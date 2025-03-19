@@ -366,9 +366,9 @@ namespace ccf
     ReconstructedLedgerSecretWrappingKey
     combine_from_encrypted_submitted_shares(ccf::kv::Tx& tx)
     {
-      auto encrypted_submitted_shares = tx.rw<ccf::EncryptedSubmittedShares>(
+      auto encrypted_submitted_shares = tx.ro<ccf::EncryptedSubmittedShares>(
         Tables::ENCRYPTED_SUBMITTED_SHARES);
-      auto config = tx.rw<ccf::Configuration>(Tables::CONFIGURATION);
+      auto config = tx.ro<ccf::Configuration>(Tables::CONFIGURATION);
 
       std::optional<ccf::crypto::sharing::Share> full_share;
       std::vector<ccf::crypto::sharing::Share> new_shares = {};
@@ -601,7 +601,7 @@ namespace ccf
       MemberId member_id,
       const std::vector<uint8_t>& submitted_recovery_share)
     {
-      auto service = tx.rw<ccf::Service>(Tables::SERVICE);
+      auto service = tx.ro<ccf::Service>(Tables::SERVICE);
       auto encrypted_submitted_shares = tx.rw<ccf::EncryptedSubmittedShares>(
         Tables::ENCRYPTED_SUBMITTED_SHARES);
       auto active_service = service->get();
