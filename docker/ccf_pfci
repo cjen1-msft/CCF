@@ -1,0 +1,13 @@
+FROM mcr.microsoft.com/azurelinux/base/core:3.0
+
+RUN gpg --import /etc/pki/rpm-gpg/MICROSOFT-RPM-GPG-KEY
+RUN tdnf -y update
+RUN tdnf -y install ca-certificates git
+RUN tdnf -y install wget tar
+
+RUN tdnf install -y build-essential
+
+RUN wget -O /tmp/ccf.rpm https://github.com/microsoft/CCF/releases/download/ccf-6.0.0-rc1/ccf_virtual_6.0.0_rc1_x86_64.rpm
+RUN tdnf install -y /tmp/ccf.rpm
+
+CMD ["/opt/ccf_virtual/bin/sandbox.sh"]
