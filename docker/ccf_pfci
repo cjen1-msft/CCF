@@ -12,7 +12,10 @@ ARG CCF_URL=https://github.com/microsoft/CCF/releases/download/ccf-6.0.0-rc1/ccf
 #RUN wget -O /tmp/ccf.rpm $CCF_URL
 COPY ./build/ccf_snp_devel_6.0.0~rc1-14-geca2c8f3c_x86_64.rpm /tmp/ccf.rpm
 RUN tdnf install -y /tmp/ccf.rpm
-# Ensure python pulls the correct package
+
+# Horrible hacks to make this work
 RUN echo "ccf-6.0.0-rc1" > /opt/ccf_snp/share/VERSION_LONG
+RUN sed -i 's/{{ snp_endorsements_servers|tojson }},/[ { "type": "AMD", "url": "kdsintf.amd.com"} ],/g' /opt/ccf_snp/bin/config.jinja
+
 
 CMD ["/opt/ccf_snp/bin/sandbox.sh"]
