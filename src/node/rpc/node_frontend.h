@@ -4,6 +4,7 @@
 
 #include "ccf/common_auth_policies.h"
 #include "ccf/common_endpoint_registry.h"
+#include "ccf/ds/logger.h"
 #include "ccf/http_query.h"
 #include "ccf/js/core/context.h"
 #include "ccf/json_handler.h"
@@ -2189,6 +2190,17 @@ namespace ccf
         .install();
       make_command_endpoint(
         "/snapshot/{snapshot_name}", HTTP_GET, get_snapshot, no_auth_required)
+        .set_forwarding_required(endpoints::ForwardingRequired::Never)
+        .set_openapi_hidden(true)
+        .install();
+
+      auto autodr = [this](auto& args, const nlohmann::json& params) {
+        LOG_INFO_FMT("Processing autodr RPC");
+        LOG_INFO_FMT("Autodr params: {}", params.dump());
+        return make_success();
+      };
+
+      make_endpoint("/autodr", HTTP_POST, json_adapter(autodr), no_auth_required)
         .set_forwarding_required(endpoints::ForwardingRequired::Never)
         .set_openapi_hidden(true)
         .install();
