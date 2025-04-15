@@ -2963,9 +2963,10 @@ namespace ccf
 
         std::vector<uint8_t> ciphertext = files::slurp(ledger_secret_path);
 
-        std::vector<uint8_t> empty_key(16,0);
+        std::vector<uint8_t> empty_key(16, 0);
         std::span<const uint8_t> sealing_key = empty_key;
-        if(quote_info.format == ccf::QuoteFormat::amd_sev_snp_v1) {
+        if (quote_info.format == ccf::QuoteFormat::amd_sev_snp_v1)
+        {
           CCF_ASSERT(
             snp_tcb_version.has_value(),
             "TCB version must be set before unsealing");
@@ -3008,9 +3009,10 @@ namespace ccf
       std::string plaintext = nlohmann::json(ledger_secret).dump();
       std::vector<uint8_t> buf_plaintext(plaintext.begin(), plaintext.end());
 
-      std::vector<uint8_t> empty_key(16,0);
+      std::vector<uint8_t> empty_key(16, 0);
       std::span<const uint8_t> sealing_key = empty_key;
-      if(quote_info.format == ccf::QuoteFormat::amd_sev_snp_v1) {
+      if (quote_info.format == ccf::QuoteFormat::amd_sev_snp_v1)
+      {
         CCF_ASSERT(
           snp_tcb_version.has_value(),
           "TCB version must be set before unsealing");
@@ -3023,6 +3025,56 @@ namespace ccf
         crypto::aes_gcm_encrypt(sealing_key, buf_plaintext);
 
       files::dump(sealed_secret, config.sealed_ledger_secret_location.value());
+    }
+
+    void send_auto_dr_message(
+      std::string&& message, std::string target_address)
+    {
+      ccf::crypto::Pem previous_service_identity_cert(
+        config.recover.previous_service_identity.value());
+      auto network_ca =
+        std::make_shared<::tls::CA>(previous_service_identity_cert);
+      auto [target_host, target_port] = split_net_address(target_address);
+      auto client_cert = std::make_unique<::tls::Cert>(
+        network_ca,
+        self_signed_node_cert,
+        node_sign_kp->private_key_pem(),
+        target_address);
+
+      auto client = rpcsessions->create_client(
+        std::move(client_cert), rpcsessions->get_app_protocol_main_interface());
+
+      auto handle_response = [&](
+                               ccf::http_status status,
+                               http::HeaderMap&& headers,
+                               std::vector<uint8_t>&& data) {
+        std::lock_guard<pal::Mutex> guard(lock);
+
+        LOG_INFO_FMT("Received response");
+        LOG_INFO_FMT("Status: {}", status);
+        LOG_INFO_FMT("Headers: {}", headers);
+        LOG_INFO_FMT("Data: {}, {}", std::string(data.begin(), data.end()), ds::to_hex(data));
+      };
+
+      client->connect(target_host, target_port, handle_response);
+
+      const std::string endpoint =
+        fmt::format("{}/auto_dr", get_actor_prefix(ActorsType::auto_dr));
+      const auto body =
+        nlohmann::json::parse(R"({"message": ")" + message + "\"}").dump();
+      LOG_DEBUG_FMT(
+        "Sending request {} to {}:{}/{}",
+        body,
+        target_host,
+        target_port,
+        endpoint);
+
+      ::http::Request r(endpoint);
+      r.set_header(
+        http::headers::CONTENT_TYPE, http::headervalues::contenttype::JSON);
+      r.set_body(body);
+
+      client->send_request(std::move(r));
     }
   };
 }
