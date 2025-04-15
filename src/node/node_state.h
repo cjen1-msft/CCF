@@ -2867,85 +2867,6 @@ namespace ccf
       }
     }
 
-  public:
-    void set_n2n_message_limit(size_t message_limit)
-    {
-      n2n_channels->set_message_limit(message_limit);
-    }
-
-    void set_n2n_idle_timeout(std::chrono::milliseconds idle_timeout)
-    {
-      n2n_channels->set_idle_timeout(idle_timeout);
-    }
-
-    virtual const ccf::StartupConfig& get_node_config() const override
-    {
-      return config;
-    }
-
-    virtual ccf::crypto::Pem get_network_cert() override
-    {
-      return network.identity->cert;
-    }
-
-    virtual void install_custom_acme_challenge_handler(
-      const ccf::NodeInfoNetwork::RpcInterfaceID& interface_id,
-      std::shared_ptr<ACMEChallengeHandler> h) override
-    {
-      acme_challenge_handlers[interface_id] = h;
-    }
-
-    // Stop-gap until it becomes easier to use other HTTP clients
-    virtual void make_http_request(
-      const ::http::URL& url,
-      ::http::Request&& req,
-      std::function<bool(
-        ccf::http_status status, http::HeaderMap&&, std::vector<uint8_t>&&)>
-        callback,
-      const std::vector<std::string>& ca_certs = {},
-      const std::string& app_protocol = "HTTP1",
-      bool authenticate_as_node_client_certificate = false) override
-    {
-      std::optional<ccf::crypto::Pem> client_cert = std::nullopt;
-      std::optional<ccf::crypto::Pem> client_cert_key = std::nullopt;
-      if (authenticate_as_node_client_certificate)
-      {
-        client_cert =
-          endorsed_node_cert ? *endorsed_node_cert : self_signed_node_cert;
-        client_cert_key = node_sign_kp->private_key_pem();
-      }
-
-      auto ca = std::make_shared<::tls::CA>(ca_certs, true);
-      std::shared_ptr<::tls::Cert> ca_cert =
-        std::make_shared<::tls::Cert>(ca, client_cert, client_cert_key);
-      auto client = rpcsessions->create_client(ca_cert, app_protocol);
-      client->connect(
-        url.host,
-        url.port,
-        [callback](
-          ccf::http_status status,
-          http::HeaderMap&& headers,
-          std::vector<uint8_t>&& data) {
-          return callback(status, std::move(headers), std::move(data));
-        });
-      client->send_request(std::move(req));
-    }
-
-    void write_snapshot(std::span<uint8_t> snapshot_buf, size_t request_id)
-    {
-      snapshotter->write_snapshot(snapshot_buf, request_id);
-    }
-
-    virtual std::shared_ptr<ccf::kv::Store> get_store() override
-    {
-      return network.tables;
-    }
-
-    virtual ringbuffer::AbstractWriterFactory& get_writer_factory() override
-    {
-      return writer_factory;
-    }
-
     LedgerSecretPtr unseal_ledger_secret()
     {
       try
@@ -3076,5 +2997,85 @@ namespace ccf
 
       client->send_request(std::move(r));
     }
+
+  public:
+    void set_n2n_message_limit(size_t message_limit)
+    {
+      n2n_channels->set_message_limit(message_limit);
+    }
+
+    void set_n2n_idle_timeout(std::chrono::milliseconds idle_timeout)
+    {
+      n2n_channels->set_idle_timeout(idle_timeout);
+    }
+
+    virtual const ccf::StartupConfig& get_node_config() const override
+    {
+      return config;
+    }
+
+    virtual ccf::crypto::Pem get_network_cert() override
+    {
+      return network.identity->cert;
+    }
+
+    virtual void install_custom_acme_challenge_handler(
+      const ccf::NodeInfoNetwork::RpcInterfaceID& interface_id,
+      std::shared_ptr<ACMEChallengeHandler> h) override
+    {
+      acme_challenge_handlers[interface_id] = h;
+    }
+
+    // Stop-gap until it becomes easier to use other HTTP clients
+    virtual void make_http_request(
+      const ::http::URL& url,
+      ::http::Request&& req,
+      std::function<bool(
+        ccf::http_status status, http::HeaderMap&&, std::vector<uint8_t>&&)>
+        callback,
+      const std::vector<std::string>& ca_certs = {},
+      const std::string& app_protocol = "HTTP1",
+      bool authenticate_as_node_client_certificate = false) override
+    {
+      std::optional<ccf::crypto::Pem> client_cert = std::nullopt;
+      std::optional<ccf::crypto::Pem> client_cert_key = std::nullopt;
+      if (authenticate_as_node_client_certificate)
+      {
+        client_cert =
+          endorsed_node_cert ? *endorsed_node_cert : self_signed_node_cert;
+        client_cert_key = node_sign_kp->private_key_pem();
+      }
+
+      auto ca = std::make_shared<::tls::CA>(ca_certs, true);
+      std::shared_ptr<::tls::Cert> ca_cert =
+        std::make_shared<::tls::Cert>(ca, client_cert, client_cert_key);
+      auto client = rpcsessions->create_client(ca_cert, app_protocol);
+      client->connect(
+        url.host,
+        url.port,
+        [callback](
+          ccf::http_status status,
+          http::HeaderMap&& headers,
+          std::vector<uint8_t>&& data) {
+          return callback(status, std::move(headers), std::move(data));
+        });
+      client->send_request(std::move(req));
+    }
+
+    void write_snapshot(std::span<uint8_t> snapshot_buf, size_t request_id)
+    {
+      snapshotter->write_snapshot(snapshot_buf, request_id);
+    }
+
+    virtual std::shared_ptr<ccf::kv::Store> get_store() override
+    {
+      return network.tables;
+    }
+
+    virtual ringbuffer::AbstractWriterFactory& get_writer_factory() override
+    {
+      return writer_factory;
+    }
+
   };
 }
