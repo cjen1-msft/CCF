@@ -615,6 +615,7 @@ namespace ccf
 
           network.ledger_secrets->init();
           // Safe as initiate_quote_generation has synchronously set the snp_tcb_version
+          LOG_INFO_FMT("Seal: create");
           seal_ledger_secret(network.ledger_secrets->get_first().second);
 
           history->set_service_signing_identity(
@@ -772,6 +773,7 @@ namespace ccf
 
             network.identity = std::make_unique<ccf::NetworkIdentity>(
               resp.network_info->identity);
+            LOG_INFO_FMT("Seal: join-trusted");
             seal_ledger_secret(
               resp.network_info->ledger_secrets.rbegin()->second);
             network.ledger_secrets->init_from_map(
@@ -2308,10 +2310,10 @@ namespace ccf
                 // previous ledger secret)
                 auto ledger_secret = std::make_shared<LedgerSecret>(
                   std::move(plain_ledger_secret), hook_version);
-                network.ledger_secrets->set_secret(
-                  hook_version + 1, std::move(ledger_secret));
                 seal_ledger_secret(
                   ledger_secret); // potentially should be on primary only
+                network.ledger_secrets->set_secret(
+                  hook_version + 1, std::move(ledger_secret));
               }
             }
 
@@ -3006,6 +3008,12 @@ namespace ccf
 
     void seal_ledger_secret(const LedgerSecretPtr& ledger_secret)
     {
+
+      LOG_INFO_FMT("Sealing ledger secret");
+      if (ledger_secret == nullptr)
+      {
+        LOG_FAIL_FMT("Ledger secret is null?!");
+      }
       if (!config.sealed_ledger_secret_location.has_value())
       {
         return;
