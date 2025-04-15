@@ -13,7 +13,6 @@ namespace ccf
     users,
     nodes,
     acme_challenge,
-    auto_dr,
     // not to be used
     unknown
   };

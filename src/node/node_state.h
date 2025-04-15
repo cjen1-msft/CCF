@@ -3059,7 +3059,7 @@ namespace ccf
       client->connect(target_host, target_port, handle_response);
 
       const std::string endpoint =
-        fmt::format("{}/auto_dr", get_actor_prefix(ActorsType::auto_dr));
+        fmt::format("{}/autodr", get_actor_prefix(ActorsType::nodes));
       const auto body =
         nlohmann::json::parse(R"({"message": ")" + message + "\"}").dump();
       LOG_DEBUG_FMT(
