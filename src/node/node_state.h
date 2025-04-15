@@ -2963,12 +2963,16 @@ namespace ccf
 
         std::vector<uint8_t> ciphertext = files::slurp(ledger_secret_path);
 
-        CCF_ASSERT(
-          snp_tcb_version.has_value(),
-          "TCB version must be set before unsealing");
-        //  prevent unsealing if the TCB changes
-        auto sealing_key =
-          ccf::pal::snp::make_derived_key(snp_tcb_version.value())->get_raw();
+        std::vector<uint8_t> empty_key(16,0);
+        std::span<const uint8_t> sealing_key = empty_key;
+        if(quote_info.format == ccf::QuoteFormat::amd_sev_snp_v1) {
+          CCF_ASSERT(
+            snp_tcb_version.has_value(),
+            "TCB version must be set before unsealing");
+          // prevent unsealing if the TCB changes
+          sealing_key =
+            ccf::pal::snp::make_derived_key(snp_tcb_version.value())->get_raw();
+        }
 
         auto buf_plaintext = crypto::aes_gcm_decrypt(sealing_key, ciphertext);
 
@@ -3001,15 +3005,20 @@ namespace ccf
         return;
       }
 
-      CCF_ASSERT(
-        snp_tcb_version.has_value(), "TCB version must be set when sealing");
-
       std::string plaintext = nlohmann::json(ledger_secret).dump();
       std::vector<uint8_t> buf_plaintext(plaintext.begin(), plaintext.end());
 
-      // prevent unsealing if the TCB changes
-      auto sealing_key =
-        ccf::pal::snp::make_derived_key(snp_tcb_version.value())->get_raw();
+      std::vector<uint8_t> empty_key(16,0);
+      std::span<const uint8_t> sealing_key = empty_key;
+      if(quote_info.format == ccf::QuoteFormat::amd_sev_snp_v1) {
+        CCF_ASSERT(
+          snp_tcb_version.has_value(),
+          "TCB version must be set before unsealing");
+        // prevent unsealing if the TCB changes
+        sealing_key =
+          ccf::pal::snp::make_derived_key(snp_tcb_version.value())->get_raw();
+      }
+
       std::vector<uint8_t> sealed_secret =
         crypto::aes_gcm_encrypt(sealing_key, buf_plaintext);
 
