@@ -7,8 +7,10 @@
 #include "ccf/crypto/symmetric_key.h"
 #include "ccf/crypto/verifier.h"
 #include "ccf/ds/logger.h"
+#include "ccf/ds/quote_info.h"
 #include "ccf/js/core/context.h"
 #include "ccf/node/cose_signatures_config.h"
+#include "ccf/node/quote.h"
 #include "ccf/pal/attestation_sev_snp.h"
 #include "ccf/pal/locking.h"
 #include "ccf/pal/platform.h"
@@ -22,6 +24,7 @@
 #include "consensus/aft/raft.h"
 #include "consensus/ledger_enclave.h"
 #include "crypto/certs.h"
+#include "ds/ccf_assert.h"
 #include "ds/files.h"
 #include "ds/state_machine.h"
 #include "enclave/rpc_sessions.h"
@@ -98,6 +101,7 @@ namespace ccf
     std::optional<ccf::crypto::Pem> endorsed_node_cert = std::nullopt;
     QuoteInfo quote_info;
     pal::PlatformAttestationMeasurement node_measurement;
+    std::optional<pal::snp::TcbVersion> snp_tcb_version = std::nullopt;
     ccf::StartupConfig config;
     std::optional<UVMEndorsements> snp_uvm_endorsements = std::nullopt;
     std::vector<uint8_t> startup_snapshot;
@@ -303,6 +307,13 @@ namespace ccf
         throw std::logic_error("Failed to extract code id from quote");
       }
 
+      auto snp_attestation =
+        AttestationProvider::get_snp_attestation(quote_info);
+      if (snp_attestation.has_value())
+      {
+        snp_tcb_version = snp_attestation.value().reported_tcb;
+      }
+
       // Verify that the security policy matches the quoted digest of the policy
       if (!config.attestation.environment.security_policy.has_value())
       {
@@ -426,6 +437,7 @@ namespace ccf
                                       endpoint_config) {
         // Note: Node lock is already taken here as this is called back
         // synchronously with the call to pal::generate_quote
+        LOG_INFO_FMT("Setting quote info");
         this->quote_info = qi;
 
         if (quote_info.format == QuoteFormat::amd_sev_snp_v1)
@@ -602,6 +614,7 @@ namespace ccf
             config.initial_service_certificate_validity_days);
 
           network.ledger_secrets->init();
+          // Safe as initiate_quote_generation has synchronously set the snp_tcb_version
           seal_ledger_secret(network.ledger_secrets->get_first().second);
 
           history->set_service_signing_identity(
@@ -1352,7 +1365,7 @@ namespace ccf
         // Shares for the new ledger secret can only be issued now, once the
         // previous ledger secrets have been recovered
         share_manager.issue_recovery_shares(tx);
-        seal_ledger_secret(tx);
+        // seal_ledger_secret(tx);
 
         if (
           !InternalTablesAccess::open_service(tx) ||
@@ -1680,7 +1693,7 @@ namespace ccf
         try
         {
           share_manager.issue_recovery_shares(tx);
-          seal_ledger_secret(tx);
+          // seal_ledger_secret(tx);
         }
         catch (const std::logic_error& e)
         {
@@ -1921,8 +1934,8 @@ namespace ccf
       // once the local hook on the secrets table has been triggered.
 
       auto new_ledger_secret = make_ledger_secret();
-      LOG_INFO_FMT("Sealing after rekey");
-      seal_ledger_secret(new_ledger_secret);
+      // LOG_INFO_FMT("Sealing after rekey");
+      // seal_ledger_secret(new_ledger_secret);
       share_manager.issue_recovery_shares(tx, new_ledger_secret);
       LedgerSecretsBroadcast::broadcast_new(
         InternalTablesAccess::get_trusted_nodes(tx),
@@ -2295,9 +2308,10 @@ namespace ccf
                 // previous ledger secret)
                 auto ledger_secret = std::make_shared<LedgerSecret>(
                   std::move(plain_ledger_secret), hook_version);
-                seal_ledger_secret(ledger_secret);
                 network.ledger_secrets->set_secret(
                   hook_version + 1, std::move(ledger_secret));
+                seal_ledger_secret(
+                  ledger_secret); // potentially should be on primary only
               }
             }
 
@@ -2956,14 +2970,17 @@ namespace ccf
 
         std::vector<uint8_t> ciphertext = files::slurp(ledger_secret_path);
 
+        //CCF_ASSERT(
+        //  snp_tcb_version.has_value(),
+        //  "TCB version must be set before unsealing");
         // prevent unsealing if the TCB changes
-        auto tcb_version = reinterpret_cast<const ccf::pal::snp::Attestation*>(
-                             quote_info.quote.data())
-                             ->reported_tcb;
-        auto sealing_key = ccf::pal::snp::make_derived_key(tcb_version);
+        auto plain_key = std::vector<uint8_t>(16, 0);
+        auto sealing_key = quote_info.format == QuoteFormat::amd_sev_snp_v1 ?
+          ccf::pal::snp::make_derived_key(snp_tcb_version.value())->get_raw() :
+          std::span((plain_key));
 
         auto buf_plaintext =
-          crypto::aes_gcm_decrypt(sealing_key->get_raw(), ciphertext);
+          crypto::aes_gcm_decrypt(sealing_key, ciphertext);
 
         auto plaintext =
           std::string(buf_plaintext.begin(), buf_plaintext.end());
@@ -2994,17 +3011,22 @@ namespace ccf
         return;
       }
 
+      //CCF_ASSERT(
+      //  snp_tcb_version.has_value(), "TCB version must be set when unsealing");
+
       std::string plaintext = nlohmann::json(ledger_secret).dump();
       std::vector<uint8_t> buf_plaintext(plaintext.begin(), plaintext.end());
 
       // prevent unsealing if the TCB changes
-      auto tcb_version = reinterpret_cast<const ccf::pal::snp::Attestation*>(
-                           quote_info.quote.data())
-                           ->reported_tcb;
-      auto sealing_key = ccf::pal::snp::make_derived_key(tcb_version);
+      // auto sealing_key =
+      //  ccf::pal::snp::make_derived_key(snp_tcb_version.value());
+      auto plain_key = std::vector<uint8_t>(16, 0);
+      auto sealing_key = quote_info.format == QuoteFormat::amd_sev_snp_v1 ?
+        ccf::pal::snp::make_derived_key(snp_tcb_version.value())->get_raw() :
+        std::span((plain_key));
 
       std::vector<uint8_t> sealed_secret =
-        crypto::aes_gcm_encrypt(sealing_key->get_raw(), buf_plaintext);
+        crypto::aes_gcm_encrypt(sealing_key, buf_plaintext);
 
       files::dump(sealed_secret, config.sealed_ledger_secret_location.value());
     }
