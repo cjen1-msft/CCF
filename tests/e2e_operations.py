@@ -7,6 +7,7 @@ import shutil
 import infra.logging_app as app
 import infra.e2e_args
 import infra.network
+import infra.net
 import infra.snp
 import ccf.ledger
 from ccf.tx_id import TxID
@@ -30,6 +31,8 @@ from cryptography.hazmat.backends import default_backend
 from pycose.messages import Sign1Message
 
 from loguru import logger as LOG
+
+import functools
 
 
 @reqs.description("Move committed ledger files to read-only directory")
@@ -1256,6 +1259,101 @@ def run_recovery_unsealing_corrupt(const_args, recovery_f=0):
             recovery_network.stop_all_nodes()
             prev_network = recovery_network
 
+def run_recovery_local_unsealing_auto_dr(
+    const_args, recovery_f=0, rekey=False, recovery_shares_refresh=False
+):
+    args = copy.deepcopy(const_args)
+    args.nodes = infra.e2e_args.min_nodes(args, f=1)
+    args.enable_auto_dr = True
+
+    with infra.network.network(args.nodes, args.binary_dir) as network:
+        network.start_and_open(args)
+
+        network.save_service_identity(args)
+
+        primary, _ = network.find_primary()
+        if rekey:
+            network.consortium.trigger_ledger_rekey(primary)
+        if recovery_shares_refresh:
+            network.consortium.trigger_recovery_shares_refresh(primary)
+
+        node_secret_map = {
+            node.local_node_id: node.save_sealed_ledger_secret()
+            for node in network.nodes
+        }
+
+        network.stop_all_nodes()
+
+        LOG.info("Starting new auto-dr networks")
+
+        # Construct one network per previous node
+        networks = {}
+        network_args = {}
+        bound_rpc_addresses = []
+        prev_network = network
+        for node in network.nodes:
+            recovery_network_args = copy.deepcopy(args)
+
+            # We need to bake the interfaces before starting such that we can set the corresponding configs
+            recovery_host_spec = infra.e2e_args.min_nodes(args, f=0)
+            recovery_host_spec[0].rpc_interfaces[infra.interfaces.PRIMARY_RPC_INTERFACE].host = infra.net.expand_localhost()
+            recovery_host_spec[0].rpc_interfaces[infra.interfaces.PRIMARY_RPC_INTERFACE].port = 5000
+            recovery_network_args.nodes = recovery_host_spec
+
+            recovery_network_args.previous_sealed_ledger_secret_location = (
+                node_secret_map[node.local_node_id]
+            )
+            recovery_network = infra.network.Network(
+                recovery_network_args.nodes,
+                recovery_network_args.binary_dir,
+                next_node_id=prev_network.next_node_id,
+            )
+
+            # Reset consortium and users to prevent issues with hosts from existing_network
+            recovery_network.consortium = prev_network.consortium
+            recovery_network.users = prev_network.users
+            recovery_network.txs = prev_network.txs
+            recovery_network.jwt_issuer = prev_network.jwt_issuer
+
+            networks[node.local_node_id] = recovery_network
+            network_args[node.local_node_id] = recovery_network_args
+            bound_rpc_addresses.append(
+                recovery_network.hosts[0].rpc_interfaces[infra.interfaces.PRIMARY_RPC_INTERFACE]
+            )
+            prev_network = recovery_network
+        
+        LOG.info(f"Created recovery networks with bound rpc addresses: {bound_rpc_addresses}")
+
+        # Start these networks
+        for node in network.nodes:
+            LOG.info("Starting {node.local_node_id} recovery network")
+
+            recovery_network = networks[node.local_node_id]
+            recovery_network_args = network_args[node.local_node_id]
+            
+            recovery_network_args.auto_dr_target_rpc_addresses = [infra.interfaces.make_address(addr.host, addr.port) for addr in bound_rpc_addresses]
+
+            current_ledger_dir, committed_ledger_dirs = node.get_ledger()
+            recovery_network.start_in_recovery(
+                recovery_network_args,
+                ledger_dir=current_ledger_dir,
+                committed_ledger_dirs=committed_ledger_dirs,
+            )
+
+            recovery_network.recover(recovery_network_args, via_local_sealing=True)
+
+        # TODO relax to one-of once auto-dr complete 
+        def condition(iterable):
+            res = functools.reduce(lambda acc, b: acc and b, iterable, True)
+            return res
+          
+        def check_if_network_started(network):
+            return False #TODO
+        assert condition([check_if_network_started(network) for network in networks.values()]), "Expected all recovery networks to start"
+
+        for _, network in networks.items():
+            network.stop_all_nodes()
+
 
 def run(args):
     # run_max_uncommitted_tx_count(args)
@@ -1278,3 +1376,4 @@ def run(args):
         run_recovery_local_unsealing(args, recovery_shares_refresh=True)
         run_recovery_local_unsealing(args, recovery_f=1)
         run_recovery_unsealing_corrupt(args)
+        run_recovery_local_unsealing_auto_dr(args)
