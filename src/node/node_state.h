@@ -2949,23 +2949,16 @@ namespace ccf
     }
 
     void send_auto_dr_message(
-      std::string&& message, std::string target_address)
+      std::string&& message, const std::string& target_address)
     {
+      auto url = ::http::parse_url_full(target_address);
+
       ccf::crypto::Pem previous_service_identity_cert(
         config.recover.previous_service_identity.value());
-      auto network_ca =
-        std::make_shared<::tls::CA>(previous_service_identity_cert);
+      auto network_ca = std::vector<std::string>({previous_service_identity_cert.str()});
+
       auto [target_host, target_port] = split_net_address(target_address);
-      auto client_cert = std::make_unique<::tls::Cert>(
-        network_ca,
-        self_signed_node_cert,
-        node_sign_kp->private_key_pem(),
-        target_address);
-
-      auto client = rpcsessions->create_client(
-        std::move(client_cert), rpcsessions->get_app_protocol_main_interface());
-
-      auto handle_response = [&](
+      auto handle_responses = [&](
                                ccf::http_status status,
                                http::HeaderMap&& headers,
                                std::vector<uint8_t>&& data) {
@@ -2975,14 +2968,22 @@ namespace ccf
         LOG_INFO_FMT("Status: {}", status);
         LOG_INFO_FMT("Headers: {}", headers);
         LOG_INFO_FMT("Data: {}, {}", std::string(data.begin(), data.end()), ds::to_hex(data));
+
+        return true;
       };
 
-      client->connect(target_host, target_port, handle_response);
+      const std::string app_protocol = rpcsessions->get_app_protocol_main_interface();
 
       const std::string endpoint =
         fmt::format("{}/autodr", get_actor_prefix(ActorsType::nodes));
       const auto body =
         nlohmann::json::parse(R"({"message": ")" + message + "\"}").dump();
+
+      ::http::Request req(endpoint);
+      req.set_header(
+        http::headers::CONTENT_TYPE, http::headervalues::contenttype::JSON);
+      req.set_body(body);
+
       LOG_DEBUG_FMT(
         "Sending request {} to {}:{}/{}",
         body,
@@ -2990,12 +2991,7 @@ namespace ccf
         target_port,
         endpoint);
 
-      ::http::Request r(endpoint);
-      r.set_header(
-        http::headers::CONTENT_TYPE, http::headervalues::contenttype::JSON);
-      r.set_body(body);
-
-      client->send_request(std::move(r));
+      make_http_request(url, std::move(req), handle_responses, network_ca, app_protocol, true);
     }
 
   public:
