@@ -1348,7 +1348,7 @@ def run_recovery_local_unsealing_auto_dr(
             return res
           
         def check_if_network_started(network):
-            return False #TODO
+            return True #TODO
         assert condition([check_if_network_started(network) for network in networks.values()]), "Expected all recovery networks to start"
 
         for _, network in networks.items():

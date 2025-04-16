@@ -1105,6 +1105,7 @@ namespace ccf
       sm.expect(NodeStartupState::readingPublicLedger);
       history->start_signature_emit_timer();
       sm.advance(NodeStartupState::partOfPublicNetwork);
+      auto_dr_broadcast();
     }
 
     void advance_part_of_network()
@@ -2948,7 +2949,18 @@ namespace ccf
       files::dump(sealed_secret, config.sealed_ledger_secret_location.value());
     }
 
-    void send_auto_dr_message(
+    void auto_dr_broadcast(){
+      if (!config.recover.auto_dr_target_rpc_addresses.has_value()) {
+        return;
+      }
+
+      std::string msg = "Hello auto-dr";
+      for (auto& target_address : config.recover.auto_dr_target_rpc_addresses.value()) {
+        auto_dr_send_msg(std::move(msg), target_address);
+      }
+    }
+
+    void auto_dr_send_msg(
       std::string&& message, const std::string& target_address)
     {
       auto url = ::http::parse_url_full(target_address);
@@ -2964,7 +2976,7 @@ namespace ccf
                                std::vector<uint8_t>&& data) {
         std::lock_guard<pal::Mutex> guard(lock);
 
-        LOG_INFO_FMT("Received response");
+        LOG_INFO_FMT("Received auto-dr response");
         LOG_INFO_FMT("Status: {}", status);
         LOG_INFO_FMT("Headers: {}", headers);
         LOG_INFO_FMT("Data: {}, {}", std::string(data.begin(), data.end()), ds::to_hex(data));
@@ -2985,10 +2997,9 @@ namespace ccf
       req.set_body(body);
 
       LOG_DEBUG_FMT(
-        "Sending request {} to {}:{}/{}",
+        "Sending request {} to {}/{}",
         body,
-        target_host,
-        target_port,
+        url,
         endpoint);
 
       make_http_request(url, std::move(req), handle_responses, network_ca, app_protocol, true);
