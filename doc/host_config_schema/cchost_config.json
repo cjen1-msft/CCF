@@ -439,8 +439,15 @@
                     "description": "Path to the previous service certificate (PEM) file"
                   },
                   "previous_sealed_ledger_secret_location": {
-                    "type": ["string"],
+                    "type": "string",
                     "description": "Path to the sealed ledger secret file, if set alongside the --enable-auto-dr command line argument the unsealed ledger secret will be used instead of using recovery shares."
+                  },
+                  "auto_dr_target_rpc_addresses" : {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "List of addresses (host:port) of expected nodes to use to recover."
                   }
                 },
                 "required": ["previous_service_identity_file"],

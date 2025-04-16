@@ -351,6 +351,7 @@ class CCFRemote(object):
         enable_auto_dr=False,
         sealed_ledger_secret_location=None,
         previous_sealed_ledger_secret_location=None,
+        auto_dr_target_rpc_addresses=None,
         **kwargs,
     ):
         """
@@ -513,6 +514,7 @@ class CCFRemote(object):
                 auto_dr_args = {
                     "sealed_ledger_secret_location": sealed_ledger_secret_location,
                     "previous_sealed_ledger_secret_location": previous_sealed_ledger_secret_location,
+                    "auto_dr_target_rpc_addresses": auto_dr_target_rpc_addresses,
                 }
             output = t.render(
                 start_type=start_type.name.title(),

@@ -297,6 +297,7 @@ class Node:
         enclave_platform="sgx",
         enable_auto_dr=False,
         previous_sealed_ledger_secret_location=None,
+        auto_dr_target_rpc_addresses=None,
         **kwargs,
     ):
         """
@@ -316,9 +317,11 @@ class Node:
             self.previous_sealed_ledger_secret_location = (
                 previous_sealed_ledger_secret_location
             )
+            self.auto_dr_target_rpc_addresses = auto_dr_target_rpc_addresses
         else:
             self.sealed_ledger_secret_location = None
             self.previous_sealed_ledger_secret_location = None
+            self.auto_dr_target_rpc_addresses=None,
 
         self.certificate_validity_days = kwargs.get("initial_node_cert_validity_days")
         self.remote = infra.remote.CCFRemote(
@@ -345,6 +348,7 @@ class Node:
             enable_auto_dr=enable_auto_dr,
             sealed_ledger_secret_location=self.sealed_ledger_secret_location,
             previous_sealed_ledger_secret_location=previous_sealed_ledger_secret_location,
+            auto_dr_target_rpc_addresses=auto_dr_target_rpc_addresses,
             **kwargs,
         )
         self.remote.setup()

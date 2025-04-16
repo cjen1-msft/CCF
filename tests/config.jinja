@@ -59,6 +59,13 @@
       {% if previous_sealed_ledger_secret_location %}
         "previous_sealed_ledger_secret_location": "{{ previous_sealed_ledger_secret_location }}",
       {% endif %}
+      {% if auto_dr_target_rpc_addresses %}
+        "auto_dr_target_rpc_addresses": [
+          {% for address in auto_dr_target_rpc_addresses %}
+            "{{ address }}",
+          {% endfor %}
+        ],
+      {% endif %}
       "previous_service_identity_file": "{{ previous_service_identity_file }}"
     }
   },

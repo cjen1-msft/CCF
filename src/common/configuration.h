@@ -123,7 +123,9 @@ namespace ccf
   DECLARE_JSON_REQUIRED_FIELDS(
     StartupConfig::Recover,
     previous_service_identity,
-    previous_sealed_ledger_secret_location);
+    previous_sealed_ledger_secret_location,
+    auto_dr_target_rpc_addresses
+  );
 
   DECLARE_JSON_TYPE_WITH_BASE(StartupConfig, CCFConfig);
   DECLARE_JSON_REQUIRED_FIELDS(

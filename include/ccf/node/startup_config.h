@@ -136,6 +136,8 @@ namespace ccf
         std::nullopt;
       std::optional<std::string> previous_sealed_ledger_secret_location =
         std::nullopt;
+      std::optional<std::vector<ccf::NodeInfoNetwork::NetAddress>>
+        auto_dr_target_rpc_addresses = std::nullopt;
     };
     Recover recover = {};
   };
