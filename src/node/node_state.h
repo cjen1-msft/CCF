@@ -2963,7 +2963,7 @@ namespace ccf
     void auto_dr_send_msg(
       std::string&& message, const std::string& target_address)
     {
-      auto url = ::http::parse_url_full(target_address);
+      auto url = ::http::parse_url_full("https://" + target_address);
 
       ccf::crypto::Pem previous_service_identity_cert(
         config.recover.previous_service_identity.value());
