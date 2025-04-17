@@ -2997,9 +2997,10 @@ namespace ccf
       req.set_body(body);
 
       LOG_DEBUG_FMT(
-        "Sending request {} to {}/{}",
+        "Sending request {} to {}:{}/{}",
         body,
-        url,
+        url.host,
+        url.port,
         endpoint);
 
       make_http_request(url, std::move(req), handle_responses, network_ca, app_protocol, true);
