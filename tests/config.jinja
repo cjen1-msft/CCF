@@ -56,7 +56,13 @@
     },
     "recover": {
       "initial_service_certificate_validity_days": {{ initial_service_cert_validity_days }},
-      "previous_service_identity_file": "{{ previous_service_identity_file }}"
+      "previous_service_identity_file": "{{ previous_service_identity_file }}" {% if auto_dr_target_rpc_addresses %},
+      "auto_dr_target_rpc_addresses" : [
+        {% for address in auto_dr_target_rpc_addresses %}
+          "{{ address }}" {% if not loop.last %},{% endif %}
+        {% endfor %}
+      ]
+      {% endif %}
     }
   },
   "ledger":

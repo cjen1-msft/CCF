@@ -132,6 +132,8 @@ namespace ccf
     {
       std::optional<std::vector<uint8_t>> previous_service_identity =
         std::nullopt;
+      std::optional<std::vector<ccf::NodeInfoNetwork::NetAddress>>
+        auto_dr_target_rpc_addresses = std::nullopt;
     };
     Recover recover = {};
   };
