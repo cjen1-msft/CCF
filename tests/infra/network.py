@@ -6,6 +6,7 @@ import time
 from contextlib import contextmanager
 from enum import Enum, IntEnum, auto
 from infra.clients import flush_info
+import infra.interfaces
 import infra.member
 import infra.path
 import infra.proc
@@ -437,6 +438,7 @@ class Network:
         self,
         args,
         recovery=False,
+        autodr=False,
         ledger_dir=None,
         read_only_ledger_dirs=None,
         snapshots_dir=None,
@@ -458,12 +460,16 @@ class Network:
             for arg in infra.network.Network.node_args_to_forward
         }
 
+        recovery_rpc_addresses = [
+            node.get_public_rpc_address() for node in self.nodes
+        ]
+
         for i, node in enumerate(self.nodes):
             forwarded_args_with_overrides = forwarded_args.copy()
             forwarded_args_with_overrides.update(self.per_node_args_override.get(i, {}))
             try:
-                if i == 0:
-                    if not recovery:
+                if i == 0 or autodr:
+                    if not (recovery or autodr):
                         node.start(
                             lib_name=args.package,
                             workspace=args.workspace,
@@ -485,6 +491,7 @@ class Network:
                             snapshots_dir=snapshots_dir,
                             **forwarded_args_with_overrides,
                             **kwargs,
+                            **( {"recovery_rpc_addresses": recovery_rpc_addresses} if autodr else {})
                         )
                         self.wait_for_state(
                             node,
@@ -1170,23 +1177,29 @@ class Network:
     def get_f(self):
         return infra.e2e_args.max_f(self.args, len(self.nodes))
 
-    def wait_for_state(self, node, state, timeout=3):
+    def wait_for_states(self, node, states, timeout=3):
         end_time = time.time() + timeout
+        final_state = None
         while time.time() < end_time:
             try:
                 with node.client(connection_timeout=timeout) as c:
                     r = c.get("/node/state").body.json()
-                    if r["state"] == state:
+                    if r["state"] in states:
+                        final_state = r["state"]
                         break
             except ConnectionRefusedError:
                 pass
             time.sleep(0.1)
         else:
             raise TimeoutError(
-                f"Timed out waiting for state {state} on node {node.node_id}"
+                f"Timed out waiting for a state in {states} on node {node.node_id}"
             )
-        if state == infra.node.State.PART_OF_NETWORK.value:
+        if final_state == infra.node.State.PART_OF_NETWORK.value:
             self.status = ServiceStatus.OPEN
+
+    def wait_for_state(self, node, state, timeout=3):
+        self.wait_for_states(node, [state], timeout=timeout)
+
 
     def _wait_for_app_open(self, node, timeout=3):
         end_time = time.time() + timeout
