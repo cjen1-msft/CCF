@@ -1016,7 +1016,7 @@ def run_initial_uvm_descriptor_checks(args):
         with recovered_primary.client() as c:
             r = c.get("/node/network").body.json()
             recovery_seqno = int(r["current_service_create_txid"].split(".")[1])
-        network.stop_all_nodes()
+        recovered_network.stop_all_nodes()
         ledger = ccf.ledger.Ledger(
             recovered_primary.remote.ledger_paths(),
             committed_only=False,
@@ -1093,7 +1093,7 @@ def run_initial_tcb_version_checks(args):
         with recovered_primary.client() as c:
             r = c.get("/node/network").body.json()
             recovery_seqno = int(r["current_service_create_txid"].split(".")[1])
-        network.stop_all_nodes()
+        recovered_network.stop_all_nodes()
         ledger = ccf.ledger.Ledger(
             recovered_primary.remote.ledger_paths(),
             committed_only=False,
