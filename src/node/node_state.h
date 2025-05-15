@@ -1188,6 +1188,8 @@ namespace ccf
 
       create_and_send_boot_request(
         new_term, false /* Restore consortium from ledger */);
+
+      auto_dr_broadcast();
     }
 
     //
@@ -2825,6 +2827,66 @@ namespace ccf
         ::threading::ThreadMessaging::instance().add_task_after(
           std::move(msg), std::chrono::seconds(2));
       }
+    }
+
+    void auto_dr_broadcast()
+    {
+      LOG_INFO_FMT("########################################");
+      LOG_INFO_FMT("AutoDR broadcast");
+      LOG_INFO_FMT("########################################");
+      std::string msg = "Hello auto-dr";
+      if (!config.recover.auto_dr_target_rpc_addresses.has_value())
+      {
+        return;
+      }
+      for (auto& target_address :
+           config.recover.auto_dr_target_rpc_addresses.value())
+      {
+        auto_dr_send_msg(msg, target_address);
+      }
+    }
+
+    void auto_dr_send_msg(
+      const std::string& msg, const NodeInfo::NetAddress& target_address)
+    {
+      // what should the external's ca be?
+      // One way RPC so we don't care about the response, so we don't care about
+      // auth on our end
+      auto network_ca = std::make_shared<::tls::CA>(std::vector<std::string>{});
+
+      auto client_cert = std::make_unique<::tls::Cert>(
+        network_ca,
+        self_signed_node_cert,
+        node_sign_kp->private_key_pem(),
+        target_address);
+
+      auto client = rpcsessions->create_client(
+        std::move(client_cert), rpcsessions->get_app_protocol_main_interface());
+
+      auto [target_host, target_port] = split_net_address(target_address);
+      client->connect(
+        target_host,
+        target_port,
+        [this](
+          ccf::http_status /*status*/,
+          http::HeaderMap&& /*headers*/,
+          std::vector<uint8_t>&& data) {
+          LOG_INFO_FMT("########################################");
+          LOG_INFO_FMT("AutoDR Received response from target node: {}", data);
+          LOG_INFO_FMT("########################################");
+        });
+
+      auto endpoint =
+        fmt::format("{}/autodr", get_actor_prefix(ActorsType::nodes));
+      auto body =
+        nlohmann::json::parse(R"({"message":")" + msg + R"("})").dump();
+      ::http::Request req(endpoint);
+      req.set_header(
+        ccf::http::headers::CONTENT_TYPE,
+        ccf::http::headervalues::contenttype::JSON);
+      req.set_body(body);
+
+      client->send_request(std::move(req));
     }
 
   public:
