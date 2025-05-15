@@ -345,7 +345,7 @@ class CCFRemote(object):
         historical_cache_soft_limit=None,
         cose_signatures_issuer="service.example.com",
         cose_signatures_subject="ledger.signature",
-        recovery_rpc_addresses=None,
+        auto_dr_target_rpc_addresses=None,
         **kwargs,
     ):
         """
@@ -548,7 +548,7 @@ class CCFRemote(object):
                 historical_cache_soft_limit=historical_cache_soft_limit,
                 cose_signatures_issuer=cose_signatures_issuer,
                 cose_signatures_subject=cose_signatures_subject,
-                recovery_rpc_addresses=recovery_rpc_addresses,
+                auto_dr_target_rpc_addresses=auto_dr_target_rpc_addresses,
                 **kwargs,
             )
 
