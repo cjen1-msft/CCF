@@ -818,6 +818,9 @@ int main(int argc, char** argv) // NOLINT(bugprone-exception-escape)
         startup_config.recover.previous_sealed_ledger_secret_location =
           config.command.recover.previous_sealed_ledger_secret_location;
       }
+
+      startup_config.recover.auto_dr_target_rpc_addresses =
+        config.command.recover.auto_dr_target_rpc_addresses;
     }
     else
     {
