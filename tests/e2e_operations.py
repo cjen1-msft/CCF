@@ -1115,6 +1115,46 @@ def run_initial_tcb_version_checks(args):
         assert False, "No TCB_version found in recovery ledger"
 
 
+def run_basic_auto_dr_recovery(args):
+    args.nodes = infra.e2e_args.min_nodes(args, f=1)
+    with infra.network.network(
+        args.nodes,
+        args.binary_dir,
+        args.debug_nodes,
+        args.perf_nodes,
+    ) as network:
+        LOG.info("Start a network and stop it")
+        network.start_and_open(args)
+        old_common = infra.network.get_common_folder_name(args.workspace, args.label)
+        network.stop_all_nodes()
+
+        ledger_dirs = {}
+        committed_ledger_dirs = {}
+        for i, node in enumerate(network.nodes):
+            l, c = node.get_ledger()
+            ledger_dirs[i] = l
+            committed_ledger_dirs[i] = c
+
+        LOG.info("Start a recovery network and stop it")
+        recovered_network = infra.network.Network(
+            args.nodes,
+            args.binary_dir,
+            args.debug_nodes,
+            args.perf_nodes,
+            existing_network=network,
+        )
+        args.previous_service_identity_file = os.path.join(
+            old_common, "service_cert.pem"
+        )
+        recovered_network.start_in_auto_dr(
+            args,
+            ledger_dirs=ledger_dirs,
+            committed_ledger_dirs=committed_ledger_dirs,
+            common_dir=network.common_dir,
+        )
+        recovered_network.stop_all_nodes()
+
+
 def run(args):
     run_max_uncommitted_tx_count(args)
     run_file_operations(args)
@@ -1131,3 +1171,4 @@ def run(args):
     if infra.snp.is_snp():
         run_initial_uvm_descriptor_checks(args)
         run_initial_tcb_version_checks(args)
+    run_basic_auto_dr_recovery(args)

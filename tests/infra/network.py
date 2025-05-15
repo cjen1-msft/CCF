@@ -478,18 +478,19 @@ class Network:
                             **kwargs,
                         )
                     else:
-                        node.recover(
-                            lib_name=args.package,
-                            workspace=args.workspace,
-                            label=args.label,
-                            common_dir=self.common_dir,
-                            ledger_dir=ledger_dir,
-                            read_only_ledger_dirs=read_only_ledger_dirs,
-                            snapshots_dir=snapshots_dir,
-                            **forwarded_args_with_overrides,
-                            **kwargs,
-                            **( {"recovery_rpc_addresses": recovery_rpc_addresses} if autodr else {})
-                        )
+                        node_kwargs = {
+                            "lib_name": args.package,
+                            "workspace": args.workspace,
+                            "label": args.label,
+                            "common_dir": self.common_dir,
+                            "ledger_dir": ledger_dir,
+                            "read_only_ledger_dirs": read_only_ledger_dirs,
+                            "snapshots_dir": snapshots_dir,
+                        } 
+                        auto_dr_kwargs = {"recovery_rpc_addresses": recovery_rpc_addresses} if autodr else {}
+                        # If a kwarg is passed in override automatically set variants
+                        node_kwargs = node_kwargs | auto_dr_kwargs | forwarded_args_with_overrides | kwargs
+                        node.recover(**node_kwargs)
                         self.wait_for_state(
                             node,
                             infra.node.State.PART_OF_PUBLIC_NETWORK.value,
@@ -711,6 +712,54 @@ class Network:
                 public_state=public_state,
                 gov_api_version=args.gov_api_version,
             )
+
+        if set_authenticate_session is not None:
+            self.consortium.set_authenticate_session(set_authenticate_session)
+
+        for node in self.get_joined_nodes():
+            self.wait_for_state(
+                node,
+                infra.node.State.PART_OF_PUBLIC_NETWORK.value,
+                timeout=args.ledger_recovery_timeout,
+            )
+        # Catch-up in recovery can take a long time, so extend this timeout
+        self.wait_for_all_nodes_to_commit(primary=primary, timeout=20)
+        LOG.success("All nodes joined public network")
+
+    def start_in_auto_dr(
+        self,
+        args,
+        ledger_dirs,
+        committed_ledger_dirs= None,
+        snapshot_dirs= None,
+        common_dir=None,
+        set_authenticate_session=None,
+        autodr=False,
+        **kwargs,
+    ):
+        self.common_dir = common_dir or get_common_folder_name(
+            args.workspace, args.label
+        )
+
+        self.per_node_args_override = self.per_node_args_override or {i: {} for i in range(len(self.nodes))}
+        committed_ledger_dirs = committed_ledger_dirs or {i: None for i in range(len(self.nodes))}
+        snapshot_dirs = snapshot_dirs or {i: None for i in range(len(self.nodes))}
+        self.per_node_args_override = {
+            i: 
+            (d | {
+              "ledger_dir" : ledger_dirs[i],
+              "read_only_ledger_dirs" : committed_ledger_dirs[i] or [],
+              "snapshots_dir" : snapshot_dirs[i] or None,
+            })
+            for i, d in self.per_node_args_override.items()
+        }
+
+        primary = self._start_all_nodes(
+            args,
+            recovery=True,
+            autodr=True,
+            **kwargs,
+        )
 
         if set_authenticate_session is not None:
             self.consortium.set_authenticate_session(set_authenticate_session)
