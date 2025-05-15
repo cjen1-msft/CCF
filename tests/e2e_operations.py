@@ -1385,6 +1385,44 @@ def run_recovery_unsealing_corrupt(const_args, recovery_f=0):
 
             recovery_network.stop_all_nodes()
             prev_network = recovery_network
+def run_basic_auto_dr_recovery(args):
+    args.nodes = infra.e2e_args.min_nodes(args, f=1)
+    with infra.network.network(
+        args.nodes,
+        args.binary_dir,
+        args.debug_nodes,
+        args.perf_nodes,
+    ) as network:
+        LOG.info("Start a network and stop it")
+        network.start_and_open(args)
+        old_common = infra.network.get_common_folder_name(args.workspace, args.label)
+        network.stop_all_nodes()
+
+        ledger_dirs = {}
+        committed_ledger_dirs = {}
+        for i, node in enumerate(network.nodes):
+            l, c = node.get_ledger()
+            ledger_dirs[i] = l
+            committed_ledger_dirs[i] = c
+
+        LOG.info("Start a recovery network and stop it")
+        recovered_network = infra.network.Network(
+            args.nodes,
+            args.binary_dir,
+            args.debug_nodes,
+            args.perf_nodes,
+            existing_network=network,
+        )
+        args.previous_service_identity_file = os.path.join(
+            old_common, "service_cert.pem"
+        )
+        recovered_network.start_in_auto_dr(
+            args,
+            ledger_dirs=ledger_dirs,
+            committed_ledger_dirs=committed_ledger_dirs,
+            common_dir=network.common_dir,
+        )
+        recovered_network.stop_all_nodes()
 
 
 def run(args):
@@ -1400,6 +1438,7 @@ def run(args):
     run_cose_signatures_config_check(args)
     run_late_mounted_ledger_check(args)
     run_empty_ledger_dir_check(args)
+    run_basic_auto_dr_recovery(args)
     if infra.snp.is_snp():
         run_initial_uvm_descriptor_checks(args)
         run_initial_tcb_version_checks(args)
