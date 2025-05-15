@@ -794,6 +794,8 @@ int main(int argc, char** argv) // NOLINT(bugprone-exception-escape)
       }
       LOG_INFO_FMT("Reading previous service identity from {}", idf);
       startup_config.recover.previous_service_identity = files::slurp(idf);
+      startup_config.recover.auto_dr_target_rpc_addresses = 
+        config.command.recover.auto_dr_target_rpc_addresses;
     }
     else
     {

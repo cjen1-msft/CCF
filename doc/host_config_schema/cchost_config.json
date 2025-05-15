@@ -437,6 +437,13 @@
                   "previous_service_identity_file": {
                     "type": "string",
                     "description": "Path to the previous service certificate (PEM) file"
+                  },
+                  "auto_dr_target_rpc_addresses" : {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "List of addresses (host:port) of that are expected to also be recovering. These addresses are used to negotiate which node should become the recovery primary for the recovered service."
                   }
                 },
                 "required": ["previous_service_identity_file"],
