@@ -460,7 +460,7 @@ class Network:
             for arg in infra.network.Network.node_args_to_forward
         }
 
-        recovery_rpc_addresses = [
+        auto_dr_target_rpc_addresses = [
             node.get_public_rpc_address() for node in self.nodes
         ]
 
@@ -490,7 +490,7 @@ class Network:
                             "read_only_ledger_dirs": read_only_ledger_dirs,
                             "snapshots_dir": snapshots_dir,
                         } 
-                        auto_dr_kwargs = {"recovery_rpc_addresses": recovery_rpc_addresses} if autodr else {}
+                        auto_dr_kwargs = {"auto_dr_target_rpc_addresses": auto_dr_target_rpc_addresses} if autodr else {}
                         # If a kwarg is passed in override automatically set variants
                         node_kwargs = node_kwargs | auto_dr_kwargs | forwarded_args_with_overrides | kwargs
                         node.recover(**node_kwargs)
