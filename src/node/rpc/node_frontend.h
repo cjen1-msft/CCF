@@ -2200,7 +2200,7 @@ namespace ccf
       };
 
       make_endpoint(
-        "/autodr", HTTP_POST, json_adapter(autodr), no_auth_required)
+        "/autodr", HTTP_PUT, json_adapter(autodr), no_auth_required)
         .set_forwarding_required(endpoints::ForwardingRequired::Never)
         .set_openapi_hidden(true)
         .install();

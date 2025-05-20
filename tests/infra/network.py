@@ -757,6 +757,15 @@ class Network:
             for i, d in self.per_node_args_override.items()
         }
 
+
+        for i, node in enumerate(self.nodes):
+            node.host.get_primary_interface().port = 5000 + (i + 1)
+            node.host.get_primary_interface().public_port = 5000 + (i + 1)
+
+        LOG.info(f"Set up nodes")
+        for node in self.nodes:
+          LOG.info(node.host)
+
         primary = self._start_all_nodes(
             args,
             recovery=True,

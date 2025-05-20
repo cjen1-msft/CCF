@@ -1385,6 +1385,7 @@ def run_recovery_unsealing_corrupt(const_args, recovery_f=0):
 
             recovery_network.stop_all_nodes()
             prev_network = recovery_network
+
 def run_basic_auto_dr_recovery(args):
     args.nodes = infra.e2e_args.min_nodes(args, f=1)
     with infra.network.network(

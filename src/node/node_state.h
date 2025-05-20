@@ -2946,7 +2946,7 @@ namespace ccf
       if (curl != nullptr)
       {
         auto endpoint =
-          fmt::format("{}/autodr", get_actor_prefix(ActorsType::nodes));
+          fmt::format("/{}/autodr", get_actor_prefix(ActorsType::nodes));
         auto url = "https://" + target_address + endpoint;
         CHECK_CURL_EASY_SETOPT(curl, CURLOPT_URL, url.c_str());
         ccf::curl::UniqueSlist headers;
@@ -2969,6 +2969,9 @@ namespace ccf
         CHECK_CURL_EASY_SETOPT(curl, CURLOPT_SSL_VERIFYPEER, 0L);
         CHECK_CURL_EASY_SETOPT(curl, CURLOPT_SSL_VERIFYSTATUS, 0L);
 
+        // Obviously not the right thing to do, but TODO remove
+        CHECK_CURL_EASY_SETOPT(curl, CURLOPT_CONNECTTIMEOUT_MS, 200L);
+
         CHECK_CURL_EASY_SETOPT(curl, CURLOPT_HTTPHEADER, headers.get());
         auto ret = curl_easy_perform(curl);
         auto response_body_str = std::string(
@@ -2976,7 +2979,7 @@ namespace ccf
           response_body.buffer.size());
         LOG_INFO_FMT("########################################");
         LOG_INFO_FMT(
-          "AutoDR Received response from target node {} with return code: {}", target_address, ret);
+          "AutoDR Received response from target node {} with return code: {}", url, ret);
         LOG_INFO_FMT("{}", response_body_str);
         LOG_INFO_FMT("########################################");
       }
