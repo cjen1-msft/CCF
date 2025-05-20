@@ -5,7 +5,6 @@
 
 #include "ccf/crypto/curve.h"
 #include "ccf/crypto/pem.h"
-#include "ccf/ds/json.h"
 #include "ccf/ds/logger.h"
 #include "ccf/ds/unit_strings.h"
 #include "ccf/node/startup_config.h"
