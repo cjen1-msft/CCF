@@ -29,6 +29,7 @@
 #include "enclave/rpc_sessions.h"
 #include "encryptor.h"
 #include "history.h"
+#include "http/curl.h"
 #include "http/http_parser.h"
 #include "indexing/indexer.h"
 #include "js/global_class_ids.h"
@@ -52,6 +53,7 @@
 #include "share_manager.h"
 #include "uvm_endorsements.h"
 
+#include <curl/curl.h>
 #include <optional>
 
 #ifdef USE_NULL_ENCRYPTOR
@@ -2917,145 +2919,189 @@ namespace ccf
       return find_and_unseal_ledger_secret_from_disk(
         config.recover.previous_sealed_ledger_secret_location.value(),
         max_version);
-      void auto_dr_broadcast()
+    }
+
+    void auto_dr_broadcast()
+    {
+      LOG_INFO_FMT("########################################");
+      LOG_INFO_FMT("AutoDR broadcast");
+      LOG_INFO_FMT("########################################");
+      std::string msg = "Hello auto-dr";
+      if (!config.recover.auto_dr_target_rpc_addresses.has_value())
       {
-        LOG_INFO_FMT("########################################");
-        LOG_INFO_FMT("AutoDR broadcast");
-        LOG_INFO_FMT("########################################");
-        std::string msg = "Hello auto-dr";
-        if (!config.recover.auto_dr_target_rpc_addresses.has_value())
-        {
-          return;
-        }
-        for (auto& target_address :
-             config.recover.auto_dr_target_rpc_addresses.value())
-        {
-          auto_dr_send_msg(msg, target_address);
-        }
+        return;
       }
-
-      void auto_dr_send_msg(
-        const std::string& msg, const NodeInfo::NetAddress& target_address)
+      for (auto& target_address :
+           config.recover.auto_dr_target_rpc_addresses.value())
       {
-        // what should the external's ca be?
-        // One way RPC so we don't care about the response, so we don't care
-        // about auth on our end
-        auto network_ca =
-          std::make_shared<::tls::CA>(std::vector<std::string>{});
+        auto_dr_send_msg_curl(msg, target_address);
+      }
+    }
 
-        auto client_cert = std::make_unique<::tls::Cert>(
-          network_ca,
-          self_signed_node_cert,
-          node_sign_kp->private_key_pem(),
-          target_address);
+    void auto_dr_send_msg_curl(
+      const std::string& msg, const NodeInfo::NetAddress& target_address)
+    {
+      ccf::curl::UniqueCURL curl;
 
-        auto client = rpcsessions->create_client(
-          std::move(client_cert),
-          rpcsessions->get_app_protocol_main_interface());
-
-        auto [target_host, target_port] = split_net_address(target_address);
-        client->connect(
-          target_host,
-          target_port,
-          [this](
-            ccf::http_status /*status*/,
-            http::HeaderMap&& /*headers*/,
-            std::vector<uint8_t>&& data) {
-            LOG_INFO_FMT("########################################");
-            LOG_INFO_FMT("AutoDR Received response from target node: {}", data);
-            LOG_INFO_FMT("########################################");
-          });
-
+      if (curl != nullptr)
+      {
         auto endpoint =
           fmt::format("{}/autodr", get_actor_prefix(ActorsType::nodes));
+        auto url = "https://" + target_address + endpoint;
+        CHECK_CURL_EASY_SETOPT(curl, CURLOPT_URL, url.c_str());
+        ccf::curl::UniqueSlist headers;
+
         auto body =
           nlohmann::json::parse(R"({"message":")" + msg + R"("})").dump();
-        ::http::Request req(endpoint);
-        req.set_header(
-          ccf::http::headers::CONTENT_TYPE,
-          ccf::http::headervalues::contenttype::JSON);
-        req.set_body(body);
+        ccf::curl::RequestBody request_body(std::span<const uint8_t>(
+          reinterpret_cast<const uint8_t*>(body.data()), body.size()));
+        request_body.attach_to_curl(curl);
+        headers.append("Content-Type: application/text");
+        CHECK_CURL_EASY_SETOPT(curl, CURLOPT_UPLOAD, 1L);
 
-        client->send_request(std::move(req));
+        ccf::curl::ResponseBody response_body;
+        response_body.attach_to_curl(curl);
+
+        // disable ssl verification of host as it will be self-signed
+        // This is likely disabling too much so validate what can be re-enabled
+        // Or just catch that we expect it to throw a verify error?
+        CHECK_CURL_EASY_SETOPT(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+        CHECK_CURL_EASY_SETOPT(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+        CHECK_CURL_EASY_SETOPT(curl, CURLOPT_SSL_VERIFYSTATUS, 0L);
+
+        CHECK_CURL_EASY_SETOPT(curl, CURLOPT_HTTPHEADER, headers.get());
+        auto ret = curl_easy_perform(curl);
+        auto response_body_str = std::string(
+          reinterpret_cast<const char*>(response_body.buffer.data()),
+          response_body.buffer.size());
+        LOG_INFO_FMT("########################################");
+        LOG_INFO_FMT(
+          "AutoDR Received response from target node {}", target_address);
+        LOG_INFO_FMT("{}", response_body_str);
+        LOG_INFO_FMT("########################################");
       }
+    }
 
-    public:
-      void set_n2n_message_limit(size_t message_limit)
+    void auto_dr_send_msg(
+      const std::string& msg, const NodeInfo::NetAddress& target_address)
+    {
+      // what should the external's ca be?
+      // One way RPC so we don't care about the response, so we don't care
+      // about auth on our end
+      auto network_ca = std::make_shared<::tls::CA>(std::vector<std::string>{});
+
+      auto client_cert = std::make_unique<::tls::Cert>(
+        network_ca,
+        self_signed_node_cert,
+        node_sign_kp->private_key_pem(),
+        target_address);
+
+      auto client = rpcsessions->create_client(
+        std::move(client_cert), rpcsessions->get_app_protocol_main_interface());
+
+      auto [target_host, target_port] = split_net_address(target_address);
+      client->connect(
+        target_host,
+        target_port,
+        [this](
+          ccf::http_status /*status*/,
+          http::HeaderMap&& /*headers*/,
+          std::vector<uint8_t>&& data) {
+          LOG_INFO_FMT("########################################");
+          LOG_INFO_FMT("AutoDR Received response from target node: {}", data);
+          LOG_INFO_FMT("########################################");
+        });
+
+      auto endpoint =
+        fmt::format("{}/autodr", get_actor_prefix(ActorsType::nodes));
+      auto body =
+        nlohmann::json::parse(R"({"message":")" + msg + R"("})").dump();
+      ::http::Request req(endpoint);
+      req.set_header(
+        ccf::http::headers::CONTENT_TYPE,
+        ccf::http::headervalues::contenttype::JSON);
+      req.set_body(body);
+
+      client->send_request(std::move(req));
+    }
+
+  public:
+    void set_n2n_message_limit(size_t message_limit)
+    {
+      n2n_channels->set_message_limit(message_limit);
+    }
+
+    void set_n2n_idle_timeout(std::chrono::milliseconds idle_timeout)
+    {
+      n2n_channels->set_idle_timeout(idle_timeout);
+    }
+
+    virtual const ccf::StartupConfig& get_node_config() const override
+    {
+      return config;
+    }
+
+    virtual ccf::crypto::Pem get_network_cert() override
+    {
+      return network.identity->cert;
+    }
+
+    virtual void install_custom_acme_challenge_handler(
+      const ccf::NodeInfoNetwork::RpcInterfaceID& interface_id,
+      std::shared_ptr<ACMEChallengeHandler> h) override
+    {
+      acme_challenge_handlers[interface_id] = h;
+    }
+
+    // Stop-gap until it becomes easier to use other HTTP clients
+    virtual void make_http_request(
+      const ::http::URL& url,
+      ::http::Request&& req,
+      std::function<bool(
+        ccf::http_status status, http::HeaderMap&&, std::vector<uint8_t>&&)>
+        callback,
+      const std::vector<std::string>& ca_certs = {},
+      const std::string& app_protocol = "HTTP1",
+      bool authenticate_as_node_client_certificate = false) override
+    {
+      std::optional<ccf::crypto::Pem> client_cert = std::nullopt;
+      std::optional<ccf::crypto::Pem> client_cert_key = std::nullopt;
+      if (authenticate_as_node_client_certificate)
       {
-        n2n_channels->set_message_limit(message_limit);
+        client_cert =
+          endorsed_node_cert ? *endorsed_node_cert : self_signed_node_cert;
+        client_cert_key = node_sign_kp->private_key_pem();
       }
 
-      void set_n2n_idle_timeout(std::chrono::milliseconds idle_timeout)
-      {
-        n2n_channels->set_idle_timeout(idle_timeout);
-      }
+      auto ca = std::make_shared<::tls::CA>(ca_certs, true);
+      std::shared_ptr<::tls::Cert> ca_cert =
+        std::make_shared<::tls::Cert>(ca, client_cert, client_cert_key);
+      auto client = rpcsessions->create_client(ca_cert, app_protocol);
+      client->connect(
+        url.host,
+        url.port,
+        [callback](
+          ccf::http_status status,
+          http::HeaderMap&& headers,
+          std::vector<uint8_t>&& data) {
+          return callback(status, std::move(headers), std::move(data));
+        });
+      client->send_request(std::move(req));
+    }
 
-      virtual const ccf::StartupConfig& get_node_config() const override
-      {
-        return config;
-      }
+    void write_snapshot(std::span<uint8_t> snapshot_buf, size_t request_id)
+    {
+      snapshotter->write_snapshot(snapshot_buf, request_id);
+    }
 
-      virtual ccf::crypto::Pem get_network_cert() override
-      {
-        return network.identity->cert;
-      }
+    virtual std::shared_ptr<ccf::kv::Store> get_store() override
+    {
+      return network.tables;
+    }
 
-      virtual void install_custom_acme_challenge_handler(
-        const ccf::NodeInfoNetwork::RpcInterfaceID& interface_id,
-        std::shared_ptr<ACMEChallengeHandler> h) override
-      {
-        acme_challenge_handlers[interface_id] = h;
-      }
-
-      // Stop-gap until it becomes easier to use other HTTP clients
-      virtual void make_http_request(
-        const ::http::URL& url,
-        ::http::Request&& req,
-        std::function<bool(
-          ccf::http_status status, http::HeaderMap&&, std::vector<uint8_t>&&)>
-          callback,
-        const std::vector<std::string>& ca_certs = {},
-        const std::string& app_protocol = "HTTP1",
-        bool authenticate_as_node_client_certificate = false) override
-      {
-        std::optional<ccf::crypto::Pem> client_cert = std::nullopt;
-        std::optional<ccf::crypto::Pem> client_cert_key = std::nullopt;
-        if (authenticate_as_node_client_certificate)
-        {
-          client_cert =
-            endorsed_node_cert ? *endorsed_node_cert : self_signed_node_cert;
-          client_cert_key = node_sign_kp->private_key_pem();
-        }
-
-        auto ca = std::make_shared<::tls::CA>(ca_certs, true);
-        std::shared_ptr<::tls::Cert> ca_cert =
-          std::make_shared<::tls::Cert>(ca, client_cert, client_cert_key);
-        auto client = rpcsessions->create_client(ca_cert, app_protocol);
-        client->connect(
-          url.host,
-          url.port,
-          [callback](
-            ccf::http_status status,
-            http::HeaderMap&& headers,
-            std::vector<uint8_t>&& data) {
-            return callback(status, std::move(headers), std::move(data));
-          });
-        client->send_request(std::move(req));
-      }
-
-      void write_snapshot(std::span<uint8_t> snapshot_buf, size_t request_id)
-      {
-        snapshotter->write_snapshot(snapshot_buf, request_id);
-      }
-
-      virtual std::shared_ptr<ccf::kv::Store> get_store() override
-      {
-        return network.tables;
-      }
-
-      virtual ringbuffer::AbstractWriterFactory& get_writer_factory() override
-      {
-        return writer_factory;
-      }
-    };
-  }
+    virtual ringbuffer::AbstractWriterFactory& get_writer_factory() override
+    {
+      return writer_factory;
+    }
+  };
+}
