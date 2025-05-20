@@ -67,4 +67,58 @@ namespace ccf::curl
     }
   };
 
+  class RequestBody
+  {
+    // use a class as the holder of the buffer, as the curl callback requires
+    // something it can update the position
+    // Afaict all other ways to do this require the user to allocate the
+    // relevant bit and ensure it stays live over the duration of the call
+    std::span<const uint8_t> buffer_span;
+
+  public:
+    RequestBody(std::span<const uint8_t> buffer) : buffer_span(buffer) {}
+
+    static size_t send_data(
+      char* ptr, size_t size, size_t nitems, void* userdata)
+    {
+      auto* data = static_cast<RequestBody*>(userdata);
+      auto bytes_to_copy = std::min(data->buffer_span.size(), size * nitems);
+      memcpy(ptr, data->buffer_span.data(), bytes_to_copy);
+      data->buffer_span = data->buffer_span.subspan(bytes_to_copy);
+      return bytes_to_copy;
+    }
+
+    void attach_to_curl(CURL* curl)
+    {
+      CHECK_CURL_EASY_SETOPT(curl, CURLOPT_READDATA, this);
+      CHECK_CURL_EASY_SETOPT(curl, CURLOPT_READFUNCTION, send_data);
+      CHECK_CURL_EASY_SETOPT(
+        curl, CURLOPT_INFILESIZE, static_cast<curl_off_t>(buffer_span.size()));
+    }
+  };
+
+  class ResponseBody
+  {
+  public:
+    std::vector<uint8_t> buffer;
+
+    static size_t write_response_chunk(
+      char* ptr, size_t size, size_t nmemb, void* userdata)
+    {
+      auto* data = static_cast<ResponseBody*>(userdata);
+      auto bytes_to_copy = size * nmemb;
+      data->buffer.insert(
+        data->buffer.end(), (uint8_t*)ptr, (uint8_t*)ptr + bytes_to_copy);
+      // Should probably set a maximum response size here
+      return bytes_to_copy;
+    }
+
+    void attach_to_curl(CURL* curl)
+    {
+      CHECK_CURL_EASY_SETOPT(curl, CURLOPT_WRITEDATA, this);
+      // Called one or more times to add more data
+      CHECK_CURL_EASY_SETOPT(curl, CURLOPT_WRITEFUNCTION, write_response_chunk);
+    }
+  };
+
 } // namespace ccf::curl
