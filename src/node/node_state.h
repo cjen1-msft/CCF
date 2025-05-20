@@ -2976,7 +2976,7 @@ namespace ccf
           response_body.buffer.size());
         LOG_INFO_FMT("########################################");
         LOG_INFO_FMT(
-          "AutoDR Received response from target node {}", target_address);
+          "AutoDR Received response from target node {} with return code: {}", target_address, ret);
         LOG_INFO_FMT("{}", response_body_str);
         LOG_INFO_FMT("########################################");
       }
