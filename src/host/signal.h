@@ -3,6 +3,7 @@
 #pragma once
 
 #include "proxy.h"
+#include "ds/internal_logger.h"
 
 #include <chrono>
 

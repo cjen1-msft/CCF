@@ -1,40 +1,84 @@
-// Minimal standalone indexer prototype.
-// For now this does NOT start a full CCF node. Instead it demonstrates
-// initialising the shared libuv event loop and the Curlm (multi-curl)
-// singleton used elsewhere in CCF so later components (eg. endorsement
-// fetching, HTTP clients, etc.) can be integrated.
-//
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the Apache 2.0 License.
+#include "ccf/pal/platform.h"
+#include "ccf/version.h"
+#include "http/curl.h"
+#include "sig_term.h"
 
-// Order of includes matters: standard + nlohmann before project headers that rely on them
+#include <CLI11/CLI11.hpp>
+#include <chrono>
 #include <curl/curl.h>
 #include <iostream>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <stdexcept>
 #include <thread>
-#include <chrono>
 #include <uv.h>
-#include <nlohmann/json.hpp>
 
-#include "http/curl.h"
+void print_version(int64_t ignored)
+{
+  (void)ignored;
+  LOG_INFO_FMT("CCF host: {}", ccf::ccf_version);
+  LOG_INFO_FMT(
+    "Platform: {}", nlohmann::json(ccf::pal::platform).get<std::string>());
+  exit(0); // NOLINT(concurrency-mt-unsafe)
+}
 
-int main()
+int main(int argc, char** argv)
 {
   using namespace std::chrono_literals;
+  if (signal(SIGPIPE, SIG_IGN) == SIG_ERR)
+  {
+    LOG_FAIL_FMT("Failed to ignore SIGPIPE");
+    return 1;
+  }
 
-  // 1. Global libcurl init (paired with curl_global_cleanup at end)
+  CLI::App app{"Run a single ccf indexer instance"};
+
+  app.add_flag("-v, --version", print_version, "Display CCF version and exit");
+
+  ccf::LoggerLevel log_level = ccf::LoggerLevel::INFO;
+  std::map<std::string, ccf::LoggerLevel> log_level_options;
+  for (size_t i = ccf::logger::MOST_VERBOSE;
+       i < ccf::LoggerLevel::MAX_LOG_LEVEL;
+       ++i)
+  {
+    const auto level = (ccf::LoggerLevel)i;
+    log_level_options[ccf::logger::to_string(level)] = level;
+  }
+
+  app
+    .add_option(
+      "--log-level",
+      log_level,
+      "Logging level for the node (security critical)")
+    ->transform(CLI::CheckedTransformer(log_level_options, CLI::ignore_case));
+
+  try
+  {
+    app.parse(argc, argv);
+  }
+  catch (const CLI::ParseError& e)
+  {
+    return app.exit(e);
+  }
+
+  ccf::logger::config::add_text_console_logger();
+  ccf::logger::config::level() = log_level;
+
   curl_global_init(CURL_GLOBAL_DEFAULT);
 
   int rc = 0;
 
   {
     ccf::curl::CurlmLibuvContextSingleton curlm_ctx(uv_default_loop());
+    asynchost::Sigterm sigterm_handler;
+    asynchost::Sighup sighub_handler;
     try
     {
-      std::cout << "Indexer: entering event loop" << std::endl;
+      LOG_INFO_FMT("Indexer: entering event loop");
       uv_run(uv_default_loop(), UV_RUN_DEFAULT);
-      std::cout << "Indexer: exited event loop" << std::endl;
+      LOG_INFO_FMT("Indexer: exited event loop");
     }
     catch (const std::exception& e)
     {
@@ -55,20 +99,23 @@ int main()
   {
     loop_close_rc = uv_loop_close(uv_default_loop());
     if (loop_close_rc != UV_EBUSY)
+    {
       break;
+    }
     uv_run(uv_default_loop(), UV_RUN_NOWAIT);
     --close_iterations;
     std::this_thread::sleep_for(10ms);
   }
   if (loop_close_rc != 0)
   {
-    std::cerr << "Indexer: uv_loop_close still busy after cleanup attempts" << std::endl;
+    std::cerr << "Indexer: uv_loop_close still busy after cleanup attempts"
+              << std::endl;
     rc = rc == 0 ? 1 : rc;
   }
 
   // 4. Global curl cleanup
   curl_global_cleanup();
 
-  std::cout << "Indexer: shutdown complete" << std::endl;
+  LOG_INFO_FMT("Indexer: shutdown complete");
   return rc;
 }
