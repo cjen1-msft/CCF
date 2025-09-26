@@ -11,8 +11,23 @@
 #include "indexer/config.h"
 #include "node/quote_endorsements_client.h"
 #include "pal/quote_generation.h"
+
+#include <stdexcept>
 namespace ccf::indexer
 {
+  template <typename F>
+  constexpr auto compose(F f)
+  {
+    return f;
+  }
+
+  template <typename F, typename G, typename... Rest>
+  constexpr auto compose(F f, G g, Rest... rest)
+  {
+    auto next = compose(g, rest...);
+    return [f, next]() { f([&]() { next(); }); };
+  }
+
   class State
   {
   private:
@@ -25,10 +40,35 @@ namespace ccf::indexer
     std::shared_ptr<ccf::crypto::RSAKeyPair> node_encrypt_kp;
     ccf::crypto::Pem self_signed_node_cert;
     std::optional<ccf::crypto::Pem> endorsed_node_cert = std::nullopt;
-    QuoteInfo quote_info;
+
+    std::optional<QuoteInfo> quote_info_opt = std::nullopt;
+    std::optional<pal::snp::EndorsementEndpointsConfiguration>
+      snp_endorsement_endpoints_config_opt = std::nullopt;
+
+    void generate_quote(auto&& next)
+    {
+      pal::PlatformAttestationReportData report_data =
+        ccf::crypto::Sha256Hash((node_sign_kp->public_key_der()));
+
+      pal::generate_quote(
+        report_data,
+        [this, next](
+          const QuoteInfo& qi,
+          const pal::snp::EndorsementEndpointsConfiguration endpoint_config) {
+          quote_info_opt = qi;
+          snp_endorsement_endpoints_config_opt = endpoint_config;
+          next();
+        },
+        config.attestation.snp_endorsements_servers);
+    }
 
     void load_aci_endorsements_from_disk(std::function<void()> cb)
     {
+      if (!quote_info_opt.has_value())
+      {
+        throw std::logic_error("No quote info available");
+      }
+      auto& quote_info = this->quote_info_opt.value();
       try
       {
         const auto raw_data = ccf::crypto::raw_from_b64(
@@ -90,25 +130,20 @@ namespace ccf::indexer
       }
     }
 
-    void generate_quote()
+    void fetch_endorsements(auto&& next)
     {
-      pal::PlatformAttestationReportData report_data =
-        ccf::crypto::Sha256Hash((node_sign_kp->public_key_der()));
+      if (!quote_info_opt.has_value())
+      {
+        throw std::logic_error("No quote info available");
+      }
+      auto& quote_info = this->quote_info_opt.value();
+      if (!snp_endorsement_endpoints_config_opt.has_value())
+      {
+        throw std::logic_error("No SNP endorsement endpoints config available");
+      }
+      auto& endpoint_config =
+        this->snp_endorsement_endpoints_config_opt.value();
 
-      pal::generate_quote(
-        report_data,
-        [this](
-          const QuoteInfo& qi,
-          const pal::snp::EndorsementEndpointsConfiguration endpoint_config) {
-          quote_info = qi;
-          this->fetch_endorsements(endpoint_config);
-        },
-        config.attestation.snp_endorsements_servers);
-    }
-
-    void fetch_endorsements(
-      const pal::snp::EndorsementEndpointsConfiguration& endpoint_config)
-    {
       auto b64encoded_quote = ccf::crypto::b64url_from_raw(quote_info.quote);
       nlohmann::json jq;
       to_json(jq, quote_info.format);
@@ -130,7 +165,7 @@ namespace ccf::indexer
         // Use endorsements retrieved from file, if available
         if (config.attestation.environment.snp_endorsements.has_value())
         {
-          load_aci_endorsements_from_disk([this]() { this->launch_indexer(); });
+          next();
           return;
         }
 
@@ -143,26 +178,40 @@ namespace ccf::indexer
         // shared-ptr to extend its lifetime across the async call
         auto quote_endorsements_client =
           std::make_shared<QuoteEndorsementsClient>(
-            endpoint_config, [this](std::vector<uint8_t>&& endorsements) {
-              this->quote_info.endorsements = std::move(endorsements);
-              this->launch_indexer();
+            endpoint_config, [this, next](std::vector<uint8_t>&& endorsements) {
+              if (!quote_info_opt.has_value())
+              {
+                throw std::logic_error("No quote info available");
+              }
+              auto& quote_info = this->quote_info_opt.value();
+              quote_info.endorsements = std::move(endorsements);
+              next();
             });
         quote_endorsements_client->fetch_endorsements();
       }
     }
 
-    void launch_indexer()
+    void read_current_public_ledger(auto&& next)
     {
-      try
-      {
-        // something
-        return;
-      }
-      catch (const std::exception& e)
-      {
-        LOG_FAIL_FMT("{}", e.what());
-        throw;
-      }
+      // kick off reading then
+      next();
+    }
+
+    void send_join_requests(auto&& next)
+    {
+      // Do something here
+      next();
+    }
+
+    void poll_ledger_for_secrets(auto&& next)
+    {
+      // Poll ledger until we see the network secrets
+      next();
+    }
+
+    void open_frontend()
+    {
+      // open frontend for client requests
     }
 
   public:
@@ -174,12 +223,15 @@ namespace ccf::indexer
       node_encrypt_kp(ccf::crypto::make_rsa_key_pair())
     {}
 
-    // Startup process
-    // - Generate quote
-    // - Start reading public state of ledger
-    // - Learn:
-    //   - network config
-    //   - historical ledger secrets
-    void start() {}
+    void start()
+    {
+      compose(
+        [this](auto&& cb) { generate_quote(cb); },
+        [this](auto&& cb) { read_current_public_ledger(cb); },
+        [this](auto&& cb) { fetch_endorsements(cb); },
+        [this](auto&& cb) { send_join_requests(cb); },
+        [this](auto&& cb) { poll_ledger_for_secrets(cb); },
+        [this] { open_frontend(); })();
+    }
   };
 }
