@@ -2,6 +2,7 @@
 // Licensed under the Apache 2.0 License.
 #include "ccf/pal/platform.h"
 #include "ccf/version.h"
+#include "ds/files.h"
 #include "http/curl.h"
 #include "sig_term.h"
 
@@ -54,6 +55,18 @@ int main(int argc, char** argv)
       "Logging level for the node (security critical)")
     ->transform(CLI::CheckedTransformer(log_level_options, CLI::ignore_case));
 
+  std::string config_file_path;
+  app
+    .add_option(
+      "-c,--config", config_file_path, "Path to JSON configuration file")
+    ->required();
+
+  ccf::ds::TimeString config_timeout = {"0s"};
+  app.add_option(
+    "--config-timeout",
+    config_timeout,
+    "Configuration file read timeout, for example 5s or 1min");
+
   try
   {
     app.parse(argc, argv);
@@ -65,6 +78,35 @@ int main(int argc, char** argv)
 
   ccf::logger::config::add_text_console_logger();
   ccf::logger::config::level() = log_level;
+
+  nlohmann::json config_json;
+  const auto config_timeout_end = // NOLINT(clang-analyzer-deadcode.DeadStores)
+                                  // line 195
+    std::chrono::high_resolution_clock::now() +
+    std::chrono::microseconds(config_timeout);
+  std::string config_parsing_error;
+  do
+  {
+    std::string config_str = files::slurp_string(
+      config_file_path,
+      true /* return an empty string if the file does not exist */);
+    try
+    {
+      config_json = nlohmann::json::parse(config_str);
+      config_parsing_error = "";
+      break;
+    }
+    catch (const std::exception& e)
+    {
+      config_parsing_error = fmt::format(
+        "Error parsing configuration file {}: {}", config_file_path, e.what());
+      std::this_thread::sleep_for(100ms);
+    }
+  } while (std::chrono::high_resolution_clock::now() < config_timeout_end);
+  if (!config_parsing_error.empty())
+  {
+    throw std::logic_error(config_parsing_error);
+  }
 
   curl_global_init(CURL_GLOBAL_DEFAULT);
 
