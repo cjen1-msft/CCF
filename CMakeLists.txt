@@ -464,6 +464,9 @@ install(FILES tests/requirements.txt DESTINATION bin)
 # Add sample apps
 add_subdirectory(${CCF_DIR}/samples)
 
+# Add indexer app
+add_subdirectory(${CCF_DIR}/src/indexer)
+
 if(BUILD_TESTS)
   enable_testing()
 
