@@ -36,7 +36,7 @@ int main(int argc, char** argv)
 
   CLI::App app{"Run a single ccf indexer instance"};
 
-  app.add_flag("-v, --version", print_version, "Display CCF version and exit");
+  app.add_flag("-v, --version", print_version, "Display the corresponding CCF version and exit");
 
   ccf::LoggerLevel log_level = ccf::LoggerLevel::INFO;
   std::map<std::string, ccf::LoggerLevel> log_level_options;
