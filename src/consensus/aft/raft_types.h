@@ -102,8 +102,8 @@ namespace aft
     raft_request_vote,
     raft_request_vote_response,
     raft_propose_request_vote,
-    raft_request_pre_vote,
-    raft_request_pre_vote_response,
+    raft_request_vote_pvc,
+    raft_request_vote_response_pvc,
   };
   DECLARE_JSON_ENUM(
     RaftMsgType,
@@ -116,9 +116,9 @@ namespace aft
       {RaftMsgType::raft_request_vote, "raft_request_vote"},
       {RaftMsgType::raft_request_vote_response, "raft_request_vote_response"},
       {RaftMsgType::raft_propose_request_vote, "raft_propose_request_vote"},
-      {RaftMsgType::raft_request_pre_vote, "raft_request_pre_vote"},
-      {RaftMsgType::raft_request_pre_vote_response,
-       "raft_request_pre_vote_response"},
+      {RaftMsgType::raft_request_vote_pvc, "raft_request_vote_v2"},
+      {RaftMsgType::raft_request_vote_response_pvc,
+       "raft_request_vote_response_v2"},
     });
 
 #pragma pack(push, 1)
@@ -188,9 +188,6 @@ namespace aft
   DECLARE_JSON_REQUIRED_FIELDS(
     AppendEntriesResponse, term, last_log_idx, success);
 
-  DECLARE_JSON_TYPE(RaftHeader<raft_request_vote>)
-  DECLARE_JSON_REQUIRED_FIELDS(RaftHeader<raft_request_vote>, msg)
-
   enum ElectionType
   {
     PreVote = 0,
@@ -201,6 +198,8 @@ namespace aft
     {{ElectionType::PreVote, "PreVote"},
      {ElectionType::RegularVote, "RegularVote"}});
 
+  DECLARE_JSON_TYPE(RaftHeader<raft_request_vote>)
+  DECLARE_JSON_REQUIRED_FIELDS(RaftHeader<raft_request_vote>, msg)
   struct RequestVote : RaftHeader<raft_request_vote>
   {
     Term term;
@@ -210,6 +209,19 @@ namespace aft
   DECLARE_JSON_TYPE_WITH_BASE(RequestVote, RaftHeader<raft_request_vote>);
   DECLARE_JSON_REQUIRED_FIELDS(
     RequestVote, term, last_committable_idx, term_of_last_committable_idx);
+
+  DECLARE_JSON_TYPE(RaftHeader<raft_request_vote_pvc>)
+  DECLARE_JSON_REQUIRED_FIELDS(RaftHeader<raft_request_vote_pvc>, msg)
+  struct RequestVotePVC : RaftHeader<raft_request_vote_pvc>
+  {
+    Term term;
+    Index last_committable_idx;
+    Term term_of_last_committable_idx;
+    ElectionType election_type;
+  };
+  DECLARE_JSON_TYPE_WITH_BASE(RequestVotePVC, RaftHeader<raft_request_vote_pvc>);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    RequestVotePVC, term, last_committable_idx, term_of_last_committable_idx, election_type);
 
   DECLARE_JSON_TYPE(RaftHeader<raft_request_vote_response>)
   DECLARE_JSON_REQUIRED_FIELDS(RaftHeader<raft_request_vote_response>, msg)
@@ -221,6 +233,18 @@ namespace aft
   DECLARE_JSON_TYPE_WITH_BASE(
     RequestVoteResponse, RaftHeader<raft_request_vote_response>);
   DECLARE_JSON_REQUIRED_FIELDS(RequestVoteResponse, term, vote_granted);
+
+  DECLARE_JSON_TYPE(RaftHeader<raft_request_vote_response_pvc>)
+  DECLARE_JSON_REQUIRED_FIELDS(RaftHeader<raft_request_vote_response_pvc>, msg)
+  struct RequestVoteResponsePVC : RaftHeader<raft_request_vote_response_pvc>
+  {
+    Term term;
+    bool vote_granted;
+    ElectionType election_type;
+  };
+  DECLARE_JSON_TYPE_WITH_BASE(
+    RequestVoteResponsePVC, RaftHeader<raft_request_vote_response_pvc>);
+  DECLARE_JSON_REQUIRED_FIELDS(RequestVoteResponsePVC, term, vote_granted, election_type);
 
   DECLARE_JSON_TYPE(RaftHeader<raft_propose_request_vote>)
   DECLARE_JSON_REQUIRED_FIELDS(RaftHeader<raft_propose_request_vote>, msg)
@@ -277,13 +301,13 @@ struct formatter<aft::RaftMsgType>
       {
         return fmt::format_to(ctx.out(), "propose_request_vote");
       }
-      case (aft::RaftMsgType::raft_request_pre_vote):
+      case (aft::RaftMsgType::raft_request_vote_pvc):
       {
-        return fmt::format_to(ctx.out(), "request_pre_vote");
+        return fmt::format_to(ctx.out(), "request_pre_vote_pvc");
       }
-      case (aft::RaftMsgType::raft_request_pre_vote_response):
+      case (aft::RaftMsgType::raft_request_vote_response_pvc):
       {
-        return fmt::format_to(ctx.out(), "request_pre_vote_response");
+        return fmt::format_to(ctx.out(), "request_pre_vote_response_pvc");
       }
       default:
         throw std::runtime_error(
