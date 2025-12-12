@@ -720,8 +720,19 @@ namespace aft
         }
       }
 
+      auto another_node_in_active_config = std::any_of(
+        configurations.begin(),
+        configurations.end(),
+        [this](const Configuration& conf) {
+          std::any_of(
+            conf.nodes.begin(),
+            conf.nodes.end(),
+            [this](const auto& node) {
+              return node.first != state->node_id;
+            });
+        });
       // Try to advance commit at once if there are no other nodes.
-      if (other_nodes_in_active_configs().size() == 0)
+      if (!another_node_in_active_config)
       {
         update_commit();
       }
