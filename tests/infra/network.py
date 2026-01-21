@@ -471,16 +471,18 @@ class Network:
             try:
                 if i == 0:
                     if not recovery:
-                        node.start(
-                            lib_name=args.package,
-                            workspace=args.workspace,
-                            label=args.label,
-                            common_dir=self.common_dir,
-                            ledger_dir=ledger_dir,
-                            members_info=self.consortium.get_members_info(),
-                            **forwarded_args_with_overrides,
-                            **kwargs,
+                        node_kwargs = {
+                            "lib_name": args.package,
+                            "workspace": args.workspace,
+                            "label": args.label,
+                            "common_dir": self.common_dir,
+                            "ledger_dir": ledger_dir,
+                            "members_info": self.consortium.get_members_info(),
+                        }
+                        node_kwargs = (
+                            node_kwargs | forwarded_args_with_overrides | kwargs
                         )
+                        node.start(**node_kwargs)
                     else:
                         node_kwargs = {
                             "lib_name": args.package,
