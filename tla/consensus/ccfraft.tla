@@ -1075,14 +1075,7 @@ ReturnToFollowerState(i, m) ==
     /\ leadershipState[i] \in {PreVoteCandidate, Candidate}
     /\ leadershipState' = [leadershipState EXCEPT ![i] = Follower]
     /\ isNewFollower' = [isNewFollower EXCEPT ![i] = TRUE]
-    \* See rollback(last_committable_index()) in raft::become_follower
-    /\ log'            = [log         EXCEPT ![i] = SubSeq(@, 1, LastCommittableIndex(i))]
-    \* Potentially also shorten the configurations if the removed txns contained reconfigurations
-    /\ configurations' = [configurations EXCEPT ![i] = ConfigurationsToIndex(i,Len(log'[i]))]
-    \* If the leader was in the RetirementOrdered state, then its retirement has
-    \* been rolled back as it was unsigned
-    /\ membershipState' = [membershipState EXCEPT ![i] = 
-        IF @ = RetirementOrdered THEN Active ELSE @]
+    /\ UNCHANGED << membershipState, configurations, log >>
     \* messages is unchanged so m can be processed further.
     /\ UNCHANGED <<preVoteStatus, messageVars, candidateVars, leaderVars, commitIndex, hasJoined, retirementCompleted>>
     /\ UNCHANGED <<currentTerm, votedFor>>
@@ -1230,16 +1223,10 @@ UpdateTerm(i, j, m) ==
          ![i] = IF @ \in {Leader, Candidate, PreVoteCandidate, None} THEN Follower ELSE @]
     /\ isNewFollower' = [isNewFollower EXCEPT ![i] = TRUE]
     /\ votedFor'       = [votedFor    EXCEPT ![i] = Nil]
-    \* See rollback(last_committable_index()) in raft::become_follower
-    /\ log'            = [log         EXCEPT ![i] = SubSeq(@, 1, LastCommittableIndex(i))]
-    \* Potentially also shorten the configurations if the removed txns contained reconfigurations
-    /\ configurations' = [configurations EXCEPT ![i] = ConfigurationsToIndex(i,Len(log'[i]))]
-    \* If the leader was in the RetirementOrdered state, then its retirement has
-    \* been rolled back as it was unsigned
-    /\ membershipState' = [membershipState EXCEPT ![i] = 
-        IF @ = RetirementOrdered THEN Active ELSE @]
+    /\ UNCHANGED << membershipState, configurations, log >>
     \* messages is unchanged so m can be processed further.
     /\ UNCHANGED <<preVoteStatus, messageVars, candidateVars, leaderVars, commitIndex, hasJoined, retirementCompleted>>
+
 
 \* Responses with stale terms are ignored.
 DropStaleResponse(i, j, m) ==
