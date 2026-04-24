@@ -1,0 +1,85 @@
+2026-04-23T16:59:12.529740Z 0   [info ] CCF/src/host/run.cpp:972             | CCF version: ccf-7.0.0-17-g55da7964c
+2026-04-23T16:59:12.529850Z 0   [info ] CCF/src/host/run.cpp:974             | CLI args: "./logging" "--config" "1.config.json" "--log-level" "trace"
+2026-04-23T16:59:12.529881Z 0   [info ] CCF/src/host/run.cpp:987             | Configuration file 1.config.json:
+{
+  "network": {
+    "node_to_node_interface": {
+      "bind_address": "127.98.13.237:0",
+      "published_address": ""
+    },
+    "rpc_interfaces": {
+      "file_serving_rpc_interface": {
+        "app_protocol": "HTTP1",
+        "bind_address": "127.217.222.179:0",
+        "enabled_operator_features": [
+          "SnapshotRead",
+          "LedgerChunkRead",
+          "SnapshotCreate"
+        ],
+        "endorsement": {
+          "authority": "Service"
+        },
+        "forwarding_timeout_ms": 3000,
+        "http_configuration": {
+          "max_body_size": "1048576",
+          "max_header_size": "16384",
+          "max_headers_count": 256
+        },
+        "max_open_sessions_hard": 1010,
+        "max_open_sessions_soft": 1000,
+        "protocol": "tcp",
+        "published_address": "127.217.222.179:0"
+      },
+      "primary_rpc_interface": {
+        "app_protocol": "HTTP1",
+        "bind_address": "127.98.13.237:0",
+        "endorsement": {
+          "authority": "Service"
+        },
+        "forwarding_timeout_ms": 3000,
+        "http_configuration": {
+          "max_body_size": "1048576",
+          "max_header_size": "16384",
+          "max_headers_count": 256
+        },
+        "max_open_sessions_hard": 1010,
+        "max_open_sessions_soft": 1000,
+        "protocol": "tcp",
+        "published_address": "127.98.13.237:0"
+      }
+    }
+  },
+  "node_certificate": {
+    "subject_name": "CN=CCF Node",
+    "subject_alt_names": [],
+    "curve_id": "Secp384R1",
+    "initial_validity_days": 1
+  },
+  "node_data_json_file": null,
+  "attestation": {
+    "snp_endorsements_servers": [
+      {
+        "max_retries_count": 4,
+        "type": "THIM",
+        "url": "$Fabric_NodeIPOrFQDN:2377"
+      }
+    ],
+    "snp_security_policy_file": "$UVM_SECURITY_CONTEXT_DIR/security-policy-base64",
+    "snp_uvm_endorsements_file": "$UVM_SECURITY_CONTEXT_DIR/reference-info-base64",
+    "snp_endorsements_file": "$UVM_SECURITY_CONTEXT_DIR/host-amd-cert-base64"
+  },
+  "service_data_json_file": null,
+  "command": {
+    "type": "Join",
+    "service_certificate_file": "service_cert.pem",
+    "start": {
+      "members": [],
+      "constitution_files": [
+        "actions.js",
+        "validate.js",
+        "resolve.js",
+        "apply.js",
+        "virtual_attestation_actions.js"
+      ],
+      "service_configuration": {
+        "recovery_threshold": 0,
