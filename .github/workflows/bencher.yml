@@ -88,6 +88,7 @@ jobs:
             build/workspace/*/*.config.json
             build/workspace/*/out
             build/workspace/*/err
+            build/workspace/*/vegeta_*
             build/workspace/*/*.ledger/*
             build/workspace/*/stack_trace
           if-no-files-found: ignore
@@ -128,6 +129,14 @@ jobs:
           python3 tests/infra/platform_detection.py snp
         shell: bash
 
+      - name: "Install Vegeta"
+        run: |
+          set -ex
+          mkdir -p "$RUNNER_TEMP/bin"
+          VEGETA_INSTALL_DIR="$RUNNER_TEMP/vegeta" VEGETA_BIN_DIR="$RUNNER_TEMP/bin" ./scripts/install-vegeta.sh
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+        shell: bash
+
       - name: Build and run SNP perf tests
         run: |
           git config --global --add safe.directory /__w/CCF/CCF
@@ -153,6 +162,7 @@ jobs:
             build/workspace/*/*.config.json
             build/workspace/*/out
             build/workspace/*/err
+            build/workspace/*/vegeta_*
             build/workspace/*/*.ledger/*
             build/workspace/*/stack_trace
           if-no-files-found: ignore

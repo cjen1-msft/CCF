@@ -1054,6 +1054,14 @@ if(BUILD_TESTS)
   )
 
   add_e2e_test(
+    NAME vegeta_load
+    PYTHON_SCRIPT ${CMAKE_SOURCE_DIR}/tests/vegeta_load.py
+    LABEL perf
+    CONFIGURATIONS perf
+    ADDITIONAL_ARGS --vegeta-duration 30 --vegeta-rate 100
+  )
+
+  add_e2e_test(
     NAME js_batched_stress_test
     PYTHON_SCRIPT ${CMAKE_SOURCE_DIR}/tests/e2e_batched.py
     ADDITIONAL_ARGS

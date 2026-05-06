@@ -5,6 +5,7 @@
 set -ex
 
 H2SPEC_VERSION="v2.6.0"
+THIS_DIR="$(dirname "$(readlink -f "$0")")"
 
 export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(date +%s)}
 echo "Using SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}"
@@ -51,6 +52,9 @@ tar -xvf h2spec_linux_amd64.tar.gz
 mkdir -p /opt/h2spec
 mv h2spec /opt/h2spec/h2spec
 rm h2spec_linux_amd64.tar.gz
+
+# load tests
+"${THIS_DIR}/install-vegeta.sh"
 
 # partitions test
 tdnf --snapshottime=$SOURCE_DATE_EPOCH -y install iptables

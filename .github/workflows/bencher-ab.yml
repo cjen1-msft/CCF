@@ -61,8 +61,12 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: benchmark-pr-${{ github.run_id }}
-          path: build/bencher.json
+          path: |
+            build/bencher.json
+            build/workspace/*/vegeta_*
+          if-no-files-found: ignore
           retention-days: 7
+        if: success() || failure()
 
   benchmark_main:
     name: Benchmark Main
@@ -112,8 +116,12 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: benchmark-main-${{ github.run_id }}
-          path: build/bencher.json
+          path: |
+            build/bencher.json
+            build/workspace/*/vegeta_*
+          if-no-files-found: ignore
           retention-days: 7
+        if: success() || failure()
 
   compare:
     name: Compare Results
