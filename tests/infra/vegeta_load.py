@@ -14,11 +14,26 @@ from typing import FrozenSet, Optional
 from loguru import logger as LOG
 
 DEFAULT_REQUEST_RATE_S = 100
+DEFAULT_START_RATE_S = 64
 DEFAULT_DURATION_S = 30
 DEFAULT_TIMEOUT_S = 10
+DEFAULT_LOW_GOODPUT_RATIO = 0.5
+DEFAULT_CONSECUTIVE_LOW_GOODPUT_COUNT = 2
+DEFAULT_ACTUAL_RATE_FLOOR_RATIO = 0.9
 DEFAULT_ENDPOINT = "/app/log/blocking/private?scope=load"
 DEFAULT_PREFIX = "vegeta_load"
+SWEEP_SUMMARY_FILE_NAME = "vegeta_load_sweep_summary.json"
 TARGET_SAFETY_MARGIN = 1.1
+
+TERMINATION_LOW_GOODPUT = "low_goodput"
+TERMINATION_ACTUAL_RATE_UNDERDELIVERED = "actual_rate_underdelivered"
+TERMINATION_MALFORMED_REPORT = "malformed_report"
+
+VEGETA_MISSING = "vegeta_missing"
+TARGET_GENERATION_FAILED = "target_generation_failed"
+VEGETA_ATTACK_FAILED = "vegeta_attack_failed"
+VEGETA_REPORT_FAILED = "vegeta_report_failed"
+VEGETA_REPORT_PARSE_FAILED = "vegeta_report_parse_failed"
 
 
 class LoadStrategy(Enum):
@@ -68,6 +83,41 @@ class VegetaLoadConfig:
             raise ValueError("Vegeta allowed_status_codes must be non-empty when set")
         if self.strategy == LoadStrategy.SINGLE and self.target_node is None:
             raise ValueError("Vegeta SINGLE target strategy requires target_node")
+
+
+@dataclasses.dataclass(frozen=True)
+class VegetaSweepConfig:
+    start_rate: int = DEFAULT_START_RATE_S
+    duration: int = DEFAULT_DURATION_S
+    timeout: int = DEFAULT_TIMEOUT_S
+    low_goodput_ratio: float = DEFAULT_LOW_GOODPUT_RATIO
+    consecutive_low_goodput_count: int = DEFAULT_CONSECUTIVE_LOW_GOODPUT_COUNT
+    actual_rate_floor_ratio: float = DEFAULT_ACTUAL_RATE_FLOOR_RATIO
+
+    def __post_init__(self):
+        if self.start_rate <= 0:
+            raise ValueError("Vegeta sweep start_rate must be positive")
+        if self.duration <= 0:
+            raise ValueError("Vegeta sweep duration must be positive")
+        if self.timeout <= 0:
+            raise ValueError("Vegeta sweep timeout must be positive")
+        if not 0 < self.low_goodput_ratio <= 1:
+            raise ValueError("Vegeta sweep low_goodput_ratio must be in (0, 1]")
+        if self.consecutive_low_goodput_count <= 0:
+            raise ValueError(
+                "Vegeta sweep consecutive_low_goodput_count must be positive"
+            )
+        if not 0 < self.actual_rate_floor_ratio <= 1:
+            raise ValueError("Vegeta sweep actual_rate_floor_ratio must be in (0, 1]")
+
+
+class VegetaLoadFailure(Exception):
+    def __init__(self, kind, message, paths=None, original=None):
+        self.kind = kind
+        self.message = message
+        self.paths = paths or {}
+        self.original = original
+        super().__init__(f"{kind}: {message}")
 
 
 def _in_common_dir(network, file_name):
@@ -135,10 +185,24 @@ class VegetaLoadClient:
             self.network, f"{self.config.output_prefix}_report_stderr.log"
         )
 
+    def artifact_paths(self):
+        return {
+            "targets_path": self.targets_path,
+            "results_path": self.results_path,
+            "report_path": self.report_path,
+            "attack_stdout_path": self.attack_stdout_path,
+            "attack_stderr_path": self.attack_stderr_path,
+            "report_stderr_path": self.report_stderr_path,
+        }
+
     def _vegeta_path(self):
         vegeta_path = shutil.which("vegeta")
         if vegeta_path is None:
-            raise RuntimeError("Could not find 'vegeta' in PATH")
+            raise VegetaLoadFailure(
+                VEGETA_MISSING,
+                "Could not find 'vegeta' in PATH",
+                paths=self.artifact_paths(),
+            )
         return vegeta_path
 
     def _write_targets(self, primary, backups):
@@ -192,15 +256,52 @@ class VegetaLoadClient:
 
     def run(self):
         primary, backups = self.network.find_nodes()
-        self._write_targets(primary, backups)
-        self._run_attack(primary)
-        self._write_report()
-        with open(self.report_path, encoding="utf-8") as report:
-            return json.load(report)
+        try:
+            self._write_targets(primary, backups)
+        except VegetaLoadFailure:
+            raise
+        except Exception as exc:
+            raise VegetaLoadFailure(
+                TARGET_GENERATION_FAILED,
+                str(exc),
+                paths=self.artifact_paths(),
+                original=exc,
+            ) from exc
 
+        try:
+            self._run_attack(primary)
+        except VegetaLoadFailure:
+            raise
+        except Exception as exc:
+            raise VegetaLoadFailure(
+                VEGETA_ATTACK_FAILED,
+                str(exc),
+                paths=self.artifact_paths(),
+                original=exc,
+            ) from exc
 
-def _is_http_error(error, status_codes):
-    return any(error.startswith(f"{status_code} ") for status_code in status_codes)
+        try:
+            self._write_report()
+        except VegetaLoadFailure:
+            raise
+        except Exception as exc:
+            raise VegetaLoadFailure(
+                VEGETA_REPORT_FAILED,
+                str(exc),
+                paths=self.artifact_paths(),
+                original=exc,
+            ) from exc
+
+        try:
+            with open(self.report_path, encoding="utf-8") as report:
+                return json.load(report)
+        except Exception as exc:
+            raise VegetaLoadFailure(
+                VEGETA_REPORT_PARSE_FAILED,
+                str(exc),
+                paths=self.artifact_paths(),
+                original=exc,
+            ) from exc
 
 
 def report_summary(report):
@@ -226,7 +327,6 @@ def report_summary(report):
 
 def assert_accepted_report(report, allowed_status_codes=None):
     status_codes = report.get("status_codes", {})
-    errors = report.get("errors", [])
     summary = report_summary(report)
 
     requests = report.get("requests", 0)
@@ -239,10 +339,208 @@ def assert_accepted_report(report, allowed_status_codes=None):
             f"summary: {summary}"
         )
 
-    transport_errors = [
-        error for error in errors if not _is_http_error(error, status_codes)
+
+
+def desired_rates(config):
+    rate = config.start_rate
+    while True:
+        yield rate
+        rate *= 2
+
+
+def _required_number(report, field):
+    value = report.get(field)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"Vegeta report field '{field}' must be numeric: {report}")
+    return value
+
+
+def goodput(report):
+    return _required_number(report, "throughput")
+
+
+def actual_rate(report):
+    return _required_number(report, "rate")
+
+
+def is_low_goodput(desired_rate, achieved_goodput, ratio):
+    return achieved_goodput <= desired_rate * ratio
+
+
+def is_actual_rate_underdelivered(desired_rate, achieved_actual_rate, floor_ratio):
+    return achieved_actual_rate < desired_rate * floor_ratio
+
+
+def update_low_goodput_count(previous_count, is_low):
+    return previous_count + 1 if is_low else 0
+
+
+def sweep_summary_path(network):
+    return _in_common_dir(network, SWEEP_SUMMARY_FILE_NAME)
+
+
+def _write_sweep_summary(network, summary):
+    path = sweep_summary_path(network)
+    with open(path, "w", encoding="utf-8") as summary_file:
+        json.dump(summary, summary_file, indent=2)
+    return path
+
+
+def _peak_goodput(samples):
+    goodputs = [sample.get("goodput") for sample in samples]
+    numeric_goodputs = [
+        sample_goodput
+        for sample_goodput in goodputs
+        if isinstance(sample_goodput, (int, float)) and not isinstance(sample_goodput, bool)
     ]
-    assert transport_errors == [], (
-        f"Vegeta reported transport/load-generator errors: {transport_errors}; "
-        f"summary: {summary}"
-    )
+    return max(numeric_goodputs) if numeric_goodputs else None
+
+
+def _sample_from_failure(sample_index, desired_rate, failure, client):
+    paths = failure.paths or client.artifact_paths()
+    return {
+        "sample_index": sample_index,
+        "desired_rate": desired_rate,
+        "termination_reason": failure.kind,
+        "pass": False,
+        "failure_message": failure.message,
+        **paths,
+    }
+
+
+def _sample_from_report(
+    sample_index,
+    desired_rate,
+    report,
+    client,
+    achieved_actual_rate,
+    achieved_goodput,
+    low_goodput,
+    actual_rate_underdelivered,
+    invalid_report_field=None,
+):
+    summary = report_summary(report)
+    return {
+        "sample_index": sample_index,
+        "desired_rate": desired_rate,
+        "actual_rate": achieved_actual_rate,
+        "throughput": achieved_goodput,
+        "goodput": achieved_goodput,
+        "success": report.get("success"),
+        "goodput_to_desired_ratio": (
+            achieved_goodput / desired_rate if achieved_goodput is not None else None
+        ),
+        "low_goodput": low_goodput,
+        "actual_rate_underdelivered": actual_rate_underdelivered,
+        "request_errors": summary["errors"],
+        "invalid_report_field": invalid_report_field,
+        "status_codes": summary["status_codes"],
+        "errors": summary["errors"],
+        **client.artifact_paths(),
+    }
+
+
+def _finalize_summary(summary, termination_reason, passed):
+    summary["termination_reason"] = termination_reason
+    summary["pass"] = passed
+    summary["peak_goodput"] = _peak_goodput(summary["samples"])
+    return summary
+
+
+def run_sweep(network, config, client_factory=VegetaLoadClient):
+    summary = {
+        "termination_reason": None,
+        "pass": None,
+        "peak_goodput": None,
+        "samples": [],
+    }
+    consecutive_low_goodput = 0
+
+    for sample_index, desired_rate in enumerate(desired_rates(config)):
+        load_config = VegetaLoadConfig(
+            rate=desired_rate,
+            duration=config.duration,
+            timeout=config.timeout,
+            output_prefix=f"{DEFAULT_PREFIX}_{sample_index:03d}_desired_{desired_rate}",
+        )
+        client = client_factory(network, load_config)
+
+        try:
+            report = client.run()
+        except VegetaLoadFailure as exc:
+            summary["samples"].append(
+                _sample_from_failure(sample_index, desired_rate, exc, client)
+            )
+            _finalize_summary(summary, exc.kind, False)
+            _write_sweep_summary(network, summary)
+            raise
+
+        try:
+            achieved_actual_rate = actual_rate(report)
+            achieved_goodput = goodput(report)
+        except (TypeError, ValueError) as exc:
+            invalid_report_field = "rate" if "'rate'" in str(exc) else "throughput"
+            failure = VegetaLoadFailure(
+                TERMINATION_MALFORMED_REPORT,
+                str(exc),
+                paths=client.artifact_paths(),
+                original=exc,
+            )
+            summary["samples"].append(
+                _sample_from_report(
+                    sample_index,
+                    desired_rate,
+                    report,
+                    client,
+                    None,
+                    None,
+                    None,
+                    False,
+                    invalid_report_field=invalid_report_field,
+                )
+            )
+            summary["samples"][-1]["termination_reason"] = failure.kind
+            summary["samples"][-1]["pass"] = False
+            summary["samples"][-1]["failure_message"] = failure.message
+            _finalize_summary(summary, failure.kind, False)
+            _write_sweep_summary(network, summary)
+            raise failure from exc
+
+        low_goodput = is_low_goodput(
+            desired_rate, achieved_goodput, config.low_goodput_ratio
+        )
+        actual_rate_underdelivered = is_actual_rate_underdelivered(
+            desired_rate, achieved_actual_rate, config.actual_rate_floor_ratio
+        )
+        summary["samples"].append(
+            _sample_from_report(
+                sample_index,
+                desired_rate,
+                report,
+                client,
+                achieved_actual_rate,
+                achieved_goodput,
+                low_goodput,
+                actual_rate_underdelivered,
+            )
+        )
+
+        if actual_rate_underdelivered:
+            _finalize_summary(summary, TERMINATION_ACTUAL_RATE_UNDERDELIVERED, False)
+            _write_sweep_summary(network, summary)
+            raise AssertionError(
+                f"Vegeta actual issue rate {achieved_actual_rate} was below "
+                f"{config.actual_rate_floor_ratio:.2f} of desired rate {desired_rate}"
+            )
+
+        consecutive_low_goodput = update_low_goodput_count(
+            consecutive_low_goodput, low_goodput
+        )
+        if consecutive_low_goodput >= config.consecutive_low_goodput_count:
+            _finalize_summary(summary, TERMINATION_LOW_GOODPUT, True)
+            _write_sweep_summary(network, summary)
+            return summary
+
+        _write_sweep_summary(network, summary)
+
+    raise RuntimeError("Unreachable: desired_rates is an infinite generator")

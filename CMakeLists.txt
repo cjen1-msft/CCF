@@ -540,6 +540,17 @@ if(BUILD_TESTS)
     )
     add_san_test_properties(verify_uvm_attestation_and_endorsements)
 
+    add_test(
+      NAME vegeta_sweep_logic
+      COMMAND ${PYTHON} ${CMAKE_SOURCE_DIR}/tests/vegeta_sweep_logic.py
+    )
+    set_property(TEST vegeta_sweep_logic APPEND PROPERTY LABELS unit)
+    set_property(
+      TEST vegeta_sweep_logic
+      APPEND
+      PROPERTY ENVIRONMENT "PYTHONPATH=${CCF_DIR}/tests:$ENV{PYTHONPATH}"
+    )
+
     add_unit_test(
       snp_ioctl_test
       ${CMAKE_CURRENT_SOURCE_DIR}/src/pal/test/snp_ioctl_test.cpp
@@ -1058,7 +1069,7 @@ if(BUILD_TESTS)
     PYTHON_SCRIPT ${CMAKE_SOURCE_DIR}/tests/vegeta_load.py
     LABEL perf
     CONFIGURATIONS perf
-    ADDITIONAL_ARGS --vegeta-duration 30 --vegeta-rate 100
+    ADDITIONAL_ARGS --vegeta-start-rate 64 --vegeta-duration 30
   )
 
   add_e2e_test(
