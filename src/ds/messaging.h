@@ -169,8 +169,8 @@ namespace messaging
           "Exception while processing message {} of size {}",
           get_decorated_message_name(m),
           size);
-        LOG_TRACE_FMT("{}", e.what());
-        throw e;
+        LOG_FAIL_FMT("Exception what(): {}", e.what());
+        throw;
       }
     }
   };
