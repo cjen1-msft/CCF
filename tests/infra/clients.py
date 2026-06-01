@@ -2,6 +2,7 @@
 # Licensed under the Apache 2.0 License.
 import abc
 import contextlib
+import http
 import json
 import time
 import sys
@@ -33,6 +34,7 @@ from threading import local
 from loguru import logger as LOG  # type: ignore
 
 import infra.commit
+import infra.interfaces
 from infra.log_capture import flush_info
 import ccf.cose
 
@@ -349,6 +351,21 @@ class Response:
             view=tx_id.view,
             headers=response.headers,
         )
+
+
+def is_session_consistency_lost(response: Response) -> bool:
+    if response.status_code != http.HTTPStatus.INTERNAL_SERVER_ERROR:
+        return False
+
+    body = response.body.json()
+    if not isinstance(body, dict):
+        return False
+
+    error = body.get("error")
+    if not isinstance(error, dict):
+        return False
+
+    return error.get("code") == "SessionConsistencyLost"
 
 
 def human_readable_size(n):
@@ -1080,6 +1097,30 @@ class CCFClient:
         }
         self.client_impl = impl_type(hostname=self.hostname, **self.client_args)
 
+    @staticmethod
+    def _copy_client_impl_state(source, target):
+        for attr in (
+            "_corrupt_signature",
+            "cose_header_builder",
+            "created_at_override",
+        ):
+            if hasattr(source, attr):
+                setattr(target, attr, getattr(source, attr))
+
+    def _make_client_impl(self, hostname=None):
+        new_client_impl = type(self.client_impl)(
+            hostname=hostname or self.hostname, **self.client_args
+        )
+        self._copy_client_impl_state(self.client_impl, new_client_impl)
+        return new_client_impl
+
+    def _recreate_client_impl(self):
+        old_client_impl = self.client_impl
+        new_client_impl = self._make_client_impl()
+        old_client_impl.close()
+        self.client_impl = new_client_impl
+        self.is_connected = False
+
     def _response(self, response: Response) -> Response:
         LOG.info(response)
         return response
@@ -1124,11 +1165,7 @@ class CCFClient:
             redirect_path = urllib.parse.urlunsplit(("", "", *split[2:]))
 
             # Construct a temporary client to follow this redirect
-            temp_client = type(self.client_impl)(hostname=hostname, **self.client_args)
-
-            # Copy any test-specific decorators from the main client to the temporary client
-            temp_client._corrupt_signature = self.client_impl._corrupt_signature
-            temp_client.cose_header_builder = self.client_impl.cose_header_builder
+            temp_client = self._make_client_impl(hostname=hostname)
 
             r = Request(redirect_path, body, http_verb, headers)
 
@@ -1328,11 +1365,73 @@ class CCFClient:
         self.client_impl.close()
 
 
+class ResilientClient(CCFClient):
+    """
+    Client which reconnects and retries when the server reports that the current
+    session may no longer be consistent after a view change.
+    """
+
+    def call(
+        self,
+        path: str,
+        body: Optional[Union[str, dict, bytes]] = None,
+        http_verb: str = "POST",
+        headers: Optional[dict] = None,
+        timeout: int = DEFAULT_REQUEST_TIMEOUT_SEC,
+        log_capture: Optional[list] = None,
+        allow_redirects: bool = True,
+        cose_header_parameters_override: Optional[dict] = None,
+    ) -> Response:
+        end_time = time.time() + timeout
+        reconnect_count = 0
+
+        while True:
+            response = super().call(
+                path=path,
+                body=body,
+                http_verb=http_verb,
+                headers=headers,
+                timeout=timeout,
+                log_capture=log_capture,
+                allow_redirects=allow_redirects,
+                cose_header_parameters_override=cose_header_parameters_override,
+            )
+
+            if not is_session_consistency_lost(response):
+                return response
+
+            if time.time() >= end_time:
+                raise TimeoutError(f"Timed out retrying {http_verb} {path} {""
+                        if reconnect_count == 0
+                        else f" after SessionConsistencyLost ({reconnect_count} reconnects)"
+                        }")
+
+            flush_info(
+                [
+                    f"{self.description} {http_verb} {path} returned SessionConsistencyLost; reconnecting"
+                ],
+                log_capture,
+                2,
+            )
+            reconnect_count += 1
+            self._recreate_client_impl()
+            time.sleep(0.1)
+
+
 @contextlib.contextmanager
 def client(*args, **kwargs):
     c = CCFClient(*args, **kwargs)
     yield c
     c.close()
+
+
+@contextlib.contextmanager
+def resilient_client(*args, **kwargs):
+    c = ResilientClient(*args, **kwargs)
+    try:
+        yield c
+    finally:
+        c.close()
 
 
 class APIVersionedCCFClient(CCFClient):

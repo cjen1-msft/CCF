@@ -746,6 +746,9 @@ class Node:
     def client(self, *args, **kwargs):
         return self._client(*args, **kwargs)
 
+    def resilient_client(self, *args, **kwargs):
+        return self._client(*args, cls=infra.clients.resilient_client, **kwargs)
+
     def api_versioned_client(self, *args, api_version=None, **kwargs):
         return self._client(
             *args,

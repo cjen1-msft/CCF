@@ -1635,7 +1635,7 @@ def test_view_history(network, args):
     previous_node = None
     previous_tx_ids = ""
     for node in network.get_joined_nodes():
-        with node.client("user0") as c:
+        with node.resilient_client("user0") as c:
             r = c.get("/node/commit")
             check(c)
 
@@ -1739,7 +1739,7 @@ class SentTxs:
 def test_tx_statuses(network, args):
     primary, _ = network.find_primary()
 
-    with primary.client("user0") as c:
+    with primary.resilient_client("user0") as c:
         check = infra.checker.Checker()
         r = network.txs.issue(network, 1, idx=0, send_public=False, msg="Ignored")
         # Until this tx is committed, poll for the status of this and some other
