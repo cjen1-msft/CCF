@@ -1061,8 +1061,10 @@ ReturnToFollowerState(i, m) ==
     /\ leadershipState[i] \in {PreVoteCandidate, Candidate}
     /\ leadershipState' = [leadershipState EXCEPT ![i] = Follower]
     /\ isNewFollower' = [isNewFollower EXCEPT ![i] = TRUE]
+    /\ votedFor' = [votedFor EXCEPT
+        ![i] = IF leadershipState[i] = Candidate THEN Nil ELSE @]
     \* Note that the set of messages is unchanged as m is discarded
-    /\ UNCHANGED <<preVoteStatus, reconfigurationVars, currentTerm, votedFor, logVars, 
+    /\ UNCHANGED <<preVoteStatus, reconfigurationVars, currentTerm, logVars,
         messages, membershipState, candidateVars, leaderVars>>
 
 \* Follower i receives a AppendEntries from leader j for log entries it already has

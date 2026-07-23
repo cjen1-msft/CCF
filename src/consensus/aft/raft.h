@@ -1141,7 +1141,17 @@ namespace aft
         (state->leadership_state == ccf::kv::LeadershipState::Candidate ||
          state->leadership_state == ccf::kv::LeadershipState::PreVoteCandidate))
       {
-        become_aware_of_new_term(r.term);
+        if (
+          state->leadership_state == ccf::kv::LeadershipState::PreVoteCandidate)
+        {
+          reset_votes_for_me();
+          become_follower();
+          is_new_follower = true;
+        }
+        else
+        {
+          become_aware_of_new_term(r.term);
+        }
       }
       else if (state->current_view < r.term)
       {
