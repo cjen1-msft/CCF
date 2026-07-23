@@ -1136,10 +1136,11 @@ namespace aft
 
       // First, check append entries term against our own term, becoming
       // follower if necessary
-      if (
+      const auto stepping_down_in_current_term =
         state->current_view == r.term &&
         (state->leadership_state == ccf::kv::LeadershipState::Candidate ||
-         state->leadership_state == ccf::kv::LeadershipState::PreVoteCandidate))
+         state->leadership_state == ccf::kv::LeadershipState::PreVoteCandidate);
+      if (stepping_down_in_current_term)
       {
         become_aware_of_new_term(r.term);
       }
@@ -1159,6 +1160,13 @@ namespace aft
           r.term);
         send_append_entries_response_nack(from);
         return;
+      }
+
+      if (stepping_down_in_current_term)
+      {
+        // A same-term AppendEntries proves the sender is the leader even if
+        // this node cannot match the sender's log yet.
+        leader_id = from;
       }
 
       // Second, check term consistency with the entries we have so far
@@ -2103,8 +2111,9 @@ namespace aft
       }
 
       state->leadership_state = ccf::kv::LeadershipState::PreVoteCandidate;
-      leader_id.reset();
 
+      // Pre-vote is speculative and does not advance the term, so retain any
+      // leader already observed in this term.
       reset_votes_for_me();
       restart_election_timeout();
 
