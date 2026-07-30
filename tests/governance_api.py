@@ -127,6 +127,27 @@ def test_api_transactions(network, args):
     return network
 
 
+@reqs.description("Check /gov/members/state-digests/{memberId} GET")
+def test_api_member_state_digest(network, args):
+    primary, _ = network.find_primary()
+    member = network.consortium.get_any_active_member()
+
+    with primary.api_versioned_client(api_version=args.gov_api_version) as c:
+        r = c.get(f"/gov/members/state-digests/{member.service_id}")
+        assert r.status_code == 200, r
+        body = r.body.json()
+        assert body["memberId"] == member.service_id, body
+        assert body["stateDigest"], body
+
+        r = c.get(f"/gov/members/state-digests/{'0' * 64}")
+        assert r.status_code == 404, r
+        assert r.body.json()["error"]["code"] == "ResourceNotFound", r.body.text()
+
+    member.gov_api_impl_inst.ack(member, primary, body)
+
+    return network
+
+
 def run(args):
     with infra.network.network(
         args.nodes,
@@ -138,3 +159,4 @@ def run(args):
 
         network = test_api_service_state(network, args)
         network = test_api_transactions(network, args)
+        network = test_api_member_state_digest(network, args)
