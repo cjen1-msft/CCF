@@ -52,10 +52,33 @@ class VegetaLoggingJwtTests(unittest.TestCase):
         self.assertAlmostEqual(summary["achieved_throughput"], 1 / 30)
         self.assertEqual(summary["successful_requests"], 2)
         self.assertEqual(summary["successful_in_window"], 1)
+        self.assertEqual(summary["peak_concurrency"], 1)
         self.assertEqual(summary["status_counts"], {"0": 1, "200": 2, "503": 1})
         self.assertEqual(summary["errors"], {"timeout": 1})
         self.assertEqual(summary["timeouts"], 1)
         self.assertEqual(summary["successful_latencies_ns"], [100_000_000, 200_000_000])
+
+    def test_summarise_results_reports_peak_concurrency(self):
+        results = [
+            {
+                "timestamp": "2026-08-17T12:00:00.000000000Z",
+                "latency": 10_000_000_000,
+                "code": 200,
+                "error": "",
+            },
+            {
+                "timestamp": "2026-08-17T12:00:01.000000000Z",
+                "latency": 10_000_000_000,
+                "code": 200,
+                "error": "",
+            },
+        ]
+
+        summary = vegeta_logging_jwt.summarise_results(
+            results, duration_s=30, target_rate=1
+        )
+
+        self.assertEqual(summary["peak_concurrency"], 2)
 
     def test_summarise_results_rejects_malformed_records(self):
         with self.assertRaisesRegex(ValueError, "timestamp"):
@@ -112,6 +135,19 @@ class VegetaLoggingJwtTests(unittest.TestCase):
             )
 
         self.assertEqual(count, 1)
+
+    def test_attack_command_caps_vegeta_workers(self):
+        command = vegeta_logging_jwt.make_attack_command(
+            Path("targets.json"),
+            Path("service_cert.pem"),
+            Path("results.bin"),
+            target_rate=1290,
+            duration_s=30,
+            timeout_s=10,
+            max_workers=10_000,
+        )
+
+        self.assertIn("-max-workers=10000", command)
 
     def test_targets_cycle_tokens_without_cartesian_product(self):
         targets = vegeta_logging_jwt.make_targets(
@@ -195,7 +231,7 @@ class VegetaLoggingJwtTests(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "sweep.svg"
-            vegeta_logging_jwt.plot_sweep(points, path)
+            vegeta_logging_jwt.plot_sweep(points, path, max_workers=10_000)
 
             svg = path.read_text()
             self.assertIn("Achieved rate (req/s)", svg)
@@ -203,6 +239,7 @@ class VegetaLoggingJwtTests(unittest.TestCase):
             self.assertIn("Target rate of test (requests/s)", svg)
             self.assertIn("Target throughput compared to achieved throughput", svg)
             self.assertIn("Latency distribution at each target throughput", svg)
+            self.assertIn("Vegeta max workers: 10,000", svg)
             self.assertGreater(os.path.getsize(path), 1000)
 
     @unittest.skipUnless(

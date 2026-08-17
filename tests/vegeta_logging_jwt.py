@@ -115,6 +115,19 @@ def summarise_results(results, duration_s, target_rate):
     for error, count in raw_errors.items():
         errors[classify_error(error)] += count
     statuses = Counter(str(result[2]) for result in launched)
+    concurrency = 0
+    peak_concurrency = 0
+    events = sorted(
+        (
+            event
+            for timestamp_ns, latency_ns, _, _ in launched
+            for event in ((timestamp_ns, 1), (timestamp_ns + latency_ns, -1))
+        ),
+        key=lambda event: (event[0], -event[1]),
+    )
+    for _, delta in events:
+        concurrency += delta
+        peak_concurrency = max(peak_concurrency, concurrency)
 
     actual_issue_rate = len(launched) / duration_s
     return {
@@ -126,6 +139,7 @@ def summarise_results(results, duration_s, target_rate):
         "achieved_throughput": len(successful_in_window) / duration_s,
         "successful_requests": len(successful),
         "successful_in_window": len(successful_in_window),
+        "peak_concurrency": peak_concurrency,
         "status_counts": dict(sorted(statuses.items())),
         "errors": dict(sorted(errors.items())),
         "timeouts": sum(
@@ -228,7 +242,7 @@ def plotting_available():
     )
 
 
-def plot_sweep(points, output_path):
+def plot_sweep(points, output_path, max_workers=None):
     if not plotting_available():
         raise RuntimeError("Plotting requires matplotlib and numpy")
     if not points:
@@ -256,6 +270,8 @@ def plot_sweep(points, output_path):
     figure, (throughput_axis, latency_axis) = plt.subplots(
         2, 1, figsize=(9, 9), sharex=True
     )
+    if max_workers is not None:
+        figure.suptitle(f"Vegeta max workers: {max_workers:,}")
     throughput_axis.plot(columns, achieved, marker="o", label="Measured")
     throughput_axis.plot(
         columns, target_rates, linestyle="--", color="grey", label="Ideal"
@@ -300,7 +316,7 @@ def plot_sweep(points, output_path):
     latency_axis.tick_params(axis="x", labelrotation=45)
     latency_axis.set_title("Latency distribution at each target throughput")
     latency_axis.grid(axis="y", alpha=0.3)
-    figure.tight_layout()
+    figure.tight_layout(rect=(0, 0, 1, 0.97) if max_workers is not None else None)
     figure.savefig(output_path, format="svg")
     plt.close(figure)
 
@@ -347,7 +363,7 @@ def _serialisable_point(point):
     }
 
 
-def _write_summary(path, points, termination_reason):
+def _write_summary(path, points, termination_reason, max_workers=None):
     summary = {
         "benchmark": (
             "CCF Logging blocking/receipt benchmark using a locally signed, "
@@ -355,6 +371,7 @@ def _write_summary(path, points, termination_reason):
         ),
         "endpoint": RECEIPT_PATH,
         "http_version": "HTTP/1.1",
+        "vegeta_max_workers": max_workers,
         "termination_reason": termination_reason,
         "points": [_serialisable_point(point) for point in points],
     }
@@ -399,6 +416,35 @@ def _print_interpretation(points, termination_reason):
     print(f"Sweep termination: {termination_reason}")
 
 
+def make_attack_command(
+    target_path,
+    service_cert_path,
+    raw_path,
+    target_rate,
+    duration_s,
+    timeout_s,
+    max_workers=None,
+):
+    if max_workers is not None and max_workers <= 0:
+        raise ValueError("Vegeta max workers must be positive")
+    command = [
+        "vegeta",
+        "attack",
+        "-format=json",
+        f"-rate={target_rate}/s",
+        f"-duration={duration_s}s",
+        f"-timeout={timeout_s}s",
+        "-http2=false",
+        "-max-body=0",
+        f"-root-certs={service_cert_path}",
+        f"-targets={target_path}",
+        f"-output={raw_path}",
+    ]
+    if max_workers is not None:
+        command.append(f"-max-workers={max_workers}")
+    return command
+
+
 def _run_attack(
     target_path,
     service_cert_path,
@@ -406,25 +452,22 @@ def _run_attack(
     target_rate,
     duration_s,
     timeout_s,
+    max_workers=None,
 ):
     point_dir.mkdir(exist_ok=True)
     raw_path = point_dir / "results.bin"
     report_path = point_dir / "report.txt"
     decoded_path = point_dir / "results.json"
     _run_command(
-        [
-            "vegeta",
-            "attack",
-            "-format=json",
-            f"-rate={target_rate}/s",
-            f"-duration={duration_s}s",
-            f"-timeout={timeout_s}s",
-            "-http2=false",
-            "-max-body=0",
-            f"-root-certs={service_cert_path}",
-            f"-targets={target_path}",
-            f"-output={raw_path}",
-        ],
+        make_attack_command(
+            target_path,
+            service_cert_path,
+            raw_path,
+            target_rate,
+            duration_s,
+            timeout_s,
+            max_workers,
+        ),
         f"Vegeta attack at {target_rate} requests/s",
     )
     _run_command(
@@ -482,7 +525,9 @@ def run_benchmark(args):
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     common_dir = Path(infra.network.get_common_folder_name(args.workspace, args.label))
-    artifact_dir = common_dir / f"vegeta_logging_jwt_{timestamp}"
+    max_workers = args.vegeta_max_workers or None
+    cap_label = f"_max_workers_{max_workers}" if max_workers is not None else ""
+    artifact_dir = common_dir / f"vegeta_logging_jwt{cap_label}_{timestamp}"
     artifact_dir.mkdir(mode=0o700, parents=True)
     bodies = [
         {"id": index, "msg": f"Vegeta Logging JWT message {index}"}
@@ -529,6 +574,7 @@ def run_benchmark(args):
                 target_rate,
                 args.duration_s,
                 args.request_timeout_s,
+                max_workers,
             )
 
         point = summarise_results(results, args.duration_s, target_rate)
@@ -540,16 +586,25 @@ def run_benchmark(args):
         }
         points.append(point)
         if not point["generator_valid"]:
-            termination_reason = "generator_under_delivery"
+            termination_reason = (
+                "max_workers_under_delivery"
+                if max_workers is not None
+                else "generator_under_delivery"
+            )
         elif should_stop_sweep(points):
             termination_reason = "two_consecutive_half_rate_points"
-        _write_summary(summary_path, points, termination_reason or "sweep_in_progress")
+        _write_summary(
+            summary_path,
+            points,
+            termination_reason or "sweep_in_progress",
+            max_workers,
+        )
         if termination_reason is None:
             print(f"Waiting for client ports used by {base_url} to be released")
             wait_for_port_release(base_url, args.port_release_timeout_s)
 
-    plot_sweep(points, plot_path)
-    _write_summary(summary_path, points, termination_reason)
+    plot_sweep(points, plot_path, max_workers)
+    _write_summary(summary_path, points, termination_reason, max_workers)
     _print_interpretation(points, termination_reason)
     print(f"Artifacts: {artifact_dir}")
     if termination_reason == "generator_under_delivery":
@@ -575,6 +630,7 @@ if __name__ == "__main__":
             type=int,
             default=DEFAULT_PORT_RELEASE_TIMEOUT_S,
         )
+        parser.add_argument("--vegeta-max-workers", type=int, default=0)
 
     cli_args = infra.e2e_args.cli_args(add=add)
     cli_args.package = "samples/apps/logging/logging"

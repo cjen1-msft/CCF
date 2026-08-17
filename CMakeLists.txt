@@ -1528,6 +1528,8 @@ if(BUILD_TESTS)
       0s
       --port-release-timeout-s
       70
+      --vegeta-max-workers
+      10000
     CONFIGURATIONS perf
   )
 
