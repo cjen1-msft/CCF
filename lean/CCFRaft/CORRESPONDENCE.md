@@ -77,10 +77,13 @@ intermediate traffic observable.
 - Timeout advances a term-one follower directly to term two, records its
   self-vote, and starts an election.
 - `UpdateTerm` observes but does not consume a newer queued message.
-- Ordinary receive handling is disabled while the selected message has a newer
-  term, so `UpdateTerm` cannot be bypassed.
+- Future requests and ordinary responses require `UpdateTerm` before their
+  normal same-term handler can run.
 - Stale successful AppendEntries responses are consumed without changing node
   state, preventing an old ACK from blocking later traffic from that source.
+- AppendEntries NACKs are handled regardless of their overloaded `term` field,
+  which carries last-match metadata; `UpdateTerm` may independently be enabled
+  for the same message, matching the source receive disjunction.
 - A voter grants at most one candidate in term two and only when the candidate
   log is at least as up to date as its own.
 - A candidate becomes leader after recording a strict three-of-five majority.
