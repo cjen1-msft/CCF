@@ -79,8 +79,8 @@ theorem entryAtSomeIndexBound
     omega
 
 /-- Every supporting invariant holds in the empty initial state. -/
-theorem initialCoreInvariant :
-    CoreInvariant (initialState : State TxId) := by
+theorem initialSystemInductiveInvariant :
+    SystemInductiveInvariant (initialState : State TxId) := by
   constructor
   · simp [CommitIndicesBounded, initialState, initialNodeState]
   · intro node
@@ -97,7 +97,7 @@ theorem initialCoreInvariant :
 /-- A node's committed log is a prefix of the leader log. -/
 theorem committedLogPrefixLeader
     {state : State TxId}
-    (core : CoreInvariant state)
+    (core : SystemInductiveInvariant state)
     (node : Node) :
     (state.nodes node).committedLog <+:
       (state.nodes LEADER).log := by
@@ -107,10 +107,10 @@ theorem committedLogPrefixLeader
       (state.nodes node).log).trans
       (core.logsPrefixLeader node)
 
-/-- The core invariant implies pairwise committed-log prefix comparability. -/
-theorem coreCommittedLogsPrefix
+/-- The system invariant implies pairwise committed-log prefix comparability. -/
+theorem systemInductiveInvariantCommittedLogsPrefix
     {state : State TxId}
-    (core : CoreInvariant state) :
+    (core : SystemInductiveInvariant state) :
     CommittedLogsPrefix state := by
   intro left right
   exact
@@ -119,9 +119,9 @@ theorem coreCommittedLogsPrefix
       (committedLogPrefixLeader core right)
 
 /-- Prefix agreement with the leader implies Raft log matching. -/
-theorem coreLogMatching
+theorem systemInductiveInvariantLogMatching
     {state : State TxId}
-    (core : CoreInvariant state) :
+    (core : SystemInductiveInvariant state) :
     LogMatching state := by
   intro left right index leftEntry rightEntry leftFound rightFound sameTerm
   have leftBound := entryAtSomeIndexBound leftFound
@@ -134,13 +134,13 @@ theorem coreLogMatching
       (takeEqOfPrefix (core.logsPrefixLeader right) rightBound).symm
 
 /-- Log matching makes equal index and term imply equal transaction ID. -/
-theorem coreSameIndexSameTermSameTxId
+theorem systemInductiveInvariantSameIndexSameTermSameTxId
     {state : State TxId}
-    (core : CoreInvariant state) :
+    (core : SystemInductiveInvariant state) :
     SameIndexSameTermSameTxId state := by
   intro left right index leftEntry rightEntry leftFound rightFound sameTerm
   have matching :=
-    coreLogMatching core
+    systemInductiveInvariantLogMatching core
       left right index leftEntry rightEntry leftFound rightFound sameTerm
   have leftBound := entryAtSomeIndexBound leftFound
   have rightBound := entryAtSomeIndexBound rightFound
@@ -179,9 +179,9 @@ theorem coreSameIndexSameTermSameTxId
   exact congrArg Entry.txId (Option.some.inj lookupEqual)
 
 /-- Since every entry is in term one, terms are monotonic along every log. -/
-theorem coreMonoLog
+theorem systemInductiveInvariantMonoLog
     {state : State TxId}
-    (core : CoreInvariant state) :
+    (core : SystemInductiveInvariant state) :
     MonoLog state := by
   intro node earlier later earlierEntry laterEntry _ earlierFound laterFound
   have earlierMember : earlierEntry ∈ (state.nodes node).log := by
@@ -208,7 +208,7 @@ theorem coreMonoLog
 /-- Under fixed roles, any node in the leader role is node zero. -/
 theorem roleLeaderImpliesNodeLeader
     {state : State TxId}
-    (core : CoreInvariant state)
+    (core : SystemInductiveInvariant state)
     {node : Node}
     (isLeader : (state.nodes node).role = .leader) :
     node = LEADER := by
@@ -266,13 +266,13 @@ theorem requestMatchesLeaderAfterAppend
     exact entries
 
 /-- A fresh client request preserves every supporting invariant. -/
-theorem clientRequestPreservesCoreInvariant
+theorem clientRequestPreservesSystemInductiveInvariant
     (state : State TxId)
     (node : Node)
     (txId : TxId)
-    (core : CoreInvariant state)
+    (core : SystemInductiveInvariant state)
     (enabled : Enabled state (.clientRequest node txId)) :
-    CoreInvariant (next state (.clientRequest node txId)) := by
+    SystemInductiveInvariant (next state (.clientRequest node txId)) := by
   have nodeEq : node = LEADER :=
     roleLeaderImpliesNodeLeader core enabled.1
   subst node
@@ -392,7 +392,7 @@ theorem makeAppendEntriesRequestMatchesLeader
     {state : State TxId}
     {source destination : Node}
     {batchEnd : Nat}
-    (core : CoreInvariant state)
+    (core : SystemInductiveInvariant state)
     (enabled : Enabled state (.appendEntries source destination batchEnd)) :
     RequestMatchesLeader state
       (makeAppendEntriesRequest state source destination batchEnd) := by
@@ -574,7 +574,7 @@ theorem takeMaxCommitMonotonic
 theorem requestEntriesTermOne
     {system : State TxId}
     {request : AppendEntriesRequest TxId}
-    (core : CoreInvariant system)
+    (core : SystemInductiveInvariant system)
     (requestSafe : RequestMatchesLeader system request) :
     forall entry,
       entry ∈ request.entries ->
@@ -598,7 +598,7 @@ theorem noReachableTermConflict
     {system : State TxId}
     {destination : Node}
     {request : AppendEntriesRequest TxId}
-    (core : CoreInvariant system)
+    (core : SystemInductiveInvariant system)
     (requestSafe : RequestMatchesLeader system request) :
     Not (hasTermConflict (system.nodes destination) request) := by
   intro conflict
@@ -704,7 +704,7 @@ theorem failureResponseSafe
     {system : State TxId}
     {destination : Node}
     {request : AppendEntriesRequest TxId}
-    (core : CoreInvariant system)
+    (core : SystemInductiveInvariant system)
     (requestSafe : RequestMatchesLeader system request) :
     ResponseMatchesLeader system
       (failureResponse (system.nodes destination) request) := by
@@ -785,7 +785,7 @@ theorem conflictAppendEntriesRequestDisabled
     {system : State TxId}
     {destination : Node}
     {request : AppendEntriesRequest TxId}
-    (core : CoreInvariant system)
+    (core : SystemInductiveInvariant system)
     (requestSafe : RequestMatchesLeader system request) :
     conflictAppendEntriesRequest? (system.nodes destination) request = none := by
   unfold conflictAppendEntriesRequest?
@@ -798,7 +798,7 @@ theorem handleAppendEntriesRequestPreserves
     {request : AppendEntriesRequest TxId}
     {after : NodeState TxId}
     {response : AppendEntriesResponse}
-    (core : CoreInvariant system)
+    (core : SystemInductiveInvariant system)
     (requestDestination : request.destination = destination)
     (requestSafe : RequestMatchesLeader system request)
     (handled :
@@ -1043,7 +1043,7 @@ theorem handleAppendEntriesResponsePreserves
     {system : State TxId}
     {response : AppendEntriesResponse}
     {after : NodeState TxId}
-    (core : CoreInvariant system)
+    (core : SystemInductiveInvariant system)
     (responseSafe : ResponseMatchesLeader system response)
     (handled :
       handleAppendEntriesResponse? (system.nodes LEADER) response =
@@ -1117,7 +1117,7 @@ theorem queuedMessagesSafeAfterRemove
     {source destination : Node}
     {selected : Message TxId}
     {remaining : List (Message TxId)}
-    (core : CoreInvariant state)
+    (core : SystemInductiveInvariant state)
     (taken :
       takeFirstFrom source (state.network destination) =
         some (selected, remaining)) :
@@ -1145,14 +1145,14 @@ theorem queuedMessagesSafeAfterRemove
       core.queuedRequestsMatchLeader
         queuedDestination message oldMember
 
-/-- Sending one entry or heartbeat preserves the core invariant. -/
-theorem appendEntriesPreservesCoreInvariant
+/-- Sending one entry or heartbeat preserves the system invariant. -/
+theorem appendEntriesPreservesSystemInductiveInvariant
     (state : State TxId)
     (source destination : Node)
     (batchEnd : Nat)
-    (core : CoreInvariant state)
+    (core : SystemInductiveInvariant state)
     (enabled : Enabled state (.appendEntries source destination batchEnd)) :
-    CoreInvariant (next state (.appendEntries source destination batchEnd)) := by
+    SystemInductiveInvariant (next state (.appendEntries source destination batchEnd)) := by
   have sourceEq : source = LEADER :=
     roleLeaderImpliesNodeLeader core enabled.1
   subst source
@@ -1250,13 +1250,13 @@ theorem appendEntriesPreservesCoreInvariant
     · simpa [next, request, candidateEq] using
         core.currentTermsAreOne candidate
 
-/-- Processing any enabled request or response preserves the core invariant. -/
-theorem receivePreservesCoreInvariant
+/-- Processing any enabled request or response preserves the system invariant. -/
+theorem receivePreservesSystemInductiveInvariant
     (state : State TxId)
     (source destination : Node)
-    (core : CoreInvariant state)
+    (core : SystemInductiveInvariant state)
     (enabled : Enabled state (.receive source destination)) :
-    CoreInvariant (next state (.receive source destination)) := by
+    SystemInductiveInvariant (next state (.receive source destination)) := by
   unfold Enabled at enabled
   cases receiveResult :
       handleReceive? state source destination with
@@ -1571,12 +1571,12 @@ theorem highestCommittableIndexBounded
   exact foldBounded candidates 0 allBounded (by omega)
 
 /-- Advancing the leader commit index preserves every supporting invariant. -/
-theorem advanceCommitPreservesCoreInvariant
+theorem advanceCommitPreservesSystemInductiveInvariant
     (state : State TxId)
     (node : Node)
-    (core : CoreInvariant state)
+    (core : SystemInductiveInvariant state)
     (enabled : Enabled state (.advanceCommitIndex node)) :
-    CoreInvariant (next state (.advanceCommitIndex node)) := by
+    SystemInductiveInvariant (next state (.advanceCommitIndex node)) := by
   have nodeEq : node = LEADER :=
     roleLeaderImpliesNodeLeader core enabled.1
   subst node
@@ -1623,7 +1623,7 @@ theorem advanceCommitPreservesCoreInvariant
 theorem receiveCommittedLogMonotonicity
     (state : State TxId)
     (source destination : Node)
-    (core : CoreInvariant state)
+    (core : SystemInductiveInvariant state)
     (enabled : Enabled state (.receive source destination)) :
     CommittedLogMonotonicity
       state
@@ -1710,7 +1710,7 @@ theorem receiveCommittedLogMonotonicity
 theorem nextCommittedLogMonotonicity
     (state : State TxId)
     (action : Action TxId)
-    (core : CoreInvariant state)
+    (core : SystemInductiveInvariant state)
     (enabled : Enabled state action) :
     CommittedLogMonotonicity state (next state action) := by
   cases action with
@@ -1825,33 +1825,33 @@ theorem receiveFrame
             simp [different]
 
 /-- Case-split dispatcher proving every enabled action preserves the invariant. -/
-theorem nextPreservesCoreInvariant
+theorem nextPreservesSystemInductiveInvariant
     (state : State TxId)
     (action : Action TxId)
-    (core : CoreInvariant state)
+    (core : SystemInductiveInvariant state)
     (enabled : Enabled state action) :
-    CoreInvariant (next state action) := by
+    SystemInductiveInvariant (next state action) := by
   cases action with
   | clientRequest node txId =>
-      exact clientRequestPreservesCoreInvariant state node txId core enabled
+      exact clientRequestPreservesSystemInductiveInvariant state node txId core enabled
   | appendEntries source destination batchEnd =>
       exact
-        appendEntriesPreservesCoreInvariant
+        appendEntriesPreservesSystemInductiveInvariant
           state source destination batchEnd core enabled
   | receive source destination =>
-      exact receivePreservesCoreInvariant state source destination core enabled
+      exact receivePreservesSystemInductiveInvariant state source destination core enabled
   | advanceCommitIndex node =>
-      exact advanceCommitPreservesCoreInvariant state node core enabled
+      exact advanceCommitPreservesSystemInductiveInvariant state node core enabled
 
 /-- The supporting invariant holds in every reachable slice-one state. -/
-theorem reachableCoreInvariant
+theorem reachableSystemInductiveInvariant
     {state : State TxId}
     (reachable : Reachable state) :
-    CoreInvariant state :=
+    SystemInductiveInvariant state :=
   ExecutableTransitionSystem.reachableInvariant
     (system (TxId := TxId))
-    initialCoreInvariant
-    nextPreservesCoreInvariant
+    initialSystemInductiveInvariant
+    nextPreservesSystemInductiveInvariant
     reachable
 
 /-- Every enabled edge leaving a reachable state extends committed logs. -/
@@ -1862,35 +1862,39 @@ theorem reachableStepCommittedLogMonotonicity
     (enabled : Enabled state action) :
     CommittedLogMonotonicity state (next state action) :=
   nextCommittedLogMonotonicity
-    state action (reachableCoreInvariant reachable) enabled
+    state action (reachableSystemInductiveInvariant reachable) enabled
 
 /-- All reachable committed logs are pairwise prefix-comparable. -/
 theorem reachableCommittedLogsPrefix
     {state : State TxId}
     (reachable : Reachable state) :
     CommittedLogsPrefix state :=
-  coreCommittedLogsPrefix (reachableCoreInvariant reachable)
+  systemInductiveInvariantCommittedLogsPrefix
+    (reachableSystemInductiveInvariant reachable)
 
 /-- Every reachable state satisfies Raft log matching. -/
 theorem reachableLogMatching
     {state : State TxId}
     (reachable : Reachable state) :
     LogMatching state :=
-  coreLogMatching (reachableCoreInvariant reachable)
+  systemInductiveInvariantLogMatching
+    (reachableSystemInductiveInvariant reachable)
 
 /-- Equal index and term identify equal transaction IDs in reachable states. -/
 theorem reachableSameIndexSameTermSameTxId
     {state : State TxId}
     (reachable : Reachable state) :
     SameIndexSameTermSameTxId state :=
-  coreSameIndexSameTermSameTxId (reachableCoreInvariant reachable)
+  systemInductiveInvariantSameIndexSameTermSameTxId
+    (reachableSystemInductiveInvariant reachable)
 
 /-- Terms are monotonic in every reachable node log. -/
 theorem reachableMonoLog
     {state : State TxId}
     (reachable : Reachable state) :
     MonoLog state :=
-  coreMonoLog (reachableCoreInvariant reachable)
+  systemInductiveInvariantMonoLog
+    (reachableSystemInductiveInvariant reachable)
 
 /-- Bundle all public state-safety theorems for a reachable state. -/
 theorem reachableConsensusSafety
