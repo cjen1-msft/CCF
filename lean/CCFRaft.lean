@@ -1,19 +1,19 @@
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-import CCFRaft.Proofs
 import CCFRaft.Examples
+import CCFRaft.Simulation
 
 /-!
-# Static CCF Raft safety core
+# CCF Raft slice 1
 
-This library is an experimental pure Lean safety model derived from
-`tla/consensus/ccfraft.tla`. It proves selected committed-log safety
-consequences of `tla/consensus/abs.tla`, not the refinement theorem itself.
+An executable, directly proved, five-node single-term AppendEntries model.
 -/
 
-#print axioms CCFRaft.reachableProved
-#print axioms CCFRaft.reachableStepCommittedLogAppendOnly
+#print axioms CCFRaft.reachableConsensusSafety
+#print axioms CCFRaft.reachableStepCommittedLogMonotonicity
+#print axioms CCFRaft.Simulation.materializeComplete
+#print axioms CCFRaft.Simulation.candidateChoicesComplete
 
 run_cmd do
   let env <- Lean.getEnv
@@ -29,4 +29,4 @@ run_cmd do
       | _ => pure ()
   if checked = 0 then
     throwError "no CCFRaft theorems were audited"
-  Lean.logInfo m!"Audited {checked} CCF Raft theorems for sorryAx."
+  Lean.logInfo m!"Audited {checked} CCF Raft slice theorems for sorryAx."

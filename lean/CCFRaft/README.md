@@ -1,73 +1,77 @@
-# Static certified CCF Raft safety core in Lean
+# CCF Raft Lean model
 
-This experiment applies the pure Lean transition-system approach to a
-certificate-based, static signed-log core derived from
-`tla/consensus/ccfraft.tla`.
+This directory builds `ccfraft.tla` incrementally as an executable Lean
+transition system with kernel-checked safety proofs.
 
-It proves, for every reachable state:
+## Slice 1: single-term AppendEntries
 
-- `LeaderCompleteness`: every higher-term leader contains each lower-term
-  server's committed log;
-- `CommittedLogsNoConflicts`: any two local committed logs are prefix-comparable
-  (`abs.tla`'s `NoConflicts`);
-- `CommittedLogAppendOnly`: every reachable transition preserves each local
-  committed log as a prefix (`abs.tla`'s `AppendOnlyProp`);
-- `GlobalCommitAppendOnly`: the ghost committed upper bound only extends.
+The current slice has:
 
-These are selected safety consequences of `abs.tla`. There is no abstract
-state mapping, step simulation, or trace-lifting theorem yet, so this project
-does not prove `ccfraft.tla`'s `RefinementToAbsProp`.
+- five fixed nodes and one fixed configuration;
+- node 0 as the sole leader in term 1;
+- empty initial logs;
+- opaque, externally allocated unique transaction IDs;
+- every transaction treated as immediately signed and commit-eligible;
+- explicit ordered/no-duplicate per-destination message queues;
+- AppendEntries sends one entry when behind and an empty heartbeat when caught
+  up;
+- executable `ClientRequest`, `AppendEntries`, `Receive`, and
+  `AdvanceCommitIndex` actions;
+- split request/response handlers including reject, already-done,
+  no-conflict extension, conflict truncation, ACK, and NACK behavior;
+- highest current-term index committed after ACKs from a majority, including
+  the leader.
 
-## Structure
+`Action`, `Enabled`, and `next` are the authoritative semantics. Proofs and the
+compiled simulator call these same definitions.
 
-- `Model.lean`: roles, signed entries, state, seven actions, `CertifiedStep`, and
-  `Reachable`.
-- `Properties.lean`: inductive core and exported safety properties.
-- `Proofs.lean`: action preservation, reachability induction, leader
-  completeness, no-conflicts, and append-only proofs.
-- `Examples.lean`: a concrete two-server
-  request/sign/commit/replicate/elect execution.
+## Proved
 
-## Run
+For every reachable state:
+
+- `CommittedLogsPrefix`: committed logs are prefixes of each other;
+- `LogMatching`;
+- same index and term imply the same transaction ID;
+- entry terms are monotonic.
+
+For every enabled transition from a reachable state:
+
+- `CommittedLogMonotonicity`: every node's committed log is append-only.
+
+Each action also has a frame theorem proving nodes other than the acting node
+are unchanged. Conflict truncation is implemented but proved unreachable in
+this single-leader, single-term slice.
+
+## Build and simulate
 
 ```bash
 cd lean
-lake build CCFRaft
+lake build
+lake build ccf-raft-simulator
+.lake/build/bin/ccf-raft-simulator simulate 5000 1 1000
+.lake/build/bin/ccf-raft-simulator replay ccf-raft-failure.trace
 ```
 
-The root module prints the axioms of the exported theorems and rejects any
-theorem under `CCFRaft` that transitively depends on `sorryAx`.
+Simulation runs for the requested number of milliseconds. It reports proposals
+and accepted actions per family. A failure writes a replayable semantic action
+trace.
 
-## Refinement boundary
+`candidateChoicesComplete` proves every enabled action in the finite simulator
+instance appears in its finite candidate list. The reusable
+`SimulationAdapter.complete` theorem proves it can be materialized by a
+simulator choice.
+Random scheduling is only a bug-finding policy; it is not proof evidence.
 
-This is not a complete port of `ccfraft.tla`. It omits the asynchronous
-network, vote messages, quorum calculation, reconfiguration, retirement,
-pre-vote, and fairness. Initialization also deliberately uses empty logs and
-term `1`, rather than parameterizing `StartTerm` and reproducing CCF's bootstrap
-logs.
+## Future slices
 
-The omitted protocol appears through explicit proof-certificate guards:
+2. Add term-2 timeout and RequestVote request/response flows, prove majority
+   intersection, election safety, and term-2 leader completeness.
+3. Prove committed-log safety across commits in terms 1 and 2.
+4. Generalize adjacent terms.
+5. Generalize skipped election terms.
+6. Prove the unbounded AppendEntries/RequestVote core.
+6.5. Add message loss and stale-message handling.
+7. Add reconfiguration.
+8. Add pre-vote and remaining CCF-specific actions.
 
-- advancing the ghost committed upper bound must show that the old bound is a
-  prefix of the new committed prefix;
-- advancing or learning a commit must show the new prefix is visible to every
-  higher-term leader;
-- becoming leader must show the candidate contains the ghost committed upper
-  prefix after truncation to its last signature;
-- replication must show it preserves the follower's committed prefix.
-
-`CertifiedStep` also enforces two source-level CCF rules directly: commits end
-at signatures, leader commits use a current-term signature, and election
-truncates unsigned suffixes.
-
-The proofs establish that the certificates are sufficient for the stated
-safety properties. They do not establish that the concrete protocol produces
-the certificates. A faithful next layer must model messages, votes, log
-matching, current-term commit rules, and quorum intersection, then prove every
-concrete action maps to a `CertifiedStep` or stutter.
-
-`CommittedLogsNoConflicts` and `CommittedLogAppendOnly` are the consensus-log
-safety facts sometimes informally grouped under linearizability. They are not
-a full linearizability or refinement proof, and they are not client
-request/response linearizability; the latter remains the subject of
-`CCFConsistency`.
+Later slices remain roadmap notes, not current claims.

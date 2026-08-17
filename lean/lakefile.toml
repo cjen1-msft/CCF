@@ -12,3 +12,7 @@ name = "CCFConsistency"
 
 [[lean_lib]]
 name = "CCFRaft"
+
+[[lean_exe]]
+name = "ccf-raft-simulator"
+root = "CCFRaftSimulator"
