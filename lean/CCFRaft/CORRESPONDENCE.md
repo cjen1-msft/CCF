@@ -1,4 +1,4 @@
-# Slice 1 correspondence with `ccfraft.tla`
+# Slice 2 correspondence with `ccfraft.tla`
 
 This document is the review surface for the selected TLA-to-Lean transition
 mapping. It records deliberate projections rather than claiming literal
@@ -6,16 +6,16 @@ state-shape equality.
 
 ## Scope and deliberate projections
 
-| Source concept | Slice 1 representation |
-| --- | --- |
-| `Servers` | `Node := Fin NODE_COUNT`, with `NODE_COUNT = 5` |
-| Configuration | Fixed set of all five nodes; not mutable state |
-| Initial log | Empty; the CCF bootstrap prefix is projected away |
-| Signature entries | Each transaction and following signature collapse to one `Entry` |
-| Entry payload | Opaque unique `txId`; erased by the source consensus algorithm |
-| Terms | All nodes and entries remain in term 1 |
-| Network guarantee | Ordered/no-duplicate FIFO queue per destination |
-| Variables outside selected actions | Omitted |
+| Source concept                     | Slice 2 representation                                           |
+| ---------------------------------- | ---------------------------------------------------------------- |
+| `Servers`                          | `Node := Fin NODE_COUNT`, with `NODE_COUNT = 5`                  |
+| Configuration                      | Fixed set of all five nodes; not mutable state                   |
+| Initial log                        | Empty; the CCF bootstrap prefix is projected away                |
+| Signature entries                  | Each transaction and following signature collapse to one `Entry` |
+| Entry payload                      | Opaque unique `txId`; erased by the source consensus algorithm   |
+| Terms                              | Log entries remain in term 1; node terms are 1 or 2              |
+| Network guarantee                  | Ordered/no-duplicate FIFO queue per destination                  |
+| Variables outside selected actions | Omitted                                                          |
 
 The signature-pair projection maps source signature index `2n` to slice index
 `n`. Removed bootstrap prefixes rebase all later indices by the removed prefix
@@ -23,17 +23,23 @@ length.
 
 ## Locality and action mapping
 
-| Lean action/helper | `ccfraft.tla` operator | Reads current node state | Writes node state |
-| --- | --- | --- | --- |
-| `clientRequest` | `ClientRequest` followed by `SignCommittableMessages` | acting leader | acting leader |
-| `appendEntries` | projected pair of `AppendEntries` sends | source | source |
-| `receive` | projected pair of selected AppendEntries receive branches | destination and selected message | destination |
-| `rejectAppendEntriesRequest?` | `RejectAppendEntriesRequest` | destination | destination |
-| `appendEntriesAlreadyDone?` | `AppendEntriesAlreadyDone` | destination | destination |
-| `conflictAppendEntriesRequest?` | `ConflictAppendEntriesRequest` | destination | destination |
-| `noConflictAppendEntriesRequest?` | `NoConflictAppendEntriesRequest` | destination | destination |
-| `handleAppendEntriesResponse?` | `HandleAppendEntriesResponse` | destination leader | destination leader |
-| `advanceCommitIndex` | `AdvanceCommitIndex` | acting leader's local `matchIndex` | acting leader |
+| Lean action/helper                | `ccfraft.tla` operator                                    | Reads current node state                   | Writes node state         |
+| --------------------------------- | --------------------------------------------------------- | ------------------------------------------ | ------------------------- |
+| `clientRequest`                   | `ClientRequest` followed by `SignCommittableMessages`     | acting leader                              | acting leader             |
+| `appendEntries`                   | projected pair of `AppendEntries` sends                   | source                                     | source                    |
+| `receive`                         | projected pair of selected AppendEntries receive branches | destination and selected message           | destination               |
+| `rejectAppendEntriesRequest?`     | `RejectAppendEntriesRequest`                              | destination                                | destination               |
+| `appendEntriesAlreadyDone?`       | `AppendEntriesAlreadyDone`                                | destination                                | destination               |
+| `conflictAppendEntriesRequest?`   | `ConflictAppendEntriesRequest`                            | destination                                | destination               |
+| `noConflictAppendEntriesRequest?` | `NoConflictAppendEntriesRequest`                          | destination                                | destination               |
+| `handleAppendEntriesResponse?`    | `HandleAppendEntriesResponse`                             | destination leader                         | destination leader        |
+| `advanceCommitIndex`              | `AdvanceCommitIndex`                                      | acting leader's local `matchIndex`         | acting leader             |
+| `timeout`                         | `Timeout` / `BecomeCandidate`                             | timing-out follower                        | timing-out follower       |
+| `requestVote`                     | `RequestVote`                                             | source candidate                           | source network queue only |
+| `updateTerm`                      | `UpdateTerm`                                              | destination and selected immutable message | destination               |
+| RequestVote request receive       | `HandleRequestVoteRequest`                                | destination and selected request           | destination               |
+| RequestVote response receive      | `HandleRequestVoteResponse`                               | destination and selected response          | destination               |
+| `becomeLeader`                    | `BecomeLeader`                                            | candidate-local votes                      | candidate                 |
 
 Receive handlers never inspect the source node's current state. They use only
 the immutable request/response snapshot selected from the destination queue.
@@ -68,6 +74,18 @@ intermediate traffic observable.
 - Conflict truncation is guarded above `commitIndex`.
 - Commit chooses the greatest index above the current commit whose entry term
   equals the leader term and whose local ACK set is a five-node majority.
+- Timeout advances a term-one follower directly to term two, records its
+  self-vote, and starts an election.
+- `UpdateTerm` observes but does not consume a newer queued message.
+- Ordinary receive handling is disabled while the selected message has a newer
+  term, so `UpdateTerm` cannot be bypassed.
+- Stale successful AppendEntries responses are consumed without changing node
+  state, preventing an old ACK from blocking later traffic from that source.
+- A voter grants at most one candidate in term two and only when the candidate
+  log is at least as up to date as its own.
+- A candidate becomes leader after recording a strict three-of-five majority.
+- Leader promotion initializes local replication indices as in the source, but
+  term-two replication remains disabled until slice 3.
 
 ## Synthetic non-vacuity evidence
 
@@ -87,6 +105,12 @@ actions. It is not claimed to be projected from the checked-in one-node
 `append` scenario. A grounded multi-node trace projection remains future
 correspondence evidence.
 
+`Examples.termTwoElectionReachable` extends that committed state with two
+competing candidates. Candidate one receives votes from nodes three and four
+and becomes the term-two leader; candidate two retains only its self-vote.
+`Examples.splitVoteHasNoWinner` separately checks the intermediate two-candidate
+state has no enabled promotion.
+
 The conflict helpers are also translated, but no conflict transition is
 reachable before elections or term changes. Later grounded fixtures may project
 `matching_partial`, `suffix_collision`, or
@@ -102,14 +126,18 @@ deltas.
 - There is not yet a machine-checked semantics or bisimulation theorem between
   TLA+ and Lean.
 - Differential edge comparison is deferred.
+- Term-two AppendEntries and commit advancement are deliberately disabled.
 - `RcvDropIgnoredMessage` and other stale/ignored message branches are deferred
-  to the dedicated message-loss/staleness slice; current `receive` correspondence
-  is limited to request/response handlers selected above.
+  to the dedicated message-loss/staleness slice.
 
 ## Review status
 
 Independent transition-correspondence, proof-soundness, and adversarial/vacuity
-reviews were completed for slice 1. Their findings led to:
+reviews were completed for slice 1. Slice 2 retains those corrections and adds
+kernel-checked election majority intersection, vote soundness, election safety,
+and term-two leader completeness.
+
+The slice 1 findings led to:
 
 - exact one-entry/heartbeat source batching;
 - source-compatible NACK match index and term fields;

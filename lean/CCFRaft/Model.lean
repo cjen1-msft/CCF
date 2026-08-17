@@ -7,29 +7,31 @@ import Mathlib
 set_option autoImplicit false
 
 /-!
-# Slice 1: single-term AppendEntries
+# Slice 2: term-two RequestVote elections
 
-This is an executable direct translation of the selected single-term
-`ccfraft.tla` actions. Protocol handlers receive only the acting node's local
-state and immutable message snapshots.
+This extends term-one AppendEntries with term-two RequestVote elections.
+Protocol handlers receive only the acting node's local state and immutable
+message snapshots.
 -/
 
 namespace CCFRaft
 
-/-- Number of nodes in the fixed slice-one network. -/
+/-- Number of nodes in the fixed five-node network. -/
 def NODE_COUNT : Nat := 5
 /-- Node identifiers are the integers from zero through four. -/
 abbrev Node := Fin NODE_COUNT
 
-/-- Node zero is the fixed leader in slice one. -/
+/-- Node zero is the fixed initial term-one leader. -/
 def LEADER : Node := ⟨0, by decide⟩
-/-- Every node and entry remains in term one in this slice. -/
+/-- Log entries remain in term one; node terms may advance to term two. -/
 def TERM_ONE : Nat := 1
 
-/-- The only leadership roles reachable before elections are introduced. -/
+/-- Leadership roles represented by the election slice. -/
 inductive Role where
   /-- A replica that receives AppendEntries messages. -/
   | follower
+  /-- A node soliciting votes for term two. -/
+  | candidate
   /-- The single node that accepts requests and sends AppendEntries. -/
   | leader
   deriving DecidableEq, Repr
@@ -60,12 +62,35 @@ structure AppendEntriesResponse where
   destination : Node
   deriving DecidableEq, Repr
 
+/-! RequestVote messages carry the candidate's latest collapsed signature. -/
+
+/-- Candidate log summary sent to a potential voter. -/
+structure RequestVoteRequest where
+  term : Nat
+  lastLogTerm : Nat
+  lastLogIndex : Nat
+  source : Node
+  destination : Node
+  deriving DecidableEq, Repr
+
+/-- A voter's granted or rejected RequestVote response. -/
+structure RequestVoteResponse where
+  term : Nat
+  voteGranted : Bool
+  source : Node
+  destination : Node
+  deriving DecidableEq, Repr
+
 /-- The two network message kinds used by the AppendEntries slice. -/
 inductive Message (TxId : Type) where
   /-- A leader-to-follower replication request. -/
   | appendEntriesRequest (request : AppendEntriesRequest TxId)
   /-- A follower-to-leader acknowledgement or rejection. -/
   | appendEntriesResponse (response : AppendEntriesResponse)
+  /-- A candidate-to-voter RequestVote request. -/
+  | requestVoteRequest (request : RequestVoteRequest)
+  /-- A voter-to-candidate RequestVote response. -/
+  | requestVoteResponse (response : RequestVoteResponse)
   deriving DecidableEq, Repr
 
 variable {TxId : Type}
@@ -76,11 +101,22 @@ namespace Message
 def source : Message TxId -> Node
   | .appendEntriesRequest request => request.source
   | .appendEntriesResponse response => response.source
+  | .requestVoteRequest request => request.source
+  | .requestVoteResponse response => response.source
 
 /-- Read a message's intended recipient. -/
 def destination : Message TxId -> Node
   | .appendEntriesRequest request => request.destination
   | .appendEntriesResponse response => response.destination
+  | .requestVoteRequest request => request.destination
+  | .requestVoteResponse response => response.destination
+
+/-- Term snapshot carried by any message kind. -/
+def term : Message TxId -> Nat
+  | .appendEntriesRequest request => request.term
+  | .appendEntriesResponse response => response.term
+  | .requestVoteRequest request => request.term
+  | .requestVoteResponse response => response.term
 
 end Message
 
@@ -93,6 +129,8 @@ structure NodeState (TxId : Type) where
   sentIndex : Node -> Nat
   matchIndex : Node -> Nat
   isNewFollower : Bool
+  votedFor : Option Node
+  votesGranted : Finset Node
 
 namespace NodeState
 
@@ -200,6 +238,8 @@ def initialNodeState (node : Node) : NodeState TxId where
   sentIndex := fun _ => 0
   matchIndex := fun _ => 0
   isNewFollower := true
+  votedFor := none
+  votesGranted := ∅
 
 /-- Initialize all nodes, queues, and allocated transaction IDs. -/
 def initialState : State TxId where
@@ -491,6 +531,8 @@ def handleAppendEntriesResponse?
             state.matchIndex
             response.source
             (max (state.matchIndex response.source) response.lastLogIndex) }
+  else if response.term < state.currentTerm then
+    some state
   else if response.success = false then
     let possible :=
       findHighestPossibleMatch state.log response.lastLogIndex response.term
@@ -503,6 +545,82 @@ def handleAppendEntriesResponse?
             (max
               (min possible (state.sentIndex response.source))
               (state.matchIndex response.source)) }
+  else
+    none
+
+/-- Compare a candidate log summary with a voter's local log. -/
+def voteLogUpToDate
+    (state : NodeState TxId)
+    (request : RequestVoteRequest) : Prop :=
+  request.lastLogTerm > termAt state.log state.log.length \/
+    (request.lastLogTerm = termAt state.log state.log.length /\
+      request.lastLogIndex >= state.log.length)
+
+instance (state : NodeState TxId) (request : RequestVoteRequest) :
+    Decidable (voteLogUpToDate state request) := by
+  unfold voteLogUpToDate
+  infer_instance
+
+/-- Handle a current-term RequestVote request and construct the reply. -/
+def handleRequestVoteRequest?
+    (state : NodeState TxId)
+    (request : RequestVoteRequest) :
+    Option (NodeState TxId × RequestVoteResponse) :=
+  if request.term <= state.currentTerm then
+    let grant : Bool :=
+      decide (
+        request.term = state.currentTerm /\
+          voteLogUpToDate state request /\
+          (state.votedFor = none \/
+            state.votedFor = some request.source))
+    let nextState :=
+      if grant then { state with votedFor := some request.source } else state
+    some
+      (nextState,
+        { term := state.currentTerm
+          voteGranted := grant
+          source := request.destination
+          destination := request.source })
+  else
+    none
+
+/-- Tally or discard a RequestVote response at the candidate. -/
+def handleRequestVoteResponse?
+    (state : NodeState TxId)
+    (response : RequestVoteResponse) :
+    Option (NodeState TxId) :=
+  if response.term < state.currentTerm then
+    some state
+  else if response.term = state.currentTerm /\ state.role = .candidate then
+    if response.voteGranted then
+      some
+        { state with
+          votesGranted := insert response.source state.votesGranted }
+    else
+      some state
+  else
+    some state
+
+/-- Build a RequestVote message from candidate-local state. -/
+def makeRequestVoteRequest
+    (state : State TxId)
+    (source destination : Node) :
+    RequestVoteRequest :=
+  let sourceState := state.nodes source
+  { term := sourceState.currentTerm
+    lastLogTerm := termAt sourceState.log sourceState.log.length
+    lastLogIndex := sourceState.log.length
+    source
+    destination }
+
+/-- Return the selected message exactly when it carries a newer term. -/
+def newerMessage?
+    (state : State TxId)
+    (source destination : Node) :
+    Option (Message TxId) := do
+  let (selected, _) <- takeFirstFrom source (state.network destination)
+  if (state.nodes destination).currentTerm < selected.term then
+    some selected
   else
     none
 
@@ -527,6 +645,8 @@ def handleReceive?
   | some (message, remaining) =>
       if message.destination != destination then
         none
+      else if (state.nodes destination).currentTerm < message.term then
+        none
       else
         match message with
         | .appendEntriesRequest request =>
@@ -542,6 +662,26 @@ def handleReceive?
             match
               handleAppendEntriesResponse? (state.nodes destination) response
             with
+            | none => none
+            | some nextNode =>
+                some
+                  { state with
+                    nodes := updateNode state.nodes destination nextNode
+                    network :=
+                      updateQueue state.network destination remaining }
+        | .requestVoteRequest request =>
+            match handleRequestVoteRequest? (state.nodes destination) request with
+            | none => none
+            | some (nextNode, response) =>
+                some
+                  { state with
+                    nodes := updateNode state.nodes destination nextNode
+                    network :=
+                      enqueueNoDup
+                        (updateQueue state.network destination remaining)
+                        (.requestVoteResponse response) }
+        | .requestVoteResponse response =>
+            match handleRequestVoteResponse? (state.nodes destination) response with
             | none => none
             | some nextNode =>
                 some
@@ -589,6 +729,17 @@ instance (state : State TxId) (leader : Node) (index : Nat) :
   unfold hasMajorityAt
   infer_instance
 
+/-- True when a candidate's locally recorded votes form a majority. -/
+def hasElectionMajority
+    (state : State TxId)
+    (candidate : Node) : Prop :=
+  (state.nodes candidate).votesGranted.card * 2 > NODE_COUNT
+
+instance (state : State TxId) (candidate : Node) :
+    Decidable (hasElectionMajority state candidate) := by
+  unfold hasElectionMajority
+  infer_instance
+
 /-- Greatest newer current-term index acknowledged by a majority. -/
 def highestCommittableIndex
     (state : State TxId)
@@ -614,6 +765,14 @@ inductive Action (TxId : Type) where
   | receive (source destination : Node)
   /-- Advance a leader to its locally computed quorum commit frontier. -/
   | advanceCommitIndex (node : Node)
+  /-- Locally start the term-two election and vote for oneself. -/
+  | timeout (node : Node)
+  /-- Send a RequestVote message from a candidate to another node. -/
+  | requestVote (source destination : Node)
+  /-- Observe a newer message term without consuming the message. -/
+  | updateTerm (source destination : Node)
+  /-- Promote a candidate after its local vote set reaches a majority. -/
+  | becomeLeader (node : Node)
   deriving DecidableEq, Repr
 
 /-- Protocol guard determining whether an action may occur in a state. -/
@@ -622,9 +781,11 @@ def Enabled
     Action TxId -> Prop
   | .clientRequest node txId =>
       (state.nodes node).role = .leader /\
+        (state.nodes node).currentTerm = TERM_ONE /\
         txId ∉ state.submittedTxIds
   | .appendEntries source destination batchEnd =>
       (state.nodes source).role = .leader /\
+        (state.nodes source).currentTerm = TERM_ONE /\
         Not (source = destination) /\
         batchEnd =
           min
@@ -634,8 +795,22 @@ def Enabled
       (handleReceive? state source destination).isSome
   | .advanceCommitIndex node =>
       (state.nodes node).role = .leader /\
+        (state.nodes node).currentTerm = TERM_ONE /\
         (state.nodes node).commitIndex <
           highestCommittableIndex state node
+  | .timeout node =>
+      (state.nodes node).role = .follower /\
+        (state.nodes node).currentTerm = TERM_ONE
+  | .requestVote source destination =>
+      (state.nodes source).role = .candidate /\
+        (state.nodes source).currentTerm = 2 /\
+        Not (source = destination)
+  | .updateTerm source destination =>
+      (newerMessage? state source destination).isSome
+  | .becomeLeader node =>
+      (state.nodes node).role = .candidate /\
+        (state.nodes node).currentTerm = 2 /\
+        hasElectionMajority state node
 
 /-- Make every action guard directly executable. -/
 instance (state : State TxId) (action : Action TxId) :
@@ -674,6 +849,47 @@ def next
           updateNode state.nodes node
             { nodeState with
               commitIndex := highestCommittableIndex state node } }
+  | .timeout node =>
+      let nodeState := state.nodes node
+      { state with
+        nodes :=
+          updateNode state.nodes node
+            { nodeState with
+              role := .candidate
+              currentTerm := nodeState.currentTerm + 1
+              votedFor := some node
+              votesGranted := {node} } }
+  | .requestVote source destination =>
+      let request := makeRequestVoteRequest state source destination
+      { state with
+        network :=
+          enqueueNoDup state.network (.requestVoteRequest request) }
+  | .updateTerm source destination =>
+      match newerMessage? state source destination with
+      | none => state
+      | some selected =>
+          let nodeState := state.nodes destination
+          { state with
+            nodes :=
+              updateNode state.nodes destination
+                { nodeState with
+                  role :=
+                    if nodeState.role = .follower then
+                      .follower
+                    else
+                      .follower
+                  currentTerm := selected.term
+                  votedFor := none
+                  isNewFollower := true } }
+  | .becomeLeader node =>
+      let nodeState := state.nodes node
+      { state with
+        nodes :=
+          updateNode state.nodes node
+            { nodeState with
+              role := .leader
+              sentIndex := fun _ => nodeState.log.length
+              matchIndex := fun _ => 0 } }
 
 /-- Package the Raft slice as a reusable executable transition system. -/
 def system [DecidableEq TxId] : ExecutableTransitionSystem where
@@ -684,7 +900,7 @@ def system [DecidableEq TxId] : ExecutableTransitionSystem where
   enabledDecidable := fun _ _ => inferInstance
   next
 
-/-- States reachable through enabled slice-one Raft actions. -/
+/-- States reachable through enabled slice-two Raft actions. -/
 abbrev Reachable [DecidableEq TxId] :=
   (system (TxId := TxId)).Reachable
 

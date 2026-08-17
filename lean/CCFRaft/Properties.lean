@@ -58,8 +58,11 @@ def ResponseMatchesLeader
     (response : AppendEntriesResponse) : Prop :=
   response.destination = LEADER /\
     Not (response.source = LEADER) /\
-    response.term = TERM_ONE /\
-    response.lastLogIndex <= (state.nodes LEADER).log.length
+    response.term ∈ ({TERM_ONE, 2} : Finset Nat) /\
+    response.lastLogIndex <= (state.nodes LEADER).log.length /\
+    (response.success = true ->
+      (state.nodes LEADER).log.take response.lastLogIndex =
+        (state.nodes response.source).log.take response.lastLogIndex)
 
 /-- Make request-snapshot consistency executable for bounded simulation. -/
 instance (state : State TxId) (request : AppendEntriesRequest TxId) :
@@ -83,6 +86,56 @@ def QueuedRequestsMatchLeader (state : State TxId) : Prop :=
             RequestMatchesLeader state request
         | .appendEntriesResponse response =>
             ResponseMatchesLeader state response
+        | .requestVoteRequest _ => True
+        | .requestVoteResponse _ => True
+
+/-- A queued vote request is a current snapshot of its candidate's log. -/
+def RequestVoteRequestSafe
+    (state : State TxId)
+    (request : RequestVoteRequest) : Prop :=
+  request.term = 2 /\
+    Not (request.source = request.destination) /\
+    (state.nodes request.source).currentTerm = 2 /\
+    (state.nodes request.source).votedFor = some request.source /\
+    request.lastLogTerm =
+      termAt
+        (state.nodes request.source).log
+        (state.nodes request.source).log.length /\
+    request.lastLogIndex = (state.nodes request.source).log.length
+
+/-- A queued granted vote records a voter whose log is a candidate prefix. -/
+def RequestVoteResponseSafe
+    (state : State TxId)
+    (response : RequestVoteResponse) : Prop :=
+  response.term = 2 /\
+    Not (response.source = response.destination) /\
+    (state.nodes response.source).currentTerm = 2 /\
+    (state.nodes response.destination).currentTerm = 2 /\
+    (response.voteGranted = true ->
+      (state.nodes response.source).votedFor = some response.destination /\
+        (state.nodes response.source).log <+:
+          (state.nodes response.destination).log)
+
+/-- Make RequestVote request snapshot checks executable. -/
+instance (state : State TxId) (request : RequestVoteRequest) :
+    Decidable (RequestVoteRequestSafe state request) := by
+  unfold RequestVoteRequestSafe
+  infer_instance
+
+/-- Make RequestVote response snapshot checks executable. -/
+instance (state : State TxId) (response : RequestVoteResponse) :
+    Decidable (RequestVoteResponseSafe state response) := by
+  unfold RequestVoteResponseSafe
+  infer_instance
+
+/-- Every queued vote message satisfies its snapshot correspondence facts. -/
+def QueuedVoteMessagesSafe (state : State TxId) : Prop :=
+  forall destination message,
+    message ∈ state.network destination ->
+      match message with
+      | .requestVoteRequest request => RequestVoteRequestSafe state request
+      | .requestVoteResponse response => RequestVoteResponseSafe state response
+      | _ => True
 
 /-- The leader never records sending past the end of its log. -/
 def SentIndicesBounded (state : State TxId) : Prop :=
@@ -96,29 +149,110 @@ def MatchIndicesBounded (state : State TxId) : Prop :=
     (state.nodes LEADER).matchIndex node <=
       (state.nodes LEADER).log.length
 
-/-- Node zero remains leader and all other nodes remain followers. -/
-def RolesFixed (state : State TxId) : Prop :=
+/-- Nodes remain in either the original term or the single election term. -/
+def CurrentTermsValid (state : State TxId) : Prop :=
   forall node,
-    (state.nodes node).role =
-      if node = LEADER then .leader else .follower
+    (state.nodes node).currentTerm = TERM_ONE \/
+      (state.nodes node).currentTerm = 2
 
-/-- Every node remains in term one. -/
-def CurrentTermsAreOne (state : State TxId) : Prop :=
+/-- Any leader still in term one is the initial node-zero leader. -/
+def TermOneLeaderIsInitial (state : State TxId) : Prop :=
   forall node,
-    (state.nodes node).currentTerm = TERM_ONE
+    (state.nodes node).role = .leader ->
+      (state.nodes node).currentTerm = TERM_ONE ->
+        node = LEADER
+
+/-- While node zero remains in term one, it remains the original leader. -/
+def InitialNodeTermOneIsLeader (state : State TxId) : Prop :=
+  (state.nodes LEADER).currentTerm = TERM_ONE ->
+    (state.nodes LEADER).role = .leader
+
+/-- Every candidate is in term two and has voted for itself. -/
+def CandidatesSelfVote (state : State TxId) : Prop :=
+  forall node,
+    (state.nodes node).role = .candidate ->
+      (state.nodes node).currentTerm = 2 /\
+        (state.nodes node).votedFor = some node /\
+        node ∈ (state.nodes node).votesGranted
+
+/-- Recording any vote implies that voter has entered term two. -/
+def VotedForTermTwo (state : State TxId) : Prop :=
+  forall voter candidate,
+    (state.nodes voter).votedFor = some candidate ->
+      (state.nodes voter).currentTerm = 2
+
+/-- Every recorded vote is backed by the voter's local vote and log relation. -/
+def VotesGrantedSound (state : State TxId) : Prop :=
+  forall candidate voter,
+    voter ∈ (state.nodes candidate).votesGranted ->
+      (state.nodes candidate).currentTerm = 2 /\
+      (state.nodes voter).votedFor = some candidate /\
+        (state.nodes voter).log <+: (state.nodes candidate).log
+
+/-- Every term-two leader was promoted from a locally recorded majority. -/
+def TermTwoLeadersHaveMajority (state : State TxId) : Prop :=
+  forall node,
+    (state.nodes node).role = .leader ->
+      (state.nodes node).currentTerm = 2 ->
+        hasElectionMajority state node
+
+/-- A leader match index denotes a prefix actually present on that follower. -/
+def MatchIndexDescribesPrefix (state : State TxId) : Prop :=
+  forall node,
+    (state.nodes LEADER).log.take
+        ((state.nodes LEADER).matchIndex node) =
+      (state.nodes node).log.take
+        ((state.nodes LEADER).matchIndex node)
+
+/-- A nonzero node-zero commit frontier is still backed by a current majority. -/
+def InitialLeaderCommitHasMajority (state : State TxId) : Prop :=
+  (state.nodes LEADER).commitIndex = 0 \/
+    hasMajorityAt state LEADER (state.nodes LEADER).commitIndex
+
+/-- Node zero never returns to candidacy after its fixed term-one leadership. -/
+def InitialNodeNotCandidate (state : State TxId) : Prop :=
+  Not ((state.nodes LEADER).role = .candidate)
+
+/-- No two distinct nodes lead in the same term. -/
+def ElectionSafety (state : State TxId) : Prop :=
+  forall left right,
+    (state.nodes left).role = .leader ->
+      (state.nodes right).role = .leader ->
+        (state.nodes left).currentTerm =
+          (state.nodes right).currentTerm ->
+          left = right
+
+/-- Every term-two leader contains node zero's term-one committed prefix. -/
+def TermTwoLeaderCompleteness (state : State TxId) : Prop :=
+  forall leader,
+    (state.nodes leader).role = .leader ->
+      (state.nodes leader).currentTerm = 2 ->
+        (state.nodes LEADER).committedLog <+:
+          (state.nodes leader).log
 
 /-- Supporting facts proved together because actions preserve them jointly. -/
 structure SystemInductiveInvariant (state : State TxId) : Prop where
+  /-- Within term --/
   commitIndicesBounded : CommitIndicesBounded state
   logsPrefixLeader : LogsPrefixLeader state
   termsAreOne : TermsAreOne state
   leaderTxIdsUnique : LeaderTxIdsUnique state
   leaderTxIdsSubmitted : LeaderTxIdsSubmitted state
   queuedRequestsMatchLeader : QueuedRequestsMatchLeader state
+  queuedVoteMessagesSafe : QueuedVoteMessagesSafe state
   sentIndicesBounded : SentIndicesBounded state
   matchIndicesBounded : MatchIndicesBounded state
-  rolesFixed : RolesFixed state
-  currentTermsAreOne : CurrentTermsAreOne state
+  /-- over one term --/
+  currentTermsValid : CurrentTermsValid state
+  termOneLeaderIsInitial : TermOneLeaderIsInitial state
+  initialNodeTermOneIsLeader : InitialNodeTermOneIsLeader state
+  candidatesSelfVote : CandidatesSelfVote state
+  votedForTermTwo : VotedForTermTwo state
+  votesGrantedSound : VotesGrantedSound state
+  termTwoLeadersHaveMajority : TermTwoLeadersHaveMajority state
+  matchIndexDescribesPrefix : MatchIndexDescribesPrefix state
+  initialLeaderCommitHasMajority : InitialLeaderCommitHasMajority state
+  initialNodeNotCandidate : InitialNodeNotCandidate state
 
 /-- Every node's committed prefix can only grow across one transition. -/
 def CommittedLogMonotonicity
@@ -168,11 +302,13 @@ def OtherNodesUnchanged
     Not (node = acting) ->
       after.nodes node = before.nodes node
 
-/-- The public state-safety guarantees exported by slice one. -/
+/-- The public state-safety guarantees exported by slice two. -/
 structure ConsensusSafety (state : State TxId) : Prop where
   committedLogsPrefix : CommittedLogsPrefix state
   logMatching : LogMatching state
   sameIndexSameTermSameTxId : SameIndexSameTermSameTxId state
   monoLog : MonoLog state
+  electionSafety : ElectionSafety state
+  termTwoLeaderCompleteness : TermTwoLeaderCompleteness state
 
 end CCFRaft

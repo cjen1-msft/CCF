@@ -29,6 +29,10 @@ inductive ActionFamily where
   | appendEntries
   | receive
   | advanceCommitIndex
+  | timeout
+  | requestVote
+  | updateTerm
+  | becomeLeader
   deriving DecidableEq, Repr
 
 /-- Raw simulator choices that materialize directly as semantic actions. -/
@@ -37,6 +41,10 @@ inductive Choice where
   | appendEntries (source destination : Node) (batchEnd : Nat)
   | receive (source destination : Node)
   | advanceCommitIndex (node : Node)
+  | timeout (node : Node)
+  | requestVote (source destination : Node)
+  | updateTerm (source destination : Node)
+  | becomeLeader (node : Node)
   deriving DecidableEq, Repr
 
 /-- Classify a simulator choice for coverage reporting. -/
@@ -45,6 +53,10 @@ def Choice.family : Choice -> ActionFamily
   | .appendEntries .. => .appendEntries
   | .receive .. => .receive
   | .advanceCommitIndex .. => .advanceCommitIndex
+  | .timeout .. => .timeout
+  | .requestVote .. => .requestVote
+  | .updateTerm .. => .updateTerm
+  | .becomeLeader .. => .becomeLeader
 
 /-- Convert a simulator choice into the exact model action it denotes. -/
 def materialize (_state : SimState) : Choice -> Option SimAction
@@ -53,6 +65,12 @@ def materialize (_state : SimState) : Choice -> Option SimAction
       some (.appendEntries source destination batchEnd)
   | .receive source destination => some (.receive source destination)
   | .advanceCommitIndex node => some (.advanceCommitIndex node)
+  | .timeout node => some (.timeout node)
+  | .requestVote source destination =>
+      some (.requestVote source destination)
+  | .updateTerm source destination =>
+      some (.updateTerm source destination)
+  | .becomeLeader node => some (.becomeLeader node)
 
 /-- Every enabled finite model action has a corresponding simulator choice. -/
 theorem materializeComplete
@@ -70,6 +88,14 @@ theorem materializeComplete
       exact ⟨.receive source destination, rfl⟩
   | advanceCommitIndex node =>
       exact ⟨.advanceCommitIndex node, rfl⟩
+  | timeout node =>
+      exact ⟨.timeout node, rfl⟩
+  | requestVote source destination =>
+      exact ⟨.requestVote source destination, rfl⟩
+  | updateTerm source destination =>
+      exact ⟨.updateTerm source destination, rfl⟩
+  | becomeLeader node =>
+      exact ⟨.becomeLeader node, rfl⟩
 
 /-- Package materialization and its completeness proof for the generic engine. -/
 def adapter :
@@ -106,21 +132,57 @@ def stateChecks (state : SimState) : Bool :=
       decide ((state.nodes node).commitIndex <=
         (state.nodes node).log.length) &&
       decide ((state.nodes node).log <+: (state.nodes LEADER).log) &&
+      ((state.nodes node).log.all fun entry =>
+        decide (entry.term = TERM_ONE)) &&
       decide (
-        (state.nodes node).role =
-          if node = LEADER then .leader else .follower) &&
-      decide ((state.nodes node).currentTerm = TERM_ONE) &&
-      (state.nodes node).log.all fun entry =>
-        decide (entry.term = TERM_ONE)
+        (state.nodes node).currentTerm = TERM_ONE \/
+          (state.nodes node).currentTerm = 2) &&
+      decide (
+        (state.nodes node).role = .leader ->
+          (state.nodes node).currentTerm = TERM_ONE ->
+          node = LEADER) &&
+      decide (
+        (state.nodes node).role = .candidate ->
+          (state.nodes node).currentTerm = 2 /\
+          (state.nodes node).votedFor = some node /\
+          node ∈ (state.nodes node).votesGranted) &&
+      decide (
+        (state.nodes node).role = .leader ->
+          (state.nodes node).currentTerm = 2 ->
+          hasElectionMajority state node) &&
+      (allNodes.all fun voter =>
+        if decide (voter ∈ (state.nodes node).votesGranted) then
+          decide ((state.nodes node).currentTerm = 2) &&
+          decide ((state.nodes voter).votedFor = some node) &&
+          decide ((state.nodes voter).log <+: (state.nodes node).log)
+        else
+          true)
+  let voterChecks :=
+    allNodes.all fun voter =>
+      match (state.nodes voter).votedFor with
+      | none => true
+      | some _ => decide ((state.nodes voter).currentTerm = 2)
   let leaderChecks :=
     decide ((state.nodes LEADER).log.map Entry.txId |>.Nodup) &&
-      (state.nodes LEADER).log.all fun entry =>
-        decide (entry.txId ∈ state.submittedTxIds) &&
-      allNodes.all fun node =>
+      ((state.nodes LEADER).log.all fun entry =>
+        decide (entry.txId ∈ state.submittedTxIds)) &&
+      (allNodes.all fun node =>
         decide ((state.nodes LEADER).sentIndex node <=
           (state.nodes LEADER).log.length) &&
         decide ((state.nodes LEADER).matchIndex node <=
-          (state.nodes LEADER).log.length)
+          (state.nodes LEADER).log.length) &&
+        decide (
+          (state.nodes LEADER).log.take
+              ((state.nodes LEADER).matchIndex node) =
+            (state.nodes node).log.take
+              ((state.nodes LEADER).matchIndex node))) &&
+      decide (
+        (state.nodes LEADER).currentTerm = TERM_ONE ->
+          (state.nodes LEADER).role = .leader) &&
+      decide (
+        (state.nodes LEADER).commitIndex = 0 \/
+          hasMajorityAt state LEADER (state.nodes LEADER).commitIndex) &&
+      decide (Not ((state.nodes LEADER).role = .candidate))
   let networkChecks :=
     allNodes.all fun destination =>
       (state.network destination).all fun message =>
@@ -130,7 +192,11 @@ def stateChecks (state : SimState) : Bool :=
               decide (RequestMatchesLeader state request)
           | .appendEntriesResponse response =>
               decide (ResponseMatchesLeader state response)
-  nodeChecks && leaderChecks && networkChecks
+          | .requestVoteRequest request =>
+              decide (RequestVoteRequestSafe state request)
+          | .requestVoteResponse response =>
+              decide (RequestVoteResponseSafe state response)
+  nodeChecks && voterChecks && leaderChecks && networkChecks
 
 /-- Executably check committed-log monotonicity on one explored edge. -/
 def edgeChecks (before after : SimState) : Bool :=
@@ -174,7 +240,13 @@ def candidateChoices (state : SimState) : List Choice :=
           (state.nodes source).log.length)) ++
   (allNodes.flatMap fun source =>
     allNodes.map fun destination => .receive source destination) ++
-  (allNodes.map fun node => .advanceCommitIndex node)
+  (allNodes.map fun node => .advanceCommitIndex node) ++
+  (allNodes.map fun node => .timeout node) ++
+  (allNodes.flatMap fun source =>
+    allNodes.map fun destination => .requestVote source destination) ++
+  (allNodes.flatMap fun source =>
+    allNodes.map fun destination => .updateTerm source destination) ++
+  (allNodes.map fun node => .becomeLeader node)
 
 /-- Every enabled finite action appears in the simulator candidate list. -/
 theorem candidateChoicesComplete
@@ -190,22 +262,41 @@ theorem candidateChoicesComplete
       simp [candidateChoices]
   | appendEntries source destination batchEnd =>
       refine ⟨.appendEntries source destination batchEnd, ?_, rfl⟩
-      simp [candidateChoices, enabled.2.2]
+      simp [candidateChoices, enabled.2.2.2]
   | receive source destination =>
       refine ⟨.receive source destination, ?_, rfl⟩
       simp [candidateChoices]
   | advanceCommitIndex node =>
       refine ⟨.advanceCommitIndex node, ?_, rfl⟩
       simp [candidateChoices]
+  | timeout node =>
+      refine ⟨.timeout node, ?_, rfl⟩
+      simp [candidateChoices]
+  | requestVote source destination =>
+      refine ⟨.requestVote source destination, ?_, rfl⟩
+      simp [candidateChoices]
+  | updateTerm source destination =>
+      refine ⟨.updateTerm source destination, ?_, rfl⟩
+      simp [candidateChoices]
+  | becomeLeader node =>
+      refine ⟨.becomeLeader node, ?_, rfl⟩
+      simp [candidateChoices]
 
-/-- Randomly select one candidate choice from the complete finite list. -/
+/-- Retain exactly the candidate choices enabled by the authoritative guard. -/
+def enabledChoices (state : SimState) : List Choice :=
+  candidateChoices state |>.filter fun choice =>
+    match materialize state choice with
+    | none => false
+    | some action => decide (Enabled state action)
+
+/-- Randomly select one currently enabled choice from the complete list. -/
 def propose
     (state : SimState)
     (generator : Generator) :
-    Choice × Generator :=
-  let candidates := candidateChoices state
+    Option Choice × Generator :=
+  let candidates := enabledChoices state
   let (index, generator) := generator.choose candidates.length
-  (candidates[index]?.getD (.advanceCommitIndex LEADER), generator)
+  (candidates[index]?, generator)
 
 /-- Counts proposals, accepted actions, rejections, traces, and explored depth. -/
 structure Telemetry where
@@ -213,10 +304,18 @@ structure Telemetry where
   proposedAppend : Nat := 0
   proposedReceive : Nat := 0
   proposedCommit : Nat := 0
+  proposedTimeout : Nat := 0
+  proposedVote : Nat := 0
+  proposedUpdateTerm : Nat := 0
+  proposedBecomeLeader : Nat := 0
   takenClient : Nat := 0
   takenAppend : Nat := 0
   takenReceive : Nat := 0
   takenCommit : Nat := 0
+  takenTimeout : Nat := 0
+  takenVote : Nat := 0
+  takenUpdateTerm : Nat := 0
+  takenBecomeLeader : Nat := 0
   rejected : Nat := 0
   traces : Nat := 0
   steps : Nat := 0
@@ -236,6 +335,15 @@ def Telemetry.proposed
       { telemetry with proposedReceive := telemetry.proposedReceive + 1 }
   | .advanceCommitIndex =>
       { telemetry with proposedCommit := telemetry.proposedCommit + 1 }
+  | .timeout =>
+      { telemetry with proposedTimeout := telemetry.proposedTimeout + 1 }
+  | .requestVote =>
+      { telemetry with proposedVote := telemetry.proposedVote + 1 }
+  | .updateTerm =>
+      { telemetry with proposedUpdateTerm := telemetry.proposedUpdateTerm + 1 }
+  | .becomeLeader =>
+      { telemetry with
+          proposedBecomeLeader := telemetry.proposedBecomeLeader + 1 }
 
 /-- Increment the accepted-action counter for one action family. -/
 def Telemetry.taken
@@ -250,6 +358,15 @@ def Telemetry.taken
       { telemetry with takenReceive := telemetry.takenReceive + 1 }
   | .advanceCommitIndex =>
       { telemetry with takenCommit := telemetry.takenCommit + 1 }
+  | .timeout =>
+      { telemetry with takenTimeout := telemetry.takenTimeout + 1 }
+  | .requestVote =>
+      { telemetry with takenVote := telemetry.takenVote + 1 }
+  | .updateTerm =>
+      { telemetry with takenUpdateTerm := telemetry.takenUpdateTerm + 1 }
+  | .becomeLeader =>
+      { telemetry with
+          takenBecomeLeader := telemetry.takenBecomeLeader + 1 }
 
 /-- Serialize one semantic action as a stable replay line. -/
 def renderAction : SimAction -> String
@@ -261,6 +378,14 @@ def renderAction : SimAction -> String
       s!"receive,{source.val},{destination.val}"
   | .advanceCommitIndex node =>
       s!"commit,{node.val}"
+  | .timeout node =>
+      s!"timeout,{node.val}"
+  | .requestVote source destination =>
+      s!"vote,{source.val},{destination.val}"
+  | .updateTerm source destination =>
+      s!"term,{source.val},{destination.val}"
+  | .becomeLeader node =>
+      s!"leader,{node.val}"
 
 /-- Parse a natural number only when it lies below a given bound. -/
 def parseBounded
@@ -305,6 +430,20 @@ def parseAction (line : String) : Option SimAction := do
   | ["commit", node] =>
       let node <- nodeOfString node
       some (.advanceCommitIndex node)
+  | ["timeout", node] =>
+      let node <- nodeOfString node
+      some (.timeout node)
+  | ["vote", source, destination] =>
+      let source <- nodeOfString source
+      let destination <- nodeOfString destination
+      some (.requestVote source destination)
+  | ["term", source, destination] =>
+      let source <- nodeOfString source
+      let destination <- nodeOfString destination
+      some (.updateTerm source destination)
+  | ["leader", node] =>
+      let node <- nodeOfString node
+      some (.becomeLeader node)
   | _ => none
 
 /-- Write semantic actions in execution order to a replayable trace. -/
@@ -368,7 +507,11 @@ partial def simulateLoop
     if depth = 0 then
       { telemetry with traces := telemetry.traces + 1 }
     else telemetry
-  let (choice, generator) := propose state generator
+  let (choice?, generator) := propose state generator
+  let some choice := choice?
+    | simulateLoop
+        deadlineMs maxDepth generator
+        (initialState : SimState) 0 [] telemetry
   let telemetry := telemetry.proposed choice.family
   let some action := materialize state choice
     | simulateLoop deadlineMs maxDepth generator state depth trace
