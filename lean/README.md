@@ -171,3 +171,10 @@ No theorem in this project claims those 17 open properties.
 3. Prove commit/invalid closure and observation uniqueness.
 4. Derive serializability and `CommittedRwOrderedRealTime`, then replace
    `ProvedBundle` with the complete `PropertyBundle` in the reachable theorem.
+
+## Related CCF Raft experiment
+
+`CCFRaft/` contains a separate static signed-log safety core derived from
+`tla/consensus/ccfraft.tla`. Its certificate-based transition system proves
+leader completeness and the append-only, no-conflicts committed-log safety
+properties. See `CCFRaft/README.md` for its explicit refinement boundary.
