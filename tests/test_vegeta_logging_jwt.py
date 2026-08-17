@@ -74,6 +74,12 @@ class VegetaLoggingJwtTests(unittest.TestCase):
         points.append({"target_rate": 256, "achieved_throughput": 100})
         self.assertTrue(vegeta_logging_jwt.should_stop_sweep(points))
 
+    def test_sweep_rates_use_cube_root_of_two_steps(self):
+        self.assertEqual(
+            [vegeta_logging_jwt.sweep_rate(64, step) for step in range(7)],
+            [64, 81, 102, 128, 161, 203, 256],
+        )
+
     def test_targets_cycle_tokens_without_cartesian_product(self):
         targets = vegeta_logging_jwt.make_targets(
             "https://127.0.0.1:8000",
@@ -109,10 +115,7 @@ class VegetaLoggingJwtTests(unittest.TestCase):
         errors = [
             'Post "https://localhost": EOF',
             'Post "https://localhost": context deadline exceeded',
-            (
-                "dial tcp 0.0.0.0:0->127.0.0.1:8000: "
-                "bind: address already in use"
-            ),
+            ("dial tcp 0.0.0.0:0->127.0.0.1:8000: " "bind: address already in use"),
             "read tcp 127.0.0.1:1234: connection reset by peer",
             "503 SERVICE_UNAVAILABLE",
         ]
@@ -162,9 +165,11 @@ class VegetaLoggingJwtTests(unittest.TestCase):
             vegeta_logging_jwt.plot_sweep(points, path)
 
             svg = path.read_text()
-            self.assertIn("Achieved successful-completion throughput", svg)
-            self.assertIn("Successful request latency", svg)
-            self.assertIn("Target rate (requests/s)", svg)
+            self.assertIn("Achieved rate (req/s)", svg)
+            self.assertIn("Latency (ms, symlog)", svg)
+            self.assertIn("Target rate of test (requests/s)", svg)
+            self.assertIn("Target throughput compared to achieved throughput", svg)
+            self.assertIn("Latency distribution at each target throughput", svg)
             self.assertGreater(os.path.getsize(path), 1000)
 
     @unittest.skipUnless(
@@ -184,6 +189,7 @@ class VegetaLoggingJwtTests(unittest.TestCase):
                 path,
             )
 
+            self.assertIn("No successful responses", path.read_text())
             self.assertGreater(os.path.getsize(path), 1000)
 
     def test_zero_success_point_prints_na_percentiles(self):

@@ -1515,7 +1515,17 @@ if(BUILD_TESTS)
     NAME vegeta_logging_jwt_perf
     PYTHON_SCRIPT ${CMAKE_SOURCE_DIR}/tests/vegeta_logging_jwt.py
     LABEL perf
-    ADDITIONAL_ARGS --max-open-sessions 20000 --max-open-sessions-hard 20010
+    ADDITIONAL_ARGS
+      --worker-threads
+      2
+      --max-open-sessions
+      100000
+      --max-open-sessions-hard
+      100010
+      --snapshot-tx-interval
+      1000000
+      --snapshot-time-interval
+      0s
     CONFIGURATIONS perf
   )
 

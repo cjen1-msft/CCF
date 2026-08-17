@@ -2,6 +2,7 @@
 # Licensed under the Apache 2.0 License.
 
 import base64
+import copy
 import importlib.util
 import json
 import os
@@ -22,9 +23,7 @@ DEFAULT_DURATION_S = 30
 DEFAULT_TIMEOUT_S = 10
 TARGET_BODY_COUNT = 100
 SYNTHETIC_TENANT_ID = UUID("00000000-0000-4000-8000-000000000001")
-SYNTHETIC_ISSUER = (
-    f"https://login.microsoftonline.com/{SYNTHETIC_TENANT_ID}/v2.0"
-)
+SYNTHETIC_ISSUER = f"https://login.microsoftonline.com/{SYNTHETIC_TENANT_ID}/v2.0"
 _TIMESTAMP_RE = re.compile(
     r"^(?P<seconds>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})"
     r"(?:\.(?P<fraction>\d{1,9}))?Z$"
@@ -39,9 +38,9 @@ def _timestamp_ns(value):
     if match is None:
         raise ValueError(f"Invalid Vegeta result timestamp: {value!r}")
 
-    seconds = datetime.strptime(
-        match.group("seconds"), "%Y-%m-%dT%H:%M:%S"
-    ).replace(tzinfo=timezone.utc)
+    seconds = datetime.strptime(match.group("seconds"), "%Y-%m-%dT%H:%M:%S").replace(
+        tzinfo=timezone.utc
+    )
     fraction = (match.group("fraction") or "").ljust(9, "0")
     return int(seconds.timestamp()) * NANOSECONDS_PER_SECOND + int(fraction or 0)
 
@@ -102,9 +101,7 @@ def summarise_results(results, duration_s, target_rate):
     attack_start_ns = min(result[0] for result in parsed)
     attack_end_ns = attack_start_ns + duration_s * NANOSECONDS_PER_SECOND
     launched = [result for result in parsed if result[0] < attack_end_ns]
-    successful = [
-        result for result in launched if result[2] == 200 and not result[3]
-    ]
+    successful = [result for result in launched if result[2] == 200 and not result[3]]
     successful_in_window = [
         result for result in successful if result[0] + result[1] <= attack_end_ns
     ]
@@ -134,9 +131,7 @@ def summarise_results(results, duration_s, target_rate):
         ),
         "successful_latencies_ns": latencies,
         "latency_percentiles_ms": {
-            name: (
-                percentile_ns / 1_000_000 if percentile_ns is not None else None
-            )
+            name: (percentile_ns / 1_000_000 if percentile_ns is not None else None)
             for name, percentile_ns in (
                 ("p50", _percentile(latencies, 0.50)),
                 ("p90", _percentile(latencies, 0.90)),
@@ -153,6 +148,14 @@ def should_stop_sweep(points):
         point["achieved_throughput"] <= point["target_rate"] * 0.5
         for point in points[-2:]
     )
+
+
+def sweep_rate(initial_rate, step):
+    if initial_rate <= 0:
+        raise ValueError("initial_rate must be positive")
+    if step < 0:
+        raise ValueError("step must be non-negative")
+    return round(initial_rate * 2 ** (step / 3))
 
 
 def make_targets(base_url, bodies, tokens):
@@ -207,57 +210,66 @@ def plot_sweep(points, output_path):
     import matplotlib.pyplot as plt
     import numpy as np
 
-    positive_latencies_ms = [
+    matplotlib.rcParams["svg.fonttype"] = "none"
+    columns = np.arange(len(points))
+    target_rates = [point["target_rate"] for point in points]
+    achieved = [point["achieved_throughput"] for point in points]
+    successful_latencies_ms = [
         latency_ns / 1_000_000
         for point in points
         for latency_ns in point["successful_latencies_ns"]
         if latency_ns > 0
     ]
-
-    matplotlib.rcParams["svg.fonttype"] = "none"
-    rows = np.arange(len(points))
-    target_rates = [point["target_rate"] for point in points]
-    achieved = [point["achieved_throughput"] for point in points]
-    minimum_latency = min(positive_latencies_ms, default=1)
-    maximum_latency = max(positive_latencies_ms, default=10_000)
-    if minimum_latency == maximum_latency:
-        minimum_latency /= 2
-        maximum_latency *= 2
-    bins = np.geomspace(minimum_latency, maximum_latency, 40)
+    maximum_latency_ms = max(1, max(successful_latencies_ms, default=1))
+    bins = np.concatenate(([0], np.geomspace(0.1, maximum_latency_ms, 100)))
 
     figure, (throughput_axis, latency_axis) = plt.subplots(
-        1, 2, figsize=(12, max(4, len(points) * 0.8)), sharey=True
+        2, 1, figsize=(9, 9), sharex=True
     )
-    throughput_axis.plot(achieved, rows, marker="o", label="Measured")
+    throughput_axis.plot(columns, achieved, marker="o", label="Measured")
     throughput_axis.plot(
-        target_rates, rows, linestyle="--", color="grey", label="Ideal"
+        columns, target_rates, linestyle="--", color="grey", label="Ideal"
     )
-    throughput_axis.set_xlabel("Achieved successful-completion throughput (requests/s)")
-    throughput_axis.set_ylabel("Target rate (requests/s)")
-    throughput_axis.set_yticks(rows, [str(rate) for rate in target_rates])
-    throughput_axis.grid(axis="x", alpha=0.3)
+    throughput_axis.set_yscale("symlog", base=2, linthresh=min(target_rates))
+    throughput_axis.set_ylabel("Achieved rate (req/s)")
+    throughput_axis.set_title("Target throughput compared to achieved throughput")
+    throughput_axis.grid(axis="y", alpha=0.3)
     throughput_axis.legend()
 
-    for row, point in zip(rows, points):
+    for column, point in zip(columns, points):
         latencies_ms = [
             latency_ns / 1_000_000
             for latency_ns in point["successful_latencies_ns"]
             if latency_ns > 0
         ]
         if not latencies_ms:
+            latency_axis.text(
+                column,
+                maximum_latency_ms / 2,
+                "No successful responses",
+                ha="center",
+                va="center",
+                rotation=90,
+                fontsize="small",
+            )
             continue
         density, edges = np.histogram(latencies_ms, bins=bins, density=True)
         if density.max() > 0:
-            density = density / density.max() * 0.7
-        centres = np.sqrt(edges[:-1] * edges[1:])
-        latency_axis.fill_between(
-            centres, row, row + density, alpha=0.55, linewidth=0
+            density = density / density.max() * 0.9
+        centres = (edges[:-1] + edges[1:]) / 2
+        latency_axis.fill_betweenx(
+            centres, column, column + density, alpha=0.55, linewidth=0
         )
-        latency_axis.plot(centres, row + density, linewidth=1)
+        latency_axis.plot(column + density, centres, linewidth=1)
 
-    latency_axis.set_xscale("log")
-    latency_axis.set_xlabel("Successful request latency (ms, log scale)")
-    latency_axis.grid(axis="x", alpha=0.3)
+    latency_axis.set_ylim(0, maximum_latency_ms)
+    latency_axis.set_yscale("symlog", base=10, linthresh=0.1)
+    latency_axis.set_ylabel("Latency (ms, symlog)")
+    latency_axis.set_xlabel("Target rate of test (requests/s)")
+    latency_axis.set_xticks(columns, [str(rate) for rate in target_rates])
+    latency_axis.tick_params(axis="x", labelrotation=45)
+    latency_axis.set_title("Latency distribution at each target throughput")
+    latency_axis.grid(axis="y", alpha=0.3)
     figure.tight_layout()
     figure.savefig(output_path, format="svg")
     plt.close(figure)
@@ -301,9 +313,7 @@ def _decode_results(raw_path, decoded_path):
 
 def _serialisable_point(point):
     return {
-        key: value
-        for key, value in point.items()
-        if key != "successful_latencies_ns"
+        key: value for key, value in point.items() if key != "successful_latencies_ns"
     }
 
 
@@ -366,9 +376,8 @@ def _run_attack(
     target_rate,
     duration_s,
     timeout_s,
-    source_address,
 ):
-    point_dir.mkdir()
+    point_dir.mkdir(exist_ok=True)
     raw_path = point_dir / "results.bin"
     report_path = point_dir / "report.txt"
     decoded_path = point_dir / "results.json"
@@ -382,7 +391,6 @@ def _run_attack(
             f"-timeout={timeout_s}s",
             "-http2=false",
             "-max-body=0",
-            f"-laddr={source_address}",
             f"-root-certs={service_cert_path}",
             f"-targets={target_path}",
             f"-output={raw_path}",
@@ -426,9 +434,11 @@ def _jwt_preflight(base_url, service_cert_path, token):
             )
 
 
-def run_benchmark(network, duration_s, initial_rate, timeout_s):
+def run_benchmark(args):
+    import infra.e2e_args
     import infra.interfaces
     import infra.jwt_issuer
+    import infra.network
 
     if shutil.which("vegeta") is None:
         raise RuntimeError("vegeta is required but was not found on PATH")
@@ -439,46 +449,61 @@ def run_benchmark(network, duration_s, initial_rate, timeout_s):
         alg=infra.jwt_issuer.JwtAlg.RS256,
     )
     issuer.auto_refresh = False
-    issuer.register(network)
-    token = issuer.issue_jwt(claims={"tid": str(SYNTHETIC_TENANT_ID)})
-
-    primary, _ = network.find_primary()
-    base_url = "https://" + infra.interfaces.make_address(
-        primary.get_public_rpc_host(), primary.get_public_rpc_port()
-    )
-    _jwt_preflight(base_url, network.cert_path, token)
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    artifact_dir = Path(network.common_dir) / f"vegeta_logging_jwt_{timestamp}"
-    artifact_dir.mkdir(mode=0o700)
-    target_path = artifact_dir / "targets.json"
+    common_dir = Path(infra.network.get_common_folder_name(args.workspace, args.label))
+    artifact_dir = common_dir / f"vegeta_logging_jwt_{timestamp}"
+    artifact_dir.mkdir(mode=0o700, parents=True)
     bodies = [
         {"id": index, "msg": f"Vegeta Logging JWT message {index}"}
         for index in range(TARGET_BODY_COUNT)
     ]
-    write_targets(target_path, make_targets(base_url, bodies, [token]))
+    (artifact_dir / "bodies.json").write_text(
+        json.dumps(bodies, indent=2) + "\n", encoding="utf-8"
+    )
 
     points = []
-    target_rate = initial_rate
     termination_reason = None
     summary_path = artifact_dir / "summary.json"
     plot_path = artifact_dir / "sweep.svg"
     while termination_reason is None:
-        point_dir = artifact_dir / f"rate_{target_rate}"
-        point_number = len(points) + 1
-        source_address = f"127.0.{point_number // 255}.{point_number % 255}"
-        results = _run_attack(
-            target_path,
-            network.cert_path,
-            point_dir,
-            target_rate,
-            duration_s,
-            timeout_s,
-            source_address,
-        )
-        point = summarise_results(results, duration_s, target_rate)
-        point["source_address"] = source_address
+        step = len(points)
+        target_rate = sweep_rate(args.initial_rate, step)
+        point_name = f"step_{step:02d}_rate_{target_rate}"
+        point_dir = artifact_dir / point_name
+        point_dir.mkdir()
+        point_args = copy.deepcopy(args)
+        point_args.label = f"{args.label}_{point_name}"
+        point_args.nodes = infra.e2e_args.min_nodes(point_args, f=0)
+        with infra.network.network(
+            point_args.nodes,
+            point_args.binary_dir,
+            point_args.debug_nodes,
+            pdb=point_args.pdb,
+            library_directory=point_args.library_dir,
+        ) as network:
+            network.start_and_open(point_args)
+            issuer.register(network)
+            token = issuer.issue_jwt(claims={"tid": str(SYNTHETIC_TENANT_ID)})
+            primary, _ = network.find_primary()
+            base_url = "https://" + infra.interfaces.make_address(
+                primary.get_public_rpc_host(), primary.get_public_rpc_port()
+            )
+            _jwt_preflight(base_url, network.cert_path, token)
+            target_path = point_dir / "targets.json"
+            write_targets(target_path, make_targets(base_url, bodies, [token]))
+            results = _run_attack(
+                target_path,
+                network.cert_path,
+                point_dir,
+                target_rate,
+                args.duration_s,
+                args.request_timeout_s,
+            )
+
+        point = summarise_results(results, args.duration_s, target_rate)
         point["artifacts"] = {
+            "targets": str(target_path),
             "raw_results": str(point_dir / "results.bin"),
             "report": str(point_dir / "report.txt"),
             "decoded_results": str(point_dir / "results.json"),
@@ -488,11 +513,7 @@ def run_benchmark(network, duration_s, initial_rate, timeout_s):
             termination_reason = "generator_under_delivery"
         elif should_stop_sweep(points):
             termination_reason = "two_consecutive_half_rate_points"
-        else:
-            target_rate *= 2
-        _write_summary(
-            summary_path, points, termination_reason or "sweep_in_progress"
-        )
+        _write_summary(summary_path, points, termination_reason or "sweep_in_progress")
 
     plot_sweep(points, plot_path)
     _write_summary(summary_path, points, termination_reason)
@@ -506,22 +527,7 @@ def run_benchmark(network, duration_s, initial_rate, timeout_s):
 
 
 def run(args):
-    import infra.network
-
-    with infra.network.network(
-        args.nodes,
-        args.binary_dir,
-        args.debug_nodes,
-        pdb=args.pdb,
-        library_directory=args.library_dir,
-    ) as network:
-        network.start_and_open(args)
-        run_benchmark(
-            network,
-            duration_s=args.duration_s,
-            initial_rate=args.initial_rate,
-            timeout_s=args.request_timeout_s,
-        )
+    run_benchmark(args)
 
 
 if __name__ == "__main__":
@@ -530,15 +536,12 @@ if __name__ == "__main__":
     def add(parser):
         parser.add_argument("--duration-s", type=int, default=DEFAULT_DURATION_S)
         parser.add_argument("--initial-rate", type=int, default=DEFAULT_INITIAL_RATE)
-        parser.add_argument(
-            "--request-timeout-s", type=int, default=DEFAULT_TIMEOUT_S
-        )
+        parser.add_argument("--request-timeout-s", type=int, default=DEFAULT_TIMEOUT_S)
 
     cli_args = infra.e2e_args.cli_args(add=add)
     cli_args.package = "samples/apps/logging/logging"
     cli_args.max_open_sessions = int(cli_args.max_open_sessions)
     cli_args.max_open_sessions_hard = int(cli_args.max_open_sessions_hard)
-    cli_args.nodes = infra.e2e_args.max_nodes(cli_args, f=0)
     cli_args.initial_member_count = 1
     cli_args.sig_ms_interval = 100
     run(cli_args)
