@@ -1965,7 +1965,8 @@ theorem handleAppendEntriesResponsePreserves
       · simpa [updateIndex, Function.update, nodeEq] using
           core.matchIndexDescribesPrefix node
   · split at handled
-    · simp at handled
+    · rename_i failure
+      simp at handled
       subst after
       constructor
       · rfl
@@ -1974,14 +1975,36 @@ theorem handleAppendEntriesResponsePreserves
       · rfl
       · rfl
       · rfl
-      · exact core.sentIndicesBounded
-      · exact core.matchIndicesBounded
+      · intro node
+        by_cases nodeEq : node = response.source
+        · subst node
+          simp only [updateIndex_same]
+          change
+            max
+                (min
+                  (findHighestPossibleMatch
+                    (system.nodes LEADER).log
+                    response.lastLogIndex
+                    response.term)
+                  ((system.nodes LEADER).sentIndex response.source))
+                ((system.nodes LEADER).matchIndex response.source) <=
+              (system.nodes LEADER).log.length
+          exact
+            max_le
+              (le_trans
+                (min_le_right _ _)
+                (core.sentIndicesBounded response.source))
+              (core.matchIndicesBounded response.source)
+        · simpa [updateIndex, Function.update, nodeEq] using
+            core.sentIndicesBounded node
+      · intro node
+        exact core.matchIndicesBounded node
       · intro node
         exact Nat.le_refl _
-      · exact core.matchIndexDescribesPrefix
+      · intro node
+        exact core.matchIndexDescribesPrefix node
     · split at handled
-      · rename_i failure
-        simp at handled
+      · simp at handled
         subst after
         constructor
         · rfl
@@ -1990,35 +2013,27 @@ theorem handleAppendEntriesResponsePreserves
         · rfl
         · rfl
         · rfl
-        · intro node
-          by_cases nodeEq : node = response.source
-          · subst node
-            simp only [updateIndex_same]
-            change
-              max
-                  (min
-                    (findHighestPossibleMatch
-                      (system.nodes LEADER).log
-                      response.lastLogIndex
-                      response.term)
-                    ((system.nodes LEADER).sentIndex response.source))
-                  ((system.nodes LEADER).matchIndex response.source) <=
-                (system.nodes LEADER).log.length
-            exact
-              max_le
-                (le_trans
-                  (min_le_right _ _)
-                  (core.sentIndicesBounded response.source))
-                (core.matchIndicesBounded response.source)
-          · simpa [updateIndex, Function.update, nodeEq] using
-              core.sentIndicesBounded node
-        · intro node
-          exact core.matchIndicesBounded node
+        · exact core.sentIndicesBounded
+        · exact core.matchIndicesBounded
         · intro node
           exact Nat.le_refl _
-        · intro node
-          exact core.matchIndexDescribesPrefix node
-      · contradiction
+        · exact core.matchIndexDescribesPrefix
+      · split at handled
+        · simp at handled
+          subst after
+          constructor
+          · rfl
+          · rfl
+          · rfl
+          · rfl
+          · rfl
+          · rfl
+          · exact core.sentIndicesBounded
+          · exact core.matchIndicesBounded
+          · intro node
+            exact Nat.le_refl _
+          · exact core.matchIndexDescribesPrefix
+        · contradiction
 
 /-- Removing one selected message preserves safety of every remaining message. -/
 theorem queuedMessagesSafeAfterRemove
@@ -2409,19 +2424,22 @@ theorem handleRequestVoteResponsePreserves
     subst after
     exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, Or.inl rfl⟩
   · split at handled
-    · rename_i currentCandidate
-      split at handled
-      · rename_i granted
-        simp at handled
-        subst after
-        exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl,
-          Or.inr ⟨granted, currentCandidate.2, rfl⟩⟩
-      · simp at handled
-        subst after
-        exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, Or.inl rfl⟩
     · simp at handled
       subst after
       exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, Or.inl rfl⟩
+    · rename_i candidateRole
+      split at handled
+      · rename_i currentTerm
+        split at handled
+        · rename_i granted
+          simp at handled
+          subst after
+          exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+            Or.inr ⟨granted, by simpa using candidateRole, rfl⟩⟩
+        · simp at handled
+          subst after
+          exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, Or.inl rfl⟩
+      · contradiction
 
 /-- A successful newer-message lookup identifies the queued message and order. -/
 theorem newerMessageSound
@@ -2734,9 +2752,6 @@ theorem receivePreservesSystemInductiveInvariant
         split at receiveResult
         · contradiction
         · rename_i destinationMatches
-          split at receiveResult
-          · contradiction
-          rename_i notNewer
           split at receiveResult
           · rename_i request
             split at receiveResult
@@ -4883,9 +4898,6 @@ theorem receiveCommittedLogMonotonicity
         · contradiction
         · rename_i destinationMatches
           split at receiveResult
-          · contradiction
-          rename_i notNewer
-          split at receiveResult
           · rename_i request
             split at receiveResult
             · contradiction
@@ -5161,9 +5173,7 @@ theorem receiveFrame
       · contradiction
       · split at resultEq
         · contradiction
-        · split at resultEq
-          · contradiction
-          split at resultEq <;> split at resultEq
+        · split at resultEq <;> split at resultEq
           · contradiction
           · have stateEq := Option.some.inj resultEq
             rw [← stateEq]

@@ -531,8 +531,6 @@ def handleAppendEntriesResponse?
             state.matchIndex
             response.source
             (max (state.matchIndex response.source) response.lastLogIndex) }
-  else if response.term < state.currentTerm then
-    some state
   else if response.success = false then
     let possible :=
       findHighestPossibleMatch state.log response.lastLogIndex response.term
@@ -545,6 +543,10 @@ def handleAppendEntriesResponse?
             (max
               (min possible (state.sentIndex response.source))
               (state.matchIndex response.source)) }
+  else if state.role != .leader then
+    some state
+  else if response.term < state.currentTerm then
+    some state
   else
     none
 
@@ -591,7 +593,9 @@ def handleRequestVoteResponse?
     Option (NodeState TxId) :=
   if response.term < state.currentTerm then
     some state
-  else if response.term = state.currentTerm /\ state.role = .candidate then
+  else if state.role != .candidate then
+    some state
+  else if response.term = state.currentTerm then
     if response.voteGranted then
       some
         { state with
@@ -599,7 +603,7 @@ def handleRequestVoteResponse?
     else
       some state
   else
-    some state
+    none
 
 /-- Build a RequestVote message from candidate-local state. -/
 def makeRequestVoteRequest
@@ -644,8 +648,6 @@ def handleReceive?
   | none => none
   | some (message, remaining) =>
       if message.destination != destination then
-        none
-      else if (state.nodes destination).currentTerm < message.term then
         none
       else
         match message with

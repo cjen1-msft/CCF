@@ -130,10 +130,10 @@ def timedOutWithHeartbeat : RaftState :=
 def newerNackQueued : RaftState :=
   next timedOutWithHeartbeat (.receive LEADER followerOne)
 
-/-- A newer-term NACK must update node zero's term before it can be consumed. -/
-theorem newerNackRequiresTermUpdate :
+/-- An overloaded NACK may be handled or may first trigger `UpdateTerm`. -/
+theorem newerNackMatchesTlaNondeterminism :
     Enabled newerNackQueued (.updateTerm followerOne LEADER) /\
-      Not (Enabled newerNackQueued (.receive followerOne LEADER)) := by
+      Enabled newerNackQueued (.receive followerOne LEADER) := by
   decide
 
 /-- A stale successful ACK is consumed as an ignored response. -/
@@ -149,7 +149,136 @@ theorem staleSuccessAckIsDiscarded :
         source := followerTwo
         destination := followerOne }
     handleAppendEntriesResponse? nodeState response = some nodeState := by
+  simp [
+    handleAppendEntriesResponse?,
+    initialNodeState,
+    followerOne,
+    LEADER,
+    TERM_ONE
+  ]
+
+/-- A stale NACK still backs up `sentIndex`; its term is match metadata. -/
+theorem staleNackIsHandled :
+    let nodeState : NodeState TxId :=
+      { initialNodeState (TxId := TxId) LEADER with
+        role := .leader
+        currentTerm := 2
+        log :=
+          [{ term := TERM_ONE, txId := 0 },
+            { term := TERM_ONE, txId := 1 }]
+        sentIndex :=
+          updateIndex (fun _ => 0) followerTwo 2 }
+    let response : AppendEntriesResponse :=
+      { term := TERM_ONE
+        success := false
+        lastLogIndex := 1
+        source := followerTwo
+        destination := LEADER }
+    match handleAppendEntriesResponse? nodeState response with
+    | none => False
+    | some after => after.sentIndex followerTwo = 1 := by
+  simp [
+    handleAppendEntriesResponse?,
+    initialNodeState,
+    findHighestPossibleMatch,
+    updateIndex,
+    TERM_ONE
+  ]
+  native_decide
+
+/-- A candidate cannot consume a RequestVote response from a future term. -/
+theorem futureVoteResponseRequiresTermUpdate :
+    let candidate : NodeState TxId :=
+      { initialNodeState (TxId := TxId) followerOne with
+        role := .candidate }
+    let response : RequestVoteResponse :=
+      { term := 2
+        voteGranted := true
+        source := followerTwo
+        destination := followerOne }
+    handleRequestVoteResponse? candidate response = none := by
+  simp [handleRequestVoteResponse?, initialNodeState, TERM_ONE]
+
+/-- A non-leader may discard a future successful AppendEntries response. -/
+theorem futureAckDroppedWhenNotLeader :
+    let follower : NodeState TxId :=
+      initialNodeState (TxId := TxId) followerOne
+    let response : AppendEntriesResponse :=
+      { term := 2
+        success := true
+        lastLogIndex := 0
+        source := followerTwo
+        destination := followerOne }
+    match handleAppendEntriesResponse? follower response with
+    | none => False
+    | some after =>
+        after.role = .follower /\
+          after.currentTerm = TERM_ONE := by
+  simp [
+    handleAppendEntriesResponse?,
+    initialNodeState,
+    followerOne,
+    LEADER,
+    TERM_ONE
+  ]
+
+/-- A current leader cannot consume a successful ACK from a future term. -/
+theorem futureAckRequiresTermUpdateAtLeader :
+    let leader : NodeState TxId :=
+      initialNodeState (TxId := TxId) LEADER
+    let response : AppendEntriesResponse :=
+      { term := 2
+        success := true
+        lastLogIndex := 0
+        source := followerTwo
+        destination := LEADER }
+    handleAppendEntriesResponse? leader response = none := by
   simp [handleAppendEntriesResponse?, initialNodeState, TERM_ONE]
+
+/-- A non-candidate discards a RequestVote response, even from a future term. -/
+theorem futureVoteResponseDroppedWhenNotCandidate :
+    let follower : NodeState TxId :=
+      initialNodeState (TxId := TxId) followerOne
+    let response : RequestVoteResponse :=
+      { term := 2
+        voteGranted := true
+        source := followerTwo
+        destination := followerOne }
+    match handleRequestVoteResponse? follower response with
+    | none => False
+    | some after =>
+        after.role = .follower /\
+          after.currentTerm = TERM_ONE := by
+  simp [
+    handleRequestVoteResponse?,
+    initialNodeState,
+    followerOne,
+    LEADER,
+    TERM_ONE
+  ]
+
+/-- A stale RequestVote request is consumed and denied in the current term. -/
+theorem staleVoteRequestIsDenied :
+    let voter : NodeState TxId :=
+      { initialNodeState (TxId := TxId) followerTwo with
+        currentTerm := 2 }
+    let request : RequestVoteRequest :=
+      { term := TERM_ONE
+        lastLogTerm := 0
+        lastLogIndex := 0
+        source := followerOne
+        destination := followerTwo }
+    match handleRequestVoteRequest? voter request with
+    | none => False
+    | some (_, response) =>
+        response.term = 2 /\
+          response.voteGranted = false := by
+  simp [
+    handleRequestVoteRequest?,
+    initialNodeState,
+    voteLogUpToDate,
+    TERM_ONE
+  ]
 
 /-- Candidate one sends its first RequestVote request. -/
 def voteRequestThree : RaftState :=
