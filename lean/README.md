@@ -174,7 +174,8 @@ No theorem in this project claims those 17 open properties.
 
 ## Related CCF Raft experiment
 
-`CCFRaft/` contains a separate static signed-log safety core derived from
-`tla/consensus/ccfraft.tla`. Its certificate-based transition system proves
-leader completeness and the append-only, no-conflicts committed-log safety
-properties. See `CCFRaft/README.md` for its explicit refinement boundary.
+`CCFRaft/` incrementally translates `tla/consensus/ccfraft.tla` into executable
+Lean. Slice 1 directly models the five-node, single-term AppendEntries flow and
+proves committed-log prefix and monotonicity safety without certificate guards
+or semantic ghost state. See `CCFRaft/README.md` and
+`CCFRaft/CORRESPONDENCE.md`.
