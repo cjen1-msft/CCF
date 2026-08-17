@@ -10,10 +10,12 @@ namespace CCFRaft
 variable {TxId : Type}
 variable [DecidableEq TxId]
 
+/-- Every list is a prefix of itself. -/
 theorem prefixRefl {Alpha : Type} (values : List Alpha) :
     values <+: values :=
   ⟨[], by simp⟩
 
+/-- Taking the length of a known prefix recovers that prefix. -/
 theorem prefixEqTake
     {Alpha : Type}
     {head values : List Alpha}
@@ -22,6 +24,7 @@ theorem prefixEqTake
   rw [List.prefix_iff_eq_take] at isPrefix
   exact isPrefix.symm
 
+/-- Two lists agree through any index lying inside their shared prefix. -/
 theorem takeEqOfPrefix
     {Alpha : Type}
     {left right : List Alpha}
@@ -32,6 +35,7 @@ theorem takeEqOfPrefix
   rw [List.prefix_iff_eq_take] at isPrefix
   rw [isPrefix, List.take_take, Nat.min_eq_left within]
 
+/-- Two prefixes of the same list are prefixes of each other. -/
 theorem prefixesComparable
     {Alpha : Type}
     {left right common : List Alpha}
@@ -59,6 +63,7 @@ theorem prefixesComparable
     have takenPrefix := List.take_prefix right.length left
     rwa [rightEq] at takenPrefix
 
+/-- A successful one-based lookup proves the index lies within the log. -/
 theorem entryAtSomeIndexBound
     {log : List (Entry TxId)}
     {index : Nat}
@@ -73,6 +78,7 @@ theorem entryAtSomeIndexBound
     rcases found with ⟨within, _⟩
     omega
 
+/-- Every supporting invariant holds in the empty initial state. -/
 theorem initialCoreInvariant :
     CoreInvariant (initialState : State TxId) := by
   constructor
@@ -88,6 +94,7 @@ theorem initialCoreInvariant :
   · simp [RolesFixed, initialState, initialNodeState]
   · simp [CurrentTermsAreOne, initialState, initialNodeState]
 
+/-- A node's committed log is a prefix of the leader log. -/
 theorem committedLogPrefixLeader
     {state : State TxId}
     (core : CoreInvariant state)
@@ -100,6 +107,7 @@ theorem committedLogPrefixLeader
       (state.nodes node).log).trans
       (core.logsPrefixLeader node)
 
+/-- The core invariant implies pairwise committed-log prefix comparability. -/
 theorem coreCommittedLogsPrefix
     {state : State TxId}
     (core : CoreInvariant state) :
@@ -110,6 +118,7 @@ theorem coreCommittedLogsPrefix
       (committedLogPrefixLeader core left)
       (committedLogPrefixLeader core right)
 
+/-- Prefix agreement with the leader implies Raft log matching. -/
 theorem coreLogMatching
     {state : State TxId}
     (core : CoreInvariant state) :
@@ -124,6 +133,7 @@ theorem coreLogMatching
     _ = (state.nodes right).log.take index :=
       (takeEqOfPrefix (core.logsPrefixLeader right) rightBound).symm
 
+/-- Log matching makes equal index and term imply equal transaction ID. -/
 theorem coreSameIndexSameTermSameTxId
     {state : State TxId}
     (core : CoreInvariant state) :
@@ -168,6 +178,7 @@ theorem coreSameIndexSameTermSameTxId
   rw [leftTakeFound, rightTakeFound] at lookupEqual
   exact congrArg Entry.txId (Option.some.inj lookupEqual)
 
+/-- Since every entry is in term one, terms are monotonic along every log. -/
 theorem coreMonoLog
     {state : State TxId}
     (core : CoreInvariant state) :
@@ -194,6 +205,7 @@ theorem coreMonoLog
     core.termsAreOne node laterEntry laterMember
   ]
 
+/-- Under fixed roles, any node in the leader role is node zero. -/
 theorem roleLeaderImpliesNodeLeader
     {state : State TxId}
     (core : CoreInvariant state)
@@ -206,6 +218,7 @@ theorem roleLeaderImpliesNodeLeader
   · simp [nodeEq] at fixed
     exact False.elim (Role.noConfusion (fixed.symm.trans isLeader))
 
+/-- Appending an entry does not change terms at existing indices. -/
 theorem termAtAppendOfBound
     (log : List (Entry TxId))
     (entry : Entry TxId)
@@ -218,6 +231,7 @@ theorem termAtAppendOfBound
   · simp only [indexZero, ↓reduceIte]
     rw [List.getElem?_append_left (by omega)]
 
+/-- An old request snapshot remains valid when the leader appends later entries. -/
 theorem requestMatchesLeaderAfterAppend
     {state : State TxId}
     {entry : Entry TxId}
@@ -251,6 +265,7 @@ theorem requestMatchesLeaderAfterAppend
     ]
     exact entries
 
+/-- A fresh client request preserves every supporting invariant. -/
 theorem clientRequestPreservesCoreInvariant
     (state : State TxId)
     (node : Node)
@@ -356,6 +371,7 @@ theorem clientRequestPreservesCoreInvariant
     · simpa [next, updateNode, Function.update, candidateEq] using
         core.currentTermsAreOne candidate
 
+/-- A bounded AppendEntries slice has exactly `batchEnd - previousIndex` entries. -/
 theorem messageEntriesLength
     (log : List (Entry TxId))
     {previousIndex batchEnd : Nat}
@@ -371,6 +387,7 @@ theorem messageEntriesLength
   ]
   omega
 
+/-- A request built by an enabled leader send is a valid leader-log snapshot. -/
 theorem makeAppendEntriesRequestMatchesLeader
     {state : State TxId}
     {source destination : Node}
@@ -423,6 +440,7 @@ theorem makeAppendEntriesRequestMatchesLeader
         (i := previousIndex)
         (j := batchEnd - previousIndex))
 
+/-- A message after enqueue was either already present or is the new message. -/
 theorem memEnqueueNoDup
     (network : Node -> List (Message TxId))
     (newMessage message : Message TxId)
@@ -446,6 +464,7 @@ theorem memEnqueueNoDup
         simpa [updateQueue, Function.update, destinationEq] using member
       exact Or.inl oldMember
 
+/-- Selecting a source message returns that source and preserves queue membership. -/
 theorem takeFirstFromSound
     {source : Node}
     {queue remaining : List (Message TxId)}
@@ -486,6 +505,7 @@ theorem takeFirstFromSound
             simp
           · exact List.mem_cons_of_mem _ (sound.2.2 message tailMember)
 
+/-- Every member of a prefix is also a member of the larger list. -/
 theorem memOfPrefix
     {Alpha : Type}
     {left right : List Alpha}
@@ -497,6 +517,7 @@ theorem memOfPrefix
   rw [← rightEq]
   simp [member]
 
+/-- Applying a safe request extension still yields a prefix of the leader log. -/
 theorem requestExtensionPrefixLeader
     {state : State TxId}
     {node : Node}
@@ -517,6 +538,7 @@ theorem requestExtensionPrefixLeader
   rw [← requestSafe.2.2.2.2.2.2]
   exact requestPrefix
 
+/-- Facts guaranteed after successfully handling an AppendEntries request. -/
 structure RequestHandlerPost
     (system : State TxId)
     (before after : NodeState TxId)
@@ -533,6 +555,7 @@ structure RequestHandlerPost
   matchIndexUnchanged : after.matchIndex = before.matchIndex
   responseSafe : ResponseMatchesLeader system response
 
+/-- Raising a commit frontier with `max` extends the old committed prefix. -/
 theorem takeMaxCommitMonotonic
     (log : List (Entry TxId))
     {oldCommit leaderCommit : Nat}
@@ -547,6 +570,7 @@ theorem takeMaxCommitMonotonic
       (log.take (max oldCommit (min log.length leaderCommit)))
   simpa [List.take_take, Nat.min_eq_left oldLe] using taken
 
+/-- Every entry carried by a safe request belongs to term one. -/
 theorem requestEntriesTermOne
     {system : State TxId}
     {request : AppendEntriesRequest TxId}
@@ -569,6 +593,7 @@ theorem requestEntriesTermOne
     exact inCombined
   exact core.termsAreOne LEADER entry (List.mem_of_mem_take inTaken)
 
+/-- Two term-one logs cannot trigger the differing-term conflict branch. -/
 theorem noReachableTermConflict
     {system : State TxId}
     {destination : Node}
@@ -617,6 +642,7 @@ theorem noReachableTermConflict
   apply conflict.2
   exact leftTerms'.trans rightTerms'.symm
 
+/-- The NACK match search never returns an index past the searched log. -/
 theorem findHighestPossibleMatchBoundedByLog
     (log : List (Entry TxId))
     (index term : Nat) :
@@ -658,6 +684,7 @@ theorem findHighestPossibleMatchBoundedByLog
   change values.foldl choose 0 <= log.length
   exact foldBounded values 0 allBounded (by omega)
 
+/-- A valid nonzero index in an all-term-one log has term one. -/
 theorem termAtEqTermOne
     {log : List (Entry TxId)}
     {index : Nat}
@@ -672,6 +699,7 @@ theorem termAtEqTermOne
   simp
   exact termsAreOne _ (List.getElem_mem (by omega))
 
+/-- A NACK generated from safe state has metadata bounded by the leader log. -/
 theorem failureResponseSafe
     {system : State TxId}
     {destination : Node}
@@ -752,6 +780,7 @@ theorem failureResponseSafe
         le_trans matchBound destinationPrefix.length_le
       ]
 
+/-- Conflict truncation returns `none` throughout this single-term slice. -/
 theorem conflictAppendEntriesRequestDisabled
     {system : State TxId}
     {destination : Node}
@@ -762,6 +791,7 @@ theorem conflictAppendEntriesRequestDisabled
   unfold conflictAppendEntriesRequest?
   simp [noReachableTermConflict core requestSafe]
 
+/-- Every successful request-handler branch establishes the common postconditions. -/
 theorem handleAppendEntriesRequestPreserves
     {system : State TxId}
     {destination : Node}
@@ -950,6 +980,7 @@ theorem handleAppendEntriesRequestPreserves
             exact impossible.elim
     · contradiction
 
+/-- Facts guaranteed after the leader handles an AppendEntries response. -/
 structure ResponseHandlerPost
     (system : State TxId)
     (before after : NodeState TxId)
@@ -965,6 +996,7 @@ structure ResponseHandlerPost
     forall node,
       after.matchIndex node <= (system.nodes LEADER).log.length
 
+/-- The response-side match search is bounded by the leader log. -/
 theorem findHighestPossibleMatchBounded
     (log : List (Entry TxId))
     (index term : Nat) :
@@ -1006,6 +1038,7 @@ theorem findHighestPossibleMatchBounded
   change values.foldl choose 0 <= log.length
   exact foldBounded values 0 allBounded (by omega)
 
+/-- ACK and NACK handling preserve logs and keep replication indices bounded. -/
 theorem handleAppendEntriesResponsePreserves
     {system : State TxId}
     {response : AppendEntriesResponse}
@@ -1078,6 +1111,7 @@ theorem handleAppendEntriesResponsePreserves
         exact core.matchIndicesBounded node
     · contradiction
 
+/-- Removing one selected message preserves safety of every remaining message. -/
 theorem queuedMessagesSafeAfterRemove
     {state : State TxId}
     {source destination : Node}
@@ -1111,6 +1145,7 @@ theorem queuedMessagesSafeAfterRemove
       core.queuedRequestsMatchLeader
         queuedDestination message oldMember
 
+/-- Sending one entry or heartbeat preserves the core invariant. -/
 theorem appendEntriesPreservesCoreInvariant
     (state : State TxId)
     (source destination : Node)
@@ -1215,6 +1250,7 @@ theorem appendEntriesPreservesCoreInvariant
     · simpa [next, request, candidateEq] using
         core.currentTermsAreOne candidate
 
+/-- Processing any enabled request or response preserves the core invariant. -/
 theorem receivePreservesCoreInvariant
     (state : State TxId)
     (source destination : Node)
@@ -1487,6 +1523,7 @@ theorem receivePreservesCoreInvariant
                 · simpa [responseDestinationEq, candidateEq] using
                     core.currentTermsAreOne candidate
 
+/-- The computed commit frontier never exceeds the leader log length. -/
 theorem highestCommittableIndexBounded
     (state : State TxId)
     (leader : Node) :
@@ -1533,6 +1570,7 @@ theorem highestCommittableIndexBounded
   change candidates.foldl choose 0 <= (state.nodes leader).log.length
   exact foldBounded candidates 0 allBounded (by omega)
 
+/-- Advancing the leader commit index preserves every supporting invariant. -/
 theorem advanceCommitPreservesCoreInvariant
     (state : State TxId)
     (node : Node)
@@ -1581,6 +1619,7 @@ theorem advanceCommitPreservesCoreInvariant
     · simpa [next, candidateEq] using
         core.currentTermsAreOne candidate
 
+/-- A receive transition never shrinks any node's committed log. -/
 theorem receiveCommittedLogMonotonicity
     (state : State TxId)
     (source destination : Node)
@@ -1667,6 +1706,7 @@ theorem receiveCommittedLogMonotonicity
                   candidateEq
                 ]
 
+/-- Every enabled action preserves committed-log append-only behavior. -/
 theorem nextCommittedLogMonotonicity
     (state : State TxId)
     (action : Action TxId)
@@ -1724,6 +1764,7 @@ theorem nextCommittedLogMonotonicity
         ] using taken
       · simp [next, NodeState.committedLog, candidateEq]
 
+/-- A client request changes only the node receiving that request. -/
 theorem clientRequestFrame
     (state : State TxId)
     (node : Node)
@@ -1733,6 +1774,7 @@ theorem clientRequestFrame
   intro candidate different
   simp [next, different]
 
+/-- Sending AppendEntries changes only the source node's local bookkeeping. -/
 theorem appendEntriesFrame
     (state : State TxId)
     (source destination : Node)
@@ -1742,6 +1784,7 @@ theorem appendEntriesFrame
   intro candidate different
   simp [next, different]
 
+/-- Commit advancement changes only the acting leader. -/
 theorem advanceCommitIndexFrame
     (state : State TxId)
     (node : Node) :
@@ -1750,6 +1793,7 @@ theorem advanceCommitIndexFrame
   intro candidate different
   simp [next, different]
 
+/-- Receiving a message changes only the destination node. -/
 theorem receiveFrame
     (state : State TxId)
     (source destination : Node) :
@@ -1780,6 +1824,7 @@ theorem receiveFrame
             rw [← stateEq]
             simp [different]
 
+/-- Case-split dispatcher proving every enabled action preserves the invariant. -/
 theorem nextPreservesCoreInvariant
     (state : State TxId)
     (action : Action TxId)
@@ -1798,6 +1843,7 @@ theorem nextPreservesCoreInvariant
   | advanceCommitIndex node =>
       exact advanceCommitPreservesCoreInvariant state node core enabled
 
+/-- The supporting invariant holds in every reachable slice-one state. -/
 theorem reachableCoreInvariant
     {state : State TxId}
     (reachable : Reachable state) :
@@ -1808,6 +1854,7 @@ theorem reachableCoreInvariant
     nextPreservesCoreInvariant
     reachable
 
+/-- Every enabled edge leaving a reachable state extends committed logs. -/
 theorem reachableStepCommittedLogMonotonicity
     {state : State TxId}
     (reachable : Reachable state)
@@ -1817,30 +1864,35 @@ theorem reachableStepCommittedLogMonotonicity
   nextCommittedLogMonotonicity
     state action (reachableCoreInvariant reachable) enabled
 
+/-- All reachable committed logs are pairwise prefix-comparable. -/
 theorem reachableCommittedLogsPrefix
     {state : State TxId}
     (reachable : Reachable state) :
     CommittedLogsPrefix state :=
   coreCommittedLogsPrefix (reachableCoreInvariant reachable)
 
+/-- Every reachable state satisfies Raft log matching. -/
 theorem reachableLogMatching
     {state : State TxId}
     (reachable : Reachable state) :
     LogMatching state :=
   coreLogMatching (reachableCoreInvariant reachable)
 
+/-- Equal index and term identify equal transaction IDs in reachable states. -/
 theorem reachableSameIndexSameTermSameTxId
     {state : State TxId}
     (reachable : Reachable state) :
     SameIndexSameTermSameTxId state :=
   coreSameIndexSameTermSameTxId (reachableCoreInvariant reachable)
 
+/-- Terms are monotonic in every reachable node log. -/
 theorem reachableMonoLog
     {state : State TxId}
     (reachable : Reachable state) :
     MonoLog state :=
   coreMonoLog (reachableCoreInvariant reachable)
 
+/-- Bundle all public state-safety theorems for a reachable state. -/
 theorem reachableConsensusSafety
     {state : State TxId}
     (reachable : Reachable state) :

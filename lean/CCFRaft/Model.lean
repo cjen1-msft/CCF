@@ -16,22 +16,31 @@ state and immutable message snapshots.
 
 namespace CCFRaft
 
+/-- Number of nodes in the fixed slice-one network. -/
 def NODE_COUNT : Nat := 5
+/-- Node identifiers are the integers from zero through four. -/
 abbrev Node := Fin NODE_COUNT
 
+/-- Node zero is the fixed leader in slice one. -/
 def LEADER : Node := ⟨0, by decide⟩
+/-- Every node and entry remains in term one in this slice. -/
 def TERM_ONE : Nat := 1
 
+/-- The only leadership roles reachable before elections are introduced. -/
 inductive Role where
+  /-- A replica that receives AppendEntries messages. -/
   | follower
+  /-- The single node that accepts requests and sends AppendEntries. -/
   | leader
   deriving DecidableEq, Repr
 
+/-- A collapsed transaction/signature pair stored in a Raft log. -/
 structure Entry (TxId : Type) where
   term : Nat
   txId : TxId
   deriving DecidableEq, Repr
 
+/-- Immutable AppendEntries data captured when a leader sends a request. -/
 structure AppendEntriesRequest (TxId : Type) where
   term : Nat
   prevLogIndex : Nat
@@ -42,6 +51,7 @@ structure AppendEntriesRequest (TxId : Type) where
   destination : Node
   deriving DecidableEq, Repr
 
+/-- ACK or NACK returned after processing an AppendEntries request. -/
 structure AppendEntriesResponse where
   term : Nat
   success : Bool
@@ -50,8 +60,11 @@ structure AppendEntriesResponse where
   destination : Node
   deriving DecidableEq, Repr
 
+/-- The two network message kinds used by the AppendEntries slice. -/
 inductive Message (TxId : Type) where
+  /-- A leader-to-follower replication request. -/
   | appendEntriesRequest (request : AppendEntriesRequest TxId)
+  /-- A follower-to-leader acknowledgement or rejection. -/
   | appendEntriesResponse (response : AppendEntriesResponse)
   deriving DecidableEq, Repr
 
@@ -59,16 +72,19 @@ variable {TxId : Type}
 
 namespace Message
 
+/-- Read a message's sender without inspecting any node state. -/
 def source : Message TxId -> Node
   | .appendEntriesRequest request => request.source
   | .appendEntriesResponse response => response.source
 
+/-- Read a message's intended recipient. -/
 def destination : Message TxId -> Node
   | .appendEntriesRequest request => request.destination
   | .appendEntriesResponse response => response.destination
 
 end Message
 
+/-- Protocol state stored locally by one node. -/
 structure NodeState (TxId : Type) where
   role : Role
   currentTerm : Nat
@@ -80,11 +96,13 @@ structure NodeState (TxId : Type) where
 
 namespace NodeState
 
+/-- The prefix of a node's log up to its local commit index. -/
 def committedLog (state : NodeState TxId) : List (Entry TxId) :=
   state.log.take state.commitIndex
 
 end NodeState
 
+/-- Global proof state: local node states, network queues, and client allocation. -/
 structure State (TxId : Type) where
   nodes : Node -> NodeState TxId
   network : Node -> List (Message TxId)
@@ -92,6 +110,7 @@ structure State (TxId : Type) where
 
 variable [DecidableEq TxId]
 
+/-- Replace one node state while leaving every other node unchanged. -/
 def updateNode
     (nodes : Node -> NodeState TxId)
     (node : Node)
@@ -99,6 +118,7 @@ def updateNode
     Node -> NodeState TxId :=
   Function.update nodes node value
 
+/-- Reading the node just updated returns the new value. -/
 @[simp]
 theorem updateNode_same
     (nodes : Node -> NodeState TxId)
@@ -107,6 +127,7 @@ theorem updateNode_same
     updateNode nodes node value node = value := by
   simp [updateNode]
 
+/-- Reading another node after an update returns its old value. -/
 @[simp]
 theorem updateNode_of_ne
     (nodes : Node -> NodeState TxId)
@@ -116,6 +137,7 @@ theorem updateNode_of_ne
     updateNode nodes node value candidate = nodes candidate := by
   simp [updateNode, different]
 
+/-- Replace one peer index in a node-local index table. -/
 def updateIndex
     (indices : Node -> Nat)
     (node : Node)
@@ -123,6 +145,7 @@ def updateIndex
     Node -> Nat :=
   Function.update indices node value
 
+/-- Reading the updated peer index returns the new value. -/
 @[simp]
 theorem updateIndex_same
     (indices : Node -> Nat)
@@ -131,6 +154,7 @@ theorem updateIndex_same
     updateIndex indices node value node = value := by
   simp [updateIndex]
 
+/-- Updating one peer index leaves all other peer indices unchanged. -/
 @[simp]
 theorem updateIndex_of_ne
     (indices : Node -> Nat)
@@ -140,6 +164,7 @@ theorem updateIndex_of_ne
     updateIndex indices node value candidate = indices candidate := by
   simp [updateIndex, different]
 
+/-- Replace the FIFO queue for one destination. -/
 def updateQueue
     (network : Node -> List (Message TxId))
     (destination : Node)
@@ -147,6 +172,7 @@ def updateQueue
     Node -> List (Message TxId) :=
   Function.update network destination queue
 
+/-- Reading the replaced destination queue returns the new queue. -/
 @[simp]
 theorem updateQueue_same
     (network : Node -> List (Message TxId))
@@ -155,6 +181,7 @@ theorem updateQueue_same
     updateQueue network destination queue destination = queue := by
   simp [updateQueue]
 
+/-- Replacing one destination queue leaves other queues unchanged. -/
 @[simp]
 theorem updateQueue_of_ne
     (network : Node -> List (Message TxId))
@@ -164,6 +191,7 @@ theorem updateQueue_of_ne
     updateQueue network destination queue candidate = network candidate := by
   simp [updateQueue, different]
 
+/-- Initialize node zero as leader and every other node as an empty follower. -/
 def initialNodeState (node : Node) : NodeState TxId where
   role := if node = LEADER then .leader else .follower
   currentTerm := TERM_ONE
@@ -173,23 +201,28 @@ def initialNodeState (node : Node) : NodeState TxId where
   matchIndex := fun _ => 0
   isNewFollower := true
 
+/-- Initialize all nodes, queues, and allocated transaction IDs. -/
 def initialState : State TxId where
   nodes := initialNodeState
   network := fun _ => []
   submittedTxIds := ∅
 
+/-- Read a one-based log index, returning `none` for index zero or past the end. -/
 def entryAt? (log : List (Entry TxId)) (index : Nat) : Option (Entry TxId) :=
   if index = 0 then none else log[index - 1]?
 
+/-- Read the term at a one-based index, using zero when no entry exists. -/
 def termAt (log : List (Entry TxId)) (index : Nat) : Nat :=
   (entryAt? log index).map Entry.term |>.getD 0
 
+/-- Select the log entries between the previous index and chosen batch end. -/
 def messageEntries
     (log : List (Entry TxId))
     (previousIndex batchEnd : Nat) :
     List (Entry TxId) :=
   (log.drop previousIndex).take (batchEnd - previousIndex)
 
+/-- Append a message unless an exactly equal message is already queued. -/
 def enqueueNoDup
     (network : Node -> List (Message TxId))
     (message : Message TxId) :
@@ -201,6 +234,7 @@ def enqueueNoDup
   else
     updateQueue network destination (queue ++ [message])
 
+/-- Remove the first message from a source while preserving all other order. -/
 def takeFirstFrom
     (source : Node) :
     List (Message TxId) ->
@@ -215,6 +249,7 @@ def takeFirstFrom
         | some (selected, remaining) =>
             some (selected, message :: remaining)
 
+/-- Check that a request's previous index and term match the follower log. -/
 def logOk
     (state : NodeState TxId)
     (request : AppendEntriesRequest TxId) : Prop :=
@@ -222,6 +257,7 @@ def logOk
     (request.prevLogIndex <= state.log.length /\
       termAt state.log request.prevLogIndex = request.prevLogTerm)
 
+/-- Check whether a heartbeat or all requested entry terms are already present. -/
 def alreadyDone
     (state : NodeState TxId)
     (request : AppendEntriesRequest TxId) : Prop :=
@@ -231,12 +267,14 @@ def alreadyDone
           Entry.term =
         request.entries.map Entry.term)
 
+/-- Number of request entries that overlap the follower's existing suffix. -/
 def overlapLength
     (state : NodeState TxId)
     (request : AppendEntriesRequest TxId) : Nat :=
   min request.entries.length
     (state.log.length - request.prevLogIndex)
 
+/-- Detect a differing term in the overlapping part of a request. -/
 def hasTermConflict
     (state : NodeState TxId)
     (request : AppendEntriesRequest TxId) : Prop :=
@@ -246,6 +284,7 @@ def hasTermConflict
           (overlapLength state request)).map Entry.term =
         (request.entries.take (overlapLength state request)).map Entry.term)
 
+/-- Check that a request safely extends a matching follower prefix. -/
 def noConflictExtension
     (state : NodeState TxId)
     (request : AppendEntriesRequest TxId) : Prop :=
@@ -256,32 +295,38 @@ def noConflictExtension
         (state.log.length - request.prevLogIndex) =
       request.entries.take (state.log.length - request.prevLogIndex)
 
+/-- Make the previous-entry consistency guard executable. -/
 instance (state : NodeState TxId) (request : AppendEntriesRequest TxId) :
     Decidable (logOk state request) := by
   unfold logOk
   infer_instance
 
+/-- Make the already-applied request guard executable. -/
 instance (state : NodeState TxId) (request : AppendEntriesRequest TxId) :
     Decidable (alreadyDone state request) := by
   unfold alreadyDone
   infer_instance
 
+/-- Make term-conflict detection executable. -/
 instance (state : NodeState TxId) (request : AppendEntriesRequest TxId) :
     Decidable (hasTermConflict state request) := by
   unfold hasTermConflict
   infer_instance
 
+/-- Make no-conflict extension detection executable. -/
 instance (state : NodeState TxId) (request : AppendEntriesRequest TxId) :
     Decidable (noConflictExtension state request) := by
   unfold noConflictExtension
   infer_instance
 
+/-- Advance a follower commit index no further than its log or the leader frontier. -/
 def committedFromLeader
     (state : NodeState TxId)
     (request : AppendEntriesRequest TxId)
     (newLog : List (Entry TxId)) : Nat :=
   max state.commitIndex (min newLog.length request.leaderCommit)
 
+/-- Construct a successful response for an applied request. -/
 def successResponse
     (state : NodeState TxId)
     (request : AppendEntriesRequest TxId)
@@ -293,6 +338,7 @@ def successResponse
   source := request.destination
   destination := request.source
 
+/-- Find the highest local index whose term could match a rejected request. -/
 def findHighestPossibleMatch
     (log : List (Entry TxId))
     (index term : Nat) : Nat :=
@@ -304,6 +350,7 @@ def findHighestPossibleMatch
         best)
     0
 
+/-- Construct source-compatible NACK metadata for stale or inconsistent requests. -/
 def failureResponse
     (state : NodeState TxId)
     (request : AppendEntriesRequest TxId) :
@@ -342,6 +389,7 @@ def failureResponse
         source := request.destination
         destination := request.source }
 
+/-- Reject stale-term requests or requests whose previous entry does not match. -/
 def rejectAppendEntriesRequest?
     (state : NodeState TxId)
     (request : AppendEntriesRequest TxId) :
@@ -354,6 +402,7 @@ def rejectAppendEntriesRequest?
   else
     none
 
+/-- ACK a request whose entries are already present, possibly learning commit. -/
 def appendEntriesAlreadyDone?
     (state : NodeState TxId)
     (request : AppendEntriesRequest TxId) :
@@ -368,6 +417,7 @@ def appendEntriesAlreadyDone?
   else
     none
 
+/-- Truncate a conflicting uncommitted suffix without consuming the request. -/
 def conflictAppendEntriesRequest?
     (state : NodeState TxId)
     (request : AppendEntriesRequest TxId) :
@@ -380,6 +430,7 @@ def conflictAppendEntriesRequest?
   else
     none
 
+/-- Append a matching extension and return an ACK. -/
 def noConflictAppendEntriesRequest?
     (state : NodeState TxId)
     (request : AppendEntriesRequest TxId) :
@@ -392,6 +443,7 @@ def noConflictAppendEntriesRequest?
   else
     none
 
+/-- Apply the accepted-request branches, composing truncation with retry. -/
 def acceptAppendEntriesRequest?
     (state : NodeState TxId)
     (request : AppendEntriesRequest TxId) :
@@ -415,6 +467,7 @@ def acceptAppendEntriesRequest?
   else
     none
 
+/-- Prefer rejection when required; otherwise run the accepted-request logic. -/
 def handleAppendEntriesRequest?
     (state : NodeState TxId)
     (request : AppendEntriesRequest TxId) :
@@ -423,6 +476,7 @@ def handleAppendEntriesRequest?
   | some result => some result
   | none => acceptAppendEntriesRequest? state request
 
+/-- Update leader match or sent indices from an ACK or NACK. -/
 def handleAppendEntriesResponse?
     (state : NodeState TxId)
     (response : AppendEntriesResponse) :
@@ -452,6 +506,7 @@ def handleAppendEntriesResponse?
   else
     none
 
+/-- Consume a request and enqueue its response without duplicates. -/
 def reply
     (network : Node -> List (Message TxId))
     (requestDestination : Node)
@@ -462,6 +517,7 @@ def reply
     (updateQueue network requestDestination remaining)
     (.appendEntriesResponse response)
 
+/-- Process the first queued message from a chosen source at a destination. -/
 def handleReceive?
     (state : State TxId)
     (source destination : Node) :
@@ -494,6 +550,7 @@ def handleReceive?
                     network :=
                       updateQueue state.network destination remaining }
 
+/-- Snapshot leader-local replication state into an AppendEntries request. -/
 def makeAppendEntriesRequest
     (state : State TxId)
     (source destination : Node)
@@ -509,6 +566,7 @@ def makeAppendEntriesRequest
     source
     destination }
 
+/-- Nodes locally known by the leader to acknowledge a candidate index. -/
 def acknowledgingNodes
     (state : State TxId)
     (leader : Node)
@@ -518,17 +576,20 @@ def acknowledgingNodes
     node = leader \/
       (state.nodes leader).matchIndex node >= index
 
+/-- True when the leader plus recorded ACKs form a strict majority. -/
 def hasMajorityAt
     (state : State TxId)
     (leader : Node)
     (index : Nat) : Prop :=
   (acknowledgingNodes state leader index).card * 2 > NODE_COUNT
 
+/-- Make the five-node majority predicate executable. -/
 instance (state : State TxId) (leader : Node) (index : Nat) :
     Decidable (hasMajorityAt state leader index) := by
   unfold hasMajorityAt
   infer_instance
 
+/-- Greatest newer current-term index acknowledged by a majority. -/
 def highestCommittableIndex
     (state : State TxId)
     (leader : Node) : Nat :=
@@ -543,13 +604,19 @@ def highestCommittableIndex
         best)
     0
 
+/-- Explicit witnesses for every source of transition nondeterminism. -/
 inductive Action (TxId : Type) where
+  /-- Submit a fresh external transaction to a node. -/
   | clientRequest (node : Node) (txId : TxId)
+  /-- Send the next entry or a heartbeat from one node to another. -/
   | appendEntries (source destination : Node) (batchEnd : Nat)
+  /-- Process the first queued message from a selected source. -/
   | receive (source destination : Node)
+  /-- Advance a leader to its locally computed quorum commit frontier. -/
   | advanceCommitIndex (node : Node)
   deriving DecidableEq, Repr
 
+/-- Protocol guard determining whether an action may occur in a state. -/
 def Enabled
     (state : State TxId) :
     Action TxId -> Prop
@@ -570,10 +637,12 @@ def Enabled
         (state.nodes node).commitIndex <
           highestCommittableIndex state node
 
+/-- Make every action guard directly executable. -/
 instance (state : State TxId) (action : Action TxId) :
     Decidable (Enabled state action) := by
   cases action <;> simp only [Enabled] <;> infer_instance
 
+/-- Deterministically apply the state update selected by an action witness. -/
 def next
     (state : State TxId) :
     Action TxId -> State TxId
@@ -606,6 +675,7 @@ def next
             { nodeState with
               commitIndex := highestCommittableIndex state node } }
 
+/-- Package the Raft slice as a reusable executable transition system. -/
 def system [DecidableEq TxId] : ExecutableTransitionSystem where
   State := State TxId
   Action := Action TxId
@@ -614,15 +684,18 @@ def system [DecidableEq TxId] : ExecutableTransitionSystem where
   enabledDecidable := fun _ _ => inferInstance
   next
 
+/-- States reachable through enabled slice-one Raft actions. -/
 abbrev Reachable [DecidableEq TxId] :=
   (system (TxId := TxId)).Reachable
 
 namespace Reachable
 
+/-- The Raft initial state is reachable. -/
 theorem initial :
     Reachable (initialState : State TxId) :=
   ExecutableTransitionSystem.Reachable.initial
 
+/-- Taking an enabled action from a reachable state preserves reachability. -/
 theorem step
     {state : State TxId}
     (reachable : Reachable state)

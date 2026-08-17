@@ -12,6 +12,7 @@ The proof relation and compiled execution share the same `Enabled` predicate and
 
 namespace CCFRaft
 
+/-- A transition system whose guards and state updates can also be executed. -/
 structure ExecutableTransitionSystem where
   State : Type
   Action : Type
@@ -22,10 +23,12 @@ structure ExecutableTransitionSystem where
 
 namespace ExecutableTransitionSystem
 
+/-- Use the decision procedure stored in the transition system for its guards. -/
 instance (system : ExecutableTransitionSystem) :
     forall state action, Decidable (system.Enabled state action) :=
   system.enabledDecidable
 
+/-- Execute an action when enabled, returning `none` when its guard is false. -/
 def applyAction
     (system : ExecutableTransitionSystem)
     (state : system.State)
@@ -36,6 +39,7 @@ def applyAction
   else
     none
 
+/-- Two states are related when an enabled action transforms one into the other. -/
 def Step
     (system : ExecutableTransitionSystem)
     (before after : system.State) : Prop :=
@@ -43,6 +47,7 @@ def Step
     system.Enabled before action /\
       after = system.next before action
 
+/-- States obtainable from the initial state by finitely many enabled actions. -/
 inductive Reachable
     (system : ExecutableTransitionSystem) :
     system.State -> Prop where
@@ -54,6 +59,7 @@ inductive Reachable
       (enabled : system.Enabled state action) :
       Reachable system (system.next state action)
 
+/-- Lift an initial-state and one-step preservation proof to all reachable states. -/
 theorem reachableInvariant
     (system : ExecutableTransitionSystem)
     {Invariant : system.State -> Prop}
@@ -71,6 +77,7 @@ theorem reachableInvariant
   | step reachable enabled invariant =>
       exact preserved _ _ invariant enabled
 
+/-- Connect a finite simulator choice type to a transition system's actions. -/
 structure SimulationAdapter
     (system : ExecutableTransitionSystem) where
   Choice : Type
@@ -83,6 +90,7 @@ structure SimulationAdapter
 
 namespace SimulationAdapter
 
+/-- Materialize one simulator choice and execute the resulting model action. -/
 def simulateStep
     {system : ExecutableTransitionSystem}
     (adapter : SimulationAdapter system)
