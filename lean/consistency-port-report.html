@@ -1,0 +1,1537 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CCF consistency in Lean: reading and porting guide</title>
+  <style>
+    :root {
+      --ink: #172133;
+      --muted: #596579;
+      --paper: #f7f5ef;
+      --panel: #ffffff;
+      --line: #d8d9d4;
+      --blue: #145da0;
+      --blue-soft: #eaf3fb;
+      --green: #176b52;
+      --green-soft: #e7f5ef;
+      --amber: #8a5700;
+      --amber-soft: #fff3d6;
+      --red: #9b3030;
+      --red-soft: #fdecec;
+      --code: #101827;
+      --shadow: 0 16px 40px rgba(23, 33, 51, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 10% 0%, #dfeff8 0, transparent 28rem),
+        radial-gradient(circle at 100% 20%, #f7e9cb 0, transparent 32rem),
+        var(--paper);
+      font: 16px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    a { color: var(--blue); }
+    a:hover { text-decoration-thickness: 2px; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 250px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 26px 20px;
+      border-right: 1px solid rgba(23, 33, 51, 0.10);
+      background: rgba(247, 245, 239, 0.88);
+      backdrop-filter: blur(16px);
+      overflow-y: auto;
+    }
+
+    aside .mark {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      margin-bottom: 18px;
+      color: white;
+      background: var(--ink);
+      border-radius: 13px;
+      font: 800 15px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    aside strong {
+      display: block;
+      margin-bottom: 18px;
+      font-size: 14px;
+      line-height: 1.35;
+    }
+
+    nav a {
+      display: block;
+      margin: 3px 0;
+      padding: 7px 9px;
+      color: var(--muted);
+      border-radius: 8px;
+      text-decoration: none;
+      font-size: 13px;
+    }
+
+    nav a:hover,
+    nav a.active {
+      color: var(--ink);
+      background: white;
+      box-shadow: 0 2px 10px rgba(23, 33, 51, 0.06);
+    }
+
+    .workspace-link {
+      display: inline-block;
+      margin-top: 22px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--panel);
+      font-size: 12px;
+      text-decoration: none;
+    }
+
+    main {
+      width: min(1160px, 100%);
+      padding: 44px 54px 100px;
+    }
+
+    .eyebrow {
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 880px;
+      margin: 10px 0 14px;
+      font-size: clamp(38px, 5.2vw, 68px);
+      line-height: 0.99;
+      letter-spacing: -0.045em;
+    }
+
+    .lede {
+      max-width: 820px;
+      margin: 0 0 20px;
+      color: var(--muted);
+      font-size: 20px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .meta code { color: var(--ink); }
+
+    section {
+      padding-top: 70px;
+      scroll-margin-top: 20px;
+    }
+
+    h2 {
+      margin: 0 0 10px;
+      font-size: 32px;
+      letter-spacing: -0.025em;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 19px;
+    }
+
+    .section-intro {
+      max-width: 760px;
+      margin: 0 0 24px;
+      color: var(--muted);
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 34px;
+    }
+
+    .metric {
+      min-height: 110px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.82);
+      box-shadow: var(--shadow);
+    }
+
+    .metric b {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 32px;
+      line-height: 1;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .callout {
+      margin: 26px 0;
+      padding: 17px 20px;
+      border-left: 4px solid var(--amber);
+      border-radius: 0 12px 12px 0;
+      background: var(--amber-soft);
+    }
+
+    .callout strong { display: block; margin-bottom: 4px; }
+
+    .grid-2,
+    .grid-3 {
+      display: grid;
+      gap: 16px;
+    }
+
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+    .card {
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: var(--panel);
+      box-shadow: 0 6px 22px rgba(23, 33, 51, 0.05);
+    }
+
+    .card p:last-child { margin-bottom: 0; }
+    .card .kicker {
+      color: var(--blue);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .source-pair {
+      white-space: nowrap;
+      font-size: 12px;
+    }
+
+    .source-pair a {
+      display: inline-block;
+      margin-right: 7px;
+      text-decoration: none;
+    }
+
+    .mapping {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 54px minmax(0, 1fr);
+      gap: 12px;
+      align-items: stretch;
+      margin: 22px 0;
+    }
+
+    .mapping .side {
+      padding: 20px;
+      border-radius: 15px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+    }
+
+    .mapping .bridge {
+      display: grid;
+      place-items: center;
+      color: var(--blue);
+      font-weight: 900;
+      font-size: 22px;
+    }
+
+    .mapping ul,
+    .compact {
+      margin: 10px 0 0;
+      padding-left: 19px;
+    }
+
+    .mapping li,
+    .compact li { margin: 6px 0; }
+
+    code,
+    pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    code {
+      padding: 0.08em 0.28em;
+      border-radius: 4px;
+      background: rgba(20, 93, 160, 0.08);
+      font-size: 0.91em;
+    }
+
+    .codebox {
+      position: relative;
+      overflow: hidden;
+      margin: 15px 0;
+      border-radius: 13px;
+      background: var(--code);
+      color: #dce8f6;
+      box-shadow: var(--shadow);
+    }
+
+    .codebox pre {
+      margin: 0;
+      padding: 19px 52px 19px 19px;
+      overflow-x: auto;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .copy {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      padding: 5px 8px;
+      color: #cbd8e8;
+      border: 1px solid #405069;
+      border-radius: 7px;
+      background: #1c293d;
+      cursor: pointer;
+      font-size: 11px;
+    }
+
+    .copy:hover { background: #263752; }
+
+    .proof-ladder {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .steps {
+      display: grid;
+      gap: 9px;
+    }
+
+    .step-button {
+      display: grid;
+      grid-template-columns: 36px 1fr;
+      gap: 12px;
+      width: 100%;
+      padding: 13px;
+      text-align: left;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+      cursor: pointer;
+    }
+
+    .step-button:hover,
+    .step-button.active {
+      border-color: var(--blue);
+      background: var(--blue-soft);
+    }
+
+    .step-button .n {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border-radius: 10px;
+      color: white;
+      background: var(--blue);
+      font-weight: 800;
+    }
+
+    .step-button b { display: block; }
+    .step-button small { color: var(--muted); }
+
+    #proof-detail {
+      min-height: 260px;
+      padding: 22px;
+      border-radius: 15px;
+      color: #e8f0fa;
+      background: var(--code);
+      box-shadow: var(--shadow);
+    }
+
+    #proof-detail h3 { color: white; }
+    #proof-detail p { color: #bac7d8; }
+
+    .trust {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .trust .yes { background: var(--green-soft); border-color: #b6ddcf; }
+    .trust .no { background: var(--red-soft); border-color: #ecc2c2; }
+
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .badge.proved { color: var(--green); background: var(--green-soft); }
+    .badge.open { color: var(--red); background: var(--red-soft); }
+    .badge.partial { color: var(--amber); background: var(--amber-soft); }
+
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+      align-items: stretch;
+      margin: 24px 0;
+    }
+
+    .pipe-node {
+      position: relative;
+      min-height: 118px;
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--panel);
+    }
+
+    .pipe-node:not(:last-child)::after {
+      content: ">";
+      position: absolute;
+      top: 42%;
+      right: -18px;
+      z-index: 2;
+      color: var(--blue);
+      font-weight: 900;
+    }
+
+    .pipe-node b { display: block; margin-bottom: 6px; }
+    .pipe-node small { color: var(--muted); }
+
+    .roadmap {
+      display: grid;
+      gap: 10px;
+      counter-reset: phase;
+    }
+
+    details {
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--panel);
+    }
+
+    details[open] { box-shadow: 0 8px 26px rgba(23, 33, 51, 0.06); }
+
+    summary {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      padding: 16px 18px;
+      cursor: pointer;
+      font-weight: 750;
+      list-style: none;
+    }
+
+    summary::-webkit-details-marker { display: none; }
+
+    summary::before {
+      counter-increment: phase;
+      content: counter(phase);
+      width: 28px;
+      height: 28px;
+      display: grid;
+      flex: 0 0 auto;
+      place-items: center;
+      color: white;
+      border-radius: 9px;
+      background: var(--blue);
+      font-size: 12px;
+    }
+
+    details .body {
+      padding: 0 20px 18px 58px;
+      color: var(--muted);
+    }
+
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 16px 0 12px;
+    }
+
+    input[type="search"],
+    select {
+      padding: 9px 11px;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--panel);
+      font: inherit;
+      font-size: 13px;
+    }
+
+    input[type="search"] { width: min(330px, 100%); }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--panel);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th,
+    td {
+      padding: 11px 13px;
+      border-bottom: 1px solid #ecece8;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      color: var(--muted);
+      background: #f6f7f7;
+      cursor: pointer;
+      font-size: 11px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    tbody tr:last-child td { border-bottom: 0; }
+    tbody tr:hover { background: #fafbfd; }
+
+    .recommendation {
+      padding: 22px;
+      border: 2px solid var(--blue);
+      border-radius: 16px;
+      background: var(--blue-soft);
+    }
+
+    .recommendation h3 { color: var(--blue); }
+
+    footer {
+      margin-top: 80px;
+      padding-top: 24px;
+      color: var(--muted);
+      border-top: 1px solid var(--line);
+      font-size: 12px;
+    }
+
+    @media (max-width: 940px) {
+      .layout { grid-template-columns: 1fr; }
+      aside {
+        position: static;
+        width: 100%;
+        height: auto;
+        padding: 16px 20px;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      aside .mark,
+      aside strong,
+      aside .workspace-link { display: none; }
+      nav {
+        display: flex;
+        gap: 3px;
+        overflow-x: auto;
+      }
+      nav a { white-space: nowrap; }
+      main { padding: 34px 24px 80px; }
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .proof-ladder,
+      .trust,
+      .grid-2,
+      .grid-3 { grid-template-columns: 1fr; }
+      .pipeline { grid-template-columns: 1fr; }
+      .pipe-node:not(:last-child)::after {
+        content: "v";
+        top: auto;
+        right: 50%;
+        bottom: -20px;
+      }
+    }
+
+    @media print {
+      aside { display: none; }
+      .layout { display: block; }
+      main { width: 100%; padding: 20px; }
+      .copy { display: none; }
+      details .body { display: block; }
+      section { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="mark">Lean</div>
+      <strong>CCF consistency<br>reading and porting guide</strong>
+      <nav>
+        <a href="#orientation">Orientation</a>
+        <a href="#translation">TLA+ to Lean</a>
+        <a href="#structure">Structure</a>
+        <a href="#proof">Proof spine</a>
+        <a href="#run">Run and trust</a>
+        <a href="#coverage">Coverage</a>
+        <a href="#traces">Trace validation</a>
+        <a href="#raft">Porting ccfraft.tla</a>
+        <a href="#recipe">Reusable recipe</a>
+      </nav>
+      <a class="workspace-link"
+         href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency">
+        Open workspace in VS Code
+      </a>
+    </aside>
+
+    <main>
+      <header>
+        <div class="eyebrow">Formal methods field guide</div>
+        <h1>From state exploration to proof construction</h1>
+        <p class="lede">
+          Read Amaury's port as an executable refinement ladder: define states and
+          legal steps, preserve an inductive invariant, lift it to all reachable
+          states, then derive client consistency facts.
+        </p>
+        <div class="meta">
+          <span>Source commit <code>0921b7c37db0e795186a60031b9cd218c22e0972</code></span>
+          <span>Lean <code>4.28.0</code></span>
+          <span>Generated 2026-08-14</span>
+          <span><a href="https://github.com/cjen1-msft/CCF/tree/0921b7c37db0e795186a60031b9cd218c22e0972/lean">GitHub tree</a></span>
+        </div>
+      </header>
+
+      <section id="orientation">
+        <div class="eyebrow">01 / Orientation</div>
+        <h2>What this port is - and is not</h2>
+        <p class="section-intro">
+          It is a hand-written, unbounded Lean translation of the Veil client
+          consistency model. It is not yet a translation of CCF Raft, a complete
+          proof of all translated properties, or a runtime trace validator.
+        </p>
+
+        <div class="metrics">
+          <div class="metric"><b>4</b><span>abstract ordered domains</span></div>
+          <div class="metric"><b>10</b><span>transition constructors</span></div>
+          <div class="metric"><b>36</b><span>translated clauses</span></div>
+          <div class="metric"><b>19</b><span>reachable-state clauses proved</span></div>
+          <div class="metric"><b>180</b><span>theorems audited for sorryAx</span></div>
+        </div>
+
+        <div class="callout">
+          <strong>The key boundary</strong>
+          <code>reachableProved</code> establishes a 19-clause
+          <code>ProvedBundle</code>. Seventeen translated clauses, including the
+          final real-time safety property, remain open. No assumption hides them.
+        </div>
+
+        <div class="grid-3">
+          <article class="card">
+            <div class="kicker">Model scope</div>
+            <h3>Client-visible consistency</h3>
+            <p>Transactions, ledger branches, sequence positions, requests,
+              responses, and commit/invalid status observations.</p>
+          </article>
+          <article class="card">
+            <div class="kicker">Proof scope</div>
+            <h3>Unbounded safety</h3>
+            <p>The theorem quantifies over abstract domains and every state built
+              by the inductive <code>Reachable</code> relation.</p>
+          </article>
+          <article class="card">
+            <div class="kicker">Out of scope</div>
+            <h3>Consensus mechanics</h3>
+            <p>No servers, votes, messages, quorums, terms, leaders, fairness,
+              liveness, or CCF Raft implementation trace replay.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="translation">
+        <div class="eyebrow">02 / Mental model</div>
+        <h2>Translate relations, not model-checker behavior</h2>
+        <p class="section-intro">
+          TLA+ and Lean can state the same transition system, but they answer
+          different questions by default. TLC searches finite instances; this Lean
+          development constructs a proof for all inhabitants of its abstract types.
+        </p>
+
+        <div class="mapping">
+          <div class="side">
+            <h3>TLA+ / TLC lens</h3>
+            <ul>
+              <li><code>Init /\ [][Next]_vars</code> defines behaviors.</li>
+              <li>TLC enumerates reachable concrete states.</li>
+              <li>An invariant violation produces a counterexample trace.</li>
+              <li>Bounds, symmetry, and constraints control tractability.</li>
+            </ul>
+          </div>
+          <div class="bridge">~</div>
+          <div class="side">
+            <h3>Lean lens</h3>
+            <ul>
+              <li><code>initialState</code> is a value.</li>
+              <li><code>Step s s'</code> is an inductive proposition.</li>
+              <li><code>Reachable</code> is the reflexive transition closure.</li>
+              <li>Induction proves a proposition for every reachable state.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <article class="card">
+            <h3>State variable</h3>
+            <p>A TLA+ function or relation becomes a field of
+              <code>State</code>, often a function returning <code>Prop</code>.</p>
+            <div class="source-pair">
+              <a href="https://github.com/cjen1-msft/CCF/blob/0921b7c37db0e795186a60031b9cd218c22e0972/lean/CCFConsistency/Model.lean#L19-L50">GitHub</a>
+              <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFConsistency/Model.lean:19:1">VS Code</a>
+            </div>
+          </article>
+          <article class="card">
+            <h3>Primed assignment</h3>
+            <p>A TLA+ action becomes a pure <code>*Next</code> function. All
+              structure-update fields read the old <code>state</code>, preserving
+              simultaneous assignment semantics.</p>
+            <div class="source-pair">
+              <a href="https://github.com/cjen1-msft/CCF/blob/0921b7c37db0e795186a60031b9cd218c22e0972/lean/CCFConsistency/Model.lean#L364-L523">GitHub</a>
+              <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFConsistency/Model.lean:364:1">VS Code</a>
+            </div>
+          </article>
+          <article class="card">
+            <h3>Action guard</h3>
+            <p>Each guard is a premise of a <code>Step</code> constructor; the
+              constructor's result fixes the exact next-state function.</p>
+            <div class="source-pair">
+              <a href="https://github.com/cjen1-msft/CCF/blob/0921b7c37db0e795186a60031b9cd218c22e0972/lean/CCFConsistency/Model.lean#L524-L628">GitHub</a>
+              <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFConsistency/Model.lean:524:1">VS Code</a>
+            </div>
+          </article>
+          <article class="card">
+            <h3>Invariant</h3>
+            <p>A named <code>State -> Prop</code> is grouped with supporting
+              invariants in a structure, so preservation proofs can use the whole
+              induction hypothesis.</p>
+            <div class="source-pair">
+              <a href="https://github.com/cjen1-msft/CCF/blob/0921b7c37db0e795186a60031b9cd218c22e0972/lean/CCFConsistency/Properties.lean#L327-L395">GitHub</a>
+              <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFConsistency/Properties.lean:327:1">VS Code</a>
+            </div>
+          </article>
+        </div>
+
+        <div class="callout">
+          <strong>Stuttering and fairness need an explicit decision</strong>
+          The current <code>Reachable</code> relation contains real actions, not a
+          stutter step, and no fairness. This is enough for state invariants:
+          stuttering cannot falsify a state predicate. It is not enough to port
+          action properties, arbitrary temporal formulas, or liveness claims from
+          <code>ccfraft.tla</code>.
+        </div>
+      </section>
+
+      <section id="structure">
+        <div class="eyebrow">03 / Code map</div>
+        <h2>Read in dependency order</h2>
+        <p class="section-intro">
+          The four source files form a narrow pipeline. Read definitions first;
+          use proofs only after the transition relation and bundles are familiar.
+        </p>
+
+        <div class="pipeline">
+          <div class="pipe-node">
+            <b>Model.lean</b>
+            <small>State, derived predicates, initialization, ten next-state
+              functions, Step, Reachable.</small>
+          </div>
+          <div class="pipe-node">
+            <b>Properties.lean</b>
+            <small>Thirty-five invariants, one safety property, four bundles.</small>
+          </div>
+          <div class="pipe-node">
+            <b>Proofs.lean</b>
+            <small>Initializer, per-action preservation, reachability induction,
+              consequences.</small>
+          </div>
+          <div class="pipe-node">
+            <b>Examples.lean</b>
+            <small>Concrete Nat request, execute, response path proving guards are
+              satisfiable.</small>
+          </div>
+          <div class="pipe-node">
+            <b>CCFConsistency.lean</b>
+            <small>Imports, axiom print, transitive <code>sorryAx</code> audit.</small>
+          </div>
+        </div>
+
+        <h3 style="margin-top: 28px">The ten-action vocabulary</h3>
+        <p class="section-intro">
+          Each row is both an operational rule and a proof branch. Filter by the
+          part of the model you are tracing.
+        </p>
+        <div class="filters">
+          <input id="action-search" type="search" placeholder="Filter actions or effects...">
+          <select id="action-kind">
+            <option value="">All action kinds</option>
+            <option value="history">History</option>
+            <option value="ledger">Ledger</option>
+            <option value="status">Status</option>
+            <option value="view">View change</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table id="action-table">
+            <thead>
+              <tr>
+                <th data-action-col="0">Step constructor</th>
+                <th data-action-col="1">Kind</th>
+                <th data-action-col="2">Key guards</th>
+                <th data-action-col="3">State change</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="recommendation">
+          <h3>Fastest reading route</h3>
+          <ol class="compact">
+            <li>Read <code>State</code>, derived "next/current/last" predicates, then one action end to end.</li>
+            <li>Read <code>Step</code> and <code>Reachable</code>; this is the semantic center.</li>
+            <li>Read the bundle definitions before any large preservation proof.</li>
+            <li>Read <code>stepPreservesCore</code>, <code>reachableCore</code>, and <code>reachableProved</code>.</li>
+            <li>Return to one difficult action proof, such as ledger truncation, only for proof technique.</li>
+          </ol>
+        </div>
+      </section>
+
+      <section id="proof">
+        <div class="eyebrow">04 / Proof spine</div>
+        <h2>One induction, with the work pushed into preservation</h2>
+        <p class="section-intro">
+          Click the ladder. The final reachable-state theorem is short because
+          initialization and every action case have already discharged the proof
+          obligations.
+        </p>
+
+        <div class="proof-ladder">
+          <div class="steps" id="proof-steps">
+            <button class="step-button active" data-step="0">
+              <span class="n">1</span>
+              <span><b>Initial state</b><small>All 36 clauses hold vacuously or by order-bottom laws.</small></span>
+            </button>
+            <button class="step-button" data-step="1">
+              <span class="n">2</span>
+              <span><b>Action preservation</b><small>Each of ten constructors preserves the 17-clause core.</small></span>
+            </button>
+            <button class="step-button" data-step="2">
+              <span class="n">3</span>
+              <span><b>Reachability induction</b><small>Base uses initialCore; step uses stepPreservesCore.</small></span>
+            </button>
+            <button class="step-button" data-step="3">
+              <span class="n">4</span>
+              <span><b>Logical consequences</b><small>Core implies UniqueRwTxs and SameObservations.</small></span>
+            </button>
+            <button class="step-button" data-step="4">
+              <span class="n">5</span>
+              <span><b>Exported theorem</b><small>Reachable state implies the 19-clause ProvedBundle.</small></span>
+            </button>
+          </div>
+          <div id="proof-detail" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <section id="run">
+        <div class="eyebrow">05 / Run and trust</div>
+        <h2>Checking the proof</h2>
+        <p class="section-intro">
+          Elan reads <code>lean-toolchain</code>, supplies Lean and Lake 4.28.0,
+          and Lake resolves the pinned Mathlib revision before compiling the
+          definitions and proof terms.
+        </p>
+
+        <div class="codebox">
+          <button class="copy" data-copy="cd lean&#10;lake build">copy</button>
+          <pre>cd lean
+lake build</pre>
+        </div>
+
+        <div class="grid-2">
+          <article class="card">
+            <div class="kicker">Observed 2026-08-14</div>
+            <h3>Build passed</h3>
+            <p><code>Build completed successfully (8031 jobs).</code></p>
+            <p><code>Audited 180 pure Lean theorems for sorryAx.</code></p>
+          </article>
+          <article class="card">
+            <div class="kicker">Axiom report</div>
+            <h3>Standard Lean/Mathlib axioms only</h3>
+            <p><code>[propext, Classical.choice, Quot.sound]</code></p>
+            <p>No <code>sorryAx</code>, custom axiom, Veil import, SMT result, or
+              trusted generated invariant.</p>
+          </article>
+        </div>
+
+        <div class="trust">
+          <article class="card yes">
+            <h3>What the kernel checks</h3>
+            <ul class="compact">
+              <li>Every compiled proof term type-checks.</li>
+              <li>The final theorem's transitive dependencies exclude <code>sorryAx</code>.</li>
+              <li>Tactic output from <code>simp</code>, <code>grind</code>, and <code>omega</code> is checked.</li>
+            </ul>
+          </article>
+          <article class="card no">
+            <h3>What this build does not establish</h3>
+            <ul class="compact">
+              <li>The hand translation is equivalent to Veil or TLA+.</li>
+              <li>The 17 open properties hold for reachable states.</li>
+              <li>CCF implementation traces refine this Lean model.</li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="source-pair" style="margin-top: 14px">
+          Audit source:
+          <a href="https://github.com/cjen1-msft/CCF/blob/0921b7c37db0e795186a60031b9cd218c22e0972/lean/CCFConsistency.lean#L14-L29">GitHub</a>
+          <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFConsistency.lean:14:1">VS Code</a>
+        </div>
+      </section>
+
+      <section id="coverage">
+        <div class="eyebrow">06 / Coverage</div>
+        <h2>The fixed point is explicit</h2>
+        <p class="section-intro">
+          The important unit is not "a proof file compiles"; it is which
+          properties are preserved by every action and therefore exported for all
+          reachable states.
+        </p>
+
+        <div class="filters">
+          <input id="property-search" type="search" placeholder="Filter properties...">
+          <select id="property-status">
+            <option value="">All statuses</option>
+            <option value="proved">Proved</option>
+            <option value="open">Open</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table id="property-table">
+            <thead>
+              <tr>
+                <th data-col="0">Property</th>
+                <th data-col="1">Layer</th>
+                <th data-col="2">Reachable-state status</th>
+                <th data-col="3">Why it matters</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="traces">
+        <div class="eyebrow">07 / Trace validation</div>
+        <h2>Trace validation currently lives in TLA+/TLC</h2>
+        <p class="section-intro">
+          The pure Lean project does not parse NDJSON or replay CCF Raft events.
+          <code>Examples.lean</code> proves a constructed request/execute/response
+          path is reachable; that is a non-vacuity test, not implementation trace
+          validation.
+        </p>
+
+        <div class="grid-2">
+          <article class="card">
+            <div class="kicker">Current TLC path</div>
+            <h3>Search for a matching refinement</h3>
+            <ol class="compact">
+              <li>Raft driver emits <code>raft_trace</code> NDJSON lines.</li>
+              <li><code>Traceccfraft.tla</code> maps each log function to zero or more model actions.</li>
+              <li>Missing state is chosen nondeterministically.</li>
+              <li>TLC keeps possible paths and requires at least one full match.</li>
+              <li>CCF invariants are constraints during replay.</li>
+            </ol>
+          </article>
+          <article class="card">
+            <div class="kicker">Important complication</div>
+            <h3>One log event is not always one model step</h3>
+            <p>The implementation piggybacks operations. Trace validation composes
+              steps such as <code>UpdateTerm</code> then message handling, and
+              sometimes two receive actions. Any Lean validator must represent
+              those hidden intermediate states.</p>
+          </article>
+        </div>
+
+        <h3 style="margin-top: 28px">What TLC is doing under the hood</h3>
+        <div class="grid-3">
+          <article class="card">
+            <div class="kicker">1 / Select</div>
+            <h3>Load only Raft events</h3>
+            <p><code>ndJsonDeserialize</code> reads the file and
+              <code>TraceLog</code> retains lines tagged
+              <code>raft_trace</code>. Distinct node IDs across the whole trace
+              determine a server count; the configuration assumes those IDs are
+              the prefix <code>"0"</code> through <code>"N-1"</code>. The first
+              bootstrap line selects the initial node.</p>
+            <div class="source-pair">
+              <a href="https://github.com/cjen1-msft/CCF/blob/0921b7c37db0e795186a60031b9cd218c22e0972/tla/consensus/Traceccfraft.tla#L86-L111">GitHub</a>
+              <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/tla/consensus/Traceccfraft.tla:86:1">VS Code</a>
+            </div>
+          </article>
+          <article class="card">
+            <div class="kicker">2 / Cursor</div>
+            <h3>Make log position part of state</h3>
+            <p><code>l</code> is the next trace line. <code>IsEvent</code> checks
+              its function, increments <code>l</code>, and records the timestamp.
+              <code>TraceView</code> includes the cursor so TLC does not deduplicate
+              repeated protocol states at different log positions.</p>
+            <div class="source-pair">
+              <a href="https://github.com/cjen1-msft/CCF/blob/0921b7c37db0e795186a60031b9cd218c22e0972/tla/consensus/Traceccfraft.tla#L123-L151">cursor</a>
+              <a href="https://github.com/cjen1-msft/CCF/blob/0921b7c37db0e795186a60031b9cd218c22e0972/tla/consensus/Traceccfraft.tla#L492-L511">view</a>
+            </div>
+          </article>
+          <article class="card">
+            <div class="kicker">3 / Constrain</div>
+            <h3>Match partial observations</h3>
+            <p>Each <code>Is*</code> action conjoins one CCF model action with
+              fields visible in that log line: node, role, commit index, log
+              length, message packet, and so on. Unmentioned model state remains
+              nondeterministic.</p>
+            <div class="source-pair">
+              <a href="https://github.com/cjen1-msft/CCF/blob/0921b7c37db0e795186a60031b9cd218c22e0972/tla/consensus/Traceccfraft.tla#L153-L460">GitHub</a>
+              <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/tla/consensus/Traceccfraft.tla:153:1">VS Code</a>
+            </div>
+          </article>
+          <article class="card">
+            <div class="kicker">4 / Branch</div>
+            <h3>Retain ambiguity</h3>
+            <p>A log line may match several messages or paths. TLC explores all
+              legal successors. Composed actions reconcile implementation
+              atomicity with smaller specification steps.</p>
+            <div class="source-pair">
+              <a href="https://github.com/cjen1-msft/CCF/blob/0921b7c37db0e795186a60031b9cd218c22e0972/tla/consensus/Traceccfraft.tla#L639-L658">GitHub</a>
+              <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/tla/consensus/Traceccfraft.tla:639:1">VS Code</a>
+            </div>
+          </article>
+          <article class="card">
+            <div class="kicker">5 / Require</div>
+            <h3>At least one complete match</h3>
+            <p><code>TraceMatched</code> detects an exhausted search queue before
+              the cursor reaches the end. <code>TraceMatchedNonTrivially</code>
+              checks the explored diameter equals trace length. Deadlock checking
+              is disabled because dead partial branches are expected.</p>
+            <div class="source-pair">
+              <a href="https://github.com/cjen1-msft/CCF/blob/0921b7c37db0e795186a60031b9cd218c22e0972/tla/consensus/Traceccfraft.tla#L513-L531">GitHub</a>
+              <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/tla/consensus/Traceccfraft.tla:513:1">VS Code</a>
+            </div>
+          </article>
+          <article class="card">
+            <div class="kicker">6 / Refine</div>
+            <h3>Check protocol and invariants</h3>
+            <p><code>CCFSpec</code> requires matched paths to follow CCF
+              <code>Init/Next</code>, plus approved composed steps. Safety
+              invariants become state constraints, pruning paths that violate the
+              model while replaying the trace.</p>
+            <div class="source-pair">
+              <a href="https://github.com/cjen1-msft/CCF/blob/0921b7c37db0e795186a60031b9cd218c22e0972/tla/consensus/Traceccfraft.tla#L533-L551">constraints</a>
+              <a href="https://github.com/cjen1-msft/CCF/blob/0921b7c37db0e795186a60031b9cd218c22e0972/tla/consensus/Traceccfraft.tla#L658">refinement</a>
+            </div>
+          </article>
+        </div>
+
+        <div class="codebox">
+          <button class="copy" data-copy="cd tla&#10;./tlc.py --workers 1 tv --scenario ../tests/raft_scenarios/append consensus/Traceccfraft.tla">copy</button>
+          <pre>cd tla
+./tlc.py --workers 1 tv \
+  --scenario ../tests/raft_scenarios/append \
+  consensus/Traceccfraft.tla</pre>
+        </div>
+
+        <h3 style="margin-top: 28px">A Lean-native design that scales</h3>
+        <div class="pipeline">
+          <div class="pipe-node"><b>NDJSON</b><small>Observed, partial implementation event.</small></div>
+          <div class="pipe-node"><b>Untrusted search</b><small>Chooses parameters, hidden states, and step counts.</small></div>
+          <div class="pipe-node"><b>Certificate</b><small>Zero-or-more model steps per observation, including intermediates.</small></div>
+          <div class="pipe-node"><b>Lean checker</b><small>Checks the reflexive-transitive Step witnesses and observations.</small></div>
+          <div class="pipe-node"><b>Soundness theorem</b><small>Accepted trace has a reachable matching execution.</small></div>
+        </div>
+
+        <div class="callout">
+          <strong>TLC's current existence check is one-sided</strong>
+          <code>TraceMatched</code> is a "poor man's hyperproperty" tied to TLC's
+          single-worker BFS queue. A successful run supports the claim that at
+          least one complete matching refinement exists. A reported
+          <code>CCFSpec</code> counterexample can come from a different, failing
+          branch even when another branch matches, so failure alone does not prove
+          that no matching refinement exists. A Lean certificate directly checks
+          one complete existential witness and avoids this ambiguity.
+        </div>
+
+        <div class="recommendation">
+          <h3>Do not put search in the trusted core</h3>
+          <p>Keep <code>Step</code> relational and prove a small executable checker
+            sound. An external tool may resolve nondeterminism and emit a
+            certificate; Lean only verifies it. This mirrors proof-producing
+            automation and avoids reimplementing TLC's state-space engine in Lean.</p>
+        </div>
+
+        <div class="source-pair" style="margin-top: 14px">
+          Trace source:
+          <a href="https://github.com/cjen1-msft/CCF/blob/0921b7c37db0e795186a60031b9cd218c22e0972/tla/consensus/Traceccfraft.tla#L80-L123">GitHub</a>
+          <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/tla/consensus/Traceccfraft.tla:80:1">VS Code</a>
+          &nbsp;|&nbsp;
+          <a href="https://github.com/cjen1-msft/CCF/blob/0921b7c37db0e795186a60031b9cd218c22e0972/tla/consensus/Traceccfraft.tla#L502-L660">matching and composition</a>
+        </div>
+      </section>
+
+      <section id="raft">
+        <div class="eyebrow">08 / Migration plan</div>
+        <h2>How to start porting ccfraft.tla</h2>
+        <p class="section-intro">
+          Do not begin by transliterating all 1,779 lines. First establish the
+          representation and proof pattern on a CCF-specific local slice, then add
+          distributed mechanisms behind stable interfaces.
+        </p>
+
+        <div class="recommendation">
+          <h3>Recommended first slice: signed-commit core</h3>
+          <p>Use a singleton configuration and model only logs, terms, roles,
+            commit indices, <code>ClientRequest</code>,
+            <code>SignCommittableMessages</code>, and
+            a specialized <code>AdvanceCommitIndex</code> whose quorum guard is
+            proved equivalent to the singleton case. Prove <code>TypeInv</code>,
+            <code>SignatureInv</code>, and <code>MonoLogInv</code>, plus a concrete
+            client-request/sign/commit path.</p>
+          <p><b>Why this slice:</b> it exercises per-server functional updates,
+            sequences, content variants, guarded actions, bundles, and a defining
+            CCF deviation from Raft - without network messages or dynamic
+            reconfiguration. Alternatively, a multi-server static slice must
+            retain configurations, <code>matchIndex</code>, and quorum
+            calculation; otherwise it silently weakens commit semantics.</p>
+        </div>
+
+        <h3 style="margin-top: 28px">Representation choices for that slice</h3>
+        <div class="grid-3">
+          <article class="card">
+            <div class="kicker">Servers</div>
+            <h3>Finite, inhabited key type</h3>
+            <p>State fields use total functions <code>Server -> ...</code>.
+              Initialization needs a chosen <code>start : Server</code> or
+              <code>Nonempty Server</code>; quorum operations need
+              <code>Fintype Server</code> and decidable equality.</p>
+          </article>
+          <article class="card">
+            <div class="kicker">Entries</div>
+            <h3>Typed sum, not record tags</h3>
+            <p><code>EntryContent := transaction | signature | reconfiguration |
+              retired</code>, with payloads attached to the relevant constructor.
+              This makes impossible record shapes unrepresentable, but narrows the
+              raw TLA+ state space. Prove encode/decode correspondence or that all
+              reachable TLA+ entries have this canonical shape.</p>
+          </article>
+          <article class="card">
+            <div class="kicker">Logs</div>
+            <h3>List plus index API</h3>
+            <p>Store <code>Server -> List Entry</code>. Isolate indexing,
+              prefix, append, truncate, and last-committable operations behind
+              lemmas so proofs do not unfold list arithmetic everywhere.</p>
+          </article>
+          <article class="card">
+            <div class="kicker">Roles</div>
+            <h3>Inductive state</h3>
+            <p><code>LeadershipState</code> and <code>MembershipState</code> become
+              inductive types. Exhaustive cases replace repeated membership tests
+              over symbolic constants.</p>
+          </article>
+          <article class="card">
+            <div class="kicker">Indices</div>
+            <h3>Choose one convention</h3>
+            <p>Lean lists are zero-based; TLA+ sequences are one-based and use
+              zero as "none". Keep an explicit Raft index wrapper or a carefully
+              specified conversion boundary. Do not mix conventions in actions.</p>
+          </article>
+          <article class="card">
+            <div class="kicker">Updates</div>
+            <h3>Pure old-state reads</h3>
+            <p>Every action returns a new structure. Compute coupled values in a
+              <code>let</code> from the old state, then update fields together.
+              Add simplification lemmas for per-server updates immediately.</p>
+          </article>
+        </div>
+
+        <div class="roadmap" style="margin-top: 18px">
+          <details open>
+            <summary>Freeze semantics and choose representations</summary>
+            <div class="body">
+              <p>Write a mapping table before proofs. Use an inductive
+                <code>EntryContent</code>, an <code>Entry</code> structure,
+                <code>Server -> List Entry</code> for logs, and explicit state
+                fields. Decide whether indices are zero-based in Lean or preserve
+                TLA+'s one-based view behind helper functions. Prefer one internal
+                convention and prove boundary lemmas.</p>
+            </div>
+          </details>
+          <details>
+            <summary>Build the local signed-log vertical slice</summary>
+            <div class="body">
+              <p>Implement <code>initialState</code>, pure next-state functions,
+                <code>Step</code> constructors, three properties, their bundle,
+                initializer proof, per-action preservation, <code>Reachable</code>,
+                and one non-vacuity example. This gives an end-to-end template.</p>
+            </div>
+          </details>
+          <details>
+            <summary>Add elections under one static configuration</summary>
+            <div class="body">
+              <p>Add votes, roles, timeouts, vote request/response, and
+                <code>BecomeLeader</code>. Express quorum intersection as a
+                reusable assumption or theorem over a configuration abstraction.
+                Target one-leader-per-term and leader log prerequisites.</p>
+            </div>
+          </details>
+          <details>
+            <summary>Add the network and log replication</summary>
+            <div class="body">
+              <p>Model messages as typed data rather than loose records. Add send,
+                receive, update-term, append request/response, conflict truncation,
+                and stale-message handling. Target log matching, monotonic terms,
+                and leader completeness as a joint inductive bundle.</p>
+            </div>
+          </details>
+          <details>
+            <summary>Add reconfiguration and retirement last</summary>
+            <div class="body">
+              <p>Configurations change the quorum theorem and couple logs,
+                membership phases, and commitment. Add them only after static Raft
+                safety is stable. Treat pre-vote, check-quorum, and retirement as
+                separate extensions with regression examples.</p>
+            </div>
+          </details>
+          <details>
+            <summary>Add transition properties before temporal liveness</summary>
+            <div class="body">
+              <p>Reachability induction handles state invariants, but
+                <code>ccfraft.tla</code> also has safety formulas over
+                current/next pairs: committed-log append-only, monotonic commit
+                and term, permitted log changes, and never committing prior-term
+                entries. Prove these for every real <code>Step</code> and
+                separately prove the reflexive stutter case. Infinite traces or
+                another temporal layer are still needed for exact temporal and
+                fairness/liveness statements.</p>
+            </div>
+          </details>
+        </div>
+
+        <h3 style="margin-top: 28px">Suggested project shape</h3>
+        <div class="codebox">
+          <pre>CCFRaft/
+  Model.lean       -- data, State, helpers, pure updates, Step, Reachable
+  Properties.lean  -- type/safety propositions and induction bundles
+  Proofs/
+    SignedLog.lean -- first vertical slice
+    Election.lean
+    Replication.lean
+    Reconfiguration.lean
+  Examples.lean    -- concrete reachable paths and regression scenarios
+  Trace.lean       -- later: observations, certificates, checker soundness</pre>
+        </div>
+
+        <div class="callout">
+          <strong>Proof engineering rule</strong>
+          Bundle properties by mutual preservation dependency, not by how the TLA+
+          file groups them. The current port's 17-clause <code>CoreBundle</code> is
+          the fixed point ordinary Lean automation could preserve across all ten
+          actions; the remaining properties need another mutually supporting layer.
+        </div>
+      </section>
+
+      <section id="recipe">
+        <div class="eyebrow">09 / Reuse</div>
+        <h2>A repeatable porting recipe</h2>
+        <p class="section-intro">
+          This applies beyond Raft: disaster recovery, governance, and smaller TLA+
+          protocols can use the same progression.
+        </p>
+
+        <div class="grid-3">
+          <article class="card">
+            <div class="kicker">Specify</div>
+            <h3>Make the relation exact</h3>
+            <p>Translate state, derived operators, initialization, guards, and
+              simultaneous updates. Keep a source-to-target mapping table.</p>
+          </article>
+          <article class="card">
+            <div class="kicker">Execute</div>
+            <h3>Rule out vacuity early</h3>
+            <p>Instantiate finite concrete types and prove representative action
+              paths are reachable before investing in invariants.</p>
+          </article>
+          <article class="card">
+            <div class="kicker">Prove</div>
+            <h3>Find the inductive bundle</h3>
+            <p>Prove initialization, then preservation per action. Add supporting
+              invariants when an action exposes a missing fact.</p>
+          </article>
+          <article class="card">
+            <div class="kicker">Audit</div>
+            <h3>Expose the trust boundary</h3>
+            <p>Print axioms, reject <code>sorryAx</code>, report open obligations,
+              and distinguish proof gaps from translation gaps.</p>
+          </article>
+          <article class="card">
+            <div class="kicker">Validate</div>
+            <h3>Separate search from checking</h3>
+            <p>Let untrusted tooling find witnesses. Prove that a small Lean
+              checker accepts only legal model executions.</p>
+          </article>
+          <article class="card">
+            <div class="kicker">Scale</div>
+            <h3>Add one semantic dimension</h3>
+            <p>Static before dynamic configuration; local before networked;
+              state and transition safety before liveness; deterministic replay
+              before partial traces.</p>
+          </article>
+        </div>
+
+        <div class="recommendation" style="margin-top: 20px">
+          <h3>Concrete next commit</h3>
+          <p>Create <code>CCFRaft/Model.lean</code> with the signed-log state and
+            three actions, then add one failing preservation test/theorem target
+            for <code>SignatureInv</code>. Complete that vertical slice before
+            introducing messages. It is small enough to review and rich enough to
+            invalidate bad representation choices.</p>
+        </div>
+      </section>
+
+      <footer>
+        Evidence: repository source at commit
+        <code>0921b7c37db0e795186a60031b9cd218c22e0972</code> and a successful
+        local <code>lake build</code> on 2026-08-14. Report file:
+        <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/consistency-port-report.html:1:1">open source</a>.
+      </footer>
+    </main>
+  </div>
+
+  <script>
+    const proofDetails = [
+      {
+        title: "Initializer discharges the full specification",
+        text: "initialProperties proves PropertyBundle initialState: all 35 invariants plus the safety clause. Most facts are vacuous because there are no events or ledger entries; order-bottom laws handle the active initial view.",
+        code: "theorem initialProperties :\\n  PropertyBundle (initialState : State ...) := by\\n  constructor <;> simp [...]\\n  grind [eqZeroOfLeZero]",
+        href: "https://github.com/cjen1-msft/CCF/blob/0921b7c37db0e795186a60031b9cd218c22e0972/lean/CCFConsistency/Proofs.lean#L108-L166"
+      },
+      {
+        title: "The proof matrix lives here",
+        text: "Each action has a preservation theorem. stepPreservesCore cases on the Step witness and dispatches to the corresponding theorem. This is Lean's analogue of checking every Next disjunct against the induction invariant.",
+        code: "theorem stepPreservesCore\\n  (properties : CoreBundle state)\\n  (transition : Step state next) :\\n  CoreBundle next := by\\n  cases transition with ...",
+        href: "https://github.com/cjen1-msft/CCF/blob/0921b7c37db0e795186a60031b9cd218c22e0972/lean/CCFConsistency/Proofs.lean#L2763-L2889"
+      },
+      {
+        title: "Reachable is the induction principle",
+        text: "Reachable has two constructors: initial and step. Induction therefore asks exactly for the initial proof and preservation under one arbitrary legal transition.",
+        code: "theorem reachableCore\\n  (reachable : Reachable state) :\\n  CoreBundle state := by\\n  induction reachable with\\n  | initial => exact initialCore\\n  | step _ transition properties =>\\n      exact stepPreservesCore properties transition",
+        href: "https://github.com/cjen1-msft/CCF/blob/0921b7c37db0e795186a60031b9cd218c22e0972/lean/CCFConsistency/Proofs.lean#L2891-L2901"
+      },
+      {
+        title: "Some properties need no new induction",
+        text: "UniqueRwTxs and SameObservations are consequences of the core facts about response branches, frontiers, and ledger entries. Deriving them after reachability keeps the preservation bundle smaller.",
+        code: "core : CoreBundle state\\n------------------------\\ncoreUniqueRwTxs core : UniqueRwTxs state\\ncoreSameObservations core : SameObservations state",
+        href: "https://github.com/cjen1-msft/CCF/blob/0921b7c37db0e795186a60031b9cd218c22e0972/lean/CCFConsistency/Proofs.lean#L2903-L2954"
+      },
+      {
+        title: "The exported result is intentionally partial",
+        text: "reachableProved packages the 17-clause core and two consequences. Its conclusion is ProvedBundle, not PropertyBundle, so the theorem statement itself records the fixed-point boundary.",
+        code: "theorem reachableProved\\n  (reachable : Reachable state) :\\n  ProvedBundle state := by\\n  have core := reachableCore reachable\\n  exact { core,\\n    uniqueRwTxs := coreUniqueRwTxs core,\\n    sameObservations := coreSameObservations core }",
+        href: "https://github.com/cjen1-msft/CCF/blob/0921b7c37db0e795186a60031b9cd218c22e0972/lean/CCFConsistency/Proofs.lean#L2956-L2966"
+      }
+    ];
+
+    const proofDetail = document.getElementById("proof-detail");
+    function showProofStep(index) {
+      const item = proofDetails[index];
+      proofDetail.innerHTML =
+        "<h3>" + item.title + "</h3>" +
+        "<p>" + item.text + "</p>" +
+        "<pre>" + item.code + "</pre>" +
+        '<p><a href="' + item.href + '" style="color:#8dc7ff">Open source on GitHub</a></p>';
+      document.querySelectorAll(".step-button").forEach((button, i) => {
+        button.classList.toggle("active", i === index);
+      });
+    }
+    document.querySelectorAll(".step-button").forEach(button => {
+      button.addEventListener("click", () => showProofStep(Number(button.dataset.step)));
+    });
+    showProofStep(0);
+
+    const actions = [
+      ["rwTxRequest", "history", "Next transaction ID; next history event", "Adds a used RW-request event and its transaction ID."],
+      ["roTxRequest", "history", "Next transaction ID; next history event", "Adds a used RO-request event and its transaction ID."],
+      ["rwTxExecute", "ledger", "RW request; transaction absent; active branch; next slot", "Appends a client ledger entry with origin view and transaction."],
+      ["appendOtherTxn", "ledger", "Active branch; next slot", "Appends a non-client ledger entry, representing unrelated traffic."],
+      ["rwTxResponse", "history", "Unanswered RW request; matching client entry; next event", "Records RW response transaction, frontier, origin view, and branch."],
+      ["roTxResponse", "history", "Unanswered RO request; active branch; last slot; next event", "Records RO response at the branch frontier and its origin view."],
+      ["statusCommittedResponse", "status", "RW response; current branch contains matching origin; not invalid; next event", "Adds a committed status event for the response view and slot."],
+      ["statusInvalidResponse", "status", "RW response; invalidStatusAllowed; next event", "Adds an invalid status event for the response view and slot."],
+      ["truncateLedger", "view", "Active source; existing cut; valid source; next view", "Creates a new active view by copying the source prefix through the cut."],
+      ["truncateLedgerToEmpty", "view", "Active source; no committed ID; next view", "Creates a new empty active view."]
+    ];
+
+    const actionBody = document.querySelector("#action-table tbody");
+    const actionSearch = document.getElementById("action-search");
+    const actionKind = document.getElementById("action-kind");
+    let actionSortColumn = 0;
+    let actionSortDirection = 1;
+
+    function renderActions() {
+      const query = actionSearch.value.trim().toLowerCase();
+      const kind = actionKind.value;
+      const visible = actions
+        .filter(row => (!query || row.join(" ").toLowerCase().includes(query)))
+        .filter(row => (!kind || row[1] === kind))
+        .sort((a, b) =>
+          a[actionSortColumn].localeCompare(b[actionSortColumn]) * actionSortDirection
+        );
+      actionBody.innerHTML = visible.map(row =>
+        "<tr>" +
+        "<td><code>" + row[0] + "</code></td>" +
+        "<td>" + row[1] + "</td>" +
+        "<td>" + row[2] + "</td>" +
+        "<td>" + row[3] + "</td>" +
+        "</tr>"
+      ).join("");
+    }
+
+    actionSearch.addEventListener("input", renderActions);
+    actionKind.addEventListener("change", renderActions);
+    document.querySelectorAll("#action-table th").forEach(th => {
+      th.addEventListener("click", () => {
+        const next = Number(th.dataset.actionCol);
+        if (actionSortColumn === next) actionSortDirection *= -1;
+        else { actionSortColumn = next; actionSortDirection = 1; }
+        renderActions();
+      });
+    });
+    renderActions();
+
+    const properties = [
+      ["HistoryTypeOk", "Structural", "proved", "Used events have exactly one recognized history role."],
+      ["HistoryEventKindUnique", "Structural", "proved", "An event cannot have conflicting history kinds."],
+      ["HistoryIsPrefix", "Structural", "proved", "Used history events form an ordered prefix."],
+      ["ActiveViewsArePrefix", "Structural", "proved", "Ledger branches/views are introduced without gaps."],
+      ["LedgerTypeOk", "Structural", "proved", "Entries belong to active branches and valid origin views."],
+      ["ClientEntriesAreLedgerEntries", "Structural", "proved", "Client entries are real ledger entries."],
+      ["LedgerIsPrefix", "Structural", "proved", "Occupied slots form a prefix on each branch."],
+      ["LedgerTxIdsAreStableAcrossCopies", "Provenance", "open", "Equal transaction copies agree on slot and origin view."],
+      ["LedgerEntryExistsInOriginView", "Structural", "proved", "Every copied entry exists on its origin branch."],
+      ["ResponseFrontierIsLedgerEntry", "Structural", "proved", "A response frontier denotes a real entry."],
+      ["ClientEntryHasRequest", "Provenance", "open", "Every client ledger entry came from a request."],
+      ["ClientEntryMatchesOrigin", "Core", "proved", "Copied client entries retain origin metadata."],
+      ["LedgerEntryViewsAreMonotonic", "Core", "proved", "Origin views do not decrease along a branch."],
+      ["LedgerPrefixMatchesFrontierOrigin", "Core", "proved", "A response prefix agrees with its frontier's origin."],
+      ["ResponseBranchIsView", "Structural", "proved", "Recorded response branch equals response view."],
+      ["ResponseFrontierMatchesOrigin", "Structural", "proved", "Response view matches frontier origin."],
+      ["RwResponseMatchesLedgerEntry", "Structural", "proved", "RW response transaction matches its ledger slot."],
+      ["StatusHasRwResponse", "Status", "open", "Every status event refers to an earlier RW response."],
+      ["CommittedIdIsInCurrentLedger", "Status", "open", "Committed identifiers remain in the current branch."],
+      ["CommittedResponseMatchesCurrentLedger", "Status", "open", "Committed response metadata matches current ledger."],
+      ["AllReceivedAfterSent", "History", "proved", "Every response follows a matching request."],
+      ["UniqueTxRequests", "Provenance", "open", "Different requests use different transaction IDs."],
+      ["OnlyObserveSentRequests", "Observation", "open", "Observed transactions have preceding requests."],
+      ["ObservationsAreWithinResponsePrefix", "Structural", "proved", "Observations stay at or before response frontier."],
+      ["UniqueRwTxs", "Derived", "proved", "Same view/slot RW responses name the same transaction."],
+      ["SameObservations", "Derived", "proved", "Same view/slot responses expose identical observations."],
+      ["UniqueTxIds", "Provenance", "open", "A transaction ID identifies one view/slot."],
+      ["UniqueCommittedSeqnos", "Commit", "open", "Committed responses at one slot agree on transaction."],
+      ["CommittedOrInvalid", "Status", "open", "A transaction ID cannot be both committed and invalid."],
+      ["OnceCommittedPreviousIsCommitted", "Status", "open", "Commit status closes the preceding same-view prefix."],
+      ["OnceCommittedOlderViewSuffixIsInvalid", "Status", "open", "Newer commits invalidate old-view suffixes."],
+      ["OnceInvalidSameViewSuffixIsInvalid", "Status", "open", "Invalidity closes a same-view suffix."],
+      ["AllCommittedObserved", "Observation", "open", "Later committed RW transactions observe earlier commits."],
+      ["CommittedRwSerializable", "Safety", "open", "Committed RW observation sets are prefix-comparable."],
+      ["AtMostOnceObserved", "Observation", "open", "A transaction appears at only one observed slot."],
+      ["CommittedRwOrderedRealTime", "Safety", "open", "Committed RW order respects request/response real time."]
+    ];
+
+    const tbody = document.querySelector("#property-table tbody");
+    const search = document.getElementById("property-search");
+    const statusFilter = document.getElementById("property-status");
+    let sortColumn = 0;
+    let sortDirection = 1;
+
+    function renderProperties() {
+      const query = search.value.trim().toLowerCase();
+      const status = statusFilter.value;
+      const visible = properties
+        .filter(row => (!query || row.join(" ").toLowerCase().includes(query)))
+        .filter(row => (!status || row[2] === status))
+        .sort((a, b) => a[sortColumn].localeCompare(b[sortColumn]) * sortDirection);
+      tbody.innerHTML = visible.map(row =>
+        "<tr>" +
+        "<td><code>" + row[0] + "</code></td>" +
+        "<td>" + row[1] + "</td>" +
+        '<td><span class="badge ' + row[2] + '">' + row[2] + "</span></td>" +
+        "<td>" + row[3] + "</td>" +
+        "</tr>"
+      ).join("");
+    }
+
+    search.addEventListener("input", renderProperties);
+    statusFilter.addEventListener("change", renderProperties);
+    document.querySelectorAll("#property-table th").forEach(th => {
+      th.addEventListener("click", () => {
+        const next = Number(th.dataset.col);
+        if (sortColumn === next) sortDirection *= -1;
+        else { sortColumn = next; sortDirection = 1; }
+        renderProperties();
+      });
+    });
+    renderProperties();
+
+    document.querySelectorAll(".copy").forEach(button => {
+      button.addEventListener("click", async () => {
+        await navigator.clipboard.writeText(button.dataset.copy);
+        const old = button.textContent;
+        button.textContent = "copied";
+        setTimeout(() => button.textContent = old, 1000);
+      });
+    });
+
+    const navLinks = [...document.querySelectorAll("nav a")];
+    const sections = [...document.querySelectorAll("main section")];
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          navLinks.forEach(link =>
+            link.classList.toggle("active", link.getAttribute("href") === "#" + entry.target.id)
+          );
+        }
+      });
+    }, { rootMargin: "-20% 0px -70% 0px" });
+    sections.forEach(section => observer.observe(section));
+  </script>
+</body>
+</html>
