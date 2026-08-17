@@ -108,7 +108,7 @@ def CurrentTermsAreOne (state : State TxId) : Prop :=
     (state.nodes node).currentTerm = TERM_ONE
 
 /-- Supporting facts proved together because actions preserve them jointly. -/
-structure CoreInvariant (state : State TxId) : Prop where
+structure SystemInductiveInvariant (state : State TxId) : Prop where
   commitIndicesBounded : CommitIndicesBounded state
   logsPrefixLeader : LogsPrefixLeader state
   termsAreOne : TermsAreOne state
