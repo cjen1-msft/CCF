@@ -1512,6 +1512,20 @@ if(BUILD_TESTS)
   )
 
   add_e2e_test(
+    NAME vegeta_logging_jwt_perf
+    PYTHON_SCRIPT ${CMAKE_SOURCE_DIR}/tests/vegeta_logging_jwt.py
+    LABEL perf
+    ADDITIONAL_ARGS --max-open-sessions 20000 --max-open-sessions-hard 20010
+    CONFIGURATIONS perf
+  )
+
+  add_test(
+    NAME vegeta_logging_jwt_unit
+    COMMAND ${PYTHON} ${CMAKE_SOURCE_DIR}/tests/test_vegeta_logging_jwt.py
+  )
+  set_property(TEST vegeta_logging_jwt_unit APPEND PROPERTY LABELS unit)
+
+  add_e2e_test(
     NAME historical_query_perf_test
     PYTHON_SCRIPT ${CMAKE_SOURCE_DIR}/tests/historical_query_perf.py
     LABEL perf
