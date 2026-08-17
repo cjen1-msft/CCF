@@ -9,6 +9,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import vegeta_logging_jwt
 
@@ -79,6 +80,38 @@ class VegetaLoggingJwtTests(unittest.TestCase):
             [vegeta_logging_jwt.sweep_rate(64, step) for step in range(7)],
             [64, 81, 102, 128, 161, 203, 256],
         )
+
+    def test_waits_until_target_connections_are_released(self):
+        with (
+            mock.patch.object(
+                vegeta_logging_jwt,
+                "_count_target_sockets",
+                side_effect=[2, 1, 0],
+            ),
+            mock.patch.object(vegeta_logging_jwt.time, "monotonic", return_value=0),
+            mock.patch.object(vegeta_logging_jwt.time, "sleep") as sleep,
+        ):
+            vegeta_logging_jwt.wait_for_port_release(
+                "https://127.0.0.1:8000", timeout_s=70
+            )
+
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_counts_sockets_for_target_address(self):
+        with tempfile.TemporaryDirectory() as directory:
+            proc_path = Path(directory) / "tcp"
+            proc_path.write_text(
+                "sl local_address rem_address st\n"
+                "0: 0100007F:C350 0100007F:1F40 06\n"
+                "1: 0100007F:C351 0100007F:1F41 06\n",
+                encoding="ascii",
+            )
+
+            count = vegeta_logging_jwt._count_target_sockets(
+                "https://127.0.0.1:8000", proc_path
+            )
+
+        self.assertEqual(count, 1)
 
     def test_targets_cycle_tokens_without_cartesian_product(self):
         targets = vegeta_logging_jwt.make_targets(

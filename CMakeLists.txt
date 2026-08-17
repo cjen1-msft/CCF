@@ -1526,6 +1526,8 @@ if(BUILD_TESTS)
       1000000
       --snapshot-time-interval
       0s
+      --port-release-timeout-s
+      70
     CONFIGURATIONS perf
   )
 

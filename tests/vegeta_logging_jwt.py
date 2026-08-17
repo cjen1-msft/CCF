@@ -4,16 +4,19 @@
 import base64
 import copy
 import importlib.util
+import ipaddress
 import json
 import os
 import re
 import shutil
 import ssl
 import subprocess
+import time
 import urllib.request
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import UUID
 
 RECEIPT_PATH = "/app/log/blocking/private/receipt"
@@ -21,6 +24,7 @@ NANOSECONDS_PER_SECOND = 1_000_000_000
 DEFAULT_INITIAL_RATE = 64
 DEFAULT_DURATION_S = 30
 DEFAULT_TIMEOUT_S = 10
+DEFAULT_PORT_RELEASE_TIMEOUT_S = 70
 TARGET_BODY_COUNT = 100
 SYNTHETIC_TENANT_ID = UUID("00000000-0000-4000-8000-000000000001")
 SYNTHETIC_ISSUER = f"https://login.microsoftonline.com/{SYNTHETIC_TENANT_ID}/v2.0"
@@ -156,6 +160,32 @@ def sweep_rate(initial_rate, step):
     if step < 0:
         raise ValueError("step must be non-negative")
     return round(initial_rate * 2 ** (step / 3))
+
+
+def _count_target_sockets(base_url, proc_path=Path("/proc/net/tcp")):
+    parsed_url = urlsplit(base_url)
+    if parsed_url.hostname is None or parsed_url.port is None:
+        raise ValueError(f"URL has no host and port: {base_url}")
+    address = ipaddress.IPv4Address(parsed_url.hostname)
+    proc_address = address.packed[::-1].hex().upper()
+    remote = f"{proc_address}:{parsed_url.port:04X}"
+    return sum(
+        line.split()[2] == remote
+        for line in proc_path.read_text(encoding="ascii").splitlines()[1:]
+    )
+
+
+def wait_for_port_release(base_url, timeout_s):
+    if timeout_s <= 0:
+        raise ValueError("Port release timeout must be positive")
+    deadline = time.monotonic() + timeout_s
+    while (socket_count := _count_target_sockets(base_url)) > 0:
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"{socket_count} client sockets for {base_url} remain after "
+                f"{timeout_s}s"
+            )
+        time.sleep(1)
 
 
 def make_targets(base_url, bodies, tokens):
@@ -514,6 +544,9 @@ def run_benchmark(args):
         elif should_stop_sweep(points):
             termination_reason = "two_consecutive_half_rate_points"
         _write_summary(summary_path, points, termination_reason or "sweep_in_progress")
+        if termination_reason is None:
+            print(f"Waiting for client ports used by {base_url} to be released")
+            wait_for_port_release(base_url, args.port_release_timeout_s)
 
     plot_sweep(points, plot_path)
     _write_summary(summary_path, points, termination_reason)
@@ -537,6 +570,11 @@ if __name__ == "__main__":
         parser.add_argument("--duration-s", type=int, default=DEFAULT_DURATION_S)
         parser.add_argument("--initial-rate", type=int, default=DEFAULT_INITIAL_RATE)
         parser.add_argument("--request-timeout-s", type=int, default=DEFAULT_TIMEOUT_S)
+        parser.add_argument(
+            "--port-release-timeout-s",
+            type=int,
+            default=DEFAULT_PORT_RELEASE_TIMEOUT_S,
+        )
 
     cli_args = infra.e2e_args.cli_args(add=add)
     cli_args.package = "samples/apps/logging/logging"
