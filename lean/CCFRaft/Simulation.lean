@@ -14,11 +14,16 @@ ordinary model actions, then calls `ExecutableTransitionSystem.applyAction`.
 
 namespace CCFRaft.Simulation
 
+/-- Number of transaction IDs available to the bounded simulator. -/
 def TX_COUNT : Nat := 8
+/-- Finite transaction-ID type used only by simulation and replay. -/
 abbrev TxId := Fin TX_COUNT
+/-- Concrete finite state explored by the simulator. -/
 abbrev SimState := State TxId
+/-- Concrete finite action type explored by the simulator. -/
 abbrev SimAction := Action TxId
 
+/-- Action families used for coverage telemetry. -/
 inductive ActionFamily where
   | clientRequest
   | appendEntries
@@ -26,6 +31,7 @@ inductive ActionFamily where
   | advanceCommitIndex
   deriving DecidableEq, Repr
 
+/-- Raw simulator choices that materialize directly as semantic actions. -/
 inductive Choice where
   | clientRequest (node : Node) (txId : TxId)
   | appendEntries (source destination : Node) (batchEnd : Nat)
@@ -33,12 +39,14 @@ inductive Choice where
   | advanceCommitIndex (node : Node)
   deriving DecidableEq, Repr
 
+/-- Classify a simulator choice for coverage reporting. -/
 def Choice.family : Choice -> ActionFamily
   | .clientRequest .. => .clientRequest
   | .appendEntries .. => .appendEntries
   | .receive .. => .receive
   | .advanceCommitIndex .. => .advanceCommitIndex
 
+/-- Convert a simulator choice into the exact model action it denotes. -/
 def materialize (_state : SimState) : Choice -> Option SimAction
   | .clientRequest node txId => some (.clientRequest node txId)
   | .appendEntries source destination batchEnd =>
@@ -46,6 +54,7 @@ def materialize (_state : SimState) : Choice -> Option SimAction
   | .receive source destination => some (.receive source destination)
   | .advanceCommitIndex node => some (.advanceCommitIndex node)
 
+/-- Every enabled finite model action has a corresponding simulator choice. -/
 theorem materializeComplete
     (state : SimState)
     (action : SimAction)
@@ -62,6 +71,7 @@ theorem materializeComplete
   | advanceCommitIndex node =>
       exact ⟨.advanceCommitIndex node, rfl⟩
 
+/-- Package materialization and its completeness proof for the generic engine. -/
 def adapter :
     ExecutableTransitionSystem.SimulationAdapter
       (system (TxId := TxId)) where
@@ -69,22 +79,27 @@ def adapter :
   materialize
   complete := materializeComplete
 
+/-- Executable enumeration of all five nodes. -/
 def allNodes : List Node :=
   List.ofFn fun node => node
 
+/-- Executable enumeration of all bounded transaction IDs. -/
 def allTxIds : List TxId :=
   List.ofFn fun txId => txId
 
+/-- Every node occurs in the simulator's node enumeration. -/
 @[simp]
 theorem memAllNodes (node : Node) :
     node ∈ allNodes :=
   List.mem_ofFn.mpr ⟨node, rfl⟩
 
+/-- Every bounded transaction ID occurs in its enumeration. -/
 @[simp]
 theorem memAllTxIds (txId : TxId) :
     txId ∈ allTxIds :=
   List.mem_ofFn.mpr ⟨txId, rfl⟩
 
+/-- Executably check every category of the proof's supporting invariant. -/
 def stateChecks (state : SimState) : Bool :=
   let nodeChecks :=
     allNodes.all fun node =>
@@ -117,20 +132,24 @@ def stateChecks (state : SimState) : Bool :=
               decide (ResponseMatchesLeader state response)
   nodeChecks && leaderChecks && networkChecks
 
+/-- Executably check committed-log monotonicity on one explored edge. -/
 def edgeChecks (before after : SimState) : Bool :=
   allNodes.all fun node =>
     decide (
       (before.nodes node).committedLog <+:
         (after.nodes node).committedLog)
 
+/-- State of the deterministic pseudo-random number generator. -/
 structure Generator where
   state : UInt64
 
+/-- Produce the next pseudo-random word and generator state. -/
 def Generator.next (generator : Generator) : UInt64 × Generator :=
   let value :=
     generator.state * 6364136223846793005 + 1442695040888963407
   (value, { state := value })
 
+/-- Choose an index below a bound, returning zero for an empty range. -/
 def Generator.choose
     (generator : Generator)
     (bound : Nat) :
@@ -141,6 +160,7 @@ def Generator.choose
   else
     (value.toNat % bound, nextGenerator)
 
+/-- Enumerate every bounded action shape that could be enabled in a state. -/
 def candidateChoices (state : SimState) : List Choice :=
   (allNodes.flatMap fun node =>
     allTxIds.map fun txId => .clientRequest node txId) ++
@@ -156,6 +176,7 @@ def candidateChoices (state : SimState) : List Choice :=
     allNodes.map fun destination => .receive source destination) ++
   (allNodes.map fun node => .advanceCommitIndex node)
 
+/-- Every enabled finite action appears in the simulator candidate list. -/
 theorem candidateChoicesComplete
     (state : SimState)
     (action : SimAction)
@@ -177,6 +198,7 @@ theorem candidateChoicesComplete
       refine ⟨.advanceCommitIndex node, ?_, rfl⟩
       simp [candidateChoices]
 
+/-- Randomly select one candidate choice from the complete finite list. -/
 def propose
     (state : SimState)
     (generator : Generator) :
@@ -185,6 +207,7 @@ def propose
   let (index, generator) := generator.choose candidates.length
   (candidates[index]?.getD (.advanceCommitIndex LEADER), generator)
 
+/-- Counts proposals, accepted actions, rejections, traces, and explored depth. -/
 structure Telemetry where
   proposedClient : Nat := 0
   proposedAppend : Nat := 0
@@ -200,6 +223,7 @@ structure Telemetry where
   maxDepth : Nat := 0
   deriving Repr
 
+/-- Increment the proposal counter for one action family. -/
 def Telemetry.proposed
     (telemetry : Telemetry)
     (family : ActionFamily) : Telemetry :=
@@ -213,6 +237,7 @@ def Telemetry.proposed
   | .advanceCommitIndex =>
       { telemetry with proposedCommit := telemetry.proposedCommit + 1 }
 
+/-- Increment the accepted-action counter for one action family. -/
 def Telemetry.taken
     (telemetry : Telemetry)
     (family : ActionFamily) : Telemetry :=
@@ -226,6 +251,7 @@ def Telemetry.taken
   | .advanceCommitIndex =>
       { telemetry with takenCommit := telemetry.takenCommit + 1 }
 
+/-- Serialize one semantic action as a stable replay line. -/
 def renderAction : SimAction -> String
   | .clientRequest node txId =>
       s!"client,{node.val},{txId.val}"
@@ -236,6 +262,7 @@ def renderAction : SimAction -> String
   | .advanceCommitIndex node =>
       s!"commit,{node.val}"
 
+/-- Parse a natural number only when it lies below a given bound. -/
 def parseBounded
     (bound : Nat)
     (raw : String) :
@@ -243,6 +270,7 @@ def parseBounded
   let value <- raw.toNat?
   if value < bound then some value else none
 
+/-- Parse a node identifier from replay text. -/
 def nodeOfString (raw : String) : Option Node := do
   let value <- raw.toNat?
   if within : value < NODE_COUNT then
@@ -250,6 +278,7 @@ def nodeOfString (raw : String) : Option Node := do
   else
     none
 
+/-- Parse a bounded transaction ID from replay text. -/
 def txIdOfString (raw : String) : Option TxId := do
   let value <- raw.toNat?
   if within : value < TX_COUNT then
@@ -257,6 +286,7 @@ def txIdOfString (raw : String) : Option TxId := do
   else
     none
 
+/-- Parse one replay line into a semantic action. -/
 def parseAction (line : String) : Option SimAction := do
   match line.splitOn "," with
   | ["client", node, txId] =>
@@ -277,10 +307,12 @@ def parseAction (line : String) : Option SimAction := do
       some (.advanceCommitIndex node)
   | _ => none
 
+/-- Write semantic actions in execution order to a replayable trace. -/
 def writeTrace (path : System.FilePath) (actions : List SimAction) : IO Unit :=
   IO.FS.writeFile path
     (String.intercalate "\n" (actions.reverse.map renderAction) ++ "\n")
 
+/-- Reapply a trace while checking every state and edge invariant. -/
 def replayActions
     (actions : List SimAction) :
     Except String SimState :=
@@ -294,6 +326,7 @@ def replayActions
       throw s!"edge invariant failed after: {renderAction action}"
     pure nextState
 
+/-- Parse and replay a trace file, reporting its final commit frontier. -/
 def replayFile (path : System.FilePath) : IO UInt32 := do
   let content <- IO.FS.readFile path
   let lines := content.splitOn "\n" |>.filter (· != "")
@@ -311,6 +344,7 @@ def replayFile (path : System.FilePath) : IO UInt32 := do
       IO.eprintln message
       return 1
 
+/-- Run random traces until the deadline, restarting at the depth limit. -/
 partial def simulateLoop
     (deadlineMs : Nat)
     (maxDepth : Nat)
@@ -356,6 +390,7 @@ partial def simulateLoop
           maxDepth := max telemetry.maxDepth nextDepth }
       simulateLoop deadlineMs maxDepth generator nextState nextDepth trace telemetry
 
+/-- Run timed simulation from a seed and print coverage telemetry. -/
 def simulate
     (durationMs seed maxDepth : Nat) :
     IO UInt32 := do
