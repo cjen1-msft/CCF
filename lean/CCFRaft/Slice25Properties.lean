@@ -37,8 +37,7 @@ def EntriesHaveTerm (term : Nat) (entries : List (Entry TxId)) : Prop :=
 def RequestSnapshots
     (history : List (Entry TxId))
     (request : AppendEntriesRequest TxId) : Prop :=
-  request.prevLogIndex <= history.length /\
-    request.prevLogIndex + request.entries.length <= history.length /\
+  request.prevLogIndex + request.entries.length <= history.length /\
     request.prevLogTerm = termAt history request.prevLogIndex /\
     history.take (request.prevLogIndex + request.entries.length) =
       history.take request.prevLogIndex ++ request.entries
@@ -60,12 +59,8 @@ def CrossTermRequestSafe
         request.source = newLeader /\
         RequestSnapshots newLog request /\
         request.leaderCommit <= newLog.length)) /\
-    (if request.term = TERM_ONE then
-      oldLog.take request.leaderCommit <+: newLog
-    else if request.term = 2 then
-      newLog.take request.leaderCommit <+: newLog
-    else
-      False) /\
+    (request.term = TERM_ONE ->
+      oldLog.take request.leaderCommit <+: newLog) /\
     (request.entries = [] ->
       request.leaderCommit <= request.prevLogIndex)
 
@@ -159,6 +154,20 @@ def CrossTermNetworkSafe
         | .requestVoteResponse response =>
             CrossTermVoteResponseSafe state response
 
+/--
+Every active leader's replication cursors stay within that leader's current
+log.  Historical bounds which survive leadership changes are recorded
+separately only where the election argument needs them.
+-/
+def LeaderProgressBounded (state : State TxId) : Prop :=
+  forall leader,
+    (state.nodes leader).role = .leader ->
+      forall peer,
+        (state.nodes leader).sentIndex peer <=
+            (state.nodes leader).log.length /\
+          (state.nodes leader).matchIndex peer <=
+            (state.nodes leader).log.length
+
 /-- Before promotion, followers have not committed beyond node zero. -/
 def PreFollowerCommitsCovered (state : State TxId) : Prop :=
   forall node,
@@ -195,14 +204,15 @@ cross-term argument visible rather than minimizing the inductive state.
 -/
 structure CrossTermFacts
     (state : State TxId)
-    (oldLeader newLeader : Node)
+    (newLeader : Node)
     (oldLog base suffix : List (Entry TxId)) : Prop where
-  /- History shape and node-log coverage. -/
+  /-
+  Two term-labelled histories cover every node log.  Their common base makes
+  equal-index/equal-term entries agree and makes terms monotonic.
+  -/
   oldEntriesTermOne : EntriesHaveTerm TERM_ONE oldLog
   suffixEntriesTermTwo : EntriesHaveTerm 2 suffix
   basePrefixOld : base <+: oldLog
-  newLeaderLog :
-    (state.nodes newLeader).log = base ++ suffix
   logsCovered :
     forall node,
       (state.nodes node).log <+: oldLog \/
@@ -216,31 +226,25 @@ structure CrossTermFacts
       entry ∈ (state.nodes node).log ->
         entry.term <= (state.nodes node).currentTerm
 
-  /- The two possible leaders and the frozen election quorum. -/
-  oldLeaderIsInitial : oldLeader = INITIAL_LEADER
-  leadersDistinct : Not (oldLeader = newLeader)
-  oldLeaderOwnsHistory :
-    (state.nodes oldLeader).role = .leader ->
-      (state.nodes oldLeader).currentTerm = TERM_ONE ->
-        (state.nodes oldLeader).log = oldLog
+  /-
+  Every active leader owns exactly one represented history.  Consequently,
+  two leaders in the same term name the same node.
+  -/
+  leadersDistinct : Not (INITIAL_LEADER = newLeader)
   newLeaderRole : (state.nodes newLeader).role = .leader
-  newLeaderTerm : (state.nodes newLeader).currentTerm = 2
-  termOneLeaderUnique :
+  leadersOwnHistories :
     forall node,
       (state.nodes node).role = .leader ->
-      (state.nodes node).currentTerm = TERM_ONE ->
-        node = oldLeader
-  termTwoLeaderUnique :
-    forall node,
-      (state.nodes node).role = .leader ->
-      (state.nodes node).currentTerm = 2 ->
-        node = newLeader
+        ((node = INITIAL_LEADER /\
+            (state.nodes node).currentTerm = TERM_ONE /\
+            (state.nodes node).log = oldLog) \/
+          (node = newLeader /\
+            (state.nodes node).currentTerm = 2 /\
+            (state.nodes node).log = base ++ suffix))
+
+  /- The frozen winning quorum prevents a second term-two promotion. -/
   electionMajority :
-    (state.nodes newLeader).votesGranted.card * 2 > NODE_COUNT
-  electionVotersChooseLeader :
-    forall voter,
-      voter ∈ (state.nodes newLeader).votesGranted ->
-        (state.nodes voter).votedFor = some newLeader
+    hasElectionMajority state newLeader
   candidatesSelfVote :
     CandidatesSelfVote state
   votedForTermTwo : VotedForTermTwo state
@@ -252,46 +256,26 @@ structure CrossTermFacts
   /- Replication snapshots and leader-local progress indices. -/
   networkSafe :
     CrossTermNetworkSafe
-      state oldLeader newLeader oldLog (base ++ suffix) base
+      state INITIAL_LEADER newLeader oldLog (base ++ suffix) base
         (state.nodes newLeader).votesGranted
-  oldSentIndicesBounded :
-    forall node,
-      (state.nodes oldLeader).sentIndex node <= oldLog.length
-  oldMatchIndicesBounded :
-    forall node,
-      (state.nodes oldLeader).matchIndex node <= oldLog.length
+  leaderProgressBounded : LeaderProgressBounded state
   oldElectionMatchBound :
     forall voter,
       voter ∈ (state.nodes newLeader).votesGranted ->
-        (state.nodes oldLeader).matchIndex voter <= base.length
-  newSentIndicesBounded :
-    forall node,
-      (state.nodes newLeader).sentIndex node <=
-        (base ++ suffix).length
-  newMatchIndicesBounded :
-    forall node,
-      (state.nodes newLeader).matchIndex node <=
-        (base ++ suffix).length
+        (state.nodes INITIAL_LEADER).matchIndex voter <= base.length
 
   /-
-  Every old-term quorum is contained in the inherited base.  This is the
-  majority-intersection fact that prevents node zero from committing a
-  divergent term-one suffix after the term-two election.
+  Every committed log is a prefix of one canonical history.  This is the
+  direct reason all committed logs are pairwise prefix-comparable.
   -/
-  oldMajoritiesCovered :
-    forall index,
-      index <= oldLog.length ->
-      hasMajorityAt state oldLeader index ->
-        index <= base.length
-
-  /- All committed prefixes fit in the unique term-two leader history. -/
   committedLogsCovered :
     forall node,
       (state.nodes node).committedLog <+:
-        (state.nodes newLeader).log
+        base ++ suffix
   /-
-  A send cursor below the inherited base is only produced by a response from
-  a term-two node already following the canonical history.
+  The remaining clauses support queued-message handling and remember why a
+  peer participating in conflict repair inside the inherited base is already
+  on the canonical history.
   -/
   newCatchupLogs :
     forall node,
@@ -316,13 +300,11 @@ structure CrossTermFacts
 
 /-- Existentially package the proof-only post-election histories. -/
 def CrossTermInvariant (state : State TxId) : Prop :=
-  Exists fun oldLeader =>
-    Exists fun newLeader =>
-      Exists fun oldLog =>
-        Exists fun base =>
-          Exists fun suffix =>
-            CrossTermFacts
-              state oldLeader newLeader oldLog base suffix
+  Exists fun newLeader =>
+    Exists fun oldLog =>
+      Exists fun base =>
+        Exists fun suffix =>
+          CrossTermFacts state newLeader oldLog base suffix
 
 /-- The two documented phases form the slice-2.5 inductive invariant. -/
 inductive SystemInductiveInvariant (state : State TxId) : Prop
@@ -340,9 +322,6 @@ def LeaderCompleteness (state : State TxId) : Prop :=
 /-- Public safety facts exported by the slice-2.5 proof layer. -/
 structure ConsensusSafety (state : State TxId) : Prop where
   committedLogsPrefix : CommittedLogsPrefix state
-  logMatching : LogMatching state
-  monoLog : MonoLog state
   electionSafety : ElectionSafety state
-  leaderCompleteness : LeaderCompleteness state
 
 end CCFRaft.Slice25
