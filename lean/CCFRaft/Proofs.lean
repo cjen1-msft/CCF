@@ -122,7 +122,7 @@ theorem initialSystemInductiveInvariant :
   · simp [TermOneLeaderIsInitial, initialState, initialNodeState]
   · simp [InitialNodeTermOneIsLeader, initialState, initialNodeState]
   · intro node candidate
-    by_cases nodeEq : node = LEADER <;>
+    by_cases nodeEq : node = INITIAL_LEADER <;>
       simp [initialState, initialNodeState, nodeEq] at candidate
   · simp [VotedForTermTwo, initialState, initialNodeState]
   · simp [VotesGrantedSound, initialState, initialNodeState]
@@ -138,7 +138,7 @@ theorem committedLogPrefixLeader
     (core : SystemInductiveInvariant state)
     (node : Node) :
     (state.nodes node).committedLog <+:
-      (state.nodes LEADER).log := by
+      (state.nodes INITIAL_LEADER).log := by
   exact
     (List.take_prefix
       (state.nodes node).commitIndex
@@ -166,7 +166,7 @@ theorem systemInductiveInvariantLogMatching
   have rightBound := entryAtSomeIndexBound rightFound
   calc
     (state.nodes left).log.take index =
-        (state.nodes LEADER).log.take index :=
+        (state.nodes INITIAL_LEADER).log.take index :=
       takeEqOfPrefix (core.logsPrefixLeader left) leftBound
     _ = (state.nodes right).log.take index :=
       (takeEqOfPrefix (core.logsPrefixLeader right) rightBound).symm
@@ -290,7 +290,7 @@ theorem systemInductiveInvariantTermTwoLeaderCompleteness
     have intersection :=
       fiveNodeMajoritiesIntersect
         (acknowledgingNodes
-          state LEADER (state.nodes LEADER).commitIndex)
+          state INITIAL_LEADER (state.nodes INITIAL_LEADER).commitIndex)
         (state.nodes leader).votesGranted
         commitMajority
         electionMajority
@@ -302,7 +302,7 @@ theorem systemInductiveInvariantTermTwoLeaderCompleteness
     have voterPrefixLeader :=
       (core.votesGrantedSound leader voter voterElected).2.2
     have committedPrefixVoter :
-        (state.nodes LEADER).committedLog <+:
+        (state.nodes INITIAL_LEADER).committedLog <+:
           (state.nodes voter).log := by
       simp only [
         acknowledgingNodes,
@@ -316,13 +316,13 @@ theorem systemInductiveInvariantTermTwoLeaderCompleteness
       · have matchEquality :=
           core.matchIndexDescribesPrefix voter
         have commitEquality :
-            (state.nodes LEADER).log.take
-                (state.nodes LEADER).commitIndex =
+            (state.nodes INITIAL_LEADER).log.take
+                (state.nodes INITIAL_LEADER).commitIndex =
               (state.nodes voter).log.take
-                (state.nodes LEADER).commitIndex := by
+                (state.nodes INITIAL_LEADER).commitIndex := by
           have taken :=
             congrArg
-              (List.take (state.nodes LEADER).commitIndex)
+              (List.take (state.nodes INITIAL_LEADER).commitIndex)
               matchEquality
           simpa [
             List.take_take,
@@ -339,7 +339,7 @@ theorem termOneLeaderImpliesInitialLeader
     {node : Node}
     (isLeader : (state.nodes node).role = .leader)
     (termOne : (state.nodes node).currentTerm = TERM_ONE) :
-    node = LEADER := by
+    node = INITIAL_LEADER := by
   exact core.termOneLeaderIsInitial node isLeader termOne
 
 /-- Appending an entry does not change terms at existing indices. -/
@@ -364,9 +364,9 @@ theorem requestMatchesLeaderAfterAppend
     RequestMatchesLeader
       { state with
         nodes :=
-          updateNode state.nodes LEADER
-            { state.nodes LEADER with
-              log := (state.nodes LEADER).log ++ [entry] } }
+          updateNode state.nodes INITIAL_LEADER
+            { state.nodes INITIAL_LEADER with
+              log := (state.nodes INITIAL_LEADER).log ++ [entry] } }
       request := by
   rcases requestMatches with
     ⟨source, destination, term, previousBound, endBound, previousTerm, entries⟩
@@ -381,7 +381,7 @@ theorem requestMatchesLeaderAfterAppend
   · simpa [updateNode] using
       previousTerm.trans
         (termAtAppendOfBound
-          (state.nodes LEADER).log entry previousBound).symm
+          (state.nodes INITIAL_LEADER).log entry previousBound).symm
   · simp only [updateNode, Function.update_self]
     rw [
       List.take_append_of_le_length endBound,
@@ -397,15 +397,15 @@ theorem clientRequestPreservesSystemInductiveInvariant
     (core : SystemInductiveInvariant state)
     (enabled : Enabled state (.clientRequest node txId)) :
     SystemInductiveInvariant (next state (.clientRequest node txId)) := by
-  have nodeEq : node = LEADER :=
+  have nodeEq : node = INITIAL_LEADER :=
     termOneLeaderImpliesInitialLeader core enabled.1 enabled.2.1
   subst node
   have leaderTermOne :
-      (state.nodes LEADER).currentTerm = TERM_ONE :=
+      (state.nodes INITIAL_LEADER).currentTerm = TERM_ONE :=
     enabled.2.1
   have fresh : txId ∉ state.submittedTxIds := enabled.2.2
   have notInLeader :
-      txId ∉ (state.nodes LEADER).log.map Entry.txId := by
+      txId ∉ (state.nodes INITIAL_LEADER).log.map Entry.txId := by
     intro inLog
     rw [List.mem_map] at inLog
     rcases inLog with ⟨entry, entryInLog, entryTx⟩
@@ -414,25 +414,25 @@ theorem clientRequestPreservesSystemInductiveInvariant
     exact core.leaderTxIdsSubmitted entry entryInLog
   constructor
   · intro candidate
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
-      have oldBound := core.commitIndicesBounded LEADER
+      have oldBound := core.commitIndicesBounded INITIAL_LEADER
       simpa [next, updateNode] using Nat.le.step oldBound
     · simpa [next, updateNode, Function.update, candidateEq] using
         core.commitIndicesBounded candidate
   · intro candidate
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
       exact prefixRefl _
     · have oldPrefix := core.logsPrefixLeader candidate
       simpa [next, updateNode, Function.update, candidateEq] using
         oldPrefix.trans (List.prefix_append _ _)
   · intro candidate candidateEntry candidateEntryIn
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
       simp [next, updateNode] at candidateEntryIn
       rcases candidateEntryIn with oldEntry | newEntry
-      · exact core.termsAreOne LEADER candidateEntry oldEntry
+      · exact core.termsAreOne INITIAL_LEADER candidateEntry oldEntry
       · simpa [newEntry] using leaderTermOne
     · have oldEntry :
           candidateEntry ∈ (state.nodes candidate).log := by
@@ -499,7 +499,7 @@ theorem clientRequestPreservesSystemInductiveInvariant
     | appendEntriesRequest request => trivial
     | appendEntriesResponse response => trivial
     | requestVoteRequest request =>
-        by_cases sourceEq : request.source = LEADER
+        by_cases sourceEq : request.source = INITIAL_LEADER
         · have sourceTermTwo := safe.2.2.1
           rw [sourceEq, leaderTermOne] at sourceTermTwo
           simp [TERM_ONE] at sourceTermTwo
@@ -512,13 +512,13 @@ theorem clientRequestPreservesSystemInductiveInvariant
           ] using safe
     | requestVoteResponse response =>
         have sourceNe :
-            Not (response.source = LEADER) := by
+            Not (response.source = INITIAL_LEADER) := by
           intro sourceEq
           have sourceTermTwo := safe.2.2.1
           rw [sourceEq, leaderTermOne] at sourceTermTwo
           simp [TERM_ONE] at sourceTermTwo
         have destinationNe :
-            Not (response.destination = LEADER) := by
+            Not (response.destination = INITIAL_LEADER) := by
           intro destinationEq
           have destinationTermTwo := safe.2.2.2.1
           rw [destinationEq, leaderTermOne] at destinationTermTwo
@@ -538,13 +538,13 @@ theorem clientRequestPreservesSystemInductiveInvariant
     have oldBound := core.matchIndicesBounded candidate
     simpa [MatchIndicesBounded, next, updateNode] using Nat.le.step oldBound
   · intro candidate
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
       exact Or.inl leaderTermOne
     · simpa [next, updateNode, Function.update, candidateEq] using
         core.currentTermsValid candidate
   · intro candidate leader termOne
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · exact candidateEq
     · exact
         core.termOneLeaderIsInitial candidate
@@ -553,10 +553,10 @@ theorem clientRequestPreservesSystemInductiveInvariant
   · simpa [InitialNodeTermOneIsLeader, next, updateNode] using
       core.initialNodeTermOneIsLeader
   · intro candidate candidateRole
-    have candidateNe : Not (candidate = LEADER) := by
+    have candidateNe : Not (candidate = INITIAL_LEADER) := by
       intro candidateEq
       subst candidate
-      have leaderRole : (state.nodes LEADER).role = .candidate := by
+      have leaderRole : (state.nodes INITIAL_LEADER).role = .candidate := by
         simpa [next, updateNode] using candidateRole
       exact Role.noConfusion (enabled.1.symm.trans leaderRole)
     simpa [next, updateNode, Function.update, candidateNe] using
@@ -564,12 +564,12 @@ theorem clientRequestPreservesSystemInductiveInvariant
         (by simpa [next, updateNode, Function.update, candidateNe] using
           candidateRole)
   · intro voter candidate voted
-    by_cases voterEq : voter = LEADER
+    by_cases voterEq : voter = INITIAL_LEADER
     · subst voter
       have oldVote :
-          (state.nodes LEADER).votedFor = some candidate := by
+          (state.nodes INITIAL_LEADER).votedFor = some candidate := by
         simpa [next, updateNode] using voted
-      have termTwo := core.votedForTermTwo LEADER candidate oldVote
+      have termTwo := core.votedForTermTwo INITIAL_LEADER candidate oldVote
       rw [leaderTermOne] at termTwo
       simp [TERM_ONE] at termTwo
     · exact
@@ -580,22 +580,22 @@ theorem clientRequestPreservesSystemInductiveInvariant
           have termTwo := core.votedForTermTwo voter candidate oldVote
           simpa [next, updateNode, Function.update, voterEq] using termTwo)
   · intro candidate voter voterIn
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
       have oldIn :
-          voter ∈ (state.nodes LEADER).votesGranted := by
+          voter ∈ (state.nodes INITIAL_LEADER).votesGranted := by
         simpa [next, updateNode] using voterIn
-      have sound := core.votesGrantedSound LEADER voter oldIn
+      have sound := core.votesGrantedSound INITIAL_LEADER voter oldIn
       rw [leaderTermOne] at sound
       simp [TERM_ONE] at sound
     · have oldIn :
           voter ∈ (state.nodes candidate).votesGranted := by
         simpa [next, updateNode, Function.update, candidateEq] using voterIn
       have sound := core.votesGrantedSound candidate voter oldIn
-      have voterNe : Not (voter = LEADER) := by
+      have voterNe : Not (voter = INITIAL_LEADER) := by
         intro voterEq
         subst voter
-        have termTwo := core.votedForTermTwo LEADER candidate sound.2.1
+        have termTwo := core.votedForTermTwo INITIAL_LEADER candidate sound.2.1
         rw [leaderTermOne] at termTwo
         simp [TERM_ONE] at termTwo
       simpa [
@@ -606,7 +606,7 @@ theorem clientRequestPreservesSystemInductiveInvariant
         voterNe
       ] using sound
   · intro candidate leader termTwo
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
       exfalso
       simpa [next, updateNode, leaderTermOne, TERM_ONE] using termTwo
@@ -624,18 +624,18 @@ theorem clientRequestPreservesSystemInductiveInvariant
             candidateEq
           ] using majority)
   · intro candidate
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
       simp [next, updateNode]
     · have oldEquality := core.matchIndexDescribesPrefix candidate
       have bound := core.matchIndicesBounded candidate
       have leaderTakeUnchanged :
-          ((state.nodes LEADER).log ++
-              [({ term := (state.nodes LEADER).currentTerm
+          ((state.nodes INITIAL_LEADER).log ++
+              [({ term := (state.nodes INITIAL_LEADER).currentTerm
                   txId := txId } : Entry TxId)]).take
-              ((state.nodes LEADER).matchIndex candidate) =
-            (state.nodes LEADER).log.take
-              ((state.nodes LEADER).matchIndex candidate) :=
+              ((state.nodes INITIAL_LEADER).matchIndex candidate) =
+            (state.nodes INITIAL_LEADER).log.take
+              ((state.nodes INITIAL_LEADER).matchIndex candidate) :=
         List.take_append_of_le_length bound
       simp only [
         next,
@@ -673,30 +673,30 @@ theorem makeAppendEntriesRequestMatchesLeader
     (enabled : Enabled state (.appendEntries source destination batchEnd)) :
     RequestMatchesLeader state
       (makeAppendEntriesRequest state source destination batchEnd) := by
-  have sourceEq : source = LEADER :=
+  have sourceEq : source = INITIAL_LEADER :=
     termOneLeaderImpliesInitialLeader core enabled.1 enabled.2.1
   subst source
   have leaderTermOne :
-      (state.nodes LEADER).currentTerm = TERM_ONE :=
+      (state.nodes INITIAL_LEADER).currentTerm = TERM_ONE :=
     enabled.2.1
   rcases enabled with ⟨_, termOne, different, batchEndEq⟩
-  let previousIndex := (state.nodes LEADER).sentIndex destination
+  let previousIndex := (state.nodes INITIAL_LEADER).sentIndex destination
   have previousBound :
-      previousIndex <= (state.nodes LEADER).log.length :=
+      previousIndex <= (state.nodes INITIAL_LEADER).log.length :=
     core.sentIndicesBounded destination
   have previousBeforeEnd : previousIndex <= batchEnd := by
     rw [batchEndEq]
     simp [previousIndex]
     omega
-  have endWithin : batchEnd <= (state.nodes LEADER).log.length := by
+  have endWithin : batchEnd <= (state.nodes INITIAL_LEADER).log.length := by
     rw [batchEndEq]
     exact min_le_right _ _
   have entriesLength :
       (messageEntries
-        (state.nodes LEADER).log previousIndex batchEnd).length =
+        (state.nodes INITIAL_LEADER).log previousIndex batchEnd).length =
         batchEnd - previousIndex :=
     messageEntriesLength
-      (state.nodes LEADER).log previousBeforeEnd endWithin
+      (state.nodes INITIAL_LEADER).log previousBeforeEnd endWithin
   refine
     ⟨rfl, Ne.symm different, termOne,
       core.sentIndicesBounded destination, ?_, rfl, ?_⟩
@@ -704,19 +704,19 @@ theorem makeAppendEntriesRequestMatchesLeader
     rw [entriesLength]
     omega
   · change
-      (state.nodes LEADER).log.take
+      (state.nodes INITIAL_LEADER).log.take
           (previousIndex +
             (messageEntries
-              (state.nodes LEADER).log previousIndex batchEnd).length) =
-        (state.nodes LEADER).log.take previousIndex ++
+              (state.nodes INITIAL_LEADER).log previousIndex batchEnd).length) =
+        (state.nodes INITIAL_LEADER).log.take previousIndex ++
           messageEntries
-            (state.nodes LEADER).log previousIndex batchEnd
+            (state.nodes INITIAL_LEADER).log previousIndex batchEnd
     rw [entriesLength]
     have sumEq : previousIndex + (batchEnd - previousIndex) = batchEnd := by
       omega
     simpa [messageEntries, sumEq] using
       (List.take_add
-        (l := (state.nodes LEADER).log)
+        (l := (state.nodes INITIAL_LEADER).log)
         (i := previousIndex)
         (j := batchEnd - previousIndex))
 
@@ -802,18 +802,18 @@ theorem requestExtensionPrefixLeader
     {state : State TxId}
     {node : Node}
     {request : AppendEntriesRequest TxId}
-    (nodePrefix : (state.nodes node).log <+: (state.nodes LEADER).log)
+    (nodePrefix : (state.nodes node).log <+: (state.nodes INITIAL_LEADER).log)
     (requestSafe : RequestMatchesLeader state request)
     (previousWithin :
       request.prevLogIndex <= (state.nodes node).log.length) :
     (state.nodes node).log.take request.prevLogIndex ++ request.entries <+:
-      (state.nodes LEADER).log := by
+      (state.nodes INITIAL_LEADER).log := by
   have previousEqual :=
     takeEqOfPrefix nodePrefix previousWithin
   have requestPrefix :=
     List.take_prefix
       (request.prevLogIndex + request.entries.length)
-      (state.nodes LEADER).log
+      (state.nodes INITIAL_LEADER).log
   rw [previousEqual]
   rw [← requestSafe.2.2.2.2.2.2]
   exact requestPrefix
@@ -824,7 +824,7 @@ structure RequestHandlerPost
     (before after : NodeState TxId)
     (request : AppendEntriesRequest TxId)
     (response : AppendEntriesResponse) : Prop where
-  logPrefixLeader : after.log <+: (system.nodes LEADER).log
+  logPrefixLeader : after.log <+: (system.nodes INITIAL_LEADER).log
   commitBounded : after.commitIndex <= after.log.length
   committedMonotonic :
     before.committedLog <+: after.committedLog
@@ -872,16 +872,16 @@ theorem requestEntriesTermOne
   intro entry entryIn
   have inCombined :
       entry ∈
-        (system.nodes LEADER).log.take request.prevLogIndex ++
+        (system.nodes INITIAL_LEADER).log.take request.prevLogIndex ++
           request.entries := by
     simp [entryIn]
   have inTaken :
       entry ∈
-        (system.nodes LEADER).log.take
+        (system.nodes INITIAL_LEADER).log.take
           (request.prevLogIndex + request.entries.length) := by
     rw [requestSafe.2.2.2.2.2.2]
     exact inCombined
-  exact core.termsAreOne LEADER entry (List.mem_of_mem_take inTaken)
+  exact core.termsAreOne INITIAL_LEADER entry (List.mem_of_mem_take inTaken)
 
 /-- A conflict-free extension retains the follower's entire old log. -/
 theorem noConflictExtensionPreservesLog
@@ -1217,12 +1217,12 @@ theorem handleAppendEntriesRequestPreserves
     RequestHandlerPost
       system (system.nodes destination) after request response := by
   have requestDestinationNeLeader :
-      Not (request.destination = LEADER) :=
+      Not (request.destination = INITIAL_LEADER) :=
     requestSafe.2.1
   have leaderNeRequestDestination :
-      Not (LEADER = request.destination) :=
+      Not (INITIAL_LEADER = request.destination) :=
     Ne.symm requestDestinationNeLeader
-  have leaderNeDestination : Not (LEADER = destination) := by
+  have leaderNeDestination : Not (INITIAL_LEADER = destination) := by
     intro leaderEq
     apply requestDestinationNeLeader
     rw [requestDestination, leaderEq]
@@ -1423,7 +1423,7 @@ theorem handleAppendEntriesRequestPreserves
                     request.prevLogIndex ++ request.entries)
                   oldCommitBoundNew
             · intro entry member
-              exact core.termsAreOne LEADER entry
+              exact core.termsAreOne INITIAL_LEADER entry
                 (memOfPrefix newPrefix member)
             · rfl
             · rfl
@@ -1624,7 +1624,7 @@ theorem requestHandlerPreservesResponseSafe
       RequestHandlerPost
         state before after request handlerResponse)
     (beforeEq : before = state.nodes destination)
-    (leaderNeDestination : Not (LEADER = destination))
+    (leaderNeDestination : Not (INITIAL_LEADER = destination))
     (safe : ResponseMatchesLeader state response) :
     ResponseMatchesLeader
       { state with nodes := updateNode state.nodes destination after }
@@ -1655,9 +1655,9 @@ theorem requestHandlerPreservesResponseSafe
       takeEqOfPrefix post.logMonotonic sourceBound
     calc
       ({ state with
-          nodes := updateNode state.nodes destination after }.nodes LEADER).log.take
+          nodes := updateNode state.nodes destination after }.nodes INITIAL_LEADER).log.take
           response.lastLogIndex =
-          (state.nodes LEADER).log.take response.lastLogIndex := by
+          (state.nodes INITIAL_LEADER).log.take response.lastLogIndex := by
             simp [updateNode, Function.update, leaderNeDestination]
       _ = (state.nodes response.source).log.take response.lastLogIndex :=
         responsePrefix success
@@ -1683,14 +1683,14 @@ theorem requestHandlerPreservesMatchIndexPrefix
     (core : SystemInductiveInvariant state)
     (post : RequestHandlerPost state before after request response)
     (beforeEq : before = state.nodes destination)
-    (leaderNeDestination : Not (LEADER = destination)) :
+    (leaderNeDestination : Not (INITIAL_LEADER = destination)) :
     MatchIndexDescribesPrefix
       { state with nodes := updateNode state.nodes destination after } := by
   subst before
   intro peer
   by_cases peerEq : peer = destination
   · subst peer
-    let index := (state.nodes LEADER).matchIndex destination
+    let index := (state.nodes INITIAL_LEADER).matchIndex destination
     have oldEquality := core.matchIndexDescribesPrefix destination
     have leaderBound := core.matchIndicesBounded destination
     have followerBound :
@@ -1706,11 +1706,11 @@ theorem requestHandlerPreservesMatchIndexPrefix
       takeEqOfPrefix post.logMonotonic followerBound
     calc
       ({ state with
-          nodes := updateNode state.nodes destination after }.nodes LEADER).log.take
+          nodes := updateNode state.nodes destination after }.nodes INITIAL_LEADER).log.take
           (({ state with
-            nodes := updateNode state.nodes destination after }.nodes LEADER).matchIndex
+            nodes := updateNode state.nodes destination after }.nodes INITIAL_LEADER).matchIndex
               destination) =
-          (state.nodes LEADER).log.take index := by
+          (state.nodes INITIAL_LEADER).log.take index := by
             simp [
               index, updateNode, Function.update, leaderNeDestination
             ]
@@ -1721,7 +1721,7 @@ theorem requestHandlerPreservesMatchIndexPrefix
             nodes := updateNode state.nodes destination after }.nodes
               destination).log.take
             (({ state with
-              nodes := updateNode state.nodes destination after }.nodes LEADER).matchIndex
+              nodes := updateNode state.nodes destination after }.nodes INITIAL_LEADER).matchIndex
                 destination) := by
             simp [
               index, updateNode, Function.update, leaderNeDestination
@@ -1746,13 +1746,13 @@ structure ResponseHandlerPost
   votesGrantedUnchanged : after.votesGranted = before.votesGranted
   sentIndicesBounded :
     forall node,
-      after.sentIndex node <= (system.nodes LEADER).log.length
+      after.sentIndex node <= (system.nodes INITIAL_LEADER).log.length
   matchIndicesBounded :
     forall node,
-      after.matchIndex node <= (system.nodes LEADER).log.length
+      after.matchIndex node <= (system.nodes INITIAL_LEADER).log.length
   matchIndicesMonotonic :
     forall node,
-      (system.nodes LEADER).matchIndex node <= after.matchIndex node
+      (system.nodes INITIAL_LEADER).matchIndex node <= after.matchIndex node
   matchIndicesDescribePrefix :
     forall node,
       after.log.take (after.matchIndex node) =
@@ -1764,10 +1764,10 @@ theorem responseHandlerPreservesResponseSafe
     {before after : NodeState TxId}
     {handledResponse response : AppendEntriesResponse}
     (post : ResponseHandlerPost system before after handledResponse)
-    (beforeEq : before = system.nodes LEADER)
+    (beforeEq : before = system.nodes INITIAL_LEADER)
     (safe : ResponseMatchesLeader system response) :
     ResponseMatchesLeader
-      { system with nodes := updateNode system.nodes LEADER after }
+      { system with nodes := updateNode system.nodes INITIAL_LEADER after }
       response := by
   subst before
   simpa [
@@ -1784,7 +1784,7 @@ theorem responseHandlerPreservesVoteMessageSafe
     {before after : NodeState TxId}
     {handledResponse : AppendEntriesResponse}
     (post : ResponseHandlerPost system before after handledResponse)
-    (beforeEq : before = system.nodes LEADER)
+    (beforeEq : before = system.nodes INITIAL_LEADER)
     {message : Message TxId}
     (safe :
       match message with
@@ -1795,11 +1795,11 @@ theorem responseHandlerPreservesVoteMessageSafe
     match message with
     | .requestVoteRequest request =>
         RequestVoteRequestSafe
-          { system with nodes := updateNode system.nodes LEADER after }
+          { system with nodes := updateNode system.nodes INITIAL_LEADER after }
           request
     | .requestVoteResponse response =>
         RequestVoteResponseSafe
-          { system with nodes := updateNode system.nodes LEADER after }
+          { system with nodes := updateNode system.nodes INITIAL_LEADER after }
           response
     | _ => True := by
   subst before
@@ -1807,7 +1807,7 @@ theorem responseHandlerPreservesVoteMessageSafe
   | appendEntriesRequest _ => trivial
   | appendEntriesResponse _ => trivial
   | requestVoteRequest request =>
-      by_cases sourceEq : request.source = LEADER
+      by_cases sourceEq : request.source = INITIAL_LEADER
       · simpa [
           RequestVoteRequestSafe,
           updateNode,
@@ -1824,8 +1824,8 @@ theorem responseHandlerPreservesVoteMessageSafe
           sourceEq
         ] using safe
   | requestVoteResponse response =>
-      by_cases sourceEq : response.source = LEADER
-      · by_cases destinationEq : response.destination = LEADER
+      by_cases sourceEq : response.source = INITIAL_LEADER
+      · by_cases destinationEq : response.destination = INITIAL_LEADER
         · simpa [
             RequestVoteResponseSafe,
             updateNode,
@@ -1846,7 +1846,7 @@ theorem responseHandlerPreservesVoteMessageSafe
             post.votedForUnchanged,
             post.logUnchanged
           ] using safe
-      · by_cases destinationEq : response.destination = LEADER
+      · by_cases destinationEq : response.destination = INITIAL_LEADER
         · simpa [
             RequestVoteResponseSafe,
             updateNode,
@@ -1914,9 +1914,9 @@ theorem handleAppendEntriesResponsePreserves
     (core : SystemInductiveInvariant system)
     (responseSafe : ResponseMatchesLeader system response)
     (handled :
-      handleAppendEntriesResponse? (system.nodes LEADER) response =
+      handleAppendEntriesResponse? (system.nodes INITIAL_LEADER) response =
         some after) :
-    ResponseHandlerPost system (system.nodes LEADER) after response := by
+    ResponseHandlerPost system (system.nodes INITIAL_LEADER) after response := by
   unfold handleAppendEntriesResponse? at handled
   split at handled
   · rename_i success
@@ -1937,9 +1937,9 @@ theorem handleAppendEntriesResponsePreserves
         simp only [updateIndex_same]
         change
           max
-              ((system.nodes LEADER).matchIndex response.source)
+              ((system.nodes INITIAL_LEADER).matchIndex response.source)
               response.lastLogIndex <=
-            (system.nodes LEADER).log.length
+            (system.nodes INITIAL_LEADER).log.length
         exact
           max_le
             (core.matchIndicesBounded response.source)
@@ -1956,7 +1956,7 @@ theorem handleAppendEntriesResponsePreserves
       · subst node
         simp only [updateIndex_same]
         by_cases oldLe :
-            (system.nodes LEADER).matchIndex response.source <=
+            (system.nodes INITIAL_LEADER).matchIndex response.source <=
               response.lastLogIndex
         · rw [max_eq_right oldLe]
           exact responseSafe.2.2.2.2 success.1
@@ -1983,12 +1983,12 @@ theorem handleAppendEntriesResponsePreserves
             max
                 (min
                   (findHighestPossibleMatch
-                    (system.nodes LEADER).log
+                    (system.nodes INITIAL_LEADER).log
                     response.lastLogIndex
                     response.term)
-                  ((system.nodes LEADER).sentIndex response.source))
-                ((system.nodes LEADER).matchIndex response.source) <=
-              (system.nodes LEADER).log.length
+                  ((system.nodes INITIAL_LEADER).sentIndex response.source))
+                ((system.nodes INITIAL_LEADER).matchIndex response.source) <=
+              (system.nodes INITIAL_LEADER).log.length
           exact
             max_le
               (le_trans
@@ -2467,6 +2467,191 @@ theorem newerMessageSound
         exact ⟨remaining, rfl, newer⟩
       · simp [newer] at found
 
+/-- A same-term AppendEntries makes a candidate a follower without changing its log. -/
+theorem returnToFollowerPreservesSystemInductiveInvariant
+    {state : State TxId}
+    {destination : Node}
+    {request : AppendEntriesRequest TxId}
+    {nextNode : NodeState TxId}
+    (core : SystemInductiveInvariant state)
+    (stepped :
+      returnToFollowerState? (state.nodes destination) request =
+        some nextNode) :
+    SystemInductiveInvariant
+      { state with nodes := updateNode state.nodes destination nextNode } := by
+  unfold returnToFollowerState? at stepped
+  split at stepped
+  · rename_i canReturn
+    simp at stepped
+    subst nextNode
+    have destinationNeInitial :
+        Not (destination = INITIAL_LEADER) := by
+      intro destinationEq
+      apply core.initialNodeNotCandidate
+      rw [← destinationEq]
+      exact canReturn.2
+    have initialNeDestination :
+        Not (INITIAL_LEADER = destination) :=
+      Ne.symm destinationNeInitial
+    have currentTermEq :
+        forall node,
+          (updateNode state.nodes destination
+              { state.nodes destination with
+                role := .follower
+                isNewFollower := true } node).currentTerm =
+            (state.nodes node).currentTerm := by
+      intro node
+      by_cases nodeEq : node = destination
+      · subst node
+        simp [updateNode]
+      · simp [updateNode, Function.update, nodeEq]
+    have logEq :
+        forall node,
+          (updateNode state.nodes destination
+              { state.nodes destination with
+                role := .follower
+                isNewFollower := true } node).log =
+            (state.nodes node).log := by
+      intro node
+      by_cases nodeEq : node = destination
+      · subst node
+        simp [updateNode]
+      · simp [updateNode, Function.update, nodeEq]
+    have commitEq :
+        forall node,
+          (updateNode state.nodes destination
+              { state.nodes destination with
+                role := .follower
+                isNewFollower := true } node).commitIndex =
+            (state.nodes node).commitIndex := by
+      intro node
+      by_cases nodeEq : node = destination
+      · subst node
+        simp [updateNode]
+      · simp [updateNode, Function.update, nodeEq]
+    have sentEq :
+        forall node,
+          (updateNode state.nodes destination
+              { state.nodes destination with
+                role := .follower
+                isNewFollower := true } node).sentIndex =
+            (state.nodes node).sentIndex := by
+      intro node
+      by_cases nodeEq : node = destination
+      · subst node
+        simp [updateNode]
+      · simp [updateNode, Function.update, nodeEq]
+    have matchEq :
+        forall node,
+          (updateNode state.nodes destination
+              { state.nodes destination with
+                role := .follower
+                isNewFollower := true } node).matchIndex =
+            (state.nodes node).matchIndex := by
+      intro node
+      by_cases nodeEq : node = destination
+      · subst node
+        simp [updateNode]
+      · simp [updateNode, Function.update, nodeEq]
+    have votedForEq :
+        forall node,
+          (updateNode state.nodes destination
+              { state.nodes destination with
+                role := .follower
+                isNewFollower := true } node).votedFor =
+            (state.nodes node).votedFor := by
+      intro node
+      by_cases nodeEq : node = destination
+      · subst node
+        simp [updateNode]
+      · simp [updateNode, Function.update, nodeEq]
+    have votesEq :
+        forall node,
+          (updateNode state.nodes destination
+              { state.nodes destination with
+                role := .follower
+                isNewFollower := true } node).votesGranted =
+            (state.nodes node).votesGranted := by
+      intro node
+      by_cases nodeEq : node = destination
+      · subst node
+        simp [updateNode]
+      · simp [updateNode, Function.update, nodeEq]
+    constructor
+    · simpa only [CommitIndicesBounded, commitEq, logEq] using
+        core.commitIndicesBounded
+    · simpa only [LogsPrefixLeader, logEq] using core.logsPrefixLeader
+    · simpa only [TermsAreOne, logEq] using core.termsAreOne
+    · simpa only [LeaderTxIdsUnique, logEq] using
+        core.leaderTxIdsUnique
+    · simpa only [LeaderTxIdsSubmitted, logEq] using
+        core.leaderTxIdsSubmitted
+    · simpa only [
+        QueuedRequestsMatchLeader, RequestMatchesLeader,
+        ResponseMatchesLeader, logEq
+      ] using core.queuedRequestsMatchLeader
+    · simpa only [
+        QueuedVoteMessagesSafe, RequestVoteRequestSafe,
+        RequestVoteResponseSafe, currentTermEq, votedForEq, logEq
+      ] using core.queuedVoteMessagesSafe
+    · simpa only [SentIndicesBounded, sentEq, logEq] using
+        core.sentIndicesBounded
+    · simpa only [MatchIndicesBounded, matchEq, logEq] using
+        core.matchIndicesBounded
+    · simpa only [CurrentTermsValid, currentTermEq] using
+        core.currentTermsValid
+    · intro node leader termOne
+      by_cases nodeEq : node = destination
+      · subst node
+        simp [updateNode] at leader
+      · exact core.termOneLeaderIsInitial node
+          (by simpa [updateNode, Function.update, nodeEq] using leader)
+          (by simpa [updateNode, Function.update, nodeEq] using termOne)
+    · intro termOne
+      have oldTermOne :
+          (state.nodes INITIAL_LEADER).currentTerm = TERM_ONE := by
+        simpa [
+          updateNode, Function.update, initialNeDestination
+        ] using termOne
+      have oldLeader :=
+        core.initialNodeTermOneIsLeader oldTermOne
+      simpa [
+        updateNode, Function.update, initialNeDestination
+      ] using oldLeader
+    · intro node candidate
+      by_cases nodeEq : node = destination
+      · subst node
+        simp [updateNode] at candidate
+      · simpa [updateNode, Function.update, nodeEq] using
+          core.candidatesSelfVote node
+            (by simpa [updateNode, Function.update, nodeEq] using candidate)
+    · simpa only [VotedForTermTwo, votedForEq, currentTermEq] using
+        core.votedForTermTwo
+    · simpa only [
+        VotesGrantedSound, votesEq, currentTermEq, votedForEq, logEq
+      ] using core.votesGrantedSound
+    · intro node leader termTwo
+      by_cases nodeEq : node = destination
+      · subst node
+        simp [updateNode] at leader
+      · simpa [
+          hasElectionMajority, updateNode, Function.update, nodeEq
+        ] using core.termTwoLeadersHaveMajority node
+          (by simpa [updateNode, Function.update, nodeEq] using leader)
+          (by simpa [updateNode, Function.update, nodeEq] using termTwo)
+    · simpa only [
+        MatchIndexDescribesPrefix, logEq, matchEq
+      ] using core.matchIndexDescribesPrefix
+    · simpa only [
+        InitialLeaderCommitHasMajority, hasMajorityAt,
+        acknowledgingNodes, commitEq, matchEq
+      ] using core.initialLeaderCommitHasMajority
+    · simpa [
+        InitialNodeNotCandidate, updateNode,
+        Function.update, initialNeDestination
+      ] using core.initialNodeNotCandidate
+  · contradiction
+
 /-- Sending one entry or heartbeat preserves the system invariant. -/
 theorem appendEntriesPreservesSystemInductiveInvariant
     (state : State TxId)
@@ -2475,36 +2660,36 @@ theorem appendEntriesPreservesSystemInductiveInvariant
     (core : SystemInductiveInvariant state)
     (enabled : Enabled state (.appendEntries source destination batchEnd)) :
     SystemInductiveInvariant (next state (.appendEntries source destination batchEnd)) := by
-  have sourceEq : source = LEADER :=
+  have sourceEq : source = INITIAL_LEADER :=
     termOneLeaderImpliesInitialLeader core enabled.1 enabled.2.1
   subst source
   have leaderTermOne :
-      (state.nodes LEADER).currentTerm = TERM_ONE :=
+      (state.nodes INITIAL_LEADER).currentTerm = TERM_ONE :=
     enabled.2.1
   let request :=
-    makeAppendEntriesRequest state LEADER destination batchEnd
+    makeAppendEntriesRequest state INITIAL_LEADER destination batchEnd
   have requestSafe : RequestMatchesLeader state request :=
     makeAppendEntriesRequestMatchesLeader core enabled
   constructor
   · intro candidate
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
-      simpa [next, request] using core.commitIndicesBounded LEADER
+      simpa [next, request] using core.commitIndicesBounded INITIAL_LEADER
     · simpa [next, request, candidateEq] using
         core.commitIndicesBounded candidate
   · intro candidate
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
-      simpa [next, request] using core.logsPrefixLeader LEADER
+      simpa [next, request] using core.logsPrefixLeader INITIAL_LEADER
     · simpa [next, request, candidateEq] using
         core.logsPrefixLeader candidate
   · intro candidate entry entryIn
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
       have oldEntry :
-          entry ∈ (state.nodes LEADER).log := by
+          entry ∈ (state.nodes INITIAL_LEADER).log := by
         simpa [next, request] using entryIn
-      exact core.termsAreOne LEADER entry oldEntry
+      exact core.termsAreOne INITIAL_LEADER entry oldEntry
     · have oldEntry :
           entry ∈ (state.nodes candidate).log := by
         simpa [next, request, candidateEq] using entryIn
@@ -2578,7 +2763,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
       | appendEntriesRequest oldRequest => trivial
       | appendEntriesResponse oldResponse => trivial
       | requestVoteRequest voteRequest =>
-          by_cases sourceEq : voteRequest.source = LEADER
+          by_cases sourceEq : voteRequest.source = INITIAL_LEADER
           · have sourceTermTwo := oldSafe.2.2.1
             rw [sourceEq, leaderTermOne] at sourceTermTwo
             simp [TERM_ONE] at sourceTermTwo
@@ -2591,12 +2776,12 @@ theorem appendEntriesPreservesSystemInductiveInvariant
               sourceEq
             ] using oldSafe
       | requestVoteResponse voteResponse =>
-          have sourceNe : Not (voteResponse.source = LEADER) := by
+          have sourceNe : Not (voteResponse.source = INITIAL_LEADER) := by
             intro sourceEq
             have sourceTermTwo := oldSafe.2.2.1
             rw [sourceEq, leaderTermOne] at sourceTermTwo
             simp [TERM_ONE] at sourceTermTwo
-          have destinationNe : Not (voteResponse.destination = LEADER) := by
+          have destinationNe : Not (voteResponse.destination = INITIAL_LEADER) := by
             intro destinationEq
             have destinationTermTwo := oldSafe.2.2.2.1
             rw [destinationEq, leaderTermOne] at destinationTermTwo
@@ -2617,7 +2802,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
     by_cases candidateEq : candidate = destination
     · subst candidate
       have batchEndBound :
-          batchEnd <= (state.nodes LEADER).log.length := by
+          batchEnd <= (state.nodes INITIAL_LEADER).log.length := by
         rw [enabled.2.2.2]
         exact min_le_right _ _
       simpa [
@@ -2636,19 +2821,19 @@ theorem appendEntriesPreservesSystemInductiveInvariant
         request
       ] using core.sentIndicesBounded candidate
   · intro candidate
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
-      simpa [next, request] using core.matchIndicesBounded LEADER
+      simpa [next, request] using core.matchIndicesBounded INITIAL_LEADER
     · simpa [next, request, candidateEq] using
         core.matchIndicesBounded candidate
   · intro node
-    by_cases nodeEq : node = LEADER
+    by_cases nodeEq : node = INITIAL_LEADER
     · subst node
       exact Or.inl leaderTermOne
     · simpa [next, request, updateNode, Function.update, nodeEq] using
         core.currentTermsValid node
   · intro node leader termOne
-    by_cases nodeEq : node = LEADER
+    by_cases nodeEq : node = INITIAL_LEADER
     · exact nodeEq
     · exact core.termOneLeaderIsInitial node
         (by simpa [next, request, updateNode, Function.update, nodeEq] using leader)
@@ -2656,10 +2841,10 @@ theorem appendEntriesPreservesSystemInductiveInvariant
   · simpa [InitialNodeTermOneIsLeader, next, request, updateNode] using
       core.initialNodeTermOneIsLeader
   · intro node candidate
-    by_cases nodeEq : node = LEADER
+    by_cases nodeEq : node = INITIAL_LEADER
     · subst node
       have impossible :
-          (state.nodes LEADER).role = .candidate := by
+          (state.nodes INITIAL_LEADER).role = .candidate := by
         simpa [next, request, updateNode] using candidate
       exact Role.noConfusion (enabled.1.symm.trans impossible)
     · have oldCandidate :
@@ -2668,46 +2853,46 @@ theorem appendEntriesPreservesSystemInductiveInvariant
       simpa [next, request, updateNode, Function.update, nodeEq] using
         core.candidatesSelfVote node oldCandidate
   · intro voter candidate vote
-    by_cases voterEq : voter = LEADER
+    by_cases voterEq : voter = INITIAL_LEADER
     · subst voter
       have oldVote :
-          (state.nodes LEADER).votedFor = some candidate := by
+          (state.nodes INITIAL_LEADER).votedFor = some candidate := by
         simpa [next, request, updateNode] using vote
       simpa [next, request, updateNode] using
-        core.votedForTermTwo LEADER candidate oldVote
+        core.votedForTermTwo INITIAL_LEADER candidate oldVote
     · have oldVote :
           (state.nodes voter).votedFor = some candidate := by
         simpa [next, request, updateNode, Function.update, voterEq] using vote
       simpa [next, request, updateNode, Function.update, voterEq] using
         core.votedForTermTwo voter candidate oldVote
   · intro candidate voter voterIn
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
       have oldIn :
-          voter ∈ (state.nodes LEADER).votesGranted := by
+          voter ∈ (state.nodes INITIAL_LEADER).votesGranted := by
         simpa [next, request, updateNode] using voterIn
-      by_cases voterEq : voter = LEADER
+      by_cases voterEq : voter = INITIAL_LEADER
       · subst voter
         simpa [next, request, updateNode] using
-          core.votesGrantedSound LEADER LEADER oldIn
+          core.votesGrantedSound INITIAL_LEADER INITIAL_LEADER oldIn
       · simpa [next, request, updateNode, Function.update, voterEq] using
-          core.votesGrantedSound LEADER voter oldIn
+          core.votesGrantedSound INITIAL_LEADER voter oldIn
     · have oldIn :
           voter ∈ (state.nodes candidate).votesGranted := by
         simpa [next, request, updateNode, Function.update, candidateEq] using voterIn
-      by_cases voterEq : voter = LEADER
+      by_cases voterEq : voter = INITIAL_LEADER
       · subst voter
         simpa [next, request, updateNode, Function.update, candidateEq] using
-          core.votesGrantedSound candidate LEADER oldIn
+          core.votesGrantedSound candidate INITIAL_LEADER oldIn
       · simpa [
           next, request, updateNode, Function.update, candidateEq, voterEq
         ] using core.votesGrantedSound candidate voter oldIn
   · intro node leader termTwo
-    by_cases nodeEq : node = LEADER
+    by_cases nodeEq : node = INITIAL_LEADER
     · subst node
       have impossible := leaderTermOne
       have termTwo' :
-          (state.nodes LEADER).currentTerm = 2 := by
+          (state.nodes INITIAL_LEADER).currentTerm = 2 := by
         simpa [next, request, updateNode] using termTwo
       rw [impossible] at termTwo'
       simp [TERM_ONE] at termTwo'
@@ -2718,7 +2903,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
       simpa [hasElectionMajority, next, request, updateNode, Function.update, nodeEq]
         using majority
   · intro node
-    by_cases nodeEq : node = LEADER
+    by_cases nodeEq : node = INITIAL_LEADER
     · subst node
       simp [next, request, updateNode]
     · simpa [next, request, updateNode, Function.update, nodeEq] using
@@ -2755,315 +2940,322 @@ theorem receivePreservesSystemInductiveInvariant
           split at receiveResult
           · rename_i request
             split at receiveResult
-            · contradiction
-            · rename_i nextNode response handled
+            · rename_i nextNode stepped
               have resultEq := Option.some.inj receiveResult
               rw [← resultEq]
-              have selectedSound := takeFirstFromSound taken
-              have selectedSafe :=
-                core.queuedRequestsMatchLeader
-                  destination
-                  (.appendEntriesRequest request)
-                  selectedSound.2.1
-              have requestDestination :
-                  request.destination = destination :=
-                selectedSafe.1
-              have requestSafe :
-                  RequestMatchesLeader state request :=
-                selectedSafe.2
-              have destinationNeLeader :
-                  Not (destination = LEADER) := by
-                intro destinationEq
-                apply requestSafe.2.1
-                rw [requestDestination, destinationEq]
-              have leaderNeDestination :
-                  Not (LEADER = destination) :=
-                Ne.symm destinationNeLeader
-              have post :=
-                handleAppendEntriesRequestPreserves
-                  core requestDestination requestSafe handled
-              constructor
-              · intro candidate
-                by_cases candidateEq : candidate = destination
-                · subst candidate
-                  simpa using post.commitBounded
-                · simpa [candidateEq] using
-                    core.commitIndicesBounded candidate
-              · intro candidate
-                by_cases candidateEq : candidate = destination
-                · subst candidate
-                  simpa [leaderNeDestination] using post.logPrefixLeader
-                · simpa [candidateEq, leaderNeDestination] using
-                    core.logsPrefixLeader candidate
-              · intro candidate entry entryIn
-                by_cases candidateEq : candidate = destination
-                · subst candidate
-                  exact post.termsAreOne entry (by simpa using entryIn)
-                · exact
-                    core.termsAreOne candidate entry
-                      (by simpa [candidateEq] using entryIn)
-              · simpa [LeaderTxIdsUnique, leaderNeDestination] using
-                  core.leaderTxIdsUnique
-              · simpa [LeaderTxIdsSubmitted, leaderNeDestination] using
-                  core.leaderTxIdsSubmitted
-              · intro queuedDestination message messageIn
-                have member :
-                    message ∈
-                      enqueueNoDup
-                        (updateQueue state.network destination remaining)
-                        (.appendEntriesResponse response)
-                        queuedDestination := by
-                  simpa [reply] using messageIn
-                rcases
-                  memEnqueueNoDup
-                    (updateQueue state.network destination remaining)
-                    (.appendEntriesResponse response)
-                    message
-                    queuedDestination
-                    member
-                  with oldMessage | newMessage
-                · have oldSafe :=
-                    queuedMessagesSafeAfterRemove
-                      core taken queuedDestination message oldMessage
-                  constructor
-                  · exact oldSafe.1
-                  · cases message with
-                    | appendEntriesRequest oldRequest =>
+              exact
+                returnToFollowerPreservesSystemInductiveInvariant
+                  core stepped
+            · split at receiveResult
+              · contradiction
+              · rename_i nextNode response handled
+                have resultEq := Option.some.inj receiveResult
+                rw [← resultEq]
+                have selectedSound := takeFirstFromSound taken
+                have selectedSafe :=
+                  core.queuedRequestsMatchLeader
+                    destination
+                    (.appendEntriesRequest request)
+                    selectedSound.2.1
+                have requestDestination :
+                    request.destination = destination :=
+                  selectedSafe.1
+                have requestSafe :
+                    RequestMatchesLeader state request :=
+                  selectedSafe.2
+                have destinationNeLeader :
+                    Not (destination = INITIAL_LEADER) := by
+                  intro destinationEq
+                  apply requestSafe.2.1
+                  rw [requestDestination, destinationEq]
+                have leaderNeDestination :
+                    Not (INITIAL_LEADER = destination) :=
+                  Ne.symm destinationNeLeader
+                have post :=
+                  handleAppendEntriesRequestPreserves
+                    core requestDestination requestSafe handled
+                constructor
+                · intro candidate
+                  by_cases candidateEq : candidate = destination
+                  · subst candidate
+                    simpa using post.commitBounded
+                  · simpa [candidateEq] using
+                      core.commitIndicesBounded candidate
+                · intro candidate
+                  by_cases candidateEq : candidate = destination
+                  · subst candidate
+                    simpa [leaderNeDestination] using post.logPrefixLeader
+                  · simpa [candidateEq, leaderNeDestination] using
+                      core.logsPrefixLeader candidate
+                · intro candidate entry entryIn
+                  by_cases candidateEq : candidate = destination
+                  · subst candidate
+                    exact post.termsAreOne entry (by simpa using entryIn)
+                  · exact
+                      core.termsAreOne candidate entry
+                        (by simpa [candidateEq] using entryIn)
+                · simpa [LeaderTxIdsUnique, leaderNeDestination] using
+                    core.leaderTxIdsUnique
+                · simpa [LeaderTxIdsSubmitted, leaderNeDestination] using
+                    core.leaderTxIdsSubmitted
+                · intro queuedDestination message messageIn
+                  have member :
+                      message ∈
+                        enqueueNoDup
+                          (updateQueue state.network destination remaining)
+                          (.appendEntriesResponse response)
+                          queuedDestination := by
+                    simpa [reply] using messageIn
+                  rcases
+                    memEnqueueNoDup
+                      (updateQueue state.network destination remaining)
+                      (.appendEntriesResponse response)
+                      message
+                      queuedDestination
+                      member
+                    with oldMessage | newMessage
+                  · have oldSafe :=
+                      queuedMessagesSafeAfterRemove
+                        core taken queuedDestination message oldMessage
+                    constructor
+                    · exact oldSafe.1
+                    · cases message with
+                      | appendEntriesRequest oldRequest =>
+                          simpa [
+                            RequestMatchesLeader,
+                            updateNode,
+                            Function.update,
+                            leaderNeDestination
+                          ] using oldSafe.2
+                      | appendEntriesResponse oldResponse =>
+                          simpa [reply] using
+                            requestHandlerPreservesResponseSafe
+                              post rfl leaderNeDestination oldSafe.2
+                      | requestVoteRequest _ => trivial
+                      | requestVoteResponse _ => trivial
+                  · rcases newMessage with
+                      ⟨queuedDestinationEq, messageEq⟩
+                    subst queuedDestination
+                    subst message
+                    exact
+                      ⟨rfl, by
                         simpa [
-                          RequestMatchesLeader,
+                          ResponseMatchesLeader,
                           updateNode,
                           Function.update,
-                          leaderNeDestination
-                        ] using oldSafe.2
-                    | appendEntriesResponse oldResponse =>
+                          leaderNeDestination,
+                          requestDestination
+                        ] using post.responseSafe⟩
+                · intro queuedDestination message messageIn
+                  have member :
+                      message ∈
+                        enqueueNoDup
+                          (updateQueue state.network destination remaining)
+                          (.appendEntriesResponse response)
+                          queuedDestination := by
+                    simpa [reply] using messageIn
+                  rcases
+                    memEnqueueNoDup
+                      (updateQueue state.network destination remaining)
+                      (.appendEntriesResponse response)
+                      message
+                      queuedDestination
+                      member
+                    with oldMessage | newMessage
+                  · have oldSafe :=
+                      queuedVoteMessagesSafeAfterRemove
+                        core taken queuedDestination message oldMessage
+                    cases message with
+                    | appendEntriesRequest _ => trivial
+                    | appendEntriesResponse _ => trivial
+                    | requestVoteRequest request =>
                         simpa [reply] using
-                          requestHandlerPreservesResponseSafe
-                            post rfl leaderNeDestination oldSafe.2
-                    | requestVoteRequest _ => trivial
-                    | requestVoteResponse _ => trivial
-                · rcases newMessage with
-                    ⟨queuedDestinationEq, messageEq⟩
-                  subst queuedDestination
-                  subst message
-                  exact
-                    ⟨rfl, by
-                      simpa [
-                        ResponseMatchesLeader,
-                        updateNode,
-                        Function.update,
-                        leaderNeDestination,
-                        requestDestination
-                      ] using post.responseSafe⟩
-              · intro queuedDestination message messageIn
-                have member :
-                    message ∈
-                      enqueueNoDup
-                        (updateQueue state.network destination remaining)
-                        (.appendEntriesResponse response)
-                        queuedDestination := by
-                  simpa [reply] using messageIn
-                rcases
-                  memEnqueueNoDup
-                    (updateQueue state.network destination remaining)
-                    (.appendEntriesResponse response)
-                    message
-                    queuedDestination
-                    member
-                  with oldMessage | newMessage
-                · have oldSafe :=
-                    queuedVoteMessagesSafeAfterRemove
-                      core taken queuedDestination message oldMessage
-                  cases message with
-                  | appendEntriesRequest _ => trivial
-                  | appendEntriesResponse _ => trivial
-                  | requestVoteRequest request =>
-                      simpa [reply] using
-                        requestHandlerPreservesVoteMessageSafe
-                          (message := .requestVoteRequest request)
-                          post rfl oldSafe
-                  | requestVoteResponse response =>
-                      simpa [reply] using
-                        requestHandlerPreservesVoteMessageSafe
-                          (message := .requestVoteResponse response)
-                          post rfl oldSafe
-                · rcases newMessage with ⟨_, messageEq⟩
-                  subst message
-                  trivial
-              · intro candidate
-                simpa [leaderNeDestination] using
-                  core.sentIndicesBounded candidate
-              · intro candidate
-                simpa [leaderNeDestination] using
-                  core.matchIndicesBounded candidate
-              · intro candidate
-                by_cases candidateEq : candidate = destination
-                · subst candidate
-                  have oldValid := core.currentTermsValid destination
-                  rw [← post.currentTermUnchanged] at oldValid
-                  simpa [updateNode] using oldValid
-                · simpa [updateNode, Function.update, candidateEq] using
-                    core.currentTermsValid candidate
-              · intro candidate leader termOne
-                apply core.termOneLeaderIsInitial candidate
-                · by_cases candidateEq : candidate = destination
+                          requestHandlerPreservesVoteMessageSafe
+                            (message := .requestVoteRequest request)
+                            post rfl oldSafe
+                    | requestVoteResponse response =>
+                        simpa [reply] using
+                          requestHandlerPreservesVoteMessageSafe
+                            (message := .requestVoteResponse response)
+                            post rfl oldSafe
+                  · rcases newMessage with ⟨_, messageEq⟩
+                    subst message
+                    trivial
+                · intro candidate
+                  simpa [leaderNeDestination] using
+                    core.sentIndicesBounded candidate
+                · intro candidate
+                  simpa [leaderNeDestination] using
+                    core.matchIndicesBounded candidate
+                · intro candidate
+                  by_cases candidateEq : candidate = destination
                   · subst candidate
-                    simpa [post.roleUnchanged] using leader
-                  · simpa [candidateEq] using leader
-                · by_cases candidateEq : candidate = destination
-                  · subst candidate
-                    simpa [post.currentTermUnchanged] using termOne
-                  · simpa [candidateEq] using termOne
-              · intro termOne
-                have oldTermOne :
-                    (state.nodes LEADER).currentTerm = TERM_ONE := by
+                    have oldValid := core.currentTermsValid destination
+                    rw [← post.currentTermUnchanged] at oldValid
+                    simpa [updateNode] using oldValid
+                  · simpa [updateNode, Function.update, candidateEq] using
+                      core.currentTermsValid candidate
+                · intro candidate leader termOne
+                  apply core.termOneLeaderIsInitial candidate
+                  · by_cases candidateEq : candidate = destination
+                    · subst candidate
+                      simpa [post.roleUnchanged] using leader
+                    · simpa [candidateEq] using leader
+                  · by_cases candidateEq : candidate = destination
+                    · subst candidate
+                      simpa [post.currentTermUnchanged] using termOne
+                    · simpa [candidateEq] using termOne
+                · intro termOne
+                  have oldTermOne :
+                      (state.nodes INITIAL_LEADER).currentTerm = TERM_ONE := by
+                    simpa [
+                      updateNode,
+                      Function.update,
+                      leaderNeDestination
+                    ] using termOne
+                  have oldLeader :=
+                    core.initialNodeTermOneIsLeader oldTermOne
                   simpa [
                     updateNode,
                     Function.update,
                     leaderNeDestination
-                  ] using termOne
-                have oldLeader :=
-                  core.initialNodeTermOneIsLeader oldTermOne
-                simpa [
-                  updateNode,
-                  Function.update,
-                  leaderNeDestination
-                ] using oldLeader
-              · intro candidate candidateRole
-                by_cases candidateEq : candidate = destination
-                · subst candidate
-                  have oldCandidate :
-                      (state.nodes destination).role = .candidate := by
-                    simpa [post.roleUnchanged] using candidateRole
-                  have oldSelf :=
-                    core.candidatesSelfVote destination oldCandidate
-                  simpa [
-                    post.currentTermUnchanged,
-                    post.votedForUnchanged,
-                    post.votesGrantedUnchanged,
-                    updateNode
-                  ] using oldSelf
-                · simpa [updateNode, Function.update, candidateEq] using
-                    core.candidatesSelfVote candidate
-                      (by
-                        simpa [
-                          updateNode,
-                          Function.update,
-                          candidateEq
-                        ] using candidateRole)
-              · intro voter candidate voted
-                by_cases voterEq : voter = destination
-                · subst voter
-                  have oldVote :
-                      (state.nodes destination).votedFor = some candidate := by
-                    simpa [post.votedForUnchanged] using voted
-                  have oldTermTwo :=
-                    core.votedForTermTwo destination candidate oldVote
-                  simpa [post.currentTermUnchanged] using oldTermTwo
-                · have oldVote :
-                      (state.nodes voter).votedFor = some candidate := by
+                  ] using oldLeader
+                · intro candidate candidateRole
+                  by_cases candidateEq : candidate = destination
+                  · subst candidate
+                    have oldCandidate :
+                        (state.nodes destination).role = .candidate := by
+                      simpa [post.roleUnchanged] using candidateRole
+                    have oldSelf :=
+                      core.candidatesSelfVote destination oldCandidate
+                    simpa [
+                      post.currentTermUnchanged,
+                      post.votedForUnchanged,
+                      post.votesGrantedUnchanged,
+                      updateNode
+                    ] using oldSelf
+                  · simpa [updateNode, Function.update, candidateEq] using
+                      core.candidatesSelfVote candidate
+                        (by
+                          simpa [
+                            updateNode,
+                            Function.update,
+                            candidateEq
+                          ] using candidateRole)
+                · intro voter candidate voted
+                  by_cases voterEq : voter = destination
+                  · subst voter
+                    have oldVote :
+                        (state.nodes destination).votedFor = some candidate := by
+                      simpa [post.votedForUnchanged] using voted
+                    have oldTermTwo :=
+                      core.votedForTermTwo destination candidate oldVote
+                    simpa [post.currentTermUnchanged] using oldTermTwo
+                  · have oldVote :
+                        (state.nodes voter).votedFor = some candidate := by
+                      simpa [
+                        updateNode,
+                        Function.update,
+                        voterEq
+                      ] using voted
+                    have oldTermTwo :=
+                      core.votedForTermTwo voter candidate oldVote
                     simpa [
                       updateNode,
                       Function.update,
                       voterEq
-                    ] using voted
-                  have oldTermTwo :=
-                    core.votedForTermTwo voter candidate oldVote
-                  simpa [
+                    ] using oldTermTwo
+                · intro candidate voter voterIn
+                  by_cases candidateEq : candidate = destination
+                  · subst candidate
+                    have oldIn :
+                        voter ∈ (state.nodes destination).votesGranted := by
+                      simpa [post.votesGrantedUnchanged] using voterIn
+                    have oldSound :=
+                      core.votesGrantedSound destination voter oldIn
+                    have logUnchanged :=
+                      post.logUnchangedIfTermTwo oldSound.1
+                    by_cases voterEq : voter = destination
+                    · subst voter
+                      simpa [
+                        post.currentTermUnchanged,
+                        post.votedForUnchanged,
+                        post.votesGrantedUnchanged,
+                        logUnchanged,
+                        updateNode
+                      ] using oldSound
+                    · simpa [
+                        post.currentTermUnchanged,
+                        post.votesGrantedUnchanged,
+                        logUnchanged,
+                        updateNode,
+                        Function.update,
+                        voterEq
+                      ] using oldSound
+                  · have oldIn :
+                        voter ∈ (state.nodes candidate).votesGranted := by
+                      simpa [candidateEq] using voterIn
+                    have oldSound :=
+                      core.votesGrantedSound candidate voter oldIn
+                    by_cases voterEq : voter = destination
+                    · subst voter
+                      have logUnchanged :=
+                        post.logUnchangedIfTermTwo
+                          (core.votedForTermTwo
+                            destination candidate oldSound.2.1)
+                      simpa [
+                        candidateEq,
+                        post.currentTermUnchanged,
+                        post.votedForUnchanged,
+                        logUnchanged,
+                        updateNode
+                      ] using oldSound
+                    · simpa [
+                        updateNode,
+                        Function.update,
+                        candidateEq,
+                        voterEq
+                      ] using oldSound
+                · intro candidate leader termTwo
+                  have oldLeader :
+                      (state.nodes candidate).role = .leader := by
+                    by_cases candidateEq : candidate = destination
+                    · subst candidate
+                      simpa [post.roleUnchanged] using leader
+                    · simpa [candidateEq] using leader
+                  have oldTermTwo :
+                      (state.nodes candidate).currentTerm = 2 := by
+                    by_cases candidateEq : candidate = destination
+                    · subst candidate
+                      simpa [post.currentTermUnchanged] using termTwo
+                    · simpa [candidateEq] using termTwo
+                  have majority :=
+                    core.termTwoLeadersHaveMajority candidate
+                      oldLeader oldTermTwo
+                  by_cases candidateEq : candidate = destination
+                  · subst candidate
+                    simpa [
+                      hasElectionMajority,
+                      post.votesGrantedUnchanged
+                    ] using majority
+                  · simpa [hasElectionMajority, candidateEq] using majority
+                · intro candidate
+                  simpa [reply] using
+                    requestHandlerPreservesMatchIndexPrefix
+                      core post rfl leaderNeDestination candidate
+                · simpa [
+                    InitialLeaderCommitHasMajority,
+                    hasMajorityAt,
+                    acknowledgingNodes,
                     updateNode,
                     Function.update,
-                    voterEq
-                  ] using oldTermTwo
-              · intro candidate voter voterIn
-                by_cases candidateEq : candidate = destination
-                · subst candidate
-                  have oldIn :
-                      voter ∈ (state.nodes destination).votesGranted := by
-                    simpa [post.votesGrantedUnchanged] using voterIn
-                  have oldSound :=
-                    core.votesGrantedSound destination voter oldIn
-                  have logUnchanged :=
-                    post.logUnchangedIfTermTwo oldSound.1
-                  by_cases voterEq : voter = destination
-                  · subst voter
-                    simpa [
-                      post.currentTermUnchanged,
-                      post.votedForUnchanged,
-                      post.votesGrantedUnchanged,
-                      logUnchanged,
-                      updateNode
-                    ] using oldSound
-                  · simpa [
-                      post.currentTermUnchanged,
-                      post.votesGrantedUnchanged,
-                      logUnchanged,
-                      updateNode,
-                      Function.update,
-                      voterEq
-                    ] using oldSound
-                · have oldIn :
-                      voter ∈ (state.nodes candidate).votesGranted := by
-                    simpa [candidateEq] using voterIn
-                  have oldSound :=
-                    core.votesGrantedSound candidate voter oldIn
-                  by_cases voterEq : voter = destination
-                  · subst voter
-                    have logUnchanged :=
-                      post.logUnchangedIfTermTwo
-                        (core.votedForTermTwo
-                          destination candidate oldSound.2.1)
-                    simpa [
-                      candidateEq,
-                      post.currentTermUnchanged,
-                      post.votedForUnchanged,
-                      logUnchanged,
-                      updateNode
-                    ] using oldSound
-                  · simpa [
-                      updateNode,
-                      Function.update,
-                      candidateEq,
-                      voterEq
-                    ] using oldSound
-              · intro candidate leader termTwo
-                have oldLeader :
-                    (state.nodes candidate).role = .leader := by
-                  by_cases candidateEq : candidate = destination
-                  · subst candidate
-                    simpa [post.roleUnchanged] using leader
-                  · simpa [candidateEq] using leader
-                have oldTermTwo :
-                    (state.nodes candidate).currentTerm = 2 := by
-                  by_cases candidateEq : candidate = destination
-                  · subst candidate
-                    simpa [post.currentTermUnchanged] using termTwo
-                  · simpa [candidateEq] using termTwo
-                have majority :=
-                  core.termTwoLeadersHaveMajority candidate
-                    oldLeader oldTermTwo
-                by_cases candidateEq : candidate = destination
-                · subst candidate
-                  simpa [
-                    hasElectionMajority,
-                    post.votesGrantedUnchanged
-                  ] using majority
-                · simpa [hasElectionMajority, candidateEq] using majority
-              · intro candidate
-                simpa [reply] using
-                  requestHandlerPreservesMatchIndexPrefix
-                    core post rfl leaderNeDestination candidate
-              · simpa [
-                  InitialLeaderCommitHasMajority,
-                  hasMajorityAt,
-                  acknowledgingNodes,
-                  updateNode,
-                  Function.update,
-                  leaderNeDestination
-                ]
-                  using core.initialLeaderCommitHasMajority
-              · simpa [
-                  InitialNodeNotCandidate, reply, updateNode,
-                  Function.update, leaderNeDestination
-                ] using core.initialNodeNotCandidate
+                    leaderNeDestination
+                  ]
+                    using core.initialLeaderCommitHasMajority
+                · simpa [
+                    InitialNodeNotCandidate, reply, updateNode,
+                    Function.update, leaderNeDestination
+                  ] using core.initialNodeNotCandidate
           · rename_i response
             split at receiveResult
             · contradiction
@@ -3083,9 +3275,9 @@ theorem receivePreservesSystemInductiveInvariant
                   ResponseMatchesLeader state response :=
                 selectedSafe.2
               have responseDestinationEq :
-                  response.destination = LEADER :=
+                  response.destination = INITIAL_LEADER :=
                 responseSafe.1
-              have destinationEq : destination = LEADER :=
+              have destinationEq : destination = INITIAL_LEADER :=
                 responseDestination.symm.trans responseSafe.1
               cases destinationEq
               have post :=
@@ -3094,30 +3286,30 @@ theorem receivePreservesSystemInductiveInvariant
                     (by simpa [responseSafe.1] using handled)
               constructor
               · intro candidate
-                by_cases candidateEq : candidate = LEADER
+                by_cases candidateEq : candidate = INITIAL_LEADER
                 · subst candidate
                   simpa [
                     post.commitIndexUnchanged,
                     post.logUnchanged
                   ] using
-                    core.commitIndicesBounded LEADER
+                    core.commitIndicesBounded INITIAL_LEADER
                 · simpa [candidateEq] using
                     core.commitIndicesBounded candidate
               · intro candidate
-                by_cases candidateEq : candidate = LEADER
+                by_cases candidateEq : candidate = INITIAL_LEADER
                 · subst candidate
                   simpa [post.logUnchanged] using
-                    core.logsPrefixLeader LEADER
+                    core.logsPrefixLeader INITIAL_LEADER
                 · simpa [
                     candidateEq,
                     post.logUnchanged
                   ] using
                     core.logsPrefixLeader candidate
               · intro candidate entry entryIn
-                by_cases candidateEq : candidate = LEADER
+                by_cases candidateEq : candidate = INITIAL_LEADER
                 · subst candidate
                   exact
-                    core.termsAreOne LEADER entry
+                    core.termsAreOne INITIAL_LEADER entry
                       (by
                         simpa [
                           post.logUnchanged
@@ -3183,9 +3375,9 @@ theorem receivePreservesSystemInductiveInvariant
                   post.logUnchanged
                 ] using post.matchIndicesBounded
               · intro node
-                by_cases nodeEq : node = LEADER
+                by_cases nodeEq : node = INITIAL_LEADER
                 · subst node
-                  have oldValid := core.currentTermsValid LEADER
+                  have oldValid := core.currentTermsValid INITIAL_LEADER
                   rw [← post.currentTermUnchanged] at oldValid
                   simpa [updateNode] using oldValid
                 · simpa [
@@ -3195,7 +3387,7 @@ theorem receivePreservesSystemInductiveInvariant
                   ] using core.currentTermsValid node
               · intro node leader termOne
                 apply core.termOneLeaderIsInitial node
-                · by_cases nodeEq : node = LEADER
+                · by_cases nodeEq : node = INITIAL_LEADER
                   · subst node
                     simpa [
                       updateNode,
@@ -3206,7 +3398,7 @@ theorem receivePreservesSystemInductiveInvariant
                       Function.update,
                       nodeEq
                     ] using leader
-                · by_cases nodeEq : node = LEADER
+                · by_cases nodeEq : node = INITIAL_LEADER
                   · subst node
                     simpa [
                       updateNode,
@@ -3219,7 +3411,7 @@ theorem receivePreservesSystemInductiveInvariant
                     ] using termOne
               · intro termOne
                 have oldTermOne :
-                    (state.nodes LEADER).currentTerm = TERM_ONE := by
+                    (state.nodes INITIAL_LEADER).currentTerm = TERM_ONE := by
                   simpa [
                     updateNode,
                     post.currentTermUnchanged
@@ -3231,16 +3423,16 @@ theorem receivePreservesSystemInductiveInvariant
                   post.roleUnchanged
                 ] using oldLeader
               · intro node candidate
-                by_cases nodeEq : node = LEADER
+                by_cases nodeEq : node = INITIAL_LEADER
                 · subst node
                   have oldCandidate :
-                      (state.nodes LEADER).role = .candidate := by
+                      (state.nodes INITIAL_LEADER).role = .candidate := by
                     simpa [
                       updateNode,
                       post.roleUnchanged
                     ] using candidate
                   have oldSelf :=
-                    core.candidatesSelfVote LEADER oldCandidate
+                    core.candidatesSelfVote INITIAL_LEADER oldCandidate
                   simpa [
                     updateNode,
                     post.currentTermUnchanged,
@@ -3259,16 +3451,16 @@ theorem receivePreservesSystemInductiveInvariant
                         nodeEq
                       ] using candidate)
               · intro voter candidate voted
-                by_cases voterEq : voter = LEADER
+                by_cases voterEq : voter = INITIAL_LEADER
                 · subst voter
                   have oldVote :
-                      (state.nodes LEADER).votedFor = some candidate := by
+                      (state.nodes INITIAL_LEADER).votedFor = some candidate := by
                     simpa [
                       updateNode,
                       post.votedForUnchanged
                     ] using voted
                   have oldTerm :=
-                    core.votedForTermTwo LEADER candidate oldVote
+                    core.votedForTermTwo INITIAL_LEADER candidate oldVote
                   simpa [
                     updateNode,
                     post.currentTermUnchanged
@@ -3288,7 +3480,7 @@ theorem receivePreservesSystemInductiveInvariant
               · intro candidate voter voterIn
                 have oldIn :
                     voter ∈ (state.nodes candidate).votesGranted := by
-                  by_cases candidateEq : candidate = LEADER
+                  by_cases candidateEq : candidate = INITIAL_LEADER
                   · subst candidate
                     simpa [
                       updateNode,
@@ -3301,9 +3493,9 @@ theorem receivePreservesSystemInductiveInvariant
                     ] using voterIn
                 have oldSound :=
                   core.votesGrantedSound candidate voter oldIn
-                by_cases candidateEq : candidate = LEADER
+                by_cases candidateEq : candidate = INITIAL_LEADER
                 · subst candidate
-                  by_cases voterEq : voter = LEADER
+                  by_cases voterEq : voter = INITIAL_LEADER
                   · subst voter
                     simpa [
                       updateNode,
@@ -3318,7 +3510,7 @@ theorem receivePreservesSystemInductiveInvariant
                       post.currentTermUnchanged,
                       post.logUnchanged
                     ] using oldSound
-                · by_cases voterEq : voter = LEADER
+                · by_cases voterEq : voter = INITIAL_LEADER
                   · subst voter
                     simpa [
                       updateNode,
@@ -3336,7 +3528,7 @@ theorem receivePreservesSystemInductiveInvariant
               · intro node leader termTwo
                 have oldLeader :
                     (state.nodes node).role = .leader := by
-                  by_cases nodeEq : node = LEADER
+                  by_cases nodeEq : node = INITIAL_LEADER
                   · subst node
                     simpa [
                       updateNode,
@@ -3349,7 +3541,7 @@ theorem receivePreservesSystemInductiveInvariant
                     ] using leader
                 have oldTermTwo :
                     (state.nodes node).currentTerm = 2 := by
-                  by_cases nodeEq : node = LEADER
+                  by_cases nodeEq : node = INITIAL_LEADER
                   · subst node
                     simpa [
                       updateNode,
@@ -3362,7 +3554,7 @@ theorem receivePreservesSystemInductiveInvariant
                     ] using termTwo
                 have oldMajority :=
                   core.termTwoLeadersHaveMajority node oldLeader oldTermTwo
-                by_cases nodeEq : node = LEADER
+                by_cases nodeEq : node = INITIAL_LEADER
                 · subst node
                   simpa [
                     hasElectionMajority,
@@ -3376,12 +3568,12 @@ theorem receivePreservesSystemInductiveInvariant
                     nodeEq
                   ] using oldMajority
               · intro node
-                by_cases nodeEq : node = LEADER
+                by_cases nodeEq : node = INITIAL_LEADER
                 · subst node
                   simpa [
                     updateNode,
                     post.logUnchanged
-                  ] using post.matchIndicesDescribePrefix LEADER
+                  ] using post.matchIndicesDescribePrefix INITIAL_LEADER
                 · simpa [
                     updateNode,
                     Function.update,
@@ -3395,14 +3587,14 @@ theorem receivePreservesSystemInductiveInvariant
                 · right
                   let updated : State TxId :=
                     { state with
-                      nodes := updateNode state.nodes LEADER nextNode
+                      nodes := updateNode state.nodes INITIAL_LEADER nextNode
                       network :=
-                        updateQueue state.network LEADER remaining }
+                        updateQueue state.network INITIAL_LEADER remaining }
                   have subset :
-                      acknowledgingNodes state LEADER
-                          (state.nodes LEADER).commitIndex ⊆
-                        acknowledgingNodes updated LEADER
-                          (updated.nodes LEADER).commitIndex := by
+                      acknowledgingNodes state INITIAL_LEADER
+                          (state.nodes INITIAL_LEADER).commitIndex ⊆
+                        acknowledgingNodes updated INITIAL_LEADER
+                          (updated.nodes INITIAL_LEADER).commitIndex := by
                     intro peer member
                     simp only [
                       acknowledgingNodes,
@@ -3422,8 +3614,8 @@ theorem receivePreservesSystemInductiveInvariant
                           (post.matchIndicesMonotonic peer)
                   have cardLe := Finset.card_le_card subset
                   have updatedMajority :
-                      hasMajorityAt updated LEADER
-                        (updated.nodes LEADER).commitIndex := by
+                      hasMajorityAt updated INITIAL_LEADER
+                        (updated.nodes INITIAL_LEADER).commitIndex := by
                     unfold hasMajorityAt at majority ⊢
                     omega
                   simpa [updated] using
@@ -4037,89 +4229,89 @@ theorem advanceCommitPreservesSystemInductiveInvariant
     (core : SystemInductiveInvariant state)
     (enabled : Enabled state (.advanceCommitIndex node)) :
     SystemInductiveInvariant (next state (.advanceCommitIndex node)) := by
-  have nodeEq : node = LEADER :=
+  have nodeEq : node = INITIAL_LEADER :=
     termOneLeaderImpliesInitialLeader core enabled.1 enabled.2.1
   subst node
   have roleEq :
       forall candidate,
-        ((next state (.advanceCommitIndex LEADER)).nodes candidate).role =
+        ((next state (.advanceCommitIndex INITIAL_LEADER)).nodes candidate).role =
           (state.nodes candidate).role := by
     intro candidate
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
       simp [next]
     · simp [next, updateNode, Function.update, candidateEq]
   have currentTermEq :
       forall candidate,
-        ((next state (.advanceCommitIndex LEADER)).nodes candidate).currentTerm =
+        ((next state (.advanceCommitIndex INITIAL_LEADER)).nodes candidate).currentTerm =
           (state.nodes candidate).currentTerm := by
     intro candidate
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
       simp [next]
     · simp [next, updateNode, Function.update, candidateEq]
   have logEq :
       forall candidate,
-        ((next state (.advanceCommitIndex LEADER)).nodes candidate).log =
+        ((next state (.advanceCommitIndex INITIAL_LEADER)).nodes candidate).log =
           (state.nodes candidate).log := by
     intro candidate
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
       simp [next]
     · simp [next, updateNode, Function.update, candidateEq]
   have sentEq :
       forall candidate,
-        ((next state (.advanceCommitIndex LEADER)).nodes candidate).sentIndex =
+        ((next state (.advanceCommitIndex INITIAL_LEADER)).nodes candidate).sentIndex =
           (state.nodes candidate).sentIndex := by
     intro candidate
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
       simp [next]
     · simp [next, updateNode, Function.update, candidateEq]
   have matchEq :
       forall candidate,
-        ((next state (.advanceCommitIndex LEADER)).nodes candidate).matchIndex =
+        ((next state (.advanceCommitIndex INITIAL_LEADER)).nodes candidate).matchIndex =
           (state.nodes candidate).matchIndex := by
     intro candidate
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
       simp [next]
     · simp [next, updateNode, Function.update, candidateEq]
   have votedForEq :
       forall candidate,
-        ((next state (.advanceCommitIndex LEADER)).nodes candidate).votedFor =
+        ((next state (.advanceCommitIndex INITIAL_LEADER)).nodes candidate).votedFor =
           (state.nodes candidate).votedFor := by
     intro candidate
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
       simp [next]
     · simp [next, updateNode, Function.update, candidateEq]
   have votesEq :
       forall candidate,
-        ((next state (.advanceCommitIndex LEADER)).nodes candidate).votesGranted =
+        ((next state (.advanceCommitIndex INITIAL_LEADER)).nodes candidate).votesGranted =
           (state.nodes candidate).votesGranted := by
     intro candidate
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
       simp [next]
     · simp [next, updateNode, Function.update, candidateEq]
   constructor
   · intro candidate
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
       simpa [next] using
-        highestCommittableIndexBounded state LEADER
+        highestCommittableIndexBounded state INITIAL_LEADER
     · simpa [next, candidateEq] using
         core.commitIndicesBounded candidate
   · intro candidate
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
-      simpa [next] using core.logsPrefixLeader LEADER
+      simpa [next] using core.logsPrefixLeader INITIAL_LEADER
     · simpa [next, candidateEq] using core.logsPrefixLeader candidate
   · intro candidate entry entryIn
-    by_cases candidateEq : candidate = LEADER
+    by_cases candidateEq : candidate = INITIAL_LEADER
     · subst candidate
-      exact core.termsAreOne LEADER entry (by simpa [next] using entryIn)
+      exact core.termsAreOne INITIAL_LEADER entry (by simpa [next] using entryIn)
     · exact
         core.termsAreOne candidate entry
           (by simpa [next, candidateEq] using entryIn)
@@ -4179,7 +4371,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       core.matchIndexDescribesPrefix
   · right
     exact
-      (highestCommittableIndexValid state LEADER enabled.2.2).2
+      (highestCommittableIndexValid state INITIAL_LEADER enabled.2.2).2
   · simpa [InitialNodeNotCandidate, next] using
       core.initialNodeNotCandidate
 
@@ -4190,13 +4382,13 @@ theorem timeoutPreservesSystemInductiveInvariant
     (core : SystemInductiveInvariant state)
     (enabled : Enabled state (.timeout node)) :
     SystemInductiveInvariant (next state (.timeout node)) := by
-  have nodeNeLeader : Not (node = LEADER) := by
+  have nodeNeLeader : Not (node = INITIAL_LEADER) := by
     intro nodeEq
     subst node
     have leaderRole :=
       core.initialNodeTermOneIsLeader enabled.2
     exact Role.noConfusion (enabled.1.symm.trans leaderRole)
-  have leaderNeNode : Not (LEADER = node) :=
+  have leaderNeNode : Not (INITIAL_LEADER = node) :=
     Ne.symm nodeNeLeader
   have logEq :
       forall candidate,
@@ -4314,7 +4506,7 @@ theorem timeoutPreservesSystemInductiveInvariant
           (by simpa [next, updateNode, Function.update, candidateEq] using termOne)
   · intro termOne
     have oldTermOne :
-        (state.nodes LEADER).currentTerm = TERM_ONE := by
+        (state.nodes INITIAL_LEADER).currentTerm = TERM_ONE := by
       simpa [next, updateNode, Function.update, leaderNeNode] using termOne
     have oldLeader :=
       core.initialNodeTermOneIsLeader oldTermOne
@@ -4636,7 +4828,7 @@ theorem updateTermPreservesSystemInductiveInvariant
             (by simpa [updateNode, Function.update, nodeEq] using leader)
             (by simpa [updateNode, Function.update, nodeEq] using termOne)
       · intro termOne
-        by_cases leaderEq : LEADER = destination
+        by_cases leaderEq : INITIAL_LEADER = destination
         · rw [leaderEq] at termOne
           simp [selectedTermTwo, updateNode] at termOne
           contradiction
@@ -4701,7 +4893,7 @@ theorem updateTermPreservesSystemInductiveInvariant
           acknowledgingNodes, commitEq, matchEq
         ] using
           core.initialLeaderCommitHasMajority
-      · by_cases leaderEq : LEADER = destination
+      · by_cases leaderEq : INITIAL_LEADER = destination
         · simp [
             InitialNodeNotCandidate, updateNode,
             Function.update, leaderEq
@@ -4718,11 +4910,11 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
     (core : SystemInductiveInvariant state)
     (enabled : Enabled state (.becomeLeader node)) :
     SystemInductiveInvariant (next state (.becomeLeader node)) := by
-  have nodeNeLeader : Not (node = LEADER) := by
+  have nodeNeLeader : Not (node = INITIAL_LEADER) := by
     intro nodeEq
     subst node
     exact core.initialNodeNotCandidate enabled.1
-  have leaderNeNode : Not (LEADER = node) :=
+  have leaderNeNode : Not (INITIAL_LEADER = node) :=
     Ne.symm nodeNeLeader
   have currentTermEq :
       forall candidate,
@@ -4752,12 +4944,12 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
       simp [next]
     · simp [next, updateNode, Function.update, candidateEq]
   have sentEq :
-      ((next state (.becomeLeader node)).nodes LEADER).sentIndex =
-        (state.nodes LEADER).sentIndex := by
+      ((next state (.becomeLeader node)).nodes INITIAL_LEADER).sentIndex =
+        (state.nodes INITIAL_LEADER).sentIndex := by
     simp [next, updateNode, Function.update, leaderNeNode]
   have matchEq :
-      ((next state (.becomeLeader node)).nodes LEADER).matchIndex =
-        (state.nodes LEADER).matchIndex := by
+      ((next state (.becomeLeader node)).nodes INITIAL_LEADER).matchIndex =
+        (state.nodes INITIAL_LEADER).matchIndex := by
     simp [next, updateNode, Function.update, leaderNeNode]
   have votedForEq :
       forall candidate,
@@ -4830,7 +5022,7 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
         (by simpa [next, updateNode, Function.update, candidateEq] using termOne)
   · intro termOne
     have oldTermOne :
-        (state.nodes LEADER).currentTerm = TERM_ONE := by
+        (state.nodes INITIAL_LEADER).currentTerm = TERM_ONE := by
       simpa only [currentTermEq] using termOne
     have oldLeader := core.initialNodeTermOneIsLeader oldTermOne
     simpa [next, updateNode, Function.update, leaderNeNode] using oldLeader
@@ -4900,24 +5092,38 @@ theorem receiveCommittedLogMonotonicity
           split at receiveResult
           · rename_i request
             split at receiveResult
-            · contradiction
-            · rename_i nextNode response handled
+            · rename_i nextNode stepped
               have resultEq := Option.some.inj receiveResult
               rw [← resultEq]
-              have selectedSound := takeFirstFromSound taken
-              have selectedSafe :=
-                core.queuedRequestsMatchLeader
-                  destination
-                  (.appendEntriesRequest request)
-                  selectedSound.2.1
-              have post :=
-                handleAppendEntriesRequestPreserves
-                  core selectedSafe.1 selectedSafe.2 handled
               intro candidate
               by_cases candidateEq : candidate = destination
               · subst candidate
-                simpa using post.committedMonotonic
+                unfold returnToFollowerState? at stepped
+                split at stepped
+                · simp at stepped
+                  subst nextNode
+                  simp [NodeState.committedLog]
+                · contradiction
               · simp [NodeState.committedLog, candidateEq]
+            · split at receiveResult
+              · contradiction
+              · rename_i nextNode response handled
+                have resultEq := Option.some.inj receiveResult
+                rw [← resultEq]
+                have selectedSound := takeFirstFromSound taken
+                have selectedSafe :=
+                  core.queuedRequestsMatchLeader
+                    destination
+                    (.appendEntriesRequest request)
+                    selectedSound.2.1
+                have post :=
+                  handleAppendEntriesRequestPreserves
+                    core selectedSafe.1 selectedSafe.2 handled
+                intro candidate
+                by_cases candidateEq : candidate = destination
+                · subst candidate
+                  simpa using post.committedMonotonic
+                · simp [NodeState.committedLog, candidateEq]
           · rename_i response
             split at receiveResult
             · contradiction
@@ -4936,7 +5142,7 @@ theorem receiveCommittedLogMonotonicity
               have responseDestination :
                   response.destination = destination :=
                 selectedSafe.1
-              have destinationEq : destination = LEADER :=
+              have destinationEq : destination = INITIAL_LEADER :=
                 responseDestination.symm.trans responseSafe.1
               subst destination
               have post :=
@@ -4944,7 +5150,7 @@ theorem receiveCommittedLogMonotonicity
                   core responseSafe
                     (by simpa [responseSafe.1] using handled)
               intro candidate
-              by_cases candidateEq : candidate = LEADER
+              by_cases candidateEq : candidate = INITIAL_LEADER
               · subst candidate
                 simp [
                   NodeState.committedLog,
@@ -5013,19 +5219,19 @@ theorem nextCommittedLogMonotonicity
     CommittedLogMonotonicity state (next state action) := by
   cases action with
   | clientRequest node txId =>
-      have nodeEq : node = LEADER :=
+      have nodeEq : node = INITIAL_LEADER :=
         termOneLeaderImpliesInitialLeader core enabled.1 enabled.2.1
       subst node
       intro candidate
-      by_cases candidateEq : candidate = LEADER
+      by_cases candidateEq : candidate = INITIAL_LEADER
       · subst candidate
         have unchanged :
-            ((next state (.clientRequest LEADER txId)).nodes LEADER).committedLog =
-              (state.nodes LEADER).committedLog := by
+            ((next state (.clientRequest INITIAL_LEADER txId)).nodes INITIAL_LEADER).committedLog =
+              (state.nodes INITIAL_LEADER).committedLog := by
           simp only [next, updateNode_same, NodeState.committedLog]
           exact
             List.take_append_of_le_length
-              (core.commitIndicesBounded LEADER)
+              (core.commitIndicesBounded INITIAL_LEADER)
         rw [unchanged]
       · simp [next, NodeState.committedLog, candidateEq]
   | appendEntries source destination batchEnd =>
@@ -5039,21 +5245,21 @@ theorem nextCommittedLogMonotonicity
         receiveCommittedLogMonotonicity
           state source destination core enabled
   | advanceCommitIndex node =>
-      have nodeEq : node = LEADER :=
+      have nodeEq : node = INITIAL_LEADER :=
         termOneLeaderImpliesInitialLeader core enabled.1 enabled.2.1
       subst node
       intro candidate
-      by_cases candidateEq : candidate = LEADER
+      by_cases candidateEq : candidate = INITIAL_LEADER
       · subst candidate
         have oldLe :
-            (state.nodes LEADER).commitIndex <=
-              highestCommittableIndex state LEADER :=
+            (state.nodes INITIAL_LEADER).commitIndex <=
+              highestCommittableIndex state INITIAL_LEADER :=
           Nat.le_of_lt enabled.2.2
         have taken :=
           List.take_prefix
-            (state.nodes LEADER).commitIndex
-            ((state.nodes LEADER).log.take
-              (highestCommittableIndex state LEADER))
+            (state.nodes INITIAL_LEADER).commitIndex
+            ((state.nodes INITIAL_LEADER).log.take
+              (highestCommittableIndex state INITIAL_LEADER))
         simpa [
           next,
           NodeState.committedLog,
@@ -5169,27 +5375,11 @@ theorem receiveFrame
   | some result =>
       simp only [resultEq, Option.getD_some]
       unfold handleReceive? at resultEq
-      split at resultEq
-      · contradiction
-      · split at resultEq
-        · contradiction
-        · split at resultEq <;> split at resultEq
-          · contradiction
-          · have stateEq := Option.some.inj resultEq
-            rw [← stateEq]
-            simp [different]
-          · contradiction
-          · have stateEq := Option.some.inj resultEq
-            rw [← stateEq]
-            simp [different]
-          · contradiction
-          · have stateEq := Option.some.inj resultEq
-            rw [← stateEq]
-            simp [different]
-          · contradiction
-          · have stateEq := Option.some.inj resultEq
-            rw [← stateEq]
-            simp [different]
+      repeat' split at resultEq
+      all_goals try contradiction
+      all_goals
+        cases resultEq
+        simp [different]
 
 /-- Case-split dispatcher proving every enabled action preserves the invariant. -/
 theorem nextPreservesSystemInductiveInvariant

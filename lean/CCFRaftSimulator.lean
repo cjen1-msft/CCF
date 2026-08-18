@@ -2,12 +2,13 @@
 -- Licensed under the Apache 2.0 License.
 
 import CCFRaft.Simulation
+import CCFRaft.Slice25Simulation
 
 open CCFRaft.Simulation
 
 /-- Command-line usage text for simulation and deterministic replay. -/
 def usage : String :=
-  "usage:\n  ccf-raft-simulator simulate [duration-ms] [seed] [max-depth]\n  ccf-raft-simulator replay <trace-file>"
+  "usage:\n  ccf-raft-simulator simulate [duration-ms] [seed] [max-depth]\n  ccf-raft-simulator replay <trace-file>\n  ccf-raft-simulator simulate25 [duration-ms] [seed] [max-depth]\n  ccf-raft-simulator replay25 <trace-file>"
 
 /-- Parse an optional natural-number argument, using a default on failure. -/
 def parseNatOr (raw : Option String) (fallback : Nat) : Nat :=
@@ -23,6 +24,13 @@ def main (args : List String) : IO UInt32 := do
       simulate durationMs seed maxDepth
   | ["replay", path] =>
       replayFile path
+  | "simulate25" :: rest =>
+      let durationMs := parseNatOr rest[0]? 5000
+      let seed := parseNatOr rest[1]? 1
+      let maxDepth := parseNatOr rest[2]? 1000
+      CCFRaft.Slice25.Simulation.simulate durationMs seed maxDepth
+  | ["replay25", path] =>
+      CCFRaft.Slice25.Simulation.replayFile path
   | _ =>
       IO.eprintln usage
       return 2

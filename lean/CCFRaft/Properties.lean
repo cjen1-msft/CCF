@@ -18,7 +18,7 @@ def CommitIndicesBounded (state : State TxId) : Prop :=
 /-- Every node log is a prefix of the fixed leader's log. -/
 def LogsPrefixLeader (state : State TxId) : Prop :=
   forall node,
-    (state.nodes node).log <+: (state.nodes LEADER).log
+    (state.nodes node).log <+: (state.nodes INITIAL_LEADER).log
 
 /-- Every reachable log entry belongs to the single modeled term. -/
 def TermsAreOne (state : State TxId) : Prop :=
@@ -28,40 +28,40 @@ def TermsAreOne (state : State TxId) : Prop :=
 
 /-- No transaction ID appears twice in the leader log. -/
 def LeaderTxIdsUnique (state : State TxId) : Prop :=
-  ((state.nodes LEADER).log.map Entry.txId).Nodup
+  ((state.nodes INITIAL_LEADER).log.map Entry.txId).Nodup
 
 /-- Every leader-log transaction was allocated by the external client input. -/
 def LeaderTxIdsSubmitted (state : State TxId) : Prop :=
   forall entry,
-    entry ∈ (state.nodes LEADER).log ->
+    entry ∈ (state.nodes INITIAL_LEADER).log ->
       entry.txId ∈ state.submittedTxIds
 
 /-- A queued request is a faithful snapshot of a leader log prefix. -/
 def RequestMatchesLeader
     (state : State TxId)
     (request : AppendEntriesRequest TxId) : Prop :=
-  request.source = LEADER /\
-    Not (request.destination = LEADER) /\
+  request.source = INITIAL_LEADER /\
+    Not (request.destination = INITIAL_LEADER) /\
     request.term = TERM_ONE /\
-    request.prevLogIndex <= (state.nodes LEADER).log.length /\
+    request.prevLogIndex <= (state.nodes INITIAL_LEADER).log.length /\
     request.prevLogIndex + request.entries.length <=
-      (state.nodes LEADER).log.length /\
+      (state.nodes INITIAL_LEADER).log.length /\
     request.prevLogTerm =
-      termAt (state.nodes LEADER).log request.prevLogIndex /\
-    (state.nodes LEADER).log.take
+      termAt (state.nodes INITIAL_LEADER).log request.prevLogIndex /\
+    (state.nodes INITIAL_LEADER).log.take
         (request.prevLogIndex + request.entries.length) =
-      (state.nodes LEADER).log.take request.prevLogIndex ++ request.entries
+      (state.nodes INITIAL_LEADER).log.take request.prevLogIndex ++ request.entries
 
 /-- A queued response targets the leader and stays within its current log. -/
 def ResponseMatchesLeader
     (state : State TxId)
     (response : AppendEntriesResponse) : Prop :=
-  response.destination = LEADER /\
-    Not (response.source = LEADER) /\
+  response.destination = INITIAL_LEADER /\
+    Not (response.source = INITIAL_LEADER) /\
     response.term ∈ ({TERM_ONE, 2} : Finset Nat) /\
-    response.lastLogIndex <= (state.nodes LEADER).log.length /\
+    response.lastLogIndex <= (state.nodes INITIAL_LEADER).log.length /\
     (response.success = true ->
-      (state.nodes LEADER).log.take response.lastLogIndex =
+      (state.nodes INITIAL_LEADER).log.take response.lastLogIndex =
         (state.nodes response.source).log.take response.lastLogIndex)
 
 /-- Make request-snapshot consistency executable for bounded simulation. -/
@@ -140,14 +140,14 @@ def QueuedVoteMessagesSafe (state : State TxId) : Prop :=
 /-- The leader never records sending past the end of its log. -/
 def SentIndicesBounded (state : State TxId) : Prop :=
   forall node,
-    (state.nodes LEADER).sentIndex node <=
-      (state.nodes LEADER).log.length
+    (state.nodes INITIAL_LEADER).sentIndex node <=
+      (state.nodes INITIAL_LEADER).log.length
 
 /-- The leader never records a follower match past its own log. -/
 def MatchIndicesBounded (state : State TxId) : Prop :=
   forall node,
-    (state.nodes LEADER).matchIndex node <=
-      (state.nodes LEADER).log.length
+    (state.nodes INITIAL_LEADER).matchIndex node <=
+      (state.nodes INITIAL_LEADER).log.length
 
 /-- Nodes remain in either the original term or the single election term. -/
 def CurrentTermsValid (state : State TxId) : Prop :=
@@ -160,12 +160,12 @@ def TermOneLeaderIsInitial (state : State TxId) : Prop :=
   forall node,
     (state.nodes node).role = .leader ->
       (state.nodes node).currentTerm = TERM_ONE ->
-        node = LEADER
+        node = INITIAL_LEADER
 
 /-- While node zero remains in term one, it remains the original leader. -/
 def InitialNodeTermOneIsLeader (state : State TxId) : Prop :=
-  (state.nodes LEADER).currentTerm = TERM_ONE ->
-    (state.nodes LEADER).role = .leader
+  (state.nodes INITIAL_LEADER).currentTerm = TERM_ONE ->
+    (state.nodes INITIAL_LEADER).role = .leader
 
 /-- Every candidate is in term two and has voted for itself. -/
 def CandidatesSelfVote (state : State TxId) : Prop :=
@@ -199,19 +199,19 @@ def TermTwoLeadersHaveMajority (state : State TxId) : Prop :=
 /-- A leader match index denotes a prefix actually present on that follower. -/
 def MatchIndexDescribesPrefix (state : State TxId) : Prop :=
   forall node,
-    (state.nodes LEADER).log.take
-        ((state.nodes LEADER).matchIndex node) =
+    (state.nodes INITIAL_LEADER).log.take
+        ((state.nodes INITIAL_LEADER).matchIndex node) =
       (state.nodes node).log.take
-        ((state.nodes LEADER).matchIndex node)
+        ((state.nodes INITIAL_LEADER).matchIndex node)
 
 /-- A nonzero node-zero commit frontier is still backed by a current majority. -/
 def InitialLeaderCommitHasMajority (state : State TxId) : Prop :=
-  (state.nodes LEADER).commitIndex = 0 \/
-    hasMajorityAt state LEADER (state.nodes LEADER).commitIndex
+  (state.nodes INITIAL_LEADER).commitIndex = 0 \/
+    hasMajorityAt state INITIAL_LEADER (state.nodes INITIAL_LEADER).commitIndex
 
 /-- Node zero never returns to candidacy after its fixed term-one leadership. -/
 def InitialNodeNotCandidate (state : State TxId) : Prop :=
-  Not ((state.nodes LEADER).role = .candidate)
+  Not ((state.nodes INITIAL_LEADER).role = .candidate)
 
 /-- No two distinct nodes lead in the same term. -/
 def ElectionSafety (state : State TxId) : Prop :=
@@ -227,7 +227,7 @@ def TermTwoLeaderCompleteness (state : State TxId) : Prop :=
   forall leader,
     (state.nodes leader).role = .leader ->
       (state.nodes leader).currentTerm = 2 ->
-        (state.nodes LEADER).committedLog <+:
+        (state.nodes INITIAL_LEADER).committedLog <+:
           (state.nodes leader).log
 
 /-- Supporting facts proved together because actions preserve them jointly. -/

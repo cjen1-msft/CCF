@@ -2,6 +2,8 @@
 -- Licensed under the Apache 2.0 License.
 
 import CCFRaft.Proofs
+import CCFRaft.Slice25Proofs
+import CCFRaft.Slice25Simulation
 
 set_option autoImplicit false
 
@@ -35,35 +37,35 @@ def initial : RaftState :=
 
 /-- State after the leader accepts transaction zero. -/
 def requested : RaftState :=
-  next initial (.clientRequest LEADER 0)
+  next initial (.clientRequest INITIAL_LEADER 0)
 
 /-- State after sending the entry to the first follower. -/
 def sentOne : RaftState :=
-  next requested (.appendEntries LEADER followerOne 1)
+  next requested (.appendEntries INITIAL_LEADER followerOne 1)
 
 /-- State after the first follower appends the entry and sends an ACK. -/
 def receivedOne : RaftState :=
-  next sentOne (.receive LEADER followerOne)
+  next sentOne (.receive INITIAL_LEADER followerOne)
 
 /-- State after the leader records the first follower's ACK. -/
 def ackedOne : RaftState :=
-  next receivedOne (.receive followerOne LEADER)
+  next receivedOne (.receive followerOne INITIAL_LEADER)
 
 /-- State after sending the entry to the second follower. -/
 def sentTwo : RaftState :=
-  next ackedOne (.appendEntries LEADER followerTwo 1)
+  next ackedOne (.appendEntries INITIAL_LEADER followerTwo 1)
 
 /-- State after the second follower appends the entry and sends an ACK. -/
 def receivedTwo : RaftState :=
-  next sentTwo (.receive LEADER followerTwo)
+  next sentTwo (.receive INITIAL_LEADER followerTwo)
 
 /-- State after the leader records enough ACKs for a majority. -/
 def ackedTwo : RaftState :=
-  next receivedTwo (.receive followerTwo LEADER)
+  next receivedTwo (.receive followerTwo INITIAL_LEADER)
 
 /-- State after the leader advances its commit index to one. -/
 def committed : RaftState :=
-  next ackedTwo (.advanceCommitIndex LEADER)
+  next ackedTwo (.advanceCommitIndex INITIAL_LEADER)
 
 /-- The request, replication, ACK, and quorum-commit path is genuinely reachable. -/
 theorem requestReplicateCommitReachable :
@@ -86,7 +88,7 @@ theorem requestReplicateCommitReachable :
 
 /-- The example ends with transaction zero in the committed leader log. -/
 theorem committedLogIsNonempty :
-    (committed.nodes LEADER).committedLog =
+    (committed.nodes INITIAL_LEADER).committedLog =
       [{ term := TERM_ONE, txId := 0 }] := by
   decide
 
@@ -120,7 +122,7 @@ theorem splitVoteHasNoWinner :
 
 /-- A term-one heartbeat is queued before follower one times out. -/
 def heartbeatBeforeTimeout : RaftState :=
-  next initial (.appendEntries LEADER followerOne 0)
+  next initial (.appendEntries INITIAL_LEADER followerOne 0)
 
 /-- The follower advances to term two while the old heartbeat remains queued. -/
 def timedOutWithHeartbeat : RaftState :=
@@ -128,12 +130,12 @@ def timedOutWithHeartbeat : RaftState :=
 
 /-- Receiving the stale heartbeat produces a term-two NACK for node zero. -/
 def newerNackQueued : RaftState :=
-  next timedOutWithHeartbeat (.receive LEADER followerOne)
+  next timedOutWithHeartbeat (.receive INITIAL_LEADER followerOne)
 
 /-- An overloaded NACK may be handled or may first trigger `UpdateTerm`. -/
 theorem newerNackMatchesTlaNondeterminism :
-    Enabled newerNackQueued (.updateTerm followerOne LEADER) /\
-      Enabled newerNackQueued (.receive followerOne LEADER) := by
+    Enabled newerNackQueued (.updateTerm followerOne INITIAL_LEADER) /\
+      Enabled newerNackQueued (.receive followerOne INITIAL_LEADER) := by
   decide
 
 /-- A stale successful ACK is consumed as an ignored response. -/
@@ -153,14 +155,14 @@ theorem staleSuccessAckIsDiscarded :
     handleAppendEntriesResponse?,
     initialNodeState,
     followerOne,
-    LEADER,
+    INITIAL_LEADER,
     TERM_ONE
   ]
 
 /-- A stale NACK still backs up `sentIndex`; its term is match metadata. -/
 theorem staleNackIsHandled :
     let nodeState : NodeState TxId :=
-      { initialNodeState (TxId := TxId) LEADER with
+      { initialNodeState (TxId := TxId) INITIAL_LEADER with
         role := .leader
         currentTerm := 2
         log :=
@@ -173,7 +175,7 @@ theorem staleNackIsHandled :
         success := false
         lastLogIndex := 1
         source := followerTwo
-        destination := LEADER }
+        destination := INITIAL_LEADER }
     match handleAppendEntriesResponse? nodeState response with
     | none => False
     | some after => after.sentIndex followerTwo = 1 := by
@@ -218,20 +220,20 @@ theorem futureAckDroppedWhenNotLeader :
     handleAppendEntriesResponse?,
     initialNodeState,
     followerOne,
-    LEADER,
+    INITIAL_LEADER,
     TERM_ONE
   ]
 
 /-- A current leader cannot consume a successful ACK from a future term. -/
 theorem futureAckRequiresTermUpdateAtLeader :
     let leader : NodeState TxId :=
-      initialNodeState (TxId := TxId) LEADER
+      initialNodeState (TxId := TxId) INITIAL_LEADER
     let response : AppendEntriesResponse :=
       { term := 2
         success := true
         lastLogIndex := 0
         source := followerTwo
-        destination := LEADER }
+        destination := INITIAL_LEADER }
     handleAppendEntriesResponse? leader response = none := by
   simp [handleAppendEntriesResponse?, initialNodeState, TERM_ONE]
 
@@ -253,7 +255,7 @@ theorem futureVoteResponseDroppedWhenNotCandidate :
     handleRequestVoteResponse?,
     initialNodeState,
     followerOne,
-    LEADER,
+    INITIAL_LEADER,
     TERM_ONE
   ]
 
@@ -359,10 +361,200 @@ theorem exampleElectionSafety :
 
 /-- The elected term-two leader contains the term-one committed entry. -/
 theorem electedLeaderContainsTermOneCommit :
-    (electedTermTwo.nodes LEADER).committedLog <+:
+    (electedTermTwo.nodes INITIAL_LEADER).committedLog <+:
       (electedTermTwo.nodes followerOne).log := by
   exact
     reachableTermTwoLeaderCompleteness termTwoElectionReachable
       followerOne (by decide) (by decide)
+
+/-! ## Slice 2.5 cross-term replication and conflict -/
+
+/-- A direct term-two append, replication, and commit trace. -/
+def slice25HappyActions : List (Action TxId) :=
+  [ .clientRequest INITIAL_LEADER 0,
+    .appendEntries INITIAL_LEADER followerOne 1,
+    .receive INITIAL_LEADER followerOne,
+    .receive followerOne INITIAL_LEADER,
+    .appendEntries INITIAL_LEADER followerTwo 1,
+    .receive INITIAL_LEADER followerTwo,
+    .receive followerTwo INITIAL_LEADER,
+    .advanceCommitIndex INITIAL_LEADER,
+    .timeout followerOne,
+    .requestVote followerOne followerTwo,
+    .updateTerm followerOne followerTwo,
+    .receive followerOne followerTwo,
+    .receive followerTwo followerOne,
+    .requestVote followerOne followerThree,
+    .updateTerm followerOne followerThree,
+    .receive followerOne followerThree,
+    .receive followerThree followerOne,
+    .becomeLeader followerOne,
+    .clientRequest followerOne 2,
+    .appendEntries followerOne followerTwo 2,
+    .receive followerOne followerTwo,
+    .receive followerTwo followerOne,
+    .appendEntries followerOne INITIAL_LEADER 2,
+    .updateTerm followerOne INITIAL_LEADER,
+    .receive followerOne INITIAL_LEADER,
+    .receive INITIAL_LEADER followerOne,
+    .advanceCommitIndex followerOne ]
+
+/-- The direct term-two commit trace has no disabled action. -/
+theorem slice25HappyTraceExecutes :
+    (Slice25.runActions initial slice25HappyActions).isSome = true := by
+  native_decide
+
+/-- The mandatory election, divergence, repair, and cross-term commit trace. -/
+def slice25ConflictActions : List (Action TxId) :=
+  [ .clientRequest INITIAL_LEADER 0,
+    .appendEntries INITIAL_LEADER followerOne 1,
+    .receive INITIAL_LEADER followerOne,
+    .receive followerOne INITIAL_LEADER,
+    .appendEntries INITIAL_LEADER followerTwo 1,
+    .receive INITIAL_LEADER followerTwo,
+    .receive followerTwo INITIAL_LEADER,
+    .advanceCommitIndex INITIAL_LEADER,
+    .timeout followerOne,
+    .requestVote followerOne followerTwo,
+    .updateTerm followerOne followerTwo,
+    .receive followerOne followerTwo,
+    .receive followerTwo followerOne,
+    .requestVote followerOne followerThree,
+    .updateTerm followerOne followerThree,
+    .receive followerOne followerThree,
+    .receive followerThree followerOne,
+    .becomeLeader followerOne,
+    .clientRequest INITIAL_LEADER 1,
+    .appendEntries INITIAL_LEADER followerFour 1,
+    .receive INITIAL_LEADER followerFour,
+    .appendEntries INITIAL_LEADER followerFour 2,
+    .receive INITIAL_LEADER followerFour,
+    .clientRequest followerOne 2,
+    .appendEntries followerOne followerFour 2,
+    .updateTerm followerOne followerFour,
+    .receive followerOne followerFour,
+    .receive followerFour followerOne,
+    .appendEntries followerOne followerTwo 2,
+    .receive followerOne followerTwo,
+    .receive followerTwo followerOne,
+    .advanceCommitIndex followerOne ]
+
+/-- Execute a prefix of the mandatory slice-2.5 trace. -/
+def slice25StateAfter (count : Nat) : RaftState :=
+  (Slice25.runActions initial (slice25ConflictActions.take count)).getD initial
+
+/-- Node four starts a same-term candidacy after node one is elected. -/
+def sameTermCandidate : RaftState :=
+  Slice25.next (slice25StateAfter 18) (.timeout followerFour)
+
+/-- The term-two leader sends a heartbeat to that candidate. -/
+def sameTermCandidateHeartbeat : RaftState :=
+  Slice25.next sameTermCandidate
+    (.appendEntries followerOne followerFour 1)
+
+/-- A same-term AppendEntries first makes the candidate a follower without consuming it. -/
+theorem sameTermCandidateReturnsToFollower :
+    Slice25.Enabled sameTermCandidateHeartbeat
+      (.receive followerOne followerFour) /\
+      let stepped :=
+        Slice25.next sameTermCandidateHeartbeat
+          (.receive followerOne followerFour)
+      (stepped.nodes followerFour).role = .follower /\
+        stepped.network followerFour =
+          sameTermCandidateHeartbeat.network followerFour := by
+  native_decide
+
+/-- The full trace has no disabled action. -/
+theorem slice25ConflictTraceExecutes :
+    (Slice25.runActions initial slice25ConflictActions).isSome = true := by
+  native_decide
+
+/-- The final state of the checked trace is reachable in slice 2.5. -/
+theorem slice25ConflictTraceReachable :
+    Slice25.Reachable (slice25StateAfter slice25ConflictActions.length) := by
+  cases ran : Slice25.runActions initial slice25ConflictActions with
+  | none =>
+      have executes := slice25ConflictTraceExecutes
+      simp [ran] at executes
+  | some final =>
+      have reachable : Slice25.Reachable final :=
+        Slice25.Reachable.runActionsReachable
+          Slice25.Reachable.initial ran
+      simpa [slice25StateAfter, ran] using reachable
+
+/-- The divergent trace still satisfies committed-prefix consistency. -/
+theorem slice25ConflictCommittedLogsPrefix :
+    CommittedLogsPrefix
+      (slice25StateAfter slice25ConflictActions.length) :=
+  Slice25.reachableCommittedLogsPrefix slice25ConflictTraceReachable
+
+/-- The divergent trace still has at most one leader in each term. -/
+theorem slice25ConflictElectionSafety :
+    ElectionSafety
+      (slice25StateAfter slice25ConflictActions.length) :=
+  Slice25.reachableElectionSafety slice25ConflictTraceReachable
+
+/-- Cross-term conflict repair preserves Raft log matching. -/
+theorem slice25ConflictLogMatching :
+    LogMatching
+      (slice25StateAfter slice25ConflictActions.length) :=
+  Slice25.reachableLogMatching slice25ConflictTraceReachable
+
+/-- Before repair, node four contains node zero's divergent suffix. -/
+theorem divergentFollowerContainsOldEntry :
+    ((slice25StateAfter 23).nodes followerFour).log =
+      [{ term := TERM_ONE, txId := 0 },
+        { term := TERM_ONE, txId := 1 }] := by
+  native_decide
+
+/-- Conflict handling replaces the old suffix with the new leader's entry. -/
+theorem conflictFollowerContainsTermTwoEntry :
+    ((slice25StateAfter 27).nodes followerFour).log =
+      [{ term := TERM_ONE, txId := 0 },
+        { term := 2, txId := 2 }] := by
+  native_decide
+
+/-- The new leader commits its term-two entry and inherited prefix. -/
+theorem termTwoCommittedLog :
+    ((slice25StateAfter slice25ConflictActions.length).nodes followerOne).committedLog =
+      [{ term := TERM_ONE, txId := 0 },
+        { term := 2, txId := 2 }] := by
+  native_decide
+
+/-- Runtime checks reject a higher-term leader missing the committed prefix. -/
+theorem slice25RuntimeChecksLeaderCompleteness :
+    let entry : Entry TxId := { term := TERM_ONE, txId := 0 }
+    let bad : RaftState :=
+      { initial with
+        nodes :=
+          updateNode
+            (updateNode initial.nodes INITIAL_LEADER
+              { initial.nodes INITIAL_LEADER with
+                role := .follower
+                log := [entry]
+                commitIndex := 1 })
+            followerOne
+            { initial.nodes followerOne with
+              role := .leader
+              currentTerm := 2 } }
+    Slice25.Simulation.stateChecks bad = false := by
+  native_decide
+
+/-- Scheduler priorities never select heartbeat-only AppendEntries exclusively. -/
+theorem slice25SchedulerPrioritisesOnlyProgressingAppends :
+    let final := slice25StateAfter slice25ConflictActions.length
+    let leader := final.nodes followerOne
+    let settled : RaftState :=
+      { final with
+        nodes :=
+          updateNode final.nodes followerOne
+            { leader with sentIndex := fun _ => leader.log.length }
+        network := fun _ => [] }
+    (Slice25.Simulation.preferredChoices settled).all fun choice =>
+      match choice with
+      | .appendEntries source destination batchEnd =>
+          (settled.nodes source).sentIndex destination < batchEnd
+      | _ => true := by
+  native_decide
 
 end CCFRaft.Examples

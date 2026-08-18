@@ -3,9 +3,13 @@
 This directory builds `ccfraft.tla` incrementally as an executable Lean
 transition system with kernel-checked safety proofs.
 
-## Slice 2: term-two RequestVote elections
+## Slice 2.5: term-two writes after election
 
-The current slice has:
+`CCFRaft.system` retains the completed slice-two election checkpoint.
+`CCFRaft.Slice25.system` extends the same local handlers so any selected leader
+can append, replicate, and commit entries in its current term.
+
+The combined model has:
 
 - five fixed nodes and one fixed configuration;
 - node 0 as the initial leader in term 1;
@@ -26,9 +30,14 @@ The current slice has:
 - RequestVote request/response snapshots, log-up-to-date voting, and
   three-of-five leader promotion;
 - explicit newer-term observation that does not consume the selected message.
+- coexisting leaders in different terms while an isolated old leader remains
+  unaware of the election;
+- term-two client entries, AppendEntries, acknowledgements, and current-term
+  majority commit;
+- reachable conflict truncation replacing an old leader's uncommitted suffix.
 
-Term-two leaders cannot yet append or commit entries. Cross-term replication
-and commitment are slice 3.
+Slice 2.5 still permits only the single term-one to term-two election. Repeated
+elections and arbitrary terms belong to slice 3.
 
 `Action`, `Enabled`, and `next` are the authoritative semantics. Proofs and the
 compiled simulator call these same definitions.
@@ -61,6 +70,9 @@ lake build ccf-raft-simulator
 .lake/build/bin/ccf-raft-simulator simulate 5000 1 1000
 .lake/build/bin/ccf-raft-simulator replay ccf-raft-failure.trace
 .lake/build/bin/ccf-raft-simulator replay CCFRaft/slice2-election.trace
+.lake/build/bin/ccf-raft-simulator simulate25 5000 1 1000
+.lake/build/bin/ccf-raft-simulator replay25 CCFRaft/slice25-happy.trace
+.lake/build/bin/ccf-raft-simulator replay25 CCFRaft/slice25-conflict.trace
 ```
 
 Simulation runs for the requested number of milliseconds. It reports proposals
@@ -76,15 +88,13 @@ instance appears in its finite candidate list. The reusable
 simulator choice.
 Random scheduling is only a bug-finding policy; it is not proof evidence.
 
-## Future slices
+   ## Future slices
 
-3. Add term-two AppendEntries and prove committed-log safety across commits in
-   terms 1 and 2.
-4. Generalize adjacent terms.
-5. Generalize skipped election terms.
-6. Prove the unbounded AppendEntries/RequestVote core.
-   6.5. Add message loss and stale-message handling.
-7. Add reconfiguration.
-8. Add pre-vote and remaining CCF-specific actions.
+   3. Generalize elections, proposals, replication, and commits to arbitrary
+      terms, including skipped terms produced by prolonged nondelivery.
+   4. Prove the unbounded AppendEntries/RequestVote core.
+   4.5. Add explicit message loss and remaining stale-message behavior.
+   5. Add reconfiguration.
+   6. Add pre-vote and remaining CCF-specific actions.
 
 Later slices remain roadmap notes, not current claims.
