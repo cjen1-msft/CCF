@@ -131,7 +131,7 @@ def stateChecks (state : SimState) : Bool :=
     allNodes.all fun node =>
       decide ((state.nodes node).commitIndex <=
         (state.nodes node).log.length) &&
-      decide ((state.nodes node).log <+: (state.nodes LEADER).log) &&
+      decide ((state.nodes node).log <+: (state.nodes INITIAL_LEADER).log) &&
       ((state.nodes node).log.all fun entry =>
         decide (entry.term = TERM_ONE)) &&
       decide (
@@ -140,7 +140,7 @@ def stateChecks (state : SimState) : Bool :=
       decide (
         (state.nodes node).role = .leader ->
           (state.nodes node).currentTerm = TERM_ONE ->
-          node = LEADER) &&
+          node = INITIAL_LEADER) &&
       decide (
         (state.nodes node).role = .candidate ->
           (state.nodes node).currentTerm = 2 /\
@@ -163,26 +163,26 @@ def stateChecks (state : SimState) : Bool :=
       | none => true
       | some _ => decide ((state.nodes voter).currentTerm = 2)
   let leaderChecks :=
-    decide ((state.nodes LEADER).log.map Entry.txId |>.Nodup) &&
-      ((state.nodes LEADER).log.all fun entry =>
+    decide ((state.nodes INITIAL_LEADER).log.map Entry.txId |>.Nodup) &&
+      ((state.nodes INITIAL_LEADER).log.all fun entry =>
         decide (entry.txId ∈ state.submittedTxIds)) &&
       (allNodes.all fun node =>
-        decide ((state.nodes LEADER).sentIndex node <=
-          (state.nodes LEADER).log.length) &&
-        decide ((state.nodes LEADER).matchIndex node <=
-          (state.nodes LEADER).log.length) &&
+        decide ((state.nodes INITIAL_LEADER).sentIndex node <=
+          (state.nodes INITIAL_LEADER).log.length) &&
+        decide ((state.nodes INITIAL_LEADER).matchIndex node <=
+          (state.nodes INITIAL_LEADER).log.length) &&
         decide (
-          (state.nodes LEADER).log.take
-              ((state.nodes LEADER).matchIndex node) =
+          (state.nodes INITIAL_LEADER).log.take
+              ((state.nodes INITIAL_LEADER).matchIndex node) =
             (state.nodes node).log.take
-              ((state.nodes LEADER).matchIndex node))) &&
+              ((state.nodes INITIAL_LEADER).matchIndex node))) &&
       decide (
-        (state.nodes LEADER).currentTerm = TERM_ONE ->
-          (state.nodes LEADER).role = .leader) &&
+        (state.nodes INITIAL_LEADER).currentTerm = TERM_ONE ->
+          (state.nodes INITIAL_LEADER).role = .leader) &&
       decide (
-        (state.nodes LEADER).commitIndex = 0 \/
-          hasMajorityAt state LEADER (state.nodes LEADER).commitIndex) &&
-      decide (Not ((state.nodes LEADER).role = .candidate))
+        (state.nodes INITIAL_LEADER).commitIndex = 0 \/
+          hasMajorityAt state INITIAL_LEADER (state.nodes INITIAL_LEADER).commitIndex) &&
+      decide (Not ((state.nodes INITIAL_LEADER).role = .candidate))
   let networkChecks :=
     allNodes.all fun destination =>
       (state.network destination).all fun message =>
@@ -477,7 +477,7 @@ def replayFile (path : System.FilePath) : IO UInt32 := do
     actions := actions ++ [action]
   match replayActions actions with
   | .ok state =>
-      IO.println s!"replayed {actions.length} actions; leader commit={(state.nodes LEADER).commitIndex}"
+      IO.println s!"replayed {actions.length} actions; leader commit={(state.nodes INITIAL_LEADER).commitIndex}"
       return 0
   | .error message =>
       IO.eprintln message

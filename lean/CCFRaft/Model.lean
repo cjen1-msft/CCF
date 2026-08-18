@@ -22,7 +22,7 @@ def NODE_COUNT : Nat := 5
 abbrev Node := Fin NODE_COUNT
 
 /-- Node zero is the fixed initial term-one leader. -/
-def LEADER : Node := ⟨0, by decide⟩
+def INITIAL_LEADER : Node := ⟨0, by decide⟩
 /-- Log entries remain in term one; node terms may advance to term two. -/
 def TERM_ONE : Nat := 1
 
@@ -231,7 +231,7 @@ theorem updateQueue_of_ne
 
 /-- Initialize node zero as leader and every other node as an empty follower. -/
 def initialNodeState (node : Node) : NodeState TxId where
-  role := if node = LEADER then .leader else .follower
+  role := if node = INITIAL_LEADER then .leader else .follower
   currentTerm := TERM_ONE
   log := []
   commitIndex := 0
@@ -516,6 +516,17 @@ def handleAppendEntriesRequest?
   | some result => some result
   | none => acceptAppendEntriesRequest? state request
 
+/-- A same-term candidate steps down before retrying the unchanged request. -/
+def returnToFollowerState?
+    (state : NodeState TxId)
+    (request : AppendEntriesRequest TxId) :
+    Option (NodeState TxId) :=
+  if request.term = state.currentTerm /\
+      state.role = .candidate then
+    some { state with role := .follower, isNewFollower := true }
+  else
+    none
+
 /-- Update leader match or sent indices from an ACK or NACK. -/
 def handleAppendEntriesResponse?
     (state : NodeState TxId)
@@ -652,14 +663,20 @@ def handleReceive?
       else
         match message with
         | .appendEntriesRequest request =>
-            match handleAppendEntriesRequest? (state.nodes destination) request with
-            | none => none
-            | some (nextNode, response) =>
+            match returnToFollowerState? (state.nodes destination) request with
+            | some nextNode =>
                 some
                   { state with
-                    nodes := updateNode state.nodes destination nextNode
-                    network :=
-                      reply state.network destination remaining response }
+                    nodes := updateNode state.nodes destination nextNode }
+            | none =>
+                match handleAppendEntriesRequest? (state.nodes destination) request with
+                | none => none
+                | some (nextNode, response) =>
+                    some
+                      { state with
+                        nodes := updateNode state.nodes destination nextNode
+                        network :=
+                          reply state.network destination remaining response }
         | .appendEntriesResponse response =>
             match
               handleAppendEntriesResponse? (state.nodes destination) response

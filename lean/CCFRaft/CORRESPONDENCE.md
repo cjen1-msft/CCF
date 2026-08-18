@@ -4,6 +4,10 @@ This document is the review surface for the selected TLA-to-Lean transition
 mapping. It records deliberate projections rather than claiming literal
 state-shape equality.
 
+Slice 2.5 is implemented as `CCFRaft.Slice25.system`, preserving the completed
+slice-two checkpoint while reusing the same message and local-handler
+definitions.
+
 ## Scope and deliberate projections
 
 | Source concept                     | Slice 2 representation                                           |
@@ -88,7 +92,15 @@ intermediate traffic observable.
   log is at least as up to date as its own.
 - A candidate becomes leader after recording a strict three-of-five majority.
 - Leader promotion initializes local replication indices as in the source, but
-  term-two replication remains disabled until slice 3.
+  the collapsed signed-entry projection makes source signature-prefix
+  truncation a no-op.
+- Slice 2.5 allows both term-one and term-two leaders to append and replicate
+  while they remain locally unaware of each other.
+- A same-term candidate receiving AppendEntries first executes
+  `ReturnToFollowerState`; the request remains queued and is retried by a later
+  receive action.
+- Commit advancement still requires the chosen frontier entry to belong to the
+  acting leader's current term.
 
 ## Synthetic non-vacuity evidence
 
@@ -114,6 +126,17 @@ and becomes the term-two leader; candidate two retains only its self-vote.
 `Examples.splitVoteHasNoWinner` separately checks the intermediate two-candidate
 state has no enabled promotion.
 
+`CCFRaft/slice25-conflict.trace` is the required cross-term witness:
+
+1. nodes one, two, and three elect node one in term two;
+2. isolated node zero appends and replicates an uncommitted term-one suffix to
+   node four;
+3. node one appends a term-two entry;
+4. node four advances term, truncates the conflicting old suffix, and accepts
+   the new entry;
+5. node one records a majority and commits the term-two entry plus its inherited
+   prefix.
+
 The conflict helpers are also translated, but no conflict transition is
 reachable before elections or term changes. Later grounded fixtures may project
 `matching_partial`, `suffix_collision`, or
@@ -129,7 +152,7 @@ deltas.
 - There is not yet a machine-checked semantics or bisimulation theorem between
   TLA+ and Lean.
 - Differential edge comparison is deferred.
-- Term-two AppendEntries and commit advancement are deliberately disabled.
+- Slice 2.5 still contains only one election-term transition.
 - `RcvDropIgnoredMessage` and other stale/ignored message branches are deferred
   to the dedicated message-loss/staleness slice.
 
