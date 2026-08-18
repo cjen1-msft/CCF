@@ -21,6 +21,42 @@ namespace CCFRaft.Slice25
 variable {TxId : Type}
 variable [DecidableEq TxId]
 
+/-! ## Request snapshot projections -/
+
+/-- The complete request slice fits in the history it snapshots. -/
+theorem requestSnapshotEndBound
+    {history : List (Entry TxId)}
+    {request : AppendEntriesRequest TxId}
+    (snapshot : RequestSnapshots history request) :
+    request.prevLogIndex + request.entries.length <= history.length :=
+  snapshot.1
+
+/-- The previous index bound follows from the complete slice bound. -/
+theorem requestSnapshotPreviousBound
+    {history : List (Entry TxId)}
+    {request : AppendEntriesRequest TxId}
+    (snapshot : RequestSnapshots history request) :
+    request.prevLogIndex <= history.length := by
+  have endBound := requestSnapshotEndBound snapshot
+  omega
+
+/-- The request records the history term at its previous index. -/
+theorem requestSnapshotPreviousTerm
+    {history : List (Entry TxId)}
+    {request : AppendEntriesRequest TxId}
+    (snapshot : RequestSnapshots history request) :
+    request.prevLogTerm = termAt history request.prevLogIndex :=
+  snapshot.2.1
+
+/-- The request entries are exactly the advertised history slice. -/
+theorem requestSnapshotEntries
+    {history : List (Entry TxId)}
+    {request : AppendEntriesRequest TxId}
+    (snapshot : RequestSnapshots history request) :
+    history.take (request.prevLogIndex + request.entries.length) =
+      history.take request.prevLogIndex ++ request.entries :=
+  snapshot.2.2
+
 /-- Membership is preserved when moving from a prefix to its containing list. -/
 theorem mem_of_prefix
     {Alpha : Type}
@@ -356,30 +392,223 @@ theorem coveredLogsMono
           suffixTerms laterHistoryFound (by omega)
       rw [earlierTerm, laterTerm]
 
-/-- A fixed leader per represented term implies election safety. -/
+/-! ## Derived cross-term facts -/
+
+/-- The elected leader owns the canonical history in term two. -/
+theorem CrossTermFacts.newLeaderOwnsHistory
+    {state : State TxId}
+    {newLeader : Node}
+    {oldLog base suffix : List (Entry TxId)}
+    (facts : CrossTermFacts state newLeader oldLog base suffix) :
+    (state.nodes newLeader).currentTerm = 2 /\
+      (state.nodes newLeader).log = base ++ suffix := by
+  rcases facts.leadersOwnHistories newLeader facts.newLeaderRole with
+    old | new
+  · exact False.elim (facts.leadersDistinct old.1.symm)
+  · exact new.2
+
+/-- An active term-one leader is node zero and owns the old history. -/
+theorem CrossTermFacts.termOneLeaderOwnsHistory
+    {state : State TxId}
+    {newLeader : Node}
+    {oldLog base suffix : List (Entry TxId)}
+    (facts : CrossTermFacts state newLeader oldLog base suffix)
+    {node : Node}
+    (role : (state.nodes node).role = .leader)
+    (termOne : (state.nodes node).currentTerm = TERM_ONE) :
+    node = INITIAL_LEADER /\ (state.nodes node).log = oldLog := by
+  rcases facts.leadersOwnHistories node role with old | new
+  · exact ⟨old.1, old.2.2⟩
+  · have impossible : TERM_ONE = 2 :=
+      termOne.symm.trans new.2.1
+    simp [TERM_ONE] at impossible
+
+/-- An active term-two leader is the elected leader and owns the canonical history. -/
+theorem CrossTermFacts.termTwoLeaderOwnsHistory
+    {state : State TxId}
+    {newLeader : Node}
+    {oldLog base suffix : List (Entry TxId)}
+    (facts : CrossTermFacts state newLeader oldLog base suffix)
+    {node : Node}
+    (role : (state.nodes node).role = .leader)
+    (termTwo : (state.nodes node).currentTerm = 2) :
+    node = newLeader /\ (state.nodes node).log = base ++ suffix := by
+  rcases facts.leadersOwnHistories node role with old | new
+  · have impossible : TERM_ONE = 2 :=
+      old.2.1.symm.trans termTwo
+    simp [TERM_ONE] at impossible
+  · exact ⟨new.1, new.2.2⟩
+
+/-- Derived compatibility projection for the canonical leader log. -/
+theorem CrossTermFacts.newLeaderLog
+    {state : State TxId}
+    {newLeader : Node}
+    {oldLog base suffix : List (Entry TxId)}
+    (facts : CrossTermFacts state newLeader oldLog base suffix) :
+    (state.nodes newLeader).log = base ++ suffix :=
+  facts.newLeaderOwnsHistory.2
+
+/-- Derived compatibility projection for the elected leader's term. -/
+theorem CrossTermFacts.newLeaderTerm
+    {state : State TxId}
+    {newLeader : Node}
+    {oldLog base suffix : List (Entry TxId)}
+    (facts : CrossTermFacts state newLeader oldLog base suffix) :
+    (state.nodes newLeader).currentTerm = 2 :=
+  facts.newLeaderOwnsHistory.1
+
+/-- Derived compatibility projection for the active term-one leader history. -/
+theorem CrossTermFacts.oldLeaderOwnsHistory
+    {state : State TxId}
+    {newLeader : Node}
+    {oldLog base suffix : List (Entry TxId)}
+    (facts : CrossTermFacts state newLeader oldLog base suffix)
+    (role : (state.nodes INITIAL_LEADER).role = .leader)
+    (termOne :
+      (state.nodes INITIAL_LEADER).currentTerm = TERM_ONE) :
+    (state.nodes INITIAL_LEADER).log = oldLog :=
+  (facts.termOneLeaderOwnsHistory role termOne).2
+
+/-- Derived uniqueness of the active term-one leader. -/
+theorem CrossTermFacts.termOneLeaderUnique
+    {state : State TxId}
+    {newLeader : Node}
+    {oldLog base suffix : List (Entry TxId)}
+    (facts : CrossTermFacts state newLeader oldLog base suffix)
+    (node : Node)
+    (role : (state.nodes node).role = .leader)
+    (termOne : (state.nodes node).currentTerm = TERM_ONE) :
+    node = INITIAL_LEADER :=
+  (facts.termOneLeaderOwnsHistory role termOne).1
+
+/-- Derived uniqueness of the active term-two leader. -/
+theorem CrossTermFacts.termTwoLeaderUnique
+    {state : State TxId}
+    {newLeader : Node}
+    {oldLog base suffix : List (Entry TxId)}
+    (facts : CrossTermFacts state newLeader oldLog base suffix)
+    (node : Node)
+    (role : (state.nodes node).role = .leader)
+    (termTwo : (state.nodes node).currentTerm = 2) :
+    node = newLeader :=
+  (facts.termTwoLeaderOwnsHistory role termTwo).1
+
+/-- A frozen election voter still records its choice of the elected leader. -/
+theorem CrossTermFacts.electionVoterChoosesLeader
+    {state : State TxId}
+    {newLeader : Node}
+    {oldLog base suffix : List (Entry TxId)}
+    (facts : CrossTermFacts state newLeader oldLog base suffix)
+    {voter : Node}
+    (member : voter ∈ (state.nodes newLeader).votesGranted) :
+    (state.nodes voter).votedFor = some newLeader :=
+  facts.votesGrantedSound newLeader voter member
+
+/-- Election-voter choice is derived from general vote soundness. -/
+theorem CrossTermFacts.electionVotersChooseLeader
+    {state : State TxId}
+    {newLeader : Node}
+    {oldLog base suffix : List (Entry TxId)}
+    (facts : CrossTermFacts state newLeader oldLog base suffix)
+    (voter : Node)
+    (member : voter ∈ (state.nodes newLeader).votesGranted) :
+    (state.nodes voter).votedFor = some newLeader :=
+  facts.electionVoterChoosesLeader member
+
+/-- The elected leader's send cursor is bounded by the canonical history. -/
+theorem CrossTermFacts.newSentIndicesBounded
+    {state : State TxId}
+    {newLeader : Node}
+    {oldLog base suffix : List (Entry TxId)}
+    (facts : CrossTermFacts state newLeader oldLog base suffix)
+    (peer : Node) :
+    (state.nodes newLeader).sentIndex peer <= (base ++ suffix).length := by
+  rw [← facts.newLeaderLog]
+  exact
+    (facts.leaderProgressBounded
+      newLeader facts.newLeaderRole peer).1
+
+/-- The elected leader's match cursor is bounded by the canonical history. -/
+theorem CrossTermFacts.newMatchIndicesBounded
+    {state : State TxId}
+    {newLeader : Node}
+    {oldLog base suffix : List (Entry TxId)}
+    (facts : CrossTermFacts state newLeader oldLog base suffix)
+    (peer : Node) :
+    (state.nodes newLeader).matchIndex peer <= (base ++ suffix).length := by
+  rw [← facts.newLeaderLog]
+  exact
+    (facts.leaderProgressBounded
+      newLeader facts.newLeaderRole peer).2
+
+/-- Active leaders have both replication cursors inside their current log. -/
+theorem CrossTermFacts.activeLeaderProgress
+    {state : State TxId}
+    {newLeader : Node}
+    {oldLog base suffix : List (Entry TxId)}
+    (facts : CrossTermFacts state newLeader oldLog base suffix)
+    {leader : Node}
+    (role : (state.nodes leader).role = .leader)
+    (peer : Node) :
+    (state.nodes leader).sentIndex peer <=
+        (state.nodes leader).log.length /\
+      (state.nodes leader).matchIndex peer <=
+        (state.nodes leader).log.length :=
+  facts.leaderProgressBounded leader role peer
+
+/--
+While node zero is still the active term-one leader, any majority it could
+commit intersects the frozen election quorum at a voter whose old match index
+is inside the inherited base.
+-/
+theorem activeInitialLeaderMajorityCovered
+    {state : State TxId}
+    {newLeader : Node}
+    {oldLog base suffix : List (Entry TxId)}
+    (facts : CrossTermFacts state newLeader oldLog base suffix)
+    (role : (state.nodes INITIAL_LEADER).role = .leader)
+    (termOne :
+      (state.nodes INITIAL_LEADER).currentTerm = TERM_ONE)
+    {index : Nat}
+    (majority : hasMajorityAt state INITIAL_LEADER index) :
+    index <= base.length := by
+  have intersection :=
+    CCFRaft.fiveNodeMajoritiesIntersect
+      (acknowledgingNodes state INITIAL_LEADER index)
+      (state.nodes newLeader).votesGranted
+      majority facts.electionMajority
+  rcases intersection with ⟨voter, both⟩
+  have acknowledges := (Finset.mem_inter.mp both).1
+  have elected := (Finset.mem_inter.mp both).2
+  simp only [
+    acknowledgingNodes, Finset.mem_filter, Finset.mem_univ, true_and
+  ] at acknowledges
+  rcases acknowledges with voterLeader | matchCovers
+  · subst voter
+    have chosen := facts.electionVoterChoosesLeader elected
+    have enteredTermTwo :=
+      facts.votedForTermTwo INITIAL_LEADER newLeader chosen
+    rw [termOne, TERM_ONE] at enteredTermTwo
+    omega
+  · exact le_trans matchCovers
+      (facts.oldElectionMatchBound voter elected)
+
+/-- The leader-history ownership clause directly implies election safety. -/
 theorem crossTermElectionSafety
     {state : State TxId}
-    {oldLeader newLeader : Node}
-    (terms : CurrentTermsValid state)
-    (oldUnique :
-      forall node,
-        (state.nodes node).role = .leader ->
-        (state.nodes node).currentTerm = TERM_ONE ->
-          node = oldLeader)
-    (newUnique :
-      forall node,
-        (state.nodes node).role = .leader ->
-        (state.nodes node).currentTerm = 2 ->
-          node = newLeader) :
+    {newLeader : Node}
+    {oldLog base suffix : List (Entry TxId)}
+    (facts : CrossTermFacts state newLeader oldLog base suffix) :
     ElectionSafety state := by
   intro left right leftRole rightRole sameTerm
-  rcases terms left with leftOne | leftTwo
-  · have rightOne := sameTerm.symm.trans leftOne
-    exact (oldUnique left leftRole leftOne).trans
-      (oldUnique right rightRole rightOne).symm
-  · have rightTwo := sameTerm.symm.trans leftTwo
-    exact (newUnique left leftRole leftTwo).trans
-      (newUnique right rightRole rightTwo).symm
+  rcases facts.leadersOwnHistories left leftRole with leftOld | leftNew <;>
+    rcases facts.leadersOwnHistories right rightRole with rightOld | rightNew
+  · exact leftOld.1.trans rightOld.1.symm
+  · rw [leftOld.2.1, rightNew.2.1, TERM_ONE] at sameTerm
+    omega
+  · rw [leftNew.2.1, rightOld.2.1, TERM_ONE] at sameTerm
+    omega
+  · exact leftNew.1.trans rightNew.1.symm
 
 /-- The pre-election invariant implies every requested public property. -/
 theorem preElectionSafety
@@ -388,15 +617,8 @@ theorem preElectionSafety
     ConsensusSafety state where
   committedLogsPrefix :=
     CCFRaft.systemInductiveInvariantCommittedLogsPrefix invariant.sliceTwo
-  logMatching :=
-    CCFRaft.systemInductiveInvariantLogMatching invariant.sliceTwo
-  monoLog :=
-    CCFRaft.systemInductiveInvariantMonoLog invariant.sliceTwo
   electionSafety :=
     CCFRaft.systemInductiveInvariantElectionSafety invariant.sliceTwo
-  leaderCompleteness := by
-    intro leader role termTwo
-    exact False.elim (invariant.noTermTwoLeader leader role termTwo)
 
 /-- The post-election histories imply every requested public property. -/
 theorem crossTermSafety
@@ -404,34 +626,57 @@ theorem crossTermSafety
     (invariant : CrossTermInvariant state) :
     ConsensusSafety state := by
   rcases invariant with
-    ⟨oldLeader, newLeader, oldLog, base, suffix, facts⟩
+    ⟨newLeader, oldLog, base, suffix, facts⟩
   constructor
   · intro left right
     exact CCFRaft.prefixesComparable
       (facts.committedLogsCovered left)
       (facts.committedLogsCovered right)
-  · exact
-      coveredLogsLogMatching
-        facts.oldEntriesTermOne
-        facts.suffixEntriesTermTwo
-        facts.basePrefixOld
-        facts.logsCovered
-  · exact
-      coveredLogsMono
-        facts.oldEntriesTermOne
-        facts.suffixEntriesTermTwo
-        facts.basePrefixOld
-        facts.logsCovered
-  · exact
-      crossTermElectionSafety
-        facts.currentTermsValid
-        facts.termOneLeaderUnique
-        facts.termTwoLeaderUnique
-  · intro leader role termTwo
-    have leaderEq := facts.termTwoLeaderUnique leader role termTwo
-    subst leader
-    simpa [facts.oldLeaderIsInitial] using
-      facts.committedLogsCovered oldLeader
+  · exact crossTermElectionSafety facts
+
+/-- The packaged invariant implies Raft log matching. -/
+theorem systemInductiveInvariantLogMatching
+    {state : State TxId}
+    (invariant : SystemInductiveInvariant state) :
+    LogMatching state := by
+  cases invariant with
+  | pre pre =>
+      exact CCFRaft.systemInductiveInvariantLogMatching pre.sliceTwo
+  | crossTerm cross =>
+      rcases cross with ⟨newLeader, oldLog, base, suffix, facts⟩
+      exact coveredLogsLogMatching
+        facts.oldEntriesTermOne facts.suffixEntriesTermTwo
+        facts.basePrefixOld facts.logsCovered
+
+/-- The packaged invariant implies monotonic terms in each log. -/
+theorem systemInductiveInvariantMonoLog
+    {state : State TxId}
+    (invariant : SystemInductiveInvariant state) :
+    MonoLog state := by
+  cases invariant with
+  | pre pre =>
+      exact CCFRaft.systemInductiveInvariantMonoLog pre.sliceTwo
+  | crossTerm cross =>
+      rcases cross with ⟨newLeader, oldLog, base, suffix, facts⟩
+      exact coveredLogsMono
+        facts.oldEntriesTermOne facts.suffixEntriesTermTwo
+        facts.basePrefixOld facts.logsCovered
+
+/-- The packaged invariant implies CCF-style term-two leader completeness. -/
+theorem systemInductiveInvariantLeaderCompleteness
+    {state : State TxId}
+    (invariant : SystemInductiveInvariant state) :
+    LeaderCompleteness state := by
+  cases invariant with
+  | pre pre =>
+      intro leader role termTwo
+      exact False.elim (pre.noTermTwoLeader leader role termTwo)
+  | crossTerm cross =>
+      rcases cross with ⟨newLeader, oldLog, base, suffix, facts⟩
+      intro leader role termTwo
+      have owns := facts.termTwoLeaderOwnsHistory role termTwo
+      rw [owns.2]
+      exact facts.committedLogsCovered INITIAL_LEADER
 
 /-- The packaged invariant implies the public consensus-safety bundle. -/
 theorem systemInductiveInvariantSafety
@@ -1107,8 +1352,9 @@ theorem requestMatchesOldHistory
     {request : AppendEntriesRequest TxId}
     (safe : RequestMatchesLeader state request) :
     RequestSnapshots (state.nodes INITIAL_LEADER).log request := by
-  exact ⟨safe.2.2.2.1, safe.2.2.2.2.1, safe.2.2.2.2.2.1,
-    safe.2.2.2.2.2.2⟩
+  exact
+    ⟨safe.2.2.2.2.1, safe.2.2.2.2.2.1,
+      safe.2.2.2.2.2.2⟩
 
 /-- Promotion of the first term-two leader establishes the cross-term phase. -/
 theorem becomeLeaderStartsCrossTerm
@@ -1140,13 +1386,12 @@ theorem becomeLeaderStartsCrossTerm
         (by simp [after, next])
         (by simp [after, next, enabled.2.1])
   refine
-    ⟨INITIAL_LEADER, node, (state.nodes INITIAL_LEADER).log,
+    ⟨node, (state.nodes INITIAL_LEADER).log,
       (state.nodes node).log, [], ?_⟩
   constructor
   · exact pre.sliceTwo.termsAreOne INITIAL_LEADER
   · simp [EntriesHaveTerm]
   · exact pre.sliceTwo.logsPrefixLeader node
-  · simp [after, next]
   · intro candidate
     left
     by_cases candidateEq : candidate = node
@@ -1171,42 +1416,30 @@ theorem becomeLeaderStartsCrossTerm
         simpa [after] using currentTwo
       rw [termOne, currentTwo', TERM_ONE]
       omega
-  · rfl
   · exact Ne.symm nodeNeLeader
-  · intro _ _
-    simp [after, next, updateNode, Function.update, Ne.symm nodeNeLeader]
   · simp [after, next]
-  · simpa [after, next] using enabled.2.1
-  · simpa [after] using afterCore.termOneLeaderIsInitial
-  · intro candidate role termTwo
-    have nodeTermTwo :
-        (after.nodes node).currentTerm = 2 := by
-      simpa [after, next] using enabled.2.1
-    have candidateRole :
-        (after.nodes candidate).role = .leader := by
+  · intro candidate role
+    have candidateRole : (after.nodes candidate).role = .leader := by
       simpa [after] using role
-    have nodeRole :
-        (after.nodes node).role = .leader := by
+    rcases afterCore.currentTermsValid candidate with termOne | termTwo
+    · have candidateEq :=
+        afterCore.termOneLeaderIsInitial candidate candidateRole termOne
+      left
+      refine ⟨candidateEq, by simpa [after] using termOne, ?_⟩
+      subst candidate
+      simp [after, next, updateNode, Function.update, Ne.symm nodeNeLeader]
+    · have nodeRole : (after.nodes node).role = .leader := by
+        simp [after, next]
+      have nodeTerm : (after.nodes node).currentTerm = 2 := by
+        simpa [after, next] using enabled.2.1
+      have candidateEq :=
+        CCFRaft.systemInductiveInvariantElectionSafety afterCore
+          candidate node candidateRole nodeRole (termTwo.trans nodeTerm.symm)
+      right
+      refine ⟨candidateEq, by simpa [after] using termTwo, ?_⟩
+      subst candidate
       simp [after, next]
-    have candidateTerm :
-        (after.nodes candidate).currentTerm = 2 := by
-      simpa [after] using termTwo
-    exact
-      CCFRaft.systemInductiveInvariantElectionSafety afterCore
-        candidate node candidateRole nodeRole
-          (candidateTerm.trans nodeTermTwo.symm)
   · simpa [after, next, hasElectionMajority] using enabled.2.2
-  · intro voter voterIn
-    have oldIn :
-        voter ∈ (state.nodes node).votesGranted := by
-      simpa [after, next] using voterIn
-    have sound := pre.sliceTwo.votesGrantedSound node voter oldIn
-    by_cases voterEq : voter = node
-    · subst voter
-      simpa [after, next] using sound.2.1
-    · simpa [
-        after, next, updateNode, Function.update, voterEq
-      ] using sound.2.1
   · simpa [after] using afterCore.candidatesSelfVote
   · simpa [after] using afterCore.votedForTermTwo
   · intro candidate voter voterIn
@@ -1351,16 +1584,29 @@ theorem becomeLeaderStartsCrossTerm
           · simpa [
               after, next, updateNode, Function.update, sourceEq
             ] using chosen
-  · intro candidate
-    simpa [
-      after, next, updateNode, Function.update, Ne.symm nodeNeLeader
-    ] using
-      pre.sliceTwo.sentIndicesBounded candidate
-  · intro candidate
-    simpa [
-      after, next, updateNode, Function.update, Ne.symm nodeNeLeader
-    ] using
-      pre.sliceTwo.matchIndicesBounded candidate
+  · intro leader role peer
+    have leaderRole : (after.nodes leader).role = .leader := by
+      simpa [after] using role
+    rcases afterCore.currentTermsValid leader with termOne | termTwo
+    · have leaderEq :=
+        afterCore.termOneLeaderIsInitial leader leaderRole termOne
+      subst leader
+      constructor
+      · simpa [
+          after, next, updateNode, Function.update, Ne.symm nodeNeLeader
+        ] using pre.sliceTwo.sentIndicesBounded peer
+      · simpa [
+          after, next, updateNode, Function.update, Ne.symm nodeNeLeader
+        ] using pre.sliceTwo.matchIndicesBounded peer
+    · have nodeRole : (after.nodes node).role = .leader := by
+        simp [after, next]
+      have nodeTerm : (after.nodes node).currentTerm = 2 := by
+        simpa [after, next] using enabled.2.1
+      have leaderEq :=
+        CCFRaft.systemInductiveInvariantElectionSafety afterCore
+          leader node leaderRole nodeRole (termTwo.trans nodeTerm.symm)
+      subst leader
+      simp [after, next]
   · intro voter voterIn
     have oldVoterIn :
         voter ∈ (state.nodes node).votesGranted := by
@@ -1383,65 +1629,6 @@ theorem becomeLeaderStartsCrossTerm
     ] using
       le_trans matchWithinVoter voterPrefix.length_le
   · intro candidate
-    simp [after, next]
-  · intro candidate
-    simp [after, next]
-  · intro index indexBound majority
-    have majorityAfter :
-        hasMajorityAt after INITIAL_LEADER index := by
-      simpa [after] using majority
-    have intersection :=
-      CCFRaft.fiveNodeMajoritiesIntersect
-        (acknowledgingNodes after INITIAL_LEADER index)
-        (after.nodes node).votesGranted
-        majorityAfter
-        (by simpa [after, next, hasElectionMajority] using enabled.2.2)
-    rcases intersection with ⟨voter, both⟩
-    have acknowledges := (Finset.mem_inter.mp both).1
-    have elected := (Finset.mem_inter.mp both).2
-    simp only [
-      acknowledgingNodes,
-      Finset.mem_filter,
-      Finset.mem_univ,
-      true_and
-    ] at acknowledges
-    rcases acknowledges with voterLeader | matchCovers
-    · subst voter
-      have oldVoterIn :
-          INITIAL_LEADER ∈ (state.nodes node).votesGranted := by
-        simpa [after, next] using elected
-      have leaderPrefix :=
-        (pre.sliceTwo.votesGrantedSound node INITIAL_LEADER oldVoterIn).2.2
-      exact indexBound.trans leaderPrefix.length_le
-    · have electionBound :=
-        show (after.nodes INITIAL_LEADER).matchIndex voter <=
-            (state.nodes node).log.length by
-          have oldVoterIn :
-              voter ∈ (state.nodes node).votesGranted := by
-            simpa [after, next] using elected
-          have voterPrefix :=
-            (pre.sliceTwo.votesGrantedSound
-              node voter oldVoterIn).2.2
-          have matchEquality :=
-            pre.sliceTwo.matchIndexDescribesPrefix voter
-          have matchBound :=
-            pre.sliceTwo.matchIndicesBounded voter
-          have withinVoter :
-              (state.nodes INITIAL_LEADER).matchIndex voter <=
-                (state.nodes voter).log.length := by
-            have equalLengths := congrArg List.length matchEquality
-            simp [
-              List.length_take,
-              Nat.min_eq_left matchBound
-            ] at equalLengths
-            omega
-          simpa [
-            after, next, updateNode, Function.update,
-            Ne.symm nodeNeLeader
-          ] using
-            le_trans withinVoter voterPrefix.length_le
-      omega
-  · intro candidate
     have beforePrefix := pre.followerCommitsCovered candidate
     have candidateUnchanged :
         (after.nodes candidate).committedLog =
@@ -1460,15 +1647,18 @@ theorem becomeLeaderStartsCrossTerm
         after, next, updateNode, Function.update,
         Ne.symm nodeNeLeader, NodeState.committedLog
       ]
-    calc
+    simpa [after] using (show
+      (after.nodes candidate).committedLog <+:
+          (state.nodes node).log from by
+      calc
       ((next state (.becomeLeader node)).nodes candidate).committedLog =
           (state.nodes candidate).committedLog := by
         simpa [after] using candidateUnchanged
       _ <+: (state.nodes INITIAL_LEADER).committedLog := beforePrefix
       _ = (after.nodes INITIAL_LEADER).committedLog := leaderUnchanged.symm
       _ <+: (after.nodes node).log := oldLeaderCommitPrefix
-      _ = ((next state (.becomeLeader node)).nodes node).log := by
-        simp [after]
+      _ = (state.nodes node).log := by
+        simp [after, next])
   · intro candidate belowBase
     simp [after, next] at belowBase
   · intro destination message member
@@ -2173,39 +2363,37 @@ theorem preElectionInvariantPreserved
 /-- The two represented leaders are distinct. -/
 theorem crossTermLeadersDistinct
     {state : State TxId}
-    {oldLeader newLeader : Node}
+    {newLeader : Node}
     {oldLog base suffix : List (Entry TxId)}
     (facts :
-      CrossTermFacts state oldLeader newLeader oldLog base suffix) :
-    Not (oldLeader = newLeader) :=
+      CrossTermFacts state newLeader oldLog base suffix) :
+    Not (INITIAL_LEADER = newLeader) :=
   facts.leadersDistinct
 
 /-- Every current leader is one of the two history owners. -/
 theorem crossTermLeaderCases
     {state : State TxId}
-    {oldLeader newLeader : Node}
+    {newLeader : Node}
     {oldLog base suffix : List (Entry TxId)}
     (facts :
-      CrossTermFacts state oldLeader newLeader oldLog base suffix)
+      CrossTermFacts state newLeader oldLog base suffix)
     {node : Node}
     (role : (state.nodes node).role = .leader) :
-    (node = oldLeader /\
+    (node = INITIAL_LEADER /\
         (state.nodes node).currentTerm = TERM_ONE) \/
       (node = newLeader /\
         (state.nodes node).currentTerm = 2) := by
-  rcases facts.currentTermsValid node with termOne | termTwo
-  · exact Or.inl
-      ⟨facts.termOneLeaderUnique node role termOne, termOne⟩
-  · exact Or.inr
-      ⟨facts.termTwoLeaderUnique node role termTwo, termTwo⟩
+  rcases facts.leadersOwnHistories node role with old | new
+  · exact Or.inl ⟨old.1, old.2.1⟩
+  · exact Or.inr ⟨new.1, new.2.1⟩
 
 /-- The frozen winning quorum prevents any other candidate majority. -/
 theorem crossTermCandidateLacksMajority
     {state : State TxId}
-    {oldLeader newLeader : Node}
+    {newLeader : Node}
     {oldLog base suffix : List (Entry TxId)}
     (facts :
-      CrossTermFacts state oldLeader newLeader oldLog base suffix)
+      CrossTermFacts state newLeader oldLog base suffix)
     {candidate : Node}
     (candidateRole : (state.nodes candidate).role = .candidate) :
     Not (hasElectionMajority state candidate) := by
@@ -2230,10 +2418,10 @@ theorem crossTermCandidateLacksMajority
 /-- A term-one node cannot extend into the term-two suffix. -/
 theorem currentTermOneLogPrefixOld
     {state : State TxId}
-    {oldLeader newLeader : Node}
+    {newLeader : Node}
     {oldLog base suffix : List (Entry TxId)}
     (facts :
-      CrossTermFacts state oldLeader newLeader oldLog base suffix)
+      CrossTermFacts state newLeader oldLog base suffix)
     {node : Node}
     (current : (state.nodes node).currentTerm = TERM_ONE) :
     (state.nodes node).log <+: oldLog := by
@@ -2279,10 +2467,10 @@ theorem currentTermOneLogPrefixOld
 /-- A covered log shorter than the base is already canonical. -/
 theorem coveredLogWithinBasePrefixNew
     {state : State TxId}
-    {oldLeader newLeader : Node}
+    {newLeader : Node}
     {oldLog base suffix : List (Entry TxId)}
     (facts :
-      CrossTermFacts state oldLeader newLeader oldLog base suffix)
+      CrossTermFacts state newLeader oldLog base suffix)
     {node : Node}
     (within : (state.nodes node).log.length <= base.length) :
     (state.nodes node).log <+: base ++ suffix := by
@@ -2301,10 +2489,10 @@ theorem coveredLogWithinBasePrefixNew
 /-- Every represented entry inside the inherited base has term one. -/
 theorem termAtCoveredWithinBase
     {state : State TxId}
-    {oldLeader newLeader : Node}
+    {newLeader : Node}
     {oldLog base suffix : List (Entry TxId)}
     (facts :
-      CrossTermFacts state oldLeader newLeader oldLog base suffix)
+      CrossTermFacts state newLeader oldLog base suffix)
     {node : Node}
     {index : Nat}
     (positive : 0 < index)
@@ -2397,7 +2585,7 @@ theorem nonemptyNewRequestNotRepresentedByOld
         request.entries := by
     apply (List.append_right_inj
       ((base ++ suffix).take request.prevLogIndex)).mp
-    exact split.symm.trans snapshot.2.2.2
+    exact split.symm.trans (requestSnapshotEntries snapshot)
   obtain ⟨entry, entryMember⟩ :=
     List.exists_mem_of_ne_nil request.entries nonempty
   have entryInCanonicalSlice :
@@ -2616,8 +2804,10 @@ theorem requestSnapshotsAfterAppend
     (snapshot : RequestSnapshots history request) :
     RequestSnapshots (history ++ [entry]) request := by
   rcases snapshot with
-    ⟨previousBound, endBound, previousTerm, entries⟩
-  refine ⟨by simp; omega, by simp; omega, ?_, ?_⟩
+    ⟨endBound, previousTerm, entries⟩
+  have previousBound :
+      request.prevLogIndex <= history.length := by omega
+  refine ⟨by simp; omega, ?_, ?_⟩
   · exact previousTerm.trans
       (CCFRaft.termAtAppendOfBound history entry previousBound).symm
   · rw [
@@ -2629,17 +2819,17 @@ theorem requestSnapshotsAfterAppend
 /-- Queued messages remain safe when the old proof history is extended. -/
 theorem networkSafeAfterOldAppend
     {state : State TxId}
-    {oldLeader newLeader : Node}
+    {newLeader : Node}
     {oldLog base suffix : List (Entry TxId)}
     (facts :
-      CrossTermFacts state oldLeader newLeader oldLog base suffix)
+      CrossTermFacts state newLeader oldLog base suffix)
     (entry : Entry TxId) :
     CrossTermNetworkSafe
       { state with
         nodes :=
-          updateNode state.nodes oldLeader
-            { state.nodes oldLeader with log := oldLog ++ [entry] } }
-      oldLeader newLeader (oldLog ++ [entry]) (base ++ suffix) base
+          updateNode state.nodes INITIAL_LEADER
+            { state.nodes INITIAL_LEADER with log := oldLog ++ [entry] } }
+      INITIAL_LEADER newLeader (oldLog ++ [entry]) (base ++ suffix) base
       (state.nodes newLeader).votesGranted := by
   intro destination message member
   have oldSafe := facts.networkSafe destination message (by simpa using member)
@@ -2662,7 +2852,9 @@ theorem networkSafeAfterOldAppend
             List.take_append_of_le_length old.2.2.2
           ] using advertised
         · refine ⟨different, Or.inr new, ?_, emptyBound⟩
-          simpa [new.1] using advertised
+          intro termOne
+          rw [new.1, TERM_ONE] at termOne
+          omega
     | appendEntriesResponse response =>
         rcases oldSafe.2 with
           ⟨different, destinationLeader, term, success⟩
@@ -2678,11 +2870,11 @@ theorem networkSafeAfterOldAppend
         rcases oldSafe.2 with
           ⟨term, different, sourceTerm, sourceVote⟩
         refine ⟨term, different, ?_, ?_⟩
-        · by_cases sourceEq : request.source = oldLeader
+        · by_cases sourceEq : request.source = INITIAL_LEADER
           · rw [sourceEq] at sourceTerm ⊢
             simpa using sourceTerm
           · simpa [updateNode, Function.update, sourceEq] using sourceTerm
-        · by_cases sourceEq : request.source = oldLeader
+        · by_cases sourceEq : request.source = INITIAL_LEADER
           · rw [sourceEq] at sourceVote ⊢
             simpa using sourceVote
           · simpa [updateNode, Function.update, sourceEq] using sourceVote
@@ -2691,7 +2883,7 @@ theorem networkSafeAfterOldAppend
         refine ⟨term, different, ?_⟩
         intro success
         have vote := granted success
-        by_cases sourceEq : response.source = oldLeader
+        by_cases sourceEq : response.source = INITIAL_LEADER
         · rw [sourceEq] at vote ⊢
           simpa using vote
         · simpa [updateNode, Function.update, sourceEq] using vote
@@ -2699,10 +2891,10 @@ theorem networkSafeAfterOldAppend
 /-- Queued messages remain safe when the term-two history is extended. -/
 theorem networkSafeAfterNewAppend
     {state : State TxId}
-    {oldLeader newLeader : Node}
+    {newLeader : Node}
     {oldLog base suffix : List (Entry TxId)}
     (facts :
-      CrossTermFacts state oldLeader newLeader oldLog base suffix)
+      CrossTermFacts state newLeader oldLog base suffix)
     (entry : Entry TxId) :
     CrossTermNetworkSafe
       { state with
@@ -2710,7 +2902,7 @@ theorem networkSafeAfterNewAppend
           updateNode state.nodes newLeader
             { state.nodes newLeader with
               log := base ++ suffix ++ [entry] } }
-      oldLeader newLeader oldLog (base ++ suffix ++ [entry]) base
+      INITIAL_LEADER newLeader oldLog (base ++ suffix ++ [entry]) base
       (state.nodes newLeader).votesGranted := by
   intro destination message member
   have oldSafe := facts.networkSafe destination message (by simpa using member)
@@ -2782,18 +2974,17 @@ theorem clientRequestPreservesCrossTermInvariant
     (cross : CrossTermInvariant state)
     (enabled : Enabled state (.clientRequest node txId)) :
     CrossTermInvariant (next state (.clientRequest node txId)) := by
-  rcases cross with
-    ⟨oldLeader, newLeader, oldLog, base, suffix, facts⟩
+  rcases cross with ⟨newLeader, oldLog, base, suffix, facts⟩
   let entry : Entry TxId :=
     { term := (state.nodes node).currentTerm, txId }
   rcases crossTermLeaderCases facts enabled.1 with old | new
   · rcases old with ⟨nodeEq, nodeTerm⟩
     subst node
     have oldLogEq :
-        (state.nodes oldLeader).log = oldLog :=
+        (state.nodes INITIAL_LEADER).log = oldLog :=
       facts.oldLeaderOwnsHistory enabled.1 nodeTerm
     refine
-      ⟨oldLeader, newLeader, oldLog ++ [entry], base, suffix, ?_⟩
+      ⟨newLeader, oldLog ++ [entry], base, suffix, ?_⟩
     constructor
     · intro value member
       simp at member
@@ -2803,12 +2994,8 @@ theorem clientRequestPreservesCrossTermInvariant
         exact nodeTerm
     · exact facts.suffixEntriesTermTwo
     · exact facts.basePrefixOld.trans (List.prefix_append _ _)
-    · simpa [
-        next, updateNode, Function.update,
-        Ne.symm facts.leadersDistinct
-      ] using facts.newLeaderLog
     · intro candidate
-      by_cases candidateEq : candidate = oldLeader
+      by_cases candidateEq : candidate = INITIAL_LEADER
       · subst candidate
         left
         simp [next, oldLogEq, entry]
@@ -2822,32 +3009,32 @@ theorem clientRequestPreservesCrossTermInvariant
             next, updateNode, Function.update, candidateEq
           ] using newCovered
     · intro candidate
-      by_cases candidateEq : candidate = oldLeader
+      by_cases candidateEq : candidate = INITIAL_LEADER
       · subst candidate
         simpa [next, oldLogEq] using
-          Nat.le.step (facts.commitIndicesBounded oldLeader)
+          Nat.le.step (facts.commitIndicesBounded INITIAL_LEADER)
       · simpa [
           next, updateNode, Function.update, candidateEq
         ] using facts.commitIndicesBounded candidate
     · intro candidate
-      by_cases candidateEq : candidate = oldLeader
+      by_cases candidateEq : candidate = INITIAL_LEADER
       · subst candidate
-        simpa [next] using facts.currentTermsValid oldLeader
+        simpa [next] using facts.currentTermsValid INITIAL_LEADER
       · simpa [
           next, updateNode, Function.update, candidateEq
         ] using facts.currentTermsValid candidate
     · intro candidate value member
-      by_cases candidateEq : candidate = oldLeader
+      by_cases candidateEq : candidate = INITIAL_LEADER
       · subst candidate
         simp [next, oldLogEq] at member
         rcases member with oldMember | newMember
         · have oldSafe :=
             facts.entriesDoNotExceedCurrentTerm
-              oldLeader value (by simpa [oldLogEq] using oldMember)
+              INITIAL_LEADER value (by simpa [oldLogEq] using oldMember)
           simpa [next] using oldSafe
         · subst value
           simpa [entry, next] using
-            Nat.le_refl (state.nodes oldLeader).currentTerm
+            Nat.le_refl (state.nodes INITIAL_LEADER).currentTerm
       · have oldSafe :=
           facts.entriesDoNotExceedCurrentTerm candidate value
             (by simpa [
@@ -2856,79 +3043,50 @@ theorem clientRequestPreservesCrossTermInvariant
         simpa [
           next, updateNode, Function.update, candidateEq
         ] using oldSafe
-    · exact facts.oldLeaderIsInitial
     · exact facts.leadersDistinct
-    · intro role termOne
-      simp [next, oldLogEq, entry]
     · simpa [
         next, updateNode, Function.update,
         Ne.symm facts.leadersDistinct
       ] using facts.newLeaderRole
+    · intro candidate role
+      by_cases candidateEq : candidate = INITIAL_LEADER
+      · subst candidate
+        left
+        exact
+          ⟨rfl, by simpa [next] using nodeTerm,
+            by simp [next, oldLogEq, entry]⟩
+      · have beforeRole :
+            (state.nodes candidate).role = .leader := by
+          simpa [
+            next, updateNode, Function.update, candidateEq
+          ] using role
+        rcases facts.leadersOwnHistories candidate beforeRole with
+          oldOwner | newOwner
+        · exact False.elim (candidateEq oldOwner.1)
+        · right
+          exact
+            ⟨newOwner.1,
+              by simpa [
+                next, updateNode, Function.update, candidateEq
+              ] using newOwner.2.1,
+              by simpa [
+                next, updateNode, Function.update, candidateEq
+              ] using newOwner.2.2⟩
     · simpa [
-        next, updateNode, Function.update,
-        Ne.symm facts.leadersDistinct
-      ] using facts.newLeaderTerm
-    · intro candidate role termOne
-      exact facts.termOneLeaderUnique candidate
-        (by
-          by_cases candidateEq : candidate = oldLeader
-          · subst candidate
-            simpa [next] using role
-          · simpa [
-              next, updateNode, Function.update, candidateEq
-            ] using role)
-        (by
-          by_cases candidateEq : candidate = oldLeader
-          · subst candidate
-            simpa [next] using termOne
-          · simpa [
-              next, updateNode, Function.update, candidateEq
-            ] using termOne)
-    · intro candidate role termTwo
-      exact facts.termTwoLeaderUnique candidate
-        (by
-          by_cases candidateEq : candidate = oldLeader
-          · subst candidate
-            simpa [next] using role
-          · simpa [
-              next, updateNode, Function.update, candidateEq
-            ] using role)
-        (by
-          by_cases candidateEq : candidate = oldLeader
-          · subst candidate
-            simpa [next] using termTwo
-          · simpa [
-              next, updateNode, Function.update, candidateEq
-            ] using termTwo)
-    · simpa [
-        next, updateNode, Function.update,
+        next, hasElectionMajority, updateNode, Function.update,
         Ne.symm facts.leadersDistinct
       ] using facts.electionMajority
-    · intro voter voterIn
-      have oldIn :
-          voter ∈ (state.nodes newLeader).votesGranted := by
-        simpa [
-          next, updateNode, Function.update,
-          Ne.symm facts.leadersDistinct
-        ] using voterIn
-      have chosen := facts.electionVotersChooseLeader voter oldIn
-      by_cases voterEq : voter = oldLeader
-      · subst voter
-        simpa [next] using chosen
-      · simpa [
-          next, updateNode, Function.update, voterEq
-        ] using chosen
     · intro candidate candidateRole
       have oldRole :
           (state.nodes candidate).role = .candidate := by
-        by_cases candidateEq : candidate = oldLeader
+        by_cases candidateEq : candidate = INITIAL_LEADER
         · subst candidate
           simpa [next] using candidateRole
         · simpa [
             next, updateNode, Function.update, candidateEq
           ] using candidateRole
       have self := facts.candidatesSelfVote candidate oldRole
-      by_cases candidateEq : candidate = oldLeader
+      by_cases candidateEq : candidate = INITIAL_LEADER
       · subst candidate
         simpa [next] using self
       · simpa [
@@ -2937,14 +3095,14 @@ theorem clientRequestPreservesCrossTermInvariant
     · intro voter candidate voted
       have oldVote :
           (state.nodes voter).votedFor = some candidate := by
-        by_cases voterEq : voter = oldLeader
+        by_cases voterEq : voter = INITIAL_LEADER
         · subst voter
           simpa [next] using voted
         · simpa [
             next, updateNode, Function.update, voterEq
           ] using voted
       have termTwo := facts.votedForTermTwo voter candidate oldVote
-      by_cases voterEq : voter = oldLeader
+      by_cases voterEq : voter = INITIAL_LEADER
       · subst voter
         simpa [next] using termTwo
       · simpa [
@@ -2953,14 +3111,14 @@ theorem clientRequestPreservesCrossTermInvariant
     · intro candidate voter voterIn
       have oldIn :
           voter ∈ (state.nodes candidate).votesGranted := by
-        by_cases candidateEq : candidate = oldLeader
+        by_cases candidateEq : candidate = INITIAL_LEADER
         · subst candidate
           simpa [next] using voterIn
         · simpa [
             next, updateNode, Function.update, candidateEq
           ] using voterIn
       have chosen := facts.votesGrantedSound candidate voter oldIn
-      by_cases voterEq : voter = oldLeader
+      by_cases voterEq : voter = INITIAL_LEADER
       · subst voter
         simpa [next] using chosen
       · simpa [
@@ -2972,12 +3130,18 @@ theorem clientRequestPreservesCrossTermInvariant
         Ne.symm facts.leadersDistinct
       ] using
         networkSafeAfterOldAppend facts entry
-    · intro candidate
-      have oldBound := facts.oldSentIndicesBounded candidate
-      simpa [next, oldLogEq] using Nat.le.step oldBound
-    · intro candidate
-      have oldBound := facts.oldMatchIndicesBounded candidate
-      simpa [next, oldLogEq] using Nat.le.step oldBound
+    · intro leader role peer
+      by_cases leaderEq : leader = INITIAL_LEADER
+      · subst leader
+        have oldProgress := facts.activeLeaderProgress enabled.1 peer
+        constructor
+        · simpa [next, oldLogEq] using Nat.le.step oldProgress.1
+        · simpa [next, oldLogEq] using Nat.le.step oldProgress.2
+      · have beforeRole :
+            (state.nodes leader).role = .leader := by
+          simpa [next, updateNode, Function.update, leaderEq] using role
+        simpa [next, updateNode, Function.update, leaderEq] using
+          facts.activeLeaderProgress beforeRole peer
     · intro voter voterIn
       have oldIn :
           voter ∈ (state.nodes newLeader).votesGranted := by
@@ -2988,68 +3152,12 @@ theorem clientRequestPreservesCrossTermInvariant
       have bound := facts.oldElectionMatchBound voter oldIn
       simpa [next] using bound
     · intro candidate
-      simpa [
-        next, updateNode, Function.update,
-        Ne.symm facts.leadersDistinct
-      ] using facts.newSentIndicesBounded candidate
-    · intro candidate
-      simpa [
-        next, updateNode, Function.update,
-        Ne.symm facts.leadersDistinct
-      ] using facts.newMatchIndicesBounded candidate
-    · intro index indexBound majority
-      by_cases oldIndex : index <= oldLog.length
-      · apply facts.oldMajoritiesCovered index oldIndex
-        simpa [hasMajorityAt, acknowledgingNodes, next] using majority
-      · have intersection :=
-          CCFRaft.fiveNodeMajoritiesIntersect
-            (acknowledgingNodes
-              (next state (.clientRequest oldLeader txId))
-              oldLeader index)
-            ((next state (.clientRequest oldLeader txId)).nodes
-              newLeader).votesGranted
-            majority
-            (by simpa [
-                next, updateNode, Function.update,
-                Ne.symm facts.leadersDistinct
-              ] using facts.electionMajority)
-        rcases intersection with ⟨voter, both⟩
-        have acknowledges := (Finset.mem_inter.mp both).1
-        have elected := (Finset.mem_inter.mp both).2
-        simp only [
-          acknowledgingNodes,
-          Finset.mem_filter,
-          Finset.mem_univ,
-          true_and
-        ] at acknowledges
-        rcases acknowledges with voterOld | matchCovers
-        · subst voter
-          have chosen :=
-            facts.electionVotersChooseLeader oldLeader
-              (by simpa [
-                  next, updateNode, Function.update,
-                  Ne.symm facts.leadersDistinct
-                ] using elected)
-          have termTwo :=
-            facts.votedForTermTwo oldLeader newLeader chosen
-          rw [nodeTerm, TERM_ONE] at termTwo
-          omega
-        · have electionBound :=
-            facts.oldElectionMatchBound voter
-              (by simpa [
-                  next, updateNode, Function.update,
-                  Ne.symm facts.leadersDistinct
-                ] using elected)
-          have baseBound := facts.basePrefixOld.length_le
-          simp [next] at matchCovers
-          omega
-    · intro candidate
       have covered := facts.committedLogsCovered candidate
-      by_cases candidateEq : candidate = oldLeader
+      by_cases candidateEq : candidate = INITIAL_LEADER
       · subst candidate
         have commitBoundOld :
-            (state.nodes oldLeader).commitIndex <= oldLog.length := by
-          simpa [oldLogEq] using facts.commitIndicesBounded oldLeader
+            (state.nodes INITIAL_LEADER).commitIndex <= oldLog.length := by
+          simpa [oldLogEq] using facts.commitIndicesBounded INITIAL_LEADER
         simpa [
           next, oldLogEq, NodeState.committedLog,
           List.take_append_of_le_length
@@ -3069,7 +3177,7 @@ theorem clientRequestPreservesCrossTermInvariant
           Ne.symm facts.leadersDistinct
         ] using belowBase
       have safe := facts.newCatchupLogs candidate oldBelow
-      by_cases candidateEq : candidate = oldLeader
+      by_cases candidateEq : candidate = INITIAL_LEADER
       · subst candidate
         rw [nodeTerm, TERM_ONE] at safe
         omega
@@ -3086,7 +3194,7 @@ theorem clientRequestPreservesCrossTermInvariant
               destination (.appendEntriesRequest request) oldMember
           intro termTwo previousInside
           have oldSafe := safe termTwo previousInside
-          by_cases targetEq : request.destination = oldLeader
+          by_cases targetEq : request.destination = INITIAL_LEADER
           · rw [targetEq, nodeTerm, TERM_ONE] at oldSafe
             omega
           · simpa [
@@ -3106,7 +3214,7 @@ theorem clientRequestPreservesCrossTermInvariant
               destination (.appendEntriesResponse response) oldMember
           intro responseDestination responseInside
           have oldSafe := safe responseDestination responseInside
-          by_cases sourceEq : response.source = oldLeader
+          by_cases sourceEq : response.source = INITIAL_LEADER
           · rw [sourceEq, nodeTerm, TERM_ONE] at oldSafe
             omega
           · simpa [
@@ -3120,7 +3228,7 @@ theorem clientRequestPreservesCrossTermInvariant
         (state.nodes newLeader).log = base ++ suffix :=
       facts.newLeaderLog
     refine
-      ⟨oldLeader, newLeader, oldLog, base, suffix ++ [entry], ?_⟩
+      ⟨newLeader, oldLog, base, suffix ++ [entry], ?_⟩
     constructor
     · exact facts.oldEntriesTermOne
     · intro value member
@@ -3130,7 +3238,6 @@ theorem clientRequestPreservesCrossTermInvariant
       · subst value
         exact nodeTerm
     · exact facts.basePrefixOld
-    · simp [next, newLogEq, List.append_assoc, entry]
     · intro candidate
       by_cases candidateEq : candidate = newLeader
       · subst candidate
@@ -3185,64 +3292,33 @@ theorem clientRequestPreservesCrossTermInvariant
         simpa [
           next, updateNode, Function.update, candidateEq
         ] using oldSafe
-    · exact facts.oldLeaderIsInitial
     · exact facts.leadersDistinct
-    · intro role termOne
-      simpa [
-        next, updateNode, Function.update, facts.leadersDistinct
-      ] using facts.oldLeaderOwnsHistory
-        (by simpa [
-            next, updateNode, Function.update, facts.leadersDistinct
-          ] using role)
-        (by simpa [
-            next, updateNode, Function.update, facts.leadersDistinct
-          ] using termOne)
     · simpa [next] using facts.newLeaderRole
-    · simpa [next] using facts.newLeaderTerm
-    · intro candidate role termOne
-      exact facts.termOneLeaderUnique candidate
-        (by
-          by_cases candidateEq : candidate = newLeader
-          · subst candidate
-            simpa [next] using role
-          · simpa [
-              next, updateNode, Function.update, candidateEq
-            ] using role)
-        (by
-          by_cases candidateEq : candidate = newLeader
-          · subst candidate
-            simpa [next] using termOne
-          · simpa [
-              next, updateNode, Function.update, candidateEq
-            ] using termOne)
-    · intro candidate role termTwo
-      exact facts.termTwoLeaderUnique candidate
-        (by
-          by_cases candidateEq : candidate = newLeader
-          · subst candidate
-            simpa [next] using role
-          · simpa [
-              next, updateNode, Function.update, candidateEq
-            ] using role)
-        (by
-          by_cases candidateEq : candidate = newLeader
-          · subst candidate
-            simpa [next] using termTwo
-          · simpa [
-              next, updateNode, Function.update, candidateEq
-            ] using termTwo)
-    · simpa [next] using facts.electionMajority
-    · intro voter voterIn
-      have oldIn :
-          voter ∈ (state.nodes newLeader).votesGranted := by
-        simpa [next] using voterIn
-      have chosen := facts.electionVotersChooseLeader voter oldIn
-      by_cases voterEq : voter = newLeader
-      · subst voter
-        simpa [next] using chosen
-      · simpa [
-          next, updateNode, Function.update, voterEq
-        ] using chosen
+    · intro candidate role
+      by_cases candidateEq : candidate = newLeader
+      · subst candidate
+        right
+        exact
+          ⟨rfl, by simpa [next] using nodeTerm,
+            by simp [next, newLogEq, List.append_assoc, entry]⟩
+      · have beforeRole :
+            (state.nodes candidate).role = .leader := by
+          simpa [
+            next, updateNode, Function.update, candidateEq
+          ] using role
+        rcases facts.leadersOwnHistories candidate beforeRole with
+          oldOwner | newOwner
+        · left
+          exact
+            ⟨oldOwner.1,
+              by simpa [
+                next, updateNode, Function.update, candidateEq
+              ] using oldOwner.2.1,
+              by simpa [
+                next, updateNode, Function.update, candidateEq
+              ] using oldOwner.2.2⟩
+        · exact False.elim (candidateEq newOwner.1)
+    · simpa [next, hasElectionMajority] using facts.electionMajority
     · intro candidate candidateRole
       have oldRole :
           (state.nodes candidate).role = .candidate := by
@@ -3293,14 +3369,20 @@ theorem clientRequestPreservesCrossTermInvariant
         ] using chosen
     · simpa [next, newLogEq, entry, List.append_assoc] using
         networkSafeAfterNewAppend facts entry
-    · intro candidate
-      simpa [
-        next, updateNode, Function.update, facts.leadersDistinct
-      ] using facts.oldSentIndicesBounded candidate
-    · intro candidate
-      simpa [
-        next, updateNode, Function.update, facts.leadersDistinct
-      ] using facts.oldMatchIndicesBounded candidate
+    · intro leader role peer
+      by_cases leaderEq : leader = newLeader
+      · subst leader
+        have oldProgress := facts.activeLeaderProgress enabled.1 peer
+        constructor
+        · simpa [next, newLogEq, List.append_assoc] using
+            Nat.le.step oldProgress.1
+        · simpa [next, newLogEq, List.append_assoc] using
+            Nat.le.step oldProgress.2
+      · have beforeRole :
+            (state.nodes leader).role = .leader := by
+          simpa [next, updateNode, Function.update, leaderEq] using role
+        simpa [next, updateNode, Function.update, leaderEq] using
+          facts.activeLeaderProgress beforeRole peer
     · intro voter voterIn
       have oldIn :
           voter ∈ (state.nodes newLeader).votesGranted := by
@@ -3309,25 +3391,16 @@ theorem clientRequestPreservesCrossTermInvariant
         next, updateNode, Function.update, facts.leadersDistinct
       ] using facts.oldElectionMatchBound voter oldIn
     · intro candidate
-      have oldBound := facts.newSentIndicesBounded candidate
-      simpa [next, newLogEq, List.append_assoc] using Nat.le.step oldBound
-    · intro candidate
-      have oldBound := facts.newMatchIndicesBounded candidate
-      simpa [next, newLogEq, List.append_assoc] using Nat.le.step oldBound
-    · intro index indexBound majority
-      exact facts.oldMajoritiesCovered index indexBound
-        (by simpa [
-            hasMajorityAt, acknowledgingNodes, next,
-            updateNode, Function.update, facts.leadersDistinct
-          ] using majority)
-    · intro candidate
       have covered := facts.committedLogsCovered candidate
       by_cases candidateEq : candidate = newLeader
       · subst candidate
-        exact List.take_prefix _ _
+        simpa [next, newLogEq, List.append_assoc] using
+          (List.take_prefix
+            (state.nodes newLeader).commitIndex
+            ((state.nodes newLeader).log ++ [entry]))
       · have extended :=
           covered.trans
-            (List.prefix_append (state.nodes newLeader).log [entry])
+            (List.prefix_append (base ++ suffix) [entry])
         simpa [
           next, updateNode, Function.update, candidateEq,
           newLogEq, entry, List.append_assoc
@@ -3442,7 +3515,7 @@ theorem makeAppendEntriesRequestSnapshots
         batchEnd - previous :=
     CCFRaft.messageEntriesLength
       history previousBeforeEnd endWithin
-  refine ⟨sentBound, ?_, ?_, ?_⟩
+  refine ⟨?_, ?_, ?_⟩
   · simp only [makeAppendEntriesRequest, logEq]
     rw [entriesLength]
     omega
@@ -3543,8 +3616,7 @@ theorem appendEntriesPreservesCrossTermInvariant
     (enabled : Enabled state (.appendEntries source destination batchEnd)) :
     CrossTermInvariant
       (next state (.appendEntries source destination batchEnd)) := by
-  rcases cross with
-    ⟨oldLeader, newLeader, oldLog, base, suffix, facts⟩
+  rcases cross with ⟨newLeader, oldLog, base, suffix, facts⟩
   have post :=
     appendEntriesNodePost state source destination batchEnd
   rcases crossTermLeaderCases facts enabled.1 with old | new
@@ -3553,41 +3625,42 @@ theorem appendEntriesPreservesCrossTermInvariant
     have oldLogEq :=
       facts.oldLeaderOwnsHistory enabled.1 sourceTerm
     let request :=
-      makeAppendEntriesRequest state oldLeader destination batchEnd
+      makeAppendEntriesRequest state INITIAL_LEADER destination batchEnd
     have snapshot :
         RequestSnapshots oldLog request :=
       makeAppendEntriesRequestSnapshots
         oldLogEq
-        (facts.oldSentIndicesBounded destination)
+        (by simpa [oldLogEq] using
+          (facts.activeLeaderProgress enabled.1 destination).1)
         enabled.2.2
     have commitBound :
-        (state.nodes oldLeader).commitIndex <= oldLog.length := by
-      simpa [oldLogEq] using facts.commitIndicesBounded oldLeader
+        (state.nodes INITIAL_LEADER).commitIndex <= oldLog.length := by
+      simpa [oldLogEq] using facts.commitIndicesBounded INITIAL_LEADER
     have advertised :
-        oldLog.take (state.nodes oldLeader).commitIndex <+:
+        oldLog.take (state.nodes INITIAL_LEADER).commitIndex <+:
           base ++ suffix := by
-      have covered := facts.committedLogsCovered oldLeader
+      have covered := facts.committedLogsCovered INITIAL_LEADER
       simpa [
-        NodeState.committedLog, oldLogEq, facts.newLeaderLog
+        NodeState.committedLog, oldLogEq
       ] using covered
     have requestSafe :
         CrossTermRequestSafe
-          oldLeader newLeader oldLog (base ++ suffix) request := by
+          INITIAL_LEADER newLeader oldLog (base ++ suffix) request := by
       refine
         ⟨enabled.2.1, Or.inl
           ⟨sourceTerm, rfl, snapshot, commitBound⟩, ?_, ?_⟩
-      · simpa [request, makeAppendEntriesRequest, sourceTerm] using advertised
+      · intro _
+        simpa [request, makeAppendEntriesRequest, sourceTerm] using advertised
       · exact makeAppendEntriesRequestEmptyCommitBound
-          (by simpa [oldLogEq] using facts.oldSentIndicesBounded destination)
-          (facts.commitIndicesBounded oldLeader)
+          (by simpa [oldLogEq] using
+            (facts.activeLeaderProgress enabled.1 destination).1)
+          (facts.commitIndicesBounded INITIAL_LEADER)
           enabled.2.2
-    refine ⟨oldLeader, newLeader, oldLog, base, suffix, ?_⟩
+    refine ⟨newLeader, oldLog, base, suffix, ?_⟩
     constructor
     · exact facts.oldEntriesTermOne
     · exact facts.suffixEntriesTermTwo
     · exact facts.basePrefixOld
-    · rw [post.log newLeader]
-      exact facts.newLeaderLog
     · intro candidate
       rw [post.log candidate]
       exact facts.logsCovered candidate
@@ -3601,29 +3674,15 @@ theorem appendEntriesPreservesCrossTermInvariant
       rw [post.log candidate] at member
       rw [post.currentTerm candidate]
       exact facts.entriesDoNotExceedCurrentTerm candidate entry member
-    · exact facts.oldLeaderIsInitial
     · exact facts.leadersDistinct
-    · intro _ _
-      rw [post.log oldLeader]
-      exact oldLogEq
     · rw [post.role newLeader]
       exact facts.newLeaderRole
-    · rw [post.currentTerm newLeader]
-      exact facts.newLeaderTerm
-    · intro candidate role termOne
-      apply facts.termOneLeaderUnique candidate
-      · rwa [post.role candidate] at role
-      · rwa [post.currentTerm candidate] at termOne
-    · intro candidate role termTwo
-      apply facts.termTwoLeaderUnique candidate
-      · rwa [post.role candidate] at role
-      · rwa [post.currentTerm candidate] at termTwo
-    · rw [post.votesGranted newLeader]
-      exact facts.electionMajority
-    · intro voter voterIn
-      rw [post.votesGranted newLeader] at voterIn
-      rw [post.votedFor voter]
-      exact facts.electionVotersChooseLeader voter voterIn
+    · intro leader role
+      rw [post.currentTerm leader, post.log leader]
+      exact facts.leadersOwnHistories leader
+        (by rwa [post.role leader] at role)
+    · simpa [hasElectionMajority, post.votesGranted newLeader] using
+        facts.electionMajority
     · intro candidate role
       rw [post.role candidate] at role
       rcases facts.candidatesSelfVote candidate role with
@@ -3670,41 +3729,35 @@ theorem appendEntriesPreservesCrossTermInvariant
               exact granted success
       · subst message
         exact ⟨queueEq.symm, requestSafe⟩
-    · intro candidate
-      by_cases candidateEq : candidate = destination
-      · subst candidate
-        simp only [next, updateNode_same, updateIndex_same]
-        rw [enabled.2.2, oldLogEq]
-        exact min_le_right _ _
-      · simpa [
-          next, updateNode, Function.update,
-          updateIndex, candidateEq
-        ] using facts.oldSentIndicesBounded candidate
-    · intro candidate
-      rw [post.matchIndex oldLeader]
-      exact facts.oldMatchIndicesBounded candidate
+    · intro leader role peer
+      have beforeRole :
+          (state.nodes leader).role = .leader := by
+        rwa [post.role leader] at role
+      constructor
+      · by_cases leaderEq : leader = INITIAL_LEADER
+        · subst leader
+          by_cases peerEq : peer = destination
+          · subst peer
+            simp only [next, updateNode_same, updateIndex_same]
+            rw [enabled.2.2, oldLogEq]
+            exact min_le_right _ _
+          · simpa [
+              next, updateNode, Function.update,
+              updateIndex, peerEq
+            ] using
+              (facts.activeLeaderProgress beforeRole peer).1
+        · simpa [
+            next, updateNode, Function.update, leaderEq
+          ] using (facts.activeLeaderProgress beforeRole peer).1
+      · rw [post.matchIndex leader, post.log leader]
+        exact (facts.activeLeaderProgress beforeRole peer).2
     · intro voter voterIn
       rw [post.votesGranted newLeader] at voterIn
-      rw [post.matchIndex oldLeader]
+      rw [post.matchIndex INITIAL_LEADER]
       exact facts.oldElectionMatchBound voter voterIn
-    · simpa [
-        next, updateNode, Function.update,
-        Ne.symm facts.leadersDistinct
-      ] using facts.newSentIndicesBounded
-    · intro candidate
-      rw [post.matchIndex newLeader]
-      exact facts.newMatchIndicesBounded candidate
-    · intro index indexBound majority
-      exact facts.oldMajoritiesCovered index indexBound
-        (by simpa [
-            hasMajorityAt, acknowledgingNodes, next
-          ] using majority)
     · intro candidate
       simp only [NodeState.committedLog]
-      rw [
-        post.log candidate, post.commitIndex candidate,
-        post.log newLeader
-      ]
+      rw [post.log candidate, post.commitIndex candidate]
       exact facts.committedLogsCovered candidate
     · intro candidate belowBase
       have oldBelow :
@@ -3774,7 +3827,8 @@ theorem appendEntriesPreservesCrossTermInvariant
         RequestSnapshots (base ++ suffix) request :=
       makeAppendEntriesRequestSnapshots
         newLogEq
-        (facts.newSentIndicesBounded destination)
+        (by simpa [newLogEq] using
+          (facts.activeLeaderProgress enabled.1 destination).1)
         enabled.2.2
     have commitBound :
         (state.nodes newLeader).commitIndex <=
@@ -3782,26 +3836,27 @@ theorem appendEntriesPreservesCrossTermInvariant
       simpa [newLogEq] using facts.commitIndicesBounded newLeader
     have requestSafe :
         CrossTermRequestSafe
-          oldLeader newLeader oldLog (base ++ suffix) request := by
+          INITIAL_LEADER newLeader oldLog (base ++ suffix) request := by
       refine
         ⟨enabled.2.1, Or.inr
           ⟨sourceTerm, rfl, snapshot, commitBound⟩, ?_, ?_⟩
-      · simpa [request, makeAppendEntriesRequest, sourceTerm] using
-          (List.take_prefix
-            (state.nodes newLeader).commitIndex (base ++ suffix))
+      · intro requestTerm
+        have termOne :
+            (state.nodes newLeader).currentTerm = TERM_ONE := by
+          simpa [request, makeAppendEntriesRequest] using requestTerm
+        rw [sourceTerm] at termOne
+        norm_num [TERM_ONE] at termOne
       · exact makeAppendEntriesRequestEmptyCommitBound
           (by
             simpa [newLogEq] using
-              facts.newSentIndicesBounded destination)
+              (facts.activeLeaderProgress enabled.1 destination).1)
           (facts.commitIndicesBounded newLeader)
           enabled.2.2
-    refine ⟨oldLeader, newLeader, oldLog, base, suffix, ?_⟩
+    refine ⟨newLeader, oldLog, base, suffix, ?_⟩
     constructor
     · exact facts.oldEntriesTermOne
     · exact facts.suffixEntriesTermTwo
     · exact facts.basePrefixOld
-    · rw [post.log newLeader]
-      exact facts.newLeaderLog
     · intro candidate
       rw [post.log candidate]
       exact facts.logsCovered candidate
@@ -3815,31 +3870,15 @@ theorem appendEntriesPreservesCrossTermInvariant
       rw [post.log candidate] at member
       rw [post.currentTerm candidate]
       exact facts.entriesDoNotExceedCurrentTerm candidate entry member
-    · exact facts.oldLeaderIsInitial
     · exact facts.leadersDistinct
-    · intro role termOne
-      rw [post.log oldLeader]
-      apply facts.oldLeaderOwnsHistory
-      · rwa [post.role oldLeader] at role
-      · rwa [post.currentTerm oldLeader] at termOne
     · rw [post.role newLeader]
       exact facts.newLeaderRole
-    · rw [post.currentTerm newLeader]
-      exact facts.newLeaderTerm
-    · intro candidate role termOne
-      apply facts.termOneLeaderUnique candidate
-      · rwa [post.role candidate] at role
-      · rwa [post.currentTerm candidate] at termOne
-    · intro candidate role termTwo
-      apply facts.termTwoLeaderUnique candidate
-      · rwa [post.role candidate] at role
-      · rwa [post.currentTerm candidate] at termTwo
-    · rw [post.votesGranted newLeader]
-      exact facts.electionMajority
-    · intro voter voterIn
-      rw [post.votesGranted newLeader] at voterIn
-      rw [post.votedFor voter]
-      exact facts.electionVotersChooseLeader voter voterIn
+    · intro leader role
+      rw [post.currentTerm leader, post.log leader]
+      exact facts.leadersOwnHistories leader
+        (by rwa [post.role leader] at role)
+    · simpa [hasElectionMajority, post.votesGranted newLeader] using
+        facts.electionMajority
     · intro candidate role
       rw [post.role candidate] at role
       rcases facts.candidatesSelfVote candidate role with
@@ -3883,48 +3922,43 @@ theorem appendEntriesPreservesCrossTermInvariant
               exact granted success
       · subst message
         exact ⟨queueEq.symm, requestSafe⟩
-    · simpa [
-        next, updateNode, Function.update, facts.leadersDistinct
-      ] using facts.oldSentIndicesBounded
-    · intro candidate
-      rw [post.matchIndex oldLeader]
-      exact facts.oldMatchIndicesBounded candidate
+    · intro leader role peer
+      have beforeRole :
+          (state.nodes leader).role = .leader := by
+        rwa [post.role leader] at role
+      constructor
+      · by_cases leaderEq : leader = newLeader
+        · subst leader
+          by_cases peerEq : peer = destination
+          · subst peer
+            simp only [next, updateNode_same, updateIndex_same]
+            rw [enabled.2.2, newLogEq]
+            exact min_le_right _ _
+          · simpa [
+              next, updateNode, Function.update,
+              updateIndex, peerEq
+            ] using
+              (facts.activeLeaderProgress beforeRole peer).1
+        · simpa [
+            next, updateNode, Function.update, leaderEq
+          ] using (facts.activeLeaderProgress beforeRole peer).1
+      · rw [post.matchIndex leader, post.log leader]
+        exact (facts.activeLeaderProgress beforeRole peer).2
     · intro voter voterIn
       rw [post.votesGranted newLeader] at voterIn
-      rw [post.matchIndex oldLeader]
+      rw [post.matchIndex INITIAL_LEADER]
       exact facts.oldElectionMatchBound voter voterIn
     · intro candidate
-      by_cases candidateEq : candidate = destination
-      · subst candidate
-        simp only [next, updateNode_same, updateIndex_same]
-        rw [enabled.2.2, newLogEq]
-        exact min_le_right _ _
-      · simpa [
-          next, updateNode, Function.update,
-          updateIndex, candidateEq
-        ] using facts.newSentIndicesBounded candidate
-    · intro candidate
-      rw [post.matchIndex newLeader]
-      exact facts.newMatchIndicesBounded candidate
-    · intro index indexBound majority
-      exact facts.oldMajoritiesCovered index indexBound
-        (by simpa [
-            hasMajorityAt, acknowledgingNodes, next,
-            updateNode, Function.update, facts.leadersDistinct
-          ] using majority)
-    · intro candidate
       simp only [NodeState.committedLog]
-      rw [
-        post.log candidate, post.commitIndex candidate,
-        post.log newLeader
-      ]
+      rw [post.log candidate, post.commitIndex candidate]
       exact facts.committedLogsCovered candidate
     · intro candidate belowBase
       have oldBelow :
           (state.nodes newLeader).sentIndex candidate < base.length := by
         by_cases candidateEq : candidate = destination
         · subst candidate
-          have sentBound := facts.newSentIndicesBounded destination
+          have sentBound :=
+            (facts.activeLeaderProgress enabled.1 destination).1
           have baseWithin :
               base.length <= (state.nodes newLeader).log.length := by
             rw [newLogEq]
@@ -4033,8 +4067,7 @@ theorem advanceCommitPreservesCrossTermInvariant
     (cross : CrossTermInvariant state)
     (enabled : Enabled state (.advanceCommitIndex node)) :
     CrossTermInvariant (next state (.advanceCommitIndex node)) := by
-  rcases cross with
-    ⟨oldLeader, newLeader, oldLog, base, suffix, facts⟩
+  rcases cross with ⟨newLeader, oldLog, base, suffix, facts⟩
   have post := advanceCommitNodePost state node
   have highestBound :=
     CCFRaft.highestCommittableIndexBounded state node
@@ -4042,36 +4075,35 @@ theorem advanceCommitPreservesCrossTermInvariant
     CCFRaft.highestCommittableIndexValid state node enabled.2
   have nodeCommitCovered :
       ((next state (.advanceCommitIndex node)).nodes node).committedLog <+:
-        (state.nodes newLeader).log := by
+        base ++ suffix := by
     rcases crossTermLeaderCases facts enabled.1 with old | new
     · rcases old with ⟨nodeEq, nodeTerm⟩
       subst node
       have oldLogEq :=
         facts.oldLeaderOwnsHistory enabled.1 nodeTerm
       have oldBound :
-          highestCommittableIndex state oldLeader <= oldLog.length := by
+          highestCommittableIndex state INITIAL_LEADER <= oldLog.length := by
         simpa [oldLogEq] using highestBound
       have baseBound :
-          highestCommittableIndex state oldLeader <= base.length :=
-        facts.oldMajoritiesCovered
-          (highestCommittableIndex state oldLeader)
-          oldBound highestValid.2
+          highestCommittableIndex state INITIAL_LEADER <= base.length :=
+        activeInitialLeaderMajorityCovered
+          facts enabled.1 nodeTerm highestValid.2
       have oldTakeBase :
-          oldLog.take (highestCommittableIndex state oldLeader) =
-            base.take (highestCommittableIndex state oldLeader) :=
+          oldLog.take (highestCommittableIndex state INITIAL_LEADER) =
+            base.take (highestCommittableIndex state INITIAL_LEADER) :=
         (CCFRaft.takeEqOfPrefix facts.basePrefixOld baseBound).symm
       have newTakeBase :
           (base ++ suffix).take
-              (highestCommittableIndex state oldLeader) =
-            base.take (highestCommittableIndex state oldLeader) :=
+              (highestCommittableIndex state INITIAL_LEADER) =
+            base.take (highestCommittableIndex state INITIAL_LEADER) :=
         List.take_append_of_le_length baseBound
       have historyPrefix :
-          oldLog.take (highestCommittableIndex state oldLeader) <+:
+          oldLog.take (highestCommittableIndex state INITIAL_LEADER) <+:
             base ++ suffix := by
         rw [oldTakeBase, ← newTakeBase]
         exact List.take_prefix _ _
       simpa [
-        next, oldLogEq, facts.newLeaderLog,
+        next, oldLogEq,
         NodeState.committedLog
       ] using historyPrefix
     · rcases new with ⟨nodeEq, _⟩
@@ -4093,27 +4125,22 @@ theorem advanceCommitPreservesCrossTermInvariant
   have afterCommittedCovered :
       forall candidate,
         ((next state (.advanceCommitIndex node)).nodes candidate).committedLog <+:
-          ((next state (.advanceCommitIndex node)).nodes newLeader).log := by
+          base ++ suffix := by
     intro candidate
     by_cases candidateEq : candidate = node
     · subst candidate
-      rw [post.log newLeader]
       exact nodeCommitCovered
     · have covered := facts.committedLogsCovered candidate
       simp only [NodeState.committedLog]
-      rw [
-        post.log candidate, post.log newLeader
-      ]
+      rw [post.log candidate]
       simpa [
         next, updateNode, Function.update, candidateEq
       ] using covered
-  refine ⟨oldLeader, newLeader, oldLog, base, suffix, ?_⟩
+  refine ⟨newLeader, oldLog, base, suffix, ?_⟩
   constructor
   · exact facts.oldEntriesTermOne
   · exact facts.suffixEntriesTermTwo
   · exact facts.basePrefixOld
-  · rw [post.log newLeader]
-    exact facts.newLeaderLog
   · intro candidate
     rw [post.log candidate]
     exact facts.logsCovered candidate
@@ -4125,31 +4152,15 @@ theorem advanceCommitPreservesCrossTermInvariant
     rw [post.log candidate] at member
     rw [post.currentTerm candidate]
     exact facts.entriesDoNotExceedCurrentTerm candidate entry member
-  · exact facts.oldLeaderIsInitial
   · exact facts.leadersDistinct
-  · intro role termOne
-    rw [post.log oldLeader]
-    apply facts.oldLeaderOwnsHistory
-    · rwa [post.role oldLeader] at role
-    · rwa [post.currentTerm oldLeader] at termOne
   · rw [post.role newLeader]
     exact facts.newLeaderRole
-  · rw [post.currentTerm newLeader]
-    exact facts.newLeaderTerm
-  · intro candidate role termOne
-    apply facts.termOneLeaderUnique candidate
-    · rwa [post.role candidate] at role
-    · rwa [post.currentTerm candidate] at termOne
-  · intro candidate role termTwo
-    apply facts.termTwoLeaderUnique candidate
-    · rwa [post.role candidate] at role
-    · rwa [post.currentTerm candidate] at termTwo
-  · rw [post.votesGranted newLeader]
-    exact facts.electionMajority
-  · intro voter voterIn
-    rw [post.votesGranted newLeader] at voterIn
-    rw [post.votedFor voter]
-    exact facts.electionVotersChooseLeader voter voterIn
+  · intro leader role
+    rw [post.currentTerm leader, post.log leader]
+    exact facts.leadersOwnHistories leader
+      (by rwa [post.role leader] at role)
+  · simpa [hasElectionMajority, post.votesGranted newLeader] using
+      facts.electionMajority
   · intro candidate role
     rw [post.role candidate] at role
     rcases facts.candidatesSelfVote candidate role with
@@ -4188,27 +4199,16 @@ theorem advanceCommitPreservesCrossTermInvariant
           intro success
           rw [post.votedFor response.source]
           exact granted success
-  · intro candidate
-    rw [post.sentIndex oldLeader]
-    exact facts.oldSentIndicesBounded candidate
-  · intro candidate
-    rw [post.matchIndex oldLeader]
-    exact facts.oldMatchIndicesBounded candidate
+  · intro leader role peer
+    have beforeRole :
+        (state.nodes leader).role = .leader := by
+      rwa [post.role leader] at role
+    rw [post.sentIndex leader, post.matchIndex leader, post.log leader]
+    exact facts.activeLeaderProgress beforeRole peer
   · intro voter voterIn
     rw [post.votesGranted newLeader] at voterIn
-    rw [post.matchIndex oldLeader]
+    rw [post.matchIndex INITIAL_LEADER]
     exact facts.oldElectionMatchBound voter voterIn
-  · intro candidate
-    rw [post.sentIndex newLeader]
-    exact facts.newSentIndicesBounded candidate
-  · intro candidate
-    rw [post.matchIndex newLeader]
-    exact facts.newMatchIndicesBounded candidate
-  · intro index indexBound majority
-    apply facts.oldMajoritiesCovered index indexBound
-    unfold hasMajorityAt acknowledgingNodes at majority ⊢
-    rw [post.matchIndex oldLeader] at majority
-    exact majority
   · exact afterCommittedCovered
   · intro candidate belowBase
     rw [post.sentIndex newLeader] at belowBase
@@ -4262,13 +4262,12 @@ theorem requestVotePreservesCrossTermInvariant
     (cross : CrossTermInvariant state)
     (enabled : Enabled state (.requestVote source destination)) :
     CrossTermInvariant (next state (.requestVote source destination)) := by
-  rcases cross with
-    ⟨oldLeader, newLeader, oldLog, base, suffix, facts⟩
+  rcases cross with ⟨newLeader, oldLog, base, suffix, facts⟩
   let request := makeRequestVoteRequest state source destination
   have selfVote := facts.candidatesSelfVote source enabled.1
   have requestSafe : CrossTermVoteRequestSafe state request :=
     ⟨enabled.2.1, enabled.2.2, enabled.2.1, selfVote.2.1⟩
-  refine ⟨oldLeader, newLeader, oldLog, base, suffix, ?_⟩
+  refine ⟨newLeader, oldLog, base, suffix, ?_⟩
   refine
     { facts with
       networkSafe := ?_
@@ -4311,8 +4310,7 @@ theorem timeoutPreservesCrossTermInvariant
     (cross : CrossTermInvariant state)
     (enabled : Enabled state (.timeout node)) :
     CrossTermInvariant (next state (.timeout node)) := by
-  rcases cross with
-    ⟨oldLeader, newLeader, oldLog, base, suffix, facts⟩
+  rcases cross with ⟨newLeader, oldLog, base, suffix, facts⟩
   have nodeNeNew : Not (node = newLeader) := by
     intro nodeEq
     subst node
@@ -4324,24 +4322,16 @@ theorem timeoutPreservesCrossTermInvariant
     have termTwo := facts.votedForTermTwo node newLeader chosen
     rw [enabled.2, TERM_ONE] at termTwo
     omega
-  have oldSentEq :
-      ((next state (.timeout node)).nodes oldLeader).sentIndex =
-        (state.nodes oldLeader).sentIndex := by
-    by_cases oldEq : oldLeader = node <;>
-      simp [next, updateNode, Function.update, oldEq]
   have oldMatchEq :
-      ((next state (.timeout node)).nodes oldLeader).matchIndex =
-        (state.nodes oldLeader).matchIndex := by
-    by_cases oldEq : oldLeader = node <;>
+      ((next state (.timeout node)).nodes INITIAL_LEADER).matchIndex =
+        (state.nodes INITIAL_LEADER).matchIndex := by
+    by_cases oldEq : INITIAL_LEADER = node <;>
       simp [next, updateNode, Function.update, oldEq]
-  refine ⟨oldLeader, newLeader, oldLog, base, suffix, ?_⟩
+  refine ⟨newLeader, oldLog, base, suffix, ?_⟩
   constructor
   · exact facts.oldEntriesTermOne
   · exact facts.suffixEntriesTermTwo
   · exact facts.basePrefixOld
-  · simpa [
-      next, updateNode, Function.update, Ne.symm nodeNeNew
-    ] using facts.newLeaderLog
   · intro candidate
     by_cases candidateEq : candidate = node
     · subst candidate
@@ -4386,69 +4376,26 @@ theorem timeoutPreservesCrossTermInvariant
       simpa [
         next, updateNode, Function.update, candidateEq
       ] using oldSafe
-  · exact facts.oldLeaderIsInitial
   · exact facts.leadersDistinct
-  · intro role termOne
-    by_cases oldEq : oldLeader = node
-    · subst node
-      simp [next] at role
-    · have oldRole :
-          (state.nodes oldLeader).role = .leader := by
-        simpa [
-          next, updateNode, Function.update, oldEq
-        ] using role
-      have oldTerm :
-          (state.nodes oldLeader).currentTerm = TERM_ONE := by
-        simpa [
-          next, updateNode, Function.update, oldEq
-        ] using termOne
-      simpa [
-        next, updateNode, Function.update, oldEq
-      ] using facts.oldLeaderOwnsHistory oldRole oldTerm
   · simpa [
       next, updateNode, Function.update, Ne.symm nodeNeNew
     ] using facts.newLeaderRole
-  · simpa [
-      next, updateNode, Function.update, Ne.symm nodeNeNew
-    ] using facts.newLeaderTerm
-  · intro candidate role termOne
-    by_cases candidateEq : candidate = node
-    · subst candidate
+  · intro leader role
+    by_cases leaderEq : leader = node
+    · subst leader
       simp [next] at role
-    · apply facts.termOneLeaderUnique candidate
-      · simpa [
-          next, updateNode, Function.update, candidateEq
+    · have beforeRole :
+          (state.nodes leader).role = .leader := by
+        simpa [
+          next, updateNode, Function.update, leaderEq
         ] using role
-      · simpa [
-          next, updateNode, Function.update, candidateEq
-        ] using termOne
-  · intro candidate role termTwo
-    by_cases candidateEq : candidate = node
-    · subst candidate
-      simp [next] at role
-    · apply facts.termTwoLeaderUnique candidate
-      · simpa [
-          next, updateNode, Function.update, candidateEq
-        ] using role
-      · simpa [
-          next, updateNode, Function.update, candidateEq
-        ] using termTwo
-  · simpa [
-      next, updateNode, Function.update, Ne.symm nodeNeNew
-    ] using facts.electionMajority
-  · intro voter voterIn
-    have oldIn :
-        voter ∈ (state.nodes newLeader).votesGranted := by
       simpa [
-        next, updateNode, Function.update, Ne.symm nodeNeNew
-      ] using voterIn
-    have chosen := facts.electionVotersChooseLeader voter oldIn
-    by_cases voterEq : voter = node
-    · subst voter
-      exact False.elim (nodeNotElectionVoter oldIn)
-    · simpa [
-        next, updateNode, Function.update, voterEq
-      ] using chosen
+        next, updateNode, Function.update, leaderEq
+      ] using facts.leadersOwnHistories leader beforeRole
+  · simpa [
+      next, hasElectionMajority, updateNode, Function.update,
+      Ne.symm nodeNeNew
+    ] using facts.electionMajority
   · intro candidate role
     by_cases candidateEq : candidate = node
     · subst candidate
@@ -4535,12 +4482,18 @@ theorem timeoutPreservesCrossTermInvariant
           · simpa [
               next, updateNode, Function.update, sourceEq
             ] using chosen
-  · intro candidate
-    rw [oldSentEq]
-    exact facts.oldSentIndicesBounded candidate
-  · intro candidate
-    rw [oldMatchEq]
-    exact facts.oldMatchIndicesBounded candidate
+  · intro leader role peer
+    by_cases leaderEq : leader = node
+    · subst leader
+      simp [next] at role
+    · have beforeRole :
+          (state.nodes leader).role = .leader := by
+        simpa [
+          next, updateNode, Function.update, leaderEq
+        ] using role
+      simpa [
+        next, updateNode, Function.update, leaderEq
+      ] using facts.activeLeaderProgress beforeRole peer
   · intro voter voterIn
     have oldIn :
         voter ∈ (state.nodes newLeader).votesGranted := by
@@ -4549,17 +4502,6 @@ theorem timeoutPreservesCrossTermInvariant
       ] using voterIn
     rw [oldMatchEq]
     exact facts.oldElectionMatchBound voter oldIn
-  · simpa [
-      next, updateNode, Function.update, Ne.symm nodeNeNew
-    ] using facts.newSentIndicesBounded
-  · simpa [
-      next, updateNode, Function.update, Ne.symm nodeNeNew
-    ] using facts.newMatchIndicesBounded
-  · intro index indexBound majority
-    apply facts.oldMajoritiesCovered index indexBound
-    unfold hasMajorityAt acknowledgingNodes at majority ⊢
-    rw [oldMatchEq] at majority
-    exact majority
   · intro candidate
     have covered := facts.committedLogsCovered candidate
     by_cases candidateEq : candidate = node
@@ -4633,8 +4575,7 @@ theorem updateTermPreservesCrossTermInvariant
       (cross : CrossTermInvariant state)
       (enabled : Enabled state (.updateTerm source destination)) :
       CrossTermInvariant (next state (.updateTerm source destination)) := by
-  rcases cross with
-      ⟨oldLeader, newLeader, oldLog, base, suffix, facts⟩
+  rcases cross with ⟨newLeader, oldLog, base, suffix, facts⟩
   cases found : newerMessage? state source destination with
   | none =>
         simp [Enabled, found] at enabled
@@ -4685,27 +4626,17 @@ theorem updateTermPreservesCrossTermInvariant
             facts.votedForTermTwo destination newLeader chosen
           rw [destinationTermOne, TERM_ONE] at termTwo
           omega
-        have oldSentEq :
-            ((next state (.updateTerm source destination)).nodes
-                oldLeader).sentIndex =
-              (state.nodes oldLeader).sentIndex := by
-          by_cases oldEq : oldLeader = destination <;>
-            simp [next, found, updateNode, Function.update, oldEq]
         have oldMatchEq :
             ((next state (.updateTerm source destination)).nodes
-                oldLeader).matchIndex =
-              (state.nodes oldLeader).matchIndex := by
-          by_cases oldEq : oldLeader = destination <;>
+                INITIAL_LEADER).matchIndex =
+              (state.nodes INITIAL_LEADER).matchIndex := by
+          by_cases oldEq : INITIAL_LEADER = destination <;>
             simp [next, found, updateNode, Function.update, oldEq]
-        refine ⟨oldLeader, newLeader, oldLog, base, suffix, ?_⟩
+        refine ⟨newLeader, oldLog, base, suffix, ?_⟩
         constructor
         · exact facts.oldEntriesTermOne
         · exact facts.suffixEntriesTermTwo
         · exact facts.basePrefixOld
-        · simpa [
-            next, found, updateNode, Function.update,
-            Ne.symm destinationNeNew
-          ] using facts.newLeaderLog
         · intro candidate
           by_cases candidateEq : candidate = destination
           · subst candidate
@@ -4750,73 +4681,28 @@ theorem updateTermPreservesCrossTermInvariant
             simpa [
               next, found, updateNode, Function.update, candidateEq
             ] using oldSafe
-        · exact facts.oldLeaderIsInitial
         · exact facts.leadersDistinct
-        · intro role termOne
-          by_cases oldEq : oldLeader = destination
-          · subst destination
-            simp [next, found] at role
-          · have oldRole :
-                (state.nodes oldLeader).role = .leader := by
-              simpa [
-                next, found, updateNode, Function.update, oldEq
-              ] using role
-            have oldTerm :
-                (state.nodes oldLeader).currentTerm = TERM_ONE := by
-              simpa [
-                next, found, updateNode, Function.update, oldEq
-              ] using termOne
-            simpa [
-              next, found, updateNode, Function.update, oldEq
-            ] using facts.oldLeaderOwnsHistory oldRole oldTerm
         · simpa [
             next, found, updateNode, Function.update,
             Ne.symm destinationNeNew
           ] using facts.newLeaderRole
-        · simpa [
-            next, found, updateNode, Function.update,
-            Ne.symm destinationNeNew
-          ] using facts.newLeaderTerm
-        · intro candidate role termOne
-          by_cases candidateEq : candidate = destination
-          · subst candidate
+        · intro leader role
+          by_cases leaderEq : leader = destination
+          · subst leader
             simp [next, found] at role
-          · apply facts.termOneLeaderUnique candidate
-            · simpa [
-                next, found, updateNode, Function.update, candidateEq
+          · have beforeRole :
+                (state.nodes leader).role = .leader := by
+              simpa [
+                next, found, updateNode, Function.update, leaderEq
               ] using role
-            · simpa [
-                next, found, updateNode, Function.update, candidateEq
-              ] using termOne
-        · intro candidate role termTwo
-          by_cases candidateEq : candidate = destination
-          · subst candidate
-            simp [next, found] at role
-          · apply facts.termTwoLeaderUnique candidate
-            · simpa [
-                next, found, updateNode, Function.update, candidateEq
-              ] using role
-            · simpa [
-                next, found, updateNode, Function.update, candidateEq
-              ] using termTwo
+            simpa [
+              next, found, updateNode, Function.update, leaderEq
+            ] using facts.leadersOwnHistories leader beforeRole
         · simpa [
-            next, found, updateNode, Function.update,
+            next, found, hasElectionMajority,
+            updateNode, Function.update,
             Ne.symm destinationNeNew
           ] using facts.electionMajority
-        · intro voter voterIn
-          have oldIn :
-              voter ∈ (state.nodes newLeader).votesGranted := by
-            simpa [
-              next, found, updateNode, Function.update,
-              Ne.symm destinationNeNew
-            ] using voterIn
-          have chosen := facts.electionVotersChooseLeader voter oldIn
-          by_cases voterEq : voter = destination
-          · subst voter
-            exact False.elim (destinationNotElectionVoter oldIn)
-          · simpa [
-              next, found, updateNode, Function.update, voterEq
-            ] using chosen
         · intro candidate role
           by_cases candidateEq : candidate = destination
           · subst candidate
@@ -4902,12 +4788,18 @@ theorem updateTermPreservesCrossTermInvariant
                 · simpa [
                     next, found, updateNode, Function.update, sourceEq
                   ] using chosen
-        · intro candidate
-          rw [oldSentEq]
-          exact facts.oldSentIndicesBounded candidate
-        · intro candidate
-          rw [oldMatchEq]
-          exact facts.oldMatchIndicesBounded candidate
+        · intro leader role peer
+          by_cases leaderEq : leader = destination
+          · subst leader
+            simp [next, found] at role
+          · have beforeRole :
+                (state.nodes leader).role = .leader := by
+              simpa [
+                next, found, updateNode, Function.update, leaderEq
+              ] using role
+            simpa [
+              next, found, updateNode, Function.update, leaderEq
+            ] using facts.activeLeaderProgress beforeRole peer
         · intro voter voterIn
           have oldIn :
               voter ∈ (state.nodes newLeader).votesGranted := by
@@ -4917,19 +4809,6 @@ theorem updateTermPreservesCrossTermInvariant
             ] using voterIn
           rw [oldMatchEq]
           exact facts.oldElectionMatchBound voter oldIn
-        · simpa [
-            next, found, updateNode, Function.update,
-            Ne.symm destinationNeNew
-          ] using facts.newSentIndicesBounded
-        · simpa [
-            next, found, updateNode, Function.update,
-            Ne.symm destinationNeNew
-          ] using facts.newMatchIndicesBounded
-        · intro index indexBound majority
-          apply facts.oldMajoritiesCovered index indexBound
-          unfold hasMajorityAt acknowledgingNodes at majority ⊢
-          rw [oldMatchEq] at majority
-          exact majority
         · intro candidate
           have covered := facts.committedLogsCovered candidate
           by_cases candidateEq : candidate = destination
@@ -5000,7 +4879,7 @@ theorem updateTermPreservesCrossTermInvariant
 /-- A changed destination log follows the selected request history. -/
 theorem handledAppendRequestChangedLogPrefix
     {state : State TxId}
-    {oldLeader newLeader : Node}
+    {newLeader : Node}
     {oldLog base suffix : List (Entry TxId)}
     {destination : Node}
     {request : AppendEntriesRequest TxId}
@@ -5008,7 +4887,7 @@ theorem handledAppendRequestChangedLogPrefix
     {response : AppendEntriesResponse}
     {history : List (Entry TxId)}
     (facts :
-      CrossTermFacts state oldLeader newLeader oldLog base suffix)
+      CrossTermFacts state newLeader oldLog base suffix)
     (historyChoice :
       history = oldLog \/ history = base ++ suffix)
     (snapshot : RequestSnapshots history request)
@@ -5041,17 +4920,17 @@ theorem handledAppendRequestChangedLogPrefix
       · apply coveredHistoriesTakeEqualAtTerm
         · omega
         · exact previousBound
-        · exact snapshot.1
+        · exact requestSnapshotPreviousBound snapshot
         · exact facts.oldEntriesTermOne
         · exact facts.suffixEntriesTermTwo
         · exact facts.basePrefixOld
         · exact facts.logsCovered destination
         · exact historyCovered
-        · exact matching.trans snapshot.2.2.1
+        · exact matching.trans (requestSnapshotPreviousTerm snapshot)
   have requestPrefix :
       history.take request.prevLogIndex ++ request.entries <+:
         history := by
-    rw [← snapshot.2.2.2]
+    rw [← requestSnapshotEntries snapshot]
     exact List.take_prefix _ _
   rcases localPost.logShape with same | truncated | extended
   · exact False.elim (unchanged same)
@@ -5063,17 +4942,17 @@ theorem handledAppendRequestChangedLogPrefix
 /-- A changed destination log follows one of the two proof histories. -/
 theorem handledAppendRequestChangedLogCovered
     {state : State TxId}
-    {oldLeader newLeader : Node}
+    {newLeader : Node}
     {oldLog base suffix : List (Entry TxId)}
     {destination : Node}
     {request : AppendEntriesRequest TxId}
     {after : NodeState TxId}
     {response : AppendEntriesResponse}
     (facts :
-      CrossTermFacts state oldLeader newLeader oldLog base suffix)
+      CrossTermFacts state newLeader oldLog base suffix)
     (safe :
       CrossTermRequestSafe
-        oldLeader newLeader oldLog (base ++ suffix) request)
+        INITIAL_LEADER newLeader oldLog (base ++ suffix) request)
     (handled :
       handleAppendEntriesRequest? (state.nodes destination) request =
         some (after, response))
@@ -5098,17 +4977,17 @@ theorem handledAppendRequestChangedLogCovered
 /-- A handled safe request leaves the destination log on one proof history. -/
 theorem handledAppendRequestLogCovered
     {state : State TxId}
-    {oldLeader newLeader : Node}
+    {newLeader : Node}
     {oldLog base suffix : List (Entry TxId)}
     {destination : Node}
     {request : AppendEntriesRequest TxId}
     {after : NodeState TxId}
     {response : AppendEntriesResponse}
     (facts :
-      CrossTermFacts state oldLeader newLeader oldLog base suffix)
+      CrossTermFacts state newLeader oldLog base suffix)
     (safe :
       CrossTermRequestSafe
-        oldLeader newLeader oldLog (base ++ suffix) request)
+        INITIAL_LEADER newLeader oldLog (base ++ suffix) request)
     (handled :
       handleAppendEntriesRequest? (state.nodes destination) request =
         some (after, response)) :
@@ -5126,17 +5005,17 @@ theorem handledAppendRequestLogCovered
 /-- Applying a safe queued request preserves the canonical committed prefix. -/
 theorem handledAppendRequestCommittedCovered
     {state : State TxId}
-    {oldLeader newLeader : Node}
+    {newLeader : Node}
     {oldLog base suffix : List (Entry TxId)}
     {destination : Node}
     {request : AppendEntriesRequest TxId}
     {after : NodeState TxId}
     {response : AppendEntriesResponse}
     (facts :
-      CrossTermFacts state oldLeader newLeader oldLog base suffix)
+      CrossTermFacts state newLeader oldLog base suffix)
     (safe :
       CrossTermRequestSafe
-        oldLeader newLeader oldLog (base ++ suffix) request)
+        INITIAL_LEADER newLeader oldLog (base ++ suffix) request)
     (targetSafe :
       CrossTermRequestTargetSafe
         state (base ++ suffix) base request)
@@ -5151,7 +5030,6 @@ theorem handledAppendRequestCommittedCovered
       after.commitIndex <= after.log.length :=
     localPost.commitIndexBounded beforeBound
   have beforeCommittedSafe := facts.committedLogsCovered destination
-  rw [facts.newLeaderLog] at beforeCommittedSafe
   by_cases noAdvance :
       after.commitIndex <= (state.nodes destination).commitIndex
   · have withinOld :
@@ -5207,7 +5085,7 @@ theorem handledAppendRequestCommittedCovered
       have learnedPrefix :=
         prefixThroughLeaderCommit afterLogOld
       exact learnedPrefix.trans (by
-        simpa [old.1] using safe.2.2.1)
+        simpa [old.1] using safe.2.2.1 old.1)
     · have afterPrefixNewOrThrough :
           after.committedLog <+: base ++ suffix := by
         by_cases same : after.log = (state.nodes destination).log
@@ -5233,13 +5111,14 @@ theorem handledAppendRequestCommittedCovered
                 · apply coveredHistoriesTakeEqualAtTerm
                   · omega
                   · exact present.1
-                  · exact new.2.2.1.1
+                  · exact requestSnapshotPreviousBound new.2.2.1
                   · exact facts.oldEntriesTermOne
                   · exact facts.suffixEntriesTermTwo
                   · exact facts.basePrefixOld
                   · exact facts.logsCovered destination
                   · exact Or.inr (prefixRefl _)
-                  · exact present.2.trans new.2.2.1.2.2.1
+                  · exact present.2.trans
+                      (requestSnapshotPreviousTerm new.2.2.1)
               unfold NodeState.committedLog
               rw [same]
               have toPrevious :
@@ -5283,23 +5162,23 @@ theorem handledAppendRequestCommittedCovered
 /-- A generated AppendEntries response carries safe routing and index data. -/
 theorem handledAppendRequestResponseSafe
     {state : State TxId}
-    {oldLeader newLeader : Node}
+    {newLeader : Node}
     {oldLog base suffix : List (Entry TxId)}
     {destination : Node}
     {request : AppendEntriesRequest TxId}
     {after : NodeState TxId}
     {response : AppendEntriesResponse}
     (facts :
-      CrossTermFacts state oldLeader newLeader oldLog base suffix)
+      CrossTermFacts state newLeader oldLog base suffix)
     (safe :
       CrossTermRequestSafe
-        oldLeader newLeader oldLog (base ++ suffix) request)
+        INITIAL_LEADER newLeader oldLog (base ++ suffix) request)
     (requestDestination : request.destination = destination)
     (handled :
       handleAppendEntriesRequest? (state.nodes destination) request =
         some (after, response)) :
     CrossTermResponseSafe
-      oldLeader newLeader oldLog (base ++ suffix) base
+      INITIAL_LEADER newLeader oldLog (base ++ suffix) base
         (state.nodes newLeader).votesGranted response := by
   have localPost := handleAppendEntriesRequestLocalPost handled
   refine ⟨?_, ?_, ?_, ?_⟩
@@ -5338,7 +5217,8 @@ theorem handledAppendRequestResponseSafe
         ⟨by
             rw [localPost.responseDestination]
             exact old.2.1,
-          indexBound.trans old.2.2.1.2.1, ?_⟩
+          indexBound.trans
+            (requestSnapshotEndBound old.2.2.1), ?_⟩
       intro voterIn
       have sourceCurrentTwo :
           (state.nodes response.source).currentTerm = 2 := by
@@ -5355,22 +5235,23 @@ theorem handledAppendRequestResponseSafe
         ⟨by
             rw [localPost.responseDestination]
             exact new.2.1,
-          indexBound.trans new.2.2.1.2.1⟩
+          indexBound.trans
+            (requestSnapshotEndBound new.2.2.1)⟩
 
 /-- A generated response which can lower catch-up remains canonical. -/
 theorem handledAppendRequestResponseCatchupSafe
     {state : State TxId}
-    {oldLeader newLeader : Node}
+    {newLeader : Node}
     {oldLog base suffix : List (Entry TxId)}
     {destination : Node}
     {request : AppendEntriesRequest TxId}
     {after : NodeState TxId}
     {response : AppendEntriesResponse}
     (facts :
-      CrossTermFacts state oldLeader newLeader oldLog base suffix)
+      CrossTermFacts state newLeader oldLog base suffix)
     (safe :
       CrossTermRequestSafe
-        oldLeader newLeader oldLog (base ++ suffix) request)
+        INITIAL_LEADER newLeader oldLog (base ++ suffix) request)
     (targetSafe :
       CrossTermRequestTargetSafe
         state (base ++ suffix) base request)
@@ -5491,7 +5372,7 @@ theorem handledAppendRequestResponseCatchupSafe
               · omega
             have requestTerm :
                 request.prevLogTerm = TERM_ONE := by
-              rw [requestNew.2.2.1.2.2.1]
+              rw [requestSnapshotPreviousTerm requestNew.2.2.1]
               exact termAtNewWithinBase
                 facts.oldEntriesTermOne facts.basePrefixOld
                 previousPositive (by omega)
@@ -5505,10 +5386,10 @@ theorem handledAppendRequestResponseCatchupSafe
                 base.length < request.prevLogIndex := by omega
             have requestedPreviousTerm :
                 request.prevLogTerm = 2 := by
-              rw [requestNew.2.2.1.2.2.1]
+              rw [requestSnapshotPreviousTerm requestNew.2.2.1]
               exact termAtNewAfterBase
                 facts.suffixEntriesTermTwo previousAfterBase
-                requestNew.2.2.1.1
+                (requestSnapshotPreviousBound requestNew.2.2.1)
             have localPreviousTermValid :=
               termAtValidOfCoveredLog
                 previousPositive previousBound
@@ -5552,17 +5433,17 @@ theorem handledAppendRequestResponseCatchupSafe
 /-- A request handler cannot move a canonical term-two follower off history. -/
 theorem handledAppendRequestPreservesCanonical
     {state : State TxId}
-    {oldLeader newLeader : Node}
+    {newLeader : Node}
     {oldLog base suffix : List (Entry TxId)}
     {destination : Node}
     {request : AppendEntriesRequest TxId}
     {after : NodeState TxId}
     {response : AppendEntriesResponse}
     (facts :
-      CrossTermFacts state oldLeader newLeader oldLog base suffix)
+      CrossTermFacts state newLeader oldLog base suffix)
     (safe :
       CrossTermRequestSafe
-        oldLeader newLeader oldLog (base ++ suffix) request)
+        INITIAL_LEADER newLeader oldLog (base ++ suffix) request)
     (currentTwo :
       (state.nodes destination).currentTerm = 2)
     (logCanonical :
@@ -5590,17 +5471,17 @@ theorem handledAppendRequestPreservesCanonical
 /-- Every entry after request handling remains within the local current term. -/
 theorem handledAppendRequestEntriesWithinCurrent
     {state : State TxId}
-    {oldLeader newLeader : Node}
+    {newLeader : Node}
     {oldLog base suffix : List (Entry TxId)}
     {destination : Node}
     {request : AppendEntriesRequest TxId}
     {after : NodeState TxId}
     {response : AppendEntriesResponse}
     (facts :
-      CrossTermFacts state oldLeader newLeader oldLog base suffix)
+      CrossTermFacts state newLeader oldLog base suffix)
     (safe :
       CrossTermRequestSafe
-        oldLeader newLeader oldLog (base ++ suffix) request)
+        INITIAL_LEADER newLeader oldLog (base ++ suffix) request)
     (handled :
       handleAppendEntriesRequest? (state.nodes destination) request =
         some (after, response)) :
@@ -5664,8 +5545,7 @@ theorem receiveAppendRequestPreservesCrossTermInvariant
           enqueueNoDup
             (updateQueue state.network destination remaining)
             (.appendEntriesResponse response) } := by
-  rcases cross with
-    ⟨oldLeader, newLeader, oldLog, base, suffix, facts⟩
+  rcases cross with ⟨newLeader, oldLog, base, suffix, facts⟩
   let afterState : State TxId :=
     { state with
       nodes := updateNode state.nodes destination after
@@ -5699,19 +5579,10 @@ theorem receiveAppendRequestPreservesCrossTermInvariant
     · simp [
         afterState, updateNode, Function.update,
         Ne.symm destinationEq]
-  have oldSentEq :
-      (afterState.nodes oldLeader).sentIndex =
-        (state.nodes oldLeader).sentIndex := by
-    by_cases destinationEq : destination = oldLeader
-    · simpa [
-        afterState, destinationEq, localPost.sentIndexUnchanged]
-    · simp [
-        afterState, updateNode, Function.update,
-        Ne.symm destinationEq]
   have oldMatchEq :
-      (afterState.nodes oldLeader).matchIndex =
-        (state.nodes oldLeader).matchIndex := by
-    by_cases destinationEq : destination = oldLeader
+      (afterState.nodes INITIAL_LEADER).matchIndex =
+        (state.nodes INITIAL_LEADER).matchIndex := by
+    by_cases destinationEq : destination = INITIAL_LEADER
     · simpa [
         afterState, destinationEq, localPost.matchIndexUnchanged]
     · simp [
@@ -5735,12 +5606,11 @@ theorem receiveAppendRequestPreservesCrossTermInvariant
     fun current log =>
       handledAppendRequestPreservesCanonical
         facts requestSafe current log handled
-  refine ⟨oldLeader, newLeader, oldLog, base, suffix, ?_⟩
+  refine ⟨newLeader, oldLog, base, suffix, ?_⟩
   constructor
   · exact facts.oldEntriesTermOne
   · exact facts.suffixEntriesTermTwo
   · exact facts.basePrefixOld
-  · exact (congrArg NodeState.log newLeaderNodeEq).trans facts.newLeaderLog
   · intro node
     by_cases nodeEq : node = destination
     · subst node
@@ -5783,94 +5653,31 @@ theorem receiveAppendRequestPreservesCrossTermInvariant
       simpa [
         afterState, updateNode, Function.update, nodeEq
       ] using facts.entriesDoNotExceedCurrentTerm node entry oldMember
-  · exact facts.oldLeaderIsInitial
   · exact facts.leadersDistinct
-  · intro role termOne
-    by_cases destinationEq : destination = oldLeader
-    · have handled' :
-          handleAppendEntriesRequest?
-              (state.nodes oldLeader) request =
-            some (after, response) := by
-        simpa [destinationEq] using handled
-      have beforeRole :
-          (state.nodes oldLeader).role = .leader := by
-        simpa [
-          afterState, destinationEq, localPost.roleUnchanged
-        ] using role
-      have beforeTerm :
-          (state.nodes oldLeader).currentTerm = TERM_ONE := by
-        simpa [
-          afterState, destinationEq, localPost.currentTermUnchanged
-        ] using termOne
-      have unchanged :=
-        handleAppendEntriesRequestLeaderUnchanged beforeRole handled'
-      simpa [afterState, destinationEq, unchanged] using
-        facts.oldLeaderOwnsHistory beforeRole beforeTerm
-    · simpa [
-        afterState, updateNode, Function.update,
-        Ne.symm destinationEq
-      ] using
-        facts.oldLeaderOwnsHistory
-          (by simpa [
-              afterState, updateNode, Function.update,
-              Ne.symm destinationEq
-            ] using role)
-          (by simpa [
-              afterState, updateNode, Function.update,
-              Ne.symm destinationEq
-            ] using termOne)
   · rw [newLeaderNodeEq]
     exact facts.newLeaderRole
-  · rw [newLeaderNodeEq]
-    exact facts.newLeaderTerm
-  · intro node role termOne
+  · intro node role
     by_cases nodeEq : node = destination
     · subst node
       have beforeRole :
           (state.nodes destination).role = .leader := by
         simpa [afterState, localPost.roleUnchanged] using role
-      have beforeTerm :
-          (state.nodes destination).currentTerm = TERM_ONE := by
-        simpa [afterState, localPost.currentTermUnchanged] using termOne
-      exact facts.termOneLeaderUnique destination beforeRole beforeTerm
-    · apply facts.termOneLeaderUnique node
-      · simpa [
+      have unchanged :=
+        handleAppendEntriesRequestLeaderUnchanged beforeRole handled
+      simpa [afterState, unchanged] using
+        facts.leadersOwnHistories destination beforeRole
+    · have beforeRole :
+          (state.nodes node).role = .leader := by
+        simpa [
           afterState, updateNode, Function.update, nodeEq
         ] using role
-      · simpa [
+      simpa [
           afterState, updateNode, Function.update, nodeEq
-        ] using termOne
-  · intro node role termTwo
-    by_cases nodeEq : node = destination
-    · subst node
-      have beforeRole :
-          (state.nodes destination).role = .leader := by
-        simpa [afterState, localPost.roleUnchanged] using role
-      have beforeTerm :
-          (state.nodes destination).currentTerm = 2 := by
-        simpa [afterState, localPost.currentTermUnchanged] using termTwo
-      exact facts.termTwoLeaderUnique destination beforeRole beforeTerm
-    · apply facts.termTwoLeaderUnique node
-      · simpa [
-          afterState, updateNode, Function.update, nodeEq
-        ] using role
-      · simpa [
-          afterState, updateNode, Function.update, nodeEq
-        ] using termTwo
-  · rw [newLeaderNodeEq]
+        ] using facts.leadersOwnHistories node beforeRole
+  · change hasElectionMajority afterState newLeader
+    unfold hasElectionMajority
+    rw [newLeaderNodeEq]
     exact facts.electionMajority
-  · intro voter voterIn
-    have oldIn :
-        voter ∈ (state.nodes newLeader).votesGranted := by
-      rw [newLeaderNodeEq] at voterIn
-      exact voterIn
-    have chosen := facts.electionVotersChooseLeader voter oldIn
-    by_cases voterEq : voter = destination
-    · subst voter
-      simpa [afterState, localPost.votedForUnchanged] using chosen
-    · simpa [
-        afterState, updateNode, Function.update, voterEq
-      ] using chosen
   · intro node role
     have beforeRole :
         (state.nodes node).role = .candidate := by
@@ -5974,12 +5781,24 @@ theorem receiveAppendRequestPreservesCrossTermInvariant
       rw [newLeaderNodeEq]
       exact handledAppendRequestResponseSafe
         facts requestSafe requestDestination handled
-  · intro node
-    rw [oldSentEq]
-    exact facts.oldSentIndicesBounded node
-  · intro node
-    rw [oldMatchEq]
-    exact facts.oldMatchIndicesBounded node
+  · intro leader role peer
+    by_cases leaderEq : leader = destination
+    · subst leader
+      have beforeRole :
+          (state.nodes destination).role = .leader := by
+        simpa [afterState, localPost.roleUnchanged] using role
+      have unchanged :=
+        handleAppendEntriesRequestLeaderUnchanged beforeRole handled
+      simpa [afterState, unchanged] using
+        facts.activeLeaderProgress beforeRole peer
+    · have beforeRole :
+          (state.nodes leader).role = .leader := by
+        simpa [
+          afterState, updateNode, Function.update, leaderEq
+        ] using role
+      simpa [
+        afterState, updateNode, Function.update, leaderEq
+      ] using facts.activeLeaderProgress beforeRole peer
   · intro voter voterIn
     have oldIn :
         voter ∈ (state.nodes newLeader).votesGranted := by
@@ -5988,29 +5807,16 @@ theorem receiveAppendRequestPreservesCrossTermInvariant
     rw [oldMatchEq]
     exact facts.oldElectionMatchBound voter oldIn
   · intro node
-    rw [newLeaderNodeEq]
-    exact facts.newSentIndicesBounded node
-  · intro node
-    rw [newLeaderNodeEq]
-    exact facts.newMatchIndicesBounded node
-  · intro index indexBound majority
-    apply facts.oldMajoritiesCovered index indexBound
-    unfold hasMajorityAt acknowledgingNodes at majority ⊢
-    rw [oldMatchEq] at majority
-    exact majority
-  · intro node
     by_cases nodeEq : node = destination
     · subst node
       have targetCommit :=
         handledAppendRequestCommittedCovered
           facts requestSafe requestTargetSafe requestDestination handled
       rw [show afterState.nodes destination = after by simp [afterState]]
-      rw [newLeaderNodeEq, facts.newLeaderLog]
       exact targetCommit
     · have oldCommit := facts.committedLogsCovered node
       rw [show afterState.nodes node = state.nodes node by
         simp [afterState, updateNode, Function.update, nodeEq]]
-      rw [newLeaderNodeEq]
       exact oldCommit
   · intro node belowBase
     have oldBelow :
@@ -6089,7 +5895,7 @@ theorem receiveAppendRequestPreservesCrossTermInvariant
 /-- Cross-term frame and replication facts after handling one ACK or NACK. -/
 structure CrossResponseLocalPost
     (state : State TxId)
-    (oldLeader newLeader : Node)
+    (newLeader : Node)
     (oldLog base suffix : List (Entry TxId))
     (destination : Node)
     (after : NodeState TxId) : Prop where
@@ -6105,51 +5911,34 @@ structure CrossResponseLocalPost
     after.votedFor = (state.nodes destination).votedFor
   votesGrantedUnchanged :
     after.votesGranted = (state.nodes destination).votesGranted
-  oldSentIndicesBounded :
-    forall node,
-      (updateNode state.nodes destination after oldLeader).sentIndex node <=
-        oldLog.length
-  oldMatchIndicesBounded :
-    forall node,
-      (updateNode state.nodes destination after oldLeader).matchIndex node <=
-        oldLog.length
+  leaderProgressBounded :
+    LeaderProgressBounded
+      { state with nodes := updateNode state.nodes destination after }
   oldElectionMatchBound :
     forall voter,
       voter ∈ (state.nodes newLeader).votesGranted ->
-        (updateNode state.nodes destination after oldLeader).matchIndex voter <=
+        (updateNode state.nodes destination after INITIAL_LEADER).matchIndex voter <=
           base.length
-  newSentIndicesBounded :
-    forall node,
-      (updateNode state.nodes destination after newLeader).sentIndex node <=
-        (base ++ suffix).length
-  newMatchIndicesBounded :
-    forall node,
-      (updateNode state.nodes destination after newLeader).matchIndex node <=
-        (base ++ suffix).length
   newCatchupLogs :
     forall node,
       (updateNode state.nodes destination after newLeader).sentIndex node <
           base.length ->
         (state.nodes node).currentTerm = 2 /\
           (state.nodes node).log <+: base ++ suffix
-  oldMatchChangedImpliesLeader :
-    (updateNode state.nodes destination after oldLeader).matchIndex ≠
-        (state.nodes oldLeader).matchIndex ->
-      (state.nodes oldLeader).role = .leader
 
 /-- The response handler preserves all cross-term replication evidence. -/
 theorem handleAppendEntriesResponseCrossPost
     {state : State TxId}
-    {oldLeader newLeader : Node}
+    {newLeader : Node}
     {oldLog base suffix : List (Entry TxId)}
     {destination : Node}
     {response : AppendEntriesResponse}
     {after : NodeState TxId}
     (facts :
-      CrossTermFacts state oldLeader newLeader oldLog base suffix)
+      CrossTermFacts state newLeader oldLog base suffix)
     (safe :
       CrossTermResponseSafe
-        oldLeader newLeader oldLog (base ++ suffix) base
+        INITIAL_LEADER newLeader oldLog (base ++ suffix) base
           (state.nodes newLeader).votesGranted response)
     (catchupSafe :
       CrossTermResponseCatchupSafe
@@ -6159,9 +5948,9 @@ theorem handleAppendEntriesResponseCrossPost
       handleAppendEntriesResponse? (state.nodes destination) response =
         some after) :
     CrossResponseLocalPost
-      state oldLeader newLeader oldLog base suffix destination after := by
+      state newLeader oldLog base suffix destination after := by
   have destinationLeader :
-      destination = oldLeader \/ destination = newLeader := by
+      destination = INITIAL_LEADER \/ destination = newLeader := by
     have addressed := safe.2.1
     rcases addressed with old | new
     · exact Or.inl (responseDestination.symm.trans old)
@@ -6191,22 +5980,41 @@ theorem handleAppendEntriesResponseCrossPost
       · rfl
       · rfl
       · rfl
-      · intro node
-        simpa using facts.oldSentIndicesBounded node
-      · intro node
-        by_cases nodeEq : node = response.source
-        · subst node
-          simp [updateIndex]
-          have responseBound :=
-            (safe.2.2.2 succeeded.1).resolve_right (by
-              intro new
-              exact facts.leadersDistinct
-                ((responseAddress.symm).trans new.1))
-          exact
-            ⟨facts.oldMatchIndicesBounded response.source,
-              responseBound.2.1⟩
-        · simpa [updateIndex, Function.update, nodeEq] using
-            facts.oldMatchIndicesBounded node
+      · intro leader role peer
+        by_cases leaderEq : leader = INITIAL_LEADER
+        · subst leader
+          have beforeRole :
+              (state.nodes INITIAL_LEADER).role = .leader := by
+            simpa using role
+          have beforeProgress :=
+            facts.activeLeaderProgress beforeRole peer
+          constructor
+          · simpa using beforeProgress.1
+          · by_cases peerEq : peer = response.source
+            · subst peer
+              simp [updateIndex]
+              have responseBound :=
+                (safe.2.2.2 succeeded.1).resolve_right (by
+                  intro new
+                  exact facts.leadersDistinct
+                    ((responseAddress.symm).trans new.1))
+              have oldOwner :=
+                facts.leadersOwnHistories INITIAL_LEADER beforeRole
+              rcases oldOwner with oldOwner | newOwner
+              · exact
+                  ⟨beforeProgress.2,
+                    by simpa [oldOwner.2.2] using responseBound.2.1⟩
+              · exact False.elim (facts.leadersDistinct newOwner.1)
+            · simpa [updateIndex, Function.update, peerEq] using
+                beforeProgress.2
+        · have beforeRole :
+              (state.nodes leader).role = .leader := by
+            simpa [
+              updateNode, Function.update, leaderEq
+            ] using role
+          simpa [
+            updateNode, Function.update, leaderEq
+          ] using facts.activeLeaderProgress beforeRole peer
       · intro voter voterIn
         by_cases voterEq : voter = response.source
         · subst voter
@@ -6221,20 +6029,11 @@ theorem handleAppendEntriesResponseCrossPost
               responseBound.2.2 voterIn⟩
         · simpa [updateIndex, Function.update, voterEq] using
             facts.oldElectionMatchBound voter voterIn
-      · intro node
-        simpa [Ne.symm facts.leadersDistinct] using
-          facts.newSentIndicesBounded node
-      · intro node
-        simpa [
-          updateIndex, Function.update, Ne.symm facts.leadersDistinct
-        ] using facts.newMatchIndicesBounded node
       · intro node belowBase
         have oldBelow :
             (state.nodes newLeader).sentIndex node < base.length := by
           simpa [Ne.symm facts.leadersDistinct] using belowBase
         exact facts.newCatchupLogs node oldBelow
-      · intro _
-        exact succeeded.2.2
     · cases destinationNew
       constructor
       · rfl
@@ -6243,40 +6042,42 @@ theorem handleAppendEntriesResponseCrossPost
       · rfl
       · rfl
       · rfl
-      · intro node
-        simpa [
-          updateIndex, Function.update, facts.leadersDistinct
-        ] using facts.oldSentIndicesBounded node
-      · intro node
-        simpa [facts.leadersDistinct] using
-          facts.oldMatchIndicesBounded node
+      · intro leader role peer
+        by_cases leaderEq : leader = newLeader
+        · subst leader
+          have beforeRole :
+              (state.nodes newLeader).role = .leader := by
+            simpa using role
+          have beforeProgress :=
+            facts.activeLeaderProgress beforeRole peer
+          constructor
+          · simpa using beforeProgress.1
+          · by_cases peerEq : peer = response.source
+            · subst peer
+              simp [updateIndex]
+              have responseBound :=
+                (safe.2.2.2 succeeded.1).resolve_left (by
+                  intro old
+                  exact facts.leadersDistinct
+                    ((old.1.symm).trans responseAddress))
+              exact
+                ⟨beforeProgress.2,
+                  by simpa [facts.newLeaderLog] using responseBound.2⟩
+            · simpa [updateIndex, Function.update, peerEq] using
+                beforeProgress.2
+        · have beforeRole :
+              (state.nodes leader).role = .leader := by
+            simpa [
+              updateNode, Function.update, leaderEq
+            ] using role
+          simpa [
+            updateNode, Function.update, leaderEq
+          ] using facts.activeLeaderProgress beforeRole peer
       · intro voter voterIn
         simpa [facts.leadersDistinct] using
           facts.oldElectionMatchBound voter voterIn
-      · intro node
-        simpa using facts.newSentIndicesBounded node
-      · intro node
-        by_cases nodeEq : node = response.source
-        · subst node
-          simp [updateIndex]
-          have responseBound :=
-            (safe.2.2.2 succeeded.1).resolve_left (by
-              intro old
-              exact facts.leadersDistinct
-                ((old.1.symm).trans responseAddress))
-          exact
-            ⟨(by
-                simpa using
-                  facts.newMatchIndicesBounded response.source),
-              (by simpa using responseBound.2)⟩
-        · simpa [updateIndex, Function.update, nodeEq] using
-            facts.newMatchIndicesBounded node
       · intro node belowBase
         exact facts.newCatchupLogs node (by simpa using belowBase)
-      · intro changed
-        exfalso
-        apply changed
-        simp [facts.leadersDistinct]
   · split at handled
     · rename_i failed
       have afterEq := Option.some.inj handled
@@ -6294,34 +6095,47 @@ theorem handleAppendEntriesResponseCrossPost
         · rfl
         · rfl
         · rfl
-        · intro node
-          by_cases nodeEq : node = response.source
-          · subst node
-            simp [updateIndex]
-            exact
-              ⟨Or.inr (facts.oldSentIndicesBounded response.source),
-                facts.oldMatchIndicesBounded response.source⟩
-          · simpa [updateIndex, Function.update, nodeEq] using
-              facts.oldSentIndicesBounded node
-        · intro node
-          simpa using facts.oldMatchIndicesBounded node
+        · intro leader role peer
+          by_cases leaderEq : leader = INITIAL_LEADER
+          · subst leader
+            have beforeRole :
+                (state.nodes INITIAL_LEADER).role = .leader := by
+              simpa using role
+            have beforeProgress :=
+              facts.activeLeaderProgress beforeRole peer
+            constructor
+            · by_cases peerEq : peer = response.source
+              · subst peer
+                have bounded :=
+                  le_trans
+                    (min_le_right
+                      (findHighestPossibleMatch
+                        (state.nodes INITIAL_LEADER).log
+                        response.lastLogIndex response.term)
+                      ((state.nodes INITIAL_LEADER).sentIndex
+                        response.source))
+                    beforeProgress.1
+                have updatedBound :=
+                  max_le bounded beforeProgress.2
+                simpa [updateIndex] using updatedBound
+              · simpa [updateIndex, Function.update, peerEq] using
+                  beforeProgress.1
+            · simpa using beforeProgress.2
+          · have beforeRole :
+                (state.nodes leader).role = .leader := by
+              simpa [
+                updateNode, Function.update, leaderEq
+              ] using role
+            simpa [
+              updateNode, Function.update, leaderEq
+            ] using facts.activeLeaderProgress beforeRole peer
         · intro voter voterIn
           simpa using facts.oldElectionMatchBound voter voterIn
-        · intro node
-          simpa [Ne.symm facts.leadersDistinct] using
-            facts.newSentIndicesBounded node
-        · intro node
-          simpa [Ne.symm facts.leadersDistinct] using
-            facts.newMatchIndicesBounded node
         · intro node belowBase
           have oldBelow :
               (state.nodes newLeader).sentIndex node < base.length := by
             simpa [Ne.symm facts.leadersDistinct] using belowBase
           exact facts.newCatchupLogs node oldBelow
-        · intro changed
-          exfalso
-          apply changed
-          simp
       · cases destinationNew
         constructor
         · rfl
@@ -6330,30 +6144,43 @@ theorem handleAppendEntriesResponseCrossPost
         · rfl
         · rfl
         · rfl
-        · intro node
-          simpa [facts.leadersDistinct] using
-            facts.oldSentIndicesBounded node
-        · intro node
-          simpa [facts.leadersDistinct] using
-            facts.oldMatchIndicesBounded node
+        · intro leader role peer
+          by_cases leaderEq : leader = newLeader
+          · subst leader
+            have beforeRole :
+                (state.nodes newLeader).role = .leader := by
+              simpa using role
+            have beforeProgress :=
+              facts.activeLeaderProgress beforeRole peer
+            constructor
+            · by_cases peerEq : peer = response.source
+              · subst peer
+                have bounded :=
+                  le_trans
+                    (min_le_right
+                      (findHighestPossibleMatch
+                        (state.nodes newLeader).log
+                        response.lastLogIndex response.term)
+                      ((state.nodes newLeader).sentIndex
+                        response.source))
+                    beforeProgress.1
+                have updatedBound :=
+                  max_le bounded beforeProgress.2
+                simpa [updateIndex] using updatedBound
+              · simpa [updateIndex, Function.update, peerEq] using
+                  beforeProgress.1
+            · simpa using beforeProgress.2
+          · have beforeRole :
+                (state.nodes leader).role = .leader := by
+              simpa [
+                updateNode, Function.update, leaderEq
+              ] using role
+            simpa [
+              updateNode, Function.update, leaderEq
+            ] using facts.activeLeaderProgress beforeRole peer
         · intro voter voterIn
           simpa [facts.leadersDistinct] using
             facts.oldElectionMatchBound voter voterIn
-        · intro node
-          by_cases nodeEq : node = response.source
-          · subst node
-            simp [updateIndex]
-            exact
-              ⟨Or.inr (by
-                  simpa using
-                    facts.newSentIndicesBounded response.source),
-                (by
-                  simpa using
-                    facts.newMatchIndicesBounded response.source)⟩
-          · simpa [updateIndex, Function.update, nodeEq] using
-              facts.newSentIndicesBounded node
-        · intro node
-          simpa using facts.newMatchIndicesBounded node
         · intro node belowBase
           by_cases nodeEq : node = response.source
           · subst node
@@ -6379,40 +6206,22 @@ theorem handleAppendEntriesResponseCrossPost
                 updateIndex, Function.update, nodeEq
               ] using belowBase
             exact facts.newCatchupLogs node oldInside
-        · intro changed
-          exfalso
-          apply changed
-          simp [facts.leadersDistinct]
     · split at handled
       · have afterEq := Option.some.inj handled
         subst after
         exact
           ⟨rfl, rfl, rfl, rfl, rfl, rfl,
-            (by simpa [updateNodeSelf] using facts.oldSentIndicesBounded),
-            (by simpa [updateNodeSelf] using facts.oldMatchIndicesBounded),
+            (by simpa [updateNodeSelf] using facts.leaderProgressBounded),
             (by simpa [updateNodeSelf] using facts.oldElectionMatchBound),
-            (by simpa [updateNodeSelf] using facts.newSentIndicesBounded),
-            (by simpa [updateNodeSelf] using facts.newMatchIndicesBounded),
-            (by simpa [updateNodeSelf] using facts.newCatchupLogs),
-            (by
-              intro changed
-              exfalso
-              exact changed (by rw [updateNodeSelf]))⟩
+            (by simpa [updateNodeSelf] using facts.newCatchupLogs)⟩
       · split at handled
         · have afterEq := Option.some.inj handled
           subst after
           exact
             ⟨rfl, rfl, rfl, rfl, rfl, rfl,
-              (by simpa [updateNodeSelf] using facts.oldSentIndicesBounded),
-              (by simpa [updateNodeSelf] using facts.oldMatchIndicesBounded),
+              (by simpa [updateNodeSelf] using facts.leaderProgressBounded),
               (by simpa [updateNodeSelf] using facts.oldElectionMatchBound),
-              (by simpa [updateNodeSelf] using facts.newSentIndicesBounded),
-              (by simpa [updateNodeSelf] using facts.newMatchIndicesBounded),
-              (by simpa [updateNodeSelf] using facts.newCatchupLogs),
-              (by
-                intro changed
-                exfalso
-                exact changed (by rw [updateNodeSelf]))⟩
+              (by simpa [updateNodeSelf] using facts.newCatchupLogs)⟩
         · contradiction
 
 /-- Receiving an AppendEntries response preserves the cross-term invariant. -/
@@ -6433,8 +6242,7 @@ theorem receiveAppendResponsePreservesCrossTermInvariant
       { state with
         nodes := updateNode state.nodes destination after
         network := updateQueue state.network destination remaining } := by
-  rcases cross with
-    ⟨oldLeader, newLeader, oldLog, base, suffix, facts⟩
+  rcases cross with ⟨newLeader, oldLog, base, suffix, facts⟩
   let afterState : State TxId :=
     { state with
       nodes := updateNode state.nodes destination after
@@ -6518,12 +6326,11 @@ theorem receiveAppendResponsePreservesCrossTermInvariant
       (afterState.nodes newLeader).votesGranted =
         (state.nodes newLeader).votesGranted := by
     simpa [afterState] using votesGrantedEq newLeader
-  refine ⟨oldLeader, newLeader, oldLog, base, suffix, ?_⟩
+  refine ⟨newLeader, oldLog, base, suffix, ?_⟩
   constructor
   · exact facts.oldEntriesTermOne
   · exact facts.suffixEntriesTermTwo
   · exact facts.basePrefixOld
-  · simpa only [logEq] using facts.newLeaderLog
   · simpa only [logEq] using facts.logsCovered
   · simpa only [CommitIndicesBounded, commitEq, logEq] using
       facts.commitIndicesBounded
@@ -6533,30 +6340,16 @@ theorem receiveAppendResponsePreservesCrossTermInvariant
     exact facts.entriesDoNotExceedCurrentTerm node entry
       (by simpa only [logEq] using member) |>.trans_eq
         (currentTermEq node).symm
-  · exact facts.oldLeaderIsInitial
   · exact facts.leadersDistinct
-  · intro role termOne
-    exact facts.oldLeaderOwnsHistory
-      (by simpa only [roleEq] using role)
-      (by simpa only [currentTermEq] using termOne)
-      |>.symm.trans (logEq oldLeader).symm |>.symm
   · simpa only [roleEq] using facts.newLeaderRole
-  · simpa only [currentTermEq] using facts.newLeaderTerm
-  · intro node role termOne
-    exact facts.termOneLeaderUnique node
-      (by simpa only [roleEq] using role)
-      (by simpa only [currentTermEq] using termOne)
-  · intro node role termTwo
-    exact facts.termTwoLeaderUnique node
-      (by simpa only [roleEq] using role)
-      (by simpa only [currentTermEq] using termTwo)
-  · simpa only [votesGrantedEq] using facts.electionMajority
-  · intro voter voterIn
-    have oldIn :
-        voter ∈ (state.nodes newLeader).votesGranted := by
-      simpa only [votesGrantedEq] using voterIn
-    simpa only [votedForEq] using
-      facts.electionVotersChooseLeader voter oldIn
+  · intro node role
+    have beforeRole :
+        (state.nodes node).role = .leader := by
+      simpa only [roleEq] using role
+    simpa only [currentTermEq, logEq] using
+      facts.leadersOwnHistories node beforeRole
+  · simpa only [hasElectionMajority, votesGrantedEq] using
+      facts.electionMajority
   · intro node candidate
     have oldCandidate :
         (state.nodes node).role = .candidate := by
@@ -6593,71 +6386,10 @@ theorem receiveAppendResponsePreservesCrossTermInvariant
           simpa only [
             CrossTermVoteResponseSafe, votedForEq
           ] using oldSafe.2
-  · intro node
-    simpa [afterState] using post.oldSentIndicesBounded node
-  · intro node
-    simpa [afterState] using post.oldMatchIndicesBounded node
+  · simpa [afterState] using post.leaderProgressBounded
   · intro voter voterIn
     apply post.oldElectionMatchBound voter
     simpa only [votesGrantedEq] using voterIn
-  · intro node
-    simpa [afterState] using post.newSentIndicesBounded node
-  · intro node
-    simpa [afterState] using post.newMatchIndicesBounded node
-  · intro index indexBound majority
-    by_cases matchUnchanged :
-        (afterState.nodes oldLeader).matchIndex =
-          (state.nodes oldLeader).matchIndex
-    · apply facts.oldMajoritiesCovered index indexBound
-      have matchUnchanged' :
-          (updateNode state.nodes destination after oldLeader).matchIndex =
-            (state.nodes oldLeader).matchIndex := by
-        simpa [afterState] using matchUnchanged
-      simpa only [
-        hasMajorityAt, acknowledgingNodes, matchUnchanged'
-      ] using majority
-    have oldRole :
-        (state.nodes oldLeader).role = .leader :=
-      post.oldMatchChangedImpliesLeader (by
-        simpa [afterState] using matchUnchanged)
-    have oldTermOne :
-        (state.nodes oldLeader).currentTerm = TERM_ONE := by
-      rcases facts.currentTermsValid oldLeader with termOne | termTwo
-      · exact termOne
-      · have sameLeader :=
-          facts.termTwoLeaderUnique oldLeader oldRole termTwo
-        exact False.elim (facts.leadersDistinct sameLeader)
-    have intersection :=
-      CCFRaft.fiveNodeMajoritiesIntersect
-        (acknowledgingNodes afterState oldLeader index)
-        (afterState.nodes newLeader).votesGranted
-        majority
-        (by
-          rw [newVotesAfterEq]
-          exact facts.electionMajority)
-    rcases intersection with ⟨voter, both⟩
-    have acknowledges := (Finset.mem_inter.mp both).1
-    have elected := (Finset.mem_inter.mp both).2
-    simp only [
-      acknowledgingNodes, Finset.mem_filter, Finset.mem_univ, true_and
-    ] at acknowledges
-    rcases acknowledges with voterOld | matchCovers
-    · subst voter
-      have oldIn :
-          oldLeader ∈ (state.nodes newLeader).votesGranted := by
-        rw [newVotesAfterEq] at elected
-        exact elected
-      have chosen :=
-        facts.electionVotersChooseLeader oldLeader oldIn
-      have oldTermTwo :=
-        facts.votedForTermTwo oldLeader newLeader chosen
-      rw [oldTermOne, TERM_ONE] at oldTermTwo
-      omega
-    · have bound := post.oldElectionMatchBound voter
-        (by
-          rw [newVotesAfterEq] at elected
-          exact elected)
-      simpa [afterState] using le_trans matchCovers bound
   · intro node
     simpa only [NodeState.committedLog, commitEq, logEq] using
       facts.committedLogsCovered node
@@ -6728,14 +6460,14 @@ structure CrossVoteRequestLocalPost
 /-- A safe term-two vote request changes only the persistent local vote. -/
 theorem handleVoteRequestCrossPost
     {state : State TxId}
-    {oldLeader newLeader : Node}
+    {newLeader : Node}
     {oldLog base suffix : List (Entry TxId)}
     {destination : Node}
     {request : RequestVoteRequest}
     {after : NodeState TxId}
     {response : RequestVoteResponse}
     (facts :
-      CrossTermFacts state oldLeader newLeader oldLog base suffix)
+      CrossTermFacts state newLeader oldLog base suffix)
     (requestDestination : request.destination = destination)
     (requestSafe : CrossTermVoteRequestSafe state request)
     (handled :
@@ -6853,8 +6585,7 @@ theorem receiveVoteRequestPreservesCrossTermInvariant
             enqueueNoDup
               (updateQueue state.network destination remaining)
               (.requestVoteResponse response) } := by
-  rcases cross with
-    ⟨oldLeader, newLeader, oldLog, base, suffix, facts⟩
+  rcases cross with ⟨newLeader, oldLog, base, suffix, facts⟩
   let afterState : State TxId :=
     { state with
         nodes := updateNode state.nodes destination after
@@ -6951,12 +6682,11 @@ theorem receiveVoteRequestPreservesCrossTermInvariant
       simpa [updateQueue] using member
     else by
       simpa [updateQueue, Function.update, queueEq] using member
-  refine ⟨oldLeader, newLeader, oldLog, base, suffix, ?_⟩
+  refine ⟨newLeader, oldLog, base, suffix, ?_⟩
   constructor
   · exact facts.oldEntriesTermOne
   · exact facts.suffixEntriesTermTwo
   · exact facts.basePrefixOld
-  · simpa only [logEq] using facts.newLeaderLog
   · simpa only [logEq] using facts.logsCovered
   · simpa only [CommitIndicesBounded, commitEq, logEq] using
         facts.commitIndicesBounded
@@ -6966,30 +6696,16 @@ theorem receiveVoteRequestPreservesCrossTermInvariant
     rw [currentTermEq node]
     exact facts.entriesDoNotExceedCurrentTerm node entry
         (by simpa only [logEq] using member)
-  · exact facts.oldLeaderIsInitial
   · exact facts.leadersDistinct
-  · intro role termOne
-    rw [logEq oldLeader]
-    exact facts.oldLeaderOwnsHistory
-        (by simpa only [roleEq] using role)
-        (by simpa only [currentTermEq] using termOne)
   · simpa only [roleEq] using facts.newLeaderRole
-  · simpa only [currentTermEq] using facts.newLeaderTerm
-  · intro node role termOne
-    exact facts.termOneLeaderUnique node
-        (by simpa only [roleEq] using role)
-        (by simpa only [currentTermEq] using termOne)
-  · intro node role termTwo
-    exact facts.termTwoLeaderUnique node
-        (by simpa only [roleEq] using role)
-        (by simpa only [currentTermEq] using termTwo)
-  · simpa only [votesGrantedEq] using facts.electionMajority
-  · intro voter voterIn
-    have oldIn :
-          voter ∈ (state.nodes newLeader).votesGranted := by
-        simpa only [votesGrantedEq] using voterIn
-    exact globalSomePreserved voter newLeader
-        (facts.electionVotersChooseLeader voter oldIn)
+  · intro node role
+    have beforeRole :
+        (state.nodes node).role = .leader := by
+      simpa only [roleEq] using role
+    simpa only [currentTermEq, logEq] using
+      facts.leadersOwnHistories node beforeRole
+  · simpa only [hasElectionMajority, votesGrantedEq] using
+      facts.electionMajority
   · intro node candidate
     have oldCandidate :
           (state.nodes node).role = .candidate := by
@@ -7046,23 +6762,18 @@ theorem receiveVoteRequestPreservesCrossTermInvariant
     · exact
         ⟨by simpa [messageEq] using queueEq.symm,
           by simpa [messageEq, afterState] using post.responseSafe⟩
-  · intro node
-    simpa only [sentEq] using facts.oldSentIndicesBounded node
-  · intro node
-    simpa only [matchEq] using facts.oldMatchIndicesBounded node
+  · intro leader role peer
+    have beforeRole :
+        (state.nodes leader).role = .leader := by
+      simpa only [roleEq] using role
+    simpa only [sentEq, matchEq, logEq] using
+      facts.activeLeaderProgress beforeRole peer
   · intro voter voterIn
     have oldIn :
         voter ∈ (state.nodes newLeader).votesGranted := by
       simpa only [votesGrantedEq] using voterIn
     simpa only [matchEq] using
       facts.oldElectionMatchBound voter oldIn
-  · intro node
-    simpa only [sentEq] using facts.newSentIndicesBounded node
-  · intro node
-    simpa only [matchEq] using facts.newMatchIndicesBounded node
-  · intro index indexBound majority
-    apply facts.oldMajoritiesCovered index indexBound
-    simpa only [hasMajorityAt, acknowledgingNodes, matchEq] using majority
   · intro node
     simpa only [NodeState.committedLog, commitEq, logEq] using
         facts.committedLogsCovered node
@@ -7135,8 +6846,7 @@ theorem receiveVoteResponsePreservesCrossTermInvariant
       { state with
         nodes := updateNode state.nodes destination after
         network := updateQueue state.network destination remaining } := by
-  rcases cross with
-    ⟨oldLeader, newLeader, oldLog, base, suffix, facts⟩
+  rcases cross with ⟨newLeader, oldLog, base, suffix, facts⟩
   let afterState : State TxId :=
     { state with
       nodes := updateNode state.nodes destination after
@@ -7238,12 +6948,11 @@ theorem receiveVoteResponsePreservesCrossTermInvariant
       simpa [
         afterState, updateQueue, Function.update, queueEq
       ] using member
-  refine ⟨oldLeader, newLeader, oldLog, base, suffix, ?_⟩
+  refine ⟨newLeader, oldLog, base, suffix, ?_⟩
   constructor
   · exact facts.oldEntriesTermOne
   · exact facts.suffixEntriesTermTwo
   · exact facts.basePrefixOld
-  · simpa only [logEq] using facts.newLeaderLog
   · simpa only [logEq] using facts.logsCovered
   · simpa only [CommitIndicesBounded, commitEq, logEq] using
       facts.commitIndicesBounded
@@ -7253,30 +6962,16 @@ theorem receiveVoteResponsePreservesCrossTermInvariant
     rw [currentTermEq node]
     exact facts.entriesDoNotExceedCurrentTerm node entry
       (by simpa only [logEq] using member)
-  · exact facts.oldLeaderIsInitial
   · exact facts.leadersDistinct
-  · intro role termOne
-    rw [logEq oldLeader]
-    exact facts.oldLeaderOwnsHistory
-      (by simpa only [roleEq] using role)
-      (by simpa only [currentTermEq] using termOne)
   · simpa only [roleEq] using facts.newLeaderRole
-  · simpa only [currentTermEq] using facts.newLeaderTerm
-  · intro node role termOne
-    exact facts.termOneLeaderUnique node
-      (by simpa only [roleEq] using role)
-      (by simpa only [currentTermEq] using termOne)
-  · intro node role termTwo
-    exact facts.termTwoLeaderUnique node
-      (by simpa only [roleEq] using role)
-      (by simpa only [currentTermEq] using termTwo)
-  · simpa only [newLeaderVotesEq] using facts.electionMajority
-  · intro voter voterIn
-    have oldIn :
-        voter ∈ (state.nodes newLeader).votesGranted := by
-      simpa only [newLeaderVotesEq] using voterIn
-    simpa only [votedForEq] using
-      facts.electionVotersChooseLeader voter oldIn
+  · intro node role
+    have beforeRole :
+        (state.nodes node).role = .leader := by
+      simpa only [roleEq] using role
+    simpa only [currentTermEq, logEq] using
+      facts.leadersOwnHistories node beforeRole
+  · simpa only [hasElectionMajority, newLeaderVotesEq] using
+      facts.electionMajority
   · intro node candidate
     have oldCandidate :
         (state.nodes node).role = .candidate := by
@@ -7332,23 +7027,18 @@ theorem receiveVoteResponsePreservesCrossTermInvariant
             simpa only [
               CrossTermVoteResponseSafe, votedForEq
             ] using oldSafe.2⟩
-  · intro node
-    simpa only [sentEq] using facts.oldSentIndicesBounded node
-  · intro node
-    simpa only [matchEq] using facts.oldMatchIndicesBounded node
+  · intro leader role peer
+    have beforeRole :
+        (state.nodes leader).role = .leader := by
+      simpa only [roleEq] using role
+    simpa only [sentEq, matchEq, logEq] using
+      facts.activeLeaderProgress beforeRole peer
   · intro voter voterIn
     have oldIn :
         voter ∈ (state.nodes newLeader).votesGranted := by
       simpa only [newLeaderVotesEq] using voterIn
     simpa only [matchEq] using
       facts.oldElectionMatchBound voter oldIn
-  · intro node
-    simpa only [sentEq] using facts.newSentIndicesBounded node
-  · intro node
-    simpa only [matchEq] using facts.newMatchIndicesBounded node
-  · intro index indexBound majority
-    apply facts.oldMajoritiesCovered index indexBound
-    simpa only [hasMajorityAt, acknowledgingNodes, matchEq] using majority
   · intro node
     simpa only [NodeState.committedLog, commitEq, logEq] using
       facts.committedLogsCovered node
@@ -7405,8 +7095,7 @@ theorem returnToFollowerPreservesCrossTermInvariant
         some nextNode) :
     CrossTermInvariant
       { state with nodes := updateNode state.nodes destination nextNode } := by
-  rcases cross with
-    ⟨oldLeader, newLeader, oldLog, base, suffix, facts⟩
+  rcases cross with ⟨newLeader, oldLog, base, suffix, facts⟩
   unfold returnToFollowerState? at stepped
   split at stepped
   · rename_i canReturn
@@ -7514,12 +7203,11 @@ theorem returnToFollowerPreservesCrossTermInvariant
       intro node
       by_cases nodeEq : node = destination <;>
         simp_all [updateNode, Function.update]
-    refine ⟨oldLeader, newLeader, oldLog, base, suffix, ?_⟩
+    refine ⟨newLeader, oldLog, base, suffix, ?_⟩
     constructor
     · exact facts.oldEntriesTermOne
     · exact facts.suffixEntriesTermTwo
     · exact facts.basePrefixOld
-    · simpa only [logEq] using facts.newLeaderLog
     · simpa only [logEq] using facts.logsCovered
     · simpa only [CommitIndicesBounded, commitEq, logEq] using
         facts.commitIndicesBounded
@@ -7529,33 +7217,17 @@ theorem returnToFollowerPreservesCrossTermInvariant
       rw [currentTermEq node]
       exact facts.entriesDoNotExceedCurrentTerm node entry
         (by simpa only [logEq] using member)
-    · exact facts.oldLeaderIsInitial
     · exact facts.leadersDistinct
-    · intro role termOne
-      rw [logEq oldLeader]
-      exact facts.oldLeaderOwnsHistory
-        (leaderBack oldLeader role)
-        (by simpa only [currentTermEq] using termOne)
     · simpa [
         updateNode, Function.update,
         Ne.symm destinationNeNewLeader
       ] using facts.newLeaderRole
-    · simpa only [currentTermEq] using facts.newLeaderTerm
-    · intro node role termOne
-      exact facts.termOneLeaderUnique node
-        (leaderBack node role)
-        (by simpa only [currentTermEq] using termOne)
-    · intro node role termTwo
-      exact facts.termTwoLeaderUnique node
-        (leaderBack node role)
-        (by simpa only [currentTermEq] using termTwo)
-    · simpa only [votesGrantedEq] using facts.electionMajority
-    · intro voter voterIn
-      have oldIn :
-          voter ∈ (state.nodes newLeader).votesGranted := by
-        simpa only [votesGrantedEq] using voterIn
-      simpa only [votedForEq] using
-        facts.electionVotersChooseLeader voter oldIn
+    · intro node role
+      have beforeRole := leaderBack node role
+      simpa only [currentTermEq, logEq] using
+        facts.leadersOwnHistories node beforeRole
+    · simpa only [hasElectionMajority, votesGrantedEq] using
+        facts.electionMajority
     · intro node candidate
       have oldCandidate := candidateBack node candidate
       simpa only [currentTermEq, votedForEq, votesGrantedEq] using
@@ -7585,19 +7257,16 @@ theorem returnToFollowerPreservesCrossTermInvariant
               simpa only [
                 CrossTermVoteResponseSafe, votedForEq
               ] using oldSafe.2⟩
-    · simpa only [sentEq] using facts.oldSentIndicesBounded
-    · simpa only [matchEq] using facts.oldMatchIndicesBounded
+    · intro leader role peer
+      have beforeRole := leaderBack leader role
+      simpa only [sentEq, matchEq, logEq] using
+        facts.activeLeaderProgress beforeRole peer
     · intro voter voterIn
       have oldIn :
           voter ∈ (state.nodes newLeader).votesGranted := by
         simpa only [votesGrantedEq] using voterIn
       simpa only [matchEq] using
         facts.oldElectionMatchBound voter oldIn
-    · simpa only [sentEq] using facts.newSentIndicesBounded
-    · simpa only [matchEq] using facts.newMatchIndicesBounded
-    · intro index indexBound majority
-      apply facts.oldMajoritiesCovered index indexBound
-      simpa only [hasMajorityAt, acknowledgingNodes, matchEq] using majority
     · intro node
       simpa only [NodeState.committedLog, commitEq, logEq] using
         facts.committedLogsCovered node
@@ -7740,8 +7409,7 @@ theorem crossTermInvariantPreserved
         (updateTermPreservesCrossTermInvariant
           state source destination cross enabled)
   | becomeLeader node =>
-      rcases cross with
-        ⟨oldLeader, newLeader, oldLog, base, suffix, facts⟩
+      rcases cross with ⟨newLeader, oldLog, base, suffix, facts⟩
       exact False.elim
         (crossTermCandidateLacksMajority facts enabled.1 enabled.2.2)
 
@@ -7784,16 +7452,16 @@ theorem reachableLogMatching
     {state : State TxId}
     (reachable : Reachable state) :
     LogMatching state :=
-  (systemInductiveInvariantSafety
-    (reachableSystemInductiveInvariant reachable)).logMatching
+  systemInductiveInvariantLogMatching
+    (reachableSystemInductiveInvariant reachable)
 
 /-- Terms are monotonic within each reachable node log. -/
 theorem reachableMonoLog
     {state : State TxId}
     (reachable : Reachable state) :
     MonoLog state :=
-  (systemInductiveInvariantSafety
-    (reachableSystemInductiveInvariant reachable)).monoLog
+  systemInductiveInvariantMonoLog
+    (reachableSystemInductiveInvariant reachable)
 
 /-- Every reachable state has at most one leader in each term. -/
 theorem reachableElectionSafety
@@ -7808,8 +7476,8 @@ theorem reachableLeaderCompleteness
     {state : State TxId}
     (reachable : Reachable state) :
     LeaderCompleteness state :=
-  (systemInductiveInvariantSafety
-    (reachableSystemInductiveInvariant reachable)).leaderCompleteness
+  systemInductiveInvariantLeaderCompleteness
+    (reachableSystemInductiveInvariant reachable)
 
 /-- Bundle all exported consensus-safety properties for reachable states. -/
 theorem reachableConsensusSafety
