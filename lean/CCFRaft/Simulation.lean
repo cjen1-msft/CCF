@@ -26,6 +26,7 @@ abbrev SimAction := Action TxId
 /-- Action families used for coverage telemetry. -/
 inductive ActionFamily where
   | clientRequest
+  | signCommittableMessages
   | appendEntries
   | receive
   | advanceCommitIndex
@@ -38,6 +39,7 @@ inductive ActionFamily where
 /-- Raw simulator choices that materialize directly as semantic actions. -/
 inductive Choice where
   | clientRequest (node : Node) (txId : TxId)
+  | signCommittableMessages (node : Node)
   | appendEntries (source destination : Node) (batchEnd : Nat)
   | receive (source destination : Node)
   | advanceCommitIndex (node : Node)
@@ -50,6 +52,7 @@ inductive Choice where
 /-- Classify a simulator choice for coverage reporting. -/
 def Choice.family : Choice -> ActionFamily
   | .clientRequest .. => .clientRequest
+  | .signCommittableMessages .. => .signCommittableMessages
   | .appendEntries .. => .appendEntries
   | .receive .. => .receive
   | .advanceCommitIndex .. => .advanceCommitIndex
@@ -61,6 +64,8 @@ def Choice.family : Choice -> ActionFamily
 /-- Convert a simulator choice into the exact model action it denotes. -/
 def materialize (_state : SimState) : Choice -> Option SimAction
   | .clientRequest node txId => some (.clientRequest node txId)
+  | .signCommittableMessages node =>
+      some (.signCommittableMessages node)
   | .appendEntries source destination batchEnd =>
       some (.appendEntries source destination batchEnd)
   | .receive source destination => some (.receive source destination)
@@ -82,6 +87,8 @@ theorem materializeComplete
   cases action with
   | clientRequest node txId =>
       exact ⟨.clientRequest node txId, rfl⟩
+  | signCommittableMessages node =>
+      exact ⟨.signCommittableMessages node, rfl⟩
   | appendEntries source destination batchEnd =>
       exact ⟨.appendEntries source destination batchEnd, rfl⟩
   | receive source destination =>
@@ -112,6 +119,26 @@ def allNodes : List Node :=
 /-- Executable enumeration of all bounded transaction IDs. -/
 def allTxIds : List TxId :=
   List.ofFn fun txId => txId
+
+/-- Materialize finite function fields to keep long executable traces linear. -/
+def compactState (state : SimState) : SimState :=
+  let nodes := Array.ofFn state.nodes
+  let network := Array.ofFn state.network
+  { state with
+    nodes := fun node => nodes[node.val]'node.isLt
+    network := fun node => network[node.val]'node.isLt }
+
+/-- Materializing the finite maps does not change the represented state. -/
+theorem compactState_eq (state : SimState) :
+    compactState state = state := by
+  cases state with
+  | mk nodes network submittedTxIds =>
+      simp only [compactState]
+      congr 1
+      · funext node
+        simp
+      · funext node
+        simp
 
 /-- Every node occurs in the simulator's node enumeration. -/
 @[simp]
@@ -179,12 +206,24 @@ def electionSafetyCheck (state : SimState) : Bool :=
       else
         true
 
+/-- Check that every positive commit frontier points to a signature entry. -/
+def committedFrontierSignatureCheck (state : SimState) : Bool :=
+  allNodes.all fun node =>
+    let nodeState := state.nodes node
+    if nodeState.commitIndex = 0 then
+      true
+    else
+      match entryAt? nodeState.log nodeState.commitIndex with
+      | some entry => decide (entry.content = .signature)
+      | none => false
+
 /-- Check selected executable state-local Raft safety conditions. -/
 def stateChecks (state : SimState) : Bool :=
   (allNodes.all fun node =>
     decide (
       (state.nodes node).commitIndex <=
         (state.nodes node).log.length)) &&
+  committedFrontierSignatureCheck state &&
   committedPrefixesCheck state &&
   logMatchingCheck state &&
   logTermChecks state &&
@@ -222,6 +261,7 @@ def Generator.choose
 def candidateChoices (state : SimState) : List Choice :=
   (allNodes.flatMap fun node =>
     allTxIds.map fun txId => .clientRequest node txId) ++
+  (allNodes.map fun node => .signCommittableMessages node) ++
   (allNodes.flatMap fun source =>
     allNodes.map fun destination =>
       .appendEntries
@@ -251,6 +291,9 @@ theorem candidateChoicesComplete
   cases action with
   | clientRequest node txId =>
       refine ⟨.clientRequest node txId, ?_, rfl⟩
+      simp [candidateChoices]
+  | signCommittableMessages node =>
+      refine ⟨.signCommittableMessages node, ?_, rfl⟩
       simp [candidateChoices]
   | appendEntries source destination batchEnd =>
       refine ⟨.appendEntries source destination batchEnd, ?_, rfl⟩
@@ -309,6 +352,14 @@ def preferredChoices (state : SimState) : List Choice :=
             (state.nodes source).sentIndex destination < batchEnd)
       | _ => false
   let clients := familyChoices .clientRequest enabled
+  let signatures :=
+    (familyChoices .signCommittableMessages enabled).filter fun choice =>
+      match choice with
+      | .signCommittableMessages node =>
+          decide (
+            maxCommittableIndex (state.nodes node).log <
+              (state.nodes node).log.length)
+      | _ => false
   let electionActive :=
     allNodes.any fun node => (state.nodes node).role = .candidate
   let aLeaderNeedsCurrentEntry :=
@@ -322,6 +373,7 @@ def preferredChoices (state : SimState) : List Choice :=
   else if electionActive && !(votes ++ candidateTimeouts).isEmpty then
     votes ++ candidateTimeouts
   else if aLeaderNeedsCurrentEntry && !clients.isEmpty then clients
+  else if !signatures.isEmpty then signatures
   else if !commits.isEmpty then commits
   else if !progressingAppends.isEmpty then progressingAppends
   else enabled
@@ -338,6 +390,7 @@ def propose
 /-- Counts proposals, accepted actions, rejections, traces, and explored depth. -/
 structure Telemetry where
   proposedClient : Nat := 0
+  proposedSign : Nat := 0
   proposedAppend : Nat := 0
   proposedReceive : Nat := 0
   proposedCommit : Nat := 0
@@ -346,6 +399,7 @@ structure Telemetry where
   proposedUpdateTerm : Nat := 0
   proposedBecomeLeader : Nat := 0
   takenClient : Nat := 0
+  takenSign : Nat := 0
   takenAppend : Nat := 0
   takenReceive : Nat := 0
   takenCommit : Nat := 0
@@ -366,6 +420,8 @@ def Telemetry.proposed
   match family with
   | .clientRequest =>
       { telemetry with proposedClient := telemetry.proposedClient + 1 }
+  | .signCommittableMessages =>
+      { telemetry with proposedSign := telemetry.proposedSign + 1 }
   | .appendEntries =>
       { telemetry with proposedAppend := telemetry.proposedAppend + 1 }
   | .receive =>
@@ -389,6 +445,8 @@ def Telemetry.taken
   match family with
   | .clientRequest =>
       { telemetry with takenClient := telemetry.takenClient + 1 }
+  | .signCommittableMessages =>
+      { telemetry with takenSign := telemetry.takenSign + 1 }
   | .appendEntries =>
       { telemetry with takenAppend := telemetry.takenAppend + 1 }
   | .receive =>
@@ -409,6 +467,8 @@ def Telemetry.taken
 def renderAction : SimAction -> String
   | .clientRequest node txId =>
       s!"client,{node.val},{txId.val}"
+  | .signCommittableMessages node =>
+      s!"sign,{node.val}"
   | .appendEntries source destination batchEnd =>
       s!"append,{source.val},{destination.val},{batchEnd}"
   | .receive source destination =>
@@ -455,6 +515,9 @@ def parseAction (line : String) : Option SimAction := do
       let node <- nodeOfString node
       let txId <- txIdOfString txId
       some (.clientRequest node txId)
+  | ["sign", node] =>
+      let node <- nodeOfString node
+      some (.signCommittableMessages node)
   | ["append", source, destination, batchEnd] =>
       let source <- nodeOfString source
       let destination <- nodeOfString destination
@@ -496,6 +559,7 @@ def replayActions
     let some nextState :=
       (system (TxId := TxId)).applyAction state action
       | throw s!"disabled action: {renderAction action}"
+    let nextState := compactState nextState
     if !stateChecks nextState then
       throw s!"state invariant failed after: {renderAction action}"
     if !edgeChecks state nextState then
@@ -514,9 +578,13 @@ def replayFile (path : System.FilePath) : IO UInt32 := do
     actions := actions ++ [action]
   match replayActions actions with
   | .ok state =>
+      let commitIndices :=
+        allNodes.map fun node => (state.nodes node).commitIndex
       IO.println
         s!"replayed {actions.length} arbitrary-term Raft actions; max term={
-          (allNodes.map fun node => (state.nodes node).currentTerm).foldl max 0}"
+          (allNodes.map fun node =>
+            (state.nodes node).currentTerm).foldl max 0}; commit indices={
+          repr commitIndices}"
       return 0
   | .error message =>
       IO.eprintln message
@@ -559,6 +627,7 @@ partial def simulateLoop
       simulateLoop deadlineMs maxDepth generator state depth trace
         { telemetry with rejected := telemetry.rejected + 1 }
   | some nextState =>
+      let nextState := compactState nextState
       let trace := action :: trace
       if !stateChecks nextState || !edgeChecks state nextState then
         let path : System.FilePath := "ccf-raft-failure.trace"

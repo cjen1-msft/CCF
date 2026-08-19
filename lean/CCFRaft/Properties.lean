@@ -15,6 +15,14 @@ def CommitIndicesBounded (state : State TxId) : Prop :=
   forall node,
     (state.nodes node).commitIndex <= (state.nodes node).log.length
 
+/-- Every positive node commit frontier points to a signature entry. -/
+def CommittedFrontierIsSignature (state : State TxId) : Prop :=
+  forall node,
+    0 < (state.nodes node).commitIndex ->
+      isSignatureAt
+        (state.nodes node).log
+        (state.nodes node).commitIndex = true
+
 /-- No two distinct nodes lead in the same term. -/
 def ElectionSafety (state : State TxId) : Prop :=
   forall left right,
@@ -292,11 +300,14 @@ structure NetworkHistoryFacts
   voteRequest :
     forall destination request,
       Message.requestVoteRequest request ∈ state.network destination ->
-        request.lastLogIndex = (voteRequestHistory request).length /\
-          request.lastLogTerm =
+        request.lastCommittableIndex =
+            (voteRequestHistory request).length /\
+          request.lastCommittableTerm =
             termAt
               (voteRequestHistory request)
               (voteRequestHistory request).length /\
+          maxCommittableIndex (voteRequestHistory request) =
+            (voteRequestHistory request).length /\
           TERM_ONE < request.term /\
           request.term <=
             (state.nodes request.source).currentTerm /\
@@ -313,15 +324,20 @@ structure NetworkHistoryFacts
           response.term <=
               (state.nodes response.destination).currentTerm /\
             votes response.source response.term = some response.destination /\
+            maxCommittableIndex (voteCandidateHistory response) =
+              (voteCandidateHistory response).length /\
+            maxCommittableIndex (voteVoterHistory response) =
+              (voteVoterHistory response).length /\
             voteLogUpToDate
               { (state.nodes response.source) with
                 log := voteVoterHistory response }
               { term := response.term
-                lastLogTerm :=
+                lastCommittableTerm :=
                   termAt
                     (voteCandidateHistory response)
                     (voteCandidateHistory response).length
-                lastLogIndex := (voteCandidateHistory response).length
+                lastCommittableIndex :=
+                  (voteCandidateHistory response).length
                 source := response.destination
                 destination := response.source }
 
@@ -457,16 +473,21 @@ def GrantedVoteSnapshots
       votes voter (state.nodes candidate).currentTerm = some candidate /\
         (voter = candidate \/
           (voteCandidateHistory response <+: (state.nodes candidate).log /\
+            maxCommittableIndex (voteCandidateHistory response) =
+              (voteCandidateHistory response).length /\
+            maxCommittableIndex (voteVoterHistory response) =
+              (voteVoterHistory response).length /\
             response.term <= (state.nodes voter).currentTerm /\
             voteLogUpToDate
               { (state.nodes voter) with
                 log := voteVoterHistory response }
               { term := response.term
-                lastLogTerm :=
+                lastCommittableTerm :=
                   termAt
                     (voteCandidateHistory response)
                     (voteCandidateHistory response).length
-                lastLogIndex := (voteCandidateHistory response).length
+                lastCommittableIndex :=
+                  (voteCandidateHistory response).length
                 source := response.destination
                 destination := response.source }))
 
@@ -624,6 +645,11 @@ structure ElectionHistoryFacts
     forall term record,
       elections term = some record ->
         record.promotionLog <+: canonicalHistory term
+  promotionCommittable :
+    forall term record,
+      elections term = some record ->
+        maxCommittableIndex record.promotionLog =
+          record.promotionLog.length
   promotionEntriesBeforeTerm :
     forall term record,
       elections term = some record ->
@@ -641,12 +667,24 @@ structure ElectionHistoryFacts
         voter ∈ record.quorum ->
           HistoryCanonical
             canonicalHistory (record.candidateLog voter)
+  candidateCommittable :
+    forall term record voter,
+      elections term = some record ->
+        voter ∈ record.quorum ->
+          maxCommittableIndex (record.candidateLog voter) =
+            (record.candidateLog voter).length
   voterCanonical :
     forall term record voter,
       elections term = some record ->
         voter ∈ record.quorum ->
           HistoryCanonical
             canonicalHistory (record.voterLog voter)
+  voterCommittable :
+    forall term record voter,
+      elections term = some record ->
+        voter ∈ record.quorum ->
+          maxCommittableIndex (record.voterLog voter) =
+            (record.voterLog voter).length
   upToDate :
     forall term record voter,
       elections term = some record ->
@@ -655,11 +693,12 @@ structure ElectionHistoryFacts
             { (state.nodes voter) with
               log := record.voterLog voter }
             { term
-              lastLogTerm :=
+              lastCommittableTerm :=
                 termAt
                   (record.candidateLog voter)
                   (record.candidateLog voter).length
-              lastLogIndex := (record.candidateLog voter).length
+              lastCommittableIndex :=
+                (record.candidateLog voter).length
               source := record.leader
               destination := voter }
 
@@ -824,6 +863,7 @@ def AckerElectionHistory
     (state.nodes source).role = .leader ->
     termAt (state.nodes source).log index =
         (state.nodes source).currentTerm ->
+      isSignatureAt (state.nodes source).log index = true ->
       forall term record voter,
         elections term = some record ->
         voter ∈ record.quorum ->
@@ -867,6 +907,7 @@ def AckerCurrentHistory
     (state.nodes source).role = .leader ->
     termAt (state.nodes source).log index =
         (state.nodes source).currentTerm ->
+      isSignatureAt (state.nodes source).log index = true ->
       forall voter,
         voter ∈ effectiveAckers state responseHistory source index ->
           (state.nodes source).log.take index <+:
@@ -890,6 +931,7 @@ def AckerVoteHistory
     (state.nodes source).role = .leader ->
     termAt (state.nodes source).log index =
         (state.nodes source).currentTerm ->
+      isSignatureAt (state.nodes source).log index = true ->
       forall voter voteTerm candidate,
         voter ∈ effectiveAckers state responseHistory source index ->
         votes voter voteTerm = some candidate ->
@@ -940,13 +982,14 @@ def CommitEvidence.Valid
     evidence.history.take evidence.supportedLength =
       supportedPrefix /\
     evidence.ackQuorum.card * 2 > NODE_COUNT /\
-    forall member,
+    (forall member,
       member ∈ evidence.ackQuorum ->
         evidence.commitFrontier <=
             (evidence.memberHistory member).length /\
           (evidence.memberHistory member).take
               evidence.commitFrontier =
-            evidence.history.take evidence.commitFrontier
+            evidence.history.take evidence.commitFrontier) /\
+    isSignatureAt evidence.history evidence.commitFrontier = true
 
 /--
 Evidence is known only when it occupies a live proof-state slot: either
@@ -1076,9 +1119,9 @@ structure ProspectiveCommitEvidenceFacts
               (state.nodes candidate).log
 
 /--
-Any current-term prefix already acknowledged by a majority is compatible with
-every committed log.  This covers delayed ACK processing by an isolated old
-leader.
+Any current-term signature frontier already acknowledged by a majority is
+compatible with every committed log.  This covers delayed ACK processing by
+an isolated old leader.
 -/
 def PotentialCommitSafe
     (state : State TxId)
@@ -1087,6 +1130,7 @@ def PotentialCommitSafe
     (state.nodes leader).role = .leader ->
     termAt (state.nodes leader).log index =
         (state.nodes leader).currentTerm ->
+    isSignatureAt (state.nodes leader).log index = true ->
     hasEffectiveMajorityAt state responseHistory leader index ->
       forall node,
         (state.nodes leader).log.take index <+:
@@ -1095,9 +1139,10 @@ def PotentialCommitSafe
             (state.nodes leader).log.take index
 
 /--
-Every higher-term election winner already contains each lower-term prefix that
-an active leader could commit from its recorded acknowledgements.  This is the
-delayed-ACK bridge needed when an old leader commits after a newer election.
+Every higher-term election winner already contains each lower-term current-term
+signature frontier that an active leader could commit from its recorded
+acknowledgements.  This is the delayed-ACK bridge needed when an old leader
+commits after a newer election.
 -/
 def PotentialCommitElectionSafe
     (state : State TxId)
@@ -1106,6 +1151,7 @@ def PotentialCommitElectionSafe
     (state.nodes source).role = .leader ->
     termAt (state.nodes source).log index =
         (state.nodes source).currentTerm ->
+    isSignatureAt (state.nodes source).log index = true ->
     hasEffectiveMajorityAt state responseHistory source index ->
       forall winner,
         ((state.nodes winner).role = .leader \/
@@ -1117,9 +1163,9 @@ def PotentialCommitElectionSafe
             (state.nodes winner).log
 
 /--
-Every current-term prefix that an active leader could commit is already
-represented in every strict quorum.  Advancing `commitIndex` therefore
-preserves `QuorumLog` even when ACK processing is delayed.
+Every current-term signature frontier that an active leader could commit is
+already represented in every strict quorum.  Advancing `commitIndex`
+therefore preserves `QuorumLog` even when ACK processing is delayed.
 -/
 def PotentialCommitQuorumLog
     (state : State TxId)
@@ -1128,6 +1174,7 @@ def PotentialCommitQuorumLog
     (state.nodes source).role = .leader ->
     termAt (state.nodes source).log index =
         (state.nodes source).currentTerm ->
+    isSignatureAt (state.nodes source).log index = true ->
     hasEffectiveMajorityAt state responseHistory source index ->
       forall quorum : Finset Node,
         quorum.card * 2 > NODE_COUNT ->
@@ -1137,9 +1184,9 @@ def PotentialCommitQuorumLog
                 (state.nodes witness).log
 
 /--
-Any two current-term prefixes already acknowledged by strict majorities are
-prefix-comparable.  This lets one such prefix become committed without
-invalidating delayed commit evidence retained by another active leader.
+Any two current-term signature frontiers already acknowledged by strict
+majorities are prefix-comparable.  This lets one such prefix become committed
+without invalidating delayed commit evidence retained by another active leader.
 -/
 def PotentialCommitsComparable
     (state : State TxId)
@@ -1148,11 +1195,13 @@ def PotentialCommitsComparable
     (state.nodes left).role = .leader ->
     termAt (state.nodes left).log leftIndex =
         (state.nodes left).currentTerm ->
+    isSignatureAt (state.nodes left).log leftIndex = true ->
     hasEffectiveMajorityAt state responseHistory left leftIndex ->
       forall right rightIndex,
         (state.nodes right).role = .leader ->
         termAt (state.nodes right).log rightIndex =
             (state.nodes right).currentTerm ->
+        isSignatureAt (state.nodes right).log rightIndex = true ->
         hasEffectiveMajorityAt state responseHistory right rightIndex ->
           (state.nodes left).log.take leftIndex <+:
               (state.nodes right).log.take rightIndex \/
@@ -1233,6 +1282,7 @@ structure InvariantFacts
     (voteVoterHistory : RequestVoteResponse -> List (Entry TxId)) : Prop where
   /- Local node bounds and role obligations. -/
   commitIndicesBounded : CommitIndicesBounded state
+  committedFrontierIsSignature : CommittedFrontierIsSignature state
   currentTermsPositive : CurrentTermsPositive state
   entriesDoNotExceedCurrentTerm : EntriesDoNotExceedCurrentTerm state
   candidatesSelfVote : CandidatesSelfVote state
@@ -1295,9 +1345,10 @@ def SystemInductiveInvariant (state : State TxId) : Prop :=
               state votes appendHistory responseHistory voteRequestHistory
                 voteCandidateHistory voteVoterHistory
 
-/-- Core public safety contains only committed-log consistency and uniqueness. -/
+/-- Core public safety mirrors committed-log, signature, and election safety. -/
 structure ConsensusSafety (state : State TxId) : Prop where
   committedLogsPrefix : CommittedLogsPrefix state
+  committedFrontierIsSignature : CommittedFrontierIsSignature state
   electionSafety : ElectionSafety state
 
 end CCFRaft
