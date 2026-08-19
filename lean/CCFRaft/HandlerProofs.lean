@@ -242,6 +242,293 @@ theorem memOfPrefix
 
 /-! ## Generic commit-frontier facts -/
 
+/-- A positive signature test identifies a concrete signature entry. -/
+theorem isSignatureAtTrue
+    {log : List (Entry TxId)}
+    {index : Nat}
+    (signature : isSignatureAt log index = true) :
+    Exists fun entry =>
+      entryAt? log index = some entry /\
+        entry.content = .signature := by
+  cases found : entryAt? log index with
+  | none =>
+      simp [isSignatureAt, found] at signature
+  | some entry =>
+      refine ⟨entry, rfl, ?_⟩
+      simpa [isSignatureAt, found] using signature
+
+/-- The latest signature index lies within the log. -/
+theorem maxCommittableIndexBounded
+    (log : List (Entry TxId)) :
+    maxCommittableIndex log <= log.length := by
+  unfold maxCommittableIndex
+  let candidates := List.range (log.length + 1)
+  let choose :=
+    fun best index =>
+      if isSignatureAt log index then max best index else best
+  have allBounded :
+      forall index,
+        index ∈ candidates ->
+          index <= log.length := by
+    intro index member
+    simp [candidates] at member
+    omega
+  have foldBounded :
+      forall (values : List Nat) (best : Nat),
+        (forall index, index ∈ values -> index <= log.length) ->
+        best <= log.length ->
+        values.foldl choose best <= log.length := by
+    intro values
+    induction values with
+    | nil =>
+        intro best _ bestBound
+        exact bestBound
+    | cons head tail inductionHypothesis =>
+        intro best valuesBound bestBound
+        apply inductionHypothesis
+        · intro index member
+          exact valuesBound index (by simp [member])
+        · have headBound := valuesBound head (by simp)
+          simp only [choose]
+          split <;> omega
+  change candidates.foldl choose 0 <= log.length
+  exact foldBounded candidates 0 allBounded (by omega)
+
+/-- A positive latest committable index points to a signature. -/
+theorem maxCommittableIndexPositiveIsSignature
+    {log : List (Entry TxId)}
+    (positive : 0 < maxCommittableIndex log) :
+    isSignatureAt log (maxCommittableIndex log) = true := by
+  unfold maxCommittableIndex at positive ⊢
+  let valid := fun index => isSignatureAt log index = true
+  let choose :=
+    fun best index =>
+      if valid index then max best index else best
+  have foldValid :
+      forall (values : List Nat) (best : Nat),
+        (best = 0 \/ valid best) ->
+        let result := values.foldl choose best
+        result = 0 \/ valid result := by
+    intro values
+    induction values with
+    | nil =>
+        intro best bestValid
+        exact bestValid
+    | cons head tail inductionHypothesis =>
+        intro best bestValid
+        apply inductionHypothesis
+        simp only [choose]
+        by_cases headValid : valid head
+        · simp [headValid]
+          rcases bestValid with bestZero | bestIsValid
+          · subst best
+            exact Or.inr headValid
+          · by_cases bestLeHead : best <= head
+            · right
+              simpa [max_eq_right bestLeHead] using headValid
+            · right
+              have headLeBest : head <= best := by omega
+              simpa [max_eq_left headLeBest] using bestIsValid
+        · simp [headValid, bestValid]
+  have resultValid :=
+    foldValid (List.range (log.length + 1)) 0 (Or.inl rfl)
+  rcases resultValid with resultZero | resultValid
+  · rw [resultZero] at positive
+    omega
+  · exact resultValid
+
+/-- Every signature index is no later than the latest signature index. -/
+theorem signatureIndex_le_maxCommittableIndex
+    {log : List (Entry TxId)}
+    {index : Nat}
+    (signature : isSignatureAt log index = true) :
+    index <= maxCommittableIndex log := by
+  have indexBound : index <= log.length := by
+    rcases isSignatureAtTrue signature with ⟨entry, found, _⟩
+    exact entryAtSomeIndexBound found
+  unfold maxCommittableIndex
+  let candidates := List.range (log.length + 1)
+  let choose :=
+    fun best candidate =>
+      if isSignatureAt log candidate then
+        max best candidate
+      else
+        best
+  have foldAboveStart :
+      forall (values : List Nat) (best : Nat),
+        best <= values.foldl choose best := by
+    intro values
+    induction values with
+    | nil =>
+        intro best
+        exact le_rfl
+    | cons head tail inductionHypothesis =>
+        intro best
+        apply le_trans (b := choose best head)
+        · simp only [choose]
+          split <;> omega
+        · exact inductionHypothesis (choose best head)
+  have foldContains :
+      forall (values : List Nat) (best : Nat),
+        index ∈ values ->
+          index <= values.foldl choose best := by
+    intro values
+    induction values with
+    | nil =>
+        simp
+    | cons head tail inductionHypothesis =>
+        intro best member
+        simp only [List.foldl_cons]
+        rcases List.mem_cons.mp member with headEq | tailMember
+        · subst head
+          have selected :
+              choose best index = max best index := by
+            simp [choose, signature]
+          rw [selected]
+          exact
+            (le_max_right best index).trans
+              (foldAboveStart tail (max best index))
+        · exact
+            inductionHypothesis
+              (choose best head) tailMember
+  change index <= candidates.foldl choose 0
+  exact
+    foldContains candidates 0
+      (by
+        simp [candidates]
+        omega)
+
+/-- There is no signature exactly when the latest committable index is zero. -/
+theorem maxCommittableIndex_eq_zero_iff
+    (log : List (Entry TxId)) :
+    maxCommittableIndex log = 0 <->
+      forall index, isSignatureAt log index = false := by
+  constructor
+  · intro zero index
+    cases signature : isSignatureAt log index with
+    | false =>
+        rfl
+    | true =>
+        have bounded :=
+          signatureIndex_le_maxCommittableIndex signature
+        rw [zero] at bounded
+        have indexZero : index = 0 := by omega
+        subst index
+        simp [isSignatureAt, entryAt?] at signature
+  · intro noSignature
+    by_contra nonzero
+    have positive : 0 < maxCommittableIndex log :=
+      Nat.pos_of_ne_zero nonzero
+    have signature :=
+      maxCommittableIndexPositiveIsSignature positive
+    rw [noSignature] at signature
+    exact Bool.noConfusion signature
+
+/-- Extending a log preserves every earlier signature lookup. -/
+theorem isSignatureAt_of_prefix
+    {left right : List (Entry TxId)}
+    (isPrefix : left <+: right)
+    {index : Nat}
+    (signature : isSignatureAt left index = true) :
+    isSignatureAt right index = true := by
+  rcases isSignatureAtTrue signature with ⟨entry, found, content⟩
+  have extended := entryAt_of_prefix isPrefix found
+  simp [isSignatureAt, extended, content]
+
+/-- Extending a log cannot move its latest signature backwards. -/
+theorem maxCommittableIndex_le_of_prefix
+    {left right : List (Entry TxId)}
+    (isPrefix : left <+: right) :
+    maxCommittableIndex left <= maxCommittableIndex right := by
+  by_cases zero : maxCommittableIndex left = 0
+  · omega
+  · have positive : 0 < maxCommittableIndex left :=
+      Nat.pos_of_ne_zero zero
+    exact
+      signatureIndex_le_maxCommittableIndex
+        (isSignatureAt_of_prefix isPrefix
+          (maxCommittableIndexPositiveIsSignature positive))
+
+/-- Appending a signature makes it the latest committable entry. -/
+theorem maxCommittableIndex_append_signature
+    (log : List (Entry TxId))
+    (entry : Entry TxId)
+    (signature : entry.content = .signature) :
+    maxCommittableIndex (log ++ [entry]) = log.length + 1 := by
+  have appendedSignature :
+      isSignatureAt (log ++ [entry]) (log.length + 1) = true := by
+    simp [isSignatureAt, entryAt?, signature]
+  have lower :=
+    signatureIndex_le_maxCommittableIndex appendedSignature
+  have upper :=
+    maxCommittableIndexBounded (log ++ [entry])
+  simp only [List.length_append, List.length_cons, List.length_nil] at upper
+  omega
+
+/-- Taking a log prefix leaves lookups inside that prefix unchanged. -/
+theorem isSignatureAt_take_of_le
+    {log : List (Entry TxId)}
+    {index count : Nat}
+    (within : index <= count)
+    (signature : isSignatureAt log index = true) :
+    isSignatureAt (log.take count) index = true := by
+  rcases isSignatureAtTrue signature with ⟨entry, found, content⟩
+  have taken : entryAt? (log.take count) index = some entry := by
+    by_cases zero : index = 0
+    · subst index
+      simp [entryAt?] at found
+    · unfold entryAt? at found ⊢
+      simp only [zero, ↓reduceIte] at found ⊢
+      rw [List.getElem?_take]
+      split
+      · exact found
+      · omega
+  simp [isSignatureAt, taken, content]
+
+/-- The bounded committable frontier does not exceed its supplied frontier. -/
+theorem maxCommittableIndexUpTo_le_frontier
+    (log : List (Entry TxId))
+    (frontier : Nat) :
+    maxCommittableIndexUpTo log frontier <= frontier := by
+  unfold maxCommittableIndexUpTo
+  exact
+    (maxCommittableIndexBounded (log.take frontier)).trans
+      (by simp)
+
+/-- The bounded committable frontier does not exceed the complete log. -/
+theorem maxCommittableIndexUpTo_le_length
+    (log : List (Entry TxId))
+    (frontier : Nat) :
+    maxCommittableIndexUpTo log frontier <= log.length := by
+  unfold maxCommittableIndexUpTo
+  have bounded :=
+    maxCommittableIndexBounded (log.take frontier)
+  simp only [List.length_take] at bounded
+  omega
+
+/-- Restricting the search frontier cannot reveal a later signature. -/
+theorem maxCommittableIndexUpTo_le
+    (log : List (Entry TxId))
+    (frontier : Nat) :
+    maxCommittableIndexUpTo log frontier <=
+      maxCommittableIndex log := by
+  unfold maxCommittableIndexUpTo
+  exact
+    maxCommittableIndex_le_of_prefix
+      (List.take_prefix frontier log)
+
+/-- A positive bounded committable frontier points to a signature in the log. -/
+theorem maxCommittableIndexUpToPositiveIsSignature
+    {log : List (Entry TxId)}
+    {frontier : Nat}
+    (positive : 0 < maxCommittableIndexUpTo log frontier) :
+    isSignatureAt log (maxCommittableIndexUpTo log frontier) = true := by
+  unfold maxCommittableIndexUpTo at positive ⊢
+  exact
+    isSignatureAt_of_prefix
+      (List.take_prefix frontier log)
+      (maxCommittableIndexPositiveIsSignature positive)
+
 /-- The computed commit frontier never exceeds the leader log length. -/
 theorem highestCommittableIndexBounded
     (state : State TxId)
@@ -253,6 +540,7 @@ theorem highestCommittableIndexBounded
   let choose :=
     fun best index =>
       if index > (state.nodes leader).commitIndex /\
+          isSignatureAt (state.nodes leader).log index = true /\
           termAt (state.nodes leader).log index =
             (state.nodes leader).currentTerm /\
           hasMajorityAt state leader index then
@@ -289,24 +577,28 @@ theorem highestCommittableIndexBounded
   change candidates.foldl choose 0 <= (state.nodes leader).log.length
   exact foldBounded candidates 0 allBounded (by omega)
 
-/-- A newly selected commit frontier satisfies the term and majority guards. -/
-theorem highestCommittableIndexValid
+/-- A newly selected commit frontier satisfies every commit-selection guard. -/
+theorem highestCommittableIndexFacts
     (state : State TxId)
     (leader : Node)
     (advances :
       (state.nodes leader).commitIndex <
         highestCommittableIndex state leader) :
-    termAt
+    isSignatureAt
+        (state.nodes leader).log
+        (highestCommittableIndex state leader) = true /\
+      termAt
         (state.nodes leader).log
         (highestCommittableIndex state leader) =
-      (state.nodes leader).currentTerm /\
+        (state.nodes leader).currentTerm /\
       hasMajorityAt state leader
-        (highestCommittableIndex state leader) := by
+          (highestCommittableIndex state leader) := by
   unfold highestCommittableIndex at advances ⊢
   let leaderState := state.nodes leader
   let valid :=
     fun index =>
       index > leaderState.commitIndex /\
+        isSignatureAt leaderState.log index = true /\
         termAt leaderState.log index = leaderState.currentTerm /\
         hasMajorityAt state leader index
   let choose :=
@@ -343,7 +635,35 @@ theorem highestCommittableIndexValid
   rcases resultValid with resultZero | resultValid
   · rw [resultZero] at advances
     omega
-  · exact ⟨resultValid.2.1, resultValid.2.2⟩
+  · exact
+      ⟨resultValid.2.1, resultValid.2.2.1, resultValid.2.2.2⟩
+
+/-- A newly selected commit frontier satisfies the term and majority guards. -/
+theorem highestCommittableIndexValid
+    (state : State TxId)
+    (leader : Node)
+    (advances :
+      (state.nodes leader).commitIndex <
+        highestCommittableIndex state leader) :
+    termAt
+        (state.nodes leader).log
+        (highestCommittableIndex state leader) =
+      (state.nodes leader).currentTerm /\
+      hasMajorityAt state leader
+        (highestCommittableIndex state leader) :=
+  (highestCommittableIndexFacts state leader advances).2
+
+/-- A newly selected positive commit frontier points to a signature. -/
+theorem highestCommittableIndexIsSignature
+    (state : State TxId)
+    (leader : Node)
+    (advances :
+      (state.nodes leader).commitIndex <
+        highestCommittableIndex state leader) :
+    isSignatureAt
+        (state.nodes leader).log
+        (highestCommittableIndex state leader) = true :=
+  (highestCommittableIndexFacts state leader advances).1
 
 /-! ## Generic local-handler facts -/
 
@@ -449,13 +769,13 @@ theorem committedFromLeader_le_max_leaderCommit
   unfold committedFromLeader
   exact
     max_le_max_left before.commitIndex
-    ((min_le_right
-      newLog.length
-      (min request.leaderCommit
-        (request.prevLogIndex + request.entries.length))).trans
-      (min_le_left
-        request.leaderCommit
-        (request.prevLogIndex + request.entries.length)))
+      ((maxCommittableIndexUpTo_le_frontier
+        newLog
+        (min request.leaderCommit
+          (request.prevLogIndex + request.entries.length))).trans
+        (min_le_left
+          request.leaderCommit
+          (request.prevLogIndex + request.entries.length)))
 
 /-- A follower commit learned from a request stays below the request's
 verified end, apart from an already committed local prefix. -/
@@ -469,13 +789,83 @@ theorem committedFromLeader_le_max_requestEnd
   unfold committedFromLeader
   exact
     max_le_max_left before.commitIndex
-    ((min_le_right
-      newLog.length
+      ((maxCommittableIndexUpTo_le_frontier
+        newLog
+        (min request.leaderCommit
+          (request.prevLogIndex + request.entries.length))).trans
+        (min_le_right
+          request.leaderCommit
+          (request.prevLogIndex + request.entries.length)))
+
+/-- A follower commit learned from a request stays below the latest signature,
+apart from an already committed local prefix. -/
+theorem committedFromLeader_le_max_committable
+    (before : NodeState TxId)
+    (request : AppendEntriesRequest TxId)
+    (newLog : List (Entry TxId)) :
+    committedFromLeader before request newLog <=
+      max before.commitIndex (maxCommittableIndex newLog) := by
+  unfold committedFromLeader
+  exact
+    max_le_max_left before.commitIndex
+      (maxCommittableIndexUpTo_le
+        newLog
+        (min request.leaderCommit
+          (request.prevLogIndex + request.entries.length)))
+
+/-- A follower commit learned from a request remains inside the resulting log
+when the previous committed prefix is still present. -/
+theorem committedFromLeader_bounded
+    (before : NodeState TxId)
+    (request : AppendEntriesRequest TxId)
+    (newLog : List (Entry TxId))
+    (oldBound : before.commitIndex <= newLog.length) :
+    committedFromLeader before request newLog <= newLog.length := by
+  unfold committedFromLeader
+  apply max_le oldBound
+  exact
+    maxCommittableIndexUpTo_le_length
+      newLog
       (min request.leaderCommit
-        (request.prevLogIndex + request.entries.length))).trans
-      (min_le_right
-        request.leaderCommit
-        (request.prevLogIndex + request.entries.length)))
+        (request.prevLogIndex + request.entries.length))
+
+/-- A signature lookup is retained by any log containing the committed prefix. -/
+theorem committedSignature_retained
+    (before : NodeState TxId)
+    (newLog : List (Entry TxId))
+    (retainedPrefix : before.committedLog <+: newLog)
+    (signature :
+      isSignatureAt before.log before.commitIndex = true) :
+    isSignatureAt newLog before.commitIndex = true := by
+  apply isSignatureAt_of_prefix retainedPrefix
+  unfold NodeState.committedLog
+  exact isSignatureAt_take_of_le le_rfl signature
+
+/-- Learning a follower commit preserves the signature-frontier invariant. -/
+theorem committedFromLeader_isSignature
+    (before : NodeState TxId)
+    (request : AppendEntriesRequest TxId)
+    (newLog : List (Entry TxId))
+    (oldSignature :
+      0 < before.commitIndex ->
+        isSignatureAt newLog before.commitIndex = true)
+    (positive : 0 < committedFromLeader before request newLog) :
+    isSignatureAt
+      newLog
+      (committedFromLeader before request newLog) = true := by
+  unfold committedFromLeader at positive ⊢
+  let learned :=
+    maxCommittableIndexUpTo newLog
+      (min request.leaderCommit
+        (request.prevLogIndex + request.entries.length))
+  by_cases oldDominates : learned <= before.commitIndex
+  · rw [max_eq_left oldDominates]
+    exact oldSignature (by omega)
+  · have oldLeLearned : before.commitIndex <= learned := by omega
+    rw [max_eq_right oldLeLearned]
+    exact
+      maxCommittableIndexUpToPositiveIsSignature
+        (by omega)
 
 /-- State facts needed from the AppendEntries request handler in both phases. -/
 structure AppendRequestLocalPost
@@ -516,6 +906,14 @@ structure AppendRequestLocalPost
         (request.prevLogIndex + request.entries.length)
   commitUpperBound :
     after.commitIndex <= max before.commitIndex request.leaderCommit
+  commitCommittableBound :
+    after.commitIndex <=
+      max before.commitIndex (maxCommittableIndex after.log)
+  commitIndexSignature :
+    (0 < before.commitIndex ->
+      isSignatureAt before.log before.commitIndex = true) ->
+    0 < after.commitIndex ->
+      isSignatureAt after.log after.commitIndex = true
   responseSource : response.source = request.destination
   responseDestination : response.destination = request.source
   successfulIndexBound :
@@ -587,6 +985,8 @@ theorem handleAppendEntriesRequestLocalPost
           le_rfl,
           le_max_left _ _,
           le_max_left _ _,
+          le_max_left _ _,
+          (by intro oldSignature positive; exact oldSignature positive),
           metadata.1,
           metadata.2.1,
           (by intro succeeded; rw [metadata.2.2] at succeeded; contradiction),
@@ -637,13 +1037,21 @@ theorem handleAppendEntriesRequestLocalPost
               Or.inl rfl, List.take_prefix _ _,
               (by
                 intro bound
-                simp only [committedFromLeader]
-                omega),
+                exact
+                  committedFromLeader_bounded
+                    before request before.log bound),
               le_max_left _ _,
               committedFromLeader_le_max_requestEnd
                 before request before.log,
               committedFromLeader_le_max_leaderCommit
                 before request before.log,
+              committedFromLeader_le_max_committable
+                before request before.log,
+              (by
+                intro oldSignature positive
+                exact
+                  committedFromLeader_isSignature
+                    before request before.log oldSignature positive),
               by simp [successResponse],
               by simp [successResponse],
               by simp [successResponse],
@@ -700,10 +1108,10 @@ theorem handleAppendEntriesRequestLocalPost
                       request.entries)),
                 (by
                   intro bound
-                  simp only [committedFromLeader, List.length_append,
-                    List.length_take]
                   have previousBound :=
                     ‹noConflictExtension before request›.2.1
+                  apply committedFromLeader_bounded
+                  simp [List.length_take, previousBound]
                   omega),
                 le_max_left _ _,
                 committedFromLeader_le_max_requestEnd
@@ -714,6 +1122,34 @@ theorem handleAppendEntriesRequestLocalPost
                   before request
                     (before.log.take request.prevLogIndex ++
                       request.entries),
+                committedFromLeader_le_max_committable
+                  before request
+                    (before.log.take request.prevLogIndex ++
+                      request.entries),
+                (by
+                  intro oldSignature positive
+                  apply
+                    committedFromLeader_isSignature
+                      before request
+                        (before.log.take request.prevLogIndex ++
+                          request.entries)
+                  · intro oldPositive
+                    apply committedSignature_retained before
+                    · unfold NodeState.committedLog
+                      have first :
+                          before.log.take before.commitIndex <+:
+                            before.log.take request.prevLogIndex := by
+                        rw [List.prefix_take_iff]
+                        constructor
+                        · exact List.take_prefix _ _
+                        · simp only [List.length_take]
+                          omega
+                      exact first.trans
+                        (List.prefix_append
+                          (before.log.take request.prevLogIndex)
+                          request.entries)
+                    · exact oldSignature oldPositive
+                  · exact positive),
                 by simp [successResponse],
                 by simp [successResponse],
                 by
@@ -788,7 +1224,8 @@ theorem handleAppendEntriesRequestLocalPost
                           omega),
                       (by
                         intro bound
-                        simp only [committedFromLeader, List.length_take]
+                        apply committedFromLeader_bounded
+                        simp [List.length_take]
                         rcases accepted.2.2.1 with zero | present
                         · omega
                         · omega),
@@ -799,6 +1236,25 @@ theorem handleAppendEntriesRequestLocalPost
                       committedFromLeader_le_max_leaderCommit
                         before request
                           (before.log.take request.prevLogIndex),
+                      committedFromLeader_le_max_committable
+                        before request
+                          (before.log.take request.prevLogIndex),
+                      (by
+                        intro oldSignature positive
+                        apply
+                          committedFromLeader_isSignature
+                            before request
+                              (before.log.take request.prevLogIndex)
+                        · intro oldPositive
+                          apply committedSignature_retained before
+                          · unfold NodeState.committedLog
+                            rw [List.prefix_take_iff]
+                            constructor
+                            · exact List.take_prefix _ _
+                            · simp [List.length_take]
+                              omega
+                          · exact oldSignature oldPositive
+                        · exact positive),
                       by simp [successResponse],
                       by simp [successResponse],
                       by simp [successResponse],
@@ -862,8 +1318,8 @@ theorem handleAppendEntriesRequestLocalPost
                             request.entries)),
                       (by
                         intro bound
-                        simp only [committedFromLeader, List.length_append,
-                          List.length_take, List.take_take]
+                        apply committedFromLeader_bounded
+                        simp [List.length_take, List.take_take]
                         rcases accepted.2.2.1 with zero | present
                         · omega
                         · omega),
@@ -878,6 +1334,38 @@ theorem handleAppendEntriesRequestLocalPost
                           ((before.log.take request.prevLogIndex).take
                               request.prevLogIndex ++
                             request.entries),
+                      committedFromLeader_le_max_committable
+                        before request
+                          ((before.log.take request.prevLogIndex).take
+                              request.prevLogIndex ++
+                            request.entries),
+                      (by
+                        intro oldSignature positive
+                        apply
+                          committedFromLeader_isSignature
+                            before request
+                              ((before.log.take request.prevLogIndex).take
+                                  request.prevLogIndex ++
+                                request.entries)
+                        · intro oldPositive
+                          apply committedSignature_retained before
+                          · unfold NodeState.committedLog
+                            simp only [List.take_take, Nat.min_self]
+                            have first :
+                                before.log.take before.commitIndex <+:
+                                  before.log.take
+                                    request.prevLogIndex := by
+                              rw [List.prefix_take_iff]
+                              constructor
+                              · exact List.take_prefix _ _
+                              · simp only [List.length_take]
+                                omega
+                            exact first.trans
+                              (List.prefix_append
+                                (before.log.take request.prevLogIndex)
+                                request.entries)
+                          · exact oldSignature oldPositive
+                        · exact positive),
                       by simp [successResponse],
                       by simp [successResponse],
                       by

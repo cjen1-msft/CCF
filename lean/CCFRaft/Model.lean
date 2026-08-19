@@ -30,16 +30,24 @@ def TERM_ONE : Nat := 1
 inductive Role where
   /-- A replica that receives AppendEntries messages. -/
   | follower
-  /-- A node soliciting votes for term two. -/
+  /-- A node soliciting votes in its current term. -/
   | candidate
   /-- The single node that accepts requests and sends AppendEntries. -/
   | leader
   deriving DecidableEq, Repr
 
-/-- A collapsed transaction/signature pair stored in a Raft log. -/
+/-- Payload kinds represented by the fixed-membership Raft projection. -/
+inductive EntryContent (TxId : Type) where
+  /-- An ordinary client transaction with its external identifier. -/
+  | transaction (txId : TxId)
+  /-- A signature over the preceding log prefix. -/
+  | signature
+  deriving DecidableEq, Repr
+
+/-- A transaction or signature stored in a Raft log. -/
 structure Entry (TxId : Type) where
   term : Nat
-  txId : TxId
+  content : EntryContent TxId
   deriving DecidableEq, Repr
 
 /-- Immutable AppendEntries data captured when a leader sends a request. -/
@@ -62,13 +70,13 @@ structure AppendEntriesResponse where
   destination : Node
   deriving DecidableEq, Repr
 
-/-! RequestVote messages carry the candidate's latest collapsed signature. -/
+/-! RequestVote messages carry the candidate's last committable position. -/
 
 /-- Candidate log summary sent to a potential voter. -/
 structure RequestVoteRequest where
   term : Nat
-  lastLogTerm : Nat
-  lastLogIndex : Nat
+  lastCommittableTerm : Nat
+  lastCommittableIndex : Nat
   source : Node
   destination : Node
   deriving DecidableEq, Repr
@@ -255,6 +263,37 @@ def entryAt? (log : List (Entry TxId)) (index : Nat) : Option (Entry TxId) :=
 def termAt (log : List (Entry TxId)) (index : Nat) : Nat :=
   (entryAt? log index).map Entry.term |>.getD 0
 
+/-- Check whether a one-based log position contains a signature. -/
+def isSignatureAt (log : List (Entry TxId)) (index : Nat) : Bool :=
+  match entryAt? log index with
+  | some entry => decide (entry.content = .signature)
+  | none => false
+
+/-- Return the one-based index of the latest signature, or zero if absent. -/
+def maxCommittableIndex (log : List (Entry TxId)) : Nat :=
+  (List.range (log.length + 1)).foldl
+    (fun best index =>
+      if isSignatureAt log index then max best index else best)
+    0
+
+/-- Return the term of the latest signature, or zero if absent. -/
+def maxCommittableTerm (log : List (Entry TxId)) : Nat :=
+  termAt log (maxCommittableIndex log)
+
+/-- Return the latest signature no later than a supplied log frontier. -/
+def maxCommittableIndexUpTo
+    (log : List (Entry TxId))
+    (frontier : Nat) : Nat :=
+  maxCommittableIndex (log.take frontier)
+
+/-- Include a node's persisted commit frontier in its election snapshot. -/
+def lastCommittableIndex (state : NodeState TxId) : Nat :=
+  max state.commitIndex (maxCommittableIndex state.log)
+
+/-- Return the term at a node's last committable election position. -/
+def lastCommittableTerm (state : NodeState TxId) : Nat :=
+  termAt state.log (lastCommittableIndex state)
+
 /-- Select the log entries between the previous index and chosen batch end. -/
 def messageEntries
     (log : List (Entry TxId))
@@ -359,13 +398,13 @@ instance (state : NodeState TxId) (request : AppendEntriesRequest TxId) :
   unfold noConflictExtension
   infer_instance
 
-/-- Advance commit only through the request's verified local/leader frontier. -/
+/-- Advance commit only to a signature in the verified request frontier. -/
 def committedFromLeader
     (state : NodeState TxId)
     (request : AppendEntriesRequest TxId)
     (newLog : List (Entry TxId)) : Nat :=
   max state.commitIndex
-    (min newLog.length
+    (maxCommittableIndexUpTo newLog
       (min request.leaderCommit
         (request.prevLogIndex + request.entries.length)))
 
@@ -568,9 +607,9 @@ def handleAppendEntriesResponse?
 def voteLogUpToDate
     (state : NodeState TxId)
     (request : RequestVoteRequest) : Prop :=
-  request.lastLogTerm > termAt state.log state.log.length \/
-    (request.lastLogTerm = termAt state.log state.log.length /\
-      request.lastLogIndex >= state.log.length)
+  request.lastCommittableTerm > maxCommittableTerm state.log \/
+    (request.lastCommittableTerm = maxCommittableTerm state.log /\
+      request.lastCommittableIndex >= maxCommittableIndex state.log)
 
 instance (state : NodeState TxId) (request : RequestVoteRequest) :
     Decidable (voteLogUpToDate state request) := by
@@ -626,8 +665,8 @@ def makeRequestVoteRequest
     RequestVoteRequest :=
   let sourceState := state.nodes source
   { term := sourceState.currentTerm
-    lastLogTerm := termAt sourceState.log sourceState.log.length
-    lastLogIndex := sourceState.log.length
+    lastCommittableTerm := lastCommittableTerm sourceState
+    lastCommittableIndex := lastCommittableIndex sourceState
     source
     destination }
 
@@ -762,7 +801,7 @@ instance (state : State TxId) (candidate : Node) :
   unfold hasElectionMajority
   infer_instance
 
-/-- Greatest newer current-term index acknowledged by a majority. -/
+/-- Greatest newer current-term signature acknowledged by a majority. -/
 def highestCommittableIndex
     (state : State TxId)
     (leader : Node) : Nat :=
@@ -770,6 +809,7 @@ def highestCommittableIndex
   (List.range (leaderState.log.length + 1)).foldl
     (fun best index =>
       if index > leaderState.commitIndex /\
+          isSignatureAt leaderState.log index = true /\
           termAt leaderState.log index = leaderState.currentTerm /\
           hasMajorityAt state leader index then
         max best index
@@ -781,6 +821,8 @@ def highestCommittableIndex
 inductive Action (TxId : Type) where
   /-- Submit a fresh external transaction to a node. -/
   | clientRequest (node : Node) (txId : TxId)
+  /-- Append a signature over a leader's nonempty log. -/
+  | signCommittableMessages (node : Node)
   /-- Send the next entry or a heartbeat from one node to another. -/
   | appendEntries (source destination : Node) (batchEnd : Nat)
   /-- Process the first queued message from a selected source. -/
@@ -804,6 +846,9 @@ def Enabled
   | .clientRequest node txId =>
       (state.nodes node).role = .leader /\
         txId ∉ state.submittedTxIds
+  | .signCommittableMessages node =>
+      (state.nodes node).role = .leader /\
+        Not ((state.nodes node).log = [])
   | .appendEntries source destination batchEnd =>
       (state.nodes source).role = .leader /\
         Not (source = destination) /\
@@ -840,12 +885,23 @@ def next
     Action TxId -> State TxId
   | .clientRequest node txId =>
       let nodeState := state.nodes node
-      let entry := { term := nodeState.currentTerm, txId }
+      let entry :=
+        { term := nodeState.currentTerm
+          content := EntryContent.transaction txId }
       { state with
         nodes :=
           updateNode state.nodes node
             { nodeState with log := nodeState.log ++ [entry] }
         submittedTxIds := insert txId state.submittedTxIds }
+  | .signCommittableMessages node =>
+      let nodeState := state.nodes node
+      let entry : Entry TxId :=
+        { term := nodeState.currentTerm
+          content := .signature }
+      { state with
+        nodes :=
+          updateNode state.nodes node
+            { nodeState with log := nodeState.log ++ [entry] } }
   | .appendEntries source destination batchEnd =>
       let sourceState := state.nodes source
       let request := makeAppendEntriesRequest state source destination batchEnd
@@ -900,12 +956,14 @@ def next
                   isNewFollower := true } }
   | .becomeLeader node =>
       let nodeState := state.nodes node
+      let log := nodeState.log.take (maxCommittableIndex nodeState.log)
       { state with
         nodes :=
           updateNode state.nodes node
             { nodeState with
               role := .leader
-              sentIndex := fun _ => nodeState.log.length
+              log
+              sentIndex := fun _ => log.length
               matchIndex := fun _ => 0 } }
 
 /-- Package arbitrary-term Raft as a reusable executable transition system. -/

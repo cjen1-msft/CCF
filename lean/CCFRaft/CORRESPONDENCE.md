@@ -8,10 +8,10 @@ state-shape equality.
 candidates may time out in any term, and RequestVote and promotion are not
 fixed to term two.
 
-Canonical `CCFRaft.Proofs` proves this arbitrary-term transition system
-inductive. Its proof-only histories retain ballot provenance: the ledger
-snapshot, election term, quorum, delayed replication support, and commit
-evidence. Runtime state and wire messages are unchanged.
+Canonical `CCFRaft.Proofs` proves this arbitrary-term transition system with
+explicit signatures inductive. Its proof-only histories retain ballot
+provenance: the ledger snapshot, election term, quorum, delayed replication
+support, and commit evidence. Runtime state and wire messages are unchanged.
 
 The minimized invariant does not store log matching, quorum-log coverage,
 potential-commit safety, or leader completeness. Those are derived from the
@@ -28,23 +28,23 @@ active modules in the current tree.
 | `Servers`                          | `Node := Fin NODE_COUNT`, with `NODE_COUNT = 5`                  |
 | Configuration                      | Fixed set of all five nodes; not mutable state                   |
 | Initial log                        | Empty; the CCF bootstrap prefix is projected away                |
-| Signature entries                  | Each transaction and following signature collapse to one `Entry` |
-| Entry payload                      | Opaque unique `txId`; erased by the source consensus algorithm   |
+| Signature entries                  | Explicit `EntryContent.signature` entries                        |
+| Transaction entries                | `EntryContent.transaction` with an opaque unique `txId`           |
 | Terms                              | Natural-numbered terms starting from bootstrap term 1             |
 | Network guarantee                  | Ordered/no-duplicate FIFO queue per destination                  |
 | Variables outside selected actions | Omitted                                                          |
 
-The signature-pair projection maps source signature index `2n` to model index
-`n`. Removed bootstrap prefixes rebase all later indices by the removed prefix
+Removed bootstrap prefixes rebase all later indices by the removed prefix
 length.
 
 ## Locality and action mapping
 
 | Lean action/helper                | `ccfraft.tla` operator                                    | Reads current node state                   | Writes node state         |
 | --------------------------------- | --------------------------------------------------------- | ------------------------------------------ | ------------------------- |
-| `clientRequest`                   | `ClientRequest` followed by `SignCommittableMessages`     | acting leader                              | acting leader             |
-| `appendEntries`                   | projected pair of `AppendEntries` sends                   | source                                     | source                    |
-| `receive`                         | projected pair of selected AppendEntries receive branches | destination and selected message           | destination               |
+| `clientRequest`                   | `ClientRequest`                                           | acting leader                              | acting leader             |
+| `signCommittableMessages`         | `SignCommittableMessages`                                 | acting leader                              | acting leader             |
+| `appendEntries`                   | `AppendEntries`                                           | source                                     | source                    |
+| `receive`                         | selected AppendEntries receive branch                     | destination and selected message           | destination               |
 | `rejectAppendEntriesRequest?`     | `RejectAppendEntriesRequest`                              | destination                                | destination               |
 | `appendEntriesAlreadyDone?`       | `AppendEntriesAlreadyDone`                                | destination                                | destination               |
 | `conflictAppendEntriesRequest?`   | `ConflictAppendEntriesRequest`                            | destination                                | destination               |
@@ -62,19 +62,6 @@ Receive handlers never inspect the source node's current state. They use only
 the immutable request/response snapshot selected from the destination queue.
 Global comparisons occur only in proof predicates.
 
-### Collapsed-pair weak transitions
-
-The entry projection hides odd source indices. One Lean entry represents a
-source transaction followed immediately by its signature. Consequently one
-Lean AppendEntries request/ACK exchange represents the source sequence that
-replicates and acknowledges both raw entries.
-
-The intermediate source state where only the transaction is replicated is
-hidden. This is a weak/macro-step correspondence, not a one-to-one transition
-mapping. The hidden state cannot advance `commitIndex` because it does not end at a
-signature. Elections and delayed traffic make this a weak correspondence
-rather than a one-to-one transition mapping.
-
 ## Semantic details retained
 
 - AppendEntries uses
@@ -88,8 +75,9 @@ rather than a one-to-one transition mapping.
 - NACKs back `sentIndex` up but never below `matchIndex`.
 - Conflict detection compares terms; overlap acceptance compares full entries.
 - Conflict truncation is guarded above `commitIndex`.
-- Commit chooses the greatest index above the current commit whose entry term
-  equals the leader term and whose local ACK set is a five-node majority.
+- Commit chooses the greatest signature index above the current commit whose
+  entry term equals the leader term and whose local ACK set is a five-node
+  majority.
 - Timeout advances a follower or candidate to its successor term, records its
   self-vote, and starts an election.
 - `UpdateTerm` observes but does not consume a newer queued message.
@@ -103,9 +91,8 @@ rather than a one-to-one transition mapping.
 - A voter grants at most one candidate per term and only when the candidate log
   is at least as up to date as its own.
 - A candidate becomes leader after recording a strict three-of-five majority.
-- Leader promotion initializes local replication indices as in the source, but
-  the collapsed signed-entry projection makes source signature-prefix
-  truncation a no-op.
+- Leader promotion truncates its log to the latest signature, initializes
+  `sentIndex` from that truncated length, and clears `matchIndex`.
 - Leaders in different terms may append and replicate while they remain
   locally unaware of each other.
 - A same-term candidate receiving AppendEntries first executes
@@ -116,23 +103,29 @@ rather than a one-to-one transition mapping.
 
 ## Executable regression evidence
 
+`CCFRaft/signature-commit.trace` appends a transaction and signature, replicates
+both entries to a majority, and commits the signature frontier.
+
 `CCFRaft/arbitrary-terms.trace` leaves node one partitioned long enough to
-timeout twice, elects it directly in term three, commits a term-three entry,
-then elects node two in term four and commits another current-term entry.
+timeout twice, elects it directly in term three, commits a term-three
+signature, then elects node two in term four and commits another current-term
+signature.
 
 `CCFRaft/delayed-ack.trace` elects a higher-term leader before node zero
-processes its final old-term ACK. Node zero then forms a stale local majority
-and commits; the elected higher-term leader already contains that prefix.
+processes the final ACK for its current-term signature. Node zero then forms a
+stale local majority and commits; the elected higher-term leader already
+contains that signed prefix.
 
 `CCFRaft/follower-overcommit.trace` exposed a Lean-reachable safety
-issue: an already-done partial AppendEntries request carried a later leader
-commit frontier, allowing the follower to commit a divergent signed suffix
-beyond the request tail. The Lean model now additionally bounds follower
-commit by `prevLogIndex + entries.length`, matching the standard Raft "last new
-entry" bound. The checked-in `ccfraft.tla` and C++ implementation contain the
-same missing local bound, but equivalent end-to-end reachability has not yet
-been demonstrated there. This is an explicit evidence-backed correction rather
-than an accidental projection.
+issue: an already-done partial AppendEntries request carried signed commit
+frontier six while its verified tail ended at signature four, beyond which the
+follower had a divergent signed suffix. The follower now commits only through
+signature four. The Lean model bounds follower commit by
+`prevLogIndex + entries.length`, matching the standard Raft "last new entry"
+bound. The checked-in `ccfraft.tla` and C++ implementation contain the same
+missing local bound, but equivalent end-to-end reachability has not yet been
+demonstrated there. This is an explicit evidence-backed correction rather than
+an accidental projection.
 
 The conflict helpers are also translated, but no conflict transition is
 reachable before elections or term changes. Later grounded fixtures may project
@@ -144,8 +137,9 @@ deltas.
 ## Current evidence and limitations
 
 - Lean proofs establish safety over every execution of the active semantics.
-- Executable traces cover repeated elections, skipped terms, delayed ACKs,
-  and follower commit bounds.
+- Executable traces cover explicit transaction/signature replication,
+  signature-only commits, repeated elections, skipped terms, delayed ACKs, and
+  follower commit bounds.
 - The simulator uses exactly `Enabled` and `next`.
 - There is not yet a machine-checked semantics or bisimulation theorem between
   TLA+ and Lean.
@@ -160,8 +154,7 @@ reviews during development produced:
 
 - exact one-entry/heartbeat source batching;
 - source-compatible NACK match index and term fields;
-- explicit weak/macro-step documentation for collapsed transaction/signature
-  replication;
+- explicit transaction/signature replication and signature-only commits;
 - complete finite simulator candidate enumeration;
 - runtime checks for commit bounds, committed-prefix consistency, log
   matching, log-term bounds, and election safety.

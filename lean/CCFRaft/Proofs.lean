@@ -29,7 +29,7 @@ theorem commitEvidenceRestrictValid
       (evidence.history.take shorterLength) := by
   rcases valid with
     ⟨frontierBound, frontierTerm, supportedBound, _,
-      majority, members⟩
+      majority, members, frontierSignature⟩
   exact
     ⟨by simpa [CommitEvidence.restrict] using frontierBound,
       by simpa [CommitEvidence.restrict] using frontierTerm,
@@ -40,7 +40,8 @@ theorem commitEvidenceRestrictValid
       by
         intro member memberIn
         simpa [CommitEvidence.restrict] using
-          members member memberIn⟩
+          members member memberIn,
+      by simpa [CommitEvidence.restrict] using frontierSignature⟩
 
 /-- A valid evidence exposes its supported prefix as a canonical take. -/
 theorem commitEvidencePrefix
@@ -637,6 +638,85 @@ theorem entryAtTake_of_le
     split
     · rfl
     · omega
+
+/-- Taking beyond an index leaves its term lookup unchanged. -/
+theorem termAtTakeOfLe
+    {log : List (Entry TxId)}
+    {index count : Nat}
+    (within : index <= count) :
+    termAt (log.take count) index = termAt log index := by
+  unfold termAt
+  rw [entryAtTake_of_le within]
+
+/-- Taking through the latest signature retains exactly that committable index. -/
+theorem maxCommittableIndexTakeMax
+    (log : List (Entry TxId)) :
+    maxCommittableIndex (log.take (maxCommittableIndex log)) =
+      maxCommittableIndex log := by
+  by_cases zero : maxCommittableIndex log = 0
+  · rw [zero]
+    rfl
+  apply Nat.le_antisymm
+  · exact
+      (maxCommittableIndexBounded
+        (log.take (maxCommittableIndex log))).trans
+        (by simp)
+  · exact
+      signatureIndex_le_maxCommittableIndex
+        (isSignatureAt_take_of_le le_rfl
+          (maxCommittableIndexPositiveIsSignature
+            (Nat.pos_of_ne_zero zero)))
+
+/-- Taking through the latest signature retains its committable term. -/
+theorem maxCommittableTermTakeMax
+    (log : List (Entry TxId)) :
+    maxCommittableTerm (log.take (maxCommittableIndex log)) =
+      maxCommittableTerm log := by
+  unfold maxCommittableTerm
+  rw [maxCommittableIndexTakeMax]
+  exact termAtTakeOfLe le_rfl
+
+/-- An exact committable snapshot lies inside the larger log's signature prefix. -/
+theorem committablePrefixOfMaxTake
+    {snapshot log : List (Entry TxId)}
+    (isPrefix : snapshot <+: log)
+    (snapshotCommittable :
+      maxCommittableIndex snapshot = snapshot.length) :
+    snapshot <+: log.take (maxCommittableIndex log) := by
+  have lengthBound :
+      snapshot.length <= maxCommittableIndex log := by
+    rw [← snapshotCommittable]
+    exact maxCommittableIndex_le_of_prefix isPrefix
+  rw [List.prefix_iff_eq_take]
+  calc
+    snapshot =
+        log.take snapshot.length := (prefixEqTake isPrefix).symm
+    _ =
+        (log.take (maxCommittableIndex log)).take snapshot.length := by
+      simp [List.take_take, Nat.min_eq_left lengthBound]
+
+/-- A prefix ending in a signature lies inside the larger log's signature prefix. -/
+theorem signatureEndedPrefixOfMaxTake
+    {snapshot log : List (Entry TxId)}
+    (isPrefix : snapshot <+: log)
+    (signature : isSignatureAt snapshot snapshot.length = true) :
+    snapshot <+: log.take (maxCommittableIndex log) := by
+  apply committablePrefixOfMaxTake isPrefix
+  apply Nat.le_antisymm
+  · exact maxCommittableIndexBounded snapshot
+  · exact signatureIndex_le_maxCommittableIndex signature
+
+/-- Taking through a known signature produces a prefix ending at that signature. -/
+theorem signatureAtTakeLength
+    {log : List (Entry TxId)}
+    {index : Nat}
+    (signature : isSignatureAt log index = true) :
+    isSignatureAt (log.take index) (log.take index).length = true := by
+  have indexBound : index <= log.length := by
+    rcases isSignatureAtTrue signature with ⟨entry, found, _⟩
+    exact entryAtSomeIndexBound found
+  simpa [List.length_take, Nat.min_eq_left indexBound] using
+    isSignatureAt_take_of_le le_rfl signature
 
 /-- A strict majority of the fixed node set is nonempty. -/
 theorem majorityNonempty
@@ -2499,7 +2579,110 @@ theorem termAtLastMonotoneOfPrefix
           shorterFoundInHistory historyFound
   simpa [termAt, shorterFound, historyFound] using termOrder
 
-/-- A voter accepting one candidate prefix also accepts any monotone extension. -/
+/-- Extending a monotone history cannot decrease its latest signature term. -/
+theorem maxCommittableTermMonotoneOfPrefix
+    {shorter history : List (Entry TxId)}
+    (isPrefix : shorter <+: history)
+    (mono : MonoHistory history) :
+    maxCommittableTerm shorter <= maxCommittableTerm history := by
+  let shorterIndex := maxCommittableIndex shorter
+  let historyIndex := maxCommittableIndex history
+  have indexOrder : shorterIndex <= historyIndex := by
+    exact maxCommittableIndex_le_of_prefix isPrefix
+  change termAt shorter shorterIndex <= termAt history historyIndex
+  by_cases shorterZero : shorterIndex = 0
+  · simp [maxCommittableTerm, shorterIndex, shorterZero, termAt, entryAt?]
+  have shorterPositive : 0 < shorterIndex := Nat.pos_of_ne_zero shorterZero
+  rcases
+      isSignatureAtTrue
+        (maxCommittableIndexPositiveIsSignature
+          (log := shorter) shorterPositive) with
+    ⟨shorterEntry, shorterFound, _⟩
+  have shorterFound' :
+      entryAt? shorter shorterIndex = some shorterEntry := by
+    simpa [shorterIndex] using shorterFound
+  have shorterFoundInHistory :
+      entryAt? history shorterIndex = some shorterEntry :=
+    CCFRaft.entryAt_of_prefix isPrefix shorterFound
+  by_cases sameIndex : shorterIndex = historyIndex
+  · rw [← sameIndex]
+    simp [termAt, shorterFound', shorterFoundInHistory]
+  have historyPositive : 0 < historyIndex := lt_of_lt_of_le shorterPositive indexOrder
+  rcases
+      isSignatureAtTrue
+        (maxCommittableIndexPositiveIsSignature
+          (log := history) historyPositive) with
+    ⟨historyEntry, historyFound, _⟩
+  have historyFound' :
+      entryAt? history historyIndex = some historyEntry := by
+    simpa [historyIndex] using historyFound
+  have termOrder :=
+    mono shorterIndex historyIndex shorterEntry historyEntry
+      (lt_of_le_of_ne indexOrder sameIndex)
+      shorterFoundInHistory historyFound'
+  simpa [termAt, shorterFound', historyFound'] using termOrder
+
+/-- A signature-only commit frontier is no later than the latest signature. -/
+theorem lastCommittableIndex_eq_maxCommittableIndex
+    (state : NodeState TxId)
+    (committedSignature :
+      0 < state.commitIndex ->
+        isSignatureAt state.log state.commitIndex = true) :
+    lastCommittableIndex state = maxCommittableIndex state.log := by
+  unfold lastCommittableIndex
+  apply max_eq_right
+  by_cases zero : state.commitIndex = 0
+  · omega
+  exact
+    signatureIndex_le_maxCommittableIndex
+      (committedSignature (Nat.pos_of_ne_zero zero))
+
+/-- A signature-only commit does not alter the latest-signature election term. -/
+theorem lastCommittableTerm_eq_maxCommittableTerm
+    (state : NodeState TxId)
+    (committedSignature :
+      0 < state.commitIndex ->
+        isSignatureAt state.log state.commitIndex = true) :
+    lastCommittableTerm state = maxCommittableTerm state.log := by
+  simp [
+    lastCommittableTerm, maxCommittableTerm,
+    lastCommittableIndex_eq_maxCommittableIndex
+      state committedSignature
+  ]
+
+/-- Election frontier fields depend only on the log and commit index. -/
+theorem lastCommittableIndexFrame
+    {before after : NodeState TxId}
+    (logEq : after.log = before.log)
+    (commitEq : after.commitIndex = before.commitIndex) :
+    lastCommittableIndex after = lastCommittableIndex before := by
+  simp [lastCommittableIndex, logEq, commitEq]
+
+/-- Election frontier terms frame with the log and commit index. -/
+theorem lastCommittableTermFrame
+    {before after : NodeState TxId}
+    (logEq : after.log = before.log)
+    (commitEq : after.commitIndex = before.commitIndex) :
+    lastCommittableTerm after = lastCommittableTerm before := by
+  simp [
+    lastCommittableTerm, logEq,
+    lastCommittableIndexFrame logEq commitEq
+  ]
+
+/-- A signature-only committed frontier lies within the latest signature. -/
+theorem commitIndex_le_maxCommittableIndex
+    (state : NodeState TxId)
+    (committedSignature :
+      0 < state.commitIndex ->
+        isSignatureAt state.log state.commitIndex = true) :
+    state.commitIndex <= maxCommittableIndex state.log := by
+  by_cases zero : state.commitIndex = 0
+  · omega
+  exact
+    signatureIndex_le_maxCommittableIndex
+      (committedSignature (Nat.pos_of_ne_zero zero))
+
+/-- A voter accepting one committable prefix also accepts any monotone extension. -/
 theorem voteLogUpToDateOfCandidatePrefix
     (voter : NodeState TxId)
     (source destination : Node)
@@ -2509,29 +2692,28 @@ theorem voteLogUpToDateOfCandidatePrefix
     (upToDate :
       voteLogUpToDate voter
         { term := voter.currentTerm
-          lastLogTerm :=
-            termAt candidatePrefix candidatePrefix.length
-          lastLogIndex := candidatePrefix.length
+          lastCommittableTerm := maxCommittableTerm candidatePrefix
+          lastCommittableIndex := maxCommittableIndex candidatePrefix
           source
           destination }) :
     voteLogUpToDate voter
       { term := voter.currentTerm
-        lastLogTerm :=
-          termAt candidateHistory candidateHistory.length
-        lastLogIndex := candidateHistory.length
+        lastCommittableTerm := maxCommittableTerm candidateHistory
+        lastCommittableIndex := maxCommittableIndex candidateHistory
         source
         destination } := by
   have termMonotone :=
-    termAtLastMonotoneOfPrefix isPrefix mono
-  have lengthMonotone := isPrefix.length_le
+    maxCommittableTermMonotoneOfPrefix isPrefix mono
+  have indexMonotone :=
+    maxCommittableIndex_le_of_prefix isPrefix
   unfold voteLogUpToDate at upToDate ⊢
   simp only at upToDate ⊢
   rcases upToDate with newer | same
   · left
     omega
   · by_cases termStrict :
-        termAt candidatePrefix candidatePrefix.length <
-          termAt candidateHistory candidateHistory.length
+        maxCommittableTerm candidatePrefix <
+          maxCommittableTerm candidateHistory
     · left
       omega
     · right
@@ -2549,8 +2731,9 @@ theorem voteLogUpToDateOfVoterPrefix
     (upToDate : voteLogUpToDate after request) :
     voteLogUpToDate before request := by
   have termMonotone :=
-    termAtLastMonotoneOfPrefix isPrefix mono
-  have lengthMonotone := isPrefix.length_le
+    maxCommittableTermMonotoneOfPrefix isPrefix mono
+  have indexMonotone :=
+    maxCommittableIndex_le_of_prefix isPrefix
   unfold voteLogUpToDate at upToDate ⊢
   rw [beforeLogEq]
   rw [afterLogEq] at upToDate
@@ -2558,8 +2741,8 @@ theorem voteLogUpToDateOfVoterPrefix
   · left
     omega
   · by_cases termStrict :
-        termAt beforeLog beforeLog.length <
-          termAt afterLog afterLog.length
+        maxCommittableTerm beforeLog <
+          maxCommittableTerm afterLog
     · left
       omega
     · right
@@ -3367,7 +3550,7 @@ theorem effectiveElectionVoterTermBound
     ⟨_, self | recorded⟩
   · subst voter
     exact le_rfl
-  · exact recorded.2.1
+  · exact recorded.2.2.2.1
 
 /-- Every prospective election voter is at the candidate's current term. -/
 theorem potentialElectionVoterTermBound
@@ -3598,8 +3781,8 @@ theorem potentialElectionRecordIntersectionEffective
 
 /--
 For the least higher-term election whose promotion log omits a prospective
-prefix, quorum intersection yields a voter whose frozen voter log contains
-that prefix.
+signature frontier, quorum intersection yields a voter whose frozen voter log
+contains that frontier.
 -/
 theorem leastBadElectionHasPrefixVoter
     {state : State TxId}
@@ -3622,6 +3805,8 @@ theorem leastBadElectionHasPrefixVoter
     (currentEntry :
       termAt (state.nodes source).log index =
         (state.nodes source).currentTerm)
+    (currentSignature :
+      isSignatureAt (state.nodes source).log index = true)
     (potential :
       hasPotentialMajorityAt
         state appendHistory responseHistory source index)
@@ -3643,7 +3828,7 @@ theorem leastBadElectionHasPrefixVoter
         voteFacts electionFacts potential recorded newer with
     ⟨voter, effective, electionMember⟩
   rcases
-      ackerHistory source index sourceRole currentEntry
+      ackerHistory source index sourceRole currentEntry currentSignature
         term record voter recorded electionMember effective newer with
     voterPrefix | earlier
   · exact ⟨voter, electionMember, voterPrefix⟩
@@ -3656,7 +3841,7 @@ theorem leastBadElectionHasPrefixVoter
 
 /--
 The least higher-term election cannot omit a prospectively quorum-supported
-current-term prefix.
+current-term signature frontier.
 -/
 theorem leastBadElectionPromotionContainsPrefix
     {state : State TxId}
@@ -3683,6 +3868,8 @@ theorem leastBadElectionPromotionContainsPrefix
     (currentEntry :
       termAt (state.nodes source).log index =
         (state.nodes source).currentTerm)
+    (currentSignature :
+      isSignatureAt (state.nodes source).log index = true)
     (potential :
       hasPotentialMajorityAt
         state appendHistory responseHistory source index)
@@ -3699,6 +3886,7 @@ theorem leastBadElectionPromotionContainsPrefix
   rcases
       leastBadElectionHasPrefixVoter
         voteFacts electionFacts ackerHistory sourceRole currentEntry
+          currentSignature
           potential recorded newer earlierSafe with
     ⟨voter, electionMember, voterPrefix⟩
   let supportedPrefix := (state.nodes source).log.take index
@@ -3790,8 +3978,9 @@ theorem leastBadElectionPromotionContainsPrefix
   · have candidateNonempty :
         Not (record.candidateLog voter = []) := by
       intro empty
-      rw [voterLastTerm] at candidateNewer
-      simp [empty, termAt, entryAt?] at candidateNewer
+      simp [
+        empty, maxCommittableTerm, termAt, entryAt?
+      ] at candidateNewer
     have candidateLastPositive :
         0 < (record.candidateLog voter).length :=
       List.length_pos_iff_ne_nil.mpr candidateNonempty
@@ -3809,7 +3998,12 @@ theorem leastBadElectionPromotionContainsPrefix
           candidateLastEntry.term := by
       have candidateNewer' :
           voterLastEntry.term < candidateLastEntry.term := by
-        simpa [candidateLastTerm, voterLastTerm] using candidateNewer
+        simpa [
+          maxCommittableTerm,
+          electionFacts.voterCommittable
+            term record voter recorded electionMember,
+          candidateLastTerm, voterLastTerm
+        ] using candidateNewer
       omega
     have candidateEntryInPromotion :
         candidateLastEntry ∈ record.promotionLog :=
@@ -3904,10 +4098,24 @@ theorem leastBadElectionPromotionContainsPrefix
         record.voterLog voter <+: record.candidateLog voter :=
       canonicalHistoriesPrefixOfSameLastTerm
         canonicalHistory voterCanonical candidateCanonical
-          voterNonempty candidateSame.2 candidateSame.1.symm
+          voterNonempty
+          (by
+            have voterCommittable :=
+              electionFacts.voterCommittable
+                term record voter recorded electionMember
+            have candidateIndex := candidateSame.2
+            simp only at candidateIndex
+            rw [voterCommittable] at candidateIndex
+            exact candidateIndex)
+          (by
+            simpa [
+              maxCommittableTerm,
+              electionFacts.voterCommittable
+                term record voter recorded electionMember
+            ] using candidateSame.1.symm)
     exact voterPrefix.trans (voterCandidatePrefix.trans candidatePrefix)
 
-/-- Every higher frozen election record contains a prospective current-term prefix. -/
+/-- Every higher frozen election record contains a prospective signature frontier. -/
 theorem potentialPrefixInElectionRecords
     {state : State TxId}
     {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
@@ -3932,6 +4140,8 @@ theorem potentialPrefixInElectionRecords
     (currentEntry :
       termAt (state.nodes source).log index =
         (state.nodes source).currentTerm)
+    (currentSignature :
+      isSignatureAt (state.nodes source).log index = true)
     (potential :
       hasPotentialMajorityAt
         state appendHistory responseHistory source index) :
@@ -3947,13 +4157,13 @@ theorem potentialPrefixInElectionRecords
       apply
         leastBadElectionPromotionContainsPrefix
           termsPositive voteFacts ownership electionFacts ackerHistory
-            sourceRole currentEntry potential recorded newer
+            sourceRole currentEntry currentSignature potential recorded newer
       intro earlierTerm earlierRecord above below earlierRecorded
       exact
         inductionHypothesis earlierTerm below
           earlierRecord earlierRecorded above
 
-/-- Every higher active leader contains a prospective current-term prefix. -/
+/-- Every higher active leader contains a prospective current-term signature frontier. -/
 theorem potentialPrefixInHigherLeader
     {state : State TxId}
     {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
@@ -3978,6 +4188,8 @@ theorem potentialPrefixInHigherLeader
     (currentEntry :
       termAt (state.nodes source).log index =
         (state.nodes source).currentTerm)
+    (currentSignature :
+      isSignatureAt (state.nodes source).log index = true)
     (potential :
       hasPotentialMajorityAt
         state appendHistory responseHistory source index)
@@ -4001,7 +4213,7 @@ theorem potentialPrefixInHigherLeader
     have promotionPrefix :=
       potentialPrefixInElectionRecords
         termsPositive voteFacts ownership electionFacts ackerHistory
-          sourceRole currentEntry potential
+          sourceRole currentEntry currentSignature potential
           (state.nodes leader).currentTerm record
           recordStored newer
     have canonicalPrefix :=
@@ -4035,6 +4247,8 @@ theorem candidateSnapshotContainsProspectivePrefix
     (currentEntry :
       termAt (state.nodes source).log index =
         (state.nodes source).currentTerm)
+    (currentSignature :
+      isSignatureAt (state.nodes source).log index = true)
     (voterPrefix :
       (state.nodes source).log.take index <+: voterLog)
     (candidatePrefix : candidateLog <+: promotionLog)
@@ -4051,8 +4265,8 @@ theorem candidateSnapshotContainsProspectivePrefix
       voteLogUpToDate
         { (state.nodes source) with log := voterLog }
         { term := targetTerm
-          lastLogTerm := termAt candidateLog candidateLog.length
-          lastLogIndex := candidateLog.length
+          lastCommittableTerm := maxCommittableTerm candidateLog
+          lastCommittableIndex := maxCommittableIndex candidateLog
           source
           destination := source })
     (earlierSafe :
@@ -4098,51 +4312,68 @@ theorem candidateSnapshotContainsProspectivePrefix
     rw [voterTakeEq]
     rw [entryAtTake_of_le le_rfl]
     exact sourceFound
-  have voterNonempty : Not (voterLog = []) := by
-    intro empty
-    rw [empty] at voterLength
-    simp at voterLength
-    have indexNe : Not (index = 0) := by
-      intro zero
-      rw [zero] at sourceFound
+  have supportedSignature :
+      isSignatureAt supportedPrefix index = true := by
+    exact isSignatureAt_take_of_le le_rfl currentSignature
+  have voterSignature :
+      isSignatureAt voterLog index = true :=
+    isSignatureAt_of_prefix voterPrefix supportedSignature
+  have voterFrontierBound :
+      index <= maxCommittableIndex voterLog :=
+    signatureIndex_le_maxCommittableIndex voterSignature
+  have voterFrontierPositive :
+      0 < maxCommittableIndex voterLog := by
+    have indexPositive : 0 < index := by
+      apply Nat.pos_of_ne_zero
+      intro indexZero
+      rw [indexZero] at sourceFound
       simp [entryAt?] at sourceFound
     omega
-  have voterLastPositive : 0 < voterLog.length :=
-    List.length_pos_iff_ne_nil.mpr voterNonempty
   rcases
-      entryAtSomeOfPositiveBound voterLastPositive le_rfl with
-    ⟨voterLastEntry, voterLastFound⟩
+      isSignatureAtTrue
+        (maxCommittableIndexPositiveIsSignature voterFrontierPositive) with
+    ⟨voterLastEntry, voterLastFound, _⟩
   have sourceTermLeVoterLast :
       (state.nodes source).currentTerm <= voterLastEntry.term := by
-    by_cases atEnd : index = voterLog.length
+    by_cases atEnd : index = maxCommittableIndex voterLog
     · rw [atEnd] at voterFound
       have sameEntry : sourceEntry = voterLastEntry :=
         Option.some.inj (voterFound.symm.trans voterLastFound)
       simpa [sameEntry] using sourceEntryCurrent.symm.le
-    · have beforeEnd : index < voterLog.length := by omega
+    · have beforeEnd : index < maxCommittableIndex voterLog := by omega
       have monotone :=
-        voterMono index voterLog.length
+        voterMono index (maxCommittableIndex voterLog)
           sourceEntry voterLastEntry
           beforeEnd voterFound voterLastFound
       rw [sourceEntryCurrent] at monotone
       exact monotone
   have voterLastTerm :
-      termAt voterLog voterLog.length = voterLastEntry.term := by
-    simp [termAt, voterLastFound]
+      maxCommittableTerm voterLog = voterLastEntry.term := by
+    simp [maxCommittableTerm, termAt, voterLastFound]
   rcases upToDate with candidateNewer | candidateSame
-  · have candidateNonempty : Not (candidateLog = []) := by
-      intro empty
-      rw [voterLastTerm] at candidateNewer
-      simp [empty, termAt, entryAt?] at candidateNewer
-    have candidateLastPositive : 0 < candidateLog.length :=
-      List.length_pos_iff_ne_nil.mpr candidateNonempty
+  · have candidateTermPositive :
+        0 < maxCommittableTerm candidateLog := by
+      have voterTermPositive :
+          0 < maxCommittableTerm voterLog := by
+        rw [voterLastTerm]
+        exact sourceTermPositive.trans_le sourceTermLeVoterLast
+      exact voterTermPositive.trans candidateNewer
+    have candidateFrontierPositive :
+        0 < maxCommittableIndex candidateLog := by
+      apply Nat.pos_of_ne_zero
+      intro frontierZero
+      unfold maxCommittableTerm at candidateTermPositive
+      rw [frontierZero] at candidateTermPositive
+      simp [termAt, entryAt?] at candidateTermPositive
     rcases
-        entryAtSomeOfPositiveBound candidateLastPositive le_rfl with
-      ⟨candidateLastEntry, candidateLastFound⟩
+        isSignatureAtTrue
+          (maxCommittableIndexPositiveIsSignature
+            candidateFrontierPositive) with
+      ⟨candidateLastEntry, candidateLastFound, _⟩
     have candidateLastTerm :
-        termAt candidateLog candidateLog.length =
+        maxCommittableTerm candidateLog =
           candidateLastEntry.term := by
-      simp [termAt, candidateLastFound]
+      simp [maxCommittableTerm, termAt, candidateLastFound]
     have candidateNewer' :
         voterLastEntry.term < candidateLastEntry.term := by
       simpa [candidateLastTerm, voterLastTerm] using candidateNewer
@@ -4155,12 +4386,12 @@ theorem candidateSnapshotContainsProspectivePrefix
       candidateEntriesBeforeTerm candidateLastEntry
         (entryAtSomeMember candidateLastFound)
     rcases
-        candidateCanonical candidateLog.length
+        candidateCanonical (maxCommittableIndex candidateLog)
           candidateLastEntry candidateLastFound with
       ⟨candidateCanonicalFound, candidateAgreed⟩
     rcases
         ownership.canonicalEntryOwner
-          candidateLastEntry.term candidateLog.length
+          candidateLastEntry.term (maxCommittableIndex candidateLog)
           candidateLastEntry candidateCanonicalFound with
       ⟨candidateOwner, candidateOwned⟩
     rcases
@@ -4199,42 +4430,87 @@ theorem candidateSnapshotContainsProspectivePrefix
         rw [canonicalTakeEq]
         rw [entryAtTake_of_le le_rfl]
         exact sourceFound
-      have indexLeCandidateLength : index <= candidateLog.length := by
+      have indexLeCandidateFrontier :
+          index <= maxCommittableIndex candidateLog := by
         by_contra outside
-        have order : candidateLog.length < index := by omega
+        have order : maxCommittableIndex candidateLog < index := by omega
         have monotone :=
           ownership.canonicalMonoLog
             candidateLastEntry.term
-              candidateLog.length index
+              (maxCommittableIndex candidateLog) index
               candidateLastEntry sourceEntry
               order candidateCanonicalFound canonicalSourceFound
         rw [sourceEntryCurrent] at monotone
         omega
       have prefixInCandidate : supportedPrefix <+: candidateLog := by
-        have candidateEq :
-            candidateLog =
-              (canonicalHistory candidateLastEntry.term).take
-                candidateLog.length := by
-          simpa using candidateAgreed
         calc
           supportedPrefix =
               (canonicalHistory candidateLastEntry.term).take index :=
             canonicalTakeEq.symm
           _ <+:
               (canonicalHistory candidateLastEntry.term).take
-                candidateLog.length := by
+                (maxCommittableIndex candidateLog) := by
             rw [List.prefix_take_iff]
             exact
               ⟨List.take_prefix index _,
                 Nat.le_trans (List.length_take_le _ _)
-                  indexLeCandidateLength⟩
-          _ = candidateLog := candidateEq.symm
+                  indexLeCandidateFrontier⟩
+          _ = candidateLog.take (maxCommittableIndex candidateLog) :=
+            candidateAgreed.symm
+          _ <+: candidateLog :=
+            List.take_prefix _ _
       exact prefixInCandidate.trans candidatePrefix
-  · have voterCandidatePrefix : voterLog <+: candidateLog :=
-      canonicalHistoriesPrefixOfSameLastTerm
-        canonicalHistory voterCanonical candidateCanonical
-          voterNonempty candidateSame.2 candidateSame.1.symm
-    exact voterPrefix.trans (voterCandidatePrefix.trans candidatePrefix)
+  · have candidateFrontierPositive :
+        0 < maxCommittableIndex candidateLog := by
+      exact lt_of_lt_of_le voterFrontierPositive candidateSame.2
+    rcases
+        isSignatureAtTrue
+          (maxCommittableIndexPositiveIsSignature
+            candidateFrontierPositive) with
+      ⟨candidateLastEntry, candidateLastFound, _⟩
+    have candidateLastTerm :
+        maxCommittableTerm candidateLog =
+          candidateLastEntry.term := by
+      simp [maxCommittableTerm, termAt, candidateLastFound]
+    have sameTerm :
+        voterLastEntry.term = candidateLastEntry.term := by
+      rw [← voterLastTerm, ← candidateLastTerm]
+      exact candidateSame.1.symm
+    rcases
+        voterCanonical (maxCommittableIndex voterLog)
+          voterLastEntry voterLastFound with
+      ⟨_, voterAgreed⟩
+    rcases
+        candidateCanonical (maxCommittableIndex candidateLog)
+          candidateLastEntry candidateLastFound with
+      ⟨_, candidateAgreed⟩
+    have supportedInVoterFrontier :
+        supportedPrefix <+:
+          voterLog.take (maxCommittableIndex voterLog) := by
+      rw [List.prefix_iff_eq_take]
+      calc
+        supportedPrefix = voterLog.take index := voterTakeEq.symm
+        _ =
+            (voterLog.take (maxCommittableIndex voterLog)).take
+              supportedPrefix.length := by
+          simp [List.take_take, prefixLength,
+            Nat.min_eq_left voterFrontierBound]
+    have voterInCandidateFrontier :
+        voterLog.take (maxCommittableIndex voterLog) <+:
+          candidateLog.take (maxCommittableIndex candidateLog) := by
+      rw [voterAgreed]
+      rw [sameTerm, candidateAgreed]
+      rw [List.prefix_take_iff]
+      exact
+        ⟨List.take_prefix _ _,
+          (List.length_take_le
+            (maxCommittableIndex voterLog)
+            (canonicalHistory candidateLastEntry.term)).trans
+            candidateSame.2⟩
+    exact
+      supportedInVoterFrontier.trans
+        (voterInCandidateFrontier.trans
+          ((List.take_prefix _ _).trans candidatePrefix))
 
 /-- Every higher prospective winning candidate contains a prospective prefix. -/
 theorem potentialPrefixInHigherCandidate
@@ -4248,6 +4524,7 @@ theorem potentialPrefixInHigherCandidate
     {owners : TermOwners}
     {elections : ElectionHistory TxId}
     (termsPositive : CurrentTermsPositive state)
+    (committedSignature : CommittedFrontierIsSignature state)
     (candidatesAbove : CandidatesAboveBootstrap state)
     (entriesBounded : EntriesDoNotExceedCurrentTerm state)
     (voteFacts : VoteHistoryFacts state votes)
@@ -4276,6 +4553,8 @@ theorem potentialPrefixInHigherCandidate
     (currentEntry :
       termAt (state.nodes source).log index =
         (state.nodes source).currentTerm)
+    (currentSignature :
+      isSignatureAt (state.nodes source).log index = true)
     (potential :
       hasPotentialMajorityAt
         state appendHistory responseHistory source index)
@@ -4312,7 +4591,7 @@ theorem potentialPrefixInHigherCandidate
     exact
       potentialPrefixInElectionRecords
         termsPositive voteFacts ownership electionFacts electedHistory
-          sourceRole currentEntry potential
+          sourceRole currentEntry currentSignature potential
           earlierTerm earlierRecord recorded above
   have badImpossible :
       forall bound,
@@ -4340,7 +4619,7 @@ theorem potentialPrefixInHigherCandidate
   by_cases voterEq : voter = candidate
   · subst voter
     rcases
-        currentHistory source index sourceRole currentEntry
+        currentHistory source index sourceRole currentEntry currentSignature
           candidate effective with
       retained | bad
     · exact retained
@@ -4357,7 +4636,7 @@ theorem potentialPrefixInHigherCandidate
           (Or.inl candidateRole) materialised
       have recordedVote := snapshot.1
       rcases
-          voteHistory source index sourceRole currentEntry
+          voteHistory source index sourceRole currentEntry currentSignature
             voter (state.nodes candidate).currentTerm candidate
             effective recordedVote voterEq newer with
         voterPrefix | bad
@@ -4395,12 +4674,15 @@ theorem potentialPrefixInHigherCandidate
             apply
               candidateSnapshotContainsProspectivePrefix
                 termsPositive ownership electionFacts
-                  currentEntry voterPrefix voteSnapshot.1
+                  currentEntry currentSignature voterPrefix voteSnapshot.1
                   canonicalSnapshot.1
                   canonicalSnapshot.2.2.1
                   canonicalSnapshot.2.2.2
                   candidateEntriesBefore
-            · simpa [response, voteLogUpToDate] using voteSnapshot.2.2
+            · simpa [
+                response, voteLogUpToDate, maxCommittableTerm,
+                voteSnapshot.2.1, voteSnapshot.2.2.1
+              ] using voteSnapshot.2.2.2.2
             · exact earlierSafe
       · exact False.elim
           (badImpossible
@@ -4410,6 +4692,7 @@ theorem potentialPrefixInHigherCandidate
             (state.nodes voter).log := by
         rcases
             currentHistory source index sourceRole currentEntry
+              currentSignature
               voter effective with
           retained | bad
         · exact retained
@@ -4443,7 +4726,7 @@ theorem potentialPrefixInHigherCandidate
       apply
         candidateSnapshotContainsProspectivePrefix
           termsPositive ownership electionFacts
-            currentEntry voterPrefix
+            currentEntry currentSignature voterPrefix
             (prefixRefl (state.nodes candidate).log)
             (fun entryIndex entry found =>
               ownership.logEntryAgreement
@@ -4456,6 +4739,10 @@ theorem potentialPrefixInHigherCandidate
       · simpa [
           currentlyEligibleElectionVoter,
           makeRequestVoteRequest,
+          lastCommittableIndex_eq_maxCommittableIndex
+            (state.nodes candidate) (committedSignature candidate),
+          lastCommittableTerm_eq_maxCommittableTerm
+            (state.nodes candidate) (committedSignature candidate),
           voteLogUpToDate
         ] using eligible.2.1
       · exact earlierSafe
@@ -4916,6 +5203,7 @@ theorem prospectiveCommitFutureMemberCore
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
+    (committedSignature : CommittedFrontierIsSignature state)
     (electionFacts :
       ElectionHistoryFacts
         state votes canonicalHistory owners elections)
@@ -5016,16 +5304,57 @@ theorem prospectiveCommitFutureMemberCore
         evidence.commitTerm := by
     rw [prefixLength]
     simpa [termAt, prefixFound] using frontierEntryTerm
+  have evidenceSignature :
+      isSignatureAt evidence.history evidence.commitFrontier = true :=
+    valid.2.2.2.2.2.2
+  have prefixSignature :
+      isSignatureAt evidencePrefix evidence.commitFrontier = true := by
+    exact isSignatureAt_take_of_le le_rfl evidenceSignature
+  have memberSignature :
+      isSignatureAt
+        (state.nodes member).log evidence.commitFrontier = true :=
+    isSignatureAt_of_prefix memberCovered prefixSignature
+  have memberFrontierBound :
+      evidence.commitFrontier <=
+        maxCommittableIndex (state.nodes member).log :=
+    signatureIndex_le_maxCommittableIndex memberSignature
+  have memberCommittablePositive :
+      0 < maxCommittableIndex (state.nodes member).log := by
+    omega
+  rcases
+      isSignatureAtTrue
+        (maxCommittableIndexPositiveIsSignature
+          memberCommittablePositive) with
+    ⟨memberEntry, memberEntryFound, _⟩
+  have memberEntryTerm :
+      maxCommittableTerm (state.nodes member).log =
+        memberEntry.term := by
+    simp [maxCommittableTerm, termAt, memberEntryFound]
   have memberLastTerm :
       evidence.commitTerm <=
-        termAt (state.nodes member).log
-          (state.nodes member).log.length := by
-    have monotone :=
-      termAtLastMonotoneOfPrefix
-        memberCovered
-        ((canonicalHistoriesMonoLog ownership) member)
-    rw [prefixLastTerm] at monotone
-    exact monotone
+        maxCommittableTerm (state.nodes member).log := by
+    have entryOrder :
+        frontierEntry.term <= memberEntry.term := by
+      by_cases sameIndex :
+          evidence.commitFrontier =
+            maxCommittableIndex (state.nodes member).log
+      · rw [sameIndex] at memberFound
+        exact
+          (congrArg Entry.term
+            (Option.some.inj
+              (memberFound.symm.trans memberEntryFound))).le
+      · exact
+          (canonicalHistoriesMonoLog ownership) member
+            evidence.commitFrontier
+            (maxCommittableIndex (state.nodes member).log)
+            frontierEntry memberEntry
+            (lt_of_le_of_ne memberFrontierBound sameIndex)
+            memberFound memberEntryFound
+    calc
+      evidence.commitTerm = frontierEntry.term := frontierEntryTerm.symm
+      _ <= memberEntry.term := entryOrder
+      _ = maxCommittableTerm (state.nodes member).log :=
+        memberEntryTerm.symm
   simp only [
     futureElectionVoters, Finset.mem_filter,
     Finset.mem_univ, true_and
@@ -5037,51 +5366,61 @@ theorem prospectiveCommitFutureMemberCore
     have commitPositive :=
       commitTermPositive
         evidence supportedPrefix known
+    have candidateLastIndex :
+        lastCommittableIndex (state.nodes candidate) =
+          maxCommittableIndex (state.nodes candidate).log :=
+      lastCommittableIndex_eq_maxCommittableIndex
+        (state.nodes candidate) (committedSignature candidate)
+    have candidateLastTermEq :
+        lastCommittableTerm (state.nodes candidate) =
+          maxCommittableTerm (state.nodes candidate).log :=
+      lastCommittableTerm_eq_maxCommittableTerm
+        (state.nodes candidate) (committedSignature candidate)
+    unfold voteLogUpToDate at upToDate
+    simp only [makeRequestVoteRequest] at upToDate
+    rw [candidateLastIndex, candidateLastTermEq] at upToDate
     have candidateLastTerm :
         evidence.commitTerm <=
-          termAt (state.nodes candidate).log
-            (state.nodes candidate).log.length := by
-      unfold voteLogUpToDate at upToDate
-      simp only [makeRequestVoteRequest] at upToDate
+          maxCommittableTerm (state.nodes candidate).log := by
       rcases upToDate with newer | same
       · omega
       · omega
-    have candidateLastPositive :
-        0 < termAt (state.nodes candidate).log
-          (state.nodes candidate).log.length := by
+    have candidateTermPositive :
+        0 < maxCommittableTerm (state.nodes candidate).log := by
       have commitTermPositive :
           0 < evidence.commitTerm := by
         simpa [TERM_ONE] using commitPositive
       omega
-    rcases termAtPositiveEntry candidateLastPositive with
-      ⟨candidateEntry, candidateFound, candidateEntryTerm⟩
+    have candidateIndexPositive :
+        0 < maxCommittableIndex (state.nodes candidate).log := by
+      apply Nat.pos_of_ne_zero
+      intro zero
+      simp [
+        maxCommittableTerm, zero, termAt, entryAt?
+      ] at candidateTermPositive
+    rcases
+        isSignatureAtTrue
+          (maxCommittableIndexPositiveIsSignature
+            candidateIndexPositive) with
+      ⟨candidateEntry, candidateFound, _⟩
     have candidateEntryLast :
         candidateEntry.term =
-          termAt (state.nodes candidate).log
-            (state.nodes candidate).log.length :=
-      candidateEntryTerm
+          maxCommittableTerm (state.nodes candidate).log := by
+      simp [maxCommittableTerm, termAt, candidateFound]
     rcases
         ownership.logEntryAgreement
-          candidate (state.nodes candidate).log.length
+          candidate (maxCommittableIndex (state.nodes candidate).log)
             candidateEntry candidateFound with
       ⟨candidateCanonicalFound, candidateAgreed⟩
     by_cases sameCommit :
         candidateEntry.term = evidence.commitTerm
     · have candidateLengthBound :
           evidence.commitFrontier <=
-            (state.nodes candidate).log.length := by
-        unfold voteLogUpToDate at upToDate
-        simp only [makeRequestVoteRequest] at upToDate
+            maxCommittableIndex (state.nodes candidate).log := by
         rcases upToDate with newer | same
         · rw [← candidateEntryLast, sameCommit] at newer
           omega
-        · have memberLength :
-              evidence.commitFrontier <=
-                (state.nodes member).log.length :=
-            by
-              have covered := memberCovered.length_le
-              rw [prefixLength] at covered
-              exact covered
+        · have memberLength := memberFrontierBound
           omega
       rw [List.prefix_iff_eq_take]
       calc
@@ -5091,14 +5430,20 @@ theorem prospectiveCommitFutureMemberCore
           prefixCanonical
         _ =
             ((canonicalHistory candidateEntry.term).take
-              (state.nodes candidate).log.length).take
+              (maxCommittableIndex
+                (state.nodes candidate).log)).take
                 evidence.commitFrontier := by
           rw [sameCommit]
           simp [List.take_take, Nat.min_eq_left candidateLengthBound]
         _ =
-            (state.nodes candidate).log.take
+            ((state.nodes candidate).log.take
+              (maxCommittableIndex
+                (state.nodes candidate).log)).take
               evidence.commitFrontier := by
           rw [← candidateAgreed]
+        _ =
+            (state.nodes candidate).log.take
+              evidence.commitFrontier := by
           simp [List.take_take, Nat.min_eq_left candidateLengthBound]
         _ =
             (state.nodes candidate).log.take evidencePrefix.length := by
@@ -5110,7 +5455,7 @@ theorem prospectiveCommitFutureMemberCore
       rcases
           ownership.canonicalEntryOwner
             candidateEntry.term
-              (state.nodes candidate).log.length
+              (maxCommittableIndex (state.nodes candidate).log)
               candidateEntry candidateCanonicalFound with
         ⟨owner, owned⟩
       rcases
@@ -5139,13 +5484,13 @@ theorem prospectiveCommitFutureMemberCore
           CCFRaft.entryAt_of_prefix prefixInCanonical prefixFound
         have lengthStrict :
             evidence.commitFrontier <
-              (state.nodes candidate).log.length := by
+              maxCommittableIndex (state.nodes candidate).log := by
           by_contra notStrict
           have reverse :
-              (state.nodes candidate).log.length <=
+              maxCommittableIndex (state.nodes candidate).log <=
                 evidence.commitFrontier := by omega
           by_cases equal :
-              (state.nodes candidate).log.length =
+              maxCommittableIndex (state.nodes candidate).log =
                 evidence.commitFrontier
           · rw [equal] at candidateCanonicalFound
             have entryEq :
@@ -5155,11 +5500,11 @@ theorem prospectiveCommitFutureMemberCore
             rw [entryEq, frontierEntryTerm] at commitStrict
             omega
           · have order :
-                (state.nodes candidate).log.length <
+              maxCommittableIndex (state.nodes candidate).log <
                   evidence.commitFrontier := by omega
             have termOrder :=
               ownership.canonicalMonoLog candidateEntry.term
-                (state.nodes candidate).log.length
+              (maxCommittableIndex (state.nodes candidate).log)
                 evidence.commitFrontier
                 candidateEntry frontierEntry order
                 candidateCanonicalFound canonicalPrefixFound
@@ -5175,16 +5520,22 @@ theorem prospectiveCommitFutureMemberCore
               simpa [prefixLength] using covered.symm
           _ =
               ((canonicalHistory candidateEntry.term).take
-                (state.nodes candidate).log.length).take
+                (maxCommittableIndex
+                  (state.nodes candidate).log)).take
                   evidence.commitFrontier := by
             simp [
               List.take_take,
               Nat.min_eq_left lengthStrict.le
             ]
           _ =
-              (state.nodes candidate).log.take
+              ((state.nodes candidate).log.take
+                (maxCommittableIndex
+                  (state.nodes candidate).log)).take
                 evidence.commitFrontier := by
             rw [← candidateAgreed]
+          _ =
+              (state.nodes candidate).log.take
+                evidence.commitFrontier := by
             simp [
               List.take_take,
               Nat.min_eq_left lengthStrict.le
@@ -5209,6 +5560,7 @@ theorem prospectiveCommitFutureMember
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
+    (committedSignature : CommittedFrontierIsSignature state)
     (electionFacts :
       ElectionHistoryFacts
         state votes canonicalHistory owners elections)
@@ -5234,7 +5586,7 @@ theorem prospectiveCommitFutureMember
     evidence.history.take evidence.commitFrontier <+:
       (state.nodes candidate).log :=
   prospectiveCommitFutureMemberCore
-    ownership electionFacts evidenceFacts
+    ownership committedSignature electionFacts evidenceFacts
       prospectiveFacts.commitTermPositive
       prospectiveFacts.electionClosure
       prospectiveFacts.currentMember
@@ -5267,6 +5619,8 @@ theorem effectiveAckerContainsPotentialPrefix
     (currentEntry :
       termAt (state.nodes source).log index =
         (state.nodes source).currentTerm)
+    (currentSignature :
+      isSignatureAt (state.nodes source).log index = true)
     (potential :
       hasPotentialMajorityAt
         state appendHistory responseHistory source index)
@@ -5275,7 +5629,7 @@ theorem effectiveAckerContainsPotentialPrefix
     (state.nodes source).log.take index <+:
       (state.nodes voter).log := by
   rcases
-      currentHistory source index sourceRole currentEntry
+      currentHistory source index sourceRole currentEntry currentSignature
         voter effective with
     retained | bad
   · exact retained
@@ -5285,7 +5639,7 @@ theorem effectiveAckerContainsPotentialPrefix
       (missing
         (potentialPrefixInElectionRecords
           termsPositive voteFacts ownership electionFacts electedHistory
-            sourceRole currentEntry potential
+            sourceRole currentEntry currentSignature potential
             badTerm badRecord recorded above))
 
 /--
@@ -5303,6 +5657,7 @@ theorem effectiveAckerRelaxedCandidateContainsPotentialPrefix
     {owners : TermOwners}
     {elections : ElectionHistory TxId}
     (termsPositive : CurrentTermsPositive state)
+    (committedSignature : CommittedFrontierIsSignature state)
     (voteFacts : VoteHistoryFacts state votes)
     (ownership :
       TermOwnershipFacts
@@ -5329,6 +5684,8 @@ theorem effectiveAckerRelaxedCandidateContainsPotentialPrefix
     (currentEntry :
       termAt (state.nodes source).log index =
         (state.nodes source).currentTerm)
+    (currentSignature :
+      isSignatureAt (state.nodes source).log index = true)
     (potential :
       hasPotentialMajorityAt
         state appendHistory responseHistory source index)
@@ -5356,7 +5713,7 @@ theorem effectiveAckerRelaxedCandidateContainsPotentialPrefix
     exact
       potentialPrefixInElectionRecords
         termsPositive voteFacts ownership electionFacts electedHistory
-          sourceRole currentEntry potential
+          sourceRole currentEntry currentSignature potential
           earlierTerm earlierRecord recorded above
   by_cases voterEq : voter = candidate
   · subst voter
@@ -5364,7 +5721,7 @@ theorem effectiveAckerRelaxedCandidateContainsPotentialPrefix
       effectiveAckerContainsPotentialPrefix
         termsPositive voteFacts ownership electionFacts
           currentHistory electedHistory
-          sourceRole currentEntry potential effective
+          sourceRole currentEntry currentSignature potential effective
   · simp only [
       relaxedElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
@@ -5380,7 +5737,7 @@ theorem effectiveAckerRelaxedCandidateContainsPotentialPrefix
               (grantedVoteKey
                 voter (state.nodes candidate).currentTerm candidate) := by
         rcases
-            voteHistory source index sourceRole currentEntry
+            voteHistory source index sourceRole currentEntry currentSignature
               voter (state.nodes candidate).currentTerm candidate
               effective recordedVote voterEq newer with
           retained | bad
@@ -5391,7 +5748,7 @@ theorem effectiveAckerRelaxedCandidateContainsPotentialPrefix
             (missing
               (potentialPrefixInElectionRecords
                 termsPositive voteFacts ownership electionFacts electedHistory
-                  sourceRole currentEntry potential
+                  sourceRole currentEntry currentSignature potential
                   badTerm badRecord recorded above))
       rcases snapshot.2 with self | voteSnapshot
       · exact False.elim (voterEq self)
@@ -5406,24 +5763,27 @@ theorem effectiveAckerRelaxedCandidateContainsPotentialPrefix
           apply
             candidateSnapshotContainsProspectivePrefix
               termsPositive ownership electionFacts
-                currentEntry voterPrefix voteSnapshot.1
+                currentEntry currentSignature voterPrefix voteSnapshot.1
                 canonicalSnapshot.1
                 canonicalSnapshot.2.2.1
                 canonicalSnapshot.2.2.2
                 (fun entry member =>
                   candidateEntriesBefore entry
                     (CCFRaft.memOfPrefix voteSnapshot.1 member))
-          · simpa [response, voteLogUpToDate] using voteSnapshot.2.2
+          · simpa [
+              response, voteLogUpToDate, maxCommittableTerm,
+              voteSnapshot.2.1, voteSnapshot.2.2.1
+            ] using voteSnapshot.2.2.2.2
           · exact earlierSafe
     · have voterPrefix :=
         effectiveAckerContainsPotentialPrefix
           termsPositive voteFacts ownership electionFacts
             currentHistory electedHistory
-            sourceRole currentEntry potential effective
+            sourceRole currentEntry currentSignature potential effective
       apply
         candidateSnapshotContainsProspectivePrefix
           termsPositive ownership electionFacts
-            currentEntry voterPrefix
+            currentEntry currentSignature voterPrefix
             (prefixRefl (state.nodes candidate).log)
             (fun entryIndex entry found =>
               ownership.logEntryAgreement
@@ -5435,6 +5795,10 @@ theorem effectiveAckerRelaxedCandidateContainsPotentialPrefix
       · simpa [
           relaxedElectionVoters,
           makeRequestVoteRequest,
+          lastCommittableIndex_eq_maxCommittableIndex
+            (state.nodes candidate) (committedSignature candidate),
+          lastCommittableTerm_eq_maxCommittableTerm
+            (state.nodes candidate) (committedSignature candidate),
           voteLogUpToDate
         ] using upToDate.2
       · exact earlierSafe
@@ -5452,6 +5816,7 @@ theorem effectiveAckerFutureCandidateContainsPotentialPrefix
     {owners : TermOwners}
     {elections : ElectionHistory TxId}
     (termsPositive : CurrentTermsPositive state)
+    (committedSignature : CommittedFrontierIsSignature state)
     (entriesBounded : EntriesDoNotExceedCurrentTerm state)
     (voteFacts : VoteHistoryFacts state votes)
     (ownership :
@@ -5470,6 +5835,8 @@ theorem effectiveAckerFutureCandidateContainsPotentialPrefix
     (currentEntry :
       termAt (state.nodes source).log index =
         (state.nodes source).currentTerm)
+    (currentSignature :
+      isSignatureAt (state.nodes source).log index = true)
     (potential :
       hasPotentialMajorityAt
         state appendHistory responseHistory source index)
@@ -5486,7 +5853,7 @@ theorem effectiveAckerFutureCandidateContainsPotentialPrefix
     effectiveAckerContainsPotentialPrefix
       termsPositive voteFacts ownership electionFacts
         currentHistory electedHistory
-        sourceRole currentEntry potential effective
+        sourceRole currentEntry currentSignature potential effective
   by_cases voterEq : voter = candidate
   · subst voter
     exact voterPrefix
@@ -5507,12 +5874,12 @@ theorem effectiveAckerFutureCandidateContainsPotentialPrefix
         exact
           potentialPrefixInElectionRecords
             termsPositive voteFacts ownership electionFacts electedHistory
-              sourceRole currentEntry potential
+              sourceRole currentEntry currentSignature potential
               earlierTerm earlierRecord recorded above
       apply
         candidateSnapshotContainsProspectivePrefix
           termsPositive ownership electionFacts
-            currentEntry voterPrefix
+            currentEntry currentSignature voterPrefix
             (prefixRefl (state.nodes candidate).log)
             (fun entryIndex entry found =>
               ownership.logEntryAgreement
@@ -5527,6 +5894,10 @@ theorem effectiveAckerFutureCandidateContainsPotentialPrefix
       · simpa [
           futureElectionVoters,
           makeRequestVoteRequest,
+          lastCommittableIndex_eq_maxCommittableIndex
+            (state.nodes candidate) (committedSignature candidate),
+          lastCommittableTerm_eq_maxCommittableTerm
+            (state.nodes candidate) (committedSignature candidate),
           voteLogUpToDate
         ] using supporter.2
       · exact earlierSafe
@@ -5554,7 +5925,7 @@ theorem derivePotentialCommitSafe
     (electedHistory :
       AckerElectionHistory state responseHistory elections) :
     PotentialCommitSafe state responseHistory := by
-  intro source index role current majority committed
+  intro source index role current signature majority committed
   have potential :=
     effectiveMajorityImpliesPotential
       state appendHistory responseHistory source index majority
@@ -5569,7 +5940,7 @@ theorem derivePotentialCommitSafe
     effectiveAckerContainsPotentialPrefix
       termsPositive voteFacts ownership electionFacts
         currentHistory electedHistory
-        role current potential
+        role current signature potential
         (Finset.mem_inter.mp member).1
   have committedPrefix :
       (state.nodes committed).committedLog <+:
@@ -5590,6 +5961,7 @@ theorem derivePotentialCommitElectionSafe
     {owners : TermOwners}
     {elections : ElectionHistory TxId}
     (termsPositive : CurrentTermsPositive state)
+    (committedSignature : CommittedFrontierIsSignature state)
     (candidatesAbove : CandidatesAboveBootstrap state)
     (entriesBounded : EntriesDoNotExceedCurrentTerm state)
     (voteFacts : VoteHistoryFacts state votes)
@@ -5613,7 +5985,7 @@ theorem derivePotentialCommitElectionSafe
     (electedHistory :
       AckerElectionHistory state responseHistory elections) :
     PotentialCommitElectionSafe state responseHistory := by
-  intro source index role current majority winner active newer
+  intro source index role current signature majority winner active newer
   have potential :=
     effectiveMajorityImpliesPotential
       state appendHistory responseHistory source index majority
@@ -5621,13 +5993,13 @@ theorem derivePotentialCommitElectionSafe
   · exact
       potentialPrefixInHigherLeader
         termsPositive voteFacts ownership electionFacts electedHistory
-          role current potential leader newer
+          role current signature potential leader newer
   · exact
       potentialPrefixInHigherCandidate
-        termsPositive candidatesAbove entriesBounded
+        termsPositive committedSignature candidatesAbove entriesBounded
           voteFacts snapshots canonicalSnapshots
           ownership electionFacts currentHistory voteHistory electedHistory
-          role current potential candidate.1
+          role current signature potential candidate.1
             (effectiveElectionMajorityImpliesPotential
               state winner candidate.2)
             newer
@@ -5654,7 +6026,7 @@ theorem derivePotentialCommitQuorumLog
     (electedHistory :
       AckerElectionHistory state responseHistory elections) :
     PotentialCommitQuorumLog state responseHistory := by
-  intro source index role current majority quorum quorumMajority
+  intro source index role current signature majority quorum quorumMajority
   have potential :=
     effectiveMajorityImpliesPotential
       state appendHistory responseHistory source index majority
@@ -5668,7 +6040,7 @@ theorem derivePotentialCommitQuorumLog
       effectiveAckerContainsPotentialPrefix
         termsPositive voteFacts ownership electionFacts
           currentHistory electedHistory
-          role current potential
+          role current signature potential
           (Finset.mem_inter.mp member).1⟩
 
 /-- Temporal quorum evidence makes any two potential prefixes comparable. -/
@@ -5693,8 +6065,8 @@ theorem derivePotentialCommitsComparable
     (electedHistory :
       AckerElectionHistory state responseHistory elections) :
     PotentialCommitsComparable state responseHistory := by
-  intro left leftIndex leftRole leftCurrent leftMajority
-      right rightIndex rightRole rightCurrent rightMajority
+  intro left leftIndex leftRole leftCurrent leftSignature leftMajority
+      right rightIndex rightRole rightCurrent rightSignature rightMajority
   have leftPotential :=
     effectiveMajorityImpliesPotential
       state appendHistory responseHistory left leftIndex leftMajority
@@ -5711,13 +6083,13 @@ theorem derivePotentialCommitsComparable
     effectiveAckerContainsPotentialPrefix
       termsPositive voteFacts ownership electionFacts
         currentHistory electedHistory
-        leftRole leftCurrent leftPotential
+        leftRole leftCurrent leftSignature leftPotential
         (Finset.mem_inter.mp member).1
   have rightPrefix :=
     effectiveAckerContainsPotentialPrefix
       termsPositive voteFacts ownership electionFacts
         currentHistory electedHistory
-        rightRole rightCurrent rightPotential
+        rightRole rightCurrent rightSignature rightPotential
         (Finset.mem_inter.mp member).2
   exact CCFRaft.prefixesComparable leftPrefix rightPrefix
 
@@ -5797,16 +6169,19 @@ theorem electionHistoryFrame
     exact
       (facts.promotionCanonical term record recorded).trans
         (canonicalMonotone term)
+  · exact facts.promotionCommittable
   · exact facts.promotionEntriesBeforeTerm
   · exact facts.candidatePrefix
   · intro term record voter recorded member
     exact
       canonicalFrame _
         (facts.candidateCanonical term record voter recorded member)
+  · exact facts.candidateCommittable
   · intro term record voter recorded member
     exact
       canonicalFrame _
         (facts.voterCanonical term record voter recorded member)
+  · exact facts.voterCommittable
   · intro term record voter recorded member
     simpa [voteLogUpToDate] using
       facts.upToDate term record voter recorded member
@@ -5930,7 +6305,7 @@ theorem ackerTemporalFrameSameLogs
     intro source index
     rw [logEq]
   constructor
-  · intro source index role current voter effective
+  · intro source index role current signature voter effective
     have oldRole := roleBack source role
     have oldTerm :
         (after.nodes source).currentTerm =
@@ -5940,8 +6315,11 @@ theorem ackerTemporalFrameSameLogs
         termAt (state.nodes source).log index =
           (state.nodes source).currentTerm := by
       simpa [logEq, oldTerm] using current
+    have oldSignature :
+        isSignatureAt (state.nodes source).log index = true := by
+      simpa [logEq] using signature
     rcases
-        currentFacts source index oldRole oldCurrent voter
+        currentFacts source index oldRole oldCurrent oldSignature voter
           (effectiveBack source index voter role current effective) with
       retained | bad
     · exact Or.inl (by simpa [logEq, prefixEq] using retained)
@@ -5955,7 +6333,7 @@ theorem ackerTemporalFrameSameLogs
           recorded,
           by simpa [prefixEq] using missing⟩
   · constructor
-    · intro source index role current
+    · intro source index role current signature
         voter voteTerm candidate effective voted different newer
       have oldRole := roleBack source role
       have oldTerm :
@@ -5966,6 +6344,9 @@ theorem ackerTemporalFrameSameLogs
           termAt (state.nodes source).log index =
             (state.nodes source).currentTerm := by
         simpa [logEq, oldTerm] using current
+      have oldSignature :
+          isSignatureAt (state.nodes source).log index = true := by
+        simpa [logEq] using signature
       have oldEffective :=
         effectiveBack source index voter role current effective
       have oldVoted := voteBack voter voteTerm candidate voted different
@@ -5973,7 +6354,7 @@ theorem ackerTemporalFrameSameLogs
           (state.nodes source).currentTerm < voteTerm := by
         simpa [oldTerm] using newer
       rcases
-          voteFacts source index oldRole oldCurrent
+          voteFacts source index oldRole oldCurrent oldSignature
             voter voteTerm candidate oldEffective oldVoted different oldNewer with
         retained | bad
       · exact Or.inl (by simpa [prefixEq] using retained)
@@ -5985,7 +6366,7 @@ theorem ackerTemporalFrameSameLogs
             by simpa [oldTerm] using above,
             bounded, recorded,
             by simpa [prefixEq] using missing⟩
-    · intro source index role current term record voter
+    · intro source index role current signature term record voter
         recorded member effective newer
       have oldRole := roleBack source role
       have oldTerm :
@@ -5996,13 +6377,16 @@ theorem ackerTemporalFrameSameLogs
           termAt (state.nodes source).log index =
             (state.nodes source).currentTerm := by
         simpa [logEq, oldTerm] using current
+      have oldSignature :
+          isSignatureAt (state.nodes source).log index = true := by
+        simpa [logEq] using signature
       have oldEffective :=
         effectiveBack source index voter role current effective
       have oldNewer :
           (state.nodes source).currentTerm < term := by
         simpa [oldTerm] using newer
       rcases
-          electionFacts source index oldRole oldCurrent
+          electionFacts source index oldRole oldCurrent oldSignature
             term record voter recorded member oldEffective oldNewer with
         retained | bad
       · exact Or.inl (by simpa [prefixEq] using retained)
@@ -6150,6 +6534,8 @@ theorem systemInductiveInvariantSafety
     { committedLogsPrefix :=
         quorumLogCommittedLogsPrefix
           (invariantFactsQuorumLogFromCommitEvidence facts)
+      committedFrontierIsSignature :=
+        facts.committedFrontierIsSignature
       electionSafety :=
         voteHistoryElectionSafety
           facts.currentTermsPositive
@@ -6185,6 +6571,13 @@ theorem systemInductiveInvariantLeaderCompleteness
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
   exact invariantFactsLeaderCompletenessFromCommitEvidence facts
+
+/-- Every positive committed frontier in the invariant points to a signature. -/
+theorem systemInductiveInvariantCommittedFrontierIsSignature
+    {state : State TxId}
+    (invariant : SystemInductiveInvariant state) :
+    CommittedFrontierIsSignature state :=
+  (systemInductiveInvariantSafety invariant).committedFrontierIsSignature
 
 /-! ## Initial state -/
 
@@ -6230,6 +6623,8 @@ theorem initialSystemInductiveInvariant :
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, ?_⟩
   constructor
   · simp [CommitIndicesBounded, initialState, initialNodeState]
+  · intro node positive
+    simp [initialState, initialNodeState] at positive
   · simp [
       CurrentTermsPositive, initialState, initialNodeState, TERM_ONE
     ]
@@ -6376,36 +6771,200 @@ theorem initialSystemInductiveInvariant :
       simp [initialState, initialNodeState] at positive
 /-! ## Client append -/
 
-/-- A client append does not change any node's committed prefix. -/
-theorem clientRequestCommittedLogUnchanged
+/-- Proof-local action shape shared by transaction and signature appends. -/
+inductive LeaderAppendProofAction (TxId : Type) where
+  | clientRequest (node : Node) (content : EntryContent TxId)
+
+/-- Append one current-term entry while applying the action-specific client set. -/
+def leaderAppendState
     (state : State TxId)
     (node : Node)
-    (txId : TxId)
+    (content : EntryContent TxId)
+    (submittedTxIds : Finset TxId) :
+    State TxId :=
+  let entry : Entry TxId :=
+    { term := (state.nodes node).currentTerm
+      content }
+  { state with
+    nodes :=
+      updateNode state.nodes node
+        { state.nodes node with
+          log := (state.nodes node).log ++ [entry] }
+    submittedTxIds }
+
+@[simp]
+theorem leaderAppendState_nodes_same
+    (state : State TxId)
+    (node : Node)
+    (content : EntryContent TxId)
+    (submittedTxIds : Finset TxId) :
+    (leaderAppendState state node content submittedTxIds).nodes node =
+      { state.nodes node with
+        log :=
+          (state.nodes node).log ++
+            [{ term := (state.nodes node).currentTerm
+               content }] } := by
+  simp [leaderAppendState]
+
+@[simp]
+theorem leaderAppendState_nodes_of_ne
+    (state : State TxId)
+    (node candidate : Node)
+    (content : EntryContent TxId)
+    (submittedTxIds : Finset TxId)
+    (different : Not (candidate = node)) :
+    (leaderAppendState state node content submittedTxIds).nodes candidate =
+      state.nodes candidate := by
+  simp [leaderAppendState, updateNode, Function.update, different]
+
+@[simp]
+theorem leaderAppendState_network
+    (state : State TxId)
+    (node : Node)
+    (content : EntryContent TxId)
+    (submittedTxIds : Finset TxId) :
+    (leaderAppendState state node content submittedTxIds).network =
+      state.network := by
+  rfl
+
+@[simp]
+theorem leaderAppendState_role
+    (state : State TxId)
+    (node candidate : Node)
+    (content : EntryContent TxId)
+    (submittedTxIds : Finset TxId) :
+    ((leaderAppendState state node content submittedTxIds).nodes candidate).role =
+      (state.nodes candidate).role := by
+  by_cases same : candidate = node
+  · subst candidate
+    simp
+  · simp [leaderAppendState_nodes_of_ne state node candidate
+      content submittedTxIds same]
+
+@[simp]
+theorem leaderAppendState_currentTerm
+    (state : State TxId)
+    (node candidate : Node)
+    (content : EntryContent TxId)
+    (submittedTxIds : Finset TxId) :
+    ((leaderAppendState state node content submittedTxIds).nodes candidate).currentTerm =
+      (state.nodes candidate).currentTerm := by
+  by_cases same : candidate = node
+  · subst candidate
+    simp
+  · simp [leaderAppendState_nodes_of_ne state node candidate
+      content submittedTxIds same]
+
+@[simp]
+theorem leaderAppendState_commitIndex
+    (state : State TxId)
+    (node candidate : Node)
+    (content : EntryContent TxId)
+    (submittedTxIds : Finset TxId) :
+    ((leaderAppendState state node content submittedTxIds).nodes candidate).commitIndex =
+      (state.nodes candidate).commitIndex := by
+  by_cases same : candidate = node
+  · subst candidate
+    simp
+  · simp [leaderAppendState_nodes_of_ne state node candidate
+      content submittedTxIds same]
+
+@[simp]
+theorem leaderAppendState_sentIndex
+    (state : State TxId)
+    (node candidate : Node)
+    (content : EntryContent TxId)
+    (submittedTxIds : Finset TxId) :
+    ((leaderAppendState state node content submittedTxIds).nodes candidate).sentIndex =
+      (state.nodes candidate).sentIndex := by
+  by_cases same : candidate = node
+  · subst candidate
+    simp
+  · simp [leaderAppendState_nodes_of_ne state node candidate
+      content submittedTxIds same]
+
+@[simp]
+theorem leaderAppendState_matchIndex
+    (state : State TxId)
+    (node candidate : Node)
+    (content : EntryContent TxId)
+    (submittedTxIds : Finset TxId) :
+    ((leaderAppendState state node content submittedTxIds).nodes candidate).matchIndex =
+      (state.nodes candidate).matchIndex := by
+  by_cases same : candidate = node
+  · subst candidate
+    simp
+  · simp [leaderAppendState_nodes_of_ne state node candidate
+      content submittedTxIds same]
+
+@[simp]
+theorem leaderAppendState_votedFor
+    (state : State TxId)
+    (node candidate : Node)
+    (content : EntryContent TxId)
+    (submittedTxIds : Finset TxId) :
+    ((leaderAppendState state node content submittedTxIds).nodes candidate).votedFor =
+      (state.nodes candidate).votedFor := by
+  by_cases same : candidate = node
+  · subst candidate
+    simp
+  · simp [leaderAppendState_nodes_of_ne state node candidate
+      content submittedTxIds same]
+
+@[simp]
+theorem leaderAppendState_votesGranted
+    (state : State TxId)
+    (node candidate : Node)
+    (content : EntryContent TxId)
+    (submittedTxIds : Finset TxId) :
+    ((leaderAppendState state node content submittedTxIds).nodes candidate).votesGranted =
+      (state.nodes candidate).votesGranted := by
+  by_cases same : candidate = node
+  · subst candidate
+    simp
+  · simp [leaderAppendState_nodes_of_ne state node candidate
+      content submittedTxIds same]
+
+/-- A leader append does not change any node's committed prefix. -/
+theorem leaderAppendCommittedLogUnchanged
+    (state : State TxId)
+    (node : Node)
+    (content : EntryContent TxId)
+    (submittedTxIds : Finset TxId)
     (bounded : CommitIndicesBounded state) :
     forall candidate,
-      ((next state (.clientRequest node txId)).nodes candidate).committedLog =
+      ((leaderAppendState state node content submittedTxIds).nodes
+        candidate).committedLog =
         (state.nodes candidate).committedLog := by
   intro candidate
   by_cases candidateEq : candidate = node
   · subst candidate
     simp only [
-      next, CCFRaft.next, updateNode_same,
+      leaderAppendState, updateNode_same,
       NodeState.committedLog
     ]
     rw [List.take_append_of_le_length (bounded node)]
   · simp [
-      next, CCFRaft.next, updateNode, Function.update,
+    leaderAppendState, updateNode, Function.update,
       candidateEq
     ]
 
-/-- Appending a current-term client entry preserves the arbitrary-term facts. -/
-theorem clientRequestPreservesSystemInductiveInvariant
+/-- Appending any current-term leader entry preserves the arbitrary-term facts. -/
+theorem leaderAppendPreservesSystemInductiveInvariant
     (state : State TxId)
     (node : Node)
-    (txId : TxId)
+    (txId : EntryContent TxId)
+    (submittedTxIds : Finset TxId)
     (invariant : SystemInductiveInvariant state)
-    (enabled : Enabled state (.clientRequest node txId)) :
-    SystemInductiveInvariant (next state (.clientRequest node txId)) := by
+    (leaderRole : (state.nodes node).role = .leader) :
+    SystemInductiveInvariant
+      (leaderAppendState state node txId submittedTxIds) := by
+  let next :
+      State TxId -> LeaderAppendProofAction TxId -> State TxId :=
+    fun _ _ => leaderAppendState state node txId submittedTxIds
+  let enabled :
+      (state.nodes node).role = .leader /\ True :=
+    ⟨leaderRole, trivial⟩
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
@@ -6424,13 +6983,14 @@ theorem clientRequestPreservesSystemInductiveInvariant
       candidatesAboveBootstrap facts.grantedVoteSnapshots
         ownership electionFacts
   let entry : Entry TxId :=
-    { term := (state.nodes node).currentTerm, txId }
+    { term := (state.nodes node).currentTerm
+      content := txId }
   let newCanonicalHistory : Nat -> List (Entry TxId) :=
     Function.update canonicalHistory entry.term
       ((state.nodes node).log ++ [entry])
   have committedEq :=
-    clientRequestCommittedLogUnchanged
-      state node txId facts.commitIndicesBounded
+    leaderAppendCommittedLogUnchanged
+      state node txId submittedTxIds facts.commitIndicesBounded
   have oldElectionSafety :
       ElectionSafety state :=
     voteHistoryElectionSafety
@@ -6550,23 +7110,21 @@ theorem clientRequestPreservesSystemInductiveInvariant
         effectiveElectionVotersEq
       ]
   have logEqNode :
-      ((next state (.clientRequest node txId)).nodes node).log =
+      ((leaderAppendState state node txId submittedTxIds).nodes node).log =
         (state.nodes node).log ++ [entry] := by
-    simp [next, CCFRaft.next, entry]
+    simp [entry]
   have logEqOther :
       forall candidate,
         Not (candidate = node) ->
-        ((next state (.clientRequest node txId)).nodes candidate).log =
+        ((leaderAppendState state node txId submittedTxIds).nodes candidate).log =
           (state.nodes candidate).log := by
     intro candidate
     intro candidateNe
-    simp [
-      next, CCFRaft.next, updateNode,
-      Function.update, candidateNe, Ne.symm candidateNe
-    ]
+    simp [leaderAppendState_nodes_of_ne
+      state node candidate txId submittedTxIds candidateNe]
   have monoAfterNode :
       MonoHistory
-        ((next state (.clientRequest node txId)).nodes node).log := by
+        ((leaderAppendState state node txId submittedTxIds).nodes node).log := by
     intro earlier later earlierEntry laterEntry order earlierFound laterFound
     rw [logEqNode] at earlierFound laterFound
     have laterClassified :=
@@ -6615,8 +7173,8 @@ theorem clientRequestPreservesSystemInductiveInvariant
               (next state (.clientRequest node txId)) candidate voter =
             makeRequestVoteRequest state candidate voter := by
         simp [
-          makeRequestVoteRequest, currentTermEq,
-          logEqOther candidate candidateNe
+          makeRequestVoteRequest, next, CCFRaft.next,
+          updateNode, Function.update, candidateNe
         ]
       have termAccepted :
           (makeRequestVoteRequest state candidate voter).term =
@@ -6627,6 +7185,11 @@ theorem clientRequestPreservesSystemInductiveInvariant
             ((next state (.clientRequest node txId)).nodes voter)
             (makeRequestVoteRequest state candidate voter) := by
         simpa [requestEq] using eligible.2.1
+      change
+        voteLogUpToDate
+          ((leaderAppendState state node txId submittedTxIds).nodes voter)
+          (makeRequestVoteRequest state candidate voter)
+        at upToDateAfter
       refine ⟨termAccepted, ?_, by simpa [votedForEq] using eligible.2.2⟩
       by_cases voterEq : voter = node
       · subst voter
@@ -6769,6 +7332,20 @@ theorem clientRequestPreservesSystemInductiveInvariant
         enabled.1 beyond
     rw [onlySelf] at oldMember
     simpa using oldMember
+  have signatureBackNode :
+      forall index,
+        index <= (state.nodes node).log.length ->
+        isSignatureAt
+            ((next state (.clientRequest node txId)).nodes node).log index =
+          true ->
+        isSignatureAt (state.nodes node).log index = true := by
+    intro index within signature
+    rw [logEqNode] at signature
+    rcases isSignatureAtTrue signature with
+      ⟨foundEntry, found, foundSignature⟩
+    rcases entryAtAppendSingleton found with old | appended
+    · simp [isSignatureAt, old.2, foundSignature]
+    · omega
   refine
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, ?_⟩
@@ -6783,25 +7360,41 @@ theorem clientRequestPreservesSystemInductiveInvariant
       omega
     · rw [logEqOther candidate candidateEq]
       exact facts.commitIndicesBounded candidate
+  · intro candidate positive
+    have oldPositive :
+        0 < (state.nodes candidate).commitIndex := by
+      simpa [commitIndexEq] using positive
+    have oldSignature :=
+      facts.committedFrontierIsSignature candidate oldPositive
+    by_cases candidateEq : candidate = node
+    · subst candidate
+      rw [commitIndexEq, logEqNode]
+      exact
+        isSignatureAt_of_prefix
+          (List.prefix_append (state.nodes node).log [entry])
+          oldSignature
+    · rw [
+        commitIndexEq,
+        logEqOther candidate candidateEq
+      ]
+      exact oldSignature
   · intro candidate
     rw [currentTermEq]
     exact facts.currentTermsPositive candidate
   · intro candidate value member
     by_cases candidateEq : candidate = node
     · subst candidate
-      simp only [next, CCFRaft.next, updateNode_same] at member
+      rw [logEqNode] at member
       simp at member
       rcases member with oldMember | newMember
       · rw [currentTermEq]
         exact facts.entriesDoNotExceedCurrentTerm node value oldMember
       · subst value
-        rw [currentTermEq]
+        simp [entry, currentTermEq]
     · have oldMember :
           value ∈ (state.nodes candidate).log := by
-        simpa [
-          next, CCFRaft.next, updateNode,
-          Function.update, candidateEq
-        ] using member
+        rw [logEqOther candidate candidateEq] at member
+        exact member
       simpa [currentTermEq] using
         facts.entriesDoNotExceedCurrentTerm candidate value oldMember
   · intro candidate role
@@ -6895,9 +7488,10 @@ theorem clientRequestPreservesSystemInductiveInvariant
       rcases
           facts.networkHistory.voteRequest destination request
             (by simpa [next, CCFRaft.next] using member) with
-        ⟨lastIndex, lastTerm, aboveBootstrap, termBound, activePrefix⟩
+        ⟨lastIndex, lastTerm, maxIndex,
+          aboveBootstrap, termBound, activePrefix⟩
       refine
-        ⟨lastIndex, lastTerm, aboveBootstrap,
+        ⟨lastIndex, lastTerm, maxIndex, aboveBootstrap,
           by simpa [currentTermEq] using termBound, ?_⟩
       intro sameTerm active
       have oldSameTerm :
@@ -6915,7 +7509,8 @@ theorem clientRequestPreservesSystemInductiveInvariant
           simpa [sourceEq] using oldPrefix
         rw [sourceEq, logEqNode]
         exact oldPrefixNode.trans (List.prefix_append _ _)
-      · simpa [logEqOther request.source sourceEq] using oldPrefix
+      · rw [logEqOther request.source sourceEq]
+        exact oldPrefix
     · intro destination response member granted
       rcases
           facts.networkHistory.voteResponse destination response
@@ -6983,9 +7578,12 @@ theorem clientRequestPreservesSystemInductiveInvariant
           by simpa [currentTermEq] using newer,
           ?_, ?_, ?_⟩
       · intro entry entryMember
-        have afterBound := entriesBefore entry
-          (by
-            simpa [logEqOther candidate candidateNe] using entryMember)
+        have afterMember :
+            entry ∈
+              ((next state (.clientRequest node txId)).nodes candidate).log := by
+          rw [logEqOther candidate candidateNe]
+          exact entryMember
+        have afterBound := entriesBefore entry afterMember
         simpa [currentTermEq] using afterBound
       · simp only [
           relaxedElectionVoters, Finset.mem_filter,
@@ -7008,15 +7606,13 @@ theorem clientRequestPreservesSystemInductiveInvariant
                 (makeRequestVoteRequest state candidate candidate)
                 rfl logEqNode
             simpa [
-              makeRequestVoteRequest,
-              currentTermEq,
-              logEqOther candidate candidateNe
+              makeRequestVoteRequest, next, CCFRaft.next,
+              updateNode, Function.update, candidateNe
             ] using upToDate.2
           · simpa [
-              makeRequestVoteRequest,
-              currentTermEq,
-              logEqOther candidate candidateNe,
-              logEqOther member memberEq,
+              makeRequestVoteRequest, next, CCFRaft.next,
+              updateNode, Function.update,
+              candidateNe, memberEq,
               voteLogUpToDate
             ] using upToDate.2
       · rw [logEqOther candidate candidateNe]
@@ -7064,7 +7660,8 @@ theorem clientRequestPreservesSystemInductiveInvariant
             ]
       · have oldFound :
             entryAt? (state.nodes candidate).log index = some value := by
-          simpa [logEqOther candidate candidateEq] using found
+          rw [logEqOther candidate candidateEq] at found
+          exact found
         rcases
             preserveCanonicalAgreement
               (state.nodes candidate).log index value
@@ -7073,7 +7670,9 @@ theorem clientRequestPreservesSystemInductiveInvariant
           ⟨canonicalFound, agreed⟩
         exact
           ⟨canonicalFound,
-            by simpa [logEqOther candidate candidateEq] using agreed⟩
+            by
+              rw [logEqOther candidate candidateEq]
+              exact agreed⟩
     · intro destination request member index value found
       exact
         preserveCanonicalAgreement
@@ -7206,7 +7805,8 @@ theorem clientRequestPreservesSystemInductiveInvariant
       · rw [sourceEq] at oldPrefix ⊢
         rw [logEqNode]
         exact oldPrefix.trans (List.prefix_append _ _)
-      · simpa [logEqOther request.source sourceEq] using oldPrefix
+      · rw [logEqOther request.source sourceEq]
+        exact oldPrefix
     · apply
         electionHistoryFrame
           state (next state (.clientRequest node txId))
@@ -7241,7 +7841,7 @@ theorem clientRequestPreservesSystemInductiveInvariant
         exact
           preserveCanonicalAgreement history index value
             (canonical index value found)
-    · intro source index role current voter effective
+    · intro source index role current signature voter effective
       have oldRole : (state.nodes source).role = .leader := by
         simpa [roleEq] using role
       by_cases sourceEq : source = node
@@ -7254,7 +7854,8 @@ theorem clientRequestPreservesSystemInductiveInvariant
             simpa [termAtAppend_of_le_length oldIndex, currentTermEq] using
               current
           rcases
-              ackerCurrentFacts node index oldRole oldCurrent voter
+              ackerCurrentFacts node index oldRole oldCurrent
+                (signatureBackNode index oldIndex signature) voter
                 (effectiveAckersSubset node index oldRole effective) with
             retained | bad
           · left
@@ -7293,7 +7894,8 @@ theorem clientRequestPreservesSystemInductiveInvariant
             logEqOther source sourceEq, currentTermEq
           ] using current
         rcases
-            ackerCurrentFacts source index oldRole oldCurrent voter
+            ackerCurrentFacts source index oldRole oldCurrent
+              (by simpa [logEqOther source sourceEq] using signature) voter
               (effectiveAckersSubset source index oldRole effective) with
           retained | bad
         · left
@@ -7312,7 +7914,7 @@ theorem clientRequestPreservesSystemInductiveInvariant
               by simpa [currentTermEq] using bounded,
               recorded,
               by simpa [logEqOther source sourceEq] using missing⟩
-    · intro source index role current
+    · intro source index role current signature
         voter voteTerm candidate effective voted different newer
       have oldRole : (state.nodes source).role = .leader := by
         simpa [roleEq] using role
@@ -7327,6 +7929,7 @@ theorem clientRequestPreservesSystemInductiveInvariant
               current
           rcases
               ackerVoteFacts node index oldRole oldCurrent
+                (signatureBackNode index oldIndex signature)
                 voter voteTerm candidate
                 (effectiveAckersSubset node index oldRole effective)
                 voted different (by simpa [currentTermEq] using newer) with
@@ -7365,6 +7968,7 @@ theorem clientRequestPreservesSystemInductiveInvariant
           ] using current
         rcases
             ackerVoteFacts source index oldRole oldCurrent
+              (by simpa [logEqOther source sourceEq] using signature)
               voter voteTerm candidate
               (effectiveAckersSubset source index oldRole effective)
               voted different (by simpa [currentTermEq] using newer) with
@@ -7379,7 +7983,7 @@ theorem clientRequestPreservesSystemInductiveInvariant
               by simpa [currentTermEq] using above,
               bounded, recorded,
               by simpa [logEqOther source sourceEq] using missing⟩
-    · intro source index role current term record voter
+    · intro source index role current signature term record voter
         recorded member effective newer
       have oldRole : (state.nodes source).role = .leader := by
         simpa [roleEq] using role
@@ -7394,6 +7998,7 @@ theorem clientRequestPreservesSystemInductiveInvariant
               current
           rcases
               ackerElectionFacts node index oldRole oldCurrent
+                (signatureBackNode index oldIndex signature)
                 term record voter recorded member
                 (effectiveAckersSubset node index oldRole effective)
                 (by simpa [currentTermEq] using newer) with
@@ -7431,6 +8036,7 @@ theorem clientRequestPreservesSystemInductiveInvariant
           ] using current
         rcases
             ackerElectionFacts source index oldRole oldCurrent
+              (by simpa [logEqOther source sourceEq] using signature)
               term record voter recorded member
               (effectiveAckersSubset source index oldRole effective)
               (by simpa [currentTermEq] using newer) with
@@ -7502,6 +8108,33 @@ theorem clientRequestPreservesSystemInductiveInvariant
         exact agreed
       · simpa [logEqOther leader leaderEq] using agreed
 
+/-! ## Executable leader append actions -/
+
+/-- A client transaction append preserves the arbitrary-term invariant. -/
+theorem clientRequestPreservesSystemInductiveInvariant
+    (state : State TxId)
+    (node : Node)
+    (txId : TxId)
+    (invariant : SystemInductiveInvariant state)
+    (enabled : Enabled state (.clientRequest node txId)) :
+    SystemInductiveInvariant (next state (.clientRequest node txId)) := by
+  simpa [leaderAppendState, next, CCFRaft.next] using
+    leaderAppendPreservesSystemInductiveInvariant
+      state node (.transaction txId)
+        (insert txId state.submittedTxIds) invariant enabled.1
+
+/-- Appending a current-term signature preserves the arbitrary-term invariant. -/
+theorem signCommittableMessagesPreservesSystemInductiveInvariant
+    (state : State TxId)
+    (node : Node)
+    (invariant : SystemInductiveInvariant state)
+    (enabled : Enabled state (.signCommittableMessages node)) :
+    SystemInductiveInvariant
+      (next state (.signCommittableMessages node)) := by
+  simpa [leaderAppendState, next, CCFRaft.next] using
+    leaderAppendPreservesSystemInductiveInvariant
+      state node .signature state.submittedTxIds invariant enabled.1
+
 /-! ## RequestVote send -/
 
 /-- Sending a vote request changes only the network and its proof snapshot. -/
@@ -7524,8 +8157,46 @@ theorem requestVotePreservesSystemInductiveInvariant
   have candidatesAboveBootstrap :=
     invariantFactsCandidatesAboveBootstrap facts
   let request := makeRequestVoteRequest state source destination
+  let voteRequestSnapshot :=
+    (state.nodes source).log.take
+      (maxCommittableIndex (state.nodes source).log)
   let newVoteRequestHistory :=
-    Function.update voteRequestHistory request (state.nodes source).log
+    Function.update voteRequestHistory request voteRequestSnapshot
+  have sourceLastIndex :
+      lastCommittableIndex (state.nodes source) =
+        maxCommittableIndex (state.nodes source).log :=
+    lastCommittableIndex_eq_maxCommittableIndex
+      (state.nodes source)
+      (facts.committedFrontierIsSignature source)
+  have sourceLastTerm :
+      lastCommittableTerm (state.nodes source) =
+        maxCommittableTerm (state.nodes source).log :=
+    lastCommittableTerm_eq_maxCommittableTerm
+      (state.nodes source)
+      (facts.committedFrontierIsSignature source)
+  have snapshotLength :
+      voteRequestSnapshot.length =
+        maxCommittableIndex (state.nodes source).log := by
+    simp [
+      voteRequestSnapshot,
+      Nat.min_eq_left
+        (maxCommittableIndexBounded (state.nodes source).log)
+    ]
+  have snapshotTerm :
+      termAt voteRequestSnapshot voteRequestSnapshot.length =
+        maxCommittableTerm (state.nodes source).log := by
+    rw [snapshotLength]
+    exact
+      (termAtTakeOfLe
+        (log := (state.nodes source).log)
+        (index := maxCommittableIndex (state.nodes source).log)
+        (count := maxCommittableIndex (state.nodes source).log)
+        le_rfl).trans rfl
+  have snapshotCommittable :
+      maxCommittableIndex voteRequestSnapshot =
+        voteRequestSnapshot.length := by
+    rw [snapshotLength]
+    exact maxCommittableIndexTakeMax (state.nodes source).log
   have effectiveAckersEq :
       forall leader index,
         effectiveAckers
@@ -7710,6 +8381,8 @@ theorem requestVotePreservesSystemInductiveInvariant
       newVoteRequestHistory, voteCandidateHistory, voteVoterHistory, ?_⟩
   constructor
   · simpa [next, CCFRaft.next] using facts.commitIndicesBounded
+  · simpa [next, CCFRaft.next] using
+      facts.committedFrontierIsSignature
   · simpa [next, CCFRaft.next] using facts.currentTermsPositive
   · simpa [next, CCFRaft.next] using facts.entriesDoNotExceedCurrentTerm
   · simpa [next, CCFRaft.next] using facts.candidatesSelfVote
@@ -7780,34 +8453,58 @@ theorem requestVotePreservesSystemInductiveInvariant
             queuedDestination queuedRequest old
         by_cases sameRequest : queuedRequest = request
         · subst queuedRequest
-          simp [
-            newVoteRequestHistory, Function.update,
-            request, makeRequestVoteRequest
-          ]
-          constructor
-          · exact candidatesAboveBootstrap source enabled.1
-          · constructor
-            · simp [next, CCFRaft.next]
-            · intro _ _
-              simpa [next, CCFRaft.next] using
-                prefixRefl (state.nodes source).log
+          refine
+            ⟨by simpa [
+                newVoteRequestHistory, Function.update,
+                request, makeRequestVoteRequest,
+                sourceLastIndex, snapshotLength
+              ],
+              by simpa [
+                newVoteRequestHistory, Function.update,
+                request, makeRequestVoteRequest,
+                sourceLastTerm, snapshotTerm
+              ],
+              by simpa [
+                newVoteRequestHistory, Function.update
+              ] using snapshotCommittable,
+              candidatesAboveBootstrap source enabled.1,
+              by simp [request, makeRequestVoteRequest, next, CCFRaft.next],
+              ?_⟩
+          intro _ _
+          simpa [
+            newVoteRequestHistory, Function.update
+          ] using List.take_prefix
+            (maxCommittableIndex (state.nodes source).log)
+            (state.nodes source).log
         · simpa [
             newVoteRequestHistory, Function.update, sameRequest
           ] using oldFacts
       · rcases new with ⟨destinationEq, messageEq⟩
         simp only [Message.requestVoteRequest.injEq] at messageEq
         subst queuedRequest
-        simp [
-          newVoteRequestHistory, Function.update,
-          request, makeRequestVoteRequest
-        ]
-        constructor
-        · exact candidatesAboveBootstrap source enabled.1
-        · constructor
-          · simp [next, CCFRaft.next]
-          · intro _ _
-            simpa [next, CCFRaft.next] using
-              prefixRefl (state.nodes source).log
+        refine
+          ⟨by simpa [
+              newVoteRequestHistory, Function.update,
+              request, makeRequestVoteRequest,
+              sourceLastIndex, snapshotLength
+            ],
+            by simpa [
+              newVoteRequestHistory, Function.update,
+              request, makeRequestVoteRequest,
+              sourceLastTerm, snapshotTerm
+            ],
+            by simpa [
+              newVoteRequestHistory, Function.update
+            ] using snapshotCommittable,
+            candidatesAboveBootstrap source enabled.1,
+            by simp [request, makeRequestVoteRequest, next, CCFRaft.next],
+            ?_⟩
+        intro _ _
+        simpa [
+          newVoteRequestHistory, Function.update
+        ] using List.take_prefix
+          (maxCommittableIndex (state.nodes source).log)
+          (state.nodes source).log
     · intro queuedDestination response member granted
       have old :
           Message.requestVoteResponse response ∈
@@ -8224,6 +8921,22 @@ theorem appendEntriesPreservesSystemInductiveInvariant
         next, CCFRaft.next, updateNode,
         Function.update, nodeEq
       ]
+  have lastIndexEq :
+      forall node,
+        lastCommittableIndex
+            ((next state
+              (.appendEntries source destination batchEnd)).nodes node) =
+          lastCommittableIndex (state.nodes node) := by
+    intro node
+    exact lastCommittableIndexFrame (logEq node) (commitIndexEq node)
+  have lastTermEq :
+      forall node,
+        lastCommittableTerm
+            ((next state
+              (.appendEntries source destination batchEnd)).nodes node) =
+          lastCommittableTerm (state.nodes node) := by
+    intro node
+    exact lastCommittableTermFrame (logEq node) (commitIndexEq node)
   have votedForEq :
       forall node,
         ((next state (.appendEntries source destination batchEnd)).nodes node).votedFor =
@@ -8402,7 +9115,11 @@ theorem appendEntriesPreservesSystemInductiveInvariant
         simpa [
           currentlyEligibleElectionVoter,
           makeRequestVoteRequest,
-          currentTermEq, logEq, votedForEq,
+          currentTermEq, logEq, commitIndexEq, votedForEq,
+          lastCommittableIndexFrame
+            (logEq candidate) (commitIndexEq candidate),
+          lastCommittableTermFrame
+            (logEq candidate) (commitIndexEq candidate),
           voteLogUpToDate
         ] using eligible
     · rintro (effective | eligible)
@@ -8413,7 +9130,11 @@ theorem appendEntriesPreservesSystemInductiveInvariant
         simpa [
           currentlyEligibleElectionVoter,
           makeRequestVoteRequest,
-          currentTermEq, logEq, votedForEq,
+          currentTermEq, logEq, commitIndexEq, votedForEq,
+          lastCommittableIndexFrame
+            (logEq candidate) (commitIndexEq candidate),
+          lastCommittableTermFrame
+            (logEq candidate) (commitIndexEq candidate),
           voteLogUpToDate
         ] using eligible
   have potentialElectionMajorityEq :
@@ -8460,6 +9181,10 @@ theorem appendEntriesPreservesSystemInductiveInvariant
   · intro node
     rw [commitIndexEq, logEq]
     exact facts.commitIndicesBounded node
+  · intro node positive
+    rw [commitIndexEq, logEq]
+    apply facts.committedFrontierIsSignature node
+    simpa [commitIndexEq] using positive
   · intro node
     rw [currentTermEq]
     exact facts.currentTermsPositive node
@@ -8609,9 +9334,10 @@ theorem appendEntriesPreservesSystemInductiveInvariant
       rcases
           facts.networkHistory.voteRequest
             queuedDestination voteRequest old with
-        ⟨lastIndex, lastTerm, aboveBootstrap, termBound, activePrefix⟩
+        ⟨lastIndex, lastTerm, maxIndex,
+          aboveBootstrap, termBound, activePrefix⟩
       exact
-        ⟨lastIndex, lastTerm, aboveBootstrap,
+        ⟨lastIndex, lastTerm, maxIndex, aboveBootstrap,
           by simpa [currentTermEq] using termBound,
           fun sameTerm active =>
             by
@@ -8929,6 +9655,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
             simpa [
               makeRequestVoteRequest,
               currentTermEq, logEq,
+              lastIndexEq, lastTermEq,
               voteLogUpToDate
             ] using upToDate)
   · refine
@@ -9242,6 +9969,20 @@ theorem timeoutPreservesSystemInductiveInvariant
         next, CCFRaft.next, updateNode,
         Function.update, same
       ]
+  have lastIndexEq :
+      forall candidate,
+        lastCommittableIndex
+            ((next state (.timeout node)).nodes candidate) =
+          lastCommittableIndex (state.nodes candidate) := by
+    intro candidate
+    exact lastCommittableIndexFrame (logEq candidate) (commitEq candidate)
+  have lastTermEq :
+      forall candidate,
+        lastCommittableTerm
+            ((next state (.timeout node)).nodes candidate) =
+          lastCommittableTerm (state.nodes candidate) := by
+    intro candidate
+    exact lastCommittableTermFrame (logEq candidate) (commitEq candidate)
   have committedEq :
       forall candidate,
         ((next state (.timeout node)).nodes candidate).committedLog =
@@ -9485,6 +10226,10 @@ theorem timeoutPreservesSystemInductiveInvariant
   · intro candidate
     rw [commitEq, logEq]
     exact facts.commitIndicesBounded candidate
+  · intro candidate positive
+    rw [commitEq, logEq]
+    apply facts.committedFrontierIsSignature candidate
+    simpa [commitEq] using positive
   · intro candidate
     by_cases same : candidate = node
     · subst candidate
@@ -9654,8 +10399,9 @@ theorem timeoutPreservesSystemInductiveInvariant
     · intro destination request member
       rcases
           facts.networkHistory.voteRequest destination request member with
-        ⟨lastIndex, lastTerm, aboveBootstrap, termBound, activePrefix⟩
-      refine ⟨lastIndex, lastTerm, aboveBootstrap, ?_, ?_⟩
+        ⟨lastIndex, lastTerm, maxIndex,
+          aboveBootstrap, termBound, activePrefix⟩
+      refine ⟨lastIndex, lastTerm, maxIndex, aboveBootstrap, ?_, ?_⟩
       · by_cases sourceEq : request.source = node
         · have oldBound :
               request.term <= (state.nodes node).currentTerm := by
@@ -9780,14 +10526,16 @@ theorem timeoutPreservesSystemInductiveInvariant
                     supporter.1,
                   by simpa [
                     makeRequestVoteRequest,
-                    logEq, voteLogUpToDate
+                    logEq, lastIndexEq, lastTermEq,
+                    voteLogUpToDate
                   ] using supporter.2⟩
         have oldCandidateBefore :
             (state.nodes node).currentTerm < newTerm := by
           simp [newTerm]
         have covered :=
           prospectiveCommitFutureMember
-            ownership electionFacts evidenceFacts prospectiveFacts
+            ownership facts.committedFrontierIsSignature
+              electionFacts evidenceFacts prospectiveFacts
               oldKnown oldCandidateBefore ackMember futureMember
         simpa [logEq] using covered
       · left
@@ -9810,7 +10558,8 @@ theorem timeoutPreservesSystemInductiveInvariant
               ⟨?_, by simpa [
                 makeRequestVoteRequest,
                 termOther candidate candidateEq,
-                logEq, voteLogUpToDate
+                logEq, lastIndexEq, lastTermEq,
+                voteLogUpToDate
               ] using supporter.2⟩
             by_cases memberEq : member = node
             · have afterBound := supporter.1
@@ -9992,10 +10741,14 @@ theorem timeoutPreservesSystemInductiveInvariant
           · simpa [newVotes, Function.update, voterEq] using recorded
       · refine ⟨?_, Or.inl self⟩
         exact newRecorded
-      · rcases snapshot with ⟨candidatePrefix, voterBound, upToDate⟩
-        refine ⟨?_, Or.inr ⟨?_, ?_, ?_⟩⟩
+      · rcases snapshot with
+          ⟨candidatePrefix, candidateCommittable, voterCommittable,
+            voterBound, upToDate⟩
+        refine ⟨?_, Or.inr ⟨?_, ?_, ?_, ?_, ?_⟩⟩
         · exact newRecorded
         · simpa [logEq] using candidatePrefix
+        · exact candidateCommittable
+        · exact voterCommittable
         · by_cases voterEq : voter = node
           · subst voter
             rw [termNode]
@@ -10117,6 +10870,20 @@ theorem updateTermPreservesSystemInductiveInvariant
           next, CCFRaft.next, found, updateNode,
           Function.update, same
         ]
+    have lastIndexEq :
+        forall node,
+          lastCommittableIndex
+              ((next state (.updateTerm source destination)).nodes node) =
+            lastCommittableIndex (state.nodes node) := by
+      intro node
+      exact lastCommittableIndexFrame (logEq node) (commitEq node)
+    have lastTermEq :
+        forall node,
+          lastCommittableTerm
+              ((next state (.updateTerm source destination)).nodes node) =
+            lastCommittableTerm (state.nodes node) := by
+      intro node
+      exact lastCommittableTermFrame (logEq node) (commitEq node)
     have committedEq :
         forall node,
           ((next state (.updateTerm source destination)).nodes node).committedLog =
@@ -10299,6 +11066,10 @@ theorem updateTermPreservesSystemInductiveInvariant
     · intro node
       rw [commitEq, logEq]
       exact facts.commitIndicesBounded node
+    · intro node positive
+      rw [commitEq, logEq]
+      apply facts.committedFrontierIsSignature node
+      simpa [commitEq] using positive
     · intro node
       by_cases same : node = destination
       · subst node
@@ -10431,8 +11202,9 @@ theorem updateTermPreservesSystemInductiveInvariant
         rcases
             facts.networkHistory.voteRequest
               queuedDestination request member with
-          ⟨lastIndex, lastTerm, aboveBootstrap, termBound, activePrefix⟩
-        refine ⟨lastIndex, lastTerm, aboveBootstrap, ?_, ?_⟩
+          ⟨lastIndex, lastTerm, maxIndex,
+            aboveBootstrap, termBound, activePrefix⟩
+        refine ⟨lastIndex, lastTerm, maxIndex, aboveBootstrap, ?_, ?_⟩
         · by_cases sourceEq : request.source = destination
           · have oldBound :
                 request.term <=
@@ -10542,7 +11314,8 @@ theorem updateTermPreservesSystemInductiveInvariant
             refine ⟨?_, by simpa [
               makeRequestVoteRequest,
               (termOther candidate candidateNe),
-              logEq, voteLogUpToDate
+              logEq, lastIndexEq, lastTermEq,
+              voteLogUpToDate
             ] using supporter.2⟩
             by_cases memberEq : member = destination
             · have oldTermLe :
@@ -10719,8 +11492,13 @@ theorem updateTermPreservesSystemInductiveInvariant
             candidate voter oldActive oldMember with
         ⟨recorded, self | snapshot⟩
       · exact ⟨recorded, Or.inl self⟩
-      · rcases snapshot with ⟨candidatePrefix, voterBound, upToDate⟩
-        refine ⟨recorded, Or.inr ⟨?_, ?_, ?_⟩⟩
+      · rcases snapshot with
+          ⟨candidatePrefix, candidateCommittable, voterCommittable,
+            voterBound, upToDate⟩
+        refine
+          ⟨recorded,
+            Or.inr
+              ⟨?_, candidateCommittable, voterCommittable, ?_, ?_⟩⟩
         · simpa [logEq] using candidatePrefix
         · by_cases voterEq : voter = destination
           · subst voter
@@ -10797,25 +11575,43 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
     termOwnershipCandidateTermNotInLogs
       candidatesAboveBootstrap facts.grantedVoteSnapshots
         ownership electionFacts
+  let promotionLog :=
+    (state.nodes node).log.take
+      (maxCommittableIndex (state.nodes node).log)
+  have promotionPrefix :
+      promotionLog <+: (state.nodes node).log :=
+    List.take_prefix _ _
+  have promotionLength :
+      promotionLog.length =
+        maxCommittableIndex (state.nodes node).log := by
+    simp [
+      promotionLog,
+      Nat.min_eq_left
+        (maxCommittableIndexBounded (state.nodes node).log)
+    ]
+  have promotionCommittable :
+      maxCommittableIndex promotionLog = promotionLog.length := by
+    rw [promotionLength]
+    exact maxCommittableIndexTakeMax (state.nodes node).log
   let newOwners : TermOwners :=
     Function.update owners (state.nodes node).currentTerm (some node)
   let newCanonicalHistory : Nat -> List (Entry TxId) :=
     Function.update canonicalHistory
-      (state.nodes node).currentTerm (state.nodes node).log
+      (state.nodes node).currentTerm promotionLog
   let electionRecord : ElectionRecord TxId :=
     { leader := node
       quorum := (state.nodes node).votesGranted
-      promotionLog := (state.nodes node).log
+      promotionLog
       candidateLog := fun voter =>
         if voter = node then
-          (state.nodes node).log
+          promotionLog
         else
           voteCandidateHistory
             (grantedVoteKey
               voter (state.nodes node).currentTerm node)
       voterLog := fun voter =>
         if voter = node then
-          (state.nodes node).log
+          promotionLog
         else
           voteVoterHistory
             (grantedVoteKey
@@ -10872,16 +11668,20 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
       next, CCFRaft.next, updateNode,
       Function.update, different
     ]
-  have logEq :
+  have logNode :
+      ((next state (.becomeLeader node)).nodes node).log =
+        promotionLog := by
+    simp [next, CCFRaft.next, promotionLog]
+  have logOther :
       forall candidate,
+        Not (candidate = node) ->
         ((next state (.becomeLeader node)).nodes candidate).log =
           (state.nodes candidate).log := by
-    intro candidate
-    by_cases same : candidate = node <;>
-      simp [
-        next, CCFRaft.next, updateNode,
-        Function.update, same
-      ]
+    intro candidate different
+    simp [
+      next, CCFRaft.next, updateNode,
+      Function.update, different
+    ]
   have termEq :
       forall candidate,
         ((next state (.becomeLeader node)).nodes candidate).currentTerm =
@@ -10907,7 +11707,69 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
         ((next state (.becomeLeader node)).nodes candidate).committedLog =
           (state.nodes candidate).committedLog := by
     intro candidate
-    simp [NodeState.committedLog, commitEq, logEq]
+    by_cases same : candidate = node
+    · subst candidate
+      have commitBound :=
+        commitIndex_le_maxCommittableIndex
+          (state.nodes node)
+          (facts.committedFrontierIsSignature node)
+      simp [
+        NodeState.committedLog, commitEq, logNode,
+        promotionLog, List.take_take,
+        Nat.min_eq_left commitBound
+      ]
+    · simp [
+        NodeState.committedLog, commitEq,
+        logOther candidate same
+      ]
+  have maxCommittableIndexEq :
+      forall candidate,
+        maxCommittableIndex
+            ((next state (.becomeLeader node)).nodes candidate).log =
+          maxCommittableIndex (state.nodes candidate).log := by
+    intro candidate
+    by_cases same : candidate = node
+    · subst candidate
+      rw [logNode, promotionCommittable, promotionLength]
+    · rw [logOther candidate same]
+  have maxCommittableTermEq :
+      forall candidate,
+        maxCommittableTerm
+            ((next state (.becomeLeader node)).nodes candidate).log =
+          maxCommittableTerm (state.nodes candidate).log := by
+    intro candidate
+    by_cases same : candidate = node
+    · subst candidate
+      unfold maxCommittableTerm
+      rw [maxCommittableIndexEq, logNode]
+      exact termAtTakeOfLe le_rfl
+    · rw [logOther candidate same]
+  have lastIndexEq :
+      forall candidate,
+        lastCommittableIndex
+            ((next state (.becomeLeader node)).nodes candidate) =
+          lastCommittableIndex (state.nodes candidate) := by
+    intro candidate
+    simp [
+      lastCommittableIndex, commitEq,
+      maxCommittableIndexEq
+    ]
+  have lastTermEq :
+      forall candidate,
+        lastCommittableTerm
+            ((next state (.becomeLeader node)).nodes candidate) =
+          lastCommittableTerm (state.nodes candidate) := by
+    intro candidate
+    unfold lastCommittableTerm
+    rw [lastIndexEq]
+    by_cases same : candidate = node
+    · subst candidate
+      rw [logNode]
+      rw [lastCommittableIndex_eq_maxCommittableIndex
+        (state.nodes node)
+        (facts.committedFrontierIsSignature node)]
+      exact termAtTakeOfLe le_rfl
+    · rw [logOther candidate same]
   have votedEq :
       forall candidate,
         ((next state (.becomeLeader node)).nodes candidate).votedFor =
@@ -10930,8 +11792,8 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
       ]
   have sentNode :
       ((next state (.becomeLeader node)).nodes node).sentIndex =
-        fun _ => (state.nodes node).log.length := by
-    simp [next, CCFRaft.next]
+        fun _ => promotionLog.length := by
+    simp [next, CCFRaft.next, promotionLog]
   have matchNode :
       ((next state (.becomeLeader node)).nodes node).matchIndex =
         fun _ => 0 := by
@@ -11020,7 +11882,8 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
         simpa [
           currentlyEligibleElectionVoter,
           makeRequestVoteRequest,
-          termEq, logEq, votedEq, voteLogUpToDate
+          termEq, maxCommittableIndexEq, maxCommittableTermEq,
+          lastIndexEq, lastTermEq, votedEq, voteLogUpToDate
         ] using eligible)
     · exact Or.inl (by
         rw [effectiveElectionVotersEq]
@@ -11029,7 +11892,8 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
         simpa [
           currentlyEligibleElectionVoter,
           makeRequestVoteRequest,
-          termEq, logEq, votedEq, voteLogUpToDate
+          termEq, maxCommittableIndexEq, maxCommittableTermEq,
+          lastIndexEq, lastTermEq, votedEq, voteLogUpToDate
         ] using eligible)
   have potentialElectionMajorityEq :
       forall candidate,
@@ -11069,7 +11933,7 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
           ⟨response, by simpa [networkEq] using member,
             success, by simpa [termEq] using responseTerm,
             sourceEq, destinationEq, lastIndex,
-            by simpa [logEq] using covered⟩
+            by simpa [logOther leader leaderNe] using covered⟩
     · rintro (self | matched | queued)
       · exact Or.inl self
       · exact Or.inr
@@ -11083,7 +11947,7 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
           ⟨response, by simpa [networkEq] using member,
             success, by simpa [termEq] using responseTerm,
             sourceEq, destinationEq, lastIndex,
-            by simpa [logEq] using covered⟩
+            by simpa [logOther leader leaderNe] using covered⟩
   have effectiveMajorityOtherEq :
       forall leader,
         Not (leader = node) ->
@@ -11168,18 +12032,23 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
       simpa [TERM_ONE] using facts.currentTermsPositive node
     rcases termAtPositiveEntry positive with
       ⟨foundEntry, found, foundTerm⟩
+    have oldFound :
+        entryAt? (state.nodes node).log index = some foundEntry := by
+      rw [logNode] at found
+      exact CCFRaft.entryAt_of_prefix promotionPrefix found
     exact
       oldCandidateTermNot
         node oldRole oldEffectiveMajority node index foundEntry
-          (by simpa [logEq] using found)
+          oldFound
           (by simpa [termEq] using foundTerm.trans current)
   have preserveEarlierBad :
       forall source index bound,
+        Not (source = node) ->
         EarlierBadElection state elections source index bound ->
           EarlierBadElection
             (next state (.becomeLeader node))
               newElections source index bound := by
-    intro source index bound bad
+    intro source index bound sourceNe bad
     rcases bad with
       ⟨badTerm, badRecord, above, bounded, badRecorded, missing⟩
     have badTermNe :=
@@ -11191,21 +12060,51 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
         by simpa [
           newElections, Function.update, badTermNe
         ] using badRecorded,
-        by simpa [logEq] using missing⟩
+        by simpa [logOther source sourceNe] using missing⟩
   refine
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, ?_⟩
   constructor
   · intro candidate
-    rw [commitEq, logEq]
-    exact facts.commitIndicesBounded candidate
+    by_cases same : candidate = node
+    · subst candidate
+      rw [commitEq, logNode, promotionLength]
+      exact
+        commitIndex_le_maxCommittableIndex
+          (state.nodes node)
+          (facts.committedFrontierIsSignature node)
+    · rw [commitEq, logOther candidate same]
+      exact facts.commitIndicesBounded candidate
+  · intro candidate positive
+    have oldPositive :
+        0 < (state.nodes candidate).commitIndex := by
+      simpa [commitEq] using positive
+    have oldSignature :=
+      facts.committedFrontierIsSignature candidate oldPositive
+    by_cases same : candidate = node
+    · subst candidate
+      rw [commitEq, logNode]
+      exact
+        isSignatureAt_take_of_le
+          (commitIndex_le_maxCommittableIndex
+            (state.nodes node)
+            (facts.committedFrontierIsSignature node))
+          oldSignature
+    · rw [commitEq, logOther candidate same]
+      exact oldSignature
   · intro candidate
     rw [termEq]
     exact facts.currentTermsPositive candidate
   · intro candidate entry member
-    rw [logEq] at member
     rw [termEq]
-    exact facts.entriesDoNotExceedCurrentTerm candidate entry member
+    by_cases same : candidate = node
+    · subst candidate
+      rw [logNode] at member
+      exact
+        facts.entriesDoNotExceedCurrentTerm node entry
+          (CCFRaft.memOfPrefix promotionPrefix member)
+    · rw [logOther candidate same] at member
+      exact facts.entriesDoNotExceedCurrentTerm candidate entry member
   · intro candidate role
     have candidateNe : Not (candidate = node) := by
       intro same
@@ -11233,11 +12132,14 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
   · intro leader role peer
     by_cases leaderEq : leader = node
     · subst leader
-      rw [sentNode, matchNode, logEq]
+      rw [sentNode, matchNode, logNode]
       simp
     · rw [roleOther leader leaderEq] at role
       have old := facts.leaderProgressBounded leader role peer
-      rw [sentOther leader leaderEq, matchOther leader leaderEq, logEq]
+      rw [
+        sentOther leader leaderEq, matchOther leader leaderEq,
+        logOther leader leaderEq
+      ]
       exact old
   · constructor
     · exact facts.voteHistory.bootstrapEmpty
@@ -11292,14 +12194,15 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
         contradiction
       · constructor
         · simpa [roleOther response.destination destinationEq] using oldLeader
-        · simpa [logEq] using covered
+        · simpa [logOther response.destination destinationEq] using covered
     · intro destination request member
       rw [networkEq] at member
       rcases
           facts.networkHistory.voteRequest destination request member with
-        ⟨lastIndex, lastTerm, aboveBootstrap, termBound, activePrefix⟩
+        ⟨lastIndex, lastTerm, maxIndex,
+          aboveBootstrap, termBound, activePrefix⟩
       refine
-        ⟨lastIndex, lastTerm, aboveBootstrap,
+        ⟨lastIndex, lastTerm, maxIndex, aboveBootstrap,
           by simpa [termEq] using termBound, ?_⟩
       intro sameTerm active
       have oldPrefix := activePrefix
@@ -11309,15 +12212,22 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
           · rw [sourceEq]
             exact Or.inl oldRole
           · simpa [roleOther request.source sourceEq] using active)
-      simpa [logEq] using oldPrefix
+      by_cases sourceEq : request.source = node
+      · rw [sourceEq] at oldPrefix ⊢
+        rw [logNode]
+        exact
+          committablePrefixOfMaxTake oldPrefix maxIndex
+      · simpa [logOther request.source sourceEq] using oldPrefix
     · intro destination response member granted
       rw [networkEq] at member
       rcases
           facts.networkHistory.voteResponse destination response member granted with
-        ⟨termBound, vote, upToDate⟩
+        ⟨termBound, vote, candidateCommittable,
+          voterCommittable, upToDate⟩
       exact
         ⟨by simpa [termEq] using termBound,
-          vote, by simpa [voteLogUpToDate] using upToDate⟩
+          vote, candidateCommittable, voterCommittable,
+          by simpa [voteLogUpToDate] using upToDate⟩
   have evidenceAfter :
       CommitEvidenceFacts
         (next state (.becomeLeader node))
@@ -11357,12 +12267,12 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
             evidence supportedPrefix ->
         evidence.commitTerm < (state.nodes node).currentTerm ->
           evidence.history.take evidence.commitFrontier <+:
-            (state.nodes node).log := by
+            promotionLog := by
     intro evidence supportedPrefix known strict
     have oldKnown := knownBack evidence supportedPrefix known
     rcases knownCommitEvidenceValid evidenceFacts oldKnown with
       ⟨frontierBound, frontierTerm, supportedBound,
-        supportedEq, ackMajority, memberAgreement⟩
+        supportedEq, ackMajority, memberAgreement, frontierSignature⟩
     rcases
         majoritiesIntersect
           evidence.ackQuorum
@@ -11389,7 +12299,7 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
             node oldRole oldEffectiveMajority
               node index entry found same
       omega
-    exact
+    have covered :=
       prospectiveFacts.relaxedSupporterCarriesFrontier
         evidence supportedPrefix oldKnown node witness
           oldRole strict candidateEntriesBefore
@@ -11399,6 +12309,13 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
               Finset.mem_univ, true_and
             ]
             exact Or.inl witnessParts.2)
+    apply signatureEndedPrefixOfMaxTake covered
+    have prefixLength :
+        (evidence.history.take evidence.commitFrontier).length =
+          evidence.commitFrontier := by
+      simp [Nat.min_eq_left frontierBound]
+    rw [prefixLength]
+    exact isSignatureAt_take_of_le le_rfl frontierSignature
   have prospectiveAfter :
       ProspectiveCommitEvidenceFacts
         (next state (.becomeLeader node))
@@ -11430,11 +12347,55 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
               (knownBack evidence supportedPrefix known)
               term record oldRecorded newer
     · intro evidence supportedPrefix known member ackMember
-      simpa [logEq] using
-        prospectiveFacts.currentMember
-          evidence supportedPrefix
-            (knownBack evidence supportedPrefix known)
-            member ackMember
+      by_cases memberEq : member = node
+      · subst member
+        have oldKnown := knownBack evidence supportedPrefix known
+        have oldCovered :=
+          prospectiveFacts.currentMember
+            evidence supportedPrefix oldKnown node ackMember
+        have valid := knownCommitEvidenceValid evidenceFacts oldKnown
+        have frontierPositive : 0 < evidence.commitFrontier := by
+          have supportedPositive :=
+            knownCommitEvidenceSupportedLengthPositive evidenceFacts oldKnown
+          exact supportedPositive.trans_le valid.2.2.1
+        rcases
+            entryAtSomeOfPositiveBound frontierPositive valid.1 with
+          ⟨frontierEntry, historyFound⟩
+        have prefixFound :
+            entryAt?
+                (evidence.history.take evidence.commitFrontier)
+                evidence.commitFrontier =
+              some frontierEntry := by
+          rw [entryAtTake_of_le le_rfl]
+          exact historyFound
+        have nodeFound :
+            entryAt? (state.nodes node).log evidence.commitFrontier =
+              some frontierEntry :=
+          CCFRaft.entryAt_of_prefix oldCovered prefixFound
+        have frontierTerm :
+            frontierEntry.term = evidence.commitTerm := by
+          simpa [termAt, historyFound] using valid.2.1
+        have termBound :=
+          facts.entriesDoNotExceedCurrentTerm node frontierEntry
+            (CCFRaft.entryAt_mem nodeFound)
+        have termNe :
+            Not (
+              frontierEntry.term =
+                (state.nodes node).currentTerm) :=
+          oldCandidateTermNot
+            node oldRole oldEffectiveMajority node
+              evidence.commitFrontier frontierEntry nodeFound
+        have strict :
+            evidence.commitTerm < (state.nodes node).currentTerm := by
+          rw [← frontierTerm]
+          omega
+        simpa [logNode] using
+          newPromotionCovered evidence supportedPrefix known strict
+      · simpa [logOther member memberEq] using
+          prospectiveFacts.currentMember
+            evidence supportedPrefix
+              (knownBack evidence supportedPrefix known)
+              member ackMember
     · intro evidence supportedPrefix known destination request
         queued sameTerm
       exact
@@ -11452,7 +12413,9 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
         exact Role.noConfusion (role.symm.trans roleNode)
       simpa [
         roleOther candidate candidateNe,
-        termEq, logEq, votedEq,
+        termEq, logOther candidate candidateNe,
+        maxCommittableIndexEq, maxCommittableTermEq,
+        lastIndexEq, lastTermEq, votedEq,
         effectiveElectionVotersEq,
         relaxedElectionVoters,
         makeRequestVoteRequest,
@@ -11467,12 +12430,15 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
             (by
               intro entry entryMember
               simpa [termEq] using
-                entriesBefore entry (by simpa [logEq] using entryMember))
+                entriesBefore entry
+                  (by simpa [logOther candidate candidateNe] using entryMember))
             ackMember
             (by simpa [
               relaxedElectionVoters,
               makeRequestVoteRequest,
-              termEq, logEq, votedEq,
+              termEq, logOther candidate candidateNe,
+              maxCommittableIndexEq, maxCommittableTermEq,
+              lastIndexEq, lastTermEq, votedEq,
               effectiveElectionVotersEq,
               voteLogUpToDate
             ] using relaxed)
@@ -11514,7 +12480,11 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
     · intro owner index entry found
       have oldFound :
           entryAt? (state.nodes owner).log index = some entry := by
-        simpa [logEq] using found
+        by_cases ownerEq : owner = node
+        · subst owner
+          rw [logNode] at found
+          exact CCFRaft.entryAt_of_prefix promotionPrefix found
+        · simpa [logOther owner ownerEq] using found
       have termNe :
           Not (entry.term = (state.nodes node).currentTerm) :=
         oldCandidateTermNot
@@ -11526,9 +12496,27 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
         ⟨by simpa [
             newCanonicalHistory, Function.update, termNe
           ] using canonicalFound,
-          by simpa [
-            logEq, newCanonicalHistory, Function.update, termNe
-          ] using agreed⟩
+          by
+            by_cases ownerEq : owner = node
+            · subst owner
+              have promotionFound :
+                  entryAt? promotionLog index = some entry := by
+                simpa [logNode] using found
+              rw [logNode]
+              calc
+                promotionLog.take index =
+                    (state.nodes node).log.take index :=
+                  CCFRaft.takeEqOfPrefix promotionPrefix
+                    (entryAtSomeIndexBound promotionFound)
+                _ =
+                    (newCanonicalHistory entry.term).take index := by
+                  simpa [
+                    newCanonicalHistory, Function.update, termNe
+                  ] using agreed
+            · simpa [
+                logOther owner ownerEq,
+                newCanonicalHistory, Function.update, termNe
+              ] using agreed⟩
     · intro destination request member index entry found
       have oldMember :
           Message.appendEntriesRequest request ∈
@@ -11558,7 +12546,7 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
       by_cases leaderEq : leader = node
       · subst leader
         simp [
-          newCanonicalHistory, Function.update, termEq, logEq
+          newCanonicalHistory, Function.update, termEq, logNode
         ]
       · have oldLeader :
             (state.nodes leader).role = .leader := by
@@ -11577,7 +12565,7 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
           ownership.activeLeaderHistory leader oldLeader
         simpa [
           newCanonicalHistory, Function.update, differentTerm,
-          termEq, logEq
+          termEq, logOther leader leaderEq
         ] using oldHistory
     · intro term index entry found
       by_cases termEqNode :
@@ -11585,9 +12573,12 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
       · subst term
         have candidateFound :
             entryAt? (state.nodes node).log index = some entry := by
-          simpa [
-            newCanonicalHistory, Function.update
-          ] using found
+          have promotionFound :
+              entryAt? promotionLog index = some entry := by
+            simpa [
+              newCanonicalHistory, Function.update
+            ] using found
+          exact CCFRaft.entryAt_of_prefix promotionPrefix promotionFound
         have entryTermNe :
             Not (entry.term = (state.nodes node).currentTerm) :=
           oldCandidateTermNot
@@ -11624,8 +12615,11 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
           term = (state.nodes node).currentTerm
       · subst term
         simpa [
-          MonoHistory, newCanonicalHistory, Function.update
-        ] using monoLog node
+          newCanonicalHistory, Function.update
+        ] using
+          monoHistoryOfPrefix
+            ((canonicalHistoriesMonoLog ownership) node)
+            promotionPrefix
       · simpa [
           newCanonicalHistory, Function.update, termEqNode
         ] using ownership.canonicalMonoLog term
@@ -11695,7 +12689,7 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
             destination request oldMember
               (by simpa [termEq] using sameTerm)
               (by simpa [roleOther request.source sourceEq] using leaderRole)
-        simpa [logEq] using oldPrefix
+        simpa [logOther request.source sourceEq] using oldPrefix
     · constructor
       · intro term record recorded
         by_cases termEqNode :
@@ -11807,6 +12801,20 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
           ] using
             electionFacts.promotionCanonical
               term record oldRecorded
+      · intro term record recorded
+        by_cases termEqNode :
+            term = (state.nodes node).currentTerm
+        · subst term
+          have recordEq : electionRecord = record :=
+            Option.some.inj (by
+              simpa [newElections] using recorded)
+          subst record
+          simpa [electionRecord] using promotionCommittable
+        · exact
+            electionFacts.promotionCommittable term record
+              (by simpa [
+                newElections, Function.update, termEqNode
+              ] using recorded)
       · intro term record recorded entry member
         by_cases termEqNode :
             term = (state.nodes node).currentTerm
@@ -11815,15 +12823,19 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
             Option.some.inj (by
               simpa [newElections] using recorded)
           subst record
+          have oldMember :
+              entry ∈ (state.nodes node).log :=
+            CCFRaft.memOfPrefix promotionPrefix
+              (by simpa [electionRecord] using member)
           have bounded :=
             facts.entriesDoNotExceedCurrentTerm
-              node entry (by simpa [electionRecord] using member)
+              node entry oldMember
           have different :
               Not (entry.term = (state.nodes node).currentTerm) := by
             intro same
             rcases
                 termOwnershipLogEntryOwner ownership
-                  (by simpa [electionRecord] using member) with
+                  oldMember with
               ⟨owner, owned⟩
             rw [same, oldTermUnowned] at owned
             contradiction
@@ -11858,7 +12870,9 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
                   node voter (Or.inl oldRole) effectiveMember with
               ⟨_, self | snapshot⟩
             · exact False.elim (voterEq self)
-            · simpa [electionRecord, voterEq] using snapshot.1
+            · simpa [electionRecord, voterEq] using
+                committablePrefixOfMaxTake
+                  snapshot.1 snapshot.2.1
         · exact
             electionFacts.candidatePrefix term record voter
               (by simpa [
@@ -11877,8 +12891,10 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
           · subst voter
             simpa [electionRecord] using
               canonicalFrameToNew
-                (state.nodes node).log
-                (nodeLogCanonical ownership node)
+                promotionLog
+                (historyCanonicalOfPrefix
+                  (nodeLogCanonical ownership node)
+                  promotionPrefix)
           · have effectiveMember :
                 voter ∈ effectiveElectionVoters state node := by
               simp only [
@@ -11911,10 +12927,42 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
           subst record
           by_cases voterEq : voter = node
           · subst voter
+            simpa [electionRecord] using promotionCommittable
+          · have effectiveMember :
+                voter ∈ effectiveElectionVoters state node := by
+              simp only [
+                effectiveElectionVoters,
+                Finset.mem_filter, Finset.mem_univ, true_and
+              ]
+              exact Or.inl (by simpa [electionRecord] using member)
+            rcases
+                facts.grantedVoteSnapshots
+                  node voter (Or.inl oldRole) effectiveMember with
+              ⟨_, self | snapshot⟩
+            · exact False.elim (voterEq self)
+            · simpa [electionRecord, voterEq] using snapshot.2.1
+        · exact
+            electionFacts.candidateCommittable term record voter
+              (by simpa [
+                newElections, Function.update, termEqNode
+              ] using recorded)
+              member
+      · intro term record voter recorded member
+        by_cases termEqNode :
+            term = (state.nodes node).currentTerm
+        · subst term
+          have recordEq : electionRecord = record :=
+            Option.some.inj (by
+              simpa [newElections] using recorded)
+          subst record
+          by_cases voterEq : voter = node
+          · subst voter
             simpa [electionRecord] using
               canonicalFrameToNew
-                (state.nodes node).log
-                (nodeLogCanonical ownership node)
+                promotionLog
+                (historyCanonicalOfPrefix
+                  (nodeLogCanonical ownership node)
+                  promotionPrefix)
           · have effectiveMember :
                 voter ∈ effectiveElectionVoters state node := by
               simp only [
@@ -11947,8 +12995,43 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
           subst record
           by_cases voterEq : voter = node
           · subst voter
+            simpa [electionRecord] using promotionCommittable
+          · have effectiveMember :
+                voter ∈ effectiveElectionVoters state node := by
+              simp only [
+                effectiveElectionVoters,
+                Finset.mem_filter, Finset.mem_univ, true_and
+              ]
+              exact Or.inl (by simpa [electionRecord] using member)
+            rcases
+                facts.grantedVoteSnapshots
+                  node voter (Or.inl oldRole) effectiveMember with
+              ⟨_, self | snapshot⟩
+            · exact False.elim (voterEq self)
+            · simpa [electionRecord, voterEq] using snapshot.2.2.1
+        · exact
+            electionFacts.voterCommittable term record voter
+              (by simpa [
+                newElections, Function.update, termEqNode
+              ] using recorded)
+              member
+      · intro term record voter recorded member
+        by_cases termEqNode :
+            term = (state.nodes node).currentTerm
+        · subst term
+          have recordEq : electionRecord = record :=
+            Option.some.inj (by
+              simpa [newElections] using recorded)
+          subst record
+          by_cases voterEq : voter = node
+          · subst voter
             right
-            simp [electionRecord]
+            constructor
+            · simp [
+                electionRecord, maxCommittableTerm,
+                promotionCommittable
+              ]
+            · simpa [electionRecord, promotionCommittable]
           · have effectiveMember :
                 voter ∈ effectiveElectionVoters state node := by
               simp only [
@@ -11963,7 +13046,7 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
             · exact False.elim (voterEq self)
             · simpa [
                 electionRecord, voterEq, voteLogUpToDate
-              ] using snapshot.2.2
+              ] using snapshot.2.2.2.2
         · exact
             electionFacts.upToDate term record voter
               (by simpa [
@@ -12004,7 +13087,7 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
             by simpa [
               newCanonicalHistory, Function.update, entryTermNe
             ] using agreed⟩
-    · intro source index role current voter effective
+    · intro source index role current signature voter effective
       have sourceNe : Not (source = node) := by
         intro same
         subst source
@@ -12014,21 +13097,33 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
       have oldCurrent :
           termAt (state.nodes source).log index =
             (state.nodes source).currentTerm := by
-        simpa [logEq, termEq] using current
+        simpa [logOther source sourceNe, termEq] using current
+      have oldSignature :
+          isSignatureAt (state.nodes source).log index = true := by
+        simpa [logOther source sourceNe] using signature
       have oldEffective :
           voter ∈ effectiveAckers state responseHistory source index := by
         rw [effectiveAckersOtherEq source sourceNe index] at effective
         exact effective
       rcases
-          ackerCurrentFacts source index oldRole oldCurrent
+          ackerCurrentFacts source index oldRole oldCurrent oldSignature
             voter oldEffective with
         retained | bad
-      · exact Or.inl (by simpa [logEq] using retained)
+      · left
+        by_cases voterEq : voter = node
+        · subst voter
+          simpa [logOther source sourceNe, logNode] using
+            (signatureEndedPrefixOfMaxTake
+              retained (signatureAtTakeLength oldSignature))
+        · simpa [
+            logOther source sourceNe,
+            logOther voter voterEq
+          ] using retained
       · exact Or.inr (by
           simpa [termEq] using
             preserveEarlierBad
-              source index (state.nodes voter).currentTerm bad)
-    · intro source index role current
+              source index (state.nodes voter).currentTerm sourceNe bad)
+    · intro source index role current signature
         voter voteTerm candidate effective voted different newer
       have sourceNe : Not (source = node) := by
         intro same
@@ -12039,20 +13134,24 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
       have oldCurrent :
           termAt (state.nodes source).log index =
             (state.nodes source).currentTerm := by
-        simpa [logEq, termEq] using current
+        simpa [logOther source sourceNe, termEq] using current
+      have oldSignature :
+          isSignatureAt (state.nodes source).log index = true := by
+        simpa [logOther source sourceNe] using signature
       have oldEffective :
           voter ∈ effectiveAckers state responseHistory source index := by
         rw [effectiveAckersOtherEq source sourceNe index] at effective
         exact effective
       rcases
-          ackerVoteFacts source index oldRole oldCurrent
+          ackerVoteFacts source index oldRole oldCurrent oldSignature
             voter voteTerm candidate oldEffective voted different
               (by simpa [termEq] using newer) with
         retained | bad
-      · exact Or.inl (by simpa [logEq] using retained)
+      · exact Or.inl
+          (by simpa [logOther source sourceNe] using retained)
       · exact Or.inr
-          (preserveEarlierBad source index voteTerm bad)
-    · intro source index role current term record voter
+          (preserveEarlierBad source index voteTerm sourceNe bad)
+    · intro source index role current signature term record voter
         recorded member effective newer
       have sourceNe : Not (source = node) := by
         intro same
@@ -12063,7 +13162,10 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
       have oldCurrent :
           termAt (state.nodes source).log index =
             (state.nodes source).currentTerm := by
-        simpa [logEq, termEq] using current
+        simpa [logOther source sourceNe, termEq] using current
+      have oldSignature :
+          isSignatureAt (state.nodes source).log index = true := by
+        simpa [logOther source sourceNe] using signature
       have oldEffective :
           voter ∈ effectiveAckers state responseHistory source index := by
         rw [effectiveAckersOtherEq source sourceNe index] at effective
@@ -12079,10 +13181,14 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
         · subst voter
           rcases
               ackerCurrentFacts source index oldRole oldCurrent
-                node oldEffective with
+                oldSignature node oldEffective with
             retained | bad
           · exact Or.inl
-              (by simpa [electionRecord, logEq] using retained)
+              (by simpa [
+                electionRecord, logOther source sourceNe
+              ] using
+                (signatureEndedPrefixOfMaxTake
+                  retained (signatureAtTakeLength oldSignature)))
           · right
             rcases bad with
               ⟨badTerm, badRecord, above, bounded,
@@ -12096,7 +13202,7 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
                 by simpa [
                   newElections, Function.update, badTermNe
                 ] using badRecorded,
-                by simpa [logEq] using missing⟩
+                by simpa [logOther source sourceNe] using missing⟩
         · have voterInVotes :
               voter ∈ (state.nodes node).votesGranted := by
             simpa [electionRecord] using member
@@ -12106,13 +13212,15 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
               node voter (Or.inl enabled.1) voterInVotes
           rcases
               ackerVoteFacts source index oldRole oldCurrent
+                oldSignature
                 voter (state.nodes node).currentTerm node
                 oldEffective voterVoted voterEq
                 (by simpa [termEq] using newer) with
             retained | bad
           · exact Or.inl
               (by simpa [
-                electionRecord, voterEq, logEq
+                electionRecord, voterEq,
+                logOther source sourceNe
               ] using retained)
           · right
             rcases bad with
@@ -12127,7 +13235,7 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
                 by simpa [
                   newElections, Function.update, badTermNe
                 ] using badRecorded,
-                by simpa [logEq] using missing⟩
+                by simpa [logOther source sourceNe] using missing⟩
       · have oldRecorded :
             elections term = some record := by
           simpa [
@@ -12135,10 +13243,11 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
           ] using recorded
         rcases
             ackerElectionFacts source index oldRole oldCurrent
-              term record voter oldRecorded member oldEffective
+              oldSignature term record voter oldRecorded member oldEffective
                 (by simpa [termEq] using newer) with
           retained | bad
-        · exact Or.inl (by simpa [logEq] using retained)
+        · exact Or.inl
+            (by simpa [logOther source sourceNe] using retained)
         · right
           rcases bad with
             ⟨badTerm, badRecord, above, below,
@@ -12152,7 +13261,7 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
               by simpa [
                 newElections, Function.update, badTermNe
               ] using badRecorded,
-              by simpa [logEq] using missing⟩
+              by simpa [logOther source sourceNe] using missing⟩
     · intro destination request member record recorded
       have oldMember :
           Message.appendEntriesRequest request ∈
@@ -12187,9 +13296,22 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
         exact Or.inl oldRole
       · rw [roleOther candidate candidateEq] at active
         exact active
-    simpa [logEq] using
-      facts.grantedVoteSnapshots
-        candidate voter oldActive oldMember
+    rcases
+        facts.grantedVoteSnapshots
+          candidate voter oldActive oldMember with
+      ⟨recorded, self | snapshot⟩
+    · exact ⟨recorded, Or.inl self⟩
+    · refine ⟨recorded, Or.inr ⟨?_, snapshot.2.1,
+        snapshot.2.2.1, ?_, ?_⟩⟩
+      · by_cases candidateEq : candidate = node
+        · subst candidate
+          rw [logNode]
+          exact
+            committablePrefixOfMaxTake snapshot.1 snapshot.2.1
+        · simpa [logOther candidate candidateEq] using snapshot.1
+      · simpa [termEq] using snapshot.2.2.2.1
+      · simpa [voteLogUpToDate, maxCommittableIndexEq,
+          maxCommittableTermEq] using snapshot.2.2.2.2
   · refine ⟨newAckHistory, ?_⟩
     constructor
     · intro leader role peer zero
@@ -12225,7 +13347,7 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
             by simpa [termEq] using snapshotTerm,
             by simpa [matchOther leader leaderEq] using snapshotIndex,
             historyBound,
-            by simpa [logEq] using agreed⟩
+            by simpa [logOther leader leaderEq] using agreed⟩
 /-! ## Commit advancement -/
 
 /-- Advancing a current-term quorum frontier preserves all safety evidence. -/
@@ -12250,6 +13372,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       PotentialCommitElectionSafe state responseHistory :=
     derivePotentialCommitElectionSafe
       facts.currentTermsPositive
+      facts.committedFrontierIsSignature
       candidatesAboveBootstrap
       facts.entriesDoNotExceedCurrentTerm
       facts.voteHistory
@@ -12273,6 +13396,9 @@ theorem advanceCommitPreservesSystemInductiveInvariant
             (state.nodes node).currentTerm /\
           hasMajorityAt state node frontier :=
       highestCommittableIndexValid state node advances
+  have frontierSignature :
+      isSignatureAt (state.nodes node).log frontier = true :=
+    highestCommittableIndexIsSignature state node advances
   let memberHistory : Node -> List (Entry TxId) :=
     fun member =>
       if member = node then
@@ -12375,6 +13501,47 @@ theorem advanceCommitPreservesSystemInductiveInvariant
         next, CCFRaft.next, updateNode,
         Function.update, frontier, different
       ]
+  have committedSignatureAfter :
+      CommittedFrontierIsSignature
+        (next state (.advanceCommitIndex node)) := by
+    intro candidate positive
+    by_cases same : candidate = node
+    · subst candidate
+      rw [commitNode, logEq]
+      exact frontierSignature
+    · rw [commitOther candidate same, logEq]
+      apply facts.committedFrontierIsSignature candidate
+      simpa [commitOther candidate same] using positive
+  have lastIndexEq :
+      forall candidate,
+        lastCommittableIndex
+            ((next state (.advanceCommitIndex node)).nodes candidate) =
+          lastCommittableIndex (state.nodes candidate) := by
+    intro candidate
+    rw [
+      lastCommittableIndex_eq_maxCommittableIndex
+        ((next state (.advanceCommitIndex node)).nodes candidate)
+        (committedSignatureAfter candidate),
+      lastCommittableIndex_eq_maxCommittableIndex
+        (state.nodes candidate)
+        (facts.committedFrontierIsSignature candidate),
+      logEq
+    ]
+  have lastTermEq :
+      forall candidate,
+        lastCommittableTerm
+            ((next state (.advanceCommitIndex node)).nodes candidate) =
+          lastCommittableTerm (state.nodes candidate) := by
+    intro candidate
+    rw [
+      lastCommittableTerm_eq_maxCommittableTerm
+        ((next state (.advanceCommitIndex node)).nodes candidate)
+        (committedSignatureAfter candidate),
+      lastCommittableTerm_eq_maxCommittableTerm
+        (state.nodes candidate)
+        (facts.committedFrontierIsSignature candidate),
+      logEq
+    ]
   have committedNode :
         ((next state (.advanceCommitIndex node)).nodes node).committedLog =
           (state.nodes node).log.take frontier := by
@@ -12515,7 +13682,8 @@ theorem advanceCommitPreservesSystemInductiveInvariant
         simpa [
           currentlyEligibleElectionVoter,
           makeRequestVoteRequest,
-          termEq, logEq, votedEq, voteLogUpToDate
+          termEq, logEq, lastIndexEq, lastTermEq,
+          votedEq, voteLogUpToDate
         ] using eligible)
     · exact Or.inl (by
         rw [effectiveElectionVotersEq]
@@ -12524,7 +13692,8 @@ theorem advanceCommitPreservesSystemInductiveInvariant
         simpa [
           currentlyEligibleElectionVoter,
           makeRequestVoteRequest,
-          termEq, logEq, votedEq, voteLogUpToDate
+          termEq, logEq, lastIndexEq, lastTermEq,
+          votedEq, voteLogUpToDate
         ] using eligible)
   have potentialElectionMajorityEq :
       forall candidate,
@@ -12562,7 +13731,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       evidence.Valid ((state.nodes node).log.take frontier) := by
     refine
       ⟨frontierBound, frontierValid.1, le_rfl,
-        by simp [evidence], ?_, ?_⟩
+        by simp [evidence], ?_, ?_, by simpa [evidence]⟩
     · simpa [evidence, hasMajorityAt] using frontierValid.2
     · intro member memberIn
       have acknowledges :
@@ -12733,6 +13902,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
             facts.currentTermsPositive facts.voteHistory
               ownership electionFacts
               ackerElectionFacts leaderRole frontierValid.1
+              frontierSignature
               frontierPotential term record recorded
               (by simpa [evidence] using newer)
       · exact
@@ -12750,7 +13920,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
             facts.currentTermsPositive facts.voteHistory
               ownership electionFacts
               ackerCurrentFacts ackerElectionFacts
-              leaderRole frontierValid.1 frontierPotential
+              leaderRole frontierValid.1 frontierSignature frontierPotential
               (evidenceMemberEffective member ackMember)
       · simpa [logEq] using
           prospectiveFacts.currentMember
@@ -12815,16 +13985,18 @@ theorem advanceCommitPreservesSystemInductiveInvariant
           simpa [
             relaxedElectionVoters,
             makeRequestVoteRequest,
-            termEq, logEq, effectiveElectionVotersEq,
+            termEq, logEq, lastIndexEq, lastTermEq,
+            effectiveElectionVotersEq,
             voteLogUpToDate
           ] using relaxed
         simpa [evidence, logEq] using
           effectiveAckerRelaxedCandidateContainsPotentialPrefix
-            facts.currentTermsPositive facts.voteHistory
+            facts.currentTermsPositive facts.committedFrontierIsSignature
+              facts.voteHistory
               ownership electionFacts
               facts.grantedVoteSnapshots voteCanonicalFacts
               ackerCurrentFacts ackerVoteFacts ackerElectionFacts
-              leaderRole frontierValid.1 frontierPotential
+              leaderRole frontierValid.1 frontierSignature frontierPotential
               oldRole oldNewer oldEntriesBefore
               (evidenceMemberEffective member ackMember)
               oldRelaxed
@@ -12847,7 +14019,8 @@ theorem advanceCommitPreservesSystemInductiveInvariant
           simpa [
             relaxedElectionVoters,
             makeRequestVoteRequest,
-            termEq, logEq, effectiveElectionVotersEq,
+            termEq, logEq, lastIndexEq, lastTermEq,
+            effectiveElectionVotersEq,
             voteLogUpToDate
           ] using relaxed
         simpa [logEq] using
@@ -12865,6 +14038,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       exact frontierBound
     · rw [commitOther candidate same, logEq]
       exact facts.commitIndicesBounded candidate
+  · exact committedSignatureAfter
   · intro candidate
     rw [termEq]
     exact facts.currentTermsPositive candidate
@@ -13113,6 +14287,18 @@ theorem returnToFollowerPreservesSystemInductiveInvariant
       intro node
       by_cases same : node = destination <;>
         simp [after, updateNode, Function.update, same]
+    have lastIndexEq :
+        forall node,
+          lastCommittableIndex (after.nodes node) =
+            lastCommittableIndex (state.nodes node) := by
+      intro node
+      exact lastCommittableIndexFrame (logEq node) (commitEq node)
+    have lastTermEq :
+        forall node,
+          lastCommittableTerm (after.nodes node) =
+            lastCommittableTerm (state.nodes node) := by
+      intro node
+      exact lastCommittableTermFrame (logEq node) (commitEq node)
     have committedEq :
         forall node,
           (after.nodes node).committedLog =
@@ -13248,7 +14434,8 @@ theorem returnToFollowerPreservesSystemInductiveInvariant
         simpa [
           currentlyEligibleElectionVoter,
           makeRequestVoteRequest,
-          termEq, logEq, votedEq, voteLogUpToDate
+          termEq, logEq, lastIndexEq, lastTermEq,
+          votedEq, voteLogUpToDate
         ] using eligible)
       · exact Or.inl (by
         rw [effectiveElectionVotersEq]
@@ -13257,7 +14444,8 @@ theorem returnToFollowerPreservesSystemInductiveInvariant
         simpa [
           currentlyEligibleElectionVoter,
           makeRequestVoteRequest,
-          termEq, logEq, votedEq, voteLogUpToDate
+          termEq, logEq, lastIndexEq, lastTermEq,
+          votedEq, voteLogUpToDate
         ] using eligible)
     have potentialElectionMajorityEq :
       forall candidate,
@@ -13294,6 +14482,10 @@ theorem returnToFollowerPreservesSystemInductiveInvariant
     · intro node
       rw [commitEq, logEq]
       exact facts.commitIndicesBounded node
+    · intro node positive
+      rw [commitEq, logEq]
+      apply facts.committedFrontierIsSignature node
+      simpa [commitEq] using positive
     · intro node
       rw [termEq]
       exact facts.currentTermsPositive node
@@ -13394,9 +14586,10 @@ theorem returnToFollowerPreservesSystemInductiveInvariant
         rcases
             facts.networkHistory.voteRequest
               queuedDestination voteRequest member with
-          ⟨lastIndex, lastTerm, aboveBootstrap, termBound, activePrefix⟩
+          ⟨lastIndex, lastTerm, maxIndex,
+            aboveBootstrap, termBound, activePrefix⟩
         refine
-          ⟨lastIndex, lastTerm, aboveBootstrap,
+          ⟨lastIndex, lastTerm, maxIndex, aboveBootstrap,
             by simpa [termEq] using termBound, ?_⟩
         intro sameTerm active
         by_cases sourceEq : voteRequest.source = destination
@@ -13416,10 +14609,12 @@ theorem returnToFollowerPreservesSystemInductiveInvariant
         rcases
             facts.networkHistory.voteResponse
               queuedDestination response member granted with
-          ⟨termBound, recorded, upToDate⟩
+          ⟨termBound, recorded, candidateCommittable,
+            voterCommittable, upToDate⟩
         exact
           ⟨by simpa [termEq] using termBound,
-            recorded, by simpa [voteLogUpToDate] using upToDate⟩
+            recorded, candidateCommittable, voterCommittable,
+            by simpa [voteLogUpToDate] using upToDate⟩
     have evidenceAfter :
         CommitEvidenceFacts
           after appendHistory nodeEvidence requestEvidence := by
@@ -13471,7 +14666,8 @@ theorem returnToFollowerPreservesSystemInductiveInvariant
             by simpa [
               relaxedElectionVoters,
               makeRequestVoteRequest,
-              termEq, logEq, effectiveElectionVotersEq,
+              termEq, logEq, lastIndexEq, lastTermEq,
+              effectiveElectionVotersEq,
               voteLogUpToDate
             ] using relaxed,
             by simpa [logEq] using
@@ -13853,6 +15049,18 @@ theorem responseDequeuePreservesSystemInductiveInvariant
           (state.nodes node).committedLog := by
     intro node
     simp [NodeState.committedLog, commitEq, logEq]
+  have lastIndexEq :
+      forall node,
+        lastCommittableIndex (after.nodes node) =
+          lastCommittableIndex (state.nodes node) := by
+    intro node
+    exact lastCommittableIndexFrame (logEq node) (commitEq node)
+  have lastTermEq :
+      forall node,
+        lastCommittableTerm (after.nodes node) =
+          lastCommittableTerm (state.nodes node) := by
+    intro node
+    exact lastCommittableTermFrame (logEq node) (commitEq node)
   have effectiveMajorityEq :
       forall leader index,
         hasEffectiveMajorityAt after responseHistory leader index ↔
@@ -13871,6 +15079,10 @@ theorem responseDequeuePreservesSystemInductiveInvariant
   · intro node
     rw [commitEq, logEq]
     exact facts.commitIndicesBounded node
+  · intro node positive
+    rw [commitEq, logEq]
+    apply facts.committedFrontierIsSignature node
+    simpa [commitEq] using positive
   · intro node
     rw [termEq]
     exact facts.currentTermsPositive node
@@ -13918,9 +15130,10 @@ theorem responseDequeuePreservesSystemInductiveInvariant
       rcases
           facts.networkHistory.voteRequest destination request
             (networkSubset destination (.requestVoteRequest request) member) with
-        ⟨lastIndex, lastTerm, aboveBootstrap, termBound, activePrefix⟩
+        ⟨lastIndex, lastTerm, maxIndex,
+          aboveBootstrap, termBound, activePrefix⟩
       exact
-        ⟨lastIndex, lastTerm, aboveBootstrap,
+        ⟨lastIndex, lastTerm, maxIndex, aboveBootstrap,
           by simpa [termEq] using termBound,
           fun sameTerm active =>
             by
@@ -14000,7 +15213,8 @@ theorem responseDequeuePreservesSystemInductiveInvariant
         · exact Or.inr (by
             simpa [
               makeRequestVoteRequest,
-              termEq, logEq, voteLogUpToDate
+              termEq, logEq, lastIndexEq, lastTermEq,
+              voteLogUpToDate
             ] using eligible)
       left
       exact
@@ -16237,7 +17451,7 @@ theorem appendRequestAckerTemporalFacts
         after votes newResponseHistory voteVoterHistory elections /\
       AckerElectionHistory after newResponseHistory elections
   constructor
-  · intro leader index role current voter effective
+  · intro leader index role current signature voter effective
     have oldRole : (state.nodes leader).role = .leader := by
       simpa [roleEq] using role
     have leaderEq := sourceStateEq leader role
@@ -16245,10 +17459,14 @@ theorem appendRequestAckerTemporalFacts
         termAt (state.nodes leader).log index =
           (state.nodes leader).currentTerm := by
       simpa [leaderEq] using current
+    have oldSignature :
+        isSignatureAt (state.nodes leader).log index = true := by
+      simpa [leaderEq] using signature
     rcases effectiveCases leader index role voter effective with
       oldEffective | materialised
     · rcases
-          currentFacts leader index oldRole oldCurrent voter oldEffective with
+          currentFacts leader index oldRole oldCurrent oldSignature
+            voter oldEffective with
         retained | bad
       · by_cases voterEq : voter = destination
         · subst voter
@@ -16443,7 +17661,7 @@ theorem appendRequestAckerTemporalFacts
           rw [sourceStateEq request.source role]
           simpa [after, updateNode] using acknowledgedPrefix)
   · constructor
-    · intro leader index role current
+    · intro leader index role current signature
         voter voteTerm candidate effective voted different newer
       have oldRole : (state.nodes leader).role = .leader := by
         simpa [roleEq] using role
@@ -16452,10 +17670,13 @@ theorem appendRequestAckerTemporalFacts
           termAt (state.nodes leader).log index =
             (state.nodes leader).currentTerm := by
         simpa [leaderEq] using current
+      have oldSignature :
+          isSignatureAt (state.nodes leader).log index = true := by
+        simpa [leaderEq] using signature
       rcases effectiveCases leader index role voter effective with
         oldEffective | materialised
       · rcases
-            ackerVoteFacts leader index oldRole oldCurrent
+            ackerVoteFacts leader index oldRole oldCurrent oldSignature
               voter voteTerm candidate oldEffective voted different
                 (by simpa [leaderEq] using newer) with
           retained | bad
@@ -16488,7 +17709,7 @@ theorem appendRequestAckerTemporalFacts
               exact sourceNewer)
         rw [future] at voted
         contradiction
-    · intro leader index role current
+    · intro leader index role current signature
         term record voter recorded voterMember effective newer
       have oldRole : (state.nodes leader).role = .leader := by
         simpa [roleEq] using role
@@ -16497,10 +17718,13 @@ theorem appendRequestAckerTemporalFacts
           termAt (state.nodes leader).log index =
             (state.nodes leader).currentTerm := by
         simpa [leaderEq] using current
+      have oldSignature :
+          isSignatureAt (state.nodes leader).log index = true := by
+        simpa [leaderEq] using signature
       rcases effectiveCases leader index role voter effective with
         oldEffective | materialised
       · rcases
-            ackerElectionFacts leader index oldRole oldCurrent
+            ackerElectionFacts leader index oldRole oldCurrent oldSignature
               term record voter recorded voterMember oldEffective
                 (by simpa [leaderEq] using newer) with
           retained | bad
@@ -16914,8 +18138,8 @@ theorem effectiveElectionVotersAfterGrantedRequestSubsetPotential
       rcases
           facts.networkHistory.voteRequest
             destination request selectedMember with
-        ⟨lastIndex, lastTerm, aboveBootstrap, sourceTermBound,
-          activePrefix⟩
+        ⟨lastIndex, lastTerm, maxIndex, aboveBootstrap,
+          sourceTermBound, activePrefix⟩
       have sourceTerm :
           request.term =
             (state.nodes request.source).currentTerm := by
@@ -16936,15 +18160,24 @@ theorem effectiveElectionVotersAfterGrantedRequestSubsetPotential
             (state.nodes destination)
             (makeRequestVoteRequest
               state request.source destination) := by
-        apply
-          voteLogUpToDateOfCandidatePrefix
+        simpa [
+          makeRequestVoteRequest,
+          lastCommittableIndex_eq_maxCommittableIndex
+            (state.nodes request.source)
+            (facts.committedFrontierIsSignature request.source),
+          lastCommittableTerm_eq_maxCommittableTerm
+            (state.nodes request.source)
+            (facts.committedFrontierIsSignature request.source),
+          sourceTerm, grantFacts.1
+        ] using
+          (voteLogUpToDateOfCandidatePrefix
             (state.nodes destination) request.source destination
               candidatePrefix
               (monoLog request.source)
-        simpa [
-          voteLogUpToDate,
-          lastIndex, lastTerm
-        ] using grantFacts.2.1
+              (by simpa [
+                voteLogUpToDate, maxCommittableTerm,
+                lastIndex, lastTerm, maxIndex
+              ] using grantFacts.2.1))
       have candidateVoterTerm :
           (state.nodes request.source).currentTerm =
             (state.nodes destination).currentTerm :=
@@ -17031,11 +18264,12 @@ theorem ackerVoteHistoryAfterGrantedRequest
           (votes destination) request.term (some request.source))
     let newVoterHistory :=
       Function.update voteVoterHistory key
-        (state.nodes destination).log
+        ((state.nodes destination).log.take
+          (maxCommittableIndex (state.nodes destination).log))
     AckerVoteHistory
       after newVotes responseHistory newVoterHistory elections := by
   dsimp
-  intro source index role current
+  intro source index role current signature
       voter voteTerm candidate effective voted different newer
   have oldRole : (state.nodes source).role = .leader := by
     simpa [roleEq] using role
@@ -17043,6 +18277,9 @@ theorem ackerVoteHistoryAfterGrantedRequest
       termAt (state.nodes source).log index =
         (state.nodes source).currentTerm := by
     simpa [logEq, termEq] using current
+  have oldSignature :
+      isSignatureAt (state.nodes source).log index = true := by
+    simpa [logEq] using signature
   have oldEffective :
       voter ∈ effectiveAckers state responseHistory source index := by
     rw [effectiveEq] at effective
@@ -17058,11 +18295,13 @@ theorem ackerVoteHistoryAfterGrantedRequest
         exact (Option.some.inj chosen).symm
       subst candidate
       rcases
-          currentFacts source index oldRole oldCurrent
+          currentFacts source index oldRole oldCurrent oldSignature
             destination oldEffective with
         retained | bad
       · left
-        simpa [Function.update, logEq] using retained
+        simpa [Function.update, logEq] using
+          (signatureEndedPrefixOfMaxTake
+            retained (signatureAtTakeLength oldSignature))
       · right
         rcases bad with
           ⟨badTerm, badRecord, above, bounded, recorded, missing⟩
@@ -17076,7 +18315,7 @@ theorem ackerVoteHistoryAfterGrantedRequest
           votes destination voteTerm = some candidate := by
         simpa [Function.update, voteTermEq] using voted
       rcases
-          voteFacts source index oldRole oldCurrent
+          voteFacts source index oldRole oldCurrent oldSignature
             destination voteTerm candidate oldEffective oldVoted
               different (by simpa [termEq] using newer) with
         retained | bad
@@ -17104,7 +18343,7 @@ theorem ackerVoteHistoryAfterGrantedRequest
         votes voter voteTerm = some candidate := by
       simpa [Function.update, voterEq] using voted
     rcases
-        voteFacts source index oldRole oldCurrent
+        voteFacts source index oldRole oldCurrent oldSignature
           voter voteTerm candidate oldEffective oldVoted
             different (by simpa [termEq] using newer) with
       retained | bad
@@ -17295,6 +18534,7 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, ?_⟩
   constructor
   · exact facts.commitIndicesBounded
+  · exact facts.committedFrontierIsSignature
   · exact facts.currentTermsPositive
   · exact facts.entriesDoNotExceedCurrentTerm
   · exact facts.candidatesSelfVote
@@ -17439,20 +18679,21 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
       exact
         voteCanonicalFacts candidate voter active
           (by rw [effectiveElectionVotersEq] at member; exact member)
-    · intro source index role current voter effective
+    · intro source index role current signature voter effective
       exact
-        ackerCurrentFacts source index role current voter
+        ackerCurrentFacts source index role current signature voter
           (by rw [effectiveAckersEq] at effective; exact effective)
-    · intro source index role current voter voteTerm candidate
+    · intro source index role current signature voter voteTerm candidate
         effective voted different newer
       exact
-        ackerVoteFacts source index role current voter voteTerm candidate
+        ackerVoteFacts source index role current signature
+          voter voteTerm candidate
           (by rw [effectiveAckersEq] at effective; exact effective)
           voted different newer
-    · intro source index role current term record voter recorded member
+    · intro source index role current signature term record voter recorded member
         effective newer
       exact
-        ackerElectionFacts source index role current term record voter
+        ackerElectionFacts source index role current signature term record voter
           recorded member
           (by rw [effectiveAckersEq] at effective; exact effective)
           newer
@@ -17536,7 +18777,19 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
       (voteRequestHistory request)
   let newVoterHistory :=
     Function.update voteVoterHistory response
-      (state.nodes destination).log
+      ((state.nodes destination).log.take
+        (maxCommittableIndex (state.nodes destination).log))
+  have voterSnapshotCommittable :
+      maxCommittableIndex
+          ((state.nodes destination).log.take
+            (maxCommittableIndex (state.nodes destination).log)) =
+        ((state.nodes destination).log.take
+          (maxCommittableIndex (state.nodes destination).log)).length := by
+    rw [maxCommittableIndexTakeMax]
+    simp [
+      Nat.min_eq_left
+        (maxCommittableIndexBounded (state.nodes destination).log)
+    ]
   let after : State TxId :=
     { state with
       nodes := updateNode state.nodes destination nextNode
@@ -17576,6 +18829,18 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
     · subst node
       simpa [after, updateNode] using post.commitIndexUnchanged
     · simp [after, updateNode, Function.update, same]
+  have lastIndexEq :
+      forall node,
+        lastCommittableIndex (after.nodes node) =
+          lastCommittableIndex (state.nodes node) := by
+    intro node
+    exact lastCommittableIndexFrame (logEq node) (commitEq node)
+  have lastTermEq :
+      forall node,
+        lastCommittableTerm (after.nodes node) =
+          lastCommittableTerm (state.nodes node) := by
+    intro node
+    exact lastCommittableTermFrame (logEq node) (commitEq node)
   have sentEq :
       forall node,
         (after.nodes node).sentIndex =
@@ -17814,22 +19079,32 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
       have candidatePrefix :
           voteRequestHistory request <+:
             (state.nodes request.source).log :=
-        requestFacts.2.2.2.2
+        requestFacts.2.2.2.2.2
           sourceCurrent (Or.inl sourceRole)
       have canonicalUpToDate :
           voteLogUpToDate
             (state.nodes destination)
             (makeRequestVoteRequest
               state request.source destination) := by
-        apply
-          voteLogUpToDateOfCandidatePrefix
+        simpa [
+          makeRequestVoteRequest,
+          lastCommittableIndex_eq_maxCommittableIndex
+            (state.nodes request.source)
+            (facts.committedFrontierIsSignature request.source),
+          lastCommittableTerm_eq_maxCommittableTerm
+            (state.nodes request.source)
+            (facts.committedFrontierIsSignature request.source),
+          sourceCurrent, grantFacts.1
+        ] using
+          (voteLogUpToDateOfCandidatePrefix
             (state.nodes destination) request.source destination
               candidatePrefix
               (monoLog request.source)
-        simpa [
-          voteLogUpToDate,
-          requestFacts.1, requestFacts.2.1
-        ] using grantFacts.2.1
+              (by simpa [
+                voteLogUpToDate, maxCommittableTerm,
+                requestFacts.1, requestFacts.2.1,
+                requestFacts.2.2.1
+              ] using grantFacts.2.1))
       exact
         ⟨by simpa [makeRequestVoteRequest] using
             sourceCurrent.symm.trans grantFacts.1,
@@ -17894,7 +19169,8 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
     · intro voter
       by_cases voterEq : voter = destination
       · subst voter
-        have requestAbove : TERM_ONE < request.term := requestFacts.2.2.1
+        have requestAbove : TERM_ONE < request.term :=
+          requestFacts.2.2.2.1
         simpa [
           newVotes, Function.update,
           requestAbove.ne
@@ -17990,7 +19266,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
       response.term <=
         (after.nodes response.destination).currentTerm := by
     rw [post.responseDestination, termEq]
-    exact responseTermRequest.trans_le requestFacts.2.2.2.1
+    exact responseTermRequest.trans_le requestFacts.2.2.2.2.1
   have oldGrantedVotePreserved :
       forall queuedDestination queuedResponse,
         Message.requestVoteResponse queuedResponse ∈
@@ -18036,6 +19312,10 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
   · intro node
     rw [commitEq, logEq]
     exact facts.commitIndicesBounded node
+  · intro node positive
+    rw [commitEq, logEq]
+    apply facts.committedFrontierIsSignature node
+    simpa [commitEq] using positive
   · intro node
     rw [termEq]
     exact facts.currentTermsPositive node
@@ -18138,7 +19418,8 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
       · rcases
           facts.networkHistory.voteResponse
             queuedDestination queuedResponse old queuedGranted with
-          ⟨termBound, voted, upToDate⟩
+          ⟨termBound, voted, candidateCommittable,
+            voterCommittable, upToDate⟩
         have keyNeOrEq :
             queuedResponse = response \/
               Not (queuedResponse = response) := Classical.em _
@@ -18148,7 +19429,16 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
             ⟨responseTermBound,
               by simp [newVotes, responseKey, grantedVoteKey],
               by simpa [
+                newCandidateHistory, Function.update
+              ] using requestFacts.2.2.1,
+              by simpa [
+                newVoterHistory, Function.update
+              ] using voterSnapshotCommittable,
+              by simpa [
                 newCandidateHistory, newVoterHistory,
+                maxCommittableIndexTakeMax,
+                maxCommittableTermTakeMax,
+                requestFacts.2.2.1,
                 requestFacts.1, requestFacts.2.1,
                 post.responseTerm, post.responseSource,
                 post.responseDestination,
@@ -18158,6 +19448,12 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
             ⟨by simpa [termEq] using termBound,
               oldGrantedVotePreserved
                 queuedDestination queuedResponse old queuedGranted,
+              by simpa [
+                newCandidateHistory, Function.update, different
+              ] using candidateCommittable,
+              by simpa [
+                newVoterHistory, Function.update, different
+              ] using voterCommittable,
               by simpa [
                 newCandidateHistory, newVoterHistory,
                 Function.update, different, logEq,
@@ -18170,7 +19466,16 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
           ⟨responseTermBound,
             by simp [newVotes, responseKey, grantedVoteKey],
             by simpa [
+              newCandidateHistory, Function.update
+            ] using requestFacts.2.2.1,
+            by simpa [
+              newVoterHistory, Function.update
+            ] using voterSnapshotCommittable,
+            by simpa [
               newCandidateHistory, newVoterHistory,
+              maxCommittableIndexTakeMax,
+              maxCommittableTermTakeMax,
+              requestFacts.2.2.1,
               requestFacts.1, requestFacts.2.1,
               post.responseTerm, post.responseSource,
               post.responseDestination,
@@ -18265,29 +19570,40 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
             have candidatePrefix :
                 voteRequestHistory request <+:
                   (state.nodes request.source).log :=
-              requestFacts.2.2.2.2
+              requestFacts.2.2.2.2.2
                 candidateTerm.symm (Or.inl sourceRole)
             have canonicalUpToDate :
                 voteLogUpToDate
                   (state.nodes destination)
                   (makeRequestVoteRequest
                     state request.source request.source) := by
-              apply
-                voteLogUpToDateOfCandidatePrefix
+              simpa [
+                makeRequestVoteRequest,
+                lastCommittableIndex_eq_maxCommittableIndex
+                  (state.nodes request.source)
+                  (facts.committedFrontierIsSignature request.source),
+                lastCommittableTerm_eq_maxCommittableTerm
+                  (state.nodes request.source)
+                  (facts.committedFrontierIsSignature request.source),
+                candidateTerm, grantFacts.1
+              ] using
+                (voteLogUpToDateOfCandidatePrefix
                   (state.nodes destination)
                     request.source request.source
                     candidatePrefix
                     (monoLog request.source)
-              simpa [
-                voteLogUpToDate,
-                requestFacts.1, requestFacts.2.1
-              ] using grantFacts.2.1
+                    (by simpa [
+                      voteLogUpToDate, maxCommittableTerm,
+                      requestFacts.1, requestFacts.2.1,
+                      requestFacts.2.2.1
+                    ] using grantFacts.2.1))
             exact
               ⟨by simpa [candidateTerm, grantFacts.1],
                 canonicalUpToDate⟩
         · exact Or.inr (by simpa [
             makeRequestVoteRequest,
-            termEq, logEq, voteLogUpToDate
+            termEq, logEq, lastIndexEq, lastTermEq,
+            voteLogUpToDate
           ] using eligible)
       left
       exact
@@ -18388,7 +19704,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
             have candidatePrefix :
                 voteRequestHistory request <+:
                   (state.nodes request.source).log :=
-              requestFacts.2.2.2.2 candidateTerm.symm sourceRole
+              requestFacts.2.2.2.2.2 candidateTerm.symm sourceRole
             exact
               ⟨by simpa [
                   newCandidateHistory, keyEq
@@ -18404,11 +19720,22 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
                     candidatePrefix,
                 by simpa [
                   newVoterHistory, keyEq
-                ] using nodeLogCanonical ownership destination,
+                ] using
+                  historyCanonicalOfPrefix
+                    (nodeLogCanonical ownership destination)
+                    (List.take_prefix
+                      (maxCommittableIndex
+                        (state.nodes destination).log)
+                      (state.nodes destination).log),
                 by simpa [
                   newVoterHistory, keyEq
                 ] using
-                  (canonicalHistoriesMonoLog ownership) destination⟩
+                  monoHistoryOfPrefix
+                    ((canonicalHistoriesMonoLog ownership) destination)
+                    (List.take_prefix
+                      (maxCommittableIndex
+                        (state.nodes destination).log)
+                      (state.nodes destination).log)⟩
           · right
             simpa [
               newCandidateHistory, newVoterHistory,
@@ -18424,7 +19751,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
         have candidatePrefix :
             voteRequestHistory request <+:
               (state.nodes request.source).log :=
-          requestFacts.2.2.2.2 candidateTerm.symm sourceRole
+          requestFacts.2.2.2.2.2 candidateTerm.symm sourceRole
         right
         refine
           ⟨by simpa [
@@ -18445,16 +19772,27 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
         · simpa [
             newVoterHistory, termEq,
             candidateTerm, responseKey
-          ] using nodeLogCanonical ownership destination
+          ] using
+            historyCanonicalOfPrefix
+              (nodeLogCanonical ownership destination)
+              (List.take_prefix
+                (maxCommittableIndex (state.nodes destination).log)
+                (state.nodes destination).log)
         · simpa [
             newVoterHistory, termEq,
             candidateTerm, responseKey
-          ] using (canonicalHistoriesMonoLog ownership) destination
-    · intro sourceNode index role current voter effective
+          ] using
+            monoHistoryOfPrefix
+              ((canonicalHistoriesMonoLog ownership) destination)
+              (List.take_prefix
+                (maxCommittableIndex (state.nodes destination).log)
+                (state.nodes destination).log)
+    · intro sourceNode index role current signature voter effective
       rcases
           ackerCurrentFacts sourceNode index
             (by simpa [roleEq] using role)
             (by simpa [logEq, termEq] using current)
+            (by simpa [logEq] using signature)
             voter
             (by rw [effectiveAckersEq] at effective; exact effective) with
         retained | bad
@@ -18474,12 +19812,13 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
             elections destination request
             ackerCurrentFacts ackerVoteFacts grantFacts.1
             roleEq termEq logEq effectiveAckersEq
-    · intro sourceNode index role current term record voter recorded member
+    · intro sourceNode index role current signature term record voter recorded member
         effective newer
       rcases
           ackerElectionFacts sourceNode index
             (by simpa [roleEq] using role)
             (by simpa [logEq, termEq] using current)
+            (by simpa [logEq] using signature)
             term record voter recorded member
             (by rw [effectiveAckersEq] at effective; exact effective)
             (by simpa [termEq] using newer) with
@@ -18540,7 +19879,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
           have candidatePrefix :
               voteRequestHistory request <+:
                 (state.nodes request.source).log :=
-            requestFacts.2.2.2.2
+            requestFacts.2.2.2.2.2
               (by simpa [candidateEq] using candidateTerm.symm)
               sourceRole
           have candidateHistoryEq :
@@ -18553,7 +19892,9 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
               newVoterHistory
                   (grantedVoteKey voter
                     (state.nodes candidate).currentTerm candidate) =
-                (state.nodes destination).log := by
+                (state.nodes destination).log.take
+                  (maxCommittableIndex
+                    (state.nodes destination).log) := by
             simp [newVoterHistory, keyEq]
           exact
             ⟨recordedVotePreserved
@@ -18562,6 +19903,10 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
                 ⟨by
                     rw [candidateHistoryEq]
                     simpa [candidateEq, logEq] using candidatePrefix,
+                  by simpa [candidateHistoryEq] using
+                    requestFacts.2.2.1,
+                  by simpa [voterHistoryEq] using
+                    voterSnapshotCommittable,
                   by
                     simp [
                       grantedVoteKey,
@@ -18571,6 +19916,9 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
                   by
                     rw [candidateHistoryEq, voterHistoryEq]
                     simpa [
+                      maxCommittableIndexTakeMax,
+                      maxCommittableTermTakeMax,
+                      requestFacts.2.2.1,
                       candidateEq, voterEq,
                       requestFacts.1, requestFacts.2.1,
                       voteLogUpToDate
@@ -18583,11 +19931,17 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
                     newCandidateHistory, keyNe,
                     logEq
                   ] using snapshot.1,
-                  by simpa [termEq] using snapshot.2.1,
+                  by simpa [
+                    newCandidateHistory, keyNe
+                  ] using snapshot.2.1,
+                  by simpa [
+                    newVoterHistory, keyNe
+                  ] using snapshot.2.2.1,
+                  by simpa [termEq] using snapshot.2.2.2.1,
                   by simpa [
                     newCandidateHistory, newVoterHistory,
                     keyNe, voteLogUpToDate
-                  ] using snapshot.2.2⟩⟩
+                  ] using snapshot.2.2.2.2⟩⟩
     · rcases new with ⟨candidateEq, voterEq, candidateTerm⟩
       subst candidate
       subst voter
@@ -18598,7 +19952,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
       have candidatePrefix :
           voteRequestHistory request <+:
             (state.nodes request.source).log :=
-        requestFacts.2.2.2.2 candidateTerm.symm sourceRole
+        requestFacts.2.2.2.2.2 candidateTerm.symm sourceRole
       have keyEq :
           grantedVoteKey destination
               (state.nodes request.source).currentTerm request.source =
@@ -18614,7 +19968,9 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
           newVoterHistory
               (grantedVoteKey destination
                 (state.nodes request.source).currentTerm request.source) =
-            (state.nodes destination).log := by
+            (state.nodes destination).log.take
+              (maxCommittableIndex
+                (state.nodes destination).log) := by
         simp [newVoterHistory, keyEq]
       exact
         ⟨by simp [newVotes, candidateTerm],
@@ -18622,6 +19978,8 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
             ⟨by
                 rw [candidateHistoryEq]
                 simpa [logEq] using candidatePrefix,
+              by simpa [candidateHistoryEq] using requestFacts.2.2.1,
+              by simpa [voterHistoryEq] using voterSnapshotCommittable,
               by
                 simp [
                   grantedVoteKey,
@@ -18630,6 +19988,9 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
               by
                 rw [candidateHistoryEq, voterHistoryEq]
                 simpa [
+                  maxCommittableIndexTakeMax,
+                  maxCommittableTermTakeMax,
+                  requestFacts.2.2.1,
                   requestFacts.1, requestFacts.2.1,
                   voteLogUpToDate
                 ] using grantFacts.2.1⟩⟩
@@ -18753,6 +20114,18 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
           notStepped handled oldActive
       simp [after, updateNode, unchanged]
     · simp [after, updateNode, Function.update, same]
+  have committedSignatureAfter :
+      CommittedFrontierIsSignature after := by
+    intro node positive
+    by_cases same : node = destination
+    · subst node
+      simpa [after, updateNode] using
+        post.commitIndexSignature
+          (facts.committedFrontierIsSignature destination)
+          (by simpa [after, updateNode] using positive)
+    · simpa [after, updateNode, Function.update, same] using
+        facts.committedFrontierIsSignature node
+          (by simpa [after, updateNode, Function.update, same] using positive)
   have committedMonotone :
       forall node,
         (state.nodes node).committedLog <+:
@@ -19125,7 +20498,8 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
             exact Or.inr supporter
           exact
             prospectiveCommitFutureMemberCore
-              ownershipAfter electionFactsAfter evidenceAfter
+              ownershipAfter committedSignatureAfter
+                electionFactsAfter evidenceAfter
                 termPositiveAfter electionClosureAfter currentMemberAfter
                 known ackMember future
         · have oldRelaxed :
@@ -19286,6 +20660,7 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
         post.commitIndexBounded (facts.commitIndicesBounded destination)
     · simpa [after, updateNode, Function.update, same] using
         facts.commitIndicesBounded node
+  · exact committedSignatureAfter
   · intro node
     rw [termEq]
     exact facts.currentTermsPositive node
@@ -19504,9 +20879,9 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
           facts.networkHistory.voteRequest
             queuedDestination queuedRequest
               ((voteRequestEq queuedDestination queuedRequest).mp member) with
-        ⟨lastIndex, lastTerm, above, bounded, activePrefix⟩
+        ⟨lastIndex, lastTerm, maxIndex, above, bounded, activePrefix⟩
       exact
-        ⟨lastIndex, lastTerm, above,
+        ⟨lastIndex, lastTerm, maxIndex, above,
           by rw [termEq]; exact bounded,
           fun sameTerm active => by
             have unchanged := activeNodeEq queuedRequest.source active
@@ -19522,10 +20897,12 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
             queuedDestination queuedResponse
               ((voteResponseEq queuedDestination queuedResponse).mp member)
               granted with
-        ⟨bounded, recorded, upToDate⟩
+        ⟨bounded, recorded, candidateCommittable,
+          voterCommittable, upToDate⟩
       exact
         ⟨by rw [termEq]; exact bounded,
-          recorded, by simpa [voteLogUpToDate] using upToDate⟩
+          recorded, candidateCommittable, voterCommittable,
+          by simpa [voteLogUpToDate] using upToDate⟩
   · exact
       ⟨owners, canonicalHistory, elections,
         newNodeEvidence, requestEvidence,
@@ -19917,6 +21294,10 @@ theorem systemInductiveInvariantPreserved
       exact
         clientRequestPreservesSystemInductiveInvariant
           state node txId invariant enabled
+  | signCommittableMessages node =>
+      exact
+        signCommittableMessagesPreservesSystemInductiveInvariant
+          state node invariant enabled
   | appendEntries source destination batchEnd =>
       exact
         appendEntriesPreservesSystemInductiveInvariant
@@ -19966,6 +21347,14 @@ theorem reachableCommittedLogsPrefix
     CommittedLogsPrefix state :=
   (systemInductiveInvariantSafety
     (reachableSystemInductiveInvariant reachable)).committedLogsPrefix
+
+/-- Every positive committed frontier in a reachable state is a signature. -/
+theorem reachableCommittedFrontierIsSignature
+    {state : State TxId}
+    (reachable : Reachable state) :
+    CommittedFrontierIsSignature state :=
+  systemInductiveInvariantCommittedFrontierIsSignature
+    (reachableSystemInductiveInvariant reachable)
 
 /-- Every reachable state satisfies Raft log matching. -/
 theorem reachableLogMatching
