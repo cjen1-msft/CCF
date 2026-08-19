@@ -3,6 +3,7 @@
 
 import CCFRaft.Examples
 import CCFRaft.Simulation
+import CCFRaft.Slice3Proofs
 
 /-!
 # CCF Raft slice 1
@@ -12,6 +13,10 @@ An executable, directly proved, five-node single-term AppendEntries model.
 
 #print axioms CCFRaft.reachableConsensusSafety
 #print axioms CCFRaft.reachableStepCommittedLogMonotonicity
+#print axioms CCFRaft.Slice3.reachableConsensusSafety
+#print axioms CCFRaft.Slice3.reachableLogMatching
+#print axioms CCFRaft.Slice3.reachableMonoLog
+#print axioms CCFRaft.Slice3.reachableLeaderCompleteness
 #print axioms CCFRaft.Simulation.materializeComplete
 #print axioms CCFRaft.Simulation.candidateChoicesComplete
 

@@ -8,6 +8,16 @@ Slice 2.5 is implemented as `CCFRaft.Slice25.system`, preserving the completed
 slice-two checkpoint while reusing the same message and local-handler
 definitions.
 
+Slice 3 is `CCFRaft.Slice3.system`. It changes only election guards: followers
+and candidates may time out in any term, RequestVote and promotion are no
+longer fixed to term two, and the existing deterministic updates carry the
+selected node's current term.
+
+`CCFRaft.Slice3Proofs` proves the resulting arbitrary-term transition system
+inductive. Its proof-only histories retain ballot provenance: the ledger
+snapshot, election term, quorum, delayed replication support, and commit
+evidence. Runtime state and wire messages are unchanged.
+
 ## Scope and deliberate projections
 
 | Source concept                     | Slice 2 representation                                           |
@@ -136,6 +146,28 @@ state has no enabled promotion.
    the new entry;
 5. node one records a majority and commits the term-two entry plus its inherited
    prefix.
+
+`CCFRaft/slice3-arbitrary.trace` leaves node one partitioned long enough to
+timeout twice, elects it directly in term three, commits a term-three entry,
+then elects node two in term four and commits another current-term entry.
+
+`CCFRaft/slice3-delayed-ack.trace` elects a higher-term leader before node zero
+processes its final old-term ACK. Node zero then forms a stale local majority
+and commits; the elected higher-term leader already contains that prefix.
+
+`Examples.slice3SameTermCompetitorCannotWin` advances an isolated follower into
+an already-owned term and checks that the frozen winning quorum prevents a
+second leader in that term.
+
+`CCFRaft/slice3-follower-overcommit.trace` exposed a Lean-reachable safety
+issue: an already-done partial AppendEntries request carried a later leader
+commit frontier, allowing the follower to commit a divergent signed suffix
+beyond the request tail. The Lean model now additionally bounds follower
+commit by `prevLogIndex + entries.length`, matching the standard Raft "last new
+entry" bound. The checked-in `ccfraft.tla` and C++ implementation contain the
+same missing local bound, but equivalent end-to-end reachability has not yet
+been demonstrated there. This is an explicit evidence-backed correction rather
+than an accidental projection.
 
 The conflict helpers are also translated, but no conflict transition is
 reachable before elections or term changes. Later grounded fixtures may project

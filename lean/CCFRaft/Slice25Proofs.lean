@@ -791,6 +791,45 @@ theorem failureResponseMetadata
       · exact ⟨rfl, rfl, rfl⟩
       · split <;> exact ⟨rfl, rfl, rfl⟩
 
+/-- A follower commit learned from a request stays below the advertised
+leader frontier, apart from an already committed local prefix. -/
+theorem committedFromLeader_le_max_leaderCommit
+    (before : NodeState TxId)
+    (request : AppendEntriesRequest TxId)
+    (newLog : List (Entry TxId)) :
+    committedFromLeader before request newLog <=
+    max before.commitIndex request.leaderCommit := by
+  unfold committedFromLeader
+  exact
+    max_le_max_left before.commitIndex
+    ((min_le_right
+      newLog.length
+      (min request.leaderCommit
+        (request.prevLogIndex + request.entries.length))).trans
+      (min_le_left
+        request.leaderCommit
+        (request.prevLogIndex + request.entries.length)))
+
+/-- A follower commit learned from a request stays below the request's
+verified end, apart from an already committed local prefix. -/
+theorem committedFromLeader_le_max_requestEnd
+    (before : NodeState TxId)
+    (request : AppendEntriesRequest TxId)
+    (newLog : List (Entry TxId)) :
+    committedFromLeader before request newLog <=
+    max before.commitIndex
+      (request.prevLogIndex + request.entries.length) := by
+  unfold committedFromLeader
+  exact
+    max_le_max_left before.commitIndex
+    ((min_le_right
+      newLog.length
+      (min request.leaderCommit
+        (request.prevLogIndex + request.entries.length))).trans
+      (min_le_right
+        request.leaderCommit
+        (request.prevLogIndex + request.entries.length)))
+
 /-- State facts needed from the AppendEntries request handler in both phases. -/
 structure AppendRequestLocalPost
     (before after : NodeState TxId)
@@ -822,6 +861,12 @@ structure AppendRequestLocalPost
   commitIndexBounded :
     before.commitIndex <= before.log.length ->
       after.commitIndex <= after.log.length
+  commitIndexMonotone :
+    before.commitIndex <= after.commitIndex
+  commitRequestEndBound :
+    after.commitIndex <=
+      max before.commitIndex
+        (request.prevLogIndex + request.entries.length)
   commitUpperBound :
     after.commitIndex <= max before.commitIndex request.leaderCommit
   responseSource : response.source = request.destination
@@ -891,7 +936,10 @@ theorem handleAppendEntriesRequestLocalPost
         ⟨rfl, rfl, rfl, rfl, rfl, rfl,
           Or.inl rfl, Or.inl rfl, Or.inl rfl,
           Or.inl rfl, List.take_prefix _ _,
-          (by intro bound; exact bound), by omega,
+          (by intro bound; exact bound),
+          le_rfl,
+          le_max_left _ _,
+          le_max_left _ _,
           metadata.1,
           metadata.2.1,
           (by intro succeeded; rw [metadata.2.2] at succeeded; contradiction),
@@ -944,11 +992,11 @@ theorem handleAppendEntriesRequestLocalPost
                 intro bound
                 simp only [committedFromLeader]
                 omega),
-              by
-                simpa using
-                  (max_le_max_left
-                    before.commitIndex
-                    (min_le_right before.log.length request.leaderCommit)),
+              le_max_left _ _,
+              committedFromLeader_le_max_requestEnd
+                before request before.log,
+              committedFromLeader_le_max_leaderCommit
+                before request before.log,
               by simp [successResponse],
               by simp [successResponse],
               by simp [successResponse],
@@ -1010,14 +1058,15 @@ theorem handleAppendEntriesRequestLocalPost
                   have previousBound :=
                     ‹noConflictExtension before request›.2.1
                   omega),
-                by
-                  simpa using
-                    (max_le_max_left
-                      before.commitIndex
-                      (min_le_right
-                        (before.log.take request.prevLogIndex ++
-                          request.entries).length
-                        request.leaderCommit)),
+                le_max_left _ _,
+                committedFromLeader_le_max_requestEnd
+                  before request
+                    (before.log.take request.prevLogIndex ++
+                      request.entries),
+                committedFromLeader_le_max_leaderCommit
+                  before request
+                    (before.log.take request.prevLogIndex ++
+                      request.entries),
                 by simp [successResponse],
                 by simp [successResponse],
                 by
@@ -1096,13 +1145,13 @@ theorem handleAppendEntriesRequestLocalPost
                         rcases accepted.2.2.1 with zero | present
                         · omega
                         · omega),
-                      by
-                        simpa using
-                          (max_le_max_left
-                            before.commitIndex
-                            (min_le_right
-                              (before.log.take request.prevLogIndex).length
-                              request.leaderCommit)),
+                      le_max_left _ _,
+                      committedFromLeader_le_max_requestEnd
+                        before request
+                          (before.log.take request.prevLogIndex),
+                      committedFromLeader_le_max_leaderCommit
+                        before request
+                          (before.log.take request.prevLogIndex),
                       by simp [successResponse],
                       by simp [successResponse],
                       by simp [successResponse],
@@ -1171,15 +1220,17 @@ theorem handleAppendEntriesRequestLocalPost
                         rcases accepted.2.2.1 with zero | present
                         · omega
                         · omega),
-                      by
-                        simpa using
-                          (max_le_max_left
-                            before.commitIndex
-                            (min_le_right
-                              ((before.log.take request.prevLogIndex).take
-                                  request.prevLogIndex ++
-                                request.entries).length
-                              request.leaderCommit)),
+                      le_max_left _ _,
+                      committedFromLeader_le_max_requestEnd
+                        before request
+                          ((before.log.take request.prevLogIndex).take
+                              request.prevLogIndex ++
+                            request.entries),
+                      committedFromLeader_le_max_leaderCommit
+                        before request
+                          ((before.log.take request.prevLogIndex).take
+                              request.prevLogIndex ++
+                            request.entries),
                       by simp [successResponse],
                       by simp [successResponse],
                       by

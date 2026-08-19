@@ -359,12 +359,15 @@ instance (state : NodeState TxId) (request : AppendEntriesRequest TxId) :
   unfold noConflictExtension
   infer_instance
 
-/-- Advance a follower commit index no further than its log or the leader frontier. -/
+/-- Advance commit only through the request's verified local/leader frontier. -/
 def committedFromLeader
     (state : NodeState TxId)
     (request : AppendEntriesRequest TxId)
     (newLog : List (Entry TxId)) : Nat :=
-  max state.commitIndex (min newLog.length request.leaderCommit)
+  max state.commitIndex
+    (min newLog.length
+      (min request.leaderCommit
+        (request.prevLogIndex + request.entries.length)))
 
 /-- Construct a successful response for an applied request. -/
 def successResponse
