@@ -174,8 +174,7 @@ No theorem in this project claims those 17 open properties.
 
 ## Related CCF Raft experiment
 
-`CCFRaft/` incrementally translates `tla/consensus/ccfraft.tla` into executable
-Lean. Slice 1 directly models the five-node, single-term AppendEntries flow and
-proves committed-log prefix and monotonicity safety without certificate guards
-or semantic ghost state. See `CCFRaft/README.md` and
+`CCFRaft/` translates the selected core of `tla/consensus/ccfraft.tla` into an
+executable arbitrary-term Lean model with kernel-checked Raft safety proofs.
+Git history retains its development stages. See `CCFRaft/README.md` and
 `CCFRaft/CORRESPONDENCE.md`.

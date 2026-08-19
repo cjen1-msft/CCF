@@ -1,37 +1,40 @@
-# Slice 2 correspondence with `ccfraft.tla`
+# Arbitrary-term correspondence with `ccfraft.tla`
 
 This document is the review surface for the selected TLA-to-Lean transition
 mapping. It records deliberate projections rather than claiming literal
 state-shape equality.
 
-Slice 2.5 is implemented as `CCFRaft.Slice25.system`, preserving the completed
-slice-two checkpoint while reusing the same message and local-handler
-definitions.
+`CCFRaft.system` is the active transition system. Followers and
+candidates may time out in any term, and RequestVote and promotion are not
+fixed to term two.
 
-Slice 3 is `CCFRaft.Slice3.system`. It changes only election guards: followers
-and candidates may time out in any term, RequestVote and promotion are no
-longer fixed to term two, and the existing deterministic updates carry the
-selected node's current term.
-
-`CCFRaft.Slice3Proofs` proves the resulting arbitrary-term transition system
+Canonical `CCFRaft.Proofs` proves this arbitrary-term transition system
 inductive. Its proof-only histories retain ballot provenance: the ledger
 snapshot, election term, quorum, delayed replication support, and commit
 evidence. Runtime state and wire messages are unchanged.
 
+The minimized invariant does not store log matching, quorum-log coverage,
+potential-commit safety, or leader completeness. Those are derived from the
+canonical ballot histories and commit evidence. This keeps the invariant
+focused on facts that transitions must actually preserve.
+
+Earlier development stages remain available in Git history; they are not
+active modules in the current tree.
+
 ## Scope and deliberate projections
 
-| Source concept                     | Slice 2 representation                                           |
+| Source concept                     | Lean representation                                              |
 | ---------------------------------- | ---------------------------------------------------------------- |
 | `Servers`                          | `Node := Fin NODE_COUNT`, with `NODE_COUNT = 5`                  |
 | Configuration                      | Fixed set of all five nodes; not mutable state                   |
 | Initial log                        | Empty; the CCF bootstrap prefix is projected away                |
 | Signature entries                  | Each transaction and following signature collapse to one `Entry` |
 | Entry payload                      | Opaque unique `txId`; erased by the source consensus algorithm   |
-| Terms                              | Log entries remain in term 1; node terms are 1 or 2              |
+| Terms                              | Natural-numbered terms starting from bootstrap term 1             |
 | Network guarantee                  | Ordered/no-duplicate FIFO queue per destination                  |
 | Variables outside selected actions | Omitted                                                          |
 
-The signature-pair projection maps source signature index `2n` to slice index
+The signature-pair projection maps source signature index `2n` to model index
 `n`. Removed bootstrap prefixes rebase all later indices by the removed prefix
 length.
 
@@ -48,7 +51,7 @@ length.
 | `noConflictAppendEntriesRequest?` | `NoConflictAppendEntriesRequest`                          | destination                                | destination               |
 | `handleAppendEntriesResponse?`    | `HandleAppendEntriesResponse`                             | destination leader                         | destination leader        |
 | `advanceCommitIndex`              | `AdvanceCommitIndex`                                      | acting leader's local `matchIndex`         | acting leader             |
-| `timeout`                         | `Timeout` / `BecomeCandidate`                             | timing-out follower                        | timing-out follower       |
+| `timeout`                         | `Timeout` / `BecomeCandidate`                             | timing-out follower or candidate           | timing-out node           |
 | `requestVote`                     | `RequestVote`                                             | source candidate                           | source network queue only |
 | `updateTerm`                      | `UpdateTerm`                                              | destination and selected immutable message | destination               |
 | RequestVote request receive       | `HandleRequestVoteRequest`                                | destination and selected request           | destination               |
@@ -68,10 +71,9 @@ replicates and acknowledges both raw entries.
 
 The intermediate source state where only the transaction is replicated is
 hidden. This is a weak/macro-step correspondence, not a one-to-one transition
-mapping. In this slice the hidden state cannot advance `commitIndex` because it
-does not end at a signature, and terms never change. Later slices must revisit
-this projection when elections, loss, or reordering make the hidden
-intermediate traffic observable.
+mapping. The hidden state cannot advance `commitIndex` because it does not end at a
+signature. Elections and delayed traffic make this a weak correspondence
+rather than a one-to-one transition mapping.
 
 ## Semantic details retained
 
@@ -88,7 +90,7 @@ intermediate traffic observable.
 - Conflict truncation is guarded above `commitIndex`.
 - Commit chooses the greatest index above the current commit whose entry term
   equals the leader term and whose local ACK set is a five-node majority.
-- Timeout advances a term-one follower directly to term two, records its
+- Timeout advances a follower or candidate to its successor term, records its
   self-vote, and starts an election.
 - `UpdateTerm` observes but does not consume a newer queued message.
 - Future requests and ordinary responses require `UpdateTerm` before their
@@ -98,68 +100,31 @@ intermediate traffic observable.
 - AppendEntries NACKs are handled regardless of their overloaded `term` field,
   which carries last-match metadata; `UpdateTerm` may independently be enabled
   for the same message, matching the source receive disjunction.
-- A voter grants at most one candidate in term two and only when the candidate
-  log is at least as up to date as its own.
+- A voter grants at most one candidate per term and only when the candidate log
+  is at least as up to date as its own.
 - A candidate becomes leader after recording a strict three-of-five majority.
 - Leader promotion initializes local replication indices as in the source, but
   the collapsed signed-entry projection makes source signature-prefix
   truncation a no-op.
-- Slice 2.5 allows both term-one and term-two leaders to append and replicate
-  while they remain locally unaware of each other.
+- Leaders in different terms may append and replicate while they remain
+  locally unaware of each other.
 - A same-term candidate receiving AppendEntries first executes
   `ReturnToFollowerState`; the request remains queued and is retried by a later
   receive action.
 - Commit advancement still requires the chosen frontier entry to belong to the
   acting leader's current term.
 
-## Synthetic non-vacuity evidence
+## Executable regression evidence
 
-`Examples.requestReplicateCommitReachable` is a synthetic non-vacuity path
-using the same semantic actions as the model:
-
-Projection assumptions are the removed bootstrap prefix and collapsed
-transaction/signature pairs. The executable path then:
-
-1. submits one transaction;
-2. performs projected request/response exchanges with two followers;
-3. forms a majority with the leader;
-4. commits the resulting non-empty prefix.
-
-The resulting Lean path is proved reachable through eight enabled executable
-actions. It is not claimed to be projected from the checked-in one-node
-`append` scenario. A grounded multi-node trace projection remains future
-correspondence evidence.
-
-`Examples.termTwoElectionReachable` extends that committed state with two
-competing candidates. Candidate one receives votes from nodes three and four
-and becomes the term-two leader; candidate two retains only its self-vote.
-`Examples.splitVoteHasNoWinner` separately checks the intermediate two-candidate
-state has no enabled promotion.
-
-`CCFRaft/slice25-conflict.trace` is the required cross-term witness:
-
-1. nodes one, two, and three elect node one in term two;
-2. isolated node zero appends and replicates an uncommitted term-one suffix to
-   node four;
-3. node one appends a term-two entry;
-4. node four advances term, truncates the conflicting old suffix, and accepts
-   the new entry;
-5. node one records a majority and commits the term-two entry plus its inherited
-   prefix.
-
-`CCFRaft/slice3-arbitrary.trace` leaves node one partitioned long enough to
+`CCFRaft/arbitrary-terms.trace` leaves node one partitioned long enough to
 timeout twice, elects it directly in term three, commits a term-three entry,
 then elects node two in term four and commits another current-term entry.
 
-`CCFRaft/slice3-delayed-ack.trace` elects a higher-term leader before node zero
+`CCFRaft/delayed-ack.trace` elects a higher-term leader before node zero
 processes its final old-term ACK. Node zero then forms a stale local majority
 and commits; the elected higher-term leader already contains that prefix.
 
-`Examples.slice3SameTermCompetitorCannotWin` advances an isolated follower into
-an already-owned term and checks that the frozen winning quorum prevents a
-second leader in that term.
-
-`CCFRaft/slice3-follower-overcommit.trace` exposed a Lean-reachable safety
+`CCFRaft/follower-overcommit.trace` exposed a Lean-reachable safety
 issue: an already-done partial AppendEntries request carried a later leader
 commit frontier, allowing the follower to commit a divergent signed suffix
 beyond the request tail. The Lean model now additionally bounds follower
@@ -178,29 +143,28 @@ deltas.
 
 ## Current evidence and limitations
 
-- Lean proofs establish safety over every execution of the slice semantics.
-- Non-vacuity examples establish an ordinary quorum-commit path exists.
+- Lean proofs establish safety over every execution of the active semantics.
+- Executable traces cover repeated elections, skipped terms, delayed ACKs,
+  and follower commit bounds.
 - The simulator uses exactly `Enabled` and `next`.
 - There is not yet a machine-checked semantics or bisimulation theorem between
   TLA+ and Lean.
 - Differential edge comparison is deferred.
-- Slice 2.5 still contains only one election-term transition.
 - `RcvDropIgnoredMessage` and other stale/ignored message branches are deferred
-  to the dedicated message-loss/staleness slice.
+  to future message-loss and staleness work.
 
 ## Review status
 
 Independent transition-correspondence, proof-soundness, and adversarial/vacuity
-reviews were completed for slice 1. Slice 2 retains those corrections and adds
-kernel-checked election majority intersection, vote soundness, election safety,
-and term-two leader completeness.
-
-The slice 1 findings led to:
+reviews during development produced:
 
 - exact one-entry/heartbeat source batching;
 - source-compatible NACK match index and term fields;
 - explicit weak/macro-step documentation for collapsed transaction/signature
   replication;
 - complete finite simulator candidate enumeration;
-- synthetic examples labelled separately from grounded trace evidence;
-- runtime checks for every supporting invariant category.
+- runtime checks for commit bounds, committed-prefix consistency, log
+  matching, log-term bounds, and election safety.
+
+Those earlier proofs and review checkpoints remain available in Git history.
+The current tree contains only the canonical arbitrary-term proof.
