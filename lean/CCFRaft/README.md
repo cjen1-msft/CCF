@@ -1,15 +1,14 @@
 # CCF Raft Lean model
 
-This directory builds `ccfraft.tla` incrementally as an executable Lean
-transition system with kernel-checked safety proofs.
+This directory models the selected `ccfraft.tla` Raft core as an executable
+Lean transition system with kernel-checked safety proofs.
 
-## Slice 3: arbitrary terms
+## Model
 
-`CCFRaft.system` retains the completed slice-two election checkpoint.
-`CCFRaft.Slice25.system` extends the same local handlers so any selected leader
-can append, replicate, and commit entries in its current term.
-`CCFRaft.Slice3.system` additionally permits repeated elections in arbitrary
-natural-numbered terms.
+`Model.lean` defines the arbitrary-term transition system, including
+`Enabled`, deterministic `next`, `system`, `runActions`, and `Reachable`.
+`Properties.lean` and `Proofs.lean` are the canonical property and proof
+modules. Git history contains the earlier development stages.
 
 The combined model has:
 
@@ -27,16 +26,17 @@ The combined model has:
 - split request/response handlers including reject, already-done,
   no-conflict extension, conflict truncation, ACK, and NACK behavior;
 - highest current-term index committed after ACKs from a majority, including
-  the leader.
-- follower timeouts into term-two candidacy with a self-vote;
+  the leader;
+- follower and candidate timeouts into successor-term candidacy with a
+  self-vote;
 - RequestVote request/response snapshots, log-up-to-date voting, and
   three-of-five leader promotion;
-- explicit newer-term observation that does not consume the selected message.
+- explicit newer-term observation that does not consume the selected message;
 - coexisting leaders in different terms while an isolated old leader remains
   unaware of the election;
-- term-two client entries, AppendEntries, acknowledgements, and current-term
-  majority commit;
-- reachable conflict truncation replacing an old leader's uncommitted suffix.
+- arbitrary-term client entries, AppendEntries, acknowledgements, and
+  current-term majority commit;
+- reachable conflict truncation replacing an old leader's uncommitted suffix;
 - candidates timing out repeatedly while partitioned;
 - direct term jumps when delayed messages finally reach other nodes;
 - later leaders proposing and committing entries in terms three, four, and
@@ -50,31 +50,37 @@ compiled simulator call these same definitions.
 
 ## Proved
 
-For every reachable state:
+For every arbitrary-term reachable state:
 
-- `CommittedLogsPrefix`: committed logs are prefixes of each other;
+- `CommittedLogsPrefix`: committed logs are prefix-comparable;
 - `LogMatching`;
-- same index and term imply the same transaction ID;
-- entry terms are monotonic;
+- `MonoLog`: entry terms are monotonic;
 - `ElectionSafety`: at most one leader exists in each term;
-- `TermTwoLeaderCompleteness`: every term-two leader contains node zero's
-  term-one committed prefix.
-
-For every enabled transition from a reachable state:
-
-- `CommittedLogMonotonicity`: every node's committed log is append-only.
-
-Slice 3 additionally proves these properties for arbitrary terms:
-
-- committed-log prefix consistency;
-- log matching and monotonic entry terms;
-- election safety;
-- TLA-style `LeaderCompleteness`: every active higher-term leader contains
+- `LeaderCompleteness`: every active higher-term leader contains
   each lower-term node's committed prefix.
 
 The arbitrary-term proof is inductive over every enabled action, including
 conflict truncation, delayed AppendEntries acknowledgements, delayed votes,
 repeated elections, and skipped terms.
+
+### How the arbitrary-term invariant works
+
+The invariant stores proof evidence, not the safety conclusions themselves:
+
+- local bounds keep commit indices, terms, and replication cursors valid;
+- immutable message histories retain the exact ledger snapshots carried by
+  delayed AppendEntries and RequestVote messages;
+- canonical histories and frozen election records preserve ballot ancestry;
+- temporal ACK and vote histories connect delayed replication support to later
+  elections;
+- commit evidence records the quorum and ledger frontier supporting each live
+  committed prefix.
+
+Log matching and monotonic terms are derived from canonical histories.
+Election safety is derived from persistent voter choices. Committed-prefix
+consistency is derived by intersecting commit-support quorums. Leader
+completeness is derived by following ballot ancestry across frozen elections,
+including elections which occurred before a delayed ACK completed its quorum.
 
 ## Build and simulate
 
@@ -83,15 +89,9 @@ cd lean
 lake build
 lake build ccf-raft-simulator
 .lake/build/bin/ccf-raft-simulator simulate 5000 1 1000
-.lake/build/bin/ccf-raft-simulator replay ccf-raft-failure.trace
-.lake/build/bin/ccf-raft-simulator replay CCFRaft/slice2-election.trace
-.lake/build/bin/ccf-raft-simulator simulate25 5000 1 1000
-.lake/build/bin/ccf-raft-simulator replay25 CCFRaft/slice25-happy.trace
-.lake/build/bin/ccf-raft-simulator replay25 CCFRaft/slice25-conflict.trace
-.lake/build/bin/ccf-raft-simulator simulate3 5000 1 1000
-.lake/build/bin/ccf-raft-simulator replay3 CCFRaft/slice3-arbitrary.trace
-.lake/build/bin/ccf-raft-simulator replay3 CCFRaft/slice3-delayed-ack.trace
-.lake/build/bin/ccf-raft-simulator replay3 CCFRaft/slice3-follower-overcommit.trace
+.lake/build/bin/ccf-raft-simulator replay CCFRaft/arbitrary-terms.trace
+.lake/build/bin/ccf-raft-simulator replay CCFRaft/delayed-ack.trace
+.lake/build/bin/ccf-raft-simulator replay CCFRaft/follower-overcommit.trace
 ```
 
 Simulation runs for the requested number of milliseconds. It reports proposals
@@ -107,11 +107,9 @@ instance appears in its finite candidate list. The reusable
 simulator choice.
 Random scheduling is only a bug-finding policy; it is not proof evidence.
 
-   ## Future slices
+## Out of scope
 
-   4. Prove the unbounded-node AppendEntries/RequestVote core.
-   4.5. Add explicit message loss and remaining stale-message behavior.
-   5. Add reconfiguration.
-   6. Add pre-vote and remaining CCF-specific actions.
-
-Later slices remain roadmap notes, not current claims.
+- unbounded node sets;
+- explicit message loss and remaining stale-message behavior;
+- reconfiguration;
+- pre-vote and remaining CCF-specific actions.

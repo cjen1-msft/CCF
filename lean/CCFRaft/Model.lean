@@ -7,11 +7,11 @@ import Mathlib
 set_option autoImplicit false
 
 /-!
-# Slice 2: term-two RequestVote elections
+# Arbitrary-term Raft model
 
-This extends term-one AppendEntries with term-two RequestVote elections.
-Protocol handlers receive only the acting node's local state and immutable
-message snapshots.
+Followers and candidates may repeatedly start successor-term elections, and
+messages may move another node directly across skipped terms. Protocol handlers
+receive only the acting node's local state and immutable message snapshots.
 -/
 
 namespace CCFRaft
@@ -21,12 +21,12 @@ def NODE_COUNT : Nat := 5
 /-- Node identifiers are the integers from zero through four. -/
 abbrev Node := Fin NODE_COUNT
 
-/-- Node zero is the fixed initial term-one leader. -/
+/-- Node zero is the fixed initial leader in term one. -/
 def INITIAL_LEADER : Node := ⟨0, by decide⟩
-/-- Log entries remain in term one; node terms may advance to term two. -/
+/-- Initial bootstrap term. -/
 def TERM_ONE : Nat := 1
 
-/-- Leadership roles represented by the election slice. -/
+/-- Leadership roles represented by the model. -/
 inductive Role where
   /-- A replica that receives AppendEntries messages. -/
   | follower
@@ -81,7 +81,7 @@ structure RequestVoteResponse where
   destination : Node
   deriving DecidableEq, Repr
 
-/-- The two network message kinds used by the AppendEntries slice. -/
+/-- Network messages used by replication and elections. -/
 inductive Message (TxId : Type) where
   /-- A leader-to-follower replication request. -/
   | appendEntriesRequest (request : AppendEntriesRequest TxId)
@@ -787,7 +787,7 @@ inductive Action (TxId : Type) where
   | receive (source destination : Node)
   /-- Advance a leader to its locally computed quorum commit frontier. -/
   | advanceCommitIndex (node : Node)
-  /-- Locally start the term-two election and vote for oneself. -/
+  /-- Locally start a successor-term election and vote for oneself. -/
   | timeout (node : Node)
   /-- Send a RequestVote message from a candidate to another node. -/
   | requestVote (source destination : Node)
@@ -797,17 +797,15 @@ inductive Action (TxId : Type) where
   | becomeLeader (node : Node)
   deriving DecidableEq, Repr
 
-/-- Protocol guard determining whether an action may occur in a state. -/
+/-- Protocol guard for arbitrary repeated elections and leader writes. -/
 def Enabled
     (state : State TxId) :
     Action TxId -> Prop
   | .clientRequest node txId =>
       (state.nodes node).role = .leader /\
-        (state.nodes node).currentTerm = TERM_ONE /\
         txId ∉ state.submittedTxIds
   | .appendEntries source destination batchEnd =>
       (state.nodes source).role = .leader /\
-        (state.nodes source).currentTerm = TERM_ONE /\
         Not (source = destination) /\
         batchEnd =
           min
@@ -817,21 +815,18 @@ def Enabled
       (handleReceive? state source destination).isSome
   | .advanceCommitIndex node =>
       (state.nodes node).role = .leader /\
-        (state.nodes node).currentTerm = TERM_ONE /\
         (state.nodes node).commitIndex <
           highestCommittableIndex state node
   | .timeout node =>
-      (state.nodes node).role = .follower /\
-        (state.nodes node).currentTerm = TERM_ONE
+      ((state.nodes node).role = .follower \/
+        (state.nodes node).role = .candidate)
   | .requestVote source destination =>
       (state.nodes source).role = .candidate /\
-        (state.nodes source).currentTerm = 2 /\
         Not (source = destination)
   | .updateTerm source destination =>
       (newerMessage? state source destination).isSome
   | .becomeLeader node =>
       (state.nodes node).role = .candidate /\
-        (state.nodes node).currentTerm = 2 /\
         hasElectionMajority state node
 
 /-- Make every action guard directly executable. -/
@@ -913,7 +908,7 @@ def next
               sentIndex := fun _ => nodeState.log.length
               matchIndex := fun _ => 0 } }
 
-/-- Package the Raft slice as a reusable executable transition system. -/
+/-- Package arbitrary-term Raft as a reusable executable transition system. -/
 def system [DecidableEq TxId] : ExecutableTransitionSystem where
   State := State TxId
   Action := Action TxId
@@ -922,7 +917,16 @@ def system [DecidableEq TxId] : ExecutableTransitionSystem where
   enabledDecidable := fun _ _ => inferInstance
   next
 
-/-- States reachable through enabled slice-two Raft actions. -/
+/-- Execute actions until one is disabled. -/
+def runActions
+    (state : State TxId) :
+    List (Action TxId) -> Option (State TxId)
+  | [] => some state
+  | action :: actions => do
+      let nextState <- system.applyAction state action
+      runActions nextState actions
+
+/-- States reachable through enabled arbitrary-term Raft actions. -/
 abbrev Reachable [DecidableEq TxId] :=
   (system (TxId := TxId)).Reachable
 
@@ -941,6 +945,41 @@ theorem step
     (enabled : Enabled state action) :
     Reachable (next state action) :=
   ExecutableTransitionSystem.Reachable.step reachable enabled
+
+/-- A successfully executed action list ends in a reachable state. -/
+theorem runActionsReachable
+    {start final : State TxId}
+    {actions : List (Action TxId)}
+    (startReachable : Reachable start)
+    (ran : runActions start actions = some final) :
+    Reachable final := by
+  induction actions generalizing start final with
+  | nil =>
+      simp [runActions] at ran
+      subst final
+      exact startReachable
+  | cons action actions inductionHypothesis =>
+      unfold runActions at ran
+      cases applied : system.applyAction start action with
+      | none =>
+          simp [applied] at ran
+      | some nextState =>
+          have enabled : Enabled start action := by
+            unfold ExecutableTransitionSystem.applyAction at applied
+            split at applied
+            · assumption
+            · contradiction
+          have nextEq : next start action = nextState := by
+            unfold ExecutableTransitionSystem.applyAction at applied
+            split at applied
+            · exact Option.some.inj applied
+            · contradiction
+          have nextReachable : Reachable nextState := by
+            rw [← nextEq]
+            exact step startReachable enabled
+          exact
+            inductionHypothesis nextReachable
+              (by simpa [applied] using ran)
 
 end Reachable
 

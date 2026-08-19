@@ -1,12 +1,12 @@
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-import CCFRaft.Proofs
+import CCFRaft.Model
 
 set_option autoImplicit false
 
 /-!
-# Bounded simulator adapter
+# Bounded arbitrary-term Raft simulator
 
 The adapter does not define protocol semantics. It materializes choices as
 ordinary model actions, then calls `ExecutableTransitionSystem.applyAction`.
@@ -125,78 +125,70 @@ theorem memAllTxIds (txId : TxId) :
     txId ∈ allTxIds :=
   List.mem_ofFn.mpr ⟨txId, rfl⟩
 
-/-- Executably check every category of the proof's supporting invariant. -/
+/-- Check pairwise committed-prefix consistency. -/
+def committedPrefixesCheck (state : SimState) : Bool :=
+  allNodes.all fun left =>
+    allNodes.all fun right =>
+      decide (
+        (state.nodes left).committedLog <+:
+            (state.nodes right).committedLog \/
+          (state.nodes right).committedLog <+:
+            (state.nodes left).committedLog)
+
+/-- Check that equal index/term observations identify equal prefixes. -/
+def logMatchingCheck (state : SimState) : Bool :=
+  allNodes.all fun left =>
+    allNodes.all fun right =>
+      (List.range
+        (min
+          (state.nodes left).log.length
+          (state.nodes right).log.length + 1)).all fun index =>
+        match
+          entryAt? (state.nodes left).log index,
+          entryAt? (state.nodes right).log index
+        with
+        | some leftEntry, some rightEntry =>
+            if leftEntry.term = rightEntry.term then
+              decide (
+                (state.nodes left).log.take index =
+                  (state.nodes right).log.take index)
+            else
+              true
+        | _, _ => true
+
+/-- Check monotonically increasing terms and local current-term bounds. -/
+def logTermChecks (state : SimState) : Bool :=
+  allNodes.all fun node =>
+    let log := (state.nodes node).log
+    (log.all fun entry =>
+      decide (entry.term <= (state.nodes node).currentTerm)) &&
+    (List.range log.length).all fun index =>
+      match log[index]?, log[index + 1]? with
+      | some earlier, some later => decide (earlier.term <= later.term)
+      | _, _ => true
+
+/-- Check at most one leader in each represented term. -/
+def electionSafetyCheck (state : SimState) : Bool :=
+  allNodes.all fun left =>
+    allNodes.all fun right =>
+      if (state.nodes left).role = .leader /\
+          (state.nodes right).role = .leader /\
+          (state.nodes left).currentTerm =
+            (state.nodes right).currentTerm then
+        decide (left = right)
+      else
+        true
+
+/-- Check selected executable state-local Raft safety conditions. -/
 def stateChecks (state : SimState) : Bool :=
-  let nodeChecks :=
-    allNodes.all fun node =>
-      decide ((state.nodes node).commitIndex <=
-        (state.nodes node).log.length) &&
-      decide ((state.nodes node).log <+: (state.nodes INITIAL_LEADER).log) &&
-      ((state.nodes node).log.all fun entry =>
-        decide (entry.term = TERM_ONE)) &&
-      decide (
-        (state.nodes node).currentTerm = TERM_ONE \/
-          (state.nodes node).currentTerm = 2) &&
-      decide (
-        (state.nodes node).role = .leader ->
-          (state.nodes node).currentTerm = TERM_ONE ->
-          node = INITIAL_LEADER) &&
-      decide (
-        (state.nodes node).role = .candidate ->
-          (state.nodes node).currentTerm = 2 /\
-          (state.nodes node).votedFor = some node /\
-          node ∈ (state.nodes node).votesGranted) &&
-      decide (
-        (state.nodes node).role = .leader ->
-          (state.nodes node).currentTerm = 2 ->
-          hasElectionMajority state node) &&
-      (allNodes.all fun voter =>
-        if decide (voter ∈ (state.nodes node).votesGranted) then
-          decide ((state.nodes node).currentTerm = 2) &&
-          decide ((state.nodes voter).votedFor = some node) &&
-          decide ((state.nodes voter).log <+: (state.nodes node).log)
-        else
-          true)
-  let voterChecks :=
-    allNodes.all fun voter =>
-      match (state.nodes voter).votedFor with
-      | none => true
-      | some _ => decide ((state.nodes voter).currentTerm = 2)
-  let leaderChecks :=
-    decide ((state.nodes INITIAL_LEADER).log.map Entry.txId |>.Nodup) &&
-      ((state.nodes INITIAL_LEADER).log.all fun entry =>
-        decide (entry.txId ∈ state.submittedTxIds)) &&
-      (allNodes.all fun node =>
-        decide ((state.nodes INITIAL_LEADER).sentIndex node <=
-          (state.nodes INITIAL_LEADER).log.length) &&
-        decide ((state.nodes INITIAL_LEADER).matchIndex node <=
-          (state.nodes INITIAL_LEADER).log.length) &&
-        decide (
-          (state.nodes INITIAL_LEADER).log.take
-              ((state.nodes INITIAL_LEADER).matchIndex node) =
-            (state.nodes node).log.take
-              ((state.nodes INITIAL_LEADER).matchIndex node))) &&
-      decide (
-        (state.nodes INITIAL_LEADER).currentTerm = TERM_ONE ->
-          (state.nodes INITIAL_LEADER).role = .leader) &&
-      decide (
-        (state.nodes INITIAL_LEADER).commitIndex = 0 \/
-          hasMajorityAt state INITIAL_LEADER (state.nodes INITIAL_LEADER).commitIndex) &&
-      decide (Not ((state.nodes INITIAL_LEADER).role = .candidate))
-  let networkChecks :=
-    allNodes.all fun destination =>
-      (state.network destination).all fun message =>
-        decide (message.destination = destination) &&
-          match message with
-          | .appendEntriesRequest request =>
-              decide (RequestMatchesLeader state request)
-          | .appendEntriesResponse response =>
-              decide (ResponseMatchesLeader state response)
-          | .requestVoteRequest request =>
-              decide (RequestVoteRequestSafe state request)
-          | .requestVoteResponse response =>
-              decide (RequestVoteResponseSafe state response)
-  nodeChecks && voterChecks && leaderChecks && networkChecks
+  (allNodes.all fun node =>
+    decide (
+      (state.nodes node).commitIndex <=
+        (state.nodes node).log.length)) &&
+  committedPrefixesCheck state &&
+  logMatchingCheck state &&
+  logTermChecks state &&
+  electionSafetyCheck state
 
 /-- Executably check committed-log monotonicity on one explored edge. -/
 def edgeChecks (before after : SimState) : Bool :=
@@ -262,7 +254,7 @@ theorem candidateChoicesComplete
       simp [candidateChoices]
   | appendEntries source destination batchEnd =>
       refine ⟨.appendEntries source destination batchEnd, ?_, rfl⟩
-      simp [candidateChoices, enabled.2.2.2]
+      simp [candidateChoices, enabled.2.2]
   | receive source destination =>
       refine ⟨.receive source destination, ?_, rfl⟩
       simp [candidateChoices]
@@ -289,12 +281,57 @@ def enabledChoices (state : SimState) : List Choice :=
     | none => false
     | some action => decide (Enabled state action)
 
-/-- Randomly select one currently enabled choice from the complete list. -/
+/-- Retain enabled choices belonging to one action family. -/
+def familyChoices
+    (family : ActionFamily)
+    (choices : List Choice) : List Choice :=
+  choices.filter fun choice => decide (choice.family = family)
+
+/-- Prefer actions that advance elections, delivery, or replication. -/
+def preferredChoices (state : SimState) : List Choice :=
+  let enabled := enabledChoices state
+  let promotions := familyChoices .becomeLeader enabled
+  let updates := familyChoices .updateTerm enabled
+  let receives := familyChoices .receive enabled
+  let votes := familyChoices .requestVote enabled
+  let candidateTimeouts :=
+    (familyChoices .timeout enabled).filter fun choice =>
+      match choice with
+      | .timeout node => (state.nodes node).role = .candidate
+      | _ => false
+  let commits := familyChoices .advanceCommitIndex enabled
+  let appends := familyChoices .appendEntries enabled
+  let progressingAppends :=
+    appends.filter fun choice =>
+      match choice with
+      | .appendEntries source destination batchEnd =>
+          decide (
+            (state.nodes source).sentIndex destination < batchEnd)
+      | _ => false
+  let clients := familyChoices .clientRequest enabled
+  let electionActive :=
+    allNodes.any fun node => (state.nodes node).role = .candidate
+  let aLeaderNeedsCurrentEntry :=
+    allNodes.any fun node =>
+      (state.nodes node).role = .leader /\
+        !(state.nodes node).log.any fun entry =>
+          entry.term = (state.nodes node).currentTerm
+  if !promotions.isEmpty then promotions
+  else if !updates.isEmpty then updates
+  else if !receives.isEmpty then receives
+  else if electionActive && !(votes ++ candidateTimeouts).isEmpty then
+    votes ++ candidateTimeouts
+  else if aLeaderNeedsCurrentEntry && !clients.isEmpty then clients
+  else if !commits.isEmpty then commits
+  else if !progressingAppends.isEmpty then progressingAppends
+  else enabled
+
+/-- Randomly select one preferred enabled choice from the complete list. -/
 def propose
     (state : SimState)
     (generator : Generator) :
     Option Choice × Generator :=
-  let candidates := enabledChoices state
+  let candidates := preferredChoices state
   let (index, generator) := generator.choose candidates.length
   (candidates[index]?, generator)
 
@@ -451,7 +488,7 @@ def writeTrace (path : System.FilePath) (actions : List SimAction) : IO Unit :=
   IO.FS.writeFile path
     (String.intercalate "\n" (actions.reverse.map renderAction) ++ "\n")
 
-/-- Reapply a trace while checking every state and edge invariant. -/
+/-- Replay semantic actions from the initial state while checking invariants. -/
 def replayActions
     (actions : List SimAction) :
     Except String SimState :=
@@ -465,7 +502,7 @@ def replayActions
       throw s!"edge invariant failed after: {renderAction action}"
     pure nextState
 
-/-- Parse and replay a trace file, reporting its final commit frontier. -/
+/-- Parse and replay a semantic action trace. -/
 def replayFile (path : System.FilePath) : IO UInt32 := do
   let content <- IO.FS.readFile path
   let lines := content.splitOn "\n" |>.filter (· != "")
@@ -477,13 +514,15 @@ def replayFile (path : System.FilePath) : IO UInt32 := do
     actions := actions ++ [action]
   match replayActions actions with
   | .ok state =>
-      IO.println s!"replayed {actions.length} actions; leader commit={(state.nodes INITIAL_LEADER).commitIndex}"
+      IO.println
+        s!"replayed {actions.length} arbitrary-term Raft actions; max term={
+          (allNodes.map fun node => (state.nodes node).currentTerm).foldl max 0}"
       return 0
   | .error message =>
       IO.eprintln message
       return 1
 
-/-- Run random traces until the deadline, restarting at the depth limit. -/
+/-- Explore traces until the deadline, restarting at the requested depth. -/
 partial def simulateLoop
     (deadlineMs : Nat)
     (maxDepth : Nat)
@@ -499,8 +538,7 @@ partial def simulateLoop
   let state :=
     if depth >= maxDepth then
       (initialState : SimState)
-    else
-      state
+    else state
   let depth := if depth >= maxDepth then 0 else depth
   let trace := if depth = 0 then [] else trace
   let telemetry :=
@@ -525,15 +563,16 @@ partial def simulateLoop
       if !stateChecks nextState || !edgeChecks state nextState then
         let path : System.FilePath := "ccf-raft-failure.trace"
         writeTrace path trace
-        throw <| IO.userError s!"invariant failure; replay {path}"
+        throw <| IO.userError s!"Raft invariant failure; replay {path}"
       let nextDepth := depth + 1
       let telemetry :=
         { telemetry.taken choice.family with
           steps := telemetry.steps + 1
           maxDepth := max telemetry.maxDepth nextDepth }
-      simulateLoop deadlineMs maxDepth generator nextState nextDepth trace telemetry
+      simulateLoop
+        deadlineMs maxDepth generator nextState nextDepth trace telemetry
 
-/-- Run timed simulation from a seed and print coverage telemetry. -/
+/-- Run bounded randomized exploration for the requested duration. -/
 def simulate
     (durationMs seed maxDepth : Nat) :
     IO UInt32 := do

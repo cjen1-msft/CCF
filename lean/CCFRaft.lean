@@ -1,22 +1,19 @@
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-import CCFRaft.Examples
+import CCFRaft.Proofs
 import CCFRaft.Simulation
-import CCFRaft.Slice3Proofs
 
 /-!
-# CCF Raft slice 1
+# CCF Raft arbitrary-term proof
 
-An executable, directly proved, five-node single-term AppendEntries model.
+An executable, directly proved, five-node arbitrary-term Raft model.
 -/
 
 #print axioms CCFRaft.reachableConsensusSafety
-#print axioms CCFRaft.reachableStepCommittedLogMonotonicity
-#print axioms CCFRaft.Slice3.reachableConsensusSafety
-#print axioms CCFRaft.Slice3.reachableLogMatching
-#print axioms CCFRaft.Slice3.reachableMonoLog
-#print axioms CCFRaft.Slice3.reachableLeaderCompleteness
+#print axioms CCFRaft.reachableLogMatching
+#print axioms CCFRaft.reachableMonoLog
+#print axioms CCFRaft.reachableLeaderCompleteness
 #print axioms CCFRaft.Simulation.materializeComplete
 #print axioms CCFRaft.Simulation.candidateChoicesComplete
 
@@ -34,4 +31,4 @@ run_cmd do
       | _ => pure ()
   if checked = 0 then
     throwError "no CCFRaft theorems were audited"
-  Lean.logInfo m!"Audited {checked} CCF Raft slice theorems for sorryAx."
+  Lean.logInfo m!"Audited {checked} CCF Raft theorems for sorryAx."
