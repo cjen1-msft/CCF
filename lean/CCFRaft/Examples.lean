@@ -4,6 +4,7 @@
 import CCFRaft.Proofs
 import CCFRaft.Slice25Proofs
 import CCFRaft.Slice25Simulation
+import CCFRaft.Slice3Model
 
 set_option autoImplicit false
 
@@ -555,6 +556,257 @@ theorem slice25SchedulerPrioritisesOnlyProgressingAppends :
       | .appendEntries source destination batchEnd =>
           (settled.nodes source).sentIndex destination < batchEnd
       | _ => true := by
+  native_decide
+
+/-! ## Slice 3 arbitrary and skipped terms -/
+
+/-- Reachable regression for follower commit beyond a partially verified request. -/
+def slice3FollowerOvercommitActions : List (Action TxId) :=
+  [ .clientRequest INITIAL_LEADER 0,
+    .appendEntries INITIAL_LEADER followerOne 1,
+    .receive INITIAL_LEADER followerOne,
+    .receive followerOne INITIAL_LEADER,
+    .appendEntries INITIAL_LEADER followerTwo 1,
+    .receive INITIAL_LEADER followerTwo,
+    .receive followerTwo INITIAL_LEADER,
+    .appendEntries INITIAL_LEADER followerThree 1,
+    .receive INITIAL_LEADER followerThree,
+    .receive followerThree INITIAL_LEADER,
+    .appendEntries INITIAL_LEADER followerFour 1,
+    .receive INITIAL_LEADER followerFour,
+    .receive followerFour INITIAL_LEADER,
+    .advanceCommitIndex INITIAL_LEADER,
+    .appendEntries INITIAL_LEADER followerTwo 1,
+    .timeout followerOne,
+    .requestVote followerOne followerTwo,
+    .updateTerm followerOne followerTwo,
+    .receive INITIAL_LEADER followerTwo,
+    .receive followerOne followerTwo,
+    .requestVote followerOne followerThree,
+    .updateTerm followerOne followerThree,
+    .receive followerOne followerThree,
+    .requestVote followerOne INITIAL_LEADER,
+    .updateTerm followerOne INITIAL_LEADER,
+    .receive followerOne INITIAL_LEADER,
+    .receive followerTwo followerOne,
+    .receive followerThree followerOne,
+    .becomeLeader followerOne,
+    .clientRequest followerOne 1,
+    .appendEntries followerOne INITIAL_LEADER 2,
+    .receive followerOne INITIAL_LEADER,
+    .appendEntries followerOne followerTwo 2,
+    .receive followerOne followerTwo,
+    .appendEntries followerOne followerThree 2,
+    .receive followerOne followerThree,
+    .appendEntries followerOne followerFour 2,
+    .updateTerm followerOne followerFour,
+    .receive followerOne followerFour,
+    .clientRequest followerOne 2,
+    .appendEntries followerOne followerTwo 3,
+    .receive followerOne followerTwo,
+    .timeout INITIAL_LEADER,
+    .requestVote INITIAL_LEADER followerThree,
+    .updateTerm INITIAL_LEADER followerThree,
+    .receive INITIAL_LEADER followerThree,
+    .requestVote INITIAL_LEADER followerFour,
+    .updateTerm INITIAL_LEADER followerFour,
+    .receive INITIAL_LEADER followerFour,
+    .receive followerThree INITIAL_LEADER,
+    .receive followerFour INITIAL_LEADER,
+    .becomeLeader INITIAL_LEADER,
+    .clientRequest INITIAL_LEADER 3,
+    .appendEntries INITIAL_LEADER followerThree 3,
+    .receive INITIAL_LEADER followerThree,
+    .receive followerThree INITIAL_LEADER,
+    .appendEntries INITIAL_LEADER followerFour 3,
+    .receive INITIAL_LEADER followerFour,
+    .receive followerFour INITIAL_LEADER,
+    .advanceCommitIndex INITIAL_LEADER,
+    .receive followerTwo INITIAL_LEADER,
+    .appendEntries INITIAL_LEADER followerTwo 2,
+    .updateTerm INITIAL_LEADER followerTwo,
+    .receive INITIAL_LEADER followerTwo ]
+
+/-- The overcommit regression trace contains no disabled action. -/
+theorem slice3FollowerOvercommitTraceExecutes :
+    (Slice3.runActions initial slice3FollowerOvercommitActions).isSome = true := by
+  native_decide
+
+/-- Final state of the follower-overcommit regression. -/
+def slice3FollowerOvercommitFinal : RaftState :=
+  (Slice3.runActions initial slice3FollowerOvercommitActions).getD initial
+
+/-- Follower commit is bounded by the final request's verified tail. -/
+theorem slice3FollowerCommitStopsAtRequestEnd :
+    (slice3FollowerOvercommitFinal.nodes followerTwo).commitIndex = 2 /\
+      (slice3FollowerOvercommitFinal.nodes followerTwo).committedLog <+:
+        (slice3FollowerOvercommitFinal.nodes INITIAL_LEADER).log := by
+  native_decide
+
+/-- A delayed ACK lets an isolated lower-term leader commit after a later election. -/
+def slice3DelayedAckActions : List (Action TxId) :=
+  [ .clientRequest INITIAL_LEADER 0,
+    .appendEntries INITIAL_LEADER followerOne 1,
+    .receive INITIAL_LEADER followerOne,
+    .receive followerOne INITIAL_LEADER,
+    .appendEntries INITIAL_LEADER followerTwo 1,
+    .receive INITIAL_LEADER followerTwo,
+    .timeout followerOne,
+    .requestVote followerOne followerThree,
+    .updateTerm followerOne followerThree,
+    .receive followerOne followerThree,
+    .receive followerThree followerOne,
+    .requestVote followerOne followerFour,
+    .updateTerm followerOne followerFour,
+    .receive followerOne followerFour,
+    .receive followerFour followerOne,
+    .becomeLeader followerOne,
+    .receive followerTwo INITIAL_LEADER,
+    .advanceCommitIndex INITIAL_LEADER ]
+
+/-- The delayed-ACK stale-leader trace is executable. -/
+theorem slice3DelayedAckTraceExecutes :
+    (Slice3.runActions initial slice3DelayedAckActions).isSome = true := by
+  native_decide
+
+/-- The later leader already contains the prefix committed by the stale leader. -/
+theorem slice3DelayedAckLeaderContainsCommit :
+    let final :=
+      (Slice3.runActions initial slice3DelayedAckActions).getD initial
+    (final.nodes INITIAL_LEADER).committedLog <+:
+      (final.nodes followerOne).log := by
+  native_decide
+
+/-- A skipped term-three election followed by a later term-four commit. -/
+def slice3ArbitraryActions : List (Action TxId) :=
+  [ .clientRequest INITIAL_LEADER 0,
+    .appendEntries INITIAL_LEADER followerOne 1,
+    .receive INITIAL_LEADER followerOne,
+    .receive followerOne INITIAL_LEADER,
+    .appendEntries INITIAL_LEADER followerTwo 1,
+    .receive INITIAL_LEADER followerTwo,
+    .receive followerTwo INITIAL_LEADER,
+    .advanceCommitIndex INITIAL_LEADER,
+    .timeout followerOne,
+    .timeout followerOne,
+    .requestVote followerOne followerTwo,
+    .updateTerm followerOne followerTwo,
+    .receive followerOne followerTwo,
+    .receive followerTwo followerOne,
+    .requestVote followerOne followerThree,
+    .updateTerm followerOne followerThree,
+    .receive followerOne followerThree,
+    .receive followerThree followerOne,
+    .becomeLeader followerOne,
+    .clientRequest followerOne 2,
+    .appendEntries followerOne followerTwo 2,
+    .receive followerOne followerTwo,
+    .receive followerTwo followerOne,
+    .appendEntries followerOne INITIAL_LEADER 2,
+    .updateTerm followerOne INITIAL_LEADER,
+    .receive followerOne INITIAL_LEADER,
+    .receive INITIAL_LEADER followerOne,
+    .advanceCommitIndex followerOne,
+    .timeout followerTwo,
+    .requestVote followerTwo INITIAL_LEADER,
+    .updateTerm followerTwo INITIAL_LEADER,
+    .receive followerTwo INITIAL_LEADER,
+    .receive INITIAL_LEADER followerTwo,
+    .requestVote followerTwo followerFour,
+    .updateTerm followerTwo followerFour,
+    .receive followerTwo followerFour,
+    .receive followerFour followerTwo,
+    .becomeLeader followerTwo,
+    .clientRequest followerTwo 3,
+    .appendEntries followerTwo followerOne 3,
+    .updateTerm followerTwo followerOne,
+    .receive followerTwo followerOne,
+    .receive followerOne followerTwo,
+    .appendEntries followerTwo INITIAL_LEADER 3,
+    .receive followerTwo INITIAL_LEADER,
+    .receive INITIAL_LEADER followerTwo,
+    .advanceCommitIndex followerTwo ]
+
+/-- A second candidate in an already-owned term cannot collect a majority. -/
+def slice3SameTermCompetitorActions : List (Action TxId) :=
+  slice3ArbitraryActions.take 19 ++
+    [ .timeout followerFour,
+      .timeout followerFour,
+      .requestVote followerFour INITIAL_LEADER,
+      .updateTerm followerFour INITIAL_LEADER,
+      .receive followerFour INITIAL_LEADER,
+      .receive INITIAL_LEADER followerFour,
+      .requestVote followerFour followerTwo,
+      .receive followerFour followerTwo,
+      .receive followerTwo followerFour ]
+
+/-- Majority intersection prevents a second term-three leader. -/
+theorem slice3SameTermCompetitorCannotWin :
+    let final :=
+      (Slice3.runActions initial slice3SameTermCompetitorActions).getD initial
+    (Slice3.runActions initial slice3SameTermCompetitorActions).isSome = true /\
+      Not (Slice3.Enabled final (.becomeLeader followerFour)) := by
+  native_decide
+
+/--
+An isolated old ACK may outlive later conflict repair; arbitrary ACK snapshots
+must not be treated as permanent voter-log prefixes.
+-/
+def slice3OverwrittenAckActions : List (Action TxId) :=
+  slice25ConflictActions ++
+    [ .receive followerFour INITIAL_LEADER,
+      .receive followerFour INITIAL_LEADER,
+      .timeout followerTwo,
+      .requestVote followerTwo followerFour,
+      .updateTerm followerTwo followerFour,
+      .receive followerTwo followerFour,
+      .receive followerFour followerTwo ]
+
+/-- The overwritten ACK voter can later grant from its replacement log. -/
+theorem slice3ArbitraryAckHistoryIsNotPersistent :
+    let final :=
+      (Slice3.runActions initial slice3OverwrittenAckActions).getD initial
+    (Slice3.runActions initial slice3OverwrittenAckActions).isSome = true /\
+      Not (
+        ([{ term := TERM_ONE, txId := 0 },
+          { term := TERM_ONE, txId := 1 }] : List (Entry TxId)) <+:
+          (final.nodes followerFour).log) /\
+      followerFour ∈ (final.nodes followerTwo).votesGranted := by
+  native_decide
+
+/-- Execute a prefix of the arbitrary-term trace. -/
+def slice3StateAfter (count : Nat) : RaftState :=
+  (Slice3.runActions initial (slice3ArbitraryActions.take count)).getD initial
+
+/-- Every action in the skipped-term and repeated-election trace is enabled. -/
+theorem slice3ArbitraryTraceExecutes :
+    (Slice3.runActions initial slice3ArbitraryActions).isSome = true := by
+  native_decide
+
+/-- The checked skipped-term trace ends in a reachable arbitrary-term state. -/
+theorem slice3ArbitraryTraceReachable :
+    Slice3.Reachable (slice3StateAfter slice3ArbitraryActions.length) := by
+  cases ran : Slice3.runActions initial slice3ArbitraryActions with
+  | none =>
+      have executes := slice3ArbitraryTraceExecutes
+      simp [ran] at executes
+  | some final =>
+      have reachable : Slice3.Reachable final :=
+        Slice3.Reachable.runActionsReachable
+          Slice3.Reachable.initial ran
+      simpa [slice3StateAfter, ran] using reachable
+
+/-- The partitioned candidate skips term two and wins in term three. -/
+theorem slice3FirstLeaderSkipsTerm :
+    ((slice3StateAfter 19).nodes followerOne).currentTerm = 3 := by
+  native_decide
+
+/-- The later leader commits its own term-four entry. -/
+theorem slice3TermFourCommitted :
+    ((slice3StateAfter slice3ArbitraryActions.length).nodes followerTwo).committedLog =
+      [{ term := TERM_ONE, txId := 0 },
+        { term := 3, txId := 2 },
+        { term := 4, txId := 3 }] := by
   native_decide
 
 end CCFRaft.Examples

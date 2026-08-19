@@ -3,11 +3,13 @@
 This directory builds `ccfraft.tla` incrementally as an executable Lean
 transition system with kernel-checked safety proofs.
 
-## Slice 2.5: term-two writes after election
+## Slice 3: arbitrary terms
 
 `CCFRaft.system` retains the completed slice-two election checkpoint.
 `CCFRaft.Slice25.system` extends the same local handlers so any selected leader
 can append, replicate, and commit entries in its current term.
+`CCFRaft.Slice3.system` additionally permits repeated elections in arbitrary
+natural-numbered terms.
 
 The combined model has:
 
@@ -35,9 +37,13 @@ The combined model has:
 - term-two client entries, AppendEntries, acknowledgements, and current-term
   majority commit;
 - reachable conflict truncation replacing an old leader's uncommitted suffix.
+- candidates timing out repeatedly while partitioned;
+- direct term jumps when delayed messages finally reach other nodes;
+- later leaders proposing and committing entries in terms three, four, and
+  beyond.
 
-Slice 2.5 still permits only the single term-one to term-two election. Repeated
-elections and arbitrary terms belong to slice 3.
+Partitions remain implicit: the scheduler simply does not select a
+source/destination receive channel while other actions continue.
 
 `Action`, `Enabled`, and `next` are the authoritative semantics. Proofs and the
 compiled simulator call these same definitions.
@@ -58,8 +64,17 @@ For every enabled transition from a reachable state:
 
 - `CommittedLogMonotonicity`: every node's committed log is append-only.
 
-Conflict truncation is implemented but remains unreachable while all log
-entries belong to term one.
+Slice 3 additionally proves these properties for arbitrary terms:
+
+- committed-log prefix consistency;
+- log matching and monotonic entry terms;
+- election safety;
+- TLA-style `LeaderCompleteness`: every active higher-term leader contains
+  each lower-term node's committed prefix.
+
+The arbitrary-term proof is inductive over every enabled action, including
+conflict truncation, delayed AppendEntries acknowledgements, delayed votes,
+repeated elections, and skipped terms.
 
 ## Build and simulate
 
@@ -73,6 +88,10 @@ lake build ccf-raft-simulator
 .lake/build/bin/ccf-raft-simulator simulate25 5000 1 1000
 .lake/build/bin/ccf-raft-simulator replay25 CCFRaft/slice25-happy.trace
 .lake/build/bin/ccf-raft-simulator replay25 CCFRaft/slice25-conflict.trace
+.lake/build/bin/ccf-raft-simulator simulate3 5000 1 1000
+.lake/build/bin/ccf-raft-simulator replay3 CCFRaft/slice3-arbitrary.trace
+.lake/build/bin/ccf-raft-simulator replay3 CCFRaft/slice3-delayed-ack.trace
+.lake/build/bin/ccf-raft-simulator replay3 CCFRaft/slice3-follower-overcommit.trace
 ```
 
 Simulation runs for the requested number of milliseconds. It reports proposals
@@ -90,9 +109,7 @@ Random scheduling is only a bug-finding policy; it is not proof evidence.
 
    ## Future slices
 
-   3. Generalize elections, proposals, replication, and commits to arbitrary
-      terms, including skipped terms produced by prolonged nondelivery.
-   4. Prove the unbounded AppendEntries/RequestVote core.
+   4. Prove the unbounded-node AppendEntries/RequestVote core.
    4.5. Add explicit message loss and remaining stale-message behavior.
    5. Add reconfiguration.
    6. Add pre-vote and remaining CCF-specific actions.
