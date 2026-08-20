@@ -4,6 +4,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+checked_commit="$(git rev-parse HEAD)"
 expected_model_hash="8c840c5eb7228ad1562e13150d9083287448764ab48202a8788446c9dedb15d8"
 model_hash="$(sha256sum CCFRaft/Model.lean)"
 model_hash="${model_hash%% *}"
@@ -37,7 +38,13 @@ if grep -R -n -E \
   exit 1
 fi
 
-nice -n 10 ionice -c 3 lake build CCFRaft ccf-raft-simulator
+build_log="$(mktemp)"
+trap 'rm -f "$build_log"' EXIT
+if ! nice -n 10 ionice -c 3 lake build CCFRaft ccf-raft-simulator \
+    >"$build_log" 2>&1; then
+  cat "$build_log" >&2
+  exit 1
+fi
 
 simulator=".lake/build/bin/ccf-raft-simulator"
 
@@ -52,7 +59,14 @@ check_trace() {
     echo "actual:   $actual" >&2
     exit 1
   fi
+  echo "$trace=$actual"
 }
+
+echo "commit=$checked_commit"
+echo "model_sha256=$model_hash"
+echo "reachable_exports=${#reachable_theorems[@]}"
+echo "proof_placeholders=none"
+echo "build=passed"
 
 check_trace \
   CCFRaft/signature-commit.trace \
@@ -66,3 +80,5 @@ check_trace \
 check_trace \
   CCFRaft/follower-overcommit.trace \
   "replayed 98 arbitrary-term Raft actions; max term=3; commit indices=[6, 0, 4, 2, 2]"
+
+echo "result=passed"
