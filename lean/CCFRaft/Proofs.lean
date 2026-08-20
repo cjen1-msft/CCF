@@ -25,14 +25,16 @@ theorem systemInductiveInvariantToFixedMembership
     {state : State TxId}
     (invariant : SystemInductiveInvariant state) :
     FixedMembershipSystemInductiveInvariant state :=
-  (fixedMembershipSystemInductiveInvariant_iff_system state).mpr invariant
+  (fixedMembershipSystemInductiveInvariant_iff_component state).mpr
+    invariant.fixedMembership
 
 /-- Convert the checked fixed-membership proof package to the canonical invariant. -/
 theorem fixedMembershipSystemInductiveInvariantToSystem
     {state : State TxId}
     (invariant : FixedMembershipSystemInductiveInvariant state) :
     SystemInductiveInvariant state :=
-  (fixedMembershipSystemInductiveInvariant_iff_system state).mp invariant
+  ⟨(fixedMembershipSystemInductiveInvariant_iff_component state).mp
+    invariant⟩
 
 /-- Lift one fixed-membership preservation theorem through the fixed-witness equivalence. -/
 theorem liftFixedMembershipPreservation

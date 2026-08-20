@@ -1489,9 +1489,9 @@ structure ComponentInvariantFacts
 def ComponentSystemInductiveInvariant (state : State TxId) : Prop :=
   Exists fun ghost => ComponentInvariantFacts state ghost
 
-/-- The canonical inductive invariant uses named ghost state and components. -/
-abbrev SystemInductiveInvariant (state : State TxId) : Prop :=
-  ComponentSystemInductiveInvariant state
+/-- The canonical invariant contains independently witnessed components. -/
+structure SystemInductiveInvariant (state : State TxId) : Prop where
+  fixedMembership : ComponentSystemInductiveInvariant state
 
 /-- Monotone runtime facts shared by preservation deltas. -/
 structure CommonProgress
@@ -1509,17 +1509,12 @@ structure CommonProgress
       (before.nodes node).committedLog <+:
         (after.nodes node).committedLog
 
-/-- Exact runtime and ghost changes made by one AppendEntries send. -/
-structure AppendEntriesSendDelta
-    (before after : State TxId)
+/-- Exact ghost-history changes made by one AppendEntries send. -/
+structure AppendEntriesSendGhostDelta
+    (before : State TxId)
     (oldGhost newGhost : GhostState TxId)
     (request : AppendEntriesRequest TxId)
-    (source destination : Node)
-    (batchEnd : Nat) : Prop where
-  requestEq :
-    request = makeAppendEntriesRequest before source destination batchEnd
-  afterEq :
-    after = next before (.appendEntries source destination batchEnd)
+    (source : Node) : Prop where
   appendHistoryAtRequest :
     newGhost.appendHistory request = (before.nodes source).log
   appendHistoryAtOther :
@@ -1547,6 +1542,17 @@ structure AppendEntriesSendDelta
   electionsEq : newGhost.elections = oldGhost.elections
   nodeEvidenceEq : newGhost.nodeEvidence = oldGhost.nodeEvidence
   processedAcksEq : newGhost.processedAcks = oldGhost.processedAcks
+
+/-- Exact runtime changes made by one AppendEntries send. -/
+structure AppendEntriesSendDelta
+    (before after : State TxId)
+    (request : AppendEntriesRequest TxId)
+    (source destination : Node)
+    (batchEnd : Nat) : Prop where
+  requestEq :
+    request = makeAppendEntriesRequest before source destination batchEnd
+  afterEq :
+    after = next before (.appendEntries source destination batchEnd)
   progress : CommonProgress before after
   rolesEq :
     forall node,

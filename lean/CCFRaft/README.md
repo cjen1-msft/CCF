@@ -78,6 +78,8 @@ The invariant stores proof evidence, not the safety conclusions themselves:
 
 - `GhostState` names the 12 proof-only histories;
 - `ComponentInvariantFacts` groups them into eight causal components;
+- `SystemInductiveInvariant` keeps fixed membership as an independently
+  witnessed base for later protocol components;
 - local bounds keep commit indices, terms, and replication cursors valid;
 - immutable message histories retain the exact ledger snapshots carried by
   delayed AppendEntries and RequestVote messages;

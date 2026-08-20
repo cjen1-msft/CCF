@@ -169,12 +169,16 @@ structure ComponentInvariantFacts
   ackElections : AckElectionBridge state ghost
   commits : CommitClosure state ghost
 
-def SystemInductiveInvariant (state : State TxId) : Prop :=
+def ComponentSystemInductiveInvariant (state : State TxId) : Prop :=
   Exists fun ghost => ComponentInvariantFacts state ghost
+
+structure SystemInductiveInvariant (state : State TxId) : Prop where
+  fixedMembership : ComponentSystemInductiveInvariant state
 ```
 
 Public safety properties remain derived results. They do not become fields of
-the inductive invariant.
+the inductive invariant. Each later protocol component gets its own witness.
+The fixed-membership proof does not choose or constrain that witness.
 
 Before the reachable-state proof uses this representation, prove equivalence
 for the same ghost witness:
@@ -203,28 +207,24 @@ structure CommonProgress
   committedLogPrefix : ...
 ```
 
-Action-specific deltas describe exact runtime changes and ghost projections:
+Action-specific deltas describe exact runtime changes:
 
 ```lean
 structure AppendEntriesSendDelta
-    (before after : State TxId)
-    (oldGhost newGhost : GhostState TxId) : Prop where
+  (before after : State TxId)
   progress : CommonProgress before after
   request : AppendEntriesRequest TxId
   rolesEq : ...
   termsEq : ...
   logsEq : ...
   requestQueued : ...
-  appendHistoryAtRequest : ...
-  appendHistoryAtOther : ...
-  requestEvidenceAtRequest : ...
-  requestEvidenceAtOther : ...
-  otherGhostProjectionsEq : ...
 ```
 
-Do not require whole-record ghost equality. Ghost histories are functions, and
-several updates are conditional. Each delta supplies the lookup equations its
-consumers need.
+A component records its own ghost update separately. Do not require
+whole-record ghost equality. Ghost histories are functions, and several
+updates are conditional. `AppendEntriesSendGhostDelta` supplies same-key,
+different-key, and unchanged-projection equations for the fixed-membership
+ghost.
 
 Enqueue and dequeue operations also need separate capabilities. A duplicate
 AppendEntries send can leave `enqueueNoDup` unchanged while updating proof
@@ -233,8 +233,9 @@ and different-key cases.
 
 ### Add preservation APIs for new components
 
-The fixed-membership proof remains one base preservation API. A new component
-uses the same action delta but proves only its own post-state facts:
+The fixed-membership proof remains one independently witnessed base
+preservation API. A new component uses the same runtime delta and its own ghost
+delta, then proves only its own post-state facts:
 
 ```lean
 rcases invariant with ⟨ghost, facts⟩
@@ -330,7 +331,7 @@ their preservation APIs alongside the base.
 - `Properties.lean` contains no positional invariant.
 - `Proofs.lean` does not destructure positional witnesses.
 - New components can preserve themselves without modifying the
-  fixed-membership action proofs.
+  fixed-membership action proofs or sharing their ghost witness.
 
 ## Consequences
 
