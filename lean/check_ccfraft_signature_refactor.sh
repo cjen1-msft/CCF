@@ -5,6 +5,15 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 checked_commit="$(git rev-parse HEAD)"
+checked_tree="$(git rev-parse HEAD^{tree})"
+lean_version="$(lean --version)"
+if ! git diff --quiet HEAD -- \
+    CCFRaft.lean CCFRaft CCFRaftSimulator.lean lakefile.toml \
+    lake-manifest.json lean-toolchain check_ccfraft_signature_refactor.sh; then
+  echo "tracked Lean inputs differ from $checked_commit" >&2
+  exit 1
+fi
+
 expected_model_hash="8c840c5eb7228ad1562e13150d9083287448764ab48202a8788446c9dedb15d8"
 model_hash="$(sha256sum CCFRaft/Model.lean)"
 model_hash="${model_hash%% *}"
@@ -40,6 +49,7 @@ fi
 
 build_log="$(mktemp)"
 trap 'rm -f "$build_log"' EXIT
+lake clean
 if ! nice -n 10 ionice -c 3 lake build CCFRaft ccf-raft-simulator \
     >"$build_log" 2>&1; then
   cat "$build_log" >&2
@@ -63,10 +73,13 @@ check_trace() {
 }
 
 echo "commit=$checked_commit"
+echo "tree=$checked_tree"
+echo "lean=$lean_version"
 echo "model_sha256=$model_hash"
 echo "reachable_exports=${#reachable_theorems[@]}"
 echo "proof_placeholders=none"
 echo "build=passed"
+grep -F "depends on axioms:" "$build_log"
 
 check_trace \
   CCFRaft/signature-commit.trace \
