@@ -149,6 +149,61 @@ structure GhostState (TxId : Type) where
   requestEvidence : RequestCommitEvidence TxId
   processedAcks : ProcessedAckHistory TxId
 
+/-- Record the two proof snapshots created by an AppendEntries send. -/
+def GhostState.recordAppendRequest
+    (ghost : GhostState TxId)
+    (request : AppendEntriesRequest TxId)
+    (history : List (Entry TxId))
+    (evidence : Option (CommitEvidence TxId)) :
+    GhostState TxId :=
+  { ghost with
+    appendHistory := Function.update ghost.appendHistory request history
+    requestEvidence :=
+      Function.update ghost.requestEvidence request evidence }
+
+@[simp]
+theorem GhostState.recordAppendRequest_history_same
+    (ghost : GhostState TxId)
+    (request : AppendEntriesRequest TxId)
+    (history : List (Entry TxId))
+    (evidence : Option (CommitEvidence TxId)) :
+    (ghost.recordAppendRequest request history evidence).appendHistory request =
+      history := by
+  simp [GhostState.recordAppendRequest]
+
+@[simp]
+theorem GhostState.recordAppendRequest_history_of_ne
+    (ghost : GhostState TxId)
+    (request other : AppendEntriesRequest TxId)
+    (history : List (Entry TxId))
+    (evidence : Option (CommitEvidence TxId))
+    (different : Not (other = request)) :
+    (ghost.recordAppendRequest request history evidence).appendHistory other =
+      ghost.appendHistory other := by
+  simp [GhostState.recordAppendRequest, different]
+
+@[simp]
+theorem GhostState.recordAppendRequest_evidence_same
+    (ghost : GhostState TxId)
+    (request : AppendEntriesRequest TxId)
+    (history : List (Entry TxId))
+    (evidence : Option (CommitEvidence TxId)) :
+    (ghost.recordAppendRequest request history evidence).requestEvidence
+        request =
+      evidence := by
+  simp [GhostState.recordAppendRequest]
+
+@[simp]
+theorem GhostState.recordAppendRequest_evidence_of_ne
+    (ghost : GhostState TxId)
+    (request other : AppendEntriesRequest TxId)
+    (history : List (Entry TxId))
+    (evidence : Option (CommitEvidence TxId))
+    (different : Not (other = request)) :
+    (ghost.recordAppendRequest request history evidence).requestEvidence other =
+      ghost.requestEvidence other := by
+  simp [GhostState.recordAppendRequest, different]
+
 /-- Entry terms do not decrease inside one proof-only history. -/
 def MonoHistory (history : List (Entry TxId)) : Prop :=
   forall earlier later earlierEntry laterEntry,
@@ -1726,6 +1781,66 @@ theorem systemInductiveInvariant_iff_component
         grantedVoteSnapshots := facts.grantedVoteSnapshots
         processedAckHistory :=
           ⟨ghost.processedAcks, facts.processedAckHistory⟩ }
+
+/-- Monotone runtime facts shared by preservation deltas. -/
+structure CommonProgress
+    (before after : State TxId) : Prop where
+  termMonotone :
+    forall node,
+      (before.nodes node).currentTerm <=
+        (after.nodes node).currentTerm
+  commitIndexMonotone :
+    forall node,
+      (before.nodes node).commitIndex <=
+        (after.nodes node).commitIndex
+  committedLogPrefix :
+    forall node,
+      (before.nodes node).committedLog <+:
+        (after.nodes node).committedLog
+
+/-- Exact runtime and ghost changes made by one AppendEntries send. -/
+structure AppendEntriesSendDelta
+    (before after : State TxId)
+    (oldGhost newGhost : GhostState TxId)
+    (request : AppendEntriesRequest TxId)
+    (source destination : Node)
+    (batchEnd : Nat) : Prop where
+  requestEq :
+    request = makeAppendEntriesRequest before source destination batchEnd
+  afterEq :
+    after = next before (.appendEntries source destination batchEnd)
+  newGhostEq :
+    newGhost =
+      oldGhost.recordAppendRequest
+        request (before.nodes source).log (oldGhost.nodeEvidence source)
+  progress : CommonProgress before after
+  rolesEq :
+    forall node,
+      (after.nodes node).role = (before.nodes node).role
+  termsEq :
+    forall node,
+      (after.nodes node).currentTerm =
+        (before.nodes node).currentTerm
+  logsEq :
+    forall node,
+      (after.nodes node).log = (before.nodes node).log
+  commitIndicesEq :
+    forall node,
+      (after.nodes node).commitIndex =
+        (before.nodes node).commitIndex
+  votedForEq :
+    forall node,
+      (after.nodes node).votedFor = (before.nodes node).votedFor
+  votesGrantedEq :
+    forall node,
+      (after.nodes node).votesGranted =
+        (before.nodes node).votesGranted
+  matchIndicesEq :
+    forall node,
+      (after.nodes node).matchIndex =
+        (before.nodes node).matchIndex
+  requestQueued :
+    Message.appendEntriesRequest request ∈ after.network destination
 
 /-- Core public safety mirrors committed-log, signature, and election safety. -/
 structure ConsensusSafety (state : State TxId) : Prop where

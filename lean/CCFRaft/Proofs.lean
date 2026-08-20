@@ -8853,6 +8853,101 @@ theorem madeAppendRequestSupport
     simp only [makeAppendEntriesRequest]
     exact prefixRefl _
 
+/-- The exact runtime and ghost delta of one AppendEntries send. -/
+theorem appendEntriesSendDelta
+    (state : State TxId)
+    (ghost : GhostState TxId)
+    (source destination : Node)
+    (batchEnd : Nat) :
+    let request :=
+      makeAppendEntriesRequest state source destination batchEnd
+    let nextGhost :=
+      ghost.recordAppendRequest
+        request (state.nodes source).log (ghost.nodeEvidence source)
+    AppendEntriesSendDelta
+      state (next state (.appendEntries source destination batchEnd))
+      ghost nextGhost request source destination batchEnd := by
+  dsimp only
+  refine
+    { requestEq := rfl
+      afterEq := rfl
+      newGhostEq := rfl
+      progress := ?_
+      rolesEq := ?_
+      termsEq := ?_
+      logsEq := ?_
+      commitIndicesEq := ?_
+      votedForEq := ?_
+      votesGrantedEq := ?_
+      matchIndicesEq := ?_
+      requestQueued := ?_ }
+  · constructor
+    · intro node
+      by_cases nodeEq : node = source <;>
+        simp [
+          next, CCFRaft.next, updateNode,
+          Function.update, nodeEq
+        ]
+    · intro node
+      by_cases nodeEq : node = source <;>
+        simp [
+          next, CCFRaft.next, updateNode,
+          Function.update, nodeEq
+        ]
+    · intro node
+      by_cases nodeEq : node = source <;>
+        simpa [
+          NodeState.committedLog, next, CCFRaft.next,
+          updateNode, Function.update, nodeEq
+        ] using prefixRefl (state.nodes node).committedLog
+  · intro node
+    by_cases nodeEq : node = source <;>
+      simp [
+        next, CCFRaft.next, updateNode,
+        Function.update, nodeEq
+      ]
+  · intro node
+    by_cases nodeEq : node = source <;>
+      simp [
+        next, CCFRaft.next, updateNode,
+        Function.update, nodeEq
+      ]
+  · intro node
+    by_cases nodeEq : node = source <;>
+      simp [
+        next, CCFRaft.next, updateNode,
+        Function.update, nodeEq
+      ]
+  · intro node
+    by_cases nodeEq : node = source <;>
+      simp [
+        next, CCFRaft.next, updateNode,
+        Function.update, nodeEq
+      ]
+  · intro node
+    by_cases nodeEq : node = source <;>
+      simp [
+        next, CCFRaft.next, updateNode,
+        Function.update, nodeEq
+      ]
+  · intro node
+    by_cases nodeEq : node = source <;>
+      simp [
+        next, CCFRaft.next, updateNode,
+        Function.update, nodeEq
+      ]
+  · intro node
+    by_cases nodeEq : node = source <;>
+      simp [
+        next, CCFRaft.next, updateNode,
+        Function.update, nodeEq
+      ]
+  · simpa [next, CCFRaft.next] using
+      memEnqueueNoDupSelf
+        state.network
+        (.appendEntriesRequest
+          (makeAppendEntriesRequest state source destination batchEnd))
+
 /-- Sending AppendEntries updates one cursor and enqueues one snapshot. -/
 theorem appendEntriesPreservesSystemInductiveInvariant
     (state : State TxId)
@@ -8877,6 +8972,21 @@ theorem appendEntriesPreservesSystemInductiveInvariant
   let newRequestEvidence : RequestCommitEvidence TxId :=
     Function.update
       requestEvidence request (nodeEvidence source)
+  let ghost : GhostState TxId :=
+    { votes
+      appendHistory
+      responseHistory
+      voteRequestHistory
+      voteCandidateHistory
+      voteVoterHistory
+      owners
+      canonicalHistory
+      elections
+      nodeEvidence
+      requestEvidence
+      processedAcks := ackHistory }
+  have delta :=
+    appendEntriesSendDelta state ghost source destination batchEnd
   have requestSupport :=
     madeAppendRequestSupport
       state source destination batchEnd
@@ -8884,43 +8994,23 @@ theorem appendEntriesPreservesSystemInductiveInvariant
   have roleEq :
       forall node,
         ((next state (.appendEntries source destination batchEnd)).nodes node).role =
-          (state.nodes node).role := by
-    intro node
-    by_cases nodeEq : node = source <;>
-      simp [
-        next, CCFRaft.next, updateNode,
-        Function.update, nodeEq
-      ]
+          (state.nodes node).role :=
+    delta.rolesEq
   have currentTermEq :
       forall node,
         ((next state (.appendEntries source destination batchEnd)).nodes node).currentTerm =
-          (state.nodes node).currentTerm := by
-    intro node
-    by_cases nodeEq : node = source <;>
-      simp [
-        next, CCFRaft.next, updateNode,
-        Function.update, nodeEq
-      ]
+          (state.nodes node).currentTerm :=
+    delta.termsEq
   have logEq :
       forall node,
         ((next state (.appendEntries source destination batchEnd)).nodes node).log =
-          (state.nodes node).log := by
-    intro node
-    by_cases nodeEq : node = source <;>
-      simp [
-        next, CCFRaft.next, updateNode,
-        Function.update, nodeEq
-      ]
+          (state.nodes node).log :=
+    delta.logsEq
   have commitIndexEq :
       forall node,
         ((next state (.appendEntries source destination batchEnd)).nodes node).commitIndex =
-          (state.nodes node).commitIndex := by
-    intro node
-    by_cases nodeEq : node = source <;>
-      simp [
-        next, CCFRaft.next, updateNode,
-        Function.update, nodeEq
-      ]
+          (state.nodes node).commitIndex :=
+    delta.commitIndicesEq
   have lastIndexEq :
       forall node,
         lastCommittableIndex
@@ -8940,33 +9030,18 @@ theorem appendEntriesPreservesSystemInductiveInvariant
   have votedForEq :
       forall node,
         ((next state (.appendEntries source destination batchEnd)).nodes node).votedFor =
-          (state.nodes node).votedFor := by
-    intro node
-    by_cases nodeEq : node = source <;>
-      simp [
-        next, CCFRaft.next, updateNode,
-        Function.update, nodeEq
-      ]
+          (state.nodes node).votedFor :=
+    delta.votedForEq
   have votesGrantedEq :
       forall node,
         ((next state (.appendEntries source destination batchEnd)).nodes node).votesGranted =
-          (state.nodes node).votesGranted := by
-    intro node
-    by_cases nodeEq : node = source <;>
-      simp [
-        next, CCFRaft.next, updateNode,
-        Function.update, nodeEq
-      ]
+          (state.nodes node).votesGranted :=
+    delta.votesGrantedEq
   have matchEq :
       forall node,
         ((next state (.appendEntries source destination batchEnd)).nodes node).matchIndex =
-          (state.nodes node).matchIndex := by
-    intro node
-    by_cases nodeEq : node = source <;>
-      simp [
-        next, CCFRaft.next, updateNode,
-        Function.update, nodeEq
-      ]
+          (state.nodes node).matchIndex :=
+    delta.matchIndicesEq
   have committedEq :
       forall node,
         ((next state (.appendEntries source destination batchEnd)).nodes node).committedLog =
