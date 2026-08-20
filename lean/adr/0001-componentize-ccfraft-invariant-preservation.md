@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Context
 
@@ -42,8 +42,18 @@ reconfiguration attempt is preserved in stash
 ## Decision
 
 Represent proof-only data in one named `GhostState`. Group invariant facts by
-their role in the proof. Make each action prove a runtime delta and a ghost
-delta. Preserve each invariant component through a small component API.
+their role in the proof. Make the named component invariant canonical for
+reachable induction and public safety theorems.
+
+Keep the existing fixed-membership preservation proof as one checked base
+implementation. Isolate that implementation in
+`FixedMembershipPreservation.lean`. The public `Proofs.lean` module converts
+through the fixed-witness equivalence and exposes only the component invariant.
+
+New components, including configuration authority, preserve themselves
+alongside this base. They consume action deltas that expose the runtime and
+ghost projections they need. Do not rewrite a fixed-membership action proof
+unless the fixed-membership component itself changes.
 
 ### Store proof-only data in one record
 
@@ -147,7 +157,7 @@ The component boundary must not duplicate those facts.
 The complete invariant names these components:
 
 ```lean
-structure InvariantFacts
+structure ComponentInvariantFacts
     (state : State TxId)
     (ghost : GhostState TxId) : Prop where
   localWF : LocalWF state
@@ -160,7 +170,7 @@ structure InvariantFacts
   commits : CommitClosure state ghost
 
 def SystemInductiveInvariant (state : State TxId) : Prop :=
-  Exists fun ghost => InvariantFacts state ghost
+  Exists fun ghost => ComponentInvariantFacts state ghost
 ```
 
 Public safety properties remain derived results. They do not become fields of
@@ -173,7 +183,8 @@ for the same ghost witness:
 theorem invariantFacts_iff
     (state : State TxId)
     (ghost : GhostState TxId) :
-    LegacyInvariantFacts state ghost ↔ InvariantFacts state ghost
+    FixedMembershipInvariantFacts state ghost ↔
+      ComponentInvariantFacts state ghost
 ```
 
 Then lift this theorem through the existential. Existential equivalence alone
@@ -220,43 +231,26 @@ AppendEntries send can leave `enqueueNoDup` unchanged while updating proof
 history at the same request key. The send delta must cover both the same-key
 and different-key cases.
 
-### Give each component a preservation API
+### Add preservation APIs for new components
 
-Use a small namespace for each component:
-
-```lean
-namespace AppendTransport
-
-theorem frame ...
-theorem onAppendEntriesSend ...
-
-end AppendTransport
-```
-
-An AppendEntries send proof then has this shape:
+The fixed-membership proof remains one base preservation API. A new component
+uses the same action delta but proves only its own post-state facts:
 
 ```lean
 rcases invariant with ⟨ghost, facts⟩
-
-let nextGhost := ghost.enqueueAppendEntries request sourceLog sourceEvidence
-have delta := appendEntriesSendDelta ...
-
+have baseAfter :=
+  liftFixedMembershipPreservation fixedMembershipAction facts.base
+have configurationAfter :=
+  ConfigurationAuthority.onAppendEntriesSend facts.configuration delta
 exact
-  ⟨nextGhost,
-    { localWF := LocalWF.preserve facts delta
-      votes := VoteTransport.frame facts delta
-      appends := AppendTransport.onAppendEntriesSend facts delta
-      acknowledgements := ReplicationAck.frame facts delta
-      ballots := Ballot.frame facts delta
-      logs := LogProvenance.frame facts delta
-      ackElections := AckElectionBridge.frame facts delta
-      commits := CommitClosure.onAppendEntriesSend facts delta }⟩
+  { base := baseAfter
+    configuration := configurationAfter }
 ```
 
-Each component consumes the common pre-state aggregate and the action delta.
-A component must not consume a sibling post-state component. That rule keeps
-the dependency graph acyclic and prevents action proofs from depending on
-construction order.
+Each new component consumes the common pre-state aggregate and the action
+delta. A component must not consume a sibling post-state component. That rule
+keeps the dependency graph acyclic and prevents action proofs from depending
+on construction order.
 
 ## Why this helps
 
@@ -288,8 +282,10 @@ The refactor removes repeated framing around those obligations.
 
 ### It limits repair scope
 
-Today, adding one history field changes almost every action proof. With
-component APIs, unrelated actions keep using the same projection laws.
+Adding a configuration witness does not change the fixed-membership proof.
+Configuration actions and existing actions preserve configuration authority
+through its own API. A change to the fixed-membership component can still
+require changes inside `FixedMembershipPreservation.lean`.
 
 ### It makes the invariant reviewable
 
@@ -304,25 +300,22 @@ can answer:
 
 ## Migration
 
-Refactor the committed signature proof before restoring reconfiguration work.
+The signature-baseline refactor is complete:
 
-1. Lock all eight reachable theorem names. Add deterministic final-state
-   checks for the four signature traces after a clean build.
-2. Add `GhostState` with exactly the baseline witnesses. Keep the legacy
-   invariant definition.
-3. Add the named components without changing their primitive predicates.
-4. Prove fixed-ghost equivalence, then prove existential equivalence.
-5. Add `CommonProgress` and action-specific delta records. Reuse current frame
-   helpers and deterministic handler postconditions.
-6. Convert AppendEntries send first. Its narrow mutation set tests network
-   deduplication and function-update laws.
-7. Convert `updateTerm`, sends, timeout, leader append, promotion, commit
-   advancement, receive handlers, and the receive dispatcher. Build after
-   each action family.
-8. Switch reachable induction only after all actions use component APIs.
-9. Remove the legacy representation.
-10. Port the stashed reconfiguration work in a separate worktree. Add
-    configuration authority and activation history through the new APIs.
+1. `check_ccfraft_signature_refactor.sh` locks `Model.lean`, all eight
+   reachable theorem names, proof placeholders, and four trace projections.
+2. `GhostState` contains exactly the 12 signature-baseline witnesses.
+3. `Properties.lean` defines the named components and canonical system
+   invariant.
+4. `FixedMembershipPreservation.lean` contains the positional base proof and
+   both fixed-witness and existential equivalence theorems.
+5. `Proofs.lean` exposes component preservation and reachable safety.
+6. `AppendEntriesSendDelta` records projection and lookup laws for future
+   components.
+
+Port reconfiguration in a separate worktree. Keep fixed-membership
+preservation unchanged. Add configuration authority, activation history, and
+their preservation APIs alongside the base.
 
 ## Acceptance criteria
 
@@ -331,21 +324,24 @@ Refactor the committed signature proof before restoring reconfiguration work.
 - All eight public reachable safety theorem names remain stable.
 - The signature commit, arbitrary terms, delayed ACK, and follower overcommit
   traces replay with pinned final-state projections.
-- `LegacyInvariantFacts state ghost ↔ InvariantFacts state ghost` holds for
-  every state and fixed ghost witness during migration.
-- Each action theorem proves one delta and calls component preservation
-  functions.
-- Adding a field to one component does not require positional repairs in
-  unrelated action proofs.
+- `FixedMembershipInvariantFacts state ghost ↔
+  ComponentInvariantFacts state ghost` holds for every state and fixed ghost
+  witness.
+- `Properties.lean` contains no positional invariant.
+- `Proofs.lean` does not destructure positional witnesses.
+- New components can preserve themselves without modifying the
+  fixed-membership action proofs.
 
 ## Consequences
 
-The proof gains more named records and preservation theorems. This is
-intentional. The names expose dependencies that positional conjunctions hide.
+The proof gains named records and one isolated compatibility boundary. The
+names expose dependencies that positional conjunctions hide. The compatibility
+boundary avoids rewriting thousands of checked proof lines solely to change
+their packaging.
 
-The migration has an upfront cost. During migration, the old and new invariant
-representations coexist. The equivalence theorem keeps that period
-reviewable.
+Changes to the fixed-membership facts still affect the isolated positional
+proof. New protocol layers do not. They add components alongside the base and
+use action deltas for their own preservation.
 
 This design does not solve reconfiguration safety by itself. The later
 extension adds a `ConfigurationAuthority` component and parameterizes
@@ -365,6 +361,14 @@ A universal frame must encode every log, term, network, vote, and commit case.
 It either rejects valid actions through false equalities or accumulates
 conditionals until it becomes another monolithic invariant. Use a small common
 progress record and action-specific capabilities instead.
+
+### Rewrite every fixed-membership action proof
+
+The AppendEntries prototype showed that a complete rewrite would replace
+thousands of checked lines without reducing the work required for the new
+configuration-authority component. Isolating the fixed-membership proof behind
+fixed-witness equivalence gives the new component a stable boundary with less
+proof churn.
 
 ### Store safety conclusions in the invariant
 

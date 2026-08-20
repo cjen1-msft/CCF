@@ -11,9 +11,11 @@ on this artifact.
 
 `Model.lean` defines the arbitrary-term transition system, including
 `Enabled`, deterministic `next`, `system`, `runActions`, and `Reachable`.
-`Properties.lean` and `Proofs.lean` are the canonical property and proof
-modules for the explicit signature semantics. Git history contains the earlier
-development stages.
+`Properties.lean` defines the named ghost state and invariant components.
+`Proofs.lean` exposes component preservation and reachable safety.
+`FixedMembershipPreservation.lean` contains the checked positional
+fixed-membership implementation behind their fixed-witness equivalence. Git
+history contains the earlier development stages.
 
 The combined model has:
 
@@ -74,6 +76,8 @@ acknowledgements, delayed votes, repeated elections, and skipped terms.
 
 The invariant stores proof evidence, not the safety conclusions themselves:
 
+- `GhostState` names the 12 proof-only histories;
+- `ComponentInvariantFacts` groups them into eight causal components;
 - local bounds keep commit indices, terms, and replication cursors valid;
 - immutable message histories retain the exact ledger snapshots carried by
   delayed AppendEntries and RequestVote messages;
