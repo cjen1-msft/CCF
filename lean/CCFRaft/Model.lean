@@ -7,27 +7,38 @@ import Mathlib
 set_option autoImplicit false
 
 /-!
-# Arbitrary-term Raft model
+# Arbitrary-term reconfiguring Raft model
 
 Followers and candidates may repeatedly start successor-term elections, and
 messages may move another node directly across skipped terms. Protocol handlers
 receive only the acting node's local state and immutable message snapshots.
+
+This first reconfiguration slice uses a fixed 15-node world. Configuration
+retirement is not yet represented: membership is derived from each node's log,
+while `hasJoined` only prevents a removed node from being added again.
 -/
 
 namespace CCFRaft
 
-/-- Number of nodes in the fixed five-node network. -/
-def NODE_COUNT : Nat := 5
-/-- Node identifiers are the integers from zero through four. -/
+/-- Number of nodes in the fixed world available to configurations. -/
+def NODE_COUNT : Nat := 15
+/-- Number of members in the projected bootstrap configuration. -/
+def INITIAL_CONFIGURATION_SIZE : Nat := 5
+/-- Node identifiers are the integers from zero through fourteen. -/
 abbrev Node := Fin NODE_COUNT
 
 /-- Node zero is the fixed initial leader in term one. -/
 def INITIAL_LEADER : Node := ⟨0, by decide⟩
 /-- Initial bootstrap term. -/
 def TERM_ONE : Nat := 1
+/-- The implicit projected configuration at log index zero. -/
+def INITIAL_CONFIGURATION : Finset Node :=
+  Finset.univ.filter fun node => node.val < INITIAL_CONFIGURATION_SIZE
 
 /-- Leadership roles represented by the model. -/
 inductive Role where
+  /-- A fixed-world node that has not yet observed a configuration adding it. -/
+  | none
   /-- A replica that receives AppendEntries messages. -/
   | follower
   /-- A node soliciting votes in its current term. -/
@@ -36,19 +47,21 @@ inductive Role where
   | leader
   deriving DecidableEq, Repr
 
-/-- Payload kinds represented by the fixed-membership Raft projection. -/
+/-- Payload kinds represented by the Raft projection. -/
 inductive EntryContent (TxId : Type) where
   /-- An ordinary client transaction with its external identifier. -/
   | transaction (txId : TxId)
   /-- A signature over the preceding log prefix. -/
   | signature
-  deriving DecidableEq, Repr
+  /-- A new configuration, stored at a one-based physical log index. -/
+  | reconfiguration (nodes : Finset Node)
+  deriving DecidableEq
 
 /-- A transaction or signature stored in a Raft log. -/
 structure Entry (TxId : Type) where
   term : Nat
   content : EntryContent TxId
-  deriving DecidableEq, Repr
+  deriving DecidableEq
 
 /-- Immutable AppendEntries data captured when a leader sends a request. -/
 structure AppendEntriesRequest (TxId : Type) where
@@ -59,7 +72,7 @@ structure AppendEntriesRequest (TxId : Type) where
   leaderCommit : Nat
   source : Node
   destination : Node
-  deriving DecidableEq, Repr
+  deriving DecidableEq
 
 /-- ACK or NACK returned after processing an AppendEntries request. -/
 structure AppendEntriesResponse where
@@ -99,7 +112,7 @@ inductive Message (TxId : Type) where
   | requestVoteRequest (request : RequestVoteRequest)
   /-- A voter-to-candidate RequestVote response. -/
   | requestVoteResponse (response : RequestVoteResponse)
-  deriving DecidableEq, Repr
+  deriving DecidableEq
 
 variable {TxId : Type}
 
@@ -148,11 +161,12 @@ def committedLog (state : NodeState TxId) : List (Entry TxId) :=
 
 end NodeState
 
-/-- Global proof state: local node states, network queues, and client allocation. -/
+/-- Global state: local nodes, queues, allocation, and one-time join history. -/
 structure State (TxId : Type) where
   nodes : Node -> NodeState TxId
   network : Node -> List (Message TxId)
   submittedTxIds : Finset TxId
+  hasJoined : Finset Node
 
 variable [DecidableEq TxId]
 
@@ -237,10 +251,16 @@ theorem updateQueue_of_ne
     updateQueue network destination queue candidate = network candidate := by
   simp [updateQueue, different]
 
-/-- Initialize node zero as leader and every other node as an empty follower. -/
+/-- Initialize bootstrap members in term one and all other fixed nodes unused. -/
 def initialNodeState (node : Node) : NodeState TxId where
-  role := if node = INITIAL_LEADER then .leader else .follower
-  currentTerm := TERM_ONE
+  role :=
+    if node = INITIAL_LEADER then
+      .leader
+    else if node ∈ INITIAL_CONFIGURATION then
+      .follower
+    else
+      .none
+  currentTerm := if node ∈ INITIAL_CONFIGURATION then TERM_ONE else 0
   log := []
   commitIndex := 0
   sentIndex := fun _ => 0
@@ -254,6 +274,69 @@ def initialState : State TxId where
   nodes := initialNodeState
   network := fun _ => []
   submittedTxIds := ∅
+  hasJoined := INITIAL_CONFIGURATION
+
+/-- A configuration paired with its projected one-based log index. -/
+structure Configuration where
+  index : Nat
+  nodes : Finset Node
+  deriving DecidableEq
+
+/-- The projected bootstrap configuration, which has no physical log entry. -/
+def implicitConfiguration : Configuration where
+  index := 0
+  nodes := INITIAL_CONFIGURATION
+
+/-- Collect physical reconfiguration entries with their one-based indices. -/
+def configurationsInLogFrom :
+    Nat -> List (Entry TxId) -> List Configuration
+  | _, [] => []
+  | index, entry :: entries =>
+      let remaining := configurationsInLogFrom (index + 1) entries
+      match entry.content with
+      | .reconfiguration nodes => { index, nodes } :: remaining
+      | _ => remaining
+
+/-- All physical reconfiguration entries in a log. -/
+def configurationsInLog (log : List (Entry TxId)) : List Configuration :=
+  configurationsInLogFrom 1 log
+
+/-- All configurations known from a log, including implicit configuration 0. -/
+def allConfigurations (log : List (Entry TxId)) : List Configuration :=
+  implicitConfiguration :: configurationsInLog log
+
+/-- The latest configuration represented in a node's current log. -/
+def latestConfiguration (state : NodeState TxId) : Configuration :=
+  (configurationsInLog state.log).foldl (fun _ configuration => configuration)
+    implicitConfiguration
+
+/-- The latest reconfiguration in a log at or before a supplied frontier. -/
+def currentConfigurationAt
+    (log : List (Entry TxId))
+    (commitIndex : Nat) : Configuration :=
+  (configurationsInLog log).foldl
+    (fun current configuration =>
+      if configuration.index <= commitIndex then configuration else current)
+    implicitConfiguration
+
+/-- The latest reconfiguration at or before the node's local commit frontier. -/
+def currentConfiguration (state : NodeState TxId) : Configuration :=
+  currentConfigurationAt state.log state.commitIndex
+
+/--
+The current configuration and all later pending configurations known from the
+node's log.
+-/
+def activeConfigurations (state : NodeState TxId) : List Configuration :=
+  let current := currentConfiguration state
+  (allConfigurations state.log).filter fun configuration =>
+    current.index <= configuration.index
+
+/-- Union of every node in a node's current or pending configurations. -/
+def activeNodeUnion (state : NodeState TxId) : Finset Node :=
+  (activeConfigurations state).foldl
+    (fun nodes configuration => nodes ∪ configuration.nodes)
+    ∅
 
 /-- Read a one-based log index, returning `none` for index zero or past the end. -/
 def entryAt? (log : List (Entry TxId)) (index : Nat) : Option (Entry TxId) :=
@@ -275,6 +358,24 @@ def maxCommittableIndex (log : List (Entry TxId)) : Nat :=
     (fun best index =>
       if isSignatureAt log index then max best index else best)
     0
+
+/--
+A node may campaign once some known configuration containing it has reached
+the node's signed log frontier. Configuration zero therefore admits bootstrap
+members even before the first physical signature.
+-/
+def campaignEligible
+    (node : Node)
+    (state : NodeState TxId) : Prop :=
+  (activeConfigurations state).any fun configuration =>
+    decide (
+      node ∈ configuration.nodes /\
+        configuration.index <= maxCommittableIndex state.log)
+
+instance (node : Node) (state : NodeState TxId) :
+    Decidable (campaignEligible node state) := by
+  unfold campaignEligible
+  infer_instance
 
 /-- Return the term of the latest signature, or zero if absent. -/
 def maxCommittableTerm (log : List (Entry TxId)) : Nat :=
@@ -777,24 +878,44 @@ def acknowledgingNodes
     node = leader \/
       (state.nodes leader).matchIndex node >= index
 
-/-- True when the leader plus recorded ACKs form a strict majority. -/
+/-- True when a support set contains a strict majority of one configuration. -/
+def hasConfigurationMajority
+    (support : Finset Node)
+    (configuration : Configuration) : Prop :=
+  (support ∩ configuration.nodes).card * 2 > configuration.nodes.card
+
+instance (support : Finset Node) (configuration : Configuration) :
+    Decidable (hasConfigurationMajority support configuration) := by
+  unfold hasConfigurationMajority
+  infer_instance
+
+/-- True when every configuration governing an index has replication support. -/
 def hasMajorityAt
     (state : State TxId)
     (leader : Node)
     (index : Nat) : Prop :=
-  (acknowledgingNodes state leader index).card * 2 > NODE_COUNT
+  (activeConfigurations (state.nodes leader)).all fun configuration =>
+    decide (
+      configuration.index <= index ->
+        hasConfigurationMajority
+          (acknowledgingNodes state leader index)
+          configuration)
 
-/-- Make the five-node majority predicate executable. -/
+/-- Make the per-active-configuration replication predicate executable. -/
 instance (state : State TxId) (leader : Node) (index : Nat) :
     Decidable (hasMajorityAt state leader index) := by
   unfold hasMajorityAt
   infer_instance
 
-/-- True when a candidate's locally recorded votes form a majority. -/
+/-- True when votes form a strict majority in every active configuration. -/
 def hasElectionMajority
     (state : State TxId)
     (candidate : Node) : Prop :=
-  (state.nodes candidate).votesGranted.card * 2 > NODE_COUNT
+  (activeConfigurations (state.nodes candidate)).all fun configuration =>
+    decide (
+      hasConfigurationMajority
+        (state.nodes candidate).votesGranted
+        configuration)
 
 instance (state : State TxId) (candidate : Node) :
     Decidable (hasElectionMajority state candidate) := by
@@ -821,6 +942,8 @@ def highestCommittableIndex
 inductive Action (TxId : Type) where
   /-- Submit a fresh external transaction to a node. -/
   | clientRequest (node : Node) (txId : TxId)
+  /-- Append a new nonempty configuration to a leader's log. -/
+  | changeConfiguration (source : Node) (newConfiguration : Finset Node)
   /-- Append a signature over a leader's nonempty log. -/
   | signCommittableMessages (node : Node)
   /-- Send the next entry or a heartbeat from one node to another. -/
@@ -837,7 +960,7 @@ inductive Action (TxId : Type) where
   | updateTerm (source destination : Node)
   /-- Promote a candidate after its local vote set reaches a majority. -/
   | becomeLeader (node : Node)
-  deriving DecidableEq, Repr
+  deriving DecidableEq
 
 /-- Protocol guard for arbitrary repeated elections and leader writes. -/
 def Enabled
@@ -846,12 +969,21 @@ def Enabled
   | .clientRequest node txId =>
       (state.nodes node).role = .leader /\
         txId ∉ state.submittedTxIds
+  | .changeConfiguration source newConfiguration =>
+      let sourceState := state.nodes source
+      let previousConfiguration := (latestConfiguration sourceState).nodes
+      let addedNodes := newConfiguration \ previousConfiguration
+      sourceState.role = .leader /\
+        newConfiguration.Nonempty /\
+        Not (newConfiguration = previousConfiguration) /\
+        ∀ node ∈ addedNodes, node ∉ state.hasJoined
   | .signCommittableMessages node =>
       (state.nodes node).role = .leader /\
         Not ((state.nodes node).log = [])
   | .appendEntries source destination batchEnd =>
       (state.nodes source).role = .leader /\
         Not (source = destination) /\
+        destination ∈ activeNodeUnion (state.nodes source) /\
         batchEnd =
           min
             ((state.nodes source).sentIndex destination + 1)
@@ -864,10 +996,13 @@ def Enabled
           highestCommittableIndex state node
   | .timeout node =>
       ((state.nodes node).role = .follower \/
-        (state.nodes node).role = .candidate)
+        (state.nodes node).role = .candidate) /\
+        node ∈ activeNodeUnion (state.nodes node) /\
+        campaignEligible node (state.nodes node)
   | .requestVote source destination =>
       (state.nodes source).role = .candidate /\
-        Not (source = destination)
+        Not (source = destination) /\
+        destination ∈ activeNodeUnion (state.nodes source)
   | .updateTerm source destination =>
       (newerMessage? state source destination).isSome
   | .becomeLeader node =>
@@ -893,6 +1028,24 @@ def next
           updateNode state.nodes node
             { nodeState with log := nodeState.log ++ [entry] }
         submittedTxIds := insert txId state.submittedTxIds }
+  | .changeConfiguration source newConfiguration =>
+      let sourceState := state.nodes source
+      let previousConfiguration := (latestConfiguration sourceState).nodes
+      let addedNodes := newConfiguration \ previousConfiguration
+      let entry : Entry TxId :=
+        { term := sourceState.currentTerm
+          content := .reconfiguration newConfiguration }
+      { state with
+        nodes :=
+          updateNode state.nodes source
+            { sourceState with
+              log := sourceState.log ++ [entry]
+              sentIndex := fun peer =>
+                if peer ∈ addedNodes then
+                  sourceState.log.length
+                else
+                  sourceState.sentIndex peer }
+        hasJoined := state.hasJoined ∪ addedNodes }
   | .signCommittableMessages node =>
       let nodeState := state.nodes node
       let entry : Entry TxId :=

@@ -26,6 +26,7 @@ abbrev SimAction := Action TxId
 /-- Action families used for coverage telemetry. -/
 inductive ActionFamily where
   | clientRequest
+  | changeConfiguration
   | signCommittableMessages
   | appendEntries
   | receive
@@ -39,6 +40,7 @@ inductive ActionFamily where
 /-- Raw simulator choices that materialize directly as semantic actions. -/
 inductive Choice where
   | clientRequest (node : Node) (txId : TxId)
+  | changeConfiguration (source : Node) (newConfiguration : Finset Node)
   | signCommittableMessages (node : Node)
   | appendEntries (source destination : Node) (batchEnd : Nat)
   | receive (source destination : Node)
@@ -47,11 +49,12 @@ inductive Choice where
   | requestVote (source destination : Node)
   | updateTerm (source destination : Node)
   | becomeLeader (node : Node)
-  deriving DecidableEq, Repr
+  deriving DecidableEq
 
 /-- Classify a simulator choice for coverage reporting. -/
 def Choice.family : Choice -> ActionFamily
   | .clientRequest .. => .clientRequest
+  | .changeConfiguration .. => .changeConfiguration
   | .signCommittableMessages .. => .signCommittableMessages
   | .appendEntries .. => .appendEntries
   | .receive .. => .receive
@@ -64,6 +67,8 @@ def Choice.family : Choice -> ActionFamily
 /-- Convert a simulator choice into the exact model action it denotes. -/
 def materialize (_state : SimState) : Choice -> Option SimAction
   | .clientRequest node txId => some (.clientRequest node txId)
+  | .changeConfiguration source newConfiguration =>
+      some (.changeConfiguration source newConfiguration)
   | .signCommittableMessages node =>
       some (.signCommittableMessages node)
   | .appendEntries source destination batchEnd =>
@@ -87,6 +92,8 @@ theorem materializeComplete
   cases action with
   | clientRequest node txId =>
       exact ⟨.clientRequest node txId, rfl⟩
+  | changeConfiguration source newConfiguration =>
+      exact ⟨.changeConfiguration source newConfiguration, rfl⟩
   | signCommittableMessages node =>
       exact ⟨.signCommittableMessages node, rfl⟩
   | appendEntries source destination batchEnd =>
@@ -112,13 +119,15 @@ def adapter :
   materialize
   complete := materializeComplete
 
-/-- Executable enumeration of all five nodes. -/
+/-- Executable enumeration of all fixed-world nodes in identifier order. -/
 def allNodes : List Node :=
   List.ofFn fun node => node
 
 /-- Executable enumeration of all bounded transaction IDs. -/
 def allTxIds : List TxId :=
   List.ofFn fun txId => txId
+
+set_option maxHeartbeats 800000
 
 /-- Materialize finite function fields to keep long executable traces linear. -/
 def compactState (state : SimState) : SimState :=
@@ -132,13 +141,15 @@ def compactState (state : SimState) : SimState :=
 theorem compactState_eq (state : SimState) :
     compactState state = state := by
   cases state with
-  | mk nodes network submittedTxIds =>
+  | mk nodes network submittedTxIds hasJoined =>
       simp only [compactState]
       congr 1
       · funext node
         simp
       · funext node
         simp
+
+set_option maxHeartbeats 200000
 
 /-- Every node occurs in the simulator's node enumeration. -/
 @[simp]
@@ -217,6 +228,17 @@ def committedFrontierSignatureCheck (state : SimState) : Bool :=
       | some entry => decide (entry.content = .signature)
       | none => false
 
+/-- Check nonempty current configurations and their local log frontiers. -/
+def configurationStateCheck (state : SimState) : Bool :=
+  allNodes.all fun node =>
+    let nodeState := state.nodes node
+    let current := currentConfiguration nodeState
+    decide current.nodes.Nonempty &&
+      decide (current.index <= nodeState.commitIndex) &&
+      (activeConfigurations nodeState).all fun configuration =>
+        decide configuration.nodes.Nonempty &&
+          decide (configuration.index <= nodeState.log.length)
+
 /-- Check selected executable state-local Raft safety conditions. -/
 def stateChecks (state : SimState) : Bool :=
   (allNodes.all fun node =>
@@ -227,7 +249,8 @@ def stateChecks (state : SimState) : Bool :=
   committedPrefixesCheck state &&
   logMatchingCheck state &&
   logTermChecks state &&
-  electionSafetyCheck state
+  electionSafetyCheck state &&
+  configurationStateCheck state
 
 /-- Executably check committed-log monotonicity on one explored edge. -/
 def edgeChecks (before after : SimState) : Bool :=
@@ -257,10 +280,21 @@ def Generator.choose
   else
     (value.toNat % bound, nextGenerator)
 
-/-- Enumerate every bounded action shape that could be enabled in a state. -/
-def candidateChoices (state : SimState) : List Choice :=
+/-- Enumerate every nonempty subset of the fixed 15-node world. -/
+def configurationChoices : List (Finset Node) :=
+  (allNodes.sublists.map fun nodes => nodes.toFinset).filter fun configuration =>
+    decide configuration.Nonempty
+
+/-- Enumerate action shapes using the supplied configuration candidates. -/
+def candidateChoicesFor
+    (state : SimState)
+    (configurations : List (Finset Node)) : List Choice :=
   (allNodes.flatMap fun node =>
     allTxIds.map fun txId => .clientRequest node txId) ++
+  ((allNodes.filter fun source =>
+      (state.nodes source).role = .leader).flatMap fun source =>
+    configurations.map fun configuration =>
+      .changeConfiguration source configuration) ++
   (allNodes.map fun node => .signCommittableMessages node) ++
   (allNodes.flatMap fun source =>
     allNodes.map fun destination =>
@@ -280,6 +314,10 @@ def candidateChoices (state : SimState) : List Choice :=
     allNodes.map fun destination => .updateTerm source destination) ++
   (allNodes.map fun node => .becomeLeader node)
 
+/-- Enumerate every bounded action shape that could be enabled in a state. -/
+def candidateChoices (state : SimState) : List Choice :=
+  candidateChoicesFor state configurationChoices
+
 /-- Every enabled finite action appears in the simulator candidate list. -/
 theorem candidateChoicesComplete
     (state : SimState)
@@ -291,35 +329,70 @@ theorem candidateChoicesComplete
   cases action with
   | clientRequest node txId =>
       refine ⟨.clientRequest node txId, ?_, rfl⟩
-      simp [candidateChoices]
+      simp [candidateChoices, candidateChoicesFor]
+  | changeConfiguration source newConfiguration =>
+      have represented : newConfiguration ∈ configurationChoices := by
+        let members := allNodes.filter fun node => node ∈ newConfiguration
+        have membersSublist : List.Sublist members allNodes :=
+          List.filter_sublist
+        have membersEq : members.toFinset = newConfiguration := by
+          ext node
+          simp [members]
+        unfold configurationChoices
+        rw [List.mem_filter]
+        constructor
+        · exact
+            List.mem_map.mpr
+              ⟨members, List.mem_sublists.mpr membersSublist, membersEq⟩
+        · simpa using enabled.2.1
+      refine
+        ⟨.changeConfiguration source newConfiguration, ?_, rfl⟩
+      simp [candidateChoices, candidateChoicesFor, represented, enabled.1]
   | signCommittableMessages node =>
       refine ⟨.signCommittableMessages node, ?_, rfl⟩
-      simp [candidateChoices]
+      simp [candidateChoices, candidateChoicesFor]
   | appendEntries source destination batchEnd =>
       refine ⟨.appendEntries source destination batchEnd, ?_, rfl⟩
-      simp [candidateChoices, enabled.2.2]
+      simp [candidateChoices, candidateChoicesFor, enabled.2.2.2]
   | receive source destination =>
       refine ⟨.receive source destination, ?_, rfl⟩
-      simp [candidateChoices]
+      simp [candidateChoices, candidateChoicesFor]
   | advanceCommitIndex node =>
       refine ⟨.advanceCommitIndex node, ?_, rfl⟩
-      simp [candidateChoices]
+      simp [candidateChoices, candidateChoicesFor]
   | timeout node =>
       refine ⟨.timeout node, ?_, rfl⟩
-      simp [candidateChoices]
+      simp [candidateChoices, candidateChoicesFor]
   | requestVote source destination =>
       refine ⟨.requestVote source destination, ?_, rfl⟩
-      simp [candidateChoices]
+      simp [candidateChoices, candidateChoicesFor]
   | updateTerm source destination =>
       refine ⟨.updateTerm source destination, ?_, rfl⟩
-      simp [candidateChoices]
+      simp [candidateChoices, candidateChoicesFor]
   | becomeLeader node =>
       refine ⟨.becomeLeader node, ?_, rfl⟩
-      simp [candidateChoices]
+      simp [candidateChoices, candidateChoicesFor]
 
 /-- Retain exactly the candidate choices enabled by the authoritative guard. -/
 def enabledChoices (state : SimState) : List Choice :=
   candidateChoices state |>.filter fun choice =>
+    match materialize state choice with
+    | none => false
+    | some action => decide (Enabled state action)
+
+/-- The next disjoint five-node configuration not used by this execution. -/
+def nextFreshConfiguration (state : SimState) : Finset Node :=
+  ((allNodes.filter fun node => node ∉ state.hasJoined).take
+    INITIAL_CONFIGURATION_SIZE).toFinset
+
+/--
+Keep random exploration responsive by proposing one fresh configuration.
+`candidateChoicesComplete` remains the proof for the exhaustive action list.
+-/
+def schedulerChoices (state : SimState) : List Choice :=
+  let configuration := nextFreshConfiguration state
+  let configurations := if configuration.Nonempty then [configuration] else []
+  candidateChoicesFor state configurations |>.filter fun choice =>
     match materialize state choice with
     | none => false
     | some action => decide (Enabled state action)
@@ -332,7 +405,7 @@ def familyChoices
 
 /-- Prefer actions that advance elections, delivery, or replication. -/
 def preferredChoices (state : SimState) : List Choice :=
-  let enabled := enabledChoices state
+  let enabled := schedulerChoices state
   let promotions := familyChoices .becomeLeader enabled
   let updates := familyChoices .updateTerm enabled
   let receives := familyChoices .receive enabled
@@ -352,6 +425,8 @@ def preferredChoices (state : SimState) : List Choice :=
             (state.nodes source).sentIndex destination < batchEnd)
       | _ => false
   let clients := familyChoices .clientRequest enabled
+  let reconfigurations :=
+    familyChoices .changeConfiguration enabled
   let signatures :=
     (familyChoices .signCommittableMessages enabled).filter fun choice =>
       match choice with
@@ -373,6 +448,7 @@ def preferredChoices (state : SimState) : List Choice :=
   else if electionActive && !(votes ++ candidateTimeouts).isEmpty then
     votes ++ candidateTimeouts
   else if aLeaderNeedsCurrentEntry && !clients.isEmpty then clients
+  else if !reconfigurations.isEmpty then reconfigurations
   else if !signatures.isEmpty then signatures
   else if !commits.isEmpty then commits
   else if !progressingAppends.isEmpty then progressingAppends
@@ -390,6 +466,7 @@ def propose
 /-- Counts proposals, accepted actions, rejections, traces, and explored depth. -/
 structure Telemetry where
   proposedClient : Nat := 0
+  proposedReconfigure : Nat := 0
   proposedSign : Nat := 0
   proposedAppend : Nat := 0
   proposedReceive : Nat := 0
@@ -399,6 +476,7 @@ structure Telemetry where
   proposedUpdateTerm : Nat := 0
   proposedBecomeLeader : Nat := 0
   takenClient : Nat := 0
+  takenReconfigure : Nat := 0
   takenSign : Nat := 0
   takenAppend : Nat := 0
   takenReceive : Nat := 0
@@ -420,6 +498,9 @@ def Telemetry.proposed
   match family with
   | .clientRequest =>
       { telemetry with proposedClient := telemetry.proposedClient + 1 }
+  | .changeConfiguration =>
+      { telemetry with
+          proposedReconfigure := telemetry.proposedReconfigure + 1 }
   | .signCommittableMessages =>
       { telemetry with proposedSign := telemetry.proposedSign + 1 }
   | .appendEntries =>
@@ -445,6 +526,9 @@ def Telemetry.taken
   match family with
   | .clientRequest =>
       { telemetry with takenClient := telemetry.takenClient + 1 }
+  | .changeConfiguration =>
+      { telemetry with
+          takenReconfigure := telemetry.takenReconfigure + 1 }
   | .signCommittableMessages =>
       { telemetry with takenSign := telemetry.takenSign + 1 }
   | .appendEntries =>
@@ -467,6 +551,11 @@ def Telemetry.taken
 def renderAction : SimAction -> String
   | .clientRequest node txId =>
       s!"client,{node.val},{txId.val}"
+  | .changeConfiguration source newConfiguration =>
+      String.intercalate ","
+        ("reconfigure" :: toString source.val ::
+          (allNodes.filter fun node => node ∈ newConfiguration).map fun node =>
+            toString node.val)
   | .signCommittableMessages node =>
       s!"sign,{node.val}"
   | .appendEntries source destination batchEnd =>
@@ -515,6 +604,13 @@ def parseAction (line : String) : Option SimAction := do
       let node <- nodeOfString node
       let txId <- txIdOfString txId
       some (.clientRequest node txId)
+  | "reconfigure" :: source :: rawNodes =>
+      let source <- nodeOfString source
+      let nodes <- rawNodes.mapM nodeOfString
+      if nodes.isEmpty then
+        none
+      else
+        some (.changeConfiguration source nodes.toFinset)
   | ["sign", node] =>
       let node <- nodeOfString node
       some (.signCommittableMessages node)
@@ -580,11 +676,30 @@ def replayFile (path : System.FilePath) : IO UInt32 := do
   | .ok state =>
       let commitIndices :=
         allNodes.map fun node => (state.nodes node).commitIndex
+      let leaderNodes :=
+        allNodes.filter fun node => (state.nodes node).role = .leader
+      let leaders := leaderNodes.map Fin.val
+      let currentConfigurationIndices :=
+        allNodes.map fun node =>
+          (currentConfiguration (state.nodes node)).index
+      let leaderCurrentConfigurations :=
+        leaderNodes.map fun node =>
+          let current := currentConfiguration (state.nodes node)
+          (node.val,
+            (allNodes.filter fun member => member ∈ current.nodes).map Fin.val)
+      let activeConfigurationIndices :=
+        allNodes.map fun node =>
+          (activeConfigurations (state.nodes node)).map Configuration.index
+      let joined :=
+        (allNodes.filter fun node => node ∈ state.hasJoined).map Fin.val
       IO.println
         s!"replayed {actions.length} arbitrary-term Raft actions; max term={
           (allNodes.map fun node =>
             (state.nodes node).currentTerm).foldl max 0}; commit indices={
-          repr commitIndices}"
+          repr commitIndices}; leaders={repr leaders}; current configuration indices={
+          repr currentConfigurationIndices}; leader current configurations={
+          repr leaderCurrentConfigurations}; active configuration indices={
+          repr activeConfigurationIndices}; joined={repr joined}"
       return 0
   | .error message =>
       IO.eprintln message

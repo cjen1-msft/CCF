@@ -8,10 +8,11 @@ state-shape equality.
 candidates may time out in any term, and RequestVote and promotion are not
 fixed to term two.
 
-Canonical `CCFRaft.Proofs` proves this arbitrary-term transition system with
-explicit signatures inductive. Its proof-only histories retain ballot
-provenance: the ledger snapshot, election term, quorum, delayed replication
-support, and commit evidence. Runtime state and wire messages are unchanged.
+The checked fixed-membership proof covers the transition set before
+`changeConfiguration` and configuration-aware quorums. Extending the proof to
+the active transition system is in progress. Its proof-only histories retain
+ballot provenance: the ledger snapshot, election term, quorum, delayed
+replication support, and commit evidence.
 
 The minimized invariant does not store log matching, quorum-log coverage,
 potential-commit safety, or leader completeness. Those are derived from the
@@ -25,10 +26,14 @@ active modules in the current tree.
 
 | Source concept                     | Lean representation                                              |
 | ---------------------------------- | ---------------------------------------------------------------- |
-| `Servers`                          | `Node := Fin NODE_COUNT`, with `NODE_COUNT = 5`                  |
-| Configuration                      | Fixed set of all five nodes; not mutable state                   |
+| `Servers`                          | `Node := Fin NODE_COUNT`, with `NODE_COUNT = 15`                 |
+| Initial configuration              | Implicit `{0,1,2,3,4}` at projected index 0                     |
+| Configuration                      | `Configuration` records derived from each node's physical log   |
+| `configurations`                   | `currentConfiguration` plus later `activeConfigurations` views  |
+| `hasJoined`                        | Global `Finset Node`, initially the initial configuration        |
 | Initial log                        | Empty; the CCF bootstrap prefix is projected away                |
 | Signature entries                  | Explicit `EntryContent.signature` entries                        |
+| Reconfiguration entries            | Explicit `EntryContent.reconfiguration` at one-based indices     |
 | Transaction entries                | `EntryContent.transaction` with an opaque unique `txId`           |
 | Terms                              | Natural-numbered terms starting from bootstrap term 1             |
 | Network guarantee                  | Ordered/no-duplicate FIFO queue per destination                  |
@@ -42,6 +47,7 @@ length.
 | Lean action/helper                | `ccfraft.tla` operator                                    | Reads current node state                   | Writes node state         |
 | --------------------------------- | --------------------------------------------------------- | ------------------------------------------ | ------------------------- |
 | `clientRequest`                   | `ClientRequest`                                           | acting leader                              | acting leader             |
+| `changeConfiguration`             | `ChangeConfigurationInt`                                  | acting leader and global join history      | leader and join history   |
 | `signCommittableMessages`         | `SignCommittableMessages`                                 | acting leader                              | acting leader             |
 | `appendEntries`                   | `AppendEntries`                                           | source                                     | source                    |
 | `receive`                         | selected AppendEntries receive branch                     | destination and selected message           | destination               |
@@ -67,6 +73,22 @@ Global comparisons occur only in proof predicates.
 - AppendEntries uses
   `batchEnd = min (sentIndex + 1) leaderLog.length`: one entry when behind,
   or an empty heartbeat when caught up.
+- A configuration change appends a current-term physical log entry, marks only
+  newly added nodes joined, and initializes their `sentIndex` to the old log
+  length. Other peer cursors are preserved.
+- Configuration 0 remains implicit. A node's current configuration is its
+  latest reconfiguration at or before `commitIndex`; later log
+  reconfigurations remain active and pending.
+- Timeout is available only to a node in its own active configuration union.
+  RequestVote and AppendEntries sends are limited to the source's active
+  configuration union.
+- Election support requires a strict majority in every active configuration
+  known by the candidate.
+- Replication support at index `i` requires a strict majority in every active
+  configuration whose reconfiguration index is at most `i`.
+- Committing signature 2 after reconfiguration 1 therefore requires majorities
+  in both the old and new configurations. Once commit 2 advances, only the new
+  configuration remains active.
 - Sending updates `sentIndex` optimistically.
 - Exact duplicate messages are not enqueued twice.
 - `Receive(source,destination)` selects the first message from that source in
@@ -76,8 +98,8 @@ Global comparisons occur only in proof predicates.
 - Conflict detection compares terms; overlap acceptance compares full entries.
 - Conflict truncation is guarded above `commitIndex`.
 - Commit chooses the greatest signature index above the current commit whose
-  entry term equals the leader term and whose local ACK set is a five-node
-  majority.
+  entry term equals the leader term and whose local ACK set contains a strict
+  majority in each configuration governing that index.
 - Timeout advances a follower or candidate to its successor term, records its
   self-vote, and starts an election.
 - `UpdateTerm` observes but does not consume a newer queued message.
@@ -90,9 +112,12 @@ Global comparisons occur only in proof predicates.
   for the same message, matching the source receive disjunction.
 - A voter grants at most one candidate per term and only when the candidate log
   is at least as up to date as its own.
-- A candidate becomes leader after recording a strict three-of-five majority.
+- A candidate becomes leader after recording a strict majority in every active
+  configuration known from its log.
 - Leader promotion truncates its log to the latest signature, initializes
   `sentIndex` from that truncated length, and clears `matchIndex`.
+- Truncating an unsigned reconfiguration removes it from every derived
+  configuration view.
 - Leaders in different terms may append and replicate while they remain
   locally unaware of each other.
 - A same-term candidate receiving AppendEntries first executes
@@ -105,6 +130,11 @@ Global comparisons occur only in proof predicates.
 
 `CCFRaft/signature-commit.trace` appends a transaction and signature, replicates
 both entries to a majority, and commits the signature frontier.
+
+`CCFRaft/reconfiguration-5-to-5.trace` changes from `{0,1,2,3,4}` to
+`{5,6,7,8,9}`, replicates reconfiguration 1 and signature 2 to old and new
+majorities, commits on node 0, propagates that commit to node 5 by heartbeat,
+then elects node 5 in term 2 using the new configuration.
 
 `CCFRaft/arbitrary-terms.trace` leaves node one partitioned long enough to
 timeout twice, elects it directly in term three, commits a term-three
@@ -136,7 +166,8 @@ deltas.
 
 ## Current evidence and limitations
 
-- Lean proofs establish safety over every execution of the active semantics.
+- Existing Lean proofs establish safety for the pre-reconfiguration transition
+  set. Reconfiguration preservation is in progress.
 - Executable traces cover explicit transaction/signature replication,
   signature-only commits, repeated elections, skipped terms, delayed ACKs, and
   follower commit bounds.
@@ -144,6 +175,9 @@ deltas.
 - There is not yet a machine-checked semantics or bisimulation theorem between
   TLA+ and Lean.
 - Differential edge comparison is deferred.
+- The fixed-world projection has no mutable retirement state. A removed node
+  may remain a stale local leader, but active-union send/election guards and
+  one-time `hasJoined` history constrain its reconfiguration behavior.
 - `RcvDropIgnoredMessage` and other stale/ignored message branches are deferred
   to future message-loss and staleness work.
 
