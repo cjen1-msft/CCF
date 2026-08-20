@@ -6523,9 +6523,9 @@ theorem memSelectedOrRemaining
 /-! ## Core safety projections -/
 
 /-- The explicit invariant implies the two core public safety properties. -/
-theorem legacySystemInductiveInvariantSafety
+theorem systemInductiveInvariantSafety
     {state : State TxId}
-    (invariant : LegacySystemInductiveInvariant state) :
+    (invariant : SystemInductiveInvariant state) :
     ConsensusSafety state := by
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
@@ -6543,9 +6543,9 @@ theorem legacySystemInductiveInvariantSafety
           facts.voteHistory }
 
 /-- Log matching remains a separately exported supporting theorem. -/
-theorem legacySystemInductiveInvariantLogMatching
+theorem systemInductiveInvariantLogMatching
     {state : State TxId}
-    (invariant : LegacySystemInductiveInvariant state) :
+    (invariant : SystemInductiveInvariant state) :
     LogMatching state := by
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
@@ -6553,9 +6553,9 @@ theorem legacySystemInductiveInvariantLogMatching
   exact invariantFactsLogMatchingFromCanonicalHistories facts
 
 /-- Log-term monotonicity remains a separately exported supporting theorem. -/
-theorem legacySystemInductiveInvariantMonoLog
+theorem systemInductiveInvariantMonoLog
     {state : State TxId}
-    (invariant : LegacySystemInductiveInvariant state) :
+    (invariant : SystemInductiveInvariant state) :
     MonoLog state := by
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
@@ -6563,9 +6563,9 @@ theorem legacySystemInductiveInvariantMonoLog
   exact invariantFactsMonoLogFromCanonicalHistories facts
 
 /-- TLA-style state-local leader completeness is a separate export. -/
-theorem legacySystemInductiveInvariantLeaderCompleteness
+theorem systemInductiveInvariantLeaderCompleteness
     {state : State TxId}
-    (invariant : LegacySystemInductiveInvariant state) :
+    (invariant : SystemInductiveInvariant state) :
     LeaderCompleteness state := by
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
@@ -6573,11 +6573,11 @@ theorem legacySystemInductiveInvariantLeaderCompleteness
   exact invariantFactsLeaderCompletenessFromCommitEvidence facts
 
 /-- Every positive committed frontier in the invariant points to a signature. -/
-theorem legacySystemInductiveInvariantCommittedFrontierIsSignature
+theorem systemInductiveInvariantCommittedFrontierIsSignature
     {state : State TxId}
-    (invariant : LegacySystemInductiveInvariant state) :
+    (invariant : SystemInductiveInvariant state) :
     CommittedFrontierIsSignature state :=
-  (legacySystemInductiveInvariantSafety invariant).committedFrontierIsSignature
+  (systemInductiveInvariantSafety invariant).committedFrontierIsSignature
 
 /-! ## Initial state -/
 
@@ -6605,8 +6605,8 @@ theorem initialCommitEvidenceFacts
     simp [initialState] at member
 
 /-- The proof-only maps are empty in the deterministic initial state. -/
-theorem legacyInitialSystemInductiveInvariant :
-    LegacySystemInductiveInvariant (initialState : State TxId) := by
+theorem initialSystemInductiveInvariant :
+    SystemInductiveInvariant (initialState : State TxId) := by
   let votes : VoteHistory := fun _ _ => none
   let appendHistory : AppendEntriesRequest TxId -> List (Entry TxId) :=
     fun _ => []
@@ -6950,14 +6950,14 @@ theorem leaderAppendCommittedLogUnchanged
     ]
 
 /-- Appending any current-term leader entry preserves the arbitrary-term facts. -/
-theorem legacyLeaderAppendPreservesSystemInductiveInvariant
+theorem leaderAppendPreservesSystemInductiveInvariant
     (state : State TxId)
     (node : Node)
     (txId : EntryContent TxId)
     (submittedTxIds : Finset TxId)
-    (invariant : LegacySystemInductiveInvariant state)
+    (invariant : SystemInductiveInvariant state)
     (leaderRole : (state.nodes node).role = .leader) :
-    LegacySystemInductiveInvariant
+    SystemInductiveInvariant
       (leaderAppendState state node txId submittedTxIds) := by
   let next :
       State TxId -> LeaderAppendProofAction TxId -> State TxId :=
@@ -8111,39 +8111,39 @@ theorem legacyLeaderAppendPreservesSystemInductiveInvariant
 /-! ## Executable leader append actions -/
 
 /-- A client transaction append preserves the arbitrary-term invariant. -/
-theorem legacyClientRequestPreservesSystemInductiveInvariant
+theorem clientRequestPreservesSystemInductiveInvariant
     (state : State TxId)
     (node : Node)
     (txId : TxId)
-    (invariant : LegacySystemInductiveInvariant state)
+    (invariant : SystemInductiveInvariant state)
     (enabled : Enabled state (.clientRequest node txId)) :
-    LegacySystemInductiveInvariant (next state (.clientRequest node txId)) := by
+    SystemInductiveInvariant (next state (.clientRequest node txId)) := by
   simpa [leaderAppendState, next, CCFRaft.next] using
-    legacyLeaderAppendPreservesSystemInductiveInvariant
+    leaderAppendPreservesSystemInductiveInvariant
       state node (.transaction txId)
         (insert txId state.submittedTxIds) invariant enabled.1
 
 /-- Appending a current-term signature preserves the arbitrary-term invariant. -/
-theorem legacySignCommittableMessagesPreservesSystemInductiveInvariant
+theorem signCommittableMessagesPreservesSystemInductiveInvariant
     (state : State TxId)
     (node : Node)
-    (invariant : LegacySystemInductiveInvariant state)
+    (invariant : SystemInductiveInvariant state)
     (enabled : Enabled state (.signCommittableMessages node)) :
-    LegacySystemInductiveInvariant
+    SystemInductiveInvariant
       (next state (.signCommittableMessages node)) := by
   simpa [leaderAppendState, next, CCFRaft.next] using
-    legacyLeaderAppendPreservesSystemInductiveInvariant
+    leaderAppendPreservesSystemInductiveInvariant
       state node .signature state.submittedTxIds invariant enabled.1
 
 /-! ## RequestVote send -/
 
 /-- Sending a vote request changes only the network and its proof snapshot. -/
-theorem legacyRequestVotePreservesSystemInductiveInvariant
+theorem requestVotePreservesSystemInductiveInvariant
     (state : State TxId)
     (source destination : Node)
-    (invariant : LegacySystemInductiveInvariant state)
+    (invariant : SystemInductiveInvariant state)
     (enabled : Enabled state (.requestVote source destination)) :
-    LegacySystemInductiveInvariant
+    SystemInductiveInvariant
       (next state (.requestVote source destination)) := by
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
@@ -8949,13 +8949,13 @@ theorem appendEntriesSendDelta
           (makeAppendEntriesRequest state source destination batchEnd))
 
 /-- Sending AppendEntries updates one cursor and enqueues one snapshot. -/
-theorem legacyAppendEntriesPreservesSystemInductiveInvariant
+theorem appendEntriesPreservesSystemInductiveInvariant
     (state : State TxId)
     (source destination : Node)
     (batchEnd : Nat)
-    (invariant : LegacySystemInductiveInvariant state)
+    (invariant : SystemInductiveInvariant state)
     (enabled : Enabled state (.appendEntries source destination batchEnd)) :
-    LegacySystemInductiveInvariant
+    SystemInductiveInvariant
       (next state (.appendEntries source destination batchEnd)) := by
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
@@ -9974,12 +9974,12 @@ theorem singletonNotElectionMajority (node : Node) :
   simp [NODE_COUNT]
 
 /-- Starting a successor election preserves the arbitrary-term invariant. -/
-theorem legacyTimeoutPreservesSystemInductiveInvariant
+theorem timeoutPreservesSystemInductiveInvariant
     (state : State TxId)
     (node : Node)
-    (invariant : LegacySystemInductiveInvariant state)
+    (invariant : SystemInductiveInvariant state)
     (enabled : Enabled state (.timeout node)) :
-    LegacySystemInductiveInvariant (next state (.timeout node)) := by
+    SystemInductiveInvariant (next state (.timeout node)) := by
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
@@ -10861,12 +10861,12 @@ theorem legacyTimeoutPreservesSystemInductiveInvariant
 /-! ## Newer-term observation -/
 
 /-- Observing a queued newer term steps down without changing log history. -/
-theorem legacyUpdateTermPreservesSystemInductiveInvariant
+theorem updateTermPreservesSystemInductiveInvariant
     (state : State TxId)
     (source destination : Node)
-    (invariant : LegacySystemInductiveInvariant state)
+    (invariant : SystemInductiveInvariant state)
     (enabled : Enabled state (.updateTerm source destination)) :
-    LegacySystemInductiveInvariant
+    SystemInductiveInvariant
       (next state (.updateTerm source destination)) := by
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
@@ -11612,12 +11612,12 @@ theorem legacyUpdateTermPreservesSystemInductiveInvariant
 /-! ## Leader promotion -/
 
 /-- Promoting a winning candidate preserves all arbitrary-term support facts. -/
-theorem legacyBecomeLeaderPreservesSystemInductiveInvariant
+theorem becomeLeaderPreservesSystemInductiveInvariant
     (state : State TxId)
     (node : Node)
-    (invariant : LegacySystemInductiveInvariant state)
+    (invariant : SystemInductiveInvariant state)
     (enabled : Enabled state (.becomeLeader node)) :
-    LegacySystemInductiveInvariant (next state (.becomeLeader node)) := by
+    SystemInductiveInvariant (next state (.becomeLeader node)) := by
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
@@ -13426,12 +13426,12 @@ theorem legacyBecomeLeaderPreservesSystemInductiveInvariant
 /-! ## Commit advancement -/
 
 /-- Advancing a current-term quorum frontier preserves all safety evidence. -/
-theorem legacyAdvanceCommitPreservesSystemInductiveInvariant
+theorem advanceCommitPreservesSystemInductiveInvariant
       (state : State TxId)
       (node : Node)
-      (invariant : LegacySystemInductiveInvariant state)
+      (invariant : SystemInductiveInvariant state)
       (enabled : Enabled state (.advanceCommitIndex node)) :
-      LegacySystemInductiveInvariant
+      SystemInductiveInvariant
         (next state (.advanceCommitIndex node)) := by
   rcases invariant with
       ⟨votes, appendHistory, responseHistory,
@@ -14298,16 +14298,16 @@ A same-term candidate may step down before consuming AppendEntries.  This
 changes only its role, so every leader/election obligation either reuses the
 old fact or excludes the node which just became a follower.
 -/
-theorem legacyReturnToFollowerPreservesSystemInductiveInvariant
+theorem returnToFollowerPreservesSystemInductiveInvariant
     (state : State TxId)
     (destination : Node)
     (request : AppendEntriesRequest TxId)
     (nextNode : NodeState TxId)
-    (invariant : LegacySystemInductiveInvariant state)
+    (invariant : SystemInductiveInvariant state)
     (stepped :
       returnToFollowerState? (state.nodes destination) request =
         some nextNode) :
-    LegacySystemInductiveInvariant
+    SystemInductiveInvariant
       { state with nodes := updateNode state.nodes destination nextNode } := by
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
@@ -14549,7 +14549,7 @@ theorem legacyReturnToFollowerPreservesSystemInductiveInvariant
             exact member)
           (fun node => Nat.le_of_eq (termEq node).symm)
           (fun _ _ _ voted _ => voted)
-    change LegacySystemInductiveInvariant after
+    change SystemInductiveInvariant after
     refine
       ⟨votes, appendHistory, responseHistory,
         voteRequestHistory, voteCandidateHistory, voteVoterHistory, ?_⟩
@@ -15034,9 +15034,9 @@ theorem processedAckHistoryFrame
 Removing a queued response while changing only replication cursors preserves
 the invariant once effective-ACK evidence is shown unchanged.
 -/
-theorem legacyResponseDequeuePreservesSystemInductiveInvariant
+theorem responseDequeuePreservesSystemInductiveInvariant
     (state after : State TxId)
-    (invariant : LegacySystemInductiveInvariant state)
+    (invariant : SystemInductiveInvariant state)
     (roleEq :
       forall node, (after.nodes node).role = (state.nodes node).role)
     (termEq :
@@ -15109,7 +15109,7 @@ theorem legacyResponseDequeuePreservesSystemInductiveInvariant
           (after.nodes candidate).role = .leader) ->
         voter ∈ effectiveElectionVoters after candidate ->
           voter ∈ effectiveElectionVoters state candidate) :
-    LegacySystemInductiveInvariant after := by
+    SystemInductiveInvariant after := by
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
@@ -15865,13 +15865,13 @@ theorem processedAckHistoryAfterSuccessfulResponse
           by simpa [logEq] using agreed⟩
 
 /-- Receiving an AppendEntries response preserves all delayed-ACK evidence. -/
-theorem legacyReceiveAppendEntriesResponsePreservesSystemInductiveInvariant
+theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
     (state : State TxId)
     (source destination : Node)
     (response : AppendEntriesResponse)
     (remaining : List (Message TxId))
     (nextNode : NodeState TxId)
-    (invariant : LegacySystemInductiveInvariant state)
+    (invariant : SystemInductiveInvariant state)
     (taken :
       takeFirstFrom source (state.network destination) =
         some (.appendEntriesResponse response, remaining))
@@ -15879,7 +15879,7 @@ theorem legacyReceiveAppendEntriesResponsePreservesSystemInductiveInvariant
     (handled :
       handleAppendEntriesResponse? (state.nodes destination) response =
         some nextNode) :
-    LegacySystemInductiveInvariant
+    SystemInductiveInvariant
       { state with
         nodes := updateNode state.nodes destination nextNode
         network := updateQueue state.network destination remaining } := by
@@ -15910,7 +15910,7 @@ theorem legacyReceiveAppendEntriesResponsePreservesSystemInductiveInvariant
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
   have packed :
-      LegacySystemInductiveInvariant state :=
+      SystemInductiveInvariant state :=
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
   unfold handleAppendEntriesResponse? at handled
@@ -16023,9 +16023,9 @@ theorem legacyReceiveAppendEntriesResponsePreservesSystemInductiveInvariant
       · simpa [
           after, updateNode, Function.update, leaderEq
         ] using old
-    change LegacySystemInductiveInvariant after
+    change SystemInductiveInvariant after
     apply
-      legacyResponseDequeuePreservesSystemInductiveInvariant
+      responseDequeuePreservesSystemInductiveInvariant
         state after packed roleEq termEq logEq commitEq
     · intro node role
       rw [roleEq] at role
@@ -16200,9 +16200,9 @@ theorem legacyReceiveAppendEntriesResponsePreservesSystemInductiveInvariant
         · simpa [
             after, updateNode, Function.update, leaderEq
           ] using old
-      change LegacySystemInductiveInvariant after
+      change SystemInductiveInvariant after
       apply
-        legacyResponseDequeuePreservesSystemInductiveInvariant
+        responseDequeuePreservesSystemInductiveInvariant
           state after packed roleEq termEq logEq commitEq
       · intro node role
         rw [roleEq] at role
@@ -16292,9 +16292,9 @@ theorem legacyReceiveAppendEntriesResponsePreservesSystemInductiveInvariant
           rfl
         have progressAfter : LeaderProgressBounded after := by
           simpa [after] using facts.leaderProgressBounded
-        change LegacySystemInductiveInvariant after
+        change SystemInductiveInvariant after
         apply
-          legacyResponseDequeuePreservesSystemInductiveInvariant
+          responseDequeuePreservesSystemInductiveInvariant
             state after packed
               (fun node => by simp [after])
               (fun node => by simp [after])
@@ -16388,9 +16388,9 @@ theorem legacyReceiveAppendEntriesResponsePreservesSystemInductiveInvariant
               network := updateQueue state.network destination remaining }
           have progressAfter : LeaderProgressBounded after := by
             simpa [after] using facts.leaderProgressBounded
-          change LegacySystemInductiveInvariant after
+          change SystemInductiveInvariant after
           apply
-            legacyResponseDequeuePreservesSystemInductiveInvariant
+            responseDequeuePreservesSystemInductiveInvariant
               state after packed
                 (fun node => by simp [after])
                 (fun node => by simp [after])
@@ -16670,13 +16670,13 @@ theorem handleRequestVoteResponseVoteUpdate
       · contradiction
 
 /-- Receiving a RequestVote response transfers latent vote evidence to runtime state. -/
-theorem legacyReceiveRequestVoteResponsePreservesSystemInductiveInvariant
+theorem receiveRequestVoteResponsePreservesSystemInductiveInvariant
     (state : State TxId)
     (source destination : Node)
     (response : RequestVoteResponse)
     (remaining : List (Message TxId))
     (nextNode : NodeState TxId)
-    (invariant : LegacySystemInductiveInvariant state)
+    (invariant : SystemInductiveInvariant state)
     (taken :
       takeFirstFrom source (state.network destination) =
         some (.requestVoteResponse response, remaining))
@@ -16684,7 +16684,7 @@ theorem legacyReceiveRequestVoteResponsePreservesSystemInductiveInvariant
     (handled :
       handleRequestVoteResponse? (state.nodes destination) response =
         some nextNode) :
-    LegacySystemInductiveInvariant
+    SystemInductiveInvariant
       { state with
         nodes := updateNode state.nodes destination nextNode
         network := updateQueue state.network destination remaining } := by
@@ -16715,7 +16715,7 @@ theorem legacyReceiveRequestVoteResponsePreservesSystemInductiveInvariant
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
   have packed :
-      LegacySystemInductiveInvariant state :=
+      SystemInductiveInvariant state :=
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
   have post := handleRequestVoteResponsePreserves handled
@@ -16907,9 +16907,9 @@ theorem legacyReceiveRequestVoteResponsePreservesSystemInductiveInvariant
       simpa [roleEq] using role
     simpa [sentEq, matchEq, logEq] using
       facts.leaderProgressBounded leader oldRole peer
-  change LegacySystemInductiveInvariant after
+  change SystemInductiveInvariant after
   apply
-    legacyResponseDequeuePreservesSystemInductiveInvariant
+    responseDequeuePreservesSystemInductiveInvariant
       state after packed roleEq termEq logEq commitEq
         candidatesSelfVoteAfter leadersHaveElectionMajorityAfter
   · exact voteHistoryAfter
@@ -18073,7 +18073,7 @@ theorem effectiveElectionVotersAfterGrantedRequestSubsetPotential
     (nextNode : NodeState TxId)
     (response : RequestVoteResponse)
     (remaining : List (Message TxId))
-    (invariant : LegacySystemInductiveInvariant state)
+    (invariant : SystemInductiveInvariant state)
     (taken :
       takeFirstFrom source (state.network destination) =
         some (.requestVoteRequest request, remaining))
@@ -18274,7 +18274,7 @@ theorem effectiveElectionMajorityAfterGrantedRequestWasPotential
     (nextNode : NodeState TxId)
     (response : RequestVoteResponse)
     (remaining : List (Message TxId))
-    (invariant : LegacySystemInductiveInvariant state)
+    (invariant : SystemInductiveInvariant state)
     (taken :
       takeFirstFrom source (state.network destination) =
         some (.requestVoteRequest request, remaining))
@@ -18444,12 +18444,12 @@ theorem ackerVoteHistoryAfterGrantedRequest
           by simpa [logEq] using missing⟩
 
 /-- Enqueuing a rejected vote response is inert for all safety evidence. -/
-theorem legacyEnqueueRejectedVoteResponsePreservesSystemInductiveInvariant
+theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
     (state : State TxId)
     (response : RequestVoteResponse)
-    (invariant : LegacySystemInductiveInvariant state)
+    (invariant : SystemInductiveInvariant state)
     (rejected : response.voteGranted = false) :
-    LegacySystemInductiveInvariant
+    SystemInductiveInvariant
       { state with
         network :=
           enqueueNoDup state.network (.requestVoteResponse response) } := by
@@ -18788,14 +18788,14 @@ theorem legacyEnqueueRejectedVoteResponsePreservesSystemInductiveInvariant
             (fun _ => rfl) (fun _ => rfl)
             (fun _ => rfl) (fun _ _ => rfl)⟩
 /-- Enqueuing a granted vote response materialises prospective election evidence. -/
-theorem legacyEnqueueGrantedVoteResponsePreservesSystemInductiveInvariant
+theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
     (state : State TxId)
     (source destination : Node)
     (request : RequestVoteRequest)
     (nextNode : NodeState TxId)
     (response : RequestVoteResponse)
     (remaining : List (Message TxId))
-    (invariant : LegacySystemInductiveInvariant state)
+    (invariant : SystemInductiveInvariant state)
     (taken :
       takeFirstFrom source (state.network destination) =
         some (.requestVoteRequest request, remaining))
@@ -18803,7 +18803,7 @@ theorem legacyEnqueueGrantedVoteResponsePreservesSystemInductiveInvariant
       handleRequestVoteRequest? (state.nodes destination) request =
         some (nextNode, response))
     (granted : response.voteGranted = true) :
-    LegacySystemInductiveInvariant
+    SystemInductiveInvariant
       { state with
         nodes := updateNode state.nodes destination nextNode
         network :=
@@ -19379,7 +19379,7 @@ theorem legacyEnqueueGrantedVoteResponsePreservesSystemInductiveInvariant
     · simpa [
         newVotes, Function.update, sourceEq
       ] using voted
-  change LegacySystemInductiveInvariant after
+  change SystemInductiveInvariant after
   refine
     ⟨newVotes, appendHistory, responseHistory,
       voteRequestHistory, newCandidateHistory, newVoterHistory, ?_⟩
@@ -20076,14 +20076,14 @@ theorem legacyEnqueueGrantedVoteResponsePreservesSystemInductiveInvariant
             roleEq termEq logEq
             (fun leader peer => congrFun (matchEq leader) peer)⟩
 /-- Receiving an AppendEntries request preserves the full arbitrary-term invariant. -/
-theorem legacyReceiveAppendEntriesRequestPreservesSystemInductiveInvariant
+theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
     (state : State TxId)
     (source destination : Node)
     (request : AppendEntriesRequest TxId)
     (remaining : List (Message TxId))
     (nextNode : NodeState TxId)
     (response : AppendEntriesResponse)
-    (invariant : LegacySystemInductiveInvariant state)
+    (invariant : SystemInductiveInvariant state)
     (taken :
       takeFirstFrom source (state.network destination) =
         some (.appendEntriesRequest request, remaining))
@@ -20092,7 +20092,7 @@ theorem legacyReceiveAppendEntriesRequestPreservesSystemInductiveInvariant
     (handled :
       handleAppendEntriesRequest? (state.nodes destination) request =
         some (nextNode, response)) :
-    LegacySystemInductiveInvariant
+    SystemInductiveInvariant
       { state with
         nodes := updateNode state.nodes destination nextNode
         network := reply state.network destination remaining response } := by
@@ -20992,21 +20992,21 @@ theorem legacyReceiveAppendEntriesRequestPreservesSystemInductiveInvariant
   · exact ⟨ackHistory, processedAckAfter⟩
 
 /-- Receiving a RequestVote request preserves the full arbitrary-term invariant. -/
-theorem legacyReceiveRequestVoteRequestPreservesSystemInductiveInvariant
+theorem receiveRequestVoteRequestPreservesSystemInductiveInvariant
     (state : State TxId)
     (source destination : Node)
     (request : RequestVoteRequest)
     (remaining : List (Message TxId))
     (nextNode : NodeState TxId)
     (response : RequestVoteResponse)
-    (invariant : LegacySystemInductiveInvariant state)
+    (invariant : SystemInductiveInvariant state)
     (taken :
       takeFirstFrom source (state.network destination) =
         some (.requestVoteRequest request, remaining))
     (handled :
       handleRequestVoteRequest? (state.nodes destination) request =
         some (nextNode, response)) :
-    LegacySystemInductiveInvariant
+    SystemInductiveInvariant
       { state with
         nodes := updateNode state.nodes destination nextNode
         network :=
@@ -21026,10 +21026,10 @@ theorem legacyReceiveRequestVoteRequestPreservesSystemInductiveInvariant
         enqueueNoDup
           (updateQueue state.network destination remaining)
           (.requestVoteResponse response) }
-  have enqueuedInvariant : LegacySystemInductiveInvariant enqueued := by
+  have enqueuedInvariant : SystemInductiveInvariant enqueued := by
     by_cases granted : response.voteGranted = true
     · simpa [enqueued] using
-        legacyEnqueueGrantedVoteResponsePreservesSystemInductiveInvariant
+        enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
           state source destination request nextNode response remaining
             invariant taken handled granted
     · have rejected : response.voteGranted = false := by
@@ -21042,7 +21042,7 @@ theorem legacyReceiveRequestVoteRequestPreservesSystemInductiveInvariant
         by_cases same : node = destination <;>
           simp [updateNode, Function.update, same]
       simpa [enqueued, nodesEq] using
-        legacyEnqueueRejectedVoteResponsePreservesSystemInductiveInvariant
+        enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
           state response invariant rejected
   have roleEq :
       forall node,
@@ -21229,9 +21229,9 @@ theorem legacyReceiveRequestVoteRequestPreservesSystemInductiveInvariant
       exact
         ⟨queuedResponse, afterMember, success, responseTerm,
           responseSource, responseDestination, lastIndex, covered⟩
-  change LegacySystemInductiveInvariant after
+  change SystemInductiveInvariant after
   apply
-    legacyResponseDequeuePreservesSystemInductiveInvariant
+    responseDequeuePreservesSystemInductiveInvariant
       enqueued after enqueuedInvariant roleEq termEq logEq commitEq
   · intro candidate role
     rcases enqueuedInvariant with
@@ -21270,13 +21270,13 @@ theorem legacyReceiveRequestVoteRequestPreservesSystemInductiveInvariant
     exact member
 
 /-- Every successful receive dispatch preserves the full arbitrary-term invariant. -/
-theorem legacyHandleReceivePreservesSystemInductiveInvariant
+theorem handleReceivePreservesSystemInductiveInvariant
     (state resultingState : State TxId)
     (source destination : Node)
-    (invariant : LegacySystemInductiveInvariant state)
+    (invariant : SystemInductiveInvariant state)
     (received :
       handleReceive? state source destination = some resultingState) :
-    LegacySystemInductiveInvariant resultingState := by
+    SystemInductiveInvariant resultingState := by
   unfold handleReceive? at received
   split at received
   · contradiction
@@ -21291,7 +21291,7 @@ theorem legacyHandleReceivePreservesSystemInductiveInvariant
           have resultEq := Option.some.inj received
           rw [← resultEq]
           exact
-            legacyReturnToFollowerPreservesSystemInductiveInvariant
+            returnToFollowerPreservesSystemInductiveInvariant
               state destination request nextNode invariant stepped
         · rename_i notStepped
           split at received
@@ -21300,7 +21300,7 @@ theorem legacyHandleReceivePreservesSystemInductiveInvariant
             have resultEq := Option.some.inj received
             rw [← resultEq]
             exact
-              legacyReceiveAppendEntriesRequestPreservesSystemInductiveInvariant
+              receiveAppendEntriesRequestPreservesSystemInductiveInvariant
                 state source destination request remaining nextNode response
                   invariant taken notStepped handled
       · rename_i response
@@ -21310,7 +21310,7 @@ theorem legacyHandleReceivePreservesSystemInductiveInvariant
           have resultEq := Option.some.inj received
           rw [← resultEq]
           exact
-            legacyReceiveAppendEntriesResponsePreservesSystemInductiveInvariant
+            receiveAppendEntriesResponsePreservesSystemInductiveInvariant
               state source destination response remaining nextNode
                 invariant taken (by simpa using destinationMatches) handled
       · rename_i request
@@ -21320,7 +21320,7 @@ theorem legacyHandleReceivePreservesSystemInductiveInvariant
           have resultEq := Option.some.inj received
           rw [← resultEq]
           exact
-            legacyReceiveRequestVoteRequestPreservesSystemInductiveInvariant
+            receiveRequestVoteRequestPreservesSystemInductiveInvariant
               state source destination request remaining nextNode response
                 invariant taken handled
       · rename_i response
@@ -21330,17 +21330,17 @@ theorem legacyHandleReceivePreservesSystemInductiveInvariant
           have resultEq := Option.some.inj received
           rw [← resultEq]
           exact
-            legacyReceiveRequestVoteResponsePreservesSystemInductiveInvariant
+            receiveRequestVoteResponsePreservesSystemInductiveInvariant
               state source destination response remaining nextNode
                 invariant taken (by simpa using destinationMatches) handled
 
 /-- Processing any enabled queued message preserves the arbitrary-term invariant. -/
-theorem legacyReceivePreservesSystemInductiveInvariant
+theorem receivePreservesSystemInductiveInvariant
     (state : State TxId)
     (source destination : Node)
-    (invariant : LegacySystemInductiveInvariant state)
+    (invariant : SystemInductiveInvariant state)
     (enabled : Enabled state (.receive source destination)) :
-    LegacySystemInductiveInvariant
+    SystemInductiveInvariant
       (next state (.receive source destination)) := by
   unfold Enabled at enabled
   cases received :
@@ -21354,322 +21354,10 @@ theorem legacyReceivePreservesSystemInductiveInvariant
         simp [next, CCFRaft.next, received]
       rw [nextEq]
       exact
-        legacyHandleReceivePreservesSystemInductiveInvariant
+        handleReceivePreservesSystemInductiveInvariant
           state resultingState source destination invariant received
 
 /-- Every enabled arbitrary-term action preserves the supporting invariant. -/
-theorem legacySystemInductiveInvariantPreserved
-    (state : State TxId)
-    (action : Action TxId)
-    (invariant : LegacySystemInductiveInvariant state)
-    (enabled : Enabled state action) :
-    LegacySystemInductiveInvariant (next state action) := by
-  cases action with
-  | clientRequest node txId =>
-      exact
-        legacyClientRequestPreservesSystemInductiveInvariant
-          state node txId invariant enabled
-  | signCommittableMessages node =>
-      exact
-        legacySignCommittableMessagesPreservesSystemInductiveInvariant
-          state node invariant enabled
-  | appendEntries source destination batchEnd =>
-      exact
-        legacyAppendEntriesPreservesSystemInductiveInvariant
-          state source destination batchEnd invariant enabled
-  | receive source destination =>
-      exact
-        legacyReceivePreservesSystemInductiveInvariant
-          state source destination invariant enabled
-  | advanceCommitIndex node =>
-      exact
-        legacyAdvanceCommitPreservesSystemInductiveInvariant
-          state node invariant enabled
-  | timeout node =>
-      exact
-        legacyTimeoutPreservesSystemInductiveInvariant
-          state node invariant enabled
-  | requestVote source destination =>
-      exact
-        legacyRequestVotePreservesSystemInductiveInvariant
-          state source destination invariant enabled
-  | updateTerm source destination =>
-      exact
-        legacyUpdateTermPreservesSystemInductiveInvariant
-          state source destination invariant enabled
-  | becomeLeader node =>
-      exact
-        legacyBecomeLeaderPreservesSystemInductiveInvariant
-          state node invariant enabled
-
-/-! ## Reachable safety exports -/
-
-/-- The arbitrary-term invariant holds in every reachable state. -/
-theorem legacyReachableSystemInductiveInvariant
-    {state : State TxId}
-    (reachable : Reachable state) :
-    LegacySystemInductiveInvariant state :=
-  ExecutableTransitionSystem.reachableInvariant
-    (system (TxId := TxId))
-    legacyInitialSystemInductiveInvariant
-    legacySystemInductiveInvariantPreserved
-    reachable
-
-/-- Reachable committed logs are pairwise prefix-comparable. -/
-theorem legacyReachableCommittedLogsPrefix
-    {state : State TxId}
-    (reachable : Reachable state) :
-    CommittedLogsPrefix state :=
-  (legacySystemInductiveInvariantSafety
-    (legacyReachableSystemInductiveInvariant reachable)).committedLogsPrefix
-
-/-- Every positive committed frontier in a reachable state is a signature. -/
-theorem legacyReachableCommittedFrontierIsSignature
-    {state : State TxId}
-    (reachable : Reachable state) :
-    CommittedFrontierIsSignature state :=
-  legacySystemInductiveInvariantCommittedFrontierIsSignature
-    (legacyReachableSystemInductiveInvariant reachable)
-
-/-- Every reachable state satisfies Raft log matching. -/
-theorem legacyReachableLogMatching
-    {state : State TxId}
-    (reachable : Reachable state) :
-    LogMatching state :=
-  legacySystemInductiveInvariantLogMatching
-    (legacyReachableSystemInductiveInvariant reachable)
-
-/-- Entry terms are monotonic within every reachable node log. -/
-theorem legacyReachableMonoLog
-    {state : State TxId}
-    (reachable : Reachable state) :
-    MonoLog state :=
-  legacySystemInductiveInvariantMonoLog
-    (legacyReachableSystemInductiveInvariant reachable)
-
-/-- Every reachable state has at most one leader in each term. -/
-theorem legacyReachableElectionSafety
-    {state : State TxId}
-    (reachable : Reachable state) :
-    ElectionSafety state :=
-  (legacySystemInductiveInvariantSafety
-    (legacyReachableSystemInductiveInvariant reachable)).electionSafety
-
-/-- Every higher-term reachable leader contains lower-term committed logs. -/
-theorem legacyReachableLeaderCompleteness
-    {state : State TxId}
-    (reachable : Reachable state) :
-    LeaderCompleteness state :=
-  legacySystemInductiveInvariantLeaderCompleteness
-    (legacyReachableSystemInductiveInvariant reachable)
-
-/-- Bundle the core reachable consensus-safety properties. -/
-theorem legacyReachableConsensusSafety
-    {state : State TxId}
-    (reachable : Reachable state) :
-    ConsensusSafety state :=
-  legacySystemInductiveInvariantSafety
-    (legacyReachableSystemInductiveInvariant reachable)
-
-/-! ## Component invariant API -/
-
-/-- Convert a canonical component invariant to the legacy proof package. -/
-theorem systemInductiveInvariantToLegacy
-    {state : State TxId}
-    (invariant : SystemInductiveInvariant state) :
-    LegacySystemInductiveInvariant state :=
-  (legacySystemInductiveInvariant_iff_system state).mpr invariant
-
-/-- Convert the checked legacy proof package to the canonical invariant. -/
-theorem legacySystemInductiveInvariantToSystem
-    {state : State TxId}
-    (invariant : LegacySystemInductiveInvariant state) :
-    SystemInductiveInvariant state :=
-  (legacySystemInductiveInvariant_iff_system state).mp invariant
-
-/-- Lift one legacy preservation theorem through the fixed-witness equivalence. -/
-theorem liftLegacyPreservation
-    {before after : State TxId}
-    (preserved :
-      LegacySystemInductiveInvariant before ->
-        LegacySystemInductiveInvariant after)
-    (invariant : SystemInductiveInvariant before) :
-    SystemInductiveInvariant after :=
-  legacySystemInductiveInvariantToSystem
-    (preserved (systemInductiveInvariantToLegacy invariant))
-
-/-- The named invariant implies the core public safety properties. -/
-theorem systemInductiveInvariantSafety
-    {state : State TxId}
-    (invariant : SystemInductiveInvariant state) :
-    ConsensusSafety state :=
-  legacySystemInductiveInvariantSafety
-    (systemInductiveInvariantToLegacy invariant)
-
-/-- The named invariant derives log matching through canonical histories. -/
-theorem systemInductiveInvariantLogMatching
-    {state : State TxId}
-    (invariant : SystemInductiveInvariant state) :
-    LogMatching state :=
-  legacySystemInductiveInvariantLogMatching
-    (systemInductiveInvariantToLegacy invariant)
-
-/-- The named invariant derives monotone log terms. -/
-theorem systemInductiveInvariantMonoLog
-    {state : State TxId}
-    (invariant : SystemInductiveInvariant state) :
-    MonoLog state :=
-  legacySystemInductiveInvariantMonoLog
-    (systemInductiveInvariantToLegacy invariant)
-
-/-- The named invariant derives state-local leader completeness. -/
-theorem systemInductiveInvariantLeaderCompleteness
-    {state : State TxId}
-    (invariant : SystemInductiveInvariant state) :
-    LeaderCompleteness state :=
-  legacySystemInductiveInvariantLeaderCompleteness
-    (systemInductiveInvariantToLegacy invariant)
-
-/-- Every positive committed frontier in the named invariant is a signature. -/
-theorem systemInductiveInvariantCommittedFrontierIsSignature
-    {state : State TxId}
-    (invariant : SystemInductiveInvariant state) :
-    CommittedFrontierIsSignature state :=
-  legacySystemInductiveInvariantCommittedFrontierIsSignature
-    (systemInductiveInvariantToLegacy invariant)
-
-/-- The deterministic initial state satisfies the named invariant. -/
-theorem initialSystemInductiveInvariant :
-    SystemInductiveInvariant (initialState : State TxId) :=
-  legacySystemInductiveInvariantToSystem
-    legacyInitialSystemInductiveInvariant
-
-/-- A client append preserves the named invariant. -/
-theorem clientRequestPreservesSystemInductiveInvariant
-    (state : State TxId)
-    (node : Node)
-    (txId : TxId)
-    (invariant : SystemInductiveInvariant state)
-    (enabled : Enabled state (.clientRequest node txId)) :
-    SystemInductiveInvariant (next state (.clientRequest node txId)) :=
-  liftLegacyPreservation
-    (fun legacy =>
-      legacyClientRequestPreservesSystemInductiveInvariant
-        state node txId legacy enabled)
-    invariant
-
-/-- A signature append preserves the named invariant. -/
-theorem signCommittableMessagesPreservesSystemInductiveInvariant
-    (state : State TxId)
-    (node : Node)
-    (invariant : SystemInductiveInvariant state)
-    (enabled : Enabled state (.signCommittableMessages node)) :
-    SystemInductiveInvariant
-      (next state (.signCommittableMessages node)) :=
-  liftLegacyPreservation
-    (fun legacy =>
-      legacySignCommittableMessagesPreservesSystemInductiveInvariant
-        state node legacy enabled)
-    invariant
-
-/-- Sending RequestVote preserves the named invariant. -/
-theorem requestVotePreservesSystemInductiveInvariant
-    (state : State TxId)
-    (source destination : Node)
-    (invariant : SystemInductiveInvariant state)
-    (enabled : Enabled state (.requestVote source destination)) :
-    SystemInductiveInvariant
-      (next state (.requestVote source destination)) :=
-  liftLegacyPreservation
-    (fun legacy =>
-      legacyRequestVotePreservesSystemInductiveInvariant
-        state source destination legacy enabled)
-    invariant
-
-/-- Sending AppendEntries preserves the named invariant. -/
-theorem appendEntriesPreservesSystemInductiveInvariant
-    (state : State TxId)
-    (source destination : Node)
-    (batchEnd : Nat)
-    (invariant : SystemInductiveInvariant state)
-    (enabled : Enabled state (.appendEntries source destination batchEnd)) :
-    SystemInductiveInvariant
-      (next state (.appendEntries source destination batchEnd)) :=
-  liftLegacyPreservation
-    (fun legacy =>
-      legacyAppendEntriesPreservesSystemInductiveInvariant
-        state source destination batchEnd legacy enabled)
-    invariant
-
-/-- Starting a new election preserves the named invariant. -/
-theorem timeoutPreservesSystemInductiveInvariant
-    (state : State TxId)
-    (node : Node)
-    (invariant : SystemInductiveInvariant state)
-    (enabled : Enabled state (.timeout node)) :
-    SystemInductiveInvariant (next state (.timeout node)) :=
-  liftLegacyPreservation
-    (fun legacy =>
-      legacyTimeoutPreservesSystemInductiveInvariant
-        state node legacy enabled)
-    invariant
-
-/-- Learning a newer term preserves the named invariant. -/
-theorem updateTermPreservesSystemInductiveInvariant
-    (state : State TxId)
-    (source destination : Node)
-    (invariant : SystemInductiveInvariant state)
-    (enabled : Enabled state (.updateTerm source destination)) :
-    SystemInductiveInvariant
-      (next state (.updateTerm source destination)) :=
-  liftLegacyPreservation
-    (fun legacy =>
-      legacyUpdateTermPreservesSystemInductiveInvariant
-        state source destination legacy enabled)
-    invariant
-
-/-- Leader promotion preserves the named invariant. -/
-theorem becomeLeaderPreservesSystemInductiveInvariant
-    (state : State TxId)
-    (node : Node)
-    (invariant : SystemInductiveInvariant state)
-    (enabled : Enabled state (.becomeLeader node)) :
-    SystemInductiveInvariant (next state (.becomeLeader node)) :=
-  liftLegacyPreservation
-    (fun legacy =>
-      legacyBecomeLeaderPreservesSystemInductiveInvariant
-        state node legacy enabled)
-    invariant
-
-/-- Commit advancement preserves the named invariant. -/
-theorem advanceCommitPreservesSystemInductiveInvariant
-    (state : State TxId)
-    (node : Node)
-    (invariant : SystemInductiveInvariant state)
-    (enabled : Enabled state (.advanceCommitIndex node)) :
-    SystemInductiveInvariant
-      (next state (.advanceCommitIndex node)) :=
-  liftLegacyPreservation
-    (fun legacy =>
-      legacyAdvanceCommitPreservesSystemInductiveInvariant
-        state node legacy enabled)
-    invariant
-
-/-- Processing one queued message preserves the named invariant. -/
-theorem receivePreservesSystemInductiveInvariant
-    (state : State TxId)
-    (source destination : Node)
-    (invariant : SystemInductiveInvariant state)
-    (enabled : Enabled state (.receive source destination)) :
-    SystemInductiveInvariant
-      (next state (.receive source destination)) :=
-  liftLegacyPreservation
-    (fun legacy =>
-      legacyReceivePreservesSystemInductiveInvariant
-        state source destination legacy enabled)
-    invariant
-
-/-- Every enabled action preserves the named component invariant. -/
 theorem systemInductiveInvariantPreserved
     (state : State TxId)
     (action : Action TxId)
@@ -21714,9 +21402,9 @@ theorem systemInductiveInvariantPreserved
         becomeLeaderPreservesSystemInductiveInvariant
           state node invariant enabled
 
-/-! ## Reachable component safety exports -/
+/-! ## Reachable safety exports -/
 
-/-- The named component invariant holds in every reachable state. -/
+/-- The arbitrary-term invariant holds in every reachable state. -/
 theorem reachableSystemInductiveInvariant
     {state : State TxId}
     (reachable : Reachable state) :
@@ -21735,7 +21423,7 @@ theorem reachableCommittedLogsPrefix
   (systemInductiveInvariantSafety
     (reachableSystemInductiveInvariant reachable)).committedLogsPrefix
 
-/-- Every positive reachable commit frontier is a signature. -/
+/-- Every positive committed frontier in a reachable state is a signature. -/
 theorem reachableCommittedFrontierIsSignature
     {state : State TxId}
     (reachable : Reachable state) :
@@ -21743,7 +21431,7 @@ theorem reachableCommittedFrontierIsSignature
   systemInductiveInvariantCommittedFrontierIsSignature
     (reachableSystemInductiveInvariant reachable)
 
-/-- Every reachable state satisfies log matching. -/
+/-- Every reachable state satisfies Raft log matching. -/
 theorem reachableLogMatching
     {state : State TxId}
     (reachable : Reachable state) :
@@ -21751,7 +21439,7 @@ theorem reachableLogMatching
   systemInductiveInvariantLogMatching
     (reachableSystemInductiveInvariant reachable)
 
-/-- Entry terms are monotone in every reachable log. -/
+/-- Entry terms are monotonic within every reachable node log. -/
 theorem reachableMonoLog
     {state : State TxId}
     (reachable : Reachable state) :
@@ -21759,7 +21447,7 @@ theorem reachableMonoLog
   systemInductiveInvariantMonoLog
     (reachableSystemInductiveInvariant reachable)
 
-/-- Every reachable state has at most one leader per term. -/
+/-- Every reachable state has at most one leader in each term. -/
 theorem reachableElectionSafety
     {state : State TxId}
     (reachable : Reachable state) :
@@ -21767,7 +21455,7 @@ theorem reachableElectionSafety
   (systemInductiveInvariantSafety
     (reachableSystemInductiveInvariant reachable)).electionSafety
 
-/-- Higher-term reachable leaders contain lower-term committed logs. -/
+/-- Every higher-term reachable leader contains lower-term committed logs. -/
 theorem reachableLeaderCompleteness
     {state : State TxId}
     (reachable : Reachable state) :

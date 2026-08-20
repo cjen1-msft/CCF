@@ -1403,8 +1403,8 @@ structure InvariantFacts
   processedAckHistory :
     Exists fun history => ProcessedAckHistoryFacts state history
 
-/-- The positional existential package used by the original preservation proof. -/
-def LegacySystemInductiveInvariant (state : State TxId) : Prop :=
+/-- Existentially package all proof-only histories. -/
+def SystemInductiveInvariant (state : State TxId) : Prop :=
   Exists fun votes =>
     Exists fun appendHistory =>
       Exists fun responseHistory =>
@@ -1705,9 +1705,9 @@ def ComponentSystemInductiveInvariant (state : State TxId) : Prop :=
   Exists fun ghost => ComponentInvariantFacts state ghost
 
 /-- The positional and named existential invariants denote the same states. -/
-theorem legacySystemInductiveInvariant_iff_component
+theorem systemInductiveInvariant_iff_component
     (state : State TxId) :
-    LegacySystemInductiveInvariant state ↔
+    SystemInductiveInvariant state ↔
       ComponentSystemInductiveInvariant state := by
   constructor
   · rintro
@@ -1781,17 +1781,6 @@ theorem legacySystemInductiveInvariant_iff_component
         grantedVoteSnapshots := facts.grantedVoteSnapshots
         processedAckHistory :=
           ⟨ghost.processedAcks, facts.processedAckHistory⟩ }
-
-/-- The canonical inductive invariant uses named ghost state and components. -/
-abbrev SystemInductiveInvariant (state : State TxId) : Prop :=
-  ComponentSystemInductiveInvariant state
-
-/-- Convert between the legacy proof package and the canonical invariant. -/
-theorem legacySystemInductiveInvariant_iff_system
-    (state : State TxId) :
-    LegacySystemInductiveInvariant state ↔
-      SystemInductiveInvariant state :=
-  legacySystemInductiveInvariant_iff_component state
 
 /-- Monotone runtime facts shared by preservation deltas. -/
 structure CommonProgress
