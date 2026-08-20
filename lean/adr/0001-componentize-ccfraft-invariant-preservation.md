@@ -133,7 +133,7 @@ structure AckElectionBridge
   votes : AckerVoteHistory ...
   elections : AckerElectionHistory ...
 
-structure CommitEvidence
+structure CommitClosure
     (state : State TxId)
     (ghost : GhostState TxId) : Prop where
   existing : CommitEvidenceFacts ...
@@ -150,14 +150,14 @@ The complete invariant names these components:
 structure InvariantFacts
     (state : State TxId)
     (ghost : GhostState TxId) : Prop where
-  local : LocalWF state
+  localWF : LocalWF state
   votes : VoteTransport state ghost
   appends : AppendTransport state ghost
   acknowledgements : ReplicationAck state ghost
   ballots : Ballot state ghost
   logs : LogProvenance state ghost
   ackElections : AckElectionBridge state ghost
-  commits : CommitEvidence state ghost
+  commits : CommitClosure state ghost
 
 def SystemInductiveInvariant (state : State TxId) : Prop :=
   Exists fun ghost => InvariantFacts state ghost
@@ -243,14 +243,14 @@ have delta := appendEntriesSendDelta ...
 
 exact
   ⟨nextGhost,
-    { local := LocalWF.preserve facts delta
+    { localWF := LocalWF.preserve facts delta
       votes := VoteTransport.frame facts delta
       appends := AppendTransport.onAppendEntriesSend facts delta
       acknowledgements := ReplicationAck.frame facts delta
       ballots := Ballot.frame facts delta
       logs := LogProvenance.frame facts delta
       ackElections := AckElectionBridge.frame facts delta
-      commits := CommitEvidence.onAppendEntriesSend facts delta }⟩
+      commits := CommitClosure.onAppendEntriesSend facts delta }⟩
 ```
 
 Each component consumes the common pre-state aggregate and the action delta.

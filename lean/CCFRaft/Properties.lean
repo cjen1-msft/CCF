@@ -1360,6 +1360,373 @@ def SystemInductiveInvariant (state : State TxId) : Prop :=
               state votes appendHistory responseHistory voteRequestHistory
                 voteCandidateHistory voteVoterHistory
 
+/--
+The legacy invariant with every existential witness fixed by one ghost value.
+This view exists only to prove that componentization preserves the predicate.
+-/
+structure LegacyInvariantFacts
+    (state : State TxId)
+    (ghost : GhostState TxId) : Prop where
+  commitIndicesBounded : CommitIndicesBounded state
+  committedFrontierIsSignature : CommittedFrontierIsSignature state
+  currentTermsPositive : CurrentTermsPositive state
+  entriesDoNotExceedCurrentTerm : EntriesDoNotExceedCurrentTerm state
+  candidatesSelfVote : CandidatesSelfVote state
+  leadersHaveElectionMajority : LeadersHaveElectionMajority state
+  leaderProgressBounded : LeaderProgressBounded state
+  voteHistory : VoteHistoryFacts state ghost.votes
+  networkHistory :
+    NetworkHistoryFacts
+      state ghost.appendHistory ghost.responseHistory
+        ghost.voteRequestHistory ghost.voteCandidateHistory
+        ghost.voteVoterHistory ghost.votes
+  ownership :
+    TermOwnershipFacts
+      state ghost.votes ghost.appendHistory ghost.canonicalHistory ghost.owners
+  electionHistory :
+    ElectionHistoryFacts
+      state ghost.votes ghost.canonicalHistory ghost.owners ghost.elections
+  grantedVoteCanonical :
+    GrantedVoteCanonicalSnapshots
+      state ghost.canonicalHistory
+        ghost.voteCandidateHistory ghost.voteVoterHistory
+  ackerCurrent :
+    AckerCurrentHistory state ghost.responseHistory ghost.elections
+  ackerVote :
+    AckerVoteHistory
+      state ghost.votes ghost.responseHistory
+        ghost.voteVoterHistory ghost.elections
+  ackerElection :
+    AckerElectionHistory state ghost.responseHistory ghost.elections
+  electionQueued :
+    ElectionQueuedHistoryFacts state ghost.appendHistory ghost.elections
+  commitEvidence :
+    CommitEvidenceFacts
+      state ghost.appendHistory ghost.nodeEvidence ghost.requestEvidence
+  prospectiveCommitEvidence :
+    ProspectiveCommitEvidenceFacts
+      state ghost.appendHistory ghost.nodeEvidence
+        ghost.requestEvidence ghost.elections
+  grantedVoteSnapshots :
+    GrantedVoteSnapshots
+      state ghost.votes ghost.voteCandidateHistory ghost.voteVoterHistory
+  processedAckHistory :
+    ProcessedAckHistoryFacts state ghost.processedAcks
+
+/-- Runtime-local bounds and role obligations. -/
+structure LocalWF (state : State TxId) : Prop where
+  commitIndicesBounded : CommitIndicesBounded state
+  committedFrontierIsSignature : CommittedFrontierIsSignature state
+  currentTermsPositive : CurrentTermsPositive state
+  entriesDoNotExceedCurrentTerm : EntriesDoNotExceedCurrentTerm state
+  candidatesSelfVote : CandidatesSelfVote state
+  leadersHaveElectionMajority : LeadersHaveElectionMajority state
+  leaderProgressBounded : LeaderProgressBounded state
+
+/-- Persistent votes and immutable RequestVote snapshots. -/
+structure VoteTransport
+    (state : State TxId)
+    (ghost : GhostState TxId) : Prop where
+  history : VoteHistoryFacts state ghost.votes
+  request :
+    forall destination request,
+      Message.requestVoteRequest request ∈ state.network destination ->
+        request.lastCommittableIndex =
+            (ghost.voteRequestHistory request).length /\
+          request.lastCommittableTerm =
+            termAt
+              (ghost.voteRequestHistory request)
+              (ghost.voteRequestHistory request).length /\
+          maxCommittableIndex (ghost.voteRequestHistory request) =
+            (ghost.voteRequestHistory request).length /\
+          TERM_ONE < request.term /\
+          request.term <= (state.nodes request.source).currentTerm /\
+          (request.term = (state.nodes request.source).currentTerm ->
+            ((state.nodes request.source).role = .candidate \/
+              (state.nodes request.source).role = .leader) ->
+              ghost.voteRequestHistory request <+:
+                (state.nodes request.source).log)
+  response :
+    forall destination response,
+      Message.requestVoteResponse response ∈ state.network destination ->
+        response.voteGranted = true ->
+          response.term <=
+              (state.nodes response.destination).currentTerm /\
+            ghost.votes response.source response.term =
+              some response.destination /\
+            maxCommittableIndex (ghost.voteCandidateHistory response) =
+              (ghost.voteCandidateHistory response).length /\
+            maxCommittableIndex (ghost.voteVoterHistory response) =
+              (ghost.voteVoterHistory response).length /\
+            voteLogUpToDate
+              { (state.nodes response.source) with
+                log := ghost.voteVoterHistory response }
+              { term := response.term
+                lastCommittableTerm :=
+                  termAt
+                    (ghost.voteCandidateHistory response)
+                    (ghost.voteCandidateHistory response).length
+                lastCommittableIndex :=
+                  (ghost.voteCandidateHistory response).length
+                source := response.destination
+                destination := response.source }
+  snapshots :
+    GrantedVoteSnapshots
+      state ghost.votes ghost.voteCandidateHistory ghost.voteVoterHistory
+
+/-- Immutable AppendEntries snapshots and queue addressing. -/
+structure AppendTransport
+    (state : State TxId)
+    (ghost : GhostState TxId) : Prop where
+  addressed :
+    forall destination message,
+      message ∈ state.network destination ->
+        message.destination = destination
+  request :
+    forall destination request,
+      Message.appendEntriesRequest request ∈ state.network destination ->
+        RequestSnapshots (ghost.appendHistory request) request /\
+          request.leaderCommit <= (ghost.appendHistory request).length /\
+          (request.entries = [] ->
+            request.leaderCommit <= request.prevLogIndex) /\
+          RequestCommitStillPresent
+            state (ghost.appendHistory request) request
+  response :
+    forall destination response,
+      Message.appendEntriesResponse response ∈ state.network destination ->
+        SuccessfulResponseSnapshot
+          state (ghost.responseHistory response) response
+  electionQueued :
+    ElectionQueuedHistoryFacts
+      state ghost.appendHistory ghost.elections
+
+/-- Processed successful-ACK evidence for each active match index. -/
+structure ReplicationAck
+    (state : State TxId)
+    (ghost : GhostState TxId) : Prop where
+  processed : ProcessedAckHistoryFacts state ghost.processedAcks
+
+/-- Frozen elections and their persistent ballot history. -/
+structure Ballot
+    (state : State TxId)
+    (ghost : GhostState TxId) : Prop where
+  elections :
+    ElectionHistoryFacts
+      state ghost.votes ghost.canonicalHistory ghost.owners ghost.elections
+
+/-- Canonical log histories and snapshots used by granted votes. -/
+structure LogProvenance
+    (state : State TxId)
+    (ghost : GhostState TxId) : Prop where
+  ownership :
+    TermOwnershipFacts
+      state ghost.votes ghost.appendHistory ghost.canonicalHistory ghost.owners
+  grantedVoteCanonical :
+    GrantedVoteCanonicalSnapshots
+      state ghost.canonicalHistory
+        ghost.voteCandidateHistory ghost.voteVoterHistory
+
+/-- Temporal facts connecting ACK support to later elections. -/
+structure AckElectionBridge
+    (state : State TxId)
+    (ghost : GhostState TxId) : Prop where
+  current :
+    AckerCurrentHistory state ghost.responseHistory ghost.elections
+  votes :
+    AckerVoteHistory
+      state ghost.votes ghost.responseHistory
+        ghost.voteVoterHistory ghost.elections
+  elections :
+    AckerElectionHistory state ghost.responseHistory ghost.elections
+
+/-- Actual and prospective evidence for every live commit. -/
+structure CommitClosure
+    (state : State TxId)
+    (ghost : GhostState TxId) : Prop where
+  evidence :
+    CommitEvidenceFacts
+      state ghost.appendHistory ghost.nodeEvidence ghost.requestEvidence
+  prospective :
+    ProspectiveCommitEvidenceFacts
+      state ghost.appendHistory ghost.nodeEvidence
+        ghost.requestEvidence ghost.elections
+
+/-- The named component view of the signature-era inductive invariant. -/
+structure ComponentInvariantFacts
+    (state : State TxId)
+    (ghost : GhostState TxId) : Prop where
+  localWF : LocalWF state
+  votes : VoteTransport state ghost
+  appends : AppendTransport state ghost
+  acknowledgements : ReplicationAck state ghost
+  ballots : Ballot state ghost
+  logs : LogProvenance state ghost
+  ackElections : AckElectionBridge state ghost
+  commits : CommitClosure state ghost
+
+/-- Repackage the fixed legacy facts into named causal components. -/
+def LegacyInvariantFacts.toComponents
+    {state : State TxId}
+    {ghost : GhostState TxId}
+    (facts : LegacyInvariantFacts state ghost) :
+    ComponentInvariantFacts state ghost :=
+  { localWF :=
+      { commitIndicesBounded := facts.commitIndicesBounded
+        committedFrontierIsSignature := facts.committedFrontierIsSignature
+        currentTermsPositive := facts.currentTermsPositive
+        entriesDoNotExceedCurrentTerm := facts.entriesDoNotExceedCurrentTerm
+        candidatesSelfVote := facts.candidatesSelfVote
+        leadersHaveElectionMajority := facts.leadersHaveElectionMajority
+        leaderProgressBounded := facts.leaderProgressBounded }
+    votes :=
+      { history := facts.voteHistory
+        request := facts.networkHistory.voteRequest
+        response := facts.networkHistory.voteResponse
+        snapshots := facts.grantedVoteSnapshots }
+    appends :=
+      { addressed := facts.networkHistory.addressed
+        request := facts.networkHistory.appendRequest
+        response := facts.networkHistory.appendResponse
+        electionQueued := facts.electionQueued }
+    acknowledgements :=
+      { processed := facts.processedAckHistory }
+    ballots :=
+      { elections := facts.electionHistory }
+    logs :=
+      { ownership := facts.ownership
+        grantedVoteCanonical := facts.grantedVoteCanonical }
+    ackElections :=
+      { current := facts.ackerCurrent
+        votes := facts.ackerVote
+        elections := facts.ackerElection }
+    commits :=
+      { evidence := facts.commitEvidence
+        prospective := facts.prospectiveCommitEvidence } }
+
+/-- Flatten named causal components back into the fixed legacy facts. -/
+def ComponentInvariantFacts.toLegacy
+    {state : State TxId}
+    {ghost : GhostState TxId}
+    (facts : ComponentInvariantFacts state ghost) :
+    LegacyInvariantFacts state ghost :=
+  { commitIndicesBounded := facts.localWF.commitIndicesBounded
+    committedFrontierIsSignature :=
+      facts.localWF.committedFrontierIsSignature
+    currentTermsPositive := facts.localWF.currentTermsPositive
+    entriesDoNotExceedCurrentTerm :=
+      facts.localWF.entriesDoNotExceedCurrentTerm
+    candidatesSelfVote := facts.localWF.candidatesSelfVote
+    leadersHaveElectionMajority := facts.localWF.leadersHaveElectionMajority
+    leaderProgressBounded := facts.localWF.leaderProgressBounded
+    voteHistory := facts.votes.history
+    networkHistory :=
+      { addressed := facts.appends.addressed
+        appendRequest := facts.appends.request
+        appendResponse := facts.appends.response
+        voteRequest := facts.votes.request
+        voteResponse := facts.votes.response }
+    ownership := facts.logs.ownership
+    electionHistory := facts.ballots.elections
+    grantedVoteCanonical := facts.logs.grantedVoteCanonical
+    ackerCurrent := facts.ackElections.current
+    ackerVote := facts.ackElections.votes
+    ackerElection := facts.ackElections.elections
+    electionQueued := facts.appends.electionQueued
+    commitEvidence := facts.commits.evidence
+    prospectiveCommitEvidence := facts.commits.prospective
+    grantedVoteSnapshots := facts.votes.snapshots
+    processedAckHistory := facts.acknowledgements.processed }
+
+/-- Componentization preserves every fact for one fixed ghost witness. -/
+theorem legacyInvariantFacts_iff_componentInvariantFacts
+    (state : State TxId)
+    (ghost : GhostState TxId) :
+    LegacyInvariantFacts state ghost ↔
+      ComponentInvariantFacts state ghost :=
+  ⟨LegacyInvariantFacts.toComponents, ComponentInvariantFacts.toLegacy⟩
+
+/-- Existential packaging of the named component invariant. -/
+def ComponentSystemInductiveInvariant (state : State TxId) : Prop :=
+  Exists fun ghost => ComponentInvariantFacts state ghost
+
+/-- The positional and named existential invariants denote the same states. -/
+theorem systemInductiveInvariant_iff_component
+    (state : State TxId) :
+    SystemInductiveInvariant state ↔
+      ComponentSystemInductiveInvariant state := by
+  constructor
+  · rintro
+      ⟨votes, appendHistory, responseHistory,
+        voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
+    rcases facts.historicalSafetyEvidence with
+      ⟨owners, canonicalHistory, elections, nodeEvidence, requestEvidence,
+        ownership, electionHistory, grantedVoteCanonical, ackerCurrent,
+        ackerVote, ackerElection, electionQueued, commitEvidence,
+        prospectiveCommitEvidence⟩
+    rcases facts.processedAckHistory with
+      ⟨processedAcks, processedAckHistory⟩
+    let ghost : GhostState TxId :=
+      { votes
+        appendHistory
+        responseHistory
+        voteRequestHistory
+        voteCandidateHistory
+        voteVoterHistory
+        owners
+        canonicalHistory
+        elections
+        nodeEvidence
+        requestEvidence
+        processedAcks }
+    refine ⟨ghost, LegacyInvariantFacts.toComponents ?_⟩
+    exact
+      { commitIndicesBounded := facts.commitIndicesBounded
+        committedFrontierIsSignature := facts.committedFrontierIsSignature
+        currentTermsPositive := facts.currentTermsPositive
+        entriesDoNotExceedCurrentTerm := facts.entriesDoNotExceedCurrentTerm
+        candidatesSelfVote := facts.candidatesSelfVote
+        leadersHaveElectionMajority := facts.leadersHaveElectionMajority
+        leaderProgressBounded := facts.leaderProgressBounded
+        voteHistory := facts.voteHistory
+        networkHistory := facts.networkHistory
+        ownership
+        electionHistory
+        grantedVoteCanonical
+        ackerCurrent
+        ackerVote
+        ackerElection
+        electionQueued
+        commitEvidence
+        prospectiveCommitEvidence
+        grantedVoteSnapshots := facts.grantedVoteSnapshots
+        processedAckHistory }
+  · rintro ⟨ghost, componentFacts⟩
+    let facts := ComponentInvariantFacts.toLegacy componentFacts
+    refine
+      ⟨ghost.votes, ghost.appendHistory, ghost.responseHistory,
+        ghost.voteRequestHistory, ghost.voteCandidateHistory,
+        ghost.voteVoterHistory, ?_⟩
+    exact
+      { commitIndicesBounded := facts.commitIndicesBounded
+        committedFrontierIsSignature := facts.committedFrontierIsSignature
+        currentTermsPositive := facts.currentTermsPositive
+        entriesDoNotExceedCurrentTerm := facts.entriesDoNotExceedCurrentTerm
+        candidatesSelfVote := facts.candidatesSelfVote
+        leadersHaveElectionMajority := facts.leadersHaveElectionMajority
+        leaderProgressBounded := facts.leaderProgressBounded
+        voteHistory := facts.voteHistory
+        networkHistory := facts.networkHistory
+        historicalSafetyEvidence :=
+          ⟨ghost.owners, ghost.canonicalHistory, ghost.elections,
+            ghost.nodeEvidence, ghost.requestEvidence,
+            facts.ownership, facts.electionHistory,
+            facts.grantedVoteCanonical, facts.ackerCurrent,
+            facts.ackerVote, facts.ackerElection, facts.electionQueued,
+            facts.commitEvidence, facts.prospectiveCommitEvidence⟩
+        grantedVoteSnapshots := facts.grantedVoteSnapshots
+        processedAckHistory :=
+          ⟨ghost.processedAcks, facts.processedAckHistory⟩ }
+
 /-- Core public safety mirrors committed-log, signature, and election safety. -/
 structure ConsensusSafety (state : State TxId) : Prop where
   committedLogsPrefix : CommittedLogsPrefix state
