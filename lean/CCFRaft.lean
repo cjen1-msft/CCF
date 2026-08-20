@@ -11,8 +11,11 @@ An executable, directly proved, five-node arbitrary-term Raft model.
 -/
 
 #print axioms CCFRaft.reachableConsensusSafety
+#print axioms CCFRaft.reachableSystemInductiveInvariant
+#print axioms CCFRaft.reachableCommittedLogsPrefix
 #print axioms CCFRaft.reachableLogMatching
 #print axioms CCFRaft.reachableMonoLog
+#print axioms CCFRaft.reachableElectionSafety
 #print axioms CCFRaft.reachableLeaderCompleteness
 #print axioms CCFRaft.reachableCommittedFrontierIsSignature
 #print axioms CCFRaft.Simulation.materializeComplete
