@@ -49,7 +49,7 @@ fi
 
 build_log="$(mktemp)"
 trap 'rm -f "$build_log"' EXIT
-lake clean
+lake clean ccf-consistency-pure-lean
 if ! nice -n 10 ionice -c 3 lake build CCFRaft ccf-raft-simulator \
     >"$build_log" 2>&1; then
   cat "$build_log" >&2
