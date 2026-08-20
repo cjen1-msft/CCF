@@ -9,7 +9,8 @@ checked_tree="$(git rev-parse HEAD^{tree})"
 lean_version="$(lean --version)"
 if ! git diff --quiet HEAD -- \
     CCFRaft.lean CCFRaft CCFRaftSimulator.lean lakefile.toml \
-    lake-manifest.json lean-toolchain check_ccfraft_signature_refactor.sh; then
+    lake-manifest.json lean-toolchain check_ccfraft_signature_refactor.sh \
+    refactor_ccfraft_proof_boundary.py; then
   echo "tracked Lean inputs differ from $checked_commit" >&2
   exit 1
 fi
@@ -46,6 +47,18 @@ if grep -R -n -E \
   echo "CCFRaft sources contain a proof placeholder" >&2
   exit 1
 fi
+
+if grep -Fq "PositionalInvariantFacts" \
+    CCFRaft/Properties.lean CCFRaft/Proofs.lean; then
+  echo "positional invariant escaped the fixed-membership proof" >&2
+  exit 1
+fi
+if ! grep -Fq "structure PositionalInvariantFacts" \
+    CCFRaft/FixedMembershipPreservation.lean; then
+  echo "fixed-membership proof does not define its positional invariant" >&2
+  exit 1
+fi
+./refactor_ccfraft_proof_boundary.py
 
 build_log="$(mktemp)"
 trap 'rm -f "$build_log"' EXIT
