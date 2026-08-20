@@ -1,0 +1,22 @@
+commit=2ab3c85f7381fb5da8bdc52ffeb3e2d71e9cc734
+tree=58ebee163fd20e0f3853d03a5ddc04cb899c39ea
+lean=Lean (version 4.28.0, x86_64-unknown-linux-gnu, commit 7e01a1bf5c70fc6167d49c345d3bf80596e9a79b, Release)
+model_sha256=8c840c5eb7228ad1562e13150d9083287448764ab48202a8788446c9dedb15d8
+reachable_exports=8
+proof_placeholders=none
+build=passed
+info: CCFRaft.lean:13:0: 'CCFRaft.reachableConsensusSafety' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: CCFRaft.lean:14:0: 'CCFRaft.reachableSystemInductiveInvariant' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: CCFRaft.lean:15:0: 'CCFRaft.reachableCommittedLogsPrefix' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: CCFRaft.lean:16:0: 'CCFRaft.reachableLogMatching' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: CCFRaft.lean:17:0: 'CCFRaft.reachableMonoLog' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: CCFRaft.lean:18:0: 'CCFRaft.reachableElectionSafety' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: CCFRaft.lean:19:0: 'CCFRaft.reachableLeaderCompleteness' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: CCFRaft.lean:20:0: 'CCFRaft.reachableCommittedFrontierIsSignature' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: CCFRaft.lean:21:0: 'CCFRaft.Simulation.materializeComplete' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: CCFRaft.lean:22:0: 'CCFRaft.Simulation.candidateChoicesComplete' depends on axioms: [propext, Classical.choice, Quot.sound]
+CCFRaft/signature-commit.trace=replayed 15 arbitrary-term Raft actions; max term=1; commit indices=[2, 0, 0, 0, 0]
+CCFRaft/arbitrary-terms.trace=replayed 68 arbitrary-term Raft actions; max term=4; commit indices=[2, 4, 6, 0, 0]
+CCFRaft/delayed-ack.trace=replayed 25 arbitrary-term Raft actions; max term=2; commit indices=[2, 0, 0, 0, 0]
+CCFRaft/follower-overcommit.trace=replayed 98 arbitrary-term Raft actions; max term=3; commit indices=[6, 0, 4, 2, 2]
+result=passed
