@@ -134,6 +134,21 @@ abbrev NodeCommitEvidence (TxId : Type) :=
 abbrev RequestCommitEvidence (TxId : Type) :=
   AppendEntriesRequest TxId -> Option (CommitEvidence TxId)
 
+/-- All proof-only histories carried by the inductive invariant. -/
+structure GhostState (TxId : Type) where
+  votes : VoteHistory
+  appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)
+  responseHistory : AppendEntriesResponse -> List (Entry TxId)
+  voteRequestHistory : RequestVoteRequest -> List (Entry TxId)
+  voteCandidateHistory : RequestVoteResponse -> List (Entry TxId)
+  voteVoterHistory : RequestVoteResponse -> List (Entry TxId)
+  owners : TermOwners
+  canonicalHistory : Nat -> List (Entry TxId)
+  elections : ElectionHistory TxId
+  nodeEvidence : NodeCommitEvidence TxId
+  requestEvidence : RequestCommitEvidence TxId
+  processedAcks : ProcessedAckHistory TxId
+
 /-- Entry terms do not decrease inside one proof-only history. -/
 def MonoHistory (history : List (Entry TxId)) : Prop :=
   forall earlier later earlierEntry laterEntry,
