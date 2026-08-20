@@ -311,13 +311,6 @@ theorem fixedMembershipSystemInductiveInvariant_iff_component
         processedAckHistory :=
           ⟨ghost.processedAcks, facts.processedAckHistory⟩ }
 
-/-- Convert between the fixed-membership proof package and the canonical invariant. -/
-theorem fixedMembershipSystemInductiveInvariant_iff_system
-    (state : State TxId) :
-    FixedMembershipSystemInductiveInvariant state ↔
-      SystemInductiveInvariant state :=
-  fixedMembershipSystemInductiveInvariant_iff_component state
-
 /-- Restricting evidence preserves its actual commit and ACK support. -/
 theorem commitEvidenceRestrictValid
     {evidence : CommitEvidence TxId}
@@ -9153,8 +9146,8 @@ theorem madeAppendRequestSupport
     simp only [makeAppendEntriesRequest]
     exact prefixRefl _
 
-/-- The exact runtime and ghost delta of one AppendEntries send. -/
-theorem appendEntriesSendDelta
+/-- The exact ghost-history delta of one AppendEntries send. -/
+theorem appendEntriesSendGhostDelta
     (state : State TxId)
     (ghost : GhostState TxId)
     (source destination : Node)
@@ -9164,14 +9157,11 @@ theorem appendEntriesSendDelta
     let nextGhost :=
       ghost.recordAppendRequest
         request (state.nodes source).log (ghost.nodeEvidence source)
-    AppendEntriesSendDelta
-      state (next state (.appendEntries source destination batchEnd))
-      ghost nextGhost request source destination batchEnd := by
+    AppendEntriesSendGhostDelta
+      state ghost nextGhost request source := by
   dsimp only
   refine
-    { requestEq := rfl
-      afterEq := rfl
-      appendHistoryAtRequest := by
+    { appendHistoryAtRequest := by
         simp [GhostState.recordAppendRequest]
       appendHistoryAtOther := by
         intro other different
@@ -9190,7 +9180,22 @@ theorem appendEntriesSendDelta
       canonicalHistoryEq := rfl
       electionsEq := rfl
       nodeEvidenceEq := rfl
-      processedAcksEq := rfl
+      processedAcksEq := rfl }
+
+/-- The exact runtime delta of one AppendEntries send. -/
+theorem appendEntriesSendDelta
+    (state : State TxId)
+    (source destination : Node)
+    (batchEnd : Nat) :
+    let request :=
+      makeAppendEntriesRequest state source destination batchEnd
+    AppendEntriesSendDelta
+      state (next state (.appendEntries source destination batchEnd))
+      request source destination batchEnd := by
+  dsimp only
+  refine
+    { requestEq := rfl
+      afterEq := rfl
       progress := ?_
       rolesEq := ?_
       termsEq := ?_
@@ -9291,21 +9296,8 @@ theorem fixedMembershipAppendEntriesPreservesSystemInductiveInvariant
   let newRequestEvidence : RequestCommitEvidence TxId :=
     Function.update
       requestEvidence request (nodeEvidence source)
-  let ghost : GhostState TxId :=
-    { votes
-      appendHistory
-      responseHistory
-      voteRequestHistory
-      voteCandidateHistory
-      voteVoterHistory
-      owners
-      canonicalHistory
-      elections
-      nodeEvidence
-      requestEvidence
-      processedAcks := ackHistory }
   have delta :=
-    appendEntriesSendDelta state ghost source destination batchEnd
+    appendEntriesSendDelta state source destination batchEnd
   have requestSupport :=
     madeAppendRequestSupport
       state source destination batchEnd

@@ -14,7 +14,8 @@ PRESERVATION = ROOT / "CCFRaft" / "FixedMembershipPreservation.lean"
 
 DELTA_START = "/-- Monotone runtime facts shared by preservation deltas. -/"
 DELTA_END = "/-- Core public safety mirrors committed-log, signature, and election safety. -/"
-SEND_START = "/-- The exact runtime and ghost delta of one AppendEntries send. -/"
+SEND_START = "/-- The exact ghost-history delta of one AppendEntries send. -/"
+REFERENCE_SEND_START = "/-- The exact runtime and ghost delta of one AppendEntries send. -/"
 SEND_END = "/-- Sending AppendEntries updates one cursor and enqueues one snapshot. -/"
 API_MARKER = "/-! ## Component invariant API -/"
 OLD_INVARIANT_START = "/--\nThe arbitrary-term invariant stores only primitive safety evidence."
@@ -106,19 +107,45 @@ def main() -> None:
         properties[old_start:component_start]
         + properties[conversion_start:component_system_start]
         + properties[existential_eq_start:system_start]
-        + properties[fixed_iff_start:delta_start]
     )
+    system_definition = """/-- The canonical invariant contains independently witnessed components. -/
+structure SystemInductiveInvariant (state : State TxId) : Prop where
+  fixedMembership : ComponentSystemInductiveInvariant state
+
+"""
     properties = (
         properties[:old_start]
         + properties[component_start:conversion_start]
         + properties[component_system_start:existential_eq_start]
-        + properties[system_start:fixed_iff_start]
+        + system_definition
         + properties[delta_start:]
     )
 
     proofs = git_file("lean/CCFRaft/Proofs.lean")
-    proofs = replace_section(proofs, SEND_START, SEND_END, send_delta)
+    proofs = replace_section(
+        proofs, REFERENCE_SEND_START, SEND_END, send_delta
+    )
     proofs = fixed_membership_names(proofs)
+    proofs = proofs.replace(
+        """  let ghost : GhostState TxId :=
+    { votes
+      appendHistory
+      responseHistory
+      voteRequestHistory
+      voteCandidateHistory
+      voteVoterHistory
+      owners
+      canonicalHistory
+      elections
+      nodeEvidence
+      requestEvidence
+      processedAcks := ackHistory }
+""",
+        "",
+    ).replace(
+        "appendEntriesSendDelta state ghost source destination batchEnd",
+        "appendEntriesSendDelta state source destination batchEnd",
+    )
 
     prefix, suffix = proofs.split(API_MARKER, maxsplit=1)
     prefix = prefix[: prefix.index(GENERIC_PRESERVATION_START)]
@@ -163,6 +190,15 @@ variable {TxId : Type}
 variable [DecidableEq TxId]
 
 """ + API_MARKER + suffix
+    public_proofs = public_proofs.replace(
+        "(fixedMembershipSystemInductiveInvariant_iff_system state).mpr invariant",
+        "(fixedMembershipSystemInductiveInvariant_iff_component state).mpr\n"
+        "    invariant.fixedMembership",
+    ).replace(
+        "(fixedMembershipSystemInductiveInvariant_iff_system state).mp invariant",
+        "⟨(fixedMembershipSystemInductiveInvariant_iff_component state).mp\n"
+        "    invariant⟩",
+    )
 
     outputs = {
         PROPERTIES: properties,
