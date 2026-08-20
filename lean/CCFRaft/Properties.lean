@@ -1809,10 +1809,33 @@ structure AppendEntriesSendDelta
     request = makeAppendEntriesRequest before source destination batchEnd
   afterEq :
     after = next before (.appendEntries source destination batchEnd)
-  newGhostEq :
-    newGhost =
-      oldGhost.recordAppendRequest
-        request (before.nodes source).log (oldGhost.nodeEvidence source)
+  appendHistoryAtRequest :
+    newGhost.appendHistory request = (before.nodes source).log
+  appendHistoryAtOther :
+    forall other,
+      Not (other = request) ->
+        newGhost.appendHistory other = oldGhost.appendHistory other
+  requestEvidenceAtRequest :
+    newGhost.requestEvidence request = oldGhost.nodeEvidence source
+  requestEvidenceAtOther :
+    forall other,
+      Not (other = request) ->
+        newGhost.requestEvidence other = oldGhost.requestEvidence other
+  votesEq : newGhost.votes = oldGhost.votes
+  responseHistoryEq :
+    newGhost.responseHistory = oldGhost.responseHistory
+  voteRequestHistoryEq :
+    newGhost.voteRequestHistory = oldGhost.voteRequestHistory
+  voteCandidateHistoryEq :
+    newGhost.voteCandidateHistory = oldGhost.voteCandidateHistory
+  voteVoterHistoryEq :
+    newGhost.voteVoterHistory = oldGhost.voteVoterHistory
+  ownersEq : newGhost.owners = oldGhost.owners
+  canonicalHistoryEq :
+    newGhost.canonicalHistory = oldGhost.canonicalHistory
+  electionsEq : newGhost.elections = oldGhost.elections
+  nodeEvidenceEq : newGhost.nodeEvidence = oldGhost.nodeEvidence
+  processedAcksEq : newGhost.processedAcks = oldGhost.processedAcks
   progress : CommonProgress before after
   rolesEq :
     forall node,

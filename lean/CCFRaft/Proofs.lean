@@ -8871,7 +8871,26 @@ theorem appendEntriesSendDelta
   refine
     { requestEq := rfl
       afterEq := rfl
-      newGhostEq := rfl
+      appendHistoryAtRequest := by
+        simp [GhostState.recordAppendRequest]
+      appendHistoryAtOther := by
+        intro other different
+        simp [GhostState.recordAppendRequest, different]
+      requestEvidenceAtRequest := by
+        simp [GhostState.recordAppendRequest]
+      requestEvidenceAtOther := by
+        intro other different
+        simp [GhostState.recordAppendRequest, different]
+      votesEq := rfl
+      responseHistoryEq := rfl
+      voteRequestHistoryEq := rfl
+      voteCandidateHistoryEq := rfl
+      voteVoterHistoryEq := rfl
+      ownersEq := rfl
+      canonicalHistoryEq := rfl
+      electionsEq := rfl
+      nodeEvidenceEq := rfl
+      processedAcksEq := rfl
       progress := ?_
       rolesEq := ?_
       termsEq := ?_
