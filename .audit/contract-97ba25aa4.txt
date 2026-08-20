@@ -1,0 +1,10 @@
+commit=97ba25aa4a0b916859baad3c087924548611a2cf
+model_sha256=8c840c5eb7228ad1562e13150d9083287448764ab48202a8788446c9dedb15d8
+reachable_exports=8
+proof_placeholders=none
+build=passed
+CCFRaft/signature-commit.trace=replayed 15 arbitrary-term Raft actions; max term=1; commit indices=[2, 0, 0, 0, 0]
+CCFRaft/arbitrary-terms.trace=replayed 68 arbitrary-term Raft actions; max term=4; commit indices=[2, 4, 6, 0, 0]
+CCFRaft/delayed-ack.trace=replayed 25 arbitrary-term Raft actions; max term=2; commit indices=[2, 0, 0, 0, 0]
+CCFRaft/follower-overcommit.trace=replayed 98 arbitrary-term Raft actions; max term=3; commit indices=[6, 0, 4, 2, 2]
+result=passed
