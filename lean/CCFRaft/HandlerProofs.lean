@@ -97,6 +97,890 @@ theorem fiveNodeMajoritiesIntersect
     omega
   omega
 
+/--
+Two strict majorities of the same configuration share a configuration member.
+This witness form is independent of the size of the fixed node universe.
+-/
+theorem configurationMajoritiesIntersect
+    {configuration : Configuration}
+    {left right : Finset Node}
+    (leftMajority : hasConfigurationMajority left configuration)
+    (rightMajority : hasConfigurationMajority right configuration) :
+    Exists fun node =>
+      node ∈ configuration.nodes /\
+        node ∈ left /\
+        node ∈ right := by
+  let leftMembers := left ∩ configuration.nodes
+  let rightMembers := right ∩ configuration.nodes
+  have leftStrict :
+      leftMembers.card * 2 > configuration.nodes.card :=
+    leftMajority
+  have rightStrict :
+      rightMembers.card * 2 > configuration.nodes.card :=
+    rightMajority
+  have common : (leftMembers ∩ rightMembers).Nonempty := by
+    by_contra noCommon
+    have intersectionEmpty :
+        leftMembers ∩ rightMembers = ∅ :=
+      Finset.not_nonempty_iff_eq_empty.mp noCommon
+    have disjoint : Disjoint leftMembers rightMembers :=
+      Finset.disjoint_iff_inter_eq_empty.mpr intersectionEmpty
+    have unionCard :
+        (leftMembers ∪ rightMembers).card =
+          leftMembers.card + rightMembers.card :=
+      Finset.card_union_of_disjoint disjoint
+    have unionSubset :
+        leftMembers ∪ rightMembers ⊆ configuration.nodes := by
+      intro node member
+      rcases Finset.mem_union.mp member with leftMember | rightMember
+      · exact (Finset.mem_inter.mp leftMember).2
+      · exact (Finset.mem_inter.mp rightMember).2
+    have unionBound :
+        (leftMembers ∪ rightMembers).card <= configuration.nodes.card :=
+      Finset.card_le_card unionSubset
+    omega
+  rcases common with ⟨node, member⟩
+  have leftMember := (Finset.mem_inter.mp member).1
+  have rightMember := (Finset.mem_inter.mp member).2
+  exact
+    ⟨node,
+      (Finset.mem_inter.mp leftMember).2,
+      (Finset.mem_inter.mp leftMember).1,
+      (Finset.mem_inter.mp rightMember).1⟩
+
+/-- Enlarging a support set preserves a strict majority in one configuration. -/
+theorem hasConfigurationMajority_mono
+    {configuration : Configuration}
+    {smaller larger : Finset Node}
+    (subset : smaller ⊆ larger)
+    (majority : hasConfigurationMajority smaller configuration) :
+    hasConfigurationMajority larger configuration := by
+  unfold hasConfigurationMajority at majority ⊢
+  have intersectionSubset :
+      smaller ∩ configuration.nodes ⊆
+        larger ∩ configuration.nodes := by
+    intro node member
+    exact
+      Finset.mem_inter.mpr
+        ⟨subset (Finset.mem_inter.mp member).1,
+          (Finset.mem_inter.mp member).2⟩
+  have cardBound := Finset.card_le_card intersectionSubset
+  omega
+
+/-- A strict configuration majority contains a member of that configuration. -/
+theorem configurationMajorityNonempty
+    {configuration : Configuration}
+    {support : Finset Node}
+    (majority : hasConfigurationMajority support configuration) :
+    Exists fun node =>
+      node ∈ configuration.nodes /\ node ∈ support := by
+  have common :=
+    configurationMajoritiesIntersect majority majority
+  rcases common with ⟨node, configurationMember, supportMember, _⟩
+  exact ⟨node, configurationMember, supportMember⟩
+
+/-! ## Log-derived configuration facts -/
+
+/-- Projecting configurations distributes over log concatenation. -/
+theorem configurationsInLogFrom_append
+    (start : Nat)
+    (left right : List (Entry TxId)) :
+    configurationsInLogFrom start (left ++ right) =
+      configurationsInLogFrom start left ++
+        configurationsInLogFrom (start + left.length) right := by
+  induction left generalizing start with
+  | nil =>
+      simp [configurationsInLogFrom]
+  | cons entry entries inductionHypothesis =>
+      cases content : entry.content with
+      | transaction txId =>
+          simp [
+            configurationsInLogFrom, content,
+            inductionHypothesis, Nat.add_assoc, Nat.add_comm
+          ]
+          congr 1
+          omega
+      | signature =>
+          simp [
+            configurationsInLogFrom, content,
+            inductionHypothesis, Nat.add_assoc, Nat.add_comm
+          ]
+          congr 1
+          omega
+      | reconfiguration nodes =>
+          simp [
+            configurationsInLogFrom, content,
+            inductionHypothesis, Nat.add_assoc, Nat.add_comm
+          ]
+          congr 1
+          omega
+
+/-- A log prefix retains every projected physical configuration. -/
+theorem configurationsInLogFrom_mono_prefix
+    (start : Nat)
+    {left right : List (Entry TxId)}
+    (isPrefix : left <+: right) :
+    configurationsInLogFrom start left <+:
+      configurationsInLogFrom start right := by
+  rcases isPrefix with ⟨suffix, rfl⟩
+  rw [configurationsInLogFrom_append]
+  exact List.prefix_append _ _
+
+/-- A log prefix retains every known implicit or physical configuration. -/
+theorem allConfigurations_mono_prefix
+    {left right : List (Entry TxId)}
+    (isPrefix : left <+: right) :
+    allConfigurations left <+: allConfigurations right := by
+  unfold allConfigurations configurationsInLog
+  rcases configurationsInLogFrom_mono_prefix 1 isPrefix with
+    ⟨suffix, agreed⟩
+  exact ⟨suffix, by simp [agreed]⟩
+
+/-- Every projected physical configuration index lies in its source interval. -/
+theorem configurationsInLogFrom_index_bounds
+    (start : Nat)
+    (log : List (Entry TxId))
+    {configuration : Configuration}
+    (member : configuration ∈ configurationsInLogFrom start log) :
+    start <= configuration.index /\
+      configuration.index < start + log.length := by
+  induction log generalizing start with
+  | nil =>
+      simp [configurationsInLogFrom] at member
+  | cons entry entries inductionHypothesis =>
+      cases content : entry.content with
+      | transaction txId =>
+          have bounds :=
+            inductionHypothesis (start := start + 1)
+              (by
+                simpa [configurationsInLogFrom, content] using member)
+          simp only [List.length_cons]
+          omega
+      | signature =>
+          have bounds :=
+            inductionHypothesis (start := start + 1)
+              (by
+                simpa [configurationsInLogFrom, content] using member)
+          simp only [List.length_cons]
+          omega
+      | reconfiguration nodes =>
+          have alternatives :
+              configuration = { index := start, nodes := nodes } \/
+                configuration ∈
+                  configurationsInLogFrom (start + 1) entries := by
+            simpa [configurationsInLogFrom, content] using member
+          rcases alternatives with head | tail
+          · subst configuration
+            simp
+          · have bounds :=
+              inductionHypothesis (start := start + 1) tail
+            simp only [List.length_cons]
+            omega
+
+/-- Physical configuration indices are strictly increasing in log order. -/
+theorem configurationsInLogFrom_pairwise_index_lt
+    (start : Nat)
+    (log : List (Entry TxId)) :
+    (configurationsInLogFrom start log).Pairwise
+      (fun left right => left.index < right.index) := by
+  induction log generalizing start with
+  | nil =>
+      simp [configurationsInLogFrom]
+  | cons entry entries inductionHypothesis =>
+      cases content : entry.content with
+      | transaction txId =>
+          simpa [configurationsInLogFrom, content] using
+            inductionHypothesis (start := start + 1)
+      | signature =>
+          simpa [configurationsInLogFrom, content] using
+            inductionHypothesis (start := start + 1)
+      | reconfiguration nodes =>
+          rw [
+            show configurationsInLogFrom start (entry :: entries) =
+                { index := start, nodes := nodes } ::
+                  configurationsInLogFrom (start + 1) entries by
+              simp [configurationsInLogFrom, content],
+            List.pairwise_cons
+          ]
+          constructor
+          · intro configuration member
+            have bounds :=
+              configurationsInLogFrom_index_bounds
+                (TxId := TxId) (start + 1) entries member
+            simp only
+            omega
+          · exact inductionHypothesis (start := start + 1)
+
+/-- Every physical configuration index is positive and within the log. -/
+theorem configurationsInLog_index_bounds
+    (log : List (Entry TxId))
+    {configuration : Configuration}
+    (member : configuration ∈ configurationsInLog log) :
+    0 < configuration.index /\
+      configuration.index <= log.length := by
+  have bounds :=
+    configurationsInLogFrom_index_bounds
+      (TxId := TxId) 1 log (by simpa [configurationsInLog] using member)
+  omega
+
+/-- A known configuration within a frontier is retained by the log take. -/
+theorem allConfigurations_mem_take_of_index_le
+    (log : List (Entry TxId))
+    (frontier : Nat)
+    {configuration : Configuration}
+    (frontierBound : frontier <= log.length)
+    (known : configuration ∈ allConfigurations log)
+    (within : configuration.index <= frontier) :
+    configuration ∈ allConfigurations (log.take frontier) := by
+  rw [allConfigurations] at known ⊢
+  rcases List.mem_cons.mp known with implicit | physical
+  · exact List.mem_cons.mpr (Or.inl implicit)
+  · right
+    have split :
+        configurationsInLog log =
+          configurationsInLog (log.take frontier) ++
+            configurationsInLogFrom
+              (1 + (log.take frontier).length)
+              (log.drop frontier) := by
+      simpa [
+        configurationsInLog,
+        List.take_append_drop
+      ] using
+        configurationsInLogFrom_append
+          (TxId := TxId) 1
+          (log.take frontier) (log.drop frontier)
+    rw [split] at physical
+    rcases List.mem_append.mp physical with retained | suffix
+    · exact retained
+    · have suffixBounds :=
+        configurationsInLogFrom_index_bounds
+          (TxId := TxId)
+          (1 + (log.take frontier).length)
+          (log.drop frontier) suffix
+      have takeLength :
+          (log.take frontier).length = frontier := by
+        simp [Nat.min_eq_left frontierBound]
+      rw [takeLength] at suffixBounds
+      omega
+
+/-- Physical configuration indices are strictly increasing. -/
+theorem configurationsInLog_pairwise_index_lt
+    (log : List (Entry TxId)) :
+    (configurationsInLog log).Pairwise
+      (fun left right => left.index < right.index) := by
+  simpa [configurationsInLog] using
+    configurationsInLogFrom_pairwise_index_lt (TxId := TxId) 1 log
+
+/-- The implicit index zero precedes every physical configuration index. -/
+theorem allConfigurations_pairwise_index_lt
+    (log : List (Entry TxId)) :
+    (allConfigurations log).Pairwise
+      (fun left right => left.index < right.index) := by
+  rw [allConfigurations, List.pairwise_cons]
+  constructor
+  · intro configuration member
+    have positive :=
+      (configurationsInLog_index_bounds
+        (TxId := TxId) log member).1
+    simpa [implicitConfiguration] using positive
+  · exact configurationsInLog_pairwise_index_lt (TxId := TxId) log
+
+/-- Physical configuration indices contain no duplicates. -/
+theorem configurationsInLog_indices_nodup
+    (log : List (Entry TxId)) :
+    ((configurationsInLog log).map fun configuration =>
+      configuration.index).Nodup := by
+  have ordered :
+      ((configurationsInLog log).map fun configuration =>
+        configuration.index).Pairwise (fun left right => left < right) :=
+    List.pairwise_map.mpr
+      (configurationsInLog_pairwise_index_lt (TxId := TxId) log)
+  exact ordered.nodup
+
+/-- Known configuration indices, including implicit index zero, are unique. -/
+theorem allConfigurations_indices_nodup
+    (log : List (Entry TxId)) :
+    ((allConfigurations log).map fun configuration =>
+      configuration.index).Nodup := by
+  have ordered :
+      ((allConfigurations log).map fun configuration =>
+        configuration.index).Pairwise (fun left right => left < right) :=
+    List.pairwise_map.mpr
+      (allConfigurations_pairwise_index_lt (TxId := TxId) log)
+  exact ordered.nodup
+
+/-- A strictly index-ordered configuration list has unique index ownership. -/
+private theorem pairwiseConfigurationIndex_unique
+    {configurations : List Configuration}
+    (ordered :
+      configurations.Pairwise
+        (fun left right => left.index < right.index))
+    {left right : Configuration}
+    (leftMember : left ∈ configurations)
+    (rightMember : right ∈ configurations)
+    (sameIndex : left.index = right.index) :
+    left = right := by
+  induction configurations generalizing left right with
+  | nil =>
+      simp at leftMember
+  | cons head tail inductionHypothesis =>
+      rw [List.pairwise_cons] at ordered
+      rcases List.mem_cons.mp leftMember with leftHead | leftTail
+      · subst left
+        rcases List.mem_cons.mp rightMember with rightHead | rightTail
+        · exact rightHead.symm
+        · have strictlyLater := ordered.1 right rightTail
+          omega
+      · rcases List.mem_cons.mp rightMember with rightHead | rightTail
+        · subst right
+          have strictlyLater := ordered.1 left leftTail
+          omega
+        · exact
+            inductionHypothesis ordered.2 leftTail rightTail sameIndex
+
+/-- A physical log index identifies at most one configuration. -/
+theorem configurationsInLog_index_unique
+    (log : List (Entry TxId))
+    {left right : Configuration}
+    (leftMember : left ∈ configurationsInLog log)
+    (rightMember : right ∈ configurationsInLog log)
+    (sameIndex : left.index = right.index) :
+    left = right :=
+  pairwiseConfigurationIndex_unique
+    (configurationsInLog_pairwise_index_lt (TxId := TxId) log)
+    leftMember rightMember sameIndex
+
+/-- Every known configuration, including the implicit one, has a unique index. -/
+theorem allConfigurations_index_unique
+    (log : List (Entry TxId))
+    {left right : Configuration}
+    (leftMember : left ∈ allConfigurations log)
+    (rightMember : right ∈ allConfigurations log)
+    (sameIndex : left.index = right.index) :
+    left = right :=
+  pairwiseConfigurationIndex_unique
+    (allConfigurations_pairwise_index_lt (TxId := TxId) log)
+    leftMember rightMember sameIndex
+
+/-- Physical configurations contain no duplicate records. -/
+theorem configurationsInLog_nodup
+    (log : List (Entry TxId)) :
+    (configurationsInLog log).Nodup := by
+  rw [List.nodup_iff_pairwise_ne]
+  exact
+    (configurationsInLog_pairwise_index_lt (TxId := TxId) log).imp
+      (by
+        intro left right ordered same
+        subst right
+        omega)
+
+/-- Known configurations contain no duplicate records. -/
+theorem allConfigurations_nodup
+    (log : List (Entry TxId)) :
+    (allConfigurations log).Nodup := by
+  rw [List.nodup_iff_pairwise_ne]
+  exact
+    (allConfigurations_pairwise_index_lt (TxId := TxId) log).imp
+      (by
+        intro left right ordered same
+        subst right
+        omega)
+
+/-- Appending a non-reconfiguration entry does not add a configuration. -/
+theorem configurationsInLogFrom_append_nonreconfiguration
+    (start : Nat)
+    (log : List (Entry TxId))
+    (entry : Entry TxId)
+    (notReconfiguration :
+      forall nodes,
+        Not (entry.content = .reconfiguration nodes)) :
+    configurationsInLogFrom start (log ++ [entry]) =
+      configurationsInLogFrom start log := by
+  induction log generalizing start with
+  | nil =>
+      cases content : entry.content with
+      | transaction txId =>
+          simp [configurationsInLogFrom, content]
+      | signature =>
+          simp [configurationsInLogFrom, content]
+      | reconfiguration nodes =>
+          exact False.elim (notReconfiguration nodes content)
+  | cons head tail inductionHypothesis =>
+      cases content : head.content with
+      | transaction txId =>
+          simpa [configurationsInLogFrom, content] using
+            inductionHypothesis (start := start + 1)
+      | signature =>
+          simpa [configurationsInLogFrom, content] using
+            inductionHypothesis (start := start + 1)
+      | reconfiguration nodes =>
+          simp [
+            configurationsInLogFrom, content,
+            inductionHypothesis (start := start + 1)
+          ]
+
+/-- Appending a non-reconfiguration entry preserves projected configurations. -/
+theorem configurationsInLog_append_nonreconfiguration
+    (log : List (Entry TxId))
+    (entry : Entry TxId)
+    (notReconfiguration :
+      forall nodes,
+        Not (entry.content = .reconfiguration nodes)) :
+    configurationsInLog (log ++ [entry]) =
+      configurationsInLog log := by
+  exact
+    configurationsInLogFrom_append_nonreconfiguration
+      (TxId := TxId) 1 log entry notReconfiguration
+
+/-- Appending a non-reconfiguration entry preserves the current authority. -/
+theorem currentConfigurationAt_append_nonreconfiguration
+    (log : List (Entry TxId))
+    (entry : Entry TxId)
+    (commitIndex : Nat)
+    (notReconfiguration :
+      forall nodes,
+        Not (entry.content = .reconfiguration nodes)) :
+    currentConfigurationAt (log ++ [entry]) commitIndex =
+      currentConfigurationAt log commitIndex := by
+  simp [
+    currentConfigurationAt,
+    configurationsInLog_append_nonreconfiguration
+      (TxId := TxId) log entry notReconfiguration
+  ]
+
+/-- Appending a non-reconfiguration entry preserves all active authorities. -/
+theorem activeConfigurations_append_nonreconfiguration
+    (state : NodeState TxId)
+    (entry : Entry TxId)
+    (notReconfiguration :
+      forall nodes,
+        Not (entry.content = .reconfiguration nodes)) :
+    activeConfigurations { state with log := state.log ++ [entry] } =
+      activeConfigurations state := by
+  simp [
+    activeConfigurations, currentConfiguration,
+    allConfigurations,
+    configurationsInLog_append_nonreconfiguration
+      (TxId := TxId) state.log entry notReconfiguration,
+    currentConfigurationAt_append_nonreconfiguration
+      (TxId := TxId) state.log entry state.commitIndex
+        notReconfiguration
+  ]
+
+/-- Select a configuration exactly when its physical index is committed. -/
+private def selectConfiguration
+    (commitIndex : Nat)
+    (current configuration : Configuration) :
+    Configuration :=
+  if configuration.index <= commitIndex then configuration else current
+
+/-- Selecting from a list returns the fallback or a member of the list. -/
+private theorem foldlSelectConfiguration_mem
+    (commitIndex : Nat)
+    (configurations : List Configuration)
+    (fallback : Configuration) :
+    configurations.foldl (selectConfiguration commitIndex) fallback =
+        fallback \/
+      configurations.foldl (selectConfiguration commitIndex) fallback ∈
+        configurations := by
+  induction configurations generalizing fallback with
+  | nil =>
+      simp
+  | cons head tail inductionHypothesis =>
+      simp only [List.foldl_cons]
+      by_cases committed : head.index <= commitIndex
+      · rw [selectConfiguration, if_pos committed]
+        rcases inductionHypothesis (fallback := head) with same | member
+        · exact Or.inr (List.mem_cons.mpr (Or.inl same))
+        · exact Or.inr (List.mem_cons_of_mem head member)
+      · rw [selectConfiguration, if_neg committed]
+        rcases inductionHypothesis (fallback := fallback) with same | member
+        · exact Or.inl same
+        · exact Or.inr (List.mem_cons_of_mem head member)
+
+/-- A bounded fallback keeps the selected configuration within the frontier. -/
+private theorem foldlSelectConfiguration_index_le
+    (commitIndex : Nat)
+    (configurations : List Configuration)
+    (fallback : Configuration)
+    (fallbackBound : fallback.index <= commitIndex) :
+    (configurations.foldl
+      (selectConfiguration commitIndex) fallback).index <= commitIndex := by
+  induction configurations generalizing fallback with
+  | nil =>
+      exact fallbackBound
+  | cons head tail inductionHypothesis =>
+      simp only [List.foldl_cons]
+      by_cases committed : head.index <= commitIndex
+      · rw [selectConfiguration, if_pos committed]
+        exact inductionHypothesis head committed
+      · rw [selectConfiguration, if_neg committed]
+        exact inductionHypothesis fallback fallbackBound
+
+/-- Selection through an ordered suffix never moves behind its fallback. -/
+private theorem foldlSelectConfiguration_index_ge
+    (commitIndex : Nat)
+    (configurations : List Configuration)
+    (fallback : Configuration)
+    (afterFallback :
+      forall configuration,
+        configuration ∈ configurations ->
+          fallback.index < configuration.index)
+    (ordered :
+      configurations.Pairwise
+        (fun left right => left.index < right.index)) :
+    fallback.index <=
+      (configurations.foldl
+        (selectConfiguration commitIndex) fallback).index := by
+  induction configurations generalizing fallback with
+  | nil =>
+      simp
+  | cons head tail inductionHypothesis =>
+      rw [List.pairwise_cons] at ordered
+      simp only [List.foldl_cons]
+      by_cases committed : head.index <= commitIndex
+      · rw [selectConfiguration, if_pos committed]
+        have fallbackBeforeHead :
+            fallback.index < head.index :=
+          afterFallback head (by simp)
+        exact
+          (Nat.le_of_lt fallbackBeforeHead).trans
+            (inductionHypothesis
+              head ordered.1 ordered.2)
+      · rw [selectConfiguration, if_neg committed]
+        exact
+          inductionHypothesis
+            fallback
+            (by
+              intro configuration member
+              exact
+                afterFallback configuration
+                  (List.mem_cons_of_mem head member))
+            ordered.2
+
+/-- Every committed member of an ordered suffix is no later than its selection. -/
+private theorem foldlSelectConfiguration_greatest
+    (commitIndex : Nat)
+    (configurations : List Configuration)
+    (fallback : Configuration)
+    (afterFallback :
+      forall configuration,
+        configuration ∈ configurations ->
+          fallback.index < configuration.index)
+    (ordered :
+      configurations.Pairwise
+        (fun left right => left.index < right.index))
+    {configuration : Configuration}
+    (member : configuration ∈ configurations)
+    (committed : configuration.index <= commitIndex) :
+    configuration.index <=
+      (configurations.foldl
+        (selectConfiguration commitIndex) fallback).index := by
+  induction configurations generalizing fallback with
+  | nil =>
+      simp at member
+  | cons head tail inductionHypothesis =>
+      rw [List.pairwise_cons] at ordered
+      rcases List.mem_cons.mp member with headEq | tailMember
+      · subst configuration
+        simp only [List.foldl_cons]
+        rw [
+          selectConfiguration,
+          if_pos committed
+        ]
+        exact
+          foldlSelectConfiguration_index_ge
+            commitIndex tail head ordered.1 ordered.2
+      · simp only [List.foldl_cons]
+        by_cases headCommitted : head.index <= commitIndex
+        · rw [selectConfiguration, if_pos headCommitted]
+          exact
+            inductionHypothesis
+              head ordered.1 ordered.2 tailMember
+        · rw [selectConfiguration, if_neg headCommitted]
+          exact
+            inductionHypothesis
+              fallback
+              (by
+                intro candidate candidateMember
+                exact
+                  afterFallback candidate
+                    (List.mem_cons_of_mem head candidateMember))
+              ordered.2 tailMember
+
+/-- If every list member is pending, selection preserves its fallback. -/
+private theorem foldlSelectConfiguration_eq_of_all_after
+    (commitIndex : Nat)
+    (configurations : List Configuration)
+    (fallback : Configuration)
+    (pending :
+      forall configuration,
+        configuration ∈ configurations ->
+          commitIndex < configuration.index) :
+    configurations.foldl (selectConfiguration commitIndex) fallback =
+      fallback := by
+  induction configurations generalizing fallback with
+  | nil =>
+      rfl
+  | cons head tail inductionHypothesis =>
+      have headPending : commitIndex < head.index :=
+        pending head (by simp)
+      have headNotCommitted : Not (head.index <= commitIndex) := by
+        omega
+      simp only [
+        List.foldl_cons,
+        selectConfiguration,
+        if_neg headNotCommitted
+      ]
+      exact
+        inductionHypothesis
+          fallback
+          (by
+            intro configuration member
+            exact
+              pending configuration
+                (List.mem_cons_of_mem head member))
+
+/--
+The current configuration is either implicit or one of the physical
+configurations projected from the log.
+-/
+theorem currentConfiguration_eq_implicit_or_mem_configurationsInLog
+    (state : NodeState TxId) :
+    currentConfiguration state = implicitConfiguration \/
+      currentConfiguration state ∈ configurationsInLog state.log := by
+  simpa [currentConfiguration, selectConfiguration] using
+    foldlSelectConfiguration_mem
+      state.commitIndex
+      (configurationsInLog state.log)
+      implicitConfiguration
+
+/-- The current configuration is always known from the local log. -/
+theorem currentConfiguration_mem_allConfigurations
+    (state : NodeState TxId) :
+    currentConfiguration state ∈ allConfigurations state.log := by
+  rcases
+      currentConfiguration_eq_implicit_or_mem_configurationsInLog state with
+    implicit | physical
+  · simp [allConfigurations, implicit]
+  · simp [allConfigurations, physical]
+
+/-- The current configuration index never exceeds the local commit frontier. -/
+theorem currentConfiguration_index_le_commitIndex
+    (state : NodeState TxId) :
+    (currentConfiguration state).index <= state.commitIndex := by
+  simpa [
+    currentConfiguration,
+    selectConfiguration,
+    implicitConfiguration
+  ] using
+    foldlSelectConfiguration_index_le
+      state.commitIndex
+      (configurationsInLog state.log)
+      implicitConfiguration
+      (by simp [implicitConfiguration])
+
+/--
+The current configuration has the greatest known configuration index at or
+before the local commit frontier.
+-/
+theorem configuration_index_le_currentConfiguration
+    (state : NodeState TxId)
+    (configuration : Configuration)
+    (known : configuration ∈ allConfigurations state.log)
+    (committed : configuration.index <= state.commitIndex) :
+    configuration.index <= (currentConfiguration state).index := by
+  rw [allConfigurations] at known
+  rcases List.mem_cons.mp known with implicit | physical
+  · subst configuration
+    simp [implicitConfiguration]
+  · have afterImplicit :
+        forall candidate,
+          candidate ∈ configurationsInLog state.log ->
+            implicitConfiguration.index < candidate.index := by
+      intro candidate member
+      have positive :=
+        (configurationsInLog_index_bounds
+          (TxId := TxId) state.log member).1
+      simpa [implicitConfiguration] using positive
+    simpa [currentConfiguration, selectConfiguration] using
+      foldlSelectConfiguration_greatest
+        state.commitIndex
+        (configurationsInLog state.log)
+        implicitConfiguration
+        afterImplicit
+        (configurationsInLog_pairwise_index_lt
+          (TxId := TxId) state.log)
+        physical
+        committed
+
+/--
+The implicit configuration is current exactly when every physical
+reconfiguration is still beyond the commit frontier.
+-/
+theorem currentConfiguration_eq_implicit_iff
+    (state : NodeState TxId) :
+    currentConfiguration state = implicitConfiguration <->
+      forall configuration,
+        configuration ∈ configurationsInLog state.log ->
+          state.commitIndex < configuration.index := by
+  constructor
+  · intro currentImplicit configuration physical
+    by_contra notPending
+    have committed : configuration.index <= state.commitIndex := by
+      omega
+    have greatest :=
+      configuration_index_le_currentConfiguration
+        state configuration
+        (by simp [allConfigurations, physical])
+        committed
+    have positive :=
+      (configurationsInLog_index_bounds
+        (TxId := TxId) state.log physical).1
+    rw [currentImplicit] at greatest
+    simp [implicitConfiguration] at greatest
+    omega
+  · intro pending
+    simpa [currentConfiguration, selectConfiguration] using
+      foldlSelectConfiguration_eq_of_all_after
+        state.commitIndex
+        (configurationsInLog state.log)
+        implicitConfiguration
+        pending
+
+/-- The current configuration is one of the active configurations. -/
+theorem currentConfiguration_mem_activeConfigurations
+    (state : NodeState TxId) :
+    currentConfiguration state ∈ activeConfigurations state := by
+  simp [
+    activeConfigurations,
+    currentConfiguration_mem_allConfigurations
+  ]
+
+/--
+Unique commit authority: an active configuration whose index is committed is
+the current configuration.
+
+This lets proofs for an already-committed index reuse ordinary
+single-configuration quorum arguments: every active authority governing that
+index is definitionally the same current configuration.
+-/
+theorem activeConfigurationAtCommittedIndex_eq_current
+    (state : NodeState TxId)
+    (configuration : Configuration)
+    (active : configuration ∈ activeConfigurations state)
+    (committed : configuration.index <= state.commitIndex) :
+    configuration = currentConfiguration state := by
+  have activeFacts :
+      configuration ∈ allConfigurations state.log /\
+        (currentConfiguration state).index <= configuration.index := by
+    simpa [activeConfigurations] using active
+  have noLater :=
+    configuration_index_le_currentConfiguration
+      state configuration activeFacts.1 committed
+  have sameIndex :
+      configuration.index = (currentConfiguration state).index :=
+    Nat.le_antisymm noLater activeFacts.2
+  exact
+    allConfigurations_index_unique
+      (TxId := TxId)
+      state.log
+      activeFacts.1
+      (currentConfiguration_mem_allConfigurations state)
+      sameIndex
+
+/-- Any two active configurations at committed indices are identical. -/
+theorem activeConfigurationsAtCommittedIndices_unique
+    (state : NodeState TxId)
+    {left right : Configuration}
+    (leftActive : left ∈ activeConfigurations state)
+    (rightActive : right ∈ activeConfigurations state)
+    (leftCommitted : left.index <= state.commitIndex)
+    (rightCommitted : right.index <= state.commitIndex) :
+    left = right := by
+  rw [
+    activeConfigurationAtCommittedIndex_eq_current
+      state left leftActive leftCommitted,
+    activeConfigurationAtCommittedIndex_eq_current
+      state right rightActive rightCommitted
+  ]
+
+/--
+At an already-committed log index, the only active configuration that can
+govern that index is the current configuration.
+-/
+theorem activeConfigurationGoverningCommittedIndex_eq_current
+    (state : NodeState TxId)
+    {configuration : Configuration}
+    {index : Nat}
+    (active : configuration ∈ activeConfigurations state)
+    (governs : configuration.index <= index)
+    (committed : index <= state.commitIndex) :
+    configuration = currentConfiguration state :=
+  activeConfigurationAtCommittedIndex_eq_current
+    state configuration active (governs.trans committed)
+
+/--
+Any decidable per-configuration obligation at an already-committed index
+reduces to the current configuration. This local form avoids introducing a
+global `State` into single-node quorum arguments.
+-/
+theorem activeConfigurations_all_at_committed_index_iff_current
+    (state : NodeState TxId)
+    (index : Nat)
+    (committed : index <= state.commitIndex)
+    (predicate : Configuration -> Prop)
+    [DecidablePred predicate] :
+    (activeConfigurations state).all
+        (fun configuration =>
+          decide (configuration.index <= index -> predicate configuration)) <->
+      ((currentConfiguration state).index <= index ->
+        predicate (currentConfiguration state)) := by
+  constructor
+  · intro allActive currentGoverns
+    rw [List.all_eq_true] at allActive
+    have currentRequired :=
+      allActive
+        (currentConfiguration state)
+        (currentConfiguration_mem_activeConfigurations state)
+    exact (of_decide_eq_true currentRequired) currentGoverns
+  · intro currentRequired
+    rw [List.all_eq_true]
+    intro configuration active
+    apply decide_eq_true
+    intro governs
+    have currentEq :=
+      activeConfigurationGoverningCommittedIndex_eq_current
+        state active governs committed
+    subst configuration
+    exact currentRequired governs
+
+/--
+For an already-committed index, `hasMajorityAt` reduces to the current
+configuration's strict-majority obligation (or no obligation before its
+configuration index).
+-/
+theorem hasMajorityAt_committed_iff_currentConfiguration
+    (state : State TxId)
+    (leader : Node)
+    (index : Nat)
+    (committed : index <= (state.nodes leader).commitIndex) :
+    hasMajorityAt state leader index <->
+      ((currentConfiguration (state.nodes leader)).index <= index ->
+        hasConfigurationMajority
+          (acknowledgingNodes state leader index)
+          (currentConfiguration (state.nodes leader))) := by
+  unfold hasMajorityAt
+  exact
+    activeConfigurations_all_at_committed_index_iff_current
+      (state.nodes leader)
+      index
+      committed
+      (fun configuration =>
+        hasConfigurationMajority
+          (acknowledgingNodes state leader index)
+          configuration)
+
 /-- A successful one-based lookup proves the index lies within the log. -/
 theorem entryAtSomeIndexBound
     {log : List (Entry TxId)}

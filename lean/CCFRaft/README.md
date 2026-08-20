@@ -1,7 +1,8 @@
 # CCF Raft Lean model
 
 This directory models the selected `ccfraft.tla` Raft core as an executable
-Lean transition system with kernel-checked safety proofs.
+Lean transition system. Kernel-checked safety proofs currently cover the
+pre-reconfiguration transition set.
 
 The signature-aware milestone is called **Slice 4** in development history.
 Canonical module names remain slice-neutral so later milestones build directly
@@ -19,25 +20,29 @@ history contains the earlier development stages.
 
 The combined model has:
 
-- five fixed nodes and one fixed configuration;
-- node 0 as the initial leader in term 1;
+- a fixed 15-node world with implicit initial configuration `{0,1,2,3,4}`;
+- node 0 as the initial leader in term 1, other initial members as followers,
+  and nodes outside the initial configuration as term-zero `.none` nodes;
 - empty initial logs;
 - opaque, externally allocated unique transaction IDs;
-- explicit ordinary transaction and signature log entries;
+- explicit ordinary transaction, signature, and reconfiguration log entries;
+- log-derived current and pending configurations;
+- global one-time join history and arbitrary nonempty configuration changes;
 - explicit ordered/no-duplicate per-destination message queues;
 - AppendEntries sends one entry when behind and an empty heartbeat when caught
   up;
-- executable `ClientRequest`, `AppendEntries`, `Receive`,
-  `SignCommittableMessages`, `AdvanceCommitIndex`, `Timeout`, `RequestVote`,
-  `UpdateTerm`, and `BecomeLeader` actions;
+- executable `ClientRequest`, `ChangeConfiguration`, `AppendEntries`,
+  `Receive`, `SignCommittableMessages`, `AdvanceCommitIndex`, `Timeout`,
+  `RequestVote`, `UpdateTerm`, and `BecomeLeader` actions;
 - split request/response handlers including reject, already-done,
   no-conflict extension, conflict truncation, ACK, and NACK behavior;
-- highest current-term signature committed after ACKs from a majority,
-  including the leader;
+- highest current-term signature committed after ACKs form a strict majority
+  in every configuration governing that index;
 - follower and candidate timeouts into successor-term candidacy with a
   self-vote;
 - RequestVote request/response snapshots of the last committable entry,
-  signature-based log-up-to-date voting, and three-of-five leader promotion;
+  signature-based log-up-to-date voting, and promotion after a strict majority
+  in every candidate-active configuration;
 - explicit newer-term observation that does not consume the selected message;
 - coexisting leaders in different terms while an isolated old leader remains
   unaware of the election;
@@ -55,7 +60,7 @@ source/destination receive channel while other actions continue.
 `Action`, `Enabled`, and `next` are the authoritative semantics. Proofs and the
 compiled simulator call these same definitions.
 
-## Proved
+## Proved for the pre-reconfiguration transition set
 
 For every arbitrary-term reachable state:
 
@@ -71,6 +76,9 @@ For every arbitrary-term reachable state:
 The arbitrary-term proof is inductive over every enabled action, including
 signature creation and replication, conflict truncation, delayed AppendEntries
 acknowledgements, delayed votes, repeated elections, and skipped terms.
+
+Extending the invariant across `ChangeConfiguration` and
+configuration-aware quorums is in progress.
 
 ### How the arbitrary-term invariant works
 
@@ -101,9 +109,9 @@ including elections which occurred before a delayed ACK completed its quorum.
 cd lean
 lake build CCFRaft.Model
 lake build CCFRaft.Simulation
-lake build CCFRaft.Proofs
 lake build ccf-raft-simulator
 .lake/build/bin/ccf-raft-simulator replay CCFRaft/signature-commit.trace
+.lake/build/bin/ccf-raft-simulator replay CCFRaft/reconfiguration-5-to-5.trace
 .lake/build/bin/ccf-raft-simulator replay CCFRaft/arbitrary-terms.trace
 .lake/build/bin/ccf-raft-simulator replay CCFRaft/delayed-ack.trace
 .lake/build/bin/ccf-raft-simulator replay CCFRaft/follower-overcommit.trace
@@ -114,8 +122,9 @@ Simulation runs for the requested number of milliseconds. It reports proposals
 and accepted actions per family. A failure writes a replayable semantic action
 trace.
 
-Replay lines support `client`, `sign`, `append`, `receive`, `commit`, `timeout`,
-`vote`, `term`, and `leader` actions.
+Replay lines support `client`, variable-length `reconfigure`, `sign`, `append`,
+`receive`, `commit`, `timeout`, `vote`, `term`, and `leader` actions.
+Reconfiguration nodes render in stable identifier order.
 
 `candidateChoicesComplete` proves every enabled action in the finite simulator
 instance appears in its finite candidate list. The reusable
@@ -130,5 +139,6 @@ index points to a signature.
 
 - unbounded node sets;
 - explicit message loss and remaining stale-message behavior;
-- reconfiguration;
+- retirement state and retirement transactions;
+- proofs for reconfiguration and joint-configuration quorums;
 - pre-vote and remaining CCF-specific reconfiguration actions.
