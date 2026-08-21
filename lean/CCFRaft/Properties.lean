@@ -63,6 +63,10 @@ structure TransitionSafety
   commitsCurrentTerm :
     NeverCommitEntryPrevTermsProp before after
 
+/-- Reusable before/after delta for actions that may update current terms. -/
+structure TermDelta (before after : State) : Prop where
+  monotonic : MonotonicTermProp before after
+
 /-- The proof-only invariant carried through reachable states. -/
 structure InductiveInvariant (state : State) : Prop where
   ghost : Nonempty GhostState

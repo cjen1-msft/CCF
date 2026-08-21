@@ -72,7 +72,7 @@ theorem initial_SignatureInv (start : Node) :
     simp [initialState, startLog, entryAt?]
   · simp [initialState, h] at positive
 
-/-- Stage-one reachable theorem: the literal initial state satisfies three public safety invariants. -/
+/-- Initial-state checkpoint for three public safety invariants. -/
 theorem initialSafetyCheckpoint (start : Node) :
     And
       (LogInv (initialState start))
@@ -97,11 +97,12 @@ theorem functionUpdate_mono
     simpa using atUpdated
   · simp [Function.update, h]
 
-theorem monotonicTerm_step
+theorem termDelta
     (state : State)
     (action : Action)
     (_enabled : Enabled state action) :
-    MonotonicTermProp state (next state action) := by
+    TermDelta state (next state action) := by
+  constructor
   intro node
   cases action with
   | timeout candidate =>
@@ -141,6 +142,13 @@ theorem monotonicTerm_step
               rw [_enabled.1.1] at hterm
               exact hterm
             | split <;> simp_all
+
+theorem monotonicTerm_step
+    (state : State)
+    (action : Action)
+    (enabled : Enabled state action) :
+    MonotonicTermProp state (next state action) :=
+  (termDelta state action enabled).monotonic
 
 theorem reachable_currentTerm_lowerBound
     (start : Node)
