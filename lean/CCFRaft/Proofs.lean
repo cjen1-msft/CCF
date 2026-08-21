@@ -317,3 +317,10 @@ theorem reachable_MonotonicMatchIndexProp
   monotonicMatchIndex_step state action enabled
 
 end CCFRaft.Proofs
+
+#print axioms CCFRaft.Proofs.initialSafetyCheckpoint
+#print axioms CCFRaft.Proofs.reachable_MonotonicTermProp
+#print axioms CCFRaft.Proofs.reachable_currentTerm_lowerBound
+#print axioms CCFRaft.Proofs.reachable_MonotonicCommitIndexProp
+#print axioms CCFRaft.Proofs.reachable_commitIndex_lowerBound
+#print axioms CCFRaft.Proofs.reachable_MonotonicMatchIndexProp

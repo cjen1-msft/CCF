@@ -139,9 +139,10 @@ def forgedAck : Message :=
   }
 
 /--
-An inductiveness-only countermodel. It is not a reachable execution:
-`forgedAck` has no send history. It shows that state predicates alone cannot
-preserve `MatchIndexBoundedByLogInv`; the proof needs causal response evidence.
+An inductiveness-only test fixture. `forgedAck` is injected without a send
+history, but this file does not prove that `forgedAckState` is unreachable.
+The checked facts show only that `MatchIndexBoundedByLogInv` needs a stronger
+response invariant; they do not establish a protocol defect.
 -/
 def forgedAckState : State :=
   let initial := initialState 0
@@ -259,4 +260,4 @@ def runFullReplay (_ : Unit) : IO Unit := do
     throw <| IO.userError "CCFRaft replay reached the wrong final state"
 
 def main : IO Unit := do
-  IO.eprintln "CCFRaft replay executable started"
+  runFullReplay ()

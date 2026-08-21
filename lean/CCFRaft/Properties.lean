@@ -13,26 +13,6 @@ namespace CCFRaft.Properties
 
 open Model
 
-/-- Causal evidence for one counted vote. -/
-structure VoteEvidence where
-  term : Nat
-  candidate : Node
-  voter : Node
-  voterCommittableLog : List Entry
-
-/-- Causal evidence for one committed prefix and the quorum that replicated it. -/
-structure CommitEvidence where
-  term : Nat
-  index : Nat
-  configuration : Configuration
-  quorum : Configuration
-  committedLog : List Entry
-
-/-- Proof-only histories used by the inductive invariant. -/
-structure GhostState where
-  votes : List VoteEvidence
-  commits : List CommitEvidence
-
 /-- Public and supporting state invariants, grouped by responsibility. -/
 structure StateSafety (state : State) : Prop where
   logSafety : LogInv state
@@ -91,8 +71,8 @@ structure MonotonicDelta
 
 /--
 Successful AppendEntries responses that can update a same-term leader are
-bounded by the responder's current log. The forged-ACK countermodel in
-`Simulation.lean` shows why the inductive proof needs this causal fact.
+bounded by the responder's current log. The forged-ACK fixture in
+`Simulation.lean` shows why the inductive proof needs this candidate fact.
 -/
 def AppendEntriesResponseBoundInv (state : State) : Prop :=
   forall dest source : Node,
@@ -106,11 +86,40 @@ def AppendEntriesResponseBoundInv (state : State) : Prop :=
                   lastLogIndex <= (state.log source).length
               | _ => True
 
+def increasingConfigurationIndices : List ConfigurationAt -> Prop
+  | [] => True
+  | [_] => True
+  | first :: second :: rest =>
+      And
+        (first.index < second.index)
+        (increasingConfigurationIndices (second :: rest))
+
+/-- Representation invariant for the ordered finite-map projection. -/
+def ConfigurationsWellFormedInv (state : State) : Prop :=
+  forall node : Node,
+    And
+      (increasingConfigurationIndices (state.configurations node))
+      (forall configuration,
+        configuration ∈ state.configurations node ->
+          And
+            (0 < configuration.index)
+            (configuration.index <= (state.log node).length))
+
+/-- Representation invariant for the per-pair `OrderedNoDup` projection. -/
+def MessagesWellFormedInv (state : State) : Prop :=
+  forall dest source : Node,
+    forall message,
+      message ∈ state.messages dest source ->
+        And
+          (message.dest = dest)
+          (message.source = source)
+
 /-- The proof-only invariant carried through reachable states. -/
 structure InductiveInvariant (state : State) : Prop where
-  ghost : Nonempty GhostState
   safety : StateSafety state
   responseBounds : AppendEntriesResponseBoundInv state
+  configurationsWellFormed : ConfigurationsWellFormedInv state
+  messagesWellFormed : MessagesWellFormedInv state
 
 /-- Exact remaining preservation statement for the full selected action set. -/
 def FullInductivenessObligation : Prop :=
@@ -118,5 +127,25 @@ def FullInductivenessObligation : Prop :=
     InductiveInvariant state ->
       Enabled state action ->
         InductiveInvariant (next state action)
+
+/-- Missing initialization proof for the full inductive bundle. -/
+def InitialInductiveInvariantObligation : Prop :=
+  forall start : Node,
+    InductiveInvariant (initialState start)
+
+/-- Missing one-step proofs for the temporal safety properties. -/
+def TransitionSafetyObligation : Prop :=
+  forall state action,
+    InductiveInvariant state ->
+      Enabled state action ->
+        TransitionSafety state action (next state action)
+
+/-- The three remaining obligations needed for the requested final theorem. -/
+def FullSafetyCompletionObligation : Prop :=
+  And
+    InitialInductiveInvariantObligation
+    (And
+      FullInductivenessObligation
+      TransitionSafetyObligation)
 
 end CCFRaft.Properties

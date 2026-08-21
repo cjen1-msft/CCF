@@ -35,7 +35,7 @@ The executable model and its proof are generated from the checked-out
 `Model.Action`, `Model.Enabled`, and `Model.next` are the only transition
 semantics used by reachability and replay.
 
-## Property correspondence
+## Required property correspondence
 
 | TLA declaration | Lean declaration | Status |
 | --- | --- | --- |
@@ -57,14 +57,15 @@ semantics used by reachability and replay.
 | `MonotonicMatchIndexProp` | `Model.MonotonicMatchIndexProp` | Proved for every enabled action |
 | `NeverCommitEntryPrevTermsProp` | `Model.NeverCommitEntryPrevTermsProp` | Defined; proof pending |
 | `MatchIndexBoundedByLogInv` | `Model.MatchIndexBoundedByLogInv` | Defined; preservation pending |
-| AppendEntries response bound | `Properties.AppendEntriesResponseBoundInv` | Added after a checked inductiveness-only forged-ACK countermodel; preservation pending |
+| AppendEntries response bound | `Properties.AppendEntriesResponseBoundInv` | Candidate strengthening identified by the forged-ACK fixture; preservation pending |
+| Configuration representation | `Properties.ConfigurationsWellFormedInv` | Defined; initialization and preservation pending |
+| Message representation | `Properties.MessagesWellFormedInv` | Defined; initialization and preservation pending |
 
-`Properties.FullInductivenessObligation` is the exact unproved preservation
-statement. `Model.forgedAck_after_not_bounded` classifies the current blocker:
-it is an inductiveness-only countermodel, not a reachable execution or a
-protocol defect. The invariant must carry causal evidence for successful
-AppendEntries responses before the remaining leader and log safety proofs can
-close.
+`Properties.FullSafetyCompletionObligation` names the exact unfinished proof:
+initialization, inductive preservation, and the remaining temporal safety
+properties. `Model.forgedAck_after_not_bounded` is a checked
+inductiveness-only test fixture. The code does not prove that its state is
+unreachable, so it is not evidence of a protocol defect.
 
 ## Semantic projections
 
@@ -84,4 +85,10 @@ close.
 | `SigTermProposeVote` and `ProposeVoteRequest` | Omitted |
 | Fairness and `[Next]_vars` stuttering | Omitted from finite reachability; identity steps preserve all listed safety predicates |
 | Partial TLA indexing outside `TypeInv` | Totalized with `Option`, zero, or the empty configuration; reachable well-formed states use the TLA-defined cases |
+
+The required 309-action disjoint `5 -> 5 -> 5` replay is defined in
+`Simulation.lean`. Run it with
+`lake env lean --run CCFRaft/Simulation.lean`. Its complete execution remains
+unverified because the function-valued state representation is too slow for
+the current runner.
 -/

@@ -8,9 +8,9 @@ import CCFRaft.ExecutableTransitionSystem
 /-!
 # Executable CCF Raft model
 
-This file ports the selected scope of `tla/consensus/ccfraft.tla`. The model
-uses 15 nodes and the `OrderedNoDup` network selected by
-`tla/consensus/MCccfraft.cfg`.
+This file ports the selected scope of `tla/consensus/ccfraft.tla`. The task
+fixes the world at 15 nodes. `tla/consensus/MCccfraft.cfg` selects the
+`OrderedNoDup` network guarantee.
 
 The projection omits pre-vote, `TypeRetired`, `AppendRetiredCommitted`,
 `CheckQuorum`, `SigTermProposeVote`, and `ProposeVoteRequest`. Pre-vote status
