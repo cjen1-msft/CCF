@@ -124,42 +124,6 @@ def update₂
     Node -> Node -> α :=
   Function.update f i (Function.update (f i) j value)
 
-def compactFunction
-    {α : Type}
-    (f : Node -> α) :
-    Node -> α :=
-  let values : Vector α 15 := Vector.ofFn f
-  fun node => values.get node
-
-def compactFunction₂
-    {α : Type}
-    (f : Node -> Node -> α) :
-    Node -> Node -> α :=
-  compactFunction fun first => compactFunction (f first)
-
-/--
-Materialize per-node functions after each action. This changes only their
-runtime representation and prevents chains of `Function.update` from making
-long executable traces progressively slower.
--/
-def compactState (state : State) : State :=
-  {
-    currentTerm := compactFunction state.currentTerm
-    leadershipState := compactFunction state.leadershipState
-    membershipState := compactFunction state.membershipState
-    votedFor := compactFunction state.votedFor
-    isNewFollower := compactFunction state.isNewFollower
-    log := compactFunction state.log
-    commitIndex := compactFunction state.commitIndex
-    votesGranted := compactFunction state.votesGranted
-    sentIndex := compactFunction₂ state.sentIndex
-    matchIndex := compactFunction₂ state.matchIndex
-    configurations := compactFunction state.configurations
-    hasJoined := compactFunction state.hasJoined
-    retirementCompleted := compactFunction state.retirementCompleted
-    messages := state.messages
-  }
-
 def entryAt? (entries : List Entry) (index : Nat) : Option Entry :=
   if index = 0 then
     none
@@ -1343,7 +1307,7 @@ def rawNext (state : State) : Action -> State
 
 /-- The sole state transformer shared by execution, replay, and proof. -/
 def next (state : State) (action : Action) : State :=
-  compactState (rawNext state action)
+  rawNext state action
 
 /-- The selected `ccfraft.tla` transition system for a chosen initial leader. -/
 def system (start : Node) : ExecutableTransitionSystem where

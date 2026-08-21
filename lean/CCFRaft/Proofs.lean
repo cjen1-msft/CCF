@@ -18,44 +18,6 @@ open Model
 open Properties
 
 @[simp]
-theorem compactFunction_apply
-    {α : Type}
-    (f : Node -> α)
-    (node : Node) :
-    compactFunction f node = f node := by
-  simp [compactFunction, Vector.ofFn, Vector.get]
-
-@[simp]
-theorem compactFunction₂_apply
-    {α : Type}
-    (f : Node -> Node -> α)
-    (first second : Node) :
-    compactFunction₂ f first second = f first second := by
-  simp [compactFunction₂]
-
-@[simp]
-theorem compactState_currentTerm
-    (state : State)
-    (node : Node) :
-    (compactState state).currentTerm node = state.currentTerm node := by
-  simp [compactState]
-
-@[simp]
-theorem compactState_commitIndex
-    (state : State)
-    (node : Node) :
-    (compactState state).commitIndex node = state.commitIndex node := by
-  simp [compactState]
-
-@[simp]
-theorem compactState_matchIndex
-    (state : State)
-    (first second : Node) :
-    (compactState state).matchIndex first second =
-      state.matchIndex first second := by
-  simp [compactState]
-
-@[simp]
 theorem initial_LogInv (start : Node) :
     LogInv (initialState start) := by
   intro i j
@@ -250,6 +212,28 @@ theorem reachable_MonotonicCommitIndexProp
     (enabled : Enabled state action) :
     MonotonicCommitIndexProp state (next state action) :=
   monotonicCommitIndex_step state action enabled
+
+theorem reachable_commitIndex_lowerBound
+    (start : Node)
+    {state : State}
+    (reachable : Reachable start state) :
+    forall node,
+      (initialState start).commitIndex node <= state.commitIndex node := by
+  apply
+    ExecutableTransitionSystem.reachableInvariant
+      (system start)
+      (Invariant := fun current =>
+        forall node,
+          (initialState start).commitIndex node <=
+            current.commitIndex node)
+  · intro node
+    exact Nat.le_refl _
+  · intro current action inductionHypothesis enabled node
+    exact
+      Nat.le_trans
+        (inductionHypothesis node)
+        (monotonicCommitIndex_step current action enabled node)
+  · exact reachable
 
 theorem matchIndexDelta
     (state : State)

@@ -1,3 +1,5 @@
+import Mathlib.Tactic
+
 import CCFRaft.Model
 
 /-!
@@ -127,6 +129,69 @@ def thirdConfigurationActions (_ : Unit) : List Action :=
     heartbeat 5 10 ++
     heartbeat 5 11 ++
     heartbeat 5 12
+
+def forgedAck : Message :=
+  {
+    term := startTerm
+    source := 1
+    dest := 0
+    body := .appendEntriesResponse true 100
+  }
+
+/--
+An inductiveness-only countermodel. It is not a reachable execution:
+`forgedAck` has no send history. It shows that state predicates alone cannot
+preserve `MatchIndexBoundedByLogInv`; the proof needs causal response evidence.
+-/
+def forgedAckState : State :=
+  let initial := initialState 0
+  {
+    initial with
+    currentTerm := Function.update initial.currentTerm 1 startTerm
+    messages := enqueue initial.messages forgedAck
+  }
+
+def receiveForgedAck : Action :=
+  .receive 0 1 .handleAppendEntriesResponseSuccess
+
+theorem forgedAck_enabled :
+    Enabled forgedAckState receiveForgedAck := by
+  decide
+
+theorem forgedAck_before_bounded :
+    MatchIndexBoundedByLogInv forgedAckState := by
+  intro leader node leaderState sameTerm
+  simp [forgedAckState, initialState] at leaderState
+  subst leader
+  fin_cases node <;>
+    simp [forgedAckState, initialState] at sameTerm ⊢
+
+theorem forgedAck_sender_term :
+    forgedAck.term <=
+      forgedAckState.currentTerm forgedAck.source := by
+  decide
+
+theorem forgedAck_after_not_bounded :
+    Not
+      (MatchIndexBoundedByLogInv
+        (next forgedAckState receiveForgedAck)) := by
+  intro bounded
+  have leader :
+      (next forgedAckState receiveForgedAck).leadershipState 0 =
+        .leader := by
+    decide
+  have sameTerm :
+      (next forgedAckState receiveForgedAck).currentTerm 0 =
+        (next forgedAckState receiveForgedAck).currentTerm 1 := by
+    decide
+  have matchIndex :
+      (next forgedAckState receiveForgedAck).matchIndex 0 1 = 100 := by
+    decide
+  have logLength :
+      ((next forgedAckState receiveForgedAck).log 1).length = 0 := by
+    decide
+  have violation := bounded 0 1 leader sameTerm
+  omega
 
 end CCFRaft.Model
 

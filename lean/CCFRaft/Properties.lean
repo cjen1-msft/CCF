@@ -89,10 +89,28 @@ structure MonotonicDelta
   commits : CommitIndexDelta before after
   matchIndices : MatchIndexDelta before action after
 
+/--
+Successful AppendEntries responses that can update a same-term leader are
+bounded by the responder's current log. The forged-ACK countermodel in
+`Simulation.lean` shows why the inductive proof needs this causal fact.
+-/
+def AppendEntriesResponseBoundInv (state : State) : Prop :=
+  forall dest source : Node,
+    forall message,
+      message ∈ state.messages dest source ->
+        state.leadershipState dest = .leader ->
+          message.term = state.currentTerm dest ->
+            state.currentTerm dest = state.currentTerm source ->
+              match message.body with
+              | .appendEntriesResponse true lastLogIndex =>
+                  lastLogIndex <= (state.log source).length
+              | _ => True
+
 /-- The proof-only invariant carried through reachable states. -/
 structure InductiveInvariant (state : State) : Prop where
   ghost : Nonempty GhostState
   safety : StateSafety state
+  responseBounds : AppendEntriesResponseBoundInv state
 
 /-- Exact remaining preservation statement for the full selected action set. -/
 def FullInductivenessObligation : Prop :=
