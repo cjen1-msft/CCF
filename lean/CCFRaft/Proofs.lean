@@ -48,6 +48,14 @@ theorem compactState_commitIndex
   simp [compactState]
 
 @[simp]
+theorem compactState_matchIndex
+    (state : State)
+    (first second : Node) :
+    (compactState state).matchIndex first second =
+      state.matchIndex first second := by
+  simp [compactState]
+
+@[simp]
 theorem initial_LogInv (start : Node) :
     LogInv (initialState start) := by
   intro i j
@@ -184,5 +192,133 @@ theorem reachable_MonotonicTermProp
     (enabled : Enabled state action) :
     MonotonicTermProp state (next state action) :=
   monotonicTerm_step state action enabled
+
+theorem commitIndexDelta
+    (state : State)
+    (action : Action)
+    (_enabled : Enabled state action) :
+    CommitIndexDelta state (next state action) := by
+  constructor
+  intro node
+  cases action with
+  | timeout candidate =>
+      simp [next, rawNext, nextTimeout]
+  | requestVote source dest =>
+      simp [next, rawNext, nextRequestVote]
+  | appendEntries source dest =>
+      simp [next, rawNext, nextAppendEntries]
+  | becomeLeader leader =>
+      simp [next, rawNext, nextBecomeLeader]
+  | clientRequest leader =>
+      simp [next, rawNext, nextClientRequest]
+  | signCommittableMessages leader =>
+      simp [next, rawNext, nextSignCommittableMessages]
+  | changeConfiguration leader configuration =>
+      simp [next, rawNext, nextChangeConfiguration]
+  | advanceCommitIndex leader =>
+      simp [Enabled, actionEnabled] at _enabled
+      by_cases h : node = leader
+      · subst node
+        simp [next, rawNext, nextAdvanceCommitIndex]
+        exact Nat.le_of_lt _enabled.2
+      · simp [next, rawNext, nextAdvanceCommitIndex, Function.update, h]
+  | receive dest source kind =>
+      cases hmessage : headMessage? state dest source with
+      | none =>
+          simp [next, rawNext, nextReceive, hmessage]
+      | some message =>
+          cases kind <;>
+            cases hbody : message.body <;>
+              simp_all [next, rawNext, nextReceive,
+                nextAppendEntriesAlreadyDone, nextAppendEntriesNoConflict,
+                conflictRollback, Function.update]
+          all_goals
+            split <;> simp_all
+
+theorem monotonicCommitIndex_step
+    (state : State)
+    (action : Action)
+    (enabled : Enabled state action) :
+    MonotonicCommitIndexProp state (next state action) :=
+  (commitIndexDelta state action enabled).monotonic
+
+theorem reachable_MonotonicCommitIndexProp
+    (start : Node)
+    {state : State}
+    (_reachable : Reachable start state)
+    {action : Action}
+    (enabled : Enabled state action) :
+    MonotonicCommitIndexProp state (next state action) :=
+  monotonicCommitIndex_step state action enabled
+
+theorem matchIndexDelta
+    (state : State)
+    (action : Action)
+    (_enabled : Enabled state action) :
+    MatchIndexDelta state action (next state action) := by
+  constructor
+  cases action with
+  | becomeLeader leader =>
+      simp [MonotonicMatchIndexProp]
+  | timeout candidate =>
+      intro i j
+      simp [next, rawNext, nextTimeout]
+  | requestVote source dest =>
+      intro i j
+      simp [next, rawNext, nextRequestVote]
+  | appendEntries source dest =>
+      intro i j
+      simp [next, rawNext, nextAppendEntries]
+  | clientRequest leader =>
+      intro i j
+      simp [next, rawNext, nextClientRequest]
+  | signCommittableMessages leader =>
+      intro i j
+      simp [next, rawNext,
+        nextSignCommittableMessages]
+  | changeConfiguration leader configuration =>
+      intro i j
+      simp [next, rawNext,
+        nextChangeConfiguration]
+  | advanceCommitIndex leader =>
+      intro i j
+      simp [next, rawNext,
+        nextAdvanceCommitIndex]
+  | receive dest source kind =>
+      intro i j
+      cases hmessage : headMessage? state dest source with
+      | none =>
+          simp [next, rawNext, nextReceive,
+            hmessage]
+      | some message =>
+          cases kind <;>
+            cases hbody : message.body <;>
+              simp_all [next, rawNext,
+                nextReceive, nextAppendEntriesAlreadyDone,
+                nextAppendEntriesNoConflict, conflictRollback, update₂,
+                Function.update]
+          all_goals
+            split <;> simp_all
+          all_goals
+            by_cases hj : j = source
+            · subst j
+              simp
+            · simp [Function.update, hj]
+
+theorem monotonicMatchIndex_step
+    (state : State)
+    (action : Action)
+    (enabled : Enabled state action) :
+    MonotonicMatchIndexProp state action (next state action) :=
+  (matchIndexDelta state action enabled).monotonic
+
+theorem reachable_MonotonicMatchIndexProp
+    (start : Node)
+    {state : State}
+    (_reachable : Reachable start state)
+    {action : Action}
+    (enabled : Enabled state action) :
+    MonotonicMatchIndexProp state action (next state action) :=
+  monotonicMatchIndex_step state action enabled
 
 end CCFRaft.Proofs

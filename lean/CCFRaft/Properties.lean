@@ -67,6 +67,18 @@ structure TransitionSafety
 structure TermDelta (before after : State) : Prop where
   monotonic : MonotonicTermProp before after
 
+/-- Reusable before/after delta for actions that may update commit indices. -/
+structure CommitIndexDelta (before after : State) : Prop where
+  monotonic : MonotonicCommitIndexProp before after
+
+/-- Reusable before/after delta for volatile match indices. -/
+structure MatchIndexDelta
+    (before : State)
+    (action : Action)
+    (after : State) :
+    Prop where
+  monotonic : MonotonicMatchIndexProp before action after
+
 /-- The proof-only invariant carried through reachable states. -/
 structure InductiveInvariant (state : State) : Prop where
   ghost : Nonempty GhostState
