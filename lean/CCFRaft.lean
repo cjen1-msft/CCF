@@ -1,9 +1,12 @@
 import CCFRaft.ExecutableTransitionSystem
+import CCFRaft.Model
+import CCFRaft.Properties
+import CCFRaft.Proofs
+import CCFRaft.Simulation
 
 /-!
 # CCFRaft counterfactual port
 
-This entry point initially contains only the shared executable transition
-system infrastructure. The model and proof are generated from the checked-out
-`ccfraft.tla`.
+The executable model and its proof are generated from the checked-out
+`tla/consensus/ccfraft.tla`.
 -/
