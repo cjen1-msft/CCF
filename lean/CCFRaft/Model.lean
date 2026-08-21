@@ -401,6 +401,25 @@ def configurationsInEntries
     List ConfigurationAt :=
   configurationsInEntriesAux firstIndex entries
 
+def upsertConfiguration
+    (configurations : List ConfigurationAt)
+    (update : ConfigurationAt) :
+    List ConfigurationAt :=
+  match configurations with
+  | [] => [update]
+  | configuration :: rest =>
+      if update.index < configuration.index then
+        update :: configuration :: rest
+      else if update.index = configuration.index then
+        update :: rest
+      else
+        configuration :: upsertConfiguration rest update
+
+def overrideConfigurations
+    (configurations updates : List ConfigurationAt) :
+    List ConfigurationAt :=
+  updates.foldl upsertConfiguration configurations
+
 def enqueue
     (messages : Node -> Node -> List Message)
     (message : Message) :
@@ -506,10 +525,10 @@ inductive Action where
 
 def candidateEligible (state : State) (node : Node) : Bool :=
   (state.membershipState node != .retiredCommitted) &&
-    ((state.configurations node).any fun configuration =>
+    (((state.configurations node).any fun configuration =>
       decide (node ∈ configuration.nodes) &&
         decide
-          (configuration.index <= maxCommittableIndex (state.log node)) ||
+          (configuration.index <= maxCommittableIndex (state.log node))) ||
       decide (node ∈ state.retirementCompleted node))
 
 def requestVoteMessage
@@ -1142,8 +1161,9 @@ def nextAppendEntriesNoConflict
         (min leaderCommitIndex requestEndIndex))
       (state.commitIndex dest)
   let extendedConfigurations :=
-    state.configurations dest ++
-      configurationsInEntries (previousIndex + 1) entries
+    overrideConfigurations
+      (state.configurations dest)
+      (configurationsInEntries (previousIndex + 1) entries)
   let nextConfigurationIndex :=
     lastConfigurationToIndex extendedConfigurations nextCommitIndex
   let nextLeadershipState :=
