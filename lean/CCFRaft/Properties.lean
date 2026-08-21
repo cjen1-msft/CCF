@@ -79,6 +79,16 @@ structure MatchIndexDelta
     Prop where
   monotonic : MonotonicMatchIndexProp before action after
 
+/-- Shared monotonic before/after facts produced once for each action. -/
+structure MonotonicDelta
+    (before : State)
+    (action : Action)
+    (after : State) :
+    Prop where
+  terms : TermDelta before after
+  commits : CommitIndexDelta before after
+  matchIndices : MatchIndexDelta before action after
+
 /-- The proof-only invariant carried through reachable states. -/
 structure InductiveInvariant (state : State) : Prop where
   ghost : Nonempty GhostState

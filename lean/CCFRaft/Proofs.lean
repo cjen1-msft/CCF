@@ -312,6 +312,17 @@ theorem monotonicMatchIndex_step
     MonotonicMatchIndexProp state action (next state action) :=
   (matchIndexDelta state action enabled).monotonic
 
+theorem monotonicDelta
+    (state : State)
+    (action : Action)
+    (enabled : Enabled state action) :
+    MonotonicDelta state action (next state action) :=
+  {
+    terms := termDelta state action enabled
+    commits := commitIndexDelta state action enabled
+    matchIndices := matchIndexDelta state action enabled
+  }
+
 theorem reachable_MonotonicMatchIndexProp
     (start : Node)
     {state : State}
