@@ -1072,38 +1072,6 @@ theorem initialSafetyCheckpoint (start : Node) :
       initial_SignatureInv start⟩
 
 @[simp]
-theorem updateNode_same
-    {α : Type}
-    (values : NodeMap α)
-    (node : Node)
-    (value : α) :
-    updateNode values node value node = value := by
-  simp [updateNode]
-
-@[simp]
-theorem updateNode_ne
-    {α : Type}
-    (values : NodeMap α)
-    (updated selected : Node)
-    (value : α)
-    (different : Not (selected = updated)) :
-    updateNode values updated value selected = values selected := by
-  simp [updateNode, different]
-
-theorem functionUpdate_mono
-    (values : NodeMap Nat)
-    (updated : Node)
-    (value : Nat)
-    (atUpdated : values updated <= value) :
-    forall node,
-      values node <= updateNode values updated value node := by
-  intro node
-  by_cases h : node = updated
-  · subst node
-    simpa using atUpdated
-  · simp [h]
-
-@[simp]
 theorem enqueue_preserves_MessageChannelsWellFormed
     (messages : NodeMatrix (List Message))
     (message : Message)
@@ -1245,12 +1213,10 @@ theorem termDelta
                 nextAppendEntriesAlreadyDone, nextAppendEntriesNoConflict,
                 conflictRollback]
           all_goals
-            first
-            | apply functionUpdate_mono
-              have hterm := Nat.le_of_lt _enabled.2
-              rw [_enabled.1.1] at hterm
-              exact hterm
-            | split <;> simp_all
+            split <;> simp_all
+          all_goals
+            rw [← _enabled.1.1]
+            exact Nat.le_of_lt _enabled.2
 
 theorem monotonicTerm_step
     (state : State)
@@ -1334,12 +1300,7 @@ theorem commitIndexDelta
                 nextAppendEntriesAlreadyDone, nextAppendEntriesNoConflict,
                 conflictRollback]
           all_goals
-            first
-            | split <;> simp_all
-            | by_cases hnode : node = message.dest
-              · subst node
-                simp
-              · simp [hnode]
+            split <;> simp_all
 
 theorem monotonicCommitIndex_step
     (state : State)
@@ -1425,15 +1386,12 @@ theorem matchIndexDelta
                 nextReceive, nextAppendEntriesAlreadyDone,
                 nextAppendEntriesNoConflict, conflictRollback, update₂]
           all_goals
-            first
-            | split <;> simp_all
-            | by_cases hi : i = dest
-              · subst i
-                by_cases hj : j = source
-                · subst j
-                  simp
-                · simp [hj]
-              · simp [hi]
+            split <;> simp_all
+          all_goals
+            by_cases hj : j = source
+            · subst j
+              simp
+            · simp [hj]
 
 theorem monotonicMatchIndex_step
     (state : State)

@@ -193,6 +193,19 @@ def updateNode
     NodeMap α :=
   f.set node value
 
+@[simp]
+theorem updateNode_apply
+    {α : Type}
+    (values : NodeMap α)
+    (updated selected : Node)
+    (value : α) :
+    updateNode values updated value selected =
+      if selected = updated then value else values selected := by
+  by_cases sameNode : selected = updated
+  · subst selected
+    simp [updateNode]
+  · simp [updateNode, sameNode]
+
 def update₂
     {α : Type}
     (f : NodeMatrix α)
