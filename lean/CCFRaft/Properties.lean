@@ -86,24 +86,30 @@ def AppendEntriesResponseBoundInv (state : State) : Prop :=
                   lastLogIndex <= (state.log source).length
               | _ => True
 
-def increasingConfigurationIndices : List ConfigurationAt -> Prop
-  | [] => True
-  | [_] => True
-  | first :: second :: rest =>
+def increasingConfigurationIndices
+    (configurations : List ConfigurationAt) :
+    Prop :=
+  configurations.Pairwise fun first second =>
+    first.index < second.index
+
+def configurationsBoundedBy
+    (configurations : List ConfigurationAt)
+    (logLength : Nat) :
+    Prop :=
+  forall configuration,
+    configuration ∈ configurations ->
       And
-        (first.index < second.index)
-        (increasingConfigurationIndices (second :: rest))
+        (0 < configuration.index)
+        (configuration.index <= logLength)
 
 /-- Representation invariant for the ordered finite-map projection. -/
 def ConfigurationsWellFormedInv (state : State) : Prop :=
   forall node : Node,
     And
       (increasingConfigurationIndices (state.configurations node))
-      (forall configuration,
-        configuration ∈ state.configurations node ->
-          And
-            (0 < configuration.index)
-            (configuration.index <= (state.log node).length))
+      (configurationsBoundedBy
+        (state.configurations node)
+        (state.log node).length)
 
 /-- Well-formedness of the per-pair `OrderedNoDup` queue representation. -/
 def MessageChannelsWellFormed

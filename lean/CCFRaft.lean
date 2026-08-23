@@ -41,29 +41,30 @@ semantics used by reachability and replay.
 | --- | --- | --- |
 | `LogInv` | `Model.LogInv` | Defined; initial state proved |
 | `MoreThanOneLeaderInv` | `Model.MoreThanOneLeaderInv` | Defined; initial state proved |
-| `LogMatchingInv` | `Model.LogMatchingInv` | Defined; preservation pending |
-| `LeaderCompletenessInv` | `Model.LeaderCompletenessInv` | Defined; preservation pending |
+| `LogMatchingInv` | `Model.LogMatchingInv` | Initial state proved; preservation pending |
+| `LeaderCompletenessInv` | `Model.LeaderCompletenessInv` | Initial state proved; preservation pending |
 | `SignatureInv` | `Model.SignatureInv` | Defined; initial state proved |
-| `MonoTermInv` | `Model.MonoTermInv` | Defined; preservation pending |
-| `MonoLogInv` | `Model.MonoLogInv` | Defined; preservation pending |
-| `LogConfigurationConsistentInv` | `Model.LogConfigurationConsistentInv` | Defined; preservation pending |
+| `MonoTermInv` | `Model.MonoTermInv` | Initial state proved; preservation pending |
+| `MonoLogInv` | `Model.MonoLogInv` | Initial state proved; preservation pending |
+| `LogConfigurationConsistentInv` | `Model.LogConfigurationConsistentInv` | Initial state proved; preservation pending |
 | `CommittedLogAppendOnlyProp` | `Model.CommittedLogAppendOnlyProp` | Defined; proof pending |
-| `CandidateTermNotInLogInv` | `Model.CandidateTermNotInLogInv` | Defined; preservation pending |
-| `ElectionSafetyInv` | `Model.ElectionSafetyInv` | Defined; preservation pending |
-| `QuorumLogInv` | `Model.QuorumLogInv` | Defined; preservation pending |
-| `ReplicationInv` | `Model.ReplicationInv` | Defined; preservation pending |
+| `CandidateTermNotInLogInv` | `Model.CandidateTermNotInLogInv` | Initial state proved; preservation pending |
+| `ElectionSafetyInv` | `Model.ElectionSafetyInv` | Initial state proved; preservation pending |
+| `QuorumLogInv` | `Model.QuorumLogInv` | Initial state proved; preservation pending |
+| `ReplicationInv` | `Model.ReplicationInv` | Initial state proved; preservation pending |
 | `MonotonicCommitIndexProp` | `Model.MonotonicCommitIndexProp` | Proved for every enabled action |
 | `MonotonicTermProp` | `Model.MonotonicTermProp` | Proved for every enabled action and lifted to reachable states |
 | `MonotonicMatchIndexProp` | `Model.MonotonicMatchIndexProp` | Proved for every enabled action |
 | `NeverCommitEntryPrevTermsProp` | `Model.NeverCommitEntryPrevTermsProp` | Defined; proof pending |
-| `MatchIndexBoundedByLogInv` | `Model.MatchIndexBoundedByLogInv` | Defined; preservation pending |
-| AppendEntries response bound | `Properties.AppendEntriesResponseBoundInv` | Candidate strengthening identified by the forged-ACK fixture; preservation pending |
-| Configuration representation | `Properties.ConfigurationsWellFormedInv` | Defined; initialization and preservation pending |
+| `MatchIndexBoundedByLogInv` | `Model.MatchIndexBoundedByLogInv` | Initial state proved; preservation pending |
+| AppendEntries response bound | `Properties.AppendEntriesResponseBoundInv` | Initial state proved; preservation pending |
+| Configuration representation | `Properties.ConfigurationsWellFormedInv` | Initial state proved; preservation pending |
 | Message representation | `Properties.MessagesWellFormedInv` | Initialization and all-action preservation proved |
 
-`Properties.FullSafetyCompletionObligation` names the exact unfinished proof:
-initialization, inductive preservation, and the remaining temporal safety
-properties. `Model.forgedAck_after_not_bounded` is a checked
+`Properties.InitialInductiveInvariantObligation` is proved.
+`Properties.FullSafetyCompletionObligation` is now blocked on inductive
+preservation and the remaining temporal safety properties.
+`Model.forgedAck_after_not_bounded` is a checked
 inductiveness-only test fixture. The code does not prove that its state is
 unreachable, so it is not evidence of a protocol defect.
 

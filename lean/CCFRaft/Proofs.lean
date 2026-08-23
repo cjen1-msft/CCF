@@ -50,13 +50,240 @@ theorem initial_ConfigurationsWellFormedInv (start : Node) :
   intro node
   by_cases h : node = start
   · subst node
-    simp [increasingConfigurationIndices, initialState, startLog]
-  · simp [increasingConfigurationIndices, initialState, startLog, h]
+    simp [increasingConfigurationIndices, configurationsBoundedBy,
+      initialState, startLog]
+  · simp [increasingConfigurationIndices, configurationsBoundedBy,
+      initialState, startLog, h]
 
 theorem initial_MessagesWellFormedInv (start : Node) :
     MessagesWellFormedInv (initialState start) := by
   intro dest source message messageQueued
   simp [initialState] at messageQueued
+
+theorem initial_CandidateTermNotInLogInv (start : Node) :
+    CandidateTermNotInLogInv (initialState start) := by
+  intro candidate candidateState
+  by_cases candidateIsStart : candidate = start <;>
+    simp [initialState, candidateIsStart] at candidateState
+
+theorem initial_ElectionSafetyInv (start : Node) :
+    ElectionSafetyInv (initialState start) := by
+  intro leader leaderState node different
+  simp [initialState] at leaderState
+  subst leader
+  by_cases nodeIsStart : node = start
+  · subst node
+    simp at different
+  · simp [initialState, nodeIsStart, electionTermFold, startLog]
+
+theorem initial_LogMatchingInv (start : Node) :
+    LogMatchingInv (initialState start) := by
+  intro first second different index positive bounded _
+  by_cases firstIsStart : first = start <;>
+    by_cases secondIsStart : second = start
+  · subst first
+    subst second
+    simp at different
+  · simp [initialState, firstIsStart, secondIsStart] at bounded
+    omega
+  · simp [initialState, firstIsStart, secondIsStart] at bounded
+    omega
+  · simp [initialState, firstIsStart, secondIsStart] at bounded
+    omega
+
+theorem initial_QuorumLogInv (start : Node) :
+    QuorumLogInv (initialState start) := by
+  intro node configurationsNonempty quorum quorumIsMajority
+  by_cases nodeIsStart : node = start
+  · subst node
+    simp [initialState, currentConfiguration, isQuorum] at quorumIsMajority
+    rcases quorumIsMajority.1 with
+      quorumEmpty | quorumSingleton
+    · subst quorum
+      simp at quorumIsMajority
+    · subst quorum
+      refine ⟨start, by simp, ?_⟩
+      simp [committed, initialState, isLogPrefix, logPrefix, startLog]
+  · have emptyConfigurations :
+        (initialState start).configurations node = [] := by
+      simp [initialState, nodeIsStart]
+    rw [emptyConfigurations] at configurationsNonempty
+    change false = true at configurationsNonempty
+    exact False.elim (Bool.noConfusion configurationsNonempty)
+
+theorem initial_LeaderCompletenessInv (start : Node) :
+    LeaderCompletenessInv (initialState start) := by
+  intro leader leaderState node different lowerTerm
+  simp [initialState] at leaderState
+  subst leader
+  by_cases nodeIsStart : node = start
+  · subst node
+    simp at different
+  · simp [committed, initialState, nodeIsStart, isLogPrefix, logPrefix]
+
+theorem initial_MonoTermInv (start : Node) :
+    MonoTermInv (initialState start) := by
+  intro dest source message messageQueued
+  simp [initialState] at messageQueued
+
+theorem initial_MonoLogInv (start : Node) :
+    MonoLogInv (initialState start) := by
+  intro node nonempty
+  by_cases nodeIsStart : node = start
+  · subst node
+    simp [initialState, startLog, monoLogEntries]
+  · have emptyLog : (initialState start).log node = [] := by
+      simp [initialState, nodeIsStart]
+    rw [emptyLog] at nonempty
+    change false = true at nonempty
+    exact False.elim (Bool.noConfusion nonempty)
+
+theorem initial_LogConfigurationConsistentInv (start : Node) :
+    LogConfigurationConsistentInv (initialState start) := by
+  intro node
+  by_cases nodeIsStart : node = start
+  · subst node
+    simp [initialState, startLog, configurationsMatchLog,
+      noCommittedReconfigurationAfterCurrent,
+      uncommittedReconfigurationsAreActive, logReconfigurationAt?,
+      configurationAt?, entryAt?]
+    constructor
+    · intro index afterCurrent committed
+      have indexIsSignature : index = 2 := by
+        omega
+      subst index
+      simp
+    · intro index afterCommit inLog configuration
+      exact False.elim ((Nat.not_lt_of_ge inLog) afterCommit)
+  · simp [initialState, nodeIsStart]
+
+theorem initial_ReplicationInv (start : Node) :
+    ReplicationInv (initialState start) := by
+  refine ⟨start, ?_, {start}, ?_, {start}, ?_⟩
+  · intro other
+    by_cases otherIsStart : other = start <;>
+      simp [initialState, otherIsStart]
+  · simp [lastCommittedConfiguration?, committed, initialState, startLog,
+      indices, logReconfigurationAt?, entryAt?, logPrefix, List.range,
+      List.range.loop]
+  · simp [isQuorum, committed, initialState, startLog, isLogPrefix,
+      logPrefix]
+
+theorem initial_MatchIndexBoundedByLogInv (start : Node) :
+    MatchIndexBoundedByLogInv (initialState start) := by
+  intro leader node leaderState sameTerm
+  simp [initialState] at leaderState
+  subst leader
+  simp [initialState]
+
+theorem initial_StateSafety (start : Node) :
+    StateSafety (initialState start) :=
+  {
+    logSafety := initial_LogInv start
+    oneLeaderPerTerm := initial_MoreThanOneLeaderInv start
+    candidateFreshTerm := initial_CandidateTermNotInLogInv start
+    electionSafety := initial_ElectionSafetyInv start
+    logMatching := initial_LogMatchingInv start
+    quorumLog := initial_QuorumLogInv start
+    leaderCompleteness := initial_LeaderCompletenessInv start
+    signatures := initial_SignatureInv start
+    messageTerms := initial_MonoTermInv start
+    monotonicLogs := initial_MonoLogInv start
+    configurations := initial_LogConfigurationConsistentInv start
+    replication := initial_ReplicationInv start
+    boundedMatchIndex := initial_MatchIndexBoundedByLogInv start
+  }
+
+theorem initial_InductiveInvariant (start : Node) :
+    InductiveInvariant (initialState start) :=
+  {
+    safety := initial_StateSafety start
+    responseBounds := initial_AppendEntriesResponseBoundInv start
+    configurationsWellFormed := initial_ConfigurationsWellFormedInv start
+    messagesWellFormed := initial_MessagesWellFormedInv start
+  }
+
+theorem initialInductiveInvariantObligation :
+    InitialInductiveInvariantObligation :=
+  initial_InductiveInvariant
+
+theorem increasing_configurationsToIndex
+    (configurations : List ConfigurationAt)
+    (index : Nat)
+    (increasing : increasingConfigurationIndices configurations) :
+    increasingConfigurationIndices
+      (configurationsToIndex configurations index) := by
+  exact List.Pairwise.filter _ increasing
+
+theorem increasing_configurationsFromIndex
+    (configurations : List ConfigurationAt)
+    (index : Nat)
+    (increasing : increasingConfigurationIndices configurations) :
+    increasingConfigurationIndices
+      (configurationsFromIndex configurations index) := by
+  exact List.Pairwise.filter _ increasing
+
+theorem bounded_configurationsToIndex
+    (configurations : List ConfigurationAt)
+    (oldLogLength index : Nat)
+    (bounded :
+      configurationsBoundedBy configurations oldLogLength) :
+    configurationsBoundedBy
+      (configurationsToIndex configurations index)
+      index := by
+  intro configuration member
+  simp [configurationsToIndex] at member
+  exact ⟨(bounded configuration member.1).1, member.2⟩
+
+theorem bounded_configurationsFromIndex
+    (configurations : List ConfigurationAt)
+    (logLength index : Nat)
+    (bounded :
+      configurationsBoundedBy configurations logLength) :
+    configurationsBoundedBy
+      (configurationsFromIndex configurations index)
+      logLength := by
+  intro configuration member
+  simp [configurationsFromIndex] at member
+  exact bounded configuration member.1
+
+theorem increasing_append_configuration
+    (configurations : List ConfigurationAt)
+    (configuration : ConfigurationAt)
+    (increasing : increasingConfigurationIndices configurations)
+    (afterAll :
+      forall existing,
+        existing ∈ configurations ->
+          existing.index < configuration.index) :
+    increasingConfigurationIndices
+      (configurations ++ [configuration]) := by
+  rw [increasingConfigurationIndices, List.pairwise_append]
+  exact
+    ⟨increasing, by simp, fun existing member _ newMember => by
+      simp at newMember
+      subst newMember
+      exact afterAll existing member⟩
+
+theorem bounded_append_configuration
+    (configurations : List ConfigurationAt)
+    (configuration : ConfigurationAt)
+    (oldLogLength newLogLength : Nat)
+    (bounded :
+      configurationsBoundedBy configurations oldLogLength)
+    (oldWithinNew : oldLogLength <= newLogLength)
+    (configurationPositive : 0 < configuration.index)
+    (configurationWithin : configuration.index <= newLogLength) :
+    configurationsBoundedBy
+      (configurations ++ [configuration])
+      newLogLength := by
+  intro existing member
+  simp at member
+  rcases member with oldMember | isNew
+  · exact
+      ⟨(bounded existing oldMember).1,
+        Nat.le_trans (bounded existing oldMember).2 oldWithinNew⟩
+  · subst existing
+    exact ⟨configurationPositive, configurationWithin⟩
 
 /-- Initial-state checkpoint for three public safety invariants. -/
 theorem initialSafetyCheckpoint (start : Node) :
@@ -464,6 +691,7 @@ theorem reachable_MonotonicMatchIndexProp
 end CCFRaft.Proofs
 
 #print axioms CCFRaft.Proofs.initialSafetyCheckpoint
+#print axioms CCFRaft.Proofs.initialInductiveInvariantObligation
 #print axioms CCFRaft.Proofs.reachable_MonotonicTermProp
 #print axioms CCFRaft.Proofs.reachable_currentTerm_lowerBound
 #print axioms CCFRaft.Proofs.reachable_MonotonicCommitIndexProp
