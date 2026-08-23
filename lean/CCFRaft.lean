@@ -58,7 +58,7 @@ semantics used by reachability and replay.
 | `NeverCommitEntryPrevTermsProp` | `Model.NeverCommitEntryPrevTermsProp` | Defined; proof pending |
 | `MatchIndexBoundedByLogInv` | `Model.MatchIndexBoundedByLogInv` | Initial state proved; preservation pending |
 | AppendEntries response bound | `Properties.AppendEntriesResponseBoundInv` | Initial state proved; preservation pending |
-| Configuration representation | `Properties.ConfigurationsWellFormedInv` | Initial state proved; preservation pending |
+| Configuration representation | `Properties.ConfigurationsWellFormedInv` | Initialization and all-action preservation proved |
 | Message representation | `Properties.MessagesWellFormedInv` | Initialization and all-action preservation proved |
 
 `Properties.InitialInductiveInvariantObligation` is proved.

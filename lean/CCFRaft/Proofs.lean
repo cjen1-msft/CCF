@@ -285,6 +285,780 @@ theorem bounded_append_configuration
   · subst existing
     exact ⟨configurationPositive, configurationWithin⟩
 
+theorem mem_upsertConfiguration
+    (configurations : List ConfigurationAt)
+    (update existing : ConfigurationAt)
+    (member :
+      existing ∈ upsertConfiguration configurations update) :
+    Or (existing = update) (existing ∈ configurations) := by
+  induction configurations with
+  | nil =>
+      simp [upsertConfiguration] at member
+      exact Or.inl member
+  | cons head tail inductionHypothesis =>
+      by_cases beforeHead : update.index < head.index
+      · rw [upsertConfiguration, if_pos beforeHead] at member
+        rw [List.mem_cons, List.mem_cons] at member
+        rcases member with isUpdate | isHead | inTail
+        · exact Or.inl isUpdate
+        · exact Or.inr (by simp [isHead])
+        · exact Or.inr (by simp [inTail])
+      · by_cases sameIndex : update.index = head.index
+        · rw [upsertConfiguration, if_neg beforeHead, if_pos sameIndex]
+            at member
+          rw [List.mem_cons] at member
+          rcases member with isUpdate | inTail
+          · exact Or.inl isUpdate
+          · exact Or.inr (by simp [inTail])
+        · rw [upsertConfiguration, if_neg beforeHead, if_neg sameIndex]
+            at member
+          rw [List.mem_cons] at member
+          rcases member with isHead | inUpdatedTail
+          · exact Or.inr (by simp [isHead])
+          · rcases inductionHypothesis inUpdatedTail with isUpdate | inTail
+            · exact Or.inl isUpdate
+            · exact Or.inr (by simp [inTail])
+
+theorem increasing_upsertConfiguration
+    (configurations : List ConfigurationAt)
+    (update : ConfigurationAt)
+    (increasing : increasingConfigurationIndices configurations) :
+    increasingConfigurationIndices
+      (upsertConfiguration configurations update) := by
+  induction configurations with
+  | nil =>
+      simp [upsertConfiguration, increasingConfigurationIndices]
+  | cons head tail inductionHypothesis =>
+      rw [increasingConfigurationIndices] at increasing ⊢
+      rw [List.pairwise_cons] at increasing
+      simp only [upsertConfiguration]
+      split
+      · apply List.Pairwise.cons
+        · intro existing member
+          simp at member
+          rcases member with isHead | inTail
+          · subst existing
+            assumption
+          · exact Nat.lt_trans (by assumption) (increasing.1 _ inTail)
+        · exact List.Pairwise.cons increasing.1 increasing.2
+      · split
+        · apply List.Pairwise.cons
+          · intro existing inTail
+            have sameIndex : update.index = head.index := by omega
+            rw [sameIndex]
+            exact increasing.1 existing inTail
+          · exact increasing.2
+        · apply List.Pairwise.cons
+          · intro existing member
+            rcases
+              mem_upsertConfiguration tail update existing member with
+              isUpdate | inTail
+            · subst existing
+              omega
+            · exact increasing.1 existing inTail
+          · exact inductionHypothesis increasing.2
+
+theorem bounded_upsertConfiguration
+    (configurations : List ConfigurationAt)
+    (update : ConfigurationAt)
+    (logLength : Nat)
+    (bounded :
+      configurationsBoundedBy configurations logLength)
+    (updatePositive : 0 < update.index)
+    (updateWithin : update.index <= logLength) :
+    configurationsBoundedBy
+      (upsertConfiguration configurations update)
+      logLength := by
+  intro existing member
+  rcases
+    mem_upsertConfiguration configurations update existing member with
+    isUpdate | oldMember
+  · subst existing
+    exact ⟨updatePositive, updateWithin⟩
+  · exact bounded existing oldMember
+
+theorem increasing_overrideConfigurations
+    (configurations updates : List ConfigurationAt)
+    (increasing : increasingConfigurationIndices configurations) :
+    increasingConfigurationIndices
+      (overrideConfigurations configurations updates) := by
+  induction updates generalizing configurations with
+  | nil =>
+      simpa [overrideConfigurations] using increasing
+  | cons update rest inductionHypothesis =>
+      simp [overrideConfigurations, List.foldl_cons]
+      apply inductionHypothesis
+      exact increasing_upsertConfiguration configurations update increasing
+
+theorem bounded_overrideConfigurations
+    (configurations updates : List ConfigurationAt)
+    (logLength : Nat)
+    (bounded :
+      configurationsBoundedBy configurations logLength)
+    (updatesBounded :
+      configurationsBoundedBy updates logLength) :
+    configurationsBoundedBy
+      (overrideConfigurations configurations updates)
+      logLength := by
+  induction updates generalizing configurations with
+  | nil =>
+      simpa [overrideConfigurations] using bounded
+  | cons update rest inductionHypothesis =>
+      simp [overrideConfigurations, List.foldl_cons]
+      apply inductionHypothesis
+      · apply bounded_upsertConfiguration configurations update logLength
+          bounded
+        · exact (updatesBounded update (by simp)).1
+        · exact (updatesBounded update (by simp)).2
+      · intro existing member
+        exact updatesBounded existing (by simp [member])
+
+theorem mem_configurationsInEntriesAux
+    (firstIndex : Nat)
+    (entries : List Entry)
+    (configuration : ConfigurationAt)
+    (member :
+      configuration ∈ configurationsInEntriesAux firstIndex entries) :
+    And
+      (firstIndex <= configuration.index)
+      (configuration.index < firstIndex + entries.length) := by
+  induction entries generalizing firstIndex with
+  | nil =>
+      simp [configurationsInEntriesAux] at member
+  | cons entry rest inductionHypothesis =>
+      cases content : entry.content with
+      | entry =>
+          simp [configurationsInEntriesAux, content] at member
+          have := inductionHypothesis (firstIndex + 1) member
+          constructor
+          · exact Nat.le_trans (by omega) this.1
+          · simpa [Nat.add_assoc, Nat.add_comm, Nat.add_left_comm] using
+              this.2
+      | signature =>
+          simp [configurationsInEntriesAux, content] at member
+          have := inductionHypothesis (firstIndex + 1) member
+          constructor
+          · exact Nat.le_trans (by omega) this.1
+          · simpa [Nat.add_assoc, Nat.add_comm, Nat.add_left_comm] using
+              this.2
+      | reconfiguration nodes =>
+          simp [configurationsInEntriesAux, content] at member
+          rcases member with isHead | inTail
+          · subst configuration
+            simp
+          · have := inductionHypothesis (firstIndex + 1) inTail
+            constructor
+            · exact Nat.le_trans (by omega) this.1
+            · simpa [Nat.add_assoc, Nat.add_comm, Nat.add_left_comm] using
+                this.2
+
+theorem increasing_configurationsInEntriesAux
+    (firstIndex : Nat)
+    (entries : List Entry) :
+    increasingConfigurationIndices
+      (configurationsInEntriesAux firstIndex entries) := by
+  induction entries generalizing firstIndex with
+  | nil =>
+      simp [configurationsInEntriesAux, increasingConfigurationIndices]
+  | cons entry rest inductionHypothesis =>
+      cases content : entry.content with
+      | entry =>
+          simpa [configurationsInEntriesAux, content] using
+            inductionHypothesis (firstIndex + 1)
+      | signature =>
+          simpa [configurationsInEntriesAux, content] using
+            inductionHypothesis (firstIndex + 1)
+      | reconfiguration nodes =>
+          rw [increasingConfigurationIndices]
+          simp [configurationsInEntriesAux, content, List.pairwise_cons]
+          constructor
+          · intro configuration member
+            have bounds :=
+              mem_configurationsInEntriesAux
+                (firstIndex + 1)
+                rest
+                configuration
+                member
+            omega
+          · exact inductionHypothesis (firstIndex + 1)
+
+theorem increasing_configurationsInEntries
+    (firstIndex : Nat)
+    (entries : List Entry) :
+    increasingConfigurationIndices
+      (configurationsInEntries firstIndex entries) :=
+  increasing_configurationsInEntriesAux firstIndex entries
+
+theorem bounded_configurationsInEntries
+    (previousIndex : Nat)
+    (entries : List Entry) :
+    configurationsBoundedBy
+      (configurationsInEntries (previousIndex + 1) entries)
+      (previousIndex + entries.length) := by
+  intro configuration member
+  have bounds :=
+    mem_configurationsInEntriesAux
+      (previousIndex + 1)
+      entries
+      configuration
+      member
+  omega
+
+theorem configurationsBoundedBy_mono
+    (configurations : List ConfigurationAt)
+    (oldLength newLength : Nat)
+    (bounded : configurationsBoundedBy configurations oldLength)
+    (lengthMonotonic : oldLength <= newLength) :
+    configurationsBoundedBy configurations newLength := by
+  intro configuration member
+  exact
+    ⟨(bounded configuration member).1,
+      Nat.le_trans (bounded configuration member).2 lengthMonotonic⟩
+
+theorem configurationsWellFormed_of_unchangedConfigurations
+    (before after : State)
+    (wellFormed : ConfigurationsWellFormedInv before)
+    (configurationsUnchanged :
+      forall node,
+        after.configurations node = before.configurations node)
+    (logLengthMonotonic :
+      forall node,
+        (before.log node).length <= (after.log node).length) :
+    ConfigurationsWellFormedInv after := by
+  intro node
+  rw [configurationsUnchanged node]
+  exact
+    ⟨(wellFormed node).1,
+      configurationsBoundedBy_mono
+        (before.configurations node)
+        (before.log node).length
+        (after.log node).length
+        (wellFormed node).2
+        (logLengthMonotonic node)⟩
+
+theorem timeout_preserves_ConfigurationsWellFormedInv
+    (state : State)
+    (candidate : Node)
+    (wellFormed : ConfigurationsWellFormedInv state) :
+    ConfigurationsWellFormedInv
+      (next state (.timeout candidate)) := by
+  apply configurationsWellFormed_of_unchangedConfigurations state _ wellFormed
+  · intro node
+    simp [next, rawNext, nextTimeout]
+  · intro node
+    simp [next, rawNext, nextTimeout]
+
+theorem requestVote_preserves_ConfigurationsWellFormedInv
+    (state : State)
+    (source dest : Node)
+    (wellFormed : ConfigurationsWellFormedInv state) :
+    ConfigurationsWellFormedInv
+      (next state (.requestVote source dest)) := by
+  apply configurationsWellFormed_of_unchangedConfigurations state _ wellFormed
+  · intro node
+    simp [next, rawNext, nextRequestVote]
+  · intro node
+    simp [next, rawNext, nextRequestVote]
+
+theorem appendEntries_preserves_ConfigurationsWellFormedInv
+    (state : State)
+    (source dest : Node)
+    (wellFormed : ConfigurationsWellFormedInv state) :
+    ConfigurationsWellFormedInv
+      (next state (.appendEntries source dest)) := by
+  apply configurationsWellFormed_of_unchangedConfigurations state _ wellFormed
+  · intro node
+    simp [next, rawNext, nextAppendEntries]
+  · intro node
+    simp [next, rawNext, nextAppendEntries]
+
+theorem clientRequest_preserves_ConfigurationsWellFormedInv
+    (state : State)
+    (leader : Node)
+    (wellFormed : ConfigurationsWellFormedInv state) :
+    ConfigurationsWellFormedInv
+      (next state (.clientRequest leader)) := by
+  apply configurationsWellFormed_of_unchangedConfigurations state _ wellFormed
+  · intro node
+    simp [next, rawNext, nextClientRequest]
+  · intro node
+    by_cases nodeIsLeader : node = leader
+    · subst node
+      simp [next, rawNext, nextClientRequest, updateNode]
+    · simp [next, rawNext, nextClientRequest, updateNode, nodeIsLeader]
+
+theorem sign_preserves_ConfigurationsWellFormedInv
+    (state : State)
+    (leader : Node)
+    (wellFormed : ConfigurationsWellFormedInv state) :
+    ConfigurationsWellFormedInv
+      (next state (.signCommittableMessages leader)) := by
+  apply configurationsWellFormed_of_unchangedConfigurations state _ wellFormed
+  · intro node
+    simp [next, rawNext, nextSignCommittableMessages]
+  · intro node
+    by_cases nodeIsLeader : node = leader
+    · subst node
+      simp [next, rawNext, nextSignCommittableMessages, updateNode]
+    · simp [next, rawNext, nextSignCommittableMessages, updateNode,
+        nodeIsLeader]
+
+theorem changeConfiguration_preserves_ConfigurationsWellFormedInv
+    (state : State)
+    (leader : Node)
+    (configuration : Configuration)
+    (wellFormed : ConfigurationsWellFormedInv state) :
+    ConfigurationsWellFormedInv
+      (next state (.changeConfiguration leader configuration)) := by
+  intro node
+  by_cases nodeIsLeader : node = leader
+  · subst node
+    let nextLog :=
+      state.log leader ++
+        [{
+          term := state.currentTerm leader
+          content := .reconfiguration configuration
+        }]
+    let nextConfiguration : ConfigurationAt :=
+      { index := nextLog.length, nodes := configuration }
+    have targetWellFormed :
+        And
+          (increasingConfigurationIndices
+            (state.configurations leader ++ [nextConfiguration]))
+          (configurationsBoundedBy
+            (state.configurations leader ++ [nextConfiguration])
+            nextLog.length) := by
+      constructor
+      · apply increasing_append_configuration
+          (state.configurations leader)
+          nextConfiguration
+          (wellFormed leader).1
+        intro existing member
+        have existingBound := (wellFormed leader).2 existing member
+        dsimp [nextConfiguration, nextLog]
+        simp
+        omega
+      · apply bounded_append_configuration
+          (state.configurations leader)
+          nextConfiguration
+          (state.log leader).length
+          nextLog.length
+          (wellFormed leader).2
+        · dsimp [nextLog]
+          simp
+        · dsimp [nextConfiguration, nextLog]
+          simp
+        · exact Nat.le_refl _
+    simpa [next, rawNext, nextChangeConfiguration, updateNode,
+      nextLog, nextConfiguration] using targetWellFormed
+  · simpa [next, rawNext, nextChangeConfiguration, updateNode,
+      nodeIsLeader] using wellFormed node
+
+theorem becomeLeader_preserves_ConfigurationsWellFormedInv
+    (state : State)
+    (leader : Node)
+    (wellFormed : ConfigurationsWellFormedInv state) :
+    ConfigurationsWellFormedInv
+      (next state (.becomeLeader leader)) := by
+  intro node
+  by_cases nodeIsLeader : node = leader
+  · subst node
+    let nextLog := committable state leader
+    have targetWellFormed :
+        And
+          (increasingConfigurationIndices
+            (configurationsToIndex
+              (state.configurations leader)
+              nextLog.length))
+          (configurationsBoundedBy
+            (configurationsToIndex
+              (state.configurations leader)
+              nextLog.length)
+            nextLog.length) :=
+      ⟨increasing_configurationsToIndex
+          (state.configurations leader)
+          nextLog.length
+          (wellFormed leader).1,
+        bounded_configurationsToIndex
+          (state.configurations leader)
+          (state.log leader).length
+          nextLog.length
+          (wellFormed leader).2⟩
+    simpa [next, rawNext, nextBecomeLeader, updateNode, nextLog] using
+      targetWellFormed
+  · simpa [next, rawNext, nextBecomeLeader, updateNode, nodeIsLeader] using
+      wellFormed node
+
+theorem advanceCommitIndex_preserves_ConfigurationsWellFormedInv
+    (state : State)
+    (leader : Node)
+    (wellFormed : ConfigurationsWellFormedInv state) :
+    ConfigurationsWellFormedInv
+      (next state (.advanceCommitIndex leader)) := by
+  intro node
+  by_cases nodeIsLeader : node = leader
+  · subst node
+    let nextCommitIndex := highestCommittableIndex state leader
+    let nextConfigurations :=
+      match nextConfigurationIndex? (state.configurations leader) with
+      | some nextIndex =>
+          if nextIndex <= nextCommitIndex then
+            configurationsFromIndex
+              (state.configurations leader)
+              (lastConfigurationToIndex
+                (state.configurations leader)
+                nextCommitIndex)
+          else
+            state.configurations leader
+      | none => state.configurations leader
+    have targetWellFormed :
+        And
+          (increasingConfigurationIndices nextConfigurations)
+          (configurationsBoundedBy
+            nextConfigurations
+            (state.log leader).length) := by
+      dsimp [nextConfigurations]
+      cases nextIndex :
+          nextConfigurationIndex? (state.configurations leader) with
+      | none =>
+          simpa [nextIndex] using wellFormed leader
+      | some index =>
+          by_cases committed : index <= nextCommitIndex
+          · simp [committed]
+            exact
+              ⟨increasing_configurationsFromIndex
+                  (state.configurations leader)
+                  (lastConfigurationToIndex
+                    (state.configurations leader)
+                    nextCommitIndex)
+                  (wellFormed leader).1,
+                bounded_configurationsFromIndex
+                  (state.configurations leader)
+                  (state.log leader).length
+                  (lastConfigurationToIndex
+                    (state.configurations leader)
+                    nextCommitIndex)
+                  (wellFormed leader).2⟩
+          · simpa [committed] using wellFormed leader
+    simpa [next, rawNext, nextAdvanceCommitIndex, updateNode,
+      nextCommitIndex, nextConfigurations] using targetWellFormed
+  · simpa [next, rawNext, nextAdvanceCommitIndex, updateNode,
+      nodeIsLeader] using wellFormed node
+
+theorem conflictRollback_preserves_ConfigurationsWellFormedInv
+    (state : State)
+    (dest : Node)
+    (previousIndex : Nat)
+    (wellFormed : ConfigurationsWellFormedInv state) :
+    ConfigurationsWellFormedInv
+      (conflictRollback state dest previousIndex) := by
+  intro node
+  by_cases nodeIsDest : node = dest
+  · subst node
+    let nextLog := (state.log dest).take previousIndex
+    have targetWellFormed :
+        And
+          (increasingConfigurationIndices
+            (configurationsToIndex
+              (state.configurations dest)
+              nextLog.length))
+          (configurationsBoundedBy
+            (configurationsToIndex
+              (state.configurations dest)
+              nextLog.length)
+            nextLog.length) :=
+      ⟨increasing_configurationsToIndex
+          (state.configurations dest)
+          nextLog.length
+          (wellFormed dest).1,
+        bounded_configurationsToIndex
+          (state.configurations dest)
+          (state.log dest).length
+          nextLog.length
+          (wellFormed dest).2⟩
+    simpa [conflictRollback, updateNode, nextLog] using
+      targetWellFormed
+  · simpa [conflictRollback, updateNode, nodeIsDest] using
+      wellFormed node
+
+theorem appendEntriesAlreadyDone_preserves_ConfigurationsWellFormedInv
+    (state : State)
+    (message : Message)
+    (previousIndex : Nat)
+    (entries : List Entry)
+    (leaderCommitIndex : Nat)
+    (wellFormed : ConfigurationsWellFormedInv state) :
+    ConfigurationsWellFormedInv
+      (nextAppendEntriesAlreadyDone
+        state message previousIndex entries leaderCommitIndex) := by
+  intro node
+  by_cases nodeIsDest : node = message.dest
+  · subst node
+    let requestEndIndex := previousIndex + entries.length
+    let nextCommitIndex :=
+      max
+        (maxCommittableIndexAt
+          (state.log message.dest)
+          (min leaderCommitIndex requestEndIndex))
+        (state.commitIndex message.dest)
+    let nextConfigurationIndex :=
+      lastConfigurationToIndex
+        (state.configurations message.dest)
+        nextCommitIndex
+    have targetWellFormed :
+        And
+          (increasingConfigurationIndices
+            (configurationsFromIndex
+              (state.configurations message.dest)
+              nextConfigurationIndex))
+          (configurationsBoundedBy
+            (configurationsFromIndex
+              (state.configurations message.dest)
+              nextConfigurationIndex)
+            (state.log message.dest).length) :=
+      ⟨increasing_configurationsFromIndex
+          (state.configurations message.dest)
+          nextConfigurationIndex
+          (wellFormed message.dest).1,
+        bounded_configurationsFromIndex
+          (state.configurations message.dest)
+          (state.log message.dest).length
+          nextConfigurationIndex
+          (wellFormed message.dest).2⟩
+    simpa [nextAppendEntriesAlreadyDone, updateNode, requestEndIndex,
+      nextCommitIndex, nextConfigurationIndex] using targetWellFormed
+  · simpa [nextAppendEntriesAlreadyDone, updateNode, nodeIsDest] using
+      wellFormed node
+
+theorem appendEntriesNoConflict_preserves_ConfigurationsWellFormedInv
+    (state : State)
+    (message : Message)
+    (previousIndex : Nat)
+    (entries : List Entry)
+    (leaderCommitIndex : Nat)
+    (wellFormed : ConfigurationsWellFormedInv state)
+    (noConflict :
+      appendEntriesNoConflictGuard
+        state message.dest previousIndex entries = true) :
+    ConfigurationsWellFormedInv
+      (nextAppendEntriesNoConflict
+        state message previousIndex entries leaderCommitIndex) := by
+  simp [appendEntriesNoConflictGuard] at noConflict
+  intro node
+  by_cases nodeIsDest : node = message.dest
+  · subst node
+    let nextLog :=
+      (state.log message.dest).take previousIndex ++ entries
+    have nextLogLength :
+        nextLog.length = previousIndex + entries.length := by
+      simp [nextLog, Nat.min_eq_left noConflict.1.1.2]
+    have oldLogWithin :
+        (state.log message.dest).length <= nextLog.length := by
+      rw [nextLogLength]
+      exact Nat.le_of_lt noConflict.1.2
+    let updates :=
+      configurationsInEntries (previousIndex + 1) entries
+    let extendedConfigurations :=
+      overrideConfigurations
+        (state.configurations message.dest)
+        updates
+    let requestEndIndex := previousIndex + entries.length
+    let nextCommitIndex :=
+      max
+        (maxCommittableIndexAt
+          nextLog
+          (min leaderCommitIndex requestEndIndex))
+        (state.commitIndex message.dest)
+    let nextConfigurationIndex :=
+      lastConfigurationToIndex extendedConfigurations nextCommitIndex
+    have extendedWellFormed :
+        And
+          (increasingConfigurationIndices extendedConfigurations)
+          (configurationsBoundedBy
+            extendedConfigurations
+            nextLog.length) := by
+      constructor
+      · apply increasing_overrideConfigurations
+          (state.configurations message.dest)
+          updates
+          (wellFormed message.dest).1
+      · apply bounded_overrideConfigurations
+          (state.configurations message.dest)
+          updates
+          nextLog.length
+        · exact configurationsBoundedBy_mono
+            (state.configurations message.dest)
+            (state.log message.dest).length
+            nextLog.length
+            (wellFormed message.dest).2
+            oldLogWithin
+        · dsimp [updates]
+          rw [nextLogLength]
+          exact bounded_configurationsInEntries previousIndex entries
+    have targetWellFormed :
+        And
+          (increasingConfigurationIndices
+            (configurationsFromIndex
+              extendedConfigurations
+              nextConfigurationIndex))
+          (configurationsBoundedBy
+            (configurationsFromIndex
+              extendedConfigurations
+              nextConfigurationIndex)
+            nextLog.length) :=
+      ⟨increasing_configurationsFromIndex
+          extendedConfigurations
+          nextConfigurationIndex
+          extendedWellFormed.1,
+        bounded_configurationsFromIndex
+          extendedConfigurations
+          nextLog.length
+          nextConfigurationIndex
+          extendedWellFormed.2⟩
+    simpa [nextAppendEntriesNoConflict, updateNode, nextLog, updates,
+      extendedConfigurations, requestEndIndex, nextCommitIndex,
+      nextConfigurationIndex] using targetWellFormed
+  · simpa [nextAppendEntriesNoConflict, updateNode, nodeIsDest] using
+      wellFormed node
+
+theorem receive_preserves_ConfigurationsWellFormedInv
+    (state : State)
+    (dest source : Node)
+    (kind : ReceiveKind)
+    (wellFormed : ConfigurationsWellFormedInv state)
+    (enabled : Enabled state (.receive dest source kind)) :
+    ConfigurationsWellFormedInv
+      (next state (.receive dest source kind)) := by
+  cases hmessage : headMessage? state dest source with
+  | none =>
+      simpa [next, rawNext, nextReceive, hmessage] using wellFormed
+  | some message =>
+      cases kind with
+      | appendEntriesAlreadyDone =>
+          cases hbody : message.body with
+          | appendEntriesRequest previousIndex previousTerm entries commitIndex =>
+              simpa [next, rawNext, nextReceive, hmessage, hbody] using
+                appendEntriesAlreadyDone_preserves_ConfigurationsWellFormedInv
+                  state
+                  message
+                  previousIndex
+                  entries
+                  commitIndex
+                  wellFormed
+          | _ =>
+              simpa [next, rawNext, nextReceive, hmessage, hbody] using
+                wellFormed
+      | appendEntriesNoConflict =>
+          cases hbody : message.body with
+          | appendEntriesRequest previousIndex previousTerm entries commitIndex =>
+              have branchEnabled := enabled
+              simp [Enabled, actionEnabled, hmessage, receiveBranchEnabled,
+                hbody] at branchEnabled
+              simpa [next, rawNext, nextReceive, hmessage, hbody] using
+                appendEntriesNoConflict_preserves_ConfigurationsWellFormedInv
+                  state
+                  message
+                  previousIndex
+                  entries
+                  commitIndex
+                  wellFormed
+                  branchEnabled.2.2
+          | _ =>
+              simpa [next, rawNext, nextReceive, hmessage, hbody] using
+                wellFormed
+      | appendEntriesConflictThenAlreadyDone =>
+          cases hbody : message.body with
+          | appendEntriesRequest previousIndex previousTerm entries commitIndex =>
+              have branchEnabled := enabled
+              simp [Enabled, actionEnabled, hmessage, receiveBranchEnabled,
+                hbody] at branchEnabled
+              have destMatches : message.dest = dest := branchEnabled.1.1
+              subst dest
+              have rolledWellFormed :=
+                conflictRollback_preserves_ConfigurationsWellFormedInv
+                  state
+                  message.dest
+                  previousIndex
+                  wellFormed
+              simpa [next, rawNext, nextReceive, hmessage, hbody] using
+                appendEntriesAlreadyDone_preserves_ConfigurationsWellFormedInv
+                  (conflictRollback state message.dest previousIndex)
+                  message
+                  previousIndex
+                  entries
+                  commitIndex
+                  rolledWellFormed
+          | _ =>
+              simpa [next, rawNext, nextReceive, hmessage, hbody] using
+                wellFormed
+      | appendEntriesConflictThenNoConflict =>
+          cases hbody : message.body with
+          | appendEntriesRequest previousIndex previousTerm entries commitIndex =>
+              have branchEnabled := enabled
+              simp [Enabled, actionEnabled, hmessage, receiveBranchEnabled,
+                hbody] at branchEnabled
+              have destMatches : message.dest = dest := branchEnabled.1.1
+              subst dest
+              have rolledWellFormed :=
+                conflictRollback_preserves_ConfigurationsWellFormedInv
+                  state
+                  message.dest
+                  previousIndex
+                  wellFormed
+              simpa [next, rawNext, nextReceive, hmessage, hbody] using
+                appendEntriesNoConflict_preserves_ConfigurationsWellFormedInv
+                  (conflictRollback state message.dest previousIndex)
+                  message
+                  previousIndex
+                  entries
+                  commitIndex
+                  rolledWellFormed
+                  branchEnabled.2.2
+          | _ =>
+              simpa [next, rawNext, nextReceive, hmessage, hbody] using
+                wellFormed
+      | _ =>
+          cases hbody : message.body <;>
+            simp_all [ConfigurationsWellFormedInv, next, rawNext,
+              nextReceive]
+          all_goals
+            split <;> simp_all
+
+theorem configurationsWellFormed_step
+    (state : State)
+    (action : Action)
+    (wellFormed : ConfigurationsWellFormedInv state)
+    (enabled : Enabled state action) :
+    ConfigurationsWellFormedInv (next state action) := by
+  cases action with
+  | timeout candidate =>
+      exact timeout_preserves_ConfigurationsWellFormedInv
+        state candidate wellFormed
+  | requestVote source dest =>
+      exact requestVote_preserves_ConfigurationsWellFormedInv
+        state source dest wellFormed
+  | appendEntries source dest =>
+      exact appendEntries_preserves_ConfigurationsWellFormedInv
+        state source dest wellFormed
+  | becomeLeader leader =>
+      exact becomeLeader_preserves_ConfigurationsWellFormedInv
+        state leader wellFormed
+  | clientRequest leader =>
+      exact clientRequest_preserves_ConfigurationsWellFormedInv
+        state leader wellFormed
+  | signCommittableMessages leader =>
+      exact sign_preserves_ConfigurationsWellFormedInv
+        state leader wellFormed
+  | changeConfiguration leader configuration =>
+      exact changeConfiguration_preserves_ConfigurationsWellFormedInv
+        state leader configuration wellFormed
+  | advanceCommitIndex leader =>
+      exact advanceCommitIndex_preserves_ConfigurationsWellFormedInv
+        state leader wellFormed
+  | receive dest source kind =>
+      exact receive_preserves_ConfigurationsWellFormedInv
+        state dest source kind wellFormed enabled
+
 /-- Initial-state checkpoint for three public safety invariants. -/
 theorem initialSafetyCheckpoint (start : Node) :
     And
