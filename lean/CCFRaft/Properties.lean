@@ -105,14 +105,20 @@ def ConfigurationsWellFormedInv (state : State) : Prop :=
             (0 < configuration.index)
             (configuration.index <= (state.log node).length))
 
-/-- Representation invariant for the per-pair `OrderedNoDup` projection. -/
-def MessagesWellFormedInv (state : State) : Prop :=
+/-- Well-formedness of the per-pair `OrderedNoDup` queue representation. -/
+def MessageChannelsWellFormed
+    (messages : NodeMatrix (List Message)) :
+    Prop :=
   forall dest source : Node,
     forall message,
-      message ∈ state.messages dest source ->
+      message ∈ messages dest source ->
         And
           (message.dest = dest)
           (message.source = source)
+
+/-- Representation invariant for the per-pair `OrderedNoDup` projection. -/
+def MessagesWellFormedInv (state : State) : Prop :=
+  MessageChannelsWellFormed state.messages
 
 /-- The proof-only invariant carried through reachable states. -/
 structure InductiveInvariant (state : State) : Prop where

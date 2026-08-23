@@ -33,6 +33,75 @@ namespace CCFRaft
 /-- The fixed TLA `Servers` world. -/
 abbrev Node := Fin 15
 
+structure NodeMap (α : Type) where
+  values : Vector α 15
+
+namespace NodeMap
+
+variable {α : Type}
+
+def ofFn (f : Node -> α) : NodeMap α :=
+  ⟨Vector.ofFn f⟩
+
+def const (value : α) : NodeMap α :=
+  ofFn fun _ => value
+
+def get (values : NodeMap α) (node : Node) : α :=
+  values.values.get node
+
+instance : CoeFun (NodeMap α) (fun _ => Node -> α) where
+  coe := get
+
+def set (values : NodeMap α) (node : Node) (value : α) : NodeMap α :=
+  ⟨values.values.set node.val value node.isLt⟩
+
+@[simp]
+theorem ofFn_apply
+    (values : Node -> α)
+    (node : Node) :
+    ofFn values node = values node := by
+  change (Vector.ofFn values)[node.val] = values node
+  simp [Vector.ofFn]
+
+@[simp]
+theorem const_apply
+    (value : α)
+    (node : Node) :
+    const value node = value := by
+  simp [const]
+
+@[simp]
+theorem set_same
+    (values : NodeMap α)
+    (node : Node)
+    (value : α) :
+    values.set node value node = value := by
+  change (values.values.set node.val value node.isLt)[node.val] = value
+  simp
+
+@[simp]
+theorem set_ne
+    (values : NodeMap α)
+    (updated selected : Node)
+    (value : α)
+    (different : Not (selected = updated)) :
+    values.set updated value selected = values selected := by
+  change
+    (values.values.set updated.val value updated.isLt)[selected.val] =
+      values.values[selected.val]
+  have differentValues : Not (updated.val = selected.val) := by
+    exact fun equal => different (Fin.ext equal.symm)
+  rw [
+    Vector.getElem_set_ne
+      updated.isLt
+      selected.isLt
+      differentValues
+  ]
+
+end NodeMap
+
+abbrev NodeMatrix (α : Type) := NodeMap (NodeMap α)
+
 /-- A nonempty check is part of `ChangeConfiguration`, not this type. -/
 abbrev Configuration := Finset Node
 
@@ -97,32 +166,40 @@ The executable projection of the TLA variables. Configuration lists are kept
 in increasing log-index order by `next`.
 -/
 structure State where
-  currentTerm : Node -> Nat
-  leadershipState : Node -> LeadershipState
-  membershipState : Node -> MembershipState
-  votedFor : Node -> Option Node
-  isNewFollower : Node -> Bool
-  log : Node -> List Entry
-  commitIndex : Node -> Nat
-  votesGranted : Node -> Finset Node
-  sentIndex : Node -> Node -> Nat
-  matchIndex : Node -> Node -> Nat
-  configurations : Node -> List ConfigurationAt
-  hasJoined : Node -> Bool
-  retirementCompleted : Node -> Finset Node
-  messages : Node -> Node -> List Message
+  currentTerm : NodeMap Nat
+  leadershipState : NodeMap LeadershipState
+  membershipState : NodeMap MembershipState
+  votedFor : NodeMap (Option Node)
+  isNewFollower : NodeMap Bool
+  log : NodeMap (List Entry)
+  commitIndex : NodeMap Nat
+  votesGranted : NodeMap (Finset Node)
+  sentIndex : NodeMatrix Nat
+  matchIndex : NodeMatrix Nat
+  configurations : NodeMap (List ConfigurationAt)
+  hasJoined : NodeMap Bool
+  retirementCompleted : NodeMap (Finset Node)
+  messages : NodeMatrix (List Message)
 
 namespace Model
 
 def startTerm : Nat := 2
 
+def updateNode
+    {α : Type}
+    (f : NodeMap α)
+    (node : Node)
+    (value : α) :
+    NodeMap α :=
+  f.set node value
+
 def update₂
     {α : Type}
-    (f : Node -> Node -> α)
+    (f : NodeMatrix α)
     (i j : Node)
     (value : α) :
-    Node -> Node -> α :=
-  Function.update f i (Function.update (f i) j value)
+    NodeMatrix α :=
+  updateNode f i (updateNode (f i) j value)
 
 def entryAt? (entries : List Entry) (index : Nat) : Option Entry :=
   if index = 0 then
@@ -385,9 +462,9 @@ def overrideConfigurations
   updates.foldl upsertConfiguration configurations
 
 def enqueue
-    (messages : Node -> Node -> List Message)
+    (messages : NodeMatrix (List Message))
     (message : Message) :
-    Node -> Node -> List Message :=
+    NodeMatrix (List Message) :=
   let channel := messages message.dest message.source
   let nextChannel :=
     if channel.any fun queued => queued == message then
@@ -397,16 +474,16 @@ def enqueue
   update₂ messages message.dest message.source nextChannel
 
 def discard
-    (messages : Node -> Node -> List Message)
+    (messages : NodeMatrix (List Message))
     (message : Message) :
-    Node -> Node -> List Message :=
+    NodeMatrix (List Message) :=
   update₂ messages message.dest message.source
     ((messages message.dest message.source).erase message)
 
 def reply
-    (messages : Node -> Node -> List Message)
+    (messages : NodeMatrix (List Message))
     (response request : Message) :
-    Node -> Node -> List Message :=
+    NodeMatrix (List Message) :=
   discard (enqueue messages response) request
 
 def headMessage?
@@ -431,24 +508,30 @@ def startLog (start : Node) : List Entry :=
 def initialState (start : Node) : State :=
   let initialLog := startLog start
   {
-    currentTerm := fun node => if node = start then startTerm else 0
-    leadershipState := fun node => if node = start then .leader else .none
-    membershipState := fun _ => .active
-    votedFor := fun _ => none
-    isNewFollower := fun _ => true
-    log := fun node => if node = start then initialLog else []
-    commitIndex := fun node => if node = start then initialLog.length else 0
-    votesGranted := fun _ => ∅
-    sentIndex := fun node _ => if node = start then initialLog.length else 0
-    matchIndex := fun _ _ => 0
-    configurations := fun node =>
-      if node = start then
-        [{ index := 1, nodes := {start} }]
-      else
-        []
-    hasJoined := fun node => node = start
-    retirementCompleted := fun _ => ∅
-    messages := fun _ _ => []
+    currentTerm :=
+      NodeMap.ofFn fun node => if node = start then startTerm else 0
+    leadershipState :=
+      NodeMap.ofFn fun node => if node = start then .leader else .none
+    membershipState := NodeMap.const .active
+    votedFor := NodeMap.const none
+    isNewFollower := NodeMap.const true
+    log := NodeMap.ofFn fun node => if node = start then initialLog else []
+    commitIndex :=
+      NodeMap.ofFn fun node => if node = start then initialLog.length else 0
+    votesGranted := NodeMap.const ∅
+    sentIndex :=
+      NodeMap.ofFn fun node =>
+        NodeMap.const (if node = start then initialLog.length else 0)
+    matchIndex := NodeMap.const (NodeMap.const 0)
+    configurations :=
+      NodeMap.ofFn fun node =>
+        if node = start then
+          [{ index := 1, nodes := {start} }]
+        else
+          []
+    hasJoined := NodeMap.ofFn fun node => node = start
+    retirementCompleted := NodeMap.const ∅
+    messages := NodeMap.const (NodeMap.const [])
   }
 
 inductive ReceiveKind where
@@ -648,17 +731,17 @@ def conflictRollback
   let nextLog := (state.log dest).take previousIndex
   {
     state with
-    log := Function.update state.log dest nextLog
+    log := updateNode state.log dest nextLog
     configurations :=
-      Function.update state.configurations dest
+      updateNode state.configurations dest
         (configurationsToIndex
           (state.configurations dest)
           nextLog.length)
     membershipState :=
-      Function.update state.membershipState dest
+      updateNode state.membershipState dest
         (calcMembershipState nextLog (state.commitIndex dest) dest)
     isNewFollower :=
-      Function.update state.isNewFollower dest false
+      updateNode state.isNewFollower dest false
   }
 
 def appendEntriesAcceptBase
@@ -901,12 +984,12 @@ def nextTimeout (state : State) (node : Node) : State :=
   {
     state with
     leadershipState :=
-      Function.update state.leadershipState node .candidate
+      updateNode state.leadershipState node .candidate
     currentTerm :=
-      Function.update state.currentTerm node (state.currentTerm node + 1)
-    votedFor := Function.update state.votedFor node (some node)
+      updateNode state.currentTerm node (state.currentTerm node + 1)
+    votedFor := updateNode state.votedFor node (some node)
     votesGranted :=
-      Function.update state.votesGranted node {node}
+      updateNode state.votesGranted node {node}
   }
 
 def nextRequestVote
@@ -941,17 +1024,17 @@ def nextBecomeLeader (state : State) (node : Node) : State :=
   {
     state with
     leadershipState :=
-      Function.update state.leadershipState node .leader
-    log := Function.update state.log node nextLog
+      updateNode state.leadershipState node .leader
+    log := updateNode state.log node nextLog
     sentIndex :=
-      Function.update state.sentIndex node (fun _ => nextLength)
+      updateNode state.sentIndex node (NodeMap.const nextLength)
     matchIndex :=
-      Function.update state.matchIndex node (fun _ => 0)
+      updateNode state.matchIndex node (NodeMap.const 0)
     configurations :=
-      Function.update state.configurations node
+      updateNode state.configurations node
         (configurationsToIndex (state.configurations node) nextLength)
     membershipState :=
-      Function.update state.membershipState node
+      updateNode state.membershipState node
         (if state.membershipState node == .retirementOrdered then
           .active
         else
@@ -962,7 +1045,7 @@ def nextClientRequest (state : State) (node : Node) : State :=
   {
     state with
     log :=
-      Function.update state.log node
+      updateNode state.log node
         (state.log node ++
           [{ term := state.currentTerm node, content := .entry }])
   }
@@ -974,11 +1057,11 @@ def nextSignCommittableMessages
   {
     state with
     log :=
-      Function.update state.log node
+      updateNode state.log node
         (state.log node ++
           [{ term := state.currentTerm node, content := .signature }])
     membershipState :=
-      Function.update state.membershipState node
+      updateNode state.membershipState node
         (if state.membershipState node == .retirementOrdered then
           .retirementSigned
         else
@@ -1002,20 +1085,22 @@ def nextChangeConfiguration
     { index := nextLog.length, nodes := configuration }
   {
     state with
-    hasJoined := fun candidate =>
-      if candidate ∈ added then true else state.hasJoined candidate
+    hasJoined :=
+      NodeMap.ofFn fun candidate =>
+        if candidate ∈ added then true else state.hasJoined candidate
     sentIndex :=
-      Function.update state.sentIndex node fun candidate =>
-        if candidate ∈ added then
-          (state.log node).length
-        else
-          state.sentIndex node candidate
-    log := Function.update state.log node nextLog
+      updateNode state.sentIndex node <|
+        NodeMap.ofFn fun candidate =>
+          if candidate ∈ added then
+            (state.log node).length
+          else
+            state.sentIndex node candidate
+    log := updateNode state.log node nextLog
     configurations :=
-      Function.update state.configurations node
+      updateNode state.configurations node
         (state.configurations node ++ [nextConfiguration])
     membershipState :=
-      Function.update state.membershipState node
+      updateNode state.membershipState node
         (if state.membershipState node == .active &&
             node ∉ configuration then
           .retirementOrdered
@@ -1042,19 +1127,19 @@ def nextAdvanceCommitIndex (state : State) (node : Node) : State :=
   {
     state with
     commitIndex :=
-      Function.update state.commitIndex node nextCommitIndex
+      updateNode state.commitIndex node nextCommitIndex
     membershipState :=
-      Function.update state.membershipState node nextMembership
+      updateNode state.membershipState node nextMembership
     leadershipState :=
-      Function.update state.leadershipState node
+      updateNode state.leadershipState node
         (if nextMembership == .retiredCommitted then
           .follower
         else
           state.leadershipState node)
     configurations :=
-      Function.update state.configurations node nextConfigurations
+      updateNode state.configurations node nextConfigurations
     retirementCompleted :=
-      Function.update state.retirementCompleted node
+      updateNode state.retirementCompleted node
         (nextRetirementCompleted
           (state.retirementCompleted node)
           (state.configurations node)
@@ -1090,20 +1175,20 @@ def nextAppendEntriesAlreadyDone
   {
     state with
     commitIndex :=
-      Function.update state.commitIndex dest nextCommitIndex
+      updateNode state.commitIndex dest nextCommitIndex
     configurations :=
-      Function.update state.configurations dest
+      updateNode state.configurations dest
         (configurationsFromIndex
           (state.configurations dest)
           nextConfigurationIndex)
     retirementCompleted :=
-      Function.update state.retirementCompleted dest
+      updateNode state.retirementCompleted dest
         (nextRetirementCompleted
           (state.retirementCompleted dest)
           (state.configurations dest)
           nextCommitIndex)
     membershipState :=
-      Function.update state.membershipState dest
+      updateNode state.membershipState dest
         (calcMembershipState (state.log dest) nextCommitIndex dest)
     messages := reply state.messages response message
   }
@@ -1146,24 +1231,24 @@ def nextAppendEntriesNoConflict
     }
   {
     state with
-    log := Function.update state.log dest nextLog
+    log := updateNode state.log dest nextLog
     commitIndex :=
-      Function.update state.commitIndex dest nextCommitIndex
+      updateNode state.commitIndex dest nextCommitIndex
     configurations :=
-      Function.update state.configurations dest
+      updateNode state.configurations dest
         (configurationsFromIndex
           extendedConfigurations
           nextConfigurationIndex)
     retirementCompleted :=
-      Function.update state.retirementCompleted dest
+      updateNode state.retirementCompleted dest
         (nextRetirementCompleted
           (state.retirementCompleted dest)
           (state.configurations dest)
           nextCommitIndex)
     leadershipState :=
-      Function.update state.leadershipState dest nextLeadershipState
+      updateNode state.leadershipState dest nextLeadershipState
     membershipState :=
-      Function.update state.membershipState dest
+      updateNode state.membershipState dest
         (calcMembershipState nextLog nextCommitIndex dest)
     messages := reply state.messages response message
   }
@@ -1187,15 +1272,15 @@ def nextReceive
           {
             state with
             currentTerm :=
-              Function.update state.currentTerm dest message.term
+              updateNode state.currentTerm dest message.term
             leadershipState :=
-              Function.update state.leadershipState dest
+              updateNode state.leadershipState dest
                 (match state.leadershipState dest with
                 | .leader | .candidate | .none => .follower
                 | .follower => .follower)
             isNewFollower :=
-              Function.update state.isNewFollower dest true
-            votedFor := Function.update state.votedFor dest none
+              updateNode state.isNewFollower dest true
+            votedFor := updateNode state.votedFor dest none
           }
       | .handleRequestVoteRequest,
           .requestVoteRequest lastTerm lastIndex isPreVote =>
@@ -1213,7 +1298,7 @@ def nextReceive
             state with
             votedFor :=
               if grant then
-                Function.update state.votedFor dest (some source)
+                updateNode state.votedFor dest (some source)
               else
                 state.votedFor
             messages := reply state.messages response message
@@ -1224,7 +1309,7 @@ def nextReceive
             state with
             votesGranted :=
               if voteGranted then
-                Function.update state.votesGranted dest
+                updateNode state.votesGranted dest
                   (insert source (state.votesGranted dest))
               else
                 state.votesGranted
@@ -1241,9 +1326,9 @@ def nextReceive
           {
             state with
             leadershipState :=
-              Function.update state.leadershipState dest .follower
+              updateNode state.leadershipState dest .follower
             isNewFollower :=
-              Function.update state.isNewFollower dest true
+              updateNode state.isNewFollower dest true
           }
       | .appendEntriesAlreadyDone,
           .appendEntriesRequest previousIndex _ entries leaderCommitIndex =>

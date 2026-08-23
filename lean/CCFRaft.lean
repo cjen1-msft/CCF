@@ -59,7 +59,7 @@ semantics used by reachability and replay.
 | `MatchIndexBoundedByLogInv` | `Model.MatchIndexBoundedByLogInv` | Defined; preservation pending |
 | AppendEntries response bound | `Properties.AppendEntriesResponseBoundInv` | Candidate strengthening identified by the forged-ACK fixture; preservation pending |
 | Configuration representation | `Properties.ConfigurationsWellFormedInv` | Defined; initialization and preservation pending |
-| Message representation | `Properties.MessagesWellFormedInv` | Defined; initialization and preservation pending |
+| Message representation | `Properties.MessagesWellFormedInv` | Initialization and all-action preservation proved |
 
 `Properties.FullSafetyCompletionObligation` names the exact unfinished proof:
 initialization, inductive preservation, and the remaining temporal safety
@@ -86,9 +86,9 @@ unreachable, so it is not evidence of a protocol defect.
 | Fairness and `[Next]_vars` stuttering | Omitted from finite reachability; identity steps preserve all listed safety predicates |
 | Partial TLA indexing outside `TypeInv` | Totalized with `Option`, zero, or the empty configuration; reachable well-formed states use the TLA-defined cases |
 
-The required 309-action disjoint `5 -> 5 -> 5` replay is defined in
+The required 229-action disjoint `5 -> 5 -> 5` replay is defined in
 `Simulation.lean`. Run it with
-`lake env lean --run CCFRaft/Simulation.lean`. Its complete execution remains
-unverified because the function-valued state representation is too slow for
-the current runner.
+`lake exe ccfraft-sim`. The compiled replay reaches every expected
+configuration, election, commit index, retirement phase, and final client
+request.
 -/

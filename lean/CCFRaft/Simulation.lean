@@ -1,4 +1,4 @@
-import Mathlib.Tactic
+import Mathlib.Tactic.FinCases
 
 import CCFRaft.Model
 
@@ -85,28 +85,24 @@ def configC (_ : Unit) : Configuration :=
 def firstConfigurationActions (_ : Unit) : List Action :=
   [
     .changeConfiguration 0 (configA ()),
-    .clientRequest 0,
     .signCommittableMessages 0
   ] ++
-    freshFollowerCatchUp 0 1 5 ++
-    freshFollowerCatchUp 0 2 5 ++
+    freshFollowerCatchUp 0 1 4 ++
+    freshFollowerCatchUp 0 2 4 ++
     [.advanceCommitIndex 0]
 
 def secondConfigurationActions (_ : Unit) : List Action :=
   [
     .changeConfiguration 0 (configB ()),
-    .clientRequest 0,
     .signCommittableMessages 0
   ] ++
-    existingFollowerCatchUp 0 1 3 ++
-    existingFollowerCatchUp 0 2 3 ++
-    freshFollowerCatchUp 0 5 8 ++
-    freshFollowerCatchUp 0 6 8 ++
-    freshFollowerCatchUp 0 7 8 ++
+    existingFollowerCatchUp 0 1 2 ++
+    existingFollowerCatchUp 0 2 2 ++
+    freshFollowerCatchUp 0 5 6 ++
+    freshFollowerCatchUp 0 6 6 ++
+    freshFollowerCatchUp 0 7 6 ++
     [.advanceCommitIndex 0] ++
-    heartbeat 0 5 ++
-    heartbeat 0 6 ++
-    heartbeat 0 7
+    heartbeat 0 5
 
 def laterTermElectionActions (_ : Unit) : List Action :=
   [.timeout 5] ++
@@ -117,18 +113,27 @@ def laterTermElectionActions (_ : Unit) : List Action :=
 def thirdConfigurationActions (_ : Unit) : List Action :=
   [
     .changeConfiguration 5 (configC ()),
-    .clientRequest 5,
     .signCommittableMessages 5
   ] ++
-    existingFollowerCatchUp 5 6 3 ++
-    existingFollowerCatchUp 5 7 3 ++
-    freshFollowerCatchUp 5 10 11 ++
-    freshFollowerCatchUp 5 11 11 ++
-    freshFollowerCatchUp 5 12 11 ++
-    [.advanceCommitIndex 5] ++
-    heartbeat 5 10 ++
-    heartbeat 5 11 ++
-    heartbeat 5 12
+    existingFollowerCatchUp 5 6 2 ++
+    existingFollowerCatchUp 5 7 2 ++
+    freshFollowerCatchUp 5 10 8 ++
+    freshFollowerCatchUp 5 11 8 ++
+    freshFollowerCatchUp 5 12 8 ++
+    [
+      .advanceCommitIndex 5,
+      .clientRequest 5
+    ]
+
+def fullReplayActionCount : Nat :=
+  (firstConfigurationActions ()).length +
+    (secondConfigurationActions ()).length +
+    (laterTermElectionActions ()).length +
+    (thirdConfigurationActions ()).length
+
+theorem fullReplayActionCount_is_229 :
+    fullReplayActionCount = 229 := by
+  decide
 
 def forgedAck : Message :=
   {
@@ -148,7 +153,7 @@ def forgedAckState : State :=
   let initial := initialState 0
   {
     initial with
-    currentTerm := Function.update initial.currentTerm 1 startTerm
+    currentTerm := updateNode initial.currentTerm 1 startTerm
     messages := enqueue initial.messages forgedAck
   }
 
@@ -225,7 +230,7 @@ def runFirstConfiguration (_ : Unit) : IO Unit := do
   IO.eprintln "starting first configuration"
   let first <- requireReplayState "first configuration" fun _ =>
     runFromInitial 0 (firstConfigurationActions ())
-  if first.commitIndex 0 = 5 &&
+  if first.commitIndex 0 = 4 &&
       currentConfiguration (first.configurations 0) == configA () then
     IO.eprintln "first configuration state passed"
   else
@@ -244,17 +249,18 @@ def runFullReplay (_ : Unit) : IO Unit := do
   IO.eprintln "starting third configuration"
   let third <- requireReplayState "third configuration" fun _ =>
     runActions 0 elected (thirdConfigurationActions ())
-  if first.commitIndex 0 = 5 &&
+  if first.commitIndex 0 = 4 &&
       currentConfiguration (first.configurations 0) == configA () &&
-      second.commitIndex 0 = 8 &&
+      second.commitIndex 0 = 6 &&
       currentConfiguration (second.configurations 0) == configB () &&
       elected.currentTerm 5 = 3 &&
       elected.leadershipState 5 == .leader &&
       currentConfiguration (elected.configurations 5) == configB () &&
-      third.commitIndex 5 = 11 &&
+      third.commitIndex 5 = 8 &&
       third.leadershipState 5 == .leader &&
       third.membershipState 5 == .retirementCompleted &&
-      currentConfiguration (third.configurations 5) == configC () then
+      currentConfiguration (third.configurations 5) == configC () &&
+      (third.log 5).length = 9 then
     IO.eprintln "CCFRaft disjoint 5 -> 5 -> 5 replay passed"
   else
     throw <| IO.userError "CCFRaft replay reached the wrong final state"

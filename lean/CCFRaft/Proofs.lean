@@ -1,5 +1,3 @@
-import Mathlib.Tactic
-
 import CCFRaft.Properties
 
 /-!
@@ -42,6 +40,24 @@ theorem initial_SignatureInv (start : Node) :
     simp [initialState, startLog, entryAt?]
   · simp [initialState, h] at positive
 
+theorem initial_AppendEntriesResponseBoundInv (start : Node) :
+    AppendEntriesResponseBoundInv (initialState start) := by
+  intro dest source message messageQueued
+  simp [initialState] at messageQueued
+
+theorem initial_ConfigurationsWellFormedInv (start : Node) :
+    ConfigurationsWellFormedInv (initialState start) := by
+  intro node
+  by_cases h : node = start
+  · subst node
+    simp [increasingConfigurationIndices, initialState, startLog]
+  · simp [increasingConfigurationIndices, initialState, startLog, h]
+
+theorem initial_MessagesWellFormedInv (start : Node) :
+    MessagesWellFormedInv (initialState start) := by
+  intro dest source message messageQueued
+  simp [initialState] at messageQueued
+
 /-- Initial-state checkpoint for three public safety invariants. -/
 theorem initialSafetyCheckpoint (start : Node) :
     And
@@ -54,18 +70,140 @@ theorem initialSafetyCheckpoint (start : Node) :
       initial_MoreThanOneLeaderInv start,
       initial_SignatureInv start⟩
 
+@[simp]
+theorem updateNode_same
+    {α : Type}
+    (values : NodeMap α)
+    (node : Node)
+    (value : α) :
+    updateNode values node value node = value := by
+  simp [updateNode]
+
+@[simp]
+theorem updateNode_ne
+    {α : Type}
+    (values : NodeMap α)
+    (updated selected : Node)
+    (value : α)
+    (different : Not (selected = updated)) :
+    updateNode values updated value selected = values selected := by
+  simp [updateNode, different]
+
 theorem functionUpdate_mono
-    (values : Node -> Nat)
+    (values : NodeMap Nat)
     (updated : Node)
     (value : Nat)
     (atUpdated : values updated <= value) :
     forall node,
-      values node <= Function.update values updated value node := by
+      values node <= updateNode values updated value node := by
   intro node
   by_cases h : node = updated
   · subst node
     simpa using atUpdated
-  · simp [Function.update, h]
+  · simp [h]
+
+@[simp]
+theorem enqueue_preserves_MessageChannelsWellFormed
+    (messages : NodeMatrix (List Message))
+    (message : Message)
+    (wellFormed : MessageChannelsWellFormed messages) :
+    MessageChannelsWellFormed (enqueue messages message) := by
+  intro dest source queued queuedMem
+  by_cases destMatches : dest = message.dest
+  · subst dest
+    by_cases sourceMatches : source = message.source
+    · subst source
+      by_cases duplicate :
+          (messages message.dest message.source).any
+            (fun existing => existing == message)
+      · simp [enqueue, update₂, duplicate] at queuedMem
+        exact wellFormed _ _ queued queuedMem
+      · simp [enqueue, update₂, duplicate] at queuedMem
+        rcases queuedMem with queuedMem | queuedIsMessage
+        · exact wellFormed _ _ queued queuedMem
+        · subst queued
+          exact ⟨rfl, rfl⟩
+    · simp [enqueue, update₂, sourceMatches] at queuedMem
+      exact wellFormed _ _ queued queuedMem
+  · simp [enqueue, update₂, destMatches] at queuedMem
+    exact wellFormed _ _ queued queuedMem
+
+@[simp]
+theorem discard_preserves_MessageChannelsWellFormed
+    (messages : NodeMatrix (List Message))
+    (message : Message)
+    (wellFormed : MessageChannelsWellFormed messages) :
+    MessageChannelsWellFormed (discard messages message) := by
+  intro dest source queued queuedMem
+  by_cases destMatches : dest = message.dest
+  · subst dest
+    by_cases sourceMatches : source = message.source
+    · subst source
+      simp [Model.discard, update₂] at queuedMem
+      exact wellFormed _ _ queued (List.mem_of_mem_erase queuedMem)
+    · simp [Model.discard, update₂, sourceMatches] at queuedMem
+      exact wellFormed _ _ queued queuedMem
+  · simp [Model.discard, update₂, destMatches] at queuedMem
+    exact wellFormed _ _ queued queuedMem
+
+@[simp]
+theorem reply_preserves_MessageChannelsWellFormed
+    (messages : NodeMatrix (List Message))
+    (response request : Message)
+    (wellFormed : MessageChannelsWellFormed messages) :
+    MessageChannelsWellFormed (reply messages response request) := by
+  apply discard_preserves_MessageChannelsWellFormed
+  exact enqueue_preserves_MessageChannelsWellFormed _ _ wellFormed
+
+theorem messagesWellFormed_step
+    (state : State)
+    (action : Action)
+    (wellFormed : MessagesWellFormedInv state) :
+    MessagesWellFormedInv (next state action) := by
+  cases action with
+  | timeout candidate =>
+      simpa [MessagesWellFormedInv, next, rawNext, nextTimeout] using
+        wellFormed
+  | requestVote source dest =>
+      simpa [MessagesWellFormedInv, next, rawNext, nextRequestVote] using
+        enqueue_preserves_MessageChannelsWellFormed
+          state.messages
+          (requestVoteMessage state source dest)
+          wellFormed
+  | appendEntries source dest =>
+      simpa [MessagesWellFormedInv, next, rawNext, nextAppendEntries] using
+        enqueue_preserves_MessageChannelsWellFormed
+          state.messages
+          (appendEntriesMessage state source dest)
+          wellFormed
+  | becomeLeader leader =>
+      simpa [MessagesWellFormedInv, next, rawNext, nextBecomeLeader] using
+        wellFormed
+  | clientRequest leader =>
+      simpa [MessagesWellFormedInv, next, rawNext, nextClientRequest] using
+        wellFormed
+  | signCommittableMessages leader =>
+      simpa [MessagesWellFormedInv, next, rawNext,
+        nextSignCommittableMessages] using wellFormed
+  | changeConfiguration leader configuration =>
+      simpa [MessagesWellFormedInv, next, rawNext,
+        nextChangeConfiguration] using wellFormed
+  | advanceCommitIndex leader =>
+      simpa [MessagesWellFormedInv, next, rawNext,
+        nextAdvanceCommitIndex] using wellFormed
+  | receive dest source kind =>
+      cases hmessage : headMessage? state dest source with
+      | none =>
+          simpa [MessagesWellFormedInv, next, rawNext, nextReceive,
+            hmessage] using wellFormed
+      | some message =>
+          cases kind <;>
+            cases hbody : message.body <;>
+              simp_all [MessagesWellFormedInv, next, rawNext, nextReceive,
+                nextAppendEntriesAlreadyDone, nextAppendEntriesNoConflict,
+                conflictRollback]
+          all_goals
+            split <;> simp_all
 
 theorem termDelta
     (state : State)
@@ -183,7 +321,7 @@ theorem commitIndexDelta
       · subst node
         simp [next, rawNext, nextAdvanceCommitIndex]
         exact Nat.le_of_lt _enabled.2
-      · simp [next, rawNext, nextAdvanceCommitIndex, Function.update, h]
+      · simp [next, rawNext, nextAdvanceCommitIndex, h]
   | receive dest source kind =>
       cases hmessage : headMessage? state dest source with
       | none =>
@@ -193,9 +331,14 @@ theorem commitIndexDelta
             cases hbody : message.body <;>
               simp_all [next, rawNext, nextReceive,
                 nextAppendEntriesAlreadyDone, nextAppendEntriesNoConflict,
-                conflictRollback, Function.update]
+                conflictRollback]
           all_goals
-            split <;> simp_all
+            first
+            | split <;> simp_all
+            | by_cases hnode : node = message.dest
+              · subst node
+                simp
+              · simp [hnode]
 
 theorem monotonicCommitIndex_step
     (state : State)
@@ -279,15 +422,17 @@ theorem matchIndexDelta
             cases hbody : message.body <;>
               simp_all [next, rawNext,
                 nextReceive, nextAppendEntriesAlreadyDone,
-                nextAppendEntriesNoConflict, conflictRollback, update₂,
-                Function.update]
+                nextAppendEntriesNoConflict, conflictRollback, update₂]
           all_goals
-            split <;> simp_all
-          all_goals
-            by_cases hj : j = source
-            · subst j
-              simp
-            · simp [Function.update, hj]
+            first
+            | split <;> simp_all
+            | by_cases hi : i = dest
+              · subst i
+                by_cases hj : j = source
+                · subst j
+                  simp
+                · simp [hj]
+              · simp [hi]
 
 theorem monotonicMatchIndex_step
     (state : State)
