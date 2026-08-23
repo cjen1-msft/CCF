@@ -126,12 +126,25 @@ def MessageChannelsWellFormed
 def MessagesWellFormedInv (state : State) : Prop :=
   MessageChannelsWellFormed state.messages
 
+def NoLeaderBeforeInitialTermInv (state : State) : Prop :=
+  forall node : Node,
+    state.currentTerm node < startTerm ->
+      state.leadershipState node != .leader
+
+def LogTermsAtLeastStartInv (state : State) : Prop :=
+  forall node : Node,
+    forall entry,
+      entry ∈ state.log node ->
+        startTerm <= entry.term
+
 /-- The proof-only invariant carried through reachable states. -/
 structure InductiveInvariant (state : State) : Prop where
   safety : StateSafety state
   responseBounds : AppendEntriesResponseBoundInv state
   configurationsWellFormed : ConfigurationsWellFormedInv state
   messagesWellFormed : MessagesWellFormedInv state
+  noEarlyLeader : NoLeaderBeforeInitialTermInv state
+  logTermsStartAtInitial : LogTermsAtLeastStartInv state
 
 /-- Exact remaining preservation statement for the full selected action set. -/
 def FullInductivenessObligation : Prop :=

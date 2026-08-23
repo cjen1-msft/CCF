@@ -60,6 +60,31 @@ theorem initial_MessagesWellFormedInv (start : Node) :
   intro dest source message messageQueued
   simp [initialState] at messageQueued
 
+theorem initial_NoLeaderBeforeInitialTermInv (start : Node) :
+    NoLeaderBeforeInitialTermInv (initialState start) := by
+  intro node lowerTerm
+  by_cases nodeIsStart : node = start
+  · subst node
+    simp [initialState, startTerm] at lowerTerm
+  · have role :
+        (initialState start).leadershipState node = .none := by
+      simp [initialState, nodeIsStart]
+    rw [role]
+    decide
+
+theorem initial_LogTermsAtLeastStartInv (start : Node) :
+    LogTermsAtLeastStartInv (initialState start) := by
+  intro node entry member
+  by_cases nodeIsStart : node = start
+  · subst node
+    simp [initialState, startLog] at member
+    rcases member with isFirst | isSecond
+    · subst entry
+      exact Nat.le_refl _
+    · subst entry
+      exact Nat.le_refl _
+  · simp [initialState, nodeIsStart] at member
+
 theorem initial_CandidateTermNotInLogInv (start : Node) :
     CandidateTermNotInLogInv (initialState start) := by
   intro candidate candidateState
@@ -201,6 +226,8 @@ theorem initial_InductiveInvariant (start : Node) :
     responseBounds := initial_AppendEntriesResponseBoundInv start
     configurationsWellFormed := initial_ConfigurationsWellFormedInv start
     messagesWellFormed := initial_MessagesWellFormedInv start
+    noEarlyLeader := initial_NoLeaderBeforeInitialTermInv start
+    logTermsStartAtInitial := initial_LogTermsAtLeastStartInv start
   }
 
 theorem initialInductiveInvariantObligation :
@@ -1123,6 +1150,658 @@ theorem reply_preserves_MessageChannelsWellFormed
     MessageChannelsWellFormed (reply messages response request) := by
   apply discard_preserves_MessageChannelsWellFormed
   exact enqueue_preserves_MessageChannelsWellFormed _ _ wellFormed
+
+theorem enqueue_preserves_MonoTermInv
+    (state : State)
+    (message : Message)
+    (monoTerm : MonoTermInv state)
+    (messageBound :
+      message.term <= state.currentTerm message.source) :
+    forall dest source queued,
+      queued ∈ (enqueue state.messages message) dest source ->
+        queued.term <= state.currentTerm queued.source := by
+  intro dest source queued queuedMem
+  by_cases destMatches : dest = message.dest
+  · subst dest
+    by_cases sourceMatches : source = message.source
+    · subst source
+      by_cases duplicate :
+          (state.messages message.dest message.source).any
+            (fun existing => existing == message)
+      · simp [enqueue, update₂, duplicate] at queuedMem
+        exact monoTerm _ _ queued queuedMem
+      · simp [enqueue, update₂, duplicate] at queuedMem
+        rcases queuedMem with queuedMem | queuedIsMessage
+        · exact monoTerm _ _ queued queuedMem
+        · subst queued
+          exact messageBound
+    · simp [enqueue, update₂, sourceMatches] at queuedMem
+      exact monoTerm _ _ queued queuedMem
+  · simp [enqueue, update₂, destMatches] at queuedMem
+    exact monoTerm _ _ queued queuedMem
+
+theorem discard_preserves_MonoTermInv
+    (state : State)
+    (message : Message)
+    (monoTerm : MonoTermInv state) :
+    forall dest source queued,
+      queued ∈ (Model.discard state.messages message) dest source ->
+        queued.term <= state.currentTerm queued.source := by
+  intro dest source queued queuedMem
+  by_cases destMatches : dest = message.dest
+  · subst dest
+    by_cases sourceMatches : source = message.source
+    · subst source
+      simp [Model.discard, update₂] at queuedMem
+      exact monoTerm _ _ queued (List.mem_of_mem_erase queuedMem)
+    · simp [Model.discard, update₂, sourceMatches] at queuedMem
+      exact monoTerm _ _ queued queuedMem
+  · simp [Model.discard, update₂, destMatches] at queuedMem
+    exact monoTerm _ _ queued queuedMem
+
+theorem reply_preserves_MonoTermInv
+    (state : State)
+    (response request : Message)
+    (monoTerm : MonoTermInv state)
+    (responseBound :
+      response.term <= state.currentTerm response.source) :
+    forall dest source queued,
+      queued ∈ (reply state.messages response request) dest source ->
+        queued.term <= state.currentTerm queued.source := by
+  intro dest source queued queuedMem
+  apply
+    discard_preserves_MonoTermInv
+      { state with messages := enqueue state.messages response }
+      request
+  · intro queuedDest queuedSource existing existingMem
+    exact enqueue_preserves_MonoTermInv
+      state response monoTerm responseBound
+      queuedDest queuedSource existing existingMem
+  · exact queuedMem
+
+theorem monoTerm_of_currentTerm_mono
+    (before after : State)
+    (monoTerm : MonoTermInv before)
+    (messagesUnchanged : after.messages = before.messages)
+    (termsMonotonic :
+      forall node,
+        before.currentTerm node <= after.currentTerm node) :
+    MonoTermInv after := by
+  intro dest source message messageQueued
+  rw [messagesUnchanged] at messageQueued
+  exact Nat.le_trans
+    (monoTerm dest source message messageQueued)
+    (termsMonotonic message.source)
+
+theorem monoTerm_of_discard
+    (before after : State)
+    (message : Message)
+    (monoTerm : MonoTermInv before)
+    (messagesAfter :
+      after.messages = Model.discard before.messages message)
+    (termsAfter : after.currentTerm = before.currentTerm) :
+    MonoTermInv after := by
+  intro dest source queued queuedMem
+  rw [messagesAfter] at queuedMem
+  rw [termsAfter]
+  exact
+    discard_preserves_MonoTermInv
+      before message monoTerm
+      dest source queued queuedMem
+
+theorem entryAt?_mem
+    (entries : List Entry)
+    (index : Nat)
+    (entry : Entry)
+    (atIndex : entryAt? entries index = some entry) :
+    entry ∈ entries := by
+  unfold entryAt? at atIndex
+  split at atIndex
+  · contradiction
+  · exact List.mem_of_getElem? atIndex
+
+theorem monoLogEntries_member_le_lastTerm
+    (entries : List Entry)
+    (entry : Entry)
+    (mono : monoLogEntries entries)
+    (member : entry ∈ entries) :
+    entry.term <=
+      (entries.getLast?.map fun current => current.term).getD 0 := by
+  induction entries generalizing entry with
+  | nil =>
+      simp at member
+  | cons first rest inductionHypothesis =>
+      cases rest with
+      | nil =>
+          simp at member
+          subst entry
+          simp
+      | cons second tail =>
+          simp [monoLogEntries] at mono
+          simp at member
+          rcases member with isFirst | inTail
+          · subst entry
+            have firstLeSecond : first.term <= second.term := by
+              rcases mono.1 with sameTerm | laterTerm
+              · exact Nat.le_of_eq sameTerm
+              · exact Nat.le_of_lt laterTerm.1
+            have secondLeLast :=
+              inductionHypothesis
+                second
+                mono.2
+                (by simp)
+            exact Nat.le_trans firstLeSecond (by simpa using secondLeLast)
+          · exact inductionHypothesis entry mono.2 (by simpa using inTail)
+
+theorem logEntryTerm_le_currentTerm
+    (state : State)
+    (monoLog : MonoLogInv state)
+    (node : Node)
+    (index : Nat)
+    (entry : Entry)
+    (atIndex : entryAt? (state.log node) index = some entry) :
+    entry.term <= state.currentTerm node := by
+  have member := entryAt?_mem (state.log node) index entry atIndex
+  cases logShape : state.log node with
+  | nil =>
+      rw [logShape] at member
+      simp at member
+  | cons first rest =>
+      have nodeMono := monoLog node (by
+        rw [logShape]
+        rfl)
+      exact Nat.le_trans
+        (monoLogEntries_member_le_lastTerm
+          (state.log node)
+          entry
+          nodeMono.2
+          member)
+        nodeMono.1
+
+theorem appendEntriesRejectResponse_term_le_current
+    (state : State)
+    (message response : Message)
+    (previousIndex previousTerm : Nat)
+    (monoLog : MonoLogInv state)
+    (logTerms : LogTermsAtLeastStartInv state)
+    (responseEq :
+      appendEntriesRejectResponse?
+        state message previousIndex previousTerm = some response) :
+    response.term <= state.currentTerm response.source := by
+  unfold appendEntriesRejectResponse? at responseEq
+  dsimp only at responseEq
+  split at responseEq
+  · contradiction
+  · split at responseEq
+    · have responseIsCurrent := Option.some.inj responseEq
+      subst response
+      simp
+    · split at responseEq
+      · contradiction
+      · let comparisonTerm :=
+          if previousIndex = 0 ||
+              (state.log message.dest).length < previousIndex then
+            0
+          else
+            (state.log message.dest).getLast?.map (·.term) |>.getD 0
+        change
+          (if comparisonTerm = previousTerm then
+            none
+          else if comparisonTerm = 0 then
+            some
+              {
+                term := state.currentTerm message.dest
+                source := message.dest
+                dest := message.source
+                body :=
+                  .appendEntriesResponse false
+                    (state.log message.dest).length
+              }
+          else
+            let lastIndex :=
+              findHighestPossibleMatch
+                (state.log message.dest)
+                previousIndex
+                previousTerm
+            let responseTerm :=
+              if lastIndex = 0 then
+                startTerm
+              else
+                (entryAt? (state.log message.dest) lastIndex).map
+                    (·.term) |>.getD startTerm
+            some
+              {
+                term := responseTerm
+                source := message.dest
+                dest := message.source
+                body := .appendEntriesResponse false lastIndex
+              }) =
+            some response at responseEq
+        by_cases sameTerm : comparisonTerm = previousTerm
+        · simp [sameTerm] at responseEq
+        · simp [sameTerm] at responseEq
+          by_cases zeroComparison : comparisonTerm = 0
+          · simp [zeroComparison] at responseEq
+            subst response
+            simp
+          · simp [zeroComparison] at responseEq
+            subst response
+            let lastIndex :=
+              findHighestPossibleMatch
+                (state.log message.dest)
+                previousIndex
+                previousTerm
+            have startLeCurrent :
+                startTerm <= state.currentTerm message.dest := by
+              by_cases invalidPrevious :
+                  previousIndex = 0 ||
+                    (state.log message.dest).length < previousIndex
+              · simp [comparisonTerm, invalidPrevious] at zeroComparison
+              · simp [comparisonTerm, invalidPrevious] at zeroComparison
+                cases lastEntry : (state.log message.dest).getLast? with
+                | none =>
+                    simp [lastEntry] at zeroComparison
+                | some entry =>
+                    have decomposition :=
+                      List.getLast?_eq_some_iff.mp lastEntry
+                    rcases decomposition with ⟨logEntries, logShape⟩
+                    have entryMember :
+                        entry ∈ state.log message.dest := by
+                      rw [logShape]
+                      simp
+                    have startLeEntry :=
+                      logTerms message.dest entry entryMember
+                    have nodeMono :=
+                      monoLog message.dest (by
+                        rw [logShape]
+                        cases logEntries <;> rfl)
+                    have entryLeCurrent :
+                        entry.term <= state.currentTerm message.dest := by
+                      simpa [lastEntry] using nodeMono.1
+                    exact Nat.le_trans startLeEntry entryLeCurrent
+            change
+              (if lastIndex = 0 then
+                startTerm
+              else
+                (entryAt? (state.log message.dest) lastIndex).map
+                    (·.term) |>.getD startTerm) <=
+                state.currentTerm message.dest
+            split
+            · exact startLeCurrent
+            · cases responseEntry :
+                  entryAt? (state.log message.dest) lastIndex with
+              | none =>
+                  simp
+                  exact startLeCurrent
+              | some entry =>
+                  simp
+                  exact logEntryTerm_le_currentTerm
+                    state
+                    monoLog
+                    message.dest
+                    lastIndex
+                    entry
+                    responseEntry
+
+theorem monoTerm_step
+    (state : State)
+    (action : Action)
+    (monoTerm : MonoTermInv state)
+    (monoLog : MonoLogInv state)
+    (logTerms : LogTermsAtLeastStartInv state)
+    (enabled : Enabled state action) :
+    MonoTermInv (next state action) := by
+  cases action with
+  | timeout candidate =>
+      apply monoTerm_of_currentTerm_mono state _ monoTerm
+      · rfl
+      · intro node
+        by_cases nodeIsCandidate : node = candidate
+        · subst node
+          simp [next, rawNext, nextTimeout]
+        · simp [next, rawNext, nextTimeout, nodeIsCandidate]
+  | requestVote source dest =>
+      intro queuedDest queuedSource queued queuedMem
+      simpa [next, rawNext, nextRequestVote] using
+        enqueue_preserves_MonoTermInv
+          state
+          (requestVoteMessage state source dest)
+          monoTerm
+          (by simp [requestVoteMessage])
+          queuedDest queuedSource queued queuedMem
+  | appendEntries source dest =>
+      intro queuedDest queuedSource queued queuedMem
+      simpa [next, rawNext, nextAppendEntries] using
+        enqueue_preserves_MonoTermInv
+          state
+          (appendEntriesMessage state source dest)
+          monoTerm
+          (by simp [appendEntriesMessage])
+          queuedDest queuedSource queued queuedMem
+  | becomeLeader leader =>
+      apply monoTerm_of_currentTerm_mono state _ monoTerm
+      · rfl
+      · intro node
+        simp [next, rawNext, nextBecomeLeader]
+  | clientRequest leader =>
+      apply monoTerm_of_currentTerm_mono state _ monoTerm
+      · rfl
+      · intro node
+        simp [next, rawNext, nextClientRequest]
+  | signCommittableMessages leader =>
+      apply monoTerm_of_currentTerm_mono state _ monoTerm
+      · rfl
+      · intro node
+        simp [next, rawNext, nextSignCommittableMessages]
+  | changeConfiguration leader configuration =>
+      apply monoTerm_of_currentTerm_mono state _ monoTerm
+      · rfl
+      · intro node
+        simp [next, rawNext, nextChangeConfiguration]
+  | advanceCommitIndex leader =>
+      apply monoTerm_of_currentTerm_mono state _ monoTerm
+      · rfl
+      · intro node
+        simp [next, rawNext, nextAdvanceCommitIndex]
+  | receive dest source kind =>
+      cases hmessage : headMessage? state dest source with
+      | none =>
+          simpa [next, rawNext, nextReceive, hmessage] using monoTerm
+      | some message =>
+          have enabledDetails := enabled
+          simp [Enabled, actionEnabled, hmessage] at enabledDetails
+          have destMatches : message.dest = dest := enabledDetails.1.1
+          have sourceMatches : message.source = source :=
+            enabledDetails.1.2
+          cases kind with
+          | updateTerm =>
+              apply monoTerm_of_currentTerm_mono state _ monoTerm
+              · simp [next, rawNext, nextReceive, hmessage]
+              · intro node
+                have newerTerm :
+                    state.currentTerm message.dest < message.term := by
+                  simpa [receiveBranchEnabled, updateTermEnabled] using
+                    enabledDetails.2
+                by_cases nodeIsDest : node = dest
+                · subst node
+                  simpa [next, rawNext, nextReceive, hmessage,
+                    destMatches] using Nat.le_of_lt newerTerm
+                · simp [next, rawNext, nextReceive, hmessage,
+                    nodeIsDest]
+          | handleRequestVoteRequest =>
+              cases hbody : message.body with
+              | requestVoteRequest lastTerm lastIndex isPreVote =>
+                  let grant :=
+                    requestVoteGranted
+                      state dest source message.term lastTerm lastIndex
+                  let response : Message :=
+                    {
+                      term := state.currentTerm dest
+                      source := dest
+                      dest := source
+                      body := .requestVoteResponse grant isPreVote
+                    }
+                  intro queuedDest queuedSource queued queuedMem
+                  have messagesEq :
+                      (next state
+                        (.receive dest source
+                          .handleRequestVoteRequest)).messages =
+                        reply state.messages response message := by
+                    simp [next, rawNext, nextReceive, hmessage, hbody,
+                      grant, response]
+                  rw [messagesEq] at queuedMem
+                  have queuedBound :=
+                    reply_preserves_MonoTermInv
+                      state response message monoTerm
+                      (by simp [response])
+                      queuedDest queuedSource queued queuedMem
+                  simpa [next, rawNext, nextReceive, hmessage, hbody,
+                    destMatches, sourceMatches, grant, response] using
+                    queuedBound
+              | _ =>
+                  simpa [next, rawNext, nextReceive, hmessage, hbody,
+                    destMatches, sourceMatches] using
+                    monoTerm
+          | rejectAppendEntriesRequest =>
+              cases hbody : message.body with
+              | appendEntriesRequest previousIndex previousTerm entries
+                  commitIndex =>
+                  cases responseCase :
+                      appendEntriesRejectResponse?
+                        state message previousIndex previousTerm with
+                  | none =>
+                      simpa [next, rawNext, nextReceive, hmessage, hbody,
+                        destMatches, sourceMatches, responseCase] using monoTerm
+                  | some response =>
+                      intro queuedDest queuedSource queued queuedMem
+                      have messagesEq :
+                          (next state
+                            (.receive dest source
+                              .rejectAppendEntriesRequest)).messages =
+                            reply state.messages response message := by
+                        simp [next, rawNext, nextReceive, hmessage, hbody,
+                          responseCase]
+                      rw [messagesEq] at queuedMem
+                      have queuedBound :=
+                        reply_preserves_MonoTermInv
+                          state
+                          response
+                          message
+                          monoTerm
+                          (appendEntriesRejectResponse_term_le_current
+                            state
+                            message
+                            response
+                            previousIndex
+                            previousTerm
+                            monoLog
+                            logTerms
+                            responseCase)
+                          queuedDest queuedSource queued queuedMem
+                      simpa [next, rawNext, nextReceive, hmessage, hbody,
+                        destMatches, sourceMatches, responseCase] using
+                        queuedBound
+              | _ =>
+                  simpa [next, rawNext, nextReceive, hmessage, hbody,
+                    destMatches, sourceMatches] using
+                    monoTerm
+          | appendEntriesAlreadyDone =>
+              cases hbody : message.body with
+              | appendEntriesRequest previousIndex previousTerm entries
+                  commitIndex =>
+                  let response : Message :=
+                    {
+                      term := state.currentTerm dest
+                      source := dest
+                      dest := source
+                      body :=
+                        .appendEntriesResponse true
+                          (previousIndex + entries.length)
+                    }
+                  intro queuedDest queuedSource queued queuedMem
+                  have messagesEq :
+                      (next state
+                        (.receive dest source
+                          .appendEntriesAlreadyDone)).messages =
+                        reply state.messages response message := by
+                    simp [next, rawNext, nextReceive, hmessage, hbody,
+                      destMatches, sourceMatches,
+                      nextAppendEntriesAlreadyDone, response]
+                  rw [messagesEq] at queuedMem
+                  have queuedBound :=
+                    reply_preserves_MonoTermInv
+                      state response message monoTerm
+                      (by simp [response])
+                      queuedDest queuedSource queued queuedMem
+                  simpa [next, rawNext, nextReceive, hmessage, hbody,
+                    destMatches, sourceMatches,
+                    nextAppendEntriesAlreadyDone, response] using queuedBound
+              | _ =>
+                  simpa [next, rawNext, nextReceive, hmessage, hbody,
+                    destMatches, sourceMatches] using
+                    monoTerm
+          | appendEntriesNoConflict =>
+              cases hbody : message.body with
+              | appendEntriesRequest previousIndex previousTerm entries
+                  commitIndex =>
+                  let nextLog :=
+                    (state.log dest).take previousIndex ++ entries
+                  let response : Message :=
+                    {
+                      term := state.currentTerm dest
+                      source := dest
+                      dest := source
+                      body := .appendEntriesResponse true nextLog.length
+                    }
+                  intro queuedDest queuedSource queued queuedMem
+                  have messagesEq :
+                      (next state
+                        (.receive dest source
+                          .appendEntriesNoConflict)).messages =
+                        reply state.messages response message := by
+                    simp [next, rawNext, nextReceive, hmessage, hbody,
+                      destMatches, sourceMatches,
+                      nextAppendEntriesNoConflict, nextLog, response]
+                  rw [messagesEq] at queuedMem
+                  have queuedBound :=
+                    reply_preserves_MonoTermInv
+                      state response message monoTerm
+                      (by simp [response])
+                      queuedDest queuedSource queued queuedMem
+                  simpa [next, rawNext, nextReceive, hmessage, hbody,
+                    destMatches, sourceMatches,
+                    nextAppendEntriesNoConflict, nextLog, response] using
+                    queuedBound
+              | _ =>
+                  simpa [next, rawNext, nextReceive, hmessage, hbody,
+                    destMatches, sourceMatches] using
+                    monoTerm
+          | appendEntriesConflictThenAlreadyDone =>
+              cases hbody : message.body with
+              | appendEntriesRequest previousIndex previousTerm entries
+                  commitIndex =>
+                  let response : Message :=
+                    {
+                      term := state.currentTerm dest
+                      source := dest
+                      dest := source
+                      body :=
+                        .appendEntriesResponse true
+                          (previousIndex + entries.length)
+                    }
+                  intro queuedDest queuedSource queued queuedMem
+                  have messagesEq :
+                      (next state
+                        (.receive dest source
+                          .appendEntriesConflictThenAlreadyDone)).messages =
+                        reply state.messages response message := by
+                    simp [next, rawNext, nextReceive, hmessage, hbody,
+                      destMatches, sourceMatches,
+                      nextAppendEntriesAlreadyDone, conflictRollback,
+                      response]
+                  rw [messagesEq] at queuedMem
+                  have queuedBound :=
+                    reply_preserves_MonoTermInv
+                      state response message monoTerm
+                      (by simp [response])
+                      queuedDest queuedSource queued queuedMem
+                  simpa [next, rawNext, nextReceive, hmessage, hbody,
+                    destMatches, sourceMatches,
+                    nextAppendEntriesAlreadyDone, conflictRollback, response]
+                    using queuedBound
+              | _ =>
+                  simpa [next, rawNext, nextReceive, hmessage, hbody,
+                    destMatches, sourceMatches] using
+                    monoTerm
+          | appendEntriesConflictThenNoConflict =>
+              cases hbody : message.body with
+              | appendEntriesRequest previousIndex previousTerm entries
+                  commitIndex =>
+                  let rolled := conflictRollback state dest previousIndex
+                  let nextLog := (rolled.log dest).take previousIndex ++ entries
+                  let response : Message :=
+                    {
+                      term := state.currentTerm dest
+                      source := dest
+                      dest := source
+                      body := .appendEntriesResponse true nextLog.length
+                    }
+                  intro queuedDest queuedSource queued queuedMem
+                  have messagesEq :
+                      (next state
+                        (.receive dest source
+                          .appendEntriesConflictThenNoConflict)).messages =
+                        reply state.messages response message := by
+                    simp [next, rawNext, nextReceive, hmessage, hbody,
+                      destMatches, sourceMatches,
+                      nextAppendEntriesNoConflict, conflictRollback, rolled,
+                      nextLog, response]
+                  rw [messagesEq] at queuedMem
+                  have queuedBound :=
+                    reply_preserves_MonoTermInv
+                      state response message monoTerm
+                      (by simp [response])
+                      queuedDest queuedSource queued queuedMem
+                  simpa [next, rawNext, nextReceive, hmessage, hbody,
+                    destMatches, sourceMatches,
+                    nextAppendEntriesNoConflict, conflictRollback, rolled,
+                    nextLog, response] using queuedBound
+              | _ =>
+                  simpa [next, rawNext, nextReceive, hmessage, hbody,
+                    destMatches, sourceMatches] using
+                    monoTerm
+          | returnToFollower =>
+              cases hbody : message.body <;>
+                simpa [next, rawNext, nextReceive, hmessage, hbody,
+                  destMatches, sourceMatches, MonoTermInv] using monoTerm
+          | dropIgnored =>
+              apply monoTerm_of_discard state _ message monoTerm
+              · simp [next, rawNext, nextReceive, hmessage]
+              · simp [next, rawNext, nextReceive, hmessage]
+          | handleRequestVoteResponse =>
+              cases hbody : message.body with
+              | requestVoteResponse voteGranted isPreVote =>
+                  apply monoTerm_of_discard state _ message monoTerm
+                  · cases voteGranted <;>
+                      simp [next, rawNext, nextReceive, hmessage, hbody]
+                  · simp [next, rawNext, nextReceive, hmessage, hbody]
+              | _ =>
+                  simpa [next, rawNext, nextReceive, hmessage, hbody,
+                    MonoTermInv] using monoTerm
+          | dropRequestVoteResponseOutOfState =>
+              apply monoTerm_of_discard state _ message monoTerm
+              · simp [next, rawNext, nextReceive, hmessage]
+              · simp [next, rawNext, nextReceive, hmessage]
+          | dropRequestVoteResponseStale =>
+              apply monoTerm_of_discard state _ message monoTerm
+              · simp [next, rawNext, nextReceive, hmessage]
+              · simp [next, rawNext, nextReceive, hmessage]
+          | handleAppendEntriesResponseSuccess =>
+              cases hbody : message.body with
+              | appendEntriesResponse success lastLogIndex =>
+                  apply monoTerm_of_discard state _ message monoTerm
+                  · simp [next, rawNext, nextReceive, hmessage, hbody]
+                  · simp [next, rawNext, nextReceive, hmessage, hbody]
+              | _ =>
+                  simpa [next, rawNext, nextReceive, hmessage, hbody,
+                    MonoTermInv] using monoTerm
+          | handleAppendEntriesResponseFailure =>
+              cases hbody : message.body with
+              | appendEntriesResponse success lastLogIndex =>
+                  apply monoTerm_of_discard state _ message monoTerm
+                  · simp [next, rawNext, nextReceive, hmessage, hbody]
+                  · simp [next, rawNext, nextReceive, hmessage, hbody]
+              | _ =>
+                  simpa [next, rawNext, nextReceive, hmessage, hbody,
+                    MonoTermInv] using monoTerm
+          | dropAppendEntriesResponseOutOfState =>
+              apply monoTerm_of_discard state _ message monoTerm
+              · simp [next, rawNext, nextReceive, hmessage]
+              · simp [next, rawNext, nextReceive, hmessage]
+          | dropAppendEntriesResponseStale =>
+              apply monoTerm_of_discard state _ message monoTerm
+              · simp [next, rawNext, nextReceive, hmessage]
+              · simp [next, rawNext, nextReceive, hmessage]
 
 theorem messagesWellFormed_step
     (state : State)

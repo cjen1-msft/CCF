@@ -44,7 +44,7 @@ semantics used by reachability and replay.
 | `LogMatchingInv` | `Model.LogMatchingInv` | Initial state proved; preservation pending |
 | `LeaderCompletenessInv` | `Model.LeaderCompletenessInv` | Initial state proved; preservation pending |
 | `SignatureInv` | `Model.SignatureInv` | Defined; initial state proved |
-| `MonoTermInv` | `Model.MonoTermInv` | Initial state proved; preservation pending |
+| `MonoTermInv` | `Model.MonoTermInv` | Initialization and all-action preservation proved from monotonic logs and minimum log terms |
 | `MonoLogInv` | `Model.MonoLogInv` | Initial state proved; preservation pending |
 | `LogConfigurationConsistentInv` | `Model.LogConfigurationConsistentInv` | Initial state proved; preservation pending |
 | `CommittedLogAppendOnlyProp` | `Model.CommittedLogAppendOnlyProp` | Defined; proof pending |
@@ -60,6 +60,8 @@ semantics used by reachability and replay.
 | AppendEntries response bound | `Properties.AppendEntriesResponseBoundInv` | Initial state proved; preservation pending |
 | Configuration representation | `Properties.ConfigurationsWellFormedInv` | Initialization and all-action preservation proved |
 | Message representation | `Properties.MessagesWellFormedInv` | Initialization and all-action preservation proved |
+| No leader before term 2 | `Properties.NoLeaderBeforeInitialTermInv` | Initial state proved; preservation pending |
+| Minimum log term | `Properties.LogTermsAtLeastStartInv` | Initial state proved; preservation pending |
 
 `Properties.InitialInductiveInvariantObligation` is proved.
 `Properties.FullSafetyCompletionObligation` is now blocked on inductive
