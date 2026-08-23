@@ -1249,6 +1249,24 @@ theorem monoTerm_of_discard
       before message monoTerm
       dest source queued queuedMem
 
+theorem monoTerm_of_reply
+    (before after : State)
+    (response request : Message)
+    (monoTerm : MonoTermInv before)
+    (responseBound :
+      response.term <= before.currentTerm response.source)
+    (messagesAfter :
+      after.messages = reply before.messages response request)
+    (termsAfter : after.currentTerm = before.currentTerm) :
+    MonoTermInv after := by
+  intro dest source queued queuedMem
+  rw [messagesAfter] at queuedMem
+  rw [termsAfter]
+  exact
+    reply_preserves_MonoTermInv
+      before response request monoTerm responseBound
+      dest source queued queuedMem
+
 theorem entryAt?_mem
     (entries : List Entry)
     (index : Nat)
@@ -1541,23 +1559,11 @@ theorem monoTerm_step
                       dest := source
                       body := .requestVoteResponse grant isPreVote
                     }
-                  intro queuedDest queuedSource queued queuedMem
-                  have messagesEq :
-                      (next state
-                        (.receive dest source
-                          .handleRequestVoteRequest)).messages =
-                        reply state.messages response message := by
-                    simp [next, rawNext, nextReceive, hmessage, hbody,
+                  apply monoTerm_of_reply
+                    state _ response message monoTerm (by simp [response])
+                  · simp [next, rawNext, nextReceive, hmessage, hbody,
                       grant, response]
-                  rw [messagesEq] at queuedMem
-                  have queuedBound :=
-                    reply_preserves_MonoTermInv
-                      state response message monoTerm
-                      (by simp [response])
-                      queuedDest queuedSource queued queuedMem
-                  simpa [next, rawNext, nextReceive, hmessage, hbody,
-                    destMatches, sourceMatches, grant, response] using
-                    queuedBound
+                  · simp [next, rawNext, nextReceive, hmessage, hbody]
               | _ =>
                   simpa [next, rawNext, nextReceive, hmessage, hbody,
                     destMatches, sourceMatches] using
@@ -1573,34 +1579,21 @@ theorem monoTerm_step
                       simpa [next, rawNext, nextReceive, hmessage, hbody,
                         destMatches, sourceMatches, responseCase] using monoTerm
                   | some response =>
-                      intro queuedDest queuedSource queued queuedMem
-                      have messagesEq :
-                          (next state
-                            (.receive dest source
-                              .rejectAppendEntriesRequest)).messages =
-                            reply state.messages response message := by
-                        simp [next, rawNext, nextReceive, hmessage, hbody,
-                          responseCase]
-                      rw [messagesEq] at queuedMem
-                      have queuedBound :=
-                        reply_preserves_MonoTermInv
+                      apply monoTerm_of_reply
+                        state _ response message monoTerm
+                        (appendEntriesRejectResponse_term_le_current
                           state
-                          response
                           message
-                          monoTerm
-                          (appendEntriesRejectResponse_term_le_current
-                            state
-                            message
-                            response
-                            previousIndex
-                            previousTerm
-                            monoLog
-                            logTerms
-                            responseCase)
-                          queuedDest queuedSource queued queuedMem
-                      simpa [next, rawNext, nextReceive, hmessage, hbody,
-                        destMatches, sourceMatches, responseCase] using
-                        queuedBound
+                          response
+                          previousIndex
+                          previousTerm
+                          monoLog
+                          logTerms
+                          responseCase)
+                      · simp [next, rawNext, nextReceive, hmessage, hbody,
+                          responseCase]
+                      · simp [next, rawNext, nextReceive, hmessage, hbody,
+                          responseCase]
               | _ =>
                   simpa [next, rawNext, nextReceive, hmessage, hbody,
                     destMatches, sourceMatches] using
@@ -1618,24 +1611,13 @@ theorem monoTerm_step
                         .appendEntriesResponse true
                           (previousIndex + entries.length)
                     }
-                  intro queuedDest queuedSource queued queuedMem
-                  have messagesEq :
-                      (next state
-                        (.receive dest source
-                          .appendEntriesAlreadyDone)).messages =
-                        reply state.messages response message := by
-                    simp [next, rawNext, nextReceive, hmessage, hbody,
+                  apply monoTerm_of_reply
+                    state _ response message monoTerm (by simp [response])
+                  · simp [next, rawNext, nextReceive, hmessage, hbody,
                       destMatches, sourceMatches,
                       nextAppendEntriesAlreadyDone, response]
-                  rw [messagesEq] at queuedMem
-                  have queuedBound :=
-                    reply_preserves_MonoTermInv
-                      state response message monoTerm
-                      (by simp [response])
-                      queuedDest queuedSource queued queuedMem
-                  simpa [next, rawNext, nextReceive, hmessage, hbody,
-                    destMatches, sourceMatches,
-                    nextAppendEntriesAlreadyDone, response] using queuedBound
+                  · simp [next, rawNext, nextReceive, hmessage, hbody,
+                      nextAppendEntriesAlreadyDone]
               | _ =>
                   simpa [next, rawNext, nextReceive, hmessage, hbody,
                     destMatches, sourceMatches] using
@@ -1653,25 +1635,13 @@ theorem monoTerm_step
                       dest := source
                       body := .appendEntriesResponse true nextLog.length
                     }
-                  intro queuedDest queuedSource queued queuedMem
-                  have messagesEq :
-                      (next state
-                        (.receive dest source
-                          .appendEntriesNoConflict)).messages =
-                        reply state.messages response message := by
-                    simp [next, rawNext, nextReceive, hmessage, hbody,
+                  apply monoTerm_of_reply
+                    state _ response message monoTerm (by simp [response])
+                  · simp [next, rawNext, nextReceive, hmessage, hbody,
                       destMatches, sourceMatches,
                       nextAppendEntriesNoConflict, nextLog, response]
-                  rw [messagesEq] at queuedMem
-                  have queuedBound :=
-                    reply_preserves_MonoTermInv
-                      state response message monoTerm
-                      (by simp [response])
-                      queuedDest queuedSource queued queuedMem
-                  simpa [next, rawNext, nextReceive, hmessage, hbody,
-                    destMatches, sourceMatches,
-                    nextAppendEntriesNoConflict, nextLog, response] using
-                    queuedBound
+                  · simp [next, rawNext, nextReceive, hmessage, hbody,
+                      nextAppendEntriesNoConflict]
               | _ =>
                   simpa [next, rawNext, nextReceive, hmessage, hbody,
                     destMatches, sourceMatches] using
@@ -1689,26 +1659,14 @@ theorem monoTerm_step
                         .appendEntriesResponse true
                           (previousIndex + entries.length)
                     }
-                  intro queuedDest queuedSource queued queuedMem
-                  have messagesEq :
-                      (next state
-                        (.receive dest source
-                          .appendEntriesConflictThenAlreadyDone)).messages =
-                        reply state.messages response message := by
-                    simp [next, rawNext, nextReceive, hmessage, hbody,
+                  apply monoTerm_of_reply
+                    state _ response message monoTerm (by simp [response])
+                  · simp [next, rawNext, nextReceive, hmessage, hbody,
                       destMatches, sourceMatches,
                       nextAppendEntriesAlreadyDone, conflictRollback,
                       response]
-                  rw [messagesEq] at queuedMem
-                  have queuedBound :=
-                    reply_preserves_MonoTermInv
-                      state response message monoTerm
-                      (by simp [response])
-                      queuedDest queuedSource queued queuedMem
-                  simpa [next, rawNext, nextReceive, hmessage, hbody,
-                    destMatches, sourceMatches,
-                    nextAppendEntriesAlreadyDone, conflictRollback, response]
-                    using queuedBound
+                  · simp [next, rawNext, nextReceive, hmessage, hbody,
+                      nextAppendEntriesAlreadyDone, conflictRollback]
               | _ =>
                   simpa [next, rawNext, nextReceive, hmessage, hbody,
                     destMatches, sourceMatches] using
@@ -1726,26 +1684,14 @@ theorem monoTerm_step
                       dest := source
                       body := .appendEntriesResponse true nextLog.length
                     }
-                  intro queuedDest queuedSource queued queuedMem
-                  have messagesEq :
-                      (next state
-                        (.receive dest source
-                          .appendEntriesConflictThenNoConflict)).messages =
-                        reply state.messages response message := by
-                    simp [next, rawNext, nextReceive, hmessage, hbody,
+                  apply monoTerm_of_reply
+                    state _ response message monoTerm (by simp [response])
+                  · simp [next, rawNext, nextReceive, hmessage, hbody,
                       destMatches, sourceMatches,
                       nextAppendEntriesNoConflict, conflictRollback, rolled,
                       nextLog, response]
-                  rw [messagesEq] at queuedMem
-                  have queuedBound :=
-                    reply_preserves_MonoTermInv
-                      state response message monoTerm
-                      (by simp [response])
-                      queuedDest queuedSource queued queuedMem
-                  simpa [next, rawNext, nextReceive, hmessage, hbody,
-                    destMatches, sourceMatches,
-                    nextAppendEntriesNoConflict, conflictRollback, rolled,
-                    nextLog, response] using queuedBound
+                  · simp [next, rawNext, nextReceive, hmessage, hbody,
+                      nextAppendEntriesNoConflict, conflictRollback]
               | _ =>
                   simpa [next, rawNext, nextReceive, hmessage, hbody,
                     destMatches, sourceMatches] using
