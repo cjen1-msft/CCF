@@ -1,8 +1,9 @@
 # CCF Raft Lean model
 
 This directory models the selected `ccfraft.tla` Raft core as an executable
-Lean transition system. Kernel-checked safety proofs currently cover the
-pre-reconfiguration transition set.
+Lean transition system. Kernel-checked safety proofs cover every action in the
+fixed-five configuration projection, including stacked configuration changes
+and partial follower commits.
 
 The signature-aware milestone is called **Slice 4** in development history.
 Canonical module names remain slice-neutral so later milestones build directly
@@ -13,10 +14,12 @@ on this artifact.
 `Model.lean` defines the arbitrary-term transition system, including
 `Enabled`, deterministic `next`, `system`, `runActions`, and `Reachable`.
 `Properties.lean` defines the named ghost state and invariant components.
-`Proofs.lean` exposes component preservation and reachable safety.
-`FixedMembershipPreservation.lean` contains the checked positional
-fixed-membership implementation behind their fixed-witness equivalence. Git
-history contains the earlier development stages.
+`ReconfigurationPreservation.lean` proves preservation and reachable safety.
+`ConfigurationCoverage.lean` contains the causal configuration API.
+`UpdateTermAuthority.lean` isolates the mixed-state quorum argument for
+`UpdateTerm`. `Proofs.lean` keeps the public reachable-safety names stable.
+The default `CCFRaft` target exports the reconfiguration proof. Git history
+retains the earlier fixed-membership proof stages.
 
 The combined model has:
 
@@ -27,7 +30,7 @@ The combined model has:
 - opaque, externally allocated unique transaction IDs;
 - explicit ordinary transaction, signature, and reconfiguration log entries;
 - log-derived current and pending configurations;
-- global one-time join history and arbitrary nonempty configuration changes;
+- global one-time join history and five-member configuration changes;
 - explicit ordered/no-duplicate per-destination message queues;
 - AppendEntries sends one entry when behind and an empty heartbeat when caught
   up;
@@ -60,7 +63,7 @@ source/destination receive channel while other actions continue.
 `Action`, `Enabled`, and `next` are the authoritative semantics. Proofs and the
 compiled simulator call these same definitions.
 
-## Proved for the pre-reconfiguration transition set
+## Proved for the fixed-five transition set
 
 For every arbitrary-term reachable state:
 
@@ -76,9 +79,9 @@ For every arbitrary-term reachable state:
 The arbitrary-term proof is inductive over every enabled action, including
 signature creation and replication, conflict truncation, delayed AppendEntries
 acknowledgements, delayed votes, repeated elections, and skipped terms.
-
-Extending the invariant across `ChangeConfiguration` and
-configuration-aware quorums is in progress.
+The induction also covers configuration changes, joint old/new quorums,
+stacked disjoint configurations, follower exposure of intermediate
+configurations, and elections after reconfiguration.
 
 ### How the arbitrary-term invariant works
 
@@ -95,7 +98,10 @@ The invariant stores proof evidence, not the safety conclusions themselves:
 - temporal ACK and vote histories connect delayed replication support to later
   elections;
 - commit evidence records the quorum and ledger frontier supporting each live
-  committed prefix.
+  committed prefix;
+- immutable activation events record each signed configuration transition;
+- causal configuration coverage relates intermediate follower configurations
+  to the activation event whose signed frontier covers them.
 
 Log matching and monotonic terms are derived from canonical histories.
 Election safety is derived from persistent voter choices. Committed-prefix
@@ -112,6 +118,7 @@ lake build CCFRaft.Simulation
 lake build ccf-raft-simulator
 .lake/build/bin/ccf-raft-simulator replay CCFRaft/signature-commit.trace
 .lake/build/bin/ccf-raft-simulator replay CCFRaft/reconfiguration-5-to-5.trace
+.lake/build/bin/ccf-raft-simulator replay CCFRaft/reconfiguration-5-to-5-to-5.trace
 .lake/build/bin/ccf-raft-simulator replay CCFRaft/arbitrary-terms.trace
 .lake/build/bin/ccf-raft-simulator replay CCFRaft/delayed-ack.trace
 .lake/build/bin/ccf-raft-simulator replay CCFRaft/follower-overcommit.trace
@@ -125,6 +132,8 @@ trace.
 Replay lines support `client`, variable-length `reconfigure`, `sign`, `append`,
 `receive`, `commit`, `timeout`, `vote`, `term`, and `leader` actions.
 Reconfiguration nodes render in stable identifier order.
+The stacked reconfiguration trace moves through three disjoint five-node
+configurations and elects a leader from each successor configuration.
 
 `candidateChoicesComplete` proves every enabled action in the finite simulator
 instance appears in its finite candidate list. The reusable
@@ -138,7 +147,7 @@ index points to a signature.
 ## Out of scope
 
 - unbounded node sets;
+- configuration sizes other than five;
 - explicit message loss and remaining stale-message behavior;
 - retirement state and retirement transactions;
-- proofs for reconfiguration and joint-configuration quorums;
 - pre-vote and remaining CCF-specific reconfiguration actions.
