@@ -85,23 +85,12 @@ configurations, and elections after reconfiguration.
 
 ### How the arbitrary-term invariant works
 
-The invariant stores proof evidence, not the safety conclusions themselves:
+The invariant stores proof evidence, not the safety conclusions themselves.
+`InvariantFacts` stores runtime bounds and message transport facts.
+`HistoricalSafetyFacts` names the election, activation, and commit evidence.
 
-- `GhostState` names the 12 proof-only histories;
-- `ComponentInvariantFacts` groups them into eight causal components;
-- `SystemInductiveInvariant` keeps fixed membership as an independently
-  witnessed base for later protocol components;
-- local bounds keep commit indices, terms, and replication cursors valid;
-- immutable message histories retain the exact ledger snapshots carried by
-  delayed AppendEntries and RequestVote messages;
-- canonical histories and frozen election records preserve ballot ancestry;
-- temporal ACK and vote histories connect delayed replication support to later
-  elections;
-- commit evidence records the quorum and ledger frontier supporting each live
-  committed prefix;
-- immutable activation events record each signed configuration transition;
-- causal configuration coverage relates intermediate follower configurations
-  to the activation event whose signed frontier covers them.
+See [CCF Raft inductive invariant](INVARIANT.md) for every stored field and its
+role in the final safety proof.
 
 Log matching and monotonic terms are derived from canonical histories.
 Election safety is derived from persistent voter choices. Committed-prefix

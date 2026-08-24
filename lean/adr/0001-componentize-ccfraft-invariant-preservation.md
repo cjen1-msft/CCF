@@ -2,7 +2,12 @@
 
 ## Status
 
-Accepted
+Superseded
+
+The reconfiguration proof now owns the public invariant. Commit history retains
+the fixed-membership implementation described below, but the current tree
+removes that implementation and its component/delta API. See
+`lean/CCFRaft/INVARIANT.md` for the current invariant.
 
 ## Context
 
@@ -326,7 +331,7 @@ their preservation APIs alongside the base.
 - The signature commit, arbitrary terms, delayed ACK, and follower overcommit
   traces replay with pinned final-state projections.
 - `FixedMembershipInvariantFacts state ghost ↔
-  ComponentInvariantFacts state ghost` holds for every state and fixed ghost
+ComponentInvariantFacts state ghost` holds for every state and fixed ghost
   witness.
 - `Properties.lean` contains no positional invariant.
 - `Proofs.lean` does not destructure positional witnesses.

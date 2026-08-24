@@ -464,10 +464,6 @@ def CommitEvidence.restrict
     CommitEvidence TxId :=
   { evidence with supportedLength }
 
-def CommitEvidence.supportedAuthority
-    (evidence : CommitEvidence TxId) : Configuration :=
-  currentConfigurationAt evidence.history evidence.supportedLength
-
 /-- Current proof-only commit evidence retained by each node. -/
 abbrev NodeCommitEvidence (TxId : Type) :=
   Node -> Option (CommitEvidence TxId)
@@ -475,76 +471,6 @@ abbrev NodeCommitEvidence (TxId : Type) :=
 /-- Commit evidence advertised by each immutable AppendEntries request. -/
 abbrev RequestCommitEvidence (TxId : Type) :=
   AppendEntriesRequest TxId -> Option (CommitEvidence TxId)
-
-/-- All proof-only histories carried by the inductive invariant. -/
-structure GhostState (TxId : Type) where
-  votes : VoteHistory
-  appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)
-  responseHistory : AppendEntriesResponse -> List (Entry TxId)
-  voteRequestHistory : RequestVoteRequest -> List (Entry TxId)
-  voteCandidateHistory : RequestVoteResponse -> List (Entry TxId)
-  voteVoterHistory : RequestVoteResponse -> List (Entry TxId)
-  owners : TermOwners
-  canonicalHistory : Nat -> List (Entry TxId)
-  elections : ElectionHistory TxId
-  nodeEvidence : NodeCommitEvidence TxId
-  requestEvidence : RequestCommitEvidence TxId
-  processedAcks : ProcessedAckHistory TxId
-
-/-- Record the two proof snapshots created by an AppendEntries send. -/
-def GhostState.recordAppendRequest
-    (ghost : GhostState TxId)
-    (request : AppendEntriesRequest TxId)
-    (history : List (Entry TxId))
-    (evidence : Option (CommitEvidence TxId)) :
-    GhostState TxId :=
-  { ghost with
-    appendHistory := Function.update ghost.appendHistory request history
-    requestEvidence :=
-      Function.update ghost.requestEvidence request evidence }
-
-@[simp]
-theorem GhostState.recordAppendRequest_history_same
-    (ghost : GhostState TxId)
-    (request : AppendEntriesRequest TxId)
-    (history : List (Entry TxId))
-    (evidence : Option (CommitEvidence TxId)) :
-    (ghost.recordAppendRequest request history evidence).appendHistory request =
-      history := by
-  simp [GhostState.recordAppendRequest]
-
-@[simp]
-theorem GhostState.recordAppendRequest_history_of_ne
-    (ghost : GhostState TxId)
-    (request other : AppendEntriesRequest TxId)
-    (history : List (Entry TxId))
-    (evidence : Option (CommitEvidence TxId))
-    (different : Not (other = request)) :
-    (ghost.recordAppendRequest request history evidence).appendHistory other =
-      ghost.appendHistory other := by
-  simp [GhostState.recordAppendRequest, different]
-
-@[simp]
-theorem GhostState.recordAppendRequest_evidence_same
-    (ghost : GhostState TxId)
-    (request : AppendEntriesRequest TxId)
-    (history : List (Entry TxId))
-    (evidence : Option (CommitEvidence TxId)) :
-    (ghost.recordAppendRequest request history evidence).requestEvidence
-        request =
-      evidence := by
-  simp [GhostState.recordAppendRequest]
-
-@[simp]
-theorem GhostState.recordAppendRequest_evidence_of_ne
-    (ghost : GhostState TxId)
-    (request other : AppendEntriesRequest TxId)
-    (history : List (Entry TxId))
-    (evidence : Option (CommitEvidence TxId))
-    (different : Not (other = request)) :
-    (ghost.recordAppendRequest request history evidence).requestEvidence other =
-      ghost.requestEvidence other := by
-  simp [GhostState.recordAppendRequest, different]
 
 /-- Entry terms do not decrease inside one proof-only history. -/
 def MonoHistory (history : List (Entry TxId)) : Prop :=
@@ -646,14 +572,6 @@ def CandidatesAboveBootstrap (state : State TxId) : Prop :=
   forall node,
     (state.nodes node).role = .candidate ->
       TERM_ONE < (state.nodes node).currentTerm
-
-/-- Active leaders are either the bootstrap leader or retain their election quorum. -/
-def LeadersHaveElectionMajority (state : State TxId) : Prop :=
-  forall node,
-    (state.nodes node).role = .leader ->
-      ((node = INITIAL_LEADER /\
-          (state.nodes node).currentTerm = TERM_ONE) \/
-        hasElectionMajority state node)
 
 /-- Every active leader keeps both replication cursors inside its own log. -/
 def LeaderProgressBounded (state : State TxId) : Prop :=
@@ -1936,7 +1854,6 @@ structure ActivationEvidenceFacts
     (requestEvidence : RequestCommitEvidence TxId)
     (elections : ElectionHistory TxId)
     (activations : ActivationHistory TxId) : Prop where
-  history : ActivationHistoryFacts activations
   authorityRecorded :
     forall evidence supportedPrefix,
       KnownCommitEvidence
@@ -1947,11 +1864,7 @@ structure ActivationEvidenceFacts
             Exists fun record =>
               activations activationIndex = some record /\
                 evidence.authority ∈ record.governingActive /\
-                record.activationTerm <= evidence.commitTerm /\
-                (record.history.take record.activationFrontier <+:
-                    evidence.history.take evidence.commitFrontier \/
-                  evidence.history.take evidence.commitFrontier <+:
-                    record.history.take record.activationFrontier)
+                record.activationTerm <= evidence.commitTerm
   authorityIndexUnique :
     forall left leftPrefix,
       KnownCommitEvidence
@@ -2152,160 +2065,6 @@ def LeaderCompleteness (state : State TxId) : Prop :=
           (state.nodes node).committedLog <+:
             (state.nodes leader).log
 
-/-- Runtime-local bounds and role obligations. -/
-structure LocalWF (state : State TxId) : Prop where
-  commitIndicesBounded : CommitIndicesBounded state
-  currentTermsPositive : CurrentTermsPositive state
-  entriesDoNotExceedCurrentTerm : EntriesDoNotExceedCurrentTerm state
-  candidatesSelfVote : CandidatesSelfVote state
-  leadersHaveElectionMajority : LeadersHaveElectionMajority state
-  leaderProgressBounded : LeaderProgressBounded state
-
-/-- Persistent votes and immutable RequestVote snapshots. -/
-structure VoteTransport
-    (state : State TxId)
-    (ghost : GhostState TxId) : Prop where
-  history : VoteHistoryFacts state ghost.votes
-  request :
-    forall destination request,
-      Message.requestVoteRequest request ∈ state.network destination ->
-        request.lastCommittableIndex =
-            (ghost.voteRequestHistory request).length /\
-          request.lastCommittableTerm =
-            termAt
-              (ghost.voteRequestHistory request)
-              (ghost.voteRequestHistory request).length /\
-          maxCommittableIndex (ghost.voteRequestHistory request) =
-            (ghost.voteRequestHistory request).length /\
-          TERM_ONE < request.term /\
-          request.term <= (state.nodes request.source).currentTerm /\
-          (request.term = (state.nodes request.source).currentTerm ->
-            ((state.nodes request.source).role = .candidate \/
-              (state.nodes request.source).role = .leader) ->
-              ghost.voteRequestHistory request <+:
-                (state.nodes request.source).log)
-  response :
-    forall destination response,
-      Message.requestVoteResponse response ∈ state.network destination ->
-        response.voteGranted = true ->
-          response.term <=
-              (state.nodes response.destination).currentTerm /\
-            ghost.votes response.source response.term =
-              some response.destination /\
-            maxCommittableIndex (ghost.voteCandidateHistory response) =
-              (ghost.voteCandidateHistory response).length /\
-            maxCommittableIndex (ghost.voteVoterHistory response) =
-              (ghost.voteVoterHistory response).length /\
-            voteLogUpToDate
-              { (state.nodes response.source) with
-                log := ghost.voteVoterHistory response }
-              { term := response.term
-                lastCommittableTerm :=
-                  termAt
-                    (ghost.voteCandidateHistory response)
-                    (ghost.voteCandidateHistory response).length
-                lastCommittableIndex :=
-                  (ghost.voteCandidateHistory response).length
-                source := response.destination
-                destination := response.source }
-  snapshots :
-    GrantedVoteSnapshots
-      state ghost.votes ghost.voteCandidateHistory ghost.voteVoterHistory
-
-/-- Immutable AppendEntries snapshots and queue addressing. -/
-structure AppendTransport
-    (state : State TxId)
-    (ghost : GhostState TxId) : Prop where
-  addressed :
-    forall destination message,
-      message ∈ state.network destination ->
-        message.destination = destination
-  request :
-    forall destination request,
-      Message.appendEntriesRequest request ∈ state.network destination ->
-        RequestSnapshots (ghost.appendHistory request) request /\
-          request.leaderCommit <= (ghost.appendHistory request).length /\
-          (request.entries = [] ->
-            request.leaderCommit <= request.prevLogIndex) /\
-          RequestCommitStillPresent
-            state (ghost.appendHistory request) request
-  response :
-    forall destination response,
-      Message.appendEntriesResponse response ∈ state.network destination ->
-        SuccessfulResponseSnapshot
-          state (ghost.responseHistory response) response
-  electionQueued :
-    ElectionQueuedHistoryFacts
-      state ghost.appendHistory ghost.elections
-
-/-- Processed successful-ACK evidence for each active match index. -/
-structure ReplicationAck
-    (state : State TxId)
-    (ghost : GhostState TxId) : Prop where
-  processed : ProcessedAckHistoryFacts state ghost.processedAcks
-
-/-- Frozen elections and their persistent ballot history. -/
-structure Ballot
-    (state : State TxId)
-    (ghost : GhostState TxId) : Prop where
-  elections :
-    ElectionHistoryFacts
-      state ghost.votes ghost.canonicalHistory ghost.owners ghost.elections
-
-/-- Canonical log histories and snapshots used by granted votes. -/
-structure LogProvenance
-    (state : State TxId)
-    (ghost : GhostState TxId) : Prop where
-  ownership :
-    TermOwnershipFacts
-      state ghost.votes ghost.appendHistory ghost.canonicalHistory ghost.owners
-  grantedVoteCanonical :
-    GrantedVoteCanonicalSnapshots
-      state ghost.canonicalHistory
-        ghost.voteCandidateHistory ghost.voteVoterHistory
-
-/-- Temporal facts connecting ACK support to later elections. -/
-structure AckElectionBridge
-    (state : State TxId)
-    (ghost : GhostState TxId) : Prop where
-  current :
-    AckerCurrentHistory state ghost.responseHistory ghost.elections
-  votes :
-    AckerVoteHistory
-      state ghost.votes ghost.responseHistory
-        ghost.voteVoterHistory ghost.elections
-  elections :
-    AckerElectionHistory state ghost.responseHistory ghost.elections
-
-/-- Actual and prospective evidence for every live commit. -/
-structure CommitClosure
-    (state : State TxId)
-    (ghost : GhostState TxId) : Prop where
-  evidence :
-    CommitEvidenceFacts
-      state ghost.appendHistory ghost.nodeEvidence ghost.requestEvidence
-  prospective :
-    ProspectiveCommitEvidenceFacts
-      state ghost.appendHistory ghost.nodeEvidence
-        ghost.requestEvidence ghost.elections
-
-/-- The named component view of the signature-era inductive invariant. -/
-structure ComponentInvariantFacts
-    (state : State TxId)
-    (ghost : GhostState TxId) : Prop where
-  localWF : LocalWF state
-  votes : VoteTransport state ghost
-  appends : AppendTransport state ghost
-  acknowledgements : ReplicationAck state ghost
-  ballots : Ballot state ghost
-  logs : LogProvenance state ghost
-  ackElections : AckElectionBridge state ghost
-  commits : CommitClosure state ghost
-
-/-- Existential packaging of the named component invariant. -/
-def ComponentSystemInductiveInvariant (state : State TxId) : Prop :=
-  Exists fun ghost => ComponentInvariantFacts state ghost
-
 def LeadersHaveElectionWitness (state : State TxId) : Prop :=
   forall leader,
     (state.nodes leader).role = .leader ->
@@ -2315,6 +2074,70 @@ def LeadersHaveElectionWitness (state : State TxId) : Prop :=
           configuration ∈ allConfigurations (state.nodes leader).log /\
             hasConfigurationMajority
               (state.nodes leader).votesGranted configuration)
+
+/--
+Immutable election, activation, and commit evidence. Each field supplies one
+causal edge used to order committed prefixes across terms and configurations.
+-/
+structure HistoricalSafetyFacts
+    (state : State TxId)
+    (votes : VoteHistory)
+    (appendHistory : AppendEntriesRequest TxId -> List (Entry TxId))
+    (responseHistory : AppendEntriesResponse -> List (Entry TxId))
+    (voteRequestHistory : RequestVoteRequest -> List (Entry TxId))
+    (voteCandidateHistory : RequestVoteResponse -> List (Entry TxId))
+    (voteVoterHistory : RequestVoteResponse -> List (Entry TxId))
+    (owners : TermOwners)
+    (canonicalHistory : Nat -> List (Entry TxId))
+    (elections : ElectionHistory TxId)
+    (activations : ActivationHistory TxId)
+    (nodeEvidence : NodeCommitEvidence TxId)
+    (requestEvidence : RequestCommitEvidence TxId) : Prop where
+  termOwnership :
+    TermOwnershipFacts
+      state votes appendHistory canonicalHistory owners
+  electionHistory :
+    ElectionHistoryFacts
+      state votes canonicalHistory owners elections
+  electionConfigurations :
+    ElectionConfigurationFacts state elections activations
+  grantedVoteCanonical :
+    GrantedVoteCanonicalSnapshots
+      state canonicalHistory voteCandidateHistory voteVoterHistory
+  ackerCurrent :
+    AckerCurrentHistory state responseHistory elections
+  ackerVotes :
+    AckerVoteHistory
+      state votes responseHistory voteVoterHistory elections
+  activationVotes :
+    ActivationVoteHistory votes voteVoterHistory elections activations
+  ackerElections :
+    AckerElectionHistory state responseHistory elections
+  ackerActivations :
+    AckerActivationHistory state responseHistory elections activations
+  queuedElections :
+    ElectionQueuedHistoryFacts state appendHistory elections
+  activationProgress :
+    ActivationSupporterProgress state activations
+  activationQuorums :
+    ActivationQuorumFacts
+      state appendHistory responseHistory elections activations
+  commitEvidence :
+    CommitEvidenceFacts
+      state appendHistory nodeEvidence requestEvidence
+  prospectiveCommits :
+    ProspectiveCommitEvidenceFacts
+      state appendHistory nodeEvidence requestEvidence elections
+  activationEvidence :
+    ActivationEvidenceFacts
+      state appendHistory responseHistory
+        nodeEvidence requestEvidence elections activations
+  activationCanonical :
+    ActivationCanonicalFacts canonicalHistory owners activations
+  activationElections :
+    ActivationElectionFacts votes elections activations
+  configurationCoverage :
+    ConfigurationCoverageFacts state activations
 
 /-- The invariant preserved by the reconfiguring transition system. -/
 structure InvariantFacts
@@ -2329,55 +2152,24 @@ structure InvariantFacts
   currentTermsPositive : CurrentTermsPositive state
   entriesDoNotExceedCurrentTerm : EntriesDoNotExceedCurrentTerm state
   candidatesSelfVote : CandidatesSelfVote state
-  leadersHaveElectionMajority : LeadersHaveElectionWitness state
+  leadersHaveElectionWitness : LeadersHaveElectionWitness state
   leaderProgressBounded : LeaderProgressBounded state
   voteHistory : VoteHistoryFacts state votes
   networkHistory :
     NetworkHistoryFacts
       state appendHistory responseHistory
         voteRequestHistory voteCandidateHistory voteVoterHistory votes
-  historicalSafetyEvidence :
+  historicalSafety :
     Exists fun owners =>
       Exists fun canonicalHistory =>
         Exists fun elections =>
           Exists fun activations =>
             Exists fun nodeEvidence =>
               Exists fun requestEvidence =>
-          TermOwnershipFacts
-              state votes appendHistory canonicalHistory owners /\
-            ElectionHistoryFacts
-              state votes canonicalHistory owners elections /\
-            ElectionConfigurationFacts state elections activations /\
-            GrantedVoteCanonicalSnapshots
-              state canonicalHistory
-                voteCandidateHistory voteVoterHistory /\
-            AckerCurrentHistory
-              state responseHistory elections /\
-            AckerVoteHistory
-              state votes responseHistory voteVoterHistory elections /\
-            ActivationVoteHistory
-              votes voteVoterHistory elections activations /\
-            AckerElectionHistory
-              state responseHistory elections /\
-            AckerActivationHistory
-              state responseHistory elections activations /\
-            ElectionQueuedHistoryFacts
-              state appendHistory elections /\
-            ActivationSupporterProgress state activations /\
-            ActivationQuorumFacts
-              state appendHistory responseHistory elections activations /\
-            CommitEvidenceFacts
-              state appendHistory nodeEvidence requestEvidence /\
-            ProspectiveCommitEvidenceFacts
-              state appendHistory nodeEvidence requestEvidence elections /\
-            ActivationEvidenceFacts
-              state appendHistory responseHistory
-                nodeEvidence requestEvidence
-                elections activations /\
-            ActivationCanonicalFacts
-              canonicalHistory owners activations /\
-            ActivationElectionFacts votes elections activations /\
-            ConfigurationCoverageFacts state activations
+                HistoricalSafetyFacts
+                  state votes appendHistory responseHistory voteRequestHistory
+                    voteCandidateHistory voteVoterHistory owners canonicalHistory
+                    elections activations nodeEvidence requestEvidence
   grantedVoteSnapshots :
     GrantedVoteSnapshots
       state votes voteCandidateHistory voteVoterHistory
@@ -2395,95 +2187,6 @@ def SystemInductiveInvariant (state : State TxId) : Prop :=
               InvariantFacts
                 state votes appendHistory responseHistory voteRequestHistory
                   voteCandidateHistory voteVoterHistory
-
-/-- Monotone runtime facts shared by preservation deltas. -/
-structure CommonProgress
-    (before after : State TxId) : Prop where
-  termMonotone :
-    forall node,
-      (before.nodes node).currentTerm <=
-        (after.nodes node).currentTerm
-  commitIndexMonotone :
-    forall node,
-      (before.nodes node).commitIndex <=
-        (after.nodes node).commitIndex
-  committedLogPrefix :
-    forall node,
-      (before.nodes node).committedLog <+:
-        (after.nodes node).committedLog
-
-/-- Exact ghost-history changes made by one AppendEntries send. -/
-structure AppendEntriesSendGhostDelta
-    (before : State TxId)
-    (oldGhost newGhost : GhostState TxId)
-    (request : AppendEntriesRequest TxId)
-    (source : Node) : Prop where
-  appendHistoryAtRequest :
-    newGhost.appendHistory request = (before.nodes source).log
-  appendHistoryAtOther :
-    forall other,
-      Not (other = request) ->
-        newGhost.appendHistory other = oldGhost.appendHistory other
-  requestEvidenceAtRequest :
-    newGhost.requestEvidence request = oldGhost.nodeEvidence source
-  requestEvidenceAtOther :
-    forall other,
-      Not (other = request) ->
-        newGhost.requestEvidence other = oldGhost.requestEvidence other
-  votesEq : newGhost.votes = oldGhost.votes
-  responseHistoryEq :
-    newGhost.responseHistory = oldGhost.responseHistory
-  voteRequestHistoryEq :
-    newGhost.voteRequestHistory = oldGhost.voteRequestHistory
-  voteCandidateHistoryEq :
-    newGhost.voteCandidateHistory = oldGhost.voteCandidateHistory
-  voteVoterHistoryEq :
-    newGhost.voteVoterHistory = oldGhost.voteVoterHistory
-  ownersEq : newGhost.owners = oldGhost.owners
-  canonicalHistoryEq :
-    newGhost.canonicalHistory = oldGhost.canonicalHistory
-  electionsEq : newGhost.elections = oldGhost.elections
-  nodeEvidenceEq : newGhost.nodeEvidence = oldGhost.nodeEvidence
-  processedAcksEq : newGhost.processedAcks = oldGhost.processedAcks
-
-/-- Exact runtime changes made by one AppendEntries send. -/
-structure AppendEntriesSendDelta
-    (before after : State TxId)
-    (request : AppendEntriesRequest TxId)
-    (source destination : Node)
-    (batchEnd : Nat) : Prop where
-  requestEq :
-    request = makeAppendEntriesRequest before source destination batchEnd
-  afterEq :
-    after = next before (.appendEntries source destination batchEnd)
-  progress : CommonProgress before after
-  rolesEq :
-    forall node,
-      (after.nodes node).role = (before.nodes node).role
-  termsEq :
-    forall node,
-      (after.nodes node).currentTerm =
-        (before.nodes node).currentTerm
-  logsEq :
-    forall node,
-      (after.nodes node).log = (before.nodes node).log
-  commitIndicesEq :
-    forall node,
-      (after.nodes node).commitIndex =
-        (before.nodes node).commitIndex
-  votedForEq :
-    forall node,
-      (after.nodes node).votedFor = (before.nodes node).votedFor
-  votesGrantedEq :
-    forall node,
-      (after.nodes node).votesGranted =
-        (before.nodes node).votesGranted
-  matchIndicesEq :
-    forall node,
-      (after.nodes node).matchIndex =
-        (before.nodes node).matchIndex
-  requestQueued :
-    Message.appendEntriesRequest request ∈ after.network destination
 
 /-- Core public safety mirrors committed-log, signature, and election safety. -/
 structure ConsensusSafety (state : State TxId) : Prop where

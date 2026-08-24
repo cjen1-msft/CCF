@@ -271,15 +271,6 @@ theorem commitEvidenceRestrictValid
       by simpa [CommitEvidence.restrict] using frontierSignature,
       by simpa [CommitEvidence.restrict] using shorterSignature⟩
 
-/-- A valid evidence exposes its supported prefix as a canonical take. -/
-theorem commitEvidencePrefix
-    {evidence : CommitEvidence TxId}
-    {supportedPrefix : List (Entry TxId)}
-    (valid : evidence.Valid supportedPrefix) :
-    evidence.history.take evidence.supportedLength =
-      supportedPrefix :=
-  valid.2.2.2.1
-
 /-- Every live node/request evidence slot exposes a valid evidence. -/
 theorem knownCommitEvidenceValid
     {state : State TxId}
@@ -477,18 +468,6 @@ theorem commitEvidenceFrame
       facts.requestPositive destination request
         (networkSubset destination request member) positive
 
-/-- A future-member frame either maps to the old state or proves the result. -/
-def FutureMemberFrameResult
-    (state after : State TxId)
-    (evidence : CommitEvidence TxId)
-    (candidate member : Node)
-    (targetTerm : Nat) : Prop :=
-  ((state.nodes candidate).currentTerm < targetTerm /\
-    member ∈ futureElectionVoters state candidate targetTerm /\
-    (state.nodes candidate).log <+: (after.nodes candidate).log) \/
-  evidence.history.take evidence.commitFrontier <+:
-    (after.nodes candidate).log
-
 /-- A relaxed voter in a frame either maps back or proves the result. -/
 def RelaxedMemberFrameResult
     (state after : State TxId)
@@ -685,7 +664,6 @@ theorem activationEvidenceFrame
         newNodeEvidence newRequestEvidence
         newElections activations := by
   constructor
-  · exact facts.history
   · intro evidence supportedPrefix known
     exact facts.authorityRecorded
       evidence supportedPrefix (knownBack evidence supportedPrefix known)
@@ -8026,9 +8004,6 @@ theorem commitEvidenceCommittedLogsPrefix
     (evidenceFacts :
       CommitEvidenceFacts
         state appendHistory nodeEvidence requestEvidence)
-    (prospectiveFacts :
-      ProspectiveCommitEvidenceFacts
-        state appendHistory nodeEvidence requestEvidence elections)
     (activationEvidence :
       ActivationEvidenceFacts
         state appendHistory responseHistory nodeEvidence requestEvidence
@@ -8231,8 +8206,8 @@ theorem invariantFactsLogMatchingFromCanonicalHistories
         state votes appendHistory responseHistory voteRequestHistory
           voteCandidateHistory voteVoterHistory) :
     LogMatching state := by
-  rcases facts.historicalSafetyEvidence with
-    ⟨owners, canonicalHistory, _elections, _activations,
+  rcases facts.historicalSafety with
+    ⟨owners, _canonicalHistory, _elections, _activations,
       _nodeEvidence, _requestEvidence, ownership, _⟩
   exact canonicalHistoriesLogMatching ownership
 
@@ -8250,7 +8225,7 @@ theorem invariantFactsMonoLogFromCanonicalHistories
         state votes appendHistory responseHistory voteRequestHistory
           voteCandidateHistory voteVoterHistory) :
     MonoLog state := by
-  rcases facts.historicalSafetyEvidence with
+  rcases facts.historicalSafety with
     ⟨_owners, _canonicalHistory, _elections, _activations,
       _nodeEvidence, _requestEvidence, ownership, _⟩
   exact canonicalHistoriesMonoLog ownership
@@ -8286,20 +8261,20 @@ theorem invariantFactsCommittedLogsPrefixFromActivation
         state votes appendHistory responseHistory voteRequestHistory
           voteCandidateHistory voteVoterHistory) :
     CommittedLogsPrefix state := by
-  rcases facts.historicalSafetyEvidence with
+  rcases facts.historicalSafety with
     ⟨_owners, _canonicalHistory, elections, activations,
       nodeEvidence, requestEvidence, _ownership, _electionFacts,
       _configurationFacts, _voteCanonicalFacts, _ackerCurrentFacts,
       _ackerVoteFacts, _activationVoteFacts, _ackerElectionFacts,
       _ackerActivationFacts,
       _electionQueuedFacts,
-      _activationProgress, _activationQuorums, evidenceFacts, prospectiveFacts,
+      _activationProgress, _activationQuorums, evidenceFacts, _prospectiveFacts,
       activationEvidence, _activationCanonical, _activationElections,
       _configurationActivations⟩
   exact
     commitEvidenceCommittedLogsPrefix
       (elections := elections) (activations := activations)
-      evidenceFacts prospectiveFacts activationEvidence
+      evidenceFacts activationEvidence
 
 /-- Functional term ownership makes active leaders unique in each term. -/
 theorem invariantFactsElectionSafetyFromOwnership
@@ -8315,7 +8290,7 @@ theorem invariantFactsElectionSafetyFromOwnership
         state votes appendHistory responseHistory voteRequestHistory
           voteCandidateHistory voteVoterHistory) :
     ElectionSafety state := by
-  rcases facts.historicalSafetyEvidence with
+  rcases facts.historicalSafety with
     ⟨owners, canonicalHistory, _elections, _activations,
       _nodeEvidence, _requestEvidence, ownership, _⟩
   intro left right leftRole rightRole sameTerm
@@ -8341,7 +8316,7 @@ theorem invariantFactsCommittedFrontierIsSignatureFromCommitEvidence
         state votes appendHistory responseHistory voteRequestHistory
           voteCandidateHistory voteVoterHistory) :
     CommittedFrontierIsSignature state := by
-  rcases facts.historicalSafetyEvidence with
+  rcases facts.historicalSafety with
     ⟨_owners, _canonicalHistory, _elections, _activations,
       _nodeEvidence, _requestEvidence, _ownership, _electionFacts,
       _configurationFacts, _voteCanonicalFacts, _ackerCurrentFacts,
@@ -8387,7 +8362,7 @@ theorem invariantFactsLeaderCompletenessFromCommitEvidence
         state votes appendHistory responseHistory voteRequestHistory
           voteCandidateHistory voteVoterHistory) :
     LeaderCompleteness state := by
-  rcases facts.historicalSafetyEvidence with
+  rcases facts.historicalSafety with
     ⟨_owners, _canonicalHistory, _elections, _activations,
       _nodeEvidence, _requestEvidence, ownership, electionFacts,
       _configurationFacts, _voteCanonicalFacts, _ackerCurrentFacts,
@@ -8415,7 +8390,7 @@ theorem invariantFactsWinningCandidateCompletenessFromCommitEvidence
         state votes appendHistory responseHistory voteRequestHistory
           voteCandidateHistory voteVoterHistory) :
     WinningCandidateCompleteness state := by
-  rcases facts.historicalSafetyEvidence with
+  rcases facts.historicalSafety with
     ⟨_owners, _canonicalHistory, _elections, activations,
       _nodeEvidence, _requestEvidence, ownership, electionFacts,
       configurationFacts, _voteCanonicalFacts, _ackerCurrentFacts,
@@ -8447,7 +8422,7 @@ theorem invariantFactsLeaderTermDominanceFromCanonicalHistories
         state votes appendHistory responseHistory voteRequestHistory
           voteCandidateHistory voteVoterHistory) :
     LeaderTermDominance state := by
-  rcases facts.historicalSafetyEvidence with
+  rcases facts.historicalSafety with
     ⟨_owners, _canonicalHistory, _elections, _activations,
       _nodeEvidence, _requestEvidence, ownership, _⟩
   exact activeLeaderHistoryLeaderTermDominance ownership
@@ -13812,7 +13787,6 @@ theorem initialSystemInductiveInvariant :
             nodeEvidence requestEvidence
             elections activations := by
       constructor
-      · exact activationHistoryFacts
       · intro evidence supportedPrefix known
         exact False.elim (noKnown evidence supportedPrefix known)
       · intro left leftPrefix leftKnown
@@ -14204,29 +14178,6 @@ theorem leaderAppendCommittedLogUnchanged
         content submittedTxIds candidateEq
     ]
 
-/--
-The signature-specific activation proof transforms the old permanent records
-using their immutable supporter ACK snapshots and monotone supporter terms.
-It is kept separate from the generic append body so transaction and
-reconfiguration framing do not duplicate that body.
--/
-def SignatureAppendActivationProof
-    (state : State TxId)
-    (node : Node)
-    (submittedTxIds : Finset TxId) : Prop :=
-  forall
-    (appendHistory : AppendEntriesRequest TxId -> List (Entry TxId))
-    (responseHistory : AppendEntriesResponse -> List (Entry TxId))
-    (elections : ElectionHistory TxId)
-    (activations : ActivationHistory TxId),
-      ActivationSupporterProgress state activations ->
-      ActivationQuorumFacts
-          state appendHistory responseHistory elections activations ->
-        ActivationQuorumFacts
-          (leaderAppendState
-            state node .signature submittedTxIds)
-          appendHistory responseHistory elections activations
-
 /-- Appending any current-term leader entry preserves the arbitrary-term facts. -/
 theorem leaderAppendPreservesSystemInductiveInvariant
     (state : State TxId)
@@ -14240,7 +14191,7 @@ theorem leaderAppendPreservesSystemInductiveInvariant
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
-  rcases facts.historicalSafetyEvidence with
+  rcases facts.historicalSafety with
     ⟨owners, canonicalHistory, elections, activations,
       nodeEvidence, requestEvidence, ownership, electionFacts,
       configurationFacts, voteCanonicalFacts,
@@ -14778,7 +14729,7 @@ theorem leaderAppendPreservesSystemInductiveInvariant
     exact oldSelf
   · intro leader role
     rw [roleEq] at role
-    have old := facts.leadersHaveElectionMajority leader role
+    have old := facts.leadersHaveElectionWitness leader role
     rw [currentTermEq]
     rcases old with bootstrap | majority
     · exact Or.inl bootstrap
@@ -17198,7 +17149,7 @@ theorem requestVotePreservesSystemInductiveInvariant
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
-  rcases facts.historicalSafetyEvidence with
+  rcases facts.historicalSafety with
     ⟨owners, canonicalHistory, elections, activations,
       nodeEvidence, requestEvidence, ownership, electionFacts,
       configurationFacts, voteCanonicalFacts,
@@ -17538,7 +17489,7 @@ theorem requestVotePreservesSystemInductiveInvariant
   · simpa [next, CCFRaft.next] using facts.currentTermsPositive
   · simpa [next, CCFRaft.next] using facts.entriesDoNotExceedCurrentTerm
   · simpa [next, CCFRaft.next] using facts.candidatesSelfVote
-  · simpa [next, CCFRaft.next] using facts.leadersHaveElectionMajority
+  · simpa [next, CCFRaft.next] using facts.leadersHaveElectionWitness
   · simpa [next, CCFRaft.next] using facts.leaderProgressBounded
   · constructor
     · exact facts.voteHistory.bootstrapEmpty
@@ -18212,7 +18163,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
-  rcases facts.historicalSafetyEvidence with
+  rcases facts.historicalSafety with
     ⟨owners, canonicalHistory, elections, activations,
       nodeEvidence, requestEvidence, ownership, electionFacts,
       configurationFacts, voteCanonicalFacts,
@@ -18600,7 +18551,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
     exact facts.candidatesSelfVote node role
   · intro leader role
     rw [roleEq] at role
-    have old := facts.leadersHaveElectionMajority leader role
+    have old := facts.leadersHaveElectionWitness leader role
     rw [currentTermEq]
     rcases old with bootstrap | majority
     · exact Or.inl bootstrap
@@ -20356,7 +20307,7 @@ theorem timeoutPreservesSystemInductiveInvariant
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
-  rcases facts.historicalSafetyEvidence with
+  rcases facts.historicalSafety with
     ⟨owners, canonicalHistory, elections, activations,
       nodeEvidence, requestEvidence, ownership, electionFacts,
       configurationFacts, voteCanonicalFacts,
@@ -20845,7 +20796,7 @@ theorem timeoutPreservesSystemInductiveInvariant
       subst leader
       exact Role.noConfusion (role.symm.trans roleNode)
     rw [roleOther leader leaderNe] at role
-    have old := facts.leadersHaveElectionMajority leader role
+    have old := facts.leadersHaveElectionWitness leader role
     rw [termOther leader leaderNe]
     rcases old with bootstrap | majority
     · exact Or.inl bootstrap
@@ -21537,7 +21488,7 @@ theorem timeoutPreservesSystemInductiveInvariant
           · exact False.elim (zero (by rw [implicit]; rfl))
           · rcases recordedAuthority with
               ⟨authorityActivationIndex, authorityActivation,
-                authorityStored, authorityGoverning, _, _⟩
+                authorityStored, authorityGoverning, _⟩
             have candidatePositive : 0 < candidateConfiguration.index := by
               simpa [sameIndex] using Nat.pos_of_ne_zero zero
             rcases configurationActivations node
@@ -21606,7 +21557,7 @@ theorem timeoutPreservesSystemInductiveInvariant
         simp [implicitConfiguration] at candidateBeforeAuthority
       · rcases recordedAuthority with
           ⟨authorityActivationIndex, authorityActivation,
-            authorityStored, authorityGoverning, _, _⟩
+            authorityStored, authorityGoverning, _⟩
         have candidateBeforeActivation :
             candidateConfiguration.index <
               authorityActivation.newConfiguration.index := by
@@ -22131,7 +22082,6 @@ theorem timeoutPreservesSystemInductiveInvariant
         appendHistory responseHistory nodeEvidence requestEvidence
           elections activations := by
     constructor
-    · exact activationEvidence.history
     · intro evidence supportedPrefix known
       exact
         activationEvidence.authorityRecorded
@@ -22860,7 +22810,7 @@ theorem updateTermPreservesSystemInductiveInvariant
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
-  rcases facts.historicalSafetyEvidence with
+  rcases facts.historicalSafety with
     ⟨owners, canonicalHistory, elections, activations,
       nodeEvidence, requestEvidence, ownership, electionFacts,
       configurationFacts, voteCanonicalFacts,
@@ -23317,7 +23267,7 @@ theorem updateTermPreservesSystemInductiveInvariant
         subst node
         exact Role.noConfusion (role.symm.trans roleDestination)
       rw [roleOther node nodeNe] at role
-      have old := facts.leadersHaveElectionMajority node role
+      have old := facts.leadersHaveElectionWitness node role
       rw [termOther node nodeNe]
       rcases old with bootstrap | majority
       · exact Or.inl bootstrap
@@ -24167,7 +24117,7 @@ theorem updateTermPreservesSystemInductiveInvariant
             · exact False.elim (zero (by rw [implicit]; rfl))
             · rcases recordedAuthority with
                 ⟨authorityActivationIndex, authorityActivation,
-                  authorityStored, authorityGoverning, _, _⟩
+                  authorityStored, authorityGoverning, _⟩
               have candidatePositive :
                   0 < candidateConfiguration.index := by
                 simpa [sameIndex] using Nat.pos_of_ne_zero zero
@@ -24242,7 +24192,7 @@ theorem updateTermPreservesSystemInductiveInvariant
         · rcases recordedAuthority with
             ⟨authorityActivationIndex, authorityActivation,
               authorityStored, authorityGoverning,
-              activationTermBound, _comparable⟩
+              activationTermBound⟩
           have candidateBeforeActivation :
               candidateConfiguration.index <
                 authorityActivation.newConfiguration.index :=
@@ -24305,7 +24255,6 @@ theorem updateTermPreservesSystemInductiveInvariant
           appendHistory responseHistory nodeEvidence requestEvidence
             elections activations := by
       constructor
-      · exact activationEvidence.history
       · intro evidence supportedPrefix known
         exact
           activationEvidence.authorityRecorded
@@ -24660,7 +24609,7 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
-  rcases facts.historicalSafetyEvidence with
+  rcases facts.historicalSafety with
     ⟨owners, canonicalHistory, elections, activations,
       nodeEvidence, requestEvidence, ownership, electionFacts,
       configurationFacts, voteCanonicalFacts,
@@ -25354,7 +25303,7 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
           electionMajorityAtConfiguration oldMajority
             (currentConfiguration_mem_activeConfigurations _)
     · rw [roleOther leader leaderEq] at role
-      have old := facts.leadersHaveElectionMajority leader role
+      have old := facts.leadersHaveElectionWitness leader role
       rw [termEq]
       rcases old with bootstrap | majority
       · exact Or.inl bootstrap
@@ -27247,7 +27196,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
   rcases invariant with
       ⟨votes, appendHistory, responseHistory,
         voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
-  rcases facts.historicalSafetyEvidence with
+  rcases facts.historicalSafety with
     ⟨owners, canonicalHistory, elections, activations,
       nodeEvidence, requestEvidence, ownership, electionFacts,
       configurationFacts, voteCanonicalFacts,
@@ -33433,11 +33382,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
               Exists fun record =>
                 newActivations activationIndex = some record /\
                   knownEvidence.authority ∈ record.governingActive /\
-                  record.activationTerm <= knownEvidence.commitTerm /\
-                  (record.history.take record.activationFrontier <+:
-                      knownEvidence.history.take knownEvidence.commitFrontier \/
-                    knownEvidence.history.take knownEvidence.commitFrontier <+:
-                      record.history.take record.activationFrontier) := by
+                  record.activationTerm <= knownEvidence.commitTerm := by
     intro knownEvidence supportedPrefix known
     rcases
         knownNewOrOld knownEvidence supportedPrefix known with
@@ -33466,36 +33411,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
             by simpa [evidence, currentConfigurationNodeEq] using
               witness.configurationCovered,
             by simpa [evidence, termEq] using
-              witness.activationTermBound,
-            by
-              by_cases create : replaceActivation
-              · by_cases same :
-                    witness.activationIndex = newActivationKey
-                · have storedAtNew :
-                      newActivations newActivationKey =
-                        some witness.activation := by
-                    rw [← same]
-                    exact witness.stored
-                  have activationEq : activationRecord = witness.activation :=
-                    Option.some.inj
-                      ((activationRecordStoredForCoverage create).symm.trans
-                        storedAtNew)
-                  exact Or.inl (by
-                    simpa [evidence, activationRecord, ← activationEq] using
-                      prefixRefl ((state.nodes node).log.take frontier))
-                · have oldStored :
-                      activations witness.activationIndex =
-                        some witness.activation := by
-                    simpa [
-                      newActivations, create, Function.update, same
-                    ] using witness.stored
-                  simpa [evidence] using
-                    activationPrefixComparable
-                      witness.activationIndex witness.activation oldStored
-              · simpa [evidence, newActivations, create] using
-                  activationPrefixComparable
-                    witness.activationIndex witness.activation
-                      (by simpa [newActivations, create] using witness.stored)⟩
+              witness.activationTermBound⟩
     · rcases
           activationEvidence.authorityRecorded
             knownEvidence supportedPrefix old with
@@ -33503,7 +33419,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       · exact Or.inl implicit
       · right
         rcases recorded with
-          ⟨activationIndex, record, stored, governing, termBound, comparable⟩
+          ⟨activationIndex, record, stored, governing, termBound⟩
         by_cases create : replaceActivation
         · have different : Not (activationIndex = newActivationKey) := by
             intro same
@@ -33515,11 +33431,11 @@ theorem advanceCommitPreservesSystemInductiveInvariant
               by simpa [
                 newActivations, create, Function.update, different
               ] using stored,
-              governing, termBound, comparable⟩
+              governing, termBound⟩
         · exact
             ⟨activationIndex, record,
               by simpa [newActivations, create] using stored,
-              governing, termBound, comparable⟩
+              governing, termBound⟩
   have knownAuthorityEqNewOfSameIndex
       (knownEvidence : CommitEvidence TxId)
       (supportedPrefix : List (Entry TxId))
@@ -33595,7 +33511,6 @@ theorem advanceCommitPreservesSystemInductiveInvariant
         appendHistory responseHistory newNodeEvidence requestEvidence
           elections newActivations := by
     constructor
-    · exact activationHistoryAfter
     · exact authorityRecordedAfter
     · intro left leftPrefix leftKnown right rightPrefix rightKnown same
       rcases
@@ -33804,7 +33719,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
   · intro leader role
     have oldRole : (state.nodes leader).role = .leader := by
       simpa [roleEq] using role
-    have old := facts.leadersHaveElectionMajority leader oldRole
+    have old := facts.leadersHaveElectionWitness leader oldRole
     rw [termEq]
     rcases old with bootstrap | majority
     · exact Or.inl bootstrap
@@ -33917,7 +33832,7 @@ theorem returnToFollowerPreservesSystemInductiveInvariant
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
-  rcases facts.historicalSafetyEvidence with
+  rcases facts.historicalSafety with
     ⟨owners, canonicalHistory, elections, activations,
       nodeEvidence, requestEvidence, ownership, electionFacts,
       configurationFacts, voteCanonicalFacts,
@@ -34220,7 +34135,7 @@ theorem returnToFollowerPreservesSystemInductiveInvariant
         subst leader
         exact Role.noConfusion (role.symm.trans roleDestination)
       rw [roleOther leader leaderNe] at role
-      rcases facts.leadersHaveElectionMajority leader role with
+      rcases facts.leadersHaveElectionWitness leader role with
         bootstrap | majority
       · exact Or.inl ⟨bootstrap.1, by simpa [termEq] using bootstrap.2⟩
       · exact Or.inr (by simpa [logEq, votesEq] using majority)
@@ -35339,7 +35254,7 @@ theorem replicationCursorUpdatePreservesSystemInductiveInvariant
         (after.nodes node).isNewFollower =
           (state.nodes node).isNewFollower)
     (candidatesSelfVoteAfter : CandidatesSelfVote after)
-    (leadersHaveElectionMajorityAfter : LeadersHaveElectionWitness after)
+    (leadersHaveElectionWitnessAfter : LeadersHaveElectionWitness after)
     (voteHistoryAfter :
       forall
         (votes : VoteHistory)
@@ -35425,7 +35340,7 @@ theorem replicationCursorUpdatePreservesSystemInductiveInvariant
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
-  rcases facts.historicalSafetyEvidence with
+  rcases facts.historicalSafety with
     ⟨owners, canonicalHistory, elections, activations,
       nodeEvidence, requestEvidence, ownership, electionFacts,
       configurationFacts, voteCanonicalFacts,
@@ -35515,7 +35430,7 @@ theorem replicationCursorUpdatePreservesSystemInductiveInvariant
     rw [termEq]
     exact facts.entriesDoNotExceedCurrentTerm node entry member
   · exact candidatesSelfVoteAfter
-  · exact leadersHaveElectionMajorityAfter
+  · exact leadersHaveElectionWitnessAfter
   · exact progressAfter
   · exact
       voteHistoryAfter
@@ -36014,7 +35929,7 @@ theorem responseDequeuePreservesSystemInductiveInvariant
   · intro node role
     have oldRole : (state.nodes node).role = .leader := by
       simpa [nodesEq] using role
-    rcases facts.leadersHaveElectionMajority node oldRole with
+    rcases facts.leadersHaveElectionWitness node oldRole with
       bootstrap | majority
     · exact Or.inl
         ⟨bootstrap.1, by simpa [nodesEq] using bootstrap.2⟩
@@ -37125,7 +37040,7 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
           facts.candidatesSelfVote node role
       · intro leader role
         rw [roleEq] at role
-        rcases facts.leadersHaveElectionMajority leader role with
+        rcases facts.leadersHaveElectionWitness leader role with
           bootstrap | majority
         · exact Or.inl
             ⟨bootstrap.1, by simpa [termEq] using bootstrap.2⟩
@@ -37501,7 +37416,7 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
             facts.candidatesSelfVote node role
         · intro leader role
           rw [roleEq] at role
-          rcases facts.leadersHaveElectionMajority leader role with
+          rcases facts.leadersHaveElectionWitness leader role with
             bootstrap | majority
           · exact Or.inl
               ⟨bootstrap.1, by simpa [termEq] using bootstrap.2⟩
@@ -38360,12 +38275,12 @@ theorem receiveRequestVoteResponsePreservesSystemInductiveInvariant
     exact
       ⟨by simpa [votedEq] using selfVote,
         votesMonotone candidate selfCounted⟩
-  have leadersHaveElectionMajorityIntermediate :
+  have leadersHaveElectionWitnessIntermediate :
       LeadersHaveElectionWitness intermediate := by
     intro leader role
     have oldRole : (state.nodes leader).role = .leader := by
       simpa [roleEq] using role
-    rcases facts.leadersHaveElectionMajority leader oldRole with
+    rcases facts.leadersHaveElectionWitness leader oldRole with
       bootstrap | majority
     · exact Or.inl
         ⟨bootstrap.1, by simpa [termEq] using bootstrap.2⟩
@@ -38448,7 +38363,7 @@ theorem receiveRequestVoteResponsePreservesSystemInductiveInvariant
       replicationCursorUpdatePreservesSystemInductiveInvariant
         state intermediate packed roleEq termEq logEq commitEq
           newFollowerEq candidatesSelfVoteIntermediate
-          leadersHaveElectionMajorityIntermediate
+          leadersHaveElectionWitnessIntermediate
     · exact voteHistoryIntermediate
     · intro _ _ _ _ _ _ actualFacts
       rcases actualFacts.processedAckHistory with
@@ -40153,7 +40068,7 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
-  rcases facts.historicalSafetyEvidence with
+  rcases facts.historicalSafety with
     ⟨owners, canonicalHistory, elections, activations,
       nodeEvidence, requestEvidence, ownership, electionFacts,
       configurationFacts, voteCanonicalFacts,
@@ -40413,7 +40328,7 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
   · simpa [after] using facts.currentTermsPositive
   · simpa [after] using facts.entriesDoNotExceedCurrentTerm
   · simpa [after] using facts.candidatesSelfVote
-  · simpa [after] using facts.leadersHaveElectionMajority
+  · simpa [after] using facts.leadersHaveElectionWitness
   · simpa [after] using facts.leaderProgressBounded
   · constructor
     · exact facts.voteHistory.bootstrapEmpty
@@ -40762,7 +40677,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
-  rcases facts.historicalSafetyEvidence with
+  rcases facts.historicalSafety with
     ⟨owners, canonicalHistory, elections, activations,
       nodeEvidence, requestEvidence, ownership, electionFacts,
       configurationFacts, voteCanonicalFacts,
@@ -41536,7 +41451,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
         by simpa [votesGrantedEq] using old.2⟩
   · intro leader role
     rcases
-        facts.leadersHaveElectionMajority leader
+        facts.leadersHaveElectionWitness leader
           (by simpa [roleEq] using role) with
       bootstrap | majority
     · exact Or.inl
@@ -42522,7 +42437,7 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
-  rcases facts.historicalSafetyEvidence with
+  rcases facts.historicalSafety with
     ⟨owners, canonicalHistory, elections, activations,
       nodeEvidence, requestEvidence, ownership, electionFacts,
       configurationFacts, voteCanonicalFacts,
@@ -44147,11 +44062,7 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
               Exists fun record =>
                 activations activationIndex = some record /\
                   evidence.authority ∈ record.governingActive /\
-                  record.activationTerm <= evidence.commitTerm /\
-                  (record.history.take record.activationFrontier <+:
-                      evidence.history.take evidence.commitFrontier \/
-                    evidence.history.take evidence.commitFrontier <+:
-                      record.history.take record.activationFrontier) := by
+                  record.activationTerm <= evidence.commitTerm := by
     intro evidence supportedPrefix known
     rcases knownInherited evidence supportedPrefix known with
       ⟨oldEvidence, oldPrefix, oldKnown,
@@ -44206,7 +44117,6 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
         after appendHistory newResponseHistory
           newNodeEvidence requestEvidence elections activations := by
     constructor
-    · exact activationEvidence.history
     · exact authorityRecordedAfter
     · intro left leftPrefix leftKnown right rightPrefix rightKnown same
       rcases knownInherited left leftPrefix leftKnown with
@@ -44509,7 +44419,7 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
             · rcases recordedAuthority with
                 ⟨authorityActivationIndex, authorityActivation,
                   authorityStored, authorityGoverning,
-                  _activationTermBound, _comparable⟩
+                  _activationTermBound⟩
               have candidatePositive :
                   0 < candidateConfiguration.index := by
                 simpa [sameIndex] using Nat.pos_of_ne_zero zero
@@ -44584,7 +44494,7 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
         · rcases recordedAuthority with
             ⟨authorityActivationIndex, authorityActivation,
               authorityStored, authorityGoverning,
-              activationTermBound, _comparable⟩
+              activationTermBound⟩
           have candidateBeforeActivation :
               candidateConfiguration.index <
                 authorityActivation.newConfiguration.index := by
@@ -44669,7 +44579,7 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
     have oldRole : (state.nodes leader).role = .leader := by
       rw [roleEq] at role
       exact role
-    rcases facts.leadersHaveElectionMajority leader oldRole with
+    rcases facts.leadersHaveElectionWitness leader oldRole with
       bootstrap | majority
     · left
       exact
