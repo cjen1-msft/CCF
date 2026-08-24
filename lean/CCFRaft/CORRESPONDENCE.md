@@ -9,9 +9,10 @@ candidates may time out in any term, and RequestVote and promotion are not
 fixed to term two.
 
 The checked proof covers `changeConfiguration`, configuration-aware quorums,
-and every other action in the fixed-five projection. Its proof-only histories
-retain ballot provenance: the ledger snapshot, election term, quorum, delayed
-replication support, commit evidence, and signed configuration activations.
+and every other action in the active transition system. Its proof-only
+histories retain ballot provenance: the ledger snapshot, election term,
+quorum, delayed replication support, commit evidence, and signed
+configuration activations.
 
 The minimized invariant does not store log matching, quorum-log coverage,
 potential-commit safety, or leader completeness. Those are derived from the
@@ -74,8 +75,8 @@ Global comparisons occur only in proof predicates.
   or an empty heartbeat when caught up.
 - A configuration change appends a current-term physical log entry, marks only
   newly added nodes joined, and initializes their `sentIndex` to the old log
-  length. Other peer cursors are preserved. This slice fixes each
-  configuration at five members to cover `5 -> 5 -> 5`.
+  length. Other peer cursors are preserved. The target may be any nonempty
+  subset of the fixed node world.
 - Configuration 0 remains implicit. A node's current configuration is its
   latest reconfiguration at or before `commitIndex`; later log
   reconfigurations remain active and pending.
@@ -175,7 +176,8 @@ deltas.
   reachable safety exports.
 - Executable traces cover explicit transaction/signature replication,
   signature-only commits, stacked `5 -> 5 -> 5` configuration changes,
-  repeated elections, skipped terms, delayed ACKs, and follower commit bounds.
+  shrinking `5 -> 4 -> 3 -> 2 -> 1` configuration changes, repeated elections,
+  skipped terms, delayed ACKs, and follower commit bounds.
 - The simulator uses exactly `Enabled` and `next`.
 - There is not yet a machine-checked semantics or bisimulation theorem between
   TLA+ and Lean.
@@ -183,8 +185,6 @@ deltas.
 - The fixed-world projection has no mutable retirement state. A removed node
   may remain a stale local leader, but active-union send/election guards and
   one-time `hasJoined` history constrain its reconfiguration behavior.
-- Every configuration has five members. `ccfraft.tla` permits any nonempty
-  configuration, so variable-size reconfiguration remains unproved.
 - `RcvDropIgnoredMessage` and other stale/ignored message branches are deferred
   to future message-loss and staleness work.
 

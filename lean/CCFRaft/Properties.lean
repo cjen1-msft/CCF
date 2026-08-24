@@ -2306,23 +2306,6 @@ structure ComponentInvariantFacts
 def ComponentSystemInductiveInvariant (state : State TxId) : Prop :=
   Exists fun ghost => ComponentInvariantFacts state ghost
 
-def ActiveConfigurationsFixedSize (state : State TxId) : Prop :=
-  forall node configuration,
-    configuration ∈ activeConfigurations (state.nodes node) ->
-      configuration.nodes.card = INITIAL_CONFIGURATION_SIZE
-
-def ConfigurationHistoriesFixedSize
-    (state : State TxId)
-    (appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)) : Prop :=
-  (forall node configuration,
-    configuration ∈ allConfigurations (state.nodes node).log ->
-      configuration.nodes.card = INITIAL_CONFIGURATION_SIZE) /\
-  (forall destination request,
-    Message.appendEntriesRequest request ∈ state.network destination ->
-      forall configuration,
-        configuration ∈ allConfigurations (appendHistory request) ->
-          configuration.nodes.card = INITIAL_CONFIGURATION_SIZE)
-
 def LeadersHaveElectionWitness (state : State TxId) : Prop :=
   forall leader,
     (state.nodes leader).role = .leader ->
@@ -2333,7 +2316,7 @@ def LeadersHaveElectionWitness (state : State TxId) : Prop :=
             hasConfigurationMajority
               (state.nodes leader).votesGranted configuration)
 
-/-- The invariant preserved by the fixed-five reconfiguring transition system. -/
+/-- The invariant preserved by the reconfiguring transition system. -/
 structure InvariantFacts
     (state : State TxId)
     (votes : VoteHistory)
@@ -2400,30 +2383,6 @@ structure InvariantFacts
       state votes voteCandidateHistory voteVoterHistory
   processedAckHistory :
     Exists fun history => ProcessedAckHistoryFacts state history
-  configurationHistoriesFixedSize :
-    ConfigurationHistoriesFixedSize state appendHistory
-
-namespace InvariantFacts
-
-theorem activeConfigurationsFixedSize
-    {state : State TxId}
-    {votes : VoteHistory}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {voteRequestHistory : RequestVoteRequest -> List (Entry TxId)}
-    {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
-    (facts :
-      InvariantFacts
-        state votes appendHistory responseHistory voteRequestHistory
-          voteCandidateHistory voteVoterHistory) :
-    ActiveConfigurationsFixedSize state := by
-  intro node configuration active
-  exact
-    facts.configurationHistoriesFixedSize.1
-      node configuration (List.mem_filter.mp active).1
-
-end InvariantFacts
 
 /-- Existentially package every runtime and proof-only invariant component. -/
 def SystemInductiveInvariant (state : State TxId) : Prop :=

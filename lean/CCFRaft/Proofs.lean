@@ -9,7 +9,7 @@ set_option autoImplicit false
 # CCFRaft reachable safety API
 
 This module keeps the public reachable-safety names stable while the
-implementation proves the fixed-five reconfiguring transition system.
+implementation proves the reconfiguring transition system.
 -/
 
 namespace CCFRaft

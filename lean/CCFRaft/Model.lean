@@ -975,7 +975,6 @@ def Enabled
       let addedNodes := newConfiguration \ previousConfiguration
       sourceState.role = .leader /\
         newConfiguration.Nonempty /\
-        newConfiguration.card = INITIAL_CONFIGURATION_SIZE /\
         Not (newConfiguration = previousConfiguration) /\
         ∀ node ∈ addedNodes, node ∉ state.hasJoined
   | .signCommittableMessages node =>

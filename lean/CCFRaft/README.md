@@ -1,9 +1,9 @@
 # CCF Raft Lean model
 
 This directory models the selected `ccfraft.tla` Raft core as an executable
-Lean transition system. Kernel-checked safety proofs cover every action in the
-fixed-five configuration projection, including stacked configuration changes
-and partial follower commits.
+Lean transition system. Kernel-checked safety proofs cover every modeled
+action, including variable-size configuration changes and partial follower
+commits.
 
 The signature-aware milestone is called **Slice 4** in development history.
 Canonical module names remain slice-neutral so later milestones build directly
@@ -30,7 +30,7 @@ The combined model has:
 - opaque, externally allocated unique transaction IDs;
 - explicit ordinary transaction, signature, and reconfiguration log entries;
 - log-derived current and pending configurations;
-- global one-time join history and five-member configuration changes;
+- global one-time join history and arbitrary nonempty configuration changes;
 - explicit ordered/no-duplicate per-destination message queues;
 - AppendEntries sends one entry when behind and an empty heartbeat when caught
   up;
@@ -63,7 +63,7 @@ source/destination receive channel while other actions continue.
 `Action`, `Enabled`, and `next` are the authoritative semantics. Proofs and the
 compiled simulator call these same definitions.
 
-## Proved for the fixed-five transition set
+## Proved for the reconfiguring transition set
 
 For every arbitrary-term reachable state:
 
@@ -119,6 +119,7 @@ lake build ccf-raft-simulator
 .lake/build/bin/ccf-raft-simulator replay CCFRaft/signature-commit.trace
 .lake/build/bin/ccf-raft-simulator replay CCFRaft/reconfiguration-5-to-5.trace
 .lake/build/bin/ccf-raft-simulator replay CCFRaft/reconfiguration-5-to-5-to-5.trace
+.lake/build/bin/ccf-raft-simulator replay CCFRaft/reconfiguration-5-to-1.trace
 .lake/build/bin/ccf-raft-simulator replay CCFRaft/arbitrary-terms.trace
 .lake/build/bin/ccf-raft-simulator replay CCFRaft/delayed-ack.trace
 .lake/build/bin/ccf-raft-simulator replay CCFRaft/follower-overcommit.trace
@@ -134,6 +135,10 @@ Replay lines support `client`, variable-length `reconfigure`, `sign`, `append`,
 Reconfiguration nodes render in stable identifier order.
 The stacked reconfiguration trace moves through three disjoint five-node
 configurations and elects a leader from each successor configuration.
+The shrinking trace commits `5 -> 4 -> 3 -> 2 -> 1`, then commits another
+signature with the singleton configuration. It immediately promotes the
+singleton member, grows to three members, catches up a new follower after a
+NACK, and commits the larger configuration.
 
 `candidateChoicesComplete` proves every enabled action in the finite simulator
 instance appears in its finite candidate list. The reusable
@@ -147,7 +152,6 @@ index points to a signature.
 ## Out of scope
 
 - unbounded node sets;
-- configuration sizes other than five;
 - explicit message loss and remaining stale-message behavior;
 - retirement state and retirement transactions;
 - pre-vote and remaining CCF-specific reconfiguration actions.

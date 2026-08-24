@@ -8,7 +8,7 @@ import CCFRaft.Simulation
 # CCF Raft arbitrary-term reconfiguration proof
 
 An executable, directly proved, 15-node arbitrary-term Raft model with
-five-node configuration changes.
+arbitrary nonempty configuration changes.
 -/
 
 #print axioms CCFRaft.reachableConsensusSafety
