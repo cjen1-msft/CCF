@@ -26,9 +26,15 @@ if grep -R -n -E \
   exit 1
 fi
 
+if grep -q "newConfiguration.card = INITIAL_CONFIGURATION_SIZE" \
+    CCFRaft/Model.lean; then
+  echo "ChangeConfiguration is restricted to the bootstrap cardinality" >&2
+  exit 1
+fi
+
 check_hash \
   CCFRaft/Model.lean \
-  8b97d62c37b0f2905b3c2f244ecb81df6d98dbb6df4ae5b6b990672371daa73a
+  5c51c0fd4f1e8257ce5bd385fef636f3b9835ad747f6c8e69b77feb560f685cc
 check_hash \
   CCFRaft/HandlerProofs.lean \
   14e75abe119294022fdca13ec943f4e81b2bc5ef320ccd2de722f8bfc5859911
@@ -78,6 +84,25 @@ for expected in \
   fi
 done
 
+shrinking="$(
+  .lake/build/bin/ccf-raft-simulator \
+    replay CCFRaft/reconfiguration-5-to-1.trace
+)"
+for expected in \
+    "replayed 78 arbitrary-term Raft actions" \
+    "max term=3" \
+    "commit indices=[9, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0]" \
+    "current configuration indices=[8, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0]" \
+    "leader current configurations=[(0, [0, 5, 6])]" \
+    "active configuration indices=[[8], [0, 1, 2, 3, 4], [0, 1, 2, 3, 4], [0], [0], [4, 8], [0], [0], [0], [0], [0], [0], [0], [0], [0]]" \
+    "joined=[0, 1, 2, 3, 4, 5, 6]"; do
+  if [[ "$shrinking" != *"$expected"* ]]; then
+    echo "shrinking reconfiguration trace omitted expected state: $expected" >&2
+    echo "$shrinking" >&2
+    exit 1
+  fi
+done
+
 expect_disabled() {
   local trace="$1"
   local expected="$2"
@@ -107,4 +132,5 @@ expect_disabled \
 
 echo "$actual"
 echo "$stacked"
+echo "$shrinking"
 echo "result=passed"
