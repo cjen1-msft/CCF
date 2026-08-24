@@ -1,0 +1,172 @@
+-- Copyright (c) Microsoft Corporation. All rights reserved.
+-- Licensed under the Apache 2.0 License.
+
+import CCFRaft.Properties
+
+set_option autoImplicit false
+
+namespace CCFRaft
+
+variable {TxId : Type}
+variable [DecidableEq TxId]
+
+private def withVotedFor
+    (votedFor : Option Node)
+    (result : NodeState TxId × AppendEntriesResponse) :
+    NodeState TxId × AppendEntriesResponse :=
+  ({ result.1 with votedFor := votedFor }, result.2)
+
+theorem rejectAppendEntriesRequest_votedFor
+    (node : NodeState TxId)
+    (votedFor : Option Node)
+    (request : AppendEntriesRequest TxId) :
+    rejectAppendEntriesRequest? { node with votedFor := votedFor } request =
+      (rejectAppendEntriesRequest? node request).map
+        (withVotedFor votedFor) := by
+  unfold rejectAppendEntriesRequest?
+  simp only [logOk]
+  split <;> simp_all [failureResponse, withVotedFor]
+
+theorem appendEntriesAlreadyDone_votedFor
+    (node : NodeState TxId)
+    (votedFor : Option Node)
+    (request : AppendEntriesRequest TxId) :
+    appendEntriesAlreadyDone? { node with votedFor := votedFor } request =
+      (appendEntriesAlreadyDone? node request).map
+        (withVotedFor votedFor) := by
+  unfold appendEntriesAlreadyDone?
+  simp only [alreadyDone]
+  split <;>
+    simp_all [
+      committedFromLeader, successResponse, withVotedFor
+    ]
+
+theorem conflictAppendEntriesRequest_votedFor
+    (node : NodeState TxId)
+    (votedFor : Option Node)
+    (request : AppendEntriesRequest TxId) :
+    conflictAppendEntriesRequest? { node with votedFor := votedFor } request =
+      (conflictAppendEntriesRequest? node request).map fun next =>
+        { next with votedFor := votedFor } := by
+  unfold conflictAppendEntriesRequest?
+  simp only [hasTermConflict, overlapLength]
+  split <;> simp_all
+
+theorem noConflictAppendEntriesRequest_votedFor
+    (node : NodeState TxId)
+    (votedFor : Option Node)
+    (request : AppendEntriesRequest TxId) :
+    noConflictAppendEntriesRequest?
+        { node with votedFor := votedFor } request =
+      (noConflictAppendEntriesRequest? node request).map
+        (withVotedFor votedFor) := by
+  unfold noConflictAppendEntriesRequest?
+  simp only [noConflictExtension]
+  split <;>
+    simp_all [
+      committedFromLeader, successResponse, withVotedFor
+    ]
+
+theorem acceptAppendEntriesRequest_votedFor
+    (node : NodeState TxId)
+    (votedFor : Option Node)
+    (request : AppendEntriesRequest TxId) :
+    acceptAppendEntriesRequest? { node with votedFor := votedFor } request =
+      (acceptAppendEntriesRequest? node request).map
+        (withVotedFor votedFor) := by
+  unfold acceptAppendEntriesRequest?
+  by_cases accepted :
+      request.term = node.currentTerm /\
+        node.role = .follower /\
+        logOk node request /\
+        request.prevLogIndex >= node.commitIndex
+  · have acceptedChanged :
+        request.term =
+            ({ node with votedFor := votedFor } : NodeState TxId).currentTerm /\
+          ({ node with votedFor := votedFor } : NodeState TxId).role =
+            .follower /\
+          logOk { node with votedFor := votedFor } request /\
+          request.prevLogIndex >=
+            ({ node with votedFor := votedFor } :
+              NodeState TxId).commitIndex := by
+      simpa [logOk] using accepted
+    rw [if_pos acceptedChanged, if_pos accepted]
+    rw [
+      appendEntriesAlreadyDone_votedFor,
+      noConflictAppendEntriesRequest_votedFor,
+      conflictAppendEntriesRequest_votedFor
+    ]
+    cases appendEntriesAlreadyDone? node request <;>
+      simp [withVotedFor]
+    cases noConflictAppendEntriesRequest? node request <;>
+      simp [withVotedFor]
+    cases conflictResult :
+        conflictAppendEntriesRequest? node request with
+    | none => simp [conflictResult]
+    | some truncated =>
+        have nestedAppend :=
+          appendEntriesAlreadyDone_votedFor
+            truncated votedFor request
+        have nestedNoConflict :=
+          noConflictAppendEntriesRequest_votedFor
+            truncated votedFor request
+        simp only [Option.map_some]
+        rw [nestedAppend, nestedNoConflict]
+        cases appendEntriesAlreadyDone? truncated request <;> simp
+  · have rejectedChanged :
+        Not (
+          request.term =
+              ({ node with votedFor := votedFor } :
+                NodeState TxId).currentTerm /\
+            ({ node with votedFor := votedFor } : NodeState TxId).role =
+              .follower /\
+            logOk { node with votedFor := votedFor } request /\
+            request.prevLogIndex >=
+              ({ node with votedFor := votedFor } :
+                NodeState TxId).commitIndex) := by
+      simpa [logOk] using accepted
+    rw [if_neg rejectedChanged, if_neg accepted]
+    rfl
+
+theorem handleAppendEntriesRequest_votedFor
+    (node : NodeState TxId)
+    (votedFor : Option Node)
+    (request : AppendEntriesRequest TxId) :
+    handleAppendEntriesRequest? { node with votedFor := votedFor } request =
+      (handleAppendEntriesRequest? node request).map
+        (withVotedFor votedFor) := by
+  unfold handleAppendEntriesRequest?
+  rw [rejectAppendEntriesRequest_votedFor]
+  cases rejectAppendEntriesRequest? node request
+  · simpa [acceptAppendEntriesRequest_votedFor]
+  · simp
+
+theorem canProduceAppendAckEventuallyAt_votedFor
+    (node : NodeState TxId)
+    (votedFor : Option Node)
+    (request : AppendEntriesRequest TxId)
+    (index : Nat) :
+    canProduceAppendAckEventuallyAt
+        { node with votedFor := votedFor } request index ↔
+      canProduceAppendAckEventuallyAt node request index := by
+  unfold canProduceAppendAckEventuallyAt canProduceAppendAckAt
+  rw [handleAppendEntriesRequest_votedFor]
+  constructor <;> rintro (direct | future)
+  · left
+    rcases direct with ⟨nextNode, response, handled, success, covered⟩
+    rw [Option.map_eq_some_iff] at handled
+    rcases handled with ⟨result, oldHandled, resultEq⟩
+    rcases result with ⟨oldNextNode, oldResponse⟩
+    simp [withVotedFor] at resultEq
+    rcases resultEq with ⟨_, rfl⟩
+    exact ⟨oldNextNode, oldResponse, oldHandled, success, covered⟩
+  · exact Or.inr future
+  · left
+    rcases direct with ⟨nextNode, response, handled, success, covered⟩
+    refine
+      ⟨{ nextNode with votedFor := votedFor }, response, ?_, success, covered⟩
+    rw [Option.map_eq_some_iff]
+    exact ⟨(nextNode, response), handled, rfl⟩
+  · exact Or.inr future
+
+end CCFRaft

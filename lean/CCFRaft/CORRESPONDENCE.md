@@ -8,11 +8,10 @@ state-shape equality.
 candidates may time out in any term, and RequestVote and promotion are not
 fixed to term two.
 
-The checked fixed-membership proof covers the transition set before
-`changeConfiguration` and configuration-aware quorums. Extending the proof to
-the active transition system is in progress. Its proof-only histories retain
-ballot provenance: the ledger snapshot, election term, quorum, delayed
-replication support, and commit evidence.
+The checked proof covers `changeConfiguration`, configuration-aware quorums,
+and every other action in the fixed-five projection. Its proof-only histories
+retain ballot provenance: the ledger snapshot, election term, quorum, delayed
+replication support, commit evidence, and signed configuration activations.
 
 The minimized invariant does not store log matching, quorum-log coverage,
 potential-commit safety, or leader completeness. Those are derived from the
@@ -24,45 +23,45 @@ active modules in the current tree.
 
 ## Scope and deliberate projections
 
-| Source concept                     | Lean representation                                              |
-| ---------------------------------- | ---------------------------------------------------------------- |
-| `Servers`                          | `Node := Fin NODE_COUNT`, with `NODE_COUNT = 15`                 |
-| Initial configuration              | Implicit `{0,1,2,3,4}` at projected index 0                     |
-| Configuration                      | `Configuration` records derived from each node's physical log   |
-| `configurations`                   | `currentConfiguration` plus later `activeConfigurations` views  |
-| `hasJoined`                        | Global `Finset Node`, initially the initial configuration        |
-| Initial log                        | Empty; the CCF bootstrap prefix is projected away                |
-| Signature entries                  | Explicit `EntryContent.signature` entries                        |
-| Reconfiguration entries            | Explicit `EntryContent.reconfiguration` at one-based indices     |
-| Transaction entries                | `EntryContent.transaction` with an opaque unique `txId`           |
-| Terms                              | Natural-numbered terms starting from bootstrap term 1             |
-| Network guarantee                  | Ordered/no-duplicate FIFO queue per destination                  |
-| Variables outside selected actions | Omitted                                                          |
+| Source concept                     | Lean representation                                            |
+| ---------------------------------- | -------------------------------------------------------------- |
+| `Servers`                          | `Node := Fin NODE_COUNT`, with `NODE_COUNT = 15`               |
+| Initial configuration              | Implicit `{0,1,2,3,4}` at projected index 0                    |
+| Configuration                      | `Configuration` records derived from each node's physical log  |
+| `configurations`                   | `currentConfiguration` plus later `activeConfigurations` views |
+| `hasJoined`                        | Global `Finset Node`, initially the initial configuration      |
+| Initial log                        | Empty; the CCF bootstrap prefix is projected away              |
+| Signature entries                  | Explicit `EntryContent.signature` entries                      |
+| Reconfiguration entries            | Explicit `EntryContent.reconfiguration` at one-based indices   |
+| Transaction entries                | `EntryContent.transaction` with an opaque unique `txId`        |
+| Terms                              | Natural-numbered terms starting from bootstrap term 1          |
+| Network guarantee                  | Ordered/no-duplicate FIFO queue per destination                |
+| Variables outside selected actions | Omitted                                                        |
 
 Removed bootstrap prefixes rebase all later indices by the removed prefix
 length.
 
 ## Locality and action mapping
 
-| Lean action/helper                | `ccfraft.tla` operator                                    | Reads current node state                   | Writes node state         |
-| --------------------------------- | --------------------------------------------------------- | ------------------------------------------ | ------------------------- |
-| `clientRequest`                   | `ClientRequest`                                           | acting leader                              | acting leader             |
-| `changeConfiguration`             | `ChangeConfigurationInt`                                  | acting leader and global join history      | leader and join history   |
-| `signCommittableMessages`         | `SignCommittableMessages`                                 | acting leader                              | acting leader             |
-| `appendEntries`                   | `AppendEntries`                                           | source                                     | source                    |
-| `receive`                         | selected AppendEntries receive branch                     | destination and selected message           | destination               |
-| `rejectAppendEntriesRequest?`     | `RejectAppendEntriesRequest`                              | destination                                | destination               |
-| `appendEntriesAlreadyDone?`       | `AppendEntriesAlreadyDone`                                | destination                                | destination               |
-| `conflictAppendEntriesRequest?`   | `ConflictAppendEntriesRequest`                            | destination                                | destination               |
-| `noConflictAppendEntriesRequest?` | `NoConflictAppendEntriesRequest`                          | destination                                | destination               |
-| `handleAppendEntriesResponse?`    | `HandleAppendEntriesResponse`                             | destination leader                         | destination leader        |
-| `advanceCommitIndex`              | `AdvanceCommitIndex`                                      | acting leader's local `matchIndex`         | acting leader             |
-| `timeout`                         | `Timeout` / `BecomeCandidate`                             | timing-out follower or candidate           | timing-out node           |
-| `requestVote`                     | `RequestVote`                                             | source candidate                           | source network queue only |
-| `updateTerm`                      | `UpdateTerm`                                              | destination and selected immutable message | destination               |
-| RequestVote request receive       | `HandleRequestVoteRequest`                                | destination and selected request           | destination               |
-| RequestVote response receive      | `HandleRequestVoteResponse`                               | destination and selected response          | destination               |
-| `becomeLeader`                    | `BecomeLeader`                                            | candidate-local votes                      | candidate                 |
+| Lean action/helper                | `ccfraft.tla` operator                | Reads current node state                   | Writes node state         |
+| --------------------------------- | ------------------------------------- | ------------------------------------------ | ------------------------- |
+| `clientRequest`                   | `ClientRequest`                       | acting leader                              | acting leader             |
+| `changeConfiguration`             | `ChangeConfigurationInt`              | acting leader and global join history      | leader and join history   |
+| `signCommittableMessages`         | `SignCommittableMessages`             | acting leader                              | acting leader             |
+| `appendEntries`                   | `AppendEntries`                       | source                                     | source                    |
+| `receive`                         | selected AppendEntries receive branch | destination and selected message           | destination               |
+| `rejectAppendEntriesRequest?`     | `RejectAppendEntriesRequest`          | destination                                | destination               |
+| `appendEntriesAlreadyDone?`       | `AppendEntriesAlreadyDone`            | destination                                | destination               |
+| `conflictAppendEntriesRequest?`   | `ConflictAppendEntriesRequest`        | destination                                | destination               |
+| `noConflictAppendEntriesRequest?` | `NoConflictAppendEntriesRequest`      | destination                                | destination               |
+| `handleAppendEntriesResponse?`    | `HandleAppendEntriesResponse`         | destination leader                         | destination leader        |
+| `advanceCommitIndex`              | `AdvanceCommitIndex`                  | acting leader's local `matchIndex`         | acting leader             |
+| `timeout`                         | `Timeout` / `BecomeCandidate`         | timing-out follower or candidate           | timing-out node           |
+| `requestVote`                     | `RequestVote`                         | source candidate                           | source network queue only |
+| `updateTerm`                      | `UpdateTerm`                          | destination and selected immutable message | destination               |
+| RequestVote request receive       | `HandleRequestVoteRequest`            | destination and selected request           | destination               |
+| RequestVote response receive      | `HandleRequestVoteResponse`           | destination and selected response          | destination               |
+| `becomeLeader`                    | `BecomeLeader`                        | candidate-local votes                      | candidate                 |
 
 Receive handlers never inspect the source node's current state. They use only
 the immutable request/response snapshot selected from the destination queue.
@@ -75,7 +74,8 @@ Global comparisons occur only in proof predicates.
   or an empty heartbeat when caught up.
 - A configuration change appends a current-term physical log entry, marks only
   newly added nodes joined, and initializes their `sentIndex` to the old log
-  length. Other peer cursors are preserved.
+  length. Other peer cursors are preserved. This slice fixes each
+  configuration at five members to cover `5 -> 5 -> 5`.
 - Configuration 0 remains implicit. A node's current configuration is its
   latest reconfiguration at or before `commitIndex`; later log
   reconfigurations remain active and pending.
@@ -136,6 +136,11 @@ both entries to a majority, and commits the signature frontier.
 majorities, commits on node 0, propagates that commit to node 5 by heartbeat,
 then elects node 5 in term 2 using the new configuration.
 
+`CCFRaft/reconfiguration-5-to-5-to-5.trace` continues with a second disjoint
+configuration `{10,11,12,13,14}`. The new nodes first reject an optimistic
+AppendEntries request, catch up from index 1, commit the second configuration,
+and elect node 10 in term 3.
+
 `CCFRaft/arbitrary-terms.trace` leaves node one partitioned long enough to
 timeout twice, elects it directly in term three, commits a term-three
 signature, then elects node two in term four and commits another current-term
@@ -166,11 +171,11 @@ deltas.
 
 ## Current evidence and limitations
 
-- Existing Lean proofs establish safety for the pre-reconfiguration transition
-  set. Reconfiguration preservation is in progress.
+- The default `CCFRaft` target checks reconfiguration preservation and the
+  reachable safety exports.
 - Executable traces cover explicit transaction/signature replication,
-  signature-only commits, repeated elections, skipped terms, delayed ACKs, and
-  follower commit bounds.
+  signature-only commits, stacked `5 -> 5 -> 5` configuration changes,
+  repeated elections, skipped terms, delayed ACKs, and follower commit bounds.
 - The simulator uses exactly `Enabled` and `next`.
 - There is not yet a machine-checked semantics or bisimulation theorem between
   TLA+ and Lean.
@@ -178,6 +183,8 @@ deltas.
 - The fixed-world projection has no mutable retirement state. A removed node
   may remain a stale local leader, but active-union send/election guards and
   one-time `hasJoined` history constrain its reconfiguration behavior.
+- Every configuration has five members. `ccfraft.tla` permits any nonempty
+  configuration, so variable-size reconfiguration remains unproved.
 - `RcvDropIgnoredMessage` and other stale/ignored message branches are deferred
   to future message-loss and staleness work.
 
@@ -194,4 +201,4 @@ reviews during development produced:
   matching, log-term bounds, and election safety.
 
 Those earlier proofs and review checkpoints remain available in Git history.
-The current tree contains only the canonical arbitrary-term proof.
+The default target checks the canonical reconfiguration proof.
