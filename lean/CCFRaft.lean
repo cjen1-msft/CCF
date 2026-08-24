@@ -3,6 +3,7 @@
 
 import CCFRaft.Proofs
 import CCFRaft.Simulation
+import CCFRaft.TraceValidation
 
 /-!
 # CCF Raft arbitrary-term reconfiguration proof
@@ -29,6 +30,7 @@ arbitrary nonempty configuration changes.
 #print axioms CCFRaft.ReconfigurationProof.reachableCommittedFrontierIsSignature
 #print axioms CCFRaft.Simulation.materializeComplete
 #print axioms CCFRaft.Simulation.candidateChoicesComplete
+#print axioms CCFRaft.TraceValidation.exactRunReachable
 
 run_cmd do
   let env <- Lean.getEnv

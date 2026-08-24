@@ -1,0 +1,2 @@
+{"tag":"raft_trace","msg":{"function":"bootstrap","args":{"idx":2},"state":{"node_id":"node-0","current_view":1,"last_idx":2,"commit_idx":0,"leadership_state":"Leader"},"configurations":[{"idx":0,"nodes":{"node-0":{},"node-1":{},"node-2":{},"node-3":{},"node-4":{}}}]}}
+{"tag":"raft_trace","msg":{"function":"commit","args":{"idx":2},"state":{"node_id":"node-0","current_view":1,"last_idx":2,"commit_idx":2,"leadership_state":"Leader"},"configurations":[{"idx":1,"nodes":{"node-0":{},"node-1":{},"node-2":{},"node-3":{},"node-5":{}}}]}}

@@ -15,7 +15,7 @@ ordinary model actions, then calls `ExecutableTransitionSystem.applyAction`.
 namespace CCFRaft.Simulation
 
 /-- Number of transaction IDs available to the bounded simulator. -/
-def TX_COUNT : Nat := 8
+def TX_COUNT : Nat := 64
 /-- Finite transaction-ID type used only by simulation and replay. -/
 abbrev TxId := Fin TX_COUNT
 /-- Concrete finite state explored by the simulator. -/

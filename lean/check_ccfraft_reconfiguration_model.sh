@@ -40,7 +40,7 @@ check_hash \
   14e75abe119294022fdca13ec943f4e81b2bc5ef320ccd2de722f8bfc5859911
 check_hash \
   CCFRaft/Simulation.lean \
-  e04f3e6b292e7e6794e0a68318b1c295de6d551d7367f368ce5339271049a6b3
+  8f572bdfd13fcdd4335e86d6a127eda1a8208c427e20c28fa508e4f63724317d
 
 nice -n 10 ionice -c 3 lake build \
   CCFRaft.Model CCFRaft.HandlerProofs CCFRaft.Simulation ccf-raft-simulator \
@@ -48,7 +48,7 @@ nice -n 10 ionice -c 3 lake build \
 
 actual="$(
   .lake/build/bin/ccf-raft-simulator \
-    replay CCFRaft/reconfiguration-5-to-5.trace
+    replay CCFRaft/traces/reconfiguration-5-to-5.trace
 )"
 for expected in \
     "replayed 49 arbitrary-term Raft actions" \
@@ -68,7 +68,7 @@ done
 
 stacked="$(
   .lake/build/bin/ccf-raft-simulator \
-    replay CCFRaft/reconfiguration-5-to-5-to-5.trace
+    replay CCFRaft/traces/reconfiguration-5-to-5-to-5.trace
 )"
 for expected in \
     "replayed 125 arbitrary-term Raft actions" \
@@ -86,7 +86,7 @@ done
 
 shrinking="$(
   .lake/build/bin/ccf-raft-simulator \
-    replay CCFRaft/reconfiguration-5-to-1.trace
+    replay CCFRaft/traces/reconfiguration-5-to-1.trace
 )"
 for expected in \
     "replayed 78 arbitrary-term Raft actions" \
@@ -121,13 +121,13 @@ expect_disabled() {
 }
 
 expect_disabled \
-  CCFRaft/reconfiguration-old-quorum-only.trace \
+  CCFRaft/traces/reconfiguration-old-quorum-only.trace \
   "disabled action: commit,0"
 expect_disabled \
-  CCFRaft/reconfiguration-new-quorum-only.trace \
+  CCFRaft/traces/reconfiguration-new-quorum-only.trace \
   "disabled action: commit,0"
 expect_disabled \
-  CCFRaft/reconfiguration-rejoin.trace \
+  CCFRaft/traces/reconfiguration-rejoin.trace \
   "disabled action: reconfigure,0,0,5,6,7,8"
 
 echo "$actual"

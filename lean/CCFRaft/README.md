@@ -105,13 +105,13 @@ cd lean
 lake build CCFRaft.Model
 lake build CCFRaft.Simulation
 lake build ccf-raft-simulator
-.lake/build/bin/ccf-raft-simulator replay CCFRaft/signature-commit.trace
-.lake/build/bin/ccf-raft-simulator replay CCFRaft/reconfiguration-5-to-5.trace
-.lake/build/bin/ccf-raft-simulator replay CCFRaft/reconfiguration-5-to-5-to-5.trace
-.lake/build/bin/ccf-raft-simulator replay CCFRaft/reconfiguration-5-to-1.trace
-.lake/build/bin/ccf-raft-simulator replay CCFRaft/arbitrary-terms.trace
-.lake/build/bin/ccf-raft-simulator replay CCFRaft/delayed-ack.trace
-.lake/build/bin/ccf-raft-simulator replay CCFRaft/follower-overcommit.trace
+.lake/build/bin/ccf-raft-simulator replay CCFRaft/traces/signature-commit.trace
+.lake/build/bin/ccf-raft-simulator replay CCFRaft/traces/reconfiguration-5-to-5.trace
+.lake/build/bin/ccf-raft-simulator replay CCFRaft/traces/reconfiguration-5-to-5-to-5.trace
+.lake/build/bin/ccf-raft-simulator replay CCFRaft/traces/reconfiguration-5-to-1.trace
+.lake/build/bin/ccf-raft-simulator replay CCFRaft/traces/arbitrary-terms.trace
+.lake/build/bin/ccf-raft-simulator replay CCFRaft/traces/delayed-ack.trace
+.lake/build/bin/ccf-raft-simulator replay CCFRaft/traces/follower-overcommit.trace
 .lake/build/bin/ccf-raft-simulator simulate 5000 1 1000
 ```
 
@@ -137,6 +137,23 @@ Random scheduling is only a bug-finding policy; it is not proof evidence.
 Successful replay reports the action count, maximum current term, and final
 per-node commit indices. Every replayed state checks that each positive commit
 index points to a signature.
+
+## Validate CCF implementation traces
+
+`TraceValidation.lean` maps a five-event slice of preprocessed CCF
+`raft_trace` NDJSON to exact semantic actions. It handles CCF's bootstrap index
+offset and opaque node IDs, checks visible state and packet fields at their C++
+pre-action timing, and uses bounded whole-trace backtracking. The search may
+insert only hidden AppendEntries response deliveries. It requires every
+observed send to have a later matching receive.
+
+```bash
+cd lean
+./check_ccfraft_trace_validation.sh
+```
+
+See [CCF Raft implementation-trace validation](TRACE_VALIDATION.md) for the
+supported records, bounds, trust boundary, and current limits.
 
 ## Out of scope
 

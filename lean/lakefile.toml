@@ -16,3 +16,7 @@ name = "CCFRaft"
 [[lean_exe]]
 name = "ccf-raft-simulator"
 root = "CCFRaftSimulator"
+
+[[lean_exe]]
+name = "ccf-raft-trace-validator"
+root = "CCFRaftTraceValidator"

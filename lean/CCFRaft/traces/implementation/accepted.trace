@@ -1,0 +1,15 @@
+client,0,0
+sign,0
+append,0,1,1
+receive,0,1
+append,0,1,2
+receive,0,1
+append,0,2,1
+receive,0,2
+append,0,2,2
+receive,0,2
+receive,1,0
+receive,1,0
+receive,2,0
+receive,2,0
+commit,0
