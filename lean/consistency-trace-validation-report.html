@@ -1,0 +1,1083 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trace validation in the CCF Lean models</title>
+  <style>
+    :root {
+      --ink: #172033;
+      --muted: #5b6474;
+      --paper: #f4f1e9;
+      --panel: #fffefb;
+      --line: #d9d7cf;
+      --blue: #145da0;
+      --blue-soft: #e9f3fb;
+      --green: #176b52;
+      --green-soft: #e8f5ef;
+      --amber: #8a5700;
+      --amber-soft: #fff2d2;
+      --red: #9b3030;
+      --red-soft: #fdecec;
+      --shadow: 0 16px 42px rgba(23, 32, 51, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 8% 0%, #dcecf6 0, transparent 29rem),
+        radial-gradient(circle at 100% 18%, #f5e6c3 0, transparent 31rem),
+        var(--paper);
+      font: 16px/1.55 Inter, ui-sans-serif, system-ui, -apple-system,
+        BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    a { color: var(--blue); }
+    a:hover { text-decoration-thickness: 2px; }
+    code {
+      padding: 0.08rem 0.28rem;
+      border-radius: 5px;
+      background: rgba(20, 93, 160, 0.08);
+      font: 0.9em/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 250px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 26px 20px;
+      overflow-y: auto;
+      border-right: 1px solid rgba(23, 32, 51, 0.1);
+      background: rgba(244, 241, 233, 0.9);
+      backdrop-filter: blur(14px);
+    }
+
+    .mark {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      margin-bottom: 17px;
+      color: #fff;
+      border-radius: 13px;
+      background: var(--ink);
+      font: 800 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    aside strong {
+      display: block;
+      margin-bottom: 18px;
+      font-size: 14px;
+      line-height: 1.35;
+    }
+
+    nav a {
+      display: block;
+      margin: 3px 0;
+      padding: 7px 9px;
+      color: var(--muted);
+      border-radius: 8px;
+      text-decoration: none;
+      font-size: 13px;
+    }
+
+    nav a:hover,
+    nav a.active {
+      color: var(--ink);
+      background: var(--panel);
+      box-shadow: 0 2px 10px rgba(23, 32, 51, 0.06);
+    }
+
+    .workspace-link {
+      display: inline-block;
+      margin-top: 22px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--panel);
+      font-size: 12px;
+      text-decoration: none;
+    }
+
+    main {
+      width: min(1180px, 100%);
+      padding: 46px 54px 100px;
+    }
+
+    .eyebrow {
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 930px;
+      margin: 10px 0 16px;
+      font-size: clamp(40px, 5.4vw, 70px);
+      line-height: 0.99;
+      letter-spacing: -0.045em;
+    }
+
+    h2 {
+      margin: 0 0 10px;
+      font-size: 32px;
+      letter-spacing: -0.025em;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 19px;
+    }
+
+    .lede {
+      max-width: 850px;
+      margin: 0 0 20px;
+      color: var(--muted);
+      font-size: 20px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    section {
+      padding-top: 72px;
+      scroll-margin-top: 20px;
+    }
+
+    .section-intro {
+      max-width: 800px;
+      margin: 0 0 24px;
+      color: var(--muted);
+    }
+
+    .grid-2,
+    .grid-3 {
+      display: grid;
+      gap: 16px;
+    }
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+    .card {
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: var(--panel);
+      box-shadow: 0 6px 22px rgba(23, 32, 51, 0.05);
+    }
+
+    .card p:last-child,
+    .card ul:last-child { margin-bottom: 0; }
+
+    .kicker {
+      color: var(--blue);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 750;
+    }
+    .status.yes { color: var(--green); background: var(--green-soft); }
+    .status.partial { color: var(--amber); background: var(--amber-soft); }
+    .status.no { color: var(--red); background: var(--red-soft); }
+
+    .callout {
+      margin: 26px 0;
+      padding: 18px 20px;
+      border-left: 4px solid var(--amber);
+      border-radius: 0 12px 12px 0;
+      background: var(--amber-soft);
+    }
+
+    .callout strong { display: block; margin-bottom: 4px; }
+
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      margin: 22px 0 12px;
+    }
+
+    .stage {
+      min-height: 132px;
+      padding: 16px;
+      text-align: left;
+      color: inherit;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel);
+      cursor: pointer;
+      box-shadow: 0 6px 20px rgba(23, 32, 51, 0.04);
+    }
+
+    .stage:hover,
+    .stage.selected {
+      border-color: var(--blue);
+      transform: translateY(-1px);
+    }
+
+    .stage b { display: block; margin-bottom: 7px; }
+    .stage small { color: var(--muted); line-height: 1.4; }
+
+    .stage-detail {
+      min-height: 92px;
+      padding: 18px 20px;
+      border: 1px solid #b9d3e8;
+      border-radius: 14px;
+      background: var(--blue-soft);
+    }
+
+    .trust {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    .trust > div {
+      padding: 17px;
+      border-radius: 13px;
+      border: 1px solid var(--line);
+    }
+    .trusted { background: var(--green-soft); }
+    .untrusted { background: var(--amber-soft); }
+
+    .table-tools {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin: 18px 0 10px;
+    }
+
+    .table-tools input {
+      width: min(420px, 100%);
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--panel);
+      font: inherit;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      padding: 12px 13px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      color: var(--muted);
+      background: #f8f7f2;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+    tr:hover td { background: rgba(20, 93, 160, 0.035); }
+
+    .codebox {
+      position: relative;
+      margin: 18px 0;
+      border-radius: 14px;
+      background: #101827;
+      color: #edf4ff;
+      overflow: hidden;
+    }
+
+    .codebox pre {
+      margin: 0;
+      padding: 20px;
+      overflow-x: auto;
+      font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .copy {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      padding: 6px 9px;
+      color: #edf4ff;
+      border: 1px solid #516079;
+      border-radius: 7px;
+      background: #202c40;
+      cursor: pointer;
+    }
+
+    .source {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .source a { margin-right: 8px; text-decoration: none; }
+
+    details {
+      margin: 12px 0;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+    }
+
+    summary {
+      padding: 14px 16px;
+      cursor: pointer;
+      font-weight: 750;
+    }
+
+    details > div { padding: 0 16px 16px; }
+
+    .compact { margin: 9px 0; padding-left: 20px; }
+    .compact li { margin: 5px 0; }
+
+    footer {
+      margin-top: 76px;
+      padding-top: 20px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    @media (max-width: 920px) {
+      .layout { grid-template-columns: 1fr; }
+      aside {
+        position: static;
+        width: 100%;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      nav { display: flex; flex-wrap: wrap; }
+      main { padding: 34px 22px 76px; }
+      .pipeline { grid-template-columns: 1fr 1fr; }
+      .grid-2,
+      .grid-3,
+      .trust { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 560px) {
+      .pipeline { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="mark">LEAN</div>
+      <strong>Trace validation in the CCF Lean models</strong>
+      <nav>
+        <a href="#answer">Direct answer</a>
+        <a href="#pipeline">Consistency pipeline</a>
+        <a href="#comparison">Model comparison</a>
+        <a href="#consistency">Consistency details</a>
+        <a href="#raft">CCFRaft replay</a>
+        <a href="#adopt">How to adopt it</a>
+        <a href="#limits">Claims and limits</a>
+        <a href="#sources">Sources</a>
+      </nav>
+      <a class="workspace-link"
+         href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/">
+        Open workspace
+      </a>
+    </aside>
+
+    <main>
+      <header>
+        <div class="eyebrow">Investigation report / 24 August 2026</div>
+        <h1>Consistency traces need reconstruction; CCFRaft traces do not</h1>
+        <p class="lede">
+          Amaury's branch contains a complete runtime-to-Lean consistency
+          validator. Python reconstructs omitted ledger and view operations,
+          emits exact Lean actions, and Lean proves the resulting execution
+          reachable. CCFRaft starts one layer later: its trace already is an
+          exact model-action sequence.
+        </p>
+        <div class="meta">
+          <span>Local ref <code>254bca5ca</code></span>
+          <span>Upstream experiment <code>achamayou/vl-consistency</code></span>
+          <span>Experiment head <code>03c10ff4b230c108caef415c5491a7a49809c394</code></span>
+        </div>
+      </header>
+
+      <section id="answer">
+        <div class="eyebrow">01 / Direct answer</div>
+        <h2>Yes, the Lean validator exists upstream</h2>
+        <p class="section-intro">
+          It is not in this branch or in <code>microsoft/CCF</code>. The most
+          complete implementation is on <code>achamayou/vl-consistency</code>.
+          A standalone pure-Lean variant is on
+          <code>achamayou/pure-lean-consistency</code>.
+        </p>
+
+        <div class="grid-3">
+          <article class="card">
+            <span class="status yes">Implemented</span>
+            <h3>Runtime to Lean reachability</h3>
+            <p>
+              Strict NDJSON parsing, deterministic gap reconstruction,
+              generated typed actions, guard checking, canonical transitions,
+              and a kernel-checked <code>Reachable</code> theorem.
+            </p>
+          </article>
+          <article class="card">
+            <span class="status partial">Unmerged</span>
+            <h3>Branch status</h3>
+            <p>
+              <code>vl-consistency</code> is 26 commits ahead of its base and
+              has no associated PR. The rollback fix for the TLA adapter did
+              merge separately as PR #8133.
+            </p>
+          </article>
+          <article class="card">
+            <span class="status no">Not a full refinement proof</span>
+            <h3>Claim boundary</h3>
+            <p>
+              Python's observation-to-plan translation is trusted as input
+              generation. Lean proves that the generated actions form a
+              reachable model execution, not that every CCF behavior refines
+              the Lean model.
+            </p>
+          </article>
+        </div>
+
+        <div class="callout">
+          <strong>The shortest accurate summary</strong>
+          TLC searches for hidden actions. Python chooses them for Lean. Lean
+          checks the exact plan and proves reachability.
+        </div>
+      </section>
+
+      <section id="pipeline">
+        <div class="eyebrow">02 / Consistency trace pipeline</div>
+        <h2>Click a stage to inspect the trust boundary</h2>
+        <p class="section-intro">
+          The runtime trace is partial. It records client-visible requests,
+          executions, responses, and transaction statuses, but not every ledger
+          append or view change.
+        </p>
+
+        <div class="pipeline" id="consistencyPipeline">
+          <button class="stage selected"
+            data-title="1. Runtime NDJSON"
+            data-detail="tests/tvc.py emits one strict JSON object per client-visible event. The trace contains request IDs and observed [view, seqno] pairs, but omits internal ledger fillers and branch creation.">
+            <b>Runtime NDJSON</b>
+            <small>Partial client observations from <code>tests/tvc.py</code>.</small>
+          </button>
+          <button class="stage"
+            data-title="2. Python parser"
+            data-detail="The parser checks exact fields, action names, types, statuses, duplicate IDs, and lifecycle order. It rejects malformed observations before planning.">
+            <b>Strict parser</b>
+            <small>Reject malformed events and inconsistent lifecycles.</small>
+          </button>
+          <button class="stage"
+            data-title="3. Deterministic planner"
+            data-detail="The planner rank-normalizes observed IDs, inserts AppendOtherTxn fillers, and inserts rollback-aware truncation or branch creation. This is the unproved reconstruction step.">
+            <b>Planner</b>
+            <small>Choose omitted ledger and view actions.</small>
+          </button>
+          <button class="stage"
+            data-title="4. Generated Lean module"
+            data-detail="Python renders Fin-bounded domains and a List TraceAction. The module contains a decide+kernel replay result, a Reachable theorem, and an axiom audit.">
+            <b>Lean certificate</b>
+            <small>Typed exact actions over finite normalized IDs.</small>
+          </button>
+          <button class="stage"
+            data-title="5. Canonical replay"
+            data-detail="TraceInfra folds actions from initialState. Trace.enabled_step turns every successful boolean guard into the canonical Step relation. replay_from_initial proves the final state Reachable.">
+            <b>Kernel replay</b>
+            <small>Check guards, transitions, and final reachability.</small>
+          </button>
+        </div>
+        <div class="stage-detail" id="stageDetail">
+          <strong>1. Runtime NDJSON</strong>
+          <p>
+            <code>tests/tvc.py</code> emits one strict JSON object per
+            client-visible event. The trace contains request IDs and observed
+            <code>[view, seqno]</code> pairs, but omits internal ledger fillers
+            and branch creation.
+          </p>
+        </div>
+
+        <div class="trust">
+          <div class="untrusted">
+            <h3>Outside the Lean trust boundary</h3>
+            <ul class="compact">
+              <li>Runtime instrumentation coverage.</li>
+              <li>Python parsing and rank normalization.</li>
+              <li>Choice of filler and truncation actions.</li>
+              <li>The claim that observations correspond to CCF semantics.</li>
+            </ul>
+          </div>
+          <div class="trusted">
+            <h3>Kernel-checked</h3>
+            <ul class="compact">
+              <li>Every generated action guard holds.</li>
+              <li>Every successor uses the canonical Lean transition.</li>
+              <li>The complete action list starts at <code>initialState</code>.</li>
+              <li>The final state is <code>Reachable</code>.</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3 style="margin-top: 30px">One NDJSON stream, three validators</h3>
+        <div class="grid-3">
+          <article class="card">
+            <div class="kicker">TLC</div>
+            <h3>Searches</h3>
+            <p>
+              Reads the observations directly and explores omitted backfill
+              and view-change steps. It needs breadth-first search, one worker,
+              and disabled deadlock checking.
+            </p>
+          </article>
+          <article class="card">
+            <div class="kicker">Veil</div>
+            <h3>Replays a planned trace</h3>
+            <p>
+              Uses the same strict Python parser and planner, then validates
+              the exact reconstructed action list against the Veil model.
+            </p>
+          </article>
+          <article class="card">
+            <div class="kicker">Pure Lean</div>
+            <h3>Proves reachability</h3>
+            <p>
+              Renders the plan as typed Lean values, checks every guard and
+              canonical transition, then proves the final state reachable.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="comparison">
+        <div class="eyebrow">03 / Modelling comparison</div>
+        <h2>Same proof goal, different trace problem</h2>
+        <p class="section-intro">
+          Filter the table or click a heading to sort it. The decisive
+          difference is the row labelled "Trace input".
+        </p>
+
+        <div class="table-tools">
+          <input id="comparisonFilter" type="search"
+            placeholder="Filter rows, for example: trace, action, proof">
+          <span class="source" id="rowCount">10 rows</span>
+        </div>
+        <div class="table-wrap">
+          <table id="comparisonTable">
+            <thead>
+              <tr>
+                <th data-column="0">Concern</th>
+                <th data-column="1">CCFConsistency</th>
+                <th data-column="2">CCFRaft</th>
+                <th data-column="3">Consequence</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Primary subject</td>
+                <td>Client-visible request, execution, response, status, ledger branches.</td>
+                <td>Raft nodes, terms, logs, messages, votes, commits, configurations.</td>
+                <td>Consistency abstracts consensus away; CCFRaft models it directly.</td>
+              </tr>
+              <tr>
+                <td>Domains</td>
+                <td>Abstract ordered types with bottom values.</td>
+                <td>Fixed finite nodes and finite simulator IDs.</td>
+                <td>Consistency traces need order-preserving rank normalization.</td>
+              </tr>
+              <tr>
+                <td>Action representation</td>
+                <td>Proof-bearing <code>Step state next</code> constructors plus noncomputable updates.</td>
+                <td>Data-only <code>Action</code>, decidable <code>Enabled</code>, deterministic <code>next</code>.</td>
+                <td>Consistency needed a new executable <code>TraceAction</code> facade.</td>
+              </tr>
+              <tr>
+                <td>Trace input</td>
+                <td>Partial NDJSON observations from a running CCF client.</td>
+                <td>Exact CSV-like semantic actions already expressed in model vocabulary.</td>
+                <td>Consistency must reconstruct hidden actions; CCFRaft only parses.</td>
+              </tr>
+              <tr>
+                <td>Nondeterminism</td>
+                <td>TLC searches; Python picks one deterministic plan for Lean.</td>
+                <td>Every action includes its witnesses; replay has one successor or fails.</td>
+                <td>The consistency planner is the critical unproved adapter.</td>
+              </tr>
+              <tr>
+                <td>Rollback</td>
+                <td>Copy only the prefix before a reused sequence number, then append fillers.</td>
+                <td>Conflict/truncation behavior is explicit in semantic actions and handlers.</td>
+                <td>Consistency rollback is reconstruction; CCFRaft rollback is protocol execution.</td>
+              </tr>
+              <tr>
+                <td>Successful replay means</td>
+                <td>The generated exact plan reaches a Lean state matching the observations.</td>
+                <td>The exact action list is enabled from the fixed initial state.</td>
+                <td>Both imply model reachability, but only one begins from implementation logs.</td>
+              </tr>
+              <tr>
+                <td>Property proof</td>
+                <td><code>reachableProved</code> currently exports 19 of 36 translated clauses.</td>
+                <td>Reachable consensus safety, log matching, monotone terms, and leader completeness.</td>
+                <td>Trace acceptance and generic property coverage are separate questions.</td>
+              </tr>
+              <tr>
+                <td>Executable checks</td>
+                <td>Generated action guards and final reachability.</td>
+                <td>Guards plus state and edge regression checks after each action.</td>
+                <td>CCFRaft replay checks more concrete properties but not proof ghost state.</td>
+              </tr>
+              <tr>
+                <td>Current integration</td>
+                <td>Complete experiment on an unmerged Achamayou branch.</td>
+                <td>Present on this local branch with CLI and checked-in traces.</td>
+                <td>Adopting consistency validation is mostly a branch-integration task.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="consistency">
+        <div class="eyebrow">04 / CCFConsistency details</div>
+        <h2>The planner creates the witness that Lean checks</h2>
+        <p class="section-intro">
+          The local model cannot execute directly. The upstream experiment
+          adds a computable trace facade without replacing the canonical
+          relational model.
+        </p>
+
+        <div class="grid-2">
+          <article class="card">
+            <div class="kicker">Canonical model</div>
+            <h3>Relational and proof-oriented</h3>
+            <p>
+              Ten <code>...Next</code> functions define state updates.
+              <code>Step</code> constructors carry their guards as proof
+              premises. <code>Reachable</code> is their inductive closure.
+            </p>
+            <div class="source">
+              <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFConsistency/Model.lean:361:1">Model transitions</a>
+              <a href="https://github.com/achamayou/CCF/blob/0921b7c37db0e795186a60031b9cd218c22e0972/lean/CCFConsistency/Model.lean#L361-L636">GitHub ref</a>
+            </div>
+          </article>
+          <article class="card">
+            <div class="kicker">Trace facade</div>
+            <h3>Computable but canonical</h3>
+            <p>
+              <code>TraceAction</code> mirrors all ten actions.
+              <code>Enabled</code> makes the guards decidable and
+              <code>next</code> calls the canonical update functions.
+              <code>enabled_step</code> reconnects execution to
+              <code>Step</code>.
+            </p>
+            <div class="source">
+              <a href="https://github.com/achamayou/CCF/blob/03c10ff4b230c108caef415c5491a7a49809c394/lean/CCFConsistency/Trace.lean#L166-L349">Trace.lean</a>
+              <a href="https://github.com/achamayou/CCF/blob/03c10ff4b230c108caef415c5491a7a49809c394/lean/CCFConsistency/TraceInfra.lean#L93-L157">TraceInfra.lean</a>
+            </div>
+          </article>
+        </div>
+
+        <details open>
+          <summary>Rank normalization</summary>
+          <div>
+            <p>
+              The planner maps distinct observed transaction IDs, views, and
+              sequence numbers to sorted ranks. Numeric gaps that never appear
+              in observations disappear. Observed sequence numbers 197 and 199
+              may become ranks 0 and 1 with no filler between them.
+            </p>
+            <p>
+              This matches the Lean model's "next ordered identifier" guards,
+              but it is an abstraction choice made by Python, not a theorem.
+            </p>
+            <div class="source">
+              <a href="https://github.com/achamayou/CCF/blob/03c10ff4b230c108caef415c5491a7a49809c394/veil/trace_validation.py#L240-L351">Planner and rank maps</a>
+              <a href="https://github.com/achamayou/CCF/blob/03c10ff4b230c108caef415c5491a7a49809c394/veil/test_trace_validation.py#L62-L114">Sparse-ID tests</a>
+            </div>
+          </div>
+        </details>
+
+        <details>
+          <summary>Rollback reconstruction</summary>
+          <div>
+            <p>
+              When a new view reuses a sequence number, the planner copies
+              only entries strictly before that slot. It drops the uncommitted
+              suffix, rejects truncation below a committed prefix, then fills
+              any required gaps.
+            </p>
+            <p>
+              PR #8133 merged the equivalent fix into the TLA adapter. The
+              Lean planner already used the prefix rule on
+              <code>vl-consistency</code>.
+            </p>
+            <div class="source">
+              <a href="https://github.com/microsoft/CCF/pull/8133">PR #8133</a>
+              <a href="https://github.com/achamayou/CCF/blob/03c10ff4b230c108caef415c5491a7a49809c394/veil/trace_validation.py#L303-L393">Planner rollback</a>
+              <a href="https://github.com/achamayou/CCF/blob/03c10ff4b230c108caef415c5491a7a49809c394/veil/test_trace_validation.py#L162-L234">Rollback test</a>
+            </div>
+          </div>
+        </details>
+
+        <details>
+          <summary>Generated certificate module</summary>
+          <div>
+            <p>
+              The renderer defines finite domains, a list of typed
+              <code>TraceAction</code> values, a successful replay theorem,
+              a final-state <code>Reachable</code> theorem, and an audit that
+              rejects <code>sorryAx</code> and compiler boolean reduction.
+            </p>
+            <div class="source">
+              <a href="https://github.com/achamayou/CCF/blob/03c10ff4b230c108caef415c5491a7a49809c394/lean/trace_validation.py#L124-L213">Module renderer</a>
+              <a href="https://github.com/achamayou/CCF/blob/03c10ff4b230c108caef415c5491a7a49809c394/lean/trace_validation.py#L277-L348">Validation command</a>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <section id="raft">
+        <div class="eyebrow">05 / CCFRaft replay</div>
+        <h2>The trace is already the certificate plan</h2>
+        <p class="section-intro">
+          CCFRaft traces use the same action vocabulary as the model. There is
+          no hidden-state search or implementation-log projection.
+        </p>
+
+        <div class="pipeline">
+          <div class="stage">
+            <b>CSV-like line</b>
+            <small><code>append,0,1,2</code> or <code>timeout,5</code>.</small>
+          </div>
+          <div class="stage">
+            <b><code>parseAction</code></b>
+            <small>Bounds IDs and creates one exact model action.</small>
+          </div>
+          <div class="stage">
+            <b><code>system.applyAction</code></b>
+            <small>Checks <code>Enabled</code>, then calls <code>next</code>.</small>
+          </div>
+          <div class="stage">
+            <b>Regression checks</b>
+            <small>Committed prefixes, signatures, log matching, terms, elections.</small>
+          </div>
+          <div class="stage">
+            <b>Final projection</b>
+            <small>Terms, commits, leaders, configurations, joined nodes.</small>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <article class="card">
+            <h3>What is proved</h3>
+            <p>
+              <code>applyAction</code> and <code>runActionsReachable</code>
+              connect successful action application to the same
+              <code>Step</code>/<code>Reachable</code> system used by the
+              preservation theorem.
+            </p>
+            <div class="source">
+              <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFRaft/ExecutableTransitionSystem.lean:16:1">Transition system</a>
+              <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFRaft/Model.lean:1123:1">Model system</a>
+            </div>
+          </article>
+          <article class="card">
+            <h3>What remains testing</h3>
+            <p>
+              The IO replay loop reports Boolean state checks. It does not
+              reconstruct the proof-only invariant, prove render/parse
+              round-trip, or connect these hand-written traces to runtime
+              <code>raft_trace</code> NDJSON.
+            </p>
+            <div class="source">
+              <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFRaft/Simulation.lean:550:1">Parser and replay</a>
+              <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFRaft/Simulation.lean:166:1">Replay checks</a>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="adopt">
+        <div class="eyebrow">06 / Practical adoption</div>
+        <h2>Bring the validator over as a vertical slice</h2>
+        <p class="section-intro">
+          The local proof and the upstream validator share a common ancestor,
+          so this is integration work rather than a new design.
+        </p>
+
+        <div class="grid-3">
+          <article class="card">
+            <div class="kicker">1 / Import</div>
+            <h3>Take the pure-Lean trace facade</h3>
+            <p>
+              Bring in <code>Trace.lean</code>,
+              <code>TraceInfra.lean</code>, and
+              <code>lean/trace_validation.py</code>. Use
+              <code>pure-lean-consistency</code> if you want the standalone
+              planner copy; use <code>vl-consistency</code> to share the Veil
+              parser and planner.
+            </p>
+          </article>
+          <article class="card">
+            <div class="kicker">2 / Reconcile</div>
+            <h3>Port onto the newer proof tree</h3>
+            <p>
+              Keep the local <code>CCFConsistency.Model</code> and proof
+              exports authoritative. Resolve branch drift in action guards,
+              generated imports, Lake targets, and the property-bundle name.
+            </p>
+          </article>
+          <article class="card">
+            <div class="kicker">3 / Pin</div>
+            <h3>Add deterministic fixtures</h3>
+            <p>
+              Check in the rollback and sparse-ID NDJSON fixtures. Make CI
+              regenerate the Lean module, compile it with kernel reduction,
+              and run the generic proof build separately.
+            </p>
+          </article>
+        </div>
+
+        <h3 style="margin-top: 28px">Commands on <code>vl-consistency</code></h3>
+        <div class="codebox">
+          <button class="copy" data-copy-target="consistencyCommands">copy</button>
+          <pre id="consistencyCommands">cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Debug -DLONG_TESTS=ON
+cmake --build build --target js_generic
+(cd build &amp;&amp; ./tests.sh -VV --timeout 180 -R '^consistency_trace_validation$')
+
+(cd tla &amp;&amp; JSON=../build/consistency/trace.ndjson \
+  ./tlc.py --workers 1 tv --disable-dfs \
+  consistency/TraceMultiNodeReads.tla)
+
+python3 lean/trace_validation.py \
+  build/consistency/trace.ndjson --validate
+
+cd lean
+lake build</pre>
+        </div>
+
+        <div class="callout">
+          <strong>Input-selection gotcha</strong>
+          Consistency TLA validation reads <code>IOEnv.JSON</code>. Use the
+          <code>JSON=...</code> environment variable. The
+          <code>--ccf-raft-trace</code> option sets a different variable for
+          <code>Traceccfraft.tla</code>.
+        </div>
+
+        <div class="callout" style="border-left-color: var(--green); background: var(--green-soft)">
+          <strong>Recommended local design</strong>
+          Import the upstream consistency <code>TraceAction</code>,
+          <code>TraceInfra</code>, and planner. Keep CCFRaft's
+          <code>ExecutableTransitionSystem</code> pattern as a reference for
+          sharing executable and proved semantics, but do not reuse its CSV
+          trace format for client observations. That format assumes hidden
+          actions have already been chosen.
+        </div>
+      </section>
+
+      <section id="limits">
+        <div class="eyebrow">07 / Claims and limits</div>
+        <h2>What successful validation does and does not establish</h2>
+        <div class="grid-2">
+          <article class="card">
+            <span class="status yes">Established for one trace</span>
+            <ul class="compact">
+              <li>The strict parser accepted the logged projection.</li>
+              <li>The planner produced one exact action sequence.</li>
+              <li>Every action guard held under canonical Lean semantics.</li>
+              <li>The final replay state is reachable.</li>
+              <li>The generated theorem avoids forbidden proof escapes.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <span class="status no">Not established</span>
+            <ul class="compact">
+              <li>A general CCF-to-Lean refinement theorem.</li>
+              <li>Completeness of runtime instrumentation.</li>
+              <li>Correctness of Python reconstruction.</li>
+              <li>Equivalence between hand-written Lean, Veil, and TLA+.</li>
+              <li>All 36 translated consistency properties in the local proof.</li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="callout">
+          <strong>Do not conflate the two trace pipelines</strong>
+          <code>add_make_traces_script</code> and PR #5818 generate low-level
+          Raft driver traces for <code>Traceccfraft.tla</code>. They are not
+          inputs to the Lean consistency validator.
+        </div>
+      </section>
+
+      <section id="sources">
+        <div class="eyebrow">08 / Sources</div>
+        <h2>Primary evidence</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>Ref</th>
+                <th>What it establishes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><a href="https://github.com/achamayou/CCF/tree/03c10ff4b230c108caef415c5491a7a49809c394">achamayou/vl-consistency</a></td>
+                <td><code>03c10ff4...</code></td>
+                <td>Complete Veil and pure-Lean trace-validation experiment.</td>
+              </tr>
+              <tr>
+                <td><a href="https://github.com/achamayou/CCF/blob/03c10ff4b230c108caef415c5491a7a49809c394/lean/COMPARISON.md#L152-L196">TLA, Veil, and Lean comparison</a></td>
+                <td><code>vl-consistency</code></td>
+                <td>Explains the branch's "TLC searches; Lean replays" split.</td>
+              </tr>
+              <tr>
+                <td><a href="https://github.com/achamayou/CCF/blob/03c10ff4b230c108caef415c5491a7a49809c394/lean/trace_validation.py">Lean renderer</a></td>
+                <td><code>vl-consistency</code></td>
+                <td>Plan-to-Lean generation, compilation, and axiom audit.</td>
+              </tr>
+              <tr>
+                <td><a href="https://github.com/achamayou/CCF/blob/03c10ff4b230c108caef415c5491a7a49809c394/veil/trace_validation.py">Shared planner</a></td>
+                <td><code>vl-consistency</code></td>
+                <td>Strict NDJSON parser, normalization, fillers, rollback reconstruction.</td>
+              </tr>
+              <tr>
+                <td><a href="https://github.com/microsoft/CCF/pull/8133">microsoft/CCF PR #8133</a></td>
+                <td><code>791b9eed...</code></td>
+                <td>Merged rollback-prefix fix for TLA consistency validation.</td>
+              </tr>
+              <tr>
+                <td><a href="https://github.com/microsoft/CCF/pull/5818">microsoft/CCF PR #5818</a></td>
+                <td><code>2d096a7d...</code></td>
+                <td>Separate Raft driver trace-generation pipeline.</td>
+              </tr>
+              <tr>
+                <td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFConsistency/Model.lean:19:1">Local CCFConsistency model</a></td>
+                <td><code>254bca5ca</code></td>
+                <td>Current relational model and transition representation.</td>
+              </tr>
+              <tr>
+                <td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFRaft/Simulation.lean:550:1">Local CCFRaft replay</a></td>
+                <td><code>254bca5ca</code></td>
+                <td>Exact action codec, replay loop, and executable checks.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer>
+        Generated from local source inspection, git history, and upstream
+        branch research. The local worktree had uncommitted trace-directory
+        moves while this report was produced.
+      </footer>
+    </main>
+  </div>
+
+  <script>
+    const detail = document.getElementById("stageDetail");
+    document.querySelectorAll("#consistencyPipeline .stage").forEach((stage) => {
+      stage.addEventListener("click", () => {
+        document.querySelectorAll("#consistencyPipeline .stage")
+          .forEach((item) => item.classList.remove("selected"));
+        stage.classList.add("selected");
+        detail.innerHTML = `<strong>${stage.dataset.title}</strong><p>${stage.dataset.detail}</p>`;
+      });
+    });
+
+    const filter = document.getElementById("comparisonFilter");
+    const table = document.getElementById("comparisonTable");
+    const count = document.getElementById("rowCount");
+    const rows = Array.from(table.tBodies[0].rows);
+    function filterRows() {
+      const query = filter.value.toLowerCase().trim();
+      let visible = 0;
+      rows.forEach((row) => {
+        const show = row.textContent.toLowerCase().includes(query);
+        row.hidden = !show;
+        if (show) visible += 1;
+      });
+      count.textContent = `${visible} row${visible === 1 ? "" : "s"}`;
+    }
+    filter.addEventListener("input", filterRows);
+
+    let sortDirection = 1;
+    table.querySelectorAll("th[data-column]").forEach((header) => {
+      header.addEventListener("click", () => {
+        const column = Number(header.dataset.column);
+        sortDirection *= -1;
+        rows.sort((left, right) => {
+          const a = left.cells[column].textContent.trim();
+          const b = right.cells[column].textContent.trim();
+          return a.localeCompare(b) * sortDirection;
+        });
+        rows.forEach((row) => table.tBodies[0].appendChild(row));
+      });
+    });
+
+    document.querySelectorAll(".copy").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const target = document.getElementById(button.dataset.copyTarget);
+        await navigator.clipboard.writeText(target.textContent);
+        const original = button.textContent;
+        button.textContent = "copied";
+        setTimeout(() => { button.textContent = original; }, 1200);
+      });
+    });
+
+    const sections = Array.from(document.querySelectorAll("main section"));
+    const navLinks = Array.from(document.querySelectorAll("nav a"));
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        navLinks.forEach((link) => {
+          link.classList.toggle("active", link.hash === `#${entry.target.id}`);
+        });
+      });
+    }, { rootMargin: "-20% 0px -70% 0px" });
+    sections.forEach((section) => observer.observe(section));
+  </script>
+</body>
+</html>
