@@ -1,0 +1,10 @@
+{"tag":"raft_trace","msg":{"function":"bootstrap","args":{"idx":2},"state":{"node_id":"node-0","current_view":1,"last_idx":2,"commit_idx":0,"leadership_state":"Leader","membership_state":"Active","pre_vote_enabled":true},"configurations":[{"idx":0,"nodes":{"node-0":{},"node-1":{},"node-2":{},"node-3":{},"node-4":{}}}]}}
+{"tag":"raft_trace","msg":{"function":"replicate","view":1,"seqno":3,"globally_committable":false,"state":{"node_id":"node-0","current_view":1,"last_idx":2,"commit_idx":2,"leadership_state":"Leader"}}}
+{"tag":"raft_trace","msg":{"function":"replicate","view":1,"seqno":4,"globally_committable":false,"state":{"node_id":"node-0","current_view":1,"last_idx":3,"commit_idx":2,"leadership_state":"Leader"}}}
+{"tag":"raft_trace","msg":{"function":"replicate","view":1,"seqno":5,"globally_committable":false,"state":{"node_id":"node-0","current_view":1,"last_idx":4,"commit_idx":2,"leadership_state":"Leader"}}}
+{"tag":"raft_trace","msg":{"function":"replicate","view":1,"seqno":6,"globally_committable":false,"state":{"node_id":"node-0","current_view":1,"last_idx":5,"commit_idx":2,"leadership_state":"Leader"}}}
+{"tag":"raft_trace","msg":{"function":"replicate","view":1,"seqno":7,"globally_committable":false,"state":{"node_id":"node-0","current_view":1,"last_idx":6,"commit_idx":2,"leadership_state":"Leader"}}}
+{"tag":"raft_trace","msg":{"function":"replicate","view":1,"seqno":8,"globally_committable":false,"state":{"node_id":"node-0","current_view":1,"last_idx":7,"commit_idx":2,"leadership_state":"Leader"}}}
+{"tag":"raft_trace","msg":{"function":"replicate","view":1,"seqno":9,"globally_committable":false,"state":{"node_id":"node-0","current_view":1,"last_idx":8,"commit_idx":2,"leadership_state":"Leader"}}}
+{"tag":"raft_trace","msg":{"function":"replicate","view":1,"seqno":10,"globally_committable":false,"state":{"node_id":"node-0","current_view":1,"last_idx":9,"commit_idx":2,"leadership_state":"Leader"}}}
+{"tag":"raft_trace","msg":{"function":"replicate","view":1,"seqno":11,"globally_committable":false,"state":{"node_id":"node-0","current_view":1,"last_idx":10,"commit_idx":2,"leadership_state":"Leader"}}}

@@ -129,30 +129,30 @@ Global comparisons occur only in proof predicates.
 
 ## Executable regression evidence
 
-`CCFRaft/signature-commit.trace` appends a transaction and signature, replicates
+`CCFRaft/traces/signature-commit.trace` appends a transaction and signature, replicates
 both entries to a majority, and commits the signature frontier.
 
-`CCFRaft/reconfiguration-5-to-5.trace` changes from `{0,1,2,3,4}` to
+`CCFRaft/traces/reconfiguration-5-to-5.trace` changes from `{0,1,2,3,4}` to
 `{5,6,7,8,9}`, replicates reconfiguration 1 and signature 2 to old and new
 majorities, commits on node 0, propagates that commit to node 5 by heartbeat,
 then elects node 5 in term 2 using the new configuration.
 
-`CCFRaft/reconfiguration-5-to-5-to-5.trace` continues with a second disjoint
+`CCFRaft/traces/reconfiguration-5-to-5-to-5.trace` continues with a second disjoint
 configuration `{10,11,12,13,14}`. The new nodes first reject an optimistic
 AppendEntries request, catch up from index 1, commit the second configuration,
 and elect node 10 in term 3.
 
-`CCFRaft/arbitrary-terms.trace` leaves node one partitioned long enough to
+`CCFRaft/traces/arbitrary-terms.trace` leaves node one partitioned long enough to
 timeout twice, elects it directly in term three, commits a term-three
 signature, then elects node two in term four and commits another current-term
 signature.
 
-`CCFRaft/delayed-ack.trace` elects a higher-term leader before node zero
+`CCFRaft/traces/delayed-ack.trace` elects a higher-term leader before node zero
 processes the final ACK for its current-term signature. Node zero then forms a
 stale local majority and commits; the elected higher-term leader already
 contains that signed prefix.
 
-`CCFRaft/follower-overcommit.trace` exposed a Lean-reachable safety
+`CCFRaft/traces/follower-overcommit.trace` exposed a Lean-reachable safety
 issue: an already-done partial AppendEntries request carried signed commit
 frontier six while its verified tail ended at signature four, beyond which the
 follower had a divergent signed suffix. The follower now commits only through
