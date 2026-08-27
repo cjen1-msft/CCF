@@ -8,9 +8,13 @@ import CCFRaft.ExecutableTransitionSystem
 /-!
 # Executable CCF Raft model
 
-This file ports the selected scope of `tla/consensus/ccfraft.tla`. The task
-fixes the world at 15 nodes. `tla/consensus/MCccfraft.cfg` selects the
-`OrderedNoDup` network guarantee.
+This file ports the selected scope of `tla/consensus/ccfraft.tla`.
+`tla/consensus/MCccfraft.cfg` selects the `OrderedNoDup` network guarantee.
+
+The TLA model uses a fixed `Servers` constant. This executable generalization
+materializes `Nat` node identifiers in `State.nodes`. `InitialConfiguration`
+provides the finite genesis set, and `ChangeConfiguration` adds identifiers
+that appear for the first time. Removed identifiers remain materialized.
 
 The projection omits pre-vote, `TypeRetired`, `AppendRetiredCommitted`,
 `CheckQuorum`, `SigTermProposeVote`, and `ProposeVoteRequest`. Pre-vote status
@@ -30,45 +34,189 @@ set_option autoImplicit false
 
 namespace CCFRaft
 
-/-- The fixed TLA `Servers` world. -/
-abbrev Node := Fin 15
+/-- Node identifiers are allocated dynamically and are never reused. -/
+abbrev Node := Nat
 
+/--
+A total node function with a stable base and a bounded override list. Ordinary
+updates change only the list, so repeated protocol actions do not build closure
+chains. Reconfiguration may replace the base for one finite set of nodes.
+-/
 structure NodeMap (α : Type) where
-  values : Vector α 15
+  base : Node -> α
+  entries : List (Node × α)
 
 namespace NodeMap
 
 variable {α : Type}
 
-def ofFn (f : Node -> α) : NodeMap α :=
-  ⟨Vector.ofFn f⟩
-
 def const (value : α) : NodeMap α :=
-  ofFn fun _ => value
+  ⟨fun _ => value, []⟩
+
+def ofFn (value : Node -> α) : NodeMap α :=
+  ⟨value, []⟩
+
+def ofFinset
+    (default : α)
+    (nodes : Finset Node)
+    (value : Node -> α) :
+    NodeMap α :=
+  ⟨fun node => if node ∈ nodes then value node else default, []⟩
+
+def lookup
+    (default : α)
+    (node : Node) :
+    List (Node × α) -> α
+  | [] => default
+  | (stored, value) :: entries =>
+      if node = stored then value else lookup default node entries
 
 def get (values : NodeMap α) (node : Node) : α :=
-  values.values.get node
+  lookup (values.base node) node values.entries
 
 instance : CoeFun (NodeMap α) (fun _ => Node -> α) where
   coe := get
 
-def set (values : NodeMap α) (node : Node) (value : α) : NodeMap α :=
-  ⟨values.values.set node.val value node.isLt⟩
+def setEntries
+    (node : Node)
+    (value : α) :
+    List (Node × α) -> List (Node × α)
+  | [] => [(node, value)]
+  | (stored, storedValue) :: entries =>
+      if stored = node then
+        (node, value) :: entries
+      else
+        (stored, storedValue) :: setEntries node value entries
 
-@[simp]
-theorem ofFn_apply
-    (values : Node -> α)
-    (node : Node) :
-    ofFn values node = values node := by
-  change (Vector.ofFn values)[node.val] = values node
-  simp [Vector.ofFn]
+def set (values : NodeMap α) (node : Node) (value : α) : NodeMap α :=
+  ⟨values.base, setEntries node value values.entries⟩
+
+def keyOutside
+    (nodes : Finset Node)
+    (entry : Node × α) :
+    Bool :=
+  !decide (entry.1 ∈ nodes)
+
+def setMany
+    (values : NodeMap α)
+    (nodes : Finset Node)
+    (value : Node -> α) :
+    NodeMap α :=
+  {
+    base := fun node =>
+      if node ∈ nodes then value node else values.base node
+    entries :=
+      values.entries.filter (keyOutside nodes)
+  }
 
 @[simp]
 theorem const_apply
     (value : α)
     (node : Node) :
     const value node = value := by
-  simp [const]
+  rfl
+
+@[simp]
+theorem ofFinset_apply
+    (default : α)
+    (nodes : Finset Node)
+    (value : Node -> α)
+    (selected : Node) :
+    ofFinset default nodes value selected =
+      if selected ∈ nodes then value selected else default := by
+  simp [ofFinset, get, lookup]
+
+@[simp]
+theorem lookup_setEntries_same
+    (default : α)
+    (entries : List (Node × α))
+    (node : Node)
+    (value : α) :
+    lookup default node (setEntries node value entries) = value := by
+  induction entries with
+  | nil =>
+      simp [setEntries, lookup]
+  | cons entry entries inductionHypothesis =>
+      rcases entry with ⟨stored, storedValue⟩
+      by_cases stored = node
+      · subst stored
+        simp [setEntries, lookup]
+      · have nodeNe : Not (node = stored) := Ne.symm ‹Not (stored = node)›
+        simp [setEntries, lookup, *]
+
+@[simp]
+theorem lookup_setEntries_ne
+    (default : α)
+    (entries : List (Node × α))
+    (updated selected : Node)
+    (value : α)
+    (different : Not (selected = updated)) :
+    lookup default selected (setEntries updated value entries) =
+      lookup default selected entries := by
+  induction entries with
+  | nil =>
+      simp [setEntries, lookup, different]
+  | cons entry entries inductionHypothesis =>
+      rcases entry with ⟨stored, storedValue⟩
+      by_cases stored = updated
+      · subst stored
+        simp [setEntries, lookup, different]
+      · by_cases selected = stored
+        · subst selected
+          simp [setEntries, lookup, *]
+        · simp [setEntries, lookup, *]
+
+@[simp]
+theorem lookup_filter_keys_of_mem
+    (baseValue : α)
+    (entries : List (Node × α))
+    (nodes : Finset Node)
+    (selected : Node)
+    (member : selected ∈ nodes) :
+    lookup
+        baseValue
+        selected
+        (entries.filter (keyOutside nodes)) =
+      baseValue := by
+  induction entries with
+  | nil =>
+      simp [lookup]
+  | cons entry entries inductionHypothesis =>
+      rcases entry with ⟨stored, storedValue⟩
+      by_cases stored ∈ nodes
+      · simpa [keyOutside, *] using inductionHypothesis
+      · by_cases selected = stored
+        · subst stored
+          exact False.elim (‹selected ∉ nodes› member)
+        · simp [keyOutside, lookup, *, inductionHypothesis]
+
+@[simp]
+theorem lookup_filter_keys_of_not_mem
+    (baseValue : α)
+    (entries : List (Node × α))
+    (nodes : Finset Node)
+    (selected : Node)
+    (notMember : selected ∉ nodes) :
+    lookup
+        baseValue
+        selected
+        (entries.filter (keyOutside nodes)) =
+      lookup baseValue selected entries := by
+  induction entries with
+  | nil =>
+      simp [lookup]
+  | cons entry entries inductionHypothesis =>
+      rcases entry with ⟨stored, storedValue⟩
+      by_cases stored ∈ nodes
+      · have different : Not (selected = stored) := by
+          intro same
+          subst stored
+          exact notMember ‹selected ∈ nodes›
+        simpa [keyOutside, lookup, *] using inductionHypothesis
+      · by_cases selected = stored
+        · subst stored
+          simp [keyOutside, lookup, *]
+        · simp [keyOutside, lookup, *, inductionHypothesis]
 
 @[simp]
 theorem set_same
@@ -76,8 +224,7 @@ theorem set_same
     (node : Node)
     (value : α) :
     values.set node value node = value := by
-  change (values.values.set node.val value node.isLt)[node.val] = value
-  simp
+  simp [set, get]
 
 @[simp]
 theorem set_ne
@@ -86,17 +233,19 @@ theorem set_ne
     (value : α)
     (different : Not (selected = updated)) :
     values.set updated value selected = values selected := by
-  change
-    (values.values.set updated.val value updated.isLt)[selected.val] =
-      values.values[selected.val]
-  have differentValues : Not (updated.val = selected.val) := by
-    exact fun equal => different (Fin.ext equal.symm)
-  rw [
-    Vector.getElem_set_ne
-      updated.isLt
-      selected.isLt
-      differentValues
-  ]
+  simp [set, get, different]
+
+@[simp]
+theorem setMany_apply
+    (values : NodeMap α)
+    (nodes : Finset Node)
+    (value : Node -> α)
+    (selected : Node) :
+    setMany values nodes value selected =
+      if selected ∈ nodes then value selected else values selected := by
+  by_cases selected ∈ nodes
+  · simp [setMany, get, *]
+  · simp [setMany, get, *]
 
 end NodeMap
 
@@ -105,12 +254,30 @@ abbrev NodeMatrix (α : Type) := NodeMap (NodeMap α)
 /-- A nonempty check is part of `ChangeConfiguration`, not this type. -/
 abbrev Configuration := Finset Node
 
+structure InitialConfiguration where
+  nodes : Configuration
+  leader : Node
+  leader_mem : leader ∈ nodes
+
+namespace InitialConfiguration
+
+def singleton (leader : Node) : InitialConfiguration :=
+  ⟨{leader}, leader, by simp⟩
+
+instance : Coe InitialConfiguration Node where
+  coe initial := initial.leader
+
+instance (n : Nat) : OfNat InitialConfiguration n where
+  ofNat := singleton n
+
+end InitialConfiguration
+
 inductive LeadershipState where
   | follower
   | candidate
   | leader
   | none
-  deriving BEq, DecidableEq, Repr
+  deriving BEq, ReflBEq, LawfulBEq, DecidableEq, Repr
 
 inductive MembershipState where
   | active
@@ -166,6 +333,7 @@ The executable projection of the TLA variables. Configuration lists are kept
 in increasing log-index order by `next`.
 -/
 structure State where
+  nodes : Configuration
   currentTerm : NodeMap Nat
   leadershipState : NodeMap LeadershipState
   membershipState : NodeMap MembershipState
@@ -242,7 +410,7 @@ def lastIndexWhere
   (indices entries).foldl
     (fun result index =>
       match entryAt? entries index with
-      | some entry => if predicate entry then index else result
+      | some entry => if predicate entry then max result index else result
       | none => result)
     0
 
@@ -505,11 +673,11 @@ def headMessage?
     Option Message :=
   (state.messages dest source).head?
 
-def startLog (start : Node) : List Entry :=
+def startLog (start : InitialConfiguration) : List Entry :=
   [
     {
       term := startTerm
-      content := .reconfiguration {start}
+      content := .reconfiguration start.nodes
     },
     {
       term := startTerm
@@ -517,32 +685,36 @@ def startLog (start : Node) : List Entry :=
     }
   ]
 
-/-- The literal singleton `InitReconfigurationVars` choice, parameterized by its leader. -/
-def initialState (start : Node) : State :=
+/--
+The trusted genesis state for a finite initial configuration. Every initial
+node starts with the same committed configuration/signature prefix.
+-/
+def initialState (start : InitialConfiguration) : State :=
   let initialLog := startLog start
   {
+    nodes := start.nodes
     currentTerm :=
-      NodeMap.ofFn fun node => if node = start then startTerm else 0
+      NodeMap.ofFinset 0 start.nodes fun _ => startTerm
     leadershipState :=
-      NodeMap.ofFn fun node => if node = start then .leader else .none
+      NodeMap.ofFinset .none start.nodes fun node =>
+        if node = start.leader then .leader else .follower
     membershipState := NodeMap.const .active
     votedFor := NodeMap.const none
     isNewFollower := NodeMap.const true
-    log := NodeMap.ofFn fun node => if node = start then initialLog else []
+    log := NodeMap.ofFinset [] start.nodes fun _ => initialLog
     commitIndex :=
-      NodeMap.ofFn fun node => if node = start then initialLog.length else 0
+      NodeMap.ofFinset 0 start.nodes fun _ => initialLog.length
     votesGranted := NodeMap.const ∅
     sentIndex :=
-      NodeMap.ofFn fun node =>
-        NodeMap.const (if node = start then initialLog.length else 0)
+      updateNode
+        (NodeMap.const (NodeMap.const 0))
+        start.leader
+        (NodeMap.ofFinset 0 start.nodes fun _ => initialLog.length)
     matchIndex := NodeMap.const (NodeMap.const 0)
     configurations :=
-      NodeMap.ofFn fun node =>
-        if node = start then
-          [{ index := 1, nodes := {start} }]
-        else
-          []
-    hasJoined := NodeMap.ofFn fun node => node = start
+      NodeMap.ofFinset [] start.nodes fun _ =>
+        [{ index := 1, nodes := start.nodes }]
+    hasJoined := NodeMap.ofFinset false start.nodes fun _ => true
     retirementCompleted := NodeMap.const ∅
     messages := NodeMap.const (NodeMap.const [])
   }
@@ -930,11 +1102,14 @@ def receiveBranchEnabled
 
 def actionEnabled (state : State) : Action -> Bool
   | .timeout node =>
-      candidateEligible state node &&
+      decide (node ∈ state.nodes) &&
+        candidateEligible state node &&
         (state.leadershipState node == .follower ||
           state.leadershipState node == .candidate)
   | .requestVote source dest =>
-      source != dest &&
+      decide (source ∈ state.nodes) &&
+        decide (dest ∈ state.nodes) &&
+        source != dest &&
         state.leadershipState source == .candidate &&
         isInServerSet state dest source
   | .appendEntries source dest =>
@@ -943,27 +1118,33 @@ def actionEnabled (state : State) : Action -> Bool
         match message.body with
         | .appendEntriesRequest _ _ entries _ => !entries.isEmpty
         | _ => false
-      source != dest &&
+      decide (source ∈ state.nodes) &&
+        decide (dest ∈ state.nodes) &&
+        source != dest &&
         state.leadershipState source == .leader &&
         (isInServerSet state dest source ||
           decide (dest ∈ state.retirementCompleted source)) &&
         (state.membershipState source != .retiredCommitted ||
           sendsEntries)
   | .becomeLeader node =>
-      state.leadershipState node == .candidate &&
+      decide (node ∈ state.nodes) &&
+        state.leadershipState node == .candidate &&
         allConfigurationsHaveQuorum
           (state.votesGranted node)
           (state.configurations node)
   | .clientRequest node =>
-      state.leadershipState node == .leader &&
+      decide (node ∈ state.nodes) &&
+        state.leadershipState node == .leader &&
         state.membershipState node != .retiredCommitted
   | .signCommittableMessages node =>
-      state.leadershipState node == .leader &&
+      decide (node ∈ state.nodes) &&
+        state.leadershipState node == .leader &&
         state.membershipState node != .retiredCommitted &&
         !(state.log node).isEmpty
   | .changeConfiguration node configuration =>
       let added := configuration \ maxConfiguration (state.configurations node)
-      state.leadershipState node == .leader &&
+      decide (node ∈ state.nodes) &&
+        state.leadershipState node == .leader &&
         decide (configuration ≠ ∅) &&
         decide
           (configuration != maxConfiguration (state.configurations node)) &&
@@ -972,16 +1153,19 @@ def actionEnabled (state : State) : Action -> Bool
             addedNode ∈ added ->
               state.hasJoined addedNode = false)
   | .advanceCommitIndex node =>
-      state.leadershipState node == .leader &&
+      decide (node ∈ state.nodes) &&
+        state.leadershipState node == .leader &&
         decide
           (state.commitIndex node < highestCommittableIndex state node)
   | .receive dest source kind =>
-      match headMessage? state dest source with
-      | some message =>
-          message.dest == dest &&
-            message.source == source &&
-            receiveBranchEnabled state message kind
-      | none => false
+      decide (dest ∈ state.nodes) &&
+        decide (source ∈ state.nodes) &&
+        match headMessage? state dest source with
+        | some message =>
+            message.dest == dest &&
+              message.source == source &&
+              receiveBranchEnabled state message kind
+        | none => false
 
 /-- The guard relation shared by execution, replay, and proof. -/
 def Enabled (state : State) (action : Action) : Prop :=
@@ -1098,16 +1282,15 @@ def nextChangeConfiguration
     { index := nextLog.length, nodes := configuration }
   {
     state with
+    nodes := state.nodes ∪ configuration
     hasJoined :=
-      NodeMap.ofFn fun candidate =>
-        if candidate ∈ added then true else state.hasJoined candidate
+      NodeMap.setMany state.hasJoined added fun _ => true
     sentIndex :=
       updateNode state.sentIndex node <|
-        NodeMap.ofFn fun candidate =>
-          if candidate ∈ added then
-            (state.log node).length
-          else
-            state.sentIndex node candidate
+        NodeMap.setMany
+          (state.sentIndex node)
+          added
+          fun _ => (state.log node).length
     log := updateNode state.log node nextLog
     configurations :=
       updateNode state.configurations node
@@ -1407,8 +1590,8 @@ def rawNext (state : State) : Action -> State
 def next (state : State) (action : Action) : State :=
   rawNext state action
 
-/-- The selected `ccfraft.tla` transition system for a chosen initial leader. -/
-def system (start : Node) : ExecutableTransitionSystem where
+/-- The selected `ccfraft.tla` transition system for an initial configuration. -/
+def system (start : InitialConfiguration) : ExecutableTransitionSystem where
   State := State
   Action := Action
   initial := initialState start
@@ -1416,7 +1599,7 @@ def system (start : Node) : ExecutableTransitionSystem where
   enabledDecidable := enabledDecidable
   next := next
 
-abbrev Reachable (start : Node) : State -> Prop :=
+abbrev Reachable (start : InitialConfiguration) : State -> Prop :=
   (system start).Reachable
 
 def isLogPrefix (left right : List Entry) : Prop :=
@@ -1441,7 +1624,7 @@ def votersForCandidateTerm
     (state : State)
     (candidate : Node) :
     Configuration :=
-  Finset.univ.filter fun voter =>
+  state.nodes.filter fun voter =>
       And
         (state.currentTerm voter = state.currentTerm candidate)
         (state.votedFor voter = some candidate)
