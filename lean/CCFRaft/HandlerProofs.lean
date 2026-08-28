@@ -13,8 +13,8 @@ Common log lookup and AppendEntries handler facts.
 
 namespace CCFRaft
 
-variable {TxId : Type}
-variable [DecidableEq TxId]
+variable {Node TxId : Type}
+variable [DecidableEq Node] [DecidableEq TxId]
 
 /-! ## Generic list, quorum, and message facts -/
 
@@ -71,38 +71,11 @@ theorem prefixesComparable
     have takenPrefix := List.take_prefix right.length left
     rwa [rightEq] at takenPrefix
 
-/-- Any two strict majorities of the fixed five-node network intersect. -/
-theorem fiveNodeMajoritiesIntersect
-    (left right : Finset Node)
-    (leftMajority : left.card * 2 > NODE_COUNT)
-    (rightMajority : right.card * 2 > NODE_COUNT) :
-    (left ∩ right).Nonempty := by
-  by_contra noIntersection
-  have intersectionEmpty :
-      left ∩ right = ∅ :=
-    Finset.not_nonempty_iff_eq_empty.mp noIntersection
-  have disjoint : Disjoint left right :=
-    Finset.disjoint_iff_inter_eq_empty.mpr intersectionEmpty
-  have unionCard :
-      (left ∪ right).card = left.card + right.card :=
-    Finset.card_union_of_disjoint disjoint
-  have unionBound :
-      (left ∪ right).card <= NODE_COUNT := by
-    simpa [NODE_COUNT] using Finset.card_le_univ (left ∪ right)
-  have leftAtLeastThree : 3 <= left.card := by
-    simp [NODE_COUNT] at leftMajority
-    omega
-  have rightAtLeastThree : 3 <= right.card := by
-    simp [NODE_COUNT] at rightMajority
-    omega
-  omega
-
 /--
 Two strict majorities of the same configuration share a configuration member.
-This witness form is independent of the size of the fixed node universe.
 -/
 theorem configurationMajoritiesIntersect
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     {left right : Finset Node}
     (leftMajority : hasConfigurationMajority left configuration)
     (rightMajority : hasConfigurationMajority right configuration) :
@@ -150,7 +123,7 @@ theorem configurationMajoritiesIntersect
 
 /-- Enlarging a support set preserves a strict majority in one configuration. -/
 theorem hasConfigurationMajority_mono
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     {smaller larger : Finset Node}
     (subset : smaller ⊆ larger)
     (majority : hasConfigurationMajority smaller configuration) :
@@ -169,7 +142,7 @@ theorem hasConfigurationMajority_mono
 
 /-- A strict configuration majority contains a member of that configuration. -/
 theorem configurationMajorityNonempty
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     {support : Finset Node}
     (majority : hasConfigurationMajority support configuration) :
     Exists fun node =>
@@ -184,7 +157,7 @@ theorem configurationMajorityNonempty
 /-- Projecting configurations distributes over log concatenation. -/
 theorem configurationsInLogFrom_append
     (start : Nat)
-    (left right : List (Entry TxId)) :
+    (left right : List (Entry Node TxId)) :
     configurationsInLogFrom start (left ++ right) =
       configurationsInLogFrom start left ++
         configurationsInLogFrom (start + left.length) right := by
@@ -218,7 +191,7 @@ theorem configurationsInLogFrom_append
 /-- A log prefix retains every projected physical configuration. -/
 theorem configurationsInLogFrom_mono_prefix
     (start : Nat)
-    {left right : List (Entry TxId)}
+    {left right : List (Entry Node TxId)}
     (isPrefix : left <+: right) :
     configurationsInLogFrom start left <+:
       configurationsInLogFrom start right := by
@@ -226,9 +199,13 @@ theorem configurationsInLogFrom_mono_prefix
   rw [configurationsInLogFrom_append]
   exact List.prefix_append _ _
 
+section Bootstrap
+
+variable [Bootstrap Node]
+
 /-- A log prefix retains every known implicit or physical configuration. -/
 theorem allConfigurations_mono_prefix
-    {left right : List (Entry TxId)}
+    {left right : List (Entry Node TxId)}
     (isPrefix : left <+: right) :
     allConfigurations left <+: allConfigurations right := by
   unfold allConfigurations configurationsInLog
@@ -239,8 +216,8 @@ theorem allConfigurations_mono_prefix
 /-- Every projected physical configuration index lies in its source interval. -/
 theorem configurationsInLogFrom_index_bounds
     (start : Nat)
-    (log : List (Entry TxId))
-    {configuration : Configuration}
+    (log : List (Entry Node TxId))
+    {configuration : Configuration Node}
     (member : configuration ∈ configurationsInLogFrom start log) :
     start <= configuration.index /\
       configuration.index < start + log.length := by
@@ -280,7 +257,7 @@ theorem configurationsInLogFrom_index_bounds
 /-- Physical configuration indices are strictly increasing in log order. -/
 theorem configurationsInLogFrom_pairwise_index_lt
     (start : Nat)
-    (log : List (Entry TxId)) :
+    (log : List (Entry Node TxId)) :
     (configurationsInLogFrom start log).Pairwise
       (fun left right => left.index < right.index) := by
   induction log generalizing start with
@@ -313,8 +290,8 @@ theorem configurationsInLogFrom_pairwise_index_lt
 
 /-- Every physical configuration index is positive and within the log. -/
 theorem configurationsInLog_index_bounds
-    (log : List (Entry TxId))
-    {configuration : Configuration}
+    (log : List (Entry Node TxId))
+    {configuration : Configuration Node}
     (member : configuration ∈ configurationsInLog log) :
     0 < configuration.index /\
       configuration.index <= log.length := by
@@ -325,9 +302,9 @@ theorem configurationsInLog_index_bounds
 
 /-- A known configuration within a frontier is retained by the log take. -/
 theorem allConfigurations_mem_take_of_index_le
-    (log : List (Entry TxId))
+    (log : List (Entry Node TxId))
     (frontier : Nat)
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     (frontierBound : frontier <= log.length)
     (known : configuration ∈ allConfigurations log)
     (within : configuration.index <= frontier) :
@@ -365,7 +342,7 @@ theorem allConfigurations_mem_take_of_index_le
 
 /-- Physical configuration indices are strictly increasing. -/
 theorem configurationsInLog_pairwise_index_lt
-    (log : List (Entry TxId)) :
+    (log : List (Entry Node TxId)) :
     (configurationsInLog log).Pairwise
       (fun left right => left.index < right.index) := by
   simpa [configurationsInLog] using
@@ -373,7 +350,7 @@ theorem configurationsInLog_pairwise_index_lt
 
 /-- The implicit index zero precedes every physical configuration index. -/
 theorem allConfigurations_pairwise_index_lt
-    (log : List (Entry TxId)) :
+    (log : List (Entry Node TxId)) :
     (allConfigurations log).Pairwise
       (fun left right => left.index < right.index) := by
   rw [allConfigurations, List.pairwise_cons]
@@ -387,7 +364,7 @@ theorem allConfigurations_pairwise_index_lt
 
 /-- Physical configuration indices contain no duplicates. -/
 theorem configurationsInLog_indices_nodup
-    (log : List (Entry TxId)) :
+    (log : List (Entry Node TxId)) :
     ((configurationsInLog log).map fun configuration =>
       configuration.index).Nodup := by
   have ordered :
@@ -399,7 +376,7 @@ theorem configurationsInLog_indices_nodup
 
 /-- Known configuration indices, including implicit index zero, are unique. -/
 theorem allConfigurations_indices_nodup
-    (log : List (Entry TxId)) :
+    (log : List (Entry Node TxId)) :
     ((allConfigurations log).map fun configuration =>
       configuration.index).Nodup := by
   have ordered :
@@ -411,11 +388,11 @@ theorem allConfigurations_indices_nodup
 
 /-- A strictly index-ordered configuration list has unique index ownership. -/
 private theorem pairwiseConfigurationIndex_unique
-    {configurations : List Configuration}
+    {configurations : List (Configuration Node)}
     (ordered :
       configurations.Pairwise
         (fun left right => left.index < right.index))
-    {left right : Configuration}
+    {left right : Configuration Node}
     (leftMember : left ∈ configurations)
     (rightMember : right ∈ configurations)
     (sameIndex : left.index = right.index) :
@@ -440,8 +417,8 @@ private theorem pairwiseConfigurationIndex_unique
 
 /-- A physical log index identifies at most one configuration. -/
 theorem configurationsInLog_index_unique
-    (log : List (Entry TxId))
-    {left right : Configuration}
+    (log : List (Entry Node TxId))
+    {left right : Configuration Node}
     (leftMember : left ∈ configurationsInLog log)
     (rightMember : right ∈ configurationsInLog log)
     (sameIndex : left.index = right.index) :
@@ -452,8 +429,8 @@ theorem configurationsInLog_index_unique
 
 /-- Every known configuration, including the implicit one, has a unique index. -/
 theorem allConfigurations_index_unique
-    (log : List (Entry TxId))
-    {left right : Configuration}
+    (log : List (Entry Node TxId))
+    {left right : Configuration Node}
     (leftMember : left ∈ allConfigurations log)
     (rightMember : right ∈ allConfigurations log)
     (sameIndex : left.index = right.index) :
@@ -464,7 +441,7 @@ theorem allConfigurations_index_unique
 
 /-- Physical configurations contain no duplicate records. -/
 theorem configurationsInLog_nodup
-    (log : List (Entry TxId)) :
+    (log : List (Entry Node TxId)) :
     (configurationsInLog log).Nodup := by
   rw [List.nodup_iff_pairwise_ne]
   exact
@@ -476,7 +453,7 @@ theorem configurationsInLog_nodup
 
 /-- Known configurations contain no duplicate records. -/
 theorem allConfigurations_nodup
-    (log : List (Entry TxId)) :
+    (log : List (Entry Node TxId)) :
     (allConfigurations log).Nodup := by
   rw [List.nodup_iff_pairwise_ne]
   exact
@@ -489,8 +466,8 @@ theorem allConfigurations_nodup
 /-- Appending a non-reconfiguration entry does not add a configuration. -/
 theorem configurationsInLogFrom_append_nonreconfiguration
     (start : Nat)
-    (log : List (Entry TxId))
-    (entry : Entry TxId)
+    (log : List (Entry Node TxId))
+    (entry : Entry Node TxId)
     (notReconfiguration :
       forall nodes,
         Not (entry.content = .reconfiguration nodes)) :
@@ -521,8 +498,8 @@ theorem configurationsInLogFrom_append_nonreconfiguration
 
 /-- Appending a non-reconfiguration entry preserves projected configurations. -/
 theorem configurationsInLog_append_nonreconfiguration
-    (log : List (Entry TxId))
-    (entry : Entry TxId)
+    (log : List (Entry Node TxId))
+    (entry : Entry Node TxId)
     (notReconfiguration :
       forall nodes,
         Not (entry.content = .reconfiguration nodes)) :
@@ -534,8 +511,8 @@ theorem configurationsInLog_append_nonreconfiguration
 
 /-- Appending a non-reconfiguration entry preserves the current authority. -/
 theorem currentConfigurationAt_append_nonreconfiguration
-    (log : List (Entry TxId))
-    (entry : Entry TxId)
+    (log : List (Entry Node TxId))
+    (entry : Entry Node TxId)
     (commitIndex : Nat)
     (notReconfiguration :
       forall nodes,
@@ -550,8 +527,8 @@ theorem currentConfigurationAt_append_nonreconfiguration
 
 /-- Appending a non-reconfiguration entry preserves all active authorities. -/
 theorem activeConfigurations_append_nonreconfiguration
-    (state : NodeState TxId)
-    (entry : Entry TxId)
+    (state : NodeState Node TxId)
+    (entry : Entry Node TxId)
     (notReconfiguration :
       forall nodes,
         Not (entry.content = .reconfiguration nodes)) :
@@ -570,15 +547,15 @@ theorem activeConfigurations_append_nonreconfiguration
 /-- Select a configuration exactly when its physical index is committed. -/
 private def selectConfiguration
     (commitIndex : Nat)
-    (current configuration : Configuration) :
-    Configuration :=
+    (current configuration : Configuration Node) :
+    Configuration Node :=
   if configuration.index <= commitIndex then configuration else current
 
 /-- Selecting from a list returns the fallback or a member of the list. -/
 private theorem foldlSelectConfiguration_mem
     (commitIndex : Nat)
-    (configurations : List Configuration)
-    (fallback : Configuration) :
+    (configurations : List (Configuration Node))
+    (fallback : Configuration Node) :
     configurations.foldl (selectConfiguration commitIndex) fallback =
         fallback \/
       configurations.foldl (selectConfiguration commitIndex) fallback ∈
@@ -601,8 +578,8 @@ private theorem foldlSelectConfiguration_mem
 /-- A bounded fallback keeps the selected configuration within the frontier. -/
 private theorem foldlSelectConfiguration_index_le
     (commitIndex : Nat)
-    (configurations : List Configuration)
-    (fallback : Configuration)
+    (configurations : List (Configuration Node))
+    (fallback : Configuration Node)
     (fallbackBound : fallback.index <= commitIndex) :
     (configurations.foldl
       (selectConfiguration commitIndex) fallback).index <= commitIndex := by
@@ -620,8 +597,8 @@ private theorem foldlSelectConfiguration_index_le
 /-- Selection through an ordered suffix never moves behind its fallback. -/
 private theorem foldlSelectConfiguration_index_ge
     (commitIndex : Nat)
-    (configurations : List Configuration)
-    (fallback : Configuration)
+    (configurations : List (Configuration Node))
+    (fallback : Configuration Node)
     (afterFallback :
       forall configuration,
         configuration ∈ configurations ->
@@ -661,8 +638,8 @@ private theorem foldlSelectConfiguration_index_ge
 /-- Every committed member of an ordered suffix is no later than its selection. -/
 private theorem foldlSelectConfiguration_greatest
     (commitIndex : Nat)
-    (configurations : List Configuration)
-    (fallback : Configuration)
+    (configurations : List (Configuration Node))
+    (fallback : Configuration Node)
     (afterFallback :
       forall configuration,
         configuration ∈ configurations ->
@@ -670,7 +647,7 @@ private theorem foldlSelectConfiguration_greatest
     (ordered :
       configurations.Pairwise
         (fun left right => left.index < right.index))
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     (member : configuration ∈ configurations)
     (committed : configuration.index <= commitIndex) :
     configuration.index <=
@@ -711,8 +688,8 @@ private theorem foldlSelectConfiguration_greatest
 /-- If every list member is pending, selection preserves its fallback. -/
 private theorem foldlSelectConfiguration_eq_of_all_after
     (commitIndex : Nat)
-    (configurations : List Configuration)
-    (fallback : Configuration)
+    (configurations : List (Configuration Node))
+    (fallback : Configuration Node)
     (pending :
       forall configuration,
         configuration ∈ configurations ->
@@ -746,7 +723,7 @@ The current configuration is either implicit or one of the physical
 configurations projected from the log.
 -/
 theorem currentConfiguration_eq_implicit_or_mem_configurationsInLog
-    (state : NodeState TxId) :
+    (state : NodeState Node TxId) :
     currentConfiguration state = implicitConfiguration \/
       currentConfiguration state ∈ configurationsInLog state.log := by
   simpa [currentConfiguration, selectConfiguration] using
@@ -757,7 +734,7 @@ theorem currentConfiguration_eq_implicit_or_mem_configurationsInLog
 
 /-- The current configuration is always known from the local log. -/
 theorem currentConfiguration_mem_allConfigurations
-    (state : NodeState TxId) :
+    (state : NodeState Node TxId) :
     currentConfiguration state ∈ allConfigurations state.log := by
   rcases
       currentConfiguration_eq_implicit_or_mem_configurationsInLog state with
@@ -767,7 +744,7 @@ theorem currentConfiguration_mem_allConfigurations
 
 /-- The current configuration index never exceeds the local commit frontier. -/
 theorem currentConfiguration_index_le_commitIndex
-    (state : NodeState TxId) :
+    (state : NodeState Node TxId) :
     (currentConfiguration state).index <= state.commitIndex := by
   simpa [
     currentConfiguration,
@@ -785,8 +762,8 @@ The current configuration has the greatest known configuration index at or
 before the local commit frontier.
 -/
 theorem configuration_index_le_currentConfiguration
-    (state : NodeState TxId)
-    (configuration : Configuration)
+    (state : NodeState Node TxId)
+    (configuration : Configuration Node)
     (known : configuration ∈ allConfigurations state.log)
     (committed : configuration.index <= state.commitIndex) :
     configuration.index <= (currentConfiguration state).index := by
@@ -797,7 +774,8 @@ theorem configuration_index_le_currentConfiguration
   · have afterImplicit :
         forall candidate,
           candidate ∈ configurationsInLog state.log ->
-            implicitConfiguration.index < candidate.index := by
+            (implicitConfiguration (Node := Node)).index <
+              candidate.index := by
       intro candidate member
       have positive :=
         (configurationsInLog_index_bounds
@@ -819,7 +797,7 @@ The implicit configuration is current exactly when every physical
 reconfiguration is still beyond the commit frontier.
 -/
 theorem currentConfiguration_eq_implicit_iff
-    (state : NodeState TxId) :
+    (state : NodeState Node TxId) :
     currentConfiguration state = implicitConfiguration <->
       forall configuration,
         configuration ∈ configurationsInLog state.log ->
@@ -850,7 +828,7 @@ theorem currentConfiguration_eq_implicit_iff
 
 /-- The current configuration is one of the active configurations. -/
 theorem currentConfiguration_mem_activeConfigurations
-    (state : NodeState TxId) :
+    (state : NodeState Node TxId) :
     currentConfiguration state ∈ activeConfigurations state := by
   simp [
     activeConfigurations,
@@ -866,8 +844,8 @@ single-configuration quorum arguments: every active authority governing that
 index is definitionally the same current configuration.
 -/
 theorem activeConfigurationAtCommittedIndex_eq_current
-    (state : NodeState TxId)
-    (configuration : Configuration)
+    (state : NodeState Node TxId)
+    (configuration : Configuration Node)
     (active : configuration ∈ activeConfigurations state)
     (committed : configuration.index <= state.commitIndex) :
     configuration = currentConfiguration state := by
@@ -891,8 +869,8 @@ theorem activeConfigurationAtCommittedIndex_eq_current
 
 /-- Any two active configurations at committed indices are identical. -/
 theorem activeConfigurationsAtCommittedIndices_unique
-    (state : NodeState TxId)
-    {left right : Configuration}
+    (state : NodeState Node TxId)
+    {left right : Configuration Node}
     (leftActive : left ∈ activeConfigurations state)
     (rightActive : right ∈ activeConfigurations state)
     (leftCommitted : left.index <= state.commitIndex)
@@ -910,8 +888,8 @@ At an already-committed log index, the only active configuration that can
 govern that index is the current configuration.
 -/
 theorem activeConfigurationGoverningCommittedIndex_eq_current
-    (state : NodeState TxId)
-    {configuration : Configuration}
+    (state : NodeState Node TxId)
+    {configuration : Configuration Node}
     {index : Nat}
     (active : configuration ∈ activeConfigurations state)
     (governs : configuration.index <= index)
@@ -926,10 +904,10 @@ reduces to the current configuration. This local form avoids introducing a
 global `State` into single-node quorum arguments.
 -/
 theorem activeConfigurations_all_at_committed_index_iff_current
-    (state : NodeState TxId)
+    (state : NodeState Node TxId)
     (index : Nat)
     (committed : index <= state.commitIndex)
-    (predicate : Configuration -> Prop)
+    (predicate : Configuration Node -> Prop)
     [DecidablePred predicate] :
     (activeConfigurations state).all
         (fun configuration =>
@@ -961,7 +939,7 @@ configuration's strict-majority obligation (or no obligation before its
 configuration index).
 -/
 theorem hasMajorityAt_committed_iff_currentConfiguration
-    (state : State TxId)
+    (state : State Node TxId)
     (leader : Node)
     (index : Nat)
     (committed : index <= (state.nodes leader).commitIndex) :
@@ -981,11 +959,13 @@ theorem hasMajorityAt_committed_iff_currentConfiguration
           (acknowledgingNodes state leader index)
           configuration)
 
+end Bootstrap
+
 /-- A successful one-based lookup proves the index lies within the log. -/
 theorem entryAtSomeIndexBound
-    {log : List (Entry TxId)}
+    {log : List (Entry Node TxId)}
     {index : Nat}
-    {entry : Entry TxId}
+    {entry : Entry Node TxId}
     (found : entryAt? log index = some entry) :
     index <= log.length := by
   unfold entryAt? at found
@@ -998,9 +978,9 @@ theorem entryAtSomeIndexBound
 
 /-- A successful one-based lookup is membership evidence. -/
 theorem entryAt_mem
-    {log : List (Entry TxId)}
+    {log : List (Entry Node TxId)}
     {index : Nat}
-    {entry : Entry TxId}
+    {entry : Entry Node TxId}
     (found : entryAt? log index = some entry) :
     entry ∈ log := by
   unfold entryAt? at found
@@ -1013,10 +993,10 @@ theorem entryAt_mem
 
 /-- A successful lookup is unchanged when the log is extended at the end. -/
 theorem entryAt_of_prefix
-    {left right : List (Entry TxId)}
+    {left right : List (Entry Node TxId)}
     (isPrefix : left <+: right)
     {index : Nat}
-    {entry : Entry TxId}
+    {entry : Entry Node TxId}
     (found : entryAt? left index = some entry) :
     entryAt? right index = some entry := by
   rcases isPrefix with ⟨suffix, rightEq⟩
@@ -1033,7 +1013,7 @@ theorem entryAt_of_prefix
 
 /-- A bounded AppendEntries batch has exactly `batchEnd - previousIndex` entries. -/
 theorem messageEntriesLength
-    (log : List (Entry TxId))
+    (log : List (Entry Node TxId))
     {previousIndex batchEnd : Nat}
     (ordered : previousIndex <= batchEnd)
     (within : batchEnd <= log.length) :
@@ -1049,8 +1029,8 @@ theorem messageEntriesLength
 
 /-- A message after enqueue was either already present or is the new message. -/
 theorem memEnqueueNoDup
-    (network : Node -> List (Message TxId))
-    (newMessage message : Message TxId)
+    (network : Node -> List (Message Node TxId))
+    (newMessage message : Message Node TxId)
     (destination : Node)
     (member : message ∈ enqueueNoDup network newMessage destination) :
     message ∈ network destination \/
@@ -1074,8 +1054,8 @@ theorem memEnqueueNoDup
 /-- Selecting a source message returns that source and preserves queue membership. -/
 theorem takeFirstFromSound
     {source : Node}
-    {queue remaining : List (Message TxId)}
-    {selected : Message TxId}
+    {queue remaining : List (Message Node TxId)}
+    {selected : Message Node TxId}
     (taken :
       takeFirstFrom source queue = some (selected, remaining)) :
     selected.source = source /\
@@ -1128,7 +1108,7 @@ theorem memOfPrefix
 
 /-- A positive signature test identifies a concrete signature entry. -/
 theorem isSignatureAtTrue
-    {log : List (Entry TxId)}
+    {log : List (Entry Node TxId)}
     {index : Nat}
     (signature : isSignatureAt log index = true) :
     Exists fun entry =>
@@ -1143,7 +1123,7 @@ theorem isSignatureAtTrue
 
 /-- The latest signature index lies within the log. -/
 theorem maxCommittableIndexBounded
-    (log : List (Entry TxId)) :
+    (log : List (Entry Node TxId)) :
     maxCommittableIndex log <= log.length := by
   unfold maxCommittableIndex
   let candidates := List.range (log.length + 1)
@@ -1180,7 +1160,7 @@ theorem maxCommittableIndexBounded
 
 /-- A positive latest committable index points to a signature. -/
 theorem maxCommittableIndexPositiveIsSignature
-    {log : List (Entry TxId)}
+    {log : List (Entry Node TxId)}
     (positive : 0 < maxCommittableIndex log) :
     isSignatureAt log (maxCommittableIndex log) = true := by
   unfold maxCommittableIndex at positive ⊢
@@ -1223,7 +1203,7 @@ theorem maxCommittableIndexPositiveIsSignature
 
 /-- Every signature index is no later than the latest signature index. -/
 theorem signatureIndex_le_maxCommittableIndex
-    {log : List (Entry TxId)}
+    {log : List (Entry Node TxId)}
     {index : Nat}
     (signature : isSignatureAt log index = true) :
     index <= maxCommittableIndex log := by
@@ -1284,7 +1264,7 @@ theorem signatureIndex_le_maxCommittableIndex
 
 /-- There is no signature exactly when the latest committable index is zero. -/
 theorem maxCommittableIndex_eq_zero_iff
-    (log : List (Entry TxId)) :
+    (log : List (Entry Node TxId)) :
     maxCommittableIndex log = 0 <->
       forall index, isSignatureAt log index = false := by
   constructor
@@ -1310,7 +1290,7 @@ theorem maxCommittableIndex_eq_zero_iff
 
 /-- Extending a log preserves every earlier signature lookup. -/
 theorem isSignatureAt_of_prefix
-    {left right : List (Entry TxId)}
+    {left right : List (Entry Node TxId)}
     (isPrefix : left <+: right)
     {index : Nat}
     (signature : isSignatureAt left index = true) :
@@ -1321,7 +1301,7 @@ theorem isSignatureAt_of_prefix
 
 /-- Extending a log cannot move its latest signature backwards. -/
 theorem maxCommittableIndex_le_of_prefix
-    {left right : List (Entry TxId)}
+    {left right : List (Entry Node TxId)}
     (isPrefix : left <+: right) :
     maxCommittableIndex left <= maxCommittableIndex right := by
   by_cases zero : maxCommittableIndex left = 0
@@ -1335,8 +1315,8 @@ theorem maxCommittableIndex_le_of_prefix
 
 /-- Appending a signature makes it the latest committable entry. -/
 theorem maxCommittableIndex_append_signature
-    (log : List (Entry TxId))
-    (entry : Entry TxId)
+    (log : List (Entry Node TxId))
+    (entry : Entry Node TxId)
     (signature : entry.content = .signature) :
     maxCommittableIndex (log ++ [entry]) = log.length + 1 := by
   have appendedSignature :
@@ -1351,7 +1331,7 @@ theorem maxCommittableIndex_append_signature
 
 /-- Taking a log prefix leaves lookups inside that prefix unchanged. -/
 theorem isSignatureAt_take_of_le
-    {log : List (Entry TxId)}
+    {log : List (Entry Node TxId)}
     {index count : Nat}
     (within : index <= count)
     (signature : isSignatureAt log index = true) :
@@ -1371,7 +1351,7 @@ theorem isSignatureAt_take_of_le
 
 /-- The bounded committable frontier does not exceed its supplied frontier. -/
 theorem maxCommittableIndexUpTo_le_frontier
-    (log : List (Entry TxId))
+    (log : List (Entry Node TxId))
     (frontier : Nat) :
     maxCommittableIndexUpTo log frontier <= frontier := by
   unfold maxCommittableIndexUpTo
@@ -1381,7 +1361,7 @@ theorem maxCommittableIndexUpTo_le_frontier
 
 /-- The bounded committable frontier does not exceed the complete log. -/
 theorem maxCommittableIndexUpTo_le_length
-    (log : List (Entry TxId))
+    (log : List (Entry Node TxId))
     (frontier : Nat) :
     maxCommittableIndexUpTo log frontier <= log.length := by
   unfold maxCommittableIndexUpTo
@@ -1392,7 +1372,7 @@ theorem maxCommittableIndexUpTo_le_length
 
 /-- Restricting the search frontier cannot reveal a later signature. -/
 theorem maxCommittableIndexUpTo_le
-    (log : List (Entry TxId))
+    (log : List (Entry Node TxId))
     (frontier : Nat) :
     maxCommittableIndexUpTo log frontier <=
       maxCommittableIndex log := by
@@ -1403,7 +1383,7 @@ theorem maxCommittableIndexUpTo_le
 
 /-- A positive bounded committable frontier points to a signature in the log. -/
 theorem maxCommittableIndexUpToPositiveIsSignature
-    {log : List (Entry TxId)}
+    {log : List (Entry Node TxId)}
     {frontier : Nat}
     (positive : 0 < maxCommittableIndexUpTo log frontier) :
     isSignatureAt log (maxCommittableIndexUpTo log frontier) = true := by
@@ -1413,9 +1393,13 @@ theorem maxCommittableIndexUpToPositiveIsSignature
       (List.take_prefix frontier log)
       (maxCommittableIndexPositiveIsSignature positive)
 
+section BootstrapCommit
+
+variable [Bootstrap Node]
+
 /-- The computed commit frontier never exceeds the leader log length. -/
 theorem highestCommittableIndexBounded
-    (state : State TxId)
+    (state : State Node TxId)
     (leader : Node) :
     highestCommittableIndex state leader <=
       (state.nodes leader).log.length := by
@@ -1463,7 +1447,7 @@ theorem highestCommittableIndexBounded
 
 /-- A newly selected commit frontier satisfies every commit-selection guard. -/
 theorem highestCommittableIndexFacts
-    (state : State TxId)
+    (state : State Node TxId)
     (leader : Node)
     (advances :
       (state.nodes leader).commitIndex <
@@ -1524,7 +1508,7 @@ theorem highestCommittableIndexFacts
 
 /-- A newly selected commit frontier satisfies the term and majority guards. -/
 theorem highestCommittableIndexValid
-    (state : State TxId)
+    (state : State Node TxId)
     (leader : Node)
     (advances :
       (state.nodes leader).commitIndex <
@@ -1539,7 +1523,7 @@ theorem highestCommittableIndexValid
 
 /-- A newly selected positive commit frontier points to a signature. -/
 theorem highestCommittableIndexIsSignature
-    (state : State TxId)
+    (state : State Node TxId)
     (leader : Node)
     (advances :
       (state.nodes leader).commitIndex <
@@ -1549,12 +1533,14 @@ theorem highestCommittableIndexIsSignature
         (highestCommittableIndex state leader) = true :=
   (highestCommittableIndexFacts state leader advances).1
 
+end BootstrapCommit
+
 /-! ## Generic local-handler facts -/
 
 /-- Facts guaranteed after tallying a RequestVote response. -/
 structure VoteResponseHandlerPost
-    (before after : NodeState TxId)
-    (response : RequestVoteResponse) : Prop where
+    (before after : NodeState Node TxId)
+    (response : RequestVoteResponse Node) : Prop where
   roleUnchanged : after.role = before.role
   currentTermUnchanged : after.currentTerm = before.currentTerm
   logUnchanged : after.log = before.log
@@ -1571,8 +1557,8 @@ structure VoteResponseHandlerPost
 
 /-- Tallying a response changes only the candidate's recorded vote set. -/
 theorem handleRequestVoteResponsePreserves
-    {before after : NodeState TxId}
-    {response : RequestVoteResponse}
+    {before after : NodeState Node TxId}
+    {response : RequestVoteResponse Node}
     (handled :
       handleRequestVoteResponse? before response = some after) :
     VoteResponseHandlerPost before after response := by
@@ -1601,9 +1587,9 @@ theorem handleRequestVoteResponsePreserves
 
 /-- A successful newer-message lookup identifies the queued message and order. -/
 theorem newerMessageSound
-    {state : State TxId}
+    {state : State Node TxId}
     {source destination : Node}
-    {selected : Message TxId}
+    {selected : Message Node TxId}
     (found : newerMessage? state source destination = some selected) :
     Exists fun remaining =>
       takeFirstFrom source (state.network destination) =
@@ -1620,15 +1606,18 @@ theorem newerMessageSound
       by_cases newer :
           (state.nodes destination).currentTerm < message.term
       · have selectedEq : message = selected := by
-          simpa [newer] using found
+          have sourceAndSelected :
+              messageSourceAllowed state message /\ message = selected := by
+            simpa [newer] using found
+          exact sourceAndSelected.2
         subst selected
         exact ⟨remaining, rfl, newer⟩
       · simp [newer] at found
 
 /-- Failure-response routing and the failure bit do not depend on its NACK index. -/
 theorem failureResponseMetadata
-    (before : NodeState TxId)
-    (request : AppendEntriesRequest TxId) :
+    (before : NodeState Node TxId)
+    (request : AppendEntriesRequest Node TxId) :
     (failureResponse before request).source = request.destination /\
       (failureResponse before request).destination = request.source /\
       (failureResponse before request).success = false := by
@@ -1645,9 +1634,9 @@ theorem failureResponseMetadata
 /-- A follower commit learned from a request stays below the advertised
 leader frontier, apart from an already committed local prefix. -/
 theorem committedFromLeader_le_max_leaderCommit
-    (before : NodeState TxId)
-    (request : AppendEntriesRequest TxId)
-    (newLog : List (Entry TxId)) :
+    (before : NodeState Node TxId)
+    (request : AppendEntriesRequest Node TxId)
+    (newLog : List (Entry Node TxId)) :
     committedFromLeader before request newLog <=
     max before.commitIndex request.leaderCommit := by
   unfold committedFromLeader
@@ -1664,9 +1653,9 @@ theorem committedFromLeader_le_max_leaderCommit
 /-- A follower commit learned from a request stays below the request's
 verified end, apart from an already committed local prefix. -/
 theorem committedFromLeader_le_max_requestEnd
-    (before : NodeState TxId)
-    (request : AppendEntriesRequest TxId)
-    (newLog : List (Entry TxId)) :
+    (before : NodeState Node TxId)
+    (request : AppendEntriesRequest Node TxId)
+    (newLog : List (Entry Node TxId)) :
     committedFromLeader before request newLog <=
     max before.commitIndex
       (request.prevLogIndex + request.entries.length) := by
@@ -1684,9 +1673,9 @@ theorem committedFromLeader_le_max_requestEnd
 /-- A follower commit learned from a request stays below the latest signature,
 apart from an already committed local prefix. -/
 theorem committedFromLeader_le_max_committable
-    (before : NodeState TxId)
-    (request : AppendEntriesRequest TxId)
-    (newLog : List (Entry TxId)) :
+    (before : NodeState Node TxId)
+    (request : AppendEntriesRequest Node TxId)
+    (newLog : List (Entry Node TxId)) :
     committedFromLeader before request newLog <=
       max before.commitIndex (maxCommittableIndex newLog) := by
   unfold committedFromLeader
@@ -1700,9 +1689,9 @@ theorem committedFromLeader_le_max_committable
 /-- A follower commit learned from a request remains inside the resulting log
 when the previous committed prefix is still present. -/
 theorem committedFromLeader_bounded
-    (before : NodeState TxId)
-    (request : AppendEntriesRequest TxId)
-    (newLog : List (Entry TxId))
+    (before : NodeState Node TxId)
+    (request : AppendEntriesRequest Node TxId)
+    (newLog : List (Entry Node TxId))
     (oldBound : before.commitIndex <= newLog.length) :
     committedFromLeader before request newLog <= newLog.length := by
   unfold committedFromLeader
@@ -1715,8 +1704,8 @@ theorem committedFromLeader_bounded
 
 /-- A signature lookup is retained by any log containing the committed prefix. -/
 theorem committedSignature_retained
-    (before : NodeState TxId)
-    (newLog : List (Entry TxId))
+    (before : NodeState Node TxId)
+    (newLog : List (Entry Node TxId))
     (retainedPrefix : before.committedLog <+: newLog)
     (signature :
       isSignatureAt before.log before.commitIndex = true) :
@@ -1727,9 +1716,9 @@ theorem committedSignature_retained
 
 /-- Learning a follower commit preserves the signature-frontier invariant. -/
 theorem committedFromLeader_isSignature
-    (before : NodeState TxId)
-    (request : AppendEntriesRequest TxId)
-    (newLog : List (Entry TxId))
+    (before : NodeState Node TxId)
+    (request : AppendEntriesRequest Node TxId)
+    (newLog : List (Entry Node TxId))
     (oldSignature :
       0 < before.commitIndex ->
         isSignatureAt newLog before.commitIndex = true)
@@ -1753,9 +1742,9 @@ theorem committedFromLeader_isSignature
 
 /-- State facts needed from the AppendEntries request handler in both phases. -/
 structure AppendRequestLocalPost
-    (before after : NodeState TxId)
-    (request : AppendEntriesRequest TxId)
-    (response : AppendEntriesResponse) : Prop where
+    (before after : NodeState Node TxId)
+    (request : AppendEntriesRequest Node TxId)
+    (response : AppendEntriesResponse Node) : Prop where
   roleUnchanged : after.role = before.role
   currentTermUnchanged : after.currentTerm = before.currentTerm
   sentIndexUnchanged : after.sentIndex = before.sentIndex
@@ -1842,9 +1831,9 @@ structure AppendRequestLocalPost
 
 /-- Every successful AppendEntries handler branch has the common local shape. -/
 theorem handleAppendEntriesRequestLocalPost
-    {before after : NodeState TxId}
-    {request : AppendEntriesRequest TxId}
-    {response : AppendEntriesResponse}
+    {before after : NodeState Node TxId}
+    {request : AppendEntriesRequest Node TxId}
+    {response : AppendEntriesResponse Node}
     (handled :
       handleAppendEntriesRequest? before request = some (after, response)) :
     AppendRequestLocalPost before after request response := by
@@ -2303,9 +2292,9 @@ theorem handleAppendEntriesRequestLocalPost
 
 /-- A node which is already a leader can only take a rejecting request branch. -/
 theorem handleAppendEntriesRequestLeaderUnchanged
-    {before after : NodeState TxId}
-    {request : AppendEntriesRequest TxId}
-    {response : AppendEntriesResponse}
+    {before after : NodeState Node TxId}
+    {request : AppendEntriesRequest Node TxId}
+    {response : AppendEntriesResponse Node}
     (leader : before.role = .leader)
     (handled :
       handleAppendEntriesRequest? before request = some (after, response)) :

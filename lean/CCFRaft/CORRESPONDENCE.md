@@ -26,8 +26,10 @@ active modules in the current tree.
 
 | Source concept                     | Lean representation                                            |
 | ---------------------------------- | -------------------------------------------------------------- |
-| `Servers`                          | `Node := Fin NODE_COUNT`, with `NODE_COUNT = 15`               |
-| Initial configuration              | Implicit `{0,1,2,3,4}` at projected index 0                    |
+| `Servers`                          | Abstract `Node` with `DecidableEq Node`                         |
+| Bounded tooling                    | `Node := Fin NODE_COUNT`, with `NODE_COUNT = 15`               |
+| Bootstrap                          | `Bootstrap Node` selects a configuration and member leader      |
+| Canonical bootstrap                | `{0,1,2,3,4}`, leader 0, at projected index 0                  |
 | Configuration                      | `Configuration` records derived from each node's physical log  |
 | `configurations`                   | `currentConfiguration` plus later `activeConfigurations` views |
 | `hasJoined`                        | Global `Finset Node`, initially the initial configuration      |
@@ -73,16 +75,27 @@ Global comparisons occur only in proof predicates.
 - AppendEntries uses
   `batchEnd = min (sentIndex + 1) leaderLog.length`: one entry when behind,
   or an empty heartbeat when caught up.
+- Initial roles and terms come from `Bootstrap`. Its leader starts as the
+  term-one leader, its other members start as term-one followers, and the node
+  store omits outsiders.
+- The `Bootstrap` parameter constructs `initialState` and the implicit
+  configuration. Runtime `State` does not store it.
 - A configuration change appends a current-term physical log entry, marks only
-  newly added nodes joined, and initializes their `sentIndex` to the old log
-  length. Other peer cursors are preserved. The target may be any nonempty
-  subset of the fixed node world.
+  newly added nodes joined, allocates fresh local state for them, and
+  initializes their `sentIndex` to the old log length. Other peer cursors are
+  preserved. The inductive invariant proves that allocated identities are
+  exactly the one-time join history. The target may be any nonempty finite set
+  of node identities.
 - Configuration 0 remains implicit. A node's current configuration is its
   latest reconfiguration at or before `commitIndex`; later log
   reconfigurations remain active and pending.
 - Timeout is available only to a node in its own active configuration union.
   RequestVote and AppendEntries sends are limited to the source's active
   configuration union.
+- At the raw receive-handler boundary, AppendEntries and RequestVote requests
+  may come from an unallocated sender. Responses from an unallocated sender are
+  consumed without changing local state. The transition system does not
+  generate these inbound messages from unallocated nodes.
 - Election support requires a strict majority in every active configuration
   known by the candidate.
 - Replication support at index `i` requires a strict majority in every active
@@ -182,7 +195,7 @@ deltas.
 - There is not yet a machine-checked semantics or bisimulation theorem between
   TLA+ and Lean.
 - Differential edge comparison is deferred.
-- The fixed-world projection has no mutable retirement state. A removed node
+- The model has no mutable retirement state. A removed node
   may remain a stale local leader, but active-union send/election guards and
   one-time `hasJoined` history constrain its reconfiguration behavior.
 - `RcvDropIgnoredMessage` and other stale/ignored message branches are deferred

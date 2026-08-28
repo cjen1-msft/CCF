@@ -21,29 +21,59 @@ check_hash() {
 
 if grep -R -n -E \
     '(^|[^[:alnum:]_])(sorry|admit)([^[:alnum:]_]|$)' \
-    CCFRaft/Model.lean CCFRaft/HandlerProofs.lean CCFRaft/Simulation.lean; then
+    CCFRaft/Model.lean CCFRaft/HandlerProofs.lean CCFRaft/Simulation.lean \
+    CCFRaft/Properties.lean CCFRaft/ReconfigurationPreservation.lean \
+    CCFRaft/Proofs.lean CCFRaft/BootstrapExamples.lean; then
   echo "executable reconfiguration sources contain a proof placeholder" >&2
   exit 1
 fi
 
-if grep -q "newConfiguration.card = INITIAL_CONFIGURATION_SIZE" \
-    CCFRaft/Model.lean; then
+if grep -n -E \
+    'def INITIAL_CONFIGURATION_SIZE|newConfiguration\.card = ' \
+    CCFRaft/Model.lean CCFRaft/Simulation.lean; then
   echo "ChangeConfiguration is restricted to the bootstrap cardinality" >&2
   exit 1
 fi
 
+grep -F "class Bootstrap (Node : Type) [DecidableEq Node] where" \
+  CCFRaft/Model.lean >/dev/null
+grep -F "structure State (Node TxId : Type) where" \
+  CCFRaft/Model.lean >/dev/null
+grep -F "structure NodeStore (Node TxId : Type) where" \
+  CCFRaft/Model.lean >/dev/null
+grep -F "entries : Finmap (fun _ : Node => NodeState Node TxId)" \
+  CCFRaft/Model.lean >/dev/null
+grep -F "def AllocatedNodesExactlyJoined (state : State Node TxId) : Prop :=" \
+  CCFRaft/Properties.lean >/dev/null
+grep -F "allocatedNodesExactlyJoined : AllocatedNodesExactlyJoined state" \
+  CCFRaft/Properties.lean >/dev/null
+grep -F "theorem changeConfiguration_addedNode_fresh" \
+  CCFRaft/ReconfigurationPreservation.lean >/dev/null
+if grep -n -F "Fintype Node" \
+    CCFRaft/Model.lean CCFRaft/HandlerProofs.lean \
+    CCFRaft/Properties.lean CCFRaft/ReconfigurationPreservation.lean; then
+  echo "canonical reconfiguration semantics require a finite node universe" >&2
+  exit 1
+fi
+python3 generalize_ccfraft_node_types.py --check
+grep -F "SCHEDULER_CONFIGURATION_TARGET_WIDTH" \
+  CCFRaft/Simulation.lean >/dev/null
+
 check_hash \
   CCFRaft/Model.lean \
-  5c51c0fd4f1e8257ce5bd385fef636f3b9835ad747f6c8e69b77feb560f685cc
+  9fac9537058dcbbb63ef2e42aece8eca3c69533655748c782fb6a4b572b97275
 check_hash \
   CCFRaft/HandlerProofs.lean \
-  14e75abe119294022fdca13ec943f4e81b2bc5ef320ccd2de722f8bfc5859911
+  0a3b3bcb5b216574034c51a8333123879a88a20a975a0c68335761cac53d2117
 check_hash \
   CCFRaft/Simulation.lean \
-  8f572bdfd13fcdd4335e86d6a127eda1a8208c427e20c28fa508e4f63724317d
+  343a211ac0dd543e4532d97674ba76c3ced2c1b96c8768b7110492a23b673d03
+check_hash \
+  CCFRaft/BootstrapExamples.lean \
+  362bcc5f1997503dac7b0314bade4c0f749d756423cac1e6d99e6f5c7c50ae71
 
 nice -n 10 ionice -c 3 lake build \
-  CCFRaft.Model CCFRaft.HandlerProofs CCFRaft.Simulation ccf-raft-simulator \
+  CCFRaft ccf-raft-simulator \
   >/dev/null
 
 actual="$(

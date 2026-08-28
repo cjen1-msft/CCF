@@ -16,12 +16,19 @@ namespace CCFRaft.Simulation
 
 /-- Number of transaction IDs available to the bounded simulator. -/
 def TX_COUNT : Nat := 64
+/--
+Default width proposed by the random reconfiguration scheduler. This is a
+search heuristic, not a model-validity or bootstrap-cardinality constraint.
+-/
+def SCHEDULER_CONFIGURATION_TARGET_WIDTH : Nat := 5
 /-- Finite transaction-ID type used only by simulation and replay. -/
 abbrev TxId := Fin TX_COUNT
 /-- Concrete finite state explored by the simulator. -/
-abbrev SimState := State TxId
+abbrev SimState := State Node TxId
 /-- Concrete finite action type explored by the simulator. -/
-abbrev SimAction := Action TxId
+abbrev SimAction := Action Node TxId
+
+variable [Bootstrap Node]
 
 /-- Action families used for coverage telemetry. -/
 inductive ActionFamily where
@@ -114,7 +121,7 @@ theorem materializeComplete
 /-- Package materialization and its completeness proof for the generic engine. -/
 def adapter :
     ExecutableTransitionSystem.SimulationAdapter
-      (system (TxId := TxId)) where
+      (system (Node := Node) (TxId := TxId)) where
   Choice
   materialize
   complete := materializeComplete
@@ -131,10 +138,8 @@ set_option maxHeartbeats 800000
 
 /-- Materialize finite function fields to keep long executable traces linear. -/
 def compactState (state : SimState) : SimState :=
-  let nodes := Array.ofFn state.nodes
   let network := Array.ofFn state.network
   { state with
-    nodes := fun node => nodes[node.val]'node.isLt
     network := fun node => network[node.val]'node.isLt }
 
 /-- Materializing the finite maps does not change the represented state. -/
@@ -144,8 +149,6 @@ theorem compactState_eq (state : SimState) :
   | mk nodes network submittedTxIds hasJoined =>
       simp only [compactState]
       congr 1
-      · funext node
-        simp
       · funext node
         simp
 
@@ -344,10 +347,10 @@ theorem candidateChoicesComplete
         · exact
             List.mem_map.mpr
               ⟨members, List.mem_sublists.mpr membersSublist, membersEq⟩
-        · simpa using enabled.2.1
+        · simpa using enabled.2.2.1
       refine
         ⟨.changeConfiguration source newConfiguration, ?_, rfl⟩
-      simp [candidateChoices, candidateChoicesFor, represented, enabled.1]
+      simp [candidateChoices, candidateChoicesFor, represented, enabled.2.1]
   | signCommittableMessages node =>
       refine ⟨.signCommittableMessages node, ?_, rfl⟩
       simp [candidateChoices, candidateChoicesFor]
@@ -383,7 +386,7 @@ def enabledChoices (state : SimState) : List Choice :=
 /-- The next disjoint five-node configuration not used by this execution. -/
 def nextFreshConfiguration (state : SimState) : Finset Node :=
   ((allNodes.filter fun node => node ∉ state.hasJoined).take
-    INITIAL_CONFIGURATION_SIZE).toFinset
+    SCHEDULER_CONFIGURATION_TARGET_WIDTH).toFinset
 
 /--
 Keep random exploration responsive by proposing one fresh configuration.
@@ -573,6 +576,14 @@ def renderAction : SimAction -> String
   | .becomeLeader node =>
       s!"leader,{node.val}"
 
+/-- Serialize the model parameter required to replay the following actions. -/
+def renderBootstrap (bootstrap : Bootstrap Node) : String :=
+  String.intercalate ","
+    ("bootstrap" :: toString bootstrap.leader.val ::
+      (allNodes.filter fun node =>
+        Membership.mem bootstrap.configuration node).map fun node =>
+          toString node.val)
+
 /-- Parse a natural number only when it lies below a given bound. -/
 def parseBounded
     (bound : Nat)
@@ -642,10 +653,62 @@ def parseAction (line : String) : Option SimAction := do
       some (.becomeLeader node)
   | _ => none
 
-/-- Write semantic actions in execution order to a replayable trace. -/
-def writeTrace (path : System.FilePath) (actions : List SimAction) : IO Unit :=
+/-- Parse a replay header into a valid bootstrap parameter. -/
+def parseBootstrap (line : String) : Option (Bootstrap Node) := do
+  match line.splitOn "," with
+  | "bootstrap" :: rawLeader :: rawMembers =>
+      let leader <- nodeOfString rawLeader
+      let members <- rawMembers.mapM nodeOfString
+      let configuration := members.toFinset
+      if leaderMember : Membership.mem configuration leader then
+        some {
+          configuration
+          leader
+          leader_mem := leaderMember
+        }
+      else
+        none
+  | _ => none
+
+/-- A replay file carries its bootstrap parameter and ordered actions. -/
+structure ReplayTrace where
+  bootstrap : Bootstrap Node
+  actions : List SimAction
+
+/--
+Parse an optional bootstrap header followed by actions. Headerless traces use
+the canonical default bootstrap for backward compatibility.
+-/
+def parseReplayLines (lines : List String) : Except String ReplayTrace := do
+  let (bootstrap, actionLines) <-
+    match lines with
+    | [] => pure (defaultBootstrap, [])
+    | first :: remaining =>
+        match first.splitOn "," with
+        | "bootstrap" :: _ =>
+            let some bootstrap := parseBootstrap first
+              | throw s!"invalid bootstrap trace line: {first}"
+            pure (bootstrap, remaining)
+        | _ => pure (defaultBootstrap, lines)
+  let actions <- actionLines.mapM fun line => do
+    let some action := parseAction line
+      | throw s!"invalid trace line: {line}"
+    pure action
+  pure { bootstrap, actions }
+
+/-- Write a self-contained replay trace in action execution order. -/
+def writeReplayTrace
+    (path : System.FilePath)
+    (bootstrap : Bootstrap Node)
+    (actions : List SimAction) :
+    IO Unit :=
   IO.FS.writeFile path
-    (String.intercalate "\n" (actions.reverse.map renderAction) ++ "\n")
+    (String.intercalate "\n"
+      (renderBootstrap bootstrap :: actions.map renderAction) ++ "\n")
+
+/-- Write reverse-accumulated simulator actions as a self-contained trace. -/
+def writeTrace (path : System.FilePath) (actions : List SimAction) : IO Unit :=
+  writeReplayTrace path (inferInstanceAs (Bootstrap Node)) actions.reverse
 
 /-- Replay semantic actions from the initial state while checking invariants. -/
 def replayActions
@@ -653,7 +716,7 @@ def replayActions
     Except String SimState :=
   actions.foldlM (init := (initialState : SimState)) fun state action => do
     let some nextState :=
-      (system (TxId := TxId)).applyAction state action
+      (system (Node := Node) (TxId := TxId)).applyAction state action
       | throw s!"disabled action: {renderAction action}"
     let nextState := compactState nextState
     if !stateChecks nextState then
@@ -666,13 +729,14 @@ def replayActions
 def replayFile (path : System.FilePath) : IO UInt32 := do
   let content <- IO.FS.readFile path
   let lines := content.splitOn "\n" |>.filter (· != "")
-  let mut actions := []
-  for line in lines do
-    let some action := parseAction line
-      | IO.eprintln s!"invalid trace line: {line}"
+  let trace <-
+    match parseReplayLines lines with
+    | .ok trace => pure trace
+    | .error message =>
+        IO.eprintln message
         return 2
-    actions := actions ++ [action]
-  match replayActions actions with
+  let _ : Bootstrap Node := trace.bootstrap
+  match replayActions trace.actions with
   | .ok state =>
       let commitIndices :=
         allNodes.map fun node => (state.nodes node).commitIndex
@@ -684,7 +748,8 @@ def replayFile (path : System.FilePath) : IO UInt32 := do
           (currentConfiguration (state.nodes node)).index
       let leaderCurrentConfigurations :=
         leaderNodes.map fun node =>
-          let current := currentConfiguration (state.nodes node)
+          let current :=
+            currentConfiguration (state.nodes node)
           (node.val,
             (allNodes.filter fun member => member ∈ current.nodes).map Fin.val)
       let activeConfigurationIndices :=
@@ -693,7 +758,7 @@ def replayFile (path : System.FilePath) : IO UInt32 := do
       let joined :=
         (allNodes.filter fun node => node ∈ state.hasJoined).map Fin.val
       IO.println
-        s!"replayed {actions.length} arbitrary-term Raft actions; max term={
+        s!"replayed {trace.actions.length} arbitrary-term Raft actions; max term={
           (allNodes.map fun node =>
             (state.nodes node).currentTerm).foldl max 0}; commit indices={
           repr commitIndices}; leaders={repr leaders}; current configuration indices={
@@ -737,7 +802,7 @@ partial def simulateLoop
   let some action := materialize state choice
     | simulateLoop deadlineMs maxDepth generator state depth trace
         { telemetry with rejected := telemetry.rejected + 1 }
-  match (system (TxId := TxId)).applyAction state action with
+  match (system (Node := Node) (TxId := TxId)).applyAction state action with
   | none =>
       simulateLoop deadlineMs maxDepth generator state depth trace
         { telemetry with rejected := telemetry.rejected + 1 }
