@@ -1,0 +1,1233 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>CCF Raft trace-validation pipeline</title>
+  <style>
+    :root {
+      --bg: #07111f;
+      --panel: #0d1a2c;
+      --panel-2: #122238;
+      --line: #28415c;
+      --text: #e8f0f7;
+      --muted: #9eb0c2;
+      --cyan: #35c9e6;
+      --cyan-soft: #102f43;
+      --green: #48d597;
+      --amber: #f0b54a;
+      --red: #ff6b78;
+      --navy: #091728;
+      --max: 1500px;
+      --radius: 10px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+    }
+    a { color: var(--cyan); text-underline-offset: 3px; }
+    button, input, select { font: inherit; }
+    button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
+      outline: 2px solid var(--cyan);
+      outline-offset: 3px;
+    }
+    code, pre, .mono {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+    code {
+      padding: .12rem .28rem;
+      border-radius: 4px;
+      background: #081525;
+      color: #ccebf3;
+    }
+    pre {
+      margin: 0;
+      padding: 1rem;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #06101c;
+      color: #d7e8f2;
+      white-space: pre-wrap;
+    }
+    h1, h2, h3, h4 { margin: 0; line-height: 1.2; }
+    h1 { max-width: 1000px; font-size: clamp(2rem, 5vw, 4.8rem); letter-spacing: -.045em; }
+    h2 { font-size: clamp(1.45rem, 2.5vw, 2.2rem); }
+    h3 { font-size: 1.05rem; }
+    p { margin: .65rem 0 0; }
+    .wrap { width: min(calc(100% - 2rem), var(--max)); margin-inline: auto; }
+    .skip {
+      position: absolute;
+      left: -10000px;
+      top: auto;
+    }
+    .skip:focus {
+      left: 1rem;
+      top: 1rem;
+      z-index: 100;
+      padding: .65rem;
+      background: var(--text);
+      color: var(--bg);
+    }
+    header {
+      padding: 1rem 0 4rem;
+      border-bottom: 1px solid var(--line);
+      background: var(--navy);
+    }
+    nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 5rem;
+      color: var(--muted);
+      font-size: .9rem;
+    }
+    nav .links { display: flex; flex-wrap: wrap; gap: 1rem; }
+    .eyebrow {
+      margin-bottom: .8rem;
+      color: var(--cyan);
+      font: 700 .76rem/1.2 "SFMono-Regular", Consolas, monospace;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    .lede {
+      max-width: 980px;
+      margin-top: 1.2rem;
+      color: #c3d0dc;
+      font-size: clamp(1rem, 1.8vw, 1.28rem);
+    }
+    .result-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: .8rem 1.2rem;
+      margin-top: 1.6rem;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 2rem;
+      padding: .32rem .7rem;
+      border: 1px solid #2d8b66;
+      border-radius: 999px;
+      background: #0c2a24;
+      color: var(--green);
+      font: 700 .78rem/1 "SFMono-Regular", Consolas, monospace;
+    }
+    .answer { color: var(--text); font-weight: 650; }
+    .time-strip {
+      display: grid;
+      grid-template-columns: 1.1fr 4.2fr .9fr 70fr;
+      min-height: 3.15rem;
+      margin-top: 2rem;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+    }
+    .time-strip div {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      padding: .55rem .7rem;
+      border-right: 1px solid var(--bg);
+      font-size: .78rem;
+      white-space: nowrap;
+    }
+    .time-strip div:last-child { border: 0; }
+    .time-strip .formula, .time-strip .decode { background: var(--cyan-soft); }
+    .time-strip .solver { background: #153344; }
+    .time-strip .lean { background: #3a2b18; color: #ffd98d; }
+    .time-note {
+      margin-top: .55rem;
+      color: var(--muted);
+      font-size: .84rem;
+    }
+    main { padding: 0 0 5rem; }
+    section {
+      padding: 4.5rem 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .section-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(280px, 560px);
+      gap: 2rem;
+      align-items: end;
+      margin-bottom: 2rem;
+    }
+    .section-head p { color: var(--muted); }
+    .orientation-grid, .facts-grid, .claims-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1rem;
+    }
+    .card {
+      padding: 1.15rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+    }
+    .card .value { margin-top: .5rem; color: var(--cyan); font-size: 1.45rem; font-weight: 750; }
+    .card p { color: var(--muted); font-size: .9rem; }
+    .note {
+      margin-top: 1rem;
+      padding: 1rem 1.1rem;
+      border-left: 3px solid var(--amber);
+      background: #261d11;
+      color: #ead9b7;
+    }
+    .pipeline-layout {
+      display: grid;
+      grid-template-columns: minmax(260px, .78fr) minmax(0, 1.7fr);
+      gap: 1.2rem;
+      align-items: start;
+    }
+    .stage-list {
+      display: grid;
+      gap: .55rem;
+    }
+    .stage-button {
+      display: grid;
+      grid-template-columns: 2.4rem 1fr auto;
+      gap: .75rem;
+      width: 100%;
+      padding: .9rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+    }
+    .stage-button:hover, .stage-button[aria-selected="true"] {
+      border-color: var(--cyan);
+      background: var(--cyan-soft);
+    }
+    .stage-number { color: var(--cyan); font: 700 .8rem/1.4 monospace; }
+    .stage-button small { display: block; margin-top: .2rem; color: var(--muted); }
+    .stage-arrow { align-self: center; color: var(--cyan); }
+    .stage-detail {
+      position: sticky;
+      top: 1rem;
+      min-height: 520px;
+      padding: 1.35rem;
+      border: 1px solid var(--cyan);
+      border-radius: var(--radius);
+      background: var(--panel);
+    }
+    .stage-detail .summary { color: #bed0dd; font-size: 1.05rem; }
+    .stage-fields {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: .8rem;
+      margin-top: 1.2rem;
+    }
+    .stage-field {
+      padding: .9rem;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel-2);
+    }
+    .stage-field dt {
+      color: var(--cyan);
+      font: 700 .72rem/1.2 monospace;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .stage-field dd { margin: .35rem 0 0; color: #d2dde6; }
+    .stage-field.failure dt { color: var(--red); }
+    .stage-field.authority dt { color: var(--green); }
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(9, minmax(110px, 1fr));
+      gap: .5rem;
+      overflow-x: auto;
+      padding-bottom: .4rem;
+    }
+    .flow div {
+      position: relative;
+      min-height: 90px;
+      padding: .8rem;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+    }
+    .flow div::after {
+      content: ">";
+      position: absolute;
+      right: -.48rem;
+      top: 34%;
+      z-index: 2;
+      color: var(--cyan);
+      font-weight: 800;
+    }
+    .flow div:last-child::after { content: ""; }
+    .flow strong { display: block; font-size: .84rem; }
+    .flow small { color: var(--muted); }
+    .formula-widget {
+      display: grid;
+      grid-template-columns: 1.2fr .8fr;
+      gap: 1rem;
+    }
+    .formula-box {
+      min-height: 255px;
+      padding: 1.25rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+    }
+    .segmented {
+      display: inline-flex;
+      gap: .25rem;
+      padding: .2rem;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--bg);
+    }
+    .segmented button, .term-button {
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .segmented button { padding: .45rem .7rem; }
+    .segmented button[aria-pressed="true"], .term-button[aria-pressed="true"] {
+      background: var(--cyan-soft);
+      color: var(--cyan);
+    }
+    .formula-render {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .4rem;
+      align-items: center;
+      min-height: 150px;
+      padding-top: 1.2rem;
+      font-family: "SFMono-Regular", Consolas, monospace;
+    }
+    .term-button {
+      padding: .36rem .48rem;
+      border: 1px solid var(--line);
+    }
+    .term-detail {
+      padding: 1.2rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel-2);
+    }
+    .term-detail p { color: var(--muted); }
+    .event-demo {
+      display: grid;
+      grid-template-columns: minmax(300px, .95fr) minmax(360px, 1.4fr);
+      gap: 1rem;
+      align-items: start;
+    }
+    .event-list { display: grid; gap: .35rem; }
+    .event-button {
+      display: grid;
+      grid-template-columns: 4.8rem 1fr auto;
+      gap: .65rem;
+      width: 100%;
+      padding: .6rem .7rem;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel);
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+    }
+    .event-button:hover, .event-button[aria-selected="true"] {
+      border-color: var(--cyan);
+      background: var(--cyan-soft);
+    }
+    .event-button .event-num { color: var(--cyan); font: 700 .8rem monospace; }
+    .event-button small { color: var(--muted); }
+    .lanes {
+      min-height: 420px;
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+    }
+    .lane {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: .6rem;
+      margin-bottom: .75rem;
+    }
+    .lane-label { padding-top: .45rem; color: var(--muted); font: 700 .75rem monospace; }
+    .lane-actions { display: flex; flex-wrap: wrap; gap: .35rem; }
+    .action-chip {
+      padding: .4rem .55rem;
+      border: 1px solid #26708a;
+      border-radius: 6px;
+      background: var(--cyan-soft);
+      color: #c8f2fa;
+      font: 700 .76rem monospace;
+    }
+    .action-chip.synthetic { border-color: var(--amber); background: #2b2113; color: #f7d58f; }
+    .demo-explain {
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--line);
+      color: #c9d6e0;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .7rem;
+      margin-bottom: .8rem;
+    }
+    input[type="search"], select {
+      min-height: 2.35rem;
+      padding: .4rem .65rem;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel);
+      color: var(--text);
+    }
+    input[type="search"] { min-width: min(100%, 330px); }
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+    }
+    table { width: 100%; border-collapse: collapse; background: var(--panel); }
+    th, td {
+      padding: .72rem .8rem;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #102037;
+      color: #c7d8e5;
+      font-size: .78rem;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    th button {
+      width: 100%;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    tbody tr:hover { background: #11263e; }
+    td { color: #d1dce5; font-size: .9rem; }
+    .empty { padding: 1rem; color: var(--muted); }
+    details {
+      margin-top: 1rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+    }
+    summary { padding: .85rem 1rem; color: var(--cyan); cursor: pointer; }
+    details > div { padding: 0 1rem 1rem; color: #c9d5df; }
+    .failure-matrix td:nth-child(3) { font-weight: 700; }
+    .status-green { color: var(--green); }
+    .status-amber { color: var(--amber); }
+    .status-red { color: var(--red); }
+    .claim-step {
+      position: relative;
+      padding: 1rem;
+      border-top: 3px solid var(--line);
+      background: var(--panel);
+    }
+    .claim-step.established { border-color: var(--green); }
+    .claim-step.partial { border-color: var(--amber); }
+    .claim-step.absent { border-color: var(--red); }
+    .claim-step .state { margin-top: .55rem; font: 700 .74rem monospace; text-transform: uppercase; }
+    .claim-step.established .state { color: var(--green); }
+    .claim-step.partial .state { color: var(--amber); }
+    .claim-step.absent .state { color: var(--red); }
+    .two-col {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1rem;
+    }
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: .8rem;
+      margin-top: 1rem;
+    }
+    .meta dl { margin: 0; padding: .8rem; border: 1px solid var(--line); background: var(--panel); }
+    .meta dt { color: var(--muted); font-size: .75rem; text-transform: uppercase; }
+    .meta dd { margin: .25rem 0 0; overflow-wrap: anywhere; font: .78rem monospace; }
+    .hash { overflow-wrap: anywhere; color: var(--muted); font: .75rem monospace; }
+    footer { padding: 2rem 0; color: var(--muted); font-size: .82rem; }
+    .print-only { display: none; }
+    @media (max-width: 1000px) {
+      .orientation-grid, .facts-grid, .claims-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .pipeline-layout, .formula-widget, .event-demo { grid-template-columns: 1fr; }
+      .stage-detail { position: static; min-height: 0; }
+      .section-head { grid-template-columns: 1fr; }
+      .time-strip { grid-template-columns: 1.1fr 4.2fr .9fr 12fr; }
+    }
+    @media (max-width: 650px) {
+      nav { align-items: flex-start; }
+      nav .links { display: none; }
+      .orientation-grid, .facts-grid, .claims-grid, .two-col, .meta,
+      .stage-fields { grid-template-columns: 1fr; }
+      .time-strip { display: block; }
+      .time-strip div { border-right: 0; border-bottom: 1px solid var(--bg); }
+      section { padding: 3rem 0; }
+      .lane { grid-template-columns: 1fr; }
+    }
+    @media print {
+      :root { color-scheme: light; }
+      body { background: white; color: #111; font-size: 10pt; }
+      header, .card, .stage-button, .stage-detail, .formula-box, .term-detail,
+      .lanes, table, details, .claim-step, .meta dl, pre {
+        background: white !important;
+        color: #111 !important;
+      }
+      a { color: #075d73; }
+      nav, .controls, .segmented { display: none !important; }
+      section { padding: 1.2rem 0; break-inside: avoid; }
+      .wrap { width: 100%; }
+      .pipeline-layout, .formula-widget, .event-demo, .two-col {
+        display: block;
+      }
+      .stage-list { display: none; }
+      .stage-detail { position: static; min-height: 0; }
+      .print-only { display: block; }
+      .table-wrap { overflow: visible; }
+      th { position: static; }
+      .hash { color: #333; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to report</a>
+  <header>
+    <div class="wrap">
+      <nav aria-label="Report sections">
+        <span class="mono">CCF / Raft / trace validation</span>
+        <div class="links">
+          <a href="#pipeline">Pipeline</a>
+          <a href="#reductions">Reductions</a>
+          <a href="#formula">Formula</a>
+          <a href="#lean-check">Lean check</a>
+          <a href="#run">Run it</a>
+          <a href="#sources">Source map</a>
+        </div>
+      </nav>
+      <div class="eyebrow">Current prototype report</div>
+      <h1>One real trace, reduced once, solved cheaply, checked canonically</h1>
+      <p class="lede">Follow one real 53-event CCF Raft scenario through preprocessing, deterministic reduction, cheap bounded SMT solving, witness decoding, and canonical Lean checking, showing exactly what each stage contributes and what remains assumed.</p>
+      <div class="result-row">
+        <span class="badge" id="resultBadge">VALID_SEGMENT_CHEAP_FOOTPRINT</span>
+        <span class="answer">The 53-event segment has a bounded SAT explanation that replays through the canonical Lean transition system.</span>
+      </div>
+      <div class="time-strip" aria-label="Approximate measured stage durations">
+        <div class="formula">Formula<br>1.1 s</div>
+        <div class="solver">cvc5<br>4.2 s</div>
+        <div class="decode">Decode<br>0.9 s</div>
+        <div class="lean">Generated Lean compile and check<br>about 70 s</div>
+      </div>
+      <p class="time-note">Useful recurring cost before generated-checker compilation is about 6.2 seconds. The long bar is compilation of witness-specific source, not 43-step replay.</p>
+    </div>
+  </header>
+
+  <main id="main">
+    <section id="orientation">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <div class="eyebrow">Orientation</div>
+            <h2>Read the result at the right level</h2>
+          </div>
+          <p>The pipeline finds one bounded explanation, then asks the canonical Lean model to replay it. It does not prove that the segment starts in a reachable state.</p>
+        </div>
+        <div class="orientation-grid">
+          <article class="card"><h3>Implementation input</h3><div class="value">53 events</div><p>The real <code>tests/raft_scenarios/replicate</code> fixture produces the preprocessed NDJSON trace.</p></article>
+          <article class="card"><h3>Deterministic map</h3><div class="value">22 to 43</div><p>Twenty-two reductions consume every event once and propose 43 canonical action templates.</p></article>
+          <article class="card"><h3>Bounded search</h3><div class="value">44 states</div><p>cvc5 selects S0 through S43, actions, queue contents, log cells, and one transaction representative.</p></article>
+          <article class="card"><h3>Canonical gate</h3><div class="value">558 fields</div><p>Lean checks every projected field, 43 transitions, 43 edges, and state checks at S0 and after every action.</p></article>
+        </div>
+        <div class="note"><strong>Two jobs, two standards.</strong> Preprocessing, reduction, and decode transform data. SMT tests satisfiability of the current bounded lowering. Canonical Lean replay validates the decoded segment against <code>CCFRaft.Model</code>.</div>
+      </div>
+    </section>
+
+    <section id="end-to-end">
+      <div class="wrap">
+        <div class="section-head">
+          <div><div class="eyebrow">End-to-end pipeline</div><h2>Narrow each claim as data moves</h2></div>
+          <p>Each arrow changes representation. Only the cvc5 and Lean stages make semantic claims, and those claims have different authority.</p>
+        </div>
+        <div class="flow" aria-label="Pipeline overview">
+          <div><strong>Scenario</strong><small>Real C++ execution</small></div>
+          <div><strong>Preprocess</strong><small>53 NDJSON events</small></div>
+          <div><strong>Reduce</strong><small>43 action templates</small></div>
+          <div><strong>Footprint</strong><small>2 SMT nodes</small></div>
+          <div><strong>Formula</strong><small>Existential bounded state</small></div>
+          <div><strong>cvc5</strong><small>SAT model</small></div>
+          <div><strong>Decode</strong><small>44-state witness</small></div>
+          <div><strong>Lean</strong><small>Canonical replay</small></div>
+          <div><strong>Classify</strong><small>Valid segment</small></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="pipeline">
+      <div class="wrap">
+        <div class="section-head">
+          <div><div class="eyebrow">Clickable stage explorer</div><h2>Inspect what each stage adds</h2></div>
+          <p>Choose a stage. The detail pane states its input, operation, output, authority, timing, and failure meaning.</p>
+        </div>
+        <div class="pipeline-layout">
+          <div class="stage-list" id="stageList" role="tablist" aria-label="Pipeline stages"></div>
+          <article class="stage-detail" id="stageDetail" role="tabpanel" tabindex="0"></article>
+        </div>
+        <div class="print-only" id="printStages"></div>
+      </div>
+    </section>
+
+    <section id="reductions">
+      <div class="wrap">
+        <div class="section-head">
+          <div><div class="eyebrow">Event-to-action reductions</div><h2>One C++ event need not equal one Lean action</h2></div>
+          <p>A helper event can add no action. One aggregate packet can add several actions. The certificate records both cases.</p>
+        </div>
+        <div class="event-demo">
+          <div>
+            <h3>C++ events 9 through 20</h3>
+            <p class="time-note">Use the event list to highlight its Lean action or action span.</p>
+            <div class="event-list" id="eventList"></div>
+          </div>
+          <div class="lanes" id="eventDetail" aria-live="polite"></div>
+        </div>
+        <details open>
+          <summary>Why span start and aggregate fields differ</summary>
+          <div>
+            <p>Event 9 observes one C++ batch for absolute indices 1 through 3. Lean sends one entry per action, so the batch expands to append ends 1, 2, and 3. Event 11 similarly expands one aggregate follower receive into three receives. Event 20 expands the aggregate response into response receives for 1, 2, and 3.</p>
+            <p>The C++ event's state fields describe the state before the aggregate operation, so they constrain the span start. Packet range, destination, and aggregate result fields describe the batch as a whole, so they constrain all actions or the span end. Helper records such as <code>execute_append_entries_sync</code>, <code>commit</code>, and <code>send_append_entries_response</code> remain assertions inside the owning receive. They do not invent extra model actions.</p>
+          </div>
+        </details>
+        <h3 style="margin-top:2rem">All certificate reductions</h3>
+        <div class="controls">
+          <label><span class="skip">Filter reductions</span><input id="reductionFilter" type="search" placeholder="Filter name, event, action, exception"></label>
+          <label><span class="skip">Filter reduction type</span><select id="reductionType"><option value="all">All mappings</option><option value="expands">Expands actions</option><option value="contracts">Helper or assertion heavy</option><option value="equal">Equal event and action count</option></select></label>
+        </div>
+        <div class="table-wrap">
+          <table id="reductionTable">
+            <thead><tr>
+              <th><button data-key="reduction">Reduction</button></th>
+              <th><button data-key="name">Name</button></th>
+              <th><button data-key="eventLabel">Events</button></th>
+              <th><button data-key="actionLabel">Actions</button></th>
+              <th><button data-key="delta">Delta</button></th>
+              <th><button data-key="summary">Operation</button></th>
+              <th><button data-key="exceptions">Exceptions</button></th>
+            </tr></thead>
+            <tbody><tr><td colspan="7">Loading reductions...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="footprint">
+      <div class="wrap">
+        <div class="section-head">
+          <div><div class="eyebrow">Cheap bounded state</div><h2>Keep the sequence, shrink the world</h2></div>
+          <p>The cheap experiment retains all 44 states and 43 actions. It removes unobserved node and lane dimensions from SMT.</p>
+        </div>
+        <div class="facts-grid">
+          <article class="card"><h3>Nodes</h3><div class="value">0 and 1</div><p>Nodes 2 through 14 are absent in SMT. The canonical checker later supplies fixed inert states.</p></article>
+          <article class="card"><h3>Logs</h3><div class="value">7 slots</div><p>Both SMT nodes have physical log slots 1 through 7.</p></article>
+          <article class="card"><h3>Queues</h3><div class="value">2 x 4</div><p>Only lanes 0 to 1 and 1 to 0 exist, each with capacity four.</p></article>
+          <article class="card"><h3>Values</h3><div class="value">2 configs + 1 tx</div><p>Only {0}, {0,1}, and one unknown <code>Fin 64</code> transaction representative occur.</p></article>
+        </div>
+        <div class="note">This footprint is hardcoded for the experiment. A bounded UNSAT result can mean that the footprint excluded a valid completion, so the pipeline reports <code>INCONCLUSIVE_ENCODING</code>.</div>
+      </div>
+    </section>
+
+    <section id="formula">
+      <div class="wrap">
+        <div class="section-head">
+          <div><div class="eyebrow">Existential formula</div><h2>Find one complete bounded explanation</h2></div>
+          <p>The formula chooses a start state and every hidden value. Observations and bounded transition equations constrain those choices.</p>
+        </div>
+        <div class="formula-widget">
+          <div class="formula-box">
+            <div class="segmented" aria-label="Formula display mode">
+              <button id="plainMode" type="button" aria-pressed="true">Plain English</button>
+              <button id="formalMode" type="button" aria-pressed="false">Formal shape</button>
+            </div>
+            <div class="formula-render" id="formulaRender"></div>
+          </div>
+          <aside class="term-detail" id="termDetail" aria-live="polite"></aside>
+        </div>
+        <details>
+          <summary>Current lowering versus long-term proved lowering</summary>
+          <div>
+            <p>The current generator emits a hand-maintained bounded encoding. Lean does not prove that this formula is equivalent to <code>CCFRaft.Model</code>. SAT therefore supplies a candidate that Lean must check. UNSAT cannot reject the implementation trace.</p>
+            <p>The long-term design needs a proved lowering or a proved automatic footprint extraction and lowering path. That future proof is separate from this prototype result.</p>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section id="witness">
+      <div class="wrap">
+        <div class="section-head">
+          <div><div class="eyebrow">SAT witness</div><h2>Decode solver values before trusting them</h2></div>
+          <p>cvc5 returns SAT. The decoder materializes every state, action, log, queue, and observed field in a JSON witness.</p>
+        </div>
+        <div class="two-col">
+          <article class="card">
+            <h3>What cvc5 selected</h3>
+            <p>The unknown transaction representative is <code>1 : Fin 64</code>. S0 has node 0 as term-2 leader with log length 2 and commit 0. Node 1 is inert in the cheap world. The model fills all state and queue values through S43.</p>
+          </article>
+          <article class="card">
+            <h3>Where the witness ends</h3>
+            <p>At S43, nodes 0 and 1 both have log length 7 and commit index 7. Both cheap queues are empty. The canonical completion later checks all 15 destination queues as drained.</p>
+          </article>
+        </div>
+        <div class="note">SAT means that the generated bounded formula has a model. The SAT result alone does not mean that <code>system.applyAction</code> accepts the decoded actions.</div>
+      </div>
+    </section>
+
+    <section id="lean-check">
+      <div class="wrap">
+        <div class="section-head">
+          <div><div class="eyebrow">Canonical Lean check</div><h2>Replay through the source of semantic authority</h2></div>
+          <p>The checker expands two SMT nodes to <code>Node (Fin 15)</code>, fixes nodes 2 through 14 as inert, and runs the canonical transition system.</p>
+        </div>
+        <div class="facts-grid">
+          <article class="card"><h3>Entry</h3><div class="value">S0 checked</div><p><code>stateChecks</code> passes, but S0 remains an arbitrary existential segment entry.</p></article>
+          <article class="card"><h3>Transitions</h3><div class="value">43 + 43</div><p>All 43 <code>system.applyAction</code> calls succeed. All 43 <code>edgeChecks</code> pass.</p></article>
+          <article class="card"><h3>Observations</h3><div class="value">53 / 558</div><p>All events pass across 47 point checkpoints and six spans. Zero projected fields remain unchecked.</p></article>
+          <article class="card"><h3>Final state</h3><div class="value">7 / 7</div><p>Both active logs and commits end at 7. All 15 destination queues are empty.</p></article>
+        </div>
+        <div class="note"><strong>Current checker shape.</strong> The prototype writes 4,298 lines and 382,143 bytes of witness-specific Lean source. About 70 seconds is compilation and checking of that generated source, not replay-only time. Profiling points to the six generated span functions, especially events 9 and 11. The intended generic precompiled checker reads witness data without recompiling these declarations.</div>
+        <details>
+          <summary>What the Lean check does not prove</summary>
+          <div>
+            <p>The checker does not prove <code>Reachable S0</code>. It also does not construct the proof-only histories required by <code>SystemInductiveInvariant S0</code>. Those missing premises prevent the valid segment from becoming a reachable-safety theorem.</p>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section id="failure-paths">
+      <div class="wrap">
+        <div class="section-head">
+          <div><div class="eyebrow">Failure paths</div><h2>Classify failure at the stage that owns it</h2></div>
+          <p>A negative bounded result is not an implementation-trace rejection. A rejected SAT witness points to the encoding.</p>
+        </div>
+        <div class="table-wrap">
+          <table class="failure-matrix">
+            <thead><tr><th>Case</th><th>Meaning</th><th>Classification</th><th>Next evidence</th></tr></thead>
+            <tbody>
+              <tr><td>Unmapped event</td><td>The deterministic grammar cannot consume the current trace exactly once.</td><td class="status-red">Reducer failure</td><td>Fix or extend the correspondence grammar. Do not invoke SMT.</td></tr>
+              <tr><td>SAT</td><td>The bounded formula has at least one model.</td><td class="status-amber">SAT pending canonical check</td><td>Decode and replay the witness.</td></tr>
+              <tr><td>Bounded UNSAT</td><td>No model exists inside this lowering and hardcoded footprint.</td><td class="status-amber">INCONCLUSIVE_ENCODING</td><td>Do not call the trace invalid. Prove completeness or enlarge the encoding.</td></tr>
+              <tr><td>unknown or timeout</td><td>The solver did not establish SAT or UNSAT.</td><td class="status-amber">INCONCLUSIVE_ENCODING</td><td>Inspect solver limits and formula shape.</td></tr>
+              <tr><td>SAT witness rejected</td><td>Canonical <code>applyAction</code>, checks, or observations reject decoded values.</td><td class="status-red">Encoding bug</td><td>Fix the lowering, decoder, or correspondence data.</td></tr>
+              <tr><td>Valid segment</td><td>SAT witness passes every canonical segment check.</td><td class="status-green">VALID_SEGMENT_CHEAP_FOOTPRINT</td><td>Keep reachability and invariant claims separate.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <details>
+          <summary>Concrete negative control: commit violation</summary>
+          <div>
+            <p>Event 53 observes node 0 at commit index 7 before the final response receive. The mutation changes that checkpoint to commit index 6 at S42 while retaining action 40 <code>advanceCommitIndex</code> and actions 41 and 42 for the final append and receive. cvc5 returns UNSAT. The test proves that the bounded formula notices this in-domain contradiction. It does not prove that every possible commit violation is impossible in the full model.</p>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section id="timing">
+      <div class="wrap">
+        <div class="section-head">
+          <div><div class="eyebrow">Timing and size</div><h2>The cheap footprint removes solver cost, not generated-source cost</h2></div>
+          <p>Filter and sort the live benchmark comparison. Time values use milliseconds for sorting even when the table shows seconds.</p>
+        </div>
+        <div class="controls">
+          <label><span class="skip">Filter benchmark rows</span><input id="timingFilter" type="search" placeholder="Filter metric or ratio"></label>
+          <label><span class="skip">Filter benchmark kind</span><select id="timingKind"><option value="all">All metrics</option><option value="time">Time</option><option value="size">Size</option></select></label>
+        </div>
+        <div class="table-wrap">
+          <table id="timingTable">
+            <thead><tr>
+              <th><button data-key="metric">Metric</button></th>
+              <th><button data-key="cheap">Cheap</button></th>
+              <th><button data-key="full">Naive full</button></th>
+              <th><button data-key="ratio">Comparison</button></th>
+            </tr></thead>
+            <tbody><tr><td colspan="4">Loading benchmark...</td></tr></tbody>
+          </table>
+        </div>
+        <div class="meta">
+          <dl><dt>Solver-only runs</dt><dd>10</dd></dl>
+          <dl><dt>Distribution</dt><dd>min 3510 / median 3857 / p95 4661 / max 4661 ms</dd></dl>
+          <dl><dt>Recurring before Lean compile</dt><dd>about 6.2 s</dd></dl>
+        </div>
+      </div>
+    </section>
+
+    <section id="claims">
+      <div class="wrap">
+        <div class="section-head">
+          <div><div class="eyebrow">Claims and non-claims</div><h2>Stop at valid segment</h2></div>
+          <p>The claim ladder shows which evidence exists now and what remains outside this prototype.</p>
+        </div>
+        <div class="claims-grid">
+          <article class="claim-step established"><h3>Preprocessed trace</h3><p>Exactly 53 real scenario events with command context.</p><div class="state">Established</div></article>
+          <article class="claim-step established"><h3>Reducer coverage</h3><p>Every event is consumed once across 22 reductions and 53 observations.</p><div class="state">Established</div></article>
+          <article class="claim-step partial"><h3>Bounded SMT</h3><p>A SAT explanation exists in the hardcoded two-node footprint.</p><div class="state">Established only for this encoding</div></article>
+          <article class="claim-step established"><h3>Canonical segment</h3><p>All 43 decoded actions and 558 projected fields pass Lean checks.</p><div class="state">Established</div></article>
+          <article class="claim-step absent"><h3>Reachable entry</h3><p>No proof connects the canonical initial state to S0.</p><div class="state">Not established</div></article>
+          <article class="claim-step absent"><h3>Full invariant</h3><p>No <code>SystemInductiveInvariant S0</code> witness is constructed.</p><div class="state">Not established</div></article>
+          <article class="claim-step absent"><h3>Proved lowering</h3><p>No theorem equates the generated SMT equations with <code>Model.lean</code>.</p><div class="state">Not established</div></article>
+          <article class="claim-step absent"><h3>C++ and Lean equivalence</h3><p>The deterministic correspondence remains proposed and trace-specific.</p><div class="state">Not established</div></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="run">
+      <div class="wrap">
+        <div class="section-head">
+          <div><div class="eyebrow">Run it</div><h2>Regenerate evidence in pipeline order</h2></div>
+          <p>The full command reruns the real scenario and reducer. The cheap command reruns SMT, negative controls, source generation, Lean compilation, and canonical checking.</p>
+        </div>
+        <div class="two-col">
+          <div>
+            <h3>Full pipeline</h3>
+            <pre><code>cd lean
+./check_ccfraft_full_trace_prototype.sh
+./check_ccfraft_cheap_full_state_prototype.sh</code></pre>
+            <p class="time-note">Expect about 6 seconds through witness decode, then about 70 seconds for witness-specific Lean compilation and checking. Scenario execution and reduction add unisolated setup time.</p>
+          </div>
+          <div>
+            <h3>Cached generated checker</h3>
+            <pre><code>cd lean
+lake env lean --run .lake/build/cheap-full-state-smt/CanonicalCheapFullStateWitness.lean</code></pre>
+            <p class="time-note">This command still invokes Lean on generated source. It may use cached imports, but it is not the intended generic precompiled checker and does not isolate replay time.</p>
+          </div>
+        </div>
+        <details>
+          <summary>Generate this report</summary>
+          <div><pre><code>python3 lean/CCFRaft/generate_trace_validation_pipeline_report.py</code></pre></div>
+        </details>
+      </div>
+    </section>
+
+    <section id="sources">
+      <div class="wrap">
+        <div class="section-head">
+          <div><div class="eyebrow">Source map</div><h2>Jump to current files or committed canonical source</h2></div>
+          <p>VS Code links target this WSL worktree. GitHub links pin canonical files to the detected commit.</p>
+        </div>
+        <p><a id="workspaceLink" href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency">Open the workspace in VS Code</a></p>
+        <div class="table-wrap" style="margin-top:1rem">
+          <table id="sourceTable">
+            <thead><tr><th>Source</th><th>Role</th><th>Authority</th><th>Links</th></tr></thead>
+            <tbody><tr><td colspan="4">Loading sources...</td></tr></tbody>
+          </table>
+        </div>
+        <details>
+          <summary>Artifact hashes and generation metadata</summary>
+          <div>
+            <div class="meta">
+              <dl><dt>Generated at</dt><dd id="generatedAt"></dd></dl>
+              <dl><dt>Git HEAD</dt><dd id="gitHead"></dd></dl>
+              <dl><dt>Prototype status</dt><dd id="gitStatus"></dd></dl>
+            </div>
+            <div class="table-wrap" style="margin-top:1rem">
+              <table id="artifactTable">
+                <thead><tr><th>Artifact</th><th>Bytes</th><th>SHA-256</th><th>Open</th></tr></thead>
+                <tbody><tr><td colspan="4">Loading artifacts...</td></tr></tbody>
+              </table>
+            </div>
+            <pre id="statusLines" style="margin-top:1rem"></pre>
+          </div>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">Generated from current artifacts. Dependency-free HTML, vanilla JavaScript, and no network requests.</div>
+  </footer>
+
+  <script id="report-data" type="application/json">{"artifactHashes":[{"bytes":524689,"name":"certificate","path":"lean/.lake/build/full-trace-prototype/proposed-mapping-certificate-v2.json","sha256":"096acf12bd82b9cbe18fbfbbd257896103d5f67e9866a7f8414b89dd8173a3f8","vscode":"vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/.lake/build/full-trace-prototype/proposed-mapping-certificate-v2.json:1:1"},{"bytes":669246,"name":"cheap_witness","path":"lean/.lake/build/cheap-full-state-smt/witness-v1.json","sha256":"4586f0d2e71bb56917d8dea84affd29cdcf7ed9c04d37889d13744e5b55fd234","vscode":"vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/.lake/build/cheap-full-state-smt/witness-v1.json:1:1"},{"bytes":1509,"name":"benchmark","path":"lean/.lake/build/cheap-full-state-smt/benchmark-v1.json","sha256":"3ccd00b04d9a07d4f82b7e2582545c2985c7b34626e5f109fe5ff0171b222576","vscode":"vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/.lake/build/cheap-full-state-smt/benchmark-v1.json:1:1"},{"bytes":3962,"name":"benchmark_report","path":"lean/.lake/build/cheap-full-state-smt/report.md","sha256":"d371d81c0f05c9d55c1ceb2126b0512359cc4bcc714ee498a8858e2259ffd3cb","vscode":"vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/.lake/build/cheap-full-state-smt/report.md:1:1"},{"bytes":442,"name":"canonical_output","path":"lean/.lake/build/cheap-full-state-smt/canonical-lean.out","sha256":"7b4250c7422843dd968cf04c278837e9f8dc3f8b19f0d01ed22c0abaf1ed373f","vscode":"vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/.lake/build/cheap-full-state-smt/canonical-lean.out:1:1"},{"bytes":1921989,"name":"full_witness","path":"lean/.lake/build/naive-full-state-smt/witness-v1.json","sha256":"fc96128774326cdda534be81fbaeb343053fdb2884cc9c34573c75389c02ca2a","vscode":"vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/.lake/build/naive-full-state-smt/witness-v1.json:1:1"}],"benchmark":{"artifact_bytes":{"formula":7352853,"generated_lean_source":382153,"solver_output":471984,"witness":669246},"canonical":{"actions":43,"inert_completion_nodes":[2,3,4,5,6,7,8,9,10,11,12,13,14],"inert_completion_smt_discovered":false,"observations":53,"projected_unchecked":0,"result":"VALID_SEGMENT","spans":6},"classification":"VALID_SEGMENT_CHEAP_FOOTPRINT","cvc5":{"binary":"/nix/store/74v9g1l0b43xbr9pd0acg0qcdgf9srgw-cvc5-1.3.4/bin/cvc5","version":"cvc5 1.3.4"},"mutations":{"conflicting_observed_commit":"UNSAT_INCONCLUSIVE_ENCODING","unknown":"INCONCLUSIVE_ENCODING","wrong_in_domain_destination":"UNSAT_INCONCLUSIVE_ENCODING"},"schema_version":"ccfraft-cheap-full-state-benchmark/v1","timings_ms":{"decode_wall":1698,"end_to_end_smt":6677,"formula_generation":1901,"lean_compile":89252,"lean_compile_check":105856,"lean_generation":218,"lean_runtime":null,"lean_runtime_separated":false,"solver_only_runs":[6666,7385,6152,4874,5767,5163,5100,4350,3971,3740]},"validation":{"ascii":true,"black":true,"deterministic_regeneration":true,"diff_check":true,"python_compile":true,"shellcheck":true}},"cheap":{"dimensions":{"action_configuration_arrays":43,"actions":43,"formula_bytes":7352853,"formula_lines":26531,"labels":865,"smt_arrays":1539,"smt_assertions":865,"smt_declarations":2620,"state_arrays":1496,"states":44,"witness_aliases":11082},"finalState":{"after_action":43,"has_joined_membership":[true,true],"has_joined_nodes":[0,1],"network":[{"capacity":4,"destination":0,"length":0,"slots":[{"active":false,"append_entries_request":{"entry":{"content":{"configuration_membership":[false,false],"configuration_nodes":[],"tag":"unused","tag_value":0,"transaction_id":0},"term":0},"entry_present":false,"leader_commit":0,"prev_log_index":0,"prev_log_term":0},"append_entries_response":{"last_log_index":0,"success":false},"destination":0,"request_vote_request":{"last_committable_index":0,"last_committable_term":0},"request_vote_response":{"vote_granted":false},"slot":0,"source":0,"tag":"unused","tag_value":0,"term":0},{"active":false,"append_entries_request":{"entry":{"content":{"configuration_membership":[false,false],"configuration_nodes":[],"tag":"unused","tag_value":0,"transaction_id":0},"term":0},"entry_present":false,"leader_commit":0,"prev_log_index":0,"prev_log_term":0},"append_entries_response":{"last_log_index":0,"success":false},"destination":0,"request_vote_request":{"last_committable_index":0,"last_committable_term":0},"request_vote_response":{"vote_granted":false},"slot":1,"source":0,"tag":"unused","tag_value":0,"term":0},{"active":false,"append_entries_request":{"entry":{"content":{"configuration_membership":[false,false],"configuration_nodes":[],"tag":"unused","tag_value":0,"transaction_id":0},"term":0},"entry_present":false,"leader_commit":0,"prev_log_index":0,"prev_log_term":0},"append_entries_response":{"last_log_index":0,"success":false},"destination":0,"request_vote_request":{"last_committable_index":0,"last_committable_term":0},"request_vote_response":{"vote_granted":false},"slot":2,"source":0,"tag":"unused","tag_value":0,"term":0},{"active":false,"append_entries_request":{"entry":{"content":{"configuration_membership":[false,false],"configuration_nodes":[],"tag":"unused","tag_value":0,"transaction_id":0},"term":0},"entry_present":false,"leader_commit":0,"prev_log_index":0,"prev_log_term":0},"append_entries_response":{"last_log_index":0,"success":false},"destination":0,"request_vote_request":{"last_committable_index":0,"last_committable_term":0},"request_vote_response":{"vote_granted":false},"slot":3,"source":0,"tag":"unused","tag_value":0,"term":0}]},{"capacity":4,"destination":1,"length":0,"slots":[{"active":false,"append_entries_request":{"entry":{"content":{"configuration_membership":[false,false],"configuration_nodes":[],"tag":"unused","tag_value":0,"transaction_id":0},"term":0},"entry_present":false,"leader_commit":0,"prev_log_index":0,"prev_log_term":0},"append_entries_response":{"last_log_index":0,"success":false},"destination":0,"request_vote_request":{"last_committable_index":0,"last_committable_term":0},"request_vote_response":{"vote_granted":false},"slot":0,"source":0,"tag":"unused","tag_value":0,"term":0},{"active":false,"append_entries_request":{"entry":{"content":{"configuration_membership":[false,false],"configuration_nodes":[],"tag":"unused","tag_value":0,"transaction_id":0},"term":0},"entry_present":false,"leader_commit":0,"prev_log_index":0,"prev_log_term":0},"append_entries_response":{"last_log_index":0,"success":false},"destination":0,"request_vote_request":{"last_committable_index":0,"last_committable_term":0},"request_vote_response":{"vote_granted":false},"slot":1,"source":0,"tag":"unused","tag_value":0,"term":0},{"active":false,"append_entries_request":{"entry":{"content":{"configuration_membership":[false,false],"configuration_nodes":[],"tag":"unused","tag_value":0,"transaction_id":0},"term":0},"entry_present":false,"leader_commit":0,"prev_log_index":0,"prev_log_term":0},"append_entries_response":{"last_log_index":0,"success":false},"destination":0,"request_vote_request":{"last_committable_index":0,"last_committable_term":0},"request_vote_response":{"vote_granted":false},"slot":2,"source":0,"tag":"unused","tag_value":0,"term":0},{"active":false,"append_entries_request":{"entry":{"content":{"configuration_membership":[false,false],"configuration_nodes":[],"tag":"unused","tag_value":0,"transaction_id":0},"term":0},"entry_present":false,"leader_commit":0,"prev_log_index":0,"prev_log_term":0},"append_entries_response":{"last_log_index":0,"success":false},"destination":0,"request_vote_request":{"last_committable_index":0,"last_committable_term":0},"request_vote_response":{"vote_granted":false},"slot":3,"source":0,"tag":"unused","tag_value":0,"term":0}]}],"nodes":[{"commit_index":7,"current_term":2,"is_new_follower":false,"log_capacity":7,"log_length":7,"log_slots":[{"active":true,"content":{"configuration_membership":[true,false],"configuration_nodes":[0],"tag":"reconfiguration","tag_value":3,"transaction_id":0},"index":1,"term":2},{"active":true,"content":{"configuration_membership":[false,false],"configuration_nodes":[],"tag":"signature","tag_value":2,"transaction_id":0},"index":2,"term":2},{"active":true,"content":{"configuration_membership":[true,true],"configuration_nodes":[0,1],"tag":"reconfiguration","tag_value":3,"transaction_id":0},"index":3,"term":2},{"active":true,"content":{"configuration_membership":[false,false],"configuration_nodes":[],"tag":"signature","tag_value":2,"transaction_id":0},"index":4,"term":2},{"active":true,"content":{"configuration_membership":[false,false],"configuration_nodes":[],"tag":"transaction","tag_value":1,"transaction_id":1},"index":5,"term":2},{"active":true,"content":{"configuration_membership":[false,false],"configuration_nodes":[],"tag":"signature","tag_value":2,"transaction_id":0},"index":6,"term":2},{"active":true,"content":{"configuration_membership":[false,false],"configuration_nodes":[],"tag":"signature","tag_value":2,"transaction_id":0},"index":7,"term":2}],"match_index":[0,7],"node":0,"role":"leader","role_value":3,"sent_index":[0,7],"voted_for":{"has_value":true,"node":1,"value":1},"votes_granted_membership":[false,false],"votes_granted_nodes":[]},{"commit_index":7,"current_term":2,"is_new_follower":true,"log_capacity":7,"log_length":7,"log_slots":[{"active":true,"content":{"configuration_membership":[true,false],"configuration_nodes":[0],"tag":"reconfiguration","tag_value":3,"transaction_id":0},"index":1,"term":2},{"active":true,"content":{"configuration_membership":[false,false],"configuration_nodes":[],"tag":"signature","tag_value":2,"transaction_id":0},"index":2,"term":2},{"active":true,"content":{"configuration_membership":[true,true],"configuration_nodes":[0,1],"tag":"reconfiguration","tag_value":3,"transaction_id":0},"index":3,"term":2},{"active":true,"content":{"configuration_membership":[false,false],"configuration_nodes":[],"tag":"signature","tag_value":2,"transaction_id":0},"index":4,"term":2},{"active":true,"content":{"configuration_membership":[false,false],"configuration_nodes":[],"tag":"transaction","tag_value":1,"transaction_id":1},"index":5,"term":2},{"active":true,"content":{"configuration_membership":[false,false],"configuration_nodes":[],"tag":"signature","tag_value":2,"transaction_id":0},"index":6,"term":2},{"active":true,"content":{"configuration_membership":[false,false],"configuration_nodes":[],"tag":"signature","tag_value":2,"transaction_id":0},"index":7,"term":2}],"match_index":[0,0],"node":1,"role":"follower","role_value":1,"sent_index":[0,0],"voted_for":{"has_value":false,"node":null,"value":0},"votes_granted_membership":[false,false],"votes_granted_nodes":[]}],"selected_transaction_submitted":true,"state":43},"freshTransaction":1,"initialSemantics":{"arbitrary_existential_completion":true,"canonical_inert_completion_nodes":[2,3,4,5,6,7,8,9,10,11,12,13,14],"canonical_inert_completion_smt_discovered":false,"canonical_initial_state":false,"canonical_submitted_set_completion":"empty","reachable_claim":false,"smt_node_count":2,"unobserved_nodes_in_smt":false},"manualAssumptions":["The SMT world contains exactly nodes 0 and 1.","Each node log has seven physical slots.","Only destination 0/source 1 and destination 1/source 0 queues exist.","Each queue has four slots.","Only configurations {0} and {0,1} exist; physical records are at log indices 1 and 3.","One unknown Fin 64 transaction identifier represents every transaction entry in this trace.","The canonical checker completes nodes 2 through 14 as fixed inert nodes under bootstrap {0}.","The canonical checker completes the initial submitted transaction set as empty."],"projection":{"action_span_events":[9,11,20,25,26,31],"all_raw_fields_projected":false,"category_counts":{"exact_packet_or_span_constraints":165,"omissions":233,"preprocessing_validated":462,"redundant_grammar_bindings":42,"state_constraints":344,"weakened_exception_constraints":7},"event8_sent_index":{"reason":"event8-sent-index-translation","status":"omitted"},"independent_semantic_constraint_count_claimed":false},"timings":{"decode":1413,"direct_smt_end_to_end":6677,"formula_generation":1901}},"classification":"VALID_SEGMENT_CHEAP_FOOTPRINT","counts":{"action_checkpoint_observations":47,"action_span_observations":6,"actions":43,"consumed_events":53,"events":53,"observations":53,"reductions":22},"eventWindow":[{"encoded":16,"event":9,"exceptions":["split-request-batches"],"omitted":12,"position":{"absolute_index_range":{"end":3,"start":1},"aggregate_constraint_position":{"end_action":10,"kind":"whole_action_span","start_action":8},"end_action":10,"kind":"action_span","post_state_fields":["msg.state.node_id","msg.state.leadership_state","msg.state.current_view","msg.state.last_idx","msg.state.commit_idx"],"post_state_observation_event":10,"post_state_position":{"after_action":10,"event":10,"kind":"referenced_event_after_span"},"pre_state_position":{"action":8,"kind":"before_action"},"span_kind":"append_entries_batch_send","start_action":8}},{"encoded":16,"event":10,"exceptions":[],"omitted":12,"position":{"action":11,"kind":"action_checkpoint","relation":"before"}},{"encoded":14,"event":11,"exceptions":["split-receive-batches"],"omitted":12,"position":{"absolute_index_range":{"end":3,"start":1},"aggregate_constraint_position":{"end_action":14,"kind":"whole_action_span","start_action":12},"end_action":14,"kind":"action_span","post_state_fields":["msg.state.node_id","msg.state.leadership_state","msg.state.current_view","msg.state.last_idx","msg.state.commit_idx"],"post_state_observation_event":15,"post_state_position":{"after_action":14,"event":15,"kind":"referenced_event_after_span"},"pre_state_position":{"action":12,"kind":"before_action"},"span_kind":"append_entries_batch_receive","start_action":12}},{"encoded":7,"event":12,"exceptions":["helper-events-are-assertions"],"omitted":15,"position":{"action":12,"kind":"action_checkpoint","relation":"after"}},{"encoded":6,"event":13,"exceptions":["helper-events-are-assertions"],"omitted":12,"position":{"action":12,"kind":"action_checkpoint","relation":"after"}},{"encoded":5,"event":14,"exceptions":["helper-events-are-assertions","follower-commit-callback-atomicity"],"omitted":17,"position":{"action":13,"kind":"action_checkpoint","phase":"pre-follower-commit-callback","relation":"during"}},{"encoded":7,"event":15,"exceptions":["helper-events-are-assertions"],"omitted":19,"position":{"action":14,"kind":"action_checkpoint","relation":"after"}},{"encoded":10,"event":16,"exceptions":["helper-events-are-assertions"],"omitted":12,"position":{"action":14,"kind":"action_checkpoint","relation":"after"}},{"encoded":14,"event":17,"exceptions":[],"omitted":12,"position":{"action":15,"kind":"action_checkpoint","relation":"before"}},{"encoded":6,"event":18,"exceptions":["helper-events-are-assertions"],"omitted":12,"position":{"action":15,"kind":"action_checkpoint","relation":"before"}},{"encoded":10,"event":19,"exceptions":["helper-events-are-assertions"],"omitted":12,"position":{"action":15,"kind":"action_checkpoint","relation":"after"}},{"encoded":13,"event":20,"exceptions":["synthetic-responses-1-2"],"omitted":11,"position":{"absolute_index_range":{"end":3,"start":1},"aggregate_constraint_position":{"end_action":18,"kind":"whole_action_span","start_action":16},"end_action":18,"kind":"action_span","post_state_fields":["msg.state.node_id","msg.state.leadership_state","msg.state.current_view","msg.state.last_idx","msg.state.commit_idx"],"post_state_observation_event":21,"post_state_position":{"after_action":18,"event":21,"kind":"referenced_event_after_span"},"pre_state_position":{"action":16,"kind":"before_action"},"span_kind":"append_entries_batch_response_receive","start_action":16}}],"expectedHead":"00d917fcf2d233f83194f8b223b8f0b74efffae6","full":{"dimensions":{"actions":43,"formula_bytes":127566439,"formula_lines":68797,"labels":821,"smt_assertions":821,"smt_declarations":2576,"state_arrays":1496,"states":44,"witness_aliases":32281},"timings":{"decode":8058,"direct_smt":95775,"formula_generation":7994,"under_60_second_prototype_target":false}},"generatedAt":"2026-08-28T11:13:59Z","generatedSource":{"bytes":382153,"lines":4298},"gitStatus":{"dirty":true,"lines":["A  lean/CCFRaft/cheap_full_state_lean.py","A  lean/CCFRaft/cheap_full_state_smt.py","A  lean/CCFRaft/full_trace_prototype.py","A  lean/CCFRaft/generate_trace_validation_pipeline_report.py","A  lean/CCFRaft/trace-validation-pipeline-report.html","A  lean/check_ccfraft_cheap_full_state_prototype.sh","A  lean/check_ccfraft_full_trace_prototype.sh"],"summary":"Current prototype sources have uncommitted changes."},"head":"00d917fcf2d233f83194f8b223b8f0b74efffae6","headMatchesExpected":true,"reductions":[{"actionLabel":"1","actions":[1],"delta":0,"eventLabel":"1","events":[1],"exceptions":[],"name":"bootstrap-commit","reduction":1,"summary":"Synthetic bootstrap exposes the pre-commit state at index 2."},{"actionLabel":"2, 3","actions":[2,3],"delta":0,"eventLabel":"2, 3","events":[2,3],"exceptions":["event3-pre-reconfiguration-hook"],"name":"add-node-one","reduction":2,"summary":"Append configuration {0,1}, then propose replication of entry 3."},{"actionLabel":"4","actions":[4],"delta":0,"eventLabel":"4","events":[4],"exceptions":[],"name":"signature-four","reduction":3,"summary":"Append the committable signature at absolute index 4."},{"actionLabel":"5, 6","actions":[5,6],"delta":-1,"eventLabel":"5, 6, 7","events":[5,6,7],"exceptions":[],"name":"initial-follower-nack","reduction":4,"summary":"Node 1 observes term 2, then rejects the unmatched request."},{"actionLabel":"7","actions":[7],"delta":0,"eventLabel":"8","events":[8],"exceptions":["event8-sent-index-translation"],"name":"leader-receives-nack","reduction":5,"summary":"The leader consumes node 1's NACK."},{"actionLabel":"8, 9, 10, 11","actions":[8,9,10,11],"delta":2,"eventLabel":"9, 10","events":[9,10],"exceptions":["split-request-batches"],"name":"split-prefix-send","reduction":6,"summary":"Split C++ batches 1..3 and 4 into proposed one-entry sends."},{"actionLabel":"12, 13, 14","actions":[12,13,14],"delta":-3,"eventLabel":"11, 12, 13, 14, 15, 16","events":[11,12,13,14,15,16],"exceptions":["split-receive-batches","helper-events-are-assertions","follower-commit-callback-atomicity"],"name":"split-prefix-receive","reduction":7,"summary":"Propose receives for entries 1, 2, and 3; helper events are assertions."},{"actionLabel":"15","actions":[15],"delta":-2,"eventLabel":"17, 18, 19","events":[17,18,19],"exceptions":["helper-events-are-assertions"],"name":"signature-four-receive","reduction":8,"summary":"Propose receipt of entry 4; execute/send-response are assertions."},{"actionLabel":"16, 17, 18, 19","actions":[16,17,18,19],"delta":2,"eventLabel":"20, 21","events":[20,21],"exceptions":["synthetic-responses-1-2"],"name":"split-prefix-responses","reduction":9,"summary":"Propose responses 1..4 for C++ batch ends 3 and 4."},{"actionLabel":"20","actions":[20],"delta":0,"eventLabel":"22","events":[22],"exceptions":[],"name":"leader-commit-four","reduction":10,"summary":"Advance the leader commit index to 4."},{"actionLabel":"21","actions":[21],"delta":0,"eventLabel":"23","events":[23],"exceptions":[],"name":"client-entry-five","reduction":11,"summary":"Append the scenario's only fresh client transaction."},{"actionLabel":"22","actions":[22],"delta":0,"eventLabel":"24","events":[24],"exceptions":[],"name":"signature-six","reduction":12,"summary":"Append the committable signature at absolute index 6."},{"actionLabel":"23, 24","actions":[23,24],"delta":1,"eventLabel":"25","events":[25],"exceptions":["split-request-batches"],"name":"split-five-six-send","reduction":13,"summary":"Split the C++ 5..6 batch into two proposed sends."},{"actionLabel":"25, 26","actions":[25,26],"delta":-3,"eventLabel":"26, 27, 28, 29, 30","events":[26,27,28,29,30],"exceptions":["split-receive-batches","helper-events-are-assertions","event28-batched-follower-commit"],"name":"split-five-six-receive","reduction":14,"summary":"Receive entries 5 and 6; helper/commit/response events are assertions."},{"actionLabel":"27, 28","actions":[27,28],"delta":1,"eventLabel":"31","events":[31],"exceptions":["synthetic-response-5"],"name":"split-five-six-responses","reduction":15,"summary":"Propose responses at 5 and 6 for the C++ response at 6."},{"actionLabel":"29","actions":[29],"delta":0,"eventLabel":"32","events":[32],"exceptions":[],"name":"leader-commit-six","reduction":16,"summary":"Advance the leader commit index to 6."},{"actionLabel":"30, 31, 32","actions":[30,31,32],"delta":-2,"eventLabel":"33, 34, 35, 36, 37","events":[33,34,35,36,37],"exceptions":["helper-events-are-assertions","follower-commit-callback-atomicity"],"name":"first-heartbeat-six","reduction":17,"summary":"Send and round-trip the first heartbeat at index 6."},{"actionLabel":"33, 34, 35","actions":[33,34,35],"delta":-1,"eventLabel":"38, 39, 40, 41","events":[38,39,40,41],"exceptions":["helper-events-are-assertions"],"name":"second-heartbeat-six","reduction":18,"summary":"Send and round-trip the second heartbeat at index 6."},{"actionLabel":"36","actions":[36],"delta":0,"eventLabel":"42","events":[42],"exceptions":[],"name":"signature-seven","reduction":19,"summary":"Append the assert_state_sync signature at index 7."},{"actionLabel":"37, 38, 39","actions":[37,38,39],"delta":-2,"eventLabel":"43, 44, 45, 46, 47","events":[43,44,45,46,47],"exceptions":["helper-events-are-assertions"],"name":"entry-seven-round-trip","reduction":20,"summary":"Replicate and acknowledge signature entry 7."},{"actionLabel":"40","actions":[40],"delta":0,"eventLabel":"48","events":[48],"exceptions":[],"name":"leader-commit-seven","reduction":21,"summary":"Advance the leader commit index to 7."},{"actionLabel":"41, 42, 43","actions":[41,42,43],"delta":-2,"eventLabel":"49, 50, 51, 52, 53","events":[49,50,51,52,53],"exceptions":["helper-events-are-assertions","follower-commit-callback-atomicity"],"name":"final-heartbeat-seven","reduction":22,"summary":"Propagate commit 7 and consume the final heartbeat response."}],"solverRuns":{"count":10,"max":7385,"median":5131,"min":3740,"p95":7385,"values":[6666,7385,6152,4874,5767,5163,5100,4350,3971,3740]},"sources":[{"authority":"Committed canonical source","currentLine":16,"github":"https://github.com/cjen1-msft/CCF/blob/00d917fcf2d233f83194f8b223b8f0b74efffae6/tests/raft_scenarios/replicate#L16","name":"Scenario input","path":"tests/raft_scenarios/replicate","role":"Real CCF Raft scenario.","vscode":"vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/tests/raft_scenarios/replicate:16:1"},{"authority":"Committed canonical source","currentLine":40,"github":"https://github.com/cjen1-msft/CCF/blob/00d917fcf2d233f83194f8b223b8f0b74efffae6/tests/raft_scenarios_runner.py#L40","name":"Preprocessor","path":"tests/raft_scenarios_runner.py","role":"Runs raft_driver and writes preprocessed NDJSON.","vscode":"vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/tests/raft_scenarios_runner.py:40:1"},{"authority":"Current prototype","currentLine":1778,"github":null,"name":"Deterministic reducer","path":"lean/CCFRaft/full_trace_prototype.py","role":"Validates all 53 events and emits the mapping certificate.","vscode":"vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFRaft/full_trace_prototype.py:1778:1"},{"authority":"Current prototype","currentLine":391,"github":null,"name":"Cheap SMT generator and decoder","path":"lean/CCFRaft/cheap_full_state_smt.py","role":"Builds the bounded formula and decodes cvc5 values.","vscode":"vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFRaft/cheap_full_state_smt.py:391:1"},{"authority":"Current prototype","currentLine":115,"github":null,"name":"Generated-source checker builder","path":"lean/CCFRaft/cheap_full_state_lean.py","role":"Expands the witness and writes the current Lean checker source.","vscode":"vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFRaft/cheap_full_state_lean.py:115:1"},{"authority":"Committed canonical source","currentLine":1418,"github":"https://github.com/cjen1-msft/CCF/blob/00d917fcf2d233f83194f8b223b8f0b74efffae6/lean/CCFRaft/Model.lean#L1418","name":"Canonical transition system","path":"lean/CCFRaft/Model.lean","role":"Defines Enabled, next, applyAction, and Reachable.","vscode":"vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFRaft/Model.lean:1418:1"},{"authority":"Committed canonical source","currentLine":246,"github":"https://github.com/cjen1-msft/CCF/blob/00d917fcf2d233f83194f8b223b8f0b74efffae6/lean/CCFRaft/Simulation.lean#L246","name":"Executable structural checks","path":"lean/CCFRaft/Simulation.lean","role":"Defines stateChecks and edgeChecks used during replay.","vscode":"vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFRaft/Simulation.lean:246:1"},{"authority":"Committed canonical source","currentLine":845,"github":"https://github.com/cjen1-msft/CCF/blob/00d917fcf2d233f83194f8b223b8f0b74efffae6/lean/CCFRaft/TraceValidation.lean#L845","name":"Canonical replay","path":"lean/CCFRaft/TraceValidation.lean","role":"Runs applyAction, stateChecks, and edgeChecks.","vscode":"vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFRaft/TraceValidation.lean:845:1"},{"authority":"Committed canonical source","currentLine":2243,"github":"https://github.com/cjen1-msft/CCF/blob/00d917fcf2d233f83194f8b223b8f0b74efffae6/lean/CCFRaft/Properties.lean#L2243","name":"Full invariant","path":"lean/CCFRaft/Properties.lean","role":"Defines the proof-level invariant that this prototype does not establish.","vscode":"vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFRaft/Properties.lean:2243:1"},{"authority":"Current prototype","currentLine":4264,"github":null,"name":"Current generated Lean source","path":"lean/.lake/build/cheap-full-state-smt/CanonicalCheapFullStateWitness.lean","role":"Contains this witness as generated declarations and six span checks.","vscode":"vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/.lake/build/cheap-full-state-smt/CanonicalCheapFullStateWitness.lean:4264:1"},{"authority":"Current prototype","currentLine":15,"github":null,"name":"Pipeline driver","path":"lean/check_ccfraft_cheap_full_state_prototype.sh","role":"Runs SMT, negative controls, generation, compilation, and replay.","vscode":"vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/check_ccfraft_cheap_full_state_prototype.sh:15:1"}],"stages":[{"authority":"CCF implementation behavior. This is observed execution, not model validation.","failure":"A driver error or scenario assertion stops the pipeline before reduction.","id":"scenario","input":"tests/raft_scenarios/replicate and raft_driver","number":"01","operation":"The scenario drives node 0 and node 1 through bootstrap, reconfiguration, replication, signatures, heartbeats, commits, and final synchronization assertions.","output":"A real raft_trace log tied to scenario commands.","summary":"Run the real replicate fixture.","timing":"Included in the full prototype command, but not isolated in the current benchmark.","title":"Scenario"},{"authority":"Data transformation. It preserves selected implementation observations but does not assert Lean semantics.","failure":"Missing records, malformed JSON, or a count other than 53 fails the full-trace script.","id":"preprocessing","input":"Raw raft_driver output.","number":"02","operation":"raft_scenarios_runner.py retains the raft_trace records, attaches scenario command context, and writes replicate.ndjson.","output":"Exactly 53 numbered, preprocessed events.","summary":"Normalize the raw driver log into 53 NDJSON events.","timing":"Not isolated in the benchmark.","title":"Preprocessing"},{"authority":"Correspondence data. It proposes a mapping and records omissions. It is not a proof that C++ and Lean steps are equivalent.","failure":"An unmapped, duplicated, reordered, or field-mismatched event fails certificate generation.","id":"reduction","input":"53 preprocessed events.","number":"03","operation":"The deterministic grammar validates event shapes, groups helper records with their owning C++ operation, and expands aggregate packets into one-entry Lean actions.","output":"22 reductions, 43 action templates, 53 observations, 47 point checkpoints, and six action spans.","summary":"Consume every event once and propose 43 actions.","timing":"Small compared with formula generation. The current benchmark does not isolate it.","title":"Grammar reduction"},{"authority":"Experimental assumption. The footprint is fixture-specific and its sufficiency is not proved.","failure":"A valid full-world completion outside this footprint can make the bounded formula UNSAT.","id":"footprint","input":"Certificate capacities and action grammar.","number":"04","operation":"Hardcode nodes 0 and 1, seven log slots, four queue slots in each direction, configurations {0} and {0,1}, and one unknown Fin 64 transaction.","output":"A 44-state, 43-action bounded world. Nodes 2 through 14 do not exist in SMT.","summary":"Restrict the experiment to the trace's active state.","timing":"This restriction cuts the formula from 127,566,439 to 7,352,853 bytes.","title":"Footprint"},{"authority":"Generated and hand-maintained lowering. Equivalence to CCFRaft.Model is not proved.","failure":"Generator errors are pipeline errors. UNSAT is INCONCLUSIVE_ENCODING, not an invalid-trace result.","id":"formula","input":"Action skeletons, observation constraints, bounded state shape, and transition lowering.","number":"05","operation":"Generate an existential SMT formula for S0 through S43, A0 through A42 and unknown parameters, state/action observations, and every bounded transition equation.","output":"A 7,352,853-byte SMT-LIB formula with 26,531 lines.","summary":"Ask whether one bounded explanation exists.","timing":"About 1.1 seconds.","title":"Formula"},{"authority":"Authoritative only for satisfiability of the generated bounded formula.","failure":"unknown or timeout is inconclusive. Bounded UNSAT is also inconclusive because lowering and footprint completeness are unproved.","id":"cvc5","input":"formula.smt2.","number":"06","operation":"cvc5 searches for values for all bounded states, actions, queues, logs, and the unknown transaction representative.","output":"SAT plus model values. Ten solver-only runs had a 3,857 ms median.","summary":"Solve the bounded existential formula.","timing":"About 4.2 seconds end to end. Solver-only min 3,510 ms, median 3,857 ms, p95 4,661 ms.","title":"cvc5"},{"authority":"Data transformation with structural validation. It does not make the witness canonical.","failure":"Missing values, malformed domains, or a certificate-hash mismatch is an encoding error.","id":"decode","input":"SAT model values and the reduction certificate.","number":"07","operation":"Resolve aliases, materialize 44 two-node states and 43 actions, select transaction 1 as the Fin 64 representative, and retain field provenance.","output":"witness-v1.json with states, actions, queues, logs, reductions, and observation bindings.","summary":"Turn cvc5 values into a complete cheap witness.","timing":"About 0.9 seconds wall time.","title":"Decode"},{"authority":"Canonical transition semantics for this segment. It does not prove S0 Reachable or SystemInductiveInvariant.","failure":"A disabled action, failed state or edge check, or mismatched observation rejects the SAT witness as an encoding bug.","id":"lean","input":"Decoded witness, certificate, and an explicit inert completion for nodes 2 through 14.","number":"08","operation":"Check S0 stateChecks. For each of 43 actions, call system.applyAction, then stateChecks and edgeChecks. Check all 53 observations and all 558 projected fields.","output":"VALID_SEGMENT, final logs and commits at 7, and all 15 queues drained.","summary":"Replay the candidate through CCFRaft.Model.","timing":"About 70 seconds because Lean compiles 4,298 generated lines. Replay is not the measured bottleneck.","title":"Canonical Lean check"},{"authority":"Positive result for this fixed segment and this hardcoded footprint.","failure":"Never promote this result to reachability, invariant preservation, full C++ and Lean equivalence, or proved SMT lowering.","id":"classification","input":"SAT result and passing canonical replay.","number":"09","operation":"Combine the bounded candidate search with canonical segment checking.","output":"VALID_SEGMENT_CHEAP_FOOTPRINT.","summary":"Name only what the evidence establishes.","timing":"Useful recurring cost before generated-checker compilation is about 6.2 seconds.","title":"Classification"}],"timings":[{"cheap":7352853,"cheapDisplay":"7,352,853","full":127566439,"fullDisplay":"127,566,439","kind":"size","metric":"Formula bytes","ratio":"17.35x smaller"},{"cheap":669246,"cheapDisplay":"669,246","full":1921989,"fullDisplay":"1,921,989","kind":"size","metric":"Witness bytes","ratio":"2.87x smaller"},{"cheap":1901,"cheapDisplay":"1.9 s","full":7994,"fullDisplay":"8.0 s","kind":"time","metric":"Formula generation","ratio":"16.54x faster"},{"cheap":6677,"cheapDisplay":"6.7 s","full":95775,"fullDisplay":"95.8 s","kind":"time","metric":"cvc5 end to end","ratio":"24.22x faster"},{"cheap":1698,"cheapDisplay":"1.7 s","full":8058,"fullDisplay":"8.1 s","kind":"time","metric":"Witness decode","ratio":"about 14x faster"},{"cheap":105856,"cheapDisplay":"105.9 s","full":-1,"fullDisplay":"not measured","kind":"time","metric":"Lean generated compile and check","ratio":"generated-source only"}],"workspace":"vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency"}</script>
+  <script>
+    "use strict";
+    const data = JSON.parse(document.getElementById("report-data").textContent);
+    const escapeText = (value) => String(value);
+
+    function renderStages() {
+      const list = document.getElementById("stageList");
+      const detail = document.getElementById("stageDetail");
+      const print = document.getElementById("printStages");
+      function choose(stage) {
+        list.querySelectorAll("button").forEach((button) => {
+          button.setAttribute("aria-selected", String(button.dataset.stage === stage.id));
+          button.tabIndex = button.dataset.stage === stage.id ? 0 : -1;
+        });
+        detail.setAttribute("aria-labelledby", "stage-" + stage.id);
+        detail.innerHTML = "";
+        const eyebrow = document.createElement("div");
+        eyebrow.className = "eyebrow";
+        eyebrow.textContent = stage.number + " / " + stage.title;
+        const title = document.createElement("h3");
+        title.id = "stage-detail-title";
+        title.textContent = stage.title;
+        const summary = document.createElement("p");
+        summary.className = "summary";
+        summary.textContent = stage.summary;
+        const fields = document.createElement("dl");
+        fields.className = "stage-fields";
+        [
+          ["Input", stage.input, ""],
+          ["Operation", stage.operation, ""],
+          ["Output", stage.output, ""],
+          ["Authority", stage.authority, "authority"],
+          ["Timing", stage.timing, ""],
+          ["Failure", stage.failure, "failure"]
+        ].forEach(([label, value, className]) => {
+          const block = document.createElement("div");
+          block.className = "stage-field " + className;
+          const term = document.createElement("dt");
+          term.textContent = label;
+          const description = document.createElement("dd");
+          description.textContent = value;
+          block.append(term, description);
+          fields.append(block);
+        });
+        detail.append(eyebrow, title, summary, fields);
+      }
+      data.stages.forEach((stage, index) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "stage-button";
+        button.id = "stage-" + stage.id;
+        button.dataset.stage = stage.id;
+        button.setAttribute("role", "tab");
+        button.setAttribute("aria-controls", "stageDetail");
+        button.setAttribute("aria-selected", String(index === 0));
+        button.tabIndex = index === 0 ? 0 : -1;
+        const number = document.createElement("span");
+        number.className = "stage-number";
+        number.textContent = stage.number;
+        const copy = document.createElement("span");
+        const strong = document.createElement("strong");
+        strong.textContent = stage.title;
+        const small = document.createElement("small");
+        small.textContent = stage.summary;
+        copy.append(strong, small);
+        const arrow = document.createElement("span");
+        arrow.className = "stage-arrow";
+        arrow.setAttribute("aria-hidden", "true");
+        arrow.textContent = ">";
+        button.append(number, copy, arrow);
+        button.addEventListener("click", () => choose(stage));
+        button.addEventListener("keydown", (event) => {
+          if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+          event.preventDefault();
+          const buttons = [...list.querySelectorAll("button")];
+          const current = buttons.indexOf(button);
+          let next = current;
+          if (event.key === "ArrowDown") next = (current + 1) % buttons.length;
+          if (event.key === "ArrowUp") next = (current - 1 + buttons.length) % buttons.length;
+          if (event.key === "Home") next = 0;
+          if (event.key === "End") next = buttons.length - 1;
+          buttons[next].focus();
+          buttons[next].click();
+        });
+        list.append(button);
+        const printed = document.createElement("article");
+        printed.innerHTML = "<h3>" + escapeText(stage.number + " " + stage.title) + "</h3><p>" + escapeText(stage.summary) + "</p><p><strong>Authority:</strong> " + escapeText(stage.authority) + "</p>";
+        print.append(printed);
+      });
+      choose(data.stages[0]);
+    }
+
+    const eventDescriptions = {
+      9: ["send_append_entries batch 1..3", "span", "C++ sends one packet. Lean actions 8, 9, and 10 append ends 1, 2, and 3."],
+      10: ["send_append_entries entry 4", "point", "Lean action 11 sends append end 4."],
+      11: ["recv_append_entries batch 1..3", "span", "C++ receives one aggregate packet. Lean actions 12, 13, and 14 receive entries 1, 2, and 3."],
+      12: ["add_configuration helper", "assertion", "An assertion after Lean action 12. It adds no action."],
+      13: ["execute_append_entries_sync", "assertion", "An assertion after Lean action 12. It adds no action."],
+      14: ["commit callback", "assertion", "A during-action assertion around Lean action 13. Atomicity omissions are recorded."],
+      15: ["add_configuration helper", "assertion", "An assertion after Lean action 14. It adds no action."],
+      16: ["send response helper", "assertion", "An assertion after Lean action 14. It adds no action."],
+      17: ["recv_append_entries entry 4", "point", "Lean action 15 receives the packet for entry 4."],
+      18: ["execute_append_entries_sync", "assertion", "A pre-action assertion owned by Lean action 15."],
+      19: ["send response helper", "assertion", "An assertion after Lean action 15."],
+      20: ["recv responses 1..3", "span", "C++ exposes the aggregate response at 3. Lean actions 16, 17, and 18 receive responses 1, 2, and 3."]
+    };
+    const actionLayouts = {
+      9: [["C++ lane", ["event 9: batch 1..3"]], ["Lean 0 -> 1", ["A8 append end 1", "A9 append end 2", "A10 append end 3"]]],
+      10: [["C++ lane", ["event 10: entry 4"]], ["Lean 0 -> 1", ["A11 append end 4"]]],
+      11: [["C++ lane", ["event 11: receive 1..3"]], ["Lean at node 1", ["A12 receive 1", "A13 receive 2", "A14 receive 3"]]],
+      12: [["C++ helper", ["event 12 assertion"]], ["Lean owner", ["after A12"]]],
+      13: [["C++ helper", ["event 13 assertion"]], ["Lean owner", ["after A12"]]],
+      14: [["C++ helper", ["event 14 commit callback"]], ["Lean owner", ["during A13"]]],
+      15: [["C++ helper", ["event 15 assertion"]], ["Lean owner", ["after A14"]]],
+      16: [["C++ helper", ["event 16 response"]], ["Lean owner", ["after A14"]]],
+      17: [["C++ lane", ["event 17: entry 4"]], ["Lean at node 1", ["A15 receive 4"]]],
+      18: [["C++ helper", ["event 18 assertion"]], ["Lean owner", ["before A15"]]],
+      19: [["C++ helper", ["event 19 response"]], ["Lean owner", ["after A15"]]],
+      20: [["C++ lane", ["event 20: response end 3"]], ["Lean 1 -> 0", ["A16 receive response 1", "A17 receive response 2", "A18 receive response 3"]]]
+    };
+
+    function renderEvents() {
+      const list = document.getElementById("eventList");
+      const detail = document.getElementById("eventDetail");
+      function choose(number) {
+        const [title, kind, explanation] = eventDescriptions[number];
+        list.querySelectorAll("button").forEach((button) => {
+          button.setAttribute("aria-selected", String(Number(button.dataset.event) === number));
+        });
+        detail.innerHTML = "";
+        const heading = document.createElement("h3");
+        heading.textContent = "Event " + number + ": " + title;
+        const kindLine = document.createElement("p");
+        kindLine.className = "time-note";
+        kindLine.textContent = kind === "span" ? "Whole-action span" : kind === "assertion" ? "Helper or assertion only" : "Point checkpoint";
+        detail.append(heading, kindLine);
+        actionLayouts[number].forEach(([label, chips]) => {
+          const lane = document.createElement("div");
+          lane.className = "lane";
+          const laneLabel = document.createElement("div");
+          laneLabel.className = "lane-label";
+          laneLabel.textContent = label;
+          const actionRow = document.createElement("div");
+          actionRow.className = "lane-actions";
+          chips.forEach((chip) => {
+            const element = document.createElement("span");
+            element.className = "action-chip" + (kind === "assertion" ? " synthetic" : "");
+            element.textContent = chip;
+            actionRow.append(element);
+          });
+          lane.append(laneLabel, actionRow);
+          detail.append(lane);
+        });
+        const explain = document.createElement("p");
+        explain.className = "demo-explain";
+        explain.textContent = explanation;
+        detail.append(explain);
+      }
+      Object.keys(eventDescriptions).forEach((numberText) => {
+        const number = Number(numberText);
+        const [title, kind] = eventDescriptions[number];
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "event-button";
+        button.dataset.event = String(number);
+        button.setAttribute("aria-selected", String(number === 9));
+        const label = document.createElement("span");
+        label.className = "event-num";
+        label.textContent = "Event " + number;
+        const titleNode = document.createElement("span");
+        titleNode.textContent = title;
+        const kindNode = document.createElement("small");
+        kindNode.textContent = kind;
+        button.append(label, titleNode, kindNode);
+        button.addEventListener("click", () => choose(number));
+        list.append(button);
+      });
+      choose(9);
+    }
+
+    const formulaTerms = {
+      S0: ["S0", "An arbitrary existential entry state. The formula constrains its two nodes, logs, queues, submitted transaction bit, and observed pre-state fields. It does not assert Reachable S0."],
+      Actions: ["Actions", "A0 through A42 are action variables with certificate skeletons. Unknown parameters include the selected Fin 64 transaction representative."],
+      Step: ["Step", "For each i from 0 through 42, the generated bounded equations relate Si, Ai, and S(i+1). This lowering is hand-maintained and not proved equivalent to Model.lean."],
+      Observations: ["Observations", "All 53 event observations constrain state or action checkpoints. Six aggregate events constrain whole action spans."]
+    };
+    function renderFormula() {
+      const render = document.getElementById("formulaRender");
+      const detail = document.getElementById("termDetail");
+      const plain = document.getElementById("plainMode");
+      const formal = document.getElementById("formalMode");
+      let mode = "plain";
+      let selected = "S0";
+      function chooseTerm(name) {
+        selected = name;
+        render.querySelectorAll(".term-button").forEach((button) => {
+          button.setAttribute("aria-pressed", String(button.dataset.term === name));
+        });
+        const [title, copy] = formulaTerms[name];
+        detail.innerHTML = "";
+        const heading = document.createElement("h3");
+        heading.textContent = title;
+        const paragraph = document.createElement("p");
+        paragraph.textContent = copy;
+        detail.append(heading, paragraph);
+      }
+      function draw() {
+        plain.setAttribute("aria-pressed", String(mode === "plain"));
+        formal.setAttribute("aria-pressed", String(mode === "formal"));
+        render.innerHTML = "";
+        const pieces = mode === "plain"
+          ? [["There exists", ""], ["S0", "S0"], ["and", ""], ["Actions", "Actions"], ["such that every", ""], ["Step", "Step"], ["holds and all", ""], ["Observations", "Observations"], ["match.", ""]]
+          : [["exists S0...S43, A0...A42, params.", ""], ["S0", "S0"], ["Checks(S0) and", ""], ["Actions", "Actions"], ["Skeleton(A) and", ""], ["Step", "Step"], ["(Si,Ai,S(i+1)) and", ""], ["Observations", "Observations"], ["(S,A)", ""]];
+        pieces.forEach(([text, term]) => {
+          if (term) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "term-button";
+            button.dataset.term = term;
+            button.setAttribute("aria-pressed", String(term === selected));
+            button.textContent = text;
+            button.addEventListener("click", () => chooseTerm(term));
+            render.append(button);
+          } else {
+            const span = document.createElement("span");
+            span.textContent = text;
+            render.append(span);
+          }
+        });
+        chooseTerm(selected);
+      }
+      plain.addEventListener("click", () => { mode = "plain"; draw(); });
+      formal.addEventListener("click", () => { mode = "formal"; draw(); });
+      draw();
+    }
+
+    function installTable({tableId, rows, columns, filterId, selectId, selectPredicate}) {
+      const table = document.getElementById(tableId);
+      const body = table.querySelector("tbody");
+      const filter = document.getElementById(filterId);
+      const select = document.getElementById(selectId);
+      let sortKey = columns[0][0];
+      let direction = 1;
+      function textValue(row) {
+        return columns.map(([key]) => Array.isArray(row[key]) ? row[key].join(" ") : String(row[key])).join(" ").toLowerCase();
+      }
+      function draw() {
+        const query = filter.value.trim().toLowerCase();
+        const selected = select.value;
+        const visible = rows.filter((row) => (!query || textValue(row).includes(query)) && selectPredicate(row, selected));
+        visible.sort((left, right) => {
+          const a = left[sortKey];
+          const b = right[sortKey];
+          if (typeof a === "number" && typeof b === "number") return direction * (a - b);
+          return direction * String(a).localeCompare(String(b), undefined, {numeric: true});
+        });
+        body.innerHTML = "";
+        visible.forEach((row) => {
+          const tr = document.createElement("tr");
+          columns.forEach(([key, displayKey]) => {
+            const td = document.createElement("td");
+            const value = displayKey ? row[displayKey] : row[key];
+            td.textContent = Array.isArray(value) ? value.join(", ") || "none" : String(value);
+            tr.append(td);
+          });
+          body.append(tr);
+        });
+        if (!visible.length) {
+          const tr = document.createElement("tr");
+          const td = document.createElement("td");
+          td.colSpan = columns.length;
+          td.className = "empty";
+          td.textContent = "No rows match the current filters.";
+          tr.append(td);
+          body.append(tr);
+        }
+        table.querySelectorAll("th button").forEach((button) => {
+          button.textContent = button.textContent.replace(/ (?:asc|desc)$/, "");
+          if (button.dataset.key === sortKey) button.textContent += direction === 1 ? " asc" : " desc";
+        });
+      }
+      table.querySelectorAll("th button").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (sortKey === button.dataset.key) direction *= -1;
+          else { sortKey = button.dataset.key; direction = 1; }
+          draw();
+        });
+      });
+      filter.addEventListener("input", draw);
+      select.addEventListener("change", draw);
+      draw();
+    }
+
+    function renderSources() {
+      const sourceBody = document.querySelector("#sourceTable tbody");
+      data.sources.forEach((source) => {
+        const tr = document.createElement("tr");
+        [source.name + "\n" + source.path, source.role, source.authority].forEach((value) => {
+          const td = document.createElement("td");
+          td.textContent = value;
+          tr.append(td);
+        });
+        const links = document.createElement("td");
+        const local = document.createElement("a");
+        local.href = source.vscode;
+        local.textContent = "VS Code line " + source.currentLine;
+        links.append(local);
+        if (source.github) {
+          links.append(document.createTextNode(" | "));
+          const github = document.createElement("a");
+          github.href = source.github;
+          github.textContent = "GitHub at HEAD";
+          links.append(github);
+        }
+        tr.append(links);
+        sourceBody.append(tr);
+      });
+      const artifactBody = document.querySelector("#artifactTable tbody");
+      data.artifactHashes.forEach((artifact) => {
+        const tr = document.createElement("tr");
+        const name = document.createElement("td");
+        name.textContent = artifact.name + "\n" + artifact.path;
+        const bytes = document.createElement("td");
+        bytes.textContent = artifact.bytes.toLocaleString();
+        const hash = document.createElement("td");
+        hash.className = "hash";
+        hash.textContent = artifact.sha256;
+        const open = document.createElement("td");
+        const link = document.createElement("a");
+        link.href = artifact.vscode;
+        link.textContent = "Open";
+        open.append(link);
+        tr.append(name, bytes, hash, open);
+        artifactBody.append(tr);
+      });
+      document.getElementById("generatedAt").textContent = data.generatedAt;
+      document.getElementById("gitHead").textContent = data.head + (data.headMatchesExpected ? "" : " (differs from expected HEAD)");
+      document.getElementById("gitStatus").textContent = data.gitStatus.summary;
+      document.getElementById("statusLines").textContent = data.gitStatus.lines.join("\n") || "No selected prototype changes.";
+    }
+
+    renderStages();
+    renderEvents();
+    renderFormula();
+    installTable({
+      tableId: "reductionTable",
+      rows: data.reductions,
+      columns: [["reduction"], ["name"], ["eventLabel"], ["actionLabel"], ["delta"], ["summary"], ["exceptions"]],
+      filterId: "reductionFilter",
+      selectId: "reductionType",
+      selectPredicate: (row, selected) => selected === "all" || (selected === "expands" && row.delta > 0) || (selected === "contracts" && row.delta < 0) || (selected === "equal" && row.delta === 0)
+    });
+    installTable({
+      tableId: "timingTable",
+      rows: data.timings,
+      columns: [["metric"], ["cheap", "cheapDisplay"], ["full", "fullDisplay"], ["ratio"]],
+      filterId: "timingFilter",
+      selectId: "timingKind",
+      selectPredicate: (row, selected) => selected === "all" || row.kind === selected
+    });
+    renderSources();
+  </script>
+</body>
+</html>

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the Apache 2.0 License.
 
 import argparse
 import re
 from pathlib import Path
-
 
 REPLACEMENTS = (
     (

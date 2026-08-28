@@ -26,9 +26,9 @@ active modules in the current tree.
 
 | Source concept                     | Lean representation                                            |
 | ---------------------------------- | -------------------------------------------------------------- |
-| `Servers`                          | Abstract `Node` with `DecidableEq Node`                         |
+| `Servers`                          | Abstract `Node` with `DecidableEq Node`                        |
 | Bounded tooling                    | `Node := Fin NODE_COUNT`, with `NODE_COUNT = 15`               |
-| Bootstrap                          | `Bootstrap Node` selects a configuration and member leader      |
+| Bootstrap                          | `Bootstrap Node` selects a configuration and member leader     |
 | Canonical bootstrap                | `{0,1,2,3,4}`, leader 0, at projected index 0                  |
 | Configuration                      | `Configuration` records derived from each node's physical log  |
 | `configurations`                   | `currentConfiguration` plus later `activeConfigurations` views |
