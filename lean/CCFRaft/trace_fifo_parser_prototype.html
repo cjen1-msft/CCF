@@ -1,0 +1,1481 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Prototype: deterministic CCFRaft trace parser</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #172033;
+        --muted: #627087;
+        --line: #d9dfeb;
+        --soft: #f4f6fa;
+        --paper: #ffffff;
+        --accent: #3457d5;
+        --accent-soft: #e9edff;
+        --good: #177245;
+        --good-soft: #e8f5ee;
+        --bad: #ad2e24;
+        --bad-soft: #fbeceb;
+        --warn: #916400;
+        --warn-soft: #fff5d9;
+        --unknown: #6750a4;
+        --unknown-soft: #f0ebff;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--soft);
+        color: var(--ink);
+      }
+
+      button {
+        font: inherit;
+      }
+
+      .shell {
+        width: min(1500px, calc(100% - 32px));
+        margin: 24px auto 56px;
+      }
+
+      header,
+      .card {
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+      }
+
+      header {
+        padding: 24px 28px;
+      }
+
+      .eyebrow {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 8px;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .prototype-badge {
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: var(--warn-soft);
+        color: var(--warn);
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        margin-bottom: 10px;
+        font-size: clamp(26px, 4vw, 40px);
+        line-height: 1.08;
+      }
+
+      h2 {
+        margin-bottom: 14px;
+        font-size: 20px;
+      }
+
+      h3 {
+        margin-bottom: 10px;
+        font-size: 15px;
+      }
+
+      .question {
+        max-width: 1000px;
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.6;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.8fr);
+        gap: 16px;
+        margin-top: 16px;
+        align-items: start;
+      }
+
+      .column {
+        display: grid;
+        gap: 16px;
+      }
+
+      .card {
+        padding: 20px;
+      }
+
+      .sticky {
+        position: sticky;
+        top: 16px;
+      }
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .toolbar + .toolbar {
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 1px solid var(--line);
+      }
+
+      button {
+        border: 1px solid #bcc6d8;
+        border-radius: 8px;
+        background: var(--paper);
+        color: var(--ink);
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+
+      button:hover {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+      }
+
+      button.primary {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: white;
+      }
+
+      button.danger {
+        border-color: #e2aca7;
+        color: var(--bad);
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.45;
+      }
+
+      .status-grid {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .metric {
+        min-height: 74px;
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: var(--soft);
+      }
+
+      .metric-label {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .metric-value {
+        font-size: 17px;
+        font-weight: 750;
+      }
+
+      .status {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 999px;
+        font-size: 13px;
+        font-weight: 750;
+      }
+
+      .status.ready,
+      .status.running {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      .status.valid,
+      .status.segment-valid {
+        background: var(--good-soft);
+        color: var(--good);
+      }
+
+      .status.failed {
+        background: var(--bad-soft);
+        color: var(--bad);
+      }
+
+      .callout {
+        margin-top: 12px;
+        padding: 12px 14px;
+        border-left: 4px solid var(--accent);
+        background: var(--accent-soft);
+        line-height: 1.5;
+      }
+
+      .callout.bad {
+        border-color: var(--bad);
+        background: var(--bad-soft);
+      }
+
+      .callout.unknown {
+        border-color: var(--unknown);
+        background: var(--unknown-soft);
+      }
+
+      .scroll {
+        overflow: auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+
+      th,
+      td {
+        padding: 9px 10px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        background: var(--paper);
+        color: var(--muted);
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      code,
+      .mono {
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 12px;
+      }
+
+      .queue-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .queue {
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        overflow: hidden;
+      }
+
+      .queue-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 9px 11px;
+        background: var(--soft);
+        font-size: 13px;
+        font-weight: 750;
+      }
+
+      .events {
+        display: flex;
+        gap: 6px;
+        padding: 10px;
+        overflow-x: auto;
+      }
+
+      .event {
+        min-width: 150px;
+        padding: 8px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--paper);
+      }
+
+      .event:first-child {
+        border-color: var(--accent);
+        box-shadow: inset 3px 0 0 var(--accent);
+      }
+
+      .event-seq {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .event-name {
+        margin-top: 3px;
+        overflow-wrap: anywhere;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .empty {
+        padding: 14px;
+        color: var(--muted);
+        font-style: italic;
+      }
+
+      .provenance {
+        display: inline-block;
+        margin-top: 3px;
+        padding: 2px 5px;
+        border-radius: 4px;
+        background: var(--unknown-soft);
+        color: var(--unknown);
+        font-size: 10px;
+      }
+
+      .tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 16px;
+      }
+
+      .tabs button.active {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-weight: 750;
+      }
+
+      .walkthrough {
+        min-height: 170px;
+      }
+
+      .walkthrough p {
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .step-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .step-list button {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        width: 100%;
+        text-align: left;
+      }
+
+      .step-number {
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .rule-note {
+        margin-top: 14px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--soft);
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      @media (max-width: 980px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        .sticky {
+          position: static;
+        }
+
+        .status-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <div class="eyebrow">
+          <span class="prototype-badge">Throwaway prototype</span>
+          <span>CCFRaft trace mapping</span>
+        </div>
+        <h1>Can per-node FIFO parsing remove trace preprocessing?</h1>
+        <p class="question">
+          This demo tests whether one globally ordered NDJSON trace can be
+          demultiplexed into per-node FIFO queues, reduced by deterministic
+          LR-style rules, and mapped to one ordered list of canonical Lean
+          actions. It also tests a mid-trace mode that materializes observed
+          node variables while leaving unavailable variables explicit.
+        </p>
+      </header>
+
+      <section class="layout">
+        <div class="column">
+          <section class="card">
+            <h2>Current parser state</h2>
+            <div id="status-grid" class="status-grid"></div>
+            <div id="message"></div>
+          </section>
+
+          <section class="card">
+            <h2>Per-node FIFO queues</h2>
+            <div id="queues" class="queue-list"></div>
+          </section>
+
+          <section class="card">
+            <h2>Deterministic reductions</h2>
+            <div class="scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Anchor</th>
+                    <th>Node</th>
+                    <th>Grammar rule</th>
+                    <th>Consumed events</th>
+                    <th>Lean action</th>
+                  </tr>
+                </thead>
+                <tbody id="reductions"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="card">
+            <h2>Materialized variables</h2>
+            <div class="scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Node</th>
+                    <th>Role</th>
+                    <th>Term</th>
+                    <th>Last index</th>
+                    <th>Commit index</th>
+                    <th>Knowledge</th>
+                  </tr>
+                </thead>
+                <tbody id="variables"></tbody>
+              </table>
+            </div>
+            <div id="global-unknowns" class="rule-note"></div>
+          </section>
+        </div>
+
+        <aside class="column sticky">
+          <section class="card">
+            <h2>Free play</h2>
+            <div class="toolbar">
+              <button id="parse-next" class="primary">Reduce next prefix</button>
+              <button id="parse-all">Reduce all</button>
+              <button id="reset">Reset current trace</button>
+            </div>
+            <div class="toolbar">
+              <button data-load="bootstrap">Load raw bootstrap</button>
+              <button data-load="interleaved">Load interleaved receive</button>
+              <button data-load="midtrace">Load mid-trace window</button>
+              <button data-load="failure" class="danger">
+                Load unknown event
+              </button>
+            </div>
+            <div class="toolbar">
+              <button id="append-replicate">Append leader replication</button>
+              <button id="append-unknown" class="danger">
+                Append unknown event
+              </button>
+            </div>
+            <div class="rule-note">
+              The scheduler always selects the queue whose head has the lowest
+              original NDJSON sequence number. A grammar reduction may consume
+              several events from that node's FIFO prefix. No rule search or
+              backtracking occurs.
+            </div>
+          </section>
+
+          <section class="card walkthrough">
+            <h2>Guided walkthroughs</h2>
+            <div id="tabs" class="tabs"></div>
+            <div id="walkthrough"></div>
+          </section>
+        </aside>
+      </section>
+    </main>
+
+    <script>
+      // Portable prototype logic. This module has no DOM dependencies.
+      const TraceFifoParser = (() => {
+        const clone = (value) => JSON.parse(JSON.stringify(value));
+
+        const event = (seq, node, fn, state = {}, data = {}) => ({
+          seq,
+          node,
+          fn,
+          state,
+          ...data,
+        });
+
+        const initialMembers = ["node-0", "node-1", "node-2", "node-3", "node-4"];
+
+        const rawBootstrap = [
+          event(1, "node-0", "become_leader", {
+            role: "Leader",
+            term: 1,
+            lastIdx: 0,
+            commitIdx: 0,
+          }),
+          event(
+            2,
+            "node-0",
+            "replicate",
+            { role: "Leader", term: 1, lastIdx: 0, commitIdx: 0 },
+            { seqno: 1, committable: false, entryKind: "configuration" },
+          ),
+          event(
+            3,
+            "node-0",
+            "add_configuration",
+            { role: "Leader", term: 1, lastIdx: 1, commitIdx: 0 },
+            { members: initialMembers },
+          ),
+          event(
+            4,
+            "node-0",
+            "replicate",
+            { role: "Leader", term: 1, lastIdx: 1, commitIdx: 0 },
+            { seqno: 2, committable: true, entryKind: "signature" },
+          ),
+          event(
+            5,
+            "node-0",
+            "commit",
+            { role: "Leader", term: 1, lastIdx: 2, commitIdx: 0 },
+            { index: 2 },
+          ),
+        ];
+
+        const continuedTrace = [
+          event(
+            6,
+            "node-0",
+            "replicate",
+            { role: "Leader", term: 1, lastIdx: 2, commitIdx: 2 },
+            { seqno: 3, committable: false, entryKind: "transaction" },
+          ),
+          event(
+            7,
+            "node-0",
+            "replicate",
+            { role: "Leader", term: 1, lastIdx: 3, commitIdx: 2 },
+            { seqno: 4, committable: true, entryKind: "signature" },
+          ),
+          event(
+            8,
+            "node-0",
+            "send_append_entries",
+            { role: "Leader", term: 1, lastIdx: 4, commitIdx: 2 },
+            {
+              to: "node-1",
+              packet: { term: 1, prevIdx: 2, idx: 3, leaderCommit: 2 },
+            },
+          ),
+          event(
+            9,
+            "node-1",
+            "recv_append_entries",
+            { role: "Follower", term: 1, lastIdx: 2, commitIdx: 2 },
+            {
+              from: "node-0",
+              packet: { term: 1, prevIdx: 2, idx: 3, leaderCommit: 2 },
+            },
+          ),
+          event(
+            10,
+            "node-1",
+            "execute_append_entries_sync",
+            { role: "Follower", term: 1, lastIdx: 2, commitIdx: 2 },
+            { from: "node-0", index: 3 },
+          ),
+          event(
+            11,
+            "node-1",
+            "send_append_entries_response",
+            { role: "Follower", term: 1, lastIdx: 3, commitIdx: 2 },
+            {
+              to: "node-0",
+              packet: { term: 1, lastLogIdx: 3, success: "OK" },
+            },
+          ),
+          event(
+            12,
+            "node-0",
+            "recv_append_entries_response",
+            { role: "Leader", term: 1, lastIdx: 4, commitIdx: 2 },
+            {
+              from: "node-1",
+              packet: { term: 1, lastLogIdx: 3, success: "OK" },
+            },
+          ),
+          event(
+            13,
+            "node-0",
+            "send_append_entries",
+            { role: "Leader", term: 1, lastIdx: 4, commitIdx: 2 },
+            {
+              to: "node-1",
+              packet: { term: 1, prevIdx: 3, idx: 4, leaderCommit: 2 },
+            },
+          ),
+          event(
+            14,
+            "node-1",
+            "recv_append_entries",
+            { role: "Follower", term: 1, lastIdx: 3, commitIdx: 2 },
+            {
+              from: "node-0",
+              packet: { term: 1, prevIdx: 3, idx: 4, leaderCommit: 2 },
+            },
+          ),
+          event(
+            15,
+            "node-1",
+            "execute_append_entries_sync",
+            { role: "Follower", term: 1, lastIdx: 3, commitIdx: 2 },
+            { from: "node-0", index: 4 },
+          ),
+          event(
+            17,
+            "node-1",
+            "send_append_entries_response",
+            { role: "Follower", term: 1, lastIdx: 4, commitIdx: 2 },
+            {
+              to: "node-0",
+              packet: { term: 1, lastLogIdx: 4, success: "OK" },
+            },
+          ),
+          event(
+            18,
+            "node-0",
+            "recv_append_entries_response",
+            { role: "Leader", term: 1, lastIdx: 4, commitIdx: 2 },
+            {
+              from: "node-1",
+              packet: { term: 1, lastLogIdx: 4, success: "OK" },
+            },
+          ),
+          event(
+            19,
+            "node-0",
+            "commit",
+            { role: "Leader", term: 1, lastIdx: 4, commitIdx: 2 },
+            { index: 4 },
+          ),
+        ];
+
+        const scenarios = {
+          bootstrap: {
+            name: "Raw bootstrap",
+            mode: "full",
+            description:
+              "The five raw startup records reduce to a checked bootstrap boundary. No Python preprocessing and no Lean action are needed.",
+            events: rawBootstrap,
+          },
+          interleaved: {
+            name: "Interleaved receive",
+            mode: "full",
+            description:
+              "Events retain their global sequence numbers but enter per-node FIFOs. A follower receive, execution, and response reduce to one Lean receive action.",
+            events: [...rawBootstrap, ...continuedTrace],
+          },
+          midtrace: {
+            name: "Mid-trace window",
+            mode: "window",
+            description:
+              "The parser starts from observed node snapshots. Local variables are concrete; logs, queues, membership history, and global reachability remain unknown.",
+            events: [
+              event(
+                401,
+                "node-B",
+                "recv_append_entries",
+                { role: "Follower", term: 7, lastIdx: 119, commitIdx: 116 },
+                {
+                  from: "node-A",
+                  packet: {
+                    term: 7,
+                    prevIdx: 119,
+                    idx: 120,
+                    leaderCommit: 116,
+                  },
+                },
+              ),
+              event(
+                402,
+                "node-B",
+                "execute_append_entries_sync",
+                { role: "Follower", term: 7, lastIdx: 119, commitIdx: 116 },
+                { from: "node-A", index: 120 },
+              ),
+              event(
+                404,
+                "node-B",
+                "send_append_entries_response",
+                { role: "Follower", term: 7, lastIdx: 120, commitIdx: 116 },
+                {
+                  to: "node-A",
+                  packet: { term: 7, lastLogIdx: 120, success: "OK" },
+                },
+              ),
+              event(
+                405,
+                "node-A",
+                "recv_append_entries_response",
+                { role: "Leader", term: 7, lastIdx: 120, commitIdx: 116 },
+                {
+                  from: "node-B",
+                  packet: { term: 7, lastLogIdx: 120, success: "OK" },
+                },
+              ),
+              event(
+                406,
+                "node-A",
+                "commit",
+                { role: "Leader", term: 7, lastIdx: 120, commitIdx: 116 },
+                { index: 120 },
+              ),
+            ],
+          },
+          failure: {
+            name: "Unknown event",
+            mode: "window",
+            description:
+              "An event that is neither a complete grammar prefix nor a known single-event rule fails at its queue head. Nothing is silently discarded.",
+            events: [
+              event(
+                801,
+                "node-A",
+                "replicate",
+                { role: "Leader", term: 9, lastIdx: 220, commitIdx: 218 },
+                { seqno: 221, committable: false },
+              ),
+              event(
+                802,
+                "node-A",
+                "mystery_raft_hook",
+                { role: "Leader", term: 9, lastIdx: 221, commitIdx: 218 },
+                {},
+              ),
+            ],
+          },
+        };
+
+        const demultiplex = (events) => {
+          const queues = {};
+          [...events]
+            .sort((left, right) => left.seq - right.seq)
+            .forEach((item) => {
+              queues[item.node] ??= [];
+              queues[item.node].push(clone(item));
+            });
+          return queues;
+        };
+
+        const observedVariables = (events) => {
+          const variables = {};
+          [...events]
+            .sort((left, right) => left.seq - right.seq)
+            .forEach((item) => {
+              variables[item.node] ??= {};
+              Object.entries(item.state ?? {}).forEach(([field, value]) => {
+                if (!(field in variables[item.node])) {
+                  variables[item.node][field] = {
+                    value,
+                    source: `observed at event ${item.seq}`,
+                  };
+                }
+              });
+            });
+          return variables;
+        };
+
+        const create = (events, mode = "full") => ({
+          mode,
+          sourceEvents: clone(events).sort((left, right) => left.seq - right.seq),
+          queues: demultiplex(events),
+          variables: observedVariables(events),
+          globalUnknowns:
+            mode === "window"
+              ? [
+                  "log entry contents before the window",
+                  "messages already in flight",
+                  "submitted transaction identities",
+                  "configuration and join history",
+                  "reachability from the model initial state",
+                ]
+              : [],
+          bootstrapComplete: mode === "window",
+          indexOffset: mode === "window" ? "unknown" : null,
+          status: "ready",
+          reductions: [],
+          leanActions: [],
+          consumed: [],
+          error: null,
+          lastChange: "Trace loaded. No event has been consumed.",
+        });
+
+        const queueHeads = (state) =>
+          Object.entries(state.queues)
+            .filter(([, queue]) => queue.length > 0)
+            .map(([node, queue]) => ({ node, event: queue[0] }))
+            .sort((left, right) => left.event.seq - right.event.seq);
+
+        const startsWith = (queue, names) =>
+          names.every((name, index) => queue[index]?.fn === name);
+
+        const bootstrapRule = (queue) => {
+          const names = [
+            "become_leader",
+            "replicate",
+            "add_configuration",
+            "replicate",
+            "commit",
+          ];
+          if (!startsWith(queue, names)) return null;
+          const [leader, configurationReplication, configuration, signature, commit] =
+            queue;
+          if (
+            leader.state.role !== "Leader" ||
+            configurationReplication.entryKind !== "configuration" ||
+            configurationReplication.committable !== false ||
+            signature.committable !== true ||
+            commit.index !== 2 ||
+            configuration.members?.length !== 5
+          ) {
+            return {
+              error:
+                "The startup prefix has the right event names but does not establish the expected five-node, index-2 bootstrap state.",
+            };
+          }
+          return {
+            rule: "raw-bootstrap",
+            count: 5,
+            action: null,
+            effect: {
+              bootstrapComplete: true,
+              indexOffset: 2,
+              globalUnknowns: [],
+            },
+          };
+        };
+
+        const receiveRule = (queue) => {
+          if (queue[0]?.fn !== "recv_append_entries") return null;
+          let end = 1;
+          while (
+            queue[end] &&
+            ["execute_append_entries_sync", "commit"].includes(queue[end].fn)
+          ) {
+            if (
+              queue[end].fn === "commit" &&
+              queue[end].state?.role === "Leader"
+            ) {
+              break;
+            }
+            end += 1;
+          }
+          if (queue[end]?.fn !== "send_append_entries_response") {
+            return {
+              error:
+                "recv_append_entries must be followed in this node FIFO by zero or more follower execution/commit events and one send_append_entries_response.",
+            };
+          }
+          const receive = queue[0];
+          return {
+            rule: "follower-receive",
+            count: end + 1,
+            action: `receive(${receive.from}, ${receive.node})`,
+          };
+        };
+
+        const singleEventRule = (item) => {
+          switch (item.fn) {
+            case "replicate":
+              return {
+                rule: item.committable
+                  ? "leader-signature"
+                  : "leader-replication",
+                count: 1,
+                action: item.committable
+                  ? `signCommittableMessages(${item.node})`
+                  : `clientRequest(${item.node}, fresh-tx)`,
+              };
+            case "send_append_entries":
+              return {
+                rule: "leader-send",
+                count: 1,
+                action: `appendEntries(${item.node}, ${item.to}, ${item.packet?.idx ?? "?"})`,
+              };
+            case "recv_append_entries_response":
+              return {
+                rule: "leader-receive-response",
+                count: 1,
+                action: `receive(${item.from}, ${item.node})`,
+              };
+            case "commit":
+              if (item.state?.role !== "Leader") return null;
+              return {
+                rule: "leader-commit",
+                count: 1,
+                action: `advanceCommitIndex(${item.node}, ${item.index})`,
+              };
+            default:
+              return null;
+          }
+        };
+
+        const matchHead = (state, node) => {
+          const queue = state.queues[node];
+          if (!state.bootstrapComplete && state.mode === "full") {
+            const match = bootstrapRule(queue);
+            if (match) return match;
+            return {
+              error:
+                "Full-trace mode requires the raw bootstrap grammar at the globally earliest queue head.",
+            };
+          }
+          return (
+            receiveRule(queue) ??
+            singleEventRule(queue[0]) ?? {
+              error: `No deterministic grammar rule starts with ${queue[0]?.fn ?? "end-of-input"}.`,
+            }
+          );
+        };
+
+        const updateVariables = (variables, consumed) => {
+          const next = clone(variables);
+          consumed.forEach((item) => {
+            next[item.node] ??= {};
+            Object.entries(item.state ?? {}).forEach(([field, value]) => {
+              next[item.node][field] = {
+                value,
+                source: `latest observation at event ${item.seq}`,
+              };
+            });
+          });
+          return next;
+        };
+
+        const finishIfEmpty = (state) => {
+          if (queueHeads(state).length !== 0) return state;
+          if (!state.bootstrapComplete) {
+            return {
+              ...state,
+              status: "failed",
+              error: "Input ended before the raw bootstrap grammar completed.",
+              lastChange: "Validation failed at end of input.",
+            };
+          }
+          return {
+            ...state,
+            status: state.mode === "window" ? "segment-valid" : "valid",
+            lastChange:
+              state.mode === "window"
+                ? "Every event mapped deterministically. Entry-state reachability remains unknown."
+                : "Every event mapped deterministically from the model bootstrap boundary.",
+          };
+        };
+
+        const step = (input) => {
+          if (["valid", "segment-valid", "failed"].includes(input.status)) {
+            return input;
+          }
+          const state = clone(input);
+          const heads = queueHeads(state);
+          if (heads.length === 0) return finishIfEmpty(state);
+          const selected = heads[0];
+          const match = matchHead(state, selected.node);
+          if (match.error) {
+            state.status = "failed";
+            state.error = {
+              seq: selected.event.seq,
+              node: selected.node,
+              fn: selected.event.fn,
+              message: match.error,
+              queuePrefix: state.queues[selected.node].slice(0, 5),
+            };
+            state.lastChange = `No grammar reduction for event ${selected.event.seq}.`;
+            return state;
+          }
+          const consumed = state.queues[selected.node].splice(0, match.count);
+          const reduction = {
+            anchor: consumed[0].seq,
+            node: selected.node,
+            rule: match.rule,
+            eventSeqs: consumed.map((item) => item.seq),
+            eventNames: consumed.map((item) => item.fn),
+            action: match.action,
+          };
+          state.reductions.push(reduction);
+          if (match.action) state.leanActions.push(match.action);
+          state.consumed.push(...consumed.map((item) => item.seq));
+          state.variables = updateVariables(state.variables, consumed);
+          state.bootstrapComplete =
+            match.effect?.bootstrapComplete ?? state.bootstrapComplete;
+          state.indexOffset = match.effect?.indexOffset ?? state.indexOffset;
+          state.globalUnknowns =
+            match.effect?.globalUnknowns ?? state.globalUnknowns;
+          state.status = "running";
+          state.error = null;
+          state.lastChange = `${match.rule} consumed events ${reduction.eventSeqs.join(", ")}${
+            match.action ? ` and emitted ${match.action}` : ""
+          }.`;
+          return finishIfEmpty(state);
+        };
+
+        const run = (input) => {
+          let state = input;
+          let guard = input.sourceEvents.length + 1;
+          while (
+            !["valid", "segment-valid", "failed"].includes(state.status) &&
+            guard > 0
+          ) {
+            state = step(state);
+            guard -= 1;
+          }
+          return state;
+        };
+
+        const append = (input, item) => {
+          const state = clone(input);
+          const nextSeq =
+            Math.max(0, ...state.sourceEvents.map((entry) => entry.seq)) + 1;
+          const appended = { ...clone(item), seq: nextSeq };
+          state.sourceEvents.push(appended);
+          state.queues[appended.node] ??= [];
+          state.queues[appended.node].push(appended);
+          state.variables = updateVariables(state.variables, [appended]);
+          state.status = "ready";
+          state.error = null;
+          state.lastChange = `Appended ${appended.fn} as event ${nextSeq}.`;
+          return state;
+        };
+
+        return {
+          scenarios,
+          create,
+          step,
+          run,
+          append,
+          queueHeads,
+        };
+      })();
+
+      // Thin presentation shell.
+      const ui = {
+        scenario: "bootstrap",
+        state: null,
+        walkthrough: "bootstrap",
+        walkthroughStep: 0,
+      };
+
+      const escapeHtml = (value) =>
+        String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;");
+
+      const loadScenario = (name) => {
+        const scenario = TraceFifoParser.scenarios[name];
+        ui.scenario = name;
+        ui.state = TraceFifoParser.create(scenario.events, scenario.mode);
+        render();
+      };
+
+      const statusLabel = (status) =>
+        ({
+          ready: "Ready",
+          running: "Parsing",
+          valid: "Exact mapping",
+          "segment-valid": "Segment mapping",
+          failed: "Failed",
+        })[status] ?? status;
+
+      const remainingCount = (state) =>
+        Object.values(state.queues).reduce(
+          (total, queue) => total + queue.length,
+          0,
+        );
+
+      const renderStatus = () => {
+        const state = ui.state;
+        const heads = TraceFifoParser.queueHeads(state);
+        const next = heads[0]?.event;
+        const metrics = [
+          [
+            "Status",
+            `<span class="status ${state.status}">${statusLabel(state.status)}</span>`,
+          ],
+          ["Mode", state.mode === "full" ? "From startup" : "Mid-trace window"],
+          ["Remaining events", remainingCount(state)],
+          ["Lean actions", state.leanActions.length],
+          ["Next anchor", next ? `#${next.seq} on ${escapeHtml(next.node)}` : "None"],
+        ];
+        document.getElementById("status-grid").innerHTML = metrics
+          .map(
+            ([label, value]) => `
+              <div class="metric">
+                <span class="metric-label">${label}</span>
+                <div class="metric-value">${value}</div>
+              </div>`,
+          )
+          .join("");
+
+        const message = document.getElementById("message");
+        if (state.error) {
+          message.innerHTML = `
+            <div class="callout bad">
+              <strong>Event ${state.error.seq} on ${escapeHtml(state.error.node)} failed.</strong>
+              ${escapeHtml(state.error.message)}
+              <div class="mono" style="margin-top:8px">
+                Queue head: ${state.error.queuePrefix
+                  .map((item) => `#${item.seq} ${item.fn}`)
+                  .join(" | ")}
+              </div>
+            </div>`;
+        } else {
+          const cls = state.mode === "window" ? "callout unknown" : "callout";
+          message.innerHTML = `<div class="${cls}">${escapeHtml(state.lastChange)}</div>`;
+        }
+      };
+
+      const renderQueues = () => {
+        const queues = Object.entries(ui.state.queues).sort(([left], [right]) =>
+          left.localeCompare(right),
+        );
+        document.getElementById("queues").innerHTML = queues
+          .map(
+            ([node, events]) => `
+              <div class="queue">
+                <div class="queue-head">
+                  <span>${escapeHtml(node)}</span>
+                  <span>${events.length} unconsumed</span>
+                </div>
+                ${
+                  events.length === 0
+                    ? '<div class="empty">Queue empty</div>'
+                    : `<div class="events">${events
+                        .map(
+                          (item) => `
+                            <div class="event">
+                              <div class="event-seq">NDJSON #${item.seq}</div>
+                              <div class="event-name">${escapeHtml(item.fn)}</div>
+                            </div>`,
+                        )
+                        .join("")}</div>`
+                }
+              </div>`,
+          )
+          .join("");
+      };
+
+      const renderReductions = () => {
+        const body = document.getElementById("reductions");
+        if (ui.state.reductions.length === 0) {
+          body.innerHTML =
+            '<tr><td colspan="5" class="empty">No grammar reduction yet.</td></tr>';
+          return;
+        }
+        body.innerHTML = ui.state.reductions
+          .map(
+            (item) => `
+              <tr>
+                <td class="mono">#${item.anchor}</td>
+                <td>${escapeHtml(item.node)}</td>
+                <td><strong>${escapeHtml(item.rule)}</strong></td>
+                <td>
+                  <span class="mono">${item.eventSeqs.map((seq) => `#${seq}`).join(", ")}</span>
+                  <br />
+                  ${item.eventNames.map(escapeHtml).join(" + ")}
+                </td>
+                <td class="mono">${item.action ? escapeHtml(item.action) : "no model action"}</td>
+              </tr>`,
+          )
+          .join("");
+      };
+
+      const field = (node, name) => {
+        const entry = ui.state.variables[node]?.[name];
+        if (!entry) {
+          return {
+            html: '<span style="color:var(--unknown)">unknown</span>',
+            source: "not observed",
+          };
+        }
+        return { html: escapeHtml(entry.value), source: entry.source };
+      };
+
+      const renderVariables = () => {
+        const nodes = Object.keys(ui.state.variables).sort();
+        document.getElementById("variables").innerHTML = nodes
+          .map((node) => {
+            const role = field(node, "role");
+            const term = field(node, "term");
+            const last = field(node, "lastIdx");
+            const commit = field(node, "commitIdx");
+            const sources = [role, term, last, commit]
+              .map((item) => item.source)
+              .filter((value, index, all) => all.indexOf(value) === index);
+            return `
+              <tr>
+                <td><strong>${escapeHtml(node)}</strong></td>
+                <td>${role.html}</td>
+                <td>${term.html}</td>
+                <td>${last.html}</td>
+                <td>${commit.html}</td>
+                <td>${sources
+                  .map((source) => `<span class="provenance">${escapeHtml(source)}</span>`)
+                  .join(" ")}</td>
+              </tr>`;
+          })
+          .join("");
+
+        const unknowns = ui.state.globalUnknowns;
+        document.getElementById("global-unknowns").innerHTML =
+          unknowns.length === 0
+            ? `<strong>Global state:</strong> bootstrap boundary established; implementation index offset is ${escapeHtml(ui.state.indexOffset ?? "not established")}.`
+            : `<strong>Still unknown at the window boundary:</strong> ${unknowns
+                .map(escapeHtml)
+                .join("; ")}. A successful segment mapping does not prove global reachability.`;
+      };
+
+      const walkthroughs = {
+        bootstrap: {
+          title: "Remove external bootstrap preprocessing",
+          description:
+            "Load the raw five-record startup sequence and reduce it as one checked queue prefix. The result establishes the model's existing post-bootstrap initial boundary.",
+          steps: [
+            ["Load raw startup", () => loadScenario("bootstrap")],
+            [
+              "Reduce the bootstrap prefix",
+              () => {
+                ui.state = TraceFifoParser.step(ui.state);
+                render();
+              },
+            ],
+          ],
+        },
+        interleaved: {
+          title: "Parse interleaved node activity",
+          description:
+            "The global sequence is retained on every event. Per-node FIFOs let one follower grammar consume receive, execution, and response while leader events remain in their own queue.",
+          steps: [
+            ["Load interleaved trace", () => loadScenario("interleaved")],
+            [
+              "Reduce raw bootstrap",
+              () => {
+                ui.state = TraceFifoParser.step(ui.state);
+                render();
+              },
+            ],
+            [
+              "Reduce two replications",
+              () => {
+                ui.state = TraceFifoParser.step(
+                  TraceFifoParser.step(ui.state),
+                );
+                render();
+              },
+            ],
+            [
+              "Reduce through the first follower response",
+              () => {
+                for (let index = 0; index < 3; index += 1) {
+                  ui.state = TraceFifoParser.step(ui.state);
+                }
+                render();
+              },
+            ],
+            [
+              "Finish exact mapping",
+              () => {
+                ui.state = TraceFifoParser.run(ui.state);
+                render();
+              },
+            ],
+          ],
+        },
+        midtrace: {
+          title: "Start from a production trace section",
+          description:
+            "The first snapshots materialize local variables. The parser can deterministically map the section, but it keeps unavailable global state and initial reachability visibly unknown.",
+          steps: [
+            ["Load mid-trace section", () => loadScenario("midtrace")],
+            [
+              "Reduce the follower receive group",
+              () => {
+                ui.state = TraceFifoParser.step(ui.state);
+                render();
+              },
+            ],
+            [
+              "Finish the section",
+              () => {
+                ui.state = TraceFifoParser.run(ui.state);
+                render();
+              },
+            ],
+          ],
+        },
+        failure: {
+          title: "Fail on an unmapped event",
+          description:
+            "The first replication maps normally. The next queue head has no grammar production, so exact validation stops at that event with its queue prefix intact.",
+          steps: [
+            ["Load failing section", () => loadScenario("failure")],
+            [
+              "Reduce known replication",
+              () => {
+                ui.state = TraceFifoParser.step(ui.state);
+                render();
+              },
+            ],
+            [
+              "Attempt unknown event",
+              () => {
+                ui.state = TraceFifoParser.step(ui.state);
+                render();
+              },
+            ],
+          ],
+        },
+      };
+
+      const renderWalkthrough = () => {
+        document.getElementById("tabs").innerHTML = Object.entries(walkthroughs)
+          .map(
+            ([key, item]) => `
+              <button data-tab="${key}" class="${key === ui.walkthrough ? "active" : ""}">
+                ${escapeHtml(item.title)}
+              </button>`,
+          )
+          .join("");
+        const selected = walkthroughs[ui.walkthrough];
+        document.getElementById("walkthrough").innerHTML = `
+          <h3>${escapeHtml(selected.title)}</h3>
+          <p>${escapeHtml(selected.description)}</p>
+          <div class="step-list">
+            ${selected.steps
+              .map(
+                ([label], index) => `
+                  <button data-step="${index}">
+                    <span>${escapeHtml(label)}</span>
+                    <span class="step-number">${index + 1}/${selected.steps.length}</span>
+                  </button>`,
+              )
+              .join("")}
+          </div>`;
+        document.querySelectorAll("[data-tab]").forEach((button) => {
+          button.addEventListener("click", () => {
+            ui.walkthrough = button.dataset.tab;
+            renderWalkthrough();
+          });
+        });
+        document.querySelectorAll("[data-step]").forEach((button) => {
+          button.addEventListener("click", () => {
+            selected.steps[Number(button.dataset.step)][1]();
+          });
+        });
+      };
+
+      const render = () => {
+        renderStatus();
+        renderQueues();
+        renderReductions();
+        renderVariables();
+        document.getElementById("parse-next").disabled = [
+          "valid",
+          "segment-valid",
+          "failed",
+        ].includes(ui.state.status);
+        document.getElementById("parse-all").disabled = [
+          "valid",
+          "segment-valid",
+          "failed",
+        ].includes(ui.state.status);
+      };
+
+      document.getElementById("parse-next").addEventListener("click", () => {
+        ui.state = TraceFifoParser.step(ui.state);
+        render();
+      });
+      document.getElementById("parse-all").addEventListener("click", () => {
+        ui.state = TraceFifoParser.run(ui.state);
+        render();
+      });
+      document.getElementById("reset").addEventListener("click", () => {
+        loadScenario(ui.scenario);
+      });
+      document.querySelectorAll("[data-load]").forEach((button) => {
+        button.addEventListener("click", () => {
+          loadScenario(button.dataset.load);
+        });
+      });
+      document.getElementById("append-replicate").addEventListener("click", () => {
+        ui.state = TraceFifoParser.append(ui.state, {
+          node: "node-0",
+          fn: "replicate",
+          state: {
+            role: "Leader",
+            term: 1,
+            lastIdx: 4,
+            commitIdx: 2,
+          },
+          committable: false,
+          entryKind: "transaction",
+        });
+        render();
+      });
+      document.getElementById("append-unknown").addEventListener("click", () => {
+        ui.state = TraceFifoParser.append(ui.state, {
+          node: "node-0",
+          fn: "unmapped_debug_event",
+          state: {
+            role: "Leader",
+            term: 1,
+            lastIdx: 4,
+            commitIdx: 2,
+          },
+        });
+        render();
+      });
+
+      loadScenario("bootstrap");
+      renderWalkthrough();
+    </script>
+  </body>
+</html>
