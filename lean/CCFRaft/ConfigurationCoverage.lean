@@ -8,11 +8,11 @@ set_option autoImplicit false
 
 namespace CCFRaft
 
-variable {TxId : Type}
-variable [DecidableEq TxId]
+variable {Node TxId : Type}
+variable [DecidableEq Node] [DecidableEq TxId]
 
 private theorem entryAtTake_of_le
-    {log : List (Entry TxId)}
+    {log : List (Entry Node TxId)}
     {index count : Nat}
     (within : index <= count) :
     entryAt? (log.take count) index = entryAt? log index := by
@@ -25,16 +25,18 @@ private theorem entryAtTake_of_le
     · rfl
     · omega
 
+variable [Bootstrap Node]
+
 /--
 A covered candidate node covers an equivalent frozen election ballot.
 -/
 theorem ConfigurationCoverageWitness.ballotConfigurationCoverage
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     {node : Node}
     (witness : ConfigurationCoverageWitness state activations node)
     {term : Nat}
-    {record : ElectionRecord TxId}
+    {record : ElectionRecord Node TxId}
     (role : (state.nodes node).role = .candidate)
     (ballotLog :
       record.ballotLog = (state.nodes node).log)
@@ -62,8 +64,8 @@ theorem ConfigurationCoverageWitness.ballotConfigurationCoverage
 
 /-- Frame coverage through actions which preserve the covered log frontier. -/
 theorem configurationCoverageFrame
-    {state after : State TxId}
-    {activations : ActivationHistory TxId}
+    {state after : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     (facts : ConfigurationCoverageFacts state activations)
     (currentConfigurationEq :
       forall node,
@@ -154,8 +156,8 @@ theorem configurationCoverageFrame
 
 /-- Coverage ignores every state field except the node records. -/
 theorem configurationCoverageFrameNodesEq
-    {state after : State TxId}
-    {activations : ActivationHistory TxId}
+    {state after : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     (facts : ConfigurationCoverageFacts state activations)
     (nodesEq : after.nodes = state.nodes) :
     ConfigurationCoverageFacts after activations := by
@@ -174,25 +176,25 @@ namespace ConfigurationCoverageWitness
 
 /-- Frontier shared by the covered node and its immutable activation event. -/
 def sharedFrontier
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     {node : Node}
     (witness : ConfigurationCoverageWitness state activations node) : Nat :=
   min (state.nodes node).commitIndex witness.activation.activationFrontier
 
 /-- Stable signed prefix shared by the node and its covering activation event. -/
 def sharedPrefix
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     {node : Node}
     (witness : ConfigurationCoverageWitness state activations node) :
-    List (Entry TxId) :=
+    List (Entry Node TxId) :=
   witness.activation.history.take witness.sharedFrontier
 
 /-- The activation event retained by a coverage witness is valid. -/
 theorem activationValid
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     {node : Node}
     (historyFacts : ActivationHistoryFacts activations)
     (witness : ConfigurationCoverageWitness state activations node) :
@@ -202,8 +204,8 @@ theorem activationValid
 
 /-- The shared coverage frontier is committed by the covered node. -/
 theorem sharedFrontier_le_commitIndex
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     {node : Node}
     (witness : ConfigurationCoverageWitness state activations node) :
     witness.sharedFrontier <= (state.nodes node).commitIndex :=
@@ -211,8 +213,8 @@ theorem sharedFrontier_le_commitIndex
 
 /-- The shared coverage frontier lies inside the activation event. -/
 theorem sharedFrontier_le_activationFrontier
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     {node : Node}
     (witness : ConfigurationCoverageWitness state activations node) :
     witness.sharedFrontier <= witness.activation.activationFrontier :=
@@ -220,8 +222,8 @@ theorem sharedFrontier_le_activationFrontier
 
 /-- The shared prefix is exactly the node log at the shared frontier. -/
 theorem sharedPrefix_eq_nodeLogTake
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     {node : Node}
     (witness : ConfigurationCoverageWitness state activations node) :
     witness.sharedPrefix =
@@ -230,8 +232,8 @@ theorem sharedPrefix_eq_nodeLogTake
 
 /-- The shared prefix has the full shared-frontier length. -/
 theorem sharedPrefix_length
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     {node : Node}
     (historyFacts : ActivationHistoryFacts activations)
     (witness : ConfigurationCoverageWitness state activations node) :
@@ -245,8 +247,8 @@ theorem sharedPrefix_length
 
 /-- The shared prefix is a restriction of the full activation prefix. -/
 theorem sharedPrefix_prefix_activationPrefix
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     {node : Node}
     (witness : ConfigurationCoverageWitness state activations node) :
     witness.sharedPrefix <+:
@@ -264,8 +266,8 @@ theorem sharedPrefix_prefix_activationPrefix
 
 /-- Every positive shared prefix ends at a signature. -/
 theorem sharedPrefix_signature
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     {node : Node}
     (historyFacts : ActivationHistoryFacts activations)
     (committedSignature : CommittedFrontierIsSignature state)
@@ -311,8 +313,8 @@ theorem sharedPrefix_signature
 
 /-- The covered current configuration occurs in the event's shared prefix. -/
 theorem configuration_mem_activationHistoryTake
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     {node : Node}
     (historyFacts : ActivationHistoryFacts activations)
     (witness : ConfigurationCoverageWitness state activations node) :
@@ -342,8 +344,8 @@ theorem configuration_mem_activationHistoryTake
 
 /-- The covered current configuration occurs in the node's shared prefix. -/
 theorem configuration_mem_nodeLogTake
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     {node : Node}
     (historyFacts : ActivationHistoryFacts activations)
     (witness : ConfigurationCoverageWitness state activations node) :
@@ -362,8 +364,8 @@ theorem configuration_mem_nodeLogTake
 
 /-- A covered current configuration is no later than the event it belongs to. -/
 theorem configurationIndex_le_activationConfiguration
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     {node : Node}
     (historyFacts : ActivationHistoryFacts activations)
     (witness : ConfigurationCoverageWitness state activations node) :
@@ -380,7 +382,7 @@ theorem configurationIndex_le_activationConfiguration
       (currentConfiguration (state.nodes node)).index <=
         witness.activation.activationFrontier :=
     (of_decide_eq_true (List.mem_filter.mp covered).2).2
-  let activationState : NodeState TxId :=
+  let activationState : NodeState Node TxId :=
     { state.nodes node with
       log := witness.activation.history
       commitIndex := witness.activation.activationFrontier }
@@ -396,12 +398,12 @@ theorem configurationIndex_le_activationConfiguration
 
 /-- The stable shared prefix precedes every strictly higher activation event. -/
 theorem sharedPrefix_prefix_higherAuthority
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     {node : Node}
     (witness : ConfigurationCoverageWitness state activations node)
-    {higherIndex : ActivationKey}
-    {higher : ActivationRecord TxId}
+    {higherIndex : ActivationKey Node}
+    {higher : ActivationRecord Node TxId}
     (stored : activations higherIndex = some higher)
     (order :
       (currentConfiguration (state.nodes node)).index <
@@ -413,12 +415,12 @@ theorem sharedPrefix_prefix_higherAuthority
 
 /-- Every strictly lower activation event precedes the stable shared prefix. -/
 theorem lowerAuthority_prefix_sharedPrefix
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     {node : Node}
     (witness : ConfigurationCoverageWitness state activations node)
-    {lowerIndex : ActivationKey}
-    {lower : ActivationRecord TxId}
+    {lowerIndex : ActivationKey Node}
+    {lower : ActivationRecord Node TxId}
     (stored : activations lowerIndex = some lower)
     (order :
       lower.newConfiguration.index <
@@ -430,12 +432,12 @@ theorem lowerAuthority_prefix_sharedPrefix
 
 /-- Equal activation indices identify the covered configuration. -/
 theorem sameAuthority_configurationEq
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     {node : Node}
     (witness : ConfigurationCoverageWitness state activations node)
-    {sameIndex : ActivationKey}
-    {same : ActivationRecord TxId}
+    {sameIndex : ActivationKey Node}
+    {same : ActivationRecord Node TxId}
     (stored : activations sameIndex = some same)
     (sameConfigurationIndex :
       same.newConfiguration.index =
@@ -446,8 +448,8 @@ theorem sameAuthority_configurationEq
 
 /-- The event term retained by a coverage witness is locally observed. -/
 theorem activationTerm_le_currentTerm
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     {node : Node}
     (witness : ConfigurationCoverageWitness state activations node) :
     witness.activation.activationTerm <= (state.nodes node).currentTerm :=
@@ -455,8 +457,8 @@ theorem activationTerm_le_currentTerm
 
 /-- The covering activation term is strictly below a covered candidate term. -/
 theorem activationTerm_lt_candidateTerm
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     {node : Node}
     (witness : ConfigurationCoverageWitness state activations node)
     (role : (state.nodes node).role = .candidate) :
@@ -470,8 +472,8 @@ Equal positive current-configuration indices identify the same configuration
 across covered nodes.
 -/
 theorem configurationCoverageCurrentIndexUnique
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     (historyFacts : ActivationHistoryFacts activations)
     (coverage : ConfigurationCoverageFacts state activations)
     {left right : Node}
@@ -610,8 +612,8 @@ Return the covering activation event for a positive current configuration,
 together with the facts available at its shared frontier.
 -/
 theorem currentConfigurationCoverageAtSharedFrontier
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     (historyFacts : ActivationHistoryFacts activations)
     (coverage : ConfigurationCoverageFacts state activations)
     {node : Node}

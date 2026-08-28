@@ -19,12 +19,176 @@ state and transition semantics remain exactly `CCFRaft.system`.
 
 namespace CCFRaft.ReconfigurationProof
 
-variable {TxId : Type}
-variable [DecidableEq TxId]
+variable {Node TxId : Type}
+variable [DecidableEq Node] [DecidableEq TxId]
+variable [Bootstrap Node]
+
+@[simp]
+theorem NodeStore.get_allocate_of_allocated
+    (nodes : NodeStore Node TxId)
+    (added : Finset Node)
+    (node : Node)
+    (allocated : nodes.allocated node) :
+    nodes.allocate added node = nodes node := by
+  unfold NodeStore.get
+  rw [NodeStore.node?_allocate_of_allocated nodes added node allocated]
+
+@[simp]
+theorem NodeStore.get_allocate
+    (nodes : NodeStore Node TxId)
+    (added : Finset Node)
+    (node : Node) :
+    nodes.allocate added node = nodes node := by
+  by_cases allocated : nodes.allocated node
+  · exact NodeStore.get_allocate_of_allocated nodes added node allocated
+  · unfold NodeStore.allocated at allocated
+    cases found : nodes.node? node with
+    | some value =>
+        simp [found] at allocated
+    | none =>
+        change Finmap.lookup node nodes.entries = none at found
+        have notMember : node ∉ nodes.entries := by
+          exact Finmap.lookup_eq_none.mp found
+        unfold NodeStore.get NodeStore.node? NodeStore.allocate
+        rw [Finmap.lookup_union_right notMember]
+        by_cases member : node ∈ added
+        · rw [show
+            Finmap.lookup node
+                (NodeStore.ofFinset added
+                  (fun _ => freshNodeState : Node -> NodeState Node TxId)).entries =
+              some freshNodeState by
+            exact NodeStore.node?_ofFinset_of_mem _ _ _ member]
+          simp [found]
+        · rw [show
+            Finmap.lookup node
+                (NodeStore.ofFinset added
+                  (fun _ => freshNodeState : Node -> NodeState Node TxId)).entries =
+              none by
+            exact NodeStore.node?_ofFinset_of_not_mem _ _ _ member]
+          simp [found]
+
+@[simp]
+theorem NodeStore.allocate_empty
+    (nodes : NodeStore Node TxId) :
+    nodes.allocate ∅ = nodes := by
+  cases nodes with
+  | mk entries =>
+      unfold NodeStore.allocate
+      congr 1
+      have emptyEntries :
+          (NodeStore.ofFinset ∅
+              (fun _ => freshNodeState : Node -> NodeState Node TxId)).entries =
+            (∅ : Finmap (fun _ : Node => NodeState Node TxId)) := by
+        apply Finmap.ext_lookup
+        intro node
+        have notMember : node ∉ (∅ : Finset Node) := by simp
+        exact NodeStore.node?_ofFinset_of_not_mem _ _ _ notMember
+      rw [emptyEntries, Finmap.union_empty]
+
+theorem NodeStore.allocated_set_iff_of_allocated
+    (nodes : NodeStore Node TxId)
+    (updated : Node)
+    (value : NodeState Node TxId)
+    (updatedAllocated : nodes.allocated updated)
+    (node : Node) :
+    (nodes.set updated value).allocated node <-> nodes.allocated node := by
+  by_cases same : node = updated
+  · subst node
+    simp only [NodeStore.allocated, NodeStore.node?_set_same]
+    simpa [NodeStore.allocated] using updatedAllocated
+  · simp [NodeStore.allocated, NodeStore.node?_set_of_ne, same]
+
+theorem NodeStore.allocated_allocate_iff
+    (nodes : NodeStore Node TxId)
+    (added : Finset Node)
+    (node : Node) :
+    (nodes.allocate added).allocated node <->
+      nodes.allocated node \/ node ∈ added := by
+  change
+    ((nodes.allocate added).node? node).isSome ↔
+      (nodes.node? node).isSome ∨ node ∈ added
+  by_cases allocated : nodes.allocated node
+  · have present : (nodes.node? node).isSome = true := allocated
+    rw [NodeStore.node?_allocate_of_allocated nodes added node allocated]
+    simp [present]
+  · by_cases member : node ∈ added
+    · rw [
+        NodeStore.node?_allocate_of_not_allocated_of_mem
+          nodes added node allocated member
+      ]
+      simp [NodeStore.allocated, allocated, member]
+    · have missing : nodes.node? node = none := by
+        cases found : nodes.node? node <;>
+          simp_all [NodeStore.allocated]
+      have notIn : node ∉ nodes.entries := by
+        rw [← Finmap.lookup_eq_none]
+        exact missing
+      have allocatedMissing :
+          (nodes.allocate added).node? node = none := by
+        simp only [NodeStore.node?, NodeStore.allocate]
+        rw [Finmap.lookup_union_right notIn]
+        exact
+          NodeStore.node?_ofFinset_of_not_mem
+            added (fun _ => freshNodeState) node member
+      simp [allocatedMissing, missing, member]
+
+theorem NodeStore.set_get_of_allocated
+    (nodes : NodeStore Node TxId)
+    (node : Node)
+    (allocated : nodes.allocated node) :
+    nodes.set node (nodes node) = nodes := by
+  cases nodes with
+  | mk entries =>
+      unfold NodeStore.set
+      congr 1
+      apply Finmap.ext_lookup
+      intro other
+      by_cases same : other = node
+      · subst other
+        rw [Finmap.lookup_insert]
+        unfold NodeStore.allocated NodeStore.node? at allocated
+        cases found : entries.lookup node with
+        | none =>
+            simp [found] at allocated
+        | some value =>
+            simp [NodeStore.get, NodeStore.node?, found]
+      · exact Finmap.lookup_insert_of_ne entries same
+
+theorem Finset.subset_of_eq
+    {left right : Finset Node}
+    (same : left = right) :
+    left ⊆ right := by
+  rw [same]
+
+theorem AllocatedNodesExactlyJoined.frame
+    {state after : State Node TxId}
+    (facts : AllocatedNodesExactlyJoined state)
+    (allocatedEq :
+      forall node, after.allocated node <-> state.allocated node)
+    (hasJoinedEq : after.hasJoined = state.hasJoined) :
+    AllocatedNodesExactlyJoined after := by
+  intro node
+  rw [allocatedEq node, hasJoinedEq]
+  exact facts node
+
+@[simp]
+theorem initialNodes_apply
+    (node : Node) :
+    (initialNodes : NodeStore Node TxId) node =
+      initialNodeState node := by
+  rw [initialNodes, NodeStore.get_ofFinset]
+  split
+  · rfl
+  · rename_i notMember
+    have notLeader : Not (node = INITIAL_LEADER) := by
+      intro same
+      subst node
+      exact notMember (initialLeader_mem_initialConfiguration (Node := Node))
+    simp [initialNodeState, freshNodeState, notMember, notLeader]
 
 theorem committedConfigurationCoverageFrame
-    {state after : State TxId}
-    {activations : ActivationHistory TxId}
+    {state after : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     (facts : CommittedConfigurationCoverage state activations)
     (logEq :
       forall node, (after.nodes node).log = (state.nodes node).log)
@@ -64,10 +228,10 @@ theorem committedConfigurationCoverageFrame
         (by simpa [logEq] using sameConfiguration)
 
 theorem queuedConfigurationCoverageFrame
-    {state after : State TxId}
+    {state after : State Node TxId}
     {appendHistory afterAppendHistory :
-      AppendEntriesRequest TxId -> List (Entry TxId)}
-    {activations : ActivationHistory TxId}
+      AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {activations : ActivationHistory Node TxId}
     (facts :
       QueuedConfigurationCoverage state appendHistory activations)
     (networkBack :
@@ -87,8 +251,8 @@ theorem queuedConfigurationCoverageFrame
   exact ⟨by simpa [historyEq] using witness⟩
 
 theorem currentConfigurationAt_append_of_le_length
-    (log : List (Entry TxId))
-    (entry : Entry TxId)
+    (log : List (Entry Node TxId))
+    (entry : Entry Node TxId)
     (frontier : Nat)
     (within : frontier <= log.length) :
     currentConfigurationAt (log ++ [entry]) frontier =
@@ -103,18 +267,18 @@ theorem currentConfigurationAt_append_of_le_length
 
 /-- Current configuration depends only on the log through its frontier. -/
 theorem currentConfigurationAt_eq_of_take_eq
-    {left right : List (Entry TxId)}
+    {left right : List (Entry Node TxId)}
     {frontier : Nat}
     (leftBound : frontier <= left.length)
     (rightBound : frontier <= right.length)
     (takeEq : left.take frontier = right.take frontier) :
     currentConfigurationAt left frontier =
       currentConfigurationAt right frontier := by
-  let leftNode : NodeState TxId :=
+  let leftNode : NodeState Node TxId :=
     { initialNodeState (TxId := TxId) INITIAL_LEADER with
       log := left
       commitIndex := frontier }
-  let rightNode : NodeState TxId :=
+  let rightNode : NodeState Node TxId :=
     { initialNodeState (TxId := TxId) INITIAL_LEADER with
       log := right
       commitIndex := frontier }
@@ -178,8 +342,8 @@ theorem currentConfigurationAt_eq_of_take_eq
 
 
 theorem committedConfigurationCoverageTakeFrame
-    {state after : State TxId}
-    {activations : ActivationHistory TxId}
+    {state after : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     (facts : CommittedConfigurationCoverage state activations)
     (oldCommitBound : CommitIndicesBounded state)
     (afterCommitBound : CommitIndicesBounded after)
@@ -246,8 +410,8 @@ theorem committedConfigurationCoverageTakeFrame
 
 /-- Restricting evidence preserves its actual commit and ACK support. -/
 theorem commitEvidenceRestrictValid
-    {evidence : CommitEvidence TxId}
-    {supportedPrefix : List (Entry TxId)}
+    {evidence : CommitEvidence Node TxId}
+    {supportedPrefix : List (Entry Node TxId)}
     {shorterLength : Nat}
     (valid : evidence.Valid supportedPrefix)
     (shorter : shorterLength <= evidence.supportedLength)
@@ -273,12 +437,12 @@ theorem commitEvidenceRestrictValid
 
 /-- Every live node/request evidence slot exposes a valid evidence. -/
 theorem knownCommitEvidenceValid
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {nodeEvidence : NodeCommitEvidence TxId}
-    {requestEvidence : RequestCommitEvidence TxId}
-    {evidence : CommitEvidence TxId}
-    {supportedPrefix : List (Entry TxId)}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {nodeEvidence : NodeCommitEvidence Node TxId}
+    {requestEvidence : RequestCommitEvidence Node TxId}
+    {evidence : CommitEvidence Node TxId}
+    {supportedPrefix : List (Entry Node TxId)}
     (facts :
       CommitEvidenceFacts
         state appendHistory nodeEvidence requestEvidence)
@@ -306,8 +470,8 @@ theorem knownCommitEvidenceValid
     simpa [prefixEq] using valid
 
 def configurationFrontierCoverageFrame
-    {activations : ActivationHistory TxId}
-    {oldHistory newHistory : List (Entry TxId)}
+    {activations : ActivationHistory Node TxId}
+    {oldHistory newHistory : List (Entry Node TxId)}
     {frontier oldTerm newTerm : Nat}
     (witness :
       ConfigurationFrontierCoverageWitness
@@ -362,8 +526,8 @@ def configurationFrontierCoverageFrame
         (by simpa [configurationEq] using sameConfiguration)
 
 def configurationCoverageWitnessNodeFrame
-    {state after : State TxId}
-    {activations : ActivationHistory TxId}
+    {state after : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     {node : Node}
     (witness : ConfigurationCoverageWitness state activations node)
     (nodeEq : after.nodes node = state.nodes node) :
@@ -393,12 +557,12 @@ def configurationCoverageWitnessNodeFrame
 
 /-- Every live evidence supports a nonempty prefix. -/
 theorem knownCommitEvidenceSupportedLengthPositive
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {nodeEvidence : NodeCommitEvidence TxId}
-    {requestEvidence : RequestCommitEvidence TxId}
-    {evidence : CommitEvidence TxId}
-    {supportedPrefix : List (Entry TxId)}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {nodeEvidence : NodeCommitEvidence Node TxId}
+    {requestEvidence : RequestCommitEvidence Node TxId}
+    {evidence : CommitEvidence Node TxId}
+    {supportedPrefix : List (Entry Node TxId)}
     (facts :
       CommitEvidenceFacts
         state appendHistory nodeEvidence requestEvidence)
@@ -427,10 +591,10 @@ theorem knownCommitEvidenceSupportedLengthPositive
 
 /-- Frame changes preserve commit evidence when committed prefixes do not change. -/
 theorem commitEvidenceFrame
-    (state after : State TxId)
-    (appendHistory : AppendEntriesRequest TxId -> List (Entry TxId))
-    (nodeEvidence : NodeCommitEvidence TxId)
-    (requestEvidence : RequestCommitEvidence TxId)
+    (state after : State Node TxId)
+    (appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+    (nodeEvidence : NodeCommitEvidence Node TxId)
+    (requestEvidence : RequestCommitEvidence Node TxId)
     (facts :
       CommitEvidenceFacts
         state appendHistory nodeEvidence requestEvidence)
@@ -470,8 +634,8 @@ theorem commitEvidenceFrame
 
 /-- A relaxed voter in a frame either maps back or proves the result. -/
 def RelaxedMemberFrameResult
-    (state after : State TxId)
-    (evidence : CommitEvidence TxId)
+    (state after : State Node TxId)
+    (evidence : CommitEvidence Node TxId)
     (candidate member : Node) : Prop :=
   ((state.nodes candidate).role = .candidate /\
       evidence.commitTerm <
@@ -487,12 +651,12 @@ def RelaxedMemberFrameResult
 
 /-- Same-term queued comparability either maps back or is proved directly. -/
 def SameTermQueuedFrameResult
-    (state : State TxId)
+    (state : State Node TxId)
     (oldAppendHistory newAppendHistory :
-      AppendEntriesRequest TxId -> List (Entry TxId))
-    (evidence : CommitEvidence TxId)
+      AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+    (evidence : CommitEvidence Node TxId)
     (destination : Node)
-    (request : AppendEntriesRequest TxId) : Prop :=
+    (request : AppendEntriesRequest Node TxId) : Prop :=
   (Message.appendEntriesRequest request ∈ state.network destination /\
     oldAppendHistory request = newAppendHistory request) \/
     newAppendHistory request <+: evidence.history \/
@@ -501,12 +665,12 @@ def SameTermQueuedFrameResult
 
 /-- Frame preservation for the member-wise prospective commit witness. -/
 theorem prospectiveCommitEvidenceFrame
-    (state after : State TxId)
+    (state after : State Node TxId)
     (oldAppendHistory newAppendHistory :
-      AppendEntriesRequest TxId -> List (Entry TxId))
-    (oldNodeEvidence newNodeEvidence : NodeCommitEvidence TxId)
-    (oldRequestEvidence newRequestEvidence : RequestCommitEvidence TxId)
-    (elections : ElectionHistory TxId)
+      AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+    (oldNodeEvidence newNodeEvidence : NodeCommitEvidence Node TxId)
+    (oldRequestEvidence newRequestEvidence : RequestCommitEvidence Node TxId)
+    (elections : ElectionHistory Node TxId)
     (oldFacts :
       ProspectiveCommitEvidenceFacts
         state oldAppendHistory oldNodeEvidence oldRequestEvidence elections)
@@ -597,12 +761,422 @@ theorem prospectiveCommitEvidenceFrame
             ackMember oldRelaxed).trans logPrefix
     · exact direct
 
+/-- Every member of an active configuration belongs to its active-node union. -/
+theorem configurationNodes_subset_activeNodeUnion
+    (nodeState : NodeState Node TxId)
+    (configuration : Configuration Node)
+    (active : configuration ∈ activeConfigurations nodeState) :
+    configuration.nodes ⊆ activeNodeUnion nodeState := by
+  unfold activeNodeUnion
+  generalize activeConfigurations nodeState = configurations at active ⊢
+  have foldlPreserves :
+      forall (remaining : List (Configuration Node)) accumulator,
+        accumulator ⊆
+          remaining.foldl
+            (fun nodes current => nodes ∪ current.nodes)
+            accumulator := by
+    intro remaining
+    induction remaining with
+    | nil => exact fun _ => Finset.Subset.rfl
+    | cons head tail inductionHypothesis =>
+        intro accumulator
+        exact
+          Finset.Subset.trans Finset.subset_union_left
+            (inductionHypothesis (accumulator ∪ head.nodes))
+  have foldlMono :
+      forall (remaining : List (Configuration Node)) {left right},
+        left ⊆ right ->
+          remaining.foldl
+              (fun nodes current => nodes ∪ current.nodes) left ⊆
+            remaining.foldl
+              (fun nodes current => nodes ∪ current.nodes) right := by
+    intro remaining
+    induction remaining with
+    | nil => exact fun included => included
+    | cons head tail inductionHypothesis =>
+        intro left right included
+        apply inductionHypothesis
+        intro peer member
+        simp only [Finset.mem_union] at member ⊢
+        rcases member with member | member
+        · exact Or.inl (included member)
+        · exact Or.inr member
+  induction configurations generalizing configuration with
+  | nil => simp at active
+  | cons head tail inductionHypothesis =>
+      simp only [List.mem_cons] at active
+      rcases active with same | active
+      · subst configuration
+        exact
+          Finset.Subset.trans Finset.subset_union_right
+            (foldlPreserves tail (∅ ∪ head.nodes))
+      · exact
+          Finset.Subset.trans
+            (inductionHypothesis configuration active)
+            (foldlMono tail Finset.subset_union_left)
+
+/-- Shrinking the active configuration list can only shrink its node union. -/
+theorem activeNodeUnion_subset_of_activeConfigurations_subset
+    (before after : NodeState Node TxId)
+    (subset :
+      forall configuration,
+        configuration ∈ activeConfigurations after ->
+          configuration ∈ activeConfigurations before) :
+    activeNodeUnion after ⊆ activeNodeUnion before := by
+  intro peer member
+  unfold activeNodeUnion at member
+  generalize configurationsEq :
+    activeConfigurations after = configurations at member
+  have foldMember :
+      forall (remaining : List (Configuration Node))
+        (accumulator : Finset Node),
+        peer ∈ remaining.foldl
+            (fun nodes configuration => nodes ∪ configuration.nodes)
+            accumulator ->
+          peer ∈ accumulator \/
+            Exists fun configuration =>
+              configuration ∈ remaining /\ peer ∈ configuration.nodes := by
+    intro remaining
+    induction remaining with
+    | nil =>
+        intro accumulator included
+        exact Or.inl included
+    | cons head tail inductionHypothesis =>
+        intro accumulator included
+        simp only [List.foldl_cons] at included
+        rcases inductionHypothesis (accumulator ∪ head.nodes) included with
+          old | ⟨configuration, inTail, inNodes⟩
+        · simp only [Finset.mem_union] at old
+          rcases old with old | inHead
+          · exact Or.inl old
+          · exact Or.inr ⟨head, by simp, inHead⟩
+        · exact Or.inr ⟨configuration, by simp [inTail], inNodes⟩
+  rcases foldMember configurations ∅ member with
+    impossible | ⟨configuration, active, inNodes⟩
+  · simp at impossible
+  · apply
+      configurationNodes_subset_activeNodeUnion before configuration
+        (subset configuration (by simpa [configurationsEq] using active))
+    exact inNodes
+
+/-- Configuration node sets do not depend on the projection's starting index. -/
+theorem configurationsInLogFrom_node_sets_independent
+    (leftStart rightStart : Nat)
+    (log : List (Entry Node TxId)) :
+    (configurationsInLogFrom leftStart log).map Configuration.nodes =
+        (configurationsInLogFrom rightStart log).map Configuration.nodes := by
+  induction log generalizing leftStart rightStart with
+  | nil => simp [configurationsInLogFrom]
+  | cons entry entries inductionHypothesis =>
+        cases content : entry.content <;>
+          simp [
+            configurationsInLogFrom, content,
+            inductionHypothesis (leftStart := leftStart + 1)
+              (rightStart := rightStart + 1)
+          ]
+
+/-- The latest projected configuration is among all known configurations. -/
+theorem latestConfiguration_mem_allConfigurations
+    (nodeState : NodeState Node TxId) :
+    latestConfiguration nodeState ∈ allConfigurations nodeState.log := by
+  unfold latestConfiguration allConfigurations
+  generalize configurationsInLog nodeState.log = configurations
+  have foldMember :
+      forall (remaining : List (Configuration Node)) accumulator,
+          remaining.foldl (fun _ configuration => configuration) accumulator =
+              accumulator \/
+            remaining.foldl (fun _ configuration => configuration) accumulator ∈
+              remaining := by
+    intro remaining
+    induction remaining with
+    | nil => intro accumulator; exact Or.inl rfl
+    | cons head tail inductionHypothesis =>
+          intro accumulator
+          rcases inductionHypothesis head with same | member
+          · exact Or.inr (by simp [same])
+          · exact Or.inr (by simp [member])
+  rcases foldMember configurations implicitConfiguration with same | member
+  · exact List.mem_cons.mpr (Or.inl same)
+  · exact List.mem_cons.mpr (Or.inr member)
+
+/-- Configuration carriers compose across concatenated logs. -/
+theorem allConfigurations_append_nodes_carried
+    (left right : List (Entry Node TxId))
+    (carrier : Finset Node)
+    (leftCarried :
+        forall configuration,
+          configuration ∈ allConfigurations left ->
+            configuration.nodes ⊆ carrier)
+    (rightCarried :
+        forall configuration,
+          configuration ∈ allConfigurations right ->
+            configuration.nodes ⊆ carrier) :
+    forall configuration,
+        configuration ∈ allConfigurations (left ++ right) ->
+          configuration.nodes ⊆ carrier := by
+  intro configuration member
+  rw [allConfigurations] at member
+  rcases List.mem_cons.mp member with implicit | physical
+  · subst configuration
+    exact
+      leftCarried implicitConfiguration
+        (by simp [allConfigurations])
+  · rw [
+      configurationsInLog, configurationsInLogFrom_append
+    ] at physical
+    rcases List.mem_append.mp physical with inLeft | inRight
+    · exact
+        leftCarried configuration
+          (by
+            rw [allConfigurations]
+            exact List.mem_cons.mpr (Or.inr inLeft))
+    · have nodeSetMember :
+          configuration.nodes ∈
+            (configurationsInLogFrom 1 right).map Configuration.nodes := by
+        rw [
+          ← configurationsInLogFrom_node_sets_independent
+            (TxId := TxId) (1 + left.length) 1 right
+        ]
+        exact List.mem_map.mpr ⟨configuration, inRight, rfl⟩
+      rcases List.mem_map.mp nodeSetMember with
+        ⟨original, originalMember, sameNodes⟩
+      rw [← sameNodes]
+      exact
+        rightCarried original
+          (by
+            rw [allConfigurations, configurationsInLog]
+            exact List.mem_cons.mpr (Or.inr originalMember))
+
+/-- A log suffix inherits the node carrier of the complete log. -/
+theorem allConfigurations_suffix_nodes_carried
+    (left right : List (Entry Node TxId))
+    (carrier : Finset Node)
+    (carried :
+      forall configuration,
+        configuration ∈ allConfigurations (left ++ right) ->
+          configuration.nodes ⊆ carrier) :
+    forall configuration,
+      configuration ∈ allConfigurations right ->
+        configuration.nodes ⊆ carrier := by
+  intro configuration member
+  rw [allConfigurations] at member
+  rcases List.mem_cons.mp member with implicit | physical
+  · subst configuration
+    exact
+      carried implicitConfiguration
+        (by simp [allConfigurations])
+  · have nodeSetMember :
+        configuration.nodes ∈
+          (configurationsInLogFrom (1 + left.length) right).map
+            Configuration.nodes := by
+      rw [
+        configurationsInLogFrom_node_sets_independent
+          (TxId := TxId) (1 + left.length) 1 right
+      ]
+      exact List.mem_map.mpr
+        ⟨configuration, by simpa [configurationsInLog] using physical, rfl⟩
+    rcases List.mem_map.mp nodeSetMember with
+      ⟨shifted, shiftedMember, sameNodes⟩
+    rw [← sameNodes]
+    apply carried shifted
+    rw [
+      allConfigurations, configurationsInLog,
+      configurationsInLogFrom_append
+    ]
+    exact List.mem_cons.mpr
+      (Or.inr (List.mem_append.mpr (Or.inr shiftedMember)))
+
+/-- Covering every known configuration covers the active-node union. -/
+theorem activeNodeUnion_subset_of_allConfigurations_carrier
+    (nodeState : NodeState Node TxId)
+    (carrier : Finset Node)
+    (covered :
+        forall configuration,
+          configuration ∈ allConfigurations nodeState.log ->
+            configuration.nodes ⊆ carrier) :
+    activeNodeUnion nodeState ⊆ carrier := by
+  unfold activeNodeUnion
+  have foldCovered :
+        forall (configurations : List (Configuration Node))
+          (accumulator : Finset Node),
+          accumulator ⊆ carrier ->
+          (forall configuration,
+            configuration ∈ configurations ->
+              configuration.nodes ⊆ carrier) ->
+          configurations.foldl
+              (fun nodes configuration => nodes ∪ configuration.nodes)
+              accumulator ⊆ carrier := by
+    intro configurations
+    induction configurations with
+    | nil =>
+          intro accumulator accumulatorCovered _
+          exact accumulatorCovered
+    | cons head tail inductionHypothesis =>
+          intro accumulator accumulatorCovered configurationsCovered
+          apply inductionHypothesis
+          · exact
+              Finset.union_subset accumulatorCovered
+                (configurationsCovered head (by simp))
+          · intro configuration member
+            exact configurationsCovered configuration (by simp [member])
+  apply foldCovered (activeConfigurations nodeState) ∅
+  · exact Finset.empty_subset _
+  · intro configuration member
+    apply covered configuration
+    exact (List.mem_filter.mp member).1
+
+/-- Support inclusion only matters on members of the governing configuration. -/
+theorem hasConfigurationMajority_mono_on_configuration
+    {configuration : Configuration Node}
+    {smaller larger : Finset Node}
+    (subset :
+      forall node,
+        node ∈ smaller ->
+          node ∈ configuration.nodes ->
+            node ∈ larger)
+    (majority : hasConfigurationMajority smaller configuration) :
+    hasConfigurationMajority larger configuration := by
+  unfold hasConfigurationMajority at majority ⊢
+  apply
+    lt_of_lt_of_le majority
+      (Nat.mul_le_mul_right 2 (Finset.card_le_card ?_))
+  intro node member
+  exact
+    Finset.mem_inter.mpr
+      ⟨subset node
+          (Finset.mem_inter.mp member).1
+          (Finset.mem_inter.mp member).2,
+        (Finset.mem_inter.mp member).2⟩
+
+/-- A successful one-based log lookup has a positive index. -/
+theorem entryAtSomeIndexPositive
+    {log : List (Entry Node TxId)}
+    {index : Nat}
+    {entry : Entry Node TxId}
+    (found : entryAt? log index = some entry) :
+    0 < index := by
+  by_contra notPositive
+  have zero : index = 0 := Nat.eq_zero_of_not_pos notPositive
+  subst index
+  simp [entryAt?] at found
+
+/-- A signature can occur only at a positive log index. -/
+theorem isSignatureAtIndexPositive
+    {log : List (Entry Node TxId)}
+    {index : Nat}
+    (signature : isSignatureAt log index = true) :
+    0 < index := by
+  rcases isSignatureAtTrue signature with ⟨entry, found, _⟩
+  exact entryAtSomeIndexPositive found
+
+/-- Frame joined carriers through shrinking configurations and vote sets. -/
+theorem joinedCarrierFactsFrame
+    (state after : State Node TxId)
+    (facts : JoinedCarrierFacts state)
+    (hasJoinedEq : after.hasJoined = state.hasJoined)
+    (activeSubset :
+      forall node configuration,
+        configuration ∈ activeConfigurations (after.nodes node) ->
+          configuration ∈ activeConfigurations (state.nodes node))
+    (configurationSubset :
+      forall node configuration,
+        configuration ∈ allConfigurations (after.nodes node).log ->
+          configuration ∈ allConfigurations (state.nodes node).log)
+    (votesSubset :
+      forall node,
+        (after.nodes node).votesGranted ⊆
+          (state.nodes node).votesGranted)
+    (activeRoleJoined :
+      forall node,
+        (after.nodes node).role = .candidate \/
+          (after.nodes node).role = .leader ->
+            node ∈ after.hasJoined)
+    (positiveMatchJoined :
+      forall leader peer,
+        0 < (after.nodes leader).matchIndex peer ->
+          peer ∈ after.hasJoined)
+    (nonemptyLogJoined :
+      forall node,
+        Not ((after.nodes node).log = []) ->
+          node ∈ after.hasJoined)
+    (networkSubset :
+      forall destination message,
+        message ∈ after.network destination ->
+          message ∈ state.network destination) :
+    JoinedCarrierFacts after := by
+  constructor
+  · intro node peer member
+    rw [hasJoinedEq]
+    exact
+      facts.activeNodes node
+        (activeNodeUnion_subset_of_activeConfigurations_subset
+          (state.nodes node) (after.nodes node)
+          (activeSubset node) member)
+  · intro node configuration member peer inNodes
+    rw [hasJoinedEq]
+    exact
+      facts.configurationNodes node configuration
+        (configurationSubset node configuration member) inNodes
+  · intro node peer member
+    rw [hasJoinedEq]
+    exact facts.grantedVotes node (votesSubset node member)
+  · intro destination request member
+    rw [hasJoinedEq]
+    exact
+      facts.voteRequestDestinations destination request
+        (networkSubset destination _ member)
+  · intro destination request member
+    rw [hasJoinedEq]
+    exact
+      facts.appendRequestDestinations destination request
+        (networkSubset destination _ member)
+  · intro destination request member configuration configured peer inNodes
+    rw [hasJoinedEq]
+    exact
+      facts.appendRequestConfigurations destination request
+        (networkSubset destination _ member)
+        configuration configured inNodes
+  · intro destination response member
+    rw [hasJoinedEq]
+    exact
+      facts.voteResponseSources destination response
+        (networkSubset destination _ member)
+  · constructor
+    · exact activeRoleJoined
+    · exact positiveMatchJoined
+    · intro destination response member
+      rw [hasJoinedEq]
+      exact
+        facts.runtimeNodes.appendResponses destination response
+          (networkSubset destination _ member)
+    · exact nonemptyLogJoined
+
+/-- A queued vote request is addressed to a joined node. -/
+theorem systemVoteRequestDestinationJoined
+    (state : State Node TxId)
+    (invariant : SystemInductiveInvariant state)
+    (destination : Node)
+    (request : RequestVoteRequest Node)
+    (member :
+      Message.requestVoteRequest request ∈ state.network destination) :
+    request.destination ∈ state.hasJoined := by
+  rcases invariant with
+    ⟨_, _, _, _, _, _, facts⟩
+  have destinationEq : request.destination = destination := by
+    simpa using facts.networkHistory.addressed destination _ member
+  rw [destinationEq]
+  exact
+    facts.joinedCarriers.voteRequestDestinations
+      destination request member
+
 /-- Processed acknowledgements are always effective acknowledgement evidence. -/
 theorem acknowledgingNodes_subset_effectiveAckers
-   (state : State TxId)
-   (responseHistory : AppendEntriesResponse -> List (Entry TxId))
+   (state : State Node TxId)
+   (responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId))
    (leader : Node)
-   (index : Nat) :
+   (index : Nat)
+   (activeNodesJoined :
+     activeNodeUnion (state.nodes leader) ⊆ state.hasJoined) :
    acknowledgingNodes state leader index ⊆
      effectiveAckers state responseHistory leader index := by
  intro peer member
@@ -610,21 +1184,21 @@ theorem acknowledgingNodes_subset_effectiveAckers
    acknowledgingNodes, effectiveAckers,
    Finset.mem_filter, Finset.mem_univ, true_and
  ] at member ⊢
- rcases member with self | matched
- · exact Or.inl self
- · exact Or.inr (Or.inl matched)
+ rcases member with ⟨active, self | matched⟩
+ · exact ⟨activeNodesJoined active, Or.inl self⟩
+ · exact ⟨activeNodesJoined active, Or.inr (Or.inl matched)⟩
 
 /-- Frame permanent authority evidence through an action's live-slot mapping. -/
 theorem activationEvidenceFrame
-    (state after : State TxId)
+    (state after : State Node TxId)
     (oldAppendHistory newAppendHistory :
-      AppendEntriesRequest TxId -> List (Entry TxId))
+      AppendEntriesRequest Node TxId -> List (Entry Node TxId))
     (oldResponseHistory newResponseHistory :
-      AppendEntriesResponse -> List (Entry TxId))
-    (oldNodeEvidence newNodeEvidence : NodeCommitEvidence TxId)
-    (oldRequestEvidence newRequestEvidence : RequestCommitEvidence TxId)
-    (oldElections newElections : ElectionHistory TxId)
-    (activations : ActivationHistory TxId)
+      AppendEntriesResponse Node -> List (Entry Node TxId))
+    (oldNodeEvidence newNodeEvidence : NodeCommitEvidence Node TxId)
+    (oldRequestEvidence newRequestEvidence : RequestCommitEvidence Node TxId)
+    (oldElections newElections : ElectionHistory Node TxId)
+    (activations : ActivationHistory Node TxId)
     (facts :
       ActivationEvidenceFacts
         state oldAppendHistory oldResponseHistory
@@ -697,8 +1271,8 @@ theorem activationEvidenceFrame
 
 /-- Monotone node terms preserve every recorded activation supporter's bound. -/
 theorem activationSupporterProgressFrame
-    (state after : State TxId)
-    (activations : ActivationHistory TxId)
+    (state after : State Node TxId)
+    (activations : ActivationHistory Node TxId)
     (facts : ActivationSupporterProgress state activations)
     (termMonotone :
       forall node,
@@ -714,9 +1288,9 @@ theorem activationSupporterProgressFrame
 /-- Canonical extensions preserve immutable activation provenance. -/
 theorem activationCanonicalFrame
     (canonicalHistory afterCanonicalHistory :
-      Nat -> List (Entry TxId))
-    (owners afterOwners : TermOwners)
-    (activations : ActivationHistory TxId)
+      Nat -> List (Entry Node TxId))
+    (owners afterOwners : TermOwners Node)
+    (activations : ActivationHistory Node TxId)
     (historyFacts : ActivationHistoryFacts activations)
     (facts :
       ActivationCanonicalFacts canonicalHistory owners activations)
@@ -759,14 +1333,14 @@ theorem activationCanonicalFrame
 
 /-- The qualified temporal closure always yields the activation prefix. -/
 theorem activationPrefixInLaterElection
-    {votes : VoteHistory}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {votes : VoteHistory Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (facts : ActivationElectionFacts votes elections activations)
-    {activationIndex : ActivationKey}
+    {activationIndex : ActivationKey Node}
     {electionTerm : Nat}
-    {activation : ActivationRecord TxId}
-    {election : ElectionRecord TxId}
+    {activation : ActivationRecord Node TxId}
+    {election : ElectionRecord Node TxId}
     (activationStored :
       activations activationIndex = some activation)
     (electionStored :
@@ -788,21 +1362,21 @@ theorem activationPrefixInLaterElection
 
 /-- Empty promotion logs cannot follow a nonempty signed activation. -/
 theorem activationElectionPromotionNonempty
-    {votes : VoteHistory}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {votes : VoteHistory Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (historyFacts : ActivationHistoryFacts activations)
     (facts : ActivationElectionFacts votes elections activations)
-    {activationIndex : ActivationKey}
+    {activationIndex : ActivationKey Node}
     {electionTerm : Nat}
-    {activation : ActivationRecord TxId}
-    {election : ElectionRecord TxId}
+    {activation : ActivationRecord Node TxId}
+    {election : ElectionRecord Node TxId}
     (activationStored :
       activations activationIndex = some activation)
     (electionStored :
       elections electionTerm = some election)
     (later : activation.activationTerm < electionTerm) :
-    election.promotionLog = ([] : List (Entry TxId)) -> False := by
+    election.promotionLog = ([] : List (Entry Node TxId)) -> False := by
   intro emptyPromotion
   have covered :
       List.IsPrefix
@@ -830,9 +1404,9 @@ theorem activationElectionPromotionNonempty
 
 /-- Frame immutable activation/election closure through preserved old votes. -/
 theorem activationElectionFrame
-    (votes afterVotes : VoteHistory)
-    (elections : ElectionHistory TxId)
-    (activations : ActivationHistory TxId)
+    (votes afterVotes : VoteHistory Node)
+    (elections : ElectionHistory Node TxId)
+    (activations : ActivationHistory Node TxId)
     (facts : ActivationElectionFacts votes elections activations)
     (votesPreserved :
       forall activationIndex activation electionTerm election voter,
@@ -870,11 +1444,11 @@ Frame activation vote history through a vote projection and voter-snapshot
 update.
 -/
 theorem activationVoteHistoryFrame
-    (votes afterVotes : VoteHistory)
+    (votes afterVotes : VoteHistory Node)
     (voteVoterHistory afterVoteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId))
-    (elections : ElectionHistory TxId)
-    (activations : ActivationHistory TxId)
+      RequestVoteResponse Node -> List (Entry Node TxId))
+    (elections : ElectionHistory Node TxId)
+    (activations : ActivationHistory Node TxId)
     (facts :
       ActivationVoteHistory
         votes voteVoterHistory elections activations)
@@ -913,12 +1487,12 @@ theorem activationVoteHistoryFrame
 
 /-- Frame term ownership while supplying the action-specific queued history. -/
 theorem termOwnershipFrame
-    (state after : State TxId)
+    (state after : State Node TxId)
     (oldAppendHistory newAppendHistory :
-      AppendEntriesRequest TxId -> List (Entry TxId))
-    (votes : VoteHistory)
-    (canonicalHistory : Nat -> List (Entry TxId))
-    (owners : TermOwners)
+      AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+    (votes : VoteHistory Node)
+    (canonicalHistory : Nat -> List (Entry Node TxId))
+    (owners : TermOwners Node)
     (facts :
       TermOwnershipFacts
         state votes oldAppendHistory canonicalHistory owners)
@@ -994,10 +1568,10 @@ theorem termOwnershipFrame
 
 /-- Read the exact immutable ACK snapshot retained for one activation supporter. -/
 theorem activationSupporterAckSnapshot
-    {activations : ActivationHistory TxId}
+    {activations : ActivationHistory Node TxId}
     (facts : ActivationHistoryFacts activations)
-    {index : ActivationKey}
-    {record : ActivationRecord TxId}
+    {index : ActivationKey Node}
+    {record : ActivationRecord Node TxId}
     (recorded : activations index = some record)
     {supporter : Node}
     (member : supporter ∈ record.jointSupporters) :
@@ -1019,9 +1593,9 @@ Every effective ACK supporter has one exact immutable snapshot covering the
 acknowledged frontier, whether the ACK is self, processed, or still queued.
 -/
 theorem effectiveAckerSnapshotExists
-    {state : State TxId}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {ackHistory : ProcessedAckHistory TxId}
+    {state : State Node TxId}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {ackHistory : ProcessedAckHistory Node TxId}
     (networkFacts :
       forall destination response,
         Message.appendEntriesResponse response ∈
@@ -1038,7 +1612,7 @@ theorem effectiveAckerSnapshotExists
     (member :
       supporter ∈
         effectiveAckers state responseHistory leader frontier) :
-    Exists fun snapshot : ProcessedAckSnapshot TxId =>
+    Exists fun snapshot : ProcessedAckSnapshot Node TxId =>
       snapshot.term = (state.nodes leader).currentTerm /\
         frontier <= snapshot.index /\
         snapshot.index <= snapshot.history.length /\
@@ -1048,7 +1622,7 @@ theorem effectiveAckerSnapshotExists
     effectiveAckers, Finset.mem_filter,
     Finset.mem_univ, true_and
   ] at member
-  rcases member with self | processed | queued
+  rcases member with ⟨_joined, self | processed | queued⟩
   · subst supporter
     exact
       ⟨{ term := (state.nodes leader).currentTerm
@@ -1104,9 +1678,9 @@ Frame activation-supporter chronology through append-only logs, monotone terms,
 and preserved frozen elections.
 -/
 theorem activationSupporterCurrentHistoryFrame
-    (state after : State TxId)
-    (elections afterElections : ElectionHistory TxId)
-    (activations : ActivationHistory TxId)
+    (state after : State Node TxId)
+    (elections afterElections : ElectionHistory Node TxId)
+    (activations : ActivationHistory Node TxId)
     (facts :
       ActivationSupporterCurrentHistory state elections activations)
     (logMonotone :
@@ -1137,9 +1711,9 @@ theorem activationSupporterCurrentHistoryFrame
 
 /-- Frame shared ballot configurations through unchanged candidacies. -/
 theorem electionConfigurationFrame
-    (state after : State TxId)
-    (elections : ElectionHistory TxId)
-    (activations afterActivations : ActivationHistory TxId)
+    (state after : State Node TxId)
+    (elections : ElectionHistory Node TxId)
+    (activations afterActivations : ActivationHistory Node TxId)
     (facts :
       ElectionConfigurationFacts state elections activations)
     (activationPreserved :
@@ -1216,10 +1790,10 @@ theorem electionConfigurationFrame
 
 /-- Live evidence in a frame state came from the corresponding old slot. -/
 theorem knownCommitEvidenceFrameBack
-    (state after : State TxId)
-    (appendHistory : AppendEntriesRequest TxId -> List (Entry TxId))
-    (nodeEvidence : NodeCommitEvidence TxId)
-    (requestEvidence : RequestCommitEvidence TxId)
+    (state after : State Node TxId)
+    (appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+    (nodeEvidence : NodeCommitEvidence Node TxId)
+    (requestEvidence : RequestCommitEvidence Node TxId)
     (commitEq :
       forall node,
         (after.nodes node).commitIndex =
@@ -1232,8 +1806,8 @@ theorem knownCommitEvidenceFrameBack
       forall destination request,
         Message.appendEntriesRequest request ∈ after.network destination ->
           Message.appendEntriesRequest request ∈ state.network destination)
-    {evidence : CommitEvidence TxId}
-    {supportedPrefix : List (Entry TxId)}
+    {evidence : CommitEvidence Node TxId}
+    {supportedPrefix : List (Entry Node TxId)}
     (known :
       KnownCommitEvidence
         after appendHistory nodeEvidence requestEvidence
@@ -1258,13 +1832,13 @@ theorem knownCommitEvidenceFrameBack
 
 /-- The proof-only node evidence selected by AppendEntries receive. -/
 def appendRequestNodeEvidence
-    (state : State TxId)
+    (state : State Node TxId)
     (destination : Node)
-    (request : AppendEntriesRequest TxId)
-    (nextNode : NodeState TxId)
-    (nodeEvidence : NodeCommitEvidence TxId)
-    (requestEvidence : RequestCommitEvidence TxId) :
-    NodeCommitEvidence TxId :=
+    (request : AppendEntriesRequest Node TxId)
+    (nextNode : NodeState Node TxId)
+    (nodeEvidence : NodeCommitEvidence Node TxId)
+    (requestEvidence : RequestCommitEvidence Node TxId) :
+    NodeCommitEvidence Node TxId :=
   Function.update nodeEvidence destination
     (if nextNode.commitIndex =
         (state.nodes destination).commitIndex then
@@ -1279,15 +1853,15 @@ does not advance, and otherwise restricts the request's advertised
 evidence to the newly learned frontier.
 -/
 theorem appendRequestCommitEvidenceFacts
-    (state : State TxId)
+    (state : State Node TxId)
     (destination : Node)
-    (request : AppendEntriesRequest TxId)
-    (nextNode : NodeState TxId)
-    (response : AppendEntriesResponse)
-    (afterNetwork : Node -> List (Message TxId))
-    (appendHistory : AppendEntriesRequest TxId -> List (Entry TxId))
-    (nodeEvidence : NodeCommitEvidence TxId)
-    (requestEvidence : RequestCommitEvidence TxId)
+    (request : AppendEntriesRequest Node TxId)
+    (nextNode : NodeState Node TxId)
+    (response : AppendEntriesResponse Node)
+    (afterNetwork : Node -> List (Message Node TxId))
+    (appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+    (nodeEvidence : NodeCommitEvidence Node TxId)
+    (requestEvidence : RequestCommitEvidence Node TxId)
     (facts :
       CommitEvidenceFacts
         state appendHistory nodeEvidence requestEvidence)
@@ -1326,7 +1900,7 @@ theorem appendRequestCommitEvidenceFacts
         requestEvidence := by
   let post :=
     CCFRaft.handleAppendEntriesRequestLocalPost handled
-  let newNodeEvidence : NodeCommitEvidence TxId :=
+  let newNodeEvidence : NodeCommitEvidence Node TxId :=
     appendRequestNodeEvidence
       state destination request nextNode nodeEvidence requestEvidence
   change
@@ -1489,9 +2063,9 @@ theorem appendRequestCommitEvidenceFacts
 
 /-- A successful one-based lookup identifies an entry in the underlying log. -/
 theorem entryAtSomeMember
-    {log : List (Entry TxId)}
+    {log : List (Entry Node TxId)}
     {index : Nat}
-    {entry : Entry TxId}
+    {entry : Entry Node TxId}
     (found : entryAt? log index = some entry) :
     entry ∈ log := by
   unfold entryAt? at found
@@ -1506,8 +2080,8 @@ theorem entryAtSomeMember
 
 /-- Membership exposes a positive one-based lookup. -/
 theorem memberEntryAt
-    {log : List (Entry TxId)}
-    {entry : Entry TxId}
+    {log : List (Entry Node TxId)}
+    {entry : Entry Node TxId}
     (member : entry ∈ log) :
     Exists fun index => entryAt? log index = some entry := by
   rcases List.mem_iff_get.mp member with ⟨index, found⟩
@@ -1519,7 +2093,7 @@ theorem memberEntryAt
 
 /-- Every positive in-bounds one-based index has a concrete entry. -/
 theorem entryAtSomeOfPositiveBound
-    {log : List (Entry TxId)}
+    {log : List (Entry Node TxId)}
     {index : Nat}
     (positive : 0 < index)
     (within : index <= log.length) :
@@ -1532,7 +2106,7 @@ theorem entryAtSomeOfPositiveBound
 
 /-- Every valid commit candidate is at most the selected advancing frontier. -/
 theorem committableIndex_le_highestCommittableIndex
-    (state : State TxId)
+    (state : State Node TxId)
     (leader : Node)
     (index : Nat)
     (advances :
@@ -1608,7 +2182,7 @@ theorem committableIndex_le_highestCommittableIndex
 
 /-- Taking beyond a one-based lookup leaves that lookup unchanged. -/
 theorem entryAtTake_of_le
-    {log : List (Entry TxId)}
+    {log : List (Entry Node TxId)}
     {index count : Nat}
     (within : index <= count) :
     entryAt? (log.take count) index = entryAt? log index := by
@@ -1622,14 +2196,14 @@ theorem entryAtTake_of_le
     · omega
 
 theorem knownEvidenceFrontierCanonical
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {nodeEvidence : NodeCommitEvidence TxId}
-    {requestEvidence : RequestCommitEvidence TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {nodeEvidence : NodeCommitEvidence Node TxId}
+    {requestEvidence : RequestCommitEvidence Node TxId}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
@@ -1639,8 +2213,8 @@ theorem knownEvidenceFrontierCanonical
     (prospectiveFacts :
       ProspectiveCommitEvidenceFacts
         state appendHistory nodeEvidence requestEvidence elections)
-    {evidence : CommitEvidence TxId}
-    {supportedPrefix : List (Entry TxId)}
+    {evidence : CommitEvidence Node TxId}
+    {supportedPrefix : List (Entry Node TxId)}
     (known :
       KnownCommitEvidence
         state appendHistory nodeEvidence requestEvidence
@@ -1700,9 +2274,9 @@ theorem knownEvidenceFrontierCanonical
 
 /-- Every effective ACK supporter has advanced to at least the ACKed term. -/
 theorem effectiveAckerCurrentTermBound
-    {state : State TxId}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {elections : ElectionHistory TxId}
+    {state : State Node TxId}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {elections : ElectionHistory Node TxId}
     (entriesBounded : EntriesDoNotExceedCurrentTerm state)
     (currentHistory :
       AckerCurrentHistory state responseHistory elections)
@@ -1745,7 +2319,7 @@ theorem effectiveAckerCurrentTermBound
 
 /-- Taking beyond an index leaves its term lookup unchanged. -/
 theorem termAtTakeOfLe
-    {log : List (Entry TxId)}
+    {log : List (Entry Node TxId)}
     {index count : Nat}
     (within : index <= count) :
     termAt (log.take count) index = termAt log index := by
@@ -1754,7 +2328,7 @@ theorem termAtTakeOfLe
 
 /-- Taking through the latest signature retains exactly that committable index. -/
 theorem maxCommittableIndexTakeMax
-    (log : List (Entry TxId)) :
+    (log : List (Entry Node TxId)) :
     maxCommittableIndex (log.take (maxCommittableIndex log)) =
       maxCommittableIndex log := by
   by_cases zero : maxCommittableIndex log = 0
@@ -1773,7 +2347,7 @@ theorem maxCommittableIndexTakeMax
 
 /-- Taking through the latest signature retains its committable term. -/
 theorem maxCommittableTermTakeMax
-    (log : List (Entry TxId)) :
+    (log : List (Entry Node TxId)) :
     maxCommittableTerm (log.take (maxCommittableIndex log)) =
       maxCommittableTerm log := by
   unfold maxCommittableTerm
@@ -1782,7 +2356,7 @@ theorem maxCommittableTermTakeMax
 
 /-- An exact committable snapshot lies inside the larger log's signature prefix. -/
 theorem committablePrefixOfMaxTake
-    {snapshot log : List (Entry TxId)}
+    {snapshot log : List (Entry Node TxId)}
     (isPrefix : snapshot <+: log)
     (snapshotCommittable :
       maxCommittableIndex snapshot = snapshot.length) :
@@ -1801,7 +2375,7 @@ theorem committablePrefixOfMaxTake
 
 /-- A prefix ending in a signature lies inside the larger log's signature prefix. -/
 theorem signatureEndedPrefixOfMaxTake
-    {snapshot log : List (Entry TxId)}
+    {snapshot log : List (Entry Node TxId)}
     (isPrefix : snapshot <+: log)
     (signature : isSignatureAt snapshot snapshot.length = true) :
     snapshot <+: log.take (maxCommittableIndex log) := by
@@ -1812,7 +2386,7 @@ theorem signatureEndedPrefixOfMaxTake
 
 /-- Taking through a known signature produces a prefix ending at that signature. -/
 theorem signatureAtTakeLength
-    {log : List (Entry TxId)}
+    {log : List (Entry Node TxId)}
     {index : Nat}
     (signature : isSignatureAt log index = true) :
     isSignatureAt (log.take index) (log.take index).length = true := by
@@ -1822,31 +2396,13 @@ theorem signatureAtTakeLength
   simpa [List.length_take, Nat.min_eq_left indexBound] using
     isSignatureAt_take_of_le le_rfl signature
 
-/-- A strict majority of the fixed node set is nonempty. -/
-theorem majorityNonempty
-    (quorum : Finset Node)
-    (majority : quorum.card * 2 > NODE_COUNT) :
-    quorum.Nonempty := by
-  by_contra empty
-  rw [Finset.not_nonempty_iff_eq_empty.mp empty] at majority
-  simp at majority
-
-/-- Two strict majorities of the five-node configuration intersect. -/
-theorem majoritiesIntersect
-    (left right : Finset Node)
-    (leftMajority : left.card * 2 > NODE_COUNT)
-    (rightMajority : right.card * 2 > NODE_COUNT) :
-    (left ∩ right).Nonempty :=
-  CCFRaft.fiveNodeMajoritiesIntersect
-    left right leftMajority rightMajority
-
 /-- Extract one governing configuration's processed replication majority. -/
 theorem majorityAtConfiguration
-    {state : State TxId}
+    {state : State Node TxId}
     {leader : Node}
     {index : Nat}
     (majority : hasMajorityAt state leader index)
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     (active :
       configuration ∈ activeConfigurations (state.nodes leader))
     (governs : configuration.index <= index) :
@@ -1859,13 +2415,13 @@ theorem majorityAtConfiguration
 
 /-- Extract one governing configuration's effective replication majority. -/
 theorem effectiveMajorityAtConfiguration
-    {state : State TxId}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
+    {state : State Node TxId}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
     {leader : Node}
     {index : Nat}
     (majority :
       hasEffectiveMajorityAt state responseHistory leader index)
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     (active :
       configuration ∈ activeConfigurations (state.nodes leader))
     (governs : configuration.index <= index) :
@@ -1878,15 +2434,15 @@ theorem effectiveMajorityAtConfiguration
 
 /-- Extract one active configuration's potential replication majority. -/
 theorem potentialMajorityAtConfiguration
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
     {leader : Node}
     {index : Nat}
     (majority :
       hasPotentialMajorityAt
         state appendHistory responseHistory leader index)
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     (active :
       configuration ∈ activeConfigurations (state.nodes leader))
     (governs : configuration.index <= index) :
@@ -1903,7 +2459,7 @@ If adding at most one node creates a configuration majority, that node is the
 unique delta inside the configuration and removing it destroys the majority.
 -/
 theorem configurationMajorityOneNodeDelta
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     {before after : Finset Node}
     {added : Node}
     (beforeSubset : before ⊆ after)
@@ -1979,10 +2535,10 @@ theorem configurationMajorityOneNodeDelta
 
 /-- Extract one active configuration's processed election majority. -/
 theorem electionMajorityAtConfiguration
-    {state : State TxId}
+    {state : State Node TxId}
     {candidate : Node}
     (majority : hasElectionMajority state candidate)
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     (active :
       configuration ∈ activeConfigurations (state.nodes candidate)) :
     hasConfigurationMajority
@@ -1992,10 +2548,10 @@ theorem electionMajorityAtConfiguration
 
 /-- Extract one active configuration's effective election majority. -/
 theorem effectiveElectionMajorityAtConfiguration
-    {state : State TxId}
+    {state : State Node TxId}
     {candidate : Node}
     (majority : hasEffectiveElectionMajority state candidate)
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     (active :
       configuration ∈ activeConfigurations (state.nodes candidate)) :
     hasConfigurationMajority
@@ -2006,10 +2562,10 @@ theorem effectiveElectionMajorityAtConfiguration
 
 /-- Extract one active configuration's potential election majority. -/
 theorem potentialElectionMajorityAtConfiguration
-    {state : State TxId}
+    {state : State Node TxId}
     {candidate : Node}
     (majority : hasPotentialElectionMajority state candidate)
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     (active :
       configuration ∈ activeConfigurations (state.nodes candidate)) :
     hasConfigurationMajority
@@ -2020,7 +2576,7 @@ theorem potentialElectionMajorityAtConfiguration
 
 /-- Materialised election support is included in potential election support. -/
 theorem effectiveElectionMajorityIsPotential
-    (state : State TxId)
+    (state : State Node TxId)
     (candidate : Node)
     (majority : hasEffectiveElectionMajority state candidate) :
     hasPotentialElectionMajority state candidate := by
@@ -2042,17 +2598,25 @@ theorem effectiveElectionMajorityIsPotential
       (larger := potentialElectionVoters state candidate)
       _ effectiveMajority
   intro voter member
-  simpa [potentialElectionVoters] using Or.inl member
+  have joined : voter ∈ state.hasJoined := by
+    have unpacked :
+        voter ∈ state.hasJoined /\
+          (voter ∈ (state.nodes candidate).votesGranted \/
+            queuedGrantedVote state candidate voter) := by
+      simpa [effectiveElectionVoters] using member
+    exact unpacked.1
+  simpa [potentialElectionVoters] using
+    And.intro joined (Or.inl member)
 
 /--
 A potential election majority lifts to a frozen future ballot whenever every
 potential voter is a future voter and the ballot configurations are unchanged.
 -/
 theorem potentialElectionMajorityImpliesFuture
-    {state after : State TxId}
+    {state after : State Node TxId}
     {candidate : Node}
     {targetTerm : Nat}
-    {ballotActive : List Configuration}
+    {ballotActive : List (Configuration Node)}
     (subset :
       potentialElectionVoters after candidate ⊆
         futureElectionVoters state candidate targetTerm)
@@ -2076,14 +2640,14 @@ theorem potentialElectionMajorityImpliesFuture
 
 /-- Extract one frozen ballot configuration's future election majority. -/
 theorem futureElectionMajorityAtConfiguration
-    {state : State TxId}
+    {state : State Node TxId}
     {candidate : Node}
     {targetTerm : Nat}
-    {ballotActive : List Configuration}
+    {ballotActive : List (Configuration Node)}
     (majority :
       hasFutureElectionMajority
         state candidate targetTerm ballotActive)
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     (active : configuration ∈ ballotActive) :
     hasConfigurationMajority
       (futureElectionVoters state candidate targetTerm)
@@ -2093,8 +2657,8 @@ theorem futureElectionMajorityAtConfiguration
 
 /-- Every prefix supported by valid evidence lies inside its ACK frontier. -/
 theorem validEvidenceSupportedPrefixFrontier
-    {evidence : CommitEvidence TxId}
-    {supportedPrefix : List (Entry TxId)}
+    {evidence : CommitEvidence Node TxId}
+    {supportedPrefix : List (Entry Node TxId)}
     (valid : evidence.Valid supportedPrefix) :
     supportedPrefix <+:
       evidence.history.take evidence.commitFrontier := by
@@ -2113,8 +2677,8 @@ An authority bridge's full-frontier inclusion and supported-length bound
 place the earlier full frontier inside the later supported prefix.
 -/
 theorem authorityBridgeSupportedPrefix
-    {earlier later : CommitEvidence TxId}
-    {earlierPrefix laterPrefix : List (Entry TxId)}
+    {earlier later : CommitEvidence Node TxId}
+    {earlierPrefix laterPrefix : List (Entry Node TxId)}
     (earlierValid : earlier.Valid earlierPrefix)
     (laterValid : later.Valid laterPrefix)
     (bridge :
@@ -2141,14 +2705,14 @@ the leader's election record, whose promotion log contains the frontier by
 `electionClosure` and is the ancestor of the active leader history.
 -/
 theorem knownCommitEvidenceActiveLeaderContainsFrontier
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {nodeEvidence : NodeCommitEvidence TxId}
-    {requestEvidence : RequestCommitEvidence TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {nodeEvidence : NodeCommitEvidence Node TxId}
+    {requestEvidence : RequestCommitEvidence Node TxId}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
@@ -2161,8 +2725,8 @@ theorem knownCommitEvidenceActiveLeaderContainsFrontier
     (prospectiveFacts :
       ProspectiveCommitEvidenceFacts
         state appendHistory nodeEvidence requestEvidence elections)
-    {evidence : CommitEvidence TxId}
-    {supportedPrefix : List (Entry TxId)}
+    {evidence : CommitEvidence Node TxId}
+    {supportedPrefix : List (Entry Node TxId)}
     (known :
       KnownCommitEvidence
         state appendHistory nodeEvidence requestEvidence
@@ -2276,14 +2840,14 @@ election record inherits the evidence frontier through `electionClosure`, and
 history.  Equal terms remain governed by `sameTermQueuedComparable`.
 -/
 theorem knownCommitEvidenceQueuedAppendContainsFrontier
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {nodeEvidence : NodeCommitEvidence TxId}
-    {requestEvidence : RequestCommitEvidence TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {nodeEvidence : NodeCommitEvidence Node TxId}
+    {requestEvidence : RequestCommitEvidence Node TxId}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
@@ -2295,14 +2859,14 @@ theorem knownCommitEvidenceQueuedAppendContainsFrontier
     (prospectiveFacts :
       ProspectiveCommitEvidenceFacts
         state appendHistory nodeEvidence requestEvidence elections)
-    {evidence : CommitEvidence TxId}
-    {supportedPrefix : List (Entry TxId)}
+    {evidence : CommitEvidence Node TxId}
+    {supportedPrefix : List (Entry Node TxId)}
     (known :
       KnownCommitEvidence
         state appendHistory nodeEvidence requestEvidence
           evidence supportedPrefix)
     {destination : Node}
-    {request : AppendEntriesRequest TxId}
+    {request : AppendEntriesRequest Node TxId}
     (queued :
       Message.appendEntriesRequest request ∈ state.network destination)
     (newer : evidence.commitTerm < request.term) :
@@ -2327,18 +2891,10 @@ theorem knownCommitEvidenceQueuedAppendContainsFrontier
         (electionQueuedFacts
           destination request queued record recordStored)
 
-/-- Nodes whose current logs contain one node's committed log. -/
-def committedHolders
-    (state : State TxId)
-    (node : Node) : Finset Node :=
-  Finset.univ.filter fun holder =>
-    (state.nodes node).committedLog <+:
-      (state.nodes holder).log
-
 /-- Classify a successful lookup after appending one entry. -/
 theorem entryAtAppendSingleton
-    {log : List (Entry TxId)}
-    {newEntry foundEntry : Entry TxId}
+    {log : List (Entry Node TxId)}
+    {newEntry foundEntry : Entry Node TxId}
     {index : Nat}
     (found :
       entryAt? (log ++ [newEntry]) index = some foundEntry) :
@@ -2375,7 +2931,7 @@ theorem entryAtAppendSingleton
 
 /-- Appending a suffix does not change a one-based lookup inside the base. -/
 theorem entryAtAppend_of_le_length
-    {base suffix : List (Entry TxId)}
+    {base suffix : List (Entry Node TxId)}
     {index : Nat}
     (within : index <= base.length) :
     entryAt? (base ++ suffix) index = entryAt? base index := by
@@ -2387,7 +2943,7 @@ theorem entryAtAppend_of_le_length
 
 /-- A lookup after an appended base is the corresponding suffix lookup. -/
 theorem entryAtAppend_right
-    {base suffix : List (Entry TxId)}
+    {base suffix : List (Entry Node TxId)}
     {index : Nat}
     (afterBase : base.length < index) :
     entryAt? (base ++ suffix) index =
@@ -2404,7 +2960,7 @@ theorem entryAtAppend_right
 
 /-- Dropping and bounding a slice preserves lookups represented in it. -/
 theorem entryAtDropTake
-    {log : List (Entry TxId)}
+    {log : List (Entry Node TxId)}
     {previous index count : Nat}
     (afterPrevious : previous < index)
     (withinSlice : index <= previous + count) :
@@ -2426,9 +2982,9 @@ theorem entryAtDropTake
 
 /-- Equal term projections give equal terms at matching successful lookups. -/
 theorem entryTermsEqualOfMappedTerms
-    {left right : List (Entry TxId)}
+    {left right : List (Entry Node TxId)}
     {index : Nat}
-    {leftEntry rightEntry : Entry TxId}
+    {leftEntry rightEntry : Entry Node TxId}
     (terms : left.map Entry.term = right.map Entry.term)
     (leftFound : entryAt? left index = some leftEntry)
     (rightFound : entryAt? right index = some rightEntry) :
@@ -2446,7 +3002,7 @@ theorem entryTermsEqualOfMappedTerms
 
 /-- Appending a suffix does not change the term inside the base. -/
 theorem termAtAppend_of_le_length
-    {base suffix : List (Entry TxId)}
+    {base suffix : List (Entry Node TxId)}
     {index : Nat}
     (within : index <= base.length) :
     termAt (base ++ suffix) index = termAt base index := by
@@ -2455,7 +3011,7 @@ theorem termAtAppend_of_le_length
 
 /-- A positive term lookup exposes the underlying entry. -/
 theorem termAtPositiveEntry
-    {log : List (Entry TxId)}
+    {log : List (Entry Node TxId)}
     {index : Nat}
     (positive : 0 < termAt log index) :
     Exists fun entry =>
@@ -2471,8 +3027,8 @@ theorem termAtPositiveEntry
 
 /-- Canonical snapshots with the same final term are ordered by final index. -/
 theorem canonicalHistoriesPrefixOfSameLastTerm
-    (canonicalHistory : Nat -> List (Entry TxId))
-    {left right : List (Entry TxId)}
+    (canonicalHistory : Nat -> List (Entry Node TxId))
+    {left right : List (Entry Node TxId)}
     (leftCanonical : HistoryCanonical canonicalHistory left)
     (rightCanonical : HistoryCanonical canonicalHistory right)
     (leftNonempty : Not (left = []))
@@ -2525,18 +3081,18 @@ request-end bound and canonical history agreement identify the exact learned
 committed prefix.
 -/
 theorem handledAppendRequestAdvancedCommittedHistory
-    (state : State TxId)
-    (votes : VoteHistory)
-    (appendHistory : AppendEntriesRequest TxId -> List (Entry TxId))
-    (canonicalHistory : Nat -> List (Entry TxId))
-    (owners : TermOwners)
+    (state : State Node TxId)
+    (votes : VoteHistory Node)
+    (appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+    (canonicalHistory : Nat -> List (Entry Node TxId))
+    (owners : TermOwners Node)
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
     (destination : Node)
-    (request : AppendEntriesRequest TxId)
-    (nextNode : NodeState TxId)
-    (response : AppendEntriesResponse)
+    (request : AppendEntriesRequest Node TxId)
+    (nextNode : NodeState Node TxId)
+    (response : AppendEntriesResponse Node)
     (requestMember :
       Message.appendEntriesRequest request ∈ state.network destination)
     (snapshot : RequestSnapshots (appendHistory request) request)
@@ -2740,9 +3296,9 @@ theorem handledAppendRequestAdvancedCommittedHistory
 /-- A shared prefix covering the complete request makes the request already
 present in the destination log. -/
 theorem appendRequestAlreadyDoneOfSharedPrefix
-    {before : NodeState TxId}
-    {request : AppendEntriesRequest TxId}
-    {history sharedPrefix : List (Entry TxId)}
+    {before : NodeState Node TxId}
+    {request : AppendEntriesRequest Node TxId}
+    {history sharedPrefix : List (Entry Node TxId)}
     (snapshot : RequestSnapshots history request)
     (beforePrefix : sharedPrefix <+: before.log)
     (historyPrefix : sharedPrefix <+: history)
@@ -2788,10 +3344,10 @@ theorem appendRequestAlreadyDoneOfSharedPrefix
 /-- A successful handler cannot shorten a prefix shared by the destination
 and the immutable request history. -/
 theorem successfulAppendRequestSharedPrefixLength
-    {before nextNode : NodeState TxId}
-    {request : AppendEntriesRequest TxId}
-    {response : AppendEntriesResponse}
-    {history sharedPrefix : List (Entry TxId)}
+    {before nextNode : NodeState Node TxId}
+    {request : AppendEntriesRequest Node TxId}
+    {response : AppendEntriesResponse Node}
+    {history sharedPrefix : List (Entry Node TxId)}
     (snapshot : RequestSnapshots history request)
     (beforePrefix : sharedPrefix <+: before.log)
     (historyPrefix : sharedPrefix <+: history)
@@ -2912,18 +3468,18 @@ theorem successfulAppendRequestSharedPrefixLength
 /-- Successful handling retains every prefix shared by the old destination log
 and the immutable queued request history. -/
 theorem handledAppendRequestRetainsSharedPrefix
-    (state : State TxId)
-    (votes : VoteHistory)
-    (appendHistory : AppendEntriesRequest TxId -> List (Entry TxId))
-    (canonicalHistory : Nat -> List (Entry TxId))
-    (owners : TermOwners)
+    (state : State Node TxId)
+    (votes : VoteHistory Node)
+    (appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+    (canonicalHistory : Nat -> List (Entry Node TxId))
+    (owners : TermOwners Node)
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
     (destination : Node)
-    (request : AppendEntriesRequest TxId)
-    (nextNode : NodeState TxId)
-    (response : AppendEntriesResponse)
+    (request : AppendEntriesRequest Node TxId)
+    (nextNode : NodeState Node TxId)
+    (response : AppendEntriesResponse Node)
     (requestMember :
       Message.appendEntriesRequest request ∈ state.network destination)
     (snapshot : RequestSnapshots (appendHistory request) request)
@@ -2931,7 +3487,7 @@ theorem handledAppendRequestRetainsSharedPrefix
       handleAppendEntriesRequest? (state.nodes destination) request =
         some (nextNode, response))
     (success : response.success = true)
-    {sharedPrefix : List (Entry TxId)}
+    {sharedPrefix : List (Entry Node TxId)}
     (beforePrefix :
       sharedPrefix <+: (state.nodes destination).log)
     (historyPrefix :
@@ -3023,9 +3579,9 @@ theorem handledAppendRequestRetainsSharedPrefix
 /-- If the receive path did not step down a candidate, handling an
 AppendEntries request leaves every active node unchanged. -/
 theorem handleAppendEntriesRequestActiveUnchanged
-    {before nextNode : NodeState TxId}
-    {request : AppendEntriesRequest TxId}
-    {response : AppendEntriesResponse}
+    {before nextNode : NodeState Node TxId}
+    {request : AppendEntriesRequest Node TxId}
+    {response : AppendEntriesResponse Node}
     (notStepped : returnToFollowerState? before request = none)
     (handled :
       handleAppendEntriesRequest? before request =
@@ -3049,9 +3605,9 @@ theorem handleAppendEntriesRequestActiveUnchanged
 /-- Every successful response acknowledges an index present in the resulting
 destination log. -/
 theorem successfulAppendResponseIndexWithinLog
-    {before nextNode : NodeState TxId}
-    {request : AppendEntriesRequest TxId}
-    {response : AppendEntriesResponse}
+    {before nextNode : NodeState Node TxId}
+    {request : AppendEntriesRequest Node TxId}
+    {response : AppendEntriesResponse Node}
     (handled :
       handleAppendEntriesRequest? before request =
         some (nextNode, response))
@@ -3169,9 +3725,9 @@ theorem successfulAppendResponseIndexWithinLog
 /-- A successful request already represented in the destination log leaves
 that log unchanged. -/
 theorem successfulAlreadyDoneAppendLogUnchanged
-    {before nextNode : NodeState TxId}
-    {request : AppendEntriesRequest TxId}
-    {response : AppendEntriesResponse}
+    {before nextNode : NodeState Node TxId}
+    {request : AppendEntriesRequest Node TxId}
+    {response : AppendEntriesResponse Node}
     (already : alreadyDone before request)
     (handled :
       handleAppendEntriesRequest? before request =
@@ -3210,18 +3766,18 @@ theorem successfulAlreadyDoneAppendLogUnchanged
 /-- A successful selected request materialises the corresponding source-log
 prefix in the destination log. -/
 theorem handledAppendRequestAcknowledgesSourcePrefix
-    (state : State TxId)
-    (votes : VoteHistory)
-    (appendHistory : AppendEntriesRequest TxId -> List (Entry TxId))
-    (canonicalHistory : Nat -> List (Entry TxId))
-    (owners : TermOwners)
+    (state : State Node TxId)
+    (votes : VoteHistory Node)
+    (appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+    (canonicalHistory : Nat -> List (Entry Node TxId))
+    (owners : TermOwners Node)
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
     (destination : Node)
-    (request : AppendEntriesRequest TxId)
-    (nextNode : NodeState TxId)
-    (response : AppendEntriesResponse)
+    (request : AppendEntriesRequest Node TxId)
+    (nextNode : NodeState Node TxId)
+    (response : AppendEntriesResponse Node)
     (requestMember :
       Message.appendEntriesRequest request ∈ state.network destination)
     (snapshot : RequestSnapshots (appendHistory request) request)
@@ -3424,18 +3980,18 @@ theorem handledAppendRequestAcknowledgesSourcePrefix
 /-- A handled request leaves every destination entry on its owned canonical
 history, including entries copied from an immutable queued snapshot. -/
 theorem handledAppendRequestCanonicalAgreement
-    (state : State TxId)
-    (votes : VoteHistory)
-    (appendHistory : AppendEntriesRequest TxId -> List (Entry TxId))
-    (canonicalHistory : Nat -> List (Entry TxId))
-    (owners : TermOwners)
+    (state : State Node TxId)
+    (votes : VoteHistory Node)
+    (appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+    (canonicalHistory : Nat -> List (Entry Node TxId))
+    (owners : TermOwners Node)
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
     (destination : Node)
-    (request : AppendEntriesRequest TxId)
-    (nextNode : NodeState TxId)
-    (response : AppendEntriesResponse)
+    (request : AppendEntriesRequest Node TxId)
+    (nextNode : NodeState Node TxId)
+    (response : AppendEntriesResponse Node)
     (requestMember :
       Message.appendEntriesRequest request ∈ state.network destination)
     (snapshot : RequestSnapshots (appendHistory request) request)
@@ -3569,11 +4125,11 @@ theorem handledAppendRequestCanonicalAgreement
 
 /-- Canonical term histories directly imply state-local log matching. -/
 theorem canonicalHistoriesLogMatching
-    {state : State TxId}
-    {votes : VoteHistory}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners) :
@@ -3595,11 +4151,11 @@ theorem canonicalHistoriesLogMatching
 
 /-- Canonical history monotonicity transfers to every represented node log. -/
 theorem canonicalHistoriesMonoLog
-    {state : State TxId}
-    {votes : VoteHistory}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners) :
@@ -3634,16 +4190,16 @@ Canonical agreement locates a local log entry in its canonical history, whose
 entry-owner fact then supplies the term owner.
 -/
 theorem termOwnershipLogEntryOwner
-    {state : State TxId}
-    {votes : VoteHistory}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
     {node : Node}
-    {entry : Entry TxId}
+    {entry : Entry Node TxId}
     (member : entry ∈ (state.nodes node).log) :
     Exists fun owner => owners entry.term = some owner := by
   rcases memberEntryAt member with ⟨index, found⟩
@@ -3658,11 +4214,11 @@ An owned term is either the bootstrap term or has the strict majority recorded
 by its immutable election record.
 -/
 theorem electionHistoryOwnerProvenance
-    {state : State TxId}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
     (electionFacts :
       ElectionHistoryFacts
         state votes canonicalHistory owners elections)
@@ -3680,12 +4236,12 @@ Canonical agreement for a frozen voter log transfers canonical monotonicity
 to that exact election-record snapshot.
 -/
 theorem electionHistoryVoterMono
-    {state : State TxId}
-    {votes : VoteHistory}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
@@ -3693,7 +4249,7 @@ theorem electionHistoryVoterMono
       ElectionHistoryFacts
         state votes canonicalHistory owners elections)
     {term : Nat}
-    {record : ElectionRecord TxId}
+    {record : ElectionRecord Node TxId}
     {voter : Node}
     (recorded : elections term = some record)
     (member : voter ∈ record.supporters) :
@@ -3726,15 +4282,15 @@ theorem electionHistoryVoterMono
 
 /-- Canonical agreement transfers canonical monotonicity to any snapshot. -/
 theorem canonicalSnapshotMono
-    {state : State TxId}
-    {votes : VoteHistory}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
-    {history : List (Entry TxId)}
+    {history : List (Entry Node TxId)}
     (canonical : HistoryCanonical canonicalHistory history) :
     MonoHistory history := by
   intro earlier later earlierEntry laterEntry order
@@ -3766,17 +4322,17 @@ A recorded voter cannot remain below the recorded term: its retained vote
 would otherwise contradict the vote history's empty-future property.
 -/
 theorem electionHistoryVoterTerm
-    {state : State TxId}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
     (voteFacts : VoteHistoryFacts state votes)
     (electionFacts :
       ElectionHistoryFacts
         state votes canonicalHistory owners elections)
     {term : Nat}
-    {record : ElectionRecord TxId}
+    {record : ElectionRecord Node TxId}
     {voter : Node}
     (recorded : elections term = some record)
     (member : voter ∈ record.supporters) :
@@ -3792,8 +4348,8 @@ A candidate's persistent self-vote cannot belong to the empty bootstrap vote
 history, so every candidate term is strictly above the bootstrap term.
 -/
 theorem candidatesSelfVoteAboveBootstrap
-    {state : State TxId}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
     (termsPositive : CurrentTermsPositive state)
     (selfVotes : CandidatesSelfVote state)
     (voteFacts : VoteHistoryFacts state votes) :
@@ -3813,8 +4369,8 @@ theorem candidatesSelfVoteAboveBootstrap
 
 /-- Canonical agreement restricts to every prefix. -/
 theorem historyCanonicalOfPrefix
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {shorter history : List (Entry TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {shorter history : List (Entry Node TxId)}
     (canonical : HistoryCanonical canonicalHistory history)
     (isPrefix : shorter <+: history) :
     HistoryCanonical canonicalHistory shorter := by
@@ -3830,7 +4386,7 @@ theorem historyCanonicalOfPrefix
 
 /-- Log-term monotonicity restricts to every prefix. -/
 theorem monoHistoryOfPrefix
-    {shorter history : List (Entry TxId)}
+    {shorter history : List (Entry Node TxId)}
     (mono : MonoHistory history)
     (isPrefix : shorter <+: history) :
     MonoHistory shorter := by
@@ -3843,7 +4399,7 @@ theorem monoHistoryOfPrefix
 
 /-- Extending a monotone history cannot decrease its final term. -/
 theorem termAtLastMonotoneOfPrefix
-    {shorter history : List (Entry TxId)}
+    {shorter history : List (Entry Node TxId)}
     (isPrefix : shorter <+: history)
     (mono : MonoHistory history) :
     termAt shorter shorter.length <= termAt history history.length := by
@@ -3877,7 +4433,7 @@ theorem termAtLastMonotoneOfPrefix
 
 /-- Extending a monotone history cannot decrease its latest signature term. -/
 theorem maxCommittableTermMonotoneOfPrefix
-    {shorter history : List (Entry TxId)}
+    {shorter history : List (Entry Node TxId)}
     (isPrefix : shorter <+: history)
     (mono : MonoHistory history) :
     maxCommittableTerm shorter <= maxCommittableTerm history := by
@@ -3920,7 +4476,7 @@ theorem maxCommittableTermMonotoneOfPrefix
 
 /-- A signature-only commit frontier is no later than the latest signature. -/
 theorem lastCommittableIndex_eq_maxCommittableIndex
-    (state : NodeState TxId)
+    (state : NodeState Node TxId)
     (committedSignature :
       0 < state.commitIndex ->
         isSignatureAt state.log state.commitIndex = true) :
@@ -3935,7 +4491,7 @@ theorem lastCommittableIndex_eq_maxCommittableIndex
 
 /-- A signature-only commit does not alter the latest-signature election term. -/
 theorem lastCommittableTerm_eq_maxCommittableTerm
-    (state : NodeState TxId)
+    (state : NodeState Node TxId)
     (committedSignature :
       0 < state.commitIndex ->
         isSignatureAt state.log state.commitIndex = true) :
@@ -3948,7 +4504,7 @@ theorem lastCommittableTerm_eq_maxCommittableTerm
 
 /-- Election frontier fields depend only on the log and commit index. -/
 theorem lastCommittableIndexFrame
-    {before after : NodeState TxId}
+    {before after : NodeState Node TxId}
     (logEq : after.log = before.log)
     (commitEq : after.commitIndex = before.commitIndex) :
     lastCommittableIndex after = lastCommittableIndex before := by
@@ -3956,7 +4512,7 @@ theorem lastCommittableIndexFrame
 
 /-- Election frontier terms frame with the log and commit index. -/
 theorem lastCommittableTermFrame
-    {before after : NodeState TxId}
+    {before after : NodeState Node TxId}
     (logEq : after.log = before.log)
     (commitEq : after.commitIndex = before.commitIndex) :
     lastCommittableTerm after = lastCommittableTerm before := by
@@ -3967,7 +4523,7 @@ theorem lastCommittableTermFrame
 
 /-- A signature-only committed frontier lies within the latest signature. -/
 theorem commitIndex_le_maxCommittableIndex
-    (state : NodeState TxId)
+    (state : NodeState Node TxId)
     (committedSignature :
       0 < state.commitIndex ->
         isSignatureAt state.log state.commitIndex = true) :
@@ -3980,9 +4536,9 @@ theorem commitIndex_le_maxCommittableIndex
 
 /-- A voter accepting one committable prefix also accepts any monotone extension. -/
 theorem voteLogUpToDateOfCandidatePrefix
-    (voter : NodeState TxId)
+    (voter : NodeState Node TxId)
     (source destination : Node)
-    {candidatePrefix candidateHistory : List (Entry TxId)}
+    {candidatePrefix candidateHistory : List (Entry Node TxId)}
     (isPrefix : candidatePrefix <+: candidateHistory)
     (mono : MonoHistory candidateHistory)
     (upToDate :
@@ -4017,11 +4573,11 @@ theorem voteLogUpToDateOfCandidatePrefix
 
 /-- A candidate accepted against a longer voter log also passes its prefix. -/
 theorem voteLogUpToDateOfVoterPrefix
-    {beforeLog afterLog : List (Entry TxId)}
+    {beforeLog afterLog : List (Entry Node TxId)}
     (isPrefix : beforeLog <+: afterLog)
     (mono : MonoHistory afterLog)
-    (before after : NodeState TxId)
-    (request : RequestVoteRequest)
+    (before after : NodeState Node TxId)
+    (request : RequestVoteRequest Node)
     (beforeLogEq : before.log = beforeLog)
     (afterLogEq : after.log = afterLog)
     (upToDate : voteLogUpToDate after request) :
@@ -4046,11 +4602,11 @@ theorem voteLogUpToDateOfVoterPrefix
 
 /-- Replying to one AppendEntries request cannot introduce another request. -/
 theorem appendRequestMemberBeforeReply
-    (state : State TxId)
+    (state : State Node TxId)
     (source destination : Node)
-    (request : AppendEntriesRequest TxId)
-    (response : AppendEntriesResponse)
-    (remaining : List (Message TxId))
+    (request : AppendEntriesRequest Node TxId)
+    (response : AppendEntriesResponse Node)
+    (remaining : List (Message Node TxId))
     (taken :
       takeFirstFrom source (state.network destination) =
         some (.appendEntriesRequest request, remaining)) :
@@ -4087,21 +4643,21 @@ unchanged commits retain their node evidence, while advances inherit a
 request evidence restricted to the request-end-bounded learned prefix.
 -/
 theorem receiveAppendRequestCommitEvidenceFacts
-    (state : State TxId)
+    (state : State Node TxId)
     (source destination : Node)
-    (request : AppendEntriesRequest TxId)
-    (nextNode : NodeState TxId)
-    (response : AppendEntriesResponse)
-    (remaining : List (Message TxId))
-    (votes : VoteHistory)
-    (appendHistory : AppendEntriesRequest TxId -> List (Entry TxId))
-    (canonicalHistory : Nat -> List (Entry TxId))
-    (owners : TermOwners)
+    (request : AppendEntriesRequest Node TxId)
+    (nextNode : NodeState Node TxId)
+    (response : AppendEntriesResponse Node)
+    (remaining : List (Message Node TxId))
+    (votes : VoteHistory Node)
+    (appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+    (canonicalHistory : Nat -> List (Entry Node TxId))
+    (owners : TermOwners Node)
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
-    (nodeEvidence : NodeCommitEvidence TxId)
-    (requestEvidence : RequestCommitEvidence TxId)
+    (nodeEvidence : NodeCommitEvidence Node TxId)
+    (requestEvidence : RequestCommitEvidence Node TxId)
     (evidenceFacts :
       CommitEvidenceFacts
         state appendHistory nodeEvidence requestEvidence)
@@ -4146,15 +4702,15 @@ theorem receiveAppendRequestCommitEvidenceFacts
 /-- Live evidence after AppendEntries receive is either unchanged or a
 restriction of the selected request's pre-state evidence. -/
 theorem receiveAppendRequestKnownEvidenceInherited
-    (state : State TxId)
+    (state : State Node TxId)
     (source destination : Node)
-    (request : AppendEntriesRequest TxId)
-    (nextNode : NodeState TxId)
-    (response : AppendEntriesResponse)
-    (remaining : List (Message TxId))
-    (appendHistory : AppendEntriesRequest TxId -> List (Entry TxId))
-    (nodeEvidence : NodeCommitEvidence TxId)
-    (requestEvidence : RequestCommitEvidence TxId)
+    (request : AppendEntriesRequest Node TxId)
+    (nextNode : NodeState Node TxId)
+    (response : AppendEntriesResponse Node)
+    (remaining : List (Message Node TxId))
+    (appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+    (nodeEvidence : NodeCommitEvidence Node TxId)
+    (requestEvidence : RequestCommitEvidence Node TxId)
     (evidenceFacts :
       CommitEvidenceFacts
         state appendHistory nodeEvidence requestEvidence)
@@ -4165,8 +4721,8 @@ theorem receiveAppendRequestKnownEvidenceInherited
     (handled :
       handleAppendEntriesRequest? (state.nodes destination) request =
         some (nextNode, response))
-    {evidence : CommitEvidence TxId}
-    {supportedPrefix : List (Entry TxId)}
+    {evidence : CommitEvidence Node TxId}
+    {supportedPrefix : List (Entry Node TxId)}
     (known :
       KnownCommitEvidence
         { state with
@@ -4293,16 +4849,16 @@ ACK-quorum member.  A same-term stale request is either compatible through its
 queued history or was already fully represented before handling.
 -/
 theorem handledAppendRequestRetainsEvidenceFrontier
-    (state : State TxId)
+    (state : State Node TxId)
     (destination : Node)
-    (request : AppendEntriesRequest TxId)
-    (nextNode : NodeState TxId)
-    (response : AppendEntriesResponse)
-    (votes : VoteHistory)
-    (appendHistory : AppendEntriesRequest TxId -> List (Entry TxId))
-    (canonicalHistory : Nat -> List (Entry TxId))
-    (owners : TermOwners)
-    {elections : ElectionHistory TxId}
+    (request : AppendEntriesRequest Node TxId)
+    (nextNode : NodeState Node TxId)
+    (response : AppendEntriesResponse Node)
+    (votes : VoteHistory Node)
+    (appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+    (canonicalHistory : Nat -> List (Entry Node TxId))
+    (owners : TermOwners Node)
+    {elections : ElectionHistory Node TxId}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
@@ -4312,16 +4868,16 @@ theorem handledAppendRequestRetainsEvidenceFrontier
     (electionQueuedFacts :
       ElectionQueuedHistoryFacts state appendHistory elections)
     (entriesBounded : EntriesDoNotExceedCurrentTerm state)
-    (nodeEvidence : NodeCommitEvidence TxId)
-    (requestEvidence : RequestCommitEvidence TxId)
+    (nodeEvidence : NodeCommitEvidence Node TxId)
+    (requestEvidence : RequestCommitEvidence Node TxId)
     (evidenceFacts :
       CommitEvidenceFacts
         state appendHistory nodeEvidence requestEvidence)
     (prospectiveFacts :
       ProspectiveCommitEvidenceFacts
         state appendHistory nodeEvidence requestEvidence elections)
-    {evidence : CommitEvidence TxId}
-    {supportedPrefix : List (Entry TxId)}
+    {evidence : CommitEvidence Node TxId}
+    {supportedPrefix : List (Entry Node TxId)}
     (known :
       KnownCommitEvidence
         state appendHistory nodeEvidence requestEvidence
@@ -4446,15 +5002,15 @@ theorem handledAppendRequestRetainsEvidenceFrontier
 
 /-- A winning candidate cannot share a term with an active leader. -/
 theorem winningCandidateTermDiffersFromLeader
-    {state : State TxId}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (candidatesAbove : CandidatesAboveBootstrap state)
     (voteFacts : VoteHistoryFacts state votes)
     (snapshots :
@@ -4524,15 +5080,15 @@ theorem winningCandidateTermDiffersFromLeader
 
 /-- An effective winning candidate's current term has not been claimed before. -/
 theorem effectiveCandidateTermUnowned
-    {state : State TxId}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (candidatesAbove : CandidatesAboveBootstrap state)
     (snapshots :
       GrantedVoteSnapshots
@@ -4602,15 +5158,15 @@ theorem effectiveCandidateTermUnowned
 
 /-- A materialised winning candidate's current term has not been claimed before. -/
 theorem potentialCandidateTermUnowned
-    {state : State TxId}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (voteFacts : VoteHistoryFacts state votes)
     (candidatesAbove : CandidatesAboveBootstrap state)
     (snapshots :
@@ -4635,15 +5191,15 @@ theorem potentialCandidateTermUnowned
 
 /-- Term ownership derives the previous candidate-term absence support fact. -/
 theorem termOwnershipCandidateTermNotInLogs
-    {state : State TxId}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (candidatesAbove : CandidatesAboveBootstrap state)
     (snapshots :
       GrantedVoteSnapshots
@@ -4672,15 +5228,15 @@ theorem termOwnershipCandidateTermNotInLogs
 
 /-- Term ownership also excludes a materialised candidate term from all logs. -/
 theorem termOwnershipPotentialCandidateTermNotInLogs
-    {state : State TxId}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (voteFacts : VoteHistoryFacts state votes)
     (candidatesAbove : CandidatesAboveBootstrap state)
     (snapshots :
@@ -4715,10 +5271,12 @@ theorem termOwnershipPotentialCandidateTermNotInLogs
 
 /-- Every processed acknowledgement quorum is also an effective quorum. -/
 theorem majorityImpliesEffectiveMajority
-    (state : State TxId)
-    (responseHistory : AppendEntriesResponse -> List (Entry TxId))
+    (state : State Node TxId)
+    (responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId))
     (leader : Node)
     (index : Nat)
+    (activeNodesJoined :
+      activeNodeUnion (state.nodes leader) ⊆ state.hasJoined)
     (majority : hasMajorityAt state leader index) :
     hasEffectiveMajorityAt state responseHistory leader index := by
   have subset :
@@ -4729,9 +5287,9 @@ theorem majorityImpliesEffectiveMajority
       acknowledgingNodes, effectiveAckers,
       Finset.mem_filter, Finset.mem_univ, true_and
     ] at member ⊢
-    rcases member with self | matched
-    · exact Or.inl self
-    · exact Or.inr (Or.inl matched)
+    rcases member with ⟨active, self | matched⟩
+    · exact ⟨activeNodesJoined active, Or.inl self⟩
+    · exact ⟨activeNodesJoined active, Or.inr (Or.inl matched)⟩
   rw [hasMajorityAt, List.all_eq_true] at majority
   rw [hasEffectiveMajorityAt, List.all_eq_true]
   intro configuration active
@@ -4744,8 +5302,10 @@ theorem majorityImpliesEffectiveMajority
 
 /-- Every processed election quorum is also an effective election quorum. -/
 theorem electionMajorityImpliesEffective
-    (state : State TxId)
+    (state : State Node TxId)
     (candidate : Node)
+    (votersJoined :
+      (state.nodes candidate).votesGranted ⊆ state.hasJoined)
     (majority : hasElectionMajority state candidate) :
     hasEffectiveElectionMajority state candidate := by
   have subset :
@@ -4756,7 +5316,7 @@ theorem electionMajorityImpliesEffective
       effectiveElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ]
-    exact Or.inl member
+    exact ⟨votersJoined member, Or.inl member⟩
   rw [hasElectionMajority, List.all_eq_true] at majority
   rw [hasEffectiveElectionMajority, List.all_eq_true]
   intro configuration active
@@ -4767,16 +5327,24 @@ theorem electionMajorityImpliesEffective
 
 /-- Materialised election evidence is also prospective election evidence. -/
 theorem effectiveElectionVotersSubsetPotential
-    (state : State TxId)
+    (state : State Node TxId)
     (candidate : Node) :
     effectiveElectionVoters state candidate ⊆
       potentialElectionVoters state candidate := by
   intro voter member
-  simpa [potentialElectionVoters] using Or.inl member
+  have joined : voter ∈ state.hasJoined := by
+    have unpacked :
+        voter ∈ state.hasJoined /\
+          (voter ∈ (state.nodes candidate).votesGranted \/
+            queuedGrantedVote state candidate voter) := by
+      simpa [effectiveElectionVoters] using member
+    exact unpacked.1
+  simpa [potentialElectionVoters] using
+    And.intro joined (Or.inl member)
 
 /-- An effective election quorum is also a prospective election quorum. -/
 theorem effectiveElectionMajorityImpliesPotential
-    (state : State TxId)
+    (state : State Node TxId)
     (candidate : Node)
     (majority : hasEffectiveElectionMajority state candidate) :
     hasPotentialElectionMajority state candidate := by
@@ -4784,7 +5352,7 @@ theorem effectiveElectionMajorityImpliesPotential
 
 /-- A prospective quorum remains a quorum in any finite superset. -/
 theorem potentialElectionMajorityOfSubset
-    {state after : State TxId}
+    {state after : State Node TxId}
     {candidate : Node}
     (subset :
       potentialElectionVoters after candidate ⊆
@@ -4807,22 +5375,32 @@ theorem potentialElectionMajorityOfSubset
 
 /-- Every materialised acknowledgement is also a potential supporter. -/
 theorem effectiveAckersSubsetPotential
-    (state : State TxId)
-    (appendHistory : AppendEntriesRequest TxId -> List (Entry TxId))
-    (responseHistory : AppendEntriesResponse -> List (Entry TxId))
+    (state : State Node TxId)
+    (appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+    (responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId))
     (leader : Node)
     (index : Nat) :
     effectiveAckers state responseHistory leader index ⊆
       potentialAckers
         state appendHistory responseHistory leader index := by
   intro voter member
-  simpa [potentialAckers] using Or.inl member
+  have joined : voter ∈ state.hasJoined := by
+    have unpacked :
+        voter ∈ state.hasJoined /\
+          (voter = leader \/
+            index <= (state.nodes leader).matchIndex voter \/
+              queuedSuccessfulAck
+                state responseHistory leader voter index) := by
+      simpa [effectiveAckers] using member
+    exact unpacked.1
+  simpa [potentialAckers] using
+    And.intro joined (Or.inl member)
 
 /-- A materialised acknowledgement quorum is also a potential quorum. -/
 theorem effectiveMajorityImpliesPotential
-    (state : State TxId)
-    (appendHistory : AppendEntriesRequest TxId -> List (Entry TxId))
-    (responseHistory : AppendEntriesResponse -> List (Entry TxId))
+    (state : State Node TxId)
+    (appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+    (responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId))
     (leader : Node)
     (index : Nat)
     (majority :
@@ -4844,10 +5422,10 @@ theorem effectiveMajorityImpliesPotential
 
 /-- Effective election evidence places every voter at or above the term voted. -/
 theorem effectiveElectionVoterTermBound
-    {state : State TxId}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
     (snapshots :
       GrantedVoteSnapshots
         state votes voteCandidateHistory voteVoterHistory)
@@ -4866,10 +5444,10 @@ theorem effectiveElectionVoterTermBound
 
 /-- Every prospective election voter is at the candidate's current term. -/
 theorem potentialElectionVoterTermBound
-    {state : State TxId}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
     (snapshots :
       GrantedVoteSnapshots
         state votes voteCandidateHistory voteVoterHistory)
@@ -4884,7 +5462,7 @@ theorem potentialElectionVoterTermBound
     potentialElectionVoters, Finset.mem_filter,
     Finset.mem_univ, true_and
   ] at member
-  rcases member with effective | eligible
+  rcases member with ⟨_joined, effective | eligible⟩
   · exact effectiveElectionVoterTermBound snapshots active effective
   · simpa [
       currentlyEligibleElectionVoter,
@@ -4893,8 +5471,8 @@ theorem potentialElectionVoterTermBound
 
 /-- A reserved peer has not advanced beyond the request source term. -/
 theorem queuedAppendReservePeerTerm
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
     {leader peer : Node}
     {index : Nat}
     (reserve :
@@ -4922,18 +5500,18 @@ higher-term election quorum contains a materialised ACK, not merely a queued
 request reserve.
 -/
 theorem potentialElectionIntersectionEffective
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
     (snapshots :
       GrantedVoteSnapshots
         state votes voteCandidateHistory voteVoterHistory)
     {leader candidate : Node}
     {index : Nat}
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     (potential :
       hasPotentialMajorityAt
         state appendHistory responseHistory leader index)
@@ -4966,7 +5544,7 @@ theorem potentialElectionIntersectionEffective
     potentialAckers, Finset.mem_filter,
     Finset.mem_univ, true_and
   ] at potentialMember
-  rcases potentialMember with effective | reserve
+  rcases potentialMember with ⟨_joined, effective | reserve⟩
   · exact ⟨voter, effective, electionMember⟩
   · have reserveTerm :=
       queuedAppendReservePeerTerm reserve
@@ -4980,18 +5558,18 @@ A prospective replication quorum and a higher prospective election quorum
 still intersect in a materialised acknowledgement.
 -/
 theorem potentialElectionMajorityIntersectionEffective
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
     (snapshots :
       GrantedVoteSnapshots
         state votes voteCandidateHistory voteVoterHistory)
     {leader candidate : Node}
     {index : Nat}
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     (potential :
       hasPotentialMajorityAt
         state appendHistory responseHistory leader index)
@@ -5024,7 +5602,7 @@ theorem potentialElectionMajorityIntersectionEffective
     potentialAckers, Finset.mem_filter,
     Finset.mem_univ, true_and
   ] at potentialMember
-  rcases potentialMember with effective | reserve
+  rcases potentialMember with ⟨_joined, effective | reserve⟩
   · exact ⟨voter, effective, electionMember⟩
   · have reserveTerm :=
       queuedAppendReservePeerTerm reserve
@@ -5035,21 +5613,21 @@ theorem potentialElectionMajorityIntersectionEffective
 
 /-- A prospective support quorum intersects a frozen higher-term election in an ACK. -/
 theorem potentialElectionRecordIntersectionEffective
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
     (voteFacts : VoteHistoryFacts state votes)
     (electionFacts :
       ElectionHistoryFacts
         state votes canonicalHistory owners elections)
     {leader : Node}
     {index term : Nat}
-    {record : ElectionRecord TxId}
-    {configuration : Configuration}
+    {record : ElectionRecord Node TxId}
+    {configuration : Configuration Node}
     (potential :
       hasPotentialMajorityAt
         state appendHistory responseHistory leader index)
@@ -5076,7 +5654,7 @@ theorem potentialElectionRecordIntersectionEffective
     potentialAckers, Finset.mem_filter,
     Finset.mem_univ, true_and
   ] at potentialMember
-  rcases potentialMember with effective | reserve
+  rcases potentialMember with ⟨_joined, effective | reserve⟩
   · exact ⟨voter, effective, electionMember⟩
   · have reserveTerm :=
       queuedAppendReservePeerTerm reserve
@@ -5087,12 +5665,12 @@ theorem potentialElectionRecordIntersectionEffective
 
 /-- A retained activation ACK snapshot transfers its lower signed prefix. -/
 theorem activationSupporterSnapshotContainsPrefix
-    {state : State TxId}
-    {votes : VoteHistory}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {activations : ActivationHistory Node TxId}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
@@ -5101,8 +5679,8 @@ theorem activationSupporterSnapshotContainsPrefix
       ActivationCanonicalFacts canonicalHistory owners activations)
     {source supporter : Node}
     {index : Nat}
-    {activationIndex : ActivationKey}
-    {activation : ActivationRecord TxId}
+    {activationIndex : ActivationKey Node}
+    {activation : ActivationRecord Node TxId}
     (currentEntry :
       termAt (state.nodes source).log index =
         (state.nodes source).currentTerm)
@@ -5225,14 +5803,14 @@ supporter whose activation snapshot carries the lower signed prefix, unless a
 strictly intermediate election is already bad.
 -/
 theorem potentialPrefixInActivation
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
@@ -5245,9 +5823,9 @@ theorem potentialPrefixInActivation
         state responseHistory elections activations)
     {source : Node}
     {index : Nat}
-    {activationIndex : ActivationKey}
-    {activation : ActivationRecord TxId}
-    {configuration : Configuration}
+    {activationIndex : ActivationKey Node}
+    {activation : ActivationRecord Node TxId}
+    {configuration : Configuration Node}
     (sourceRole : (state.nodes source).role = .leader)
     (currentEntry :
       termAt (state.nodes source).log index =
@@ -5294,7 +5872,7 @@ theorem potentialPrefixInActivation
       potentialAckers, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at sourceSupporter
-    rcases sourceSupporter with materialised | reserve
+    rcases sourceSupporter with ⟨_joined, materialised | reserve⟩
     · exact materialised
     · have peerTerm := queuedAppendReservePeerTerm reserve
       have supporterProgress :=
@@ -5324,14 +5902,14 @@ supporter whose activation snapshot carries the lower signed prefix, unless a
 strictly intermediate election is already bad.
 -/
 theorem acknowledgedPrefixInActivation
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
@@ -5343,9 +5921,9 @@ theorem acknowledgedPrefixInActivation
         state responseHistory elections activations)
     {source : Node}
     {index : Nat}
-    {activationIndex : ActivationKey}
-    {activation : ActivationRecord TxId}
-    {configuration : Configuration}
+    {activationIndex : ActivationKey Node}
+    {activation : ActivationRecord Node TxId}
+    {configuration : Configuration Node}
     (sourceRole : (state.nodes source).role = .leader)
     (currentEntry :
       termAt (state.nodes source).log index =
@@ -5406,22 +5984,22 @@ theorem acknowledgedPrefixInActivation
 
 /-- Any prefix of an election promotion precedes that term's activation. -/
 theorem electionPromotionPrefixInActivationCore
-    {state : State TxId}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (electionFacts :
       ElectionHistoryFacts
         state votes canonicalHistory owners elections)
     (historyFacts : ActivationHistoryFacts activations)
     (canonicalFacts :
       ActivationCanonicalFacts canonicalHistory owners activations)
-    {activationIndex : ActivationKey}
-    {activation : ActivationRecord TxId}
-    {record : ElectionRecord TxId}
-    {supportedPrefix : List (Entry TxId)}
+    {activationIndex : ActivationKey Node}
+    {activation : ActivationRecord Node TxId}
+    {record : ElectionRecord Node TxId}
+    {supportedPrefix : List (Entry Node TxId)}
     (activationStored :
       activations activationIndex = some activation)
     (recorded :
@@ -5494,12 +6072,12 @@ theorem electionPromotionPrefixInActivationCore
 
 /-- An election promotion from the activation term precedes its activation. -/
 theorem electionPromotionPrefixInActivation
-    {state : State TxId}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (electionFacts :
       ElectionHistoryFacts
         state votes canonicalHistory owners elections)
@@ -5508,9 +6086,9 @@ theorem electionPromotionPrefixInActivation
       ActivationCanonicalFacts canonicalHistory owners activations)
     {source : Node}
     {index : Nat}
-    {activationIndex : ActivationKey}
-    {activation : ActivationRecord TxId}
-    {record : ElectionRecord TxId}
+    {activationIndex : ActivationKey Node}
+    {activation : ActivationRecord Node TxId}
+    {record : ElectionRecord Node TxId}
     (activationStored :
       activations activationIndex = some activation)
     (recorded :
@@ -5526,10 +6104,10 @@ theorem electionPromotionPrefixInActivation
 
 /-- The activated configuration occurs in the signed activation prefix. -/
 theorem activationNewConfigurationKnown
-    {activations : ActivationHistory TxId}
+    {activations : ActivationHistory Node TxId}
     (historyFacts : ActivationHistoryFacts activations)
-    {activationIndex : ActivationKey}
-    {activation : ActivationRecord TxId}
+    {activationIndex : ActivationKey Node}
+    {activation : ActivationRecord Node TxId}
     (activationStored :
       activations activationIndex = some activation) :
     activation.newConfiguration ∈
@@ -5557,17 +6135,17 @@ theorem activationNewConfigurationKnown
 
 /-- A configuration known beyond a frozen ballot frontier is ballot-active. -/
 theorem electionConfigurationActiveOfKnown
-    {state : State TxId}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
     (electionFacts :
       ElectionHistoryFacts
         state votes canonicalHistory owners elections)
     {term : Nat}
-    {record : ElectionRecord TxId}
-    {configuration : Configuration}
+    {record : ElectionRecord Node TxId}
+    {configuration : Configuration Node}
     (recorded : elections term = some record)
     (known : configuration ∈ allConfigurations record.ballotLog)
     (notRetired :
@@ -5584,13 +6162,13 @@ theorem electionConfigurationActiveOfKnown
 
 /-- Early form used by the activation/election closure induction. -/
 theorem leastBadElectionHasPrefixVoterForActivation
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
     (voteFacts : VoteHistoryFacts state votes)
     (electionFacts :
       ElectionHistoryFacts
@@ -5599,8 +6177,8 @@ theorem leastBadElectionHasPrefixVoterForActivation
       AckerElectionHistory state responseHistory elections)
     {source : Node}
     {index term : Nat}
-    {record : ElectionRecord TxId}
-    {configuration : Configuration}
+    {record : ElectionRecord Node TxId}
+    {configuration : Configuration Node}
     (sourceRole : (state.nodes source).role = .leader)
     (currentEntry :
       termAt (state.nodes source).log index =
@@ -5646,13 +6224,13 @@ theorem leastBadElectionHasPrefixVoterForActivation
 
 /-- Early promotion form used by the activation/election closure induction. -/
 theorem leastBadElectionPromotionContainsPrefixForActivation
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
     (termsPositive : CurrentTermsPositive state)
     (voteFacts : VoteHistoryFacts state votes)
     (ownership :
@@ -5665,8 +6243,8 @@ theorem leastBadElectionPromotionContainsPrefixForActivation
       AckerElectionHistory state responseHistory elections)
     {source : Node}
     {index term : Nat}
-    {record : ElectionRecord TxId}
-    {configuration : Configuration}
+    {record : ElectionRecord Node TxId}
+    {configuration : Configuration Node}
     (sourceRole : (state.nodes source).role = .leader)
     (currentEntry :
       termAt (state.nodes source).log index =
@@ -5928,16 +6506,16 @@ Activation/election chronology closes every higher frozen election without
 assuming that a newly queued AppendEntries reserve existed in the prior state.
 -/
 theorem potentialPrefixInElectionRecordsFromActivationHistory
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
-    {nodeEvidence : NodeCommitEvidence TxId}
-    {requestEvidence : RequestCommitEvidence TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
+    {nodeEvidence : NodeCommitEvidence Node TxId}
+    {requestEvidence : RequestCommitEvidence Node TxId}
     (termsPositive : CurrentTermsPositive state)
     (entriesBounded : EntriesDoNotExceedCurrentTerm state)
     (voteFacts : VoteHistoryFacts state votes)
@@ -6288,7 +6866,7 @@ theorem potentialPrefixInElectionRecordsFromActivationHistory
                     historyFacts.valid
                       ballotActivationIndex ballotActivation
                       ballotActivationStored
-                  let ballotEventState : NodeState TxId :=
+                  let ballotEventState : NodeState Node TxId :=
                     { state.nodes source with
                       log := ballotActivation.history
                       commitIndex := ballotActivation.activationFrontier }
@@ -6664,13 +7242,13 @@ signature frontier, quorum intersection yields a voter whose frozen voter log
 contains that frontier.
 -/
 theorem leastBadElectionHasPrefixVoter
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
     (voteFacts : VoteHistoryFacts state votes)
     (electionFacts :
       ElectionHistoryFacts
@@ -6679,8 +7257,8 @@ theorem leastBadElectionHasPrefixVoter
       AckerElectionHistory state responseHistory elections)
     {source : Node}
     {index term : Nat}
-    {record : ElectionRecord TxId}
-    {configuration : Configuration}
+    {record : ElectionRecord Node TxId}
+    {configuration : Configuration Node}
     (sourceRole : (state.nodes source).role = .leader)
     (currentEntry :
       termAt (state.nodes source).log index =
@@ -6729,13 +7307,13 @@ The least higher-term election cannot omit a prospectively quorum-supported
 current-term signature frontier.
 -/
 theorem leastBadElectionPromotionContainsPrefix
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
     (termsPositive : CurrentTermsPositive state)
     (voteFacts : VoteHistoryFacts state votes)
     (ownership :
@@ -6748,8 +7326,8 @@ theorem leastBadElectionPromotionContainsPrefix
       AckerElectionHistory state responseHistory elections)
     {source : Node}
     {index term : Nat}
-    {record : ElectionRecord TxId}
-    {configuration : Configuration}
+    {record : ElectionRecord Node TxId}
+    {configuration : Configuration Node}
     (sourceRole : (state.nodes source).role = .leader)
     (currentEntry :
       termAt (state.nodes source).log index =
@@ -7010,14 +7588,14 @@ theorem leastBadElectionPromotionContainsPrefix
 
 /-- Every higher frozen election record contains a prospective signature frontier. -/
 theorem potentialPrefixInElectionRecords
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (termsPositive : CurrentTermsPositive state)
     (voteFacts : VoteHistoryFacts state votes)
     (ownership :
@@ -7071,14 +7649,14 @@ theorem potentialPrefixInElectionRecords
 
 /-- Every higher active leader contains a prospective current-term signature frontier. -/
 theorem potentialPrefixInHigherLeader
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (termsPositive : CurrentTermsPositive state)
     (voteFacts : VoteHistoryFacts state votes)
     (ownership :
@@ -7140,13 +7718,13 @@ An up-to-date candidate snapshot contains a supported history prefix once
 every strictly intermediate elected term is known to contain it.
 -/
 theorem candidateSnapshotContainsSupportedPrefix
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {supportedHistory : List (Entry TxId)}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {supportedHistory : List (Entry Node TxId)}
     {supportedTerm index targetTerm : Nat}
     (supportedTermPositive : TERM_ONE <= supportedTerm)
     (ownership :
@@ -7155,7 +7733,7 @@ theorem candidateSnapshotContainsSupportedPrefix
     (electionFacts :
       ElectionHistoryFacts
         state votes canonicalHistory owners elections)
-    {candidateLog voterLog promotionLog : List (Entry TxId)}
+    {candidateLog voterLog promotionLog : List (Entry Node TxId)}
     (supportedEntry :
       termAt supportedHistory index = supportedTerm)
     (supportedSignature :
@@ -7430,12 +8008,12 @@ An up-to-date candidate snapshot contains a prospective prefix once every
 strictly intermediate elected term is known to contain it.
 -/
 theorem candidateSnapshotContainsProspectivePrefix
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
     {source : Node}
     (sourceTermPositive :
       TERM_ONE <= (state.nodes source).currentTerm)
@@ -7446,7 +8024,7 @@ theorem candidateSnapshotContainsProspectivePrefix
       ElectionHistoryFacts
         state votes canonicalHistory owners elections)
     {index targetTerm : Nat}
-    {candidateLog voterLog promotionLog : List (Entry TxId)}
+    {candidateLog voterLog promotionLog : List (Entry Node TxId)}
     (currentEntry :
       termAt (state.nodes source).log index =
         (state.nodes source).currentTerm)
@@ -7497,16 +8075,16 @@ theorem candidateSnapshotContainsProspectivePrefix
 
 /-- Every higher prospective winning candidate contains a prospective prefix. -/
 theorem potentialPrefixInHigherCandidateOfSharedConfiguration
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (termsPositive : CurrentTermsPositive state)
     (committedSignature : CommittedFrontierIsSignature state)
     (candidatesAbove : CandidatesAboveBootstrap state)
@@ -7538,7 +8116,7 @@ theorem potentialPrefixInHigherCandidateOfSharedConfiguration
         state appendHistory responseHistory elections activations)
     {source candidate : Node}
     {index : Nat}
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     (sourceRole : (state.nodes source).role = .leader)
     (currentEntry :
       termAt (state.nodes source).log index =
@@ -7610,7 +8188,7 @@ theorem potentialPrefixInHigherCandidateOfSharedConfiguration
       potentialElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at electionMember
-    rcases electionMember with materialised | eligible
+    rcases electionMember with ⟨_joined, materialised | eligible⟩
     · have snapshot :=
         snapshots candidate voter
           (Or.inl candidateRole) materialised
@@ -7749,16 +8327,16 @@ Activation history discharges the cross-configuration case before the ordinary
 same-configuration election argument is applied.
 -/
 theorem potentialPrefixInHigherCandidate
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (termsPositive : CurrentTermsPositive state)
     (committedSignature : CommittedFrontierIsSignature state)
     (candidatesAbove : CandidatesAboveBootstrap state)
@@ -7830,17 +8408,17 @@ Prospective per-ACK evidence covers a candidate with materialised election
 support.
 -/
 theorem prospectiveKnownEffectiveWinnerCompletenessOfSharedAuthority
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
-    {nodeEvidence : NodeCommitEvidence TxId}
-    {requestEvidence : RequestCommitEvidence TxId}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
+    {nodeEvidence : NodeCommitEvidence Node TxId}
+    {requestEvidence : RequestCommitEvidence Node TxId}
     (entriesBounded : EntriesDoNotExceedCurrentTerm state)
     (candidatesAbove : CandidatesAboveBootstrap state)
     (voteFacts : VoteHistoryFacts state votes)
@@ -7861,8 +8439,8 @@ theorem prospectiveKnownEffectiveWinnerCompletenessOfSharedAuthority
     (prospectiveFacts :
       ProspectiveCommitEvidenceFacts
         state appendHistory nodeEvidence requestEvidence elections)
-    {evidence : CommitEvidence TxId}
-    {supportedPrefix : List (Entry TxId)}
+    {evidence : CommitEvidence Node TxId}
+    {supportedPrefix : List (Entry Node TxId)}
     (known :
       KnownCommitEvidence
         state appendHistory nodeEvidence requestEvidence
@@ -7905,9 +8483,9 @@ theorem prospectiveKnownEffectiveWinnerCompletenessOfSharedAuthority
       relaxedElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ]
-    rcases parts.2 with effective | eligible
-    · exact Or.inl effective
-    · right
+    rcases parts.2 with ⟨joined, effective | eligible⟩
+    · exact ⟨joined, Or.inl effective⟩
+    · refine ⟨joined, Or.inr ?_⟩
       unfold currentlyEligibleElectionVoter at eligible
       exact
         ⟨by
@@ -7925,18 +8503,18 @@ theorem prospectiveKnownEffectiveWinnerCompletenessOfSharedAuthority
 
 /-- Activation bridges the evidence prefix or supplies a shared authority. -/
 theorem prospectiveKnownEffectiveWinnerCompleteness
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
-    {nodeEvidence : NodeCommitEvidence TxId}
-    {requestEvidence : RequestCommitEvidence TxId}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
+    {nodeEvidence : NodeCommitEvidence Node TxId}
+    {requestEvidence : RequestCommitEvidence Node TxId}
     (entriesBounded : EntriesDoNotExceedCurrentTerm state)
     (candidatesAbove : CandidatesAboveBootstrap state)
     (voteFacts : VoteHistoryFacts state votes)
@@ -7961,8 +8539,8 @@ theorem prospectiveKnownEffectiveWinnerCompleteness
       ActivationEvidenceFacts
         state appendHistory responseHistory nodeEvidence requestEvidence
           elections activations)
-    {evidence : CommitEvidence TxId}
-    {supportedPrefix : List (Entry TxId)}
+    {evidence : CommitEvidence Node TxId}
+    {supportedPrefix : List (Entry Node TxId)}
     (known :
       KnownCommitEvidence
         state appendHistory nodeEvidence requestEvidence
@@ -7994,13 +8572,13 @@ Authority-chain bridges compare different-authority commits; equal authorities
 fall back to an ordinary majority intersection in that configuration.
 -/
 theorem commitEvidenceCommittedLogsPrefix
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {nodeEvidence : NodeCommitEvidence TxId}
-    {requestEvidence : RequestCommitEvidence TxId}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {nodeEvidence : NodeCommitEvidence Node TxId}
+    {requestEvidence : RequestCommitEvidence Node TxId}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (evidenceFacts :
       CommitEvidenceFacts
         state appendHistory nodeEvidence requestEvidence)
@@ -8051,14 +8629,14 @@ Known commit evidence makes every lower-term committed prefix part of an
 active leader's log.
 -/
 theorem knownCommitEvidenceLeaderCompleteness
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {nodeEvidence : NodeCommitEvidence TxId}
-    {requestEvidence : RequestCommitEvidence TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {nodeEvidence : NodeCommitEvidence Node TxId}
+    {requestEvidence : RequestCommitEvidence Node TxId}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
@@ -8098,18 +8676,18 @@ Prospective commit closure makes every lower-term committed prefix part of a
 candidate's log as soon as its effective election quorum is complete.
 -/
 theorem prospectiveCommitEvidenceWinningCandidateCompleteness
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
-    {nodeEvidence : NodeCommitEvidence TxId}
-    {requestEvidence : RequestCommitEvidence TxId}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
+    {nodeEvidence : NodeCommitEvidence Node TxId}
+    {requestEvidence : RequestCommitEvidence Node TxId}
     (entriesBounded : EntriesDoNotExceedCurrentTerm state)
     (candidatesAbove : CandidatesAboveBootstrap state)
     (voteFacts : VoteHistoryFacts state votes)
@@ -8163,11 +8741,11 @@ An active leader's canonical history and canonical entry agreement imply that
 its log dominates every occurrence of an entry from its current term.
 -/
 theorem activeLeaderHistoryLeaderTermDominance
-    {state : State TxId}
-    {votes : VoteHistory}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners) :
@@ -8194,13 +8772,13 @@ theorem activeLeaderHistoryLeaderTermDominance
 
 /-- The retained canonical witness derives state-local log matching. -/
 theorem invariantFactsLogMatchingFromCanonicalHistories
-    {state : State TxId}
-    {votes : VoteHistory}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {voteRequestHistory : RequestVoteRequest -> List (Entry TxId)}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {voteRequestHistory : RequestVoteRequest Node -> List (Entry Node TxId)}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
     (facts :
       InvariantFacts
         state votes appendHistory responseHistory voteRequestHistory
@@ -8213,13 +8791,13 @@ theorem invariantFactsLogMatchingFromCanonicalHistories
 
 /-- The retained canonical histories derive state-local log monotonicity. -/
 theorem invariantFactsMonoLogFromCanonicalHistories
-    {state : State TxId}
-    {votes : VoteHistory}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {voteRequestHistory : RequestVoteRequest -> List (Entry TxId)}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {voteRequestHistory : RequestVoteRequest Node -> List (Entry Node TxId)}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
     (facts :
       InvariantFacts
         state votes appendHistory responseHistory voteRequestHistory
@@ -8232,13 +8810,13 @@ theorem invariantFactsMonoLogFromCanonicalHistories
 
 /-- Persistent self-votes derive the post-bootstrap candidate-term bound. -/
 theorem invariantFactsCandidatesAboveBootstrap
-    {state : State TxId}
-    {votes : VoteHistory}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {voteRequestHistory : RequestVoteRequest -> List (Entry TxId)}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {voteRequestHistory : RequestVoteRequest Node -> List (Entry Node TxId)}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
     (facts :
       InvariantFacts
         state votes appendHistory responseHistory voteRequestHistory
@@ -8249,13 +8827,13 @@ theorem invariantFactsCandidatesAboveBootstrap
 
 /-- Authority-tagged live evidence and activation bridges derive commit safety. -/
 theorem invariantFactsCommittedLogsPrefixFromActivation
-    {state : State TxId}
-    {votes : VoteHistory}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {voteRequestHistory : RequestVoteRequest -> List (Entry TxId)}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {voteRequestHistory : RequestVoteRequest Node -> List (Entry Node TxId)}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
     (facts :
       InvariantFacts
         state votes appendHistory responseHistory voteRequestHistory
@@ -8278,13 +8856,13 @@ theorem invariantFactsCommittedLogsPrefixFromActivation
 
 /-- Functional term ownership makes active leaders unique in each term. -/
 theorem invariantFactsElectionSafetyFromOwnership
-    {state : State TxId}
-    {votes : VoteHistory}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {voteRequestHistory : RequestVoteRequest -> List (Entry TxId)}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {voteRequestHistory : RequestVoteRequest Node -> List (Entry Node TxId)}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
     (facts :
       InvariantFacts
         state votes appendHistory responseHistory voteRequestHistory
@@ -8304,13 +8882,13 @@ Live node commit evidence derives the signature-only committed frontier.
 The supported-prefix equality transfers the evidence signature to the node log.
 -/
 theorem invariantFactsCommittedFrontierIsSignatureFromCommitEvidence
-    {state : State TxId}
-    {votes : VoteHistory}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {voteRequestHistory : RequestVoteRequest -> List (Entry TxId)}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {voteRequestHistory : RequestVoteRequest Node -> List (Entry Node TxId)}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
     (facts :
       InvariantFacts
         state votes appendHistory responseHistory voteRequestHistory
@@ -8350,13 +8928,13 @@ theorem invariantFactsCommittedFrontierIsSignatureFromCommitEvidence
 
 /-- The retained known commit witnesses derive leader completeness. -/
 theorem invariantFactsLeaderCompletenessFromCommitEvidence
-    {state : State TxId}
-    {votes : VoteHistory}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {voteRequestHistory : RequestVoteRequest -> List (Entry TxId)}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {voteRequestHistory : RequestVoteRequest Node -> List (Entry Node TxId)}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
     (facts :
       InvariantFacts
         state votes appendHistory responseHistory voteRequestHistory
@@ -8378,13 +8956,13 @@ theorem invariantFactsLeaderCompletenessFromCommitEvidence
 
 /-- The retained prospective commit witnesses derive candidate completeness. -/
 theorem invariantFactsWinningCandidateCompletenessFromCommitEvidence
-    {state : State TxId}
-    {votes : VoteHistory}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {voteRequestHistory : RequestVoteRequest -> List (Entry TxId)}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {voteRequestHistory : RequestVoteRequest Node -> List (Entry Node TxId)}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
     (facts :
       InvariantFacts
         state votes appendHistory responseHistory voteRequestHistory
@@ -8410,13 +8988,13 @@ theorem invariantFactsWinningCandidateCompletenessFromCommitEvidence
 
 /-- The retained active canonical histories derive leader-term dominance. -/
 theorem invariantFactsLeaderTermDominanceFromCanonicalHistories
-    {state : State TxId}
-    {votes : VoteHistory}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {voteRequestHistory : RequestVoteRequest -> List (Entry TxId)}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {voteRequestHistory : RequestVoteRequest Node -> List (Entry Node TxId)}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
     (facts :
       InvariantFacts
         state votes appendHistory responseHistory voteRequestHistory
@@ -8432,12 +9010,12 @@ Future voter closure transfers any canonically owned signed prefix from one
 current supporter into the unchanged candidate log.
 -/
 theorem futureElectionMemberContainsSignedPrefix
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
@@ -8445,7 +9023,7 @@ theorem futureElectionMemberContainsSignedPrefix
     (electionFacts :
       ElectionHistoryFacts
         state votes canonicalHistory owners elections)
-    {evidence : CommitEvidence TxId}
+    {evidence : CommitEvidence Node TxId}
     (frontierBound :
       evidence.commitFrontier <= evidence.history.length)
     (frontierTerm :
@@ -8572,7 +9150,7 @@ theorem futureElectionMemberContainsSignedPrefix
     futureElectionVoters, Finset.mem_filter,
     Finset.mem_univ, true_and
   ] at future
-  rcases future with self | supporter
+  rcases future with ⟨_joined, self | supporter⟩
   · subst member
     exact memberCovered
   · rcases supporter with ⟨_, upToDate⟩
@@ -8756,14 +9334,14 @@ theorem futureElectionMemberContainsSignedPrefix
 
 /-- Commit-evidence specialization of signed-prefix future-voter closure. -/
 theorem prospectiveCommitFutureMemberCore
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {nodeEvidence : NodeCommitEvidence TxId}
-    {requestEvidence : RequestCommitEvidence TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {nodeEvidence : NodeCommitEvidence Node TxId}
+    {requestEvidence : RequestCommitEvidence Node TxId}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
@@ -8799,8 +9377,8 @@ theorem prospectiveCommitFutureMemberCore
             member ∈ evidence.ackQuorum ->
               evidence.history.take evidence.commitFrontier <+:
                 (state.nodes member).log)
-    {evidence : CommitEvidence TxId}
-    {supportedPrefix : List (Entry TxId)}
+    {evidence : CommitEvidence Node TxId}
+    {supportedPrefix : List (Entry Node TxId)}
     (known :
       KnownCommitEvidence
         state appendHistory nodeEvidence requestEvidence
@@ -8831,16 +9409,16 @@ theorem prospectiveCommitFutureMemberCore
 
 /-- Frozen activation closure rules out every recorded current-log handoff. -/
 theorem activationSupporterContainsCurrentPrefix
-    {state : State TxId}
-    {votes : VoteHistory}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (currentHistory :
       ActivationSupporterCurrentHistory state elections activations)
     (activationElections :
       ActivationElectionFacts votes elections activations)
-    {activationIndex : ActivationKey}
-    {activation : ActivationRecord TxId}
+    {activationIndex : ActivationKey Node}
+    {activation : ActivationRecord Node TxId}
     (stored : activations activationIndex = some activation)
     {supporter : Node}
     (member : supporter ∈ activation.jointSupporters) :
@@ -8862,13 +9440,13 @@ One future voter from an activation quorum transfers the signed activation
 prefix into the unchanged timeout candidate log.
 -/
 theorem activationSupporterFutureCandidateContainsPrefix
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
@@ -8881,8 +9459,8 @@ theorem activationSupporterFutureCandidateContainsPrefix
       ActivationSupporterCurrentHistory state elections activations)
     (activationElections :
       ActivationElectionFacts votes elections activations)
-    {activationIndex : ActivationKey}
-    {activation : ActivationRecord TxId}
+    {activationIndex : ActivationKey Node}
+    {activation : ActivationRecord Node TxId}
     (stored : activations activationIndex = some activation)
     {candidate supporter : Node}
     {targetTerm : Nat}
@@ -8891,7 +9469,7 @@ theorem activationSupporterFutureCandidateContainsPrefix
       supporter ∈ futureElectionVoters state candidate targetTerm) :
     activation.history.take activation.activationFrontier <+:
       (state.nodes candidate).log := by
-  let evidence : CommitEvidence TxId :=
+  let evidence : CommitEvidence Node TxId :=
     { commitTerm := activation.activationTerm
       history := activation.history
       commitFrontier := activation.activationFrontier
@@ -8930,13 +9508,13 @@ A future election quorum intersecting one activation-governing quorum carries
 that activation into the unchanged candidate log.
 -/
 theorem activationPrefixInFutureCandidateOfGoverningConfiguration
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
@@ -8949,16 +9527,16 @@ theorem activationPrefixInFutureCandidateOfGoverningConfiguration
       ActivationSupporterCurrentHistory state elections activations)
     (activationElections :
       ActivationElectionFacts votes elections activations)
-    {activationIndex : ActivationKey}
-    {activation : ActivationRecord TxId}
+    {activationIndex : ActivationKey Node}
+    {activation : ActivationRecord Node TxId}
     (stored : activations activationIndex = some activation)
     {candidate : Node}
     {targetTerm : Nat}
-    {ballotActive : List Configuration}
+    {ballotActive : List (Configuration Node)}
     (futureMajority :
       hasFutureElectionMajority
         state candidate targetTerm ballotActive)
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     (governing : configuration ∈ activation.governingActive)
     (candidateActive : configuration ∈ ballotActive) :
     activation.history.take activation.activationFrontier <+:
@@ -8985,15 +9563,15 @@ A potential election quorum intersecting one activation-governing quorum
 carries that activation into the candidate's promotion prefix.
 -/
 theorem activationPrefixInPotentialCandidatePromotionOfGoverningConfiguration
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (committedSignature : CommittedFrontierIsSignature state)
     (entriesBounded : EntriesDoNotExceedCurrentTerm state)
     (snapshots :
@@ -9016,8 +9594,8 @@ theorem activationPrefixInPotentialCandidatePromotionOfGoverningConfiguration
         votes voteVoterHistory elections activations)
     (activationElections :
       ActivationElectionFacts votes elections activations)
-    {activationIndex : ActivationKey}
-    {activation : ActivationRecord TxId}
+    {activationIndex : ActivationKey Node}
+    {activation : ActivationRecord Node TxId}
     (stored : activations activationIndex = some activation)
     {candidate : Node}
     (candidateRole : (state.nodes candidate).role = .candidate)
@@ -9026,7 +9604,7 @@ theorem activationPrefixInPotentialCandidatePromotionOfGoverningConfiguration
     (activationBeforeCandidate :
       activation.activationTerm <
         (state.nodes candidate).currentTerm)
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     (governing : configuration ∈ activation.governingActive)
     (candidateActive :
       configuration ∈ activeConfigurations (state.nodes candidate)) :
@@ -9054,7 +9632,7 @@ theorem activationPrefixInPotentialCandidatePromotionOfGoverningConfiguration
       potentialElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at candidateMember
-    rcases candidateMember with materialised | eligible
+    rcases candidateMember with ⟨_joined, materialised | eligible⟩
     · have snapshot :=
         snapshots candidate supporter
           (Or.inl candidateRole) materialised
@@ -9206,10 +9784,10 @@ theorem activationPrefixInPotentialCandidatePromotionOfGoverningConfiguration
 
 /-- Every activation moves to a configuration with a strictly larger index. -/
 theorem activationOldConfigurationIndexLtNew
-    {activations : ActivationHistory TxId}
+    {activations : ActivationHistory Node TxId}
     (historyFacts : ActivationHistoryFacts activations)
-    {activationIndex : ActivationKey}
-    {activation : ActivationRecord TxId}
+    {activationIndex : ActivationKey Node}
+    {activation : ActivationRecord Node TxId}
     (stored : activations activationIndex = some activation) :
     activation.oldConfiguration.index <
       activation.newConfiguration.index := by
@@ -9222,7 +9800,7 @@ theorem activationOldConfigurationIndexLtNew
       activation.newConfiguration ∈
         allConfigurations activation.history :=
     (List.mem_filter.mp newGoverning).1
-  let priorNode : NodeState TxId :=
+  let priorNode : NodeState Node TxId :=
     { log := activation.history
       commitIndex := activation.priorCommitIndex
       currentTerm := 0
@@ -9260,12 +9838,12 @@ Every configuration governed by an activation is no later than the
 activation's resulting configuration.
 -/
 theorem activationGoverningConfigurationIndexLeNew
-    {activations : ActivationHistory TxId}
+    {activations : ActivationHistory Node TxId}
     (historyFacts : ActivationHistoryFacts activations)
-    {activationIndex : ActivationKey}
-    {activation : ActivationRecord TxId}
+    {activationIndex : ActivationKey Node}
+    {activation : ActivationRecord Node TxId}
     (stored : activations activationIndex = some activation)
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     (governing : configuration ∈ activation.governingActive) :
     configuration.index <= activation.newConfiguration.index := by
   have valid := historyFacts.valid activationIndex activation stored
@@ -9277,7 +9855,7 @@ theorem activationGoverningConfigurationIndexLeNew
     exact
       ⟨(List.mem_filter.mp governing).1,
         of_decide_eq_true (List.mem_filter.mp governing).2⟩
-  let activationNode : NodeState TxId :=
+  let activationNode : NodeState Node TxId :=
     { log := activation.history
       commitIndex := activation.activationFrontier
       currentTerm := 0
@@ -9299,12 +9877,12 @@ theorem activationGoverningConfigurationIndexLeNew
 
 /-- A covered current-configuration prefix precedes every higher activation. -/
 theorem currentCoveragePrefixInHigherActivation
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     (coverage : ConfigurationCoverageFacts state activations)
     {node : Node}
-    {higherIndex : ActivationKey}
-    {higher : ActivationRecord TxId}
+    {higherIndex : ActivationKey Node}
+    {higher : ActivationRecord Node TxId}
     (higherStored : activations higherIndex = some higher)
     (currentPositive :
       0 < (currentConfiguration (state.nodes node)).index)
@@ -9322,12 +9900,12 @@ theorem currentCoveragePrefixInHigherActivation
 
 /-- Every lower activation prefix precedes a covered current configuration. -/
 theorem lowerActivationPrefixInCurrentCoverage
-    {state : State TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {activations : ActivationHistory Node TxId}
     (coverage : ConfigurationCoverageFacts state activations)
     {node : Node}
-    {lowerIndex : ActivationKey}
-    {lower : ActivationRecord TxId}
+    {lowerIndex : ActivationKey Node}
+    {lower : ActivationRecord Node TxId}
     (lowerStored : activations lowerIndex = some lower)
     (currentPositive :
       0 < (currentConfiguration (state.nodes node)).index)
@@ -9347,20 +9925,20 @@ theorem lowerActivationPrefixInCurrentCoverage
 Prefix inclusion between two signed activation frontiers orders their terms.
 -/
 theorem activationTermLeOfPrefix
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {activations : ActivationHistory Node TxId}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
     (historyFacts : ActivationHistoryFacts activations)
     (activationCanonical :
       ActivationCanonicalFacts canonicalHistory owners activations)
-    {earlierIndex laterIndex : ActivationKey}
-    {earlier later : ActivationRecord TxId}
+    {earlierIndex laterIndex : ActivationKey Node}
+    {earlier later : ActivationRecord Node TxId}
     (earlierStored : activations earlierIndex = some earlier)
     (laterStored : activations laterIndex = some later)
     (isPrefix :
@@ -9412,13 +9990,13 @@ prefixes directly when the lower activation is not on the higher authority's
 immediate prior chain.
 -/
 theorem activationPrefixInHigherActivationCore
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
@@ -9430,8 +10008,8 @@ theorem activationPrefixInHigherActivationCore
       ActivationCanonicalFacts canonicalHistory owners activations)
     (activationElections :
       ActivationElectionFacts votes elections activations)
-    {lowerIndex higherIndex : ActivationKey}
-    {lower higher : ActivationRecord TxId}
+    {lowerIndex higherIndex : ActivationKey Node}
+    {lower higher : ActivationRecord Node TxId}
     (lowerStored : activations lowerIndex = some lower)
     (higherStored : activations higherIndex = some higher)
     (indexOrder :
@@ -9477,7 +10055,7 @@ theorem activationPrefixInHigherActivationCore
           lowerPrefix, List.length_take,
           Nat.min_eq_left lowerValid.2.1
         ] using bounded
-    let lowerNode : NodeState TxId :=
+    let lowerNode : NodeState Node TxId :=
       { state.nodes INITIAL_LEADER with
         log := lower.history
         commitIndex := lower.activationFrontier }
@@ -9572,13 +10150,13 @@ When an activation skips over the lower authority, compare the two immutable
 activation prefixes directly.
 -/
 theorem activationPrefixInHigherActivationByAuthorityChain
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
@@ -9590,8 +10168,8 @@ theorem activationPrefixInHigherActivationByAuthorityChain
       ActivationCanonicalFacts canonicalHistory owners activations)
     (activationElections :
       ActivationElectionFacts votes elections activations)
-    {lowerIndex : ActivationKey}
-    {lower : ActivationRecord TxId}
+    {lowerIndex : ActivationKey Node}
+    {lower : ActivationRecord Node TxId}
     (lowerStored : activations lowerIndex = some lower) :
     forall configurationIndex higherIndex higher,
       higher.newConfiguration.index = configurationIndex ->
@@ -9660,13 +10238,13 @@ theorem activationPrefixInHigherActivationByAuthorityChain
 
 /-- Every lower-index activation prefix occurs in a higher activation. -/
 theorem activationPrefixInHigherActivation
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
@@ -9678,8 +10256,8 @@ theorem activationPrefixInHigherActivation
       ActivationCanonicalFacts canonicalHistory owners activations)
     (activationElections :
       ActivationElectionFacts votes elections activations)
-    {lowerIndex higherIndex : ActivationKey}
-    {lower higher : ActivationRecord TxId}
+    {lowerIndex higherIndex : ActivationKey Node}
+    {lower higher : ActivationRecord Node TxId}
     (lowerStored : activations lowerIndex = some lower)
     (higherStored : activations higherIndex = some higher)
     (indexOrder :
@@ -9699,14 +10277,14 @@ activation, then transfer the source's acknowledged signed prefix through the
 remaining activation chain.
 -/
 theorem acknowledgedPrefixInActivationByAuthorityChain
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (termsPositive : CurrentTermsPositive state)
     (ownership :
       TermOwnershipFacts
@@ -9722,7 +10300,7 @@ theorem acknowledgedPrefixInActivationByAuthorityChain
         state responseHistory elections activations)
     {source : Node}
     {index : Nat}
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     (sourceRole : (state.nodes source).role = .leader)
     (currentEntry :
       termAt (state.nodes source).log index =
@@ -9836,13 +10414,13 @@ Follow frozen prior authorities until one governing configuration is active
 for the candidate, then use the supplied transfer callback.
 -/
 theorem activationPrefixInTargetByAuthorityChainCore
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
@@ -9855,8 +10433,8 @@ theorem activationPrefixInTargetByAuthorityChainCore
     (activationElections :
       ActivationElectionFacts votes elections activations)
     {candidate : Node}
-    {targetHistory : List (Entry TxId)}
-    {Eligible : ActivationRecord TxId -> Prop}
+    {targetHistory : List (Entry Node TxId)}
+    {Eligible : ActivationRecord Node TxId -> Prop}
     (targetPrefix : targetHistory <+: (state.nodes candidate).log)
     (priorEligible :
       forall activationIndex activation priorIndex prior,
@@ -9910,7 +10488,7 @@ theorem activationPrefixInTargetByAuthorityChainCore
       have oldKnownActivation :
           activation.oldConfiguration ∈
             allConfigurations activation.history := by
-        let priorNode : NodeState TxId :=
+        let priorNode : NodeState Node TxId :=
           { state.nodes candidate with
             log := activation.history
             commitIndex := activation.priorCommitIndex }
@@ -10037,7 +10615,7 @@ theorem activationPrefixInTargetByAuthorityChainCore
         have oldCommitted :
             activation.oldConfiguration.index <=
               activation.priorCommitIndex := by
-          let priorNode : NodeState TxId :=
+          let priorNode : NodeState Node TxId :=
             { state.nodes candidate with
               log := activation.history
               commitIndex := activation.priorCommitIndex }
@@ -10064,13 +10642,13 @@ theorem activationPrefixInTargetByAuthorityChainCore
 
 /-- Coverage facts instantiate the same authority-chain core. -/
 theorem activationPrefixInTargetByCoverageAuthorityChain
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
@@ -10084,8 +10662,8 @@ theorem activationPrefixInTargetByCoverageAuthorityChain
       ActivationElectionFacts votes elections activations)
     (coverage : ConfigurationCoverageFacts state activations)
     {candidate : Node}
-    {targetHistory : List (Entry TxId)}
-    {Eligible : ActivationRecord TxId -> Prop}
+    {targetHistory : List (Entry Node TxId)}
+    {Eligible : ActivationRecord Node TxId -> Prop}
     (targetPrefix : targetHistory <+: (state.nodes candidate).log)
     (priorEligible :
       forall activationIndex activation priorIndex prior,
@@ -10148,13 +10726,13 @@ theorem activationPrefixInTargetByCoverageAuthorityChain
 
 /-- Coverage-native authority traversal for a future election quorum. -/
 theorem activationPrefixInFutureCandidateByCoverageAuthorityChain
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (committedSignature : CommittedFrontierIsSignature state)
     (ownership :
       TermOwnershipFacts
@@ -10172,7 +10750,7 @@ theorem activationPrefixInFutureCandidateByCoverageAuthorityChain
     (coverage : ConfigurationCoverageFacts state activations)
     {candidate : Node}
     {targetTerm : Nat}
-    {ballotActive : List Configuration}
+    {ballotActive : List (Configuration Node)}
     (futureMajority :
       hasFutureElectionMajority
         state candidate targetTerm ballotActive)
@@ -10212,15 +10790,15 @@ theorem activationPrefixInFutureCandidateByCoverageAuthorityChain
 
 /-- Coverage-native activation transfer into a potential candidate. -/
 theorem activationPrefixInPotentialCandidateByCoverageAuthorityChain
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (committedSignature : CommittedFrontierIsSignature state)
     (entriesBounded : EntriesDoNotExceedCurrentTerm state)
     (snapshots :
@@ -10357,15 +10935,15 @@ theorem activationPrefixInPotentialCandidateByCoverageAuthorityChain
 
 /-- Coverage-native same-term potential candidates share one configuration. -/
 theorem potentialCandidatesSharedConfigurationCoverage
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (committedSignature : CommittedFrontierIsSignature state)
     (entriesBounded : EntriesDoNotExceedCurrentTerm state)
     (snapshots :
@@ -10536,15 +11114,15 @@ theorem potentialCandidatesSharedConfigurationCoverage
 
 /-- Coverage-native frozen ballot and potential candidate sharing. -/
 theorem potentialCandidateElectionRecordSharedConfigurationCoverage
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (committedSignature : CommittedFrontierIsSignature state)
     (entriesBounded : EntriesDoNotExceedCurrentTerm state)
     (snapshots :
@@ -10573,7 +11151,7 @@ theorem potentialCandidateElectionRecordSharedConfigurationCoverage
       ActivationElectionFacts votes elections activations)
     (coverage : ConfigurationCoverageFacts state activations)
     {term : Nat}
-    {record : ElectionRecord TxId}
+    {record : ElectionRecord Node TxId}
     (recorded : elections term = some record)
     {candidate : Node}
     (candidateRole : (state.nodes candidate).role = .candidate)
@@ -10610,8 +11188,8 @@ theorem potentialCandidateElectionRecordSharedConfigurationCoverage
               term record recorded).1
           omega⟩
   have activationBeforeBallot
-      {activationIndex : ActivationKey}
-      {activation : ActivationRecord TxId}
+      {activationIndex : ActivationKey Node}
+      {activation : ActivationRecord Node TxId}
       (stored : activations activationIndex = some activation)
       (retained :
         activation.history.take activation.activationFrontier <+:
@@ -10821,18 +11399,18 @@ across an UpdateTerm frame. Disjoint current configurations are connected by
 their causally ordered activation records.
 -/
 theorem activationPrefixInEffectiveCandidateByAuthorityChain
-    {after : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
+    {after : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
-    {nodeEvidence : NodeCommitEvidence TxId}
-    {requestEvidence : RequestCommitEvidence TxId}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
+    {nodeEvidence : NodeCommitEvidence Node TxId}
+    {requestEvidence : RequestCommitEvidence Node TxId}
     (afterTermsPositive : CurrentTermsPositive after)
     (afterCommittedSignature : CommittedFrontierIsSignature after)
     (afterEntriesBounded : EntriesDoNotExceedCurrentTerm after)
@@ -10916,8 +11494,8 @@ theorem activationPrefixInEffectiveCandidateByAuthorityChain
     simpa [candidateConfiguration] using
       currentConfiguration_mem_activeConfigurations (after.nodes candidate)
   have activationInCandidate
-      {activationIndex : ActivationKey}
-      {activation : ActivationRecord TxId}
+      {activationIndex : ActivationKey Node}
+      {activation : ActivationRecord Node TxId}
       (stored : activations activationIndex = some activation)
       (activationBefore :
         activation.activationTerm <
@@ -11445,13 +12023,13 @@ theorem activationPrefixInEffectiveCandidateByAuthorityChain
 
 /-- Coverage-native frozen ballot and future election sharing. -/
 theorem futureElectionRecordSharedConfigurationCoverage
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (committedSignature : CommittedFrontierIsSignature state)
     (ownership :
       TermOwnershipFacts
@@ -11468,7 +12046,7 @@ theorem futureElectionRecordSharedConfigurationCoverage
       ActivationElectionFacts votes elections activations)
     (coverage : ConfigurationCoverageFacts state activations)
     {term : Nat}
-    {record : ElectionRecord TxId}
+    {record : ElectionRecord Node TxId}
     (recorded : elections term = some record)
     {candidate : Node}
     (candidateBefore :
@@ -11676,14 +12254,14 @@ Future voter closure specialized to the fields stored in prospective commit
 evidence.
 -/
 theorem prospectiveCommitFutureMember
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {nodeEvidence : NodeCommitEvidence TxId}
-    {requestEvidence : RequestCommitEvidence TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {nodeEvidence : NodeCommitEvidence Node TxId}
+    {requestEvidence : RequestCommitEvidence Node TxId}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
@@ -11697,8 +12275,8 @@ theorem prospectiveCommitFutureMember
     (prospectiveFacts :
       ProspectiveCommitEvidenceFacts
         state appendHistory nodeEvidence requestEvidence elections)
-    {evidence : CommitEvidence TxId}
-    {supportedPrefix : List (Entry TxId)}
+    {evidence : CommitEvidence Node TxId}
+    {supportedPrefix : List (Entry Node TxId)}
     (known :
       KnownCommitEvidence
         state appendHistory nodeEvidence requestEvidence
@@ -11721,14 +12299,14 @@ theorem prospectiveCommitFutureMember
 
 /-- Under a support quorum, every materialised ACKer's current log contains the prefix. -/
 theorem effectiveAckerContainsPotentialPrefix
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (termsPositive : CurrentTermsPositive state)
     (voteFacts : VoteHistoryFacts state votes)
     (ownership :
@@ -11775,9 +12353,9 @@ theorem effectiveAckerContainsPotentialPrefix
             badTerm badRecord recorded above))
 
 theorem effectiveAckerContainsPrefixOfEarlierSafe
-    {state : State TxId}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {elections : ElectionHistory TxId}
+    {state : State Node TxId}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {elections : ElectionHistory Node TxId}
     (currentHistory :
       AckerCurrentHistory state responseHistory elections)
     {source voter : Node}
@@ -11813,16 +12391,16 @@ One materialised ACKer which is either an existing voter or currently regards
 the candidate log as up to date transfers the acknowledged prefix.
 -/
 theorem effectiveAckerRelaxedCandidateContainsPotentialPrefix
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (termsPositive : CurrentTermsPositive state)
     (committedSignature : CommittedFrontierIsSignature state)
     (voteFacts : VoteHistoryFacts state votes)
@@ -11897,7 +12475,7 @@ theorem effectiveAckerRelaxedCandidateContainsPotentialPrefix
       relaxedElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at relaxed
-    rcases relaxed with materialised | upToDate
+    rcases relaxed with ⟨_joined, materialised | upToDate⟩
     · have snapshot :=
         snapshots candidate voter
           (Or.inl candidateRole) materialised
@@ -11981,15 +12559,15 @@ theorem effectiveAckerRelaxedCandidateContainsPotentialPrefix
       · exact earlierSafe
 
 theorem effectiveAckerRelaxedCandidateContainsPrefixOfEarlierSafe
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
     (termsPositive : CurrentTermsPositive state)
     (committedSignature : CommittedFrontierIsSignature state)
     (ownership :
@@ -12046,7 +12624,7 @@ theorem effectiveAckerRelaxedCandidateContainsPrefixOfEarlierSafe
       relaxedElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at relaxed
-    rcases relaxed with materialised | upToDate
+    rcases relaxed with ⟨_joined, materialised | upToDate⟩
     · have snapshot :=
         snapshots candidate voter (Or.inl candidateRole) materialised
       have recordedVote := snapshot.1
@@ -12129,14 +12707,14 @@ One materialised ACKer whose current log would support a strictly later
 election transfers the acknowledged prefix to that unchanged candidate log.
 -/
 theorem effectiveAckerFutureCandidateContainsPotentialPrefix
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (termsPositive : CurrentTermsPositive state)
     (committedSignature : CommittedFrontierIsSignature state)
     (entriesBounded : EntriesDoNotExceedCurrentTerm state)
@@ -12186,7 +12764,7 @@ theorem effectiveAckerFutureCandidateContainsPotentialPrefix
       futureElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at future
-    rcases future with self | supporter
+    rcases future with ⟨_joined, self | supporter⟩
     · exact False.elim (voterEq self)
     · have earlierSafe :
           forall earlierTerm earlierRecord,
@@ -12235,14 +12813,14 @@ A future election quorum on a live evidence authority carries that evidence
 into the unchanged candidate log.
 -/
 theorem prospectiveCommitFutureCandidateOfSharedAuthority
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {nodeEvidence : NodeCommitEvidence TxId}
-    {requestEvidence : RequestCommitEvidence TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {nodeEvidence : NodeCommitEvidence Node TxId}
+    {requestEvidence : RequestCommitEvidence Node TxId}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
@@ -12256,15 +12834,15 @@ theorem prospectiveCommitFutureCandidateOfSharedAuthority
     (prospectiveFacts :
       ProspectiveCommitEvidenceFacts
         state appendHistory nodeEvidence requestEvidence elections)
-    {evidence : CommitEvidence TxId}
-    {supportedPrefix : List (Entry TxId)}
+    {evidence : CommitEvidence Node TxId}
+    {supportedPrefix : List (Entry Node TxId)}
     (known :
       KnownCommitEvidence
         state appendHistory nodeEvidence requestEvidence
           evidence supportedPrefix)
     {candidate : Node}
     {targetTerm : Nat}
-    {ballotActive : List Configuration}
+    {ballotActive : List (Configuration Node)}
     (candidateBefore :
       (state.nodes candidate).currentTerm < targetTerm)
     (futureMajority :
@@ -12292,14 +12870,14 @@ potential replication quorum in a materialised ACK and transfers its prefix to
 the unchanged candidate log.
 -/
 theorem potentialPrefixInFutureCandidateOfSharedConfiguration
-    {state after : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state after : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (termsPositive : CurrentTermsPositive state)
     (committedSignature : CommittedFrontierIsSignature state)
     (entriesBounded : EntriesDoNotExceedCurrentTerm state)
@@ -12319,7 +12897,7 @@ theorem potentialPrefixInFutureCandidateOfSharedConfiguration
         state appendHistory responseHistory elections activations)
     {source candidate : Node}
     {index targetTerm : Nat}
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     (sourceRole : (state.nodes source).role = .leader)
     (currentEntry :
       termAt (state.nodes source).log index =
@@ -12377,7 +12955,7 @@ theorem potentialPrefixInFutureCandidateOfSharedConfiguration
       potentialAckers, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at potentialMember
-    rcases potentialMember with materialised | reserve
+    rcases potentialMember with ⟨_joined, materialised | reserve⟩
     · exact effectiveBack voter materialised
     · have reserveTerm :=
         queuedAppendReservePeerTerm reserve
@@ -12396,14 +12974,14 @@ theorem potentialPrefixInFutureCandidateOfSharedConfiguration
 
 /-- Temporal quorum evidence derives compatibility with every committed log. -/
 theorem derivePotentialCommitSafe
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (termsPositive : CurrentTermsPositive state)
     (quorumLog : QuorumLog state)
     (voteFacts : VoteHistoryFacts state votes)
@@ -12450,16 +13028,16 @@ theorem derivePotentialCommitSafe
 
 /-- Temporal quorum evidence derives higher-winner containment. -/
 theorem derivePotentialCommitElectionSafe
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (termsPositive : CurrentTermsPositive state)
     (committedSignature : CommittedFrontierIsSignature state)
     (candidatesAbove : CandidatesAboveBootstrap state)
@@ -12512,14 +13090,14 @@ theorem derivePotentialCommitElectionSafe
 
 /-- Temporal quorum evidence makes any two potential prefixes comparable. -/
 theorem derivePotentialCommitsComparable
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     (termsPositive : CurrentTermsPositive state)
     (voteFacts : VoteHistoryFacts state votes)
     (ownership :
@@ -12578,18 +13156,18 @@ theorem derivePotentialCommitsComparable
 
 /-- A successful selected request is exactly the reserve its reply materialises. -/
 theorem successfulAppendRequestIsReserve
-    {state : State TxId}
-    {votes : VoteHistory}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
     {destination : Node}
-    {request : AppendEntriesRequest TxId}
-    {nextNode : NodeState TxId}
-    {response : AppendEntriesResponse}
+    {request : AppendEntriesRequest Node TxId}
+    {nextNode : NodeState Node TxId}
+    {response : AppendEntriesResponse Node}
     (member :
       Message.appendEntriesRequest request ∈
         state.network destination)
@@ -12616,12 +13194,12 @@ theorem successfulAppendRequestIsReserve
 
 /-- Frame an immutable election history across monotone local changes. -/
 theorem electionHistoryFrame
-    (state after : State TxId)
-    (votes afterVotes : VoteHistory)
+    (state after : State Node TxId)
+    (votes afterVotes : VoteHistory Node)
     (canonicalHistory afterCanonicalHistory :
-      Nat -> List (Entry TxId))
-    (owners : TermOwners)
-    (elections : ElectionHistory TxId)
+      Nat -> List (Entry Node TxId))
+    (owners : TermOwners Node)
+    (elections : ElectionHistory Node TxId)
     (facts :
       ElectionHistoryFacts
         state votes canonicalHistory owners elections)
@@ -12672,11 +13250,11 @@ theorem electionHistoryFrame
 
 /-- A current node log is canonical under term ownership. -/
 theorem nodeLogCanonical
-    {state : State TxId}
-    {votes : VoteHistory}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
+    {state : State Node TxId}
+    {votes : VoteHistory Node}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
     (ownership :
       TermOwnershipFacts
         state votes appendHistory canonicalHistory owners)
@@ -12687,11 +13265,11 @@ theorem nodeLogCanonical
 
 /-- Frame active vote snapshots across role/evidence restriction and canonical extension. -/
 theorem grantedVoteCanonicalFrame
-    (state after : State TxId)
+    (state after : State Node TxId)
     (canonicalHistory afterCanonicalHistory :
-      Nat -> List (Entry TxId))
+      Nat -> List (Entry Node TxId))
     (voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId))
+      RequestVoteResponse Node -> List (Entry Node TxId))
     (facts :
       GrantedVoteCanonicalSnapshots
         state canonicalHistory
@@ -12739,11 +13317,11 @@ theorem grantedVoteCanonicalFrame
 
 /-- Frame all ACK/election temporal relations when node logs are unchanged. -/
 theorem ackerTemporalFrameSameLogs
-    (state after : State TxId)
-    (votes afterVotes : VoteHistory)
-    (responseHistory : AppendEntriesResponse -> List (Entry TxId))
-    (voteVoterHistory : RequestVoteResponse -> List (Entry TxId))
-    (elections : ElectionHistory TxId)
+    (state after : State Node TxId)
+    (votes afterVotes : VoteHistory Node)
+    (responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId))
+    (voteVoterHistory : RequestVoteResponse Node -> List (Entry Node TxId))
+    (elections : ElectionHistory Node TxId)
     (currentFacts :
       AckerCurrentHistory state responseHistory elections)
     (voteFacts :
@@ -12885,10 +13463,10 @@ theorem ackerTemporalFrameSameLogs
 
 /-- Frame ACK-to-activation chronology when source logs are unchanged. -/
 theorem ackerActivationFrameSameLogs
-    (state after : State TxId)
-    (responseHistory : AppendEntriesResponse -> List (Entry TxId))
-    (elections afterElections : ElectionHistory TxId)
-    (activations : ActivationHistory TxId)
+    (state after : State Node TxId)
+    (responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId))
+    (elections afterElections : ElectionHistory Node TxId)
+    (activations : ActivationHistory Node TxId)
     (facts :
       AckerActivationHistory
         state responseHistory elections activations)
@@ -12951,8 +13529,8 @@ theorem ackerActivationFrameSameLogs
 
 /-- Any request which can still acknowledge an index carries entries through it. -/
 theorem canProduceAppendAckAt_index_le_requestEnd
-    {node : NodeState TxId}
-    {request : AppendEntriesRequest TxId}
+    {node : NodeState Node TxId}
+    {request : AppendEntriesRequest Node TxId}
     {index : Nat}
     (producible : canProduceAppendAckAt node request index) :
     index <= request.prevLogIndex + request.entries.length := by
@@ -12965,8 +13543,8 @@ theorem canProduceAppendAckAt_index_le_requestEnd
 
 /-- Every direct or prepared reserve is bounded by its immutable request tail. -/
 theorem canProduceAppendAckEventuallyAt_index_le_requestEnd
-    {node : NodeState TxId}
-    {request : AppendEntriesRequest TxId}
+    {node : NodeState Node TxId}
+    {request : AppendEntriesRequest Node TxId}
     {index : Nat}
     (producible : canProduceAppendAckEventuallyAt node request index) :
     index <= request.prevLogIndex + request.entries.length := by
@@ -12976,8 +13554,8 @@ theorem canProduceAppendAckEventuallyAt_index_le_requestEnd
 
 /-- Only a follower can directly produce a successful ACK. -/
 theorem canProduceAppendAckAt_role
-    {node : NodeState TxId}
-    {request : AppendEntriesRequest TxId}
+    {node : NodeState Node TxId}
+    {request : AppendEntriesRequest Node TxId}
     {index : Nat}
     (producible : canProduceAppendAckAt node request index) :
     node.role = .follower := by
@@ -13005,8 +13583,8 @@ theorem canProduceAppendAckAt_role
 
 /-- Enqueue-with-deduplication never removes an existing queued message. -/
 theorem memEnqueueNoDupOfMem
-    (network : Node -> List (Message TxId))
-    (newMessage message : Message TxId)
+    (network : Node -> List (Message Node TxId))
+    (newMessage message : Message Node TxId)
     (destination : Node)
     (member : message ∈ network destination) :
     message ∈ enqueueNoDup network newMessage destination := by
@@ -13025,13 +13603,13 @@ support set. The new support is tied to the exact source-log snapshot and
 cannot acknowledge beyond the immutable request tail.
 -/
 theorem appendEntriesPotentialAckerDelta
-    (state : State TxId)
+    (state : State Node TxId)
     (source destination : Node)
     (batchEnd : Nat)
     (appendHistory :
-      AppendEntriesRequest TxId -> List (Entry TxId))
+      AppendEntriesRequest Node TxId -> List (Entry Node TxId))
     (responseHistory :
-      AppendEntriesResponse -> List (Entry TxId))
+      AppendEntriesResponse Node -> List (Entry Node TxId))
     (enabled :
       Enabled state (.appendEntries source destination batchEnd))
     {leader peer : Node}
@@ -13095,18 +13673,18 @@ theorem appendEntriesPotentialAckerDelta
     potentialAckers, Finset.mem_filter,
     Finset.mem_univ, true_and
   ] at member ⊢
-  rcases member with effective | reserve
+  rcases member with ⟨joined, effective | reserve⟩
   · left
+    refine ⟨joined, ?_⟩
     left
     simp only [
       effectiveAckers, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at effective ⊢
-    rcases effective with self | matched | queued
-    · exact Or.inl self
-    · exact Or.inr (Or.inl (by simpa [matchEq] using matched))
-    · right
-      right
+    rcases effective with ⟨_effectiveJoined, self | matched | queued⟩
+    · exact ⟨joined, Or.inl self⟩
+    · exact ⟨joined, Or.inr (Or.inl (by simpa [matchEq] using matched))⟩
+    · refine ⟨joined, Or.inr (Or.inr ?_)⟩
       rcases queued with
         ⟨response, queued, success, term, responseSource,
           responseDestination, acknowledged, covered⟩
@@ -13143,7 +13721,7 @@ theorem appendEntriesPotentialAckerDelta
           by simp [newAppendHistory, request],
           by simp [request, makeAppendEntriesRequest]⟩
     · left
-      right
+      refine ⟨joined, Or.inr ?_⟩
       have requestDestinationEq := requestDestination
       have oldProducible :
           canProduceAppendAckEventuallyAt
@@ -13158,7 +13736,7 @@ theorem appendEntriesPotentialAckerDelta
                 ((next state
                   (.appendEntries source destination batchEnd)).nodes
                   source).role = .leader := by
-              simpa [next, CCFRaft.next] using enabled.1
+              simpa [next, CCFRaft.next] using enabled.2.2.1
             rw [peerEq, leaderRole] at follower
             contradiction
           · exact Or.inl (by
@@ -13190,13 +13768,13 @@ theorem appendEntriesPotentialAckerDelta
 
 /-- Existing potential AppendEntries support survives a send action. -/
 theorem appendEntriesPotentialAckersMonotone
-    (state : State TxId)
+    (state : State Node TxId)
     (source destination : Node)
     (batchEnd : Nat)
     (appendHistory :
-      AppendEntriesRequest TxId -> List (Entry TxId))
+      AppendEntriesRequest Node TxId -> List (Entry Node TxId))
     (responseHistory :
-      AppendEntriesResponse -> List (Entry TxId))
+      AppendEntriesResponse Node -> List (Entry Node TxId))
     (enabled :
       Enabled state (.appendEntries source destination batchEnd))
     (leader : Node)
@@ -13242,17 +13820,21 @@ theorem appendEntriesPotentialAckersMonotone
     potentialAckers, Finset.mem_filter,
     Finset.mem_univ, true_and
   ] at member ⊢
-  rcases member with effective | reserve
-  · left
+  rcases member with ⟨joined, effective | reserve⟩
+  · refine ⟨by simpa [next, CCFRaft.next] using joined, ?_⟩
+    left
     simp only [
       effectiveAckers, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at effective ⊢
-    rcases effective with self | matched | queued
-    · exact Or.inl self
-    · exact Or.inr (Or.inl (by simpa [matchEq] using matched))
-    · right
-      right
+    rcases effective with ⟨_effectiveJoined, self | matched | queued⟩
+    · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inl self⟩
+    · exact
+        ⟨by simpa [next, CCFRaft.next] using joined,
+          Or.inr (Or.inl (by simpa [matchEq] using matched))⟩
+    · refine
+        ⟨by simpa [next, CCFRaft.next] using joined,
+          Or.inr (Or.inr ?_)⟩
       rcases queued with
         ⟨response, queued, success, term, responseSource,
           responseDestination, acknowledged, covered⟩
@@ -13267,7 +13849,8 @@ theorem appendEntriesPotentialAckersMonotone
           by simpa [currentTermEq] using term,
           responseSource, responseDestination, acknowledged,
           by simpa [logEq] using covered⟩
-  · right
+  · refine ⟨by simpa [next, CCFRaft.next] using joined, ?_⟩
+    right
     rcases reserve with
       ⟨queuedRequest, queued, requestSource, requestDestination,
         requestTerm, producible, covered⟩
@@ -13283,7 +13866,7 @@ theorem appendEntriesPotentialAckersMonotone
               queuedRequest.destination = source :=
             requestDestinationEq.trans peerEq
           have follower := canProduceAppendAckAt_role direct
-          rw [peerEq, enabled.1] at follower
+          rw [peerEq, enabled.2.2.1] at follower
           contradiction
         · exact Or.inl (by
             simpa [
@@ -13326,18 +13909,18 @@ Configuration-qualified send delta: a new potential majority is either an old
 majority, or the destination is its unique essential new supporter.
 -/
 theorem appendEntriesPotentialMajorityDeltaAtConfiguration
-    (state : State TxId)
+    (state : State Node TxId)
     (source destination : Node)
     (batchEnd : Nat)
     (appendHistory :
-      AppendEntriesRequest TxId -> List (Entry TxId))
+      AppendEntriesRequest Node TxId -> List (Entry Node TxId))
     (responseHistory :
-      AppendEntriesResponse -> List (Entry TxId))
+      AppendEntriesResponse Node -> List (Entry Node TxId))
     (enabled :
       Enabled state (.appendEntries source destination batchEnd))
     (leader : Node)
     (index : Nat)
-    (configuration : Configuration)
+    (configuration : Configuration Node)
     (afterMajority :
       hasConfigurationMajority
         (potentialAckers
@@ -13438,8 +14021,8 @@ theorem appendEntriesPotentialMajorityDeltaAtConfiguration
 
 /-- A queued reserve cannot acknowledge beyond its immutable leader history. -/
 theorem queuedAppendReserve_index_le_leaderLog
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
     (requestFacts :
       forall destination request,
         Message.appendEntriesRequest request ∈ state.network destination ->
@@ -13465,8 +14048,8 @@ An active leader has no effective quorum beyond its log: processed cursors are
 bounded, while queued ACKs carry a bounded history prefix of that same log.
 -/
 theorem effectiveAckersBeyondLeaderLog
-    {state : State TxId}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
+    {state : State Node TxId}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
     (progress : LeaderProgressBounded state)
     (responseSafe :
       forall destination response,
@@ -13475,25 +14058,23 @@ theorem effectiveAckersBeyondLeaderLog
     {leader : Node}
     (role : (state.nodes leader).role = .leader)
     {index : Nat}
-    (beyond : (state.nodes leader).log.length < index) :
-    effectiveAckers state responseHistory leader index = {leader} := by
-  ext peer
+    (beyond : (state.nodes leader).log.length < index)
+    {peer : Node}
+    (member : peer ∈ effectiveAckers state responseHistory leader index) :
+    peer = leader := by
   simp only [
     effectiveAckers, Finset.mem_filter,
-    Finset.mem_univ, true_and, Finset.mem_singleton
-  ]
-  constructor
-  · intro acknowledges
-    rcases acknowledges with self | matched | queued
-    · exact self
-    · have bounded := (progress leader role peer).2
-      omega
-    · rcases queued with
-        ⟨response, member, success, _, _, _, _, covered⟩
-      have responseBound := (responseSafe leader response member success).1
-      have historyBound := covered.length_le
-      omega
-  · exact fun self => Or.inl self
+    Finset.mem_univ, true_and
+  ] at member
+  rcases member with ⟨_joined, self | matched | queued⟩
+  · exact self
+  · have bounded := (progress leader role peer).2
+    omega
+  · rcases queued with
+      ⟨response, queued, success, _, _, _, _, covered⟩
+    have responseBound := (responseSafe leader response queued success).1
+    have historyBound := covered.length_le
+    omega
 
 /--
 At an index beyond an active leader's current log, neither a processed/queued
@@ -13501,13 +14082,13 @@ ACK nor a queued request reserve can contribute. Only the leader's self-ACK
 remains.
 -/
 theorem potentialAckersBeyondLeaderLog
-    {state : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {voteRequestHistory : RequestVoteRequest -> List (Entry TxId)}
+    {state : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {voteRequestHistory : RequestVoteRequest Node -> List (Entry Node TxId)}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
     (progress : LeaderProgressBounded state)
     (networkFacts :
       NetworkHistoryFacts
@@ -13516,35 +14097,31 @@ theorem potentialAckersBeyondLeaderLog
     {leader : Node}
     (role : (state.nodes leader).role = .leader)
     {index : Nat}
-    (beyond : (state.nodes leader).log.length < index) :
-    potentialAckers
-        state appendHistory responseHistory leader index =
-      {leader} := by
-  ext peer
+    (beyond : (state.nodes leader).log.length < index)
+    {peer : Node}
+    (member :
+      peer ∈ potentialAckers
+        state appendHistory responseHistory leader index) :
+    peer = leader := by
   simp only [
     potentialAckers, Finset.mem_filter,
-    Finset.mem_univ, true_and, Finset.mem_singleton
-  ]
-  constructor
-  · intro supporter
-    rcases supporter with effective | reserve
-    · have onlySelf :=
-        effectiveAckersBeyondLeaderLog
-          progress networkFacts.appendResponse role beyond
-      rw [onlySelf] at effective
-      simpa using effective
-    · have bounded :=
-        queuedAppendReserve_index_le_leaderLog
-          (fun destination request member =>
-            (networkFacts.appendRequest destination request member).1)
-          reserve
-      omega
-  · exact fun same => Or.inl (by simpa [same, effectiveAckers])
+    Finset.mem_univ, true_and
+  ] at member
+  rcases member with ⟨_joined, effective | reserve⟩
+  · exact
+      effectiveAckersBeyondLeaderLog
+        progress networkFacts.appendResponse role beyond effective
+  · have bounded :=
+      queuedAppendReserve_index_le_leaderLog
+        (fun destination request queued =>
+          (networkFacts.appendRequest destination request queued).1)
+        reserve
+    omega
 
 /-- Enqueue-with-deduplication contains the message being enqueued. -/
 theorem memEnqueueNoDupSelf
-    (network : Node -> List (Message TxId))
-    (message : Message TxId) :
+    (network : Node -> List (Message Node TxId))
+    (message : Message Node TxId) :
     message ∈ enqueueNoDup network message message.destination := by
   unfold enqueueNoDup
   by_cases duplicate : message ∈ network message.destination
@@ -13554,8 +14131,8 @@ theorem memEnqueueNoDupSelf
 /-- Removing the first message from one source removes no other value. -/
 theorem memSelectedOrRemaining
     {source : Node}
-    {queue remaining : List (Message TxId)}
-    {selected message : Message TxId}
+    {queue remaining : List (Message Node TxId)}
+    {selected message : Message Node TxId}
     (taken :
       takeFirstFrom source queue = some (selected, remaining))
     (member : message ∈ queue) :
@@ -13590,7 +14167,7 @@ theorem memSelectedOrRemaining
 
 /-- The explicit invariant implies the two core public safety properties. -/
 theorem systemInductiveInvariantSafety
-    {state : State TxId}
+    {state : State Node TxId}
     (invariant : SystemInductiveInvariant state) :
     ConsensusSafety state := by
   rcases invariant with
@@ -13606,7 +14183,7 @@ theorem systemInductiveInvariantSafety
 
 /-- Log matching remains a separately exported supporting theorem. -/
 theorem systemInductiveInvariantLogMatching
-    {state : State TxId}
+    {state : State Node TxId}
     (invariant : SystemInductiveInvariant state) :
     LogMatching state := by
   rcases invariant with
@@ -13616,7 +14193,7 @@ theorem systemInductiveInvariantLogMatching
 
 /-- Log-term monotonicity remains a separately exported supporting theorem. -/
 theorem systemInductiveInvariantMonoLog
-    {state : State TxId}
+    {state : State Node TxId}
     (invariant : SystemInductiveInvariant state) :
     MonoLog state := by
   rcases invariant with
@@ -13626,7 +14203,7 @@ theorem systemInductiveInvariantMonoLog
 
 /-- TLA-style state-local leader completeness is a separate export. -/
 theorem systemInductiveInvariantLeaderCompleteness
-    {state : State TxId}
+    {state : State Node TxId}
     (invariant : SystemInductiveInvariant state) :
     LeaderCompleteness state := by
   rcases invariant with
@@ -13636,7 +14213,7 @@ theorem systemInductiveInvariantLeaderCompleteness
 
 /-- Every positive committed frontier in the invariant points to a signature. -/
 theorem systemInductiveInvariantCommittedFrontierIsSignature
-    {state : State TxId}
+    {state : State Node TxId}
     (invariant : SystemInductiveInvariant state) :
     CommittedFrontierIsSignature state := by
   rcases invariant with
@@ -13649,15 +14226,15 @@ theorem systemInductiveInvariantCommittedFrontierIsSignature
 /-- Empty initial commits and network queues need no commit evidence. -/
 theorem initialCommitEvidenceFacts
     (appendHistory :
-      AppendEntriesRequest TxId -> List (Entry TxId)) :
-    Exists fun nodeEvidence : NodeCommitEvidence TxId =>
-      Exists fun requestEvidence : RequestCommitEvidence TxId =>
+      AppendEntriesRequest Node TxId -> List (Entry Node TxId)) :
+    Exists fun nodeEvidence : NodeCommitEvidence Node TxId =>
+      Exists fun requestEvidence : RequestCommitEvidence Node TxId =>
         CommitEvidenceFacts
-          (initialState : State TxId)
+          (initialState : State Node TxId)
           appendHistory nodeEvidence requestEvidence := by
-  let nodeEvidence : NodeCommitEvidence TxId :=
+  let nodeEvidence : NodeCommitEvidence Node TxId :=
     fun _ => none
-  let requestEvidence : RequestCommitEvidence TxId :=
+  let requestEvidence : RequestCommitEvidence Node TxId :=
     fun _ => none
   refine ⟨nodeEvidence, requestEvidence, ?_⟩
   constructor
@@ -13668,24 +14245,26 @@ theorem initialCommitEvidenceFacts
 
 /-- The proof-only maps are empty in the deterministic initial state. -/
 theorem initialSystemInductiveInvariant :
-    SystemInductiveInvariant (initialState : State TxId) := by
-  let votes : VoteHistory := fun _ _ => none
-  let appendHistory : AppendEntriesRequest TxId -> List (Entry TxId) :=
+    SystemInductiveInvariant (initialState : State Node TxId) := by
+  let votes : VoteHistory (Node : Type) := fun _ _ => none
+  let appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId) :=
     fun _ => []
-  let responseHistory : AppendEntriesResponse -> List (Entry TxId) :=
+  let responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId) :=
     fun _ => []
-  let voteRequestHistory : RequestVoteRequest -> List (Entry TxId) :=
+  let voteRequestHistory : RequestVoteRequest Node -> List (Entry Node TxId) :=
     fun _ => []
-  let voteCandidateHistory : RequestVoteResponse -> List (Entry TxId) :=
+  let voteCandidateHistory : RequestVoteResponse Node -> List (Entry Node TxId) :=
     fun _ => []
-  let voteVoterHistory : RequestVoteResponse -> List (Entry TxId) :=
+  let voteVoterHistory : RequestVoteResponse Node -> List (Entry Node TxId) :=
     fun _ => []
   refine
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, ?_⟩
   have initialLeaderMember :
-      INITIAL_LEADER ∈ INITIAL_CONFIGURATION := by
-    decide
+      Membership.mem
+        (INITIAL_CONFIGURATION (Node := Node))
+        (INITIAL_LEADER (Node := Node)) :=
+    initialLeader_mem_initialConfiguration (Node := Node)
   constructor
   · simp [CommitIndicesBounded, initialState, initialNodeState]
   · intro node participating
@@ -13730,6 +14309,8 @@ theorem initialSystemInductiveInvariant :
     · intro voter
       rfl
     · intro voter
+      simp only [initialState, initialNodes_apply]
+      simp [initialNodeState]
       rfl
     · intro voter term future
       rfl
@@ -13741,15 +14322,15 @@ theorem initialSystemInductiveInvariant :
     · simp [initialState]
     · simp [initialState]
     · simp [initialState]
-  · let owners : TermOwners :=
+  · let owners : TermOwners (Node : Type) :=
       fun term => if term = TERM_ONE then some INITIAL_LEADER else none
-    let canonicalHistory : Nat -> List (Entry TxId) :=
+    let canonicalHistory : Nat -> List (Entry Node TxId) :=
       fun _ => []
-    let elections : ElectionHistory TxId :=
+    let elections : ElectionHistory Node TxId :=
       fun _ => none
-    let activations : ActivationHistory TxId :=
+    let activations : ActivationHistory Node TxId :=
       fun _ => none
-    rcases initialCommitEvidenceFacts appendHistory with
+    rcases initialCommitEvidenceFacts (Node := Node) appendHistory with
       ⟨nodeEvidence, requestEvidence, evidenceFacts⟩
     have noKnown :
         forall evidence supportedPrefix,
@@ -13933,22 +14514,22 @@ theorem initialSystemInductiveInvariant :
       · exact activationHistoryFacts
       · intro source index role current signature
         have impossible :
-            isSignatureAt ([] : List (Entry TxId)) index = true := by
+            isSignatureAt ([] : List (Entry Node TxId)) index = true := by
           simpa [initialState, initialNodeState] using signature
         simp [isSignatureAt, entryAt?] at impossible
       · intro source index role current signature
         have impossible :
-            isSignatureAt ([] : List (Entry TxId)) index = true := by
+            isSignatureAt ([] : List (Entry Node TxId)) index = true := by
           simpa [initialState, initialNodeState] using signature
         simp [isSignatureAt, entryAt?] at impossible
       · intro source index role current signature
         have impossible :
-            isSignatureAt ([] : List (Entry TxId)) index = true := by
+            isSignatureAt ([] : List (Entry Node TxId)) index = true := by
           simpa [initialState, initialNodeState] using signature
         simp [isSignatureAt, entryAt?] at impossible
       · intro left leftIndex role current signature
         have impossible :
-            isSignatureAt ([] : List (Entry TxId)) leftIndex = true := by
+            isSignatureAt ([] : List (Entry Node TxId)) leftIndex = true := by
           simpa [initialState, initialNodeState] using signature
         simp [isSignatureAt, entryAt?] at impossible
       · intro _ _ destination request _ queued _
@@ -13969,23 +14550,78 @@ theorem initialSystemInductiveInvariant :
       effectiveElectionVoters, queuedGrantedVote,
       initialState, initialNodeState
     ] at member
-  · let ackHistory : ProcessedAckHistory TxId :=
+  · let ackHistory : ProcessedAckHistory Node TxId :=
       fun _ _ => none
     refine ⟨ackHistory, ?_⟩
     constructor
     · simp [ackHistory]
     · intro leader role peer positive
       simp [initialState, initialNodeState] at positive
+  · constructor
+    · intro node peer member
+      simpa [
+        initialState, initialNodeState, activeNodeUnion,
+        activeConfigurations, currentConfiguration,
+        currentConfigurationAt, allConfigurations,
+        configurationsInLog, configurationsInLogFrom,
+        implicitConfiguration
+      ] using member
+    · intro node configuration member peer inNodes
+      simp [
+        initialState, initialNodeState, allConfigurations,
+        configurationsInLog, configurationsInLogFrom
+      ] at member
+      subst configuration
+      simpa [initialState, implicitConfiguration] using inNodes
+    · intro node peer member
+      simp [initialState, initialNodeState] at member
+    · intro destination request member
+      simp [initialState] at member
+    · intro destination request member
+      simp [initialState] at member
+    · intro destination request member
+      simp [initialState] at member
+    · intro destination response member
+      simp [initialState] at member
+    · constructor
+      · intro node active
+        by_cases same : node = INITIAL_LEADER
+        · subst node
+          exact initialLeaderMember
+        · rcases active with candidate | leader
+          · simp [initialState, initialNodeState, same] at candidate
+            split at candidate <;> contradiction
+          · simp [initialState, initialNodeState, same] at leader
+            split at leader <;> contradiction
+      · intro leader peer positive
+        by_cases same : leader = INITIAL_LEADER <;>
+          simp [initialState, initialNodeState, same] at positive
+      · intro destination response member
+        simp [initialState] at member
+      · intro node nonempty
+        by_cases same : node = INITIAL_LEADER <;>
+          simp [initialState, initialNodeState, same] at nonempty
+  · intro node
+    simp only [AllocatedNodesExactlyJoined, initialState, State.allocated]
+    by_cases member : node ∈ INITIAL_CONFIGURATION
+    · simp [
+        initialNodes, NodeStore.allocated,
+        NodeStore.node?_ofFinset_of_mem, member
+      ]
+    · simp [
+        initialNodes, NodeStore.allocated,
+        NodeStore.node?_ofFinset_of_not_mem, member
+      ]
 /-! ## Leader append -/
 
 /-- Append one current-term entry while applying the action-specific client set. -/
 def leaderAppendState
-    (state : State TxId)
+    (state : State Node TxId)
     (node : Node)
-    (content : EntryContent TxId)
+    (content : EntryContent Node TxId)
     (submittedTxIds : Finset TxId) :
-    State TxId :=
-  let entry : Entry TxId :=
+    State Node TxId :=
+  let entry : Entry Node TxId :=
     { term := (state.nodes node).currentTerm
       content }
   let addedNodes :=
@@ -13995,7 +14631,7 @@ def leaderAppendState
     | _ => ∅
   { state with
     nodes :=
-      updateNode state.nodes node
+    updateNode (state.nodes.allocate addedNodes) node
         { state.nodes node with
           log := (state.nodes node).log ++ [entry]
           sentIndex := fun peer =>
@@ -14008,9 +14644,9 @@ def leaderAppendState
 
 @[simp]
 theorem leaderAppendState_log_same
-    (state : State TxId)
+    (state : State Node TxId)
     (node : Node)
-    (content : EntryContent TxId)
+    (content : EntryContent Node TxId)
     (submittedTxIds : Finset TxId) :
     ((leaderAppendState state node content submittedTxIds).nodes node).log =
       (state.nodes node).log ++
@@ -14020,9 +14656,9 @@ theorem leaderAppendState_log_same
 
 @[simp]
 theorem leaderAppendState_nodes_of_ne
-    (state : State TxId)
+    (state : State Node TxId)
     (node candidate : Node)
-    (content : EntryContent TxId)
+    (content : EntryContent Node TxId)
     (submittedTxIds : Finset TxId)
     (different : Not (candidate = node)) :
     (leaderAppendState state node content submittedTxIds).nodes candidate =
@@ -14032,9 +14668,9 @@ theorem leaderAppendState_nodes_of_ne
 
 @[simp]
 theorem leaderAppendState_network
-    (state : State TxId)
+    (state : State Node TxId)
     (node : Node)
-    (content : EntryContent TxId)
+    (content : EntryContent Node TxId)
     (submittedTxIds : Finset TxId) :
     (leaderAppendState state node content submittedTxIds).network =
       state.network := by
@@ -14042,9 +14678,9 @@ theorem leaderAppendState_network
 
 @[simp]
 theorem leaderAppendState_role
-    (state : State TxId)
+    (state : State Node TxId)
     (node candidate : Node)
-    (content : EntryContent TxId)
+    (content : EntryContent Node TxId)
     (submittedTxIds : Finset TxId) :
     ((leaderAppendState state node content submittedTxIds).nodes candidate).role =
       (state.nodes candidate).role := by
@@ -14058,9 +14694,9 @@ theorem leaderAppendState_role
 
 @[simp]
 theorem leaderAppendState_currentTerm
-    (state : State TxId)
+    (state : State Node TxId)
     (node candidate : Node)
-    (content : EntryContent TxId)
+    (content : EntryContent Node TxId)
     (submittedTxIds : Finset TxId) :
     ((leaderAppendState state node content submittedTxIds).nodes candidate).currentTerm =
       (state.nodes candidate).currentTerm := by
@@ -14074,9 +14710,9 @@ theorem leaderAppendState_currentTerm
 
 @[simp]
 theorem leaderAppendState_commitIndex
-    (state : State TxId)
+    (state : State Node TxId)
     (node candidate : Node)
-    (content : EntryContent TxId)
+    (content : EntryContent Node TxId)
     (submittedTxIds : Finset TxId) :
     ((leaderAppendState state node content submittedTxIds).nodes candidate).commitIndex =
       (state.nodes candidate).commitIndex := by
@@ -14089,9 +14725,9 @@ theorem leaderAppendState_commitIndex
     ]
 
 theorem leaderAppendState_sentIndex_bounded
-    (state : State TxId)
+    (state : State Node TxId)
     (node peer : Node)
-    (content : EntryContent TxId)
+    (content : EntryContent Node TxId)
     (submittedTxIds : Finset TxId) :
     (state.nodes node).sentIndex peer <=
         (state.nodes node).log.length ->
@@ -14108,9 +14744,9 @@ theorem leaderAppendState_sentIndex_bounded
 
 @[simp]
 theorem leaderAppendState_matchIndex
-    (state : State TxId)
+    (state : State Node TxId)
     (node candidate : Node)
-    (content : EntryContent TxId)
+    (content : EntryContent Node TxId)
     (submittedTxIds : Finset TxId) :
     ((leaderAppendState state node content submittedTxIds).nodes candidate).matchIndex =
       (state.nodes candidate).matchIndex := by
@@ -14124,9 +14760,9 @@ theorem leaderAppendState_matchIndex
 
 @[simp]
 theorem leaderAppendState_votedFor
-    (state : State TxId)
+    (state : State Node TxId)
     (node candidate : Node)
-    (content : EntryContent TxId)
+    (content : EntryContent Node TxId)
     (submittedTxIds : Finset TxId) :
     ((leaderAppendState state node content submittedTxIds).nodes candidate).votedFor =
       (state.nodes candidate).votedFor := by
@@ -14140,9 +14776,9 @@ theorem leaderAppendState_votedFor
 
 @[simp]
 theorem leaderAppendState_votesGranted
-    (state : State TxId)
+    (state : State Node TxId)
     (node candidate : Node)
-    (content : EntryContent TxId)
+    (content : EntryContent Node TxId)
     (submittedTxIds : Finset TxId) :
     ((leaderAppendState state node content submittedTxIds).nodes candidate).votesGranted =
       (state.nodes candidate).votesGranted := by
@@ -14156,9 +14792,9 @@ theorem leaderAppendState_votesGranted
 
 /-- A leader append does not change any node's committed prefix. -/
 theorem leaderAppendCommittedLogUnchanged
-    (state : State TxId)
+    (state : State Node TxId)
     (node : Node)
-    (content : EntryContent TxId)
+    (content : EntryContent Node TxId)
     (submittedTxIds : Finset TxId)
     (bounded : CommitIndicesBounded state) :
     forall candidate,
@@ -14180,14 +14816,16 @@ theorem leaderAppendCommittedLogUnchanged
 
 /-- Appending any current-term leader entry preserves the arbitrary-term facts. -/
 theorem leaderAppendPreservesSystemInductiveInvariant
-    (state : State TxId)
+    (state : State Node TxId)
     (node : Node)
-    (content : EntryContent TxId)
+    (content : EntryContent Node TxId)
     (submittedTxIds : Finset TxId)
     (invariant : SystemInductiveInvariant state)
+    (nodeAllocated : state.allocated node)
     (leaderRole : (state.nodes node).role = .leader) :
     SystemInductiveInvariant
       (leaderAppendState state node content submittedTxIds) := by
+  classical
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
@@ -14202,6 +14840,11 @@ theorem leaderAppendPreservesSystemInductiveInvariant
       evidenceFacts, prospectiveFacts, activationEvidence,
       activationCanonical, activationElections, configurationActivations⟩
   rcases facts.processedAckHistory with ⟨ackHistory, ackFacts⟩
+  have hasJoinedMono :
+      state.hasJoined ⊆
+        (leaderAppendState state node content submittedTxIds).hasJoined := by
+    intro peer joined
+    simp [leaderAppendState, joined]
   have activationVoteHistoryAfter :
       ActivationVoteHistory
         votes voteVoterHistory elections activations := by
@@ -14221,10 +14864,10 @@ theorem leaderAppendPreservesSystemInductiveInvariant
     termOwnershipCandidateTermNotInLogs
       candidatesAboveBootstrap facts.grantedVoteSnapshots
         ownership electionFacts configurationFacts
-  let entry : Entry TxId :=
+  let entry : Entry Node TxId :=
     { term := (state.nodes node).currentTerm
       content }
-  let newCanonicalHistory : Nat -> List (Entry TxId) :=
+  let newCanonicalHistory : Nat -> List (Entry Node TxId) :=
     Function.update canonicalHistory entry.term
       ((state.nodes node).log ++ [entry])
   have committedEq :=
@@ -14404,19 +15047,29 @@ theorem leaderAppendPreservesSystemInductiveInvariant
         Finset.mem_univ, true_and
       ]
       constructor
-      · rintro (processed | queued)
-        · exact Or.inl (by simpa [votesGrantedEq] using processed)
-        · right
-          rcases queued with
+      · rintro ⟨joined, processed | queued⟩
+        · exact
+            ⟨facts.joinedCarriers.grantedVotes candidate
+                (by simpa [votesGrantedEq] using processed),
+              Or.inl (by simpa [votesGrantedEq] using processed)⟩
+        · rcases queued with
             ⟨response, member, granted, responseTerm,
               responseSource, responseDestination⟩
+          refine
+            ⟨by
+              simpa [responseSource] using
+                facts.joinedCarriers.voteResponseSources
+                  candidate response (by simpa using member),
+              Or.inr ?_⟩
           exact
-            ⟨response, by simpa using member,
-              granted, by simpa [currentTermEq] using responseTerm,
-              responseSource, responseDestination⟩
-      · rintro (processed | queued)
-        · exact Or.inl (by simpa [votesGrantedEq] using processed)
-        · right
+              ⟨response, by simpa using member,
+                granted, by simpa [currentTermEq] using responseTerm,
+                responseSource, responseDestination⟩
+      · rintro ⟨joined, processed | queued⟩
+        · exact
+            ⟨hasJoinedMono joined,
+              Or.inl (by simpa [votesGrantedEq] using processed)⟩
+        · refine ⟨hasJoinedMono joined, Or.inr ?_⟩
           rcases queued with
             ⟨response, member, granted, responseTerm,
               responseSource, responseDestination⟩
@@ -14465,11 +15118,17 @@ theorem leaderAppendPreservesSystemInductiveInvariant
       forall candidate,
         ((leaderAppendState state node content submittedTxIds).nodes
           candidate).role = .candidate ->
-          potentialElectionVoters
-              (leaderAppendState state node content submittedTxIds)
-                candidate ⊆
-            potentialElectionVoters state candidate := by
-    intro candidate role voter member
+          forall voter,
+            voter ∈
+                potentialElectionVoters
+                  (leaderAppendState state node content submittedTxIds)
+                    candidate ->
+              voter ∈
+                  activeNodeUnion
+                    ((leaderAppendState state node content submittedTxIds).nodes
+                      candidate) ->
+                voter ∈ potentialElectionVoters state candidate := by
+    intro candidate role voter member activeMember
     have candidateNe : Not (candidate = node) := by
       intro same
       subst candidate
@@ -14481,9 +15140,21 @@ theorem leaderAppendPreservesSystemInductiveInvariant
       potentialElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at member ⊢
-    rcases member with effective | eligible
-    · exact Or.inl (by simpa [effectiveElectionVotersEq] using effective)
-    · right
+    rcases member with ⟨joined, effective | eligible⟩
+    · have oldEffective :
+          voter ∈ effectiveElectionVoters state candidate := by
+        rw [← effectiveElectionVotersEq candidate]
+        exact effective
+      exact
+        ⟨(Finset.mem_filter.mp oldEffective).1, Or.inl oldEffective⟩
+    · refine ⟨?_, Or.inr ?_⟩
+      · exact
+          facts.joinedCarriers.activeNodes candidate
+            (by
+              simpa [
+                leaderAppendState_nodes_of_ne
+                  state node candidate content submittedTxIds candidateNe
+              ] using activeMember)
       unfold currentlyEligibleElectionVoter at eligible ⊢
       have requestEq :
           makeRequestVoteRequest
@@ -14534,14 +15205,22 @@ theorem leaderAppendPreservesSystemInductiveInvariant
     rw [hasPotentialElectionMajority, List.all_eq_true]
     intro configuration active
     apply decide_eq_true
+    apply
+      hasConfigurationMajority_mono_on_configuration
+        (fun voter member inConfiguration =>
+          potentialElectionVotersSubset candidate role voter member
+            (configurationNodes_subset_activeNodeUnion
+              ((leaderAppendState state node content submittedTxIds).nodes
+                candidate)
+              configuration
+              (activeConfigurationsForward candidate configuration active)
+              inConfiguration))
     exact
-      hasConfigurationMajority_mono
-        (potentialElectionVotersSubset candidate role)
-        (of_decide_eq_true
-          (majority configuration
-            (activeConfigurationsForward candidate configuration active)))
+      of_decide_eq_true
+        (majority configuration
+          (activeConfigurationsForward candidate configuration active))
   have preserveCanonicalAgreement :
-      forall (history : List (Entry TxId)) index value,
+      forall (history : List (Entry Node TxId)) index value,
         entryAt? (canonicalHistory value.term) index = some value /\
           history.take index =
             (canonicalHistory value.term).take index ->
@@ -14589,23 +15268,27 @@ theorem leaderAppendPreservesSystemInductiveInvariant
   have effectiveAckersSubset :
       forall leader index,
         (state.nodes leader).role = .leader ->
-        effectiveAckers
-            (leaderAppendState state node content submittedTxIds)
-            responseHistory leader index ⊆
-          effectiveAckers state responseHistory leader index := by
-    intro leader index leaderRole peer member
+        forall peer,
+          peer ∈
+              effectiveAckers
+                (leaderAppendState state node content submittedTxIds)
+                responseHistory leader index ->
+            peer ∈ state.hasJoined ->
+              peer ∈ effectiveAckers state responseHistory leader index := by
+    intro leader index leaderRole peer member oldJoined
     simp only [
       effectiveAckers, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at member ⊢
-    rcases member with self | matched | queued
-    · exact Or.inl self
-    · right
-      left
+    rcases member with ⟨joined, self | matched | queued⟩
+    · exact ⟨oldJoined, Or.inl self⟩
+    · refine
+        ⟨oldJoined, Or.inr (Or.inl ?_)⟩
       rw [matchEq] at matched
       exact matched
-    · right
-      right
+    · refine
+        ⟨oldJoined,
+          Or.inr (Or.inr ?_)⟩
       rcases queued with
         ⟨response, responseMember, success, responseTerm,
           responseSource, responseDestination, lastIndex, covered⟩
@@ -14629,6 +15312,48 @@ theorem leaderAppendPreservesSystemInductiveInvariant
       exact
         ⟨response, oldMember, success, oldTerm,
           responseSource, responseDestination, lastIndex, oldCovered⟩
+  have effectiveAckerJoinedBefore :
+      forall leader index peer,
+        (state.nodes leader).role = .leader ->
+        0 < index ->
+        peer ∈
+            effectiveAckers
+              (leaderAppendState state node content submittedTxIds)
+              responseHistory leader index ->
+          peer ∈ state.hasJoined := by
+    intro leader index peer role positive member
+    simp only [
+      effectiveAckers, Finset.mem_filter,
+      Finset.mem_univ, true_and
+    ] at member
+    rcases member with ⟨_, self | matched | queued⟩
+    · subst peer
+      exact facts.joinedCarriers.runtimeNodes.activeRoles leader (Or.inr role)
+    · exact
+        facts.joinedCarriers.runtimeNodes.positiveMatches leader peer
+          (positive.trans_le (by simpa [matchEq] using matched))
+    · rcases queued with
+        ⟨response, responseMember, _success, _responseTerm,
+          responseSource, _responseDestination, _lastIndex, _covered⟩
+      have sourceJoined :=
+        facts.joinedCarriers.runtimeNodes.appendResponses
+          leader response (by simpa [leaderAppendState] using responseMember)
+      simpa [responseSource] using sourceJoined
+  have effectiveAckersSubsetAtSignature :
+      forall leader index,
+        (state.nodes leader).role = .leader ->
+        isSignatureAt
+            ((leaderAppendState state node content submittedTxIds).nodes
+              leader).log index = true ->
+          effectiveAckers
+              (leaderAppendState state node content submittedTxIds)
+              responseHistory leader index ⊆
+            effectiveAckers state responseHistory leader index := by
+    intro leader index role signature peer member
+    exact
+      effectiveAckersSubset leader index role peer member
+        (effectiveAckerJoinedBefore leader index peer role
+          (isSignatureAtIndexPositive signature) member)
   have effectiveMajorityOld :
       forall leader index,
         (state.nodes leader).role = .leader ->
@@ -14648,11 +15373,17 @@ theorem leaderAppendPreservesSystemInductiveInvariant
             ((leaderAppendState state node content submittedTxIds).nodes
               leader) := by
       exact activeConfigurationsForward leader configuration active
+    apply
+      hasConfigurationMajority_mono_on_configuration
+        (fun peer member inConfiguration =>
+          effectiveAckersSubset leader index role peer member
+            (facts.joinedCarriers.configurationNodes
+              leader configuration
+                (List.mem_filter.mp active).1
+                inConfiguration))
     exact
-      hasConfigurationMajority_mono
-        (effectiveAckersSubset leader index role)
-        ((of_decide_eq_true
-          (majority configuration afterActive)) governs)
+      (of_decide_eq_true
+        (majority configuration afterActive)) governs
   have beyondIndexSelf :
       forall index voter,
         (state.nodes node).log.length < index ->
@@ -14663,14 +15394,14 @@ theorem leaderAppendPreservesSystemInductiveInvariant
           voter = node := by
     intro index voter beyond member
     have oldMember :=
-      effectiveAckersSubset node index leaderRole member
-    have onlySelf :=
+      effectiveAckersSubset node index leaderRole voter member
+        (effectiveAckerJoinedBefore node index voter leaderRole
+          (by omega) member)
+    exact
       effectiveAckersBeyondLeaderLog
         facts.leaderProgressBounded
         facts.networkHistory.appendResponse
-        leaderRole beyond
-    rw [onlySelf] at oldMember
-    simpa using oldMember
+        leaderRole beyond oldMember
   have signatureBackNode :
       forall index,
         index <= (state.nodes node).log.length ->
@@ -14910,6 +15641,29 @@ theorem leaderAppendPreservesSystemInductiveInvariant
             (state.nodes node).role = .candidate := by
           simpa [roleEq] using role
         exact Role.noConfusion (oldRole.symm.trans leaderRole)
+      have oldKnown :=
+        knownCommitEvidenceFrameBack
+          state (leaderAppendState state node content submittedTxIds)
+            appendHistory nodeEvidence requestEvidence
+            commitIndexEq committedEq
+            (fun destination request member => by simpa using member)
+            known
+      have memberCovered :=
+        prospectiveFacts.currentMember
+          evidence supportedPrefix oldKnown member ackMember
+      have valid := knownCommitEvidenceValid evidenceFacts oldKnown
+      have frontierPositive : 0 < evidence.commitFrontier :=
+        (knownCommitEvidenceSupportedLengthPositive evidenceFacts oldKnown).trans_le
+          valid.2.2.1
+      have memberLogNonempty : Not ((state.nodes member).log = []) := by
+        intro empty
+        have lengthBound := memberCovered.length_le
+        rw [empty] at lengthBound
+        simp [Nat.min_eq_left valid.1] at lengthBound
+        omega
+      have oldJoined :
+          member ∈ state.hasJoined :=
+        facts.joinedCarriers.runtimeNodes.nonemptyLogs member memberLogNonempty
       left
       refine
         ⟨by simpa [roleEq] using role,
@@ -14928,12 +15682,15 @@ theorem leaderAppendPreservesSystemInductiveInvariant
           relaxedElectionVoters, Finset.mem_filter,
           Finset.mem_univ, true_and
         ] at relaxed ⊢
-        rcases relaxed with effective | upToDate
-        · exact Or.inl
-            (by simpa [effectiveElectionVotersEq] using effective)
-        · right
-          refine
-            ⟨by simpa [currentTermEq] using upToDate.1, ?_⟩
+        rcases relaxed with ⟨joined, effective | upToDate⟩
+        · exact
+            ⟨oldJoined,
+              Or.inl
+                (by simpa [effectiveElectionVotersEq] using effective)⟩
+        · refine
+            ⟨oldJoined,
+              Or.inr
+                ⟨by simpa [currentTermEq] using upToDate.1, ?_⟩⟩
           by_cases memberEq : member = node
           · subst member
             apply
@@ -15001,79 +15758,6 @@ theorem leaderAppendPreservesSystemInductiveInvariant
         configurationFacts.candidateEntriesBeforeTerm
           candidate oldRole entry
           (by simpa [logEqOther candidate candidateNe] using member)
-  have effectiveAckersEq :
-      forall leader index,
-        effectiveAckers
-            (leaderAppendState state node content submittedTxIds)
-            responseHistory leader index =
-          effectiveAckers state responseHistory leader index := by
-    intro leader index
-    ext peer
-    simp only [
-      effectiveAckers, Finset.mem_filter,
-      Finset.mem_univ, true_and
-    ]
-    constructor <;> rintro (self | matched | queued)
-    · exact Or.inl self
-    · exact Or.inr
-        (Or.inl (by simpa [matchEq] using matched))
-    · right
-      right
-      rcases queued with
-        ⟨response, member, success, responseTerm, sourceEq,
-          destinationEq, lastIndex, covered⟩
-      have oldMember :
-          Message.appendEntriesResponse response ∈
-            state.network leader := by
-        simpa [leaderAppendState] using member
-      have oldTerm :
-          response.term = (state.nodes leader).currentTerm := by
-        simpa [currentTermEq] using responseTerm
-      have oldCovered :
-          responseHistory response <+: (state.nodes leader).log := by
-        by_cases leaderEq : leader = node
-        · have nodeMember :
-              Message.appendEntriesResponse response ∈
-                state.network node := by
-            simpa [leaderEq] using oldMember
-          have snapshot :=
-            facts.networkHistory.appendResponse
-              node response nodeMember success
-          have sameAtDestination :
-              response.term =
-                (state.nodes response.destination).currentTerm := by
-            simpa [destinationEq] using oldTerm
-          simpa [leaderEq, destinationEq] using
-            (snapshot.2.2 sameAtDestination).2
-        · simpa [logEqOther leader leaderEq] using covered
-      exact
-        ⟨response, oldMember, success, oldTerm, sourceEq,
-          destinationEq, lastIndex, oldCovered⟩
-    · exact Or.inl self
-    · exact Or.inr
-        (Or.inl (by simpa [matchEq] using matched))
-    · right
-      right
-      rcases queued with
-        ⟨response, member, success, responseTerm, sourceEq,
-          destinationEq, lastIndex, covered⟩
-      have afterCovered :
-          responseHistory response <+:
-            ((leaderAppendState
-              state node content submittedTxIds).nodes leader).log := by
-        by_cases leaderEq : leader = node
-        · have oldCoveredNode :
-              responseHistory response <+: (state.nodes node).log := by
-            simpa [leaderEq, destinationEq] using covered
-          rw [leaderEq, logEqNode]
-          exact oldCoveredNode.trans (List.prefix_append _ _)
-        · simpa [logEqOther leader leaderEq] using covered
-      exact
-        ⟨response,
-          by simpa [leaderAppendState] using member,
-          success,
-          by simpa [currentTermEq] using responseTerm,
-          sourceEq, destinationEq, lastIndex, afterCovered⟩
   have activationEvidenceAfter :
       ActivationEvidenceFacts
         (leaderAppendState state node content submittedTxIds)
@@ -15156,20 +15840,27 @@ theorem leaderAppendPreservesSystemInductiveInvariant
   have potentialAckersSubset :
       forall source index,
         (state.nodes source).role = .leader ->
-        potentialAckers
-            (leaderAppendState state node content submittedTxIds)
-            appendHistory responseHistory source index ⊆
-          potentialAckers
-            state appendHistory responseHistory source index := by
-    intro source index sourceRole peer member
+        forall peer,
+          peer ∈
+              potentialAckers
+                (leaderAppendState state node content submittedTxIds)
+                appendHistory responseHistory source index ->
+            peer ∈ state.hasJoined ->
+              peer ∈
+                potentialAckers
+                  state appendHistory responseHistory source index := by
+    intro source index sourceRole peer member oldJoined
     simp only [
       potentialAckers, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at member ⊢
-    rcases member with effective | reserve
-    · exact Or.inl
-        (effectiveAckersSubset source index sourceRole effective)
-    · right
+    rcases member with ⟨joined, effective | reserve⟩
+    · exact
+        ⟨oldJoined,
+          Or.inl
+            (effectiveAckersSubset source index sourceRole peer effective
+              oldJoined)⟩
+    · refine ⟨oldJoined, Or.inr ?_⟩
       rcases reserve with
         ⟨request, queued, requestSource, requestDestination,
           requestTerm, producible, covered⟩
@@ -15245,11 +15936,17 @@ theorem leaderAppendPreservesSystemInductiveInvariant
             ((leaderAppendState state node content submittedTxIds).nodes
               source) := by
       exact activeConfigurationsForward source configuration active
+    apply
+      hasConfigurationMajority_mono_on_configuration
+        (fun peer member inConfiguration =>
+          potentialAckersSubset source index role peer member
+            (facts.joinedCarriers.configurationNodes
+              source configuration
+                (List.mem_filter.mp active).1
+                inConfiguration))
     exact
-      hasConfigurationMajority_mono
-        (potentialAckersSubset source index role)
-        ((of_decide_eq_true
-          (majority configuration afterActive)) governs)
+      (of_decide_eq_true
+        (majority configuration afterActive)) governs
   have supportedSignatureIndexOld :
       Not (content = .signature) ->
       forall source index,
@@ -15617,7 +16314,8 @@ theorem leaderAppendPreservesSystemInductiveInvariant
         have oldEffective :
             supporter ∈
               effectiveAckers state responseHistory node index :=
-          effectiveAckersSubset node index leaderRole effective
+          effectiveAckersSubsetAtSignature
+            node index leaderRole signature effective
         have oldLater :
             (state.nodes node).currentTerm <
               activation.activationTerm := by
@@ -15669,7 +16367,8 @@ theorem leaderAppendPreservesSystemInductiveInvariant
       have oldEffective :
           supporter ∈
             effectiveAckers state responseHistory source index :=
-        effectiveAckersSubset source index oldRole effective
+        effectiveAckersSubsetAtSignature
+          source index oldRole signature effective
       have oldLater :
           (state.nodes source).currentTerm <
             activation.activationTerm := by
@@ -16064,7 +16763,8 @@ theorem leaderAppendPreservesSystemInductiveInvariant
             ackerElectionFacts node index oldRole oldCurrent
               (signatureBackNode index oldIndex signature)
               term record voter recorded member
-              (effectiveAckersSubset node index oldRole effective)
+              (effectiveAckersSubsetAtSignature
+                node index oldRole signature effective)
               (by simpa [currentTermEq] using newer) with
           retained | bad
         · exact Or.inl (by
@@ -16102,7 +16802,8 @@ theorem leaderAppendPreservesSystemInductiveInvariant
           ackerElectionFacts source index oldRole oldCurrent
             (by simpa [logEqOther source sourceEq] using signature)
             term record voter recorded member
-            (effectiveAckersSubset source index oldRole effective)
+            (effectiveAckersSubsetAtSignature
+              source index oldRole signature effective)
             (by simpa [currentTermEq] using newer) with
         retained | bad
       · exact Or.inl
@@ -16858,7 +17559,8 @@ theorem leaderAppendPreservesSystemInductiveInvariant
           rcases
               ackerCurrentFacts node index oldRole oldCurrent
                 (signatureBackNode index oldIndex signature) voter
-                (effectiveAckersSubset node index oldRole effective) with
+                (effectiveAckersSubsetAtSignature
+                  node index oldRole signature effective) with
             retained | bad
           · left
             rw [logEqNode]
@@ -16898,7 +17600,8 @@ theorem leaderAppendPreservesSystemInductiveInvariant
         rcases
             ackerCurrentFacts source index oldRole oldCurrent
               (by simpa [logEqOther source sourceEq] using signature) voter
-              (effectiveAckersSubset source index oldRole effective) with
+              (effectiveAckersSubsetAtSignature
+                source index oldRole signature effective) with
           retained | bad
         · left
           rw [logEqOther source sourceEq]
@@ -16933,7 +17636,8 @@ theorem leaderAppendPreservesSystemInductiveInvariant
               ackerVoteFacts node index oldRole oldCurrent
                 (signatureBackNode index oldIndex signature)
                 voter voteTerm candidate
-                (effectiveAckersSubset node index oldRole effective)
+                (effectiveAckersSubsetAtSignature
+                  node index oldRole signature effective)
                 voted different (by simpa [currentTermEq] using newer) with
             retained | bad
           · exact Or.inl (by
@@ -16972,7 +17676,8 @@ theorem leaderAppendPreservesSystemInductiveInvariant
             ackerVoteFacts source index oldRole oldCurrent
               (by simpa [logEqOther source sourceEq] using signature)
               voter voteTerm candidate
-              (effectiveAckersSubset source index oldRole effective)
+              (effectiveAckersSubsetAtSignature
+                source index oldRole signature effective)
               voted different (by simpa [currentTermEq] using newer) with
           retained | bad
         · exact Or.inl
@@ -17002,7 +17707,8 @@ theorem leaderAppendPreservesSystemInductiveInvariant
               ackerElectionFacts node index oldRole oldCurrent
                 (signatureBackNode index oldIndex signature)
                 term record voter recorded member
-                (effectiveAckersSubset node index oldRole effective)
+                (effectiveAckersSubsetAtSignature
+                  node index oldRole signature effective)
                 (by simpa [currentTermEq] using newer) with
             retained | bad
           · exact Or.inl (by
@@ -17040,7 +17746,8 @@ theorem leaderAppendPreservesSystemInductiveInvariant
             ackerElectionFacts source index oldRole oldCurrent
               (by simpa [logEqOther source sourceEq] using signature)
               term record voter recorded member
-              (effectiveAckersSubset source index oldRole effective)
+              (effectiveAckersSubsetAtSignature
+                source index oldRole signature effective)
               (by simpa [currentTermEq] using newer) with
           retained | bad
         · exact Or.inl
@@ -17109,11 +17816,203 @@ theorem leaderAppendPreservesSystemInductiveInvariant
         rw [List.take_append_of_le_length indexBound]
         exact agreed
       · simpa [logEqOther leader leaderEq] using agreed
+  · have configurationNodesAfter :
+        forall candidate configuration,
+          configuration ∈
+              allConfigurations
+                ((leaderAppendState
+                  state node content submittedTxIds).nodes candidate).log ->
+            configuration.nodes ⊆
+              (leaderAppendState
+                state node content submittedTxIds).hasJoined := by
+      intro candidate configuration member peer inNodes
+      by_cases same : candidate = node
+      · subst candidate
+        have appendedMember :
+            configuration ∈
+              allConfigurations ((state.nodes node).log ++ [entry]) := by
+          simpa [logEqNode] using member
+        apply
+          allConfigurations_append_nodes_carried
+            (state.nodes node).log [entry]
+            (leaderAppendState state node content submittedTxIds).hasJoined
+            (fun oldConfiguration oldMember oldPeer oldPeerMember =>
+              hasJoinedMono
+                (facts.joinedCarriers.configurationNodes
+                  node oldConfiguration oldMember oldPeerMember))
+            ?_ configuration appendedMember inNodes
+        intro newConfiguration newMember newPeer newPeerMember
+        cases content with
+        | transaction txId =>
+            simp [
+              entry, allConfigurations, configurationsInLog,
+              configurationsInLogFrom
+            ] at newMember
+            subst newConfiguration
+            exact
+              hasJoinedMono
+                (facts.joinedCarriers.configurationNodes
+                  node implicitConfiguration
+                    (by simp [allConfigurations])
+                    newPeerMember)
+        | signature =>
+            simp [
+              entry, allConfigurations, configurationsInLog,
+              configurationsInLogFrom
+            ] at newMember
+            subst newConfiguration
+            exact
+              hasJoinedMono
+                (facts.joinedCarriers.configurationNodes
+                  node implicitConfiguration
+                    (by simp [allConfigurations])
+                    newPeerMember)
+        | reconfiguration newNodes =>
+            simp [
+              entry, allConfigurations, configurationsInLog,
+              configurationsInLogFrom
+            ] at newMember
+            rcases newMember with sameImplicit | sameNew
+            · subst newConfiguration
+              exact
+                hasJoinedMono
+                  (facts.joinedCarriers.configurationNodes
+                    node implicitConfiguration
+                      (by simp [allConfigurations])
+                      newPeerMember)
+            · subst newConfiguration
+              simp only at newPeerMember
+              by_cases retained :
+                  newPeer ∈ (latestConfiguration (state.nodes node)).nodes
+              · apply hasJoinedMono
+                exact
+                  facts.joinedCarriers.configurationNodes
+                    node (latestConfiguration (state.nodes node))
+                      (latestConfiguration_mem_allConfigurations
+                        (state.nodes node))
+                      retained
+              · simp [
+                  leaderAppendState, Finset.mem_union,
+                  Finset.mem_sdiff, newPeerMember, retained
+                ]
+      · apply hasJoinedMono
+        exact
+          facts.joinedCarriers.configurationNodes
+            candidate configuration
+              (by simpa [logEqOther candidate same] using member)
+              inNodes
+    constructor
+    · intro candidate
+      exact
+        activeNodeUnion_subset_of_allConfigurations_carrier
+          ((leaderAppendState state node content submittedTxIds).nodes
+            candidate)
+          (leaderAppendState state node content submittedTxIds).hasJoined
+          (configurationNodesAfter candidate)
+    · exact configurationNodesAfter
+    · intro candidate peer member
+      exact
+        hasJoinedMono
+          (facts.joinedCarriers.grantedVotes candidate
+            (by simpa [votesGrantedEq] using member))
+    · intro destination request member
+      exact
+        hasJoinedMono
+          (facts.joinedCarriers.voteRequestDestinations
+            destination request (by simpa [leaderAppendState] using member))
+    · intro destination request member
+      exact
+        hasJoinedMono
+          (facts.joinedCarriers.appendRequestDestinations
+            destination request (by simpa [leaderAppendState] using member))
+    · intro destination request member configuration configured peer inNodes
+      exact
+        hasJoinedMono
+          (facts.joinedCarriers.appendRequestConfigurations
+            destination request
+              (by simpa [leaderAppendState] using member)
+              configuration configured inNodes)
+    · intro destination response member
+      exact
+        hasJoinedMono
+          (facts.joinedCarriers.voteResponseSources
+            destination response (by simpa [leaderAppendState] using member))
+    · constructor
+      · intro candidate active
+        exact
+          hasJoinedMono
+            (facts.joinedCarriers.runtimeNodes.activeRoles candidate
+              (by simpa [roleEq] using active))
+      · intro leader peer positive
+        exact
+          hasJoinedMono
+            (facts.joinedCarriers.runtimeNodes.positiveMatches leader peer
+              (by simpa [matchEq] using positive))
+      · intro destination response member
+        exact
+          hasJoinedMono
+            (facts.joinedCarriers.runtimeNodes.appendResponses
+              destination response (by simpa [leaderAppendState] using member))
+      · intro candidate nonempty
+        by_cases same : candidate = node
+        · subst candidate
+          exact
+            hasJoinedMono
+              (facts.joinedCarriers.runtimeNodes.activeRoles
+                node (Or.inr leaderRole))
+        · exact
+            hasJoinedMono
+              (facts.joinedCarriers.runtimeNodes.nonemptyLogs candidate
+                (by
+                  intro empty
+                  apply nonempty
+                  simpa [logEqOther candidate same] using empty))
+  · unfold AllocatedNodesExactlyJoined
+    intro candidate
+    cases content with
+    | transaction txId =>
+        simp only [
+          leaderAppendState, NodeStore.allocate_empty,
+          State.allocated, updateNode, Finset.union_empty
+        ]
+        rw [
+          NodeStore.allocated_set_iff_of_allocated
+            state.nodes node _ nodeAllocated candidate
+        ]
+        exact facts.allocatedNodesExactlyJoined candidate
+    | signature =>
+        simp only [
+          leaderAppendState, NodeStore.allocate_empty,
+          State.allocated, updateNode, Finset.union_empty
+        ]
+        rw [
+          NodeStore.allocated_set_iff_of_allocated
+            state.nodes node _ nodeAllocated candidate
+        ]
+        exact facts.allocatedNodesExactlyJoined candidate
+    | reconfiguration newConfiguration =>
+        simp only [leaderAppendState, State.allocated, updateNode]
+        rw [
+          NodeStore.allocated_set_iff_of_allocated
+            (state.nodes.allocate
+              (newConfiguration \
+                (latestConfiguration (state.nodes node)).nodes))
+            node _
+            (by
+              rw [NodeStore.allocated_allocate_iff]
+              exact Or.inl nodeAllocated)
+            candidate,
+          NodeStore.allocated_allocate_iff,
+          show state.nodes.allocated candidate ↔
+              candidate ∈ state.hasJoined by
+            exact facts.allocatedNodesExactlyJoined candidate
+        ]
+        simp only [Finset.mem_union]
 /-! ## Executable leader append actions -/
 
 /-- A client transaction append preserves the arbitrary-term invariant. -/
 theorem clientRequestPreservesSystemInductiveInvariant
-    (state : State TxId)
+    (state : State Node TxId)
     (node : Node)
     (txId : TxId)
     (invariant : SystemInductiveInvariant state)
@@ -17122,11 +18021,11 @@ theorem clientRequestPreservesSystemInductiveInvariant
   simpa [leaderAppendState, next, CCFRaft.next] using
     leaderAppendPreservesSystemInductiveInvariant
       state node (.transaction txId)
-        (insert txId state.submittedTxIds) invariant enabled.1
+        (insert txId state.submittedTxIds) invariant enabled.1 enabled.2.1
 
 /-- Appending a current-term signature preserves the arbitrary-term invariant. -/
 theorem signCommittableMessagesPreservesSystemInductiveInvariant
-    (state : State TxId)
+    (state : State Node TxId)
     (node : Node)
     (invariant : SystemInductiveInvariant state)
     (enabled : Enabled state (.signCommittableMessages node)) :
@@ -17134,13 +18033,13 @@ theorem signCommittableMessagesPreservesSystemInductiveInvariant
       (next state (.signCommittableMessages node)) := by
   simpa [leaderAppendState, next, CCFRaft.next] using
     leaderAppendPreservesSystemInductiveInvariant
-      state node .signature state.submittedTxIds invariant enabled.1
+      state node .signature state.submittedTxIds invariant enabled.1 enabled.2.1
 
 /-! ## RequestVote send -/
 
 /-- Sending a vote request changes only the network and its proof snapshot. -/
 theorem requestVotePreservesSystemInductiveInvariant
-    (state : State TxId)
+    (state : State Node TxId)
     (source destination : Node)
     (invariant : SystemInductiveInvariant state)
     (enabled : Enabled state (.requestVote source destination)) :
@@ -17229,12 +18128,15 @@ theorem requestVotePreservesSystemInductiveInvariant
       Finset.mem_univ, true_and
     ]
     constructor
-    · rintro (self | matched | queued)
-      · exact Or.inl self
-      · exact Or.inr (Or.inl (by
-          simpa [next, CCFRaft.next] using matched))
-      · right
-        right
+    · rintro ⟨joined, self | matched | queued⟩
+      · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inl self⟩
+      · exact
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inr (Or.inl (by
+              simpa [next, CCFRaft.next] using matched))⟩
+      · refine
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inr (Or.inr ?_)⟩
         rcases queued with
           ⟨response, member, success, term, sourceEq,
             destinationEq, lastIndex, covered⟩
@@ -17254,12 +18156,15 @@ theorem requestVotePreservesSystemInductiveInvariant
             by simpa [next, CCFRaft.next] using term,
             sourceEq, destinationEq, lastIndex,
             by simpa [next, CCFRaft.next] using covered⟩
-    · rintro (self | matched | queued)
-      · exact Or.inl self
-      · exact Or.inr (Or.inl (by
-          simpa [next, CCFRaft.next] using matched))
-      · right
-        right
+    · rintro ⟨joined, self | matched | queued⟩
+      · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inl self⟩
+      · exact
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inr (Or.inl (by
+              simpa [next, CCFRaft.next] using matched))⟩
+      · refine
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inr (Or.inr ?_)⟩
         rcases queued with
           ⟨response, member, success, term, sourceEq,
             destinationEq, lastIndex, covered⟩
@@ -17294,9 +18199,12 @@ theorem requestVotePreservesSystemInductiveInvariant
       Finset.mem_univ, true_and
     ]
     constructor
-    · rintro (processed | queued)
-      · exact Or.inl (by simpa [next, CCFRaft.next] using processed)
-      · right
+    · rintro ⟨joined, processed | queued⟩
+      · exact
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inl (by simpa [next, CCFRaft.next] using processed)⟩
+      · refine
+          ⟨by simpa [next, CCFRaft.next] using joined, Or.inr ?_⟩
         rcases queued with
           ⟨response, member, granted, responseTerm,
             responseSource, responseDestination⟩
@@ -17315,9 +18223,12 @@ theorem requestVotePreservesSystemInductiveInvariant
           ⟨response, oldMember, granted,
             by simpa [next, CCFRaft.next] using responseTerm,
             responseSource, responseDestination⟩
-    · rintro (processed | queued)
-      · exact Or.inl (by simpa [next, CCFRaft.next] using processed)
-      · right
+    · rintro ⟨joined, processed | queued⟩
+      · exact
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inl (by simpa [next, CCFRaft.next] using processed)⟩
+      · refine
+          ⟨by simpa [next, CCFRaft.next] using joined, Or.inr ?_⟩
         rcases queued with
           ⟨response, member, granted, responseTerm,
             responseSource, responseDestination⟩
@@ -17350,28 +18261,28 @@ theorem requestVotePreservesSystemInductiveInvariant
       Finset.mem_univ, true_and
     ]
     constructor
-    · rintro (effective | eligible)
-      · exact Or.inl (by
+    · rintro ⟨joined, effective | eligible⟩
+      · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inl (by
           rw [effectiveElectionVotersEq] at effective
-          exact effective)
-      · right
-        simpa [
+          exact effective)⟩
+      · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inr (by
+          simpa [
           currentlyEligibleElectionVoter,
           makeRequestVoteRequest,
           next, CCFRaft.next,
           voteLogUpToDate
-        ] using eligible
-    · rintro (effective | eligible)
-      · exact Or.inl (by
+          ] using eligible)⟩
+    · rintro ⟨joined, effective | eligible⟩
+      · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inl (by
           rw [effectiveElectionVotersEq]
-          exact effective)
-      · right
-        simpa [
+          exact effective)⟩
+      · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inr (by
+          simpa [
           currentlyEligibleElectionVoter,
           makeRequestVoteRequest,
           next, CCFRaft.next,
           voteLogUpToDate
-        ] using eligible
+          ] using eligible)⟩
   have potentialElectionMajorityEq :
       forall candidate,
         hasPotentialElectionMajority
@@ -17433,9 +18344,9 @@ theorem requestVotePreservesSystemInductiveInvariant
     ext peer
     simp only [
       potentialAckers, Finset.mem_filter,
-      Finset.mem_univ, true_and,
       effectiveAckersEq, queuedAppendReserveEq
     ]
+    simp [next, CCFRaft.next]
   have potentialMajorityEq :
       forall leader index,
         hasPotentialMajorityAt
@@ -17570,7 +18481,7 @@ theorem requestVotePreservesSystemInductiveInvariant
               by simpa [
                 newVoteRequestHistory, Function.update
               ] using snapshotCommittable,
-              candidatesAboveBootstrap source enabled.1,
+              candidatesAboveBootstrap source enabled.2.2.1,
               by simp [request, makeRequestVoteRequest, next, CCFRaft.next],
               ?_⟩
           intro _ _
@@ -17599,7 +18510,7 @@ theorem requestVotePreservesSystemInductiveInvariant
             by simpa [
               newVoteRequestHistory, Function.update
             ] using snapshotCommittable,
-            candidatesAboveBootstrap source enabled.1,
+            candidatesAboveBootstrap source enabled.2.2.1,
             by simp [request, makeRequestVoteRequest, next, CCFRaft.next],
             ?_⟩
         intro _ _
@@ -17712,15 +18623,18 @@ theorem requestVotePreservesSystemInductiveInvariant
           relaxedElectionVoters, Finset.mem_filter,
           Finset.mem_univ, true_and
         ] at relaxed ⊢
-        rcases relaxed with effective | upToDate
+        rcases relaxed with ⟨joined, effective | upToDate⟩
         · rw [effectiveElectionVotersEq] at effective
-          exact Or.inl effective
-        · exact Or.inr (by
-            simpa [
-              makeRequestVoteRequest,
-              next, CCFRaft.next,
-              voteLogUpToDate
-            ] using upToDate)
+          exact
+            ⟨by simpa [next, CCFRaft.next] using joined,
+              Or.inl effective⟩
+        · exact
+            ⟨by simpa [next, CCFRaft.next] using joined, Or.inr (by
+              simpa [
+                makeRequestVoteRequest,
+                next, CCFRaft.next,
+                voteLogUpToDate
+              ] using upToDate)⟩
   have configurationFactsAfter :
       ElectionConfigurationFacts
         (next state (.requestVote source destination))
@@ -18064,11 +18978,119 @@ theorem requestVotePreservesSystemInductiveInvariant
           by simpa [next, CCFRaft.next] using snapshotIndex,
           historyBound,
           by simpa [next, CCFRaft.next] using agreed⟩
+  · constructor
+    · intro node peer member
+      simpa [next, CCFRaft.next] using
+        facts.joinedCarriers.activeNodes node member
+    · intro node configuration member peer inNodes
+      exact
+        facts.joinedCarriers.configurationNodes node configuration
+          (by simpa [next, CCFRaft.next] using member)
+          (by simpa [next, CCFRaft.next] using inNodes)
+    · intro node peer member
+      simpa [next, CCFRaft.next] using
+        facts.joinedCarriers.grantedVotes node member
+    · intro queuedDestination queuedRequest member
+      rcases
+          memEnqueueNoDup
+            state.network (.requestVoteRequest request)
+              (.requestVoteRequest queuedRequest) queuedDestination
+              (by simpa [next, CCFRaft.next, request] using member) with
+        old | new
+      · exact
+          facts.joinedCarriers.voteRequestDestinations
+            queuedDestination queuedRequest old
+      · rcases new with ⟨destinationEq, requestEq⟩
+        simp at requestEq
+        subst queuedRequest
+        rw [destinationEq]
+        exact
+          facts.joinedCarriers.activeNodes source enabled.2.2.2.2
+    · intro queuedDestination queuedRequest member
+      have old :
+          Message.appendEntriesRequest queuedRequest ∈
+            state.network queuedDestination := by
+        rcases
+            memEnqueueNoDup
+              state.network (.requestVoteRequest request)
+                (.appendEntriesRequest queuedRequest) queuedDestination
+                (by simpa [next, CCFRaft.next, request] using member) with
+          old | new
+        · exact old
+        · simp at new
+      exact
+        facts.joinedCarriers.appendRequestDestinations
+          queuedDestination queuedRequest old
+    · intro queuedDestination queuedRequest member configuration configured
+        peer inNodes
+      have old :
+          Message.appendEntriesRequest queuedRequest ∈
+            state.network queuedDestination := by
+        rcases
+            memEnqueueNoDup
+              state.network (.requestVoteRequest request)
+                (.appendEntriesRequest queuedRequest) queuedDestination
+                (by simpa [next, CCFRaft.next, request] using member) with
+          old | new
+        · exact old
+        · simp at new
+      exact
+        facts.joinedCarriers.appendRequestConfigurations
+          queuedDestination queuedRequest old configuration configured
+            inNodes
+    · intro queuedDestination response member
+      have old :
+          Message.requestVoteResponse response ∈
+            state.network queuedDestination := by
+        rcases
+            memEnqueueNoDup
+              state.network (.requestVoteRequest request)
+                (.requestVoteResponse response) queuedDestination
+                (by simpa [next, CCFRaft.next, request] using member) with
+          old | new
+        · exact old
+        · simp at new
+      simpa [next, CCFRaft.next] using
+        facts.joinedCarriers.voteResponseSources
+          queuedDestination response old
+    · constructor
+      · intro node active
+        simpa [next, CCFRaft.next] using
+          facts.joinedCarriers.runtimeNodes.activeRoles node
+            (by simpa [next, CCFRaft.next] using active)
+      · intro leader peer positive
+        simpa [next, CCFRaft.next] using
+          facts.joinedCarriers.runtimeNodes.positiveMatches leader peer
+            (by simpa [next, CCFRaft.next] using positive)
+      · intro queuedDestination response member
+        have old :
+            Message.appendEntriesResponse response ∈
+              state.network queuedDestination := by
+          rcases
+              memEnqueueNoDup
+                state.network (.requestVoteRequest request)
+                  (.appendEntriesResponse response) queuedDestination
+                  (by simpa [next, CCFRaft.next, request] using member) with
+            old | new
+          · exact old
+          · simp at new
+        simpa [next, CCFRaft.next] using
+          facts.joinedCarriers.runtimeNodes.appendResponses
+            queuedDestination response old
+      · intro node nonempty
+        simpa [next, CCFRaft.next] using
+          facts.joinedCarriers.runtimeNodes.nonemptyLogs node
+            (by simpa [next, CCFRaft.next] using nonempty)
+  · exact
+      AllocatedNodesExactlyJoined.frame
+        facts.allocatedNodesExactlyJoined
+        (fun _ => Iff.rfl)
+        rfl
 /-! ## AppendEntries send -/
 
 /-- A request built by an enabled arbitrary-term leader snapshots its log. -/
 theorem madeAppendRequestSupport
-    (state : State TxId)
+    (state : State Node TxId)
     (source destination : Node)
     (batchEnd : Nat)
     (commitBounded : CommitIndicesBounded state)
@@ -18082,7 +19104,8 @@ theorem madeAppendRequestSupport
         request.leaderCommit <= request.prevLogIndex) /\
       RequestCommitStillPresent state (state.nodes source).log request := by
   rcases enabled with
-    ⟨leaderRole, different, _destinationActive, batchEndEq⟩
+    ⟨_sourceAllocated, _destinationAllocated, leaderRole, different,
+      _destinationActive, batchEndEq⟩
   let previousIndex := (state.nodes source).sentIndex destination
   have previousBound :
       previousIndex <= (state.nodes source).log.length :=
@@ -18153,7 +19176,7 @@ theorem madeAppendRequestSupport
 
 /-- Sending AppendEntries updates one cursor and enqueues one snapshot. -/
 theorem appendEntriesPreservesSystemInductiveInvariant
-    (state : State TxId)
+    (state : State Node TxId)
     (source destination : Node)
     (batchEnd : Nat)
     (invariant : SystemInductiveInvariant state)
@@ -18188,7 +19211,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
   let request := makeAppendEntriesRequest state source destination batchEnd
   let newAppendHistory :=
     Function.update appendHistory request (state.nodes source).log
-  let newRequestEvidence : RequestCommitEvidence TxId :=
+  let newRequestEvidence : RequestCommitEvidence Node TxId :=
     Function.update
       requestEvidence request (nodeEvidence source)
   have requestSupport :=
@@ -18318,11 +19341,14 @@ theorem appendEntriesPreservesSystemInductiveInvariant
       Finset.mem_univ, true_and
     ]
     constructor
-    · rintro (self | matched | queued)
-      · exact Or.inl self
-      · exact Or.inr (Or.inl (by simpa [matchEq] using matched))
-      · right
-        right
+    · rintro ⟨joined, self | matched | queued⟩
+      · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inl self⟩
+      · exact
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inr (Or.inl (by simpa [matchEq] using matched))⟩
+      · refine
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inr (Or.inr ?_)⟩
         rcases queued with
           ⟨response, member, success, term, sourceEq,
             destinationEq, lastIndex, covered⟩
@@ -18342,11 +19368,14 @@ theorem appendEntriesPreservesSystemInductiveInvariant
             by simpa [currentTermEq] using term,
             sourceEq, destinationEq, lastIndex,
             by simpa [logEq] using covered⟩
-    · rintro (self | matched | queued)
-      · exact Or.inl self
-      · exact Or.inr (Or.inl (by simpa [matchEq] using matched))
-      · right
-        right
+    · rintro ⟨joined, self | matched | queued⟩
+      · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inl self⟩
+      · exact
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inr (Or.inl (by simpa [matchEq] using matched))⟩
+      · refine
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inr (Or.inr ?_)⟩
         rcases queued with
           ⟨response, member, success, term, sourceEq,
             destinationEq, lastIndex, covered⟩
@@ -18381,9 +19410,12 @@ theorem appendEntriesPreservesSystemInductiveInvariant
       Finset.mem_univ, true_and
     ]
     constructor
-    · rintro (processed | queued)
-      · exact Or.inl (by simpa [votesGrantedEq] using processed)
-      · right
+    · rintro ⟨joined, processed | queued⟩
+      · exact
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inl (by simpa [votesGrantedEq] using processed)⟩
+      · refine
+          ⟨by simpa [next, CCFRaft.next] using joined, Or.inr ?_⟩
         rcases queued with
           ⟨response, member, granted, responseTerm,
             responseSource, responseDestination⟩
@@ -18402,9 +19434,12 @@ theorem appendEntriesPreservesSystemInductiveInvariant
           ⟨response, oldMember, granted,
             by simpa [currentTermEq] using responseTerm,
             responseSource, responseDestination⟩
-    · rintro (processed | queued)
-      · exact Or.inl (by simpa [votesGrantedEq] using processed)
-      · right
+    · rintro ⟨joined, processed | queued⟩
+      · exact
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inl (by simpa [votesGrantedEq] using processed)⟩
+      · refine
+          ⟨by simpa [next, CCFRaft.next] using joined, Or.inr ?_⟩
         rcases queued with
           ⟨response, member, granted, responseTerm,
             responseSource, responseDestination⟩
@@ -18441,12 +19476,12 @@ theorem appendEntriesPreservesSystemInductiveInvariant
       Finset.mem_univ, true_and
     ]
     constructor
-    · rintro (effective | eligible)
-      · exact Or.inl (by
+    · rintro ⟨joined, effective | eligible⟩
+      · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inl (by
           rw [effectiveElectionVotersEq] at effective
-          exact effective)
-      · right
-        simpa [
+          exact effective)⟩
+      · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inr (by
+          simpa [
           currentlyEligibleElectionVoter,
           makeRequestVoteRequest,
           currentTermEq, logEq, commitIndexEq, votedForEq,
@@ -18455,13 +19490,13 @@ theorem appendEntriesPreservesSystemInductiveInvariant
           lastCommittableTermFrame
             (logEq candidate) (commitIndexEq candidate),
           voteLogUpToDate
-        ] using eligible
-    · rintro (effective | eligible)
-      · exact Or.inl (by
+          ] using eligible)⟩
+    · rintro ⟨joined, effective | eligible⟩
+      · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inl (by
           rw [effectiveElectionVotersEq]
-          exact effective)
-      · right
-        simpa [
+          exact effective)⟩
+      · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inr (by
+          simpa [
           currentlyEligibleElectionVoter,
           makeRequestVoteRequest,
           currentTermEq, logEq, commitIndexEq, votedForEq,
@@ -18470,7 +19505,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
           lastCommittableTermFrame
             (logEq candidate) (commitIndexEq candidate),
           voteLogUpToDate
-        ] using eligible
+          ] using eligible)⟩
   have potentialElectionMajorityEq :
       forall candidate,
         hasPotentialElectionMajority
@@ -18575,7 +19610,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
             next, CCFRaft.next, updateIndex,
             Function.update
           ]
-          rw [enabled.2.2.2]
+          rw [enabled.2.2.2.2.2]
           exact Nat.min_le_right _ _
         · simpa [
             next, CCFRaft.next, updateIndex,
@@ -18922,7 +19957,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
         have leaderCovered :=
           knownCommitEvidenceActiveLeaderContainsFrontier
             ownership electionFacts evidenceFacts prospectiveFacts
-              oldKnown enabled.1
+              oldKnown enabled.2.2.1
               (by
                 simpa [
                   request, makeAppendEntriesRequest
@@ -18967,16 +20002,19 @@ theorem appendEntriesPreservesSystemInductiveInvariant
           relaxedElectionVoters, Finset.mem_filter,
           Finset.mem_univ, true_and
         ] at relaxed ⊢
-        rcases relaxed with effective | upToDate
+        rcases relaxed with ⟨joined, effective | upToDate⟩
         · rw [effectiveElectionVotersEq] at effective
-          exact Or.inl effective
-        · exact Or.inr (by
-            simpa [
-              makeRequestVoteRequest,
-              currentTermEq, logEq,
-              lastIndexEq, lastTermEq,
-              voteLogUpToDate
-            ] using upToDate)
+          exact
+            ⟨by simpa [next, CCFRaft.next] using joined,
+              Or.inl effective⟩
+        · exact
+            ⟨by simpa [next, CCFRaft.next] using joined, Or.inr (by
+              simpa [
+                makeRequestVoteRequest,
+                currentTermEq, logEq,
+                lastIndexEq, lastTermEq,
+                voteLogUpToDate
+              ] using upToDate)⟩
   have configurationFactsAfter :
       ElectionConfigurationFacts
         (next state (.appendEntries source destination batchEnd))
@@ -19082,9 +20120,9 @@ theorem appendEntriesPreservesSystemInductiveInvariant
       by_cases requestEq : queuedRequest = request
       · subst queuedRequest
         refine ⟨?_, ?_, ?_⟩
-        · simpa [request, makeAppendEntriesRequest] using enabled.2.1
+        · simpa [request, makeAppendEntriesRequest] using enabled.2.2.2.1
         · simpa [request, makeAppendEntriesRequest] using
-            ownership.activeLeader source enabled.1
+            ownership.activeLeader source enabled.2.2.1
         · intro entry entryMember
           have sourceMember :
               entry ∈ (state.nodes source).log := by
@@ -19792,7 +20830,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
             show request.term =
                 (state.nodes source).currentTerm by
               simp [request, makeAppendEntriesRequest],
-            ownership.activeLeaderHistory source enabled.1
+            ownership.activeLeaderHistory source enabled.2.2.1
           ]
           exact
             List.take_prefix
@@ -20036,9 +21074,9 @@ theorem appendEntriesPreservesSystemInductiveInvariant
       by_cases requestEq : queuedRequest = request
       · subst queuedRequest
         refine ⟨?_, ?_, ?_⟩
-        · simpa [request, makeAppendEntriesRequest] using enabled.2.1
+        · simpa [request, makeAppendEntriesRequest] using enabled.2.2.2.1
         · simpa [request, makeAppendEntriesRequest] using
-            ownership.activeLeader source enabled.1
+            ownership.activeLeader source enabled.2.2.1
         · intro entry entryMember
           have sourceMember :
               entry ∈ (state.nodes source).log := by
@@ -20134,7 +21172,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
           electionFacts.promotionCanonical
             request.term record recorded
         have activeHistory :=
-          ownership.activeLeaderHistory source enabled.1
+          ownership.activeLeaderHistory source enabled.2.2.1
         simpa [
           newAppendHistory, Function.update,
           request, makeAppendEntriesRequest,
@@ -20188,6 +21226,144 @@ theorem appendEntriesPreservesSystemInductiveInvariant
           by simpa [matchEq] using snapshotIndex,
           historyBound,
           by simpa [logEq] using agreed⟩
+  · constructor
+    · intro node peer member
+      simpa [next, CCFRaft.next] using
+        facts.joinedCarriers.activeNodes node
+          (by
+            simpa [activeNodeUnion, activeConfigurationsEq] using member)
+    · intro node configuration member peer inNodes
+      simpa [next, CCFRaft.next] using
+        facts.joinedCarriers.configurationNodes node configuration
+          (by simpa [logEq] using member)
+          (by simpa [next, CCFRaft.next] using inNodes)
+    · intro node peer member
+      simpa [next, CCFRaft.next] using
+        facts.joinedCarriers.grantedVotes node
+          (by simpa [votesGrantedEq] using member)
+    · intro queuedDestination queuedRequest member
+      have old :
+          Message.requestVoteRequest queuedRequest ∈
+            state.network queuedDestination := by
+        rcases
+            memEnqueueNoDup
+              state.network (.appendEntriesRequest request)
+                (.requestVoteRequest queuedRequest) queuedDestination
+                (by simpa [next, CCFRaft.next] using member) with
+          old | new
+        · exact old
+        · simp at new
+      simpa [next, CCFRaft.next] using
+        facts.joinedCarriers.voteRequestDestinations
+          queuedDestination queuedRequest old
+    · intro queuedDestination queuedRequest member
+      rcases
+          memEnqueueNoDup
+            state.network (.appendEntriesRequest request)
+              (.appendEntriesRequest queuedRequest) queuedDestination
+              (by simpa [next, CCFRaft.next] using member) with
+        old | new
+      · exact
+          facts.joinedCarriers.appendRequestDestinations
+            queuedDestination queuedRequest old
+      · rcases new with ⟨destinationEq, requestEq⟩
+        simp at requestEq
+        subst queuedRequest
+        rw [destinationEq]
+        exact
+          facts.joinedCarriers.activeNodes source
+            (by
+              simpa [request, makeAppendEntriesRequest] using
+                enabled.2.2.2.2.1)
+    · intro queuedDestination queuedRequest member configuration configured
+        peer inNodes
+      rcases
+          memEnqueueNoDup
+            state.network (.appendEntriesRequest request)
+              (.appendEntriesRequest queuedRequest) queuedDestination
+              (by simpa [next, CCFRaft.next] using member) with
+        old | new
+      · exact
+          facts.joinedCarriers.appendRequestConfigurations
+            queuedDestination queuedRequest old configuration configured
+              inNodes
+      · rcases new with ⟨destinationEq, requestEq⟩
+        subst queuedDestination
+        simp at requestEq
+        subst queuedRequest
+        apply
+          allConfigurations_suffix_nodes_carried
+            ((state.nodes source).log.take
+            ((state.nodes source).sentIndex destination))
+            ((state.nodes source).log.drop
+            ((state.nodes source).sentIndex destination))
+            state.hasJoined
+            (by
+              simpa [List.take_append_drop] using
+                facts.joinedCarriers.configurationNodes source)
+            configuration ?_ inNodes
+        apply
+          CCFRaft.memOfPrefix
+            (allConfigurations_mono_prefix
+              (List.take_prefix
+                (batchEnd -
+                  (state.nodes source).sentIndex destination)
+                ((state.nodes source).log.drop
+                  ((state.nodes source).sentIndex destination))))
+        simpa [
+          request, makeAppendEntriesRequest, messageEntries
+        ] using configured
+    · intro queuedDestination response member
+      have old :
+          Message.requestVoteResponse response ∈
+            state.network queuedDestination := by
+        rcases
+            memEnqueueNoDup
+              state.network (.appendEntriesRequest request)
+                (.requestVoteResponse response) queuedDestination
+                (by simpa [next, CCFRaft.next] using member) with
+          old | new
+        · exact old
+        · simp at new
+      simpa [next, CCFRaft.next] using
+        facts.joinedCarriers.voteResponseSources
+          queuedDestination response old
+    · constructor
+      · intro node active
+        simpa [next, CCFRaft.next] using
+          facts.joinedCarriers.runtimeNodes.activeRoles node
+            (by simpa [roleEq] using active)
+      · intro leader peer positive
+        simpa [next, CCFRaft.next] using
+          facts.joinedCarriers.runtimeNodes.positiveMatches leader peer
+            (by simpa [matchEq] using positive)
+      · intro queuedDestination response member
+        have old :
+            Message.appendEntriesResponse response ∈
+              state.network queuedDestination := by
+          rcases
+              memEnqueueNoDup
+                state.network (.appendEntriesRequest request)
+                  (.appendEntriesResponse response) queuedDestination
+                  (by simpa [next, CCFRaft.next] using member) with
+            old | new
+          · exact old
+          · simp at new
+        simpa [next, CCFRaft.next] using
+          facts.joinedCarriers.runtimeNodes.appendResponses
+            queuedDestination response old
+      · intro node nonempty
+        simpa [next, CCFRaft.next] using
+          facts.joinedCarriers.runtimeNodes.nonemptyLogs node
+            (by simpa [logEq] using nonempty)
+  · apply
+      AllocatedNodesExactlyJoined.frame
+        facts.allocatedNodesExactlyJoined
+        (fun candidate => ?_) (by simp [next, CCFRaft.next])
+    simp only [next, CCFRaft.next, State.allocated]
+    exact
+      NodeStore.allocated_set_iff_of_allocated
+        state.nodes source _ enabled.1 candidate
 /-! ## Election timeout -/
 
 /--
@@ -20196,12 +21372,12 @@ candidate. This is a proof-layer wrapper only; it is not stored in the
 inductive invariant.
 -/
 structure TimeoutCandidatePackage
-    (state after : State TxId)
-    (appendHistory : AppendEntriesRequest TxId -> List (Entry TxId))
-    (responseHistory : AppendEntriesResponse -> List (Entry TxId))
-    (elections : ElectionHistory TxId)
-    (nodeEvidence : NodeCommitEvidence TxId)
-    (requestEvidence : RequestCommitEvidence TxId)
+    (state after : State Node TxId)
+    (appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+    (responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId))
+    (elections : ElectionHistory Node TxId)
+    (nodeEvidence : NodeCommitEvidence Node TxId)
+    (requestEvidence : RequestCommitEvidence Node TxId)
     (candidate : Node)
     (targetTerm : Nat) : Prop where
   potentialShared :
@@ -20238,7 +21414,7 @@ After a timeout, every potential voter for the fresh self-ballot was already a
 supporter for that exact future term in the pre-state.
 -/
 theorem timeoutPotentialElectionVotersSubsetFuture
-    (state : State TxId)
+    (state : State Node TxId)
     (node : Node)
     (invariant : SystemInductiveInvariant state) :
     potentialElectionVoters (next state (.timeout node)) node ⊆
@@ -20256,12 +21432,13 @@ theorem timeoutPotentialElectionVotersSubsetFuture
     futureElectionVoters, Finset.mem_filter,
     Finset.mem_univ, true_and
   ]
-  rcases member with effective | eligible
-  · simp only [
+  rcases member with ⟨joined, effective | eligible⟩
+  · refine ⟨by simpa [next, CCFRaft.next] using joined, ?_⟩
+    simp only [
       effectiveElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at effective
-    rcases effective with processed | queued
+    rcases effective with ⟨_joined, processed | queued⟩
     · have voterEq : voter = node := by
         simpa [next, CCFRaft.next] using processed
       exact Or.inl voterEq
@@ -20278,7 +21455,8 @@ theorem timeoutPotentialElectionVotersSubsetFuture
       rw [responseDestination] at oldBound
       simp [next, CCFRaft.next] at responseTerm
       omega
-  · by_cases voterEq : voter = node
+  · refine ⟨by simpa [next, CCFRaft.next] using joined, ?_⟩
+    by_cases voterEq : voter = node
     · exact Or.inl voterEq
     · right
       simp only [currentlyEligibleElectionVoter] at eligible
@@ -20299,7 +21477,7 @@ theorem timeoutPotentialElectionVotersSubsetFuture
 
 /-- Starting a successor election preserves the arbitrary-term invariant. -/
 theorem timeoutPreservesSystemInductiveInvariant
-    (state : State TxId)
+    (state : State Node TxId)
     (node : Node)
     (invariant : SystemInductiveInvariant state)
     (enabled : Enabled state (.timeout node)) :
@@ -20319,7 +21497,7 @@ theorem timeoutPreservesSystemInductiveInvariant
       activationCanonical, activationElections, configurationActivations⟩
   rcases facts.processedAckHistory with ⟨ackHistory, ackFacts⟩
   let newTerm := (state.nodes node).currentTerm + 1
-  let newVotes : VoteHistory :=
+  let newVotes : VoteHistory (Node : Type) :=
     Function.update votes node
       (Function.update (votes node) newTerm (some node))
   have activationVoteHistoryAfter :
@@ -20343,7 +21521,7 @@ theorem timeoutPreservesSystemInductiveInvariant
       exact retained
   have oldNotLeader :
       Not ((state.nodes node).role = .leader) := by
-    rcases enabled with follower | candidate
+    rcases enabled.2.1 with follower | candidate
     · exact fun leader => Role.noConfusion (follower.symm.trans leader)
     · exact fun leader => Role.noConfusion (candidate.symm.trans leader)
   have roleNode :
@@ -20481,11 +21659,14 @@ theorem timeoutPreservesSystemInductiveInvariant
       Finset.mem_univ, true_and
     ]
     constructor
-    · rintro (self | matched | queued)
-      · exact Or.inl self
-      · exact Or.inr (Or.inl (by simpa [matchEq] using matched))
-      · right
-        right
+    · rintro ⟨joined, self | matched | queued⟩
+      · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inl self⟩
+      · exact
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inr (Or.inl (by simpa [matchEq] using matched))⟩
+      · refine
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inr (Or.inr ?_)⟩
         rcases queued with
           ⟨response, member, success, term, sourceEq,
             destinationEq, lastIndex, covered⟩
@@ -20494,11 +21675,14 @@ theorem timeoutPreservesSystemInductiveInvariant
             success, by simpa [termOther leader leaderNe] using term,
             sourceEq, destinationEq, lastIndex,
             by simpa [logEq] using covered⟩
-    · rintro (self | matched | queued)
-      · exact Or.inl self
-      · exact Or.inr (Or.inl (by simpa [matchEq] using matched))
-      · right
-        right
+    · rintro ⟨joined, self | matched | queued⟩
+      · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inl self⟩
+      · exact
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inr (Or.inl (by simpa [matchEq] using matched))⟩
+      · refine
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inr (Or.inr ?_)⟩
         rcases queued with
           ⟨response, member, success, term, sourceEq,
             destinationEq, lastIndex, covered⟩
@@ -20522,32 +21706,29 @@ theorem timeoutPreservesSystemInductiveInvariant
     ]
   have effectiveElectionVotersNode :
       effectiveElectionVoters
-          (next state (.timeout node)) node =
+          (next state (.timeout node)) node ⊆
         {node} := by
-    ext voter
+    intro voter member
     simp only [
       effectiveElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and, Finset.mem_singleton
-    ]
-    constructor
-    · rintro (processed | queued)
-      · simpa [votesNode] using processed
-      · rcases queued with
-          ⟨response, member, granted, responseTerm,
-            responseSource, responseDestination⟩
-        have oldMember :
-            Message.requestVoteResponse response ∈
-              state.network node := by
-          simpa [next, CCFRaft.next] using member
-        have oldBound :=
-          (facts.networkHistory.voteResponse
-            node response oldMember granted).1
-        rw [responseDestination] at oldBound
-        rw [termNode] at responseTerm
-        simp [newTerm] at responseTerm
-        omega
-    · intro same
-      exact Or.inl (by simpa [votesNode] using same)
+    ] at member ⊢
+    rcases member with ⟨_joined, processed | queued⟩
+    · simpa [votesNode] using processed
+    · rcases queued with
+        ⟨response, member, granted, responseTerm,
+          responseSource, responseDestination⟩
+      have oldMember :
+          Message.requestVoteResponse response ∈
+            state.network node := by
+        simpa [next, CCFRaft.next] using member
+      have oldBound :=
+        (facts.networkHistory.voteResponse
+          node response oldMember granted).1
+      rw [responseDestination] at oldBound
+      rw [termNode] at responseTerm
+      simp [newTerm] at responseTerm
+      omega
   have effectiveElectionVotersOtherEq :
       forall candidate,
         Not (candidate = node) ->
@@ -20561,9 +21742,12 @@ theorem timeoutPreservesSystemInductiveInvariant
       Finset.mem_univ, true_and
     ]
     constructor
-    · rintro (processed | queued)
-      · exact Or.inl (by simpa [votesOther candidate candidateNe] using processed)
-      · right
+    · rintro ⟨joined, processed | queued⟩
+      · exact
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inl (by simpa [votesOther candidate candidateNe] using processed)⟩
+      · refine
+          ⟨by simpa [next, CCFRaft.next] using joined, Or.inr ?_⟩
         rcases queued with
           ⟨response, member, granted, responseTerm,
             responseSource, responseDestination⟩
@@ -20572,9 +21756,12 @@ theorem timeoutPreservesSystemInductiveInvariant
             granted,
             by simpa [termOther candidate candidateNe] using responseTerm,
             responseSource, responseDestination⟩
-    · rintro (processed | queued)
-      · exact Or.inl (by simpa [votesOther candidate candidateNe] using processed)
-      · right
+    · rintro ⟨joined, processed | queued⟩
+      · exact
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inl (by simpa [votesOther candidate candidateNe] using processed)⟩
+      · refine
+          ⟨by simpa [next, CCFRaft.next] using joined, Or.inr ?_⟩
         rcases queued with
           ⟨response, member, granted, responseTerm,
             responseSource, responseDestination⟩
@@ -20605,12 +21792,12 @@ theorem timeoutPreservesSystemInductiveInvariant
       potentialElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at member ⊢
-    rcases member with effective | eligible
-    · exact Or.inl
+    rcases member with ⟨joined, effective | eligible⟩
+    · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inl
         (by
           rw [effectiveElectionVotersOtherEq candidate candidateNe] at effective
-          exact effective)
-    · right
+          exact effective)⟩
+    · refine ⟨by simpa [next, CCFRaft.next] using joined, Or.inr ?_⟩
       by_cases voterEq : voter = node
       · subst voter
         simp only [currentlyEligibleElectionVoter] at eligible
@@ -20640,7 +21827,7 @@ theorem timeoutPreservesSystemInductiveInvariant
         majority
   have newTermAboveBootstrap : TERM_ONE < newTerm := by
     have participating : Not ((state.nodes node).role = .none) := by
-      rcases enabled with ⟨follower | candidate, _, _⟩
+      rcases enabled.2.1 with follower | candidate
       · simpa [follower]
       · simpa [candidate]
     have positive := facts.currentTermsPositive node participating
@@ -20700,8 +21887,8 @@ theorem timeoutPreservesSystemInductiveInvariant
     by_cases candidateEq : candidate = node
     · subst candidate
       have voterEq : voter = node := by
-        have : voter ∈ ({node} : Finset Node) := by
-          simpa [effectiveElectionVotersNode] using member
+        have : voter ∈ ({node} : Finset Node) :=
+          effectiveElectionVotersNode member
         simpa using this
       subst voter
       refine ⟨?_, Or.inl rfl⟩
@@ -21043,23 +22230,28 @@ theorem timeoutPreservesSystemInductiveInvariant
             relaxedElectionVoters, futureElectionVoters,
             Finset.mem_filter, Finset.mem_univ, true_and
           ] at relaxed ⊢
-          rcases relaxed with effective | supporter
+          rcases relaxed with ⟨joined, effective | supporter⟩
           · have voterEq : member = node := by
-              have voterIn : member ∈ ({node} : Finset Node) := by
-                simpa [effectiveElectionVotersNode] using effective
+              have voterIn : member ∈ ({node} : Finset Node) :=
+                effectiveElectionVotersNode effective
               simpa using voterIn
-            exact Or.inl voterEq
+            exact
+              ⟨by simpa [next, CCFRaft.next] using joined,
+                Or.inl voterEq⟩
           · by_cases memberEq : member = node
-            · exact Or.inl memberEq
-            · right
-              exact
-                ⟨by simpa [termOther member memberEq, termNode] using
-                    supporter.1,
-                  by simpa [
-                    makeRequestVoteRequest,
-                    logEq, lastIndexEq, lastTermEq,
-                    voteLogUpToDate
-                  ] using supporter.2⟩
+            · exact
+                ⟨by simpa [next, CCFRaft.next] using joined,
+                  Or.inl memberEq⟩
+            · exact
+                ⟨by simpa [next, CCFRaft.next] using joined,
+                  Or.inr
+                    ⟨by simpa [termOther member memberEq, termNode] using
+                        supporter.1,
+                      by simpa [
+                        makeRequestVoteRequest,
+                        logEq, lastIndexEq, lastTermEq,
+                        voteLogUpToDate
+                      ] using supporter.2⟩⟩
         have oldCandidateBefore :
             (state.nodes node).currentTerm < newTerm := by
           simp [newTerm]
@@ -21083,26 +22275,29 @@ theorem timeoutPreservesSystemInductiveInvariant
             relaxedElectionVoters, Finset.mem_filter,
             Finset.mem_univ, true_and
           ] at relaxed ⊢
-          rcases relaxed with effective | supporter
+          rcases relaxed with ⟨joined, effective | supporter⟩
           · rw [effectiveElectionVotersOtherEq candidate candidateEq] at effective
-            exact Or.inl effective
-          · right
-            refine
-              ⟨?_, by simpa [
+            exact
+              ⟨by simpa [next, CCFRaft.next] using joined,
+                Or.inl effective⟩
+          · refine
+              ⟨by simpa [next, CCFRaft.next] using joined,
+                Or.inr ⟨?_, ?_⟩⟩
+            · by_cases memberEq : member = node
+              · have afterBound := supporter.1
+                rw [memberEq, termNode,
+                  termOther candidate candidateEq] at afterBound
+                simp [newTerm] at afterBound
+                rw [memberEq]
+                omega
+              · simpa [termOther member memberEq,
+                  termOther candidate candidateEq] using supporter.1
+            · simpa [
                 makeRequestVoteRequest,
                 termOther candidate candidateEq,
                 logEq, lastIndexEq, lastTermEq,
                 voteLogUpToDate
-              ] using supporter.2⟩
-            by_cases memberEq : member = node
-            · have afterBound := supporter.1
-              rw [memberEq, termNode,
-                termOther candidate candidateEq] at afterBound
-              simp [newTerm] at afterBound
-              rw [memberEq]
-              omega
-            · simpa [termOther member memberEq,
-                termOther candidate candidateEq] using supporter.1
+              ] using supporter.2
         · simpa [logEq] using prefixRefl (state.nodes candidate).log
   have timeoutVoterSubset :
       potentialElectionVoters (next state (.timeout node)) node ⊆
@@ -21138,9 +22333,9 @@ theorem timeoutPreservesSystemInductiveInvariant
       potentialElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at member
-    rcases member with effective | eligible
-    · have voterIn : voter ∈ ({node} : Finset Node) := by
-        simpa [effectiveElectionVotersNode] using effective
+    rcases member with ⟨_joined, effective | eligible⟩
+    · have voterIn : voter ∈ ({node} : Finset Node) :=
+        effectiveElectionVotersNode effective
       have voterEq : voter = node := by simpa using voterIn
       subst voter
       exact termNode
@@ -21163,11 +22358,11 @@ theorem timeoutPreservesSystemInductiveInvariant
       potentialAckers, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at member ⊢
-    rcases member with effective | reserve
-    · left
+    rcases member with ⟨joined, effective | reserve⟩
+    · refine ⟨by simpa [next, CCFRaft.next] using joined, Or.inl ?_⟩
       rw [effectiveAckersEq source sourceNe index] at effective
       exact effective
-    · right
+    · refine ⟨by simpa [next, CCFRaft.next] using joined, Or.inr ?_⟩
       rcases reserve with
         ⟨request, queued, requestSource, requestDestination,
           requestTerm, producible, covered⟩
@@ -21322,7 +22517,7 @@ theorem timeoutPreservesSystemInductiveInvariant
             candidateConfiguration.index <=
               candidateEvidence.commitFrontier :=
           supportedBound.trans candidateValid.2.2.1
-        let evidenceNode : NodeState TxId :=
+        let evidenceNode : NodeState Node TxId :=
           { state.nodes node with
             log := candidateEvidence.history
             commitIndex := candidateEvidence.commitFrontier }
@@ -21409,7 +22604,7 @@ theorem timeoutPreservesSystemInductiveInvariant
           exact candidateKnownAtEvidenceFrontier
         have candidateBeforeEvidenceAuthority :
             candidateConfiguration.index <= evidence.authority.index := by
-          let evidenceNode : NodeState TxId :=
+          let evidenceNode : NodeState Node TxId :=
             { state.nodes node with
               log := evidence.history
               commitIndex := evidence.commitFrontier }
@@ -21451,7 +22646,7 @@ theorem timeoutPreservesSystemInductiveInvariant
         · have valid := knownCommitEvidenceValid evidenceFacts known
           have evidenceKnown :
               evidence.authority ∈ allConfigurations evidence.history := by
-            let evidenceNode : NodeState TxId :=
+            let evidenceNode : NodeState Node TxId :=
               { state.nodes node with
                 log := evidence.history
                 commitIndex := evidence.commitFrontier }
@@ -21686,7 +22881,7 @@ theorem timeoutPreservesSystemInductiveInvariant
           ((validEvidenceSupportedPrefixFrontier valid).trans
             committedInCandidate)
     have useShared
-        (configuration : Configuration)
+        (configuration : Configuration Node)
         (sourceConfigurationActive :
           configuration ∈
             activeConfigurations
@@ -22387,7 +23582,7 @@ theorem timeoutPreservesSystemInductiveInvariant
       · subst voter
         have newTermNe : Not (newTerm = TERM_ONE) := by
           have participating : Not ((state.nodes node).role = .none) := by
-            rcases enabled with follower | candidate
+            rcases enabled.2.1 with follower | candidate
             · rw [follower]
               decide
             · rw [candidate]
@@ -22479,8 +23674,8 @@ theorem timeoutPreservesSystemInductiveInvariant
     by_cases candidateEq : candidate = node
     · subst candidate
       left
-      have voterIn : voter ∈ ({node} : Finset Node) := by
-        simpa [effectiveElectionVotersNode] using member
+      have voterIn : voter ∈ ({node} : Finset Node) :=
+        effectiveElectionVotersNode member
       simpa using voterIn
     · have oldActive :
           (state.nodes candidate).role = .candidate \/
@@ -22589,7 +23784,7 @@ theorem timeoutPreservesSystemInductiveInvariant
             · subst candidate
               rw [termNode]
               have participating : Not ((state.nodes node).role = .none) := by
-                rcases enabled with follower | candidate
+                rcases enabled.2.1 with follower | candidate
                 · rw [follower]
                   decide
                 · rw [candidate]
@@ -22797,11 +23992,85 @@ theorem timeoutPreservesSystemInductiveInvariant
           by simpa [matchEq] using snapshotIndex,
           historyBound,
           by simpa [logEq] using agreed⟩
+  · constructor
+    · intro candidate peer member
+      exact
+        facts.joinedCarriers.activeNodes candidate
+          (by
+            simpa [activeNodeUnion, activeConfigurationsEq] using member)
+    · intro candidate configuration member peer inNodes
+      exact
+        facts.joinedCarriers.configurationNodes candidate configuration
+          (by simpa [logEq] using member) inNodes
+    · intro candidate peer member
+      by_cases candidateEq : candidate = node
+      · subst candidate
+        have peerEq : peer = node := by
+          simpa [next, CCFRaft.next] using member
+        subst peer
+        exact
+          facts.joinedCarriers.activeNodes node enabled.2.2.1
+      · exact
+          facts.joinedCarriers.grantedVotes candidate
+            (by simpa [
+              next, CCFRaft.next, updateNode,
+              Function.update, candidateEq
+            ] using member)
+    · intro destination request member
+      exact
+        facts.joinedCarriers.voteRequestDestinations
+          destination request
+          (by simpa [next, CCFRaft.next] using member)
+    · intro destination request member
+      exact
+        facts.joinedCarriers.appendRequestDestinations
+          destination request
+          (by simpa [next, CCFRaft.next] using member)
+    · intro destination request member configuration configured peer inNodes
+      exact
+        facts.joinedCarriers.appendRequestConfigurations
+          destination request
+            (by simpa [next, CCFRaft.next] using member)
+          configuration configured inNodes
+    · intro destination response member
+      exact
+        facts.joinedCarriers.voteResponseSources
+          destination response
+          (by simpa [next, CCFRaft.next] using member)
+    · constructor
+      · intro candidate active
+        by_cases same : candidate = node
+        · subst candidate
+          exact facts.joinedCarriers.activeNodes node enabled.2.2.1
+        · exact
+            facts.joinedCarriers.runtimeNodes.activeRoles candidate
+              (by simpa [roleOther candidate same] using active)
+      · intro leader peer positive
+        exact
+          facts.joinedCarriers.runtimeNodes.positiveMatches leader peer
+            (by simpa [matchEq] using positive)
+      · intro destination response member
+        exact
+          facts.joinedCarriers.runtimeNodes.appendResponses
+            destination response
+              (by simpa [next, CCFRaft.next] using member)
+      · intro candidate nonempty
+        exact
+          facts.joinedCarriers.runtimeNodes.nonemptyLogs candidate
+            (by simpa [logEq] using nonempty)
+  · apply
+      AllocatedNodesExactlyJoined.frame
+        facts.allocatedNodesExactlyJoined
+        (fun candidate => ?_) (by simp [next, CCFRaft.next])
+    simp only [next, CCFRaft.next, State.allocated]
+    exact
+      NodeStore.allocated_set_iff_of_allocated
+        state.nodes node _ enabled.1 candidate
 /-! ## Newer-term observation -/
 
 /-- Observing a queued newer term steps down without changing log history. -/
 theorem updateTermPreservesSystemInductiveInvariant
-    (state : State TxId)
+    (state : State Node TxId)
     (source destination : Node)
     (invariant : SystemInductiveInvariant state)
     (enabled : Enabled state (.updateTerm source destination)) :
@@ -22977,11 +24246,16 @@ theorem updateTermPreservesSystemInductiveInvariant
         Finset.mem_univ, true_and
       ]
       constructor
-      · rintro (self | matched | queued)
-        · exact Or.inl self
-        · exact Or.inr (Or.inl (by simpa [matchEq] using matched))
-        · right
-          right
+      · rintro ⟨joined, self | matched | queued⟩
+        · exact
+            ⟨by simpa [next, CCFRaft.next, found] using joined,
+              Or.inl self⟩
+        · exact
+            ⟨by simpa [next, CCFRaft.next, found] using joined,
+              Or.inr (Or.inl (by simpa [matchEq] using matched))⟩
+        · refine
+            ⟨by simpa [next, CCFRaft.next, found] using joined,
+              Or.inr (Or.inr ?_)⟩
           rcases queued with
             ⟨response, member, success, term, sourceEq,
               destinationEq, lastIndex, covered⟩
@@ -22990,11 +24264,16 @@ theorem updateTermPreservesSystemInductiveInvariant
               success, by simpa [termOther leader leaderNe] using term,
               sourceEq, destinationEq, lastIndex,
               by simpa [logEq] using covered⟩
-      · rintro (self | matched | queued)
-        · exact Or.inl self
-        · exact Or.inr (Or.inl (by simpa [matchEq] using matched))
-        · right
-          right
+      · rintro ⟨joined, self | matched | queued⟩
+        · exact
+            ⟨by simpa [next, CCFRaft.next, found] using joined,
+              Or.inl self⟩
+        · exact
+            ⟨by simpa [next, CCFRaft.next, found] using joined,
+              Or.inr (Or.inl (by simpa [matchEq] using matched))⟩
+        · refine
+            ⟨by simpa [next, CCFRaft.next, found] using joined,
+              Or.inr (Or.inr ?_)⟩
           rcases queued with
             ⟨response, member, success, term, sourceEq,
               destinationEq, lastIndex, covered⟩
@@ -23029,9 +24308,13 @@ theorem updateTermPreservesSystemInductiveInvariant
         Finset.mem_univ, true_and
       ]
       constructor
-      · rintro (processed | queued)
-        · exact Or.inl (by simpa [votesEq] using processed)
-        · right
+      · rintro ⟨joined, processed | queued⟩
+        · exact
+            ⟨by simpa [next, CCFRaft.next, found] using joined,
+              Or.inl (by simpa [votesEq] using processed)⟩
+        · refine
+            ⟨by simpa [next, CCFRaft.next, found] using joined,
+              Or.inr ?_⟩
           rcases queued with
             ⟨response, member, granted, responseTerm,
               responseSource, responseDestination⟩
@@ -23040,9 +24323,13 @@ theorem updateTermPreservesSystemInductiveInvariant
               granted,
               by simpa [termOther candidate candidateNe] using responseTerm,
               responseSource, responseDestination⟩
-      · rintro (processed | queued)
-        · exact Or.inl (by simpa [votesEq] using processed)
-        · right
+      · rintro ⟨joined, processed | queued⟩
+        · exact
+            ⟨by simpa [next, CCFRaft.next, found] using joined,
+              Or.inl (by simpa [votesEq] using processed)⟩
+        · refine
+            ⟨by simpa [next, CCFRaft.next, found] using joined,
+              Or.inr ?_⟩
           rcases queued with
             ⟨response, member, granted, responseTerm,
               responseSource, responseDestination⟩
@@ -23076,11 +24363,13 @@ theorem updateTermPreservesSystemInductiveInvariant
         potentialAckers, Finset.mem_filter,
         Finset.mem_univ, true_and
       ] at member ⊢
-      rcases member with effective | reserve
-      · exact Or.inl (by
+      rcases member with ⟨joined, effective | reserve⟩
+      · exact
+          ⟨by simpa [next, CCFRaft.next, found] using joined, Or.inl (by
           rw [effectiveAckersEq leader leaderNe index] at effective
-          exact effective)
-      · right
+          exact effective)⟩
+      · refine
+          ⟨by simpa [next, CCFRaft.next, found] using joined, Or.inr ?_⟩
         rcases reserve with
           ⟨request, queued, requestSource, requestDestination,
             requestTerm, producible, covered⟩
@@ -23441,30 +24730,34 @@ theorem updateTermPreservesSystemInductiveInvariant
             relaxedElectionVoters, Finset.mem_filter,
             Finset.mem_univ, true_and
           ] at relaxed ⊢
-          rcases relaxed with effective | supporter
+          rcases relaxed with ⟨joined, effective | supporter⟩
           · rw [effectiveElectionVotersEq candidate candidateNe] at effective
-            exact Or.inl effective
-          · right
-            refine ⟨?_, by simpa [
-              makeRequestVoteRequest,
-              (termOther candidate candidateNe),
-              logEq, lastIndexEq, lastTermEq,
-              voteLogUpToDate
-            ] using supporter.2⟩
-            by_cases memberEq : member = destination
-            · have oldTermLe :
-                  (state.nodes destination).currentTerm <=
-                    ((next state
-                      (.updateTerm source destination)).nodes
-                        destination).currentTerm := by
-                rw [termDestination]
-                exact newer.le
-              have afterBound := supporter.1
-              rw [memberEq, termOther candidate candidateNe] at afterBound
-              rw [memberEq]
-              omega
-            · simpa [termOther member memberEq,
-                termOther candidate candidateNe] using supporter.1
+            exact
+              ⟨by simpa [next, CCFRaft.next, found] using joined,
+                Or.inl effective⟩
+          · refine
+              ⟨by simpa [next, CCFRaft.next, found] using joined,
+                Or.inr ⟨?_, ?_⟩⟩
+            · by_cases memberEq : member = destination
+              · have oldTermLe :
+                    (state.nodes destination).currentTerm <=
+                      ((next state
+                        (.updateTerm source destination)).nodes
+                          destination).currentTerm := by
+                  rw [termDestination]
+                  exact newer.le
+                have afterBound := supporter.1
+                rw [memberEq, termOther candidate candidateNe] at afterBound
+                rw [memberEq]
+                omega
+              · simpa [termOther member memberEq,
+                  termOther candidate candidateNe] using supporter.1
+            · simpa [
+                makeRequestVoteRequest,
+                termOther candidate candidateNe,
+                logEq, lastIndexEq, lastTermEq,
+                voteLogUpToDate
+              ] using supporter.2
         · simpa [logEq] using prefixRefl (state.nodes candidate).log
     have ownershipAfter :
         TermOwnershipFacts
@@ -23866,9 +25159,10 @@ theorem updateTermPreservesSystemInductiveInvariant
             potentialElectionVoters, relaxedElectionVoters,
             Finset.mem_filter, Finset.mem_univ, true_and
           ] at electionMember ⊢
-          rcases electionMember with materialised | eligible
-          · exact Or.inl materialised
-          · right
+          rcases electionMember with
+            ⟨joined, materialised | eligible⟩
+          · exact ⟨joined, Or.inl materialised⟩
+          · refine ⟨joined, Or.inr ?_⟩
             unfold currentlyEligibleElectionVoter at eligible
             exact
               ⟨by
@@ -23949,7 +25243,7 @@ theorem updateTermPreservesSystemInductiveInvariant
             simpa [candidateConfiguration] using
               currentConfiguration_index_le_commitIndex
                 (state.nodes candidate)
-          let evidenceNode : NodeState TxId :=
+          let evidenceNode : NodeState Node TxId :=
             { state.nodes candidate with
               log := candidateEvidence.history
               commitIndex := candidateEvidence.commitFrontier }
@@ -24035,7 +25329,7 @@ theorem updateTermPreservesSystemInductiveInvariant
             exact candidateKnownAtEvidenceFrontier
           have candidateBeforeEvidenceAuthority :
               candidateConfiguration.index <= evidence.authority.index := by
-            let evidenceNode : NodeState TxId :=
+            let evidenceNode : NodeState Node TxId :=
               { state.nodes candidate with
                 log := evidence.history
                 commitIndex := evidence.commitFrontier }
@@ -24079,7 +25373,7 @@ theorem updateTermPreservesSystemInductiveInvariant
           · have valid := knownCommitEvidenceValid evidenceFacts oldKnown
             have evidenceKnown :
                 evidence.authority ∈ allConfigurations evidence.history := by
-              let evidenceNode : NodeState TxId :=
+              let evidenceNode : NodeState Node TxId :=
                 { state.nodes candidate with
                   log := evidence.history
                   commitIndex := evidence.commitFrontier }
@@ -24358,6 +25652,7 @@ theorem updateTermPreservesSystemInductiveInvariant
                       Function.update, candidateNe
                     ])
                   logEq termMonotone
+                  (by simp [next, CCFRaft.next, found])
                   (by
                     intro voter member
                     rw [effectiveAckersEq leader leaderNe index] at member
@@ -24597,11 +25892,79 @@ theorem updateTermPreservesSystemInductiveInvariant
             by simpa [matchEq] using snapshotIndex,
             historyBound,
             by simpa [logEq] using agreed⟩
+    · constructor
+      · intro node peer member
+        simpa [next, CCFRaft.next, found] using
+          facts.joinedCarriers.activeNodes node
+            (by
+              simpa [activeNodeUnion, activeConfigurationsEq] using member)
+      · intro node configuration member peer inNodes
+        simpa [next, CCFRaft.next, found] using
+          facts.joinedCarriers.configurationNodes node configuration
+            (by simpa [logEq] using member) inNodes
+      · intro node peer member
+        simpa [next, CCFRaft.next, found] using
+          facts.joinedCarriers.grantedVotes node
+            (by rw [← votesEq node]; exact member)
+      · intro queuedDestination request member
+        simpa [next, CCFRaft.next, found] using
+          facts.joinedCarriers.voteRequestDestinations
+            queuedDestination request
+            (by simpa [next, CCFRaft.next, found] using member)
+      · intro queuedDestination request member
+        simpa [next, CCFRaft.next, found] using
+          facts.joinedCarriers.appendRequestDestinations
+            queuedDestination request
+            (by simpa [next, CCFRaft.next, found] using member)
+      · intro queuedDestination request member configuration configured
+          peer inNodes
+        simpa [next, CCFRaft.next, found] using
+          facts.joinedCarriers.appendRequestConfigurations
+            queuedDestination request
+              (by simpa [next, CCFRaft.next, found] using member)
+            configuration configured inNodes
+      · intro queuedDestination response member
+        simpa [next, CCFRaft.next, found] using
+          facts.joinedCarriers.voteResponseSources
+            queuedDestination response
+            (by simpa [next, CCFRaft.next, found] using member)
+      · constructor
+        · intro candidate active
+          have different : Not (candidate = destination) := by
+            intro same
+            subst candidate
+            rcases active with candidateRole | leaderRole
+            · exact Role.noConfusion (candidateRole.symm.trans roleDestination)
+            · exact Role.noConfusion (leaderRole.symm.trans roleDestination)
+          simpa [next, CCFRaft.next, found] using
+            facts.joinedCarriers.runtimeNodes.activeRoles candidate
+              (by simpa [roleOther candidate different] using active)
+        · intro leader peer positive
+          simpa [next, CCFRaft.next, found] using
+            facts.joinedCarriers.runtimeNodes.positiveMatches leader peer
+              (by simpa [matchEq] using positive)
+        · intro queuedDestination response member
+          simpa [next, CCFRaft.next, found] using
+            facts.joinedCarriers.runtimeNodes.appendResponses
+              queuedDestination response
+                (by simpa [next, CCFRaft.next, found] using member)
+        · intro candidate nonempty
+          simpa [next, CCFRaft.next, found] using
+            facts.joinedCarriers.runtimeNodes.nonemptyLogs candidate
+              (by simpa [logEq] using nonempty)
+    · apply
+        AllocatedNodesExactlyJoined.frame
+          facts.allocatedNodesExactlyJoined
+          (fun candidate => ?_) (by simp [next, CCFRaft.next, found])
+      simp only [next, CCFRaft.next, found, State.allocated]
+      exact
+        NodeStore.allocated_set_iff_of_allocated
+          state.nodes destination _ enabled.1 candidate
 /-! ## Leader promotion -/
 
 /-- Promoting a winning candidate preserves all arbitrary-term support facts. -/
 theorem becomeLeaderPreservesSystemInductiveInvariant
-    (state : State TxId)
+    (state : State Node TxId)
     (node : Node)
     (invariant : SystemInductiveInvariant state)
     (enabled : Enabled state (.becomeLeader node)) :
@@ -24623,11 +25986,12 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
   have monoLog := invariantFactsMonoLogFromCanonicalHistories facts
   have candidatesAboveBootstrap :=
     invariantFactsCandidatesAboveBootstrap facts
-  have oldRole : (state.nodes node).role = .candidate := enabled.1
-  have oldMajority : hasElectionMajority state node := enabled.2
+  have oldRole : (state.nodes node).role = .candidate := enabled.2.1
+  have oldMajority : hasElectionMajority state node := enabled.2.2
   have oldEffectiveMajority :
       hasEffectiveElectionMajority state node :=
-    electionMajorityImpliesEffective state node oldMajority
+    electionMajorityImpliesEffective
+      state node (facts.joinedCarriers.grantedVotes node) oldMajority
   have oldPotentialMajority :
       hasPotentialElectionMajority state node :=
     effectiveElectionMajorityImpliesPotential
@@ -24662,12 +26026,12 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
     change maxCommittableIndex promotionLog = promotionLog.length
     rw [promotionLength]
     exact maxCommittableIndexTakeMax (state.nodes node).log
-  let newOwners : TermOwners :=
+  let newOwners : TermOwners (Node : Type) :=
     Function.update owners (state.nodes node).currentTerm (some node)
-  let newCanonicalHistory : Nat -> List (Entry TxId) :=
+  let newCanonicalHistory : Nat -> List (Entry Node TxId) :=
     Function.update canonicalHistory
       (state.nodes node).currentTerm promotionLog
-  let electionRecord : ElectionRecord TxId :=
+  let electionRecord : ElectionRecord Node TxId :=
     { leader := node
       supporters := (state.nodes node).votesGranted
       ballotLog := (state.nodes node).log
@@ -24688,7 +26052,7 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
           voteVoterHistory
             (grantedVoteKey
               voter (state.nodes node).currentTerm node) }
-  let newElections : ElectionHistory TxId :=
+  let newElections : ElectionHistory Node TxId :=
     Function.update elections
       (state.nodes node).currentTerm (some electionRecord)
   have canonicalFrameToNew :
@@ -24725,7 +26089,7 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
         (state.nodes node).currentTerm record recorded
     rw [oldTermUnowned] at owned
     contradiction
-  let newAckHistory : ProcessedAckHistory TxId :=
+  let newAckHistory : ProcessedAckHistory Node TxId :=
     Function.update ackHistory node (fun _ => none)
   have roleNode :
       ((next state (.becomeLeader node)).nodes node).role = .leader := by
@@ -25004,9 +26368,12 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
       Finset.mem_univ, true_and
     ]
     constructor
-    · rintro (processed | queued)
-      · exact Or.inl (by simpa [votesEq] using processed)
-      · right
+    · rintro ⟨joined, processed | queued⟩
+      · exact
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inl (by simpa [votesEq] using processed)⟩
+      · refine
+          ⟨by simpa [next, CCFRaft.next] using joined, Or.inr ?_⟩
         rcases queued with
           ⟨response, member, granted, responseTerm,
             responseSource, responseDestination⟩
@@ -25014,9 +26381,12 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
           ⟨response, by simpa [networkEq] using member,
             granted, by simpa [termEq] using responseTerm,
             responseSource, responseDestination⟩
-    · rintro (processed | queued)
-      · exact Or.inl (by simpa [votesEq] using processed)
-      · right
+    · rintro ⟨joined, processed | queued⟩
+      · exact
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inl (by simpa [votesEq] using processed)⟩
+      · refine
+          ⟨by simpa [next, CCFRaft.next] using joined, Or.inr ?_⟩
         rcases queued with
           ⟨response, member, granted, responseTerm,
             responseSource, responseDestination⟩
@@ -25047,27 +26417,27 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
       potentialElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ]
-    constructor <;> rintro (effective | eligible)
-    · exact Or.inl (by
+    constructor <;> rintro ⟨joined, effective | eligible⟩
+    · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inl (by
         rw [effectiveElectionVotersEq] at effective
-        exact effective)
-    · exact Or.inr (by
+        exact effective)⟩
+    · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inr (by
         simpa [
           currentlyEligibleElectionVoter,
           makeRequestVoteRequest,
           termEq, maxCommittableIndexEq, maxCommittableTermEq,
           lastIndexEq, lastTermEq, votedEq, voteLogUpToDate
-        ] using eligible)
-    · exact Or.inl (by
+        ] using eligible)⟩
+    · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inl (by
         rw [effectiveElectionVotersEq]
-        exact effective)
-    · exact Or.inr (by
+        exact effective)⟩
+    · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inr (by
         simpa [
           currentlyEligibleElectionVoter,
           makeRequestVoteRequest,
           termEq, maxCommittableIndexEq, maxCommittableTermEq,
           lastIndexEq, lastTermEq, votedEq, voteLogUpToDate
-        ] using eligible)
+        ] using eligible)⟩
   have potentialElectionMajorityEq :
       forall candidate,
         Not (candidate = node) ->
@@ -25095,12 +26465,15 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
       Finset.mem_univ, true_and
     ]
     constructor
-    · rintro (self | matched | queued)
-      · exact Or.inl self
-      · exact Or.inr
-          (Or.inl (by simpa [matchOther leader leaderNe] using matched))
-      · right
-        right
+    · rintro ⟨joined, self | matched | queued⟩
+      · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inl self⟩
+      · exact
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inr
+              (Or.inl (by simpa [matchOther leader leaderNe] using matched))⟩
+      · refine
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inr (Or.inr ?_)⟩
         rcases queued with
           ⟨response, member, success, responseTerm, sourceEq,
             destinationEq, lastIndex, covered⟩
@@ -25109,12 +26482,15 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
             success, by simpa [termEq] using responseTerm,
             sourceEq, destinationEq, lastIndex,
             by simpa [logOther leader leaderNe] using covered⟩
-    · rintro (self | matched | queued)
-      · exact Or.inl self
-      · exact Or.inr
-          (Or.inl (by simpa [matchOther leader leaderNe] using matched))
-      · right
-        right
+    · rintro ⟨joined, self | matched | queued⟩
+      · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inl self⟩
+      · exact
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inr
+              (Or.inl (by simpa [matchOther leader leaderNe] using matched))⟩
+      · refine
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inr (Or.inr ?_)⟩
         rcases queued with
           ⟨response, member, success, responseTerm, sourceEq,
             destinationEq, lastIndex, covered⟩
@@ -25151,11 +26527,11 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
       potentialAckers, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at member ⊢
-    rcases member with effective | reserve
-    · exact Or.inl (by
+    rcases member with ⟨joined, effective | reserve⟩
+    · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inl (by
         rw [effectiveAckersOtherEq leader leaderNe index] at effective
-        exact effective)
-    · right
+        exact effective)⟩
+    · refine ⟨by simpa [next, CCFRaft.next] using joined, Or.inr ?_⟩
       rcases reserve with
         ⟨request, queued, requestSource, requestDestination,
           requestTerm, producible, covered⟩
@@ -25500,7 +26876,14 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
                 relaxedElectionVoters, Finset.mem_filter,
                 Finset.mem_univ, true_and
               ]
-              exact Or.inl electionMember)
+              have joined : witness ∈ state.hasJoined := by
+                have unpacked :
+                    witness ∈ state.hasJoined /\
+                      (witness ∈ (state.nodes node).votesGranted \/
+                        queuedGrantedVote state node witness) := by
+                  simpa [effectiveElectionVoters] using electionMember
+                exact unpacked.1
+              exact ⟨joined, Or.inl electionMember⟩)
       apply signatureEndedPrefixOfMaxTake covered
       have prefixLength :
           (evidence.history.take evidence.commitFrontier).length =
@@ -26226,11 +27609,16 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
             simp [electionRecord]
           · have effectiveMember :
                 voter ∈ effectiveElectionVoters state node := by
+              have granted :
+                  voter ∈ (state.nodes node).votesGranted := by
+                simpa [electionRecord] using member
               simp only [
                 effectiveElectionVoters,
                 Finset.mem_filter, Finset.mem_univ, true_and
               ]
-              exact Or.inl (by simpa [electionRecord] using member)
+              exact
+                ⟨facts.joinedCarriers.grantedVotes node granted,
+                  Or.inl granted⟩
             rcases
                 facts.grantedVoteSnapshots
                   node voter (Or.inl oldRole) effectiveMember with
@@ -26263,11 +27651,16 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
                   promotionPrefix)
           · have effectiveMember :
                 voter ∈ effectiveElectionVoters state node := by
+              have granted :
+                  voter ∈ (state.nodes node).votesGranted := by
+                simpa [electionRecord] using member
               simp only [
                 effectiveElectionVoters,
                 Finset.mem_filter, Finset.mem_univ, true_and
               ]
-              exact Or.inl (by simpa [electionRecord] using member)
+              exact
+                ⟨facts.joinedCarriers.grantedVotes node granted,
+                  Or.inl granted⟩
             rcases
                 voteCanonicalFacts
                   node voter (Or.inl oldRole) effectiveMember with
@@ -26296,11 +27689,16 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
             simpa [electionRecord] using promotionCommittable
           · have effectiveMember :
                 voter ∈ effectiveElectionVoters state node := by
+              have granted :
+                  voter ∈ (state.nodes node).votesGranted := by
+                simpa [electionRecord] using member
               simp only [
                 effectiveElectionVoters,
                 Finset.mem_filter, Finset.mem_univ, true_and
               ]
-              exact Or.inl (by simpa [electionRecord] using member)
+              exact
+                ⟨facts.joinedCarriers.grantedVotes node granted,
+                  Or.inl granted⟩
             rcases
                 facts.grantedVoteSnapshots
                   node voter (Or.inl oldRole) effectiveMember with
@@ -26331,11 +27729,16 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
                   promotionPrefix)
           · have effectiveMember :
                 voter ∈ effectiveElectionVoters state node := by
+              have granted :
+                  voter ∈ (state.nodes node).votesGranted := by
+                simpa [electionRecord] using member
               simp only [
                 effectiveElectionVoters,
                 Finset.mem_filter, Finset.mem_univ, true_and
               ]
-              exact Or.inl (by simpa [electionRecord] using member)
+              exact
+                ⟨facts.joinedCarriers.grantedVotes node granted,
+                  Or.inl granted⟩
             rcases
                 voteCanonicalFacts
                   node voter (Or.inl oldRole) effectiveMember with
@@ -26364,11 +27767,16 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
             simpa [electionRecord] using promotionCommittable
           · have effectiveMember :
                 voter ∈ effectiveElectionVoters state node := by
+              have granted :
+                  voter ∈ (state.nodes node).votesGranted := by
+                simpa [electionRecord] using member
               simp only [
                 effectiveElectionVoters,
                 Finset.mem_filter, Finset.mem_univ, true_and
               ]
-              exact Or.inl (by simpa [electionRecord] using member)
+              exact
+                ⟨facts.joinedCarriers.grantedVotes node granted,
+                  Or.inl granted⟩
             rcases
                 facts.grantedVoteSnapshots
                   node voter (Or.inl oldRole) effectiveMember with
@@ -26400,11 +27808,16 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
             · simpa [electionRecord, promotionCommittable]
           · have effectiveMember :
                 voter ∈ effectiveElectionVoters state node := by
+              have granted :
+                  voter ∈ (state.nodes node).votesGranted := by
+                simpa [electionRecord] using member
               simp only [
                 effectiveElectionVoters,
                 Finset.mem_filter, Finset.mem_univ, true_and
               ]
-              exact Or.inl (by simpa [electionRecord] using member)
+              exact
+                ⟨facts.joinedCarriers.grantedVotes node granted,
+                  Or.inl granted⟩
             rcases
                 facts.grantedVoteSnapshots
                   node voter (Or.inl oldRole) effectiveMember with
@@ -26763,7 +28176,7 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
           have voterVoted :
               votes voter (state.nodes node).currentTerm = some node :=
             facts.voteHistory.counted
-              node voter (Or.inl enabled.1) voterInVotes
+              node voter (Or.inl enabled.2.1) voterInVotes
           rcases
               ackerVoteFacts source index oldRole oldCurrent
                 oldSignature
@@ -26922,7 +28335,7 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
                 configurationFacts ackerCurrentFacts ackerVoteFacts
                 ackerElectionFacts activationQuorums
                 oldRole oldCurrent oldSignature oldPotential
-                enabled.1
+                enabled.2.1
                 (effectiveElectionMajorityImpliesPotential
                   state node oldEffectiveMajority)
                 (by simpa [termEqNode, termEq] using later))
@@ -27182,11 +28595,66 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
             by simpa [matchOther leader leaderEq] using snapshotIndex,
             historyBound,
             by simpa [logOther leader leaderEq] using agreed⟩
+  · apply
+      joinedCarrierFactsFrame
+        state (next state (.becomeLeader node))
+          facts.joinedCarriers
+          (by simp [next, CCFRaft.next])
+    · intro candidate configuration active
+      by_cases candidateEq : candidate = node
+      · subst candidate
+        exact activeConfigurationsNodeSubset configuration active
+      · rw [activeConfigurationsOtherEq candidate candidateEq] at active
+        exact active
+    · intro candidate configuration member
+      by_cases candidateEq : candidate = node
+      · subst candidate
+        apply
+          CCFRaft.memOfPrefix
+            (allConfigurations_mono_prefix promotionPrefix)
+        simpa [logNode] using member
+      · simpa [logOther candidate candidateEq] using member
+    · intro candidate peer member
+      simpa [votesEq] using member
+    · intro candidate active
+      by_cases same : candidate = node
+      · subst candidate
+        simpa [next, CCFRaft.next] using
+          facts.joinedCarriers.runtimeNodes.activeRoles node (Or.inl oldRole)
+      · simpa [next, CCFRaft.next] using
+          facts.joinedCarriers.runtimeNodes.activeRoles candidate
+            (by simpa [roleOther candidate same] using active)
+    · intro leader peer positive
+      by_cases same : leader = node
+      · subst leader
+        rw [matchNode] at positive
+        simp at positive
+      · simpa [next, CCFRaft.next] using
+          facts.joinedCarriers.runtimeNodes.positiveMatches leader peer
+            (by simpa [matchOther leader same] using positive)
+    · intro candidate nonempty
+      by_cases same : candidate = node
+      · subst candidate
+        simpa [next, CCFRaft.next] using
+          facts.joinedCarriers.runtimeNodes.activeRoles node (Or.inl oldRole)
+      · simpa [next, CCFRaft.next] using
+          facts.joinedCarriers.runtimeNodes.nonemptyLogs candidate
+            (by simpa [logOther candidate same] using nonempty)
+    · intro destination message member
+      simpa [next, CCFRaft.next] using member
+  · apply
+      AllocatedNodesExactlyJoined.frame
+        facts.allocatedNodesExactlyJoined
+        (fun candidate => ?_) (by simp [next, CCFRaft.next])
+    simp only [next, CCFRaft.next, State.allocated]
+    exact
+      NodeStore.allocated_set_iff_of_allocated
+        state.nodes node _ enabled.1 candidate
 /-! ## Commit advancement -/
 
 /-- Advancing a current-term quorum frontier preserves all safety evidence. -/
 theorem advanceCommitPreservesSystemInductiveInvariant
-      (state : State TxId)
+      (state : State Node TxId)
       (node : Node)
       (invariant : SystemInductiveInvariant state)
       (enabled : Enabled state (.advanceCommitIndex node)) :
@@ -27223,20 +28691,27 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       activationQuorums
   rcases facts.processedAckHistory with ⟨ackHistory, ackFacts⟩
   let frontier := highestCommittableIndex state node
-  have leaderRole : (state.nodes node).role = .leader := enabled.1
-  have advances : (state.nodes node).commitIndex < frontier := enabled.2
+  have leaderRole : (state.nodes node).role = .leader := enabled.2.1
+  have advances : (state.nodes node).commitIndex < frontier := by
+    simpa [frontier] using enabled.2.2
   have frontierBound :
         frontier <= (state.nodes node).log.length :=
-      highestCommittableIndexBounded state node
+    by simpa [frontier] using highestCommittableIndexBounded state node
   have frontierValid :
         termAt (state.nodes node).log frontier =
             (state.nodes node).currentTerm /\
           hasMajorityAt state node frontier :=
-      highestCommittableIndexValid state node advances
+    by
+      simpa [frontier] using
+        highestCommittableIndexValid state node
+          (by simpa [frontier] using advances)
   have frontierSignature :
       isSignatureAt (state.nodes node).log frontier = true :=
-    highestCommittableIndexIsSignature state node advances
-  let evidence : CommitEvidence TxId :=
+    by
+      simpa [frontier] using
+        highestCommittableIndexIsSignature state node
+          (by simpa [frontier] using advances)
+  let evidence : CommitEvidence Node TxId :=
     { commitTerm := (state.nodes node).currentTerm
       history := (state.nodes node).log
       commitFrontier := frontier
@@ -27244,7 +28719,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       authority :=
         currentConfigurationAt (state.nodes node).log frontier
       ackQuorum := acknowledgingNodes state node frontier }
-  let newNodeEvidence : NodeCommitEvidence TxId :=
+  let newNodeEvidence : NodeCommitEvidence Node TxId :=
     Function.update nodeEvidence node (some evidence)
   have roleEq :
         forall candidate,
@@ -27441,11 +28916,14 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       Finset.mem_univ, true_and
     ]
     constructor
-    · rintro (self | matched | queued)
-      · exact Or.inl self
-      · exact Or.inr (Or.inl (by simpa [matchEq] using matched))
-      · right
-        right
+    · rintro ⟨joined, self | matched | queued⟩
+      · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inl self⟩
+      · exact
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inr (Or.inl (by simpa [matchEq] using matched))⟩
+      · refine
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inr (Or.inr ?_)⟩
         rcases queued with
           ⟨response, member, success, responseTerm, sourceEq,
             destinationEq, lastIndex, covered⟩
@@ -27454,11 +28932,14 @@ theorem advanceCommitPreservesSystemInductiveInvariant
             success, by simpa [termEq] using responseTerm,
             sourceEq, destinationEq, lastIndex,
             by simpa [logEq] using covered⟩
-    · rintro (self | matched | queued)
-      · exact Or.inl self
-      · exact Or.inr (Or.inl (by simpa [matchEq] using matched))
-      · right
-        right
+    · rintro ⟨joined, self | matched | queued⟩
+      · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inl self⟩
+      · exact
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inr (Or.inl (by simpa [matchEq] using matched))⟩
+      · refine
+          ⟨by simpa [next, CCFRaft.next] using joined,
+            Or.inr (Or.inr ?_)⟩
         rcases queued with
           ⟨response, member, success, responseTerm, sourceEq,
             destinationEq, lastIndex, covered⟩
@@ -27492,9 +28973,11 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       effectiveElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ]
-    constructor <;> rintro (processed | queued)
-    · exact Or.inl (by simpa [votesEq] using processed)
-    · right
+    constructor <;> rintro ⟨joined, processed | queued⟩
+    · exact
+        ⟨by simpa [next, CCFRaft.next] using joined,
+          Or.inl (by simpa [votesEq] using processed)⟩
+    · refine ⟨by simpa [next, CCFRaft.next] using joined, Or.inr ?_⟩
       rcases queued with
         ⟨response, member, granted, responseTerm,
           responseSource, responseDestination⟩
@@ -27502,8 +28985,10 @@ theorem advanceCommitPreservesSystemInductiveInvariant
         ⟨response, by simpa [networkEq] using member,
           granted, by simpa [termEq] using responseTerm,
           responseSource, responseDestination⟩
-    · exact Or.inl (by simpa [votesEq] using processed)
-    · right
+    · exact
+        ⟨by simpa [next, CCFRaft.next] using joined,
+          Or.inl (by simpa [votesEq] using processed)⟩
+    · refine ⟨by simpa [next, CCFRaft.next] using joined, Or.inr ?_⟩
       rcases queued with
         ⟨response, member, granted, responseTerm,
           responseSource, responseDestination⟩
@@ -27534,27 +29019,27 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       potentialElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ]
-    constructor <;> rintro (effective | eligible)
-    · exact Or.inl (by
+    constructor <;> rintro ⟨joined, effective | eligible⟩
+    · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inl (by
         rw [effectiveElectionVotersEq] at effective
-        exact effective)
-    · exact Or.inr (by
+        exact effective)⟩
+    · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inr (by
         simpa [
           currentlyEligibleElectionVoter,
           makeRequestVoteRequest,
           termEq, logEq, lastIndexEq, lastTermEq,
           votedEq, voteLogUpToDate
-        ] using eligible)
-    · exact Or.inl (by
+        ] using eligible)⟩
+    · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inl (by
         rw [effectiveElectionVotersEq]
-        exact effective)
-    · exact Or.inr (by
+        exact effective)⟩
+    · exact ⟨by simpa [next, CCFRaft.next] using joined, Or.inr (by
         simpa [
           currentlyEligibleElectionVoter,
           makeRequestVoteRequest,
           termEq, logEq, lastIndexEq, lastTermEq,
           votedEq, voteLogUpToDate
-        ] using eligible)
+        ] using eligible)⟩
   have potentialElectionMajorityOtherEq :
       forall candidate,
         Not (candidate = node) ->
@@ -27568,7 +29053,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       activeConfigurationsOtherEq candidate different
     ]
   have leaderCannotProduceAppendAck :
-      forall (leaderState : NodeState TxId) request index,
+      forall (leaderState : NodeState Node TxId) request index,
         leaderState.role = .leader ->
           Not (canProduceAppendAckAt leaderState request index) := by
     intro leaderState request index role
@@ -27661,6 +29146,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       Finset.mem_univ, true_and,
       effectiveAckersEq, queuedAppendReserveEq
     ]
+    simp [next, CCFRaft.next]
   have potentialMajorityOtherEq :
       forall leader,
         Not (leader = node) ->
@@ -27679,7 +29165,8 @@ theorem advanceCommitPreservesSystemInductiveInvariant
   have frontierEffective :
       hasEffectiveMajorityAt state responseHistory node frontier :=
     majorityImpliesEffectiveMajority
-      state responseHistory node frontier frontierValid.2
+      state responseHistory node frontier
+        (facts.joinedCarriers.activeNodes node) frontierValid.2
   have frontierPotential :
       hasPotentialMajorityAt
         state appendHistory responseHistory node frontier :=
@@ -27691,7 +29178,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       forall supporter,
         supporter ∈
             effectiveAckers state responseHistory node frontier ->
-          Exists fun snapshot : ProcessedAckSnapshot TxId =>
+          Exists fun snapshot : ProcessedAckSnapshot Node TxId =>
             snapshot.term = (state.nodes node).currentTerm /\
               frontier <= snapshot.index /\
               snapshot.index <= snapshot.history.length /\
@@ -27704,7 +29191,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
           (facts.networkHistory.appendResponse
             destination response queued success).1)
         ackFacts leaderRole frontierPositive frontierBound member
-  let supporterSnapshot : Node -> ProcessedAckSnapshot TxId :=
+  let supporterSnapshot : Node -> ProcessedAckSnapshot Node TxId :=
     fun supporter =>
       if member :
           supporter ∈
@@ -27737,7 +29224,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
   let oldConfiguration := currentConfiguration (state.nodes node)
   let newConfiguration :=
     currentConfigurationAt (state.nodes node).log frontier
-  let activationRecord : ActivationRecord TxId :=
+  let activationRecord : ActivationRecord Node TxId :=
     { leader := node
       history := (state.nodes node).log
       priorCommitIndex := (state.nodes node).commitIndex
@@ -27758,7 +29245,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       supporterHistory :=
         fun supporter =>
           (supporterSnapshot supporter).history.take frontier }
-  let newActivationKey : ActivationKey :=
+  let newActivationKey : ActivationKey (Node : Type) :=
     { configurationIndex := newConfiguration.index
       term := (state.nodes node).currentTerm
       frontier
@@ -27810,7 +29297,8 @@ theorem advanceCommitPreservesSystemInductiveInvariant
     simpa [newConfiguration] using
       hasConfigurationMajority_mono
         (acknowledgingNodes_subset_effectiveAckers
-          state responseHistory node frontier)
+          state responseHistory node frontier
+            (facts.joinedCarriers.activeNodes node))
         frontierAuthorityMajority
   have frontierCanonicalEq :
       (state.nodes node).log.take frontier =
@@ -27824,8 +29312,8 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       simpa [termAt, frontierFound] using frontierValid.1
     simpa [entryTerm] using agreement
   have activationPrefixComparable
-      (activationIndex : ActivationKey)
-      (record : ActivationRecord TxId)
+      (activationIndex : ActivationKey Node)
+      (record : ActivationRecord Node TxId)
       (stored : activations activationIndex = some record) :
       record.history.take record.activationFrontier <+:
           (state.nodes node).log.take frontier \/
@@ -27951,15 +29439,15 @@ theorem advanceCommitPreservesSystemInductiveInvariant
   let replaceActivation : Prop :=
     Not (oldConfiguration = newConfiguration) /\
       Not retainedActivation
-  let newActivations : ActivationHistory TxId :=
+  let newActivations : ActivationHistory Node TxId :=
     if replace : replaceActivation then
       Function.update activations newActivationKey
         (some activationRecord)
     else
       activations
   have retainedActivationOfGoverning
-      (activationIndex : ActivationKey)
-      (record : ActivationRecord TxId)
+      (activationIndex : ActivationKey Node)
+      (record : ActivationRecord Node TxId)
       (stored : activations activationIndex = some record)
       (governing : newConfiguration ∈ record.governingActive)
       (termBound :
@@ -27989,8 +29477,8 @@ theorem advanceCommitPreservesSystemInductiveInvariant
           (by simp [shared, frontierLength])
       simpa [shared, List.take_take] using agreed.symm
   have activationConfigurationEqNew
-      (activationIndex : ActivationKey)
-      (record : ActivationRecord TxId)
+      (activationIndex : ActivationKey Node)
+      (record : ActivationRecord Node TxId)
       (stored : activations activationIndex = some record)
       (sameIndex :
         record.newConfiguration.index = newConfiguration.index) :
@@ -28030,7 +29518,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
             newConfigurationKnown newConfigurationIndexBound
       · exact sameIndex
   have storedAtNewConfigurationEq
-      (record : ActivationRecord TxId)
+      (record : ActivationRecord Node TxId)
       (stored : activations newActivationKey = some record) :
       record.newConfiguration = newConfiguration := by
     have recordValid :=
@@ -28043,7 +29531,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       activationConfigurationEqNew newActivationKey record stored
         (by simpa [newActivationKey] using indexed.1.symm)
   have retainedActivationOfStored
-      (record : ActivationRecord TxId)
+      (record : ActivationRecord Node TxId)
       (stored : activations newActivationKey = some record) :
       retainedActivation := by
     have recordConfiguration :=
@@ -28178,8 +29666,8 @@ theorem advanceCommitPreservesSystemInductiveInvariant
           (Nat.le_of_not_gt notBefore))
   have noOldActivationGovernsNew
       (create : replaceActivation)
-      (activationIndex : ActivationKey)
-      (record : ActivationRecord TxId)
+      (activationIndex : ActivationKey Node)
+      (record : ActivationRecord Node TxId)
       (stored : activations activationIndex = some record)
       (termBound :
         record.activationTerm <= (state.nodes node).currentTerm) :
@@ -28471,7 +29959,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
                   frontier <= witness.activation.activationFrontier := by
                 simpa [activationLength, frontierLength] using
                   reversed.length_le
-              let activationNode : NodeState TxId :=
+              let activationNode : NodeState Node TxId :=
                 { state.nodes node with
                   log := witness.activation.history
                   commitIndex := witness.activation.activationFrontier }
@@ -28539,7 +30027,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
                   witness.activation.activationFrontier
                   (activationFrontierInLeader.trans frontierBound)
                   newConfigurationKnown newWithin
-            let activationNode : NodeState TxId :=
+            let activationNode : NodeState Node TxId :=
               { state.nodes node with
                 log := witness.activation.history
                 commitIndex := witness.activation.activationFrontier }
@@ -28880,8 +30368,8 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       ] using stored
     · simpa [newActivations, create] using stored
   have oldActivationPrefixInNew
-      (activationIndex : ActivationKey)
-      (activation : ActivationRecord TxId)
+      (activationIndex : ActivationKey Node)
+      (activation : ActivationRecord Node TxId)
       (stored : activations activationIndex = some activation)
       (before :
         activation.newConfiguration.index < newConfiguration.index) :
@@ -28902,7 +30390,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
           allConfigurations_mem_take_of_index_le
             (state.nodes node).log frontier frontierBound
             newConfigurationKnown newConfigurationIndexBound
-      let activationNode : NodeState TxId :=
+      let activationNode : NodeState Node TxId :=
         { state.nodes node with
           log := activation.history
           commitIndex := activation.activationFrontier }
@@ -28939,8 +30427,8 @@ theorem advanceCommitPreservesSystemInductiveInvariant
         ] using maximal
       omega
   have newActivationPrefixInOld
-      (activationIndex : ActivationKey)
-      (activation : ActivationRecord TxId)
+      (activationIndex : ActivationKey Node)
+      (activation : ActivationRecord Node TxId)
       (stored : activations activationIndex = some activation)
       (before :
         newConfiguration.index < activation.newConfiguration.index) :
@@ -29001,11 +30489,11 @@ theorem advanceCommitPreservesSystemInductiveInvariant
     · exact ordered
   have activationPrefixOrderAfter
       (create : replaceActivation)
-      (lowerIndex : ActivationKey)
-      (lower : ActivationRecord TxId)
+      (lowerIndex : ActivationKey Node)
+      (lower : ActivationRecord Node TxId)
       (lowerStored : newActivations lowerIndex = some lower)
-      (higherIndex : ActivationKey)
-      (higher : ActivationRecord TxId)
+      (higherIndex : ActivationKey Node)
+      (higher : ActivationRecord Node TxId)
       (higherStored : newActivations higherIndex = some higher)
       (order :
         lower.newConfiguration.index <
@@ -30166,7 +31654,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
                       (state.nodes node).log frontier frontierBound
                       newConfigurationKnown newConfigurationIndexBound)
                     newWithinLower
-              let lowerNode : NodeState TxId :=
+              let lowerNode : NodeState Node TxId :=
                 { state.nodes node with
                   log := lower.history
                   commitIndex := lower.activationFrontier }
@@ -30368,9 +31856,12 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       evidence, acknowledgingNodes, effectiveAckers,
       Finset.mem_filter, Finset.mem_univ, true_and
     ] at memberIn ⊢
-    rcases memberIn with self | matched
-    · exact Or.inl self
-    · exact Or.inr (Or.inl matched)
+    rcases memberIn with ⟨active, self | matched⟩
+    · exact
+        ⟨facts.joinedCarriers.activeNodes node active, Or.inl self⟩
+    · exact
+        ⟨facts.joinedCarriers.activeNodes node active,
+          Or.inr (Or.inl matched)⟩
   have prospectiveAfter :
       ProspectiveCommitEvidenceFacts
         (next state (.advanceCommitIndex node))
@@ -31192,7 +32683,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
     dsimp [newActivations]
     simp [create, Function.update]
   have oldFrontierCoveragePrefixInNew
-      {history : List (Entry TxId)}
+      {history : List (Entry Node TxId)}
       {coveredFrontier termBound : Nat}
       (witness :
         ConfigurationFrontierCoverageWitness
@@ -31314,7 +32805,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
         List.take_take, Nat.min_eq_left sharedWithinFrontier
       ] using taken
   have newPrefixInOldFrontierCoverage
-      {history : List (Entry TxId)}
+      {history : List (Entry Node TxId)}
       {coveredFrontier termBound : Nat}
       (witness :
         ConfigurationFrontierCoverageWitness
@@ -31438,7 +32929,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       Nat.min_eq_left sharedBound
     ] using frontierBeforeShared
   have migrateFrontierCoverage
-      {history : List (Entry TxId)}
+      {history : List (Entry Node TxId)}
       {coveredFrontier termBound : Nat}
       (witness :
         ConfigurationFrontierCoverageWitness
@@ -31519,7 +33010,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
     · simpa [newActivations, create] using witness
   have newConfigurationEqOfCommittedConfiguration
       (candidate : Node)
-      (configuration : Configuration)
+      (configuration : Configuration Node)
       (configurationKnown :
         configuration ∈ allConfigurations (state.nodes candidate).log)
       (configurationCommitted :
@@ -31619,8 +33110,8 @@ theorem advanceCommitPreservesSystemInductiveInvariant
   have oldActivationConfigurationEqAtFrontier
       (coveredFrontier : Nat)
       (coveredWithin : coveredFrontier <= frontier)
-      (activationIndex : ActivationKey)
-      (activation : ActivationRecord TxId)
+      (activationIndex : ActivationKey Node)
+      (activation : ActivationRecord Node TxId)
       (stored : activations activationIndex = some activation)
       (sameIndex :
         activation.newConfiguration.index =
@@ -31688,8 +33179,8 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       (create : replaceActivation)
       (coveredFrontier : Nat)
       (coveredWithin : coveredFrontier <= frontier)
-      (higherIndex : ActivationKey)
-      (higher : ActivationRecord TxId)
+      (higherIndex : ActivationKey Node)
+      (higher : ActivationRecord Node TxId)
       (higherStored : newActivations higherIndex = some higher)
       (order :
         (currentConfigurationAt
@@ -31790,8 +33281,8 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       (create : replaceActivation)
       (coveredFrontier : Nat)
       (coveredWithin : coveredFrontier <= frontier)
-      (lowerIndex : ActivationKey)
-      (lower : ActivationRecord TxId)
+      (lowerIndex : ActivationKey Node)
+      (lower : ActivationRecord Node TxId)
       (lowerStored : newActivations lowerIndex = some lower)
       (order :
         lower.newConfiguration.index <
@@ -32006,8 +33497,8 @@ theorem advanceCommitPreservesSystemInductiveInvariant
   have coveredPrefixInOldHigherActivation
       (coveredFrontier : Nat)
       (coveredWithin : coveredFrontier <= frontier)
-      (higherIndex : ActivationKey)
-      (higher : ActivationRecord TxId)
+      (higherIndex : ActivationKey Node)
+      (higher : ActivationRecord Node TxId)
       (higherStored : activations higherIndex = some higher)
       (order :
         (currentConfigurationAt
@@ -33080,7 +34571,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
             (coveredByLeaderCommit.trans leaderCommitLeSourceCommit))
           (by simpa [configuration] using sameIndex)
   have configurationIndexLeOfMemTake :
-      forall (history : List (Entry TxId)) frontier configuration,
+      forall (history : List (Entry Node TxId)) frontier configuration,
         configuration ∈ allConfigurations (history.take frontier) ->
           configuration.index <= frontier := by
     intro history takeIndex configuration member
@@ -33252,7 +34743,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
           knownEvidence.history knownEvidence.commitFrontier
           newConfiguration newKnownEvidenceFrontier
       have valid := knownCommitEvidenceValid evidenceAfter known
-      let evidenceNode : NodeState TxId :=
+      let evidenceNode : NodeState Node TxId :=
         { state.nodes node with
           log := knownEvidence.history
           commitIndex := knownEvidence.commitFrontier }
@@ -33299,7 +34790,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       have authorityIndexBound :
           knownEvidence.authority.index <=
             knownEvidence.commitFrontier := by
-        let evidenceNode : NodeState TxId :=
+        let evidenceNode : NodeState Node TxId :=
           { state.nodes node with
             log := knownEvidence.history
             commitIndex := knownEvidence.commitFrontier }
@@ -33437,8 +34928,8 @@ theorem advanceCommitPreservesSystemInductiveInvariant
               by simpa [newActivations, create] using stored,
               governing, termBound⟩
   have knownAuthorityEqNewOfSameIndex
-      (knownEvidence : CommitEvidence TxId)
-      (supportedPrefix : List (Entry TxId))
+      (knownEvidence : CommitEvidence Node TxId)
+      (supportedPrefix : List (Entry Node TxId))
       (known :
         KnownCommitEvidence
           (next state (.advanceCommitIndex node))
@@ -33459,7 +34950,7 @@ theorem advanceCommitPreservesSystemInductiveInvariant
       simpa [currentConfiguration, valid.2.2.2.2.1] using currentKnown
     have authorityWithin :
         knownEvidence.authority.index <= knownEvidence.commitFrontier := by
-      let evidenceNode : NodeState TxId :=
+      let evidenceNode : NodeState Node TxId :=
         { state.nodes node with
           log := knownEvidence.history
           commitIndex := knownEvidence.commitFrontier }
@@ -33567,8 +35058,8 @@ theorem advanceCommitPreservesSystemInductiveInvariant
               later laterPrefix laterOld order
     · intro left leftPrefix leftKnown right rightPrefix rightKnown
       have supportedInCommit
-          (knownEvidence : CommitEvidence TxId)
-          (knownPrefix : List (Entry TxId))
+          (knownEvidence : CommitEvidence Node TxId)
+          (knownPrefix : List (Entry Node TxId))
           (known :
             KnownCommitEvidence
               (next state (.advanceCommitIndex node))
@@ -33811,6 +35302,43 @@ theorem advanceCommitPreservesSystemInductiveInvariant
           by simpa [matchEq] using snapshotIndex,
           historyBound,
           by simpa [logEq] using agreed⟩
+  · apply
+      joinedCarrierFactsFrame
+        state (next state (.advanceCommitIndex node))
+          facts.joinedCarriers
+          (by simp [next, CCFRaft.next])
+    · intro candidate configuration active
+      by_cases candidateEq : candidate = node
+      · subst candidate
+        exact activeConfigurationsNodeSubset configuration active
+      · rw [activeConfigurationsOtherEq candidate candidateEq] at active
+        exact active
+    · intro candidate configuration member
+      simpa [logEq] using member
+    · intro candidate peer member
+      simpa [votesEq] using member
+    · intro candidate active
+      simpa [next, CCFRaft.next] using
+        facts.joinedCarriers.runtimeNodes.activeRoles candidate
+          (by simpa [roleEq] using active)
+    · intro leader peer positive
+      simpa [next, CCFRaft.next] using
+        facts.joinedCarriers.runtimeNodes.positiveMatches leader peer
+          (by simpa [matchEq] using positive)
+    · intro candidate nonempty
+      simpa [next, CCFRaft.next] using
+        facts.joinedCarriers.runtimeNodes.nonemptyLogs candidate
+          (by simpa [logEq] using nonempty)
+    · intro destination message member
+      simpa [next, CCFRaft.next] using member
+  · apply
+      AllocatedNodesExactlyJoined.frame
+        facts.allocatedNodesExactlyJoined
+        (fun candidate => ?_) (by simp [next, CCFRaft.next])
+    simp only [next, CCFRaft.next, State.allocated]
+    exact
+      NodeStore.allocated_set_iff_of_allocated
+        state.nodes node _ enabled.1 candidate
 /-! ## Message receive -/
 
 /--
@@ -33819,10 +35347,10 @@ changes only its role, so every leader/election obligation either reuses the
 old fact or excludes the node which just became a follower.
 -/
 theorem returnToFollowerPreservesSystemInductiveInvariant
-    (state : State TxId)
+    (state : State Node TxId)
     (destination : Node)
-    (request : AppendEntriesRequest TxId)
-    (nextNode : NodeState TxId)
+    (request : AppendEntriesRequest Node TxId)
+    (nextNode : NodeState Node TxId)
     (invariant : SystemInductiveInvariant state)
     (stepped :
       returnToFollowerState? (state.nodes destination) request =
@@ -33847,7 +35375,7 @@ theorem returnToFollowerPreservesSystemInductiveInvariant
   · rename_i canReturn
     simp at stepped
     subst nextNode
-    let after : State TxId :=
+    let after : State Node TxId :=
       { state with
         nodes :=
           updateNode state.nodes destination
@@ -33948,13 +35476,18 @@ theorem returnToFollowerPreservesSystemInductiveInvariant
         simp [after, updateNode, Function.update, same]
     have networkEq : after.network = state.network := by
       rfl
+    have hasJoinedEq : after.hasJoined = state.hasJoined := by
+      rfl
     have acknowledgingNodesEq :
         forall leader index,
           acknowledgingNodes after leader index =
             acknowledgingNodes state leader index := by
       intro leader index
       ext peer
-      simp [acknowledgingNodes, matchEq]
+      simp [
+        acknowledgingNodes, matchEq,
+        activeNodeUnion, activeConfigurationsEq
+      ]
     have effectiveAckersEq :
         forall leader index,
           effectiveAckers after responseHistory leader index =
@@ -33965,33 +35498,35 @@ theorem returnToFollowerPreservesSystemInductiveInvariant
         effectiveAckers, Finset.mem_filter,
         Finset.mem_univ, true_and
       ]
-      constructor
-      · rintro (self | matched | queued)
-        · exact Or.inl self
-        · exact Or.inr (Or.inl (by simpa [matchEq] using matched))
-        · right
-          right
-          rcases queued with
-            ⟨response, member, success, responseTerm, sourceEq,
-              destinationEq, lastIndex, covered⟩
-          exact
-            ⟨response, by simpa [networkEq] using member,
-              success, by simpa [termEq] using responseTerm,
-              sourceEq, destinationEq, lastIndex,
-              by simpa [logEq] using covered⟩
-      · rintro (self | matched | queued)
-        · exact Or.inl self
-        · exact Or.inr (Or.inl (by simpa [matchEq] using matched))
-        · right
-          right
-          rcases queued with
-            ⟨response, member, success, responseTerm, sourceEq,
-              destinationEq, lastIndex, covered⟩
-          exact
-            ⟨response, by simpa [networkEq] using member,
-              success, by simpa [termEq] using responseTerm,
-              sourceEq, destinationEq, lastIndex,
-              by simpa [logEq] using covered⟩
+      apply and_congr
+      · simp only [hasJoinedEq]
+      · constructor
+        · rintro (self | matched | queued)
+          · exact Or.inl self
+          · exact Or.inr (Or.inl (by simpa [matchEq] using matched))
+          · right
+            right
+            rcases queued with
+              ⟨response, member, success, responseTerm, sourceEq,
+                destinationEq, lastIndex, covered⟩
+            exact
+              ⟨response, by simpa [networkEq] using member,
+                success, by simpa [termEq] using responseTerm,
+                sourceEq, destinationEq, lastIndex,
+                by simpa [logEq] using covered⟩
+        · rintro (self | matched | queued)
+          · exact Or.inl self
+          · exact Or.inr (Or.inl (by simpa [matchEq] using matched))
+          · right
+            right
+            rcases queued with
+              ⟨response, member, success, responseTerm, sourceEq,
+                destinationEq, lastIndex, covered⟩
+            exact
+              ⟨response, by simpa [networkEq] using member,
+                success, by simpa [termEq] using responseTerm,
+                sourceEq, destinationEq, lastIndex,
+                by simpa [logEq] using covered⟩
     have effectiveMajorityEq :
         forall leader index,
           hasEffectiveMajorityAt after responseHistory leader index ↔
@@ -34011,25 +35546,27 @@ theorem returnToFollowerPreservesSystemInductiveInvariant
         effectiveElectionVoters, Finset.mem_filter,
         Finset.mem_univ, true_and
       ]
-      constructor <;> rintro (processed | queued)
-      · exact Or.inl (by simpa [votesEq] using processed)
-      · right
-        rcases queued with
-          ⟨response, member, granted, responseTerm,
-            responseSource, responseDestination⟩
-        exact
-          ⟨response, by simpa [networkEq] using member,
-            granted, by simpa [termEq] using responseTerm,
-            responseSource, responseDestination⟩
-      · exact Or.inl (by simpa [votesEq] using processed)
-      · right
-        rcases queued with
-          ⟨response, member, granted, responseTerm,
-            responseSource, responseDestination⟩
-        exact
-          ⟨response, by simpa [networkEq] using member,
-            granted, by simpa [termEq] using responseTerm,
-            responseSource, responseDestination⟩
+      apply and_congr
+      · simp only [hasJoinedEq]
+      · constructor <;> rintro (processed | queued)
+        · exact Or.inl (by simpa [votesEq] using processed)
+        · right
+          rcases queued with
+            ⟨response, member, granted, responseTerm,
+              responseSource, responseDestination⟩
+          exact
+            ⟨response, by simpa [networkEq] using member,
+              granted, by simpa [termEq] using responseTerm,
+              responseSource, responseDestination⟩
+        · exact Or.inl (by simpa [votesEq] using processed)
+        · right
+          rcases queued with
+            ⟨response, member, granted, responseTerm,
+              responseSource, responseDestination⟩
+          exact
+            ⟨response, by simpa [networkEq] using member,
+              granted, by simpa [termEq] using responseTerm,
+              responseSource, responseDestination⟩
     have effectiveElectionMajorityEq :
         forall candidate,
           hasEffectiveElectionMajority after candidate ↔
@@ -34050,27 +35587,29 @@ theorem returnToFollowerPreservesSystemInductiveInvariant
       potentialElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
       ]
-      constructor <;> rintro (effective | eligible)
-      · exact Or.inl (by
-        rw [effectiveElectionVotersEq] at effective
-        exact effective)
-      · exact Or.inr (by
-        simpa [
-          currentlyEligibleElectionVoter,
-          makeRequestVoteRequest,
-          termEq, logEq, lastIndexEq, lastTermEq,
-          votedEq, voteLogUpToDate
-        ] using eligible)
-      · exact Or.inl (by
-        rw [effectiveElectionVotersEq]
-        exact effective)
-      · exact Or.inr (by
-        simpa [
-          currentlyEligibleElectionVoter,
-          makeRequestVoteRequest,
-          termEq, logEq, lastIndexEq, lastTermEq,
-          votedEq, voteLogUpToDate
-        ] using eligible)
+      apply and_congr
+      · simp only [hasJoinedEq]
+      · constructor <;> rintro (effective | eligible)
+        · exact Or.inl (by
+            rw [effectiveElectionVotersEq] at effective
+            exact effective)
+        · exact Or.inr (by
+            simpa [
+              currentlyEligibleElectionVoter,
+              makeRequestVoteRequest,
+              termEq, logEq, lastIndexEq, lastTermEq,
+              votedEq, voteLogUpToDate
+            ] using eligible)
+        · exact Or.inl (by
+            rw [effectiveElectionVotersEq]
+            exact effective)
+        · exact Or.inr (by
+            simpa [
+              currentlyEligibleElectionVoter,
+              makeRequestVoteRequest,
+              termEq, logEq, lastIndexEq, lastTermEq,
+              votedEq, voteLogUpToDate
+            ] using eligible)
     have potentialElectionMajorityEq :
       forall candidate,
         hasPotentialElectionMajority after candidate ↔
@@ -35110,19 +36649,107 @@ theorem returnToFollowerPreservesSystemInductiveInvariant
             by simpa [matchEq] using snapshotIndex,
             historyBound,
             by simpa [logEq] using agreed⟩
+    · constructor
+      · intro node peer member
+        rw [hasJoinedEq]
+        exact
+          facts.joinedCarriers.activeNodes node
+            (activeNodeUnion_subset_of_activeConfigurations_subset
+              (state.nodes node) (after.nodes node)
+              (by
+                intro configuration active
+                simpa [activeConfigurationsEq] using active)
+              member)
+      · intro node configuration member peer inNodes
+        rw [hasJoinedEq]
+        exact
+          facts.joinedCarriers.configurationNodes node configuration
+            (by simpa [logEq] using member) inNodes
+      · intro node peer member
+        rw [hasJoinedEq]
+        exact
+          facts.joinedCarriers.grantedVotes node
+            (by simpa [votesEq] using member)
+      · intro queuedDestination request member
+        rw [hasJoinedEq]
+        exact
+          facts.joinedCarriers.voteRequestDestinations
+            queuedDestination request
+            (by simpa [networkEq] using member)
+      · intro queuedDestination request member
+        rw [hasJoinedEq]
+        exact
+          facts.joinedCarriers.appendRequestDestinations
+            queuedDestination request
+            (by simpa [networkEq] using member)
+      · intro queuedDestination request member configuration configured
+          peer inNodes
+        rw [hasJoinedEq]
+        exact
+          facts.joinedCarriers.appendRequestConfigurations
+            queuedDestination request
+              (by simpa [networkEq] using member)
+            configuration configured inNodes
+      · intro queuedDestination response member
+        rw [hasJoinedEq]
+        exact
+          facts.joinedCarriers.voteResponseSources
+            queuedDestination response
+            (by simpa [networkEq] using member)
+      · constructor
+        · intro candidate active
+          have different : Not (candidate = destination) := by
+            intro same
+            subst candidate
+            rcases active with candidateRole | leaderRole
+            · exact Role.noConfusion (candidateRole.symm.trans roleDestination)
+            · exact Role.noConfusion (leaderRole.symm.trans roleDestination)
+          rw [hasJoinedEq]
+          exact
+            facts.joinedCarriers.runtimeNodes.activeRoles candidate
+              (by simpa [roleOther candidate different] using active)
+        · intro leader peer positive
+          rw [hasJoinedEq]
+          exact
+            facts.joinedCarriers.runtimeNodes.positiveMatches leader peer
+              (by simpa [matchEq] using positive)
+        · intro queuedDestination response member
+          rw [hasJoinedEq]
+          exact
+            facts.joinedCarriers.runtimeNodes.appendResponses
+              queuedDestination response
+                (by simpa [networkEq] using member)
+        · intro candidate nonempty
+          rw [hasJoinedEq]
+          exact
+            facts.joinedCarriers.runtimeNodes.nonemptyLogs candidate
+              (by simpa [logEq] using nonempty)
+    · have destinationAllocated : state.allocated destination :=
+        (facts.allocatedNodesExactlyJoined destination).mpr
+          (facts.joinedCarriers.runtimeNodes.activeRoles
+            destination (Or.inl candidateRole))
+      apply
+        AllocatedNodesExactlyJoined.frame
+          facts.allocatedNodesExactlyJoined
+          (fun candidate => ?_) hasJoinedEq
+      simp only [after, State.allocated, updateNode]
+      exact
+        NodeStore.allocated_set_iff_of_allocated
+          state.nodes destination _ destinationAllocated candidate
   · contradiction
 
 /-- Dequeuing a non-vote message leaves latent election voters unchanged. -/
 theorem effectiveElectionVotersAfterAppendResponse
-    (state after : State TxId)
+    (state after : State Node TxId)
     (destination : Node)
-    (response : AppendEntriesResponse)
-    (remaining : List (Message TxId))
+    (response : AppendEntriesResponse Node)
+    (remaining : List (Message Node TxId))
     (taken :
       takeFirstFrom response.source (state.network destination) =
         some (.appendEntriesResponse response, remaining))
     (networkEq :
       after.network = updateQueue state.network destination remaining)
+    (hasJoinedEq : after.hasJoined = state.hasJoined)
     (termEq :
       forall node,
         (after.nodes node).currentTerm = (state.nodes node).currentTerm)
@@ -35140,65 +36767,67 @@ theorem effectiveElectionVotersAfterAppendResponse
     effectiveElectionVoters, Finset.mem_filter,
     Finset.mem_univ, true_and
   ]
-  constructor
-  · rintro (processed | queued)
-    · exact Or.inl (by simpa [votesEq] using processed)
-    · right
-      rcases queued with
-        ⟨voteResponse, member, granted, responseTerm,
-          responseSource, responseDestination⟩
-      have oldMember :
-          Message.requestVoteResponse voteResponse ∈
-            state.network candidate := by
-        rw [networkEq] at member
+  apply and_congr
+  · simp only [hasJoinedEq]
+  · constructor
+    · rintro (processed | queued)
+      · exact Or.inl (by simpa [votesEq] using processed)
+      · right
+        rcases queued with
+          ⟨voteResponse, member, granted, responseTerm,
+            responseSource, responseDestination⟩
+        have oldMember :
+            Message.requestVoteResponse voteResponse ∈
+              state.network candidate := by
+          rw [networkEq] at member
+          by_cases candidateEq : candidate = destination
+          · have voteDestination :
+                voteResponse.destination = destination :=
+              responseDestination.trans candidateEq
+            subst candidate
+            have remainingMember :
+                Message.requestVoteResponse voteResponse ∈ remaining := by
+              simpa [
+                updateQueue, Function.update, voteDestination
+              ] using member
+            simpa [voteDestination] using remainingOld _ remainingMember
+          · simpa [updateQueue, Function.update, candidateEq] using member
+        exact
+          ⟨voteResponse, oldMember, granted,
+            by simpa [termEq] using responseTerm,
+            responseSource, responseDestination⟩
+    · rintro (processed | queued)
+      · exact Or.inl (by simpa [votesEq] using processed)
+      · right
+        rcases queued with
+          ⟨voteResponse, member, granted, responseTerm,
+            responseSource, responseDestination⟩
+        refine
+          ⟨voteResponse, ?_, granted,
+            by simpa [termEq] using responseTerm,
+            responseSource, responseDestination⟩
+        rw [networkEq]
         by_cases candidateEq : candidate = destination
         · have voteDestination :
               voteResponse.destination = destination :=
             responseDestination.trans candidateEq
           subst candidate
-          have remainingMember :
-              Message.requestVoteResponse voteResponse ∈ remaining := by
-            simpa [
+          have oldMember :
+              Message.requestVoteResponse voteResponse ∈
+                state.network destination := by
+            simpa [voteDestination] using member
+          rcases memSelectedOrRemaining taken oldMember with
+            selectedEq | remainingMember
+          · simp at selectedEq
+          · simpa [
               updateQueue, Function.update, voteDestination
-            ] using member
-          simpa [voteDestination] using remainingOld _ remainingMember
+            ] using remainingMember
         · simpa [updateQueue, Function.update, candidateEq] using member
-      exact
-        ⟨voteResponse, oldMember, granted,
-          by simpa [termEq] using responseTerm,
-          responseSource, responseDestination⟩
-  · rintro (processed | queued)
-    · exact Or.inl (by simpa [votesEq] using processed)
-    · right
-      rcases queued with
-        ⟨voteResponse, member, granted, responseTerm,
-          responseSource, responseDestination⟩
-      refine
-        ⟨voteResponse, ?_, granted,
-          by simpa [termEq] using responseTerm,
-          responseSource, responseDestination⟩
-      rw [networkEq]
-      by_cases candidateEq : candidate = destination
-      · have voteDestination :
-            voteResponse.destination = destination :=
-          responseDestination.trans candidateEq
-        subst candidate
-        have oldMember :
-            Message.requestVoteResponse voteResponse ∈
-              state.network destination := by
-          simpa [voteDestination] using member
-        rcases memSelectedOrRemaining taken oldMember with
-          selectedEq | remainingMember
-        · simp at selectedEq
-        · simpa [
-            updateQueue, Function.update, voteDestination
-          ] using remainingMember
-      · simpa [updateQueue, Function.update, candidateEq] using member
 
 /-- Frame changes preserving leader role, term, log, and match retain ACK history. -/
 theorem processedAckHistoryFrame
-    (state after : State TxId)
-    (history : ProcessedAckHistory TxId)
+    (state after : State Node TxId)
+    (history : ProcessedAckHistory Node TxId)
     (facts : ProcessedAckHistoryFacts state history)
     (roleEq :
       forall node, (after.nodes node).role = (state.nodes node).role)
@@ -35237,8 +36866,12 @@ A replication-cursor update preserves the invariant once its effects on
 effective acknowledgement and election evidence are supplied.
 -/
 theorem replicationCursorUpdatePreservesSystemInductiveInvariant
-    (state after : State TxId)
+    (state after : State Node TxId)
     (invariant : SystemInductiveInvariant state)
+    (hasJoinedEq : after.hasJoined = state.hasJoined)
+    (allocatedEq :
+      forall node, after.allocated node <-> state.allocated node)
+    (joinedCarriersAfter : JoinedCarrierFacts after)
     (roleEq :
       forall node, (after.nodes node).role = (state.nodes node).role)
     (termEq :
@@ -35257,28 +36890,28 @@ theorem replicationCursorUpdatePreservesSystemInductiveInvariant
     (leadersHaveElectionWitnessAfter : LeadersHaveElectionWitness after)
     (voteHistoryAfter :
       forall
-        (votes : VoteHistory)
+        (votes : VoteHistory Node)
         (appendHistory :
-          AppendEntriesRequest TxId -> List (Entry TxId))
-        (responseHistory : AppendEntriesResponse -> List (Entry TxId))
+          AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+        (responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId))
         (voteRequestHistory :
-          RequestVoteRequest -> List (Entry TxId))
+          RequestVoteRequest Node -> List (Entry Node TxId))
         (voteCandidateHistory voteVoterHistory :
-          RequestVoteResponse -> List (Entry TxId)),
+          RequestVoteResponse Node -> List (Entry Node TxId)),
         InvariantFacts
             state votes appendHistory responseHistory
               voteRequestHistory voteCandidateHistory voteVoterHistory ->
           VoteHistoryFacts after votes)
     (processedAckHistoryAfter :
       forall
-        (votes : VoteHistory)
+        (votes : VoteHistory Node)
         (appendHistory :
-          AppendEntriesRequest TxId -> List (Entry TxId))
-        (responseHistory : AppendEntriesResponse -> List (Entry TxId))
+          AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+        (responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId))
         (voteRequestHistory :
-          RequestVoteRequest -> List (Entry TxId))
+          RequestVoteRequest Node -> List (Entry Node TxId))
         (voteCandidateHistory voteVoterHistory :
-          RequestVoteResponse -> List (Entry TxId)),
+          RequestVoteResponse Node -> List (Entry Node TxId)),
         InvariantFacts
             state votes appendHistory responseHistory
               voteRequestHistory voteCandidateHistory voteVoterHistory ->
@@ -35288,32 +36921,32 @@ theorem replicationCursorUpdatePreservesSystemInductiveInvariant
         message ∈ after.network destination ->
           message ∈ state.network destination)
     (progressAfter : LeaderProgressBounded after)
-    (effectiveAckersEq :
+    (effectiveAckersSubsetAfter :
       forall
-        (votes : VoteHistory)
+        (votes : VoteHistory Node)
         (appendHistory :
-          AppendEntriesRequest TxId -> List (Entry TxId))
-        (responseHistory : AppendEntriesResponse -> List (Entry TxId))
+          AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+        (responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId))
         (voteRequestHistory :
-          RequestVoteRequest -> List (Entry TxId))
+          RequestVoteRequest Node -> List (Entry Node TxId))
         (voteCandidateHistory voteVoterHistory :
-          RequestVoteResponse -> List (Entry TxId)),
+          RequestVoteResponse Node -> List (Entry Node TxId)),
         InvariantFacts
             state votes appendHistory responseHistory
               voteRequestHistory voteCandidateHistory voteVoterHistory ->
           forall leader index,
-            effectiveAckers after responseHistory leader index =
+          effectiveAckers after responseHistory leader index ⊆
               effectiveAckers state responseHistory leader index)
     (potentialAckersSubsetAfter :
       forall
-        (votes : VoteHistory)
+        (votes : VoteHistory Node)
         (appendHistory :
-          AppendEntriesRequest TxId -> List (Entry TxId))
-        (responseHistory : AppendEntriesResponse -> List (Entry TxId))
+          AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+        (responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId))
         (voteRequestHistory :
-          RequestVoteRequest -> List (Entry TxId))
+          RequestVoteRequest Node -> List (Entry Node TxId))
         (voteCandidateHistory voteVoterHistory :
-          RequestVoteResponse -> List (Entry TxId)),
+          RequestVoteResponse Node -> List (Entry Node TxId)),
         InvariantFacts
             state votes appendHistory responseHistory
               voteRequestHistory voteCandidateHistory voteVoterHistory ->
@@ -35374,18 +37007,25 @@ theorem replicationCursorUpdatePreservesSystemInductiveInvariant
           lastCommittableTerm (state.nodes node) := by
     intro node
     exact lastCommittableTermFrame (logEq node) (commitEq node)
-  have effectiveMajorityEq :
+  have effectiveMajorityBack :
       forall leader index,
-        hasEffectiveMajorityAt after responseHistory leader index ↔
+        hasEffectiveMajorityAt after responseHistory leader index ->
           hasEffectiveMajorityAt state responseHistory leader index := by
-    intro leader index
-    simp only [
-      hasEffectiveMajorityAt,
-      activeConfigurationsEq,
-        effectiveAckersEq
+    intro leader index majority
+    rw [hasEffectiveMajorityAt, List.all_eq_true] at majority ⊢
+    intro configuration active
+    apply decide_eq_true
+    intro governs
+    have afterActive :
+        configuration ∈ activeConfigurations (after.nodes leader) := by
+      simpa [activeConfigurationsEq] using active
+    exact
+      hasConfigurationMajority_mono
+        (effectiveAckersSubsetAfter
           votes appendHistory responseHistory voteRequestHistory
-            voteCandidateHistory voteVoterHistory facts leader index
-    ]
+            voteCandidateHistory voteVoterHistory facts leader index)
+        ((of_decide_eq_true
+          (majority configuration afterActive)) governs)
   have potentialAckersSubset :
       forall leader index,
         potentialAckers after appendHistory responseHistory leader index ⊆
@@ -35545,16 +37185,20 @@ theorem replicationCursorUpdatePreservesSystemInductiveInvariant
           relaxedElectionVoters, Finset.mem_filter,
           Finset.mem_univ, true_and
         ] at relaxed ⊢
-        rcases relaxed with effective | eligible
-        · exact Or.inl
-            (effectiveElectionMemberBack
-              candidate member (Or.inl role) effective)
-        · exact Or.inr (by
-            simpa [
-              makeRequestVoteRequest,
-              termEq, logEq, lastIndexEq, lastTermEq,
-              voteLogUpToDate
-            ] using eligible)
+        rcases relaxed with ⟨joined, effective | eligible⟩
+        · exact
+            ⟨by simpa [hasJoinedEq] using joined,
+              Or.inl
+                (effectiveElectionMemberBack
+                  candidate member (Or.inl role) effective)⟩
+        · exact
+            ⟨by simpa [hasJoinedEq] using joined,
+              Or.inr (by
+                simpa [
+                  makeRequestVoteRequest,
+                  termEq, logEq, lastIndexEq, lastTermEq,
+                  voteLogUpToDate
+                ] using eligible)⟩
       left
       exact
         ⟨oldRole,
@@ -35573,13 +37217,10 @@ theorem replicationCursorUpdatePreservesSystemInductiveInvariant
           (fun leader role => by simpa [roleEq] using role)
           (fun leader _ => termEq leader)
           logEq
-          (fun leader index voter _ _ member => by
-            rw [
-              effectiveAckersEq
-                votes appendHistory responseHistory voteRequestHistory
-                  voteCandidateHistory voteVoterHistory facts
-            ] at member
-            exact member)
+          (fun leader index voter _ _ member =>
+            effectiveAckersSubsetAfter
+              votes appendHistory responseHistory voteRequestHistory
+                voteCandidateHistory voteVoterHistory facts leader index member)
           (fun node => Nat.le_of_eq (termEq node).symm)
           (fun _ _ _ voted _ => voted)
     have ownershipAfter :
@@ -35688,12 +37329,10 @@ theorem replicationCursorUpdatePreservesSystemInductiveInvariant
         exact termEq source
       · exact logEq
       · intro source index supporter role current member
-        rw [
-          effectiveAckersEq
+        exact
+          effectiveAckersSubsetAfter
             votes appendHistory responseHistory voteRequestHistory
-            voteCandidateHistory voteVoterHistory facts
-        ] at member
-        exact member
+              voteCandidateHistory voteVoterHistory facts source index member
       · intro term record stored
         exact stored
     have activationProgressAfter :
@@ -35767,7 +37406,7 @@ theorem replicationCursorUpdatePreservesSystemInductiveInvariant
             (by simpa [roleEq] using role)
             (by simpa [logEq, termEq] using current)
             (by simpa [logEq] using signature)
-            ((effectiveMajorityEq source index).mp majority)
+            (effectiveMajorityBack source index majority)
             node
       · intro left leftIndex leftRole leftCurrent leftSignature leftMajority
           right rightIndex rightRole rightCurrent rightSignature rightMajority
@@ -35777,12 +37416,12 @@ theorem replicationCursorUpdatePreservesSystemInductiveInvariant
             (by simpa [roleEq] using leftRole)
             (by simpa [logEq, termEq] using leftCurrent)
             (by simpa [logEq] using leftSignature)
-            ((effectiveMajorityEq left leftIndex).mp leftMajority)
+            (effectiveMajorityBack left leftIndex leftMajority)
             right rightIndex
             (by simpa [roleEq] using rightRole)
             (by simpa [logEq, termEq] using rightCurrent)
             (by simpa [logEq] using rightSignature)
-            ((effectiveMajorityEq right rightIndex).mp rightMajority)
+            (effectiveMajorityBack right rightIndex rightMajority)
       · intro activationIndex activation queuedDestination queuedRequest
           stored queued sameTerm
         exact
@@ -35864,34 +37503,41 @@ theorem replicationCursorUpdatePreservesSystemInductiveInvariant
       processedAckHistoryAfter
         votes appendHistory responseHistory voteRequestHistory
           voteCandidateHistory voteVoterHistory facts
+  · exact joinedCarriersAfter
+  · exact
+      AllocatedNodesExactlyJoined.frame
+        facts.allocatedNodesExactlyJoined allocatedEq hasJoinedEq
 /--
 Pure response dequeue preserves the invariant when every node record is
 unchanged and the remaining effective evidence is accounted for.
 -/
 theorem responseDequeuePreservesSystemInductiveInvariant
-    (state after : State TxId)
+    (state after : State Node TxId)
     (invariant : SystemInductiveInvariant state)
+    (hasJoinedEq : after.hasJoined = state.hasJoined)
+    (allocatedEq :
+      forall node, after.allocated node <-> state.allocated node)
     (nodeStateEq :
       forall node, after.nodes node = state.nodes node)
     (networkSubset :
       forall destination message,
         message ∈ after.network destination ->
           message ∈ state.network destination)
-    (effectiveAckersEq :
+    (effectiveAckersSubsetAfter :
       forall
-        (votes : VoteHistory)
+        (votes : VoteHistory Node)
         (appendHistory :
-          AppendEntriesRequest TxId -> List (Entry TxId))
-        (responseHistory : AppendEntriesResponse -> List (Entry TxId))
+          AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+        (responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId))
         (voteRequestHistory :
-          RequestVoteRequest -> List (Entry TxId))
+          RequestVoteRequest Node -> List (Entry Node TxId))
         (voteCandidateHistory voteVoterHistory :
-          RequestVoteResponse -> List (Entry TxId)),
+          RequestVoteResponse Node -> List (Entry Node TxId)),
         InvariantFacts
             state votes appendHistory responseHistory
               voteRequestHistory voteCandidateHistory voteVoterHistory ->
           forall leader index,
-            effectiveAckers after responseHistory leader index =
+          effectiveAckers after responseHistory leader index ⊆
               effectiveAckers state responseHistory leader index)
     (effectiveElectionMajorityBack :
       forall candidate,
@@ -35912,11 +37558,76 @@ theorem responseDequeuePreservesSystemInductiveInvariant
       SystemInductiveInvariant state :=
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
-  have nodesEq : after.nodes = state.nodes :=
+  have nodesEq : NodeStore.get after.nodes = NodeStore.get state.nodes :=
     funext nodeStateEq
   apply
     replicationCursorUpdatePreservesSystemInductiveInvariant
-      state after packed
+      state after packed hasJoinedEq allocatedEq
+        (by
+          constructor
+          · intro node peer member
+            rw [hasJoinedEq]
+            exact
+              facts.joinedCarriers.activeNodes node
+                (by simpa [nodesEq] using member)
+          · intro node configuration member peer inNodes
+            rw [hasJoinedEq]
+            exact
+              facts.joinedCarriers.configurationNodes node configuration
+                (by simpa [nodesEq] using member)
+                (by simpa [nodesEq] using inNodes)
+          · intro node peer member
+            rw [hasJoinedEq]
+            exact
+              facts.joinedCarriers.grantedVotes node
+                (by simpa [nodesEq] using member)
+          · intro destination request member
+            rw [hasJoinedEq]
+            exact
+              facts.joinedCarriers.voteRequestDestinations
+                destination request
+                (networkSubset destination _ member)
+          · intro destination request member
+            rw [hasJoinedEq]
+            exact
+              facts.joinedCarriers.appendRequestDestinations
+                destination request
+                (networkSubset destination _ member)
+          · intro destination request member configuration configured
+              peer inNodes
+            rw [hasJoinedEq]
+            exact
+              facts.joinedCarriers.appendRequestConfigurations
+                destination request (networkSubset destination _ member)
+                configuration configured inNodes
+          · intro destination response member
+            rw [hasJoinedEq]
+            exact
+              facts.joinedCarriers.voteResponseSources
+                destination response
+                (networkSubset destination _ member)
+          · constructor
+            · intro node active
+              rw [hasJoinedEq]
+              exact
+                facts.joinedCarriers.runtimeNodes.activeRoles node
+                  (by simpa [nodesEq] using active)
+            · intro leader peer positive
+              rw [hasJoinedEq]
+              exact
+                facts.joinedCarriers.runtimeNodes.positiveMatches leader peer
+                  (by simpa [nodesEq] using positive)
+            · intro destination response member
+              rw [hasJoinedEq]
+              exact
+                facts.joinedCarriers.runtimeNodes.appendResponses
+                  destination response
+                    (networkSubset destination _ member)
+            · intro node nonempty
+              rw [hasJoinedEq]
+              exact
+                facts.joinedCarriers.runtimeNodes.nonemptyLogs node
+                  (by simpa [nodesEq] using nonempty))
         (fun node => by rw [nodesEq])
         (fun node => by rw [nodesEq])
         (fun node => by rw [nodesEq])
@@ -35964,7 +37675,7 @@ theorem responseDequeuePreservesSystemInductiveInvariant
     simpa [nodesEq] using
       facts.leaderProgressBounded leader
         (by simpa [nodesEq] using role) peer
-  · exact effectiveAckersEq
+  · exact effectiveAckersSubsetAfter
   · intro actualVotes actualAppendHistory actualResponseHistory
         actualVoteRequestHistory actualVoteCandidateHistory
         actualVoteVoterHistory actualFacts leader index peer member
@@ -35972,16 +37683,14 @@ theorem responseDequeuePreservesSystemInductiveInvariant
       potentialAckers, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at member ⊢
-    rcases member with effective | reserve
-    · exact Or.inl (by
-        rw [
-          effectiveAckersEq
-            actualVotes actualAppendHistory actualResponseHistory
-              actualVoteRequestHistory actualVoteCandidateHistory
-              actualVoteVoterHistory actualFacts
-        ] at effective
-        exact effective)
-    · right
+    rcases member with ⟨joined, effective | reserve⟩
+    · refine ⟨by simpa [hasJoinedEq] using joined, Or.inl ?_⟩
+      exact
+        effectiveAckersSubsetAfter
+          actualVotes actualAppendHistory actualResponseHistory
+            actualVoteRequestHistory actualVoteCandidateHistory
+            actualVoteVoterHistory actualFacts leader index effective
+    · refine ⟨by simpa [hasJoinedEq] using joined, Or.inr ?_⟩
       unfold queuedAppendReserve at reserve ⊢
       rcases reserve with
         ⟨request, queued, sourceEq, destinationEq,
@@ -36012,19 +37721,22 @@ theorem responseDequeuePreservesSystemInductiveInvariant
       potentialElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at member ⊢
-    rcases member with effective | eligible
-    · exact Or.inl
-        (effectiveElectionMemberBack candidate voter
-          (by simpa [nodesEq] using Or.inl role) effective)
-    · right
+    rcases member with ⟨joined, effective | eligible⟩
+    · exact
+        ⟨by simpa [hasJoinedEq] using joined,
+          Or.inl
+            (effectiveElectionMemberBack candidate voter
+              (by simpa [nodesEq] using Or.inl role) effective)⟩
+    · refine ⟨by simpa [hasJoinedEq] using joined, Or.inr ?_⟩
       unfold currentlyEligibleElectionVoter at eligible ⊢
       simpa [makeRequestVoteRequest, nodesEq] using eligible
   · exact effectiveElectionMemberBack
 
 /-- Replication cursors and queued ACK evidence determine effective ACKers. -/
 theorem effectiveAckersFrame
-    (state after : State TxId)
+    (state after : State Node TxId)
     (networkEq : after.network = state.network)
+    (hasJoinedEq : after.hasJoined = state.hasJoined)
     (termEq :
       forall node,
         (after.nodes node).currentTerm = (state.nodes node).currentTerm)
@@ -36035,7 +37747,7 @@ theorem effectiveAckersFrame
         (after.nodes leader).matchIndex peer =
           (state.nodes leader).matchIndex peer) :
     forall
-      (responseHistory : AppendEntriesResponse -> List (Entry TxId))
+      (responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId))
       leader index,
       effectiveAckers after responseHistory leader index =
         effectiveAckers state responseHistory leader index := by
@@ -36045,36 +37757,39 @@ theorem effectiveAckersFrame
     effectiveAckers, Finset.mem_filter,
     Finset.mem_univ, true_and
   ]
-  constructor <;> rintro (self | matched | queued)
-  · exact Or.inl self
-  · exact Or.inr (Or.inl (by simpa [matchEq] using matched))
-  · right
-    right
-    rcases queued with
-      ⟨response, member, success, responseTerm, sourceEq,
-        destinationEq, lastIndex, covered⟩
-    exact
-      ⟨response, by simpa [networkEq] using member, success,
-        by simpa [termEq] using responseTerm,
-        sourceEq, destinationEq, lastIndex,
-        by simpa [logEq] using covered⟩
-  · exact Or.inl self
-  · exact Or.inr (Or.inl (by simpa [matchEq] using matched))
-  · right
-    right
-    rcases queued with
-      ⟨response, member, success, responseTerm, sourceEq,
-        destinationEq, lastIndex, covered⟩
-    exact
-      ⟨response, by simpa [networkEq] using member, success,
-        by simpa [termEq] using responseTerm,
-        sourceEq, destinationEq, lastIndex,
-        by simpa [logEq] using covered⟩
+  apply and_congr
+  · simp only [hasJoinedEq]
+  · constructor <;> rintro (self | matched | queued)
+    · exact Or.inl self
+    · exact Or.inr (Or.inl (by simpa [matchEq] using matched))
+    · right
+      right
+      rcases queued with
+        ⟨response, member, success, responseTerm, sourceEq,
+          destinationEq, lastIndex, covered⟩
+      exact
+        ⟨response, by simpa [networkEq] using member, success,
+          by simpa [termEq] using responseTerm,
+          sourceEq, destinationEq, lastIndex,
+          by simpa [logEq] using covered⟩
+    · exact Or.inl self
+    · exact Or.inr (Or.inl (by simpa [matchEq] using matched))
+    · right
+      right
+      rcases queued with
+        ⟨response, member, success, responseTerm, sourceEq,
+          destinationEq, lastIndex, covered⟩
+      exact
+        ⟨response, by simpa [networkEq] using member, success,
+          by simpa [termEq] using responseTerm,
+          sourceEq, destinationEq, lastIndex,
+          by simpa [logEq] using covered⟩
 
 /-- Vote sets and queued grants determine effective election voters. -/
 theorem effectiveElectionVotersFrame
-    (state after : State TxId)
+    (state after : State Node TxId)
     (networkEq : after.network = state.network)
+    (hasJoinedEq : after.hasJoined = state.hasJoined)
     (termEq :
       forall node,
         (after.nodes node).currentTerm = (state.nodes node).currentTerm)
@@ -36091,36 +37806,38 @@ theorem effectiveElectionVotersFrame
     effectiveElectionVoters, Finset.mem_filter,
     Finset.mem_univ, true_and
   ]
-  constructor <;> rintro (processed | queued)
-  · exact Or.inl (by simpa [votesEq] using processed)
-  · right
-    rcases queued with
-      ⟨response, member, granted, responseTerm,
-        responseSource, responseDestination⟩
-    exact
-      ⟨response, by simpa [networkEq] using member, granted,
-        by simpa [termEq] using responseTerm,
-        responseSource, responseDestination⟩
-  · exact Or.inl (by simpa [votesEq] using processed)
-  · right
-    rcases queued with
-      ⟨response, member, granted, responseTerm,
-        responseSource, responseDestination⟩
-    exact
-      ⟨response, by simpa [networkEq] using member, granted,
-        by simpa [termEq] using responseTerm,
-        responseSource, responseDestination⟩
+  apply and_congr
+  · simp only [hasJoinedEq]
+  · constructor <;> rintro (processed | queued)
+    · exact Or.inl (by simpa [votesEq] using processed)
+    · right
+      rcases queued with
+        ⟨response, member, granted, responseTerm,
+          responseSource, responseDestination⟩
+      exact
+        ⟨response, by simpa [networkEq] using member, granted,
+          by simpa [termEq] using responseTerm,
+          responseSource, responseDestination⟩
+    · exact Or.inl (by simpa [votesEq] using processed)
+    · right
+      rcases queued with
+        ⟨response, member, granted, responseTerm,
+          responseSource, responseDestination⟩
+      exact
+        ⟨response, by simpa [networkEq] using member, granted,
+          by simpa [termEq] using responseTerm,
+          responseSource, responseDestination⟩
 
 private def setResultSentIndex
     (sentIndex : Node -> Nat)
-    (result : NodeState TxId × AppendEntriesResponse) :
-    NodeState TxId × AppendEntriesResponse :=
+    (result : NodeState Node TxId × AppendEntriesResponse Node) :
+    NodeState Node TxId × AppendEntriesResponse Node :=
   ({ result.1 with sentIndex }, result.2)
 
 private theorem rejectAppendEntriesRequest_sentIndex
-    (node : NodeState TxId)
+    (node : NodeState Node TxId)
     (sentIndex : Node -> Nat)
-    (request : AppendEntriesRequest TxId) :
+    (request : AppendEntriesRequest Node TxId) :
     rejectAppendEntriesRequest? { node with sentIndex } request =
       (rejectAppendEntriesRequest? node request).map
         (setResultSentIndex sentIndex) := by
@@ -36130,9 +37847,9 @@ private theorem rejectAppendEntriesRequest_sentIndex
   ]
 
 private theorem appendEntriesAlreadyDone_sentIndex
-    (node : NodeState TxId)
+    (node : NodeState Node TxId)
     (sentIndex : Node -> Nat)
-    (request : AppendEntriesRequest TxId) :
+    (request : AppendEntriesRequest Node TxId) :
     appendEntriesAlreadyDone? { node with sentIndex } request =
       (appendEntriesAlreadyDone? node request).map
         (setResultSentIndex sentIndex) := by
@@ -36142,9 +37859,9 @@ private theorem appendEntriesAlreadyDone_sentIndex
   ]
 
 private theorem noConflictAppendEntriesRequest_sentIndex
-    (node : NodeState TxId)
+    (node : NodeState Node TxId)
     (sentIndex : Node -> Nat)
-    (request : AppendEntriesRequest TxId) :
+    (request : AppendEntriesRequest Node TxId) :
     noConflictAppendEntriesRequest? { node with sentIndex } request =
       (noConflictAppendEntriesRequest? node request).map
         (setResultSentIndex sentIndex) := by
@@ -36154,9 +37871,9 @@ private theorem noConflictAppendEntriesRequest_sentIndex
   ]
 
 private theorem conflictAppendEntriesRequest_sentIndex
-    (node : NodeState TxId)
+    (node : NodeState Node TxId)
     (sentIndex : Node -> Nat)
-    (request : AppendEntriesRequest TxId) :
+    (request : AppendEntriesRequest Node TxId) :
     conflictAppendEntriesRequest? { node with sentIndex } request =
       (conflictAppendEntriesRequest? node request).map
         (fun nextNode => { nextNode with sentIndex }) := by
@@ -36166,9 +37883,9 @@ private theorem conflictAppendEntriesRequest_sentIndex
   ]
 
 private theorem acceptAppendEntriesRequest_sentIndex
-    (node : NodeState TxId)
+    (node : NodeState Node TxId)
     (sentIndex : Node -> Nat)
-    (request : AppendEntriesRequest TxId) :
+    (request : AppendEntriesRequest Node TxId) :
     acceptAppendEntriesRequest? { node with sentIndex } request =
       (acceptAppendEntriesRequest? node request).map
         (setResultSentIndex sentIndex) := by
@@ -36223,9 +37940,9 @@ private theorem acceptAppendEntriesRequest_sentIndex
     rfl
 
 private theorem handleAppendEntriesRequest_sentIndex
-    (node : NodeState TxId)
+    (node : NodeState Node TxId)
     (sentIndex : Node -> Nat)
-    (request : AppendEntriesRequest TxId) :
+    (request : AppendEntriesRequest Node TxId) :
     handleAppendEntriesRequest? { node with sentIndex } request =
       (handleAppendEntriesRequest? node request).map
         (setResultSentIndex sentIndex) := by
@@ -36238,9 +37955,9 @@ private theorem handleAppendEntriesRequest_sentIndex
       simp [rejected]
 
 theorem canProduceAppendAckEventuallyAt_sentIndex
-    (node : NodeState TxId)
+    (node : NodeState Node TxId)
     (sentIndex : Node -> Nat)
-    (request : AppendEntriesRequest TxId)
+    (request : AppendEntriesRequest Node TxId)
     (index : Nat) :
     canProduceAppendAckEventuallyAt
         { node with sentIndex } request index ↔
@@ -36272,15 +37989,16 @@ theorem canProduceAppendAckEventuallyAt_sentIndex
 
 /-- Dequeuing an ACK which is not effective leaves effective evidence intact. -/
 theorem effectiveAckersAfterInactiveResponse
-    (state after : State TxId)
+    (state after : State Node TxId)
     (destination : Node)
-    (response : AppendEntriesResponse)
-    (remaining : List (Message TxId))
+    (response : AppendEntriesResponse Node)
+    (remaining : List (Message Node TxId))
     (taken :
       takeFirstFrom response.source (state.network destination) =
         some (.appendEntriesResponse response, remaining))
     (networkEq :
       after.network = updateQueue state.network destination remaining)
+    (hasJoinedEq : after.hasJoined = state.hasJoined)
     (termEq :
       forall node,
         (after.nodes node).currentTerm = (state.nodes node).currentTerm)
@@ -36295,7 +38013,7 @@ theorem effectiveAckersAfterInactiveResponse
         (response.success = true /\
           response.term = (state.nodes destination).currentTerm)) :
     forall
-      (responseHistory : AppendEntriesResponse -> List (Entry TxId))
+      (responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId))
       leader index,
       effectiveAckers after responseHistory leader index =
         effectiveAckers state responseHistory leader index := by
@@ -36306,6 +38024,7 @@ theorem effectiveAckersAfterInactiveResponse
     effectiveAckers, Finset.mem_filter,
     Finset.mem_univ, true_and
   ]
+  apply and_congr (by simp only [hasJoinedEq])
   constructor
   · rintro (self | matched | queued)
     · exact Or.inl self
@@ -36382,10 +38101,10 @@ Processing a successful same-term ACK transfers its evidence from the queue to
 the destination leader's monotone `matchIndex`.
 -/
 theorem effectiveAckersAfterSuccessfulResponse
-    (state after : State TxId)
+    (state after : State Node TxId)
     (destination : Node)
-    (response : AppendEntriesResponse)
-    (remaining : List (Message TxId))
+    (response : AppendEntriesResponse Node)
+    (remaining : List (Message Node TxId))
     (taken :
       takeFirstFrom response.source (state.network destination) =
         some (.appendEntriesResponse response, remaining))
@@ -36394,11 +38113,12 @@ theorem effectiveAckersAfterSuccessfulResponse
     (sameTerm :
       response.term = (state.nodes destination).currentTerm)
     (responseHistory :
-      AppendEntriesResponse -> List (Entry TxId))
+      AppendEntriesResponse Node -> List (Entry Node TxId))
     (covered :
       responseHistory response <+: (state.nodes destination).log)
     (networkEq :
       after.network = updateQueue state.network destination remaining)
+    (hasJoinedEq : after.hasJoined = state.hasJoined)
     (termEq :
       forall node,
         (after.nodes node).currentTerm = (state.nodes node).currentTerm)
@@ -36434,6 +38154,7 @@ theorem effectiveAckersAfterSuccessfulResponse
     effectiveAckers, Finset.mem_filter,
     Finset.mem_univ, true_and
   ]
+  apply and_congr (by simp only [hasJoinedEq])
   constructor
   · rintro (self | matched | queued)
     · exact Or.inl self
@@ -36551,9 +38272,9 @@ Before dequeue, a successful same-term ACK's monotone `matchIndex` update only
 changes the representation of evidence already present in the queue.
 -/
 theorem effectiveAckersAfterSuccessfulResponseHandler
-    (state after : State TxId)
+    (state after : State Node TxId)
     (destination : Node)
-    (response : AppendEntriesResponse)
+    (response : AppendEntriesResponse Node)
     (responseDestination : response.destination = destination)
     (success : response.success = true)
     (sameTerm :
@@ -36562,10 +38283,11 @@ theorem effectiveAckersAfterSuccessfulResponseHandler
       Message.appendEntriesResponse response ∈
         state.network destination)
     (responseHistory :
-      AppendEntriesResponse -> List (Entry TxId))
+      AppendEntriesResponse Node -> List (Entry Node TxId))
     (covered :
       responseHistory response <+: (state.nodes destination).log)
     (networkEq : after.network = state.network)
+    (hasJoinedEq : after.hasJoined = state.hasJoined)
     (termEq :
       forall node,
         (after.nodes node).currentTerm = (state.nodes node).currentTerm)
@@ -36596,6 +38318,7 @@ theorem effectiveAckersAfterSuccessfulResponseHandler
     effectiveAckers, Finset.mem_filter,
     Finset.mem_univ, true_and
   ]
+  apply and_congr (by simp only [hasJoinedEq])
   constructor
   · rintro (self | matched | queued)
     · exact Or.inl self
@@ -36659,12 +38382,12 @@ theorem effectiveAckersAfterSuccessfulResponseHandler
 
 /-- A successful ACK transfers its immutable history into processed evidence. -/
 theorem processedAckHistoryAfterSuccessfulResponse
-    (state after : State TxId)
+    (state after : State Node TxId)
     (destination : Node)
-    (response : AppendEntriesResponse)
-    (history : ProcessedAckHistory TxId)
+    (response : AppendEntriesResponse Node)
+    (history : ProcessedAckHistory Node TxId)
     (historyFacts : ProcessedAckHistoryFacts state history)
-    (responseHistory : List (Entry TxId))
+    (responseHistory : List (Entry Node TxId))
     (responseBound : response.lastLogIndex <= responseHistory.length)
     (responseCovered :
       responseHistory <+: (state.nodes destination).log)
@@ -36699,11 +38422,11 @@ theorem processedAckHistoryAfterSuccessfulResponse
   by_cases raised :
       (state.nodes destination).matchIndex response.source <
         response.lastLogIndex
-  · let snapshot : ProcessedAckSnapshot TxId :=
+  · let snapshot : ProcessedAckSnapshot Node TxId :=
       { term := response.term
         index := response.lastLogIndex
         history := responseHistory }
-    let nextHistory : ProcessedAckHistory TxId :=
+    let nextHistory : ProcessedAckHistory Node TxId :=
       Function.update history destination
         (Function.update
           (history destination) response.source (some snapshot))
@@ -36835,12 +38558,13 @@ theorem processedAckHistoryAfterSuccessfulResponse
 
 /-- Receiving an AppendEntries response preserves all delayed-ACK evidence. -/
 theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
-    (state : State TxId)
+    (state : State Node TxId)
     (source destination : Node)
-    (response : AppendEntriesResponse)
-    (remaining : List (Message TxId))
-    (nextNode : NodeState TxId)
+    (response : AppendEntriesResponse Node)
+    (remaining : List (Message Node TxId))
+    (nextNode : NodeState Node TxId)
     (invariant : SystemInductiveInvariant state)
+    (destinationAllocated : state.allocated destination)
     (taken :
       takeFirstFrom source (state.network destination) =
         some (.appendEntriesResponse response, remaining))
@@ -36889,7 +38613,7 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
         (state.nodes destination).role = .leader
   · simp [successful] at handled
     subst nextNode
-    let intermediate : State TxId :=
+    let intermediate : State Node TxId :=
       { state with
         nodes :=
           updateNode state.nodes destination
@@ -36901,7 +38625,7 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
                   (max
                     ((state.nodes destination).matchIndex response.source)
                     response.lastLogIndex) } }
-    let after : State TxId :=
+    let after : State Node TxId :=
       { state with
         nodes :=
           updateNode state.nodes destination
@@ -37027,12 +38751,66 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
           effectiveElectionVoters intermediate candidate =
             effectiveElectionVoters state candidate :=
       effectiveElectionVotersFrame
-        state intermediate (by rfl) termEq votesEq
+        state intermediate (by rfl) (by rfl) termEq votesEq
     have intermediateInvariant :
         SystemInductiveInvariant intermediate := by
       apply
         replicationCursorUpdatePreservesSystemInductiveInvariant
-          state intermediate packed roleEq termEq logEq commitEq
+          state intermediate packed (by rfl)
+            (fun candidate => by
+              simp only [intermediate, State.allocated, updateNode]
+              exact
+                NodeStore.allocated_set_iff_of_allocated
+                  state.nodes destination _ destinationAllocated candidate)
+            (joinedCarrierFactsFrame
+              state intermediate facts.joinedCarriers (by rfl)
+              (by
+                intro node configuration active
+                simpa [
+                  activeConfigurations, currentConfiguration,
+                  logEq, commitEq
+                ] using active)
+              (by
+                intro node configuration member
+                simpa [logEq] using member)
+              (by
+                intro node peer member
+                simpa [votesEq] using member)
+              (by
+                intro node active
+                exact
+                  facts.joinedCarriers.runtimeNodes.activeRoles node
+                    (by simpa [roleEq] using active))
+              (by
+                intro leader peer positive
+                by_cases leaderEq : leader = destination
+                · subst leader
+                  by_cases peerEq : peer = response.source
+                  · subst peer
+                    exact
+                      facts.joinedCarriers.runtimeNodes.appendResponses
+                        destination response selectedMember
+                  · exact
+                      facts.joinedCarriers.runtimeNodes.positiveMatches
+                        destination peer
+                          (by
+                            simpa [
+                              matchDestination, updateIndex,
+                              Function.update, peerEq
+                            ] using positive)
+                · exact
+                    facts.joinedCarriers.runtimeNodes.positiveMatches
+                      leader peer
+                        (by simpa [matchOther leader leaderEq] using positive))
+              (by
+                intro node nonempty
+                exact
+                  facts.joinedCarriers.runtimeNodes.nonemptyLogs node
+                    (by simpa [logEq] using nonempty))
+              (by
+                intro destination message member
+                exact member))
+            roleEq termEq logEq commitEq
             newFollowerEq
       · intro node role
         rw [roleEq] at role
@@ -37095,12 +38873,12 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
           have covered :=
             (actualSnapshot.2.2 snapshotSameTerm).2
           simpa [responseDestination] using covered
-        exact
+        exact Finset.subset_of_eq (
           effectiveAckersAfterSuccessfulResponseHandler
             state intermediate destination response responseDestination
               successful.1 successful.2.1 selectedMember
-              actualResponseHistory actualCovered rfl
-              termEq logEq matchDestination matchOther leader index
+              actualResponseHistory actualCovered rfl rfl
+              termEq logEq matchDestination matchOther leader index)
       · intro actualVotes actualAppendHistory actualResponseHistory
           actualVoteRequestHistory actualVoteCandidateHistory
           actualVoteVoterHistory actualFacts leader index peer member
@@ -37108,8 +38886,8 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
           potentialAckers, Finset.mem_filter,
           Finset.mem_univ, true_and
         ] at member ⊢
-        rcases member with effective | reserve
-        · left
+        rcases member with ⟨joined, effective | reserve⟩
+        · refine ⟨by simpa [intermediate] using joined, Or.inl ?_⟩
           rw [
             effectiveAckersAfterSuccessfulResponseHandler
               state intermediate destination response responseDestination
@@ -37122,10 +38900,10 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
                   have covered :=
                     (actualSnapshot.2.2 snapshotSameTerm).2
                   simpa [responseDestination] using covered)
-                rfl termEq logEq matchDestination matchOther
+                rfl rfl termEq logEq matchDestination matchOther
           ] at effective
           exact effective
-        · right
+        · refine ⟨by simpa [intermediate] using joined, Or.inr ?_⟩
           rcases reserve with
             ⟨request, queued, sourceEq, destinationEq,
               requestTerm, producible, covered⟩
@@ -37238,13 +39016,15 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
         intermediate after destination response remaining
           takenFromIntermediate
           (by simp [after, intermediate])
+          (by simp [after, intermediate])
           (fun node => by rw [nodeStateEq node])
           (fun node => by rw [nodeStateEq node])
     rw [← successful.2.2]
     change SystemInductiveInvariant after
     apply
       responseDequeuePreservesSystemInductiveInvariant
-        intermediate after intermediateInvariant nodeStateEq
+        intermediate after intermediateInvariant
+          (by simp [after, intermediate]) (fun _ => Iff.rfl) nodeStateEq
           networkSubsetAfter
     · intro _ _ actualResponseHistory _ _ _ actualFacts leader index
       have actualSnapshot :=
@@ -37260,18 +39040,19 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
         have covered :=
           (actualSnapshot.2.2 sameTermIntermediate).2
         simpa [responseDestination] using covered
-      exact
+      exact Finset.subset_of_eq (
         effectiveAckersAfterSuccessfulResponse
           intermediate after destination response remaining
             takenFromIntermediate responseDestination successful.1
             (by simpa [termEq] using successful.2.1)
             actualResponseHistory actualCovered
             (by simp [after, intermediate])
+            (by simp [after, intermediate])
             (fun node => by rw [nodeStateEq node])
             (fun node => by rw [nodeStateEq node])
             matchDestinationAfter
             (fun leader _ peer => by rw [nodeStateEq leader])
-            leader index
+            leader index)
     · intro candidate role majority
       unfold hasEffectiveElectionMajority at majority ⊢
       simpa [nodeStateEq, effectiveElectionVotersAfter] using majority
@@ -37280,7 +39061,7 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
   · by_cases failed : response.success = false
     · simp [successful, failed] at handled
       subst nextNode
-      let intermediate : State TxId :=
+      let intermediate : State Node TxId :=
         { state with
           nodes :=
             updateNode state.nodes destination
@@ -37296,7 +39077,7 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
                           response.lastLogIndex response.term)
                         ((state.nodes destination).sentIndex response.source))
                       ((state.nodes destination).matchIndex response.source)) } }
-      let after : State TxId :=
+      let after : State Node TxId :=
         { state with
           nodes :=
             updateNode state.nodes destination
@@ -37397,18 +39178,57 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
           forall actualResponseHistory leader index,
             effectiveAckers intermediate actualResponseHistory leader index =
               effectiveAckers state actualResponseHistory leader index :=
-        effectiveAckersFrame state intermediate rfl termEq logEq matchEq
+        effectiveAckersFrame
+          state intermediate rfl rfl termEq logEq matchEq
       have effectiveElectionVotersIntermediate :
           forall candidate,
             effectiveElectionVoters intermediate candidate =
               effectiveElectionVoters state candidate :=
         effectiveElectionVotersFrame
-          state intermediate rfl termEq votesEq
+          state intermediate rfl rfl termEq votesEq
       have intermediateInvariant :
           SystemInductiveInvariant intermediate := by
         apply
           replicationCursorUpdatePreservesSystemInductiveInvariant
-            state intermediate packed roleEq termEq logEq commitEq
+            state intermediate packed rfl
+              (fun candidate => by
+                simp only [intermediate, State.allocated, updateNode]
+                exact
+                  NodeStore.allocated_set_iff_of_allocated
+                    state.nodes destination _ destinationAllocated candidate)
+              (joinedCarrierFactsFrame
+                state intermediate facts.joinedCarriers rfl
+                (by
+                  intro node configuration active
+                  simpa [
+                    activeConfigurations, currentConfiguration,
+                    logEq, commitEq
+                  ] using active)
+                (by
+                  intro node configuration member
+                  simpa [logEq] using member)
+                (by
+                  intro node peer member
+                  simpa [votesEq] using member)
+                (by
+                  intro node active
+                  exact
+                    facts.joinedCarriers.runtimeNodes.activeRoles node
+                      (by simpa [roleEq] using active))
+                (by
+                  intro leader peer positive
+                  exact
+                    facts.joinedCarriers.runtimeNodes.positiveMatches
+                      leader peer (by simpa [matchEq] using positive))
+                (by
+                  intro node nonempty
+                  exact
+                    facts.joinedCarriers.runtimeNodes.nonemptyLogs node
+                      (by simpa [logEq] using nonempty))
+                (by
+                  intro destination message member
+                  exact member))
+              roleEq termEq logEq commitEq
               newFollowerEq
         · intro node role
           rw [roleEq] at role
@@ -37449,22 +39269,24 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
           simpa [intermediate] using member
         · exact progressIntermediate
         · intro _ _ actualResponseHistory _ _ _ _ leader index
-          exact effectiveAckersIntermediate actualResponseHistory leader index
+          exact Finset.subset_of_eq
+            (effectiveAckersIntermediate actualResponseHistory leader index)
         · intro _ actualAppendHistory actualResponseHistory
             _ _ _ _ leader index peer member
           simp only [
             potentialAckers, Finset.mem_filter,
             Finset.mem_univ, true_and
           ] at member ⊢
-          rcases member with effective | reserve
-          · exact Or.inl
-              (by
+          rcases member with ⟨joined, effective | reserve⟩
+          · exact
+              ⟨by simpa [intermediate] using joined,
+                Or.inl (by
                 rw [
                   effectiveAckersIntermediate
                     actualResponseHistory leader index
                 ] at effective
-                exact effective)
-          · right
+                exact effective)⟩
+          · refine ⟨by simpa [intermediate] using joined, Or.inr ?_⟩
             rcases reserve with
               ⟨request, queued, sourceEq, destinationEq,
                 requestTerm, producible, covered⟩
@@ -37551,18 +39373,21 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
           intermediate after destination response remaining
             takenFromIntermediate
             (by simp [after, intermediate])
+            (by simp [after, intermediate])
             (fun node => by rw [nodeStateEq node])
             (fun node => by rw [nodeStateEq node])
       change SystemInductiveInvariant after
       apply
         responseDequeuePreservesSystemInductiveInvariant
-          intermediate after intermediateInvariant nodeStateEq
+          intermediate after intermediateInvariant
+            (by simp [after, intermediate]) (fun _ => Iff.rfl) nodeStateEq
             networkSubsetAfter
       · intro _ _ actualResponseHistory _ _ _ _ leader index
-        apply
-          effectiveAckersAfterInactiveResponse
+        apply Finset.subset_of_eq
+        apply effectiveAckersAfterInactiveResponse
             intermediate after destination response remaining
               takenFromIntermediate
+        · simp [after, intermediate]
         · simp [after, intermediate]
         · intro node
           rw [nodeStateEq node]
@@ -37591,11 +39416,11 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
         have updatedNodesEq :
             updateNode state.nodes destination (state.nodes destination) =
               state.nodes := by
-          funext node
-          by_cases same : node = destination <;>
-            simp [updateNode, Function.update, same]
+          exact
+            NodeStore.set_get_of_allocated
+              state.nodes destination destinationAllocated
         rw [updatedNodesEq]
-        let after : State TxId :=
+        let after : State Node TxId :=
           { state with
             network := updateQueue state.network destination remaining }
         have fieldEq :
@@ -37605,7 +39430,7 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
         change SystemInductiveInvariant after
         apply
           responseDequeuePreservesSystemInductiveInvariant
-            state after packed fieldEq
+            state after packed rfl (fun _ => Iff.rfl) fieldEq
               (fun queuedDestination message member =>
                 updateQueueSubset queuedDestination message
                   (by simpa [after] using member))
@@ -37630,10 +39455,11 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
                 Not ((state.nodes destination).role = .leader) := by
               simpa using notLeader
             exact roleNotLeader responseLeader
-          apply
-            effectiveAckersAfterInactiveResponse
+          apply Finset.subset_of_eq
+          apply effectiveAckersAfterInactiveResponse
               state after destination response remaining
                 takenByResponseSource
+          · rfl
           · rfl
           · intro node
             rfl
@@ -37647,7 +39473,7 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
           rw [
             effectiveElectionVotersAfterAppendResponse
               state after destination response remaining
-                takenByResponseSource rfl
+                takenByResponseSource rfl rfl
                 (fun node => rfl) (fun node => rfl)
           ] at majority
           exact majority
@@ -37655,7 +39481,7 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
           rw [
             effectiveElectionVotersAfterAppendResponse
               state after destination response remaining
-                takenByResponseSource rfl
+                takenByResponseSource rfl rfl
                 (fun node => rfl) (fun node => rfl)
           ] at member
           exact member
@@ -37680,11 +39506,11 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
           have updatedNodesEq :
               updateNode state.nodes destination (state.nodes destination) =
                 state.nodes := by
-            funext node
-            by_cases same : node = destination <;>
-              simp [updateNode, Function.update, same]
+            exact
+              NodeStore.set_get_of_allocated
+                state.nodes destination destinationAllocated
           rw [updatedNodesEq]
-          let after : State TxId :=
+          let after : State Node TxId :=
             { state with
               network := updateQueue state.network destination remaining }
           have fieldEq :
@@ -37694,15 +39520,16 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
           change SystemInductiveInvariant after
           apply
             responseDequeuePreservesSystemInductiveInvariant
-              state after packed fieldEq
+              state after packed rfl (fun _ => Iff.rfl) fieldEq
                 (fun queuedDestination message member =>
                   updateQueueSubset queuedDestination message
                     (by simpa [after] using member))
           · intro _ _ actualResponseHistory _ _ _ _ leader index
-            apply
-              effectiveAckersAfterInactiveResponse
+            apply Finset.subset_of_eq
+            apply effectiveAckersAfterInactiveResponse
                 state after destination response remaining
                   takenByResponseSource
+            · rfl
             · rfl
             · intro node
               rfl
@@ -37717,7 +39544,7 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
             rw [
               effectiveElectionVotersAfterAppendResponse
                 state after destination response remaining
-                  takenByResponseSource rfl
+                  takenByResponseSource rfl rfl
                   (fun node => rfl) (fun node => rfl)
             ] at majority
             exact majority
@@ -37725,7 +39552,7 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
             rw [
               effectiveElectionVotersAfterAppendResponse
                 state after destination response remaining
-                  takenByResponseSource rfl
+                  takenByResponseSource rfl rfl
                   (fun node => rfl) (fun node => rfl)
             ] at member
             exact member
@@ -37748,15 +39575,16 @@ theorem receiveAppendEntriesResponsePreservesSystemInductiveInvariant
 
 /-- Dequeuing a vote response leaves latent replication acknowledgements unchanged. -/
 theorem effectiveAckersAfterVoteResponse
-    (state after : State TxId)
+    (state after : State Node TxId)
     (destination : Node)
-    (response : RequestVoteResponse)
-    (remaining : List (Message TxId))
+    (response : RequestVoteResponse Node)
+    (remaining : List (Message Node TxId))
     (taken :
         takeFirstFrom response.source (state.network destination) =
           some (.requestVoteResponse response, remaining))
     (networkEq :
         after.network = updateQueue state.network destination remaining)
+    (hasJoinedEq : after.hasJoined = state.hasJoined)
     (termEq :
         forall node,
           (after.nodes node).currentTerm = (state.nodes node).currentTerm)
@@ -37767,7 +39595,7 @@ theorem effectiveAckersAfterVoteResponse
           (after.nodes leader).matchIndex peer =
             (state.nodes leader).matchIndex peer) :
     forall
-        (responseHistory : AppendEntriesResponse -> List (Entry TxId))
+        (responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId))
         leader index,
         effectiveAckers after responseHistory leader index =
           effectiveAckers state responseHistory leader index := by
@@ -37778,6 +39606,7 @@ theorem effectiveAckersAfterVoteResponse
     effectiveAckers, Finset.mem_filter,
     Finset.mem_univ, true_and
   ]
+  apply and_congr (by simp only [hasJoinedEq])
   constructor <;> rintro (self | matched | queued)
   · exact Or.inl self
   · exact Or.inr (Or.inl (by simpa [matchEq] using matched))
@@ -37843,16 +39672,17 @@ Processing a vote response never creates new effective election evidence:
 a newly recorded vote was already represented by the selected queued grant.
 -/
 theorem effectiveElectionVotersAfterVoteResponseSubset
-    (state after : State TxId)
+    (state after : State Node TxId)
     (destination : Node)
-    (response : RequestVoteResponse)
-    (remaining : List (Message TxId))
+    (response : RequestVoteResponse Node)
+    (remaining : List (Message Node TxId))
     (taken :
       takeFirstFrom response.source (state.network destination) =
         some (.requestVoteResponse response, remaining))
     (responseDestination : response.destination = destination)
     (networkEq :
       after.network = updateQueue state.network destination remaining)
+    (hasJoinedEq : after.hasJoined = state.hasJoined)
     (termEq :
       forall node,
         (after.nodes node).currentTerm = (state.nodes node).currentTerm)
@@ -37883,8 +39713,9 @@ theorem effectiveElectionVotersAfterVoteResponseSubset
     effectiveElectionVoters, Finset.mem_filter,
     Finset.mem_univ, true_and
   ] at member ⊢
-  rcases member with processed | queued
-  · by_cases candidateEq : candidate = destination
+  rcases member with ⟨joined, processed | queued⟩
+  · refine ⟨by simpa [hasJoinedEq] using joined, ?_⟩
+    by_cases candidateEq : candidate = destination
     · subst candidate
       rcases votesDestination with unchanged | inserted
       · exact Or.inl (by simpa [unchanged] using processed)
@@ -37900,7 +39731,7 @@ theorem effectiveElectionVotersAfterVoteResponseSubset
         · exact Or.inl old
     · exact Or.inl
         (by simpa [votesOther candidate candidateEq] using processed)
-  · right
+  · refine ⟨by simpa [hasJoinedEq] using joined, Or.inr ?_⟩
     rcases queued with
       ⟨queuedResponse, queuedMember, granted, responseTerm,
         responseSource, queuedDestination⟩
@@ -37933,14 +39764,15 @@ Before dequeue, recording a granted vote only changes the representation of
 evidence already present in the selected queued response.
 -/
 theorem effectiveElectionVotersAfterVoteResponseHandler
-    (state after : State TxId)
+    (state after : State Node TxId)
     (destination : Node)
-    (response : RequestVoteResponse)
+    (response : RequestVoteResponse Node)
     (selectedMember :
       Message.requestVoteResponse response ∈
         state.network destination)
     (responseDestination : response.destination = destination)
     (networkEq : after.network = state.network)
+    (hasJoinedEq : after.hasJoined = state.hasJoined)
     (termEq :
       forall node,
         (after.nodes node).currentTerm = (state.nodes node).currentTerm)
@@ -37967,6 +39799,7 @@ theorem effectiveElectionVotersAfterVoteResponseHandler
     effectiveElectionVoters, Finset.mem_filter,
     Finset.mem_univ, true_and
   ]
+  apply and_congr (by simp only [hasJoinedEq])
   constructor
   · rintro (processed | queued)
     · by_cases candidateEq : candidate = destination
@@ -38013,8 +39846,8 @@ theorem effectiveElectionVotersAfterVoteResponseHandler
 
 /-- The exact vote-set alternatives of the RequestVote response handler. -/
 theorem handleRequestVoteResponseVoteUpdate
-    {before after : NodeState TxId}
-    {response : RequestVoteResponse}
+    {before after : NodeState Node TxId}
+    {response : RequestVoteResponse Node}
     (handled :
       handleRequestVoteResponse? before response = some after) :
     after.votesGranted = before.votesGranted \/
@@ -38049,12 +39882,13 @@ theorem handleRequestVoteResponseVoteUpdate
 
 /-- Receiving a RequestVote response transfers latent vote evidence to runtime state. -/
 theorem receiveRequestVoteResponsePreservesSystemInductiveInvariant
-    (state : State TxId)
+    (state : State Node TxId)
     (source destination : Node)
-    (response : RequestVoteResponse)
-    (remaining : List (Message TxId))
-    (nextNode : NodeState TxId)
+    (response : RequestVoteResponse Node)
+    (remaining : List (Message Node TxId))
+    (nextNode : NodeState Node TxId)
     (invariant : SystemInductiveInvariant state)
+    (destinationAllocated : state.allocated destination)
     (taken :
       takeFirstFrom source (state.network destination) =
         some (.requestVoteResponse response, remaining))
@@ -38098,10 +39932,10 @@ theorem receiveRequestVoteResponsePreservesSystemInductiveInvariant
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
   have post := handleRequestVoteResponsePreserves handled
   have voteUpdate := handleRequestVoteResponseVoteUpdate handled
-  let intermediate : State TxId :=
+  let intermediate : State Node TxId :=
     { state with
       nodes := updateNode state.nodes destination nextNode }
-  let after : State TxId :=
+  let after : State Node TxId :=
     { state with
       nodes := updateNode state.nodes destination nextNode
       network := updateQueue state.network destination remaining }
@@ -38258,7 +40092,7 @@ theorem receiveRequestVoteResponsePreservesSystemInductiveInvariant
           effectiveElectionVoters state candidate :=
     effectiveElectionVotersAfterVoteResponseHandler
       state intermediate destination response selectedMember
-        responseDestination rfl termEq votesDestinationPlain votesOther
+        responseDestination rfl rfl termEq votesDestinationPlain votesOther
   have activeConfigurationsEq :
       forall candidate,
         activeConfigurations (intermediate.nodes candidate) =
@@ -38292,15 +40126,15 @@ theorem receiveRequestVoteResponsePreservesSystemInductiveInvariant
             (votesMonotone leader) majority⟩
   have voteHistoryIntermediate :
       forall
-        (actualVotes : VoteHistory)
+        (actualVotes : VoteHistory Node)
         (actualAppendHistory :
-          AppendEntriesRequest TxId -> List (Entry TxId))
+          AppendEntriesRequest Node TxId -> List (Entry Node TxId))
         (actualResponseHistory :
-          AppendEntriesResponse -> List (Entry TxId))
+          AppendEntriesResponse Node -> List (Entry Node TxId))
         (actualVoteRequestHistory :
-          RequestVoteRequest -> List (Entry TxId))
+          RequestVoteRequest Node -> List (Entry Node TxId))
         (actualVoteCandidateHistory actualVoteVoterHistory :
-          RequestVoteResponse -> List (Entry TxId)),
+          RequestVoteResponse Node -> List (Entry Node TxId)),
         InvariantFacts
             state actualVotes actualAppendHistory actualResponseHistory
               actualVoteRequestHistory actualVoteCandidateHistory
@@ -38355,13 +40189,72 @@ theorem receiveRequestVoteResponsePreservesSystemInductiveInvariant
         effectiveAckers intermediate actualResponseHistory leader index =
           effectiveAckers state actualResponseHistory leader index :=
     effectiveAckersFrame
-      state intermediate rfl termEq logEq
+      state intermediate rfl rfl termEq logEq
         (fun leader peer => congrFun (matchEq leader) peer)
+  have joinedCarriersIntermediate : JoinedCarrierFacts intermediate := by
+    constructor
+    · intro candidate peer member
+      exact
+        facts.joinedCarriers.activeNodes candidate
+          (activeNodeUnion_subset_of_activeConfigurations_subset
+            (state.nodes candidate) (intermediate.nodes candidate)
+            (by
+              intro configuration active
+              simpa [activeConfigurationsEq] using active)
+            member)
+    · intro candidate configuration member peer inNodes
+      exact
+        facts.joinedCarriers.configurationNodes candidate configuration
+          (by simpa [logEq] using member) inNodes
+    · intro candidate voter member
+      by_cases candidateEq : candidate = destination
+      · subst candidate
+        rcases votesDestination with unchanged | inserted
+        · exact
+            facts.joinedCarriers.grantedVotes destination
+              (by simpa [unchanged] using member)
+        · have sourceOrOld :
+              voter = response.source \/
+                voter ∈ (state.nodes destination).votesGranted := by
+            simpa [inserted.2.2.2] using member
+          rcases sourceOrOld with rfl | old
+          · exact
+              facts.joinedCarriers.voteResponseSources
+                destination response selectedMember
+          · exact facts.joinedCarriers.grantedVotes destination old
+      · exact
+          facts.joinedCarriers.grantedVotes candidate
+            (by simpa [votesOther candidate candidateEq] using member)
+    · exact facts.joinedCarriers.voteRequestDestinations
+    · exact facts.joinedCarriers.appendRequestDestinations
+    · exact facts.joinedCarriers.appendRequestConfigurations
+    · exact facts.joinedCarriers.voteResponseSources
+    · constructor
+      · intro candidate active
+        exact
+          facts.joinedCarriers.runtimeNodes.activeRoles candidate
+            (by simpa [roleEq] using active)
+      · intro leader peer positive
+        exact
+          facts.joinedCarriers.runtimeNodes.positiveMatches leader peer
+            (by simpa [matchEq] using positive)
+      · exact facts.joinedCarriers.runtimeNodes.appendResponses
+      · intro candidate nonempty
+        exact
+          facts.joinedCarriers.runtimeNodes.nonemptyLogs candidate
+            (by simpa [logEq] using nonempty)
   have intermediateInvariant :
       SystemInductiveInvariant intermediate := by
     apply
       replicationCursorUpdatePreservesSystemInductiveInvariant
-        state intermediate packed roleEq termEq logEq commitEq
+        state intermediate packed rfl
+          (fun candidate => by
+            simp only [intermediate, State.allocated, updateNode]
+            exact
+              NodeStore.allocated_set_iff_of_allocated
+                state.nodes destination _ destinationAllocated candidate)
+          joinedCarriersIntermediate
+          roleEq termEq logEq commitEq
           newFollowerEq candidatesSelfVoteIntermediate
           leadersHaveElectionWitnessIntermediate
     · exact voteHistoryIntermediate
@@ -38378,20 +40271,22 @@ theorem receiveRequestVoteResponsePreservesSystemInductiveInvariant
       simpa [intermediate] using member
     · exact progressIntermediate
     · intro _ _ actualResponseHistory _ _ _ _ leader index
-      exact effectiveAckersEq actualResponseHistory leader index
+      exact Finset.subset_of_eq
+        (effectiveAckersEq actualResponseHistory leader index)
     · intro _ actualAppendHistory actualResponseHistory
         _ _ _ _ leader index peer member
       simp only [
         potentialAckers, Finset.mem_filter,
         Finset.mem_univ, true_and
       ] at member ⊢
-      rcases member with effective | reserve
-      · exact Or.inl
-          (by
+      rcases member with ⟨joined, effective | reserve⟩
+      · exact
+          ⟨by simpa [intermediate] using joined,
+            Or.inl (by
             rw [effectiveAckersEq actualResponseHistory leader index]
               at effective
-            exact effective)
-      · right
+            exact effective)⟩
+      · refine ⟨by simpa [intermediate] using joined, Or.inr ?_⟩
         unfold queuedAppendReserve at reserve ⊢
         rcases reserve with
           ⟨request, queued, sourceEq, destinationEq,
@@ -38494,24 +40389,27 @@ theorem receiveRequestVoteResponsePreservesSystemInductiveInvariant
       intermediate after destination response remaining
         takenFromIntermediate responseDestination
         (by simp [after, intermediate])
+        (by simp [after, intermediate])
         (fun node => by rw [nodeStateEq node])
         (Or.inl (by rfl))
         (fun candidate _ => by rw [nodeStateEq candidate])
   change SystemInductiveInvariant after
   apply
     responseDequeuePreservesSystemInductiveInvariant
-      intermediate after intermediateInvariant nodeStateEq
+      intermediate after intermediateInvariant
+        (by simp [after, intermediate]) (fun _ => Iff.rfl) nodeStateEq
         networkSubsetAfter
   · intro _ _ actualResponseHistory _ _ _ _ leader index
-    exact
+    exact Finset.subset_of_eq (
       effectiveAckersAfterVoteResponse
         intermediate after destination response remaining
           takenFromIntermediate
           (by simp [after, intermediate])
+          (by simp [after, intermediate])
           (fun node => by rw [nodeStateEq node])
           (fun node => by rw [nodeStateEq node])
           (fun actualLeader peer => by rw [nodeStateEq actualLeader])
-          actualResponseHistory leader index
+          actualResponseHistory leader index)
   · intro candidate role majority
     rw [hasEffectiveElectionMajority, List.all_eq_true] at majority ⊢
     intro configuration active
@@ -38530,11 +40428,11 @@ theorem receiveRequestVoteResponsePreservesSystemInductiveInvariant
 
 /-- Append requests are unaffected by consuming a vote request and replying. -/
 theorem appendRequestMemAfterVoteRequestReceive
-    (network : Node -> List (Message TxId))
+    (network : Node -> List (Message Node TxId))
     (source destination : Node)
-    (request : RequestVoteRequest)
-    (response : RequestVoteResponse)
-    (remaining : List (Message TxId))
+    (request : RequestVoteRequest Node)
+    (response : RequestVoteResponse Node)
+    (remaining : List (Message Node TxId))
     (taken :
       takeFirstFrom source (network destination) =
         some (.requestVoteRequest request, remaining)) :
@@ -38575,11 +40473,11 @@ theorem appendRequestMemAfterVoteRequestReceive
 
 /-- Append responses are unaffected by consuming a vote request and replying. -/
 theorem appendResponseMemAfterVoteRequestReceive
-    (network : Node -> List (Message TxId))
+    (network : Node -> List (Message Node TxId))
     (source destination : Node)
-    (request : RequestVoteRequest)
-    (response : RequestVoteResponse)
-    (remaining : List (Message TxId))
+    (request : RequestVoteRequest Node)
+    (response : RequestVoteResponse Node)
+    (remaining : List (Message Node TxId))
     (taken :
       takeFirstFrom source (network destination) =
         some (.requestVoteRequest request, remaining)) :
@@ -38620,11 +40518,11 @@ theorem appendResponseMemAfterVoteRequestReceive
 
 /-- A remaining vote request existed before the selected request was consumed. -/
 theorem voteRequestMemBackAfterVoteRequestReceive
-    (network : Node -> List (Message TxId))
+    (network : Node -> List (Message Node TxId))
     (source destination : Node)
-    (request : RequestVoteRequest)
-    (response : RequestVoteResponse)
-    (remaining : List (Message TxId))
+    (request : RequestVoteRequest Node)
+    (response : RequestVoteResponse Node)
+    (remaining : List (Message Node TxId))
     (taken :
       takeFirstFrom source (network destination) =
         some (.requestVoteRequest request, remaining)) :
@@ -38655,11 +40553,11 @@ theorem voteRequestMemBackAfterVoteRequestReceive
 
 /-- A queued vote response is old or is the response just produced. -/
 theorem voteResponseMemAfterVoteRequestReceive
-    (network : Node -> List (Message TxId))
+    (network : Node -> List (Message Node TxId))
     (source destination : Node)
-    (request : RequestVoteRequest)
-    (response queuedResponse : RequestVoteResponse)
-    (remaining : List (Message TxId))
+    (request : RequestVoteRequest Node)
+    (response queuedResponse : RequestVoteResponse Node)
+    (remaining : List (Message Node TxId))
     (taken :
       takeFirstFrom source (network destination) =
         some (.requestVoteRequest request, remaining))
@@ -38694,11 +40592,11 @@ theorem voteResponseMemAfterVoteRequestReceive
 
 /-- Every old vote response remains queued after consuming a vote request. -/
 theorem oldVoteResponseMemAfterVoteRequestReceive
-    (network : Node -> List (Message TxId))
+    (network : Node -> List (Message Node TxId))
     (source destination : Node)
-    (request : RequestVoteRequest)
-    (response queuedResponse : RequestVoteResponse)
-    (remaining : List (Message TxId))
+    (request : RequestVoteRequest Node)
+    (response queuedResponse : RequestVoteResponse Node)
+    (remaining : List (Message Node TxId))
     (taken :
       takeFirstFrom source (network destination) =
         some (.requestVoteRequest request, remaining))
@@ -38721,11 +40619,11 @@ theorem oldVoteResponseMemAfterVoteRequestReceive
 
 /-- Vote requests are unaffected by consuming an AppendEntries request. -/
 theorem voteRequestMemAfterAppendRequestReceive
-    (network : Node -> List (Message TxId))
+    (network : Node -> List (Message Node TxId))
     (source destination : Node)
-    (request : AppendEntriesRequest TxId)
-    (response : AppendEntriesResponse)
-    (remaining : List (Message TxId))
+    (request : AppendEntriesRequest Node TxId)
+    (response : AppendEntriesResponse Node)
+    (remaining : List (Message Node TxId))
     (taken :
       takeFirstFrom source (network destination) =
         some (.appendEntriesRequest request, remaining)) :
@@ -38762,11 +40660,11 @@ theorem voteRequestMemAfterAppendRequestReceive
 
 /-- Vote responses are unaffected by consuming an AppendEntries request. -/
 theorem voteResponseMemAfterAppendRequestReceive
-    (network : Node -> List (Message TxId))
+    (network : Node -> List (Message Node TxId))
     (source destination : Node)
-    (request : AppendEntriesRequest TxId)
-    (response : AppendEntriesResponse)
-    (remaining : List (Message TxId))
+    (request : AppendEntriesRequest Node TxId)
+    (response : AppendEntriesResponse Node)
+    (remaining : List (Message Node TxId))
     (taken :
       takeFirstFrom source (network destination) =
         some (.appendEntriesRequest request, remaining)) :
@@ -38803,11 +40701,11 @@ theorem voteResponseMemAfterAppendRequestReceive
 
 /-- A queued AppendEntries response is old or is the response just produced. -/
 theorem appendResponseMemAfterAppendRequestReceive
-    (network : Node -> List (Message TxId))
+    (network : Node -> List (Message Node TxId))
     (source destination : Node)
-    (request : AppendEntriesRequest TxId)
-    (response queuedResponse : AppendEntriesResponse)
-    (remaining : List (Message TxId))
+    (request : AppendEntriesRequest Node TxId)
+    (response queuedResponse : AppendEntriesResponse Node)
+    (remaining : List (Message Node TxId))
     (taken :
       takeFirstFrom source (network destination) =
         some (.appendEntriesRequest request, remaining))
@@ -38837,11 +40735,11 @@ theorem appendResponseMemAfterAppendRequestReceive
 
 /-- Every old AppendEntries response remains queued after request handling. -/
 theorem oldAppendResponseMemAfterAppendRequestReceive
-    (network : Node -> List (Message TxId))
+    (network : Node -> List (Message Node TxId))
     (source destination : Node)
-    (request : AppendEntriesRequest TxId)
-    (response queuedResponse : AppendEntriesResponse)
-    (remaining : List (Message TxId))
+    (request : AppendEntriesRequest Node TxId)
+    (response queuedResponse : AppendEntriesResponse Node)
+    (remaining : List (Message Node TxId))
     (taken :
       takeFirstFrom source (network destination) =
         some (.appendEntriesRequest request, remaining))
@@ -38863,13 +40761,13 @@ theorem oldAppendResponseMemAfterAppendRequestReceive
 /-- Post-receive ACK evidence is old evidence or the selected request's newly
 materialised destination ACK. -/
 theorem effectiveAckerAfterAppendRequestReceive
-    (state after : State TxId)
+    (state after : State Node TxId)
     (source destination : Node)
-    (request : AppendEntriesRequest TxId)
-    (response : AppendEntriesResponse)
-    (remaining : List (Message TxId))
-    (responseHistory : AppendEntriesResponse -> List (Entry TxId))
-    (newHistory : List (Entry TxId))
+    (request : AppendEntriesRequest Node TxId)
+    (response : AppendEntriesResponse Node)
+    (remaining : List (Message Node TxId))
+    (responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId))
+    (newHistory : List (Entry Node TxId))
     (taken :
       takeFirstFrom source (state.network destination) =
         some (.appendEntriesRequest request, remaining))
@@ -38884,6 +40782,7 @@ theorem effectiveAckerAfterAppendRequestReceive
     (networkEq :
       after.network =
         reply state.network destination remaining response)
+    (hasJoinedEq : after.hasJoined = state.hasJoined)
     (termEq :
       forall node,
         (after.nodes node).currentTerm =
@@ -38916,10 +40815,13 @@ theorem effectiveAckerAfterAppendRequestReceive
     effectiveAckers, Finset.mem_filter,
     Finset.mem_univ, true_and
   ] at member ⊢
-  rcases member with self | matched | queued
-  · exact Or.inl (Or.inl self)
+  have oldJoined : voter ∈ state.hasJoined := by
+    simpa [hasJoinedEq] using member.1
+  rcases member.2 with self | matched | queued
+  · exact Or.inl ⟨oldJoined, Or.inl self⟩
   · exact Or.inl
-      (Or.inr (Or.inl (by simpa [matchEq] using matched)))
+      ⟨oldJoined,
+        Or.inr (Or.inl (by simpa [matchEq] using matched))⟩
   · rcases queued with
       ⟨queuedResponse, queuedMember, success, responseTerm,
         responseSource, responseDestination, covered, historyCovered⟩
@@ -38949,33 +40851,33 @@ theorem effectiveAckerAfterAppendRequestReceive
                 (by simpa [leaderSource] using responseRequestTerm)⟩
     · rcases memberCases with oldMember | new
       · left
-        right
-        right
-        refine
-          ⟨queuedResponse, oldMember, success,
-            by simpa [termEq] using responseTerm,
-            responseSource, responseDestination, covered, ?_⟩
-        simpa [
-          Function.update, sameResponse,
-          leaderLogEq leader role
-        ] using historyCovered
+        exact
+          ⟨oldJoined, Or.inr (Or.inr (by
+            refine
+              ⟨queuedResponse, oldMember, success,
+                by simpa [termEq] using responseTerm,
+                responseSource, responseDestination, covered, ?_⟩
+            simpa [
+              Function.update, sameResponse,
+              leaderLogEq leader role
+            ] using historyCovered))⟩
       · exact False.elim (sameResponse new.2)
 
 /-- Reserve materialisation preserves all temporal ACK histories. -/
 theorem appendRequestAckerTemporalFacts
-    (state : State TxId)
+    (state : State Node TxId)
     (source destination : Node)
-    (request : AppendEntriesRequest TxId)
-    (nextNode : NodeState TxId)
-    (response : AppendEntriesResponse)
-    (remaining : List (Message TxId))
-    (votes : VoteHistory)
-    (appendHistory : AppendEntriesRequest TxId -> List (Entry TxId))
-    (responseHistory : AppendEntriesResponse -> List (Entry TxId))
-    (voteVoterHistory : RequestVoteResponse -> List (Entry TxId))
-    (canonicalHistory : Nat -> List (Entry TxId))
-    (owners : TermOwners)
-    (elections : ElectionHistory TxId)
+    (request : AppendEntriesRequest Node TxId)
+    (nextNode : NodeState Node TxId)
+    (response : AppendEntriesResponse Node)
+    (remaining : List (Message Node TxId))
+    (votes : VoteHistory Node)
+    (appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId))
+    (responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId))
+    (voteVoterHistory : RequestVoteResponse Node -> List (Entry Node TxId))
+    (canonicalHistory : Nat -> List (Entry Node TxId))
+    (owners : TermOwners Node)
+    (elections : ElectionHistory Node TxId)
     (termsPositive : CurrentTermsPositive state)
     (entriesBounded : EntriesDoNotExceedCurrentTerm state)
     (voteFacts : VoteHistoryFacts state votes)
@@ -39004,7 +40906,7 @@ theorem appendRequestAckerTemporalFacts
     (handled :
       handleAppendEntriesRequest? (state.nodes destination) request =
         some (nextNode, response)) :
-    let after : State TxId :=
+    let after : State Node TxId :=
       { state with
         nodes := updateNode state.nodes destination nextNode
         network := reply state.network destination remaining response }
@@ -39015,7 +40917,7 @@ theorem appendRequestAckerTemporalFacts
         after votes newResponseHistory voteVoterHistory elections /\
       AckerElectionHistory after newResponseHistory elections := by
   let post := CCFRaft.handleAppendEntriesRequestLocalPost handled
-  let after : State TxId :=
+  let after : State Node TxId :=
     { state with
       nodes := updateNode state.nodes destination nextNode
       network := reply state.network destination remaining response }
@@ -39093,7 +40995,7 @@ theorem appendRequestAckerTemporalFacts
           (by simpa [requestDestination] using post.responseSource)
           post.responseDestination
           post.successfulResponseTerm post.successfulCurrentTerm
-          rfl termEq matchEq leaderLogEq
+          rfl rfl termEq matchEq leaderLogEq
           leader index role voter
           (by simpa [newResponseHistory] using member)
   have sourceStateEq :
@@ -39415,11 +41317,11 @@ theorem appendRequestAckerTemporalFacts
 
 /-- Vote-request processing does not change replication acknowledgement sets. -/
 theorem effectiveAckersAfterVoteRequestReceive
-    (state after : State TxId)
+    (state after : State Node TxId)
     (source destination : Node)
-    (request : RequestVoteRequest)
-    (response : RequestVoteResponse)
-    (remaining : List (Message TxId))
+    (request : RequestVoteRequest Node)
+    (response : RequestVoteResponse Node)
+    (remaining : List (Message Node TxId))
     (taken :
       takeFirstFrom source (state.network destination) =
         some (.requestVoteRequest request, remaining))
@@ -39428,6 +41330,7 @@ theorem effectiveAckersAfterVoteRequestReceive
         enqueueNoDup
           (updateQueue state.network destination remaining)
           (.requestVoteResponse response))
+    (hasJoinedEq : after.hasJoined = state.hasJoined)
     (termEq :
       forall node,
         (after.nodes node).currentTerm =
@@ -39447,6 +41350,7 @@ theorem effectiveAckersAfterVoteRequestReceive
     effectiveAckers, Finset.mem_filter,
     Finset.mem_univ, true_and
   ]
+  apply and_congr (by simp only [hasJoinedEq])
   constructor <;> rintro (self | matched | queued)
   · exact Or.inl self
   · exact Or.inr (Or.inl (by simpa [matchEq] using matched))
@@ -39487,11 +41391,11 @@ theorem effectiveAckersAfterVoteRequestReceive
 
 /-- Existing effective election voters survive vote-request processing. -/
 theorem effectiveElectionVotersBeforeSubsetAfterVoteRequestReceive
-    (state after : State TxId)
+    (state after : State Node TxId)
     (source destination : Node)
-    (request : RequestVoteRequest)
-    (response : RequestVoteResponse)
-    (remaining : List (Message TxId))
+    (request : RequestVoteRequest Node)
+    (response : RequestVoteResponse Node)
+    (remaining : List (Message Node TxId))
     (taken :
       takeFirstFrom source (state.network destination) =
         some (.requestVoteRequest request, remaining))
@@ -39500,6 +41404,7 @@ theorem effectiveElectionVotersBeforeSubsetAfterVoteRequestReceive
         enqueueNoDup
           (updateQueue state.network destination remaining)
           (.requestVoteResponse response))
+    (hasJoinedEq : after.hasJoined = state.hasJoined)
     (votesEq :
       forall candidate,
         (after.nodes candidate).votesGranted =
@@ -39516,9 +41421,11 @@ theorem effectiveElectionVotersBeforeSubsetAfterVoteRequestReceive
     effectiveElectionVoters, Finset.mem_filter,
     Finset.mem_univ, true_and
   ] at member ⊢
-  rcases member with processed | queued
-  · exact Or.inl (by simpa [votesEq] using processed)
-  · right
+  rcases member with ⟨joined, processed | queued⟩
+  · exact
+      ⟨by simpa [hasJoinedEq] using joined,
+        Or.inl (by simpa [votesEq] using processed)⟩
+  · refine ⟨by simpa [hasJoinedEq] using joined, Or.inr ?_⟩
     rcases queued with
       ⟨queuedResponse, queuedMember, granted, responseTerm,
         responseSource, responseDestination⟩
@@ -39535,9 +41442,9 @@ theorem effectiveElectionVotersBeforeSubsetAfterVoteRequestReceive
 
 /-- Arbitrary-term local facts for one handled RequestVote request. -/
 structure VoteRequestLocalPost
-    (before after : NodeState TxId)
-    (request : RequestVoteRequest)
-    (response : RequestVoteResponse) : Prop where
+    (before after : NodeState Node TxId)
+    (request : RequestVoteRequest Node)
+    (response : RequestVoteResponse Node) : Prop where
   roleUnchanged : after.role = before.role
   currentTermUnchanged : after.currentTerm = before.currentTerm
   logUnchanged : after.log = before.log
@@ -39568,9 +41475,9 @@ structure VoteRequestLocalPost
 
 /-- The RequestVote handler changes only the persistent vote and reply. -/
 theorem handleRequestVoteRequestLocalPost
-    {before after : NodeState TxId}
-    {request : RequestVoteRequest}
-    {response : RequestVoteResponse}
+    {before after : NodeState Node TxId}
+    {request : RequestVoteRequest Node}
+    {response : RequestVoteResponse Node}
     (handled :
       handleRequestVoteRequest? before request =
         some (after, response)) :
@@ -39657,12 +41564,12 @@ A granted response can only add a voter which was already in the candidate's
 pre-state prospective quorum.
 -/
 theorem effectiveElectionVotersAfterGrantedRequestSubsetPotential
-    (state : State TxId)
+    (state : State Node TxId)
     (source destination : Node)
-    (request : RequestVoteRequest)
-    (nextNode : NodeState TxId)
-    (response : RequestVoteResponse)
-    (remaining : List (Message TxId))
+    (request : RequestVoteRequest Node)
+    (nextNode : NodeState Node TxId)
+    (response : RequestVoteResponse Node)
+    (remaining : List (Message Node TxId))
     (invariant : SystemInductiveInvariant state)
     (taken :
       takeFirstFrom source (state.network destination) =
@@ -39670,7 +41577,7 @@ theorem effectiveElectionVotersAfterGrantedRequestSubsetPotential
     (handled :
       handleRequestVoteRequest? (state.nodes destination) request =
         some (nextNode, response)) :
-    let after : State TxId :=
+    let after : State Node TxId :=
       { state with
         nodes := updateNode state.nodes destination nextNode
         network :=
@@ -39685,7 +41592,7 @@ theorem effectiveElectionVotersAfterGrantedRequestSubsetPotential
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
   have monoLog := invariantFactsMonoLogFromCanonicalHistories facts
-  let after : State TxId :=
+  let after : State Node TxId :=
     { state with
       nodes := updateNode state.nodes destination nextNode
       network :=
@@ -39736,15 +41643,17 @@ theorem effectiveElectionVotersAfterGrantedRequestSubsetPotential
     potentialElectionVoters, Finset.mem_filter,
     Finset.mem_univ, true_and
   ]
-  rcases member with processed | queued
-  · apply Or.inl
+  rcases member with ⟨joined, processed | queued⟩
+  · refine ⟨by simpa [after] using joined, Or.inl ?_⟩
     simp only [
       effectiveElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ]
     rw [votesEq candidate] at processed
-    exact Or.inl processed
-  · rcases queued with
+    exact
+      ⟨by simpa [after] using joined, Or.inl processed⟩
+  · refine ⟨by simpa [after] using joined, ?_⟩
+    rcases queued with
       ⟨queuedResponse, queuedMember, granted, queuedTerm,
         queuedSource, queuedDestination⟩
     rcases
@@ -39779,10 +41688,12 @@ theorem effectiveElectionVotersAfterGrantedRequestSubsetPotential
         Finset.mem_univ, true_and
       ]
       rw [termEq candidate] at queuedTerm
-      exact Or.inr
-        ⟨queuedResponse, oldMember, granted,
-          queuedTerm,
-          queuedSource, queuedDestination⟩
+      exact
+        ⟨by simpa [after] using joined,
+          Or.inr
+            ⟨queuedResponse, oldMember, granted,
+              queuedTerm,
+              queuedSource, queuedDestination⟩⟩
     · rcases new with ⟨candidateEq, responseEq⟩
       simp only [Message.requestVoteResponse.injEq] at responseEq
       subst queuedResponse
@@ -39860,12 +41771,12 @@ theorem effectiveElectionVotersAfterGrantedRequestSubsetPotential
 
 /-- A post-grant effective quorum was already a pre-state prospective quorum. -/
 theorem effectiveElectionMajorityAfterGrantedRequestWasPotential
-    (state : State TxId)
+    (state : State Node TxId)
     (source destination : Node)
-    (request : RequestVoteRequest)
-    (nextNode : NodeState TxId)
-    (response : RequestVoteResponse)
-    (remaining : List (Message TxId))
+    (request : RequestVoteRequest Node)
+    (nextNode : NodeState Node TxId)
+    (response : RequestVoteResponse Node)
+    (remaining : List (Message Node TxId))
     (invariant : SystemInductiveInvariant state)
     (taken :
       takeFirstFrom source (state.network destination) =
@@ -39873,7 +41784,7 @@ theorem effectiveElectionMajorityAfterGrantedRequestWasPotential
     (handled :
       handleRequestVoteRequest? (state.nodes destination) request =
         some (nextNode, response)) :
-    let after : State TxId :=
+    let after : State Node TxId :=
       { state with
         nodes := updateNode state.nodes destination nextNode
         network :=
@@ -39917,13 +41828,13 @@ theorem effectiveElectionMajorityAfterGrantedRequestWasPotential
 
 /-- Granting a vote freezes every prior ACK-retention fact at vote time. -/
 theorem ackerVoteHistoryAfterGrantedRequest
-    (state after : State TxId)
-    (votes : VoteHistory)
-    (responseHistory : AppendEntriesResponse -> List (Entry TxId))
-    (voteVoterHistory : RequestVoteResponse -> List (Entry TxId))
-    (elections : ElectionHistory TxId)
+    (state after : State Node TxId)
+    (votes : VoteHistory Node)
+    (responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId))
+    (voteVoterHistory : RequestVoteResponse Node -> List (Entry Node TxId))
+    (elections : ElectionHistory Node TxId)
     (destination : Node)
-    (request : RequestVoteRequest)
+    (request : RequestVoteRequest Node)
     (currentFacts :
       AckerCurrentHistory state responseHistory elections)
     (voteFacts :
@@ -39945,7 +41856,7 @@ theorem ackerVoteHistoryAfterGrantedRequest
           effectiveAckers state responseHistory source index) :
     let key :=
       grantedVoteKey destination request.term request.source
-    let newVotes : VoteHistory :=
+    let newVotes : VoteHistory (Node : Type) :=
       Function.update votes destination
         (Function.update
           (votes destination) request.term (some request.source))
@@ -40057,10 +41968,11 @@ theorem ackerVoteHistoryAfterGrantedRequest
 
 /-- Enqueuing a rejected vote response is inert for all safety evidence. -/
 theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
-    (state : State TxId)
-    (response : RequestVoteResponse)
+    (state : State Node TxId)
+    (response : RequestVoteResponse Node)
     (invariant : SystemInductiveInvariant state)
-    (rejected : response.voteGranted = false) :
+    (rejected : response.voteGranted = false)
+    (responseSourceJoined : response.source ∈ state.hasJoined) :
     SystemInductiveInvariant
       { state with
         network :=
@@ -40079,7 +41991,7 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
       evidenceFacts, prospectiveFacts, activationEvidence,
       activationCanonical, activationElections, configurationActivations⟩
   rcases facts.processedAckHistory with ⟨ackHistory, ackFacts⟩
-  let after : State TxId :=
+  let after : State Node TxId :=
     { state with
       network :=
         enqueueNoDup state.network (.requestVoteResponse response) }
@@ -40136,6 +42048,7 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
       effectiveAckers, Finset.mem_filter,
       Finset.mem_univ, true_and
     ]
+    apply and_congr (by simp [after])
     constructor <;> rintro (self | matched | queued)
     · exact Or.inl self
     · exact Or.inr (Or.inl matched)
@@ -40171,6 +42084,7 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
       effectiveElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ]
+    apply and_congr (by simp [after])
     constructor
     · rintro (processed | queued)
       · exact Or.inl processed
@@ -40232,6 +42146,7 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
       Finset.mem_univ, true_and,
       effectiveElectionVotersEq
     ]
+    apply and_congr (by simp [after])
     change
       (voter ∈ effectiveElectionVoters state candidate \/
         currentlyEligibleElectionVoter state candidate voter) ↔
@@ -40281,6 +42196,7 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
       Finset.mem_univ, true_and,
       effectiveAckersEq, queuedAppendReserveEq
     ]
+    simp [after]
   have potentialMajorityEq :
       forall leader index,
         hasPotentialMajorityAt
@@ -40428,10 +42344,13 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
           relaxedElectionVoters, Finset.mem_filter,
           Finset.mem_univ, true_and
         ] at relaxed ⊢
-        rcases relaxed with effective | eligible
-        · exact Or.inl
-            (by rw [effectiveElectionVotersEq] at effective; exact effective)
-        · exact Or.inr eligible
+        rcases relaxed with ⟨joined, effective | eligible⟩
+        · exact
+            ⟨by simpa [after] using joined,
+              Or.inl (by
+                rw [effectiveElectionVotersEq] at effective
+                exact effective)⟩
+        · exact ⟨by simpa [after] using joined, Or.inr eligible⟩
       exact Or.inl
         ⟨role, newer, entriesBefore,
           oldRelaxed,
@@ -40653,14 +42572,85 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
           state after ackHistory ackFacts
             (fun _ => rfl) (fun _ => rfl)
             (fun _ => rfl) (fun _ _ => rfl)⟩
+  · constructor
+    · exact facts.joinedCarriers.activeNodes
+    · exact facts.joinedCarriers.configurationNodes
+    · exact facts.joinedCarriers.grantedVotes
+    · intro destination request member
+      rcases
+          memEnqueueNoDup
+            state.network (.requestVoteResponse response)
+              (.requestVoteRequest request) destination
+              (by simpa [after] using member) with
+        old | new
+      · exact
+          facts.joinedCarriers.voteRequestDestinations
+            destination request old
+      · simp at new
+    · intro destination request member
+      rcases
+          memEnqueueNoDup
+            state.network (.requestVoteResponse response)
+              (.appendEntriesRequest request) destination
+              (by simpa [after] using member) with
+        old | new
+      · exact
+          facts.joinedCarriers.appendRequestDestinations
+            destination request old
+      · simp at new
+    · intro destination request member configuration configured peer inNodes
+      have old :
+          Message.appendEntriesRequest request ∈
+            state.network destination := by
+        rcases
+            memEnqueueNoDup
+              state.network (.requestVoteResponse response)
+                (.appendEntriesRequest request) destination
+                (by simpa [after] using member) with
+          old | new
+        · exact old
+        · simp at new
+      exact
+        facts.joinedCarriers.appendRequestConfigurations
+          destination request old configuration configured inNodes
+    · intro destination queuedResponse member
+      rcases
+          memEnqueueNoDup
+            state.network (.requestVoteResponse response)
+              (.requestVoteResponse queuedResponse) destination
+              (by simpa [after] using member) with
+        old | new
+      · exact
+          facts.joinedCarriers.voteResponseSources
+            destination queuedResponse old
+      · simp only [Message.requestVoteResponse.injEq] at new
+        simpa [new.2] using responseSourceJoined
+    · constructor
+      · exact facts.joinedCarriers.runtimeNodes.activeRoles
+      · exact facts.joinedCarriers.runtimeNodes.positiveMatches
+      · intro destination queuedResponse member
+        rcases
+            memEnqueueNoDup
+              state.network (.requestVoteResponse response)
+                (.appendEntriesResponse queuedResponse) destination
+                (by simpa [after] using member) with
+          old | new
+        · exact
+            facts.joinedCarriers.runtimeNodes.appendResponses
+              destination queuedResponse old
+        · simp at new
+      · exact facts.joinedCarriers.runtimeNodes.nonemptyLogs
+  · exact
+      AllocatedNodesExactlyJoined.frame
+        facts.allocatedNodesExactlyJoined (fun _ => Iff.rfl) rfl
 /-- Enqueuing a granted vote response materialises prospective election evidence. -/
 theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
-    (state : State TxId)
+    (state : State Node TxId)
     (source destination : Node)
-    (request : RequestVoteRequest)
-    (nextNode : NodeState TxId)
-    (response : RequestVoteResponse)
-    (remaining : List (Message TxId))
+    (request : RequestVoteRequest Node)
+    (nextNode : NodeState Node TxId)
+    (response : RequestVoteResponse Node)
+    (remaining : List (Message Node TxId))
     (invariant : SystemInductiveInvariant state)
     (taken :
       takeFirstFrom source (state.network destination) =
@@ -40714,7 +42704,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
         granted,
         post.responseSource.trans requestDestination,
         post.responseDestination⟩
-  let newVotes : VoteHistory :=
+  let newVotes : VoteHistory (Node : Type) :=
     Function.update votes destination
       (Function.update
         (votes destination) request.term (some request.source))
@@ -40736,7 +42726,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
       Nat.min_eq_left
         (maxCommittableIndexBounded (state.nodes destination).log)
     ]
-  let after : State TxId :=
+  let after : State Node TxId :=
     { state with
       nodes := updateNode state.nodes destination nextNode
       network :=
@@ -40894,6 +42884,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
       effectiveAckers, Finset.mem_filter,
       Finset.mem_univ, true_and
     ]
+    apply and_congr (by simp [after])
     constructor <;> rintro (self | matched | queued)
     · exact Or.inl self
     · exact Or.inr (Or.inl (by simpa [matchEq] using matched))
@@ -40981,6 +42972,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
       Finset.mem_univ, true_and,
       effectiveAckersEq, queuedAppendReserveEq
     ]
+    simp [after]
   have potentialReplicationMajorityEq :
       forall leader index,
         hasPotentialMajorityAt
@@ -40999,9 +42991,11 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
       effectiveElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at member ⊢
-    rcases member with processed | queued
-    · exact Or.inl (by simpa [votesGrantedEq] using processed)
-    · right
+    rcases member with ⟨joined, processed | queued⟩
+    · exact
+        ⟨by simpa [after] using joined,
+          Or.inl (by simpa [votesGrantedEq] using processed)⟩
+    · refine ⟨by simpa [after] using joined, Or.inr ?_⟩
       rcases queued with
         ⟨queuedResponse, queuedMember, queuedGranted, responseTerm,
           responseSource, responseDestination⟩
@@ -41026,13 +43020,15 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
       effectiveElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at member
-    rcases member with processed | queued
+    rcases member with ⟨joined, processed | queued⟩
     · left
       simp only [
         effectiveElectionVoters, Finset.mem_filter,
         Finset.mem_univ, true_and
       ]
-      exact Or.inl (by simpa [votesGrantedEq] using processed)
+      exact
+        ⟨by simpa [after] using joined,
+          Or.inl (by simpa [votesGrantedEq] using processed)⟩
     · rcases queued with
         ⟨queuedResponse, queuedMember, queuedGranted, responseTerm,
           responseSource, responseDestination⟩
@@ -41047,10 +43043,12 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
           effectiveElectionVoters, Finset.mem_filter,
           Finset.mem_univ, true_and
         ]
-        exact Or.inr
-          ⟨queuedResponse, old, queuedGranted,
-            by simpa [termEq] using responseTerm,
-            responseSource, responseDestination⟩
+        exact
+          ⟨by simpa [after] using joined,
+            Or.inr
+              ⟨queuedResponse, old, queuedGranted,
+                by simpa [termEq] using responseTerm,
+                responseSource, responseDestination⟩⟩
       · simp only [Message.requestVoteResponse.injEq] at new
         have sameResponse : queuedResponse = response := new.2
         subst queuedResponse
@@ -41112,7 +43110,10 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
         potentialElectionVoters, Finset.mem_filter,
         Finset.mem_univ, true_and
       ]
-      right
+      refine
+        ⟨facts.joinedCarriers.voteRequestDestinations
+            destination request selectedMember,
+          Or.inr ?_⟩
       unfold currentlyEligibleElectionVoter
       have sourceRole :
           (state.nodes request.source).role = .candidate := by
@@ -41183,13 +43184,10 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
       potentialElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ] at member ⊢
-    rcases member with effective | eligible
-    · simpa only [
-        potentialElectionVoters, Finset.mem_filter,
-        Finset.mem_univ, true_and
-      ] using
+    rcases member with ⟨joined, effective | eligible⟩
+    · simpa [potentialElectionVoters] using
         effectiveSubsetPotential candidate candidateRole effective
-    · right
+    · refine ⟨by simpa [after] using joined, Or.inr ?_⟩
       by_cases voterEq : voter = destination
       · subst voter
         unfold currentlyEligibleElectionVoter at eligible ⊢
@@ -41656,12 +43654,20 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
           relaxedElectionVoters, Finset.mem_filter,
           Finset.mem_univ, true_and
         ] at relaxed ⊢
-        rcases relaxed with effective | eligible
+        rcases relaxed with ⟨joined, effective | eligible⟩
         · rcases newEffectiveClassify candidate member effective with
             old | new
-          · exact Or.inl old
+          · have oldJoined : member ∈ state.hasJoined := by
+              have unpacked :
+                  member ∈ state.hasJoined /\
+                    (member ∈ (state.nodes candidate).votesGranted \/
+                      queuedGrantedVote state candidate member) := by
+                simpa [effectiveElectionVoters] using old
+              exact unpacked.1
+            exact ⟨oldJoined, Or.inl old⟩
           · rcases new with ⟨candidateEq, memberEq, candidateTerm⟩
-            right
+            refine
+              ⟨by simpa [after] using joined, Or.inr ?_⟩
             subst candidate
             subst member
             have sourceRole :
@@ -41701,11 +43707,13 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
             exact
               ⟨by simpa [candidateTerm, grantFacts.1],
                 canonicalUpToDate⟩
-        · exact Or.inr (by simpa [
-            makeRequestVoteRequest,
-            termEq, logEq, lastIndexEq, lastTermEq,
-            voteLogUpToDate
-          ] using eligible)
+        · exact
+            ⟨by simpa [after] using joined,
+              Or.inr (by simpa [
+                makeRequestVoteRequest,
+                termEq, logEq, lastIndexEq, lastTermEq,
+                voteLogUpToDate
+              ] using eligible)⟩
       left
       exact
         ⟨oldRole,
@@ -42413,14 +44421,123 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
           state after ackHistory ackFacts
             roleEq termEq logEq
             (fun leader peer => congrFun (matchEq leader) peer)⟩
+  · constructor
+    · intro node peer member
+      exact
+        facts.joinedCarriers.activeNodes node
+          (activeNodeUnion_subset_of_activeConfigurations_subset
+            (state.nodes node) (after.nodes node)
+            (by
+              intro configuration active
+              simpa [activeConfigurationsEq] using active)
+            member)
+    · intro node configuration member peer inNodes
+      exact
+        facts.joinedCarriers.configurationNodes node configuration
+          (by simpa [logEq] using member) inNodes
+    · intro node peer member
+      exact
+        facts.joinedCarriers.grantedVotes node
+          (by simpa [votesGrantedEq] using member)
+    · intro queuedDestination queuedRequest member
+      rcases
+          memEnqueueNoDup
+            state.network (.requestVoteResponse response)
+              (.requestVoteRequest queuedRequest) queuedDestination
+              (by simpa [after] using member) with
+        old | new
+      · exact
+          facts.joinedCarriers.voteRequestDestinations
+            queuedDestination queuedRequest old
+      · simp at new
+    · intro queuedDestination queuedRequest member
+      rcases
+          memEnqueueNoDup
+            state.network (.requestVoteResponse response)
+              (.appendEntriesRequest queuedRequest) queuedDestination
+              (by simpa [after] using member) with
+        old | new
+      · exact
+          facts.joinedCarriers.appendRequestDestinations
+            queuedDestination queuedRequest old
+      · simp at new
+    · intro queuedDestination queuedRequest member configuration configured
+        peer inNodes
+      have old :
+          Message.appendEntriesRequest queuedRequest ∈
+            state.network queuedDestination := by
+        rcases
+            memEnqueueNoDup
+              state.network (.requestVoteResponse response)
+                (.appendEntriesRequest queuedRequest) queuedDestination
+                (by simpa [after] using member) with
+          old | new
+        · exact old
+        · simp at new
+      exact
+        facts.joinedCarriers.appendRequestConfigurations
+          queuedDestination queuedRequest old configuration configured
+            inNodes
+    · intro queuedDestination queuedResponse member
+      rcases
+          memEnqueueNoDup
+            state.network (.requestVoteResponse response)
+              (.requestVoteResponse queuedResponse) queuedDestination
+              (by simpa [after] using member) with
+        old | new
+      · exact
+          facts.joinedCarriers.voteResponseSources
+            queuedDestination queuedResponse old
+      · simp only [Message.requestVoteResponse.injEq] at new
+        rw [new.2, post.responseSource, requestDestination]
+        exact
+          facts.joinedCarriers.voteRequestDestinations
+            destination request selectedMember
+    · constructor
+      · intro node active
+        exact
+          facts.joinedCarriers.runtimeNodes.activeRoles node
+            (by simpa [roleEq] using active)
+      · intro leader peer positive
+        exact
+          facts.joinedCarriers.runtimeNodes.positiveMatches leader peer
+            (by simpa [matchEq] using positive)
+      · intro queuedDestination queuedResponse member
+        rcases
+            memEnqueueNoDup
+              state.network (.requestVoteResponse response)
+                (.appendEntriesResponse queuedResponse) queuedDestination
+                (by simpa [after] using member) with
+          old | new
+        · exact
+            facts.joinedCarriers.runtimeNodes.appendResponses
+              queuedDestination queuedResponse old
+        · simp at new
+      · intro node nonempty
+        exact
+          facts.joinedCarriers.runtimeNodes.nonemptyLogs node
+            (by simpa [logEq] using nonempty)
+  · have destinationAllocated : state.allocated destination :=
+      (facts.allocatedNodesExactlyJoined destination).mpr
+        (facts.joinedCarriers.voteRequestDestinations
+          destination request selectedMember)
+    apply
+      AllocatedNodesExactlyJoined.frame
+        (after := after)
+        facts.allocatedNodesExactlyJoined
+        (fun candidate => ?_) rfl
+    simp only [after, State.allocated, updateNode]
+    exact
+      NodeStore.allocated_set_iff_of_allocated
+        state.nodes destination _ destinationAllocated candidate
 /-- Receiving an AppendEntries request preserves the full arbitrary-term invariant. -/
 theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
-    (state : State TxId)
+    (state : State Node TxId)
     (source destination : Node)
-    (request : AppendEntriesRequest TxId)
-    (remaining : List (Message TxId))
-    (nextNode : NodeState TxId)
-    (response : AppendEntriesResponse)
+    (request : AppendEntriesRequest Node TxId)
+    (remaining : List (Message Node TxId))
+    (nextNode : NodeState Node TxId)
+    (response : AppendEntriesResponse Node)
     (invariant : SystemInductiveInvariant state)
     (taken :
       takeFirstFrom source (state.network destination) =
@@ -42449,7 +44566,7 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
       activationCanonical, activationElections, configurationActivations⟩
   rcases facts.processedAckHistory with ⟨ackHistory, ackFacts⟩
   let post := CCFRaft.handleAppendEntriesRequestLocalPost handled
-  let after : State TxId :=
+  let after : State Node TxId :=
     { state with
       nodes := updateNode state.nodes destination nextNode
       network := reply state.network destination remaining response }
@@ -42620,6 +44737,7 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
       effectiveElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ]
+    apply and_congr (by simp [after])
     constructor <;> rintro (processed | queued)
     · exact Or.inl (by simpa [votesEq] using processed)
     · right
@@ -42887,15 +45005,18 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
         relaxedElectionVoters, Finset.mem_filter,
         Finset.mem_univ, true_and
       ] at relaxed
-      rcases relaxed with effective | supporter
+      rcases relaxed with ⟨joined, effective | supporter⟩
       · have oldRelaxed :
             member ∈ relaxedElectionVoters state candidate := by
           simp only [
             relaxedElectionVoters, Finset.mem_filter,
             Finset.mem_univ, true_and
           ]
-          exact Or.inl
-            (by rw [effectiveElectionVotersEq] at effective; exact effective)
+          exact
+            ⟨by simpa [after] using joined,
+              Or.inl (by
+                rw [effectiveElectionVotersEq] at effective
+                exact effective)⟩
         simpa [candidateUnchanged, historySame, frontierSame] using
           prospectiveFacts.relaxedSupporterCarriesFrontier
             oldEvidence oldPrefix oldKnown candidate member
@@ -42910,7 +45031,7 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
               futureElectionVoters, Finset.mem_filter,
               Finset.mem_univ, true_and
             ]
-            exact Or.inr supporter
+            exact ⟨joined, Or.inr supporter⟩
           exact
             prospectiveCommitFutureMemberCore
               ownershipAfter committedSignatureAfter
@@ -42923,7 +45044,7 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
               relaxedElectionVoters, Finset.mem_filter,
               Finset.mem_univ, true_and
             ]
-            right
+            refine ⟨by simpa [after] using joined, Or.inr ?_⟩
             have memberUnchanged :
                 after.nodes member = state.nodes member := by
               simp [after, updateNode, Function.update, memberEq]
@@ -43095,7 +45216,7 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
           (by simpa [requestDestination] using post.responseSource)
           post.responseDestination
           post.successfulResponseTerm post.successfulCurrentTerm
-          rfl termEq
+          rfl rfl termEq
           (fun currentLeader peer =>
             congrFun (matchEq currentLeader) peer)
           (fun currentLeader currentRole =>
@@ -43112,7 +45233,9 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
     intro leader index role voter member
     rcases effectiveAckerCases leader index role voter member with
       old | materialised
-    · simpa [potentialAckers] using Or.inl old
+    · exact
+        effectiveAckersSubsetPotential
+          state appendHistory responseHistory leader index old
     · rcases materialised with
         ⟨succeeded, leaderEq, voterEq, acknowledged, requestTerm⟩
       subst leader
@@ -43121,10 +45244,12 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
         potentialAckers, Finset.mem_filter,
         Finset.mem_univ, true_and
       ]
-      right
       refine
-        ⟨request, requestMember, rfl, requestDestination,
-          requestTerm, Or.inl ?_, ?_⟩
+        ⟨facts.joinedCarriers.appendRequestDestinations
+            destination request requestMember,
+          Or.inr
+            ⟨request, requestMember, rfl, requestDestination,
+              requestTerm, Or.inl ?_, ?_⟩⟩
       · exact ⟨nextNode, response, handled, succeeded, acknowledged⟩
       · exact
           ownership.queuedActiveSourceHistory
@@ -43719,10 +45844,11 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
         potentialElectionVoters, relaxedElectionVoters,
         Finset.mem_filter, Finset.mem_univ, true_and
       ] at electionMember ⊢
-      rcases electionMember with materialised | eligible
-      · exact Or.inl materialised
-      · exact Or.inr
-          ⟨by
+      rcases electionMember with ⟨joined, materialised | eligible⟩
+      · exact ⟨joined, Or.inl materialised⟩
+      · exact
+          ⟨joined, Or.inr
+            ⟨by
               have termEq := eligible.1
               simpa [
                 currentlyEligibleElectionVoter,
@@ -43731,7 +45857,7 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
             by simpa [
               currentlyEligibleElectionVoter,
               makeRequestVoteRequest
-            ] using eligible.2.1⟩
+            ] using eligible.2.1⟩⟩
     exact
       effectiveAckerRelaxedCandidateContainsPrefixOfEarlierSafe
         termsPositiveAfter committedSignatureAfter ownershipAfter
@@ -44249,7 +46375,7 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
               candidateConfiguration.index <=
                 candidateEvidence.commitFrontier :=
             supportedBound.trans candidateValid.2.2.1
-          let evidenceNode : NodeState TxId :=
+          let evidenceNode : NodeState Node TxId :=
             { after.nodes candidate with
               log := candidateEvidence.history
               commitIndex := candidateEvidence.commitFrontier }
@@ -44338,7 +46464,7 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
             exact candidateKnownAtEvidenceFrontier
           have candidateBeforeEvidenceAuthority :
               candidateConfiguration.index <= evidence.authority.index := by
-            let evidenceNode : NodeState TxId :=
+            let evidenceNode : NodeState Node TxId :=
               { after.nodes candidate with
                 log := evidence.history
                 commitIndex := evidence.commitFrontier }
@@ -44381,7 +46507,7 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
             have evidenceKnown :
                 evidence.authority ∈
                   allConfigurations evidence.history := by
-              let evidenceNode : NodeState TxId :=
+              let evidenceNode : NodeState Node TxId :=
                 { after.nodes candidate with
                   log := evidence.history
                   commitIndex := evidence.commitFrontier }
@@ -44548,6 +46674,53 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
       electionQueuedFacts queuedDestination queuedRequest
         (appendRequestBack queuedDestination queuedRequest member)
         record recorded
+  have configurationNodesAfter :
+      forall node configuration,
+        configuration ∈ allConfigurations (after.nodes node).log ->
+          configuration.nodes ⊆ after.hasJoined := by
+    intro node configuration member peer inNodes
+    have joinedFromOld
+        (oldMember :
+          configuration ∈ allConfigurations (state.nodes node).log) :
+        peer ∈ after.hasJoined := by
+      simpa [after] using
+        facts.joinedCarriers.configurationNodes
+          node configuration oldMember inNodes
+    by_cases same : node = destination
+    · subst node
+      have nextMember :
+          configuration ∈ allConfigurations nextNode.log := by
+        simpa [after, updateNode] using member
+      rcases post.logShape with unchanged | truncated | extended
+      · apply joinedFromOld
+        simpa [unchanged] using nextMember
+      · apply joinedFromOld
+        exact
+          CCFRaft.memOfPrefix
+            (allConfigurations_mono_prefix
+              (List.take_prefix request.prevLogIndex
+                (state.nodes destination).log))
+            (by simpa [truncated] using nextMember)
+      · have carried :
+            configuration.nodes ⊆ state.hasJoined :=
+          allConfigurations_append_nodes_carried
+            ((state.nodes destination).log.take request.prevLogIndex)
+            request.entries state.hasJoined
+            (fun oldConfiguration oldMember =>
+              facts.joinedCarriers.configurationNodes
+                destination oldConfiguration
+                  (CCFRaft.memOfPrefix
+                    (allConfigurations_mono_prefix
+                      (List.take_prefix request.prevLogIndex
+                        (state.nodes destination).log))
+                    oldMember))
+            (facts.joinedCarriers.appendRequestConfigurations
+              destination request requestMember)
+            configuration
+            (by simpa [extended] using nextMember)
+        simpa [after] using carried inNodes
+    · apply joinedFromOld
+      simpa [after, updateNode, Function.update, same] using member
   refine
     ⟨votes, appendHistory, newResponseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, ?_⟩
@@ -44819,16 +46992,126 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
         configurationCoverageAfter⟩
   · exact snapshotsAfter
   · exact ⟨ackHistory, processedAckAfter⟩
+  · constructor
+    · intro node
+      exact
+        activeNodeUnion_subset_of_allConfigurations_carrier
+          (after.nodes node) after.hasJoined
+            (configurationNodesAfter node)
+    · exact configurationNodesAfter
+    · intro node peer member
+      simpa [after] using
+        facts.joinedCarriers.grantedVotes node
+          (by rw [← votesEq node]; exact member)
+    · intro queuedDestination queuedRequest member
+      simpa [after] using
+        facts.joinedCarriers.voteRequestDestinations
+          queuedDestination queuedRequest
+            ((voteRequestEq queuedDestination queuedRequest).mp member)
+    · intro queuedDestination queuedRequest member
+      simpa [after] using
+        facts.joinedCarriers.appendRequestDestinations
+          queuedDestination queuedRequest
+            (appendRequestBack queuedDestination queuedRequest member)
+    · intro queuedDestination queuedRequest member
+        configuration configured peer inNodes
+      simpa [after] using
+        facts.joinedCarriers.appendRequestConfigurations
+          queuedDestination queuedRequest
+            (appendRequestBack queuedDestination queuedRequest member)
+            configuration configured inNodes
+    · intro queuedDestination queuedResponse member
+      simpa [after] using
+        facts.joinedCarriers.voteResponseSources
+          queuedDestination queuedResponse
+            ((voteResponseEq queuedDestination queuedResponse).mp member)
+    · constructor
+      · intro node active
+        have oldActive :
+            (state.nodes node).role = .candidate \/
+              (state.nodes node).role = .leader := by
+          rcases active with candidate | leader
+          · exact Or.inl (by
+              rw [roleEq node] at candidate
+              exact candidate)
+          · exact Or.inr (by
+              rw [roleEq node] at leader
+              exact leader)
+        simpa [after] using
+          facts.joinedCarriers.runtimeNodes.activeRoles node
+            oldActive
+      · intro leader peer positive
+        have oldPositive :
+            0 < (state.nodes leader).matchIndex peer := by
+          rw [matchEq leader] at positive
+          exact positive
+        simpa [after] using
+          facts.joinedCarriers.runtimeNodes.positiveMatches leader peer
+            oldPositive
+      · intro queuedDestination queuedResponse member
+        rcases
+            memEnqueueNoDup
+              (updateQueue state.network destination remaining)
+              (.appendEntriesResponse response)
+              (.appendEntriesResponse queuedResponse) queuedDestination
+              (by simpa [after, reply] using member) with
+          old | new
+        · have oldMember :
+              Message.appendEntriesResponse queuedResponse ∈
+                state.network queuedDestination := by
+            by_cases same : queuedDestination = destination
+            · subst queuedDestination
+              have retained :
+                  Message.appendEntriesResponse queuedResponse ∈ remaining := by
+                simpa [updateQueue] using old
+              exact (takeFirstFromSound taken).2.2 _ retained
+            · simpa [updateQueue, Function.update, same] using old
+          simpa [after] using
+            facts.joinedCarriers.runtimeNodes.appendResponses
+              queuedDestination queuedResponse oldMember
+        · rcases new with ⟨_, responseEq⟩
+          have sameResponse : queuedResponse = response := by
+            simpa using responseEq
+          subst queuedResponse
+          simpa [after, post.responseSource, requestDestination] using
+            facts.joinedCarriers.appendRequestDestinations
+              destination request requestMember
+      · intro node nonempty
+        by_cases same : node = destination
+        · subst node
+          simpa [after] using
+            facts.joinedCarriers.appendRequestDestinations
+              destination request requestMember
+        · simpa [after] using
+            facts.joinedCarriers.runtimeNodes.nonemptyLogs node
+              (by
+                intro empty
+                apply nonempty
+                simpa [after, updateNode, Function.update, same] using empty)
+  · have destinationAllocated : state.allocated destination :=
+      (facts.allocatedNodesExactlyJoined destination).mpr
+        (facts.joinedCarriers.appendRequestDestinations
+          destination request requestMember)
+    apply
+      AllocatedNodesExactlyJoined.frame
+        (after := after)
+        facts.allocatedNodesExactlyJoined
+        (fun candidate => ?_) rfl
+    simp only [after, State.allocated, updateNode]
+    exact
+      NodeStore.allocated_set_iff_of_allocated
+        state.nodes destination _ destinationAllocated candidate
 
 /-- Receiving a RequestVote request preserves the full arbitrary-term invariant. -/
 theorem receiveRequestVoteRequestPreservesSystemInductiveInvariant
-    (state : State TxId)
+    (state : State Node TxId)
     (source destination : Node)
-    (request : RequestVoteRequest)
-    (remaining : List (Message TxId))
-    (nextNode : NodeState TxId)
-    (response : RequestVoteResponse)
+    (request : RequestVoteRequest Node)
+    (remaining : List (Message Node TxId))
+    (nextNode : NodeState Node TxId)
+    (response : RequestVoteResponse Node)
     (invariant : SystemInductiveInvariant state)
+    (destinationAllocated : state.allocated destination)
     (taken :
       takeFirstFrom source (state.network destination) =
         some (.requestVoteRequest request, remaining))
@@ -44843,12 +47126,12 @@ theorem receiveRequestVoteRequestPreservesSystemInductiveInvariant
             (updateQueue state.network destination remaining)
             (.requestVoteResponse response) } := by
   let post := handleRequestVoteRequestLocalPost handled
-  let enqueued : State TxId :=
+  let enqueued : State Node TxId :=
     { state with
       nodes := updateNode state.nodes destination nextNode
       network :=
         enqueueNoDup state.network (.requestVoteResponse response) }
-  let after : State TxId :=
+  let after : State Node TxId :=
     { state with
       nodes := updateNode state.nodes destination nextNode
       network :=
@@ -44867,12 +47150,18 @@ theorem receiveRequestVoteRequestPreservesSystemInductiveInvariant
       have nodesEq :
           updateNode state.nodes destination nextNode = state.nodes := by
         rw [nextEq]
-        funext node
-        by_cases same : node = destination <;>
-          simp [updateNode, Function.update, same]
+        exact
+          NodeStore.set_get_of_allocated
+            state.nodes destination destinationAllocated
       simpa [enqueued, nodesEq] using
         enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
           state response invariant rejected
+            (by
+              rw [post.responseSource]
+              exact
+                systemVoteRequestDestinationJoined
+                  state invariant destination request
+                    (takeFirstFromSound taken).2.1)
   have roleEq :
       forall node,
         (after.nodes node).role = (enqueued.nodes node).role := by
@@ -44981,28 +47270,34 @@ theorem receiveRequestVoteRequestPreservesSystemInductiveInvariant
       effectiveElectionVoters, Finset.mem_filter,
       Finset.mem_univ, true_and
     ]
-    constructor <;> rintro (processed | queued)
-    · exact Or.inl processed
-    · right
-      rcases queued with
-        ⟨queuedResponse, member, granted, responseTerm,
-          responseSource, responseDestination⟩
-      exact
-        ⟨queuedResponse,
-          (voteResponseEq candidate queuedResponse).mp member,
-          granted, responseTerm, responseSource, responseDestination⟩
-    · exact Or.inl processed
-    · right
-      rcases queued with
-        ⟨queuedResponse, member, granted, responseTerm,
-          responseSource, responseDestination⟩
-      exact
-        ⟨queuedResponse,
-          (voteResponseEq candidate queuedResponse).mpr member,
-          granted, responseTerm, responseSource, responseDestination⟩
+    constructor
+    · rintro ⟨joined, support⟩
+      refine ⟨joined, ?_⟩
+      rcases support with processed | queued
+      · exact Or.inl processed
+      · right
+        rcases queued with
+          ⟨queuedResponse, member, granted, responseTerm,
+            responseSource, responseDestination⟩
+        exact
+          ⟨queuedResponse,
+            (voteResponseEq candidate queuedResponse).mp member,
+            granted, responseTerm, responseSource, responseDestination⟩
+    · rintro ⟨joined, support⟩
+      refine ⟨joined, ?_⟩
+      rcases support with processed | queued
+      · exact Or.inl processed
+      · right
+        rcases queued with
+          ⟨queuedResponse, member, granted, responseTerm,
+            responseSource, responseDestination⟩
+        exact
+          ⟨queuedResponse,
+            (voteResponseEq candidate queuedResponse).mpr member,
+            granted, responseTerm, responseSource, responseDestination⟩
   have effectiveAckersEq :
       forall
-        (responseHistory : AppendEntriesResponse -> List (Entry TxId))
+        (responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId))
         leader index,
         effectiveAckers after responseHistory leader index =
           effectiveAckers enqueued responseHistory leader index := by
@@ -45012,58 +47307,67 @@ theorem receiveRequestVoteRequestPreservesSystemInductiveInvariant
       effectiveAckers, Finset.mem_filter,
       Finset.mem_univ, true_and
     ]
-    constructor <;> rintro (self | matched | queued)
-    · exact Or.inl self
-    · exact Or.inr (Or.inl matched)
-    · right
-      right
-      rcases queued with
-        ⟨queuedResponse, member, success, responseTerm,
-          responseSource, responseDestination, lastIndex, covered⟩
-      exact
-        ⟨queuedResponse,
-          networkSubset leader (.appendEntriesResponse queuedResponse) member,
-          success, responseTerm, responseSource,
-          responseDestination, lastIndex, covered⟩
-    · exact Or.inl self
-    · exact Or.inr (Or.inl matched)
-    · right
-      right
-      rcases queued with
-        ⟨queuedResponse, member, success, responseTerm,
-          responseSource, responseDestination, lastIndex, covered⟩
-      have oldMember :
-          Message.appendEntriesResponse queuedResponse ∈
-            state.network leader := by
-        rcases
-            memEnqueueNoDup
-              state.network (.requestVoteResponse response)
-                (.appendEntriesResponse queuedResponse)
-                leader (by simpa [enqueued] using member) with
-          old | new
-        · exact old
-        · simp at new
-      have afterMember :
-          Message.appendEntriesResponse queuedResponse ∈
-            after.network leader := by
-        rw [show
-          after.network =
-            enqueueNoDup
-              (updateQueue state.network destination remaining)
-              (.requestVoteResponse response) by rfl]
+    constructor
+    · rintro ⟨joined, support⟩
+      refine ⟨joined, ?_⟩
+      rcases support with self | matched | queued
+      · exact Or.inl self
+      · exact Or.inr (Or.inl matched)
+      · right
+        right
+        rcases queued with
+          ⟨queuedResponse, member, success, responseTerm,
+            responseSource, responseDestination, lastIndex, covered⟩
         exact
-          (appendResponseMemAfterVoteRequestReceive
-            state.network source destination request response remaining
-              taken leader queuedResponse).mpr oldMember
-      exact
-        ⟨queuedResponse, afterMember, success, responseTerm,
-          responseSource, responseDestination, lastIndex, covered⟩
+          ⟨queuedResponse,
+            networkSubset leader (.appendEntriesResponse queuedResponse) member,
+            success, responseTerm, responseSource,
+            responseDestination, lastIndex, covered⟩
+    · rintro ⟨joined, support⟩
+      refine ⟨joined, ?_⟩
+      rcases support with self | matched | queued
+      · exact Or.inl self
+      · exact Or.inr (Or.inl matched)
+      · right
+        right
+        rcases queued with
+          ⟨queuedResponse, member, success, responseTerm,
+            responseSource, responseDestination, lastIndex, covered⟩
+        have oldMember :
+            Message.appendEntriesResponse queuedResponse ∈
+              state.network leader := by
+          rcases
+              memEnqueueNoDup
+                state.network (.requestVoteResponse response)
+                  (.appendEntriesResponse queuedResponse)
+                  leader (by simpa [enqueued] using member) with
+            old | new
+          · exact old
+          · simp at new
+        have afterMember :
+            Message.appendEntriesResponse queuedResponse ∈
+              after.network leader := by
+          rw [show
+            after.network =
+              enqueueNoDup
+                (updateQueue state.network destination remaining)
+                (.requestVoteResponse response) by rfl]
+          exact
+            (appendResponseMemAfterVoteRequestReceive
+              state.network source destination request response remaining
+                taken leader queuedResponse).mpr oldMember
+        exact
+          ⟨queuedResponse, afterMember, success, responseTerm,
+            responseSource, responseDestination, lastIndex, covered⟩
   change SystemInductiveInvariant after
   apply
     responseDequeuePreservesSystemInductiveInvariant
-      enqueued after enqueuedInvariant (fun _ => rfl) networkSubset
+      enqueued after enqueuedInvariant
+        (by simp [after, enqueued]) (fun _ => Iff.rfl)
+        (fun _ => rfl) networkSubset
   · intro _ _ actualResponseHistory _ _ _ _ leader index
-    exact effectiveAckersEq actualResponseHistory leader index
+    exact Finset.subset_of_eq
+      (effectiveAckersEq actualResponseHistory leader index)
   · intro candidate role majority
     unfold hasEffectiveElectionMajority at majority ⊢
     rw [effectiveElectionVotersEq] at majority
@@ -45072,11 +47376,68 @@ theorem receiveRequestVoteRequestPreservesSystemInductiveInvariant
     rw [effectiveElectionVotersEq] at member
     exact member
 
+theorem pureNetworkDequeuePreservesSystemInductiveInvariant
+    (state : State Node TxId)
+    (network : Node -> List (Message Node TxId))
+    (invariant : SystemInductiveInvariant state)
+    (networkSubset :
+      forall destination message,
+        message ∈ network destination ->
+          message ∈ state.network destination) :
+    SystemInductiveInvariant { state with network } := by
+  let after : State Node TxId := { state with network }
+  have effectiveElectionSubset :
+      forall candidate,
+        effectiveElectionVoters after candidate ⊆
+          effectiveElectionVoters state candidate := by
+    intro candidate voter member
+    simp only [
+      effectiveElectionVoters, Finset.mem_filter
+    ] at member ⊢
+    rcases member with ⟨joined, processed | queued⟩
+    · exact ⟨joined, Or.inl processed⟩
+    · rcases queued with
+        ⟨response, queued, granted, term, source, destination⟩
+      exact
+        ⟨joined, Or.inr
+          ⟨response,
+            networkSubset candidate (.requestVoteResponse response) queued,
+            granted, term, source, destination⟩⟩
+  change SystemInductiveInvariant after
+  apply
+    responseDequeuePreservesSystemInductiveInvariant
+      state after invariant rfl (fun _ => Iff.rfl)
+        (fun _ => rfl) networkSubset
+  · intro _ _ responseHistory _ _ _ _ leader index peer member
+    simp only [effectiveAckers, Finset.mem_filter] at member ⊢
+    rcases member with ⟨joined, self | matched | queued⟩
+    · exact ⟨joined, Or.inl self⟩
+    · exact ⟨joined, Or.inr (Or.inl matched)⟩
+    · rcases queued with
+        ⟨response, queued, success, term, source, destination,
+          acknowledged, covered⟩
+      exact
+        ⟨joined, Or.inr (Or.inr
+          ⟨response,
+            networkSubset leader (.appendEntriesResponse response) queued,
+            success, term, source, destination, acknowledged, covered⟩)⟩
+  · intro candidate _ majority
+    rw [hasEffectiveElectionMajority, List.all_eq_true] at majority ⊢
+    intro configuration active
+    apply decide_eq_true
+    exact
+      hasConfigurationMajority_mono
+        (effectiveElectionSubset candidate)
+        (of_decide_eq_true (majority configuration active))
+  · intro candidate voter _ member
+    exact effectiveElectionSubset candidate member
+
 /-- Every successful receive dispatch preserves the full arbitrary-term invariant. -/
 theorem handleReceivePreservesSystemInductiveInvariant
-    (state resultingState : State TxId)
+    (state resultingState : State Node TxId)
     (source destination : Node)
     (invariant : SystemInductiveInvariant state)
+    (destinationAllocated : state.allocated destination)
     (received :
       handleReceive? state source destination = some resultingState) :
     SystemInductiveInvariant resultingState := by
@@ -45087,6 +47448,18 @@ theorem handleReceivePreservesSystemInductiveInvariant
     split at received
     · contradiction
     · rename_i destinationMatches
+      have networkSubset :
+          forall queuedDestination queuedMessage,
+            queuedMessage ∈
+                updateQueue state.network destination remaining
+                  queuedDestination ->
+              queuedMessage ∈ state.network queuedDestination := by
+        intro queuedDestination queuedMessage member
+        by_cases destinationEq : queuedDestination = destination
+        · subst queuedDestination
+          exact (takeFirstFromSound taken).2.2 queuedMessage
+            (by simpa [updateQueue, Function.update] using member)
+        · simpa [updateQueue, Function.update, destinationEq] using member
       split at received
       · rename_i request
         split at received
@@ -45108,14 +47481,24 @@ theorem handleReceivePreservesSystemInductiveInvariant
                   invariant taken notStepped handled
       · rename_i response
         split at received
-        · contradiction
-        · rename_i nextNode handled
+        · rename_i sourceAllocated
+          split at received
+          · contradiction
+          · rename_i nextNode handled
+            have resultEq := Option.some.inj received
+            rw [← resultEq]
+            exact
+              receiveAppendEntriesResponsePreservesSystemInductiveInvariant
+                state source destination response remaining nextNode
+                  invariant destinationAllocated taken
+                  (by simpa using destinationMatches) handled
+        · rename_i sourceNotAllocated
           have resultEq := Option.some.inj received
           rw [← resultEq]
           exact
-            receiveAppendEntriesResponsePreservesSystemInductiveInvariant
-              state source destination response remaining nextNode
-                invariant taken (by simpa using destinationMatches) handled
+            pureNetworkDequeuePreservesSystemInductiveInvariant
+              state (updateQueue state.network destination remaining)
+                invariant networkSubset
       · rename_i request
         split at received
         · contradiction
@@ -45125,21 +47508,31 @@ theorem handleReceivePreservesSystemInductiveInvariant
           exact
             receiveRequestVoteRequestPreservesSystemInductiveInvariant
               state source destination request remaining nextNode response
-                invariant taken handled
+                invariant destinationAllocated taken handled
       · rename_i response
         split at received
-        · contradiction
-        · rename_i nextNode handled
+        · rename_i sourceAllocated
+          split at received
+          · contradiction
+          · rename_i nextNode handled
+            have resultEq := Option.some.inj received
+            rw [← resultEq]
+            exact
+              receiveRequestVoteResponsePreservesSystemInductiveInvariant
+                state source destination response remaining nextNode
+                  invariant destinationAllocated taken
+                  (by simpa using destinationMatches) handled
+        · rename_i sourceNotAllocated
           have resultEq := Option.some.inj received
           rw [← resultEq]
           exact
-            receiveRequestVoteResponsePreservesSystemInductiveInvariant
-              state source destination response remaining nextNode
-                invariant taken (by simpa using destinationMatches) handled
+            pureNetworkDequeuePreservesSystemInductiveInvariant
+              state (updateQueue state.network destination remaining)
+                invariant networkSubset
 
 /-- Processing any enabled queued message preserves the arbitrary-term invariant. -/
 theorem receivePreservesSystemInductiveInvariant
-    (state : State TxId)
+    (state : State Node TxId)
     (source destination : Node)
     (invariant : SystemInductiveInvariant state)
     (enabled : Enabled state (.receive source destination)) :
@@ -45158,11 +47551,50 @@ theorem receivePreservesSystemInductiveInvariant
       rw [nextEq]
       exact
         handleReceivePreservesSystemInductiveInvariant
-          state resultingState source destination invariant received
+          state resultingState source destination invariant enabled.1 received
+
+/--
+Every node newly introduced by an enabled reconfiguration is allocated with
+the exact fresh state before the source node is updated.
+-/
+theorem changeConfiguration_addedNode_fresh
+    (state : State Node TxId)
+    (source node : Node)
+    (newConfiguration : Finset Node)
+    (allocatedNodesExactlyJoined : AllocatedNodesExactlyJoined state)
+    (enabled :
+      Enabled state (.changeConfiguration source newConfiguration))
+    (member :
+      node ∈
+        newConfiguration \
+          (latestConfiguration (state.nodes source)).nodes) :
+    (next state (.changeConfiguration source newConfiguration)).node? node =
+      some freshNodeState := by
+  unfold Enabled at enabled
+  have nodeNotJoined : node ∉ state.hasJoined :=
+    enabled.2.2.2.2 node member
+  have nodeNotAllocated : Not (state.allocated node) := by
+    intro allocated
+    exact nodeNotJoined ((allocatedNodesExactlyJoined node).mp allocated)
+  have sourceJoined : source ∈ state.hasJoined :=
+    (allocatedNodesExactlyJoined source).mp enabled.1
+  have nodeNeSource : Not (node = source) := by
+    intro same
+    subst node
+    exact nodeNotJoined sourceJoined
+  simp only [next, CCFRaft.next, State.node?, updateNode]
+  rw [
+    NodeStore.node?_set_of_ne _ source node _ nodeNeSource,
+    NodeStore.node?_allocate_of_not_allocated_of_mem
+      state.nodes
+        (newConfiguration \
+          (latestConfiguration (state.nodes source)).nodes)
+        node nodeNotAllocated member
+  ]
 
 /-- Appending a pending configuration preserves the arbitrary-term invariant. -/
 theorem changeConfigurationPreservesSystemInductiveInvariant
-    (state : State TxId)
+    (state : State Node TxId)
     (source : Node)
     (newConfiguration : Finset Node)
     (invariant : SystemInductiveInvariant state)
@@ -45173,12 +47605,12 @@ theorem changeConfigurationPreservesSystemInductiveInvariant
   simpa [leaderAppendState, next, CCFRaft.next] using
     leaderAppendPreservesSystemInductiveInvariant
       state source (.reconfiguration newConfiguration)
-        state.submittedTxIds invariant enabled.1
+        state.submittedTxIds invariant enabled.1 enabled.2.1
 
 /-- Every enabled arbitrary-term action preserves the supporting invariant. -/
 theorem systemInductiveInvariantPreserved
-    (state : State TxId)
-    (action : Action TxId)
+    (state : State Node TxId)
+    (action : Action Node TxId)
     (invariant : SystemInductiveInvariant state)
     (enabled : Enabled state action) :
     SystemInductiveInvariant (next state action) := by
@@ -45228,7 +47660,7 @@ theorem systemInductiveInvariantPreserved
 
 /-- The arbitrary-term invariant holds in every reachable state. -/
 theorem reachableSystemInductiveInvariant
-    {state : State TxId}
+    {state : State Node TxId}
     (reachable : Reachable state) :
     SystemInductiveInvariant state :=
   ExecutableTransitionSystem.reachableInvariant
@@ -45239,7 +47671,7 @@ theorem reachableSystemInductiveInvariant
 
 /-- Reachable committed logs are pairwise prefix-comparable. -/
 theorem reachableCommittedLogsPrefix
-    {state : State TxId}
+    {state : State Node TxId}
     (reachable : Reachable state) :
     CommittedLogsPrefix state :=
   (systemInductiveInvariantSafety
@@ -45247,7 +47679,7 @@ theorem reachableCommittedLogsPrefix
 
 /-- Every positive committed frontier in a reachable state is a signature. -/
 theorem reachableCommittedFrontierIsSignature
-    {state : State TxId}
+    {state : State Node TxId}
     (reachable : Reachable state) :
     CommittedFrontierIsSignature state :=
   systemInductiveInvariantCommittedFrontierIsSignature
@@ -45255,7 +47687,7 @@ theorem reachableCommittedFrontierIsSignature
 
 /-- Every reachable state satisfies Raft log matching. -/
 theorem reachableLogMatching
-    {state : State TxId}
+    {state : State Node TxId}
     (reachable : Reachable state) :
     LogMatching state :=
   systemInductiveInvariantLogMatching
@@ -45263,7 +47695,7 @@ theorem reachableLogMatching
 
 /-- Entry terms are monotonic within every reachable node log. -/
 theorem reachableMonoLog
-    {state : State TxId}
+    {state : State Node TxId}
     (reachable : Reachable state) :
     MonoLog state :=
   systemInductiveInvariantMonoLog
@@ -45271,7 +47703,7 @@ theorem reachableMonoLog
 
 /-- Every reachable state has at most one leader in each term. -/
 theorem reachableElectionSafety
-    {state : State TxId}
+    {state : State Node TxId}
     (reachable : Reachable state) :
     ElectionSafety state :=
   (systemInductiveInvariantSafety
@@ -45279,7 +47711,7 @@ theorem reachableElectionSafety
 
 /-- Every higher-term reachable leader contains lower-term committed logs. -/
 theorem reachableLeaderCompleteness
-    {state : State TxId}
+    {state : State Node TxId}
     (reachable : Reachable state) :
     LeaderCompleteness state :=
   systemInductiveInvariantLeaderCompleteness
@@ -45287,7 +47719,7 @@ theorem reachableLeaderCompleteness
 
 /-- Bundle the core reachable consensus-safety properties. -/
 theorem reachableConsensusSafety
-    {state : State TxId}
+    {state : State Node TxId}
     (reachable : Reachable state) :
     ConsensusSafety state :=
   systemInductiveInvariantSafety

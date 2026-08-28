@@ -18,8 +18,9 @@ the historical authority proof.
 
 namespace CCFRaft
 
-variable {TxId : Type}
-variable [DecidableEq TxId]
+variable {Node TxId : Type}
+variable [DecidableEq Node] [DecidableEq TxId]
+variable [Bootstrap Node]
 
 /--
 Transfer a shared-configuration authority conclusion across a term-only state
@@ -28,19 +29,19 @@ the preserved pre-state facts, while this theorem proves the UpdateTerm-specific
 quorum intersection, reserve elimination, and voter-state transport.
 -/
 theorem updateTermPotentialPrefixOfRelaxedAuthority
-    {before after : State TxId}
-    {appendHistory : AppendEntriesRequest TxId -> List (Entry TxId)}
-    {responseHistory : AppendEntriesResponse -> List (Entry TxId)}
-    {votes : VoteHistory}
+    {before after : State Node TxId}
+    {appendHistory : AppendEntriesRequest Node TxId -> List (Entry Node TxId)}
+    {responseHistory : AppendEntriesResponse Node -> List (Entry Node TxId)}
+    {votes : VoteHistory Node}
     {voteCandidateHistory voteVoterHistory :
-      RequestVoteResponse -> List (Entry TxId)}
-    {canonicalHistory : Nat -> List (Entry TxId)}
-    {owners : TermOwners}
-    {elections : ElectionHistory TxId}
-    {activations : ActivationHistory TxId}
+      RequestVoteResponse Node -> List (Entry Node TxId)}
+    {canonicalHistory : Nat -> List (Entry Node TxId)}
+    {owners : TermOwners Node}
+    {elections : ElectionHistory Node TxId}
+    {activations : ActivationHistory Node TxId}
     {source candidate : Node}
     {index : Nat}
-    {configuration : Configuration}
+    {configuration : Configuration Node}
     (sourceNodeEq : after.nodes source = before.nodes source)
     (candidateNodeEq : after.nodes candidate = before.nodes candidate)
     (logEq :
@@ -50,6 +51,7 @@ theorem updateTermPotentialPrefixOfRelaxedAuthority
       forall node,
         (before.nodes node).currentTerm <=
           (after.nodes node).currentTerm)
+    (hasJoinedEq : after.hasJoined = before.hasJoined)
     (effectiveAckersBack :
       effectiveAckers after responseHistory source index ⊆
         effectiveAckers before responseHistory source index)
@@ -168,10 +170,9 @@ theorem updateTermPotentialPrefixOfRelaxedAuthority
             (after.nodes voter).currentTerm := by
     intro voter member
     simp only [
-      potentialElectionVoters, Finset.mem_filter,
-      Finset.mem_univ, true_and
+      potentialElectionVoters, Finset.mem_filter
     ] at member
-    rcases member with effective | eligible
+    rcases member with ⟨_, effective | eligible⟩
     · have effectiveBefore :=
         effectiveElectionVotersBack effective
       rcases
@@ -214,10 +215,9 @@ theorem updateTermPotentialPrefixOfRelaxedAuthority
   have effectiveAfter :
       voter ∈ effectiveAckers after responseHistory source index := by
     simp only [
-      potentialAckers, Finset.mem_filter,
-      Finset.mem_univ, true_and
+      potentialAckers, Finset.mem_filter
     ] at replicationMember
-    rcases replicationMember with effective | reserve
+    rcases replicationMember with ⟨_, effective | reserve⟩
     · exact effective
     · have reserveTerm :
           (after.nodes voter).currentTerm <=
@@ -243,16 +243,17 @@ theorem updateTermPotentialPrefixOfRelaxedAuthority
   have relaxedBefore :
       voter ∈ relaxedElectionVoters before candidate := by
     simp only [
-      potentialElectionVoters, Finset.mem_filter,
-      Finset.mem_univ, true_and
+      potentialElectionVoters, Finset.mem_filter
     ] at electionMember
     simp only [
-      relaxedElectionVoters, Finset.mem_filter,
-      Finset.mem_univ, true_and
+      relaxedElectionVoters, Finset.mem_filter
     ]
-    rcases electionMember with effective | eligible
-    · exact Or.inl (effectiveElectionVotersBack effective)
-    · right
+    rcases electionMember with ⟨joinedAfter, effective | eligible⟩
+    · refine
+        ⟨by simpa [hasJoinedEq] using joinedAfter,
+          Or.inl (effectiveElectionVotersBack effective)⟩
+    · refine
+        ⟨by simpa [hasJoinedEq] using joinedAfter, Or.inr ?_⟩
       refine ⟨?_, ?_⟩
       · calc
           (before.nodes voter).currentTerm <=

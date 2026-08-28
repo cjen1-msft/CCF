@@ -18,20 +18,32 @@ on this artifact.
 `ConfigurationCoverage.lean` contains the causal configuration API.
 `UpdateTermAuthority.lean` isolates the mixed-state quorum argument for
 `UpdateTerm`. `Proofs.lean` keeps the public reachable-safety names stable.
+`BootstrapExamples.lean` checks singleton, sparse, and full-world bootstraps.
 The default `CCFRaft` target exports the reconfiguration proof. Git history
 retains the earlier fixed-membership proof stages.
 
 The combined model has:
 
-- a fixed 15-node world with implicit initial configuration `{0,1,2,3,4}`;
-- node 0 as the initial leader in term 1, other initial members as followers,
-  and nodes outside the initial configuration as term-zero `.none` nodes;
+- an abstract `Node` type with `DecidableEq Node`;
+- a `Bootstrap Node` parameter that contains a nonempty initial configuration
+  and its member leader;
+- a `Fin 15` specialization for simulation and trace validation;
+- a canonical default bootstrap with configuration `{0,1,2,3,4}` and leader
+  node 0, which preserves existing traces and public calls;
+- the selected bootstrap leader in term 1, other bootstrap members as
+  followers, and no allocated state for outsiders;
+- a `Finmap` node store that allocates new identities when a configuration
+  first adds them and never removes allocated state;
+- a reachable invariant proving allocated identities are exactly the
+  one-time join history;
 - empty initial logs;
 - opaque, externally allocated unique transaction IDs;
 - explicit ordinary transaction, signature, and reconfiguration log entries;
 - log-derived current and pending configurations;
 - global one-time join history and arbitrary nonempty configuration changes;
 - explicit ordered/no-duplicate per-destination message queues;
+- raw receive-handler acceptance of requests from unknown senders and dropping
+  of responses from unknown senders, matching the AFT receive handlers;
 - AppendEntries sends one entry when behind and an empty heartbeat when caught
   up;
 - executable `ClientRequest`, `ChangeConfiguration`, `AppendEntries`,
@@ -65,7 +77,7 @@ compiled simulator call these same definitions.
 
 ## Proved for the reconfiguring transition set
 
-For every arbitrary-term reachable state:
+For every valid `Bootstrap` and arbitrary-term reachable state:
 
 - `CommittedLogsPrefix`: committed logs are prefix-comparable;
 - `LogMatching`;
@@ -103,6 +115,7 @@ including elections which occurred before a delayed ACK completed its quorum.
 ```bash
 cd lean
 lake build CCFRaft.Model
+lake build CCFRaft.BootstrapExamples
 lake build CCFRaft.Simulation
 lake build ccf-raft-simulator
 .lake/build/bin/ccf-raft-simulator replay CCFRaft/traces/signature-commit.trace
@@ -119,9 +132,12 @@ Simulation runs for the requested number of milliseconds. It reports proposals
 and accepted actions per family. A failure writes a replayable semantic action
 trace.
 
-Replay lines support `client`, variable-length `reconfigure`, `sign`, `append`,
-`receive`, `commit`, `timeout`, `vote`, `term`, and `leader` actions.
-Reconfiguration nodes render in stable identifier order.
+Self-contained replay traces start with
+`bootstrap,<leader>,<member>...`, followed by `client`, variable-length
+`reconfigure`, `sign`, `append`, `receive`, `commit`, `timeout`, `vote`,
+`term`, or `leader` actions. Trace writers always emit the header.
+Headerless action traces remain valid and use `defaultBootstrap`.
+Configuration and bootstrap members render in stable identifier order.
 The stacked reconfiguration trace moves through three disjoint five-node
 configurations and elects a leader from each successor configuration.
 The shrinking trace commits `5 -> 4 -> 3 -> 2 -> 1`, then commits another
@@ -141,11 +157,11 @@ index points to a signature.
 ## Validate CCF implementation traces
 
 `TraceValidation.lean` maps a five-event slice of preprocessed CCF
-`raft_trace` NDJSON to exact semantic actions. It handles CCF's bootstrap index
-offset and opaque node IDs, checks visible state and packet fields at their C++
-pre-action timing, and uses bounded whole-trace backtracking. The search may
-insert only hidden AppendEntries response deliveries. It requires every
-observed send to have a later matching receive.
+`raft_trace` NDJSON to exact semantic actions. It parses the observed nonempty
+bootstrap and uses that parameter for initial state, search, replay, and
+certificate checks. It also handles CCF's bootstrap index offset and opaque
+node IDs. The search may insert only hidden AppendEntries response deliveries,
+and every observed send must have a later matching receive.
 
 ```bash
 cd lean

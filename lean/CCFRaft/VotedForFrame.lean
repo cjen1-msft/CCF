@@ -7,19 +7,19 @@ set_option autoImplicit false
 
 namespace CCFRaft
 
-variable {TxId : Type}
-variable [DecidableEq TxId]
+variable {Node TxId : Type}
+variable [DecidableEq Node] [DecidableEq TxId]
 
 private def withVotedFor
     (votedFor : Option Node)
-    (result : NodeState TxId × AppendEntriesResponse) :
-    NodeState TxId × AppendEntriesResponse :=
+    (result : NodeState Node TxId × AppendEntriesResponse Node) :
+    NodeState Node TxId × AppendEntriesResponse Node :=
   ({ result.1 with votedFor := votedFor }, result.2)
 
 theorem rejectAppendEntriesRequest_votedFor
-    (node : NodeState TxId)
+    (node : NodeState Node TxId)
     (votedFor : Option Node)
-    (request : AppendEntriesRequest TxId) :
+    (request : AppendEntriesRequest Node TxId) :
     rejectAppendEntriesRequest? { node with votedFor := votedFor } request =
       (rejectAppendEntriesRequest? node request).map
         (withVotedFor votedFor) := by
@@ -28,9 +28,9 @@ theorem rejectAppendEntriesRequest_votedFor
   split <;> simp_all [failureResponse, withVotedFor]
 
 theorem appendEntriesAlreadyDone_votedFor
-    (node : NodeState TxId)
+    (node : NodeState Node TxId)
     (votedFor : Option Node)
-    (request : AppendEntriesRequest TxId) :
+    (request : AppendEntriesRequest Node TxId) :
     appendEntriesAlreadyDone? { node with votedFor := votedFor } request =
       (appendEntriesAlreadyDone? node request).map
         (withVotedFor votedFor) := by
@@ -42,9 +42,9 @@ theorem appendEntriesAlreadyDone_votedFor
     ]
 
 theorem conflictAppendEntriesRequest_votedFor
-    (node : NodeState TxId)
+    (node : NodeState Node TxId)
     (votedFor : Option Node)
-    (request : AppendEntriesRequest TxId) :
+    (request : AppendEntriesRequest Node TxId) :
     conflictAppendEntriesRequest? { node with votedFor := votedFor } request =
       (conflictAppendEntriesRequest? node request).map fun next =>
         { next with votedFor := votedFor } := by
@@ -53,9 +53,9 @@ theorem conflictAppendEntriesRequest_votedFor
   split <;> simp_all
 
 theorem noConflictAppendEntriesRequest_votedFor
-    (node : NodeState TxId)
+    (node : NodeState Node TxId)
     (votedFor : Option Node)
-    (request : AppendEntriesRequest TxId) :
+    (request : AppendEntriesRequest Node TxId) :
     noConflictAppendEntriesRequest?
         { node with votedFor := votedFor } request =
       (noConflictAppendEntriesRequest? node request).map
@@ -68,9 +68,9 @@ theorem noConflictAppendEntriesRequest_votedFor
     ]
 
 theorem acceptAppendEntriesRequest_votedFor
-    (node : NodeState TxId)
+    (node : NodeState Node TxId)
     (votedFor : Option Node)
-    (request : AppendEntriesRequest TxId) :
+    (request : AppendEntriesRequest Node TxId) :
     acceptAppendEntriesRequest? { node with votedFor := votedFor } request =
       (acceptAppendEntriesRequest? node request).map
         (withVotedFor votedFor) := by
@@ -82,13 +82,13 @@ theorem acceptAppendEntriesRequest_votedFor
         request.prevLogIndex >= node.commitIndex
   · have acceptedChanged :
         request.term =
-            ({ node with votedFor := votedFor } : NodeState TxId).currentTerm /\
-          ({ node with votedFor := votedFor } : NodeState TxId).role =
+            ({ node with votedFor := votedFor } : NodeState Node TxId).currentTerm /\
+          ({ node with votedFor := votedFor } : NodeState Node TxId).role =
             .follower /\
           logOk { node with votedFor := votedFor } request /\
           request.prevLogIndex >=
             ({ node with votedFor := votedFor } :
-              NodeState TxId).commitIndex := by
+              NodeState Node TxId).commitIndex := by
       simpa [logOk] using accepted
     rw [if_pos acceptedChanged, if_pos accepted]
     rw [
@@ -117,21 +117,21 @@ theorem acceptAppendEntriesRequest_votedFor
         Not (
           request.term =
               ({ node with votedFor := votedFor } :
-                NodeState TxId).currentTerm /\
-            ({ node with votedFor := votedFor } : NodeState TxId).role =
+                NodeState Node TxId).currentTerm /\
+            ({ node with votedFor := votedFor } : NodeState Node TxId).role =
               .follower /\
             logOk { node with votedFor := votedFor } request /\
             request.prevLogIndex >=
               ({ node with votedFor := votedFor } :
-                NodeState TxId).commitIndex) := by
+                NodeState Node TxId).commitIndex) := by
       simpa [logOk] using accepted
     rw [if_neg rejectedChanged, if_neg accepted]
     rfl
 
 theorem handleAppendEntriesRequest_votedFor
-    (node : NodeState TxId)
+    (node : NodeState Node TxId)
     (votedFor : Option Node)
-    (request : AppendEntriesRequest TxId) :
+    (request : AppendEntriesRequest Node TxId) :
     handleAppendEntriesRequest? { node with votedFor := votedFor } request =
       (handleAppendEntriesRequest? node request).map
         (withVotedFor votedFor) := by
@@ -142,9 +142,9 @@ theorem handleAppendEntriesRequest_votedFor
   · simp
 
 theorem canProduceAppendAckEventuallyAt_votedFor
-    (node : NodeState TxId)
+    (node : NodeState Node TxId)
     (votedFor : Option Node)
-    (request : AppendEntriesRequest TxId)
+    (request : AppendEntriesRequest Node TxId)
     (index : Nat) :
     canProduceAppendAckEventuallyAt
         { node with votedFor := votedFor } request index ↔

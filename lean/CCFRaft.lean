@@ -2,14 +2,16 @@
 -- Licensed under the Apache 2.0 License.
 
 import CCFRaft.Proofs
+import CCFRaft.BootstrapExamples
 import CCFRaft.Simulation
 import CCFRaft.TraceValidation
 
 /-!
 # CCF Raft arbitrary-term reconfiguration proof
 
-An executable, directly proved, 15-node arbitrary-term Raft model with
-arbitrary nonempty configuration changes.
+An executable, directly proved, arbitrary-node Raft model with nonempty
+configuration changes. Simulation and trace validation use a finite 15-node
+specialization.
 -/
 
 #print axioms CCFRaft.reachableConsensusSafety
@@ -28,6 +30,10 @@ arbitrary nonempty configuration changes.
 #print axioms CCFRaft.ReconfigurationProof.reachableElectionSafety
 #print axioms CCFRaft.ReconfigurationProof.reachableLeaderCompleteness
 #print axioms CCFRaft.ReconfigurationProof.reachableCommittedFrontierIsSignature
+#print axioms CCFRaft.BootstrapExamples.arbitraryBootstrapReachableSafety
+#print axioms CCFRaft.BootstrapExamples.singletonReachableSafety
+#print axioms CCFRaft.BootstrapExamples.noncontiguousReachableSafety
+#print axioms CCFRaft.BootstrapExamples.fullReachableSafety
 #print axioms CCFRaft.Simulation.materializeComplete
 #print axioms CCFRaft.Simulation.candidateChoicesComplete
 #print axioms CCFRaft.TraceValidation.exactRunReachable
