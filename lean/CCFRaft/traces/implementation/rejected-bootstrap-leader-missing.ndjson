@@ -1,0 +1,1 @@
+{"tag":"raft_trace","msg":{"function":"bootstrap","args":{"idx":2},"state":{"node_id":"node-7","current_view":1,"last_idx":2,"commit_idx":0,"leadership_state":"Leader","membership_state":"Active","pre_vote_enabled":true},"configurations":[{"idx":0,"nodes":{"node-2":{"address":"localhost:8002"},"node-3":{"address":"localhost:8003"}}}]}}

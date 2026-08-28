@@ -103,6 +103,7 @@ structure Checkpoint where
 structure ParsedTrace where
   observations : Array Observation
   bootstrapIndex : Nat
+  bootstrap : Bootstrap Node
   nodeIds : List String
   ignoredRecords : Nat
 
@@ -110,6 +111,7 @@ structure ParseContext where
   nodeIds : List String := []
   initialNodeIds : List String := []
   bootstrapIndex : Option Nat := none
+  bootstrap : Option (Bootstrap Node) := none
 
 def requiredField (json : Json) (key : String) : Except String Json :=
   match json.getObjVal? key with
@@ -191,13 +193,14 @@ def parseNodeField
   let raw <- nodeIdText value
   internNode context raw
 
-def internNodes
+def internNodeSet
     (context : ParseContext)
     (rawIds : List String) :
-    Except String ParseContext :=
-  rawIds.foldlM (init := context) fun current raw => do
-    let (_, next) <- internNode current raw
-    pure next
+    Except String (Prod (Finset Node) ParseContext) :=
+  rawIds.foldlM
+      (init := (Finset.empty, context)) fun (nodes, current) raw => do
+    let (node, next) <- internNode current raw
+    pure (insert node nodes, next)
 
 def parseRole (raw : String) : Except String Role :=
   match raw.toLower with
@@ -472,26 +475,29 @@ def parseObservation
   let finalContext <-
     match kind with
     | .bootstrap =>
-        if node != INITIAL_LEADER then
-          throw "bootstrap node must map to the model's initial leader"
         let initialIds <- configurationNodeIds message
         let distinctIds := initialIds.eraseDups
-        let some leaderId := context.nodeIds.head?
+        let some leaderId := context.nodeIds[node.val]?
           | throw "internal bootstrap node-map invariant failed"
-        if
-            distinctIds.length != INITIAL_CONFIGURATION.card ||
-            !distinctIds.contains leaderId then
+        if !distinctIds.contains leaderId then
           throw
-            "bootstrap configuration must contain the leader and exactly five distinct nodes"
-        let seeded <- internNodes context initialIds
-        if seeded.nodeIds.length != INITIAL_CONFIGURATION.card then
-          throw s!"bootstrap contains {seeded.nodeIds.length} nodes, expected {
-            INITIAL_CONFIGURATION.card}"
-        pure {
-          seeded with
-          initialNodeIds := distinctIds
-          bootstrapIndex := some bootstrapIndex
-        }
+            "bootstrap configuration must be nonempty and contain the observed leader"
+        let (configuration, seeded) <- internNodeSet context distinctIds
+        if leaderMember : Membership.mem configuration node then
+          let bootstrap : Bootstrap Node := {
+            configuration
+            leader := node
+            leader_mem := leaderMember
+          }
+          pure {
+            seeded with
+            initialNodeIds := distinctIds
+            bootstrapIndex := some bootstrapIndex
+            bootstrap := some bootstrap
+          }
+        else
+          throw
+            "internal bootstrap membership invariant failed"
     | .commit =>
         let currentIds <- configurationNodeIds message
         if !sameNodeIds context.initialNodeIds currentIds then
@@ -526,15 +532,16 @@ def parseLines
     Except String ParsedTrace :=
   match lines with
   | [] =>
-      match context.bootstrapIndex with
-      | none => .error "trace is empty or has no bootstrap observation"
-      | some bootstrapIndex =>
+      match context.bootstrapIndex, context.bootstrap with
+      | some bootstrapIndex, some bootstrap =>
           .ok {
             observations
             bootstrapIndex
+            bootstrap
             nodeIds := context.nodeIds
             ignoredRecords
           }
+      | _, _ => .error "trace is empty or has no bootstrap observation"
   | line :: remaining =>
       if line.trimAscii.isEmpty then
         parseLines remaining (lineIndex + 1) context observations ignoredRecords
@@ -601,14 +608,18 @@ def checkVisibleState
         s!"state.leadership_state: observed {roleName expected}, model has {
           roleName nodeState.role}"
 
-def packetTailTerm (request : AppendEntriesRequest TxId) : Nat :=
+def packetTailTerm (request : AppendEntriesRequest Node TxId) : Nat :=
   match request.entries.getLast? with
   | some entry => entry.term
   | none => request.prevLogTerm
 
+section Bootstrap
+
+variable [Bootstrap Node]
+
 def checkPacket
     (packet : PacketObservation)
-    (request : AppendEntriesRequest TxId) :
+    (request : AppendEntriesRequest Node TxId) :
     Except String Unit := do
   checkOptional "packet.term" packet.term request.term
   checkOptional "packet.prev_term" packet.previousTerm request.prevLogTerm
@@ -827,7 +838,7 @@ def applyCanonical
     Except String SimState :=
   actions.foldlM (init := start) fun state action => do
     let some nextState :=
-      (system (TxId := TxId)).applyAction state action
+      (system (Node := Node) (TxId := TxId)).applyAction state action
       | throw s!"disabled canonical action: {renderAction action}"
     pure (compactState nextState)
 
@@ -946,13 +957,13 @@ def txSetCode (txIds : Finset TxId) : String :=
     ((allTxIds.filter fun txId => decide (Membership.mem txIds txId)).map
       fun txId => toString txId.val)
 
-def entryCode : Entry TxId -> String
+def entryCode : Entry Node TxId -> String
   | { term, content := .transaction txId } => s!"{term}:t{txId.val}"
   | { term, content := .signature } => s!"{term}:s"
   | { term, content := .reconfiguration nodes } =>
       s!"{term}:c[{nodeSetCode nodes}]"
 
-def messageCode : Message TxId -> String
+def messageCode : Message Node TxId -> String
   | .appendEntriesRequest request =>
       let entries := String.intercalate "." (request.entries.map entryCode)
       s!"aq:{request.source.val}:{request.destination.val}:{request.term}:{
@@ -968,7 +979,7 @@ def messageCode : Message TxId -> String
       s!"vp:{response.source.val}:{response.destination.val}:{response.term}:{
         response.voteGranted}"
 
-def nodeStateCode (state : NodeState TxId) : String :=
+def nodeStateCode (state : NodeState Node TxId) : String :=
   let sent :=
     String.intercalate "." (allNodes.map fun node => toString (state.sentIndex node))
   let matched :=
@@ -1102,6 +1113,7 @@ structure SearchState where
   seen : Std.HashSet String := {}
   stats : SearchStats := {}
   limitHit : Bool := false
+  stateLimitHit : Bool := false
   latestFailure : Option (Prod Nat String) := none
 
 abbrev SearchM := StateM SearchState
@@ -1134,7 +1146,15 @@ def recordFailure
       }
     }
 
-def recordExpanded (node : SearchNode) : SearchM Bool := do
+inductive ExpansionResult where
+  | expanded
+  | duplicate
+  | stateLimit
+
+def recordExpanded
+    (node : SearchNode)
+    (maxStates : Nat) :
+    SearchM ExpansionResult := do
   let search <- get
   if search.seen.contains node.memoKey then
     set {
@@ -1144,7 +1164,10 @@ def recordExpanded (node : SearchNode) : SearchM Bool := do
         deduplicated := search.stats.deduplicated + 1
       }
     }
-    pure false
+    pure .duplicate
+  else if search.stats.expanded >= maxStates then
+    set { search with limitHit := true, stateLimitHit := true }
+    pure .stateLimit
   else
     set {
       search with
@@ -1156,19 +1179,16 @@ def recordExpanded (node : SearchNode) : SearchM Bool := do
           max search.stats.furthestObservation node.observationIndex
       }
     }
-    pure true
+    pure .expanded
 
 partial def searchNode
     (observations : Array Observation)
     (config : SearchConfig)
     (node : SearchNode) :
     SearchM (Option SearchNode) := do
-  let search <- get
-  if search.stats.expanded >= config.maxStates then
-    set { search with limitHit := true }
-    return none
-  if !(<- recordExpanded node) then
-    return none
+  match <- recordExpanded node config.maxStates with
+  | .duplicate | .stateLimit => return none
+  | .expanded => pure ()
   if node.observationIndex >= observations.size then
     if node.pendingSends.isEmpty && pendingRequestsDrained node.state then
       return some node
@@ -1299,9 +1319,10 @@ structure SearchOutcome where
   witness : Option SearchNode
   stats : SearchStats
   limitHit : Bool
+  stateLimitHit : Bool
   latestFailure : Option (Prod Nat String)
 
-def search
+private def searchWithBootstrap
     (trace : ParsedTrace)
     (config : SearchConfig) :
     SearchOutcome :=
@@ -1314,8 +1335,29 @@ def search
     witness
     stats := finalSearch.stats
     limitHit := finalSearch.limitHit
+    stateLimitHit := finalSearch.stateLimitHit
     latestFailure := finalSearch.latestFailure
   }
+
+end Bootstrap
+
+/--
+Interpret a witness and its observation checkpoints under the bootstrap parsed
+from the same implementation trace.
+-/
+def ParsedCertificateValid
+    (trace : ParsedTrace)
+    (actions : List SimAction)
+    (checkpoints : List Checkpoint) :
+    Prop :=
+  @CertificateValid trace.bootstrap actions checkpoints
+
+/-- Search a parsed trace under the bootstrap parsed from that same trace. -/
+def search
+    (trace : ParsedTrace)
+    (config : SearchConfig) :
+    SearchOutcome :=
+  @searchWithBootstrap trace.bootstrap trace config
 
 def renderStats (stats : SearchStats) : String :=
   s!"expanded={stats.expanded} visible_candidates={stats.visibleCandidates} " ++
@@ -1323,6 +1365,83 @@ def renderStats (stats : SearchStats) : String :=
       stats.deduplicated} depth_pruned={stats.depthPruned} gap_pruned={
       stats.gapPruned} assertion_failures={stats.assertionFailures} " ++
     s!"furthest_observation={stats.furthestObservation}"
+
+inductive MinimumBoundResult where
+  | found (value probes : Nat)
+  | inconclusive
+      (config : SearchConfig)
+      (outcome : SearchOutcome)
+      (probes : Nat)
+  deriving Nonempty
+
+partial def minimumAcceptedBound
+    (trace : ParsedTrace)
+    (configAt : Nat -> SearchConfig)
+    (lower upper probes : Nat) :
+    MinimumBoundResult :=
+  if lower >= upper then
+    .found upper probes
+  else
+    let middle := (lower + upper) / 2
+    let config := configAt middle
+    let outcome := search trace config
+    let nextProbes := probes + 1
+    if outcome.witness.isSome then
+      minimumAcceptedBound trace configAt lower middle nextProbes
+    else if outcome.stateLimitHit then
+      .inconclusive config outcome nextProbes
+    else
+      minimumAcceptedBound trace configAt (middle + 1) upper nextProbes
+
+inductive MinimumBoundsResult where
+  | found (config : SearchConfig) (probes : Nat)
+  | rejected (outcome : SearchOutcome)
+  | inconclusive
+      (config : SearchConfig)
+      (outcome : SearchOutcome)
+      (probes : Nat)
+
+/--
+Find lexicographically minimum successful depth, gap, and state bounds below
+the supplied ceilings. A state-limited probe cannot establish a minimum.
+-/
+def minimumBounds
+    (trace : ParsedTrace)
+    (ceilings : SearchConfig) :
+    MinimumBoundsResult :=
+  let ceilingOutcome := search trace ceilings
+  if ceilingOutcome.witness.isNone then
+    if ceilingOutcome.stateLimitHit then
+      .inconclusive ceilings ceilingOutcome 1
+    else
+      .rejected ceilingOutcome
+  else
+    match
+      minimumAcceptedBound trace
+        (fun maxDepth => { ceilings with maxDepth })
+        0 ceilings.maxDepth 1
+    with
+    | MinimumBoundResult.inconclusive config outcome probes =>
+        MinimumBoundsResult.inconclusive config outcome probes
+    | MinimumBoundResult.found maxDepth depthProbes =>
+        match
+          minimumAcceptedBound trace
+            (fun maxGap => { ceilings with maxDepth, maxGap })
+            0 ceilings.maxGap depthProbes
+        with
+        | MinimumBoundResult.inconclusive config outcome probes =>
+            MinimumBoundsResult.inconclusive config outcome probes
+        | MinimumBoundResult.found maxGap gapProbes =>
+            let finalCeiling := { ceilings with maxDepth, maxGap }
+            let finalOutcome := search trace finalCeiling
+            match finalOutcome.witness with
+            | none =>
+                .inconclusive finalCeiling finalOutcome (gapProbes + 1)
+            | some _ =>
+                .found
+                  { finalCeiling with
+                    maxStates := finalOutcome.stats.expanded }
+                  (gapProbes + 1)
 
 def renderNodeMap (nodeIds : List String) : String :=
   String.intercalate ", "
@@ -1341,10 +1460,10 @@ def ordinaryReplicationCount (trace : ParsedTrace) : Nat :=
 
 def writeWitness
     (path : System.FilePath)
+    (bootstrap : Bootstrap Node)
     (actions : List SimAction) :
     IO Unit :=
-  IO.FS.writeFile path
-    (String.intercalate "\n" (actions.map renderAction) ++ "\n")
+  writeReplayTrace path bootstrap actions
 
 def validate
     (inputPath witnessPath : System.FilePath)
@@ -1385,15 +1504,15 @@ def validate
           return if outcome.limitHit then 4 else 1
       let actions := found.traceRev.reverse
       let checkpoints := found.checkpointsRev.reverse
-      match replayActions actions with
+      match @replayActions trace.bootstrap actions with
       | .error message =>
           IO.eprintln s!"INTERNAL ERROR canonical replay rejected witness: {message}"
           return 3
       | .ok finalState =>
-          if !checkpointsHold actions checkpoints then
+          if !@checkpointsHold trace.bootstrap actions checkpoints then
             IO.eprintln "INTERNAL ERROR observation certificate check failed"
             return 3
-          writeWitness witnessPath actions
+          writeWitness witnessPath trace.bootstrap actions
           IO.println s!"ACCEPT observations={trace.observations.size} ignored={
             trace.ignoredRecords} actions={actions.length} bootstrap_index={
             trace.bootstrapIndex}"
@@ -1407,9 +1526,44 @@ def validate
           IO.println s!"canonical_replay=ok max_term={maxTerm}"
           return 0
 
+def minimizeAndValidate
+    (inputPath witnessPath : System.FilePath)
+    (ceilings : SearchConfig) :
+    IO UInt32 := do
+  let parsed <- parseTraceFile inputPath
+  match parsed with
+  | .error message =>
+      IO.eprintln s!"PARSE ERROR {message}"
+      return 2
+  | .ok trace =>
+      let replicationCount := ordinaryReplicationCount trace
+      if TX_COUNT < replicationCount then
+        IO.eprintln (
+          s!"INCONCLUSIVE transaction_id_bound={TX_COUNT} " ++
+            s!"ordinary_replications={replicationCount}")
+        return 4
+      match minimumBounds trace ceilings with
+      | .rejected outcome =>
+          IO.eprintln "REJECT no witness exists within the supplied ceilings"
+          IO.eprintln s!"search {renderStats outcome.stats} limit_hit={
+            outcome.limitHit} state_limit_hit={outcome.stateLimitHit}"
+          return 1
+      | .inconclusive config outcome probes =>
+          IO.eprintln (
+            s!"INCONCLUSIVE minimum_bounds probes={probes} " ++
+              s!"max_depth={config.maxDepth} max_gap={config.maxGap} " ++
+              s!"max_states={config.maxStates}")
+          IO.eprintln s!"search {renderStats outcome.stats} limit_hit={
+            outcome.limitHit} state_limit_hit={outcome.stateLimitHit}"
+          return 4
+      | .found config probes =>
+          IO.println s!"MINIMUM_BOUNDS max_depth={config.maxDepth} max_gap={
+            config.maxGap} max_states={config.maxStates} probes={probes}"
+          validate inputPath witnessPath config
+
 def usage : String :=
   "usage: ccf-raft-trace-validator <input.ndjson> <witness.trace> " ++
-    "[max-depth] [max-gap] [max-states]"
+    "[--minimize-bounds] [max-depth] [max-gap] [max-states]"
 
 def parseConfig (raw : List String) : Except String SearchConfig := do
   let parseAt (index fallback : Nat) : Except String Nat :=
@@ -1428,15 +1582,20 @@ def parseConfig (raw : List String) : Except String SearchConfig := do
 def main (args : List String) : IO UInt32 := do
   match args with
   | inputPath :: witnessPath :: bounds =>
-      if bounds.length > 3 then
+      let minimize := bounds.head? == some "--minimize-bounds"
+      let rawBounds := if minimize then bounds.drop 1 else bounds
+      if rawBounds.length > 3 then
         IO.eprintln usage
         return 2
-      match parseConfig bounds with
+      match parseConfig rawBounds with
       | .error message =>
           IO.eprintln message
           return 2
       | .ok config =>
-          validate inputPath witnessPath config
+          if minimize then
+            minimizeAndValidate inputPath witnessPath config
+          else
+            validate inputPath witnessPath config
   | _ =>
       IO.eprintln usage
       return 2
