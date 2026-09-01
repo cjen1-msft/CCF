@@ -33,6 +33,9 @@ inductive Observation (Node TxId : Type) where
   | commitIndex (node : Node) (value : Nat)
   | logLength (node : Node) (value : Nat)
   | submitted (txId : TxId) (value : Bool)
+  | firstMessageFrom
+      (source destination : Node)
+      (message : Message Node TxId)
 
 def Observation.Holds
     (state : State Node TxId) :
@@ -44,11 +47,16 @@ def Observation.Holds
   | .commitIndex node value => (state.nodes node).commitIndex = value
   | .logLength node value => (state.nodes node).log.length = value
   | .submitted txId value => decide (txId ∈ state.submittedTxIds) = value
+  | .firstMessageFrom source destination message =>
+      Exists fun remaining =>
+        takeFirstFrom source (state.network destination) =
+          some (message, remaining)
 
 abbrev ReducedTrace (Node TxId : Type) :=
-  _root_.TraceValidation.ReducedTrace
-    (Action Node TxId)
-    (Observation Node TxId)
+  List
+    (_root_.TraceValidation.Instruction
+      (Action Node TxId)
+      (Observation Node TxId))
 
 abbrev Formula (Node TxId : Type) :=
   MachineGenerated.Formula Node TxId (Observation Node TxId)

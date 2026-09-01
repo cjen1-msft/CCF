@@ -49,8 +49,13 @@ class SolverRun:
     wall_time_ms: float
 
 
-TRANSITION_NAME = re.compile(r"^transition_action_(\d+)_line_(\d+)_(.+)$")
-OBSERVATION_NAME = re.compile(r"^observation_(\d+)_line_(\d+)_boundary_(\d+)_(.+)$")
+TRANSITION_NAME = re.compile(
+    r"^transition_instruction_(\d+)_action_boundary_(\d+)_line_(\d+)_(.+)$"
+)
+OBSERVATION_NAME = re.compile(
+    r"^(?:observation|evidence)_instruction_(\d+)_"
+    r"action_boundary_(\d+)_line_(\d+)_(.+)$"
+)
 
 
 def _find_cvc5(requested: Path | None) -> Path:
@@ -137,74 +142,64 @@ def _core_diagnosis(
     *,
     core_kind: str,
 ) -> dict[str, object]:
-    reduced = certificate["reduced_trace"]
-    assert isinstance(reduced, dict)
-    steps = reduced["steps"]
-    entry_observations = reduced["observations_at_entry"]
-    raw_records = certificate["raw_records"]
+    steps = certificate["steps"]
     assert isinstance(steps, list)
-    assert isinstance(entry_observations, list)
-    assert isinstance(raw_records, list)
-
-    raw_by_line = {
-        record["line"]: record
-        for record in raw_records
-        if isinstance(record, dict) and type(record.get("line")) is int
-    }
-    observations: list[tuple[int, dict[str, object]]] = [
-        (0, observation)
-        for observation in entry_observations
-        if isinstance(observation, dict)
-    ]
-    for boundary, step in enumerate(steps, 1):
-        assert isinstance(step, dict)
-        observations.extend(
-            (boundary, observation)
-            for observation in step["observations_after"]
-            if isinstance(observation, dict)
-        )
 
     items: list[dict[str, object]] = []
     for name in names:
         transition = TRANSITION_NAME.fullmatch(name)
         observation_match = OBSERVATION_NAME.fullmatch(name)
         if transition is not None:
-            action_index = int(transition.group(1))
-            raw_line = int(transition.group(2))
-            step = steps[action_index - 1]
-            assert isinstance(step, dict)
-            action = step["action"]
-            assert isinstance(action, dict)
+            instruction_index = int(transition.group(1))
+            action_boundary = int(transition.group(2))
+            raw_line = int(transition.group(3))
+            instruction = steps[instruction_index - 1]
+            assert isinstance(instruction, dict)
+            parameters = {
+                key: value
+                for key, value in instruction.items()
+                if key
+                not in {
+                    "action",
+                    "evidence",
+                    "kind",
+                    "node",
+                    "provenance",
+                    "rule",
+                }
+            }
             items.append(
                 {
-                    "action_index": action_index,
+                    "action": instruction["action"],
+                    "action_boundary": action_boundary,
                     "category": "transition",
-                    "kind": action["kind"],
+                    "instruction_index": instruction_index,
                     "name": name,
-                    "parameters": action["parameters"],
-                    "provenance": action["provenance"],
+                    "node": instruction["node"],
+                    "parameters": parameters,
+                    "provenance": instruction["provenance"],
                     "raw_line": raw_line,
-                    "raw_record": raw_by_line.get(raw_line),
-                    "reduction_rule": action["rule"],
+                    "reduction_rule": instruction["rule"],
                 }
             )
         elif observation_match is not None:
-            observation_index = int(observation_match.group(1))
-            raw_line = int(observation_match.group(2))
-            boundary = int(observation_match.group(3))
-            stored_boundary, observation = observations[observation_index - 1]
-            assert stored_boundary == boundary
+            instruction_index = int(observation_match.group(1))
+            action_boundary = int(observation_match.group(2))
+            raw_line = int(observation_match.group(3))
+            instruction = steps[instruction_index - 1]
+            assert isinstance(instruction, dict)
             items.append(
                 {
-                    "boundary": boundary,
+                    "action_boundary": action_boundary,
                     "category": "observation",
-                    "kind": observation["kind"],
+                    "instruction_index": instruction_index,
                     "name": name,
-                    "parameters": observation["parameters"],
-                    "provenance": observation["provenance"],
+                    "node": instruction["node"],
+                    "provenance": instruction["provenance"],
                     "raw_line": raw_line,
-                    "raw_record": raw_by_line.get(raw_line),
-                    "reduction_rule": observation["reduction_rule"],
+                    "reduction_rule": instruction["rule"],
+                    "value": instruction["value"],
+                    "variable": instruction["variable"],
                 }
             )
         else:

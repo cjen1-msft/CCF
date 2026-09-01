@@ -36,26 +36,30 @@ ACTION_FAMILIES = {
     "timeout",
     "updateTerm",
 }
+ACTION_PARAMETERS = {
+    "advanceCommitIndex": set(),
+    "appendEntries": {"batchEnd", "destination"},
+    "becomeLeader": set(),
+    "changeConfiguration": {"configuration"},
+    "clientRequest": {"transaction"},
+    "receive": {"source"},
+    "requestVote": {"destination"},
+    "signCommittableMessages": set(),
+    "timeout": set(),
+    "updateTerm": {"source"},
+}
 
 
 def actions(certificate: dict[str, object]) -> list[dict[str, object]]:
-    reduced = certificate["reduced_trace"]
-    assert isinstance(reduced, dict)
-    steps = reduced["steps"]
+    steps = certificate["steps"]
     assert isinstance(steps, list)
-    return [step["action"] for step in steps]
+    return [step for step in steps if step["kind"] == "action"]
 
 
 def observations(certificate: dict[str, object]) -> list[dict[str, object]]:
-    reduced = certificate["reduced_trace"]
-    assert isinstance(reduced, dict)
-    entry = reduced["observations_at_entry"]
-    steps = reduced["steps"]
-    assert isinstance(entry, list)
+    steps = certificate["steps"]
     assert isinstance(steps, list)
-    return entry + [
-        observation for step in steps for observation in step["observations_after"]
-    ]
+    return [step for step in steps if step["kind"] == "observation"]
 
 
 class ReductionTests(unittest.TestCase):
@@ -81,16 +85,14 @@ class ReductionTests(unittest.TestCase):
             certificate = reduce(preprocessed)
             trace_actions = actions(certificate)
             trace_observations = observations(certificate)
-            seen.update(str(action["kind"]) for action in trace_actions)
+            seen.update(str(action["action"]) for action in trace_actions)
 
             self.assertTrue(
                 all(action["rule"] and action["provenance"] for action in trace_actions)
             )
             self.assertTrue(
                 all(
-                    observation["rule"]
-                    and observation["reduction_rule"]
-                    and observation["provenance"]
+                    observation["rule"] and observation["provenance"]
                     for observation in trace_observations
                 )
             )
@@ -107,6 +109,92 @@ class ReductionTests(unittest.TestCase):
             )
 
         self.assertEqual(seen, ACTION_FAMILIES)
+
+    def test_certificate_is_one_flat_ordered_instruction_stream(self) -> None:
+        forbidden = {
+            "observations_at_entry",
+            "observations_after",
+            "raw_records",
+            "reduced_trace",
+        }
+        for path in sorted(CAPTURED.glob("*.ndjson")):
+            certificate = build_certificate(read_ndjson(path))
+            self.assertEqual(
+                certificate["schema_version"],
+                "ccfraft-reduction-certificate/v2",
+            )
+            self.assertTrue(forbidden.isdisjoint(certificate))
+            serialized = json.dumps(certificate)
+            self.assertTrue(
+                all(
+                    name not in serialized
+                    for name in forbidden
+                    if name != "raw_records"
+                )
+            )
+            for instruction in certificate["steps"]:
+                self.assertIn(instruction["kind"], {"action", "observation"})
+                self.assertIn("node", instruction)
+                self.assertNotIn("parameters", instruction)
+                for source in instruction["provenance"]:
+                    self.assertEqual(
+                        set(source),
+                        {"function", "line", "timestamp"},
+                    )
+                if instruction["kind"] == "action":
+                    self.assertIn(instruction["action"], ACTION_FAMILIES)
+                    self.assertNotIsInstance(instruction["action"], dict)
+                    semantic_fields = set(instruction).difference(
+                        {
+                            "action",
+                            "evidence",
+                            "kind",
+                            "node",
+                            "provenance",
+                            "rule",
+                        }
+                    )
+                    self.assertEqual(
+                        semantic_fields,
+                        ACTION_PARAMETERS[instruction["action"]],
+                    )
+                else:
+                    self.assertIn("variable", instruction)
+                    self.assertIn("value", instruction)
+
+    def test_receive_is_immediately_preceded_by_selected_message_evidence(
+        self,
+    ) -> None:
+        for path in sorted(CAPTURED.glob("*.ndjson")):
+            steps = build_certificate(read_ndjson(path))["steps"]
+            for position, instruction in enumerate(steps):
+                if instruction.get("action") != "receive":
+                    continue
+                self.assertGreater(position, 0)
+                evidence = steps[position - 1]
+                self.assertEqual(evidence["kind"], "observation")
+                self.assertEqual(evidence["variable"], "firstMessageFrom")
+                self.assertEqual(evidence["node"], instruction["node"])
+                self.assertEqual(evidence["value"]["source"], instruction["source"])
+                self.assertIn("messageType", evidence["value"])
+                self.assertIn("term", evidence["value"])
+
+    def test_direct_timeout_contradiction_is_action_then_observation(self) -> None:
+        for path in sorted(MUTATED.glob("*-direct.ndjson")):
+            steps = build_certificate(read_ndjson(path))["steps"]
+            contradiction = next(
+                position
+                for position, instruction in enumerate(steps)
+                if instruction.get("action") == "timeout"
+                and steps[position + 3]["variable"] == "role"
+                and steps[position + 3]["value"] == "leader"
+            )
+            self.assertEqual(steps[contradiction]["kind"], "action")
+            self.assertEqual(steps[contradiction + 1]["kind"], "observation")
+            self.assertEqual(
+                steps[contradiction]["provenance"],
+                steps[contradiction + 1]["provenance"],
+            )
 
     def test_reduction_is_deterministic(self) -> None:
         for path in sorted(CAPTURED.glob("*.ndjson")):

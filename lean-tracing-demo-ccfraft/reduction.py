@@ -16,7 +16,7 @@ from typing import Any
 
 from Shared.trace_io import NDJSONRecord, read_ndjson
 
-SCHEMA_VERSION = "ccfraft-reduction-certificate/v1"
+SCHEMA_VERSION = "ccfraft-reduction-certificate/v2"
 
 KNOWN_FUNCTIONS = {
     "add_configuration",
@@ -200,22 +200,17 @@ def _node_sort_key(value: str) -> tuple[int, int | str]:
 
 def _provenance(
     events: Sequence[AssociatedEvent],
-    *,
-    include_commands: bool = False,
 ) -> list[dict[str, Any]]:
     entries = [
         {
+            "function": event.function,
             "line": event.record.line_number,
-            "role": "raft_event",
+            "timestamp": event.record.value["h_ts"],
         }
         for event in events
     ]
-    if include_commands:
-        entries.extend(
-            {"line": event.command_line, "role": "command"} for event in events
-        )
-    unique = {(entry["line"], entry["role"]): entry for entry in entries}
-    return [unique[key] for key in sorted(unique, key=lambda item: (item[0], item[1]))]
+    unique = {entry["line"]: entry for entry in entries}
+    return [unique[line] for line in sorted(unique)]
 
 
 def _ignored(
@@ -680,6 +675,7 @@ def _correlate_response_batches(trace: PreprocessedTrace) -> None:
                         "count": len(event.data["split_ends"]),
                         "fingerprint": _response_fingerprint(response),
                         "provenance": _provenance(event.events),
+                        "split_ends": event.data["split_ends"],
                     }
                 )
             elif event.kind == "recv_append_entries_response":
@@ -703,6 +699,7 @@ def _correlate_response_batches(trace: PreprocessedTrace) -> None:
                 matched = queue.pop(match)
                 event.data["split_count"] = matched["count"]
                 event.data["matching_receive_provenance"] = matched["provenance"]
+                event.data["split_ends"] = matched["split_ends"]
         else:
             ignored: IgnoredEvent = item
             record = ignored.records[0]
@@ -762,6 +759,8 @@ def preprocess(records: Sequence[NDJSONRecord]) -> PreprocessedTrace:
             "command": event.command,
             "command_line": event.command_line,
             "event_line": event.record.line_number,
+            "event_timestamp": event.record.value["h_ts"],
+            "implementation_function": event.function,
             "rule": "associate-command",
         }
         for event in associated
@@ -781,8 +780,7 @@ def preprocess(records: Sequence[NDJSONRecord]) -> PreprocessedTrace:
     return trace
 
 
-def _state_facts(event: AssociatedEvent) -> list[tuple[str, dict[str, Any]]]:
-    node = event.node
+def _state_facts(event: AssociatedEvent) -> list[tuple[str, Any]]:
     role = {
         "None": "none",
         "Follower": "follower",
@@ -790,107 +788,108 @@ def _state_facts(event: AssociatedEvent) -> list[tuple[str, dict[str, Any]]]:
         "Leader": "leader",
     }[_role(event)]
     return [
-        ("allocated", {"node": node, "value": True}),
-        ("joined", {"node": node, "value": True}),
-        ("role", {"node": node, "value": role}),
+        ("allocated", True),
+        ("joined", True),
+        ("role", role),
         (
             "currentTerm",
-            {
-                "node": node,
-                "value": _natural(
-                    event.state.get("current_view"),
-                    f"line {event.record.line_number}: state.current_view",
-                ),
-            },
+            _natural(
+                event.state.get("current_view"),
+                f"line {event.record.line_number}: state.current_view",
+            ),
         ),
         (
             "commitIndex",
-            {
-                "node": node,
-                "value": _natural(
-                    event.state.get("commit_idx"),
-                    f"line {event.record.line_number}: state.commit_idx",
-                ),
-            },
+            _natural(
+                event.state.get("commit_idx"),
+                f"line {event.record.line_number}: state.commit_idx",
+            ),
         ),
         (
             "logLength",
-            {
-                "node": node,
-                "value": _natural(
-                    event.state.get("last_idx"),
-                    f"line {event.record.line_number}: state.last_idx",
-                ),
-            },
+            _natural(
+                event.state.get("last_idx"),
+                f"line {event.record.line_number}: state.last_idx",
+            ),
         ),
     ]
 
 
 class _CertificateBuilder:
     def __init__(self) -> None:
-        self.actions: list[dict[str, Any]] = []
-        self.observations_by_boundary: dict[int, list[dict[str, Any]]] = {}
+        self.steps: list[dict[str, Any]] = []
+        self.action_count = 0
 
-    def observe(
+    def observe_state(
         self,
         event: AssociatedEvent,
         *,
-        boundary: int,
         rule: str,
-        reduction_rule: str,
     ) -> None:
-        destination = self.observations_by_boundary.setdefault(boundary, [])
         provenance = _provenance([event])
-        for kind, parameters in _state_facts(event):
-            destination.append(
+        for variable, value in _state_facts(event):
+            self.steps.append(
                 {
-                    "kind": kind,
-                    "parameters": parameters,
+                    "kind": "observation",
+                    "node": event.node,
                     "provenance": provenance,
-                    "reduction_rule": reduction_rule,
                     "rule": rule,
+                    "value": value,
+                    "variable": variable,
                 }
             )
 
+    def observe_message(
+        self,
+        event: AssociatedEvent,
+        *,
+        source: str,
+        destination: str,
+        rule: str,
+        batch_position: int,
+        batch_count: int,
+        batch_end: int | None,
+    ) -> None:
+        self.steps.append(
+            {
+                "kind": "observation",
+                "node": destination,
+                "provenance": _provenance([event]),
+                "rule": rule,
+                "value": _message_summary(
+                    event,
+                    source=source,
+                    batch_position=batch_position,
+                    batch_count=batch_count,
+                    batch_end=batch_end,
+                ),
+                "variable": "firstMessageFrom",
+            }
+        )
+
     def action(
         self,
-        kind: str,
-        parameters: Mapping[str, Any],
+        action: str,
+        node: str,
         *,
         rule: str,
         events: Sequence[AssociatedEvent],
-        include_commands: bool = False,
-        matching_receive_provenance: list[dict[str, Any]] | None = None,
+        evidence: Mapping[str, Any] | None = None,
+        **parameters: Any,
     ) -> int:
-        action = {
-            "index": len(self.actions) + 1,
-            "kind": kind,
-            "parameters": dict(parameters),
-            "provenance": _provenance(
-                events,
-                include_commands=include_commands,
-            ),
+        instruction = {
+            "action": action,
+            "kind": "action",
+            "node": node,
+            "provenance": _provenance(events),
             "rule": rule,
+            **parameters,
         }
-        if matching_receive_provenance is not None:
-            action["matching_receive_provenance"] = matching_receive_provenance
-        self.actions.append(action)
-        return len(self.actions)
-
-    def reduced_trace(self) -> dict[str, Any]:
-        return {
-            "observations_at_entry": self.observations_by_boundary.get(0, []),
-            "steps": [
-                {
-                    "action": action,
-                    "observations_after": self.observations_by_boundary.get(
-                        action["index"],
-                        [],
-                    ),
-                }
-                for action in self.actions
-            ],
-        }
+        if evidence is not None:
+            instruction["evidence"] = dict(evidence)
+        self.steps.append(instruction)
+        self.action_count += 1
+        return self.action_count
 
 
 def _peer(event: AssociatedEvent, field: str) -> str:
@@ -898,6 +897,89 @@ def _peer(event: AssociatedEvent, field: str) -> str:
         event.message.get(field),
         f"line {event.record.line_number}: {field}",
     )
+
+
+def _message_summary(
+    event: AssociatedEvent,
+    *,
+    source: str,
+    batch_position: int,
+    batch_count: int,
+    batch_end: int | None,
+) -> dict[str, Any]:
+    packet = event.message.get("packet")
+    _require(
+        isinstance(packet, dict),
+        f"line {event.record.line_number}: receive packet is missing",
+    )
+    family = packet.get("msg")
+    _require(
+        family
+        in {
+            "raft_append_entries",
+            "raft_append_entries_response",
+            "raft_request_vote",
+            "raft_request_vote_response",
+        },
+        f"line {event.record.line_number}: unsupported receive packet {family!r}",
+    )
+    summary: dict[str, Any] = {
+        "batchCount": batch_count,
+        "batchPosition": batch_position,
+        "messageType": family,
+        "source": source,
+        "term": _natural(
+            packet.get("term"),
+            f"line {event.record.line_number}: packet.term",
+        ),
+    }
+    if family == "raft_append_entries":
+        _require(
+            batch_end is not None,
+            f"line {event.record.line_number}: AppendEntries batch end is missing",
+        )
+        previous, end = _append_range(event)
+        selected_previous = previous if previous == end else batch_end - 1
+        summary.update(
+            {
+                "batchEnd": batch_end,
+                "leaderCommitIndex": _natural(
+                    packet.get("leader_commit_idx"),
+                    f"line {event.record.line_number}: packet.leader_commit_idx",
+                ),
+                "previousIndex": selected_previous,
+            }
+        )
+    elif family == "raft_append_entries_response":
+        _require(
+            packet.get("success") in {"OK", "FAIL"},
+            f"line {event.record.line_number}: response success is unsupported",
+        )
+        summary.update(
+            {
+                "lastLogIndex": (
+                    batch_end
+                    if packet["success"] == "OK" and batch_end is not None
+                    else _natural(
+                        packet.get("last_log_idx"),
+                        f"line {event.record.line_number}: packet.last_log_idx",
+                    )
+                ),
+                "success": packet["success"],
+            }
+        )
+    elif family == "raft_request_vote":
+        summary["lastCommittableIndex"] = _natural(
+            packet.get("last_committable_idx"),
+            f"line {event.record.line_number}: packet.last_committable_idx",
+        )
+    else:
+        _require(
+            type(packet.get("vote_granted")) is bool,
+            f"line {event.record.line_number}: vote_granted is not Boolean",
+        )
+        summary["voteGranted"] = packet["vote_granted"]
+    return summary
 
 
 def _reduce_receive_with_optional_term_update(
@@ -910,43 +992,60 @@ def _reduce_receive_with_optional_term_update(
     receive_rule: str,
     post_event: AssociatedEvent | None = None,
     matching_receive_provenance: list[dict[str, Any]] | None = None,
+    batch_ends: Sequence[int] | None = None,
 ) -> None:
     receive = event.data.get("receive", event.events[0])
     follower = event.data.get("become_follower")
-    start_boundary = len(builder.actions)
-    builder.observe(
+    builder.observe_state(
         receive,
-        boundary=start_boundary,
         rule="observe-pre-action-state",
-        reduction_rule=receive_rule,
     )
     if follower is not None:
         builder.action(
             "updateTerm",
-            {"source": source, "destination": destination},
+            destination,
+            source=source,
             rule="newer-term-receive-transition",
             events=[receive, follower],
         )
-        builder.observe(
+        builder.observe_state(
             follower,
-            boundary=len(builder.actions),
             rule="observe-proven-term-transition-state",
-            reduction_rule="newer-term-receive-transition",
         )
-    for _ in range(receive_count):
+    _require(
+        batch_ends is None or len(batch_ends) == receive_count,
+        f"line {receive.record.line_number}: receive batch summary is inconsistent",
+    )
+    for position in range(1, receive_count + 1):
+        builder.observe_message(
+            receive,
+            source=source,
+            destination=destination,
+            rule="observe-selected-message-before-receive",
+            batch_position=position,
+            batch_count=receive_count,
+            batch_end=(batch_ends[position - 1] if batch_ends is not None else None),
+        )
+        evidence = None
+        if matching_receive_provenance is not None and position == 1:
+            evidence = {
+                "batchCorrelation": {
+                    "matchingReceiveProvenance": matching_receive_provenance,
+                    "splitCount": receive_count,
+                }
+            }
         builder.action(
             "receive",
-            {"source": source, "destination": destination},
+            destination,
+            source=source,
             rule=receive_rule,
-            events=event.events,
-            matching_receive_provenance=matching_receive_provenance,
+            events=[receive],
+            evidence=evidence,
         )
     if post_event is not None:
-        builder.observe(
+        builder.observe_state(
             post_event,
-            boundary=len(builder.actions),
             rule="observe-grouped-receive-post-state",
-            reduction_rule=receive_rule,
         )
 
 
@@ -958,21 +1057,37 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
         "reduce expects the result of preprocess",
     )
     builder = _CertificateBuilder()
+    pending_configuration: PreprocessedEvent | None = None
+
+    def emit_pending_configuration() -> None:
+        nonlocal pending_configuration
+        if pending_configuration is None:
+            return
+        configuration_event = pending_configuration.events[0]
+        _, nodes = _configuration(configuration_event)
+        builder.action(
+            "changeConfiguration",
+            configuration_event.node,
+            configuration=nodes,
+            rule="leader-add-configuration",
+            events=pending_configuration.events,
+        )
+        pending_configuration = None
+
     for event in preprocessed.events:
         primary = event.events[0]
-        boundary = len(builder.actions)
+        if pending_configuration is not None and event.kind != "send_append_entries":
+            emit_pending_configuration()
 
         if event.kind == "bootstrap":
             commit = event.data["commit_event"]
-            builder.observe(
+            builder.observe_state(
                 commit,
-                boundary=boundary,
                 rule="observe-bootstrap-entry-state",
-                reduction_rule="bootstrap-leader-commit",
             )
             builder.action(
                 "advanceCommitIndex",
-                {"node": commit.node},
+                commit.node,
                 rule="bootstrap-leader-commit",
                 events=event.events,
             )
@@ -981,15 +1096,9 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
                 _role(primary) == "Leader",
                 f"line {primary.record.line_number}: replicate is not on a leader",
             )
-            builder.observe(
+            builder.observe_state(
                 primary,
-                boundary=boundary,
                 rule="observe-pre-action-state",
-                reduction_rule=(
-                    "replicate-signature"
-                    if primary.message.get("globally_committable") is True
-                    else "replicate-client-request"
-                ),
             )
             committable = primary.message.get("globally_committable")
             _require(
@@ -1000,20 +1109,17 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
             if committable:
                 builder.action(
                     "signCommittableMessages",
-                    {"node": primary.node},
+                    primary.node,
                     rule="replicate-signature",
                     events=event.events,
                 )
             else:
                 builder.action(
                     "clientRequest",
-                    {
-                        "node": primary.node,
-                        "txId": f"trace-line-{primary.record.line_number}",
-                    },
+                    primary.node,
+                    transaction=f"trace-line-{primary.record.line_number}",
                     rule="replicate-client-request",
                     events=event.events,
-                    include_commands=True,
                 )
         elif event.kind == "add_configuration":
             _require(
@@ -1021,38 +1127,28 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
                 f"line {primary.record.line_number}: configuration is not leader "
                 "initiated",
             )
-            _, nodes = _configuration(primary)
-            builder.observe(
+            _configuration(primary)
+            builder.observe_state(
                 primary,
-                boundary=boundary,
                 rule="observe-pre-action-state",
-                reduction_rule="leader-add-configuration",
             )
-            builder.action(
-                "changeConfiguration",
-                {
-                    "source": primary.node,
-                    "newConfiguration": nodes,
-                },
-                rule="leader-add-configuration",
-                events=event.events,
+            _require(
+                pending_configuration is None,
+                f"line {primary.record.line_number}: nested configuration callback",
             )
+            pending_configuration = event
         elif event.kind == "send_append_entries":
             destination = _peer(primary, "to_node_id")
-            builder.observe(
+            builder.observe_state(
                 primary,
-                boundary=boundary,
                 rule="observe-pre-action-state",
-                reduction_rule="split-append-entries-batch",
             )
             for batch_end in _split_ends(primary):
                 builder.action(
                     "appendEntries",
-                    {
-                        "source": primary.node,
-                        "destination": destination,
-                        "batchEnd": batch_end,
-                    },
+                    primary.node,
+                    destination=destination,
+                    batchEnd=batch_end,
                     rule="split-append-entries-batch",
                     events=event.events,
                 )
@@ -1067,6 +1163,7 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
                 destination=receive.node,
                 receive_rule="split-append-entries-receive",
                 post_event=event.data["response"],
+                batch_ends=event.data["split_ends"],
             )
         elif event.kind == "recv_append_entries_response":
             source = _peer(primary, "from_node_id")
@@ -1083,6 +1180,7 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
                 destination=primary.node,
                 receive_rule="split-append-entries-response-receive",
                 matching_receive_provenance=event.data["matching_receive_provenance"],
+                batch_ends=event.data["split_ends"],
             )
         elif event.kind in {
             "recv_request_vote",
@@ -1123,30 +1221,26 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
                 and args["idx"] >= 0,
                 f"line {primary.record.line_number}: commit target is missing",
             )
-            builder.observe(
+            builder.observe_state(
                 primary,
-                boundary=boundary,
                 rule="observe-pre-action-state",
-                reduction_rule="leader-commit-callback",
             )
             builder.action(
                 "advanceCommitIndex",
-                {"node": primary.node},
+                primary.node,
                 rule="leader-commit-callback",
                 events=event.events,
             )
         elif event.kind == "become_candidate":
             builder.action(
                 "timeout",
-                {"node": primary.node},
+                primary.node,
                 rule="candidate-timeout",
                 events=event.events,
             )
-            builder.observe(
+            builder.observe_state(
                 primary,
-                boundary=len(builder.actions),
                 rule="observe-post-action-state",
-                reduction_rule="candidate-timeout",
             )
         elif event.kind == "send_request_vote":
             _require(
@@ -1156,18 +1250,14 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
             )
             destination = _peer(primary, "to_node_id")
             _packet(primary, "raft_request_vote")
-            builder.observe(
+            builder.observe_state(
                 primary,
-                boundary=boundary,
                 rule="observe-pre-action-state",
-                reduction_rule="send-request-vote",
             )
             builder.action(
                 "requestVote",
-                {
-                    "source": primary.node,
-                    "destination": destination,
-                },
+                primary.node,
+                destination=destination,
                 rule="send-request-vote",
                 events=event.events,
             )
@@ -1179,15 +1269,13 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
             )
             builder.action(
                 "becomeLeader",
-                {"node": primary.node},
+                primary.node,
                 rule="candidate-became-leader",
                 events=event.events,
             )
-            builder.observe(
+            builder.observe_state(
                 primary,
-                boundary=len(builder.actions),
                 rule="observe-post-action-state",
-                reduction_rule="candidate-became-leader",
             )
         else:
             raise ReductionError(
@@ -1195,11 +1283,26 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
                 f"{event.kind!r}"
             )
 
+    emit_pending_configuration()
+
     ignored_events = [
         {
             "function": ignored.function,
             "provenance": [
-                {"line": record.line_number, "role": "raw_record"}
+                {
+                    "line": record.line_number,
+                    **(
+                        {"timestamp": record.value["h_ts"]}
+                        if "h_ts" in record.value
+                        else {}
+                    ),
+                    **(
+                        {"function": record.value["msg"]["function"]}
+                        if isinstance(record.value.get("msg"), dict)
+                        and isinstance(record.value["msg"].get("function"), str)
+                        else {}
+                    ),
+                }
                 for record in ignored.records
             ],
             "reason": ignored.reason,
@@ -1210,23 +1313,14 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
             key=lambda item: item.first_line,
         )
     ]
-    raw_records = [
-        {
-            "line": record.line_number,
-            "object": record.value,
-            "raw": record.raw,
-        }
-        for record in preprocessed.records
-    ]
-    reduced_trace = builder.reduced_trace()
-    observation_count = len(reduced_trace["observations_at_entry"]) + sum(
-        len(step["observations_after"]) for step in reduced_trace["steps"]
+    observation_count = sum(
+        instruction["kind"] == "observation" for instruction in builder.steps
     )
     canonical_text = "\n".join(record.raw for record in preprocessed.records) + "\n"
     return {
         "artifact_kind": "ccfraft_reduction_certificate",
         "counts": {
-            "actions": len(builder.actions),
+            "actions": builder.action_count,
             "ignored_events": len(ignored_events),
             "observations": observation_count,
             "preprocessed_events": len(preprocessed.events),
@@ -1242,9 +1336,8 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
             "groups": preprocessed.groups,
             "ignored_events": ignored_events,
         },
-        "raw_records": raw_records,
-        "reduced_trace": reduced_trace,
         "schema_version": SCHEMA_VERSION,
+        "steps": builder.steps,
     }
 
 

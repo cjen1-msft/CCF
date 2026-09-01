@@ -159,14 +159,17 @@ def run_rows() -> tuple[str, str]:
                     if raw_line is None
                     else editor_link(trace_relative, int(raw_line), str(raw_line))
                 )
-                position = item.get("action_index", item.get("boundary", "-"))
+                instruction = item.get("instruction_index", "-")
+                boundary = item.get("action_boundary", "-")
+                item_kind = item.get("action", item.get("variable", "-"))
                 diagnosis_rows.append(
                     "<tr>"
                     f"<td>{html.escape(str(item['category']))}</td>"
-                    f"<td>{html.escape(str(position))}</td>"
+                    f"<td>{html.escape(str(instruction))}</td>"
+                    f"<td>{html.escape(str(boundary))}</td>"
                     f"<td>{trace_link}</td>"
                     f"<td>{html.escape(str(item.get('reduction_rule', '-')))}</td>"
-                    f"<td><code>{html.escape(str(item.get('kind', '-')))}</code></td>"
+                    f"<td><code>{html.escape(str(item_kind))}</code></td>"
                     f"<td><code>{html.escape(str(item['name']))}</code></td>"
                     "</tr>"
                 )
@@ -177,7 +180,8 @@ def run_rows() -> tuple[str, str]:
                 f"Result: {html.escape(str(diagnosis['core_kind']))}. "
                 f"{result['core_reduction_checks']} solver checks used a "
                 f"{result['core_reduction_budget_seconds']:.1f} second budget.</p>"
-                "<table><thead><tr><th>Type</th><th>Position</th>"
+                "<table><thead><tr><th>Type</th><th>Instruction</th>"
+                "<th>Action boundary</th>"
                 "<th>Raw line</th><th>Reduction rule</th><th>Kind</th>"
                 "<th>Assertion</th></tr></thead><tbody>"
                 f"{''.join(diagnosis_rows)}</tbody></table>"
@@ -212,8 +216,21 @@ def main() -> int:
     rows, details = run_rows()
     walkthrough_formula = ARTIFACTS / "soft_rollback-direct" / "formula-reduced.smt2"
     walkthrough_proof = ARTIFACTS / "soft_rollback-direct" / "proof.txt"
-    transition_name = "transition_action_0069_line_0112_timeout"
-    observation_name = "observation_0297_line_0112_boundary_0069_role"
+    walkthrough_diagnosis = read_json(
+        ARTIFACTS / "soft_rollback-direct" / "diagnosis.json"
+    )
+    walkthrough_transition = next(
+        item
+        for item in walkthrough_diagnosis["items"]
+        if item["category"] == "transition"
+    )
+    walkthrough_observation = next(
+        item
+        for item in walkthrough_diagnosis["items"]
+        if item["category"] == "observation"
+    )
+    transition_name = walkthrough_transition["name"]
+    observation_name = walkthrough_observation["name"]
     transition_line = source_line(walkthrough_formula, transition_name)
     proof_line = source_last_line(walkthrough_proof, ":rule eq_resolve")
     audit_files = (
@@ -296,8 +313,19 @@ single-edit negative traces. Open the
 <code>Shared/smt.py</code> is a separate user-reviewed projection of terms,
 roles, log lengths, commit indices, allocation, and join state. The report's
 <code>sat</code> and <code>unsat</code> results do not yet establish
-<code>MidtraceSatisfiable</code> for the complete model.
+<code>MidtraceSatisfiable</code> for the complete model. The flat certificate
+also records <code>firstMessageFrom</code> before every receive, but this
+projected backend does not yet encode queues or message contents.
 </div>
+
+<h2>Reduced trace format</h2>
+<pre>{{"kind":"observation","node":"2","variable":"currentTerm","value":3}}
+{{"kind":"observation","node":"2","variable":"firstMessageFrom","value":{{...}}}}
+{{"kind":"action","node":"2","action":"receive","source":"1"}}</pre>
+<p>
+The array is the instruction stream. Observations read the current state.
+Actions check <code>Enabled</code> and advance it with <code>next</code>.
+</p>
 
 <h2>Results</h2>
 <input id="filter" placeholder="Filter traces">
@@ -340,12 +368,12 @@ mutated role as a post-action observation at boundary 69.
 </li>
 <li>
 The timeout assertion
-<code>transition_action_0069_line_0112_timeout</code> requires
+<code>{html.escape(transition_name)}</code> requires
 <code>state_0069_role[1] = 2</code>. Role value 2 means candidate.
 </li>
 <li>
 The observation assertion
-<code>observation_0297_line_0112_boundary_0069_role</code> requires
+<code>{html.escape(observation_name)}</code> requires
 <code>state_0069_role[1] = 3</code>. Role value 3 means leader.
 </li>
 <li>
@@ -385,8 +413,8 @@ the proof records the derivation from those assertions to <code>false</code>.
 <td>Correct and subset-minimal</td></tr>
 <tr><td><code>bad_network-indirect</code></td><td>5</td>
 <td>Correct and subset-minimal</td></tr>
-<tr><td><code>soft_rollback-indirect</code></td><td>14</td>
-<td>Correctly UNSAT, but not minimal. Seven assertions are irrelevant.</td></tr>
+<tr><td><code>soft_rollback-indirect</code></td><td>7</td>
+<td>Correct and subset-minimal</td></tr>
 </tbody>
 </table>
 
@@ -404,9 +432,7 @@ one assertion permits a consistent term assignment.
 </p>
 
 <h3>Soft-rollback indirect chain</h3>
-<p>
-Seven of the 14 retained assertions suffice:
-</p>
+<p>The reduced core contains seven assertions:</p>
 <pre>term at boundary 71 = 2
 receive preserves term through boundary 72
 receive preserves term through boundary 73
@@ -417,10 +443,8 @@ observation at boundary 76 requires term 3
 
 therefore 2 = 3</pre>
 <p>
-The other seven assertions constrain commit indices, log lengths, or
-allocation. Those assertions are mutually compatible and do not contribute
-to this term contradiction. The report keeps the 14-assertion output because
-the automatic reducer reached its five-second budget.
+Every assertion supplies an endpoint or one term-preserving transition.
+Removing any one breaks the chain and permits a consistent term assignment.
 </p>
 
 <p>

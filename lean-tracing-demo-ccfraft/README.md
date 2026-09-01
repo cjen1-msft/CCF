@@ -21,6 +21,25 @@ The reducers separate three jobs:
 2. Audited preprocessing groups or removes implementation events.
 3. Audited reduction rules emit model actions and observations.
 
+The reduction certificate has one ordered `steps` array. Each item is either:
+
+```json
+{"kind": "observation", "node": "2", "variable": "currentTerm", "value": 3}
+```
+
+or:
+
+```json
+{"kind": "action", "node": "2", "action": "receive", "source": "1"}
+```
+
+Array order defines the semantics. An observation reads the current state. An
+action checks `Enabled` and advances the state with `next`.
+
+Before every receive, the reducer emits a `firstMessageFrom` observation with
+the packet fields available in the implementation trace. The Lean definition
+means the first queued message from the chosen source equals that message.
+
 ## Do not manually review generated proofs
 
 `MachineGenerated/` contains lowering code, proof bodies, and the inductive
@@ -46,6 +65,10 @@ The executable SMT backend currently checks only a projection of that claim.
 and join state. It does not encode complete logs, messages, votes, or
 configurations. Its `sat` and `unsat` results therefore do not yet establish
 `MidtraceSatisfiable` for the complete model.
+
+The projected backend checks the shape and ordering of `firstMessageFrom`, but
+does not yet encode queues or message contents. The generated SMT file marks
+that observation as an unencoded projection constraint.
 
 `MachineGenerated/Lowering.lean` and
 `MachineGenerated/LoweringProofs.lean` prove that all ten typed action
