@@ -373,6 +373,62 @@ the proof records the derivation from those assertions to <code>false</code>.
 )}
 </p>
 
+<h2>Manual core cross-check</h2>
+<table>
+<thead>
+<tr><th>Trace</th><th>Reduced core</th><th>Manual result</th></tr>
+</thead>
+<tbody>
+<tr><td><code>bad_network-direct</code></td><td>2</td>
+<td>Correct and subset-minimal</td></tr>
+<tr><td><code>soft_rollback-direct</code></td><td>2</td>
+<td>Correct and subset-minimal</td></tr>
+<tr><td><code>bad_network-indirect</code></td><td>5</td>
+<td>Correct and subset-minimal</td></tr>
+<tr><td><code>soft_rollback-indirect</code></td><td>14</td>
+<td>Correctly UNSAT, but not minimal. Seven assertions are irrelevant.</td></tr>
+</tbody>
+</table>
+
+<h3>Bad-network indirect chain</h3>
+<pre>term at boundary 117 = 6
+receive preserves term through boundary 118
+receive preserves term through boundary 119
+timeout increments term at boundary 120 to 7
+observation at boundary 120 requires term 8
+
+therefore 7 = 8</pre>
+<p>
+Each of the five named assertions supplies one link or endpoint. Removing any
+one assertion permits a consistent term assignment.
+</p>
+
+<h3>Soft-rollback indirect chain</h3>
+<p>
+Seven of the 14 retained assertions suffice:
+</p>
+<pre>term at boundary 71 = 2
+receive preserves term through boundary 72
+receive preserves term through boundary 73
+becomeLeader preserves term through boundary 74
+appendEntries preserves term through boundary 75
+appendEntries preserves term through boundary 76
+observation at boundary 76 requires term 3
+
+therefore 2 = 3</pre>
+<p>
+The other seven assertions constrain commit indices, log lengths, or
+allocation. Those assertions are mutually compatible and do not contribute
+to this term contradiction. The report keeps the 14-assertion output because
+the automatic reducer reached its five-second budget.
+</p>
+
+<p>
+Minimality applies to named assertions. A transition assertion contains
+several conjuncts, although only one conjunct may participate in the
+contradiction.
+</p>
+
 <h2>Run evidence</h2>
 {details}
 
