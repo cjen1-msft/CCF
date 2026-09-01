@@ -54,6 +54,8 @@ blocker is to connect the emitted SMT formula to that typed formula.
 
 The projected backend trusts cvc5 for `sat` and `unsat`. For `unsat`, it saves
 the cvc5 proof and unsat core and asks cvc5 to check both.
+The report records wall-clock time for the initial check and the separate core
+and proof invocations.
 
 ## Run the demo
 
