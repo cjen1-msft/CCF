@@ -53,9 +53,14 @@ lowerings preserve the canonical Lean transition relation. The remaining
 blocker is to connect the emitted SMT formula to that typed formula.
 
 The projected backend trusts cvc5 for `sat` and `unsat`. For `unsat`, it saves
-the cvc5 proof and unsat core and asks cvc5 to check both.
-The report records wall-clock time for the initial check and the separate core
-and proof invocations.
+the cvc5 proof and unsat core and asks cvc5 to check both. It reduces the core
+within a fixed wall-clock budget by removing deterministic chunks and then
+individual assertions. It accepts a removal only when cvc5 still returns
+`unsat`. It reconstructs a formula from the reduced core and generates the
+proof from that formula. `diagnosis.json` maps each remaining constraint back
+to its action or observation, reducer rule, and raw trace line.
+The report records wall-clock time for the initial check, core generation,
+budgeted reduction, and proof invocation.
 
 ## Run the demo
 

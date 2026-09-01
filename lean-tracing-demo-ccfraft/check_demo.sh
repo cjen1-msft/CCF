@@ -41,12 +41,16 @@ run_trace() {
     "$output/cvc5-status.stdout" \
     "$output/cvc5-unsat-core.stderr" \
     "$output/cvc5-unsat-core.stdout" \
+    "$output/diagnosis.json" \
     "$output/expected.canonical.json" \
-    "$output/formula-proof.smt2" \
+    "$output/formula-reduced-proof.smt2" \
+    "$output/formula-reduced.smt2" \
+    "$output/formula-core-candidate.smt2" \
     "$output/formula-unsat-core.smt2" \
     "$output/formula.smt2" \
     "$output/proof.txt" \
     "$output/result.json" \
+    "$output/unsat-core-original.txt" \
     "$output/unsat-core.txt"
   status="$(
     python3 validate.py \
