@@ -68,21 +68,22 @@ roles, log lengths, commit indices, allocation, and join state. The report's
 <thead>
 <tr>
 <th>Trace</th><th>cvc5</th><th>Case</th><th>Raw</th>
-<th>Actions</th><th>Observations</th><th>Trace</th><th>Result</th>
+<th>Actions</th><th>Observations</th><th>Check ms</th><th>Core ms</th>
+<th>Proof ms</th><th>Total ms</th><th>Trace</th><th>Result</th>
 </tr>
 </thead>
-<tbody><tr><td><a href="#run-bad_network">bad_network</a></td><td data-sort="sat"><code>sat</code></td><td>valid</td><td>319</td><td>176</td><td>1008</td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Traces/Captured/bad_network.ndjson:1:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/7cbb49860e62b2b0b8f5e6298f1c2d18a474d4bf/lean-tracing-demo-ccfraft/Traces/Captured/bad_network.ndjson#L1">GitHub</a></td><td><a href="../Artifacts/runs/bad_network/result.json">artifact</a></td></tr>
-<tr><td><a href="#run-soft_rollback">soft_rollback</a></td><td data-sort="sat"><code>sat</code></td><td>valid</td><td>232</td><td>143</td><td>738</td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Traces/Captured/soft_rollback.ndjson:1:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/7cbb49860e62b2b0b8f5e6298f1c2d18a474d4bf/lean-tracing-demo-ccfraft/Traces/Captured/soft_rollback.ndjson#L1">GitHub</a></td><td><a href="../Artifacts/runs/soft_rollback/result.json">artifact</a></td></tr>
-<tr><td><a href="#run-bad_network-direct">bad_network-direct</a></td><td data-sort="unsat"><code>unsat</code></td><td>direct</td><td>319</td><td>176</td><td>1008</td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Traces/Mutated/bad_network-direct.ndjson:1:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/7cbb49860e62b2b0b8f5e6298f1c2d18a474d4bf/lean-tracing-demo-ccfraft/Traces/Mutated/bad_network-direct.ndjson#L1">GitHub</a></td><td><a href="../Artifacts/runs/bad_network-direct/result.json">artifact</a></td></tr>
-<tr><td><a href="#run-bad_network-indirect">bad_network-indirect</a></td><td data-sort="unsat"><code>unsat</code></td><td>indirect</td><td>318</td><td>175</td><td>1002</td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Traces/Mutated/bad_network-indirect.ndjson:1:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/7cbb49860e62b2b0b8f5e6298f1c2d18a474d4bf/lean-tracing-demo-ccfraft/Traces/Mutated/bad_network-indirect.ndjson#L1">GitHub</a></td><td><a href="../Artifacts/runs/bad_network-indirect/result.json">artifact</a></td></tr>
-<tr><td><a href="#run-soft_rollback-direct">soft_rollback-direct</a></td><td data-sort="unsat"><code>unsat</code></td><td>direct</td><td>232</td><td>143</td><td>738</td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Traces/Mutated/soft_rollback-direct.ndjson:1:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/7cbb49860e62b2b0b8f5e6298f1c2d18a474d4bf/lean-tracing-demo-ccfraft/Traces/Mutated/soft_rollback-direct.ndjson#L1">GitHub</a></td><td><a href="../Artifacts/runs/soft_rollback-direct/result.json">artifact</a></td></tr>
-<tr><td><a href="#run-soft_rollback-indirect">soft_rollback-indirect</a></td><td data-sort="unsat"><code>unsat</code></td><td>indirect</td><td>231</td><td>142</td><td>732</td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Traces/Mutated/soft_rollback-indirect.ndjson:1:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/7cbb49860e62b2b0b8f5e6298f1c2d18a474d4bf/lean-tracing-demo-ccfraft/Traces/Mutated/soft_rollback-indirect.ndjson#L1">GitHub</a></td><td><a href="../Artifacts/runs/soft_rollback-indirect/result.json">artifact</a></td></tr></tbody>
+<tbody><tr><td><a href="#run-bad_network">bad_network</a></td><td data-sort="sat"><code>sat</code></td><td>valid</td><td>319</td><td>176</td><td>1008</td><td>602.6</td><td>-</td><td>-</td><td>602.6</td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Traces/Captured/bad_network.ndjson:1:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/440e47b849a5a97bf48127debea54265bd2319c3/lean-tracing-demo-ccfraft/Traces/Captured/bad_network.ndjson#L1">GitHub</a></td><td><a href="../Artifacts/runs/bad_network/result.json">artifact</a></td></tr>
+<tr><td><a href="#run-soft_rollback">soft_rollback</a></td><td data-sort="sat"><code>sat</code></td><td>valid</td><td>232</td><td>143</td><td>738</td><td>496.4</td><td>-</td><td>-</td><td>496.4</td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Traces/Captured/soft_rollback.ndjson:1:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/440e47b849a5a97bf48127debea54265bd2319c3/lean-tracing-demo-ccfraft/Traces/Captured/soft_rollback.ndjson#L1">GitHub</a></td><td><a href="../Artifacts/runs/soft_rollback/result.json">artifact</a></td></tr>
+<tr><td><a href="#run-bad_network-direct">bad_network-direct</a></td><td data-sort="unsat"><code>unsat</code></td><td>direct</td><td>319</td><td>176</td><td>1008</td><td>143.2</td><td>195.2</td><td>214.0</td><td>552.5</td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Traces/Mutated/bad_network-direct.ndjson:1:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/440e47b849a5a97bf48127debea54265bd2319c3/lean-tracing-demo-ccfraft/Traces/Mutated/bad_network-direct.ndjson#L1">GitHub</a></td><td><a href="../Artifacts/runs/bad_network-direct/result.json">artifact</a></td></tr>
+<tr><td><a href="#run-bad_network-indirect">bad_network-indirect</a></td><td data-sort="unsat"><code>unsat</code></td><td>indirect</td><td>318</td><td>175</td><td>1002</td><td>346.1</td><td>813.5</td><td>615.3</td><td>1775.0</td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Traces/Mutated/bad_network-indirect.ndjson:1:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/440e47b849a5a97bf48127debea54265bd2319c3/lean-tracing-demo-ccfraft/Traces/Mutated/bad_network-indirect.ndjson#L1">GitHub</a></td><td><a href="../Artifacts/runs/bad_network-indirect/result.json">artifact</a></td></tr>
+<tr><td><a href="#run-soft_rollback-direct">soft_rollback-direct</a></td><td data-sort="unsat"><code>unsat</code></td><td>direct</td><td>232</td><td>143</td><td>738</td><td>88.9</td><td>177.8</td><td>179.2</td><td>445.8</td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Traces/Mutated/soft_rollback-direct.ndjson:1:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/440e47b849a5a97bf48127debea54265bd2319c3/lean-tracing-demo-ccfraft/Traces/Mutated/soft_rollback-direct.ndjson#L1">GitHub</a></td><td><a href="../Artifacts/runs/soft_rollback-direct/result.json">artifact</a></td></tr>
+<tr><td><a href="#run-soft_rollback-indirect">soft_rollback-indirect</a></td><td data-sort="unsat"><code>unsat</code></td><td>indirect</td><td>231</td><td>142</td><td>732</td><td>285.0</td><td>651.6</td><td>690.6</td><td>1627.1</td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Traces/Mutated/soft_rollback-indirect.ndjson:1:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/440e47b849a5a97bf48127debea54265bd2319c3/lean-tracing-demo-ccfraft/Traces/Mutated/soft_rollback-indirect.ndjson#L1">GitHub</a></td><td><a href="../Artifacts/runs/soft_rollback-indirect/result.json">artifact</a></td></tr></tbody>
 </table>
 
 <h2>Manual review boundary</h2>
 <table>
 <thead><tr><th>File</th><th>Source</th></tr></thead>
-<tbody><tr><td><code>Model.lean</code></td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Model.lean:1225:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/7cbb49860e62b2b0b8f5e6298f1c2d18a474d4bf/lean-tracing-demo-ccfraft/Model.lean#L1225">GitHub</a></td></tr><tr><td><code>Properties.lean</code></td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Properties.lean:40:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/7cbb49860e62b2b0b8f5e6298f1c2d18a474d4bf/lean-tracing-demo-ccfraft/Properties.lean#L40">GitHub</a></td></tr><tr><td><code>Reduction.lean</code></td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Reduction.lean:73:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/7cbb49860e62b2b0b8f5e6298f1c2d18a474d4bf/lean-tracing-demo-ccfraft/Reduction.lean#L73">GitHub</a></td></tr><tr><td><code>reduction.py</code></td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/reduction.py:756:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/7cbb49860e62b2b0b8f5e6298f1c2d18a474d4bf/lean-tracing-demo-ccfraft/reduction.py#L756">GitHub</a></td></tr><tr><td><code>TraceProperties.lean</code></td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/TraceProperties.lean:72:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/7cbb49860e62b2b0b8f5e6298f1c2d18a474d4bf/lean-tracing-demo-ccfraft/TraceProperties.lean#L72">GitHub</a></td></tr></tbody>
+<tbody><tr><td><code>Model.lean</code></td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Model.lean:1225:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/440e47b849a5a97bf48127debea54265bd2319c3/lean-tracing-demo-ccfraft/Model.lean#L1225">GitHub</a></td></tr><tr><td><code>Properties.lean</code></td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Properties.lean:40:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/440e47b849a5a97bf48127debea54265bd2319c3/lean-tracing-demo-ccfraft/Properties.lean#L40">GitHub</a></td></tr><tr><td><code>Reduction.lean</code></td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Reduction.lean:73:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/440e47b849a5a97bf48127debea54265bd2319c3/lean-tracing-demo-ccfraft/Reduction.lean#L73">GitHub</a></td></tr><tr><td><code>reduction.py</code></td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/reduction.py:756:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/440e47b849a5a97bf48127debea54265bd2319c3/lean-tracing-demo-ccfraft/reduction.py#L756">GitHub</a></td></tr><tr><td><code>TraceProperties.lean</code></td><td><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/TraceProperties.lean:72:1">editor</a> <a href="https://github.com/cjen1-msft/CCF/blob/440e47b849a5a97bf48127debea54265bd2319c3/lean-tracing-demo-ccfraft/TraceProperties.lean#L72">GitHub</a></td></tr></tbody>
 </table>
 
 <h2>Mechanically checked boundary</h2>
@@ -91,6 +92,42 @@ roles, log lengths, commit indices, allocation, and join state. The report's
 lowerings, <code>lowerTrace_correct</code>, and the forbidden-axiom audit.
 The Python integration tests regenerate each formula and ask cvc5 to check
 the proof and unsat core for every negative trace.
+</p>
+
+<h2>One UNSAT proof</h2>
+<p>
+The direct <code>soft_rollback</code> mutation changes raw line 112 from
+<code>Candidate</code> to <code>Leader</code>, but leaves the event function
+as <code>become_candidate</code>.
+</p>
+<ol>
+<li>
+The reducer emits action 69, <code>timeout(node = 1)</code>. It records the
+mutated role as a post-action observation at boundary 69.
+</li>
+<li>
+The timeout assertion
+<code>transition_action_0069_line_0112_timeout</code> requires
+<code>state_0069_role[1] = 2</code>. Role value 2 means candidate.
+</li>
+<li>
+The observation assertion
+<code>observation_0297_line_0112_boundary_0069_role</code> requires
+<code>state_0069_role[1] = 3</code>. Role value 3 means leader.
+</li>
+<li>
+cvc5 normalizes the array reads, extracts both equalities, derives
+<code>2 = 3</code>, evaluates that equality as false, and closes the proof.
+</li>
+</ol>
+<p>
+The unsat core contains both named assertions, along with a large non-minimal
+prefix. The proof is different from the core. The core lists input assertions;
+the proof records the derivation from those assertions to <code>false</code>.
+</p>
+<p>
+<a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Artifacts/runs/soft_rollback-direct/formula.smt2:4270:1">Open the conflicting SMT assertions</a>
+<a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Artifacts/runs/soft_rollback-direct/proof.txt:7431:1">Open the final proof steps</a>
 </p>
 
 <h2>Run evidence</h2>

@@ -16,6 +16,7 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +42,7 @@ class SolverRun:
     status: str
     stdout: str
     stderr: str
+    wall_time_ms: float
 
 
 def _find_cvc5(requested: Path | None) -> Path:
@@ -72,6 +74,7 @@ def _run_solver(
     output_directory: Path,
     artifact_stem: str,
 ) -> SolverRun:
+    started = time.perf_counter_ns()
     completed = subprocess.run(
         [str(cvc5), "--lang=smt2", str(formula_path)],
         check=False,
@@ -80,6 +83,7 @@ def _run_solver(
         encoding="utf-8",
         errors="replace",
     )
+    wall_time_ms = (time.perf_counter_ns() - started) / 1_000_000
     stdout_path = output_directory / f"{artifact_stem}.stdout"
     stderr_path = output_directory / f"{artifact_stem}.stderr"
     stdout_path.write_text(completed.stdout, encoding="utf-8")
@@ -93,6 +97,7 @@ def _run_solver(
         _solver_status(completed.stdout),
         completed.stdout,
         completed.stderr,
+        wall_time_ms,
     )
 
 
@@ -149,7 +154,9 @@ def validate(
         "cvc5": str(solver),
         "formula": formula_path.name,
         "nodes": list(formula.nodes),
+        "check_sat_wall_ms": status_run.wall_time_ms,
         "status": status,
+        "total_solver_wall_ms": status_run.wall_time_ms,
     }
 
     if status == "unsat":
@@ -184,8 +191,15 @@ def validate(
             {
                 "proof": proof_path.name,
                 "proof_checked_by_cvc5": True,
+                "proof_wall_ms": proof_run.wall_time_ms,
                 "unsat_core": core_path.name,
                 "unsat_core_checked_by_cvc5": True,
+                "unsat_core_wall_ms": core_run.wall_time_ms,
+                "total_solver_wall_ms": (
+                    status_run.wall_time_ms
+                    + core_run.wall_time_ms
+                    + proof_run.wall_time_ms
+                ),
             }
         )
         if show_proof:

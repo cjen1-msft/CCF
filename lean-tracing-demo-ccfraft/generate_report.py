@@ -60,6 +60,11 @@ def source_links(relative: str, line: int = 1) -> str:
     )
 
 
+def editor_link(relative: str, line: int, label: str) -> str:
+    vscode = f"{FILE_URL_PREFIX}{relative}:{line}:1"
+    return f'<a href="{html.escape(vscode)}">{html.escape(label)}</a>'
+
+
 def read_json(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
@@ -98,6 +103,10 @@ def run_rows() -> tuple[str, str]:
         result = read_json(ARTIFACTS / stem / "result.json")
         certificate = read_json(ARTIFACTS / stem / "certificate.json")
         status = str(result["status"])
+        check_ms = float(result["check_sat_wall_ms"])
+        core_ms = result.get("unsat_core_wall_ms")
+        proof_ms = result.get("proof_wall_ms")
+        total_ms = float(result["total_solver_wall_ms"])
         counts = certificate["counts"]
         trace_relative = f"lean-tracing-demo-ccfraft/Traces/{directory}/{stem}.ndjson"
         result_href = f"../Artifacts/runs/{stem}/result.json"
@@ -109,6 +118,10 @@ def run_rows() -> tuple[str, str]:
             f"<td>{counts['raw_records']}</td>"
             f"<td>{counts['actions']}</td>"
             f"<td>{counts['observations']}</td>"
+            f"<td>{check_ms:.1f}</td>"
+            f"<td>{'-' if core_ms is None else f'{float(core_ms):.1f}'}</td>"
+            f"<td>{'-' if proof_ms is None else f'{float(proof_ms):.1f}'}</td>"
+            f"<td>{total_ms:.1f}</td>"
             f"<td>{source_links(trace_relative)}</td>"
             f'<td><a href="{html.escape(result_href)}">artifact</a></td>'
             "</tr>"
@@ -237,7 +250,8 @@ roles, log lengths, commit indices, allocation, and join state. The report's
 <thead>
 <tr>
 <th>Trace</th><th>cvc5</th><th>Case</th><th>Raw</th>
-<th>Actions</th><th>Observations</th><th>Trace</th><th>Result</th>
+<th>Actions</th><th>Observations</th><th>Check ms</th><th>Core ms</th>
+<th>Proof ms</th><th>Total ms</th><th>Trace</th><th>Result</th>
 </tr>
 </thead>
 <tbody>{rows}</tbody>
@@ -255,6 +269,50 @@ roles, log lengths, commit indices, allocation, and join state. The report's
 lowerings, <code>lowerTrace_correct</code>, and the forbidden-axiom audit.
 The Python integration tests regenerate each formula and ask cvc5 to check
 the proof and unsat core for every negative trace.
+</p>
+
+<h2>One UNSAT proof</h2>
+<p>
+The direct <code>soft_rollback</code> mutation changes raw line 112 from
+<code>Candidate</code> to <code>Leader</code>, but leaves the event function
+as <code>become_candidate</code>.
+</p>
+<ol>
+<li>
+The reducer emits action 69, <code>timeout(node = 1)</code>. It records the
+mutated role as a post-action observation at boundary 69.
+</li>
+<li>
+The timeout assertion
+<code>transition_action_0069_line_0112_timeout</code> requires
+<code>state_0069_role[1] = 2</code>. Role value 2 means candidate.
+</li>
+<li>
+The observation assertion
+<code>observation_0297_line_0112_boundary_0069_role</code> requires
+<code>state_0069_role[1] = 3</code>. Role value 3 means leader.
+</li>
+<li>
+cvc5 normalizes the array reads, extracts both equalities, derives
+<code>2 = 3</code>, evaluates that equality as false, and closes the proof.
+</li>
+</ol>
+<p>
+The unsat core contains both named assertions, along with a large non-minimal
+prefix. The proof is different from the core. The core lists input assertions;
+the proof records the derivation from those assertions to <code>false</code>.
+</p>
+<p>
+{editor_link(
+    "lean-tracing-demo-ccfraft/Artifacts/runs/soft_rollback-direct/formula.smt2",
+    4270,
+    "Open the conflicting SMT assertions",
+)}
+{editor_link(
+    "lean-tracing-demo-ccfraft/Artifacts/runs/soft_rollback-direct/proof.txt",
+    7431,
+    "Open the final proof steps",
+)}
 </p>
 
 <h2>Run evidence</h2>

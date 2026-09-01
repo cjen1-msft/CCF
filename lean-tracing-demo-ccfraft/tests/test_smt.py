@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
 import pathlib
 import shutil
@@ -170,6 +171,11 @@ class Cvc5IntegrationTests(unittest.TestCase):
             status,
         )
         self.assertTrue((output_directory / "cvc5-status.stderr").is_file())
+        result = json.loads(
+            (output_directory / "result.json").read_text(encoding="utf-8")
+        )
+        self.assertGreaterEqual(result["check_sat_wall_ms"], 0)
+        self.assertGreaterEqual(result["total_solver_wall_ms"], 0)
         return status, output_directory, emitted
 
     def test_captured_traces_are_sat(self) -> None:
@@ -202,6 +208,13 @@ class Cvc5IntegrationTests(unittest.TestCase):
                 result = (output_directory / "result.json").read_text(encoding="utf-8")
                 self.assertIn('"proof_checked_by_cvc5": true', result)
                 self.assertIn('"unsat_core_checked_by_cvc5": true', result)
+                parsed = json.loads(result)
+                self.assertGreaterEqual(parsed["unsat_core_wall_ms"], 0)
+                self.assertGreaterEqual(parsed["proof_wall_ms"], 0)
+                self.assertGreaterEqual(
+                    parsed["total_solver_wall_ms"],
+                    parsed["check_sat_wall_ms"],
+                )
 
 
 if __name__ == "__main__":
