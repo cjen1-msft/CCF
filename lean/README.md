@@ -174,7 +174,6 @@ No theorem in this project claims those 17 open properties.
 
 ## Related CCF Raft experiment
 
-`CCFRaft/` translates the selected core of `tla/consensus/ccfraft.tla` into an
-executable arbitrary-term Lean model with kernel-checked Raft safety proofs.
-Git history retains its development stages. See `CCFRaft/README.md` and
-`CCFRaft/CORRESPONDENCE.md`.
+The CCF Raft model moved to
+`../lean-tracing-demo-ccfraft/`. That directory contains the canonical model,
+the safety proof, and the implementation-trace validation demo.
