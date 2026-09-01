@@ -998,7 +998,7 @@ def _reduce_receive_with_optional_term_update(
     follower = event.data.get("become_follower")
     builder.observe_state(
         receive,
-        rule="observe-pre-action-state",
+        rule=receive_rule,
     )
     if follower is not None:
         builder.action(
@@ -1010,7 +1010,7 @@ def _reduce_receive_with_optional_term_update(
         )
         builder.observe_state(
             follower,
-            rule="observe-proven-term-transition-state",
+            rule="newer-term-receive-transition",
         )
     _require(
         batch_ends is None or len(batch_ends) == receive_count,
@@ -1045,7 +1045,7 @@ def _reduce_receive_with_optional_term_update(
     if post_event is not None:
         builder.observe_state(
             post_event,
-            rule="observe-grouped-receive-post-state",
+            rule=receive_rule,
         )
 
 
@@ -1096,10 +1096,6 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
                 _role(primary) == "Leader",
                 f"line {primary.record.line_number}: replicate is not on a leader",
             )
-            builder.observe_state(
-                primary,
-                rule="observe-pre-action-state",
-            )
             committable = primary.message.get("globally_committable")
             _require(
                 type(committable) is bool,
@@ -1107,18 +1103,22 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
                 "is missing",
             )
             if committable:
+                rule = "replicate-signature"
+                builder.observe_state(primary, rule=rule)
                 builder.action(
                     "signCommittableMessages",
                     primary.node,
-                    rule="replicate-signature",
+                    rule=rule,
                     events=event.events,
                 )
             else:
+                rule = "replicate-client-request"
+                builder.observe_state(primary, rule=rule)
                 builder.action(
                     "clientRequest",
                     primary.node,
                     transaction=f"trace-line-{primary.record.line_number}",
-                    rule="replicate-client-request",
+                    rule=rule,
                     events=event.events,
                 )
         elif event.kind == "add_configuration":
@@ -1130,7 +1130,7 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
             _configuration(primary)
             builder.observe_state(
                 primary,
-                rule="observe-pre-action-state",
+                rule="leader-add-configuration",
             )
             _require(
                 pending_configuration is None,
@@ -1141,7 +1141,7 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
             destination = _peer(primary, "to_node_id")
             builder.observe_state(
                 primary,
-                rule="observe-pre-action-state",
+                rule="split-append-entries-batch",
             )
             for batch_end in _split_ends(primary):
                 builder.action(
@@ -1223,7 +1223,7 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
             )
             builder.observe_state(
                 primary,
-                rule="observe-pre-action-state",
+                rule="leader-commit-callback",
             )
             builder.action(
                 "advanceCommitIndex",
@@ -1240,7 +1240,7 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
             )
             builder.observe_state(
                 primary,
-                rule="observe-post-action-state",
+                rule="candidate-timeout",
             )
         elif event.kind == "send_request_vote":
             _require(
@@ -1252,7 +1252,7 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
             _packet(primary, "raft_request_vote")
             builder.observe_state(
                 primary,
-                rule="observe-pre-action-state",
+                rule="send-request-vote",
             )
             builder.action(
                 "requestVote",
@@ -1275,7 +1275,7 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
             )
             builder.observe_state(
                 primary,
-                rule="observe-post-action-state",
+                rule="candidate-became-leader",
             )
         else:
             raise ReductionError(
