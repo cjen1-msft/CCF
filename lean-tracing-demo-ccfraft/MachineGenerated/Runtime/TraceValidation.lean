@@ -1,7 +1,7 @@
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-import CCFRaft.Simulation
+import MachineGenerated.Runtime.Simulation
 import Lean.Data.Json
 
 set_option autoImplicit false

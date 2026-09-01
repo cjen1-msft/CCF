@@ -1,8 +1,8 @@
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-import CCFRaft.Properties
-import CCFRaft.HandlerProofs
+import MachineGenerated.Invariant
+import MachineGenerated.HandlerProofs
 
 set_option autoImplicit false
 
