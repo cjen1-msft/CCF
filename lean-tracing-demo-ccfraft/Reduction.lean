@@ -130,6 +130,14 @@ def receiveSteps
 def isAppendSend (event : Event Node TxId) : Bool :=
   event.function = .sendAppendEntries
 
+def receiveRuleName : RawFunction -> String
+  | .receiveAppendEntries => "split-append-entries-receive"
+  | .receiveAppendEntriesResponse =>
+      "split-append-entries-response-receive"
+  | .receiveRequestVote => "receive-request-vote"
+  | .receiveRequestVoteResponse => "receive-request-vote-response"
+  | _ => "unsupported-receive"
+
 def takeAppendSends :
     List (Event Node TxId) ->
       List (Event Node TxId) × List (Event Node TxId)
@@ -197,7 +205,7 @@ partial def reduce [DecidableEq Node] :
                       "candidate-became-leader"
                       [event]
                       [.becomeLeader event.node] ++
-                    observeState "observe-post-action-state" event ++
+                    observeState "candidate-became-leader" event ++
                     remaining
           | _ =>
               let remaining <- reduce rest
@@ -206,7 +214,7 @@ partial def reduce [DecidableEq Node] :
                     "candidate-became-leader"
                     [event]
                     [.becomeLeader event.node] ++
-                  observeState "observe-post-action-state" event ++
+                  observeState "candidate-became-leader" event ++
                   remaining
 
       | .replicate =>
@@ -218,7 +226,7 @@ partial def reduce [DecidableEq Node] :
                 let emittedSends <- reduce sends
                 let remaining <- reduce remainingEvents
                 pure <|
-                  observeState "observe-pre-action-state" configuration ++
+                  observeState "leader-add-configuration" configuration ++
                     emittedSends ++
                     actionSteps
                       "leader-add-configuration"
@@ -232,7 +240,7 @@ partial def reduce [DecidableEq Node] :
                 | some true, _ =>
                     let remaining <- reduce rest
                     pure <|
-                      observeState "observe-pre-action-state" event ++
+                      observeState "replicate-signature" event ++
                         actionSteps
                           "replicate-signature"
                           [event]
@@ -241,7 +249,7 @@ partial def reduce [DecidableEq Node] :
                 | some false, some transaction =>
                     let remaining <- reduce rest
                     pure <|
-                      observeState "observe-pre-action-state" event ++
+                      observeState "replicate-client-request" event ++
                         actionSteps
                           "replicate-client-request"
                           [event]
@@ -253,14 +261,14 @@ partial def reduce [DecidableEq Node] :
               match event.globallyCommittable, event.transaction with
               | some true, _ =>
                   pure <|
-                    observeState "observe-pre-action-state" event ++
+                    observeState "replicate-signature" event ++
                       actionSteps
                         "replicate-signature"
                         [event]
                         [.signCommittableMessages event.node]
               | some false, some transaction =>
                   pure <|
-                    observeState "observe-pre-action-state" event ++
+                    observeState "replicate-client-request" event ++
                       actionSteps
                         "replicate-client-request"
                         [event]
@@ -284,17 +292,17 @@ partial def reduce [DecidableEq Node] :
                   receiveSteps "split-append-entries-receive" event source
                 let remaining <- reduce remainingEvents
                 pure <|
-                  observeState "observe-pre-action-state" event ++
+                  observeState "split-append-entries-receive" event ++
                     actionSteps
                       "newer-term-receive-transition"
                       [event, follower]
                       [.updateTerm source event.node] ++
                     observeState
-                      "observe-proven-term-transition-state"
+                      "newer-term-receive-transition"
                       follower ++
                     receives ++
                     observeState
-                      "observe-grouped-receive-post-state"
+                      "split-append-entries-receive"
                       response ++
                     remaining
               else
@@ -308,10 +316,10 @@ partial def reduce [DecidableEq Node] :
                   receiveSteps "split-append-entries-receive" event source
                 let remaining <- reduce remainingEvents
                 pure <|
-                  observeState "observe-pre-action-state" event ++
+                  observeState "split-append-entries-receive" event ++
                     receives ++
                     observeState
-                      "observe-grouped-receive-post-state"
+                      "split-append-entries-receive"
                       response ++
                     remaining
           | [] =>
@@ -321,40 +329,41 @@ partial def reduce [DecidableEq Node] :
       | .receiveRequestVote
       | .receiveRequestVoteResponse =>
           let source <- requirePeer event
+          let rule := receiveRuleName event.function
           match rest with
           | follower :: tail =>
               if follower.function = .becomeFollower &&
                   decide (follower.node = event.node) then
-                let receives <- receiveSteps "receive-message" event source
+                let receives <- receiveSteps rule event source
                 let remaining <- reduce tail
                 pure <|
-                  observeState "observe-pre-action-state" event ++
+                  observeState rule event ++
                     actionSteps
                       "newer-term-receive-transition"
                       [event, follower]
                       [.updateTerm source event.node] ++
                     observeState
-                      "observe-proven-term-transition-state"
+                      "newer-term-receive-transition"
                       follower ++
                     receives ++
                     remaining
               else
-                let receives <- receiveSteps "receive-message" event source
+                let receives <- receiveSteps rule event source
                 let remaining <- reduce rest
                 pure <|
-                  observeState "observe-pre-action-state" event ++
+                  observeState rule event ++
                     receives ++
                     remaining
           | [] =>
-              let receives <- receiveSteps "receive-message" event source
+              let receives <- receiveSteps rule event source
               pure <|
-                observeState "observe-pre-action-state" event ++ receives
+                observeState rule event ++ receives
 
       | .sendAppendEntries =>
           let destination <- requirePeer event
           let remaining <- reduce rest
           pure <|
-            observeState "observe-pre-action-state" event ++
+            observeState "split-append-entries-batch" event ++
               actionSteps
                 "split-append-entries-batch"
                 [event]
@@ -366,7 +375,7 @@ partial def reduce [DecidableEq Node] :
           if event.role = .leader then
             let remaining <- reduce rest
             pure <|
-              observeState "observe-pre-action-state" event ++
+              observeState "leader-commit-callback" event ++
                 actionSteps
                   "leader-commit-callback"
                   [event]
@@ -379,14 +388,14 @@ partial def reduce [DecidableEq Node] :
           let remaining <- reduce rest
           pure <|
             actionSteps "candidate-timeout" [event] [.timeout event.node] ++
-              observeState "observe-post-action-state" event ++
+              observeState "candidate-timeout" event ++
               remaining
 
       | .sendRequestVote =>
           let destination <- requirePeer event
           let remaining <- reduce rest
           pure <|
-            observeState "observe-pre-action-state" event ++
+            observeState "send-request-vote" event ++
               actionSteps
                 "send-request-vote"
                 [event]
