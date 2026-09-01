@@ -5,25 +5,10 @@ set_option autoImplicit false
 
 namespace TraceValidation
 
-/-- One model action followed by observations at the resulting boundary. -/
-structure Step (Action Observation : Type) where
-  action : Action
-  observationsAfter : List Observation
-
-/-- A reduced trace with observations before and after model actions. -/
-structure ReducedTrace (Action Observation : Type) where
-  observationsAtEntry : List Observation
-  steps : List (Step Action Observation)
-
-def observationsHold
-    {State Observation : Type}
-    (observes : Observation -> State -> Prop)
-    (state : State) :
-    List Observation -> Prop
-  | [] => True
-  | observation :: rest =>
-      observes observation state /\
-        observationsHold observes state rest
+/-- One ordered trace instruction. Observations do not advance model state. -/
+inductive Instruction (Action Observation : Type) where
+  | action (value : Action)
+  | observation (value : Observation)
 
 def follows
     {State Action Observation : Type}
@@ -31,15 +16,14 @@ def follows
     (next : State -> Action -> State)
     (observes : Observation -> State -> Prop)
     (state : State) :
-    List (Step Action Observation) -> Prop
+    List (Instruction Action Observation) -> Prop
   | [] => True
-  | step :: rest =>
-      enabled state step.action /\
-        observationsHold
-          observes
-          (next state step.action)
-          step.observationsAfter /\
-        follows enabled next observes (next state step.action) rest
+  | .observation observation :: rest =>
+      observes observation state /\
+        follows enabled next observes state rest
+  | .action action :: rest =>
+      enabled state action /\
+        follows enabled next observes (next state action) rest
 
 def Satisfiable
     {State Action Observation : Type}
@@ -47,10 +31,9 @@ def Satisfiable
     (enabled : State -> Action -> Prop)
     (next : State -> Action -> State)
     (observes : Observation -> State -> Prop)
-    (trace : ReducedTrace Action Observation) : Prop :=
+    (trace : List (Instruction Action Observation)) : Prop :=
   Exists fun entry =>
     validEntryState entry /\
-      observationsHold observes entry trace.observationsAtEntry /\
-      follows enabled next observes entry trace.steps
+      follows enabled next observes entry trace
 
 end TraceValidation

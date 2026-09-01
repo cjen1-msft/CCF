@@ -9,12 +9,6 @@ namespace CCFRaft.Reduction
 
 variable {Node TxId : Type}
 
-/-!
-The NDJSON reader is shared infrastructure. This file starts after JSON fields
-have been decoded without interpretation. It contains only the model-specific
-preprocessing and reduction rules.
--/
-
 inductive RawFunction where
   | addConfiguration
   | becomeCandidate
@@ -33,8 +27,10 @@ inductive RawFunction where
   | sendRequestVote
   deriving DecidableEq
 
-structure RawEvent (Node TxId : Type) where
+/-- One normalized implementation event. JSON parsing is shared infrastructure. -/
+structure Event (Node TxId : Type) where
   line : Nat
+  timestamp : Nat
   function : RawFunction
   node : Node
   peer : Option Node
@@ -46,132 +42,369 @@ structure RawEvent (Node TxId : Type) where
   transaction : Option TxId := none
   configuration : Finset Node := {}
   batchEnds : List Nat := []
+  messages : List (Message Node TxId) := []
 
-inductive PreprocessedEvent (Node TxId : Type) where
-  | bootstrap (events : List (RawEvent Node TxId))
-  | retained (event : RawEvent Node TxId)
-  | newerTermReceive
-      (receive follower : RawEvent Node TxId)
+structure SourceLocation where
+  line : Nat
+  timestamp : Nat
+  function : RawFunction
 
-def isReceive : RawFunction -> Bool
-  | .receiveAppendEntries
-  | .receiveAppendEntriesResponse
-  | .receiveRequestVote
-  | .receiveRequestVoteResponse => true
-  | _ => false
+abbrev Instruction (Node TxId : Type) :=
+  TraceValidation.Instruction
+    (Action Node TxId)
+    (TraceValidation.Observation Node TxId)
 
-def isHelper : RawFunction -> Bool
-  | .dropPending
-  | .executeAppendEntries
-  | .sendAppendEntriesResponse => true
-  | _ => false
+/-- One certificate step with its audited rule and raw-event provenance. -/
+structure Step (Node TxId : Type) where
+  instruction : Instruction Node TxId
+  rule : String
+  provenance : List SourceLocation
 
-/--
-Group the implementation events that jointly denote one model transition.
-JSON parsing and field validation happen before this function.
--/
-partial def preprocess [DecidableEq Node] :
-    List (RawEvent Node TxId) -> List (PreprocessedEvent Node TxId)
-  | leader :: configurationReplicate :: configuration ::
-      signature :: commit :: rest =>
-      if leader.function = .becomeLeader &&
-          configurationReplicate.function = .replicate &&
-          configurationReplicate.globallyCommittable = some false &&
-          configuration.function = .addConfiguration &&
-          signature.function = .replicate &&
-          signature.globallyCommittable = some true &&
-          commit.function = .commit then
-        .bootstrap
-            [leader, configurationReplicate, configuration, signature, commit] ::
-          preprocess rest
-      else
-        preprocessPair
-          leader
-          (configurationReplicate :: configuration :: signature :: commit :: rest)
-  | event :: rest => preprocessPair event rest
-  | [] => []
-where
-  preprocessPair
-      (event : RawEvent Node TxId)
-      (rest : List (RawEvent Node TxId)) :
-      List (PreprocessedEvent Node TxId) :=
-    match rest with
-    | next :: tail =>
-        if event.function = .replicate &&
-            event.globallyCommittable = some false &&
-            next.function = .addConfiguration then
-          .retained next :: preprocess tail
-        else if isReceive event.function &&
-            next.function = .becomeFollower &&
-            decide (next.node = event.node) then
-          .newerTermReceive event next :: preprocess tail
-        else if isHelper event.function then
-          preprocess rest
-        else
-          .retained event :: preprocess rest
-    | [] =>
-        if isHelper event.function then [] else [.retained event]
+def sourceLocation (event : Event Node TxId) : SourceLocation where
+  line := event.line
+  timestamp := event.timestamp
+  function := event.function
 
-def requirePeer (event : RawEvent Node TxId) : Except String Node :=
+def emit
+    (rule : String)
+    (events : List (Event Node TxId))
+    (instruction : Instruction Node TxId) :
+    Step Node TxId where
+  instruction
+  rule
+  provenance := events.map sourceLocation
+
+def observeState
+    (rule : String)
+    (event : Event Node TxId) :
+    List (Step Node TxId) :=
+  let observation (value : TraceValidation.Observation Node TxId) :=
+    emit rule [event] (.observation value)
+  [
+    observation (.allocated event.node true),
+    observation (.joined event.node true),
+    observation (.role event.node event.role),
+    observation (.currentTerm event.node event.term),
+    observation (.commitIndex event.node event.commitIndex),
+    observation (.logLength event.node event.logLength)
+  ]
+
+def requirePeer (event : Event Node TxId) : Except String Node :=
   match event.peer with
   | some peer => .ok peer
   | none => .error s!"line {event.line}: peer is missing"
 
-def repeatAction (count : Nat) (action : Action Node TxId) :
-    List (Action Node TxId) :=
-  List.replicate count action
+def actionSteps
+    (rule : String)
+    (events : List (Event Node TxId))
+    (actions : List (Action Node TxId)) :
+    List (Step Node TxId) :=
+  actions.map fun action => emit rule events (.action action)
 
-/-- Convert one audited preprocessed event into canonical model actions. -/
-def reduceEvent
-    [DecidableEq Node]
-    (event : PreprocessedEvent Node TxId) :
-    Except String (List (Action Node TxId)) := do
-  match event with
-  | .bootstrap events =>
-      match events.getLast? with
-      | some commit => pure [.advanceCommitIndex commit.node]
-      | none => throw "bootstrap group is empty"
-  | .newerTermReceive receive _ =>
-      let source <- requirePeer receive
-      let count := max 1 receive.batchEnds.length
-      pure
-        (.updateTerm source receive.node ::
-          repeatAction count (.receive source receive.node))
-  | .retained raw =>
-      match raw.function with
+def receiveSteps
+    (rule : String)
+    (event : Event Node TxId)
+    (source : Node) :
+    Except String (List (Step Node TxId)) := do
+  if event.messages.isEmpty then
+    throw s!"line {event.line}: selected messages are missing"
+  let rec loop :
+      List (Message Node TxId) ->
+        List (Step Node TxId) ->
+          Except String (List (Step Node TxId))
+    | [], result => pure result
+    | message :: rest, result =>
+        loop
+          rest
+          (result ++
+            [
+              emit
+                "observe-selected-message-before-receive"
+                [event]
+                (.observation
+                  (.firstMessageFrom source event.node message)),
+              emit rule [event] (.action (.receive source event.node))
+            ])
+  loop event.messages []
+
+def isAppendSend (event : Event Node TxId) : Bool :=
+  event.function = .sendAppendEntries
+
+def takeAppendSends :
+    List (Event Node TxId) ->
+      List (Event Node TxId) × List (Event Node TxId)
+  | event :: rest =>
+      if isAppendSend event then
+        let (sends, remaining) := takeAppendSends rest
+        (event :: sends, remaining)
+      else
+        ([], event :: rest)
+  | [] => ([], [])
+
+def takeAppendReceiveHelpers :
+    List (Event Node TxId) ->
+      Option (Event Node TxId) × List (Event Node TxId)
+  | event :: rest =>
+      match event.function with
+      | .sendAppendEntriesResponse => (some event, rest)
+      | .executeAppendEntries => takeAppendReceiveHelpers rest
+      | .addConfiguration
+      | .commit =>
+          if event.role = .leader then
+            (none, event :: rest)
+          else
+            takeAppendReceiveHelpers rest
+      | _ => (none, event :: rest)
+  | [] => (none, [])
+
+def semantics (steps : List (Step Node TxId)) :
+    List (Instruction Node TxId) :=
+  steps.map Step.instruction
+
+/--
+Reduce one normalized event stream by prefix destructuring.
+
+Every branch emits a linear list of observations and actions, then recurses on
+the unconsumed suffix. Unsupported shapes fail rather than dropping evidence.
+-/
+partial def reduce [DecidableEq Node] :
+    List (Event Node TxId) -> Except String (List (Step Node TxId))
+  | [] => pure []
+  | event :: rest => do
+      match event.function with
+      | .becomeLeader =>
+          match rest with
+          | configurationReplicate :: configuration ::
+              signature :: commit :: tail =>
+              if configurationReplicate.function = .replicate &&
+                  configurationReplicate.globallyCommittable = some false &&
+                  configuration.function = .addConfiguration &&
+                  signature.function = .replicate &&
+                  signature.globallyCommittable = some true &&
+                  commit.function = .commit then
+                let remaining <- reduce tail
+                pure <|
+                  observeState "observe-bootstrap-entry-state" commit ++
+                    actionSteps
+                      "bootstrap-leader-commit"
+                      [event, configurationReplicate, configuration, signature, commit]
+                      [.advanceCommitIndex commit.node] ++
+                    remaining
+              else
+                let remaining <- reduce rest
+                pure <|
+                  actionSteps
+                      "candidate-became-leader"
+                      [event]
+                      [.becomeLeader event.node] ++
+                    observeState "observe-post-action-state" event ++
+                    remaining
+          | _ =>
+              let remaining <- reduce rest
+              pure <|
+                actionSteps
+                    "candidate-became-leader"
+                    [event]
+                    [.becomeLeader event.node] ++
+                  observeState "observe-post-action-state" event ++
+                  remaining
+
       | .replicate =>
-          match raw.globallyCommittable, raw.transaction with
-          | some true, _ => pure [.signCommittableMessages raw.node]
-          | some false, some transaction =>
-              pure [.clientRequest raw.node transaction]
-          | _, _ => throw s!"line {raw.line}: incomplete replicate event"
-      | .addConfiguration =>
-          pure [.changeConfiguration raw.node raw.configuration]
-      | .sendAppendEntries =>
-          let destination <- requirePeer raw
-          pure
-            (raw.batchEnds.map fun batchEnd =>
-              .appendEntries raw.node destination batchEnd)
-      | .receiveAppendEntries
+          match rest with
+          | configuration :: tail =>
+              if event.globallyCommittable = some false &&
+                  configuration.function = .addConfiguration then
+                let (sends, remainingEvents) := takeAppendSends tail
+                let emittedSends <- reduce sends
+                let remaining <- reduce remainingEvents
+                pure <|
+                  observeState "observe-pre-action-state" configuration ++
+                    emittedSends ++
+                    actionSteps
+                      "leader-add-configuration"
+                      [event, configuration]
+                      [.changeConfiguration
+                        configuration.node
+                        configuration.configuration] ++
+                    remaining
+              else
+                match event.globallyCommittable, event.transaction with
+                | some true, _ =>
+                    let remaining <- reduce rest
+                    pure <|
+                      observeState "observe-pre-action-state" event ++
+                        actionSteps
+                          "replicate-signature"
+                          [event]
+                          [.signCommittableMessages event.node] ++
+                        remaining
+                | some false, some transaction =>
+                    let remaining <- reduce rest
+                    pure <|
+                      observeState "observe-pre-action-state" event ++
+                        actionSteps
+                          "replicate-client-request"
+                          [event]
+                          [.clientRequest event.node transaction] ++
+                        remaining
+                | _, _ =>
+                    throw s!"line {event.line}: incomplete replicate event"
+          | [] =>
+              match event.globallyCommittable, event.transaction with
+              | some true, _ =>
+                  pure <|
+                    observeState "observe-pre-action-state" event ++
+                      actionSteps
+                        "replicate-signature"
+                        [event]
+                        [.signCommittableMessages event.node]
+              | some false, some transaction =>
+                  pure <|
+                    observeState "observe-pre-action-state" event ++
+                      actionSteps
+                        "replicate-client-request"
+                        [event]
+                        [.clientRequest event.node transaction]
+              | _, _ =>
+                  throw s!"line {event.line}: incomplete replicate event"
+
+      | .receiveAppendEntries =>
+          let source <- requirePeer event
+          match rest with
+          | follower :: tail =>
+              if follower.function = .becomeFollower &&
+                  decide (follower.node = event.node) then
+                let (response?, remainingEvents) :=
+                  takeAppendReceiveHelpers tail
+                let response <-
+                  response?.map .ok |>.getD
+                    (.error
+                      s!"line {event.line}: AppendEntries response is missing")
+                let receives <-
+                  receiveSteps "split-append-entries-receive" event source
+                let remaining <- reduce remainingEvents
+                pure <|
+                  observeState "observe-pre-action-state" event ++
+                    actionSteps
+                      "newer-term-receive-transition"
+                      [event, follower]
+                      [.updateTerm source event.node] ++
+                    observeState
+                      "observe-proven-term-transition-state"
+                      follower ++
+                    receives ++
+                    observeState
+                      "observe-grouped-receive-post-state"
+                      response ++
+                    remaining
+              else
+                let (response?, remainingEvents) :=
+                  takeAppendReceiveHelpers rest
+                let response <-
+                  response?.map .ok |>.getD
+                    (.error
+                      s!"line {event.line}: AppendEntries response is missing")
+                let receives <-
+                  receiveSteps "split-append-entries-receive" event source
+                let remaining <- reduce remainingEvents
+                pure <|
+                  observeState "observe-pre-action-state" event ++
+                    receives ++
+                    observeState
+                      "observe-grouped-receive-post-state"
+                      response ++
+                    remaining
+          | [] =>
+              throw s!"line {event.line}: AppendEntries response is missing"
+
       | .receiveAppendEntriesResponse
       | .receiveRequestVote
       | .receiveRequestVoteResponse =>
-          let source <- requirePeer raw
-          pure
-            (repeatAction
-              (max 1 raw.batchEnds.length)
-              (.receive source raw.node))
-      | .commit => pure [.advanceCommitIndex raw.node]
-      | .becomeCandidate => pure [.timeout raw.node]
+          let source <- requirePeer event
+          match rest with
+          | follower :: tail =>
+              if follower.function = .becomeFollower &&
+                  decide (follower.node = event.node) then
+                let receives <- receiveSteps "receive-message" event source
+                let remaining <- reduce tail
+                pure <|
+                  observeState "observe-pre-action-state" event ++
+                    actionSteps
+                      "newer-term-receive-transition"
+                      [event, follower]
+                      [.updateTerm source event.node] ++
+                    observeState
+                      "observe-proven-term-transition-state"
+                      follower ++
+                    receives ++
+                    remaining
+              else
+                let receives <- receiveSteps "receive-message" event source
+                let remaining <- reduce rest
+                pure <|
+                  observeState "observe-pre-action-state" event ++
+                    receives ++
+                    remaining
+          | [] =>
+              let receives <- receiveSteps "receive-message" event source
+              pure <|
+                observeState "observe-pre-action-state" event ++ receives
+
+      | .sendAppendEntries =>
+          let destination <- requirePeer event
+          let remaining <- reduce rest
+          pure <|
+            observeState "observe-pre-action-state" event ++
+              actionSteps
+                "split-append-entries-batch"
+                [event]
+                (event.batchEnds.map fun batchEnd =>
+                  .appendEntries event.node destination batchEnd) ++
+              remaining
+
+      | .commit =>
+          if event.role = .leader then
+            let remaining <- reduce rest
+            pure <|
+              observeState "observe-pre-action-state" event ++
+                actionSteps
+                  "leader-commit-callback"
+                  [event]
+                  [.advanceCommitIndex event.node] ++
+                remaining
+          else
+            reduce rest
+
+      | .becomeCandidate =>
+          let remaining <- reduce rest
+          pure <|
+            actionSteps "candidate-timeout" [event] [.timeout event.node] ++
+              observeState "observe-post-action-state" event ++
+              remaining
+
       | .sendRequestVote =>
-          let destination <- requirePeer raw
-          pure [.requestVote raw.node destination]
-      | .becomeLeader => pure [.becomeLeader raw.node]
+          let destination <- requirePeer event
+          let remaining <- reduce rest
+          pure <|
+            observeState "observe-pre-action-state" event ++
+              actionSteps
+                "send-request-vote"
+                [event]
+                [.requestVote event.node destination] ++
+              remaining
+
+      | .addConfiguration =>
+          if event.role = .leader then
+            throw s!"line {event.line}: configuration lacks its replicate event"
+          else
+            reduce rest
+
       | .becomeFollower =>
-          throw s!"line {raw.line}: ungrouped become_follower event"
+          throw s!"line {event.line}: ungrouped become_follower event"
+
       | .dropPending
       | .executeAppendEntries
       | .sendAppendEntriesResponse =>
-          throw s!"line {raw.line}: helper event reached reduction"
+          reduce rest
 
 end CCFRaft.Reduction

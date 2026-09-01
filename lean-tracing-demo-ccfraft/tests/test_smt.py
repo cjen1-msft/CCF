@@ -31,38 +31,36 @@ ARTIFACTS = ROOT / "Artifacts" / "solver-tests"
 CVC5 = os.environ.get("CVC5")
 
 
-def _observations(certificate: dict[str, object]) -> int:
-    reduced = certificate["reduced_trace"]
-    assert isinstance(reduced, dict)
-    entry = reduced["observations_at_entry"]
-    steps = reduced["steps"]
-    assert isinstance(entry, list)
+def _observations(certificate: dict[str, object]) -> list[dict[str, object]]:
+    steps = certificate["steps"]
     assert isinstance(steps, list)
-    return len(entry) + sum(len(step["observations_after"]) for step in steps)
+    return [step for step in steps if step["kind"] == "observation"]
 
 
 def _single_action_certificate(
     kind: str,
-    parameters: dict[str, object],
+    node: str,
+    **parameters: object,
 ) -> dict[str, object]:
     return {
         "artifact_kind": "ccfraft_reduction_certificate",
-        "schema_version": "ccfraft-reduction-certificate/v1",
-        "reduced_trace": {
-            "observations_at_entry": [],
-            "steps": [
-                {
-                    "action": {
-                        "index": 1,
-                        "kind": kind,
-                        "parameters": parameters,
-                        "provenance": [{"line": 1, "role": "raft_event"}],
-                        "rule": "test",
-                    },
-                    "observations_after": [],
-                }
-            ],
-        },
+        "schema_version": "ccfraft-reduction-certificate/v2",
+        "steps": [
+            {
+                "action": kind,
+                "kind": "action",
+                "node": node,
+                "provenance": [
+                    {
+                        "function": "test",
+                        "line": 1,
+                        "timestamp": "1",
+                    }
+                ],
+                "rule": "test",
+                **parameters,
+            }
+        ],
     }
 
 
@@ -78,26 +76,29 @@ class SmtFormulaTests(unittest.TestCase):
 
             action_count = certificate["counts"]["actions"]
             self.assertEqual(
-                first.text.count(":named transition_action_"),
+                first.text.count(":named transition_instruction_"),
                 action_count,
             )
+            observations = _observations(certificate)
             self.assertEqual(
-                first.text.count(":named observation_"),
-                _observations(certificate),
+                first.text.count(":named observation_instruction_")
+                + first.text.count(":named evidence_instruction_"),
+                len(observations),
             )
             self.assertEqual(
                 first.text.count(":named valid_entry_node_"),
                 len(first.nodes),
             )
-            for position, step in enumerate(
-                certificate["reduced_trace"]["steps"],
-                1,
-            ):
-                action = step["action"]
-                line = min(item["line"] for item in action["provenance"])
+            action_boundary = 0
+            for instruction_index, instruction in enumerate(certificate["steps"], 1):
+                if instruction["kind"] != "action":
+                    continue
+                action_boundary += 1
+                line = min(item["line"] for item in instruction["provenance"])
                 expected = (
-                    f":named transition_action_{position:04d}_"
-                    f"line_{line:04d}_{action['kind']}"
+                    f":named transition_instruction_{instruction_index:04d}_"
+                    f"action_boundary_{action_boundary:04d}_"
+                    f"line_{line:04d}_{instruction['action']}"
                 )
                 self.assertIn(expected, first.text)
 
@@ -119,7 +120,8 @@ class SmtFormulaTests(unittest.TestCase):
         formula = build_formula(
             _single_action_certificate(
                 "changeConfiguration",
-                {"source": "0", "newConfiguration": ["0", "1"]},
+                "0",
+                configuration=["0", "1"],
             )
         )
         self.assertNotIn("(= (select state_0001_allocated 1) true)", formula.text)
@@ -133,9 +135,7 @@ class SmtFormulaTests(unittest.TestCase):
         )
 
     def test_leader_promotion_may_truncate_the_log_projection(self) -> None:
-        formula = build_formula(
-            _single_action_certificate("becomeLeader", {"node": "0"})
-        )
+        formula = build_formula(_single_action_certificate("becomeLeader", "0"))
         self.assertIn(
             "(<= (select state_0001_log_length 0) " "(select state_0000_log_length 0))",
             formula.text,
@@ -143,6 +143,60 @@ class SmtFormulaTests(unittest.TestCase):
         self.assertNotIn(
             "(>= (select state_0001_log_length 0) "
             "(select state_0000_commit_index 0))",
+            formula.text,
+        )
+
+    def test_first_message_is_validated_but_queue_selection_is_unencoded(
+        self,
+    ) -> None:
+        certificate = {
+            "artifact_kind": "ccfraft_reduction_certificate",
+            "schema_version": "ccfraft-reduction-certificate/v2",
+            "steps": [
+                {
+                    "kind": "observation",
+                    "node": "1",
+                    "provenance": [
+                        {
+                            "function": "recv_request_vote",
+                            "line": 1,
+                            "timestamp": "1",
+                        }
+                    ],
+                    "rule": "test",
+                    "value": {
+                        "batchCount": 1,
+                        "batchPosition": 1,
+                        "lastCommittableIndex": 0,
+                        "messageType": "raft_request_vote",
+                        "source": "0",
+                        "term": 1,
+                    },
+                    "variable": "firstMessageFrom",
+                },
+                {
+                    "action": "receive",
+                    "kind": "action",
+                    "node": "1",
+                    "provenance": [
+                        {
+                            "function": "recv_request_vote",
+                            "line": 1,
+                            "timestamp": "1",
+                        }
+                    ],
+                    "rule": "test",
+                    "source": "0",
+                },
+            ],
+        }
+        formula = build_formula(certificate)
+        self.assertIn(
+            "queue selection is an unencoded projection constraint", formula.text
+        )
+        self.assertIn("firstMessageFrom_unencoded_projection", formula.text)
+        self.assertIn(
+            "(assert (! true :named evidence_instruction_0001_",
             formula.text,
         )
 
@@ -228,18 +282,27 @@ class Cvc5IntegrationTests(unittest.TestCase):
         return status, output_directory, emitted
 
     def test_captured_traces_are_sat(self) -> None:
-        for trace_path in sorted(CAPTURED.glob("*.ndjson")):
+        trace_paths = sorted(CAPTURED.glob("*.ndjson"))
+        self.assertEqual(len(trace_paths), 2)
+        statuses = []
+        for trace_path in trace_paths:
             with self.subTest(trace=trace_path.name):
                 status, output_directory, emitted = self._validate(trace_path)
+                statuses.append(status)
                 self.assertEqual(status, "sat")
                 self.assertEqual(emitted, "sat\n")
                 self.assertFalse((output_directory / "proof.txt").exists())
                 self.assertFalse((output_directory / "unsat-core.txt").exists())
+        self.assertEqual(statuses, ["sat", "sat"])
 
     def test_mutated_traces_are_unsat_with_solver_evidence(self) -> None:
-        for trace_path in sorted(MUTATED.glob("*.ndjson")):
+        trace_paths = sorted(MUTATED.glob("*.ndjson"))
+        self.assertEqual(len(trace_paths), 4)
+        statuses = []
+        for trace_path in trace_paths:
             with self.subTest(trace=trace_path.name):
                 status, output_directory, emitted = self._validate(trace_path)
+                statuses.append(status)
                 self.assertEqual(
                     status,
                     "unsat",
@@ -274,6 +337,10 @@ class Cvc5IntegrationTests(unittest.TestCase):
                     len(diagnosis["items"]),
                     parsed["reduced_unsat_core_assertions"],
                 )
+                for item in diagnosis["items"]:
+                    if item["category"] in {"observation", "transition"}:
+                        self.assertIn("instruction_index", item)
+                        self.assertIn("action_boundary", item)
                 if trace_path.stem.endswith("-direct"):
                     self.assertTrue(parsed["core_reduction_complete"])
                     self.assertEqual(parsed["reduced_unsat_core_assertions"], 2)
@@ -283,6 +350,7 @@ class Cvc5IntegrationTests(unittest.TestCase):
                     parsed["total_solver_wall_ms"],
                     parsed["check_sat_wall_ms"],
                 )
+        self.assertEqual(statuses, ["unsat"] * 4)
 
 
 if __name__ == "__main__":

@@ -54,26 +54,23 @@ def lowerAction : Action Node TxId -> LoweredAction Node TxId
   | .updateTerm source destination => .updateTerm source destination
   | .becomeLeader node => .becomeLeader node
 
-structure LoweredStep (Node TxId Observation : Type) where
-  action : LoweredAction Node TxId
-  observationsAfter : List Observation
+inductive LoweredInstruction (Node TxId Observation : Type) where
+  | action (value : LoweredAction Node TxId)
+  | observation (value : Observation)
 
 structure Formula (Node TxId Observation : Type) where
-  observationsAtEntry : List Observation
-  steps : List (LoweredStep Node TxId Observation)
+  instructions : List (LoweredInstruction Node TxId Observation)
 
-def lowerStep
-    (step : TraceValidation.Step (Action Node TxId) Observation) :
-    LoweredStep Node TxId Observation where
-  action := lowerAction step.action
-  observationsAfter := step.observationsAfter
+def lowerInstruction :
+    TraceValidation.Instruction (Action Node TxId) Observation ->
+      LoweredInstruction Node TxId Observation
+  | .action action => .action (lowerAction action)
+  | .observation observation => .observation observation
 
 def lowerTrace
-    (trace : TraceValidation.ReducedTrace (Action Node TxId) Observation) :
+    (trace : List (TraceValidation.Instruction (Action Node TxId) Observation)) :
     Except String (Formula Node TxId Observation) :=
-  .ok
-    { observationsAtEntry := trace.observationsAtEntry
-      steps := trace.steps.map lowerStep }
+  .ok { instructions := trace.map lowerInstruction }
 
 def ActionConstraint
     (before after : State Node TxId)
@@ -84,13 +81,14 @@ def ActionConstraint
 def formulaFollows
     (observes : Observation -> State Node TxId -> Prop)
     (state : State Node TxId) :
-    List (LoweredStep Node TxId Observation) -> Prop
+    List (LoweredInstruction Node TxId Observation) -> Prop
   | [] => True
-  | step :: rest =>
+  | .observation observation :: rest =>
+      observes observation state /\
+        formulaFollows observes state rest
+  | .action action :: rest =>
       Exists fun after =>
-        ActionConstraint state after step.action /\
-          TraceValidation.observationsHold
-            observes after step.observationsAfter /\
+        ActionConstraint state after action /\
           formulaFollows observes after rest
 
 def Satisfiable
@@ -99,8 +97,6 @@ def Satisfiable
     (formula : Formula Node TxId Observation) : Prop :=
   Exists fun entry =>
     validEntryState entry /\
-      TraceValidation.observationsHold
-        observes entry formula.observationsAtEntry /\
-      formulaFollows observes entry formula.steps
+      formulaFollows observes entry formula.instructions
 
 end CCFRaft.MachineGenerated
