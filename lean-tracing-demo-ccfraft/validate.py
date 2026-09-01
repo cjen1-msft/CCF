@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,9 @@ from Shared.smt import (
     SmtEncodingError,
     add_query,
     build_formula,
+    parse_unsat_core,
+    reduce_unsat_core,
+    restrict_to_assertions,
     write_formula,
 )
 from Shared.trace_io import NDJSONError, read_ndjson
@@ -43,6 +47,10 @@ class SolverRun:
     stdout: str
     stderr: str
     wall_time_ms: float
+
+
+TRANSITION_NAME = re.compile(r"^transition_action_(\d+)_line_(\d+)_(.+)$")
+OBSERVATION_NAME = re.compile(r"^observation_(\d+)_line_(\d+)_boundary_(\d+)_(.+)$")
 
 
 def _find_cvc5(requested: Path | None) -> Path:
@@ -73,10 +81,12 @@ def _run_solver(
     formula_path: Path,
     output_directory: Path,
     artifact_stem: str,
+    *,
+    extra_arguments: Sequence[str] = (),
 ) -> SolverRun:
     started = time.perf_counter_ns()
     completed = subprocess.run(
-        [str(cvc5), "--lang=smt2", str(formula_path)],
+        [str(cvc5), "--lang=smt2", *extra_arguments, str(formula_path)],
         check=False,
         capture_output=True,
         text=True,
@@ -121,12 +131,103 @@ def _query_payload(run: SolverRun, query: str) -> str:
     return payload
 
 
+def _core_diagnosis(
+    certificate: dict[str, object],
+    names: Sequence[str],
+    *,
+    core_kind: str,
+) -> dict[str, object]:
+    reduced = certificate["reduced_trace"]
+    assert isinstance(reduced, dict)
+    steps = reduced["steps"]
+    entry_observations = reduced["observations_at_entry"]
+    raw_records = certificate["raw_records"]
+    assert isinstance(steps, list)
+    assert isinstance(entry_observations, list)
+    assert isinstance(raw_records, list)
+
+    raw_by_line = {
+        record["line"]: record
+        for record in raw_records
+        if isinstance(record, dict) and type(record.get("line")) is int
+    }
+    observations: list[tuple[int, dict[str, object]]] = [
+        (0, observation)
+        for observation in entry_observations
+        if isinstance(observation, dict)
+    ]
+    for boundary, step in enumerate(steps, 1):
+        assert isinstance(step, dict)
+        observations.extend(
+            (boundary, observation)
+            for observation in step["observations_after"]
+            if isinstance(observation, dict)
+        )
+
+    items: list[dict[str, object]] = []
+    for name in names:
+        transition = TRANSITION_NAME.fullmatch(name)
+        observation_match = OBSERVATION_NAME.fullmatch(name)
+        if transition is not None:
+            action_index = int(transition.group(1))
+            raw_line = int(transition.group(2))
+            step = steps[action_index - 1]
+            assert isinstance(step, dict)
+            action = step["action"]
+            assert isinstance(action, dict)
+            items.append(
+                {
+                    "action_index": action_index,
+                    "category": "transition",
+                    "kind": action["kind"],
+                    "name": name,
+                    "parameters": action["parameters"],
+                    "provenance": action["provenance"],
+                    "raw_line": raw_line,
+                    "raw_record": raw_by_line.get(raw_line),
+                    "reduction_rule": action["rule"],
+                }
+            )
+        elif observation_match is not None:
+            observation_index = int(observation_match.group(1))
+            raw_line = int(observation_match.group(2))
+            boundary = int(observation_match.group(3))
+            stored_boundary, observation = observations[observation_index - 1]
+            assert stored_boundary == boundary
+            items.append(
+                {
+                    "boundary": boundary,
+                    "category": "observation",
+                    "kind": observation["kind"],
+                    "name": name,
+                    "parameters": observation["parameters"],
+                    "provenance": observation["provenance"],
+                    "raw_line": raw_line,
+                    "raw_record": raw_by_line.get(raw_line),
+                    "reduction_rule": observation["reduction_rule"],
+                }
+            )
+        else:
+            items.append(
+                {
+                    "category": "infrastructure",
+                    "name": name,
+                }
+            )
+    return {
+        "core_kind": core_kind,
+        "items": items,
+        "named_assertions": list(names),
+    }
+
+
 def validate(
     input_path: Path,
     output_directory: Path,
     *,
     cvc5: Path | None = None,
     show_proof: bool = False,
+    core_reduction_budget_seconds: float = 5.0,
 ) -> str:
     """Reduce, encode, solve, and retain all solver evidence."""
 
@@ -170,12 +271,72 @@ def validate(
         )
         if core_run.status != "unsat":
             raise ValidationError("unsat-core run did not reproduce UNSAT")
-        core = _query_payload(core_run, "an unsat core")
+        original_core = _query_payload(core_run, "an unsat core")
+        original_core_names = parse_unsat_core(original_core)
+        original_core_path = output_directory / "unsat-core-original.txt"
+        original_core_path.write_text(original_core, encoding="utf-8")
+
+        candidate_path = output_directory / "formula-core-candidate.smt2"
+
+        def check_candidate(
+            candidate_names: tuple[str, ...],
+            remaining_seconds: float,
+        ) -> str:
+            candidate_formula = restrict_to_assertions(
+                formula.text,
+                candidate_names,
+            )
+            write_formula(candidate_path, candidate_formula)
+            try:
+                completed = subprocess.run(
+                    [str(solver), "--lang=smt2", str(candidate_path)],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=remaining_seconds,
+                )
+            except subprocess.TimeoutExpired:
+                return "inconclusive"
+            if completed.returncode != 0:
+                return "inconclusive"
+            try:
+                return _solver_status(completed.stdout)
+            except ValidationError:
+                return "inconclusive"
+
+        reduced_core = reduce_unsat_core(
+            original_core_names,
+            check_candidate,
+            budget_seconds=core_reduction_budget_seconds,
+        )
+        core_names = reduced_core.names
+        core = "(\n" + "\n".join(core_names) + "\n)\n"
         core_path = output_directory / "unsat-core.txt"
         core_path.write_text(core, encoding="utf-8")
 
-        proof_formula_path = output_directory / "formula-proof.smt2"
-        write_formula(proof_formula_path, add_query(formula.text, "get-proof"))
+        reduced_formula = restrict_to_assertions(formula.text, core_names)
+        reduced_formula_path = output_directory / "formula-reduced.smt2"
+        write_formula(reduced_formula_path, reduced_formula)
+        core_kind = (
+            "subset-minimal"
+            if reduced_core.complete
+            else "heuristically reduced within budget"
+        )
+        diagnosis = _core_diagnosis(
+            certificate,
+            core_names,
+            core_kind=core_kind,
+        )
+        diagnosis_path = output_directory / "diagnosis.json"
+        diagnosis_path.write_text(
+            json.dumps(diagnosis, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+        proof_formula_path = output_directory / "formula-reduced-proof.smt2"
+        write_formula(proof_formula_path, add_query(reduced_formula, "get-proof"))
         proof_run = _run_solver(
             solver,
             proof_formula_path,
@@ -191,13 +352,27 @@ def validate(
             {
                 "proof": proof_path.name,
                 "proof_checked_by_cvc5": True,
+                "proof_formula": proof_formula_path.name,
+                "proof_scope": core_kind,
                 "proof_wall_ms": proof_run.wall_time_ms,
+                "diagnosis": diagnosis_path.name,
+                "core_reduction_budget_seconds": core_reduction_budget_seconds,
+                "core_reduction_checks": reduced_core.checks,
+                "core_reduction_complete": reduced_core.complete,
+                "core_reduction_wall_ms": reduced_core.wall_time_ms,
+                "core_reduced_by": "deterministic chunk and greedy deletion",
+                "reduced_formula": reduced_formula_path.name,
+                "original_unsat_core": original_core_path.name,
+                "original_unsat_core_assertions": len(original_core_names),
+                "reduced_unsat_core_assertions": len(core_names),
+                "original_named_assertions": formula.text.count("(assert (!"),
                 "unsat_core": core_path.name,
                 "unsat_core_checked_by_cvc5": True,
                 "unsat_core_wall_ms": core_run.wall_time_ms,
                 "total_solver_wall_ms": (
                     status_run.wall_time_ms
                     + core_run.wall_time_ms
+                    + reduced_core.wall_time_ms
                     + proof_run.wall_time_ms
                 ),
             }
@@ -236,6 +411,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="print the checked cvc5 proof after the status line",
     )
+    parser.add_argument(
+        "--core-reduction-seconds",
+        type=float,
+        default=5.0,
+        help="wall-clock budget for automatic UNSAT core reduction",
+    )
     args = parser.parse_args(argv)
     if args.output_directory is None and args.output_dir is None:
         parser.error("an output directory is required")
@@ -257,6 +438,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.output_directory,
             cvc5=args.cvc5,
             show_proof=args.show_proof,
+            core_reduction_budget_seconds=args.core_reduction_seconds,
         )
     except (
         NDJSONError,

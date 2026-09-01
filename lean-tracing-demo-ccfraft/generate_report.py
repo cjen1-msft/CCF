@@ -51,6 +51,14 @@ def source_line(path: Path, needle: str) -> int:
     return 1
 
 
+def source_last_line(path: Path, needle: str) -> int:
+    result = 1
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if needle in line:
+            result = number
+    return result
+
+
 def source_links(relative: str, line: int = 1) -> str:
     vscode = f"{FILE_URL_PREFIX}{relative}:{line}:1"
     github = f"{GITHUB_ROOT}/{git_ref()}/{relative}#L{line}"
@@ -105,8 +113,10 @@ def run_rows() -> tuple[str, str]:
         status = str(result["status"])
         check_ms = float(result["check_sat_wall_ms"])
         core_ms = result.get("unsat_core_wall_ms")
+        reduction_ms = result.get("core_reduction_wall_ms")
         proof_ms = result.get("proof_wall_ms")
         total_ms = float(result["total_solver_wall_ms"])
+        core_size = result.get("reduced_unsat_core_assertions")
         counts = certificate["counts"]
         trace_relative = f"lean-tracing-demo-ccfraft/Traces/{directory}/{stem}.ndjson"
         result_href = f"../Artifacts/runs/{stem}/result.json"
@@ -120,8 +130,10 @@ def run_rows() -> tuple[str, str]:
             f"<td>{counts['observations']}</td>"
             f"<td>{check_ms:.1f}</td>"
             f"<td>{'-' if core_ms is None else f'{float(core_ms):.1f}'}</td>"
+            f"<td>{'-' if reduction_ms is None else f'{float(reduction_ms):.1f}'}</td>"
             f"<td>{'-' if proof_ms is None else f'{float(proof_ms):.1f}'}</td>"
             f"<td>{total_ms:.1f}</td>"
+            f"<td>{'-' if core_size is None else core_size}</td>"
             f"<td>{source_links(trace_relative)}</td>"
             f'<td><a href="{html.escape(result_href)}">artifact</a></td>'
             "</tr>"
@@ -133,11 +145,48 @@ def run_rows() -> tuple[str, str]:
             proof_path = ARTIFACTS / stem / "proof.txt"
             proof = proof_path.read_text(encoding="utf-8")
             proof_preview = "\n".join(proof.splitlines()[:80])
+            diagnosis = read_json(ARTIFACTS / stem / "diagnosis.json")
+            core_label = (
+                "subset-minimal core"
+                if result["core_reduction_complete"]
+                else "budget-reduced core"
+            )
+            diagnosis_rows = []
+            for item in diagnosis["items"]:
+                raw_line = item.get("raw_line")
+                trace_link = (
+                    "-"
+                    if raw_line is None
+                    else editor_link(trace_relative, int(raw_line), str(raw_line))
+                )
+                position = item.get("action_index", item.get("boundary", "-"))
+                diagnosis_rows.append(
+                    "<tr>"
+                    f"<td>{html.escape(str(item['category']))}</td>"
+                    f"<td>{html.escape(str(position))}</td>"
+                    f"<td>{trace_link}</td>"
+                    f"<td>{html.escape(str(item.get('reduction_rule', '-')))}</td>"
+                    f"<td><code>{html.escape(str(item.get('kind', '-')))}</code></td>"
+                    f"<td><code>{html.escape(str(item['name']))}</code></td>"
+                    "</tr>"
+                )
             evidence = (
-                "<h4>Unsat core</h4>"
+                "<h4>Automatically reduced contradiction</h4>"
+                f"<p>{result['reduced_unsat_core_assertions']} of "
+                f"{result['original_unsat_core_assertions']} core assertions remain. "
+                f"Result: {html.escape(str(diagnosis['core_kind']))}. "
+                f"{result['core_reduction_checks']} solver checks used a "
+                f"{result['core_reduction_budget_seconds']:.1f} second budget.</p>"
+                "<table><thead><tr><th>Type</th><th>Position</th>"
+                "<th>Raw line</th><th>Reduction rule</th><th>Kind</th>"
+                "<th>Assertion</th></tr></thead><tbody>"
+                f"{''.join(diagnosis_rows)}</tbody></table>"
+                f"<details><summary>Raw {core_label}</summary>"
                 f"<pre>{html.escape(core)}</pre>"
+                "</details>"
                 "<details><summary>"
-                f"cvc5 proof, {proof_path.stat().st_size:,} bytes"
+                f"cvc5 proof of the {core_label} formula, "
+                f"{proof_path.stat().st_size:,} bytes"
                 "</summary>"
                 f'<p><a href="../Artifacts/runs/{html.escape(stem)}/proof.txt">'
                 "Open the complete proof</a>.</p>"
@@ -161,6 +210,12 @@ def run_rows() -> tuple[str, str]:
 
 def main() -> int:
     rows, details = run_rows()
+    walkthrough_formula = ARTIFACTS / "soft_rollback-direct" / "formula-reduced.smt2"
+    walkthrough_proof = ARTIFACTS / "soft_rollback-direct" / "proof.txt"
+    transition_name = "transition_action_0069_line_0112_timeout"
+    observation_name = "observation_0297_line_0112_boundary_0069_role"
+    transition_line = source_line(walkthrough_formula, transition_name)
+    proof_line = source_last_line(walkthrough_proof, ":rule eq_resolve")
     audit_files = (
         ("Model.lean", "inductive Action"),
         ("Properties.lean", "structure ConsensusSafety"),
@@ -251,7 +306,8 @@ roles, log lengths, commit indices, allocation, and join state. The report's
 <tr>
 <th>Trace</th><th>cvc5</th><th>Case</th><th>Raw</th>
 <th>Actions</th><th>Observations</th><th>Check ms</th><th>Core ms</th>
-<th>Proof ms</th><th>Total ms</th><th>Trace</th><th>Result</th>
+<th>Reduce ms</th><th>Proof ms</th><th>Total ms</th><th>Core size</th>
+<th>Trace</th><th>Result</th>
 </tr>
 </thead>
 <tbody>{rows}</tbody>
@@ -298,19 +354,21 @@ cvc5 normalizes the array reads, extracts both equalities, derives
 </li>
 </ol>
 <p>
-The unsat core contains both named assertions, along with a large non-minimal
-prefix. The proof is different from the core. The core lists input assertions;
+The automatic reducer reaches exactly these two assertions within its time
+budget. It removes chunks first, then tries individual assertions. Every
+accepted removal is backed by another cvc5 <code>unsat</code> result. The
+proof is different from the reduced core. The core lists input assertions;
 the proof records the derivation from those assertions to <code>false</code>.
 </p>
 <p>
 {editor_link(
-    "lean-tracing-demo-ccfraft/Artifacts/runs/soft_rollback-direct/formula.smt2",
-    4270,
+    "lean-tracing-demo-ccfraft/Artifacts/runs/soft_rollback-direct/formula-reduced.smt2",
+    transition_line,
     "Open the conflicting SMT assertions",
 )}
 {editor_link(
     "lean-tracing-demo-ccfraft/Artifacts/runs/soft_rollback-direct/proof.txt",
-    7431,
+    proof_line,
     "Open the final proof steps",
 )}
 </p>

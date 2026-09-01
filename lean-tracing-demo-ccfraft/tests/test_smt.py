@@ -16,7 +16,12 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from reduction import build_certificate
-from Shared.smt import build_formula
+from Shared.smt import (
+    build_formula,
+    parse_unsat_core,
+    reduce_unsat_core,
+    restrict_to_assertions,
+)
 from Shared.trace_io import read_ndjson
 from validate import validate
 
@@ -141,6 +146,50 @@ class SmtFormulaTests(unittest.TestCase):
             formula.text,
         )
 
+    def test_unsat_core_restriction_keeps_only_selected_assertions(self) -> None:
+        formula = "\n".join(
+            [
+                "(set-logic QF_UF)",
+                "(declare-const value Bool)",
+                "(assert (! value :named keep))",
+                "(assert (! (not value) :named drop))",
+                "(check-sat)",
+                "",
+            ]
+        )
+        names = parse_unsat_core("(\nkeep\n)")
+        restricted = restrict_to_assertions(formula, names)
+        self.assertIn(":named keep", restricted)
+        self.assertNotIn(":named drop", restricted)
+        self.assertTrue(restricted.endswith("(check-sat)\n"))
+
+    def test_budgeted_core_reduction_removes_chunks_before_individuals(self) -> None:
+        required = {"second", "fourth"}
+
+        def check(names: tuple[str, ...], _: float) -> str:
+            return "unsat" if required.issubset(names) else "sat"
+
+        reduced = reduce_unsat_core(
+            ("first", "second", "third", "fourth", "fifth"),
+            check,
+            budget_seconds=1,
+        )
+        self.assertEqual(set(reduced.names), required)
+        self.assertTrue(reduced.complete)
+        self.assertGreater(reduced.checks, 0)
+
+    def test_inconclusive_check_prevents_minimality_claim(self) -> None:
+        def check(_: tuple[str, ...], __: float) -> str:
+            return "inconclusive"
+
+        reduced = reduce_unsat_core(
+            ("first", "second"),
+            check,
+            budget_seconds=1,
+        )
+        self.assertFalse(reduced.complete)
+        self.assertEqual(reduced.names, ("first", "second"))
+
 
 @unittest.skipUnless(CVC5, "set CVC5 to an explicit cvc5 executable")
 class Cvc5IntegrationTests(unittest.TestCase):
@@ -209,6 +258,25 @@ class Cvc5IntegrationTests(unittest.TestCase):
                 self.assertIn('"proof_checked_by_cvc5": true', result)
                 self.assertIn('"unsat_core_checked_by_cvc5": true', result)
                 parsed = json.loads(result)
+                self.assertLess(
+                    parsed["reduced_unsat_core_assertions"],
+                    parsed["original_unsat_core_assertions"],
+                )
+                self.assertTrue((output_directory / "formula-reduced.smt2").is_file())
+                self.assertTrue(
+                    (output_directory / "formula-reduced-proof.smt2").is_file()
+                )
+                diagnosis = json.loads(
+                    (output_directory / "diagnosis.json").read_text(encoding="utf-8")
+                )
+                self.assertEqual(parsed["proof_scope"], diagnosis["core_kind"])
+                self.assertEqual(
+                    len(diagnosis["items"]),
+                    parsed["reduced_unsat_core_assertions"],
+                )
+                if trace_path.stem.endswith("-direct"):
+                    self.assertTrue(parsed["core_reduction_complete"])
+                    self.assertEqual(parsed["reduced_unsat_core_assertions"], 2)
                 self.assertGreaterEqual(parsed["unsat_core_wall_ms"], 0)
                 self.assertGreaterEqual(parsed["proof_wall_ms"], 0)
                 self.assertGreaterEqual(

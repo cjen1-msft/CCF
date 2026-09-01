@@ -17,10 +17,12 @@ AppendEntries block inside the enclosing configuration transition.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+import re
+import time
+from typing import Any, Literal
 
 CERTIFICATE_SCHEMA = "ccfraft-reduction-certificate/v1"
 
@@ -73,6 +75,22 @@ class SmtFormula:
 
     text: str
     nodes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CoreReduction:
+    """Result of deterministic, time-bounded UNSAT core shrinking."""
+
+    names: tuple[str, ...]
+    checks: int
+    complete: bool
+    wall_time_ms: float
+
+
+CoreCheckResult = Literal["unsat", "sat", "inconclusive"]
+
+
+NAMED_ASSERTION = re.compile(r"^\(assert \(! .+ :named ([^)]+)\)\)$")
 
 
 def _require(condition: bool, message: str) -> None:
@@ -799,6 +817,131 @@ def add_query(formula: str, query: str) -> str:
     logic_position = lines.index("(set-logic QF_AUFLIA)")
     lines[logic_position + 1 : logic_position + 1] = options
     return "\n".join(lines) + f"\n({query})\n"
+
+
+def parse_unsat_core(payload: str) -> tuple[str, ...]:
+    """Parse the symbols returned by one `get-unsat-core` query."""
+
+    stripped = payload.strip()
+    _require(
+        stripped.startswith("(") and stripped.endswith(")"),
+        "unsat core is not an SMT symbol list",
+    )
+    names = tuple(stripped[1:-1].split())
+    _require(names, "unsat core is empty")
+    _require(len(names) == len(set(names)), "unsat core contains duplicates")
+    return names
+
+
+def restrict_to_assertions(formula: str, names: Sequence[str]) -> str:
+    """Keep declarations and only the named assertions selected by a core."""
+
+    selected = set(names)
+    _require(len(selected) == len(names), "selected assertions contain duplicates")
+    available: set[str] = set()
+    output: list[str] = []
+    for line in formula.splitlines():
+        match = NAMED_ASSERTION.fullmatch(line)
+        if match is None:
+            output.append(line)
+            continue
+        name = match.group(1)
+        available.add(name)
+        if name in selected:
+            output.append(line)
+    missing = selected.difference(available)
+    _require(not missing, f"unsat core names unknown assertions: {sorted(missing)}")
+    return "\n".join(output) + "\n"
+
+
+def reduce_unsat_core(
+    names: Sequence[str],
+    check: Callable[[tuple[str, ...], float], CoreCheckResult],
+    *,
+    budget_seconds: float,
+) -> CoreReduction:
+    """Shrink an UNSAT core with chunk removal followed by a greedy pass."""
+
+    _require(budget_seconds > 0, "core reduction budget must be positive")
+    current = tuple(names)
+    _require(current, "cannot reduce an empty core")
+    started = time.monotonic()
+    deadline = started + budget_seconds
+    checks = 0
+
+    def within_budget() -> bool:
+        return time.monotonic() < deadline
+
+    def check_candidate(candidate: tuple[str, ...]) -> CoreCheckResult:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return "inconclusive"
+        result = check(candidate, remaining)
+        _require(
+            result in {"unsat", "sat", "inconclusive"},
+            f"invalid core check result: {result}",
+        )
+        return result
+
+    granularity = 2
+    complete = True
+    while len(current) >= 2:
+        if not within_budget():
+            complete = False
+            break
+        chunk_size = max(1, (len(current) + granularity - 1) // granularity)
+        removed_chunk = False
+        for start in range(0, len(current), chunk_size):
+            if not within_budget():
+                complete = False
+                break
+            candidate = current[:start] + current[start + chunk_size :]
+            if not candidate:
+                continue
+            checks += 1
+            result = check_candidate(candidate)
+            if result == "inconclusive":
+                complete = False
+                break
+            if result == "unsat":
+                current = candidate
+                granularity = max(2, granularity - 1)
+                removed_chunk = True
+                break
+        if not complete:
+            break
+        if removed_chunk:
+            continue
+        if granularity >= len(current):
+            break
+        granularity = min(len(current), granularity * 2)
+
+    if complete:
+        position = 0
+        while position < len(current):
+            if not within_budget():
+                complete = False
+                break
+            candidate = current[:position] + current[position + 1 :]
+            if not candidate:
+                position += 1
+                continue
+            checks += 1
+            result = check_candidate(candidate)
+            if result == "inconclusive":
+                complete = False
+                break
+            if result == "unsat":
+                current = candidate
+            else:
+                position += 1
+
+    return CoreReduction(
+        names=current,
+        checks=checks,
+        complete=complete,
+        wall_time_ms=(time.monotonic() - started) * 1000,
+    )
 
 
 def write_formula(path: Path, formula: SmtFormula | str) -> None:
