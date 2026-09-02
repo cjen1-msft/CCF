@@ -57,6 +57,14 @@ def line_number(path: Path, needle: str) -> int:
     return 1
 
 
+def last_line_number(path: Path, needle: str) -> int:
+    result = 1
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if needle in line:
+            result = number
+    return result
+
+
 def source_link(path: str, line: int, label: str) -> str:
     editor = f"{EDITOR_PREFIX}{path}:{line}:1"
     github = f"{GITHUB_PREFIX}/{git_ref()}/{path}#L{line}"
@@ -233,7 +241,7 @@ def main() -> int:
     cold_compile_percent = 100 * cold_build / cold_example_total
 
     reduction_path = ROOT / "Reduction.lean"
-    reduction_start = line_number(reduction_path, "| .receiveAppendEntries =>")
+    reduction_start = last_line_number(reduction_path, "| .receiveAppendEntries =>")
     reduction_snippet = code_excerpt(
         reduction_path,
         reduction_start,
