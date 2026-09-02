@@ -1,19 +1,16 @@
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-import MachineGenerated.Proof
-import MachineGenerated.BootstrapExamples
-import Reduction
-import TraceProperties
+import MachineGenerated.Runtime.LongTraceSmtProbe
+import MachineGenerated.Runtime.NaiveFullStateWitness
+import MachineGenerated.Runtime.TraceValidation
 
 /-!
-# CCFRaft trace validation demo
+# CCFRaft runtime-module proof audit
 
-This target checks the model safety proof and the trace-lowering contract.
+The legacy runtime validator defines names that collide with the new trace
+contract, so its import closure is audited in a separate Lean environment.
 -/
-
-#print axioms CCFRaft.reachableConsensusSafety
-#print axioms CCFRaft.TraceValidation.lowerTrace_correct
 
 run_cmd do
   let env <- Lean.getEnv
@@ -36,6 +33,6 @@ run_cmd do
           throwError "CCFRaft declares explicit axiom {name}"
       | _ => pure ()
   if checked = 0 then
-    throwError "no CCFRaft theorems were audited"
+    throwError "no CCFRaft runtime theorems were audited"
   Lean.logInfo
-    m!"Audited {checked} CCFRaft theorems with {explicitAxioms} explicit axioms."
+    m!"Audited {checked} runtime theorems with {explicitAxioms} explicit axioms."

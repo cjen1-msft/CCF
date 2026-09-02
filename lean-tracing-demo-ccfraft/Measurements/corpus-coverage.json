@@ -1,0 +1,2357 @@
+{
+  "accepted": [
+    "append",
+    "bad_network",
+    "indirect_commit_stale_leader",
+    "large_entry_batching",
+    "reconfiguration",
+    "reconnect",
+    "replicate",
+    "replicate_on_latest_leader",
+    "soft_rollback",
+    "startup",
+    "startup_2nodes"
+  ],
+  "aggregate": {
+    "accepted_scenarios": 11,
+    "emitted_events": 12541,
+    "function_counts": {
+      "add_configuration": 455,
+      "become_candidate": 77,
+      "become_follower": 301,
+      "become_leader": 110,
+      "become_pre_vote_candidate": 55,
+      "commit": 798,
+      "drop_pending_to": 396,
+      "execute_append_entries_sync": 1171,
+      "recv_append_entries": 1279,
+      "recv_append_entries_response": 1260,
+      "recv_propose_request_vote": 7,
+      "recv_request_vote": 233,
+      "recv_request_vote_response": 231,
+      "replicate": 550,
+      "send_append_entries": 1534,
+      "send_append_entries_response": 1279,
+      "send_request_vote": 353,
+      "step_down_and_nominate_successor": 3
+    },
+    "packet_family_counts": {
+      "raft_append_entries": 3068,
+      "raft_append_entries_response": 2557,
+      "raft_propose_request_vote": 8,
+      "raft_request_pre_vote": 302,
+      "raft_request_pre_vote_response": 103,
+      "raft_request_vote": 404,
+      "raft_request_vote_response": 130
+    },
+    "sat_scenarios": 11,
+    "scenario_count": 50
+  },
+  "sat": [
+    "append",
+    "bad_network",
+    "indirect_commit_stale_leader",
+    "large_entry_batching",
+    "reconfiguration",
+    "reconnect",
+    "replicate",
+    "replicate_on_latest_leader",
+    "soft_rollback",
+    "startup",
+    "startup_2nodes"
+  ],
+  "scenarios": [
+    {
+      "capture_wall_ms": 24.690924,
+      "inventory": {
+        "functions": {
+          "add_configuration": 10,
+          "become_candidate": 3,
+          "become_follower": 16,
+          "become_leader": 4,
+          "become_pre_vote_candidate": 3,
+          "commit": 23,
+          "drop_pending_to": 43,
+          "execute_append_entries_sync": 42,
+          "recv_append_entries": 54,
+          "recv_append_entries_response": 50,
+          "recv_request_vote": 12,
+          "recv_request_vote_response": 12,
+          "replicate": 15,
+          "send_append_entries": 81,
+          "send_append_entries_response": 54,
+          "send_request_vote": 24
+        },
+        "membership_states": {
+          "Active": 446
+        },
+        "packet_families": {
+          "raft_append_entries": 162,
+          "raft_append_entries_response": 108,
+          "raft_request_pre_vote": 24,
+          "raft_request_pre_vote_response": 6,
+          "raft_request_vote": 24,
+          "raft_request_vote_response": 6
+        },
+        "roles": {
+          "Candidate": 21,
+          "Follower": 213,
+          "Leader": 187,
+          "None": 4,
+          "PreVoteCandidate": 21
+        }
+      },
+      "raw_records": 549,
+      "reduction": {
+        "accepted": false,
+        "error": "line 132: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "ackuracy"
+    },
+    {
+      "capture_wall_ms": 4.197825,
+      "inventory": {
+        "functions": {
+          "add_configuration": 1,
+          "become_leader": 1,
+          "commit": 4,
+          "replicate": 9
+        },
+        "membership_states": {
+          "Active": 15
+        },
+        "packet_families": {},
+        "roles": {
+          "Leader": 15
+        }
+      },
+      "raw_records": 30,
+      "reduction": {
+        "accepted": true,
+        "actions": 11,
+        "ignored_events": 16,
+        "observations": 66,
+        "preprocessed_events": 11,
+        "raw_records": 30
+      },
+      "scenario": "append",
+      "smt": {
+        "accepted": true,
+        "bytes": 29110,
+        "named_assertions": 90
+      },
+      "solver": "sat"
+    },
+    {
+      "capture_wall_ms": 18.133908,
+      "inventory": {
+        "functions": {
+          "add_configuration": 9,
+          "become_candidate": 7,
+          "become_follower": 7,
+          "become_leader": 2,
+          "commit": 15,
+          "drop_pending_to": 20,
+          "execute_append_entries_sync": 22,
+          "recv_append_entries": 29,
+          "recv_append_entries_response": 25,
+          "recv_request_vote": 5,
+          "recv_request_vote_response": 3,
+          "replicate": 11,
+          "send_append_entries": 34,
+          "send_append_entries_response": 29,
+          "send_request_vote": 14
+        },
+        "membership_states": {
+          "Active": 232
+        },
+        "packet_families": {
+          "raft_append_entries": 68,
+          "raft_append_entries_response": 58,
+          "raft_request_vote": 28,
+          "raft_request_vote_response": 5
+        },
+        "roles": {
+          "Candidate": 41,
+          "Follower": 103,
+          "Leader": 86,
+          "None": 2
+        }
+      },
+      "raw_records": 319,
+      "reduction": {
+        "accepted": true,
+        "actions": 176,
+        "ignored_events": 110,
+        "observations": 1093,
+        "preprocessed_events": 132,
+        "raw_records": 319
+      },
+      "scenario": "bad_network",
+      "smt": {
+        "accepted": true,
+        "bytes": 728974,
+        "named_assertions": 1803
+      },
+      "solver": "sat"
+    },
+    {
+      "capture_wall_ms": 43.489487,
+      "inventory": {
+        "functions": {
+          "add_configuration": 10,
+          "become_candidate": 10,
+          "become_follower": 27,
+          "become_leader": 6,
+          "commit": 25,
+          "drop_pending_to": 46,
+          "execute_append_entries_sync": 40,
+          "recv_append_entries": 73,
+          "recv_append_entries_response": 73,
+          "recv_request_vote": 18,
+          "recv_request_vote_response": 18,
+          "replicate": 15,
+          "send_append_entries": 97,
+          "send_append_entries_response": 73,
+          "send_request_vote": 40
+        },
+        "membership_states": {
+          "Active": 571
+        },
+        "packet_families": {
+          "raft_append_entries": 194,
+          "raft_append_entries_response": 146,
+          "raft_request_vote": 80,
+          "raft_request_vote_response": 18
+        },
+        "roles": {
+          "Candidate": 95,
+          "Follower": 259,
+          "Leader": 213,
+          "None": 4
+        }
+      },
+      "raw_records": 677,
+      "reduction": {
+        "accepted": false,
+        "error": "line 129: ungrouped helper 'become_follower'"
+      },
+      "scenario": "candidate_viability"
+    },
+    {
+      "capture_wall_ms": 28.935576,
+      "inventory": {
+        "functions": {
+          "add_configuration": 16,
+          "become_candidate": 1,
+          "become_follower": 7,
+          "become_leader": 2,
+          "become_pre_vote_candidate": 1,
+          "commit": 24,
+          "drop_pending_to": 7,
+          "execute_append_entries_sync": 33,
+          "recv_append_entries": 39,
+          "recv_append_entries_response": 39,
+          "recv_request_vote": 6,
+          "recv_request_vote_response": 6,
+          "replicate": 11,
+          "send_append_entries": 46,
+          "send_append_entries_response": 39,
+          "send_request_vote": 6
+        },
+        "membership_states": {
+          "Active": 283
+        },
+        "packet_families": {
+          "raft_append_entries": 92,
+          "raft_append_entries_response": 78,
+          "raft_request_pre_vote": 6,
+          "raft_request_pre_vote_response": 3,
+          "raft_request_vote": 6,
+          "raft_request_vote_response": 3
+        },
+        "roles": {
+          "Candidate": 7,
+          "Follower": 154,
+          "Leader": 113,
+          "None": 3,
+          "PreVoteCandidate": 6
+        }
+      },
+      "raw_records": 350,
+      "reduction": {
+        "accepted": false,
+        "error": "line 280: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "check_quorum"
+    },
+    {
+      "capture_wall_ms": 25.102011,
+      "inventory": {
+        "functions": {
+          "add_configuration": 7,
+          "become_candidate": 1,
+          "become_follower": 5,
+          "become_leader": 2,
+          "become_pre_vote_candidate": 1,
+          "commit": 9,
+          "drop_pending_to": 9,
+          "execute_append_entries_sync": 10,
+          "recv_append_entries": 17,
+          "recv_append_entries_response": 17,
+          "recv_request_vote": 2,
+          "recv_request_vote_response": 2,
+          "replicate": 7,
+          "send_append_entries": 24,
+          "send_append_entries_response": 17,
+          "send_request_vote": 4
+        },
+        "membership_states": {
+          "Active": 134
+        },
+        "packet_families": {
+          "raft_append_entries": 48,
+          "raft_append_entries_response": 34,
+          "raft_request_pre_vote": 4,
+          "raft_request_pre_vote_response": 1,
+          "raft_request_vote": 4,
+          "raft_request_vote_response": 1
+        },
+        "roles": {
+          "Candidate": 5,
+          "Follower": 61,
+          "Leader": 61,
+          "None": 2,
+          "PreVoteCandidate": 5
+        }
+      },
+      "raw_records": 170,
+      "reduction": {
+        "accepted": false,
+        "error": "line 90: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "check_quorum_012_0"
+    },
+    {
+      "capture_wall_ms": 13.559755,
+      "inventory": {
+        "functions": {
+          "add_configuration": 6,
+          "become_candidate": 1,
+          "become_follower": 5,
+          "become_leader": 2,
+          "become_pre_vote_candidate": 2,
+          "commit": 7,
+          "drop_pending_to": 3,
+          "execute_append_entries_sync": 10,
+          "recv_append_entries": 12,
+          "recv_append_entries_response": 12,
+          "recv_request_vote": 5,
+          "recv_request_vote_response": 5,
+          "replicate": 5,
+          "send_append_entries": 14,
+          "send_append_entries_response": 12,
+          "send_request_vote": 6
+        },
+        "membership_states": {
+          "Active": 107
+        },
+        "packet_families": {
+          "raft_append_entries": 28,
+          "raft_append_entries_response": 24,
+          "raft_request_pre_vote": 8,
+          "raft_request_pre_vote_response": 3,
+          "raft_request_vote": 4,
+          "raft_request_vote_response": 2
+        },
+        "roles": {
+          "Candidate": 5,
+          "Follower": 52,
+          "Leader": 39,
+          "None": 2,
+          "PreVoteCandidate": 9
+        }
+      },
+      "raw_records": 140,
+      "reduction": {
+        "accepted": false,
+        "error": "line 75: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "check_quorum_0_012"
+    },
+    {
+      "capture_wall_ms": 35.025119,
+      "inventory": {
+        "functions": {
+          "add_configuration": 10,
+          "become_candidate": 2,
+          "become_follower": 9,
+          "become_leader": 2,
+          "become_pre_vote_candidate": 3,
+          "commit": 20,
+          "drop_pending_to": 21,
+          "execute_append_entries_sync": 24,
+          "recv_append_entries": 34,
+          "recv_append_entries_response": 32,
+          "recv_request_vote": 7,
+          "recv_request_vote_response": 7,
+          "replicate": 6,
+          "send_append_entries": 40,
+          "send_append_entries_response": 34,
+          "send_request_vote": 20
+        },
+        "membership_states": {
+          "Active": 271
+        },
+        "packet_families": {
+          "raft_append_entries": 80,
+          "raft_append_entries_response": 68,
+          "raft_request_pre_vote": 24,
+          "raft_request_pre_vote_response": 4,
+          "raft_request_vote": 16,
+          "raft_request_vote_response": 3
+        },
+        "roles": {
+          "Candidate": 13,
+          "Follower": 126,
+          "Leader": 97,
+          "None": 4,
+          "PreVoteCandidate": 31
+        }
+      },
+      "raw_records": 316,
+      "reduction": {
+        "accepted": false,
+        "error": "line 121: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "delayed_vote_requests"
+    },
+    {
+      "capture_wall_ms": 14.466969,
+      "inventory": {
+        "functions": {
+          "add_configuration": 9,
+          "become_candidate": 1,
+          "become_follower": 4,
+          "become_leader": 2,
+          "become_pre_vote_candidate": 1,
+          "commit": 10,
+          "execute_append_entries_sync": 14,
+          "recv_append_entries": 12,
+          "recv_append_entries_response": 12,
+          "recv_request_vote": 4,
+          "recv_request_vote_response": 4,
+          "replicate": 7,
+          "send_append_entries": 12,
+          "send_append_entries_response": 12,
+          "send_request_vote": 4
+        },
+        "membership_states": {
+          "Active": 108
+        },
+        "packet_families": {
+          "raft_append_entries": 24,
+          "raft_append_entries_response": 24,
+          "raft_request_pre_vote": 4,
+          "raft_request_pre_vote_response": 2,
+          "raft_request_vote": 4,
+          "raft_request_vote_response": 2
+        },
+        "roles": {
+          "Candidate": 5,
+          "Follower": 54,
+          "Leader": 43,
+          "None": 2,
+          "PreVoteCandidate": 4
+        }
+      },
+      "raw_records": 134,
+      "reduction": {
+        "accepted": false,
+        "error": "line 83: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "election"
+    },
+    {
+      "capture_wall_ms": 28.028982,
+      "inventory": {
+        "functions": {
+          "add_configuration": 15,
+          "become_candidate": 1,
+          "become_follower": 8,
+          "become_leader": 2,
+          "become_pre_vote_candidate": 1,
+          "commit": 21,
+          "execute_append_entries_sync": 32,
+          "recv_append_entries": 39,
+          "recv_append_entries_response": 39,
+          "recv_request_vote": 8,
+          "recv_request_vote_response": 8,
+          "replicate": 8,
+          "send_append_entries": 39,
+          "send_append_entries_response": 39,
+          "send_request_vote": 8
+        },
+        "membership_states": {
+          "Active": 268
+        },
+        "packet_families": {
+          "raft_append_entries": 78,
+          "raft_append_entries_response": 78,
+          "raft_request_pre_vote": 8,
+          "raft_request_pre_vote_response": 4,
+          "raft_request_vote": 8,
+          "raft_request_vote_response": 4
+        },
+        "roles": {
+          "Candidate": 7,
+          "Follower": 148,
+          "Leader": 100,
+          "None": 4,
+          "PreVoteCandidate": 9
+        }
+      },
+      "raw_records": 322,
+      "reduction": {
+        "accepted": false,
+        "error": "line 155: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "election_while_reconfiguration"
+    },
+    {
+      "capture_wall_ms": 22.575353,
+      "inventory": {
+        "functions": {
+          "add_configuration": 9,
+          "become_candidate": 1,
+          "become_follower": 4,
+          "become_leader": 2,
+          "become_pre_vote_candidate": 1,
+          "commit": 19,
+          "drop_pending_to": 11,
+          "execute_append_entries_sync": 32,
+          "recv_append_entries": 27,
+          "recv_append_entries_response": 27,
+          "recv_request_vote": 2,
+          "recv_request_vote_response": 2,
+          "replicate": 20,
+          "send_append_entries": 36,
+          "send_append_entries_response": 27,
+          "send_request_vote": 4
+        },
+        "membership_states": {
+          "Active": 224
+        },
+        "packet_families": {
+          "raft_append_entries": 72,
+          "raft_append_entries_response": 54,
+          "raft_request_pre_vote": 4,
+          "raft_request_pre_vote_response": 1,
+          "raft_request_vote": 4,
+          "raft_request_vote_response": 1
+        },
+        "roles": {
+          "Candidate": 5,
+          "Follower": 107,
+          "Leader": 105,
+          "None": 2,
+          "PreVoteCandidate": 5
+        }
+      },
+      "raw_records": 296,
+      "reduction": {
+        "accepted": false,
+        "error": "line 133: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "fancy_election.1"
+    },
+    {
+      "capture_wall_ms": 59.262832,
+      "inventory": {
+        "functions": {
+          "add_configuration": 25,
+          "become_candidate": 3,
+          "become_follower": 16,
+          "become_leader": 4,
+          "become_pre_vote_candidate": 3,
+          "commit": 37,
+          "drop_pending_to": 48,
+          "execute_append_entries_sync": 70,
+          "recv_append_entries": 74,
+          "recv_append_entries_response": 71,
+          "recv_request_vote": 16,
+          "recv_request_vote_response": 16,
+          "replicate": 19,
+          "send_append_entries": 111,
+          "send_append_entries_response": 74,
+          "send_request_vote": 24
+        },
+        "membership_states": {
+          "Active": 611
+        },
+        "packet_families": {
+          "raft_append_entries": 222,
+          "raft_append_entries_response": 148,
+          "raft_request_pre_vote": 24,
+          "raft_request_pre_vote_response": 8,
+          "raft_request_vote": 24,
+          "raft_request_vote_response": 8
+        },
+        "roles": {
+          "Candidate": 27,
+          "Follower": 299,
+          "Leader": 255,
+          "None": 4,
+          "PreVoteCandidate": 26
+        }
+      },
+      "raw_records": 699,
+      "reduction": {
+        "accepted": false,
+        "error": "line 270: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "fancy_election.2"
+    },
+    {
+      "capture_wall_ms": 17.899163,
+      "inventory": {
+        "functions": {
+          "add_configuration": 6,
+          "become_follower": 3,
+          "become_leader": 1,
+          "become_pre_vote_candidate": 1,
+          "commit": 15,
+          "drop_pending_to": 3,
+          "execute_append_entries_sync": 18,
+          "recv_append_entries": 21,
+          "recv_append_entries_response": 21,
+          "replicate": 9,
+          "send_append_entries": 22,
+          "send_append_entries_response": 21,
+          "send_request_vote": 2
+        },
+        "membership_states": {
+          "Active": 143
+        },
+        "packet_families": {
+          "raft_append_entries": 44,
+          "raft_append_entries_response": 42,
+          "raft_request_pre_vote": 4
+        },
+        "roles": {
+          "Follower": 74,
+          "Leader": 61,
+          "None": 2,
+          "PreVoteCandidate": 6
+        }
+      },
+      "raw_records": 170,
+      "reduction": {
+        "accepted": false,
+        "error": "line 90: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "follower_rollback_match_index"
+    },
+    {
+      "capture_wall_ms": 23.398187,
+      "inventory": {
+        "functions": {
+          "add_configuration": 6,
+          "become_candidate": 2,
+          "become_follower": 6,
+          "become_leader": 3,
+          "commit": 16,
+          "drop_pending_to": 8,
+          "execute_append_entries_sync": 20,
+          "recv_append_entries": 25,
+          "recv_append_entries_response": 25,
+          "recv_request_vote": 3,
+          "recv_request_vote_response": 3,
+          "replicate": 12,
+          "send_append_entries": 32,
+          "send_append_entries_response": 25,
+          "send_request_vote": 4
+        },
+        "membership_states": {
+          "Active": 190
+        },
+        "packet_families": {
+          "raft_append_entries": 64,
+          "raft_append_entries_response": 50,
+          "raft_request_vote": 8,
+          "raft_request_vote_response": 3
+        },
+        "roles": {
+          "Candidate": 9,
+          "Follower": 90,
+          "Leader": 89,
+          "None": 2
+        }
+      },
+      "raw_records": 242,
+      "reduction": {
+        "accepted": true,
+        "actions": 154,
+        "ignored_events": 62,
+        "observations": 932,
+        "preprocessed_events": 111,
+        "raw_records": 242
+      },
+      "scenario": "indirect_commit_stale_leader",
+      "smt": {
+        "accepted": true,
+        "bytes": 635103,
+        "named_assertions": 1554
+      },
+      "solver": "sat"
+    },
+    {
+      "capture_wall_ms": 13.26818,
+      "inventory": {
+        "functions": {
+          "add_configuration": 6,
+          "become_follower": 2,
+          "become_leader": 1,
+          "commit": 12,
+          "execute_append_entries_sync": 18,
+          "recv_append_entries": 18,
+          "recv_append_entries_response": 18,
+          "replicate": 9,
+          "send_append_entries": 18,
+          "send_append_entries_response": 18
+        },
+        "membership_states": {
+          "Active": 120
+        },
+        "packet_families": {
+          "raft_append_entries": 36,
+          "raft_append_entries_response": 36
+        },
+        "roles": {
+          "Follower": 66,
+          "Leader": 52,
+          "None": 2
+        }
+      },
+      "raw_records": 141,
+      "reduction": {
+        "accepted": true,
+        "actions": 91,
+        "ignored_events": 23,
+        "observations": 562,
+        "preprocessed_events": 65,
+        "raw_records": 141
+      },
+      "scenario": "large_entry_batching",
+      "smt": {
+        "accepted": true,
+        "bytes": 378871,
+        "named_assertions": 932
+      },
+      "solver": "sat"
+    },
+    {
+      "capture_wall_ms": 18.36447,
+      "inventory": {
+        "functions": {
+          "add_configuration": 6,
+          "become_candidate": 1,
+          "become_follower": 5,
+          "become_leader": 2,
+          "become_pre_vote_candidate": 1,
+          "commit": 12,
+          "execute_append_entries_sync": 12,
+          "recv_append_entries": 20,
+          "recv_append_entries_response": 20,
+          "recv_request_vote": 4,
+          "recv_request_vote_response": 4,
+          "replicate": 6,
+          "send_append_entries": 20,
+          "send_append_entries_response": 20,
+          "send_request_vote": 4
+        },
+        "membership_states": {
+          "Active": 137
+        },
+        "packet_families": {
+          "raft_append_entries": 40,
+          "raft_append_entries_response": 40,
+          "raft_request_pre_vote": 4,
+          "raft_request_pre_vote_response": 2,
+          "raft_request_vote": 4,
+          "raft_request_vote_response": 2
+        },
+        "roles": {
+          "Candidate": 4,
+          "Follower": 71,
+          "Leader": 56,
+          "None": 2,
+          "PreVoteCandidate": 4
+        }
+      },
+      "raw_records": 163,
+      "reduction": {
+        "accepted": false,
+        "error": "line 81: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "leadership_race"
+    },
+    {
+      "capture_wall_ms": 20.954849,
+      "inventory": {
+        "functions": {
+          "add_configuration": 6,
+          "become_candidate": 1,
+          "become_follower": 4,
+          "become_leader": 2,
+          "become_pre_vote_candidate": 1,
+          "commit": 12,
+          "execute_append_entries_sync": 12,
+          "recv_append_entries": 24,
+          "recv_append_entries_response": 24,
+          "recv_request_vote": 4,
+          "recv_request_vote_response": 4,
+          "replicate": 8,
+          "send_append_entries": 24,
+          "send_append_entries_response": 24,
+          "send_request_vote": 4
+        },
+        "membership_states": {
+          "Active": 154
+        },
+        "packet_families": {
+          "raft_append_entries": 48,
+          "raft_append_entries_response": 48,
+          "raft_request_pre_vote": 4,
+          "raft_request_pre_vote_response": 2,
+          "raft_request_vote": 4,
+          "raft_request_vote_response": 2
+        },
+        "roles": {
+          "Candidate": 4,
+          "Follower": 76,
+          "Leader": 68,
+          "None": 2,
+          "PreVoteCandidate": 4
+        }
+      },
+      "raw_records": 190,
+      "reduction": {
+        "accepted": false,
+        "error": "line 80: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "liveness_through_conflict"
+    },
+    {
+      "capture_wall_ms": 17.40521,
+      "inventory": {
+        "functions": {
+          "add_configuration": 6,
+          "become_candidate": 2,
+          "become_follower": 6,
+          "become_leader": 3,
+          "become_pre_vote_candidate": 2,
+          "commit": 11,
+          "drop_pending_to": 2,
+          "execute_append_entries_sync": 16,
+          "recv_append_entries": 25,
+          "recv_append_entries_response": 24,
+          "recv_request_vote": 8,
+          "recv_request_vote_response": 8,
+          "replicate": 10,
+          "send_append_entries": 26,
+          "send_append_entries_response": 25,
+          "send_request_vote": 8
+        },
+        "membership_states": {
+          "Active": 182
+        },
+        "packet_families": {
+          "raft_append_entries": 52,
+          "raft_append_entries_response": 50,
+          "raft_request_pre_vote": 8,
+          "raft_request_pre_vote_response": 4,
+          "raft_request_vote": 8,
+          "raft_request_vote_response": 4
+        },
+        "roles": {
+          "Candidate": 10,
+          "Follower": 85,
+          "Leader": 77,
+          "None": 2,
+          "PreVoteCandidate": 8
+        }
+      },
+      "raw_records": 223,
+      "reduction": {
+        "accepted": false,
+        "error": "line 72: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "matching_partial"
+    },
+    {
+      "capture_wall_ms": 12.337362,
+      "inventory": {
+        "functions": {
+          "add_configuration": 6,
+          "become_candidate": 1,
+          "become_follower": 4,
+          "become_leader": 2,
+          "become_pre_vote_candidate": 1,
+          "commit": 12,
+          "drop_pending_to": 6,
+          "execute_append_entries_sync": 12,
+          "recv_append_entries": 17,
+          "recv_append_entries_response": 17,
+          "recv_request_vote": 2,
+          "recv_request_vote_response": 2,
+          "replicate": 6,
+          "send_append_entries": 20,
+          "send_append_entries_response": 17,
+          "send_request_vote": 4,
+          "step_down_and_nominate_successor": 1
+        },
+        "membership_states": {
+          "Active": 130
+        },
+        "packet_families": {
+          "raft_append_entries": 40,
+          "raft_append_entries_response": 34,
+          "raft_propose_request_vote": 1,
+          "raft_request_pre_vote": 4,
+          "raft_request_pre_vote_response": 1,
+          "raft_request_vote": 4,
+          "raft_request_vote_response": 1
+        },
+        "roles": {
+          "Candidate": 4,
+          "Follower": 61,
+          "Leader": 59,
+          "None": 2,
+          "PreVoteCandidate": 4
+        }
+      },
+      "raw_records": 165,
+      "reduction": {
+        "accepted": false,
+        "error": "line 85: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "message_type_summaries"
+    },
+    {
+      "capture_wall_ms": 24.477783,
+      "inventory": {
+        "functions": {
+          "add_configuration": 9,
+          "become_candidate": 2,
+          "become_follower": 6,
+          "become_leader": 3,
+          "become_pre_vote_candidate": 2,
+          "commit": 27,
+          "drop_pending_to": 9,
+          "execute_append_entries_sync": 34,
+          "recv_append_entries": 41,
+          "recv_append_entries_response": 41,
+          "recv_request_vote": 6,
+          "recv_request_vote_response": 6,
+          "replicate": 20,
+          "send_append_entries": 48,
+          "send_append_entries_response": 41,
+          "send_request_vote": 8
+        },
+        "membership_states": {
+          "Active": 303
+        },
+        "packet_families": {
+          "raft_append_entries": 96,
+          "raft_append_entries_response": 82,
+          "raft_request_pre_vote": 8,
+          "raft_request_pre_vote_response": 3,
+          "raft_request_vote": 8,
+          "raft_request_vote_response": 3
+        },
+        "roles": {
+          "Candidate": 10,
+          "Follower": 147,
+          "Leader": 135,
+          "None": 2,
+          "PreVoteCandidate": 9
+        }
+      },
+      "raw_records": 386,
+      "reduction": {
+        "accepted": false,
+        "error": "line 150: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "multi_election"
+    },
+    {
+      "capture_wall_ms": 15.831451,
+      "inventory": {
+        "functions": {
+          "add_configuration": 6,
+          "become_candidate": 3,
+          "become_follower": 5,
+          "become_leader": 2,
+          "become_pre_vote_candidate": 1,
+          "commit": 12,
+          "execute_append_entries_sync": 14,
+          "recv_append_entries": 22,
+          "recv_append_entries_response": 22,
+          "recv_propose_request_vote": 2,
+          "recv_request_vote": 8,
+          "recv_request_vote_response": 8,
+          "replicate": 7,
+          "send_append_entries": 22,
+          "send_append_entries_response": 22,
+          "send_request_vote": 8,
+          "step_down_and_nominate_successor": 2
+        },
+        "membership_states": {
+          "Active": 166
+        },
+        "packet_families": {
+          "raft_append_entries": 44,
+          "raft_append_entries_response": 44,
+          "raft_propose_request_vote": 2,
+          "raft_request_pre_vote": 4,
+          "raft_request_pre_vote_response": 2,
+          "raft_request_vote": 12,
+          "raft_request_vote_response": 6
+        },
+        "roles": {
+          "Candidate": 27,
+          "Follower": 73,
+          "Leader": 60,
+          "None": 2,
+          "PreVoteCandidate": 4
+        }
+      },
+      "raw_records": 196,
+      "reduction": {
+        "accepted": false,
+        "error": "line 78: unaudited function 'step_down_and_nominate_successor'"
+      },
+      "scenario": "nominate_successor"
+    },
+    {
+      "capture_wall_ms": 12.262002,
+      "inventory": {
+        "functions": {
+          "add_configuration": 6,
+          "become_candidate": 1,
+          "become_follower": 6,
+          "become_leader": 2,
+          "become_pre_vote_candidate": 3,
+          "commit": 10,
+          "execute_append_entries_sync": 12,
+          "recv_append_entries": 18,
+          "recv_append_entries_response": 18,
+          "recv_request_vote": 8,
+          "recv_request_vote_response": 8,
+          "replicate": 6,
+          "send_append_entries": 18,
+          "send_append_entries_response": 18,
+          "send_request_vote": 8
+        },
+        "membership_states": {
+          "Active": 142
+        },
+        "packet_families": {
+          "raft_append_entries": 36,
+          "raft_append_entries_response": 36,
+          "raft_request_pre_vote": 12,
+          "raft_request_pre_vote_response": 6,
+          "raft_request_vote": 4,
+          "raft_request_vote_response": 2
+        },
+        "roles": {
+          "Candidate": 4,
+          "Follower": 68,
+          "Leader": 54,
+          "None": 2,
+          "PreVoteCandidate": 14
+        }
+      },
+      "raw_records": 204,
+      "reduction": {
+        "accepted": false,
+        "error": "line 80: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "pre_vote"
+    },
+    {
+      "capture_wall_ms": 19.1955,
+      "inventory": {
+        "functions": {
+          "add_configuration": 6,
+          "become_candidate": 2,
+          "become_follower": 6,
+          "become_leader": 2,
+          "become_pre_vote_candidate": 3,
+          "commit": 12,
+          "drop_pending_to": 10,
+          "execute_append_entries_sync": 14,
+          "recv_append_entries": 21,
+          "recv_append_entries_response": 20,
+          "recv_request_vote": 4,
+          "recv_request_vote_response": 4,
+          "replicate": 7,
+          "send_append_entries": 24,
+          "send_append_entries_response": 21,
+          "send_request_vote": 10
+        },
+        "membership_states": {
+          "Active": 166
+        },
+        "packet_families": {
+          "raft_append_entries": 48,
+          "raft_append_entries_response": 42,
+          "raft_request_pre_vote": 12,
+          "raft_request_pre_vote_response": 2,
+          "raft_request_vote": 8,
+          "raft_request_vote_response": 2
+        },
+        "roles": {
+          "Candidate": 11,
+          "Follower": 77,
+          "Leader": 60,
+          "None": 2,
+          "PreVoteCandidate": 16
+        }
+      },
+      "raw_records": 230,
+      "reduction": {
+        "accepted": false,
+        "error": "line 88: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "pre_vote_double_leader"
+    },
+    {
+      "capture_wall_ms": 19.28204,
+      "inventory": {
+        "functions": {
+          "add_configuration": 9,
+          "become_candidate": 2,
+          "become_follower": 6,
+          "become_leader": 3,
+          "become_pre_vote_candidate": 1,
+          "commit": 12,
+          "execute_append_entries_sync": 16,
+          "recv_append_entries": 21,
+          "recv_append_entries_response": 21,
+          "recv_request_vote": 6,
+          "recv_request_vote_response": 6,
+          "replicate": 8,
+          "send_append_entries": 21,
+          "send_append_entries_response": 21,
+          "send_request_vote": 6
+        },
+        "membership_states": {
+          "Active": 159
+        },
+        "packet_families": {
+          "raft_append_entries": 42,
+          "raft_append_entries_response": 42,
+          "raft_request_pre_vote": 4,
+          "raft_request_pre_vote_response": 2,
+          "raft_request_vote": 8,
+          "raft_request_vote_response": 4
+        },
+        "roles": {
+          "Candidate": 8,
+          "Follower": 79,
+          "Leader": 66,
+          "None": 2,
+          "PreVoteCandidate": 4
+        }
+      },
+      "raw_records": 202,
+      "reduction": {
+        "accepted": false,
+        "error": "line 98: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "pre_vote_split"
+    },
+    {
+      "capture_wall_ms": 15.63099,
+      "inventory": {
+        "functions": {
+          "add_configuration": 9,
+          "become_candidate": 1,
+          "become_follower": 4,
+          "become_leader": 2,
+          "commit": 16,
+          "execute_append_entries_sync": 21,
+          "recv_append_entries": 18,
+          "recv_append_entries_response": 18,
+          "recv_propose_request_vote": 1,
+          "recv_request_vote": 1,
+          "recv_request_vote_response": 1,
+          "replicate": 12,
+          "send_append_entries": 18,
+          "send_append_entries_response": 18,
+          "send_request_vote": 1
+        },
+        "membership_states": {
+          "Active": 116,
+          "Retired": 25
+        },
+        "packet_families": {
+          "raft_append_entries": 36,
+          "raft_append_entries_response": 36,
+          "raft_propose_request_vote": 1,
+          "raft_request_vote": 2,
+          "raft_request_vote_response": 1
+        },
+        "roles": {
+          "Candidate": 3,
+          "Follower": 75,
+          "Leader": 60,
+          "None": 3
+        }
+      },
+      "raw_records": 188,
+      "reduction": {
+        "accepted": false,
+        "error": "line 50: unsupported membership_state"
+      },
+      "scenario": "reconfig_01_12"
+    },
+    {
+      "capture_wall_ms": 15.107796,
+      "inventory": {
+        "functions": {
+          "add_configuration": 12,
+          "become_candidate": 1,
+          "become_follower": 6,
+          "become_leader": 2,
+          "commit": 19,
+          "execute_append_entries_sync": 30,
+          "recv_append_entries": 26,
+          "recv_append_entries_response": 26,
+          "recv_propose_request_vote": 1,
+          "recv_request_vote": 1,
+          "recv_request_vote_response": 1,
+          "replicate": 12,
+          "send_append_entries": 26,
+          "send_append_entries_response": 26,
+          "send_request_vote": 1
+        },
+        "membership_states": {
+          "Active": 142,
+          "Retired": 48
+        },
+        "packet_families": {
+          "raft_append_entries": 52,
+          "raft_append_entries_response": 52,
+          "raft_propose_request_vote": 1,
+          "raft_request_vote": 2,
+          "raft_request_vote_response": 1
+        },
+        "roles": {
+          "Candidate": 3,
+          "Follower": 107,
+          "Leader": 76,
+          "None": 4
+        }
+      },
+      "raw_records": 240,
+      "reduction": {
+        "accepted": false,
+        "error": "line 50: unsupported membership_state"
+      },
+      "scenario": "reconfig_01_23"
+    },
+    {
+      "capture_wall_ms": 18.276731,
+      "inventory": {
+        "functions": {
+          "add_configuration": 9,
+          "become_candidate": 2,
+          "become_follower": 8,
+          "become_leader": 3,
+          "become_pre_vote_candidate": 2,
+          "commit": 17,
+          "execute_append_entries_sync": 27,
+          "recv_append_entries": 25,
+          "recv_append_entries_response": 25,
+          "recv_propose_request_vote": 1,
+          "recv_request_vote": 7,
+          "recv_request_vote_response": 7,
+          "replicate": 14,
+          "send_append_entries": 25,
+          "send_append_entries_response": 25,
+          "send_request_vote": 7
+        },
+        "membership_states": {
+          "Active": 147,
+          "Retired": 57
+        },
+        "packet_families": {
+          "raft_append_entries": 50,
+          "raft_append_entries_response": 50,
+          "raft_propose_request_vote": 1,
+          "raft_request_pre_vote": 8,
+          "raft_request_pre_vote_response": 4,
+          "raft_request_vote": 6,
+          "raft_request_vote_response": 3
+        },
+        "roles": {
+          "Candidate": 8,
+          "Follower": 104,
+          "Leader": 76,
+          "None": 3,
+          "PreVoteCandidate": 13
+        }
+      },
+      "raw_records": 263,
+      "reduction": {
+        "accepted": false,
+        "error": "line 50: unsupported membership_state"
+      },
+      "scenario": "reconfig_01_el0_12"
+    },
+    {
+      "capture_wall_ms": 22.146589,
+      "inventory": {
+        "functions": {
+          "add_configuration": 12,
+          "become_candidate": 2,
+          "become_follower": 11,
+          "become_leader": 3,
+          "become_pre_vote_candidate": 2,
+          "commit": 17,
+          "drop_pending_to": 1,
+          "execute_append_entries_sync": 38,
+          "recv_append_entries": 35,
+          "recv_append_entries_response": 35,
+          "recv_propose_request_vote": 1,
+          "recv_request_vote": 10,
+          "recv_request_vote_response": 10,
+          "replicate": 14,
+          "send_append_entries": 36,
+          "send_append_entries_response": 35,
+          "send_request_vote": 10
+        },
+        "membership_states": {
+          "Active": 171,
+          "Retired": 101
+        },
+        "packet_families": {
+          "raft_append_entries": 72,
+          "raft_append_entries_response": 70,
+          "raft_propose_request_vote": 1,
+          "raft_request_pre_vote": 12,
+          "raft_request_pre_vote_response": 6,
+          "raft_request_vote": 8,
+          "raft_request_vote_response": 4
+        },
+        "roles": {
+          "Candidate": 10,
+          "Follower": 144,
+          "Leader": 96,
+          "None": 4,
+          "PreVoteCandidate": 18
+        }
+      },
+      "raw_records": 337,
+      "reduction": {
+        "accepted": false,
+        "error": "line 50: unsupported membership_state"
+      },
+      "scenario": "reconfig_01_el0_23"
+    },
+    {
+      "capture_wall_ms": 15.791788,
+      "inventory": {
+        "functions": {
+          "add_configuration": 9,
+          "become_candidate": 1,
+          "become_follower": 4,
+          "become_leader": 2,
+          "become_pre_vote_candidate": 1,
+          "commit": 15,
+          "execute_append_entries_sync": 21,
+          "recv_append_entries": 18,
+          "recv_append_entries_response": 18,
+          "recv_request_vote": 4,
+          "recv_request_vote_response": 4,
+          "replicate": 12,
+          "send_append_entries": 18,
+          "send_append_entries_response": 18,
+          "send_request_vote": 4
+        },
+        "membership_states": {
+          "Active": 129,
+          "Retired": 20
+        },
+        "packet_families": {
+          "raft_append_entries": 36,
+          "raft_append_entries_response": 36,
+          "raft_request_pre_vote": 4,
+          "raft_request_pre_vote_response": 2,
+          "raft_request_vote": 4,
+          "raft_request_vote_response": 2
+        },
+        "roles": {
+          "Candidate": 5,
+          "Follower": 76,
+          "Leader": 61,
+          "None": 2,
+          "PreVoteCandidate": 5
+        }
+      },
+      "raw_records": 192,
+      "reduction": {
+        "accepted": false,
+        "error": "line 50: unsupported membership_state"
+      },
+      "scenario": "reconfig_01_el1_12"
+    },
+    {
+      "capture_wall_ms": 16.650666,
+      "inventory": {
+        "functions": {
+          "add_configuration": 9,
+          "become_candidate": 1,
+          "become_follower": 4,
+          "become_leader": 2,
+          "become_pre_vote_candidate": 1,
+          "commit": 16,
+          "execute_append_entries_sync": 21,
+          "recv_append_entries": 19,
+          "recv_append_entries_response": 19,
+          "recv_request_vote": 4,
+          "recv_request_vote_response": 4,
+          "replicate": 12,
+          "send_append_entries": 19,
+          "send_append_entries_response": 19,
+          "send_request_vote": 4
+        },
+        "membership_states": {
+          "Active": 129,
+          "Retired": 25
+        },
+        "packet_families": {
+          "raft_append_entries": 38,
+          "raft_append_entries_response": 38,
+          "raft_request_pre_vote": 4,
+          "raft_request_pre_vote_response": 2,
+          "raft_request_vote": 4,
+          "raft_request_vote_response": 2
+        },
+        "roles": {
+          "Candidate": 5,
+          "Follower": 78,
+          "Leader": 64,
+          "None": 2,
+          "PreVoteCandidate": 5
+        }
+      },
+      "raw_records": 202,
+      "reduction": {
+        "accepted": false,
+        "error": "line 50: unsupported membership_state"
+      },
+      "scenario": "reconfig_01_el2_12"
+    },
+    {
+      "capture_wall_ms": 20.277519,
+      "inventory": {
+        "functions": {
+          "add_configuration": 12,
+          "become_candidate": 1,
+          "become_follower": 6,
+          "become_leader": 2,
+          "become_pre_vote_candidate": 1,
+          "commit": 18,
+          "execute_append_entries_sync": 30,
+          "recv_append_entries": 27,
+          "recv_append_entries_response": 27,
+          "recv_request_vote": 6,
+          "recv_request_vote_response": 6,
+          "replicate": 12,
+          "send_append_entries": 27,
+          "send_append_entries_response": 27,
+          "send_request_vote": 6
+        },
+        "membership_states": {
+          "Active": 161,
+          "Retired": 47
+        },
+        "packet_families": {
+          "raft_append_entries": 54,
+          "raft_append_entries_response": 54,
+          "raft_request_pre_vote": 6,
+          "raft_request_pre_vote_response": 3,
+          "raft_request_vote": 6,
+          "raft_request_vote_response": 3
+        },
+        "roles": {
+          "Candidate": 7,
+          "Follower": 112,
+          "Leader": 79,
+          "None": 3,
+          "PreVoteCandidate": 7
+        }
+      },
+      "raw_records": 260,
+      "reduction": {
+        "accepted": false,
+        "error": "line 50: unsupported membership_state"
+      },
+      "scenario": "reconfig_01_el2_23"
+    },
+    {
+      "capture_wall_ms": 8.074278,
+      "inventory": {
+        "functions": {
+          "add_configuration": 4,
+          "become_candidate": 1,
+          "become_follower": 2,
+          "become_leader": 2,
+          "commit": 7,
+          "execute_append_entries_sync": 6,
+          "recv_append_entries": 4,
+          "recv_append_entries_response": 4,
+          "recv_propose_request_vote": 1,
+          "replicate": 9,
+          "send_append_entries": 4,
+          "send_append_entries_response": 4
+        },
+        "membership_states": {
+          "Active": 34,
+          "Retired": 14
+        },
+        "packet_families": {
+          "raft_append_entries": 8,
+          "raft_append_entries_response": 8,
+          "raft_propose_request_vote": 1
+        },
+        "roles": {
+          "Candidate": 1,
+          "Follower": 19,
+          "Leader": 26,
+          "None": 2
+        }
+      },
+      "raw_records": 75,
+      "reduction": {
+        "accepted": false,
+        "error": "line 14: unsupported membership_state"
+      },
+      "scenario": "reconfig_0_1"
+    },
+    {
+      "capture_wall_ms": 13.411885,
+      "inventory": {
+        "functions": {
+          "add_configuration": 12,
+          "become_follower": 3,
+          "become_leader": 1,
+          "commit": 16,
+          "execute_append_entries_sync": 21,
+          "recv_append_entries": 24,
+          "recv_append_entries_response": 24,
+          "replicate": 7,
+          "send_append_entries": 24,
+          "send_append_entries_response": 24
+        },
+        "membership_states": {
+          "Active": 156
+        },
+        "packet_families": {
+          "raft_append_entries": 48,
+          "raft_append_entries_response": 48
+        },
+        "roles": {
+          "Follower": 90,
+          "Leader": 63,
+          "None": 3
+        }
+      },
+      "raw_records": 191,
+      "reduction": {
+        "accepted": true,
+        "actions": 129,
+        "ignored_events": 38,
+        "observations": 726,
+        "preprocessed_events": 81,
+        "raw_records": 191
+      },
+      "scenario": "reconfiguration",
+      "smt": {
+        "accepted": true,
+        "bytes": 630377,
+        "named_assertions": 1379
+      },
+      "solver": "sat"
+    },
+    {
+      "capture_wall_ms": 8.132553,
+      "inventory": {
+        "functions": {
+          "add_configuration": 4,
+          "become_follower": 1,
+          "become_leader": 1,
+          "commit": 10,
+          "execute_append_entries_sync": 9,
+          "recv_append_entries": 9,
+          "recv_append_entries_response": 9,
+          "replicate": 9,
+          "send_append_entries": 9,
+          "send_append_entries_response": 9
+        },
+        "membership_states": {
+          "Active": 70
+        },
+        "packet_families": {
+          "raft_append_entries": 18,
+          "raft_append_entries_response": 18
+        },
+        "roles": {
+          "Follower": 34,
+          "Leader": 35,
+          "None": 1
+        }
+      },
+      "raw_records": 104,
+      "reduction": {
+        "accepted": true,
+        "actions": 52,
+        "ignored_events": 36,
+        "observations": 320,
+        "preprocessed_events": 39,
+        "raw_records": 104
+      },
+      "scenario": "reconnect",
+      "smt": {
+        "accepted": true,
+        "bytes": 175849,
+        "named_assertions": 480
+      },
+      "solver": "sat"
+    },
+    {
+      "capture_wall_ms": 19.165344,
+      "inventory": {
+        "functions": {
+          "add_configuration": 6,
+          "become_candidate": 1,
+          "become_follower": 5,
+          "become_leader": 2,
+          "become_pre_vote_candidate": 1,
+          "commit": 9,
+          "execute_append_entries_sync": 14,
+          "recv_append_entries": 18,
+          "recv_append_entries_response": 18,
+          "recv_request_vote": 4,
+          "recv_request_vote_response": 4,
+          "replicate": 7,
+          "send_append_entries": 18,
+          "send_append_entries_response": 18,
+          "send_request_vote": 4
+        },
+        "membership_states": {
+          "Active": 129
+        },
+        "packet_families": {
+          "raft_append_entries": 36,
+          "raft_append_entries_response": 36,
+          "raft_request_pre_vote": 4,
+          "raft_request_pre_vote_response": 2,
+          "raft_request_vote": 4,
+          "raft_request_vote_response": 2
+        },
+        "roles": {
+          "Candidate": 6,
+          "Follower": 67,
+          "Leader": 47,
+          "None": 2,
+          "PreVoteCandidate": 7
+        }
+      },
+      "raw_records": 156,
+      "reduction": {
+        "accepted": false,
+        "error": "line 98: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "reelection"
+    },
+    {
+      "capture_wall_ms": 8.19414,
+      "inventory": {
+        "functions": {
+          "add_configuration": 4,
+          "become_follower": 1,
+          "become_leader": 1,
+          "commit": 8,
+          "execute_append_entries_sync": 7,
+          "recv_append_entries": 8,
+          "recv_append_entries_response": 8,
+          "replicate": 7,
+          "send_append_entries": 8,
+          "send_append_entries_response": 8
+        },
+        "membership_states": {
+          "Active": 60
+        },
+        "packet_families": {
+          "raft_append_entries": 16,
+          "raft_append_entries_response": 16
+        },
+        "roles": {
+          "Follower": 29,
+          "Leader": 30,
+          "None": 1
+        }
+      },
+      "raw_records": 84,
+      "reduction": {
+        "accepted": true,
+        "actions": 43,
+        "ignored_events": 26,
+        "observations": 274,
+        "preprocessed_events": 33,
+        "raw_records": 84
+      },
+      "scenario": "replicate",
+      "smt": {
+        "accepted": true,
+        "bytes": 147229,
+        "named_assertions": 407
+      },
+      "solver": "sat"
+    },
+    {
+      "capture_wall_ms": 9.235548,
+      "inventory": {
+        "functions": {
+          "add_configuration": 6,
+          "become_candidate": 1,
+          "become_follower": 4,
+          "become_leader": 2,
+          "commit": 12,
+          "drop_pending_to": 1,
+          "execute_append_entries_sync": 14,
+          "recv_append_entries": 18,
+          "recv_append_entries_response": 18,
+          "recv_request_vote": 1,
+          "recv_request_vote_response": 1,
+          "replicate": 7,
+          "send_append_entries": 18,
+          "send_append_entries_response": 18,
+          "send_request_vote": 2
+        },
+        "membership_states": {
+          "Active": 123
+        },
+        "packet_families": {
+          "raft_append_entries": 36,
+          "raft_append_entries_response": 36,
+          "raft_request_vote": 4,
+          "raft_request_vote_response": 1
+        },
+        "roles": {
+          "Candidate": 5,
+          "Follower": 64,
+          "Leader": 52,
+          "None": 2
+        }
+      },
+      "raw_records": 149,
+      "reduction": {
+        "accepted": true,
+        "actions": 91,
+        "ignored_events": 29,
+        "observations": 596,
+        "preprocessed_events": 69,
+        "raw_records": 149
+      },
+      "scenario": "replicate_on_latest_leader",
+      "smt": {
+        "accepted": true,
+        "bytes": 383255,
+        "named_assertions": 966
+      },
+      "solver": "sat"
+    },
+    {
+      "capture_wall_ms": 13.567989,
+      "inventory": {
+        "functions": {
+          "add_configuration": 20,
+          "become_candidate": 2,
+          "become_follower": 9,
+          "become_leader": 2,
+          "commit": 16,
+          "drop_pending_to": 2,
+          "execute_append_entries_sync": 27,
+          "recv_append_entries": 29,
+          "recv_append_entries_response": 29,
+          "recv_request_vote": 5,
+          "recv_request_vote_response": 5,
+          "replicate": 9,
+          "send_append_entries": 31,
+          "send_append_entries_response": 29,
+          "send_request_vote": 5
+        },
+        "membership_states": {
+          "Active": 213,
+          "Retired": 7
+        },
+        "packet_families": {
+          "raft_append_entries": 62,
+          "raft_append_entries_response": 58,
+          "raft_request_vote": 10,
+          "raft_request_vote_response": 5
+        },
+        "roles": {
+          "Candidate": 12,
+          "Follower": 121,
+          "Leader": 84,
+          "None": 3
+        }
+      },
+      "raw_records": 265,
+      "reduction": {
+        "accepted": false,
+        "error": "line 252: unsupported membership_state"
+      },
+      "scenario": "retire_backup"
+    },
+    {
+      "capture_wall_ms": 17.334731,
+      "inventory": {
+        "functions": {
+          "add_configuration": 20,
+          "become_follower": 4,
+          "become_leader": 1,
+          "become_pre_vote_candidate": 1,
+          "commit": 16,
+          "drop_pending_to": 2,
+          "execute_append_entries_sync": 27,
+          "recv_append_entries": 25,
+          "recv_append_entries_response": 25,
+          "recv_request_vote": 3,
+          "recv_request_vote_response": 3,
+          "replicate": 9,
+          "send_append_entries": 27,
+          "send_append_entries_response": 25,
+          "send_request_vote": 3
+        },
+        "membership_states": {
+          "Active": 186,
+          "Retired": 5
+        },
+        "packet_families": {
+          "raft_append_entries": 54,
+          "raft_append_entries_response": 50,
+          "raft_request_pre_vote": 6,
+          "raft_request_pre_vote_response": 3
+        },
+        "roles": {
+          "Follower": 106,
+          "Leader": 74,
+          "None": 3,
+          "PreVoteCandidate": 8
+        }
+      },
+      "raw_records": 226,
+      "reduction": {
+        "accepted": false,
+        "error": "line 176: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "retire_backup_pre_vote"
+    },
+    {
+      "capture_wall_ms": 7.742293,
+      "inventory": {
+        "functions": {
+          "add_configuration": 6,
+          "become_follower": 1,
+          "become_leader": 1,
+          "commit": 10,
+          "execute_append_entries_sync": 15,
+          "recv_append_entries": 7,
+          "recv_append_entries_response": 7,
+          "replicate": 20,
+          "send_append_entries": 7,
+          "send_append_entries_response": 7
+        },
+        "membership_states": {
+          "Active": 75,
+          "Retired": 6
+        },
+        "packet_families": {
+          "raft_append_entries": 14,
+          "raft_append_entries_response": 14
+        },
+        "roles": {
+          "Follower": 35,
+          "Leader": 45,
+          "None": 1
+        }
+      },
+      "raw_records": 140,
+      "reduction": {
+        "accepted": false,
+        "error": "line 91: unsupported membership_state"
+      },
+      "scenario": "retire_one"
+    },
+    {
+      "capture_wall_ms": 22.136483,
+      "inventory": {
+        "functions": {
+          "add_configuration": 9,
+          "become_candidate": 1,
+          "become_follower": 5,
+          "become_leader": 2,
+          "become_pre_vote_candidate": 1,
+          "commit": 14,
+          "drop_pending_to": 5,
+          "execute_append_entries_sync": 16,
+          "recv_append_entries": 15,
+          "recv_append_entries_response": 14,
+          "recv_request_vote": 4,
+          "recv_request_vote_response": 4,
+          "replicate": 10,
+          "send_append_entries": 20,
+          "send_append_entries_response": 15,
+          "send_request_vote": 4
+        },
+        "membership_states": {
+          "Active": 137,
+          "Retired": 2
+        },
+        "packet_families": {
+          "raft_append_entries": 40,
+          "raft_append_entries_response": 29,
+          "raft_request_pre_vote": 4,
+          "raft_request_pre_vote_response": 2,
+          "raft_request_vote": 4,
+          "raft_request_vote_response": 2
+        },
+        "roles": {
+          "Candidate": 4,
+          "Follower": 69,
+          "Leader": 60,
+          "None": 2,
+          "PreVoteCandidate": 4
+        }
+      },
+      "raw_records": 182,
+      "reduction": {
+        "accepted": false,
+        "error": "line 79: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "retired_node_delayed_responses"
+    },
+    {
+      "capture_wall_ms": 20.030363,
+      "inventory": {
+        "functions": {
+          "add_configuration": 8,
+          "become_candidate": 1,
+          "become_follower": 4,
+          "become_leader": 2,
+          "become_pre_vote_candidate": 1,
+          "commit": 12,
+          "drop_pending_to": 2,
+          "execute_append_entries_sync": 13,
+          "recv_append_entries": 19,
+          "recv_append_entries_response": 18,
+          "recv_request_vote": 4,
+          "recv_request_vote_response": 4,
+          "replicate": 7,
+          "send_append_entries": 20,
+          "send_append_entries_response": 19,
+          "send_request_vote": 4
+        },
+        "membership_states": {
+          "Active": 126,
+          "Retired": 12
+        },
+        "packet_families": {
+          "raft_append_entries": 40,
+          "raft_append_entries_response": 38,
+          "raft_request_pre_vote": 4,
+          "raft_request_pre_vote_response": 2,
+          "raft_request_vote": 4,
+          "raft_request_vote_response": 2
+        },
+        "roles": {
+          "Candidate": 5,
+          "Follower": 69,
+          "Leader": 57,
+          "None": 2,
+          "PreVoteCandidate": 5
+        }
+      },
+      "raw_records": 172,
+      "reduction": {
+        "accepted": false,
+        "error": "line 82: unsupported membership_state"
+      },
+      "scenario": "retirement_rollback"
+    },
+    {
+      "capture_wall_ms": 29.427613,
+      "inventory": {
+        "functions": {
+          "add_configuration": 10,
+          "become_candidate": 3,
+          "become_follower": 13,
+          "become_leader": 4,
+          "become_pre_vote_candidate": 3,
+          "commit": 22,
+          "drop_pending_to": 23,
+          "execute_append_entries_sync": 40,
+          "recv_append_entries": 48,
+          "recv_append_entries_response": 48,
+          "recv_request_vote": 14,
+          "recv_request_vote_response": 14,
+          "replicate": 10,
+          "send_append_entries": 61,
+          "send_append_entries_response": 48,
+          "send_request_vote": 24
+        },
+        "membership_states": {
+          "Active": 385
+        },
+        "packet_families": {
+          "raft_append_entries": 122,
+          "raft_append_entries_response": 96,
+          "raft_request_pre_vote": 24,
+          "raft_request_pre_vote_response": 7,
+          "raft_request_vote": 24,
+          "raft_request_vote_response": 7
+        },
+        "roles": {
+          "Candidate": 26,
+          "Follower": 179,
+          "Leader": 150,
+          "None": 4,
+          "PreVoteCandidate": 26
+        }
+      },
+      "raw_records": 465,
+      "reduction": {
+        "accepted": false,
+        "error": "line 151: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "rollback_safety"
+    },
+    {
+      "capture_wall_ms": 14.26213,
+      "inventory": {
+        "functions": {
+          "add_configuration": 9,
+          "become_candidate": 3,
+          "become_follower": 6,
+          "become_leader": 3,
+          "commit": 17,
+          "drop_pending_to": 6,
+          "execute_append_entries_sync": 22,
+          "recv_append_entries": 20,
+          "recv_append_entries_response": 20,
+          "recv_request_vote": 3,
+          "recv_request_vote_response": 3,
+          "replicate": 13,
+          "send_append_entries": 23,
+          "send_append_entries_response": 20,
+          "send_request_vote": 6
+        },
+        "membership_states": {
+          "Active": 174
+        },
+        "packet_families": {
+          "raft_append_entries": 46,
+          "raft_append_entries_response": 40,
+          "raft_request_vote": 12,
+          "raft_request_vote_response": 3
+        },
+        "roles": {
+          "Candidate": 16,
+          "Follower": 83,
+          "Leader": 73,
+          "None": 2
+        }
+      },
+      "raw_records": 232,
+      "reduction": {
+        "accepted": true,
+        "actions": 143,
+        "ignored_events": 67,
+        "observations": 810,
+        "preprocessed_events": 97,
+        "raw_records": 232
+      },
+      "scenario": "soft_rollback",
+      "smt": {
+        "accepted": true,
+        "bytes": 583558,
+        "named_assertions": 1388
+      },
+      "solver": "sat"
+    },
+    {
+      "capture_wall_ms": 4.823707,
+      "inventory": {
+        "functions": {
+          "add_configuration": 1,
+          "become_leader": 1,
+          "commit": 2,
+          "replicate": 3
+        },
+        "membership_states": {
+          "Active": 7
+        },
+        "packet_families": {},
+        "roles": {
+          "Leader": 7
+        }
+      },
+      "raw_records": 12,
+      "reduction": {
+        "accepted": true,
+        "actions": 3,
+        "ignored_events": 6,
+        "observations": 18,
+        "preprocessed_events": 3,
+        "raw_records": 12
+      },
+      "scenario": "startup",
+      "smt": {
+        "accepted": true,
+        "bytes": 9458,
+        "named_assertions": 26
+      },
+      "solver": "sat"
+    },
+    {
+      "capture_wall_ms": 7.207303,
+      "inventory": {
+        "functions": {
+          "add_configuration": 4,
+          "become_follower": 1,
+          "become_leader": 1,
+          "commit": 6,
+          "execute_append_entries_sync": 5,
+          "recv_append_entries": 5,
+          "recv_append_entries_response": 5,
+          "replicate": 5,
+          "send_append_entries": 5,
+          "send_append_entries_response": 5
+        },
+        "membership_states": {
+          "Active": 42
+        },
+        "packet_families": {
+          "raft_append_entries": 10,
+          "raft_append_entries_response": 10
+        },
+        "roles": {
+          "Follower": 20,
+          "Leader": 21,
+          "None": 1
+        }
+      },
+      "raw_records": 53,
+      "reduction": {
+        "accepted": true,
+        "actions": 28,
+        "ignored_events": 13,
+        "observations": 176,
+        "preprocessed_events": 21,
+        "raw_records": 53
+      },
+      "scenario": "startup_2nodes",
+      "smt": {
+        "accepted": true,
+        "bytes": 96721,
+        "named_assertions": 264
+      },
+      "solver": "sat"
+    },
+    {
+      "capture_wall_ms": 18.385402,
+      "inventory": {
+        "functions": {
+          "add_configuration": 9,
+          "become_candidate": 1,
+          "become_follower": 4,
+          "become_leader": 2,
+          "become_pre_vote_candidate": 1,
+          "commit": 24,
+          "drop_pending_to": 14,
+          "execute_append_entries_sync": 30,
+          "recv_append_entries": 30,
+          "recv_append_entries_response": 30,
+          "recv_request_vote": 2,
+          "recv_request_vote_response": 2,
+          "replicate": 17,
+          "send_append_entries": 42,
+          "send_append_entries_response": 30,
+          "send_request_vote": 4
+        },
+        "membership_states": {
+          "Active": 242
+        },
+        "packet_families": {
+          "raft_append_entries": 84,
+          "raft_append_entries_response": 60,
+          "raft_request_pre_vote": 4,
+          "raft_request_pre_vote_response": 1,
+          "raft_request_vote": 4,
+          "raft_request_vote_response": 1
+        },
+        "roles": {
+          "Candidate": 5,
+          "Follower": 115,
+          "Leader": 115,
+          "None": 2,
+          "PreVoteCandidate": 5
+        }
+      },
+      "raw_records": 307,
+      "reduction": {
+        "accepted": false,
+        "error": "line 162: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "suffix_collision.1"
+    },
+    {
+      "capture_wall_ms": 21.171382,
+      "inventory": {
+        "functions": {
+          "add_configuration": 9,
+          "become_candidate": 3,
+          "become_follower": 7,
+          "become_leader": 4,
+          "become_pre_vote_candidate": 3,
+          "commit": 28,
+          "drop_pending_to": 35,
+          "execute_append_entries_sync": 38,
+          "recv_append_entries": 48,
+          "recv_append_entries_response": 48,
+          "recv_request_vote": 6,
+          "recv_request_vote_response": 6,
+          "replicate": 23,
+          "send_append_entries": 77,
+          "send_append_entries_response": 48,
+          "send_request_vote": 12
+        },
+        "membership_states": {
+          "Active": 395
+        },
+        "packet_families": {
+          "raft_append_entries": 154,
+          "raft_append_entries_response": 96,
+          "raft_request_pre_vote": 12,
+          "raft_request_pre_vote_response": 3,
+          "raft_request_vote": 12,
+          "raft_request_vote_response": 3
+        },
+        "roles": {
+          "Candidate": 15,
+          "Follower": 165,
+          "Leader": 198,
+          "None": 2,
+          "PreVoteCandidate": 15
+        }
+      },
+      "raw_records": 488,
+      "reduction": {
+        "accepted": false,
+        "error": "line 167: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "suffix_collision.2"
+    },
+    {
+      "capture_wall_ms": 49.184267,
+      "inventory": {
+        "functions": {
+          "add_configuration": 25,
+          "become_candidate": 3,
+          "become_follower": 18,
+          "become_leader": 4,
+          "become_pre_vote_candidate": 5,
+          "commit": 54,
+          "drop_pending_to": 59,
+          "execute_append_entries_sync": 128,
+          "recv_append_entries": 71,
+          "recv_append_entries_response": 69,
+          "recv_request_vote": 16,
+          "recv_request_vote_response": 16,
+          "replicate": 41,
+          "send_append_entries": 112,
+          "send_append_entries_response": 71,
+          "send_request_vote": 32
+        },
+        "membership_states": {
+          "Active": 724
+        },
+        "packet_families": {
+          "raft_append_entries": 224,
+          "raft_append_entries_response": 142,
+          "raft_request_pre_vote": 40,
+          "raft_request_pre_vote_response": 10,
+          "raft_request_vote": 24,
+          "raft_request_vote_response": 6
+        },
+        "roles": {
+          "Candidate": 27,
+          "Follower": 367,
+          "Leader": 273,
+          "None": 4,
+          "PreVoteCandidate": 53
+        }
+      },
+      "raw_records": 833,
+      "reduction": {
+        "accepted": false,
+        "error": "line 311: unaudited function 'become_pre_vote_candidate'"
+      },
+      "scenario": "suffix_collision.3"
+    },
+    {
+      "capture_wall_ms": 14.168287,
+      "inventory": {
+        "functions": {
+          "add_configuration": 12,
+          "become_follower": 3,
+          "become_leader": 1,
+          "commit": 20,
+          "execute_append_entries_sync": 24,
+          "recv_append_entries": 30,
+          "recv_append_entries_response": 30,
+          "replicate": 8,
+          "send_append_entries": 30,
+          "send_append_entries_response": 30
+        },
+        "membership_states": {
+          "Active": 169,
+          "Retired": 19
+        },
+        "packet_families": {
+          "raft_append_entries": 60,
+          "raft_append_entries_response": 60
+        },
+        "roles": {
+          "Follower": 108,
+          "Leader": 77,
+          "None": 3
+        }
+      },
+      "raw_records": 211,
+      "reduction": {
+        "accepted": false,
+        "error": "line 94: unsupported membership_state"
+      },
+      "scenario": "swap_single_node"
+    }
+  ]
+}

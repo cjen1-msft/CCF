@@ -1,6 +1,6 @@
 name = "lean-tracing-demo-ccfraft"
 version = "0.1.0"
-defaultTargets = ["Demo"]
+defaultTargets = ["Demo", "RuntimeAudit"]
 
 [[require]]
 name = "mathlib"
@@ -21,6 +21,9 @@ name = "TraceProperties"
 
 [[lean_lib]]
 name = "Reduction"
+
+[[lean_lib]]
+name = "RuntimeAudit"
 
 [[lean_lib]]
 name = "Shared"
