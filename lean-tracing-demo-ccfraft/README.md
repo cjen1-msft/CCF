@@ -85,6 +85,25 @@ to its action or observation, reducer rule, and raw trace line.
 The report records wall-clock time for the initial check, core generation,
 budgeted reduction, and proof invocation.
 
+For repeated timing measurements, run:
+
+```bash
+python3 benchmark_pipeline.py --cvc5 /path/to/cvc5
+```
+
+The benchmark removes only this package's `.lake/build` directory for the
+clean project build. It retains the pinned toolchain and dependency cache. It
+then runs five interleaved capture and validation samples per trace and writes
+raw samples plus median and p90 values to `Measurements/pipeline.json`.
+
+Generate the colleague overview from those measurements with:
+
+```bash
+python3 generate_colleague_report.py
+```
+
+The output is `Report/colleague-overview.html`.
+
 ## Run the demo
 
 Run:

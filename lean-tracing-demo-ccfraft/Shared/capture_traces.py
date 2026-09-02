@@ -8,6 +8,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 SCENARIOS = ("bad_network", "soft_rollback")
@@ -20,7 +21,8 @@ def find_repo_root() -> Path:
     raise RuntimeError("could not locate repo-root build/raft_driver")
 
 
-def capture(driver: Path, scenario: Path) -> bytes:
+def capture(driver: Path, scenario: Path) -> tuple[bytes, float]:
+    started = time.perf_counter_ns()
     proc = subprocess.run(
         [driver, scenario],
         check=False,
@@ -55,7 +57,8 @@ def capture(driver: Path, scenario: Path) -> bytes:
             raise RuntimeError(
                 f"{scenario}: captured line {line_number} is not tagged raft_trace"
             )
-    return output
+    wall_time_ms = (time.perf_counter_ns() - started) / 1_000_000
+    return output, wall_time_ms
 
 
 def main() -> int:
@@ -67,6 +70,11 @@ def main() -> int:
         action="store_true",
         help="compare fresh captures with fixtures without replacing them",
     )
+    parser.add_argument(
+        "--metrics",
+        type=Path,
+        help="write per-scenario capture time and record counts as JSON",
+    )
     args = parser.parse_args()
 
     repo_root = find_repo_root()
@@ -76,9 +84,27 @@ def main() -> int:
 
     captures = {name: capture(driver, scenarios_dir / name) for name in SCENARIOS}
 
+    if args.metrics is not None:
+        args.metrics.parent.mkdir(parents=True, exist_ok=True)
+        args.metrics.write_text(
+            json.dumps(
+                {
+                    name: {
+                        "records": len(output.splitlines()),
+                        "wall_time_ms": wall_time_ms,
+                    }
+                    for name, (output, wall_time_ms) in captures.items()
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
     if args.check:
         matches = True
-        for name, fresh in captures.items():
+        for name, (fresh, _) in captures.items():
             fixture = captured_dir / f"{name}.ndjson"
             if not fixture.is_file():
                 print(f"missing fixture: {fixture}", file=sys.stderr)
@@ -92,7 +118,7 @@ def main() -> int:
         return 0
 
     captured_dir.mkdir(parents=True, exist_ok=True)
-    for name, output in captures.items():
+    for name, (output, _) in captures.items():
         fixture = captured_dir / f"{name}.ndjson"
         fixture.write_bytes(output)
         print(f"Wrote {len(output.splitlines())} records to {fixture}")
