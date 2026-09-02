@@ -175,10 +175,13 @@ Reduce one normalized event stream by prefix destructuring.
 Every branch emits a linear list of observations and actions, then recurses on
 the unconsumed suffix. Unsupported shapes fail rather than dropping evidence.
 -/
-partial def reduce [DecidableEq Node] :
-    List (Event Node TxId) -> Except String (List (Step Node TxId))
-  | [] => pure []
-  | event :: rest => do
+def reduceWithFuel [DecidableEq Node] :
+    Nat -> List (Event Node TxId) -> Except String (List (Step Node TxId))
+  | 0, [] => pure []
+  | 0, event :: _ =>
+      throw s!"line {event.line}: reduction exceeded its event bound"
+  | _ + 1, [] => pure []
+  | fuel + 1, event :: rest => do
       match event.function with
       | .becomeLeader =>
           match rest with
@@ -190,7 +193,7 @@ partial def reduce [DecidableEq Node] :
                   signature.function = .replicate &&
                   signature.globallyCommittable = some true &&
                   commit.function = .commit then
-                let remaining <- reduce tail
+                let remaining <- reduceWithFuel fuel tail
                 pure <|
                   observeState "observe-bootstrap-entry-state" commit ++
                     actionSteps
@@ -199,7 +202,7 @@ partial def reduce [DecidableEq Node] :
                       [.advanceCommitIndex commit.node] ++
                     remaining
               else
-                let remaining <- reduce rest
+                let remaining <- reduceWithFuel fuel rest
                 pure <|
                   actionSteps
                       "candidate-became-leader"
@@ -208,7 +211,7 @@ partial def reduce [DecidableEq Node] :
                     observeState "candidate-became-leader" event ++
                     remaining
           | _ =>
-              let remaining <- reduce rest
+              let remaining <- reduceWithFuel fuel rest
               pure <|
                 actionSteps
                     "candidate-became-leader"
@@ -223,8 +226,8 @@ partial def reduce [DecidableEq Node] :
               if event.globallyCommittable = some false &&
                   configuration.function = .addConfiguration then
                 let (sends, remainingEvents) := takeAppendSends tail
-                let emittedSends <- reduce sends
-                let remaining <- reduce remainingEvents
+                let emittedSends <- reduceWithFuel fuel sends
+                let remaining <- reduceWithFuel fuel remainingEvents
                 pure <|
                   observeState "leader-add-configuration" configuration ++
                     emittedSends ++
@@ -238,7 +241,7 @@ partial def reduce [DecidableEq Node] :
               else
                 match event.globallyCommittable, event.transaction with
                 | some true, _ =>
-                    let remaining <- reduce rest
+                    let remaining <- reduceWithFuel fuel rest
                     pure <|
                       observeState "replicate-signature" event ++
                         actionSteps
@@ -247,7 +250,7 @@ partial def reduce [DecidableEq Node] :
                           [.signCommittableMessages event.node] ++
                         remaining
                 | some false, some transaction =>
-                    let remaining <- reduce rest
+                    let remaining <- reduceWithFuel fuel rest
                     pure <|
                       observeState "replicate-client-request" event ++
                         actionSteps
@@ -290,7 +293,7 @@ partial def reduce [DecidableEq Node] :
                       s!"line {event.line}: AppendEntries response is missing")
                 let receives <-
                   receiveSteps "split-append-entries-receive" event source
-                let remaining <- reduce remainingEvents
+                let remaining <- reduceWithFuel fuel remainingEvents
                 pure <|
                   observeState "split-append-entries-receive" event ++
                     actionSteps
@@ -314,7 +317,7 @@ partial def reduce [DecidableEq Node] :
                       s!"line {event.line}: AppendEntries response is missing")
                 let receives <-
                   receiveSteps "split-append-entries-receive" event source
-                let remaining <- reduce remainingEvents
+                let remaining <- reduceWithFuel fuel remainingEvents
                 pure <|
                   observeState "split-append-entries-receive" event ++
                     receives ++
@@ -335,7 +338,7 @@ partial def reduce [DecidableEq Node] :
               if follower.function = .becomeFollower &&
                   decide (follower.node = event.node) then
                 let receives <- receiveSteps rule event source
-                let remaining <- reduce tail
+                let remaining <- reduceWithFuel fuel tail
                 pure <|
                   observeState rule event ++
                     actionSteps
@@ -349,7 +352,7 @@ partial def reduce [DecidableEq Node] :
                     remaining
               else
                 let receives <- receiveSteps rule event source
-                let remaining <- reduce rest
+                let remaining <- reduceWithFuel fuel rest
                 pure <|
                   observeState rule event ++
                     receives ++
@@ -361,7 +364,7 @@ partial def reduce [DecidableEq Node] :
 
       | .sendAppendEntries =>
           let destination <- requirePeer event
-          let remaining <- reduce rest
+          let remaining <- reduceWithFuel fuel rest
           pure <|
             observeState "split-append-entries-batch" event ++
               actionSteps
@@ -373,7 +376,7 @@ partial def reduce [DecidableEq Node] :
 
       | .commit =>
           if event.role = .leader then
-            let remaining <- reduce rest
+            let remaining <- reduceWithFuel fuel rest
             pure <|
               observeState "leader-commit-callback" event ++
                 actionSteps
@@ -382,10 +385,10 @@ partial def reduce [DecidableEq Node] :
                   [.advanceCommitIndex event.node] ++
                 remaining
           else
-            reduce rest
+            reduceWithFuel fuel rest
 
       | .becomeCandidate =>
-          let remaining <- reduce rest
+          let remaining <- reduceWithFuel fuel rest
           pure <|
             actionSteps "candidate-timeout" [event] [.timeout event.node] ++
               observeState "candidate-timeout" event ++
@@ -393,7 +396,7 @@ partial def reduce [DecidableEq Node] :
 
       | .sendRequestVote =>
           let destination <- requirePeer event
-          let remaining <- reduce rest
+          let remaining <- reduceWithFuel fuel rest
           pure <|
             observeState "send-request-vote" event ++
               actionSteps
@@ -406,7 +409,7 @@ partial def reduce [DecidableEq Node] :
           if event.role = .leader then
             throw s!"line {event.line}: configuration lacks its replicate event"
           else
-            reduce rest
+            reduceWithFuel fuel rest
 
       | .becomeFollower =>
           throw s!"line {event.line}: ungrouped become_follower event"
@@ -414,6 +417,11 @@ partial def reduce [DecidableEq Node] :
       | .dropPending
       | .executeAppendEntries
       | .sendAppendEntriesResponse =>
-          reduce rest
+          reduceWithFuel fuel rest
+
+def reduce [DecidableEq Node]
+    (events : List (Event Node TxId)) :
+    Except String (List (Step Node TxId)) :=
+  reduceWithFuel events.length events
 
 end CCFRaft.Reduction
