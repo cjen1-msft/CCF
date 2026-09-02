@@ -22,7 +22,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from reduction import ReductionError, build_certificate, write_certificate
+from reduction import ReductionError, preprocess, reduce, write_certificate
 from Shared.smt import (
     SmtEncodingError,
     add_query,
@@ -226,14 +226,34 @@ def validate(
 ) -> str:
     """Reduce, encode, solve, and retain all solver evidence."""
 
+    validation_started = time.perf_counter_ns()
     output_directory.mkdir(parents=True, exist_ok=True)
-    certificate = build_certificate(read_ndjson(input_path))
-    certificate_path = output_directory / "certificate.json"
-    write_certificate(certificate_path, certificate)
+    parse_started = time.perf_counter_ns()
+    records = read_ndjson(input_path)
+    parse_wall_ms = (time.perf_counter_ns() - parse_started) / 1_000_000
 
+    preprocess_started = time.perf_counter_ns()
+    preprocessed = preprocess(records)
+    preprocess_wall_ms = (time.perf_counter_ns() - preprocess_started) / 1_000_000
+
+    reduction_started = time.perf_counter_ns()
+    certificate = reduce(preprocessed)
+    reduction_wall_ms = (time.perf_counter_ns() - reduction_started) / 1_000_000
+
+    certificate_path = output_directory / "certificate.json"
+    certificate_write_started = time.perf_counter_ns()
+    write_certificate(certificate_path, certificate)
+    certificate_write_wall_ms = (
+        time.perf_counter_ns() - certificate_write_started
+    ) / 1_000_000
+
+    formula_started = time.perf_counter_ns()
     formula = build_formula(certificate)
+    formula_wall_ms = (time.perf_counter_ns() - formula_started) / 1_000_000
     formula_path = output_directory / "formula.smt2"
+    formula_write_started = time.perf_counter_ns()
     write_formula(formula_path, formula)
+    formula_write_wall_ms = (time.perf_counter_ns() - formula_write_started) / 1_000_000
 
     solver = _find_cvc5(cvc5)
     status_run = _run_solver(
@@ -243,6 +263,7 @@ def validate(
         "cvc5-status",
     )
     status = status_run.status
+    decision_wall_ms = (time.perf_counter_ns() - validation_started) / 1_000_000
     print(status, flush=True)
 
     result: dict[str, object] = {
@@ -250,7 +271,16 @@ def validate(
         "cvc5": str(solver),
         "formula": formula_path.name,
         "nodes": list(formula.nodes),
+        "phase_wall_ms": {
+            "certificate_write": certificate_write_wall_ms,
+            "ndjson_parse": parse_wall_ms,
+            "preprocess": preprocess_wall_ms,
+            "reduction": reduction_wall_ms,
+            "smt_build": formula_wall_ms,
+            "smt_write": formula_write_wall_ms,
+        },
         "check_sat_wall_ms": status_run.wall_time_ms,
+        "decision_wall_ms": decision_wall_ms,
         "status": status,
         "total_solver_wall_ms": status_run.wall_time_ms,
     }
@@ -376,7 +406,16 @@ def validate(
             print(proof, end="" if proof.endswith("\n") else "\n")
 
     (output_directory / "result.json").write_text(
-        json.dumps(result, indent=2, sort_keys=True) + "\n",
+        json.dumps(
+            {
+                **result,
+                "validation_wall_ms": (time.perf_counter_ns() - validation_started)
+                / 1_000_000,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
         encoding="utf-8",
     )
     return status

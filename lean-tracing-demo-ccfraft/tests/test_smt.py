@@ -277,6 +277,17 @@ class Cvc5IntegrationTests(unittest.TestCase):
         result = json.loads(
             (output_directory / "result.json").read_text(encoding="utf-8")
         )
+        phases = result["phase_wall_ms"]
+        for phase in (
+            "certificate_write",
+            "ndjson_parse",
+            "preprocess",
+            "reduction",
+            "smt_build",
+            "smt_write",
+        ):
+            self.assertGreaterEqual(phases[phase], 0)
+        self.assertGreaterEqual(result["validation_wall_ms"], 0)
         self.assertGreaterEqual(result["check_sat_wall_ms"], 0)
         self.assertGreaterEqual(result["total_solver_wall_ms"], 0)
         return status, output_directory, emitted
