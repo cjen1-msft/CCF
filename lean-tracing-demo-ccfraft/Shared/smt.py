@@ -29,13 +29,27 @@ CERTIFICATE_SCHEMA = "ccfraft-reduction-certificate/v2"
 ROLE_VALUES = {
     "none": 0,
     "follower": 1,
-    "candidate": 2,
-    "leader": 3,
+    "preVoteCandidate": 2,
+    "candidate": 3,
+    "leader": 4,
+}
+
+MEMBERSHIP_VALUES = {
+    "active": 0,
+    "retirementOrdered": 1,
+    "retirementSigned": 2,
+    "retirementCompleted": 3,
+    "retiredCommitted": 4,
 }
 
 FIELD_SORTS = {
     "allocated": "Bool",
     "joined": "Bool",
+    "pre_vote_status": "Bool",
+    "membership_state": "Int",
+    "retirement_index": "Int",
+    "retirement_committable_index": "Int",
+    "retired_committed_index": "Int",
     "role": "Int",
     "term": "Int",
     "log_length": "Int",
@@ -45,6 +59,11 @@ FIELD_SORTS = {
 OBSERVATION_FIELDS = {
     "allocated": "allocated",
     "joined": "joined",
+    "preVoteStatus": "pre_vote_status",
+    "membershipState": "membership_state",
+    "retirementIndex": "retirement_index",
+    "retirementCommittableIndex": "retirement_committable_index",
+    "retiredCommittedIndex": "retired_committed_index",
     "role": "role",
     "currentTerm": "term",
     "logLength": "log_length",
@@ -54,10 +73,16 @@ OBSERVATION_FIELDS = {
 ACTION_KINDS = {
     "advanceCommitIndex",
     "appendEntries",
+    "appendRetiredCommitted",
+    "becomeCandidate",
     "becomeLeader",
+    "becomePreVoteCandidate",
+    "checkQuorum",
     "changeConfiguration",
     "clientRequest",
     "receive",
+    "proposeVote",
+    "requestPreVote",
     "requestVote",
     "signCommittableMessages",
     "timeout",
@@ -299,17 +324,16 @@ def _transition_expression(
     fields = tuple(FIELD_SORTS)
     constraints: list[str] = []
 
-    if kind in {"clientRequest", "signCommittableMessages"}:
+    if kind == "clientRequest":
         node = _action_node(action, "node", node_indices, label)
-        if kind == "clientRequest":
-            _require(
-                isinstance(action.get("transaction"), str)
-                and bool(action["transaction"]),
-                f"{label}.transaction is missing",
-            )
+        _require(
+            isinstance(action.get("transaction"), str) and bool(action["transaction"]),
+            f"{label}.transaction is missing",
+        )
         constraints.extend(
             [
                 _eq(_select("role", before, node), ROLE_VALUES["leader"]),
+                f"(not {_eq(_select('membership_state', before, node), MEMBERSHIP_VALUES['retiredCommitted'])})",
                 *_frame_fields(
                     tuple(field for field in fields if field != "log_length"),
                     before,
@@ -329,6 +353,48 @@ def _transition_expression(
             ]
         )
 
+    elif kind in {"signCommittableMessages", "appendRetiredCommitted"}:
+        node = _action_node(action, "node", node_indices, label)
+        mutable = {
+            "log_length",
+            "membership_state",
+            "retirement_index",
+            "retirement_committable_index",
+            "retired_committed_index",
+        }
+        constraints.extend(
+            [
+                _eq(_select("role", before, node), ROLE_VALUES["leader"]),
+                f"(not {_eq(_select('membership_state', before, node), MEMBERSHIP_VALUES['retiredCommitted'])})",
+            ]
+        )
+        for field in fields:
+            if field not in mutable:
+                constraints.append(_same_field(field, before, after))
+            elif field == "log_length":
+                constraints.append(
+                    _update_array(
+                        field,
+                        before,
+                        after,
+                        [
+                            (
+                                node,
+                                f"(+ {_select(field, before, node)} 1)",
+                            )
+                        ],
+                    )
+                )
+            else:
+                constraints.append(
+                    _update_array(
+                        field,
+                        before,
+                        after,
+                        [(node, _select(field, after, node))],
+                    )
+                )
+
     elif kind == "changeConfiguration":
         source = _action_node(action, "node", node_indices, label)
         configuration_values = _sequence(
@@ -344,7 +410,7 @@ def _transition_expression(
         constraints.extend(
             [
                 *_frame_fields(
-                    ("role", "term", "commit_index"),
+                    ("role", "term", "pre_vote_status", "commit_index"),
                     before,
                     after,
                 ),
@@ -381,8 +447,27 @@ def _transition_expression(
                     ]
                 )
             constraints.append(_eq(allocated_after, joined_after))
+        for field in (
+            "membership_state",
+            "retirement_index",
+            "retirement_committable_index",
+            "retired_committed_index",
+        ):
+            constraints.append(
+                _update_array(
+                    field,
+                    before,
+                    after,
+                    [(source, _select(field, after, source))],
+                )
+            )
 
-    elif kind in {"appendEntries", "requestVote"}:
+    elif kind in {
+        "appendEntries",
+        "requestVote",
+        "requestPreVote",
+        "proposeVote",
+    }:
         source = _action_node(action, "node", node_indices, label)
         if kind == "appendEntries":
             _natural_value(action.get("batchEnd"), f"{label}.batchEnd")
@@ -392,7 +477,12 @@ def _transition_expression(
             node_indices,
             label,
         )
-        required_role = "leader" if kind == "appendEntries" else "candidate"
+        required_role = {
+            "appendEntries": "leader",
+            "requestVote": "candidate",
+            "requestPreVote": "preVoteCandidate",
+            "proposeVote": "leader",
+        }[kind]
         constraints.extend(
             [
                 _eq(_select("role", before, source), ROLE_VALUES[required_role]),
@@ -410,13 +500,30 @@ def _transition_expression(
             node_indices,
             label,
         )
+        evidence = _mapping(action.get("evidence"), f"{label}.evidence")
+        message_type = evidence.get("messageType")
+        _require(
+            isinstance(message_type, str),
+            f"{label}.evidence.messageType is missing",
+        )
+        receives_propose_vote = message_type == "raft_propose_request_vote"
+        framed = ["allocated", "joined", "pre_vote_status"]
+        if not receives_propose_vote:
+            framed.append("term")
+        mutable = [
+            "role",
+            "log_length",
+            "commit_index",
+            "membership_state",
+            "retirement_index",
+            "retirement_committable_index",
+            "retired_committed_index",
+        ]
+        if receives_propose_vote:
+            mutable.append("term")
         constraints.extend(
             [
-                *_frame_fields(
-                    ("term", "allocated", "joined"),
-                    before,
-                    after,
-                ),
+                *_frame_fields(tuple(framed), before, after),
                 *[
                     _update_array(
                         field,
@@ -424,13 +531,34 @@ def _transition_expression(
                         after,
                         [(destination, _select(field, after, destination))],
                     )
-                    for field in ("role", "log_length", "commit_index")
+                    for field in mutable
                 ],
             ]
         )
+        if receives_propose_vote:
+            constraints.extend(
+                [
+                    _eq(
+                        _select("role", after, destination),
+                        ROLE_VALUES["candidate"],
+                    ),
+                    _eq(
+                        _select("term", after, destination),
+                        f"(+ {_select('term', before, destination)} 1)",
+                    ),
+                ]
+            )
 
     elif kind == "advanceCommitIndex":
         node = _action_node(action, "node", node_indices, label)
+        mutable = {
+            "commit_index",
+            "role",
+            "membership_state",
+            "retirement_index",
+            "retirement_committable_index",
+            "retired_committed_index",
+        }
         constraints.extend(
             [
                 _eq(_select("role", before, node), ROLE_VALUES["leader"]),
@@ -440,21 +568,18 @@ def _transition_expression(
                 f"{_select('log_length', after, node)})",
             ]
         )
-        constraints.extend(
-            [
-                *_frame_fields(
-                    tuple(field for field in fields if field != "commit_index"),
-                    before,
-                    after,
-                ),
-                _update_array(
-                    "commit_index",
-                    before,
-                    after,
-                    [(node, _select("commit_index", after, node))],
-                ),
-            ]
-        )
+        for field in fields:
+            if field not in mutable:
+                constraints.append(_same_field(field, before, after))
+            else:
+                constraints.append(
+                    _update_array(
+                        field,
+                        before,
+                        after,
+                        [(node, _select(field, after, node))],
+                    )
+                )
 
     elif kind == "timeout":
         node = _action_node(action, "node", node_indices, label)
@@ -462,7 +587,10 @@ def _transition_expression(
         constraints.extend(
             [
                 f"(or {_eq(role, ROLE_VALUES['follower'])} "
+                f"{_eq(role, ROLE_VALUES['preVoteCandidate'])} "
                 f"{_eq(role, ROLE_VALUES['candidate'])})",
+                _eq(_select("pre_vote_status", before, node), False),
+                f"(not {_eq(_select('membership_state', before, node), MEMBERSHIP_VALUES['retiredCommitted'])})",
                 _eq(_select("role", after, node), ROLE_VALUES["candidate"]),
                 _eq(
                     _select("term", after, node),
@@ -473,7 +601,7 @@ def _transition_expression(
         constraints.extend(
             [
                 *_frame_fields(
-                    ("allocated", "joined", "log_length", "commit_index"),
+                    tuple(field for field in fields if field not in {"role", "term"}),
                     before,
                     after,
                 ),
@@ -488,6 +616,101 @@ def _transition_expression(
                     before,
                     after,
                     [(node, f"(+ {_select('term', before, node)} 1)")],
+                ),
+            ]
+        )
+
+    elif kind == "becomePreVoteCandidate":
+        node = _action_node(action, "node", node_indices, label)
+        role = _select("role", before, node)
+        constraints.extend(
+            [
+                f"(or {_eq(role, ROLE_VALUES['follower'])} "
+                f"{_eq(role, ROLE_VALUES['preVoteCandidate'])} "
+                f"{_eq(role, ROLE_VALUES['candidate'])})",
+                _eq(_select("pre_vote_status", before, node), True),
+                f"(not {_eq(_select('membership_state', before, node), MEMBERSHIP_VALUES['retiredCommitted'])})",
+                _eq(
+                    _select("role", after, node),
+                    ROLE_VALUES["preVoteCandidate"],
+                ),
+            ]
+        )
+        constraints.extend(
+            [
+                *_frame_fields(
+                    tuple(field for field in fields if field != "role"),
+                    before,
+                    after,
+                ),
+                _update_array(
+                    "role",
+                    before,
+                    after,
+                    [(node, ROLE_VALUES["preVoteCandidate"])],
+                ),
+            ]
+        )
+
+    elif kind == "becomeCandidate":
+        node = _action_node(action, "node", node_indices, label)
+        constraints.extend(
+            [
+                _eq(
+                    _select("role", before, node),
+                    ROLE_VALUES["preVoteCandidate"],
+                ),
+                _eq(_select("pre_vote_status", before, node), True),
+                f"(not {_eq(_select('membership_state', before, node), MEMBERSHIP_VALUES['retiredCommitted'])})",
+                _eq(_select("role", after, node), ROLE_VALUES["candidate"]),
+                _eq(
+                    _select("term", after, node),
+                    f"(+ {_select('term', before, node)} 1)",
+                ),
+            ]
+        )
+        constraints.extend(
+            [
+                *_frame_fields(
+                    tuple(field for field in fields if field not in {"role", "term"}),
+                    before,
+                    after,
+                ),
+                _update_array(
+                    "role",
+                    before,
+                    after,
+                    [(node, ROLE_VALUES["candidate"])],
+                ),
+                _update_array(
+                    "term",
+                    before,
+                    after,
+                    [(node, f"(+ {_select('term', before, node)} 1)")],
+                ),
+            ]
+        )
+
+    elif kind == "checkQuorum":
+        node = _action_node(action, "node", node_indices, label)
+        constraints.extend(
+            [
+                _eq(_select("role", before, node), ROLE_VALUES["leader"]),
+                _eq(_select("role", after, node), ROLE_VALUES["follower"]),
+            ]
+        )
+        constraints.extend(
+            [
+                *_frame_fields(
+                    tuple(field for field in fields if field != "role"),
+                    before,
+                    after,
+                ),
+                _update_array(
+                    "role",
+                    before,
+                    after,
+                    [(node, ROLE_VALUES["follower"])],
                 ),
             ]
         )
@@ -513,7 +736,7 @@ def _transition_expression(
         constraints.extend(
             [
                 *_frame_fields(
-                    ("allocated", "joined", "log_length", "commit_index"),
+                    tuple(field for field in fields if field not in {"role", "term"}),
                     before,
                     after,
                 ),
@@ -534,37 +757,44 @@ def _transition_expression(
 
     elif kind == "becomeLeader":
         node = _action_node(action, "node", node_indices, label)
+        mutable = {
+            "role",
+            "log_length",
+            "membership_state",
+            "retirement_index",
+            "retirement_committable_index",
+            "retired_committed_index",
+        }
         constraints.extend(
             [
                 _eq(_select("role", before, node), ROLE_VALUES["candidate"]),
+                f"(not {_eq(_select('membership_state', before, node), MEMBERSHIP_VALUES['retiredCommitted'])})",
                 _eq(_select("role", after, node), ROLE_VALUES["leader"]),
                 f"(<= {_select('log_length', after, node)} "
                 f"{_select('log_length', before, node)})",
             ]
         )
-        constraints.extend(
-            [
-                *_frame_fields(
-                    tuple(
-                        field for field in fields if field not in {"role", "log_length"}
-                    ),
-                    before,
-                    after,
-                ),
-                _update_array(
-                    "role",
-                    before,
-                    after,
-                    [(node, ROLE_VALUES["leader"])],
-                ),
-                _update_array(
-                    "log_length",
-                    before,
-                    after,
-                    [(node, _select("log_length", after, node))],
-                ),
-            ]
-        )
+        for field in fields:
+            if field not in mutable:
+                constraints.append(_same_field(field, before, after))
+            elif field == "role":
+                constraints.append(
+                    _update_array(
+                        field,
+                        before,
+                        after,
+                        [(node, ROLE_VALUES["leader"])],
+                    )
+                )
+            else:
+                constraints.append(
+                    _update_array(
+                        field,
+                        before,
+                        after,
+                        [(node, _select(field, after, node))],
+                    )
+                )
 
     else:
         raise AssertionError(f"unhandled action kind {kind}")
@@ -591,8 +821,17 @@ def _first_message_expression(
             "previousIndex",
         },
         "raft_append_entries_response": {"lastLogIndex", "success"},
-        "raft_request_vote": {"lastCommittableIndex"},
+        "raft_request_vote": {
+            "lastCommittableIndex",
+            "lastCommittableTerm",
+        },
+        "raft_request_pre_vote": {
+            "lastCommittableIndex",
+            "lastCommittableTerm",
+        },
         "raft_request_vote_response": {"voteGranted"},
+        "raft_request_pre_vote_response": {"voteGranted"},
+        "raft_propose_request_vote": set(),
     }
     _require(family in extras, f"{label}.value.messageType is unsupported")
     expected = {
@@ -633,15 +872,27 @@ def _first_message_expression(
             summary["success"] in {"OK", "FAIL"},
             f"{label}.value.success is unsupported",
         )
-    elif family == "raft_request_vote":
+    elif family in {"raft_request_vote", "raft_request_pre_vote"}:
         _natural_value(
             summary["lastCommittableIndex"],
             f"{label}.value.lastCommittableIndex",
         )
-    else:
+        _natural_value(
+            summary["lastCommittableTerm"],
+            f"{label}.value.lastCommittableTerm",
+        )
+    elif family in {
+        "raft_request_vote_response",
+        "raft_request_pre_vote_response",
+    }:
         _require(
             type(summary["voteGranted"]) is bool,
             f"{label}.value.voteGranted must be Boolean",
+        )
+    else:
+        _require(
+            family == "raft_propose_request_vote",
+            f"{label}.value.messageType is unsupported",
         )
     return "true"
 
@@ -671,6 +922,28 @@ def _observation_expression(
     if variable in {"allocated", "joined"}:
         _require(type(value) is bool, f"{label}.value must be Boolean")
         encoded: int | bool = value
+    elif variable == "preVoteStatus":
+        _require(
+            value in {"capable", "enabled"},
+            f"{label}.value has unknown pre-vote status",
+        )
+        encoded = value == "enabled"
+    elif variable == "membershipState":
+        _require(
+            value in MEMBERSHIP_VALUES,
+            f"{label}.value has unknown membership state",
+        )
+        encoded = MEMBERSHIP_VALUES[str(value)]
+    elif variable in {
+        "retirementIndex",
+        "retirementCommittableIndex",
+        "retiredCommittedIndex",
+    }:
+        _require(
+            value is None or (type(value) is int and value >= 0),
+            f"{label}.value must be null or a natural number",
+        )
+        encoded = -1 if value is None else value
     elif variable == "role":
         _require(value in ROLE_VALUES, f"{label}.value has unknown role")
         encoded = ROLE_VALUES[str(value)]
@@ -724,9 +997,16 @@ def build_formula(certificate: Mapping[str, Any]) -> SmtFormula:
                 [
                     f"(and (>= {role} {ROLE_VALUES['none']}) "
                     f"(<= {role} {ROLE_VALUES['leader']}))",
+                    f"(and (>= {_select('membership_state', boundary, node_index)} "
+                    f"{MEMBERSHIP_VALUES['active']}) "
+                    f"(<= {_select('membership_state', boundary, node_index)} "
+                    f"{MEMBERSHIP_VALUES['retiredCommitted']}))",
                     f"(>= {_select('term', boundary, node_index)} 0)",
                     f"(>= {_select('log_length', boundary, node_index)} 0)",
                     f"(>= {_select('commit_index', boundary, node_index)} 0)",
+                    f"(>= {_select('retirement_index', boundary, node_index)} -1)",
+                    f"(>= {_select('retirement_committable_index', boundary, node_index)} -1)",
+                    f"(>= {_select('retired_committed_index', boundary, node_index)} -1)",
                 ]
             )
             lines.append(

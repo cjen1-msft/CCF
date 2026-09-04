@@ -8,16 +8,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from reduction import ReductionError, build_certificate
+from reduction import ReductionError, build_certificate, write_certificate
+from Shared.trace_io import NDJSONError, loads_ndjson, read_ndjson
 from Shared.capture_traces import capture, find_repo_root
 from Shared.smt import SmtEncodingError, build_formula
-from Shared.trace_io import NDJSONError, loads_ndjson
 
 ROOT = Path(__file__).resolve().parent
 EXPECTED_SCENARIOS = 50
@@ -78,13 +79,38 @@ def main() -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=ROOT / "Measurements/corpus-coverage.json",
     )
     parser.add_argument("--cvc5", type=Path)
     parser.add_argument("--solve", action="store_true")
     parser.add_argument("--solver-timeout-seconds", type=float, default=10)
     parser.add_argument("--require-all", action="store_true")
+    parser.add_argument(
+        "--scenario",
+        action="append",
+        help="audit only this scenario; may be repeated",
+    )
+    parser.add_argument(
+        "--fail-fast",
+        action="store_true",
+        help="raise the first reduction or SMT error",
+    )
+    parser.add_argument(
+        "--refresh-demo-certificates",
+        action="store_true",
+        help="rewrite the six checked-in demo certificates before the audit",
+    )
+    parser.add_argument(
+        "--capture-dir",
+        type=Path,
+        help="write each raw captured scenario trace as NDJSON",
+    )
     args = parser.parse_args()
+    if args.output is None:
+        args.output = (
+            ROOT / "Artifacts/corpus-coverage-targeted.json"
+            if args.scenario
+            else ROOT / "Measurements/corpus-coverage.json"
+        )
 
     if args.solve and args.cvc5 is None:
         located = shutil.which("cvc5")
@@ -95,19 +121,38 @@ def main() -> int:
     repo_root = find_repo_root()
     driver = repo_root / "build/raft_driver"
     scenario_root = repo_root / "tests/raft_scenarios"
+    if args.refresh_demo_certificates:
+        certificate_root = ROOT / "Traces/Certificates"
+        inputs = sorted((ROOT / "Traces/Captured").glob("*.ndjson"))
+        inputs += sorted((ROOT / "Traces/Mutated").glob("*.ndjson"))
+        for input_path in inputs:
+            write_certificate(
+                certificate_root / f"{input_path.stem}.json",
+                build_certificate(read_ndjson(input_path)),
+            )
     scenarios = sorted(path for path in scenario_root.iterdir() if path.is_file())
-    if len(scenarios) != EXPECTED_SCENARIOS:
+    if not args.scenario and len(scenarios) != EXPECTED_SCENARIOS:
         raise RuntimeError(
             f"expected {EXPECTED_SCENARIOS} scenarios, found {len(scenarios)}"
         )
+    if args.scenario:
+        requested = set(args.scenario)
+        scenarios = [path for path in scenarios if path.name in requested]
+        missing = requested.difference(path.name for path in scenarios)
+        if missing:
+            parser.error(f"unknown scenarios: {sorted(missing)}")
 
     aggregate_functions: Counter[str] = Counter()
     aggregate_packets: Counter[str] = Counter()
     rows: list[dict[str, Any]] = []
     for scenario in scenarios:
         row: dict[str, Any] = {"scenario": scenario.name}
+        output = b""
         try:
             output, capture_wall_ms = capture(driver, scenario)
+            if args.capture_dir is not None:
+                args.capture_dir.mkdir(parents=True, exist_ok=True)
+                (args.capture_dir / f"{scenario.name}.ndjson").write_bytes(output)
             row["capture_wall_ms"] = capture_wall_ms
             row["raw_records"] = len(output.splitlines())
             observed = inventory(output)
@@ -135,10 +180,25 @@ def main() -> int:
                     args.solver_timeout_seconds,
                 )
         except (NDJSONError, ReductionError, SmtEncodingError, RuntimeError) as error:
+            if args.fail_fast:
+                raise
             row["reduction"] = {
                 "accepted": False,
                 "error": str(error),
             }
+            match = re.search(r"\bline (\d+)\b", str(error))
+            if match is not None and output:
+                line_number = int(match.group(1))
+                lines = output.splitlines()
+                start = max(1, line_number - 2)
+                end = min(len(lines), line_number + 2)
+                row["reduction"]["context"] = [
+                    {
+                        "line": number,
+                        "record": json.loads(lines[number - 1]),
+                    }
+                    for number in range(start, end + 1)
+                ]
         rows.append(row)
 
     accepted = [row["scenario"] for row in rows if row["reduction"]["accepted"]]

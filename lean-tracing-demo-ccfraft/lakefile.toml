@@ -20,9 +20,6 @@ name = "Properties"
 name = "TraceProperties"
 
 [[lean_lib]]
-name = "Reduction"
-
-[[lean_lib]]
 name = "RuntimeAudit"
 
 [[lean_lib]]

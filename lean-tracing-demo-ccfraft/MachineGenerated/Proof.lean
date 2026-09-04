@@ -25,32 +25,32 @@ theorem systemInductiveInvariantSafety
     {state : State Node TxId}
     (invariant : ReachableSystemInductiveInvariant state) :
     ConsensusSafety state :=
-  ReconfigurationProof.systemInductiveInvariantSafety invariant
+  ReconfigurationProof.systemInductiveInvariantSafety invariant.1
 
 theorem systemInductiveInvariantLogMatching
     {state : State Node TxId}
     (invariant : ReachableSystemInductiveInvariant state) :
     LogMatching state :=
-  ReconfigurationProof.systemInductiveInvariantLogMatching invariant
+  ReconfigurationProof.systemInductiveInvariantLogMatching invariant.1
 
 theorem systemInductiveInvariantMonoLog
     {state : State Node TxId}
     (invariant : ReachableSystemInductiveInvariant state) :
     MonoLog state :=
-  ReconfigurationProof.systemInductiveInvariantMonoLog invariant
+  ReconfigurationProof.systemInductiveInvariantMonoLog invariant.1
 
 theorem systemInductiveInvariantLeaderCompleteness
     {state : State Node TxId}
     (invariant : ReachableSystemInductiveInvariant state) :
     LeaderCompleteness state :=
-  ReconfigurationProof.systemInductiveInvariantLeaderCompleteness invariant
+  ReconfigurationProof.systemInductiveInvariantLeaderCompleteness invariant.1
 
 theorem systemInductiveInvariantCommittedFrontierIsSignature
     {state : State Node TxId}
     (invariant : ReachableSystemInductiveInvariant state) :
     CommittedFrontierIsSignature state :=
   ReconfigurationProof.systemInductiveInvariantCommittedFrontierIsSignature
-    invariant
+    invariant.1
 
 theorem initialSystemInductiveInvariant :
     ReachableSystemInductiveInvariant (initialState : State Node TxId) :=
@@ -64,8 +64,8 @@ theorem clientRequestPreservesSystemInductiveInvariant
     (enabled : Enabled state (.clientRequest node txId)) :
     ReachableSystemInductiveInvariant
       (next state (.clientRequest node txId)) :=
-  ReconfigurationProof.clientRequestPreservesSystemInductiveInvariant
-    state node txId invariant enabled
+  ReconfigurationProof.systemInductiveInvariantPreserved
+    state (.clientRequest node txId) invariant enabled
 
 theorem changeConfigurationPreservesSystemInductiveInvariant
     (state : State Node TxId)
@@ -76,8 +76,18 @@ theorem changeConfigurationPreservesSystemInductiveInvariant
       Enabled state (.changeConfiguration source newConfiguration)) :
     ReachableSystemInductiveInvariant
       (next state (.changeConfiguration source newConfiguration)) :=
-  ReconfigurationProof.changeConfigurationPreservesSystemInductiveInvariant
-    state source newConfiguration invariant enabled
+  ReconfigurationProof.systemInductiveInvariantPreserved
+    state (.changeConfiguration source newConfiguration) invariant enabled
+
+theorem appendRetiredCommittedPreservesSystemInductiveInvariant
+    (state : State Node TxId)
+    (node : Node)
+    (invariant : ReachableSystemInductiveInvariant state)
+    (enabled : Enabled state (.appendRetiredCommitted node)) :
+    ReachableSystemInductiveInvariant
+      (next state (.appendRetiredCommitted node)) :=
+  ReconfigurationProof.systemInductiveInvariantPreserved
+    state (.appendRetiredCommitted node) invariant enabled
 
 theorem signCommittableMessagesPreservesSystemInductiveInvariant
     (state : State Node TxId)
@@ -86,8 +96,8 @@ theorem signCommittableMessagesPreservesSystemInductiveInvariant
     (enabled : Enabled state (.signCommittableMessages node)) :
     ReachableSystemInductiveInvariant
       (next state (.signCommittableMessages node)) :=
-  ReconfigurationProof.signCommittableMessagesPreservesSystemInductiveInvariant
-    state node invariant enabled
+  ReconfigurationProof.systemInductiveInvariantPreserved
+    state (.signCommittableMessages node) invariant enabled
 
 theorem requestVotePreservesSystemInductiveInvariant
     (state : State Node TxId)
@@ -96,8 +106,38 @@ theorem requestVotePreservesSystemInductiveInvariant
     (enabled : Enabled state (.requestVote source destination)) :
     ReachableSystemInductiveInvariant
       (next state (.requestVote source destination)) :=
-  ReconfigurationProof.requestVotePreservesSystemInductiveInvariant
-    state source destination invariant enabled
+  ReconfigurationProof.systemInductiveInvariantPreserved
+    state (.requestVote source destination) invariant enabled
+
+theorem requestPreVotePreservesSystemInductiveInvariant
+    (state : State Node TxId)
+    (source destination : Node)
+    (invariant : ReachableSystemInductiveInvariant state)
+    (enabled : Enabled state (.requestPreVote source destination)) :
+    ReachableSystemInductiveInvariant
+      (next state (.requestPreVote source destination)) :=
+  ReconfigurationProof.systemInductiveInvariantPreserved
+    state (.requestPreVote source destination) invariant enabled
+
+theorem proposeVotePreservesSystemInductiveInvariant
+    (state : State Node TxId)
+    (source destination : Node)
+    (invariant : ReachableSystemInductiveInvariant state)
+    (enabled : Enabled state (.proposeVote source destination)) :
+    ReachableSystemInductiveInvariant
+      (next state (.proposeVote source destination)) :=
+  ReconfigurationProof.systemInductiveInvariantPreserved
+    state (.proposeVote source destination) invariant enabled
+
+theorem checkQuorumPreservesSystemInductiveInvariant
+    (state : State Node TxId)
+    (node : Node)
+    (invariant : ReachableSystemInductiveInvariant state)
+    (enabled : Enabled state (.checkQuorum node)) :
+    ReachableSystemInductiveInvariant
+      (next state (.checkQuorum node)) :=
+  ReconfigurationProof.systemInductiveInvariantPreserved
+    state (.checkQuorum node) invariant enabled
 
 theorem appendEntriesPreservesSystemInductiveInvariant
     (state : State Node TxId)
@@ -107,8 +147,8 @@ theorem appendEntriesPreservesSystemInductiveInvariant
     (enabled : Enabled state (.appendEntries source destination batchEnd)) :
     ReachableSystemInductiveInvariant
       (next state (.appendEntries source destination batchEnd)) :=
-  ReconfigurationProof.appendEntriesPreservesSystemInductiveInvariant
-    state source destination batchEnd invariant enabled
+  ReconfigurationProof.systemInductiveInvariantPreserved
+    state (.appendEntries source destination batchEnd) invariant enabled
 
 theorem timeoutPreservesSystemInductiveInvariant
     (state : State Node TxId)
@@ -116,8 +156,28 @@ theorem timeoutPreservesSystemInductiveInvariant
     (invariant : ReachableSystemInductiveInvariant state)
     (enabled : Enabled state (.timeout node)) :
     ReachableSystemInductiveInvariant (next state (.timeout node)) :=
-  ReconfigurationProof.timeoutPreservesSystemInductiveInvariant
-    state node invariant enabled
+  ReconfigurationProof.systemInductiveInvariantPreserved
+    state (.timeout node) invariant enabled
+
+theorem becomePreVoteCandidatePreservesSystemInductiveInvariant
+    (state : State Node TxId)
+    (node : Node)
+    (invariant : ReachableSystemInductiveInvariant state)
+    (enabled : Enabled state (.becomePreVoteCandidate node)) :
+    ReachableSystemInductiveInvariant
+      (next state (.becomePreVoteCandidate node)) :=
+  ReconfigurationProof.systemInductiveInvariantPreserved
+    state (.becomePreVoteCandidate node) invariant enabled
+
+theorem becomeCandidatePreservesSystemInductiveInvariant
+    (state : State Node TxId)
+    (node : Node)
+    (invariant : ReachableSystemInductiveInvariant state)
+    (enabled : Enabled state (.becomeCandidate node)) :
+    ReachableSystemInductiveInvariant
+      (next state (.becomeCandidate node)) :=
+  ReconfigurationProof.systemInductiveInvariantPreserved
+    state (.becomeCandidate node) invariant enabled
 
 theorem updateTermPreservesSystemInductiveInvariant
     (state : State Node TxId)
@@ -126,8 +186,8 @@ theorem updateTermPreservesSystemInductiveInvariant
     (enabled : Enabled state (.updateTerm source destination)) :
     ReachableSystemInductiveInvariant
       (next state (.updateTerm source destination)) :=
-  ReconfigurationProof.updateTermPreservesSystemInductiveInvariant
-    state source destination invariant enabled
+  ReconfigurationProof.systemInductiveInvariantPreserved
+    state (.updateTerm source destination) invariant enabled
 
 theorem becomeLeaderPreservesSystemInductiveInvariant
     (state : State Node TxId)
@@ -135,8 +195,8 @@ theorem becomeLeaderPreservesSystemInductiveInvariant
     (invariant : ReachableSystemInductiveInvariant state)
     (enabled : Enabled state (.becomeLeader node)) :
     ReachableSystemInductiveInvariant (next state (.becomeLeader node)) :=
-  ReconfigurationProof.becomeLeaderPreservesSystemInductiveInvariant
-    state node invariant enabled
+  ReconfigurationProof.systemInductiveInvariantPreserved
+    state (.becomeLeader node) invariant enabled
 
 theorem advanceCommitPreservesSystemInductiveInvariant
     (state : State Node TxId)
@@ -145,8 +205,20 @@ theorem advanceCommitPreservesSystemInductiveInvariant
     (enabled : Enabled state (.advanceCommitIndex node)) :
     ReachableSystemInductiveInvariant
       (next state (.advanceCommitIndex node)) :=
-  ReconfigurationProof.advanceCommitPreservesSystemInductiveInvariant
-    state node invariant enabled
+  ReconfigurationProof.systemInductiveInvariantPreserved
+    state (.advanceCommitIndex node) invariant enabled
+
+theorem advanceCommitAndProposeVotePreservesSystemInductiveInvariant
+    (state : State Node TxId)
+    (source destination : Node)
+    (invariant : ReachableSystemInductiveInvariant state)
+    (enabled :
+      Enabled state (.advanceCommitIndexAndProposeVote source destination)) :
+    ReachableSystemInductiveInvariant
+      (next state (.advanceCommitIndexAndProposeVote source destination)) :=
+  ReconfigurationProof.systemInductiveInvariantPreserved
+    state (.advanceCommitIndexAndProposeVote source destination)
+      invariant enabled
 
 theorem receivePreservesSystemInductiveInvariant
     (state : State Node TxId)
@@ -155,8 +227,8 @@ theorem receivePreservesSystemInductiveInvariant
     (enabled : Enabled state (.receive source destination)) :
     ReachableSystemInductiveInvariant
       (next state (.receive source destination)) :=
-  ReconfigurationProof.receivePreservesSystemInductiveInvariant
-    state source destination invariant enabled
+  ReconfigurationProof.systemInductiveInvariantPreserved
+    state (.receive source destination) invariant enabled
 
 theorem systemInductiveInvariantPreserved
     (state : State Node TxId)

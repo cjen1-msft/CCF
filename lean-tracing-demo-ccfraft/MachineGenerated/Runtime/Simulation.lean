@@ -34,48 +34,72 @@ variable [Bootstrap Node]
 inductive ActionFamily where
   | clientRequest
   | changeConfiguration
+  | appendRetiredCommitted
   | signCommittableMessages
   | appendEntries
   | receive
   | advanceCommitIndex
   | timeout
+  | becomePreVoteCandidate
+  | becomeCandidate
   | requestVote
+  | requestPreVote
+  | checkQuorum
   | updateTerm
   | becomeLeader
+  | proposeVote
+  | advanceCommitIndexAndProposeVote
   deriving DecidableEq, Repr
 
 /-- Raw simulator choices that materialize directly as semantic actions. -/
 inductive Choice where
   | clientRequest (node : Node) (txId : TxId)
   | changeConfiguration (source : Node) (newConfiguration : Finset Node)
+  | appendRetiredCommitted (node : Node)
   | signCommittableMessages (node : Node)
   | appendEntries (source destination : Node) (batchEnd : Nat)
   | receive (source destination : Node)
   | advanceCommitIndex (node : Node)
   | timeout (node : Node)
+  | becomePreVoteCandidate (node : Node)
+  | becomeCandidate (node : Node)
   | requestVote (source destination : Node)
+  | requestPreVote (source destination : Node)
+  | checkQuorum (node : Node)
   | updateTerm (source destination : Node)
   | becomeLeader (node : Node)
+  | proposeVote (source destination : Node)
+  | advanceCommitIndexAndProposeVote (source destination : Node)
   deriving DecidableEq
 
 /-- Classify a simulator choice for coverage reporting. -/
 def Choice.family : Choice -> ActionFamily
   | .clientRequest .. => .clientRequest
   | .changeConfiguration .. => .changeConfiguration
+  | .appendRetiredCommitted .. => .appendRetiredCommitted
   | .signCommittableMessages .. => .signCommittableMessages
   | .appendEntries .. => .appendEntries
   | .receive .. => .receive
   | .advanceCommitIndex .. => .advanceCommitIndex
   | .timeout .. => .timeout
+  | .becomePreVoteCandidate .. => .becomePreVoteCandidate
+  | .becomeCandidate .. => .becomeCandidate
   | .requestVote .. => .requestVote
+  | .requestPreVote .. => .requestPreVote
+  | .checkQuorum .. => .checkQuorum
   | .updateTerm .. => .updateTerm
   | .becomeLeader .. => .becomeLeader
+  | .proposeVote .. => .proposeVote
+  | .advanceCommitIndexAndProposeVote .. =>
+      .advanceCommitIndexAndProposeVote
 
 /-- Convert a simulator choice into the exact model action it denotes. -/
 def materialize (_state : SimState) : Choice -> Option SimAction
   | .clientRequest node txId => some (.clientRequest node txId)
   | .changeConfiguration source newConfiguration =>
       some (.changeConfiguration source newConfiguration)
+  | .appendRetiredCommitted node =>
+      some (.appendRetiredCommitted node)
   | .signCommittableMessages node =>
       some (.signCommittableMessages node)
   | .appendEntries source destination batchEnd =>
@@ -83,11 +107,21 @@ def materialize (_state : SimState) : Choice -> Option SimAction
   | .receive source destination => some (.receive source destination)
   | .advanceCommitIndex node => some (.advanceCommitIndex node)
   | .timeout node => some (.timeout node)
+  | .becomePreVoteCandidate node =>
+      some (.becomePreVoteCandidate node)
+  | .becomeCandidate node => some (.becomeCandidate node)
   | .requestVote source destination =>
       some (.requestVote source destination)
+  | .requestPreVote source destination =>
+      some (.requestPreVote source destination)
+  | .checkQuorum node => some (.checkQuorum node)
   | .updateTerm source destination =>
       some (.updateTerm source destination)
   | .becomeLeader node => some (.becomeLeader node)
+  | .proposeVote source destination =>
+      some (.proposeVote source destination)
+  | .advanceCommitIndexAndProposeVote source destination =>
+      some (.advanceCommitIndexAndProposeVote source destination)
 
 /-- Every enabled finite model action has a corresponding simulator choice. -/
 theorem materializeComplete
@@ -101,6 +135,8 @@ theorem materializeComplete
       exact ⟨.clientRequest node txId, rfl⟩
   | changeConfiguration source newConfiguration =>
       exact ⟨.changeConfiguration source newConfiguration, rfl⟩
+  | appendRetiredCommitted node =>
+      exact ⟨.appendRetiredCommitted node, rfl⟩
   | signCommittableMessages node =>
       exact ⟨.signCommittableMessages node, rfl⟩
   | appendEntries source destination batchEnd =>
@@ -111,12 +147,25 @@ theorem materializeComplete
       exact ⟨.advanceCommitIndex node, rfl⟩
   | timeout node =>
       exact ⟨.timeout node, rfl⟩
+  | becomePreVoteCandidate node =>
+      exact ⟨.becomePreVoteCandidate node, rfl⟩
+  | becomeCandidate node =>
+      exact ⟨.becomeCandidate node, rfl⟩
   | requestVote source destination =>
       exact ⟨.requestVote source destination, rfl⟩
+  | requestPreVote source destination =>
+      exact ⟨.requestPreVote source destination, rfl⟩
+  | checkQuorum node =>
+      exact ⟨.checkQuorum node, rfl⟩
   | updateTerm source destination =>
       exact ⟨.updateTerm source destination, rfl⟩
   | becomeLeader node =>
       exact ⟨.becomeLeader node, rfl⟩
+  | proposeVote source destination =>
+      exact ⟨.proposeVote source destination, rfl⟩
+  | advanceCommitIndexAndProposeVote source destination =>
+      exact
+        ⟨.advanceCommitIndexAndProposeVote source destination, rfl⟩
 
 /-- Package materialization and its completeness proof for the generic engine. -/
 def adapter :
@@ -139,16 +188,26 @@ set_option maxHeartbeats 800000
 /-- Materialize finite function fields to keep long executable traces linear. -/
 def compactState (state : SimState) : SimState :=
   let network := Array.ofFn state.network
+  let preVoteStatus := Array.ofFn state.preVoteStatus
+  let retirementCompleted := Array.ofFn state.retirementCompleted
   { state with
-    network := fun node => network[node.val]'node.isLt }
+    network := fun node => network[node.val]'node.isLt
+    preVoteStatus := fun node => preVoteStatus[node.val]'node.isLt
+    retirementCompleted :=
+      fun node => retirementCompleted[node.val]'node.isLt }
 
 /-- Materializing the finite maps does not change the represented state. -/
 theorem compactState_eq (state : SimState) :
     compactState state = state := by
   cases state with
-  | mk nodes network submittedTxIds hasJoined =>
+  | mk nodes network submittedTxIds hasJoined preVoteStatus
+      retirementCompleted =>
       simp only [compactState]
       congr 1
+      · funext node
+        simp
+      · funext node
+        simp
       · funext node
         simp
 
@@ -242,6 +301,25 @@ def configurationStateCheck (state : SimState) : Bool :=
         decide configuration.nodes.Nonempty &&
           decide (configuration.index <= nodeState.log.length)
 
+/-- Check log-derived retirement metadata and completed-retirement tracking. -/
+def retirementStateCheck (state : SimState) : Bool :=
+  allNodes.all fun node =>
+    let nodeState := state.nodes node
+    let refreshed := refreshRetirementState node nodeState
+    decide (nodeState.membershipState = refreshed.membershipState) &&
+      decide (nodeState.retirementIndex = refreshed.retirementIndex) &&
+      decide (
+        nodeState.retirementCommittableIndex =
+          refreshed.retirementCommittableIndex) &&
+      decide (
+        nodeState.retiredCommittedIndex = refreshed.retiredCommittedIndex) &&
+      decide (
+        nodeState.membershipState != .retiredCommitted ||
+          nodeState.role = .follower) &&
+      decide (
+        state.retirementCompleted node =
+          retirementCompletedNodes nodeState.log nodeState.commitIndex)
+
 /-- Check selected executable state-local Raft safety conditions. -/
 def stateChecks (state : SimState) : Bool :=
   (allNodes.all fun node =>
@@ -253,7 +331,8 @@ def stateChecks (state : SimState) : Bool :=
   logMatchingCheck state &&
   logTermChecks state &&
   electionSafetyCheck state &&
-  configurationStateCheck state
+  configurationStateCheck state &&
+  retirementStateCheck state
 
 /-- Executably check committed-log monotonicity on one explored edge. -/
 def edgeChecks (before after : SimState) : Bool :=
@@ -298,6 +377,7 @@ def candidateChoicesFor
       (state.nodes source).role = .leader).flatMap fun source =>
     configurations.map fun configuration =>
       .changeConfiguration source configuration) ++
+  (allNodes.map fun node => .appendRetiredCommitted node) ++
   (allNodes.map fun node => .signCommittableMessages node) ++
   (allNodes.flatMap fun source =>
     allNodes.map fun destination =>
@@ -311,11 +391,21 @@ def candidateChoicesFor
     allNodes.map fun destination => .receive source destination) ++
   (allNodes.map fun node => .advanceCommitIndex node) ++
   (allNodes.map fun node => .timeout node) ++
+  (allNodes.map fun node => .becomePreVoteCandidate node) ++
+  (allNodes.map fun node => .becomeCandidate node) ++
   (allNodes.flatMap fun source =>
     allNodes.map fun destination => .requestVote source destination) ++
   (allNodes.flatMap fun source =>
+    allNodes.map fun destination => .requestPreVote source destination) ++
+  (allNodes.map fun node => .checkQuorum node) ++
+  (allNodes.flatMap fun source =>
     allNodes.map fun destination => .updateTerm source destination) ++
-  (allNodes.map fun node => .becomeLeader node)
+  (allNodes.map fun node => .becomeLeader node) ++
+  (allNodes.flatMap fun source =>
+    allNodes.map fun destination => .proposeVote source destination) ++
+  (allNodes.flatMap fun source =>
+    allNodes.map fun destination =>
+      .advanceCommitIndexAndProposeVote source destination)
 
 /-- Enumerate every bounded action shape that could be enabled in a state. -/
 def candidateChoices (state : SimState) : List Choice :=
@@ -347,10 +437,13 @@ theorem candidateChoicesComplete
         · exact
             List.mem_map.mpr
               ⟨members, List.mem_sublists.mpr membersSublist, membersEq⟩
-        · simpa using enabled.2.2.1
+        · simpa using enabled.2.2.2.1
       refine
         ⟨.changeConfiguration source newConfiguration, ?_, rfl⟩
       simp [candidateChoices, candidateChoicesFor, represented, enabled.2.1]
+  | appendRetiredCommitted node =>
+      refine ⟨.appendRetiredCommitted node, ?_, rfl⟩
+      simp [candidateChoices, candidateChoicesFor]
   | signCommittableMessages node =>
       refine ⟨.signCommittableMessages node, ?_, rfl⟩
       simp [candidateChoices, candidateChoicesFor]
@@ -366,14 +459,33 @@ theorem candidateChoicesComplete
   | timeout node =>
       refine ⟨.timeout node, ?_, rfl⟩
       simp [candidateChoices, candidateChoicesFor]
+  | becomePreVoteCandidate node =>
+      refine ⟨.becomePreVoteCandidate node, ?_, rfl⟩
+      simp [candidateChoices, candidateChoicesFor]
+  | becomeCandidate node =>
+      refine ⟨.becomeCandidate node, ?_, rfl⟩
+      simp [candidateChoices, candidateChoicesFor]
   | requestVote source destination =>
       refine ⟨.requestVote source destination, ?_, rfl⟩
+      simp [candidateChoices, candidateChoicesFor]
+  | requestPreVote source destination =>
+      refine ⟨.requestPreVote source destination, ?_, rfl⟩
+      simp [candidateChoices, candidateChoicesFor]
+  | checkQuorum node =>
+      refine ⟨.checkQuorum node, ?_, rfl⟩
       simp [candidateChoices, candidateChoicesFor]
   | updateTerm source destination =>
       refine ⟨.updateTerm source destination, ?_, rfl⟩
       simp [candidateChoices, candidateChoicesFor]
   | becomeLeader node =>
       refine ⟨.becomeLeader node, ?_, rfl⟩
+      simp [candidateChoices, candidateChoicesFor]
+  | proposeVote source destination =>
+      refine ⟨.proposeVote source destination, ?_, rfl⟩
+      simp [candidateChoices, candidateChoicesFor]
+  | advanceCommitIndexAndProposeVote source destination =>
+      refine
+        ⟨.advanceCommitIndexAndProposeVote source destination, ?_, rfl⟩
       simp [candidateChoices, candidateChoicesFor]
 
 /-- Retain exactly the candidate choices enabled by the authoritative guard. -/
@@ -410,15 +522,26 @@ def familyChoices
 def preferredChoices (state : SimState) : List Choice :=
   let enabled := schedulerChoices state
   let promotions := familyChoices .becomeLeader enabled
+  let preVotePromotions := familyChoices .becomeCandidate enabled
+  let preVoteTimeouts := familyChoices .becomePreVoteCandidate enabled
   let updates := familyChoices .updateTerm enabled
+  let proposals :=
+    (familyChoices .proposeVote enabled).filter fun choice =>
+      match choice with
+      | .proposeVote _ destination =>
+          (state.nodes destination).role = .follower
+      | _ => false
   let receives := familyChoices .receive enabled
   let votes := familyChoices .requestVote enabled
+  let preVotes := familyChoices .requestPreVote enabled
   let candidateTimeouts :=
     (familyChoices .timeout enabled).filter fun choice =>
       match choice with
       | .timeout node => (state.nodes node).role = .candidate
       | _ => false
-  let commits := familyChoices .advanceCommitIndex enabled
+  let commits :=
+    familyChoices .advanceCommitIndex enabled ++
+      familyChoices .advanceCommitIndexAndProposeVote enabled
   let appends := familyChoices .appendEntries enabled
   let progressingAppends :=
     appends.filter fun choice =>
@@ -430,6 +553,8 @@ def preferredChoices (state : SimState) : List Choice :=
   let clients := familyChoices .clientRequest enabled
   let reconfigurations :=
     familyChoices .changeConfiguration enabled
+  let retirements :=
+    familyChoices .appendRetiredCommitted enabled
   let signatures :=
     (familyChoices .signCommittableMessages enabled).filter fun choice =>
       match choice with
@@ -439,19 +564,25 @@ def preferredChoices (state : SimState) : List Choice :=
               (state.nodes node).log.length)
       | _ => false
   let electionActive :=
-    allNodes.any fun node => (state.nodes node).role = .candidate
+    allNodes.any fun node =>
+      (state.nodes node).role = .candidate \/
+        (state.nodes node).role = .preVoteCandidate
   let aLeaderNeedsCurrentEntry :=
     allNodes.any fun node =>
       (state.nodes node).role = .leader /\
         !(state.nodes node).log.any fun entry =>
           entry.term = (state.nodes node).currentTerm
   if !promotions.isEmpty then promotions
+  else if !preVotePromotions.isEmpty then preVotePromotions
   else if !updates.isEmpty then updates
   else if !receives.isEmpty then receives
-  else if electionActive && !(votes ++ candidateTimeouts).isEmpty then
-    votes ++ candidateTimeouts
+  else if electionActive &&
+      !(preVotes ++ votes ++ preVoteTimeouts ++ candidateTimeouts).isEmpty then
+    preVotes ++ votes ++ preVoteTimeouts ++ candidateTimeouts
+  else if !proposals.isEmpty then proposals
   else if aLeaderNeedsCurrentEntry && !clients.isEmpty then clients
   else if !reconfigurations.isEmpty then reconfigurations
+  else if !retirements.isEmpty then retirements
   else if !signatures.isEmpty then signatures
   else if !commits.isEmpty then commits
   else if !progressingAppends.isEmpty then progressingAppends
@@ -470,24 +601,38 @@ def propose
 structure Telemetry where
   proposedClient : Nat := 0
   proposedReconfigure : Nat := 0
+  proposedRetiredCommitted : Nat := 0
   proposedSign : Nat := 0
   proposedAppend : Nat := 0
   proposedReceive : Nat := 0
   proposedCommit : Nat := 0
   proposedTimeout : Nat := 0
+  proposedPreVoteCandidate : Nat := 0
+  proposedBecomeCandidate : Nat := 0
   proposedVote : Nat := 0
+  proposedPreVote : Nat := 0
+  proposedCheckQuorum : Nat := 0
   proposedUpdateTerm : Nat := 0
   proposedBecomeLeader : Nat := 0
+  proposedProposeVote : Nat := 0
+  proposedCommitAndProposeVote : Nat := 0
   takenClient : Nat := 0
   takenReconfigure : Nat := 0
+  takenRetiredCommitted : Nat := 0
   takenSign : Nat := 0
   takenAppend : Nat := 0
   takenReceive : Nat := 0
   takenCommit : Nat := 0
   takenTimeout : Nat := 0
+  takenPreVoteCandidate : Nat := 0
+  takenBecomeCandidate : Nat := 0
   takenVote : Nat := 0
+  takenPreVote : Nat := 0
+  takenCheckQuorum : Nat := 0
   takenUpdateTerm : Nat := 0
   takenBecomeLeader : Nat := 0
+  takenProposeVote : Nat := 0
+  takenCommitAndProposeVote : Nat := 0
   rejected : Nat := 0
   traces : Nat := 0
   steps : Nat := 0
@@ -504,6 +649,10 @@ def Telemetry.proposed
   | .changeConfiguration =>
       { telemetry with
           proposedReconfigure := telemetry.proposedReconfigure + 1 }
+  | .appendRetiredCommitted =>
+      { telemetry with
+          proposedRetiredCommitted :=
+            telemetry.proposedRetiredCommitted + 1 }
   | .signCommittableMessages =>
       { telemetry with proposedSign := telemetry.proposedSign + 1 }
   | .appendEntries =>
@@ -514,13 +663,32 @@ def Telemetry.proposed
       { telemetry with proposedCommit := telemetry.proposedCommit + 1 }
   | .timeout =>
       { telemetry with proposedTimeout := telemetry.proposedTimeout + 1 }
+  | .becomePreVoteCandidate =>
+      { telemetry with
+          proposedPreVoteCandidate :=
+            telemetry.proposedPreVoteCandidate + 1 }
+  | .becomeCandidate =>
+      { telemetry with
+          proposedBecomeCandidate := telemetry.proposedBecomeCandidate + 1 }
   | .requestVote =>
       { telemetry with proposedVote := telemetry.proposedVote + 1 }
+  | .requestPreVote =>
+      { telemetry with proposedPreVote := telemetry.proposedPreVote + 1 }
+  | .checkQuorum =>
+      { telemetry with
+          proposedCheckQuorum := telemetry.proposedCheckQuorum + 1 }
   | .updateTerm =>
       { telemetry with proposedUpdateTerm := telemetry.proposedUpdateTerm + 1 }
   | .becomeLeader =>
       { telemetry with
           proposedBecomeLeader := telemetry.proposedBecomeLeader + 1 }
+  | .proposeVote =>
+      { telemetry with
+          proposedProposeVote := telemetry.proposedProposeVote + 1 }
+  | .advanceCommitIndexAndProposeVote =>
+      { telemetry with
+          proposedCommitAndProposeVote :=
+            telemetry.proposedCommitAndProposeVote + 1 }
 
 /-- Increment the accepted-action counter for one action family. -/
 def Telemetry.taken
@@ -532,6 +700,9 @@ def Telemetry.taken
   | .changeConfiguration =>
       { telemetry with
           takenReconfigure := telemetry.takenReconfigure + 1 }
+  | .appendRetiredCommitted =>
+      { telemetry with
+          takenRetiredCommitted := telemetry.takenRetiredCommitted + 1 }
   | .signCommittableMessages =>
       { telemetry with takenSign := telemetry.takenSign + 1 }
   | .appendEntries =>
@@ -542,13 +713,30 @@ def Telemetry.taken
       { telemetry with takenCommit := telemetry.takenCommit + 1 }
   | .timeout =>
       { telemetry with takenTimeout := telemetry.takenTimeout + 1 }
+  | .becomePreVoteCandidate =>
+      { telemetry with
+          takenPreVoteCandidate := telemetry.takenPreVoteCandidate + 1 }
+  | .becomeCandidate =>
+      { telemetry with
+          takenBecomeCandidate := telemetry.takenBecomeCandidate + 1 }
   | .requestVote =>
       { telemetry with takenVote := telemetry.takenVote + 1 }
+  | .requestPreVote =>
+      { telemetry with takenPreVote := telemetry.takenPreVote + 1 }
+  | .checkQuorum =>
+      { telemetry with takenCheckQuorum := telemetry.takenCheckQuorum + 1 }
   | .updateTerm =>
       { telemetry with takenUpdateTerm := telemetry.takenUpdateTerm + 1 }
   | .becomeLeader =>
       { telemetry with
           takenBecomeLeader := telemetry.takenBecomeLeader + 1 }
+  | .proposeVote =>
+      { telemetry with
+          takenProposeVote := telemetry.takenProposeVote + 1 }
+  | .advanceCommitIndexAndProposeVote =>
+      { telemetry with
+          takenCommitAndProposeVote :=
+            telemetry.takenCommitAndProposeVote + 1 }
 
 /-- Serialize one semantic action as a stable replay line. -/
 def renderAction : SimAction -> String
@@ -559,6 +747,8 @@ def renderAction : SimAction -> String
         ("reconfigure" :: toString source.val ::
           (allNodes.filter fun node => node ∈ newConfiguration).map fun node =>
             toString node.val)
+  | .appendRetiredCommitted node =>
+      s!"retire-committed,{node.val}"
   | .signCommittableMessages node =>
       s!"sign,{node.val}"
   | .appendEntries source destination batchEnd =>
@@ -569,12 +759,24 @@ def renderAction : SimAction -> String
       s!"commit,{node.val}"
   | .timeout node =>
       s!"timeout,{node.val}"
+  | .becomePreVoteCandidate node =>
+      s!"pre-timeout,{node.val}"
+  | .becomeCandidate node =>
+      s!"candidate,{node.val}"
   | .requestVote source destination =>
       s!"vote,{source.val},{destination.val}"
+  | .requestPreVote source destination =>
+      s!"pre-vote,{source.val},{destination.val}"
+  | .checkQuorum node =>
+      s!"quorum,{node.val}"
   | .updateTerm source destination =>
       s!"term,{source.val},{destination.val}"
   | .becomeLeader node =>
       s!"leader,{node.val}"
+  | .proposeVote source destination =>
+      s!"propose-vote,{source.val},{destination.val}"
+  | .advanceCommitIndexAndProposeVote source destination =>
+      s!"commit-propose,{source.val},{destination.val}"
 
 /-- Serialize the model parameter required to replay the following actions. -/
 def renderBootstrap (bootstrap : Bootstrap Node) : String :=
@@ -583,6 +785,15 @@ def renderBootstrap (bootstrap : Bootstrap Node) : String :=
       (allNodes.filter fun node =>
         Membership.mem bootstrap.configuration node).map fun node =>
           toString node.val)
+
+/-- Serialize every node's static pre-vote mode in identifier order. -/
+def renderPreVoteStatus (bootstrap : Bootstrap Node) : String :=
+  String.intercalate ","
+    ("pre-vote-status" ::
+      allNodes.map fun node =>
+        match bootstrap.preVoteStatus node with
+        | .capable => "capable"
+        | .enabled => "enabled")
 
 /-- Parse a natural number only when it lies below a given bound. -/
 def parseBounded
@@ -622,6 +833,9 @@ def parseAction (line : String) : Option SimAction := do
         none
       else
         some (.changeConfiguration source nodes.toFinset)
+  | ["retire-committed", node] =>
+      let node <- nodeOfString node
+      some (.appendRetiredCommitted node)
   | ["sign", node] =>
       let node <- nodeOfString node
       some (.signCommittableMessages node)
@@ -640,10 +854,23 @@ def parseAction (line : String) : Option SimAction := do
   | ["timeout", node] =>
       let node <- nodeOfString node
       some (.timeout node)
+  | ["pre-timeout", node] =>
+      let node <- nodeOfString node
+      some (.becomePreVoteCandidate node)
+  | ["candidate", node] =>
+      let node <- nodeOfString node
+      some (.becomeCandidate node)
   | ["vote", source, destination] =>
       let source <- nodeOfString source
       let destination <- nodeOfString destination
       some (.requestVote source destination)
+  | ["pre-vote", source, destination] =>
+      let source <- nodeOfString source
+      let destination <- nodeOfString destination
+      some (.requestPreVote source destination)
+  | ["quorum", node] =>
+      let node <- nodeOfString node
+      some (.checkQuorum node)
   | ["term", source, destination] =>
       let source <- nodeOfString source
       let destination <- nodeOfString destination
@@ -651,6 +878,14 @@ def parseAction (line : String) : Option SimAction := do
   | ["leader", node] =>
       let node <- nodeOfString node
       some (.becomeLeader node)
+  | ["propose-vote", source, destination] =>
+      let source <- nodeOfString source
+      let destination <- nodeOfString destination
+      some (.proposeVote source destination)
+  | ["commit-propose", source, destination] =>
+      let source <- nodeOfString source
+      let destination <- nodeOfString destination
+      some (.advanceCommitIndexAndProposeVote source destination)
   | _ => none
 
 /-- Parse a replay header into a valid bootstrap parameter. -/
@@ -668,6 +903,30 @@ def parseBootstrap (line : String) : Option (Bootstrap Node) := do
         }
       else
         none
+  | _ => none
+
+/-- Parse the optional pre-vote-mode replay header. -/
+def parsePreVoteStatus
+    (bootstrap : Bootstrap Node)
+    (line : String) :
+    Option (Bootstrap Node) := do
+  match line.splitOn "," with
+  | "pre-vote-status" :: rawStatuses =>
+      if rawStatuses.length != NODE_COUNT then
+        none
+      else
+        let statuses <- rawStatuses.mapM fun raw =>
+          match raw with
+          | "capable" => some PreVoteStatus.capable
+          | "enabled" => some PreVoteStatus.enabled
+          | _ => none
+        some {
+          configuration := bootstrap.configuration
+          leader := bootstrap.leader
+          leader_mem := bootstrap.leader_mem
+          preVoteStatus := fun node =>
+            statuses[node.val]?.getD .capable
+        }
   | _ => none
 
 /-- A replay file carries its bootstrap parameter and ordered actions. -/
@@ -690,6 +949,16 @@ def parseReplayLines (lines : List String) : Except String ReplayTrace := do
               | throw s!"invalid bootstrap trace line: {first}"
             pure (bootstrap, remaining)
         | _ => pure (defaultBootstrap, lines)
+  let (bootstrap, actionLines) <-
+    match actionLines with
+    | statusLine :: remaining =>
+        match statusLine.splitOn "," with
+        | "pre-vote-status" :: _ =>
+            let some bootstrap := parsePreVoteStatus bootstrap statusLine
+              | throw s!"invalid pre-vote status line: {statusLine}"
+            pure (bootstrap, remaining)
+        | _ => pure (bootstrap, actionLines)
+    | [] => pure (bootstrap, [])
   let actions <- actionLines.mapM fun line => do
     let some action := parseAction line
       | throw s!"invalid trace line: {line}"
@@ -704,7 +973,9 @@ def writeReplayTrace
     IO Unit :=
   IO.FS.writeFile path
     (String.intercalate "\n"
-      (renderBootstrap bootstrap :: actions.map renderAction) ++ "\n")
+      (renderBootstrap bootstrap ::
+        renderPreVoteStatus bootstrap ::
+        actions.map renderAction) ++ "\n")
 
 /-- Write reverse-accumulated simulator actions as a self-contained trace. -/
 def writeTrace (path : System.FilePath) (actions : List SimAction) : IO Unit :=

@@ -16,43 +16,68 @@ variable [Bootstrap Node]
 inductive LoweredAction (Node TxId : Type) where
   | clientRequest (node : Node) (txId : TxId)
   | changeConfiguration (source : Node) (configuration : Finset Node)
+  | appendRetiredCommitted (node : Node)
   | signCommittableMessages (node : Node)
   | appendEntries (source destination : Node) (batchEnd : Nat)
   | receive (source destination : Node)
   | advanceCommitIndex (node : Node)
   | timeout (node : Node)
+  | becomePreVoteCandidate (node : Node)
+  | becomeCandidate (node : Node)
   | requestVote (source destination : Node)
+  | requestPreVote (source destination : Node)
+  | checkQuorum (node : Node)
   | updateTerm (source destination : Node)
   | becomeLeader (node : Node)
+  | proposeVote (source destination : Node)
+  | advanceCommitIndexAndProposeVote (source destination : Node)
 
 def LoweredAction.toAction :
     LoweredAction Node TxId -> Action Node TxId
   | .clientRequest node txId => .clientRequest node txId
   | .changeConfiguration source configuration =>
       .changeConfiguration source configuration
+  | .appendRetiredCommitted node => .appendRetiredCommitted node
   | .signCommittableMessages node => .signCommittableMessages node
   | .appendEntries source destination batchEnd =>
       .appendEntries source destination batchEnd
   | .receive source destination => .receive source destination
   | .advanceCommitIndex node => .advanceCommitIndex node
   | .timeout node => .timeout node
+  | .becomePreVoteCandidate node => .becomePreVoteCandidate node
+  | .becomeCandidate node => .becomeCandidate node
   | .requestVote source destination => .requestVote source destination
+  | .requestPreVote source destination =>
+      .requestPreVote source destination
+  | .checkQuorum node => .checkQuorum node
   | .updateTerm source destination => .updateTerm source destination
   | .becomeLeader node => .becomeLeader node
+  | .proposeVote source destination => .proposeVote source destination
+  | .advanceCommitIndexAndProposeVote source destination =>
+      .advanceCommitIndexAndProposeVote source destination
 
 def lowerAction : Action Node TxId -> LoweredAction Node TxId
   | .clientRequest node txId => .clientRequest node txId
   | .changeConfiguration source configuration =>
       .changeConfiguration source configuration
+  | .appendRetiredCommitted node => .appendRetiredCommitted node
   | .signCommittableMessages node => .signCommittableMessages node
   | .appendEntries source destination batchEnd =>
       .appendEntries source destination batchEnd
   | .receive source destination => .receive source destination
   | .advanceCommitIndex node => .advanceCommitIndex node
   | .timeout node => .timeout node
+  | .becomePreVoteCandidate node => .becomePreVoteCandidate node
+  | .becomeCandidate node => .becomeCandidate node
   | .requestVote source destination => .requestVote source destination
+  | .requestPreVote source destination =>
+      .requestPreVote source destination
+  | .checkQuorum node => .checkQuorum node
   | .updateTerm source destination => .updateTerm source destination
   | .becomeLeader node => .becomeLeader node
+  | .proposeVote source destination => .proposeVote source destination
+  | .advanceCommitIndexAndProposeVote source destination =>
+      .advanceCommitIndexAndProposeVote source destination
 
 inductive LoweredInstruction (Node TxId Observation : Type) where
   | action (value : LoweredAction Node TxId)
