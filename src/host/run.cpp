@@ -21,6 +21,7 @@
 #include "common/enclave_interface_types.h"
 #include "config_schema.h"
 #include "configuration.h"
+#include "consensus/aft/raft_trace_sink.h"
 #include "consensus/ledger_enclave_types.h"
 #include "crypto/openssl/hash.h"
 #include "ds/files.h"
@@ -1076,6 +1077,13 @@ namespace ccf
 
     // set the host log level
     ccf::logger::config::level() = log_level;
+
+    if (config.observability.fluentd.has_value())
+    {
+      aft::RaftTraceSink::configure(aft::RaftTraceSink::Endpoint{
+        config.observability.fluentd->host,
+        config.observability.fluentd->port});
+    }
 
     asynchost::TimeBoundLogger::default_max_time =
       config.slow_io_logging_threshold;

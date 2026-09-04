@@ -6,6 +6,7 @@
 #include "driver.h"
 
 #include "ccf/ds/hash.h"
+#include "consensus/aft/raft_trace_sink.h"
 
 #include <cassert>
 #include <fstream>
@@ -37,6 +38,14 @@ int main(int argc, char** argv)
   ccf::logger::config::add_text_console_logger();
 #endif
   ccf::logger::config::level() = ccf::LoggerLevel::DEBUG;
+
+#ifdef CCF_RAFT_TRACING
+  // Placeholder endpoint: send() currently only counts drops (step 0), so no
+  // actual connection is made yet. Wiring this up to an env var/CLI flag for
+  // step 1 is future work.
+  aft::RaftTraceSink::configure(
+    aft::RaftTraceSink::Endpoint{"127.0.0.1", "24224"});
+#endif
 
   const std::string filename = argv[1];
 

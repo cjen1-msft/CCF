@@ -137,6 +137,24 @@ namespace ccf
       bool operator==(const IdentityHistoryFetch&) const = default;
     };
     IdentityHistoryFetch identity_history_fetch = {};
+
+    struct Observability
+    {
+      struct Fluentd
+      {
+        // Address of a Fluentd instance's tcp (in_forward) listener that
+        // trace events (e.g. raft_trace) are exported to.
+        std::string host;
+        std::string port;
+
+        bool operator==(const Fluentd&) const = default;
+      };
+      // Absent means the feature is off: no thread ever opens a socket.
+      std::optional<Fluentd> fluentd = std::nullopt;
+
+      bool operator==(const Observability&) const = default;
+    };
+    Observability observability = {};
   };
 
   struct RecoveryDecisionProtocolConfig
