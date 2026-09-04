@@ -3,6 +3,8 @@
 
 import MachineGenerated.Runtime.LongTraceSmtProbe
 import MachineGenerated.Runtime.NaiveFullStateWitness
+import MachineGenerated.Runtime.RetirementConsistencyExamples
+import MachineGenerated.Runtime.SuccessorNominationExamples
 import MachineGenerated.Runtime.TraceValidation
 
 /-!

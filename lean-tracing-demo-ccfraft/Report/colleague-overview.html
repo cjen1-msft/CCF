@@ -224,24 +224,38 @@ summary { cursor: pointer; color: var(--blue); }
       <code>unknown</code>. UNSAT triggers core reduction and proof output.
     </div>
   </div>
-  <div class="panel" style="margin-top:1rem">
-    <strong>Concrete transform</strong>
-    <pre>action n1.timeout
+  <div class="grid-2" style="margin-top:1rem">
+    <div class="panel">
+      <strong>Raw event, line 112</strong>
+      <pre>{
+  &quot;function&quot;: &quot;become_candidate&quot;,
+  &quot;state&quot;: {
+    &quot;current_view&quot;: 3,
+    &quot;leadership_state&quot;: &quot;Leader&quot;,
+    &quot;node_id&quot;: &quot;1&quot;
+  }
+}</pre>
+    </div>
+    <div class="panel">
+      <strong>Reduced instructions</strong>
+      <pre>action n1.timeout
 observe n1.allocated = true
 observe n1.joined = true
 observe n1.role = &quot;leader&quot;
 observe n1.currentTerm = 3
 observe n1.commitIndex = 6
 observe n1.logLength = 8</pre>
-    <p class="caption">This deliberately broken event says
-    <code>become_candidate</code> but reports the resulting role as leader.
-    The action and observations remain separate, so the solver sees the
-    contradiction.</p>
+    </div>
   </div>
+  <p class="caption">This deliberately broken event says
+  <code>become_candidate</code> but reports the resulting role as leader.
+  The reducer keeps the action and the observations separate. The solver can
+  therefore reject the pair instead of accepting the reported state as part
+  of the action definition.</p>
 </section>
 
 <section id="reduction">
-  <h2>The part a model reviewer reads</h2>
+  <h2>Reduction maps implementation events to model instructions</h2>
   <p class="section-conceit">
     Reduction is deliberately ordinary code. It pattern-matches a normalized
     event prefix, emits actions and observations in order, then recurses on
@@ -293,7 +307,7 @@ observe n1.logLength = 8</pre>
  319                    observeState &quot;split-append-entries-receive&quot; event ++
  320                      receives ++
  321                      observeState</pre>
-      <p><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Reduction.lean:279:1">Open Reduction.lean</a> <a class="quiet" href="https://github.com/cjen1-msft/CCF/blob/9edfd91ec3774dd7fa1fa19c6713b056be303fb4/lean-tracing-demo-ccfraft/Reduction.lean#L279">GitHub</a></p>
+      <p><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/Reduction.lean:279:1">Open Reduction.lean</a> <a class="quiet" href="https://github.com/cjen1-msft/CCF/blob/6e67722c1ff8c80ae205db5db142561a940a437e/lean-tracing-demo-ccfraft/Reduction.lean#L279">GitHub</a></p>
     </details>
     <div class="panel">
       <h3>Why observations are explicit</h3>
@@ -377,7 +391,7 @@ observe n2.currentTerm = 7</pre>
   91        lowered
   92  
   93  end CCFRaft.TraceValidation</pre>
-    <p><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/TraceProperties.lean:80:1">Open lowerTrace_correct</a> <a class="quiet" href="https://github.com/cjen1-msft/CCF/blob/9edfd91ec3774dd7fa1fa19c6713b056be303fb4/lean-tracing-demo-ccfraft/TraceProperties.lean#L80">GitHub</a></p>
+    <p><a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/TraceProperties.lean:80:1">Open lowerTrace_correct</a> <a class="quiet" href="https://github.com/cjen1-msft/CCF/blob/6e67722c1ff8c80ae205db5db142561a940a437e/lean-tracing-demo-ccfraft/TraceProperties.lean#L80">GitHub</a></p>
   </details>
   <div class="flow" style="margin-top:1rem">
     <div class="flow-step"><strong>Model.lean</strong>
@@ -396,6 +410,41 @@ observe n2.currentTerm = 7</pre>
       formula remains the open proof obligation.
     </div>
   </div>
+  <div class="grid-2" style="margin-top:1rem">
+    <div class="panel">
+      <h3>Why the theorem has two directions</h3>
+      <p><code>FormulaSatisfiable → MidtraceSatisfiable</code> means a solver
+      witness denotes a model segment. The reverse direction means every model
+      segment has a symbolic witness. That reverse direction is what would
+      make SMT UNSAT exclude model segments.</p>
+    </div>
+    <div class="panel">
+      <h3>What still needs proof</h3>
+      <p>The theorem covers the typed Lean formula. The executable path emits
+      a different Python formula. Until those formulas are connected, cvc5
+      proves facts only about the Python projection.</p>
+    </div>
+  </div>
+  <details class="panel" style="margin-top:1rem">
+    <summary><strong>From full UNSAT result to a readable contradiction</strong></summary>
+    <p>The direct <code>soft_rollback</code> formula contains
+    1,388 named assertions. cvc5
+    returns a core of 302.
+    Automatic deletion checks reduce that core to
+    2 assertions.</p>
+    <pre>(assert (! (and (or (= (select state_0068_role 1) 1) (= (select state_0068_role 1) 2)) (= (select state_0069_role 1) 2) (= (select state_0069_term 1) (+ (select state_0068_term 1) 1)) (= state_0069_allocated state_0068_allocated) (= state_0069_joined state_0068_joined) (= state_0069_log_length state_0068_log_length) (= state_0069_commit_index state_0068_commit_index) (= state_0069_role (store state_0068_role 1 2)) (= state_0069_term (store state_0068_term 1 (+ (select state_0068_term 1) 1)))) :named transition_instruction_0399_action_boundary_0069_line_0112_timeout))
+(assert (! (= (select state_0069_role 1) 3) :named observation_instruction_0402_action_boundary_0069_line_0112_role))</pre>
+    <p>One assertion says that <code>timeout</code> produces candidate role
+    <code>2</code>. The other says that the trace observed leader role
+    <code>3</code> at the same action boundary.</p>
+    <ol>
+      <li>cvc5 replays the full formula and returns an initial UNSAT core.</li>
+      <li>The core reducer tries deleting large deterministic chunks.</li>
+      <li>It keeps a deletion only when another cvc5 run remains UNSAT.</li>
+      <li>It tries individual deletions, then asks cvc5 to prove the reduced
+      formula.</li>
+    </ol>
+  </details>
 </section>
 
 <section id="stories">
@@ -421,6 +470,14 @@ observe n2.currentTerm = 7</pre>
         reducer still emits <code>timeout(node 1)</code>, which must produce a
         candidate. The two-step contradiction is UNSAT.
       </p>
+      <pre>python3 validate.py     Traces/Captured/soft_rollback.ndjson     Artifacts/review/soft_rollback     --cvc5 /path/to/cvc5
+# sat
+
+python3 validate.py     Traces/Mutated/soft_rollback-direct.ndjson     Artifacts/review/soft_rollback-direct     --cvc5 /path/to/cvc5
+# unsat</pre>
+      <p class="caption">For UNSAT, inspect <code>diagnosis.json</code>,
+      <code>formula-reduced.smt2</code>, and <code>proof.txt</code> in the
+      output directory.</p>
     </div>
     <div class="panel story unsat">
       <span class="status unsat">UNSAT</span>
@@ -534,7 +591,7 @@ observe n2.currentTerm = 7</pre>
     </div>
   </div>
   <p class="caption">Measurements come from
-  <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/benchmark_pipeline.py:109:1">benchmark_pipeline.py</a> <a class="quiet" href="https://github.com/cjen1-msft/CCF/blob/9edfd91ec3774dd7fa1fa19c6713b056be303fb4/lean-tracing-demo-ccfraft/benchmark_pipeline.py#L109">GitHub</a>. Five validation and capture samples were interleaved. Clean and
+  <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean-tracing-demo-ccfraft/benchmark_pipeline.py:109:1">benchmark_pipeline.py</a> <a class="quiet" href="https://github.com/cjen1-msft/CCF/blob/6e67722c1ff8c80ae205db5db142561a940a437e/lean-tracing-demo-ccfraft/benchmark_pipeline.py#L109">GitHub</a>. Five validation and capture samples were interleaved. Clean and
   no-change Lean builds were measured once. Environment:
   Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.38,
   cvc5 1.3.4,

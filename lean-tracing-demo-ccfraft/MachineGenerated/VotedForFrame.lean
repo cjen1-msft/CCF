@@ -150,6 +150,7 @@ theorem canProduceAppendAckEventuallyAt_votedFor
         { node with votedFor := votedFor } request index ↔
       canProduceAppendAckEventuallyAt node request index := by
   unfold canProduceAppendAckEventuallyAt canProduceAppendAckAt
+  rw [protocolNodeState_set_votedFor]
   rw [handleAppendEntriesRequest_votedFor]
   constructor <;> rintro (direct | future)
   · left

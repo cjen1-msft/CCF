@@ -26,24 +26,37 @@ def CCF_BOOTSTRAP_INDEX : Nat := 2
 inductive EventKind where
   | bootstrap
   | replicate
+  | addConfiguration
+  | retiredCommitted
   | sendAppendEntries
   | recvAppendEntries
+  | proposeVote
+  | recvProposeVote
   | commit
   deriving BEq, DecidableEq, Inhabited, Repr
 
 def EventKind.name : EventKind -> String
   | .bootstrap => "bootstrap"
   | .replicate => "replicate"
+  | .addConfiguration => "add_configuration"
+  | .retiredCommitted => "append_retired_committed"
   | .sendAppendEntries => "send_append_entries"
   | .recvAppendEntries => "recv_append_entries"
+  | .proposeVote => "step_down_and_nominate_successor"
+  | .recvProposeVote => "recv_propose_request_vote"
   | .commit => "commit"
 
 def parseEventKind (raw : String) : Except String EventKind :=
   match raw with
   | "bootstrap" => .ok .bootstrap
   | "replicate" => .ok .replicate
+  | "add_configuration" => .ok .addConfiguration
+  | "append_retired_committed" => .ok .retiredCommitted
+  | "retired_committed" => .ok .retiredCommitted
   | "send_append_entries" => .ok .sendAppendEntries
   | "recv_append_entries" => .ok .recvAppendEntries
+  | "step_down_and_nominate_successor" => .ok .proposeVote
+  | "recv_propose_request_vote" => .ok .recvProposeVote
   | "commit" => .ok .commit
   | _ => .error s!"unsupported raft_trace function: {raw}"
 
@@ -75,12 +88,19 @@ structure Observation where
   node : Node
   peer : Option Node := none
   role : Option Role := none
+  preVoteStatus : Option PreVoteStatus := none
+  membershipState : Option MembershipState := none
+  retirementIndex : Option Nat := none
+  retirementCommittableIndex : Option Nat := none
+  retiredCommittedIndex : Option Nat := none
+  configuration : Option (Finset Node) := none
   currentTerm : Option Nat := none
   view : Option Nat := none
   logLength : Option Nat := none
   commitIndex : Option Nat := none
   targetIndex : Option Nat := none
   committable : Option Bool := none
+  proposalTerm : Option Nat := none
   packet : Option PacketObservation := none
   wirePacket : Option WirePacketObservation := none
   sentIndex : Option Nat := none
@@ -112,6 +132,74 @@ structure ParseContext where
   initialNodeIds : List String := []
   bootstrapIndex : Option Nat := none
   bootstrap : Option (Bootstrap Node) := none
+  preVoteStatuses : Node -> Option PreVoteStatus := fun _ => none
+
+def recordPreVoteStatus
+    (context : ParseContext)
+    (node : Node)
+    (status : Option PreVoteStatus) :
+    Except String ParseContext :=
+  match status with
+  | none => .ok context
+  | some status =>
+      match context.preVoteStatuses node with
+      | none =>
+          .ok {
+            context with
+            preVoteStatuses :=
+              Function.update context.preVoteStatuses node (some status)
+          }
+      | some recorded =>
+          if recorded = status then
+            .ok context
+          else
+            .error
+              s!"node {node.val} has inconsistent pre_vote_enabled values"
+
+/-- Recording one node's status does not overwrite another interned node. -/
+theorem recordPreVoteStatus_perNode :
+    let node0 : Node := ⟨0, by decide⟩
+    let node1 : Node := ⟨1, by decide⟩
+    match recordPreVoteStatus {} node0 (some .enabled) with
+    | .error _ => False
+    | .ok first =>
+        match recordPreVoteStatus first node1 (some .capable) with
+        | .error _ => False
+        | .ok second =>
+            second.preVoteStatuses node0 = some .enabled /\
+              second.preVoteStatuses node1 = some .capable := by
+  simp [recordPreVoteStatus, Function.update]
+
+def bootstrapWithRecordedPreVoteStatuses
+    (context : ParseContext)
+    (bootstrap : Bootstrap Node) :
+    Bootstrap Node where
+  configuration := bootstrap.configuration
+  leader := bootstrap.leader
+  leader_mem := bootstrap.leader_mem
+  preVoteStatus := fun node =>
+    (context.preVoteStatuses node).getD .capable
+
+/-- Final bootstrap construction preserves distinct per-node statuses. -/
+theorem bootstrapPreVoteStatus_perNode :
+    let node0 : Node := ⟨0, by decide⟩
+    let node1 : Node := ⟨1, by decide⟩
+    match recordPreVoteStatus {} node0 (some .enabled) with
+    | .error _ => False
+    | .ok first =>
+        match recordPreVoteStatus first node1 (some .capable) with
+        | .error _ => False
+        | .ok second =>
+            let bootstrap :=
+              bootstrapWithRecordedPreVoteStatuses
+                second (inferInstanceAs (Bootstrap Node))
+            bootstrap.preVoteStatus node0 = .enabled /\
+              bootstrap.preVoteStatus node1 = .capable := by
+  simp [
+    recordPreVoteStatus,
+    bootstrapWithRecordedPreVoteStatuses,
+    Function.update
+  ]
 
 def requiredField (json : Json) (key : String) : Except String Json :=
   match json.getObjVal? key with
@@ -206,6 +294,8 @@ def parseRole (raw : String) : Except String Role :=
   match raw.toLower with
   | "leader" => .ok .leader
   | "follower" => .ok .follower
+  | "prevotecandidate" => .ok .preVoteCandidate
+  | "pre_vote_candidate" => .ok .preVoteCandidate
   | "candidate" => .ok .candidate
   | "none" => .ok .none
   | _ => .error s!"unsupported leadership_state: {raw}"
@@ -219,6 +309,26 @@ def optionalRoleField
   | some value => do
       let raw <- value.getStr?
       pure (some (<- parseRole raw))
+
+def parseMembershipState
+    (state : Json) :
+    Except String (Option MembershipState) := do
+  match optionalField state "membership_state" with
+  | none => pure none
+  | some membership =>
+      let raw <- membership.getStr?
+      match raw.toLower with
+      | "active" => pure (some .active)
+      | "retired" =>
+          let phase <- requiredField state "retirement_phase"
+          let phase <- phase.getStr?
+          match phase.toLower with
+          | "ordered" => pure (some .retirementOrdered)
+          | "signed" => pure (some .retirementSigned)
+          | "completed" => pure (some .retirementCompleted)
+          | "retiredcommitted" => pure (some .retiredCommitted)
+          | _ => throw s!"unsupported retirement_phase: {phase}"
+      | _ => throw s!"unsupported membership_state: {raw}"
 
 def projectLedgerIndex
     (bootstrapIndex visible : Nat) :
@@ -268,6 +378,21 @@ def configurationNodeIds (message : Json) : Except String (List String) := do
       let object <- nodes.getObj?
       pure object.keys
 
+def configurationArgument
+    (message : Json) :
+    Except String (Nat × List String) := do
+  let args <- requiredField message "args"
+  let configuration <- requiredField args "configuration"
+  let index <- requiredField configuration "idx" >>= jsonNat
+  let nodes <- requiredField configuration "nodes"
+  let nodeIds <-
+    match nodes.getArr? with
+    | .ok array => array.toList.mapM nodeIdText
+    | .error _ =>
+        let object <- nodes.getObj?
+        pure object.keys
+  pure (index, nodeIds)
+
 def sameNodeIds (left right : List String) : Bool :=
   let left := left.eraseDups
   let right := right.eraseDups
@@ -284,7 +409,8 @@ def ignoredRecord (line : String) : Except String Bool := do
   if
       functionName == "execute_append_entries_sync" ||
       functionName == "send_append_entries_response" ||
-      functionName == "recv_append_entries_response" then
+      functionName == "recv_append_entries_response" ||
+      functionName == "become_candidate" then
     pure true
   else if functionName == "commit" then
     let state <- requiredField message "state"
@@ -395,6 +521,21 @@ def parseObservation
   let rawLastIndex <- optionalNatField state "last_idx"
   let rawCommitIndex <- optionalNatField state "commit_idx"
   let role <- optionalRoleField state "leadership_state"
+  let membershipState <- parseMembershipState state
+  let preVoteEnabled <- optionalBoolField state "pre_vote_enabled"
+  let preVoteStatus :=
+    preVoteEnabled.map fun enabled =>
+      if enabled then PreVoteStatus.enabled else .capable
+  let context <- recordPreVoteStatus context node preVoteStatus
+  let retirementIndex <-
+    projectOptionalSentinelIndex bootstrapIndex
+      (<- optionalNatField state "retirement_idx")
+  let retirementCommittableIndex <-
+    projectOptionalSentinelIndex bootstrapIndex
+      (<- optionalNatField state "retirement_committable_idx")
+  let retiredCommittedIndex <-
+    projectOptionalSentinelIndex bootstrapIndex
+      (<- optionalNatField state "retired_committed_idx")
   if
       currentTerm.isNone ||
       rawLastIndex.isNone ||
@@ -419,6 +560,7 @@ def parseObservation
     | _ => projectOptionalSentinelIndex bootstrapIndex rawCommitIndex
   let mut context := context
   let mut peer : Option Node := none
+  let mut configuration : Option (Finset Node) := none
   match kind with
   | .sendAppendEntries =>
       let (parsed, next) <- parseNodeField context message "to_node_id"
@@ -428,6 +570,16 @@ def parseObservation
       let (parsed, next) <- parseNodeField context message "from_node_id"
       peer := some parsed
       context := next
+  | .recvProposeVote =>
+      let (parsed, next) <- parseNodeField context message "from_node_id"
+      peer := some parsed
+      context := next
+
+  | .addConfiguration =>
+      let (_, rawNodes) <- configurationArgument message
+      let (parsed, next) <- internNodeSet context rawNodes
+      configuration := some parsed
+      context := next
   | _ => pure ()
   let committable <- optionalBoolField message "globally_committable"
   let targetIndex <-
@@ -436,11 +588,30 @@ def parseObservation
     | .replicate =>
         let raw <- optionalNatField message "seqno"
         projectOptionalLedgerIndex bootstrapIndex raw
-    | .sendAppendEntries | .recvAppendEntries => pure none
+    | .addConfiguration =>
+        let (rawIndex, _) <- configurationArgument message
+        pure (some (<- projectLedgerIndex bootstrapIndex rawIndex))
+    | .retiredCommitted =>
+        let raw <- optionalNatField message "seqno"
+        projectOptionalLedgerIndex bootstrapIndex raw
+    | .sendAppendEntries | .recvAppendEntries |
+        .proposeVote | .recvProposeVote => pure none
     | .commit =>
         pure (some (<- projectLedgerIndex bootstrapIndex
           (<- requiredArgumentIndex message)))
-  let parsedPacket <- parsePacket message bootstrapIndex
+  let proposalTerm <-
+    match kind with
+    | .recvProposeVote =>
+        match optionalField message "packet" with
+        | none => throw "recv_propose_request_vote is missing packet"
+        | some packet =>
+            pure (some (<- jsonNat (<- requiredField packet "term")))
+    | _ => pure none
+  let parsedPacket <-
+    match kind with
+    | .sendAppendEntries | .recvAppendEntries =>
+        parsePacket message bootstrapIndex
+    | _ => pure none
   let packet := parsedPacket.map Prod.fst
   let wirePacket := parsedPacket.map Prod.snd
   let sentIndex <-
@@ -462,6 +633,8 @@ def parseObservation
   if kind == .recvAppendEntries &&
       (peer.isNone || packet.isNone) then
     throw "recv_append_entries requires packet and from_node_id"
+  if kind == .recvProposeVote && peer.isNone then
+    throw "recv_propose_request_vote requires from_node_id"
   match packet with
   | some packet =>
       let some previous := packet.previousIndex
@@ -482,10 +655,11 @@ def parseObservation
         if !distinctIds.contains leaderId then
           throw
             "bootstrap configuration must be nonempty and contain the observed leader"
-        let (configuration, seeded) <- internNodeSet context distinctIds
-        if leaderMember : Membership.mem configuration node then
+        let (bootstrapConfiguration, seeded) <-
+          internNodeSet context distinctIds
+        if leaderMember : Membership.mem bootstrapConfiguration node then
           let bootstrap : Bootstrap Node := {
-            configuration
+            configuration := bootstrapConfiguration
             leader := node
             leader_mem := leaderMember
           }
@@ -499,10 +673,6 @@ def parseObservation
           throw
             "internal bootstrap membership invariant failed"
     | .commit =>
-        let currentIds <- configurationNodeIds message
-        if !sameNodeIds context.initialNodeIds currentIds then
-          throw
-            "commit configurations differ from the supported bootstrap configuration"
         pure context
     | _ => pure context
   pure ({
@@ -511,17 +681,73 @@ def parseObservation
     node
     peer
     role
+    preVoteStatus
+    membershipState
+    retirementIndex
+    retirementCommittableIndex
+    retiredCommittedIndex
+    configuration
     currentTerm
     view
     logLength
     commitIndex
     targetIndex
     committable
+    proposalTerm
     packet
     wirePacket
     sentIndex
     matchIndex
   }, finalContext)
+
+/--
+Mirror the reducer's callback grouping before canonical search:
+
+* a leader `replicate` immediately followed by `add_configuration` is one
+  `changeConfiguration` action;
+* a follower `add_configuration` callback belongs to the preceding receive.
+-/
+def coalesceObservations :
+    List Observation -> Except String (List Observation × Nat)
+  | [] => .ok ([], 0)
+  | [observation] => .ok ([observation], 0)
+  | first :: second :: remaining =>
+      match first.kind, second.kind, second.role with
+      | .replicate, .addConfiguration, some .leader =>
+          if _sameNode : first.node = second.node then
+            if _noncommittable : first.committable = some false then
+              if _sameIndex : first.targetIndex = second.targetIndex then
+                coalesceObservations (second :: remaining) >>= fun result =>
+                  .ok (result.1, result.2 + 1)
+              else
+                .error
+                  s!"line {second.line}: configuration callback index differs from preceding replicate"
+            else
+              .error
+                s!"line {second.line}: leader configuration callback lacks a noncommittable replicate"
+          else
+            coalesceObservations (second :: remaining) >>= fun result =>
+              .ok (first :: result.1, result.2)
+      | .recvAppendEntries, .addConfiguration, role =>
+          if _followerCallback : role != some .leader then
+            if _sameNode : first.node = second.node then
+              if _sameIndex :
+                  (first.packet.bind fun packet => packet.index) =
+                    second.targetIndex then
+                coalesceObservations remaining >>= fun result =>
+                  .ok (first :: result.1, result.2 + 1)
+              else
+                .error
+                  s!"line {second.line}: follower configuration callback index differs from received AppendEntries"
+            else
+              coalesceObservations (second :: remaining) >>= fun result =>
+                .ok (first :: result.1, result.2)
+          else
+            coalesceObservations (second :: remaining) >>= fun result =>
+              .ok (first :: result.1, result.2)
+      | _, _, _ =>
+          coalesceObservations (second :: remaining) >>= fun result =>
+            .ok (first :: result.1, result.2)
 
 def parseLines
     (lines : List String)
@@ -534,13 +760,18 @@ def parseLines
   | [] =>
       match context.bootstrapIndex, context.bootstrap with
       | some bootstrapIndex, some bootstrap =>
-          .ok {
-            observations
-            bootstrapIndex
-            bootstrap
-            nodeIds := context.nodeIds
-            ignoredRecords
-          }
+          match coalesceObservations observations.toList with
+          | .error message => .error message
+          | .ok (coalesced, coalescedRecords) =>
+              let bootstrap :=
+                bootstrapWithRecordedPreVoteStatuses context bootstrap
+              .ok {
+                observations := coalesced.toArray
+                bootstrapIndex
+                bootstrap
+                nodeIds := context.nodeIds
+                ignoredRecords := ignoredRecords + coalescedRecords
+              }
       | _, _ => .error "trace is empty or has no bootstrap observation"
   | line :: remaining =>
       if line.trimAscii.isEmpty then
@@ -576,6 +807,7 @@ def requireSome {alpha : Type}
 def roleName : Role -> String
   | .none => "none"
   | .follower => "follower"
+  | .preVoteCandidate => "pre-vote-candidate"
   | .candidate => "candidate"
   | .leader => "leader"
 
@@ -607,6 +839,31 @@ def checkVisibleState
       check (expected == nodeState.role)
         s!"state.leadership_state: observed {roleName expected}, model has {
           roleName nodeState.role}"
+  match observation.preVoteStatus with
+  | none => pure ()
+  | some expected =>
+      check (expected = state.preVoteStatus observation.node)
+        "state.pre_vote_enabled disagrees with the model pre-vote status"
+  match observation.membershipState with
+  | none => pure ()
+  | some expected =>
+      check (expected = nodeState.membershipState)
+        "state membership/retirement phase disagrees with the model"
+  match observation.retirementIndex with
+  | none => pure ()
+  | some expected =>
+      check (nodeState.retirementIndex = some expected)
+        "state.retirement_idx disagrees with the model"
+  match observation.retirementCommittableIndex with
+  | none => pure ()
+  | some expected =>
+      check (nodeState.retirementCommittableIndex = some expected)
+        "state.retirement_committable_idx disagrees with the model"
+  match observation.retiredCommittedIndex with
+  | none => pure ()
+  | some expected =>
+      check (nodeState.retiredCommittedIndex = some expected)
+        "state.retired_committed_idx disagrees with the model"
 
 def packetTailTerm (request : AppendEntriesRequest Node TxId) : Nat :=
   match request.entries.getLast? with
@@ -676,6 +933,10 @@ def replicateCandidates
     requireSome "msg.globally_committable" observation.committable
   if committable then
     pure [[.signCommittableMessages observation.node]]
+  else if
+      (state.nodes observation.node).membershipState =
+        .retirementCompleted then
+    pure [[.appendRetiredCommitted observation.node]]
   else
     let some txId :=
       allTxIds.find? fun candidate =>
@@ -692,6 +953,57 @@ def replicatePost
   check ((after.nodes observation.node).log.length == target)
     s!"replicate post-state log length is {
       (after.nodes observation.node).log.length}, expected {target}"
+
+def addConfigurationPre
+    (observation : Observation)
+    (state : SimState) :
+    Except String Unit := do
+  checkVisibleState observation state
+  let _ <- requireSome "msg.args.configuration" observation.configuration
+  let _ <- requireSome "msg.args.configuration.idx" observation.targetIndex
+  pure ()
+
+def addConfigurationCandidates
+    (observation : Observation)
+    (_ : SimState) :
+    Except String (List (List SimAction)) := do
+  let configuration <-
+    requireSome "msg.args.configuration" observation.configuration
+  pure [[.changeConfiguration observation.node configuration]]
+
+def addConfigurationPost
+    (observation : Observation)
+    (_ : SimState)
+    (after : SimState) :
+    Except String Unit := do
+  let target <- requireSome "msg.args.configuration.idx" observation.targetIndex
+  check ((after.nodes observation.node).log.length == target)
+    s!"add_configuration post-state log length is {
+      (after.nodes observation.node).log.length}, expected {target}"
+
+def retiredCommittedPre
+    (observation : Observation)
+    (state : SimState) :
+    Except String Unit :=
+  checkVisibleState observation state
+
+def retiredCommittedCandidates
+    (observation : Observation)
+    (_ : SimState) :
+    Except String (List (List SimAction)) :=
+  pure [[.appendRetiredCommitted observation.node]]
+
+def retiredCommittedPost
+    (observation : Observation)
+    (_ : SimState)
+    (after : SimState) :
+    Except String Unit := do
+  match observation.targetIndex with
+  | none => pure ()
+  | some target =>
+      check ((after.nodes observation.node).log.length == target)
+        s!"retired-committed post-state log length is {
+          (after.nodes observation.node).log.length}, expected {target}"
 
 def sendAppendPre
     (observation : Observation)
@@ -757,6 +1069,63 @@ def recvAppendPost
     Except String Unit :=
   pure ()
 
+def proposeVotePre
+    (observation : Observation)
+    (state : SimState) :
+    Except String Unit :=
+  checkVisibleState observation state
+
+def proposeVoteCandidates
+    (observation : Observation)
+    (_ : SimState) :
+    Except String (List (List SimAction)) :=
+  pure
+    (allNodes.map fun destination =>
+      [.proposeVote observation.node destination])
+
+def proposeVotePost
+    (observation : Observation)
+    (_ : SimState)
+    (after : SimState) :
+    Except String Unit :=
+  check
+    (allNodes.any fun destination =>
+      (after.network destination).any fun message =>
+        match message with
+        | .proposeVoteRequest request =>
+            request.source == observation.node
+        | _ => false)
+    "proposal post-state has no queued ProposeVoteRequest"
+
+def recvProposeVotePre
+    (observation : Observation)
+    (state : SimState) :
+    Except String Unit := do
+  checkVisibleState observation state
+  let source <- requireSome "msg.from_node_id" observation.peer
+  let term <- requireSome "msg.packet.term" observation.proposalTerm
+  match takeFirstFrom source (state.network observation.node) with
+  | some (.proposeVoteRequest request, _) =>
+      check (request.term == term)
+        "recv_propose_request_vote packet term differs from queued proposal"
+  | some _ =>
+      throw "recv_propose_request_vote: next queued message is not proposal"
+  | none =>
+      throw "recv_propose_request_vote: no queued proposal from source"
+
+def recvProposeVoteCandidates
+    (observation : Observation)
+    (_ : SimState) :
+    Except String (List (List SimAction)) := do
+  let source <- requireSome "msg.from_node_id" observation.peer
+  pure [[.receive source observation.node]]
+
+def recvProposeVotePost
+    (_ : Observation)
+    (_ _ : SimState) :
+    Except String Unit :=
+  pure ()
+
 def coalescedRecvPre
     (observation : Observation)
     (state : SimState) :
@@ -791,9 +1160,14 @@ def commitPre
 
 def commitCandidates
     (observation : Observation)
-    (_ : SimState) :
+    (state : SimState) :
     Except String (List (List SimAction)) :=
-  pure [[.advanceCommitIndex observation.node]]
+  if terminalRetirementCommit state observation.node then
+    pure
+      (allNodes.map fun destination =>
+        [.advanceCommitIndexAndProposeVote observation.node destination])
+  else
+    pure [[.advanceCommitIndex observation.node]]
 
 def commitPost
     (observation : Observation)
@@ -816,6 +1190,16 @@ def eventSpec : EventKind -> EventSpec
       candidateSteps := replicateCandidates
       post := replicatePost
     }
+  | .addConfiguration => {
+      pre := addConfigurationPre
+      candidateSteps := addConfigurationCandidates
+      post := addConfigurationPost
+    }
+  | .retiredCommitted => {
+      pre := retiredCommittedPre
+      candidateSteps := retiredCommittedCandidates
+      post := retiredCommittedPost
+    }
   | .sendAppendEntries => {
       pre := sendAppendPre
       candidateSteps := sendAppendCandidates
@@ -825,6 +1209,16 @@ def eventSpec : EventKind -> EventSpec
       pre := recvAppendPre
       candidateSteps := recvAppendCandidates
       post := recvAppendPost
+    }
+  | .proposeVote => {
+      pre := proposeVotePre
+      candidateSteps := proposeVoteCandidates
+      post := proposeVotePost
+    }
+  | .recvProposeVote => {
+      pre := recvProposeVotePre
+      candidateSteps := recvProposeVoteCandidates
+      post := recvProposeVotePost
     }
   | .commit => {
       pre := commitPre
@@ -962,6 +1356,8 @@ def entryCode : Entry Node TxId -> String
   | { term, content := .signature } => s!"{term}:s"
   | { term, content := .reconfiguration nodes } =>
       s!"{term}:c[{nodeSetCode nodes}]"
+  | { term, content := .retiredCommitted nodes } =>
+      s!"{term}:r[{nodeSetCode nodes}]"
 
 def messageCode : Message Node TxId -> String
   | .appendEntriesRequest request =>
@@ -978,6 +1374,14 @@ def messageCode : Message Node TxId -> String
   | .requestVoteResponse response =>
       s!"vp:{response.source.val}:{response.destination.val}:{response.term}:{
         response.voteGranted}"
+  | .requestPreVote request =>
+      s!"pvq:{request.source.val}:{request.destination.val}:{request.term}:{
+        request.lastCommittableTerm}:{request.lastCommittableIndex}"
+  | .requestPreVoteResponse response =>
+      s!"pvp:{response.source.val}:{response.destination.val}:{response.term}:{
+        response.voteGranted}"
+  | .proposeVoteRequest request =>
+      s!"prv:{request.source.val}:{request.destination.val}:{request.term}"
 
 def nodeStateCode (state : NodeState Node TxId) : String :=
   let sent :=
@@ -986,9 +1390,18 @@ def nodeStateCode (state : NodeState Node TxId) : String :=
     String.intercalate "." (allNodes.map fun node => toString (state.matchIndex node))
   let log := String.intercalate "." (state.log.map entryCode)
   let votedFor := state.votedFor.map (fun node => toString node.val) |>.getD "-"
+  let membership :=
+    match state.membershipState with
+    | .active => "active"
+    | .retirementOrdered => "ordered"
+    | .retirementSigned => "signed"
+    | .retirementCompleted => "completed"
+    | .retiredCommitted => "retired-committed"
   s!"{roleName state.role},{state.currentTerm},{state.commitIndex},[{log}],{
     sent},{matched},{state.isNewFollower},{votedFor},{
-    nodeSetCode state.votesGranted}"
+    nodeSetCode state.votesGranted},{nodeSetCode state.preVotesGranted},{
+    membership},{state.retirementIndex},{state.retirementCommittableIndex},{
+    state.retiredCommittedIndex}"
 
 def stateKey (state : SimState) : String :=
   let nodes :=
@@ -998,8 +1411,17 @@ def stateKey (state : SimState) : String :=
     String.intercalate "|"
       (allNodes.map fun node =>
         String.intercalate "." ((state.network node).map messageCode))
+  let preVoteStatus :=
+    String.intercalate "."
+      (allNodes.map fun node =>
+        match state.preVoteStatus node with
+        | .capable => "c"
+        | .enabled => "e")
+  let retirementCompleted :=
+    String.intercalate "|"
+      (allNodes.map fun node => nodeSetCode (state.retirementCompleted node))
   s!"{nodes}#{network}#{txSetCode state.submittedTxIds}#{
-    nodeSetCode state.hasJoined}"
+    nodeSetCode state.hasJoined}#{preVoteStatus}#{retirementCompleted}"
 
 /--
 The five-event slice omits AppendEntries response records. Those response
@@ -1452,7 +1874,8 @@ def ordinaryReplicationCount (trace : ParsedTrace) : Nat :=
     (fun count observation =>
       if
           observation.kind == .replicate &&
-          observation.committable == some false then
+          observation.committable == some false &&
+          observation.membershipState != some .retirementCompleted then
         count + 1
       else
         count)

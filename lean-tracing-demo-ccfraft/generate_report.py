@@ -236,7 +236,6 @@ def main() -> int:
     audit_files = (
         ("Model.lean", "inductive Action"),
         ("Properties.lean", "structure ConsensusSafety"),
-        ("Reduction.lean", "def preprocess"),
         ("reduction.py", "def preprocess"),
         ("TraceProperties.lean", "theorem lowerTrace_correct"),
     )

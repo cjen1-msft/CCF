@@ -632,8 +632,10 @@ def SuccessfulResponseSnapshot
         (state.nodes response.destination).currentTerm /\
       (response.term =
           (state.nodes response.destination).currentTerm ->
-        (state.nodes response.destination).role = .leader /\
-          history <+: (state.nodes response.destination).log)
+        ((state.nodes response.destination).role = .leader /\
+            history <+: (state.nodes response.destination).log) \/
+          (state.nodes response.destination).role = .follower \/
+          (state.nodes response.destination).role = .preVoteCandidate)
 
 /-- A vote snapshot ends exactly at its latest signature. -/
 abbrev EndsAtMaxCommittable (history : List (Entry Node TxId)) : Prop :=
@@ -1011,12 +1013,15 @@ structure TermOwnershipFacts
         Exists fun owner => owners entry.term = some owner
   canonicalMonoLog :
     forall term, MonoHistory (canonicalHistory term)
+  /-- A current-term owner is active or has stepped down without a new term. -/
   ownerProgress :
     forall term owner,
       owners term = some owner ->
         term <= (state.nodes owner).currentTerm /\
           (term = (state.nodes owner).currentTerm ->
-            (state.nodes owner).role = .leader)
+            (state.nodes owner).role = .leader \/
+              (state.nodes owner).role = .follower \/
+                (state.nodes owner).role = .preVoteCandidate)
   queuedAppendMetadata :
     forall destination request,
       Message.appendEntriesRequest request ∈ state.network destination ->
@@ -1292,7 +1297,7 @@ def canProduceAppendAckAt
     (index : Nat) : Prop :=
   Exists fun nextNode =>
     Exists fun response =>
-      handleAppendEntriesRequest? node request =
+      handleAppendEntriesRequest? (protocolNodeState node) request =
           some (nextNode, response) /\
         response.success = true /\
         index <= response.lastLogIndex
@@ -2215,8 +2220,79 @@ structure InvariantFacts
   joinedCarriers : JoinedCarrierFacts state
   allocatedNodesExactlyJoined : AllocatedNodesExactlyJoined state
 
-/-- Existentially package every runtime and proof-only invariant component. -/
-def SystemInductiveInvariant (state : State Node TxId) : Prop :=
+/--
+A retired-committed entry names a node only after a signed frontier has
+committed a configuration removing that node.
+-/
+def HasCommittedRemovalBefore
+    (log : List (Entry Node TxId))
+    (commitIndex entryIndex : Nat)
+    (retired : Node) : Prop :=
+  Exists fun committedFrontier =>
+    committedFrontier < entryIndex /\
+      committedFrontier <= commitIndex /\
+      isSignatureAt log committedFrontier = true /\
+      (retirementIndexInLog
+        retired (log.take committedFrontier)).isSome
+
+/-- Every retired-committed payload in one log has committed removal evidence. -/
+def RetiredCommittedLogProvenance
+    (log : List (Entry Node TxId))
+    (commitIndex : Nat) : Prop :=
+  forall index entry,
+    entryAt? log index = some entry ->
+      match entry.content with
+      | .retiredCommitted nodes =>
+          forall retired,
+            retired ∈ nodes ->
+              HasCommittedRemovalBefore log commitIndex index retired
+      | _ => True
+
+/-- An AppendEntries snapshot carries provenance for every retired payload. -/
+def RetiredCommittedRequestProvenance
+    (request : AppendEntriesRequest Node TxId) : Prop :=
+  Exists fun history =>
+    RequestSnapshots history request /\
+      RetiredCommittedLogProvenance history request.leaderCommit
+
+/-- Log-derived retirement metadata, provenance, and observer-set invariants. -/
+structure RetirementInvariantFacts (state : State Node TxId) : Prop where
+  consistency :
+    forall node,
+      (state.nodes node).membershipState =
+        (refreshRetirementState node (state.nodes node)).membershipState
+  provenance :
+    forall node,
+      (state.nodes node).retirementIndex =
+          (refreshRetirementState node (state.nodes node)).retirementIndex /\
+        (state.nodes node).retirementCommittableIndex =
+          (refreshRetirementState
+            node (state.nodes node)).retirementCommittableIndex /\
+        (state.nodes node).retiredCommittedIndex =
+          (refreshRetirementState
+            node (state.nodes node)).retiredCommittedIndex
+  terminalRole :
+    forall node,
+      (state.nodes node).membershipState = .retiredCommitted ->
+        (state.nodes node).role = .follower
+  observerSets :
+    forall observer,
+      state.retirementCompleted observer =
+        retirementCompletedNodes
+          (state.nodes observer).log
+          (state.nodes observer).commitIndex
+  retiredCommittedEntries :
+    forall observer,
+      RetiredCommittedLogProvenance
+        (state.nodes observer).log
+        (state.nodes observer).commitIndex
+  appendRequests :
+    forall destination request,
+      Message.appendEntriesRequest request ∈ state.network destination ->
+        RetiredCommittedRequestProvenance request
+
+/-- Existentially package every consensus-safety invariant component. -/
+def SafetyInductiveInvariant (state : State Node TxId) : Prop :=
   Exists fun votes =>
     Exists fun appendHistory =>
       Exists fun responseHistory =>
@@ -2226,5 +2302,9 @@ def SystemInductiveInvariant (state : State Node TxId) : Prop :=
               InvariantFacts
                 state votes appendHistory responseHistory voteRequestHistory
                   voteCandidateHistory voteVoterHistory
+
+/-- The complete inductive invariant includes retirement consistency. -/
+def SystemInductiveInvariant (state : State Node TxId) : Prop :=
+  SafetyInductiveInvariant state /\ RetirementInvariantFacts state
 
 end CCFRaft

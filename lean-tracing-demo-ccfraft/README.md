@@ -9,8 +9,7 @@ The manual review boundary contains these files:
 
 - `Model.lean` defines `CCFRaft.Action`, `CCFRaft.Enabled`, and `CCFRaft.next`.
 - `Properties.lean` defines the three consensus-safety claims.
-- `Reduction.lean` defines the Lean preprocessing and reduction rules.
-- `reduction.py` defines the Python preprocessing and reduction rules.
+- `reduction.py` defines the preprocessing and reduction rules.
 - `TraceProperties.lean` defines `ValidEntryState`,
   `MidtraceSatisfiable`, `FormulaSatisfiable`, and `lowerTrace_correct`.
 
@@ -122,9 +121,8 @@ The command:
    the checked-in certificates.
 6. Writes `Report/index.html`.
 
-The Lean and Python reducers are separate audited implementations. The Lean
-reducer compiles and covers all action constructors. It does not yet consume
-the NDJSON fixtures, so reducer equivalence remains a manual source review.
+The Python reducer is the sole reducer implementation. Its deterministic JSON
+certificate is the input to SMT lowering.
 
 To reproduce the captured implementation traces, run:
 

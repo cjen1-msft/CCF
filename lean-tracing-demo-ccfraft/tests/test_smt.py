@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT))
 
 from reduction import build_certificate
 from Shared.smt import (
+    ROLE_VALUES,
     build_formula,
     parse_unsat_core,
     reduce_unsat_core,
@@ -146,6 +147,111 @@ class SmtFormulaTests(unittest.TestCase):
             formula.text,
         )
 
+    def test_pre_vote_actions_use_distinct_roles_and_term_updates(self) -> None:
+        pre_vote = build_formula(
+            _single_action_certificate("becomePreVoteCandidate", "0")
+        ).text
+        self.assertIn(
+            f"(= (select state_0001_role 0) " f"{ROLE_VALUES['preVoteCandidate']})",
+            pre_vote,
+        )
+        self.assertIn("(= (select state_0000_pre_vote_status 0) true)", pre_vote)
+        self.assertIn("(= state_0001_term state_0000_term)", pre_vote)
+
+        candidate = build_formula(
+            _single_action_certificate("becomeCandidate", "0")
+        ).text
+        self.assertIn(
+            f"(= (select state_0000_role 0) " f"{ROLE_VALUES['preVoteCandidate']})",
+            candidate,
+        )
+        self.assertIn(
+            "(= (select state_0001_term 0) " "(+ (select state_0000_term 0) 1))",
+            candidate,
+        )
+
+        request = build_formula(
+            _single_action_certificate(
+                "requestPreVote",
+                "0",
+                destination="1",
+            )
+        ).text
+        self.assertIn(
+            f"(= (select state_0000_role 0) " f"{ROLE_VALUES['preVoteCandidate']})",
+            request,
+        )
+
+    def test_retirement_and_nomination_actions_are_distinct(self) -> None:
+        retired = build_formula(
+            _single_action_certificate("appendRetiredCommitted", "0")
+        ).text
+        self.assertIn(
+            f"(= (select state_0000_role 0) {ROLE_VALUES['leader']})",
+            retired,
+        )
+        self.assertIn(
+            "(+ (select state_0000_log_length 0) 1)",
+            retired,
+        )
+
+        step_down = build_formula(_single_action_certificate("checkQuorum", "0")).text
+        self.assertIn(
+            f"(= (select state_0001_role 0) {ROLE_VALUES['follower']})",
+            step_down,
+        )
+
+        nomination = build_formula(
+            _single_action_certificate(
+                "proposeVote",
+                "0",
+                destination="1",
+            )
+        ).text
+        self.assertIn(
+            f"(= (select state_0000_role 0) {ROLE_VALUES['leader']})",
+            nomination,
+        )
+
+    def test_retirement_observations_encode_optional_indices(self) -> None:
+        certificate = {
+            "artifact_kind": "ccfraft_reduction_certificate",
+            "schema_version": "ccfraft-reduction-certificate/v2",
+            "steps": [
+                {
+                    "kind": "observation",
+                    "node": "0",
+                    "provenance": [
+                        {
+                            "function": "test",
+                            "line": 1,
+                            "timestamp": "1",
+                        }
+                    ],
+                    "rule": "test",
+                    "value": "retirementSigned",
+                    "variable": "membershipState",
+                },
+                {
+                    "kind": "observation",
+                    "node": "0",
+                    "provenance": [
+                        {
+                            "function": "test",
+                            "line": 1,
+                            "timestamp": "1",
+                        }
+                    ],
+                    "rule": "test",
+                    "value": None,
+                    "variable": "retiredCommittedIndex",
+                },
+            ],
+        }
+        formula = build_formula(certificate).text
+        self.assertIn("(= (select state_0000_membership_state 0) 2)", formula)
+        self.assertIn("(= (select state_0000_retired_committed_index 0) -1)", formula)
+
     def test_first_message_is_validated_but_queue_selection_is_unencoded(
         self,
     ) -> None:
@@ -168,6 +274,7 @@ class SmtFormulaTests(unittest.TestCase):
                         "batchCount": 1,
                         "batchPosition": 1,
                         "lastCommittableIndex": 0,
+                        "lastCommittableTerm": 0,
                         "messageType": "raft_request_vote",
                         "source": "0",
                         "term": 1,
@@ -176,6 +283,7 @@ class SmtFormulaTests(unittest.TestCase):
                 },
                 {
                     "action": "receive",
+                    "evidence": {"messageType": "raft_request_vote"},
                     "kind": "action",
                     "node": "1",
                     "provenance": [

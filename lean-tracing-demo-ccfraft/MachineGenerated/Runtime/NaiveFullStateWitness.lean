@@ -31,6 +31,7 @@ structure RawEntrySlot where
   tagValue : Nat
   transactionId : Nat
   configurationMembership : List Bool
+  retiredMembership : List Bool
 
 structure RawNode where
   node : Nat
@@ -43,6 +44,16 @@ structure RawNode where
   votedForHasValue : Bool
   votedForValue : Nat
   votesGrantedMembership : List Bool
+  preVotesGrantedMembership : List Bool
+  membershipState : String
+  membershipStateValue : Nat
+  retirementIndexHasValue : Bool
+  retirementIndexValue : Nat
+  retirementCommittableIndexHasValue : Bool
+  retirementCommittableIndexValue : Nat
+  retiredCommittedIndexHasValue : Bool
+  retiredCommittedIndexValue : Nat
+  retirementCompletedMembership : List Bool
   sentIndex : List Nat
   matchIndex : List Nat
   logCapacity : Nat
@@ -65,6 +76,7 @@ structure RawQueueSlot where
   entryTagValue : Nat
   entryTransactionId : Nat
   entryConfigurationMembership : List Bool
+  entryRetiredMembership : List Bool
   responseSuccess : Bool
   responseLastLogIndex : Nat
   voteLastCommittableTerm : Nat
@@ -82,6 +94,7 @@ structure RawInitialState where
   network : List RawQueue
   submittedTransactionMembership : List Bool
   hasJoinedMembership : List Bool
+  preVoteStatusEnabled : List Bool
 
 structure RawAction where
   action : Nat
@@ -132,6 +145,32 @@ def decodeNodeMembership
   pure
     ((allNodes.filter fun node => membership[node.val]!).toFinset)
 
+/-- Encode one finite node set in identifier order. -/
+def encodeNodeMembership (nodes : Finset Node) : List Bool :=
+  allNodes.map fun node => decide (node ∈ nodes)
+
+/-- Encode the speculative vote set stored by one node. -/
+def encodePreVotesGranted
+    (state : NodeState Node TxId) :
+    List Bool :=
+  encodeNodeMembership state.preVotesGranted
+
+/-- Encode immutable per-node pre-vote mode in identifier order. -/
+def encodePreVoteStatus
+    (status : Node -> PreVoteStatus) :
+    List Bool :=
+  allNodes.map fun node => decide (status node = .enabled)
+
+/-- Decode the raw pre-vote enable bit used by full-state witnesses. -/
+def decodePreVoteStatus (enabled : Bool) : PreVoteStatus :=
+  if enabled then .enabled else .capable
+
+omit [Bootstrap Node] in
+@[simp]
+theorem decodePreVoteStatus_encode (status : PreVoteStatus) :
+    decodePreVoteStatus (decide (status = .enabled)) = status := by
+  cases status <;> decide
+
 def decodeTxMembership
     (field : String)
     (membership : List Bool) :
@@ -149,7 +188,7 @@ def decodeActiveEntry
     (field : String)
     (term tagValue transactionId : Nat)
     (tag : String)
-    (configurationMembership : List Bool) :
+    (configurationMembership retiredMembership : List Bool) :
     Except String (Entry Node TxId) := do
   match tagValue with
   | 1 =>
@@ -157,6 +196,7 @@ def decodeActiveEntry
       expectNoMembers
         s!"{field}.configuration_membership"
         configurationMembership
+      expectNoMembers s!"{field}.retired_membership" retiredMembership
       let txId <- txOfNat s!"{field}.transaction_id" transactionId
       pure { term, content := .transaction txId }
   | 2 =>
@@ -165,6 +205,7 @@ def decodeActiveEntry
       expectNoMembers
         s!"{field}.configuration_membership"
         configurationMembership
+      expectNoMembers s!"{field}.retired_membership" retiredMembership
       pure { term, content := .signature }
   | 3 =>
       expectEq s!"{field}.tag" tag "reconfiguration"
@@ -176,7 +217,22 @@ def decodeActiveEntry
       expectTrue
         s!"{field}.configuration_membership"
         (decide configuration.Nonempty)
+      expectNoMembers s!"{field}.retired_membership" retiredMembership
       pure { term, content := .reconfiguration configuration }
+  | 4 =>
+      expectEq s!"{field}.tag" tag "retiredCommitted"
+      expectEq s!"{field}.transaction_id" transactionId 0
+      expectNoMembers
+        s!"{field}.configuration_membership"
+        configurationMembership
+      let retired <-
+        decodeNodeMembership
+          s!"{field}.retired_membership"
+          retiredMembership
+      expectTrue
+        s!"{field}.retired_membership"
+        (decide retired.Nonempty)
+      pure { term, content := .retiredCommitted retired }
   | _ =>
       throw
         s!"{field}.tag: unsupported active entry tag {tagValue} ({tag})"
@@ -185,7 +241,7 @@ def validateUnusedEntry
     (field : String)
     (term tagValue transactionId : Nat)
     (tag : String)
-    (configurationMembership : List Bool) :
+    (configurationMembership retiredMembership : List Bool) :
     Except String Unit := do
   expectEq s!"{field}.term" term 0
   expectEq s!"{field}.tag" tag "unused"
@@ -194,6 +250,7 @@ def validateUnusedEntry
   expectNoMembers
     s!"{field}.configuration_membership"
     configurationMembership
+  expectNoMembers s!"{field}.retired_membership" retiredMembership
 
 def decodeRole
     (field role : String)
@@ -204,10 +261,42 @@ def decodeRole
   | 1 => expectEq field role "follower" *> pure .follower
   | 2 => expectEq field role "candidate" *> pure .candidate
   | 3 => expectEq field role "leader" *> pure .leader
+  | 4 => expectEq field role "preVoteCandidate" *> pure .preVoteCandidate
   | _ => throw s!"{field}: unsupported role tag {roleValue} ({role})"
 
+def decodeMembershipState
+    (field value : String)
+    (tag : Nat) :
+    Except String MembershipState :=
+  match tag with
+  | 0 => expectEq field value "active" *> pure .active
+  | 1 =>
+      expectEq field value "retirementOrdered" *>
+        pure .retirementOrdered
+  | 2 =>
+      expectEq field value "retirementSigned" *>
+        pure .retirementSigned
+  | 3 =>
+      expectEq field value "retirementCompleted" *>
+        pure .retirementCompleted
+  | 4 =>
+      expectEq field value "retiredCommitted" *>
+        pure .retiredCommitted
+  | _ => throw s!"{field}: unsupported membership tag {tag} ({value})"
+
+def decodeOptionalIndex
+    (field : String)
+    (present : Bool)
+    (value : Nat) :
+    Except String (Option Nat) :=
+  if present then
+    pure (some value)
+  else do
+    expectEq s!"{field}.value" value 0
+    pure none
+
 def decodeNode (expectedNode : Nat) (raw : RawNode) :
-    Except String (NodeState Node TxId) := do
+    Except String (NodeState Node TxId × Finset Node) := do
   let fieldPrefix := s!"S0.nodes[{expectedNode}]"
   expectEq s!"{fieldPrefix}.node" raw.node expectedNode
   expectEq s!"{fieldPrefix}.log_capacity" raw.logCapacity LOG_CAPACITY
@@ -233,6 +322,7 @@ def decodeNode (expectedNode : Nat) (raw : RawNode) :
           slot.transactionId
           slot.tag
           slot.configurationMembership
+          slot.retiredMembership
       log := log ++ [entry]
     else
       validateUnusedEntry
@@ -242,6 +332,7 @@ def decodeNode (expectedNode : Nat) (raw : RawNode) :
         slot.transactionId
         slot.tag
         slot.configurationMembership
+        slot.retiredMembership
   expectEq s!"{fieldPrefix}.decoded_log_length" log.length raw.logLength
   expectEq
     s!"{fieldPrefix}.votes_granted_membership.length"
@@ -259,6 +350,34 @@ def decodeNode (expectedNode : Nat) (raw : RawNode) :
     decodeNodeMembership
       s!"{fieldPrefix}.votes_granted_membership"
       raw.votesGrantedMembership
+  let preVotesGranted <-
+    decodeNodeMembership
+      s!"{fieldPrefix}.pre_votes_granted_membership"
+      raw.preVotesGrantedMembership
+  let membershipState <-
+    decodeMembershipState
+      s!"{fieldPrefix}.membership_state"
+      raw.membershipState
+      raw.membershipStateValue
+  let retirementIndex <-
+    decodeOptionalIndex
+      s!"{fieldPrefix}.retirement_index"
+      raw.retirementIndexHasValue
+      raw.retirementIndexValue
+  let retirementCommittableIndex <-
+    decodeOptionalIndex
+      s!"{fieldPrefix}.retirement_committable_index"
+      raw.retirementCommittableIndexHasValue
+      raw.retirementCommittableIndexValue
+  let retiredCommittedIndex <-
+    decodeOptionalIndex
+      s!"{fieldPrefix}.retired_committed_index"
+      raw.retiredCommittedIndexHasValue
+      raw.retiredCommittedIndexValue
+  let retirementCompleted <-
+    decodeNodeMembership
+      s!"{fieldPrefix}.retirement_completed_membership"
+      raw.retirementCompletedMembership
   let votedFor <-
     if raw.votedForHasValue then
       some <$>
@@ -266,17 +385,24 @@ def decodeNode (expectedNode : Nat) (raw : RawNode) :
     else
       expectEq s!"{fieldPrefix}.voted_for.value" raw.votedForValue 0
       pure none
-  pure {
-    role
-    currentTerm := raw.currentTerm
-    log
-    commitIndex := raw.commitIndex
-    sentIndex := fun peer => raw.sentIndex[peer.val]!
-    matchIndex := fun peer => raw.matchIndex[peer.val]!
-    isNewFollower := raw.isNewFollower
-    votedFor
-    votesGranted
-  }
+  pure (
+    {
+      role
+      currentTerm := raw.currentTerm
+      log
+      commitIndex := raw.commitIndex
+      sentIndex := fun peer => raw.sentIndex[peer.val]!
+      matchIndex := fun peer => raw.matchIndex[peer.val]!
+      isNewFollower := raw.isNewFollower
+      votedFor
+      votesGranted
+      preVotesGranted
+      membershipState
+      retirementIndex
+      retirementCommittableIndex
+      retiredCommittedIndex
+    },
+    retirementCompleted)
 
 def validateUnusedQueueSlot
     (field : String)
@@ -298,6 +424,9 @@ def validateUnusedQueueSlot
   expectNoMembers
     s!"{field}.entry_configuration_membership"
     raw.entryConfigurationMembership
+  expectNoMembers
+    s!"{field}.entry_retired_membership"
+    raw.entryRetiredMembership
   expectEq s!"{field}.response_success" raw.responseSuccess false
   expectEq s!"{field}.response_last_log_index" raw.responseLastLogIndex 0
   expectEq
@@ -340,6 +469,7 @@ def decodeQueueSlot
               raw.entryTransactionId
               raw.entryTag
               raw.entryConfigurationMembership
+              raw.entryRetiredMembership
           pure [entry]
         else
           validateUnusedEntry
@@ -349,6 +479,7 @@ def decodeQueueSlot
             raw.entryTransactionId
             raw.entryTag
             raw.entryConfigurationMembership
+            raw.entryRetiredMembership
           pure []
       pure (.appendEntriesRequest {
         term := raw.term
@@ -372,6 +503,7 @@ def decodeQueueSlot
         raw.entryTransactionId
         raw.entryTag
         raw.entryConfigurationMembership
+        raw.entryRetiredMembership
       expectEq
         s!"{field}.vote_last_committable_term"
         raw.voteLastCommittableTerm
@@ -401,6 +533,7 @@ def decodeQueueSlot
         raw.entryTransactionId
         raw.entryTag
         raw.entryConfigurationMembership
+        raw.entryRetiredMembership
       expectEq s!"{field}.response_success" raw.responseSuccess false
       expectEq s!"{field}.response_last_log_index" raw.responseLastLogIndex 0
       expectEq s!"{field}.vote_granted" raw.voteGranted false
@@ -424,6 +557,7 @@ def decodeQueueSlot
         raw.entryTransactionId
         raw.entryTag
         raw.entryConfigurationMembership
+        raw.entryRetiredMembership
       expectEq s!"{field}.response_success" raw.responseSuccess false
       expectEq s!"{field}.response_last_log_index" raw.responseLastLogIndex 0
       expectEq
@@ -437,6 +571,90 @@ def decodeQueueSlot
       pure (.requestVoteResponse {
         term := raw.term
         voteGranted := raw.voteGranted
+        source
+        destination
+      })
+  | 5 =>
+      expectEq s!"{field}.tag" raw.tag "requestPreVote"
+      expectEq s!"{field}.prev_log_index" raw.prevLogIndex 0
+      expectEq s!"{field}.prev_log_term" raw.prevLogTerm 0
+      expectEq s!"{field}.leader_commit" raw.leaderCommit 0
+      expectEq s!"{field}.entry_present" raw.entryPresent false
+      validateUnusedEntry
+        s!"{field}.entry"
+        raw.entryTerm
+        raw.entryTagValue
+        raw.entryTransactionId
+        raw.entryTag
+        raw.entryConfigurationMembership
+        raw.entryRetiredMembership
+      expectEq s!"{field}.response_success" raw.responseSuccess false
+      expectEq s!"{field}.response_last_log_index" raw.responseLastLogIndex 0
+      expectEq s!"{field}.vote_granted" raw.voteGranted false
+      pure (.requestPreVote {
+        term := raw.term
+        lastCommittableTerm := raw.voteLastCommittableTerm
+        lastCommittableIndex := raw.voteLastCommittableIndex
+        source
+        destination
+      })
+  | 6 =>
+      expectEq s!"{field}.tag" raw.tag "requestPreVoteResponse"
+      expectEq s!"{field}.prev_log_index" raw.prevLogIndex 0
+      expectEq s!"{field}.prev_log_term" raw.prevLogTerm 0
+      expectEq s!"{field}.leader_commit" raw.leaderCommit 0
+      expectEq s!"{field}.entry_present" raw.entryPresent false
+      validateUnusedEntry
+        s!"{field}.entry"
+        raw.entryTerm
+        raw.entryTagValue
+        raw.entryTransactionId
+        raw.entryTag
+        raw.entryConfigurationMembership
+        raw.entryRetiredMembership
+      expectEq s!"{field}.response_success" raw.responseSuccess false
+      expectEq s!"{field}.response_last_log_index" raw.responseLastLogIndex 0
+      expectEq
+        s!"{field}.vote_last_committable_term"
+        raw.voteLastCommittableTerm
+        0
+      expectEq
+        s!"{field}.vote_last_committable_index"
+        raw.voteLastCommittableIndex
+        0
+      pure (.requestPreVoteResponse {
+        term := raw.term
+        voteGranted := raw.voteGranted
+        source
+        destination
+      })
+  | 7 =>
+      expectEq s!"{field}.tag" raw.tag "proposeVoteRequest"
+      expectEq s!"{field}.prev_log_index" raw.prevLogIndex 0
+      expectEq s!"{field}.prev_log_term" raw.prevLogTerm 0
+      expectEq s!"{field}.leader_commit" raw.leaderCommit 0
+      expectEq s!"{field}.entry_present" raw.entryPresent false
+      validateUnusedEntry
+        s!"{field}.entry"
+        raw.entryTerm
+        raw.entryTagValue
+        raw.entryTransactionId
+        raw.entryTag
+        raw.entryConfigurationMembership
+        raw.entryRetiredMembership
+      expectEq s!"{field}.response_success" raw.responseSuccess false
+      expectEq s!"{field}.response_last_log_index" raw.responseLastLogIndex 0
+      expectEq
+        s!"{field}.vote_last_committable_term"
+        raw.voteLastCommittableTerm
+        0
+      expectEq
+        s!"{field}.vote_last_committable_index"
+        raw.voteLastCommittableIndex
+        0
+      expectEq s!"{field}.vote_granted" raw.voteGranted false
+      pure (.proposeVoteRequest {
+        term := raw.term
         source
         destination
       })
@@ -476,10 +694,16 @@ def decodeInitialState (raw : RawInitialState) :
     Except String SimState := do
   expectEq "S0.nodes.length" raw.nodes.length NODE_COUNT
   expectEq "S0.network.length" raw.network.length NODE_COUNT
+  expectEq
+    "S0.pre_vote_status_enabled.length"
+    raw.preVoteStatusEnabled.length
+    NODE_COUNT
   let mut nodes : List (NodeState Node TxId) := []
+  let mut retirementCompleted : List (Finset Node) := []
   for indexed in raw.nodes.zipIdx do
-    let node <- decodeNode indexed.2 indexed.1
-    nodes := nodes ++ [node]
+    let decoded <- decodeNode indexed.2 indexed.1
+    nodes := nodes ++ [decoded.1]
+    retirementCompleted := retirementCompleted ++ [decoded.2]
   let mut network : List (List (Message Node TxId)) := []
   for indexed in raw.network.zipIdx do
     let queue <- decodeQueue indexed.2 indexed.1
@@ -501,6 +725,11 @@ def decodeInitialState (raw : RawInitialState) :
         network := fun node => (network[node.val]?).getD []
         submittedTxIds
         hasJoined
+        preVoteStatus :=
+          fun node =>
+            decodePreVoteStatus raw.preVoteStatusEnabled[node.val]!
+        retirementCompleted :=
+          fun node => (retirementCompleted[node.val]?).getD ∅
       }
     else
       throw "S0.network.length: decoded queue count changed"
@@ -589,6 +818,55 @@ def decodeAction (expectedAction : Nat) (raw : RawAction) :
       expectEq s!"{fieldPrefix}.transaction" raw.transaction 0
       noConfiguration
       pure (.becomeLeader source)
+  | 11 =>
+      expectEq s!"{fieldPrefix}.kind" raw.kind "becomePreVoteCandidate"
+      expectEq s!"{fieldPrefix}.destination" raw.destination 0
+      expectEq s!"{fieldPrefix}.parameter" raw.parameter 0
+      expectEq s!"{fieldPrefix}.transaction" raw.transaction 0
+      noConfiguration
+      pure (.becomePreVoteCandidate source)
+  | 12 =>
+      expectEq s!"{fieldPrefix}.kind" raw.kind "becomeCandidate"
+      expectEq s!"{fieldPrefix}.destination" raw.destination 0
+      expectEq s!"{fieldPrefix}.parameter" raw.parameter 0
+      expectEq s!"{fieldPrefix}.transaction" raw.transaction 0
+      noConfiguration
+      pure (.becomeCandidate source)
+  | 13 =>
+      expectEq s!"{fieldPrefix}.kind" raw.kind "requestPreVote"
+      expectEq s!"{fieldPrefix}.parameter" raw.parameter 0
+      expectEq s!"{fieldPrefix}.transaction" raw.transaction 0
+      noConfiguration
+      pure (.requestPreVote source destination)
+  | 14 =>
+      expectEq s!"{fieldPrefix}.kind" raw.kind "checkQuorum"
+      expectEq s!"{fieldPrefix}.destination" raw.destination 0
+      expectEq s!"{fieldPrefix}.parameter" raw.parameter 0
+      expectEq s!"{fieldPrefix}.transaction" raw.transaction 0
+      noConfiguration
+      pure (.checkQuorum source)
+  | 15 =>
+      expectEq s!"{fieldPrefix}.kind" raw.kind "appendRetiredCommitted"
+      expectEq s!"{fieldPrefix}.destination" raw.destination 0
+      expectEq s!"{fieldPrefix}.parameter" raw.parameter 0
+      expectEq s!"{fieldPrefix}.transaction" raw.transaction 0
+      noConfiguration
+      pure (.appendRetiredCommitted source)
+  | 16 =>
+      expectEq s!"{fieldPrefix}.kind" raw.kind "proposeVote"
+      expectEq s!"{fieldPrefix}.parameter" raw.parameter 0
+      expectEq s!"{fieldPrefix}.transaction" raw.transaction 0
+      noConfiguration
+      pure (.proposeVote source destination)
+  | 17 =>
+      expectEq
+        s!"{fieldPrefix}.kind"
+        raw.kind
+        "advanceCommitIndexAndProposeVote"
+      expectEq s!"{fieldPrefix}.parameter" raw.parameter 0
+      expectEq s!"{fieldPrefix}.transaction" raw.transaction 0
+      noConfiguration
+      pure (.advanceCommitIndexAndProposeVote source destination)
   | _ =>
       throw
         s!"{fieldPrefix}.kind: unsupported action tag {raw.kindValue} ({raw.kind})"
@@ -686,32 +964,50 @@ def actionAt
 def actionKind : SimAction -> String
   | .clientRequest .. => "clientRequest"
   | .changeConfiguration .. => "changeConfiguration"
+  | .appendRetiredCommitted .. => "appendRetiredCommitted"
   | .signCommittableMessages .. => "signCommittableMessages"
   | .appendEntries .. => "appendEntries"
   | .receive .. => "receive"
   | .advanceCommitIndex .. => "advanceCommitIndex"
   | .timeout .. => "timeout"
+  | .becomePreVoteCandidate .. => "becomePreVoteCandidate"
+  | .becomeCandidate .. => "becomeCandidate"
   | .requestVote .. => "requestVote"
+  | .requestPreVote .. => "requestPreVote"
+  | .checkQuorum .. => "checkQuorum"
   | .updateTerm .. => "updateTerm"
   | .becomeLeader .. => "becomeLeader"
+  | .proposeVote .. => "proposeVote"
+  | .advanceCommitIndexAndProposeVote .. =>
+      "advanceCommitIndexAndProposeVote"
 
 def actionSource : SimAction -> Node
   | .clientRequest node _ => node
   | .changeConfiguration source _ => source
+  | .appendRetiredCommitted node => node
   | .signCommittableMessages node => node
   | .appendEntries source _ _ => source
   | .receive source _ => source
   | .advanceCommitIndex node => node
   | .timeout node => node
+  | .becomePreVoteCandidate node => node
+  | .becomeCandidate node => node
   | .requestVote source _ => source
+  | .requestPreVote source _ => source
+  | .checkQuorum node => node
   | .updateTerm source _ => source
   | .becomeLeader node => node
+  | .proposeVote source _ => source
+  | .advanceCommitIndexAndProposeVote source _ => source
 
 def actionDestination? : SimAction -> Option Node
   | .appendEntries _ destination _ => some destination
   | .receive _ destination => some destination
   | .requestVote _ destination => some destination
+  | .requestPreVote _ destination => some destination
   | .updateTerm _ destination => some destination
+  | .proposeVote _ destination => some destination
+  | .advanceCommitIndexAndProposeVote _ destination => some destination
   | _ => none
 
 def actionParameter? : SimAction -> Option Nat
@@ -767,6 +1063,19 @@ def messageKind : Message Node TxId -> String
   | .appendEntriesResponse .. => "appendEntriesResponse"
   | .requestVoteRequest .. => "requestVoteRequest"
   | .requestVoteResponse .. => "requestVoteResponse"
+  | .requestPreVote .. => "requestPreVote"
+  | .requestPreVoteResponse .. => "requestPreVoteResponse"
+  | .proposeVoteRequest .. => "proposeVoteRequest"
+
+/-- Encode every full-state queue message with its stable raw tag. -/
+def messageTag : Message Node TxId -> Nat
+  | .appendEntriesRequest .. => 1
+  | .appendEntriesResponse .. => 2
+  | .requestVoteRequest .. => 3
+  | .requestVoteResponse .. => 4
+  | .requestPreVote .. => 5
+  | .requestPreVoteResponse .. => 6
+  | .proposeVoteRequest .. => 7
 
 def appendRequestEnd (request : AppendEntriesRequest Node TxId) : Nat :=
   request.prevLogIndex + request.entries.length

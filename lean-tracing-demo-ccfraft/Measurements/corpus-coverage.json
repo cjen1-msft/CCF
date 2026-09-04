@@ -1,19 +1,58 @@
 {
   "accepted": [
+    "ackuracy",
     "append",
     "bad_network",
+    "candidate_viability",
+    "check_quorum",
+    "check_quorum_012_0",
+    "check_quorum_0_012",
+    "delayed_vote_requests",
+    "election",
+    "election_while_reconfiguration",
+    "fancy_election.1",
+    "fancy_election.2",
+    "follower_rollback_match_index",
     "indirect_commit_stale_leader",
     "large_entry_batching",
+    "leadership_race",
+    "liveness_through_conflict",
+    "matching_partial",
+    "message_type_summaries",
+    "multi_election",
+    "nominate_successor",
+    "pre_vote",
+    "pre_vote_double_leader",
+    "pre_vote_split",
+    "reconfig_01_12",
+    "reconfig_01_23",
+    "reconfig_01_el0_12",
+    "reconfig_01_el0_23",
+    "reconfig_01_el1_12",
+    "reconfig_01_el2_12",
+    "reconfig_01_el2_23",
+    "reconfig_0_1",
     "reconfiguration",
     "reconnect",
+    "reelection",
     "replicate",
     "replicate_on_latest_leader",
+    "retire_backup",
+    "retire_backup_pre_vote",
+    "retire_one",
+    "retired_node_delayed_responses",
+    "retirement_rollback",
+    "rollback_safety",
     "soft_rollback",
     "startup",
-    "startup_2nodes"
+    "startup_2nodes",
+    "suffix_collision.1",
+    "suffix_collision.2",
+    "suffix_collision.3",
+    "swap_single_node"
   ],
   "aggregate": {
-    "accepted_scenarios": 11,
+    "accepted_scenarios": 50,
     "emitted_events": 12541,
     "function_counts": {
       "add_configuration": 455,
@@ -44,25 +83,64 @@
       "raft_request_vote": 404,
       "raft_request_vote_response": 130
     },
-    "sat_scenarios": 11,
+    "sat_scenarios": 50,
     "scenario_count": 50
   },
   "sat": [
+    "ackuracy",
     "append",
     "bad_network",
+    "candidate_viability",
+    "check_quorum",
+    "check_quorum_012_0",
+    "check_quorum_0_012",
+    "delayed_vote_requests",
+    "election",
+    "election_while_reconfiguration",
+    "fancy_election.1",
+    "fancy_election.2",
+    "follower_rollback_match_index",
     "indirect_commit_stale_leader",
     "large_entry_batching",
+    "leadership_race",
+    "liveness_through_conflict",
+    "matching_partial",
+    "message_type_summaries",
+    "multi_election",
+    "nominate_successor",
+    "pre_vote",
+    "pre_vote_double_leader",
+    "pre_vote_split",
+    "reconfig_01_12",
+    "reconfig_01_23",
+    "reconfig_01_el0_12",
+    "reconfig_01_el0_23",
+    "reconfig_01_el1_12",
+    "reconfig_01_el2_12",
+    "reconfig_01_el2_23",
+    "reconfig_0_1",
     "reconfiguration",
     "reconnect",
+    "reelection",
     "replicate",
     "replicate_on_latest_leader",
+    "retire_backup",
+    "retire_backup_pre_vote",
+    "retire_one",
+    "retired_node_delayed_responses",
+    "retirement_rollback",
+    "rollback_safety",
     "soft_rollback",
     "startup",
-    "startup_2nodes"
+    "startup_2nodes",
+    "suffix_collision.1",
+    "suffix_collision.2",
+    "suffix_collision.3",
+    "swap_single_node"
   ],
   "scenarios": [
     {
-      "capture_wall_ms": 24.690924,
+      "capture_wall_ms": 70.161595,
       "inventory": {
         "functions": {
           "add_configuration": 10,
@@ -103,13 +181,23 @@
       },
       "raw_records": 549,
       "reduction": {
-        "accepted": false,
-        "error": "line 132: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 365,
+        "ignored_events": 148,
+        "observations": 3795,
+        "preprocessed_events": 259,
+        "raw_records": 549
       },
-      "scenario": "ackuracy"
+      "scenario": "ackuracy",
+      "smt": {
+        "accepted": true,
+        "bytes": 4164964,
+        "named_assertions": 5995
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 4.197825,
+      "capture_wall_ms": 10.694843,
       "inventory": {
         "functions": {
           "add_configuration": 1,
@@ -130,20 +218,20 @@
         "accepted": true,
         "actions": 11,
         "ignored_events": 16,
-        "observations": 66,
+        "observations": 121,
         "preprocessed_events": 11,
         "raw_records": 30
       },
       "scenario": "append",
       "smt": {
         "accepted": true,
-        "bytes": 29110,
-        "named_assertions": 90
+        "bytes": 58943,
+        "named_assertions": 145
       },
       "solver": "sat"
     },
     {
-      "capture_wall_ms": 18.133908,
+      "capture_wall_ms": 28.166694,
       "inventory": {
         "functions": {
           "add_configuration": 9,
@@ -183,20 +271,20 @@
         "accepted": true,
         "actions": 176,
         "ignored_events": 110,
-        "observations": 1093,
+        "observations": 1931,
         "preprocessed_events": 132,
         "raw_records": 319
       },
       "scenario": "bad_network",
       "smt": {
         "accepted": true,
-        "bytes": 728974,
-        "named_assertions": 1803
+        "bytes": 1458443,
+        "named_assertions": 2641
       },
       "solver": "sat"
     },
     {
-      "capture_wall_ms": 43.489487,
+      "capture_wall_ms": 113.844727,
       "inventory": {
         "functions": {
           "add_configuration": 10,
@@ -233,13 +321,23 @@
       },
       "raw_records": 677,
       "reduction": {
-        "accepted": false,
-        "error": "line 129: ungrouped helper 'become_follower'"
+        "accepted": true,
+        "actions": 472,
+        "ignored_events": 154,
+        "observations": 5202,
+        "preprocessed_events": 354,
+        "raw_records": 677
       },
-      "scenario": "candidate_viability"
+      "scenario": "candidate_viability",
+      "smt": {
+        "accepted": true,
+        "bytes": 5424193,
+        "named_assertions": 8044
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 28.935576,
+      "capture_wall_ms": 36.328253,
       "inventory": {
         "functions": {
           "add_configuration": 16,
@@ -280,13 +378,23 @@
       },
       "raw_records": 350,
       "reduction": {
-        "accepted": false,
-        "error": "line 280: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 227,
+        "ignored_events": 78,
+        "observations": 2393,
+        "preprocessed_events": 161,
+        "raw_records": 350
       },
-      "scenario": "check_quorum"
+      "scenario": "check_quorum",
+      "smt": {
+        "accepted": true,
+        "bytes": 2238502,
+        "named_assertions": 3536
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 25.102011,
+      "capture_wall_ms": 20.566915,
       "inventory": {
         "functions": {
           "add_configuration": 7,
@@ -327,13 +435,23 @@
       },
       "raw_records": 170,
       "reduction": {
-        "accepted": false,
-        "error": "line 90: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 96,
+        "ignored_events": 48,
+        "observations": 1133,
+        "preprocessed_events": 78,
+        "raw_records": 170
       },
-      "scenario": "check_quorum_012_0"
+      "scenario": "check_quorum_012_0",
+      "smt": {
+        "accepted": true,
+        "bytes": 809778,
+        "named_assertions": 1523
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 13.559755,
+      "capture_wall_ms": 18.578674,
       "inventory": {
         "functions": {
           "add_configuration": 6,
@@ -374,13 +492,23 @@
       },
       "raw_records": 140,
       "reduction": {
-        "accepted": false,
-        "error": "line 75: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 93,
+        "ignored_events": 38,
+        "observations": 939,
+        "preprocessed_events": 65,
+        "raw_records": 140
       },
-      "scenario": "check_quorum_0_012"
+      "scenario": "check_quorum_0_012",
+      "smt": {
+        "accepted": true,
+        "bytes": 764021,
+        "named_assertions": 1317
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 35.025119,
+      "capture_wall_ms": 23.130144,
       "inventory": {
         "functions": {
           "add_configuration": 10,
@@ -421,13 +549,23 @@
       },
       "raw_records": 316,
       "reduction": {
-        "accepted": false,
-        "error": "line 121: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 187,
+        "ignored_events": 68,
+        "observations": 2261,
+        "preprocessed_events": 154,
+        "raw_records": 316
       },
-      "scenario": "delayed_vote_requests"
+      "scenario": "delayed_vote_requests",
+      "smt": {
+        "accepted": true,
+        "bytes": 2184828,
+        "named_assertions": 3393
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 14.466969,
+      "capture_wall_ms": 29.471527,
       "inventory": {
         "functions": {
           "add_configuration": 9,
@@ -467,13 +605,23 @@
       },
       "raw_records": 134,
       "reduction": {
-        "accepted": false,
-        "error": "line 83: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 88,
+        "ignored_events": 29,
+        "observations": 882,
+        "preprocessed_events": 60,
+        "raw_records": 134
       },
-      "scenario": "election"
+      "scenario": "election",
+      "smt": {
+        "accepted": true,
+        "bytes": 724018,
+        "named_assertions": 1240
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 28.028982,
+      "capture_wall_ms": 65.209437,
       "inventory": {
         "functions": {
           "add_configuration": 15,
@@ -513,13 +661,23 @@
       },
       "raw_records": 322,
       "reduction": {
-        "accepted": false,
-        "error": "line 155: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 226,
+        "ignored_events": 57,
+        "observations": 2354,
+        "preprocessed_events": 155,
+        "raw_records": 322
       },
-      "scenario": "election_while_reconfiguration"
+      "scenario": "election_while_reconfiguration",
+      "smt": {
+        "accepted": true,
+        "bytes": 2592205,
+        "named_assertions": 3720
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 22.575353,
+      "capture_wall_ms": 63.600698,
       "inventory": {
         "functions": {
           "add_configuration": 9,
@@ -560,13 +718,23 @@
       },
       "raw_records": 296,
       "reduction": {
-        "accepted": false,
-        "error": "line 133: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 221,
+        "ignored_events": 86,
+        "observations": 1839,
+        "preprocessed_events": 126,
+        "raw_records": 296
       },
-      "scenario": "fancy_election.1"
+      "scenario": "fancy_election.1",
+      "smt": {
+        "accepted": true,
+        "bytes": 1749788,
+        "named_assertions": 2729
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 59.262832,
+      "capture_wall_ms": 75.47317,
       "inventory": {
         "functions": {
           "add_configuration": 25,
@@ -607,13 +775,23 @@
       },
       "raw_records": 699,
       "reduction": {
-        "accepted": false,
-        "error": "line 270: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 496,
+        "ignored_events": 141,
+        "observations": 5053,
+        "preprocessed_events": 346,
+        "raw_records": 699
       },
-      "scenario": "fancy_election.2"
+      "scenario": "fancy_election.2",
+      "smt": {
+        "accepted": true,
+        "bytes": 5648653,
+        "named_assertions": 8039
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 17.899163,
+      "capture_wall_ms": 22.706643,
       "inventory": {
         "functions": {
           "add_configuration": 6,
@@ -647,13 +825,23 @@
       },
       "raw_records": 170,
       "reduction": {
-        "accepted": false,
-        "error": "line 90: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 121,
+        "ignored_events": 32,
+        "observations": 1200,
+        "preprocessed_events": 79,
+        "raw_records": 170
       },
-      "scenario": "follower_rollback_match_index"
+      "scenario": "follower_rollback_match_index",
+      "smt": {
+        "accepted": true,
+        "bytes": 990020,
+        "named_assertions": 1690
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 23.398187,
+      "capture_wall_ms": 44.971299,
       "inventory": {
         "functions": {
           "add_configuration": 6,
@@ -693,20 +881,20 @@
         "accepted": true,
         "actions": 154,
         "ignored_events": 62,
-        "observations": 932,
+        "observations": 1640,
         "preprocessed_events": 111,
         "raw_records": 242
       },
       "scenario": "indirect_commit_stale_leader",
       "smt": {
         "accepted": true,
-        "bytes": 635103,
-        "named_assertions": 1554
+        "bytes": 1271515,
+        "named_assertions": 2262
       },
       "solver": "sat"
     },
     {
-      "capture_wall_ms": 13.26818,
+      "capture_wall_ms": 11.189175,
       "inventory": {
         "functions": {
           "add_configuration": 6,
@@ -738,20 +926,20 @@
         "accepted": true,
         "actions": 91,
         "ignored_events": 23,
-        "observations": 562,
+        "observations": 985,
         "preprocessed_events": 65,
         "raw_records": 141
       },
       "scenario": "large_entry_batching",
       "smt": {
         "accepted": true,
-        "bytes": 378871,
-        "named_assertions": 932
+        "bytes": 757693,
+        "named_assertions": 1355
       },
       "solver": "sat"
     },
     {
-      "capture_wall_ms": 18.36447,
+      "capture_wall_ms": 17.927434,
       "inventory": {
         "functions": {
           "add_configuration": 6,
@@ -791,13 +979,23 @@
       },
       "raw_records": 163,
       "reduction": {
-        "accepted": false,
-        "error": "line 81: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 100,
+        "ignored_events": 28,
+        "observations": 1242,
+        "preprocessed_events": 84,
+        "raw_records": 163
       },
-      "scenario": "leadership_race"
+      "scenario": "leadership_race",
+      "smt": {
+        "accepted": true,
+        "bytes": 853707,
+        "named_assertions": 1648
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 20.954849,
+      "capture_wall_ms": 37.121626,
       "inventory": {
         "functions": {
           "add_configuration": 6,
@@ -837,13 +1035,23 @@
       },
       "raw_records": 190,
       "reduction": {
-        "accepted": false,
-        "error": "line 80: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 113,
+        "ignored_events": 38,
+        "observations": 1437,
+        "preprocessed_events": 97,
+        "raw_records": 190
       },
-      "scenario": "liveness_through_conflict"
+      "scenario": "liveness_through_conflict",
+      "smt": {
+        "accepted": true,
+        "bytes": 968627,
+        "named_assertions": 1895
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 17.40521,
+      "capture_wall_ms": 63.471124,
       "inventory": {
         "functions": {
           "add_configuration": 6,
@@ -884,13 +1092,23 @@
       },
       "raw_records": 223,
       "reduction": {
-        "accepted": false,
-        "error": "line 72: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 149,
+        "ignored_events": 45,
+        "observations": 1718,
+        "preprocessed_events": 118,
+        "raw_records": 223
       },
-      "scenario": "matching_partial"
+      "scenario": "matching_partial",
+      "smt": {
+        "accepted": true,
+        "bytes": 1249455,
+        "named_assertions": 2320
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 12.337362,
+      "capture_wall_ms": 30.839654,
       "inventory": {
         "functions": {
           "add_configuration": 6,
@@ -933,13 +1151,23 @@
       },
       "raw_records": 165,
       "reduction": {
-        "accepted": false,
-        "error": "line 85: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 90,
+        "ignored_events": 43,
+        "observations": 1089,
+        "preprocessed_events": 74,
+        "raw_records": 165
       },
-      "scenario": "message_type_summaries"
+      "scenario": "message_type_summaries",
+      "smt": {
+        "accepted": true,
+        "bytes": 764143,
+        "named_assertions": 1455
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 24.477783,
+      "capture_wall_ms": 42.785516,
       "inventory": {
         "functions": {
           "add_configuration": 9,
@@ -980,13 +1208,23 @@
       },
       "raw_records": 386,
       "reduction": {
-        "accepted": false,
-        "error": "line 150: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 247,
+        "ignored_events": 95,
+        "observations": 2658,
+        "preprocessed_events": 183,
+        "raw_records": 386
       },
-      "scenario": "multi_election"
+      "scenario": "multi_election",
+      "smt": {
+        "accepted": true,
+        "bytes": 2039073,
+        "named_assertions": 3652
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 15.831451,
+      "capture_wall_ms": 20.885692,
       "inventory": {
         "functions": {
           "add_configuration": 6,
@@ -1029,13 +1267,23 @@
       },
       "raw_records": 196,
       "reduction": {
-        "accepted": false,
-        "error": "line 78: unaudited function 'step_down_and_nominate_successor'"
+        "accepted": true,
+        "actions": 138,
+        "ignored_events": 32,
+        "observations": 1563,
+        "preprocessed_events": 106,
+        "raw_records": 196
       },
-      "scenario": "nominate_successor"
+      "scenario": "nominate_successor",
+      "smt": {
+        "accepted": true,
+        "bytes": 1154761,
+        "named_assertions": 2121
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 12.262002,
+      "capture_wall_ms": 61.933875,
       "inventory": {
         "functions": {
           "add_configuration": 6,
@@ -1075,13 +1323,23 @@
       },
       "raw_records": 204,
       "reduction": {
-        "accepted": false,
-        "error": "line 80: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 121,
+        "ignored_events": 64,
+        "observations": 1332,
+        "preprocessed_events": 92,
+        "raw_records": 204
       },
-      "scenario": "pre_vote"
+      "scenario": "pre_vote",
+      "smt": {
+        "accepted": true,
+        "bytes": 1008012,
+        "named_assertions": 1822
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 19.1955,
+      "capture_wall_ms": 25.169564,
       "inventory": {
         "functions": {
           "add_configuration": 6,
@@ -1122,13 +1380,23 @@
       },
       "raw_records": 230,
       "reduction": {
-        "accepted": false,
-        "error": "line 88: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 128,
+        "ignored_events": 76,
+        "observations": 1440,
+        "preprocessed_events": 99,
+        "raw_records": 230
       },
-      "scenario": "pre_vote_double_leader"
+      "scenario": "pre_vote_double_leader",
+      "smt": {
+        "accepted": true,
+        "bytes": 1068443,
+        "named_assertions": 1958
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 19.28204,
+      "capture_wall_ms": 19.25185,
       "inventory": {
         "functions": {
           "add_configuration": 9,
@@ -1168,13 +1436,23 @@
       },
       "raw_records": 202,
       "reduction": {
-        "accepted": false,
-        "error": "line 98: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 141,
+        "ignored_events": 46,
+        "observations": 1431,
+        "preprocessed_events": 96,
+        "raw_records": 202
       },
-      "scenario": "pre_vote_split"
+      "scenario": "pre_vote_split",
+      "smt": {
+        "accepted": true,
+        "bytes": 1157468,
+        "named_assertions": 2001
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 15.63099,
+      "capture_wall_ms": 43.108324,
       "inventory": {
         "functions": {
           "add_configuration": 9,
@@ -1213,13 +1491,23 @@
       },
       "raw_records": 188,
       "reduction": {
-        "accepted": false,
-        "error": "line 50: unsupported membership_state"
+        "accepted": true,
+        "actions": 116,
+        "ignored_events": 50,
+        "observations": 1150,
+        "preprocessed_events": 76,
+        "raw_records": 188
       },
-      "scenario": "reconfig_01_12"
+      "scenario": "reconfig_01_12",
+      "smt": {
+        "accepted": true,
+        "bytes": 950789,
+        "named_assertions": 1620
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 15.107796,
+      "capture_wall_ms": 24.409143,
       "inventory": {
         "functions": {
           "add_configuration": 12,
@@ -1258,13 +1546,23 @@
       },
       "raw_records": 240,
       "reduction": {
-        "accepted": false,
-        "error": "line 50: unsupported membership_state"
+        "accepted": true,
+        "actions": 163,
+        "ignored_events": 53,
+        "observations": 1553,
+        "preprocessed_events": 100,
+        "raw_records": 240
       },
-      "scenario": "reconfig_01_23"
+      "scenario": "reconfig_01_23",
+      "smt": {
+        "accepted": true,
+        "bytes": 1588714,
+        "named_assertions": 2376
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 18.276731,
+      "capture_wall_ms": 25.661104,
       "inventory": {
         "functions": {
           "add_configuration": 9,
@@ -1307,13 +1605,23 @@
       },
       "raw_records": 263,
       "reduction": {
-        "accepted": false,
-        "error": "line 50: unsupported membership_state"
+        "accepted": true,
+        "actions": 174,
+        "ignored_events": 62,
+        "observations": 1799,
+        "preprocessed_events": 122,
+        "raw_records": 263
       },
-      "scenario": "reconfig_01_el0_12"
+      "scenario": "reconfig_01_el0_12",
+      "smt": {
+        "accepted": true,
+        "bytes": 1431121,
+        "named_assertions": 2501
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 22.146589,
+      "capture_wall_ms": 67.630092,
       "inventory": {
         "functions": {
           "add_configuration": 12,
@@ -1357,13 +1665,23 @@
       },
       "raw_records": 337,
       "reduction": {
-        "accepted": false,
-        "error": "line 50: unsupported membership_state"
+        "accepted": true,
+        "actions": 244,
+        "ignored_events": 69,
+        "observations": 2414,
+        "preprocessed_events": 161,
+        "raw_records": 337
       },
-      "scenario": "reconfig_01_el0_23"
+      "scenario": "reconfig_01_el0_23",
+      "smt": {
+        "accepted": true,
+        "bytes": 2383571,
+        "named_assertions": 3642
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 15.791788,
+      "capture_wall_ms": 26.448751,
       "inventory": {
         "functions": {
           "add_configuration": 9,
@@ -1404,13 +1722,23 @@
       },
       "raw_records": 192,
       "reduction": {
-        "accepted": false,
-        "error": "line 50: unsupported membership_state"
+        "accepted": true,
+        "actions": 122,
+        "ignored_events": 46,
+        "observations": 1241,
+        "preprocessed_events": 85,
+        "raw_records": 192
       },
-      "scenario": "reconfig_01_el1_12"
+      "scenario": "reconfig_01_el1_12",
+      "smt": {
+        "accepted": true,
+        "bytes": 1003338,
+        "named_assertions": 1735
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 16.650666,
+      "capture_wall_ms": 33.096687,
       "inventory": {
         "functions": {
           "add_configuration": 9,
@@ -1451,13 +1779,23 @@
       },
       "raw_records": 202,
       "reduction": {
-        "accepted": false,
-        "error": "line 50: unsupported membership_state"
+        "accepted": true,
+        "actions": 129,
+        "ignored_events": 51,
+        "observations": 1300,
+        "preprocessed_events": 89,
+        "raw_records": 202
       },
-      "scenario": "reconfig_01_el2_12"
+      "scenario": "reconfig_01_el2_12",
+      "smt": {
+        "accepted": true,
+        "bytes": 1058900,
+        "named_assertions": 1822
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 20.277519,
+      "capture_wall_ms": 26.128089,
       "inventory": {
         "functions": {
           "add_configuration": 12,
@@ -1498,13 +1836,23 @@
       },
       "raw_records": 260,
       "reduction": {
-        "accepted": false,
-        "error": "line 50: unsupported membership_state"
+        "accepted": true,
+        "actions": 178,
+        "ignored_events": 55,
+        "observations": 1760,
+        "preprocessed_events": 118,
+        "raw_records": 260
       },
-      "scenario": "reconfig_01_el2_23"
+      "scenario": "reconfig_01_el2_23",
+      "smt": {
+        "accepted": true,
+        "bytes": 1742208,
+        "named_assertions": 2658
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 8.074278,
+      "capture_wall_ms": 42.69571,
       "inventory": {
         "functions": {
           "add_configuration": 4,
@@ -1538,13 +1886,23 @@
       },
       "raw_records": 75,
       "reduction": {
-        "accepted": false,
-        "error": "line 14: unsupported membership_state"
+        "accepted": true,
+        "actions": 40,
+        "ignored_events": 29,
+        "observations": 379,
+        "preprocessed_events": 26,
+        "raw_records": 75
       },
-      "scenario": "reconfig_0_1"
+      "scenario": "reconfig_0_1",
+      "smt": {
+        "accepted": true,
+        "bytes": 264220,
+        "named_assertions": 503
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 13.411885,
+      "capture_wall_ms": 25.233862,
       "inventory": {
         "functions": {
           "add_configuration": 12,
@@ -1576,20 +1934,20 @@
         "accepted": true,
         "actions": 129,
         "ignored_events": 38,
-        "observations": 726,
+        "observations": 1263,
         "preprocessed_events": 81,
         "raw_records": 191
       },
       "scenario": "reconfiguration",
       "smt": {
         "accepted": true,
-        "bytes": 630377,
-        "named_assertions": 1379
+        "bytes": 1264046,
+        "named_assertions": 1916
       },
       "solver": "sat"
     },
     {
-      "capture_wall_ms": 8.132553,
+      "capture_wall_ms": 12.381119,
       "inventory": {
         "functions": {
           "add_configuration": 4,
@@ -1621,20 +1979,20 @@
         "accepted": true,
         "actions": 52,
         "ignored_events": 36,
-        "observations": 320,
+        "observations": 564,
         "preprocessed_events": 39,
         "raw_records": 104
       },
       "scenario": "reconnect",
       "smt": {
         "accepted": true,
-        "bytes": 175849,
-        "named_assertions": 480
+        "bytes": 350933,
+        "named_assertions": 724
       },
       "solver": "sat"
     },
     {
-      "capture_wall_ms": 19.165344,
+      "capture_wall_ms": 19.502002,
       "inventory": {
         "functions": {
           "add_configuration": 6,
@@ -1674,13 +2032,23 @@
       },
       "raw_records": 156,
       "reduction": {
-        "accepted": false,
-        "error": "line 98: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 100,
+        "ignored_events": 29,
+        "observations": 1154,
+        "preprocessed_events": 78,
+        "raw_records": 156
       },
-      "scenario": "reelection"
+      "scenario": "reelection",
+      "smt": {
+        "accepted": true,
+        "bytes": 841539,
+        "named_assertions": 1560
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 8.19414,
+      "capture_wall_ms": 21.817985,
       "inventory": {
         "functions": {
           "add_configuration": 4,
@@ -1712,20 +2080,20 @@
         "accepted": true,
         "actions": 43,
         "ignored_events": 26,
-        "observations": 274,
+        "observations": 483,
         "preprocessed_events": 33,
         "raw_records": 84
       },
       "scenario": "replicate",
       "smt": {
         "accepted": true,
-        "bytes": 147229,
-        "named_assertions": 407
+        "bytes": 293509,
+        "named_assertions": 616
       },
       "solver": "sat"
     },
     {
-      "capture_wall_ms": 9.235548,
+      "capture_wall_ms": 33.827546,
       "inventory": {
         "functions": {
           "add_configuration": 6,
@@ -1765,20 +2133,20 @@
         "accepted": true,
         "actions": 91,
         "ignored_events": 29,
-        "observations": 596,
+        "observations": 1049,
         "preprocessed_events": 69,
         "raw_records": 149
       },
       "scenario": "replicate_on_latest_leader",
       "smt": {
         "accepted": true,
-        "bytes": 383255,
-        "named_assertions": 966
+        "bytes": 766500,
+        "named_assertions": 1419
       },
       "solver": "sat"
     },
     {
-      "capture_wall_ms": 13.567989,
+      "capture_wall_ms": 25.703341,
       "inventory": {
         "functions": {
           "add_configuration": 20,
@@ -1816,13 +2184,23 @@
       },
       "raw_records": 265,
       "reduction": {
-        "accepted": false,
-        "error": "line 252: unsupported membership_state"
+        "accepted": true,
+        "actions": 164,
+        "ignored_events": 52,
+        "observations": 1805,
+        "preprocessed_events": 118,
+        "raw_records": 265
       },
-      "scenario": "retire_backup"
+      "scenario": "retire_backup",
+      "smt": {
+        "accepted": true,
+        "bytes": 1631352,
+        "named_assertions": 2633
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 17.334731,
+      "capture_wall_ms": 22.302473,
       "inventory": {
         "functions": {
           "add_configuration": 20,
@@ -1860,13 +2238,23 @@
       },
       "raw_records": 226,
       "reduction": {
-        "accepted": false,
-        "error": "line 176: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 142,
+        "ignored_events": 42,
+        "observations": 1477,
+        "preprocessed_events": 98,
+        "raw_records": 226
       },
-      "scenario": "retire_backup_pre_vote"
+      "scenario": "retire_backup_pre_vote",
+      "smt": {
+        "accepted": true,
+        "bytes": 1403008,
+        "named_assertions": 2195
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 7.742293,
+      "capture_wall_ms": 15.261583,
       "inventory": {
         "functions": {
           "add_configuration": 6,
@@ -1896,13 +2284,23 @@
       },
       "raw_records": 140,
       "reduction": {
-        "accepted": false,
-        "error": "line 91: unsupported membership_state"
+        "accepted": true,
+        "actions": 77,
+        "ignored_events": 62,
+        "observations": 626,
+        "preprocessed_events": 46,
+        "raw_records": 140
       },
-      "scenario": "retire_one"
+      "scenario": "retire_one",
+      "smt": {
+        "accepted": true,
+        "bytes": 487798,
+        "named_assertions": 861
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 22.136483,
+      "capture_wall_ms": 24.370297,
       "inventory": {
         "functions": {
           "add_configuration": 9,
@@ -1944,13 +2342,23 @@
       },
       "raw_records": 182,
       "reduction": {
-        "accepted": false,
-        "error": "line 79: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 104,
+        "ignored_events": 51,
+        "observations": 1126,
+        "preprocessed_events": 79,
+        "raw_records": 182
       },
-      "scenario": "retired_node_delayed_responses"
+      "scenario": "retired_node_delayed_responses",
+      "smt": {
+        "accepted": true,
+        "bytes": 864345,
+        "named_assertions": 1548
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 20.030363,
+      "capture_wall_ms": 43.070249,
       "inventory": {
         "functions": {
           "add_configuration": 8,
@@ -1992,13 +2400,23 @@
       },
       "raw_records": 172,
       "reduction": {
-        "accepted": false,
-        "error": "line 82: unsupported membership_state"
+        "accepted": true,
+        "actions": 97,
+        "ignored_events": 39,
+        "observations": 1193,
+        "preprocessed_events": 81,
+        "raw_records": 172
       },
-      "scenario": "retirement_rollback"
+      "scenario": "retirement_rollback",
+      "smt": {
+        "accepted": true,
+        "bytes": 827137,
+        "named_assertions": 1587
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 29.427613,
+      "capture_wall_ms": 48.892044,
       "inventory": {
         "functions": {
           "add_configuration": 10,
@@ -2039,13 +2457,23 @@
       },
       "raw_records": 465,
       "reduction": {
-        "accepted": false,
-        "error": "line 151: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 312,
+        "ignored_events": 105,
+        "observations": 3361,
+        "preprocessed_events": 230,
+        "raw_records": 465
       },
-      "scenario": "rollback_safety"
+      "scenario": "rollback_safety",
+      "smt": {
+        "accepted": true,
+        "bytes": 3580380,
+        "named_assertions": 5243
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 14.26213,
+      "capture_wall_ms": 18.39399,
       "inventory": {
         "functions": {
           "add_configuration": 9,
@@ -2085,20 +2513,20 @@
         "accepted": true,
         "actions": 143,
         "ignored_events": 67,
-        "observations": 810,
+        "observations": 1423,
         "preprocessed_events": 97,
         "raw_records": 232
       },
       "scenario": "soft_rollback",
       "smt": {
         "accepted": true,
-        "bytes": 583558,
-        "named_assertions": 1388
+        "bytes": 1168306,
+        "named_assertions": 2001
       },
       "solver": "sat"
     },
     {
-      "capture_wall_ms": 4.823707,
+      "capture_wall_ms": 13.899482,
       "inventory": {
         "functions": {
           "add_configuration": 1,
@@ -2119,20 +2547,20 @@
         "accepted": true,
         "actions": 3,
         "ignored_events": 6,
-        "observations": 18,
+        "observations": 33,
         "preprocessed_events": 3,
         "raw_records": 12
       },
       "scenario": "startup",
       "smt": {
         "accepted": true,
-        "bytes": 9458,
-        "named_assertions": 26
+        "bytes": 18995,
+        "named_assertions": 41
       },
       "solver": "sat"
     },
     {
-      "capture_wall_ms": 7.207303,
+      "capture_wall_ms": 23.932913,
       "inventory": {
         "functions": {
           "add_configuration": 4,
@@ -2164,20 +2592,20 @@
         "accepted": true,
         "actions": 28,
         "ignored_events": 13,
-        "observations": 176,
+        "observations": 310,
         "preprocessed_events": 21,
         "raw_records": 53
       },
       "scenario": "startup_2nodes",
       "smt": {
         "accepted": true,
-        "bytes": 96721,
-        "named_assertions": 264
+        "bytes": 192607,
+        "named_assertions": 398
       },
       "solver": "sat"
     },
     {
-      "capture_wall_ms": 18.385402,
+      "capture_wall_ms": 33.71014,
       "inventory": {
         "functions": {
           "add_configuration": 9,
@@ -2218,13 +2646,23 @@
       },
       "raw_records": 307,
       "reduction": {
-        "accepted": false,
-        "error": "line 162: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 198,
+        "ignored_events": 82,
+        "observations": 1968,
+        "preprocessed_events": 136,
+        "raw_records": 307
       },
-      "scenario": "suffix_collision.1"
+      "scenario": "suffix_collision.1",
+      "smt": {
+        "accepted": true,
+        "bytes": 1612875,
+        "named_assertions": 2766
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 21.171382,
+      "capture_wall_ms": 33.999441,
       "inventory": {
         "functions": {
           "add_configuration": 9,
@@ -2265,13 +2703,23 @@
       },
       "raw_records": 488,
       "reduction": {
-        "accepted": false,
-        "error": "line 167: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 323,
+        "ignored_events": 131,
+        "observations": 3364,
+        "preprocessed_events": 238,
+        "raw_records": 488
       },
-      "scenario": "suffix_collision.2"
+      "scenario": "suffix_collision.2",
+      "smt": {
+        "accepted": true,
+        "bytes": 2642949,
+        "named_assertions": 4662
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 49.184267,
+      "capture_wall_ms": 50.224649,
       "inventory": {
         "functions": {
           "add_configuration": 25,
@@ -2312,13 +2760,23 @@
       },
       "raw_records": 833,
       "reduction": {
-        "accepted": false,
-        "error": "line 311: unaudited function 'become_pre_vote_candidate'"
+        "accepted": true,
+        "actions": 823,
+        "ignored_events": 173,
+        "observations": 5499,
+        "preprocessed_events": 376,
+        "raw_records": 833
       },
-      "scenario": "suffix_collision.3"
+      "scenario": "suffix_collision.3",
+      "smt": {
+        "accepted": true,
+        "bytes": 8958367,
+        "named_assertions": 10447
+      },
+      "solver": "sat"
     },
     {
-      "capture_wall_ms": 14.168287,
+      "capture_wall_ms": 23.26578,
       "inventory": {
         "functions": {
           "add_configuration": 12,
@@ -2348,10 +2806,20 @@
       },
       "raw_records": 211,
       "reduction": {
-        "accepted": false,
-        "error": "line 94: unsupported membership_state"
+        "accepted": true,
+        "actions": 140,
+        "ignored_events": 26,
+        "observations": 1555,
+        "preprocessed_events": 101,
+        "raw_records": 211
       },
-      "scenario": "swap_single_node"
+      "scenario": "swap_single_node",
+      "smt": {
+        "accepted": true,
+        "bytes": 1396315,
+        "named_assertions": 2263
+      },
+      "solver": "sat"
     }
   ]
 }

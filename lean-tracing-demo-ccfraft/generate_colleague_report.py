@@ -57,14 +57,6 @@ def line_number(path: Path, needle: str) -> int:
     return 1
 
 
-def last_line_number(path: Path, needle: str) -> int:
-    result = 1
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if needle in line:
-            result = number
-    return result
-
-
 def source_link(path: str, line: int, label: str) -> str:
     editor = f"{EDITOR_PREFIX}{path}:{line}:1"
     github = f"{GITHUB_PREFIX}/{git_ref()}/{path}#L{line}"
@@ -240,8 +232,11 @@ def main() -> int:
     )
     cold_compile_percent = 100 * cold_build / cold_example_total
 
-    reduction_path = ROOT / "Reduction.lean"
-    reduction_start = last_line_number(reduction_path, "| .receiveAppendEntries =>")
+    reduction_path = ROOT / "reduction.py"
+    reduction_start = line_number(
+        reduction_path,
+        "def _reduce_receive_with_optional_term_update",
+    )
     reduction_snippet = code_excerpt(
         reduction_path,
         reduction_start,
@@ -272,6 +267,31 @@ def main() -> int:
         compact_instruction(step)
         for step in example_steps[timeout_index : timeout_index + 7]
     )
+    raw_timeout = next(
+        item["value"]
+        for item in data["runs"]["soft_rollback-direct"]["raw"]
+        if item["line"] == 112
+    )
+    raw_timeout_excerpt = json.dumps(
+        {
+            "function": raw_timeout["msg"]["function"],
+            "state": {
+                "current_view": raw_timeout["msg"]["state"]["current_view"],
+                "leadership_state": raw_timeout["msg"]["state"]["leadership_state"],
+                "node_id": raw_timeout["msg"]["state"]["node_id"],
+            },
+        },
+        indent=2,
+    )
+    soft_direct = validations["soft_rollback-direct"]
+    reduced_formula_lines = [
+        line
+        for line in (ARTIFACTS / "soft_rollback-direct/formula-reduced.smt2")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.startswith("(assert (!")
+    ]
+    reduced_formula_excerpt = "\n".join(reduced_formula_lines)
     embedded = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
 
     document = f"""<!doctype html>
@@ -415,9 +435,9 @@ summary {{ cursor: pointer; color: var(--blue); }}
     <strong>Scope today.</strong> Neither result is yet proved equivalent to
     <code>MidtraceSatisfiable</code>. The executable solver checks role, term,
     log length, commit index, allocation, and join state. Two correspondences
-    remain unproved: Python trace reduction against <code>Reduction.lean</code>,
-    and emitted Python SMT against the typed Lean formula. Queue-message
-    observations are recorded but lower to <code>true</code>.
+    remain unproved: decoding the Python reduction certificate into the typed
+    Lean trace, and emitted Python SMT against the typed Lean formula.
+    Queue-message observations are recorded but lower to <code>true</code>.
   </div>
   <div class="cards">
     <div class="card">
@@ -500,31 +520,37 @@ summary {{ cursor: pointer; color: var(--blue); }}
       <code>unknown</code>. UNSAT triggers core reduction and proof output.
     </div>
   </div>
-  <div class="panel" style="margin-top:1rem">
-    <strong>Concrete transform</strong>
-    <pre>{html.escape(transform_example)}</pre>
-    <p class="caption">This deliberately broken event says
-    <code>become_candidate</code> but reports the resulting role as leader.
-    The action and observations remain separate, so the solver sees the
-    contradiction.</p>
+  <div class="grid-2" style="margin-top:1rem">
+    <div class="panel">
+      <strong>Raw event, line 112</strong>
+      <pre>{html.escape(raw_timeout_excerpt)}</pre>
+    </div>
+    <div class="panel">
+      <strong>Reduced instructions</strong>
+      <pre>{html.escape(transform_example)}</pre>
+    </div>
   </div>
+  <p class="caption">This deliberately broken event says
+  <code>become_candidate</code> but reports the resulting role as leader.
+  The reducer keeps the action and the observations separate. The solver can
+  therefore reject the pair instead of accepting the reported state as part
+  of the action definition.</p>
 </section>
 
 <section id="reduction">
-  <h2>The part a model reviewer reads</h2>
+  <h2>Reduction maps implementation events to model instructions</h2>
   <p class="section-conceit">
-    Reduction is deliberately ordinary code. It pattern-matches a normalized
-    event prefix, emits actions and observations in order, then recurses on
-    the rest. Unsupported shapes fail.
+    Reduction is deliberately ordinary Python. It groups normalized events,
+    emits actions and observations in order, and rejects unsupported shapes.
   </p>
   <div class="grid-2">
     <details class="panel">
-      <summary><strong>Lean receive rule</strong></summary>
+      <summary><strong>Python receive rule</strong></summary>
       <pre>{html.escape(reduction_snippet)}</pre>
       <p>{source_link(
-          "lean-tracing-demo-ccfraft/Reduction.lean",
+          "lean-tracing-demo-ccfraft/reduction.py",
           reduction_start,
-          "Open Reduction.lean",
+          "Open reduction.py",
       )}</p>
     </details>
     <div class="panel">
@@ -604,6 +630,40 @@ observe n2.currentTerm = 7</pre>
       formula remains the open proof obligation.
     </div>
   </div>
+  <div class="grid-2" style="margin-top:1rem">
+    <div class="panel">
+      <h3>Why the theorem has two directions</h3>
+      <p><code>FormulaSatisfiable → MidtraceSatisfiable</code> means a solver
+      witness denotes a model segment. The reverse direction means every model
+      segment has a symbolic witness. That reverse direction is what would
+      make SMT UNSAT exclude model segments.</p>
+    </div>
+    <div class="panel">
+      <h3>What still needs proof</h3>
+      <p>The theorem covers the typed Lean formula. The executable path emits
+      a different Python formula. Until those formulas are connected, cvc5
+      proves facts only about the Python projection.</p>
+    </div>
+  </div>
+  <details class="panel" style="margin-top:1rem">
+    <summary><strong>From full UNSAT result to a readable contradiction</strong></summary>
+    <p>The direct <code>soft_rollback</code> formula contains
+    {soft_direct['original_named_assertions']:,} named assertions. cvc5
+    returns a core of {soft_direct['original_unsat_core_assertions']:,}.
+    Automatic deletion checks reduce that core to
+    {soft_direct['reduced_unsat_core_assertions']} assertions.</p>
+    <pre>{html.escape(reduced_formula_excerpt)}</pre>
+    <p>One assertion says that <code>timeout</code> produces candidate role
+    <code>2</code>. The other says that the trace observed leader role
+    <code>3</code> at the same action boundary.</p>
+    <ol>
+      <li>cvc5 replays the full formula and returns an initial UNSAT core.</li>
+      <li>The core reducer tries deleting large deterministic chunks.</li>
+      <li>It keeps a deletion only when another cvc5 run remains UNSAT.</li>
+      <li>It tries individual deletions, then asks cvc5 to prove the reduced
+      formula.</li>
+    </ol>
+  </details>
 </section>
 
 <section id="stories">
@@ -629,6 +689,20 @@ observe n2.currentTerm = 7</pre>
         reducer still emits <code>timeout(node 1)</code>, which must produce a
         candidate. The two-step contradiction is UNSAT.
       </p>
+      <pre>python3 validate.py \
+    Traces/Captured/soft_rollback.ndjson \
+    Artifacts/review/soft_rollback \
+    --cvc5 /path/to/cvc5
+# sat
+
+python3 validate.py \
+    Traces/Mutated/soft_rollback-direct.ndjson \
+    Artifacts/review/soft_rollback-direct \
+    --cvc5 /path/to/cvc5
+# unsat</pre>
+      <p class="caption">For UNSAT, inspect <code>diagnosis.json</code>,
+      <code>formula-reduced.smt2</code>, and <code>proof.txt</code> in the
+      output directory.</p>
     </div>
     <div class="panel story unsat">
       <span class="status unsat">UNSAT</span>
@@ -729,8 +803,8 @@ observe n2.currentTerm = 7</pre>
       not encode queues or message contents yet.</p>
       <p>The next proof obligation is to connect the emitted SMT formula to
       the typed Lean formula covered by <code>lowerTrace_correct</code>.</p>
-      <p>The Python reduction certificate also needs a proved correspondence
-      with the separate Lean reducer.</p>
+      <p>The Python certificate decoder still needs a proved correspondence
+      with the typed Lean trace.</p>
       <p>The executable path trusts trace instrumentation, <code>raft_driver</code>,
       Python parsing and reduction, <code>Shared/smt.py</code>, cvc5, and the
       report generator.</p>

@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import MachineGenerated.LoweringProofs
+import MachineGenerated.Invariant
 
 set_option autoImplicit false
 
@@ -14,7 +15,8 @@ variable [Bootstrap Node]
 /-- State facts that the arbitrary trace entry point must satisfy. -/
 def ValidEntryState
     (state : State Node TxId) : Prop :=
-  (forall node, state.allocated node <-> node ∈ state.hasJoined) /\
+  RetirementInvariantFacts state /\
+    (forall node, state.allocated node <-> node ∈ state.hasJoined) /\
     (forall node,
       state.allocated node ->
         (state.nodes node).commitIndex <= (state.nodes node).log.length) /\
@@ -29,6 +31,14 @@ inductive Observation (Node TxId : Type) where
   | allocated (node : Node) (value : Bool)
   | joined (node : Node) (value : Bool)
   | role (node : Node) (value : Role)
+  | preVoteStatus (node : Node) (value : PreVoteStatus)
+  | membershipState (node : Node) (value : MembershipState)
+  | retirementIndex (node : Node) (value : Option Nat)
+  | retirementCommittableIndex (node : Node) (value : Option Nat)
+  | retiredCommittedIndex (node : Node) (value : Option Nat)
+  | retirementCompleted
+      (observer retired : Node)
+      (value : Bool)
   | currentTerm (node : Node) (value : Nat)
   | commitIndex (node : Node) (value : Nat)
   | logLength (node : Node) (value : Nat)
@@ -43,6 +53,17 @@ def Observation.Holds
   | .allocated node value => decide (state.allocated node) = value
   | .joined node value => decide (node ∈ state.hasJoined) = value
   | .role node value => (state.nodes node).role = value
+  | .preVoteStatus node value => state.preVoteStatus node = value
+  | .membershipState node value =>
+      (state.nodes node).membershipState = value
+  | .retirementIndex node value =>
+      (state.nodes node).retirementIndex = value
+  | .retirementCommittableIndex node value =>
+      (state.nodes node).retirementCommittableIndex = value
+  | .retiredCommittedIndex node value =>
+      (state.nodes node).retiredCommittedIndex = value
+  | .retirementCompleted observer retired value =>
+      decide (retired ∈ state.retirementCompleted observer) = value
   | .currentTerm node value => (state.nodes node).currentTerm = value
   | .commitIndex node value => (state.nodes node).commitIndex = value
   | .logLength node value => (state.nodes node).log.length = value

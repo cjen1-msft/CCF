@@ -3,7 +3,10 @@
 
 import MachineGenerated.Proof
 import MachineGenerated.BootstrapExamples
-import Reduction
+import MachineGenerated.PreVoteExamples
+import MachineGenerated.CheckQuorumExamples
+import MachineGenerated.RetirementExamples
+import MachineGenerated.SuccessorNominationExamples
 import TraceProperties
 
 /-!
@@ -13,7 +16,19 @@ This target checks the model safety proof and the trace-lowering contract.
 -/
 
 #print axioms CCFRaft.reachableConsensusSafety
+#print axioms CCFRaft.MachineGenerated.lowerAction_correct
 #print axioms CCFRaft.TraceValidation.lowerTrace_correct
+#print axioms CCFRaft.becomePreVoteCandidatePreservesSystemInductiveInvariant
+#print axioms CCFRaft.becomeCandidatePreservesSystemInductiveInvariant
+#print axioms CCFRaft.requestPreVotePreservesSystemInductiveInvariant
+#print axioms CCFRaft.checkQuorumPreservesSystemInductiveInvariant
+#print axioms CCFRaft.appendRetiredCommittedPreservesSystemInductiveInvariant
+#print axioms CCFRaft.proposeVotePreservesSystemInductiveInvariant
+#print axioms CCFRaft.advanceCommitAndProposeVotePreservesSystemInductiveInvariant
+#print axioms CCFRaft.PreVoteExamples.successfulPreVote
+#print axioms CCFRaft.CheckQuorumExamples.canonicalLeaderCanCheckQuorum
+#print axioms CCFRaft.RetirementExamples.selfRemovalOrdersRetirement
+#print axioms CCFRaft.SuccessorNominationExamples.sameTermProposalStartsCandidate
 
 run_cmd do
   let env <- Lean.getEnv

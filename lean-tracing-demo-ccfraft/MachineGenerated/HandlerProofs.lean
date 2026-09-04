@@ -180,6 +180,13 @@ theorem configurationsInLogFrom_append
           ]
           congr 1
           omega
+      | retiredCommitted nodes =>
+          simp [
+            configurationsInLogFrom, content,
+            inductionHypothesis, Nat.add_assoc, Nat.add_comm
+          ]
+          congr 1
+          omega
       | reconfiguration nodes =>
           simp [
             configurationsInLogFrom, content,
@@ -213,6 +220,69 @@ theorem allConfigurations_mono_prefix
     ⟨suffix, agreed⟩
   exact ⟨suffix, by simp [agreed]⟩
 
+/-- Once a removal index is found, extending the configuration history keeps it. -/
+theorem retirementIndexFromConfigurations_some_append
+    (node : Node)
+    (previouslyIncluded : Bool)
+    (configurations suffix : List (Configuration Node))
+    (index : Nat)
+    (found :
+      retirementIndexFromConfigurations
+        node previouslyIncluded configurations = some index) :
+    retirementIndexFromConfigurations
+      node previouslyIncluded (configurations ++ suffix) = some index := by
+  induction configurations generalizing previouslyIncluded with
+  | nil =>
+      simp [retirementIndexFromConfigurations] at found
+  | cons configuration remaining inductionHypothesis =>
+      by_cases member : node ∈ configuration.nodes
+      · simp [retirementIndexFromConfigurations, member] at found ⊢
+        exact inductionHypothesis true found
+      · by_cases included : previouslyIncluded
+        · simp [retirementIndexFromConfigurations, member, included] at found ⊢
+          exact found
+        · simp [retirementIndexFromConfigurations, member, included] at found ⊢
+          exact inductionHypothesis false found
+
+/-- A log extension preserves an already discovered retirement index. -/
+theorem retirementIndexInLog_some_of_prefix
+    (node : Node)
+    {left right : List (Entry Node TxId)}
+    {index : Nat}
+    (isPrefix : left <+: right)
+    (found : retirementIndexInLog node left = some index) :
+    retirementIndexInLog node right = some index := by
+  unfold retirementIndexInLog at found ⊢
+  rcases allConfigurations_mono_prefix (TxId := TxId) isPrefix with
+    ⟨suffix, configurationsEq⟩
+  rw [← configurationsEq]
+  exact
+    retirementIndexFromConfigurations_some_append
+      node false (allConfigurations left) suffix index found
+
+/-- A log extension preserves existence of committed removal evidence. -/
+theorem retirementIndexInLog_isSome_of_prefix
+    (node : Node)
+    {left right : List (Entry Node TxId)}
+    (isPrefix : left <+: right)
+    (found : (retirementIndexInLog node left).isSome) :
+    (retirementIndexInLog node right).isSome := by
+  rw [Option.isSome_iff_exists] at found ⊢
+  rcases found with ⟨index, indexFound⟩
+  exact
+    ⟨index,
+      retirementIndexInLog_some_of_prefix
+        (TxId := TxId) node isPrefix indexFound⟩
+
+/-- Every completed-retirement set member has a committed removal prefix. -/
+theorem retirementCompletedNodes_hasRemoval
+    (log : List (Entry Node TxId))
+    (commitIndex : Nat)
+    {node : Node}
+    (member : node ∈ retirementCompletedNodes log commitIndex) :
+    (retirementIndexInLog node (log.take commitIndex)).isSome := by
+  simpa [retirementCompletedNodes] using (Finset.mem_filter.mp member).2
+
 /-- Every projected physical configuration index lies in its source interval. -/
 theorem configurationsInLogFrom_index_bounds
     (start : Nat)
@@ -234,6 +304,13 @@ theorem configurationsInLogFrom_index_bounds
           simp only [List.length_cons]
           omega
       | signature =>
+          have bounds :=
+            inductionHypothesis (start := start + 1)
+              (by
+                simpa [configurationsInLogFrom, content] using member)
+          simp only [List.length_cons]
+          omega
+      | retiredCommitted nodes =>
           have bounds :=
             inductionHypothesis (start := start + 1)
               (by
@@ -269,6 +346,9 @@ theorem configurationsInLogFrom_pairwise_index_lt
           simpa [configurationsInLogFrom, content] using
             inductionHypothesis (start := start + 1)
       | signature =>
+          simpa [configurationsInLogFrom, content] using
+            inductionHypothesis (start := start + 1)
+      | retiredCommitted nodes =>
           simpa [configurationsInLogFrom, content] using
             inductionHypothesis (start := start + 1)
       | reconfiguration nodes =>
@@ -480,6 +560,8 @@ theorem configurationsInLogFrom_append_nonreconfiguration
           simp [configurationsInLogFrom, content]
       | signature =>
           simp [configurationsInLogFrom, content]
+      | retiredCommitted nodes =>
+          simp [configurationsInLogFrom, content]
       | reconfiguration nodes =>
           exact False.elim (notReconfiguration nodes content)
   | cons head tail inductionHypothesis =>
@@ -488,6 +570,9 @@ theorem configurationsInLogFrom_append_nonreconfiguration
           simpa [configurationsInLogFrom, content] using
             inductionHypothesis (start := start + 1)
       | signature =>
+          simpa [configurationsInLogFrom, content] using
+            inductionHypothesis (start := start + 1)
+      | retiredCommitted nodes =>
           simpa [configurationsInLogFrom, content] using
             inductionHypothesis (start := start + 1)
       | reconfiguration nodes =>
@@ -1537,6 +1622,128 @@ end BootstrapCommit
 
 /-! ## Generic local-handler facts -/
 
+variable [Bootstrap Node]
+
+private def withProtocolNodeState
+    (result : NodeState Node TxId × AppendEntriesResponse Node) :
+    NodeState Node TxId × AppendEntriesResponse Node :=
+  (protocolNodeState result.1, result.2)
+
+theorem rejectAppendEntriesRequest_protocolNodeState
+    (node : NodeState Node TxId)
+    (request : AppendEntriesRequest Node TxId) :
+    rejectAppendEntriesRequest? (protocolNodeState node) request =
+      (rejectAppendEntriesRequest? node request).map
+        withProtocolNodeState := by
+  unfold rejectAppendEntriesRequest?
+  simp only [protocolNodeState, logOk]
+  split <;>
+    simp_all [
+      failureResponse, withProtocolNodeState, protocolNodeState
+    ]
+
+theorem appendEntriesAlreadyDone_protocolNodeState
+    (node : NodeState Node TxId)
+    (request : AppendEntriesRequest Node TxId) :
+    appendEntriesAlreadyDone? (protocolNodeState node) request =
+      (appendEntriesAlreadyDone? node request).map
+        withProtocolNodeState := by
+  unfold appendEntriesAlreadyDone?
+  simp only [alreadyDone, protocolNodeState]
+  split <;>
+    simp_all [
+      committedFromLeader, successResponse, withProtocolNodeState,
+      protocolNodeState
+    ]
+
+theorem conflictAppendEntriesRequest_protocolNodeState
+    (node : NodeState Node TxId)
+    (request : AppendEntriesRequest Node TxId) :
+    conflictAppendEntriesRequest? (protocolNodeState node) request =
+      (conflictAppendEntriesRequest? node request).map
+        protocolNodeState := by
+  unfold conflictAppendEntriesRequest?
+  simp only [hasTermConflict, overlapLength, protocolNodeState]
+  split <;> simp_all [protocolNodeState]
+
+theorem noConflictAppendEntriesRequest_protocolNodeState
+    (node : NodeState Node TxId)
+    (request : AppendEntriesRequest Node TxId) :
+    noConflictAppendEntriesRequest? (protocolNodeState node) request =
+      (noConflictAppendEntriesRequest? node request).map
+        withProtocolNodeState := by
+  unfold noConflictAppendEntriesRequest?
+  simp only [noConflictExtension, protocolNodeState]
+  split <;>
+    simp_all [
+      committedFromLeader, successResponse, withProtocolNodeState,
+      protocolNodeState
+    ]
+
+theorem acceptAppendEntriesRequest_protocolNodeState
+    (node : NodeState Node TxId)
+    (request : AppendEntriesRequest Node TxId) :
+    acceptAppendEntriesRequest? (protocolNodeState node) request =
+      (acceptAppendEntriesRequest? node request).map
+        withProtocolNodeState := by
+  unfold acceptAppendEntriesRequest?
+  by_cases accepted :
+      request.term = node.currentTerm /\
+        node.role = .follower /\
+        logOk node request /\
+        request.prevLogIndex >= node.commitIndex
+  · have acceptedProtocol :
+        request.term = (protocolNodeState node).currentTerm /\
+          (protocolNodeState node).role = .follower /\
+          logOk (protocolNodeState node) request /\
+          request.prevLogIndex >=
+            (protocolNodeState node).commitIndex := by
+      simpa [protocolNodeState, logOk] using accepted
+    rw [if_pos acceptedProtocol, if_pos accepted]
+    rw [
+      appendEntriesAlreadyDone_protocolNodeState,
+      noConflictAppendEntriesRequest_protocolNodeState,
+      conflictAppendEntriesRequest_protocolNodeState
+    ]
+    cases appendEntriesAlreadyDone? node request <;>
+      simp [withProtocolNodeState]
+    cases noConflictAppendEntriesRequest? node request <;>
+      simp [withProtocolNodeState]
+    cases conflictResult :
+        conflictAppendEntriesRequest? node request with
+    | none => simp [conflictResult]
+    | some truncated =>
+        have nestedAppend :=
+          appendEntriesAlreadyDone_protocolNodeState truncated request
+        have nestedNoConflict :=
+          noConflictAppendEntriesRequest_protocolNodeState truncated request
+        simp only [Option.map_some]
+        rw [nestedAppend, nestedNoConflict]
+        cases appendEntriesAlreadyDone? truncated request <;>
+          simp [withProtocolNodeState]
+  · have rejectedProtocol :
+        Not (
+          request.term = (protocolNodeState node).currentTerm /\
+            (protocolNodeState node).role = .follower /\
+            logOk (protocolNodeState node) request /\
+            request.prevLogIndex >=
+              (protocolNodeState node).commitIndex) := by
+      simpa [protocolNodeState, logOk] using accepted
+    rw [if_neg rejectedProtocol, if_neg accepted]
+    rfl
+
+theorem handleAppendEntriesRequest_protocolNodeState
+    (node : NodeState Node TxId)
+    (request : AppendEntriesRequest Node TxId) :
+    handleAppendEntriesRequest? (protocolNodeState node) request =
+      (handleAppendEntriesRequest? node request).map
+        withProtocolNodeState := by
+  unfold handleAppendEntriesRequest?
+  rw [rejectAppendEntriesRequest_protocolNodeState]
+  cases rejectAppendEntriesRequest? node request
+  · simpa [acceptAppendEntriesRequest_protocolNodeState]
+  · simp
+
 /-- Facts guaranteed after tallying a RequestVote response. -/
 structure VoteResponseHandlerPost
     (before after : NodeState Node TxId)
@@ -1548,6 +1755,16 @@ structure VoteResponseHandlerPost
   sentIndexUnchanged : after.sentIndex = before.sentIndex
   matchIndexUnchanged : after.matchIndex = before.matchIndex
   votedForUnchanged : after.votedFor = before.votedFor
+  preVotesGrantedUnchanged :
+    after.preVotesGranted = before.preVotesGranted
+  membershipStateUnchanged :
+    after.membershipState = before.membershipState
+  retirementIndexUnchanged :
+    after.retirementIndex = before.retirementIndex
+  retirementCommittableIndexUnchanged :
+    after.retirementCommittableIndex = before.retirementCommittableIndex
+  retiredCommittedIndexUnchanged :
+    after.retiredCommittedIndex = before.retiredCommittedIndex
   votesUpdate :
     after.votesGranted = before.votesGranted \/
       (response.voteGranted = true /\
@@ -1566,11 +1783,15 @@ theorem handleRequestVoteResponsePreserves
   split at handled
   · simp at handled
     subst after
-    exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, Or.inl rfl⟩
+    exact
+      ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+        rfl, rfl, rfl, rfl, Or.inl rfl⟩
   · split at handled
     · simp at handled
       subst after
-      exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, Or.inl rfl⟩
+      exact
+        ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+          rfl, rfl, rfl, rfl, Or.inl rfl⟩
     · rename_i candidateRole
       split at handled
       · rename_i currentTerm
@@ -1578,12 +1799,148 @@ theorem handleRequestVoteResponsePreserves
         · rename_i granted
           simp at handled
           subst after
-          exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl,
-            Or.inr ⟨granted, by simpa using candidateRole, rfl⟩⟩
+          exact
+            ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+              rfl, rfl, rfl, rfl,
+              Or.inr ⟨granted, by simpa using candidateRole, rfl⟩⟩
         · simp at handled
           subst after
-          exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, Or.inl rfl⟩
+          exact
+            ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+              rfl, rfl, rfl, rfl, Or.inl rfl⟩
       · contradiction
+
+/-- RequestPreVote changes no local persistent or replication state. -/
+theorem handleRequestPreVoteStateUnchanged
+    {before after : NodeState Node TxId}
+    {request : RequestPreVote Node}
+    {response : RequestPreVoteResponse Node}
+    (handled :
+      handleRequestPreVote? before request = some (after, response)) :
+    after = before := by
+  unfold handleRequestPreVote? at handled
+  split at handled
+  · simp at handled
+    exact handled.1.symm
+  · contradiction
+
+/-- RequestPreVote replies preserve the request's source and destination. -/
+theorem handleRequestPreVoteResponseAddressed
+    {before after : NodeState Node TxId}
+    {request : RequestPreVote Node}
+    {response : RequestPreVoteResponse Node}
+    (handled :
+      handleRequestPreVote? before request = some (after, response)) :
+    response.source = request.destination /\
+      response.destination = request.source := by
+  unfold handleRequestPreVote? at handled
+  split at handled
+  · simp at handled
+    rw [← handled.2]
+    exact ⟨rfl, rfl⟩
+  · contradiction
+
+/-- Tallying a pre-vote response changes only the speculative vote set. -/
+structure PreVoteResponseHandlerPost
+    (before after : NodeState Node TxId)
+    (response : RequestPreVoteResponse Node) : Prop where
+  roleUnchanged : after.role = before.role
+  currentTermUnchanged : after.currentTerm = before.currentTerm
+  logUnchanged : after.log = before.log
+  commitIndexUnchanged : after.commitIndex = before.commitIndex
+  sentIndexUnchanged : after.sentIndex = before.sentIndex
+  matchIndexUnchanged : after.matchIndex = before.matchIndex
+  isNewFollowerUnchanged : after.isNewFollower = before.isNewFollower
+  votedForUnchanged : after.votedFor = before.votedFor
+  votesGrantedUnchanged : after.votesGranted = before.votesGranted
+  membershipStateUnchanged :
+    after.membershipState = before.membershipState
+  retirementIndexUnchanged :
+    after.retirementIndex = before.retirementIndex
+  retirementCommittableIndexUnchanged :
+    after.retirementCommittableIndex = before.retirementCommittableIndex
+  retiredCommittedIndexUnchanged :
+    after.retiredCommittedIndex = before.retiredCommittedIndex
+  preVotesUpdate :
+    after.preVotesGranted = before.preVotesGranted \/
+      (response.voteGranted = true /\
+        response.term = before.currentTerm /\
+        before.role = .preVoteCandidate /\
+        after.preVotesGranted =
+          insert response.source before.preVotesGranted)
+
+theorem handleRequestPreVoteResponsePreserves
+    {before after : NodeState Node TxId}
+    {response : RequestPreVoteResponse Node}
+    (handled :
+      handleRequestPreVoteResponse? before response = some after) :
+    PreVoteResponseHandlerPost before after response := by
+  unfold handleRequestPreVoteResponse? at handled
+  split at handled
+  · simp at handled
+    subst after
+    exact
+      ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+        rfl, rfl, rfl, rfl, Or.inl rfl⟩
+  · split at handled
+    · simp at handled
+      subst after
+      exact
+        ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+          rfl, rfl, rfl, rfl, Or.inl rfl⟩
+    · rename_i preVoteCandidate
+      split at handled
+      · rename_i currentTerm
+        split at handled
+        · rename_i granted
+          simp at handled
+          subst after
+          exact
+            ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+              rfl, rfl, rfl, rfl,
+              Or.inr
+                ⟨granted, currentTerm,
+                  by simpa using preVoteCandidate, rfl⟩⟩
+        · simp at handled
+          subst after
+          exact
+            ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+              rfl, rfl, rfl, rfl,
+              Or.inl rfl⟩
+      · contradiction
+
+/--
+A processed proposal is never newer than the destination. It either leaves the
+node unchanged or performs the exact ordinary-candidate transition.
+-/
+theorem handleProposeVoteRequestCases
+    {state : State Node TxId}
+    {destination : Node}
+    {request : ProposeVoteRequest Node}
+    {after : NodeState Node TxId}
+    (handled :
+      handleProposeVoteRequest? state destination request = some after) :
+    request.term <= (state.nodes destination).currentTerm /\
+      (after = state.nodes destination \/
+        (request.term = (state.nodes destination).currentTerm /\
+          candidateTransitionEnabled state destination /\
+          after =
+            becomeCandidateNodeState
+              (state.nodes destination) destination)) := by
+  simp only [handleProposeVoteRequest?] at handled
+  split at handled
+  · contradiction
+  · rename_i notNewer
+    split at handled
+    · rename_i eligible
+      simp only [Option.some.injEq] at handled
+      subst after
+      exact
+        ⟨Nat.le_of_not_gt notNewer,
+          Or.inr ⟨eligible.1, eligible.2, rfl⟩⟩
+    · simp only [Option.some.injEq] at handled
+      subst after
+      exact ⟨Nat.le_of_not_gt notNewer, Or.inl rfl⟩
 
 /-- A successful newer-message lookup identifies the queued message and order. -/
 theorem newerMessageSound
@@ -2314,6 +2671,30 @@ theorem handleAppendEntriesRequestLeaderUnchanged
     split at handled
     · rename_i accepted
       exact Role.noConfusion (accepted.2.1.symm.trans leader)
+    · contradiction
+
+/-- A non-follower can only take the stale rejecting request branch. -/
+theorem handleAppendEntriesRequestNonFollowerUnchanged
+    {before after : NodeState Node TxId}
+    {request : AppendEntriesRequest Node TxId}
+    {response : AppendEntriesResponse Node}
+    (notFollower : Not (before.role = .follower))
+    (handled :
+      handleAppendEntriesRequest? before request = some (after, response)) :
+    after = before := by
+  unfold handleAppendEntriesRequest? at handled
+  split at handled
+  · rename_i rejectedState rejectedResponse rejected
+    unfold rejectAppendEntriesRequest? at rejected
+    split at rejected
+    · have pairEq :=
+        (Option.some.inj rejected).trans (Option.some.inj handled)
+      exact (congrArg Prod.fst pairEq).symm
+    · contradiction
+  · unfold acceptAppendEntriesRequest? at handled
+    split at handled
+    · rename_i accepted
+      exact False.elim (notFollower accepted.2.1)
     · contradiction
 
 end CCFRaft
