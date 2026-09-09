@@ -70,3 +70,9 @@ name = "Shared"
 
 [[lean_lib]]
 name = "MachineGenerated"
+
+[[lean_lib]]
+name = "TraceStateObservation"
+
+[[lean_lib]]
+name = "TraceStateObservationJson"
