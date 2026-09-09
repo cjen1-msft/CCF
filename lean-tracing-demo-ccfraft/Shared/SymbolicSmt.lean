@@ -210,14 +210,14 @@ def prepare (assertions : List (Expr .bool)) :
   let (groups, printed) ← prepareGroups [assertions]
   return (groups.flatten, printed)
 
-private def preamble (printed : Printing) : List String :=
+def Printing.preamble (printed : Printing) : List String :=
   ["(set-logic ALL)"] ++ printed.sorts.toList ++ printed.unknownDeclarations.toList ++
     printed.stateDeclarations.toList ++ printed.definitions.toList
 
 def script (assertions : List (Expr .bool)) : Except String String := do
   let (roots, printed) ← prepare assertions
   return String.intercalate "\n" <|
-    preamble printed ++ roots.map (fun e => s!"(assert {e})") ++ ["(check-sat)", ""]
+    printed.preamble ++ roots.map (fun e => s!"(assert {e})") ++ ["(check-sat)", ""]
 
 /-- Zero-based groups retain total defining equalities in their owning action. -/
 def scriptGroups (groups : List (List (Expr .bool))) : Except String String := do
@@ -229,7 +229,7 @@ def scriptGroups (groups : List (List (Expr .bool))) : Except String String := d
       | _ => "(and " ++ String.intercalate " " clauses ++ ")"
     s!"(assert (! {body} :named group_{index}))"
   return String.intercalate "\n" <|
-    ["(set-option :produce-unsat-cores true)"] ++ preamble printed ++
+    ["(set-option :produce-unsat-cores true)"] ++ printed.preamble ++
       assertions ++ ["(check-sat)", ""]
 
 end Symbolic
