@@ -1,7 +1,6 @@
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-import MachineGenerated.Runtime.LongTraceSmtProbe
 import MachineGenerated.Runtime.NaiveFullStateWitness
 import MachineGenerated.Runtime.RetirementConsistencyExamples
 import MachineGenerated.Runtime.SuccessorNominationExamples

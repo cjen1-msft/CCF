@@ -3,6 +3,7 @@
 
 
 import Properties
+import MachineGenerated.ModelProofs
 
 set_option autoImplicit false
 

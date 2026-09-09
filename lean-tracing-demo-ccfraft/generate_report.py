@@ -309,7 +309,7 @@ single-edit negative traces. Open the
 <div class="warning">
 <strong>Current blocker.</strong>
 <code>lowerTrace_correct</code> proves the typed Lean lowering.
-<code>Shared/smt.py</code> is a separate user-reviewed projection of terms,
+<code>ccfraft_projection.py</code> is a separate unverified projection of terms,
 roles, log lengths, commit indices, allocation, and join state. The report's
 <code>sat</code> and <code>unsat</code> results do not yet establish
 <code>MidtraceSatisfiable</code> for the complete model. The flat certificate

@@ -1,0 +1,65 @@
+{
+  "schema_version": "ccfraft-client-request/v2",
+  "entry": {
+    "nodes": [
+      null,
+      {
+        "role": "leader",
+        "currentTerm": 7,
+        "log": [
+          {
+            "term": 6,
+            "content": {
+              "kind": "transaction",
+              "transaction": {"unknown": "old"}
+            }
+          }
+        ],
+        "commitIndex": 0,
+        "sentIndex": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        "matchIndex": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        "isNewFollower": false,
+        "votedFor": 1,
+        "votesGranted": [1],
+        "preVotesGranted": [],
+        "membershipState": "active",
+        "retirementIndex": null,
+        "retirementCommittableIndex": null,
+        "retiredCommittedIndex": null
+      },
+      null, null, null, null, null, null, null,
+      null, null, null, null, null, null
+    ],
+    "network": [[], [], [], [], [], [], [], [], [], [], [], [], [], [], []],
+    "submittedTxIds": [{"unknown": "old"}],
+    "hasJoined": [1],
+    "preVoteStatus": [
+      "capable", "capable", "capable", "capable", "capable",
+      "capable", "capable", "capable", "capable", "capable",
+      "capable", "capable", "capable", "capable", "capable"
+    ],
+    "retirementCompleted": [[], [], [], [], [], [], [], [], [], [], [], [], [], [], []]
+  },
+  "bounds": {
+    "transaction_count": 2,
+    "term_count": 8,
+    "index_count": 3,
+    "log_capacity": 2,
+    "queue_capacity": 1
+  },
+  "unknowns": ["old", "new"],
+  "steps": [
+    {
+      "kind": "action",
+      "action": "clientRequest",
+      "node": 1,
+      "transaction": {"unknown": "new"}
+    },
+    {
+      "kind": "observation",
+      "node": 1,
+      "variable": "logLength",
+      "value": 2
+    }
+  ]
+}

@@ -806,7 +806,7 @@ python3 validate.py \
       <p>The Python certificate decoder still needs a proved correspondence
       with the typed Lean trace.</p>
       <p>The executable path trusts trace instrumentation, <code>raft_driver</code>,
-      Python parsing and reduction, <code>Shared/smt.py</code>, cvc5, and the
+      Python parsing and reduction, <code>ccfraft_projection.py</code>, cvc5, and the
       report generator.</p>
     </div>
   </div>

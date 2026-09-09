@@ -75,27 +75,6 @@ def INITIAL_PRE_VOTE_STATUS
     Node -> PreVoteStatus :=
   bootstrap.preVoteStatus
 
-/-- Every valid bootstrap configuration contains its selected leader. -/
-theorem initialLeader_mem_initialConfiguration
-    {Node : Type}
-    [DecidableEq Node]
-    [bootstrap : Bootstrap Node] :
-    Membership.mem
-      (INITIAL_CONFIGURATION (Node := Node))
-      (INITIAL_LEADER (Node := Node)) :=
-  bootstrap.leader_mem
-
-/-- Every valid bootstrap configuration is nonempty. -/
-theorem initialConfiguration_nonempty
-    {Node : Type}
-    [DecidableEq Node]
-    [bootstrap : Bootstrap Node] :
-    (INITIAL_CONFIGURATION (Node := Node)).Nonempty := by
-  exact
-    Exists.intro
-      (INITIAL_LEADER (Node := Node))
-      (initialLeader_mem_initialConfiguration (Node := Node))
-
 /-- Leadership roles represented by the model. -/
 inductive Role where
   /-- A node that has not yet observed a configuration adding it. -/
@@ -368,101 +347,6 @@ def allocate
     NodeStore Node TxId :=
   ⟨nodes.entries ∪ (ofFinset added fun _ => freshNodeState).entries⟩
 
-@[simp]
-theorem node?_set_same
-    (nodes : NodeStore Node TxId)
-    (node : Node)
-    (value : NodeState Node TxId) :
-    (nodes.set node value).node? node = some value := by
-  simp [node?, set]
-
-@[simp]
-theorem node?_set_of_ne
-    (nodes : NodeStore Node TxId)
-    (node candidate : Node)
-    (value : NodeState Node TxId)
-    (different : Not (candidate = node)) :
-    (nodes.set node value).node? candidate = nodes.node? candidate := by
-  simp [node?, set, Finmap.lookup_insert_of_ne, different]
-
-@[simp]
-theorem get_set_same
-    (nodes : NodeStore Node TxId)
-    (node : Node)
-    (value : NodeState Node TxId) :
-    nodes.set node value node = value := by
-  simp [get]
-
-@[simp]
-theorem get_set_of_ne
-    (nodes : NodeStore Node TxId)
-    (node candidate : Node)
-    (value : NodeState Node TxId)
-    (different : Not (candidate = node)) :
-    nodes.set node value candidate = nodes candidate := by
-  simp [get, node?_set_of_ne, different]
-
-@[simp]
-theorem node?_ofFinset_of_mem
-    (keys : Finset Node)
-    (value : Node -> NodeState Node TxId)
-    (node : Node)
-    (member : node ∈ keys) :
-    (ofFinset keys value).node? node = some (value node) := by
-  rw [node?, Finmap.lookup_eq_some_iff]
-  simp [ofFinset, member]
-
-@[simp]
-theorem node?_ofFinset_of_not_mem
-    (keys : Finset Node)
-    (value : Node -> NodeState Node TxId)
-    (node : Node)
-    (notMember : node ∉ keys) :
-    (ofFinset keys value).node? node = none := by
-  rw [node?, Finmap.lookup_eq_none]
-  simpa [ofFinset, Finmap.mem_def, Multiset.keys] using notMember
-
-@[simp]
-theorem get_ofFinset
-    (keys : Finset Node)
-    (value : Node -> NodeState Node TxId)
-    (node : Node) :
-    ofFinset keys value node =
-      if node ∈ keys then value node else freshNodeState := by
-  simp only [get]
-  split <;> simp_all
-
-@[simp]
-theorem node?_allocate_of_allocated
-    (nodes : NodeStore Node TxId)
-    (added : Finset Node)
-    (node : Node)
-    (allocated : nodes.allocated node) :
-    (nodes.allocate added).node? node = nodes.node? node := by
-  change (nodes.node? node).isSome at allocated
-  rw [Option.isSome_iff_exists] at allocated
-  rcases allocated with ⟨value, found⟩
-  simp only [node?, allocate]
-  rw [Finmap.lookup_union_left (Finmap.mem_of_lookup_eq_some found)]
-
-@[simp]
-theorem node?_allocate_of_not_allocated_of_mem
-    (nodes : NodeStore Node TxId)
-    (added : Finset Node)
-    (node : Node)
-    (notAllocated : Not (nodes.allocated node))
-    (member : node ∈ added) :
-    (nodes.allocate added).node? node = some freshNodeState := by
-  have missing : nodes.node? node = none := by
-    cases found : nodes.node? node <;>
-      simp_all [NodeStore.allocated]
-  have notIn : node ∉ nodes.entries := by
-    rw [← Finmap.lookup_eq_none]
-    exact missing
-  simp only [node?, allocate]
-  rw [Finmap.lookup_union_right notIn]
-  exact node?_ofFinset_of_mem added (fun _ => freshNodeState) node member
-
 end NodeStore
 
 /-- Global state: allocated nodes, queues, transaction IDs, and join history. -/
@@ -497,25 +381,6 @@ def updateNode
     NodeStore Node TxId :=
   nodes.set node value
 
-/-- Reading the node just updated returns the new value. -/
-@[simp]
-theorem updateNode_same
-    (nodes : NodeStore Node TxId)
-    (node : Node)
-    (value : NodeState Node TxId) :
-    updateNode nodes node value node = value := by
-  simp [updateNode]
-
-/-- Reading another node after an update returns its old value. -/
-@[simp]
-theorem updateNode_of_ne
-    (nodes : NodeStore Node TxId)
-    (node candidate : Node)
-    (value : NodeState Node TxId)
-    (different : Not (candidate = node)) :
-    updateNode nodes node value candidate = nodes candidate := by
-  simp [updateNode, different]
-
 /-- Replace one peer index in a node-local index table. -/
 def updateIndex
     (indices : Node -> Nat)
@@ -523,25 +388,6 @@ def updateIndex
     (value : Nat) :
     Node -> Nat :=
   Function.update indices node value
-
-/-- Reading the updated peer index returns the new value. -/
-@[simp]
-theorem updateIndex_same
-    (indices : Node -> Nat)
-    (node : Node)
-    (value : Nat) :
-    updateIndex indices node value node = value := by
-  simp [updateIndex]
-
-/-- Updating one peer index leaves all other peer indices unchanged. -/
-@[simp]
-theorem updateIndex_of_ne
-    (indices : Node -> Nat)
-    (node candidate : Node)
-    (value : Nat)
-    (different : Not (candidate = node)) :
-    updateIndex indices node value candidate = indices candidate := by
-  simp [updateIndex, different]
 
 /-- Replace the FIFO queue for one destination. -/
 def updateQueue
@@ -551,25 +397,6 @@ def updateQueue
     Node -> List (Message Node TxId) :=
   Function.update network destination queue
 
-/-- Reading the replaced destination queue returns the new queue. -/
-@[simp]
-theorem updateQueue_same
-    (network : Node -> List (Message Node TxId))
-    (destination : Node)
-    (queue : List (Message Node TxId)) :
-    updateQueue network destination queue destination = queue := by
-  simp [updateQueue]
-
-/-- Replacing one destination queue leaves other queues unchanged. -/
-@[simp]
-theorem updateQueue_of_ne
-    (network : Node -> List (Message Node TxId))
-    (destination candidate : Node)
-    (queue : List (Message Node TxId))
-    (different : Not (candidate = destination)) :
-    updateQueue network destination queue candidate = network candidate := by
-  simp [updateQueue, different]
-
 /-- Erase retirement metadata which does not affect protocol handlers. -/
 def protocolNodeState (node : NodeState Node TxId) : NodeState Node TxId :=
   { node with
@@ -577,32 +404,6 @@ def protocolNodeState (node : NodeState Node TxId) : NodeState Node TxId :=
     retirementIndex := none
     retirementCommittableIndex := none
     retiredCommittedIndex := none }
-
-@[simp] theorem protocolNodeState_idempotent
-    (state : NodeState Node TxId) :
-    protocolNodeState (protocolNodeState state) = protocolNodeState state := by
-  simp [protocolNodeState]
-
-@[simp] theorem protocolNodeState_set_votedFor
-    (state : NodeState Node TxId)
-    (votedFor : Option Node) :
-    protocolNodeState { state with votedFor } =
-      { protocolNodeState state with votedFor } := by
-  simp [protocolNodeState]
-
-@[simp] theorem protocolNodeState_set_sentIndex
-    (state : NodeState Node TxId)
-    (sentIndex : Node -> Nat) :
-    protocolNodeState { state with sentIndex } =
-      { protocolNodeState state with sentIndex } := by
-  simp [protocolNodeState]
-
-@[simp] theorem protocolNodeState_idempotent_set_votedFor
-    (state : NodeState Node TxId)
-    (votedFor : Option Node) :
-    protocolNodeState { protocolNodeState state with votedFor } =
-      { protocolNodeState state with votedFor } := by
-  simp [protocolNodeState]
 
 variable [Bootstrap Node]
 
@@ -878,83 +679,6 @@ def refreshRetirementState
     retirementIndex
     retirementCommittableIndex
     retiredCommittedIndex := committedRetiredIndex }
-
-@[simp] theorem refreshRetirementState_role
-    (node : Node)
-    (state : NodeState Node TxId) :
-    (refreshRetirementState node state).role = state.role := by
-  simp [refreshRetirementState]
-
-@[simp] theorem refreshRetirementState_currentTerm
-    (node : Node)
-    (state : NodeState Node TxId) :
-    (refreshRetirementState node state).currentTerm = state.currentTerm := by
-  simp [refreshRetirementState]
-
-@[simp] theorem refreshRetirementState_log
-    (node : Node)
-    (state : NodeState Node TxId) :
-    (refreshRetirementState node state).log = state.log := by
-  simp [refreshRetirementState]
-
-@[simp] theorem refreshRetirementState_commitIndex
-    (node : Node)
-    (state : NodeState Node TxId) :
-    (refreshRetirementState node state).commitIndex = state.commitIndex := by
-  simp [refreshRetirementState]
-
-@[simp] theorem refreshRetirementState_sentIndex
-    (node : Node)
-    (state : NodeState Node TxId) :
-    (refreshRetirementState node state).sentIndex = state.sentIndex := by
-  simp [refreshRetirementState]
-
-@[simp] theorem refreshRetirementState_matchIndex
-    (node : Node)
-    (state : NodeState Node TxId) :
-    (refreshRetirementState node state).matchIndex = state.matchIndex := by
-  simp [refreshRetirementState]
-
-@[simp] theorem refreshRetirementState_isNewFollower
-    (node : Node)
-    (state : NodeState Node TxId) :
-    (refreshRetirementState node state).isNewFollower =
-      state.isNewFollower := by
-  simp [refreshRetirementState]
-
-@[simp] theorem refreshRetirementState_votedFor
-    (node : Node)
-    (state : NodeState Node TxId) :
-    (refreshRetirementState node state).votedFor = state.votedFor := by
-  simp [refreshRetirementState]
-
-@[simp] theorem refreshRetirementState_votesGranted
-    (node : Node)
-    (state : NodeState Node TxId) :
-    (refreshRetirementState node state).votesGranted =
-      state.votesGranted := by
-  simp [refreshRetirementState]
-
-@[simp] theorem refreshRetirementState_preVotesGranted
-    (node : Node)
-    (state : NodeState Node TxId) :
-    (refreshRetirementState node state).preVotesGranted =
-      state.preVotesGranted := by
-  simp [refreshRetirementState]
-
-@[simp] theorem refreshRetirementState_idempotent
-    (node : Node)
-    (state : NodeState Node TxId) :
-    refreshRetirementState node (refreshRetirementState node state) =
-      refreshRetirementState node state := by
-  simp [refreshRetirementState]
-
-@[simp] theorem protocolNodeState_refreshRetirementState
-    (node : Node)
-    (state : NodeState Node TxId) :
-    protocolNodeState (refreshRetirementState node state) =
-      protocolNodeState state := by
-  simp [protocolNodeState]
 
 /-- Retired-completed nodes still requiring replication from one observer. -/
 def refreshRetirementCompleted
@@ -2254,58 +1978,5 @@ def runActions
 /-- States reachable through enabled arbitrary-term Raft actions. -/
 abbrev Reachable [DecidableEq TxId] :=
   (system (Node := Node) (TxId := TxId)).Reachable
-
-namespace Reachable
-
-/-- The Raft initial state is reachable. -/
-theorem initial :
-    Reachable (initialState : State Node TxId) :=
-  ExecutableTransitionSystem.Reachable.initial
-
-/-- Taking an enabled action from a reachable state preserves reachability. -/
-theorem step
-    {state : State Node TxId}
-    (reachable : Reachable state)
-    {action : Action Node TxId}
-    (enabled : Enabled state action) :
-    Reachable (next state action) :=
-  ExecutableTransitionSystem.Reachable.step reachable enabled
-
-/-- A successfully executed action list ends in a reachable state. -/
-theorem runActionsReachable
-    {start final : State Node TxId}
-    {actions : List (Action Node TxId)}
-    (startReachable : Reachable start)
-    (ran : runActions start actions = some final) :
-    Reachable final := by
-  induction actions generalizing start final with
-  | nil =>
-      simp [runActions] at ran
-      subst final
-      exact startReachable
-  | cons action actions inductionHypothesis =>
-      unfold runActions at ran
-      cases applied : system.applyAction start action with
-      | none =>
-          simp [applied] at ran
-      | some nextState =>
-          have enabled : Enabled start action := by
-            unfold ExecutableTransitionSystem.applyAction at applied
-            split at applied
-            · assumption
-            · contradiction
-          have nextEq : next start action = nextState := by
-            unfold ExecutableTransitionSystem.applyAction at applied
-            split at applied
-            · exact Option.some.inj applied
-            · contradiction
-          have nextReachable : Reachable nextState := by
-            rw [← nextEq]
-            exact step startReachable enabled
-          exact
-            inductionHypothesis nextReachable
-              (by simpa [applied] using ran)
-
-end Reachable
 
 end CCFRaft

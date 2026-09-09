@@ -1,0 +1,49 @@
+{
+  "schema_version": "ccfraft-trace/v1",
+  "entry": "bootstrap",
+  "unknowns": ["tx"],
+  "bounds": {
+    "transaction_count": 1,
+    "term_count": 2,
+    "index_count": 4,
+    "log_capacity": 4,
+    "queue_capacity": 0
+  },
+  "steps": [
+    {
+      "kind": "action",
+      "action": "clientRequest",
+      "node": 0,
+      "transaction": {"unknown": "tx"}
+    },
+    {
+      "kind": "action",
+      "action": "signCommittableMessages",
+      "node": 0
+    },
+    {
+      "kind": "action",
+      "action": "changeConfiguration",
+      "node": 0,
+      "configuration": [0, 7]
+    },
+    {
+      "kind": "observation",
+      "node": 7,
+      "variable": "allocated",
+      "value": true
+    },
+    {
+      "kind": "observation",
+      "node": 7,
+      "variable": "joined",
+      "value": true
+    },
+    {
+      "kind": "observation",
+      "node": 0,
+      "variable": "logLength",
+      "value": 3
+    }
+  ]
+}

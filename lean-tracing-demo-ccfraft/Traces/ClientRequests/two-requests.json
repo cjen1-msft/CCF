@@ -1,0 +1,16 @@
+{
+  "schema_version": "ccfraft-client-request/v1",
+  "entry": "bootstrap",
+  "bounds": {
+    "transaction_count": 2,
+    "log_capacity": 2
+  },
+  "unknowns": ["first", "second"],
+  "steps": [
+    {"kind": "observation", "node": "0", "variable": "role", "value": "leader"},
+    {"kind": "action", "action": "clientRequest", "node": "0", "transaction": {"unknown": "first"}},
+    {"kind": "observation", "variable": "submitted", "transaction": {"unknown": "first"}, "value": true},
+    {"kind": "action", "action": "clientRequest", "node": "0", "transaction": {"unknown": "second"}},
+    {"kind": "observation", "node": "0", "variable": "logLength", "value": 2}
+  ]
+}

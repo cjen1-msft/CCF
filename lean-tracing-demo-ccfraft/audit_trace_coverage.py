@@ -18,7 +18,8 @@ from typing import Any
 from reduction import ReductionError, build_certificate, write_certificate
 from Shared.trace_io import NDJSONError, loads_ndjson, read_ndjson
 from Shared.capture_traces import capture, find_repo_root
-from Shared.smt import SmtEncodingError, build_formula
+from ccfraft_projection import build_formula
+from Shared.smt import SmtEncodingError
 
 ROOT = Path(__file__).resolve().parent
 EXPECTED_SCENARIOS = 50
