@@ -54,6 +54,9 @@ root = "EncodeTrace"
 name = "EncoderAudit"
 
 [[lean_lib]]
+name = "ControlActionAudit"
+
+[[lean_lib]]
 name = "RuntimeAudit"
 
 [[lean_lib]]
