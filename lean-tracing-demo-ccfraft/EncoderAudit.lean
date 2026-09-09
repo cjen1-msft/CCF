@@ -11,6 +11,7 @@ import MachineGenerated.BoundedStateExamples
 import MachineGenerated.TransactionMappingProofs
 import MachineGenerated.LeaderWriteMappingProofs
 import MachineGenerated.MessageEqualityTests
+import MachineGenerated.AppendEntriesMappingProofs
 
 run_cmd do
   for theoremName in [
@@ -24,7 +25,9 @@ run_cmd do
       ``CCFRaft.TransactionMapping.enabled_mapState_changeConfiguration_iff,
       ``CCFRaft.TransactionMapping.mapState_appendRetiredCommitted,
       ``CCFRaft.TransactionMapping.enabled_mapState_appendRetiredCommitted_iff,
-      ``CCFRaft.MessageEquality.messageEqual_correct] do
+      ``CCFRaft.MessageEquality.messageEqual_correct,
+      ``CCFRaft.TransactionMapping.enabled_mapState_appendEntries_iff,
+      ``CCFRaft.TransactionMapping.mapState_appendEntries_with_dedup] do
     for axiomName in ← Lean.collectAxioms theoremName do
       unless axiomName == ``propext || axiomName == ``Classical.choice ||
           axiomName == ``Quot.sound do
