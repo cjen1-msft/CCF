@@ -1,0 +1,540 @@
+--- a/include/ccf/node/startup_config.h
++++ b/include/ccf/node/startup_config.h
+@@ -148,6 +148,8 @@
+         bool discard = false;
+         bool buffered = false;
+         ccf::ds::SizeString ring_buffer_size = {"1MB"};
++        std::string benchmark_variant = "baseline";
++        std::optional<std::string> benchmark_stats_file = std::nullopt;
+
+         bool operator==(const Fluentd&) const = default;
+       };
+--- a/src/common/configuration.h
++++ b/src/common/configuration.h
+@@ -135,7 +135,12 @@
+   DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(CCFConfig::Observability::Fluentd);
+   DECLARE_JSON_REQUIRED_FIELDS(CCFConfig::Observability::Fluentd, host, port);
+   DECLARE_JSON_OPTIONAL_FIELDS(
+-    CCFConfig::Observability::Fluentd, discard, buffered, ring_buffer_size);
++    CCFConfig::Observability::Fluentd,
++    discard,
++    buffered,
++    ring_buffer_size,
++    benchmark_variant,
++    benchmark_stats_file);
+
+   DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(CCFConfig::Observability);
+   DECLARE_JSON_REQUIRED_FIELDS(CCFConfig::Observability);
+--- a/doc/host_config_schema/host_config.json
++++ b/doc/host_config_schema/host_config.json
+@@ -643,6 +643,17 @@
+               "type": "string",
+               "default": "1MB",
+               "description": "Memory preallocated per producer slot in buffered mode. Must be a power of two between 1KB and 64MB. Allocation failure prevents startup. The maximum event size is half this capacity minus the 8-byte ring header."
++            },
++            "benchmark_variant": {
++              "type": "string",
++              "enum": ["baseline", "mpsc", "allocate", "notify", "snapshot", "legacy"],
++              "default": "baseline",
++              "description": "Diagnostic buffered-mode enqueue variant. Unknown values prevent startup."
++            },
++            "benchmark_stats_file": {
++              "type": ["string", "null"],
++              "default": null,
++              "description": "Optional diagnostic JSON output path, resolved against the node working directory and written after buffered trace shutdown."
+             }
+           },
+           "required": ["host", "port"],
+--- a/src/consensus/aft/raft_trace_sink.h
++++ b/src/consensus/aft/raft_trace_sink.h
+@@ -3,11 +3,14 @@
+ #pragma once
+
+ #include "ccf/node/startup_config.h"
++#include "ds/files.h"
+ #include "ds/internal_logger.h"
+ #include "ds/ring_buffer.h"
++#include "ds/work_beacon.h"
+
+ #include <algorithm>
+ #include <arpa/inet.h>
++#include <array>
+ #include <atomic>
+ #include <cerrno>
+ #include <charconv>
+@@ -21,6 +24,7 @@
+ #include <span>
+ #include <stdexcept>
+ #include <string>
++#include <string_view>
+ #include <sys/socket.h>
+ #include <thread>
+ #include <unistd.h>
+@@ -47,6 +51,8 @@
+       }
+       if (endpoint.has_value())
+       {
++        const auto variant =
++          parse_benchmark_variant(endpoint->benchmark_variant);
+         const auto address = make_address(*endpoint);
+         std::unique_ptr<BufferedTransport> transport;
+         if (endpoint->buffered)
+@@ -65,7 +71,12 @@
+               "64MB");
+           }
+           transport = std::make_unique<BufferedTransport>(
+-            address, size, endpoint->discard, producer_count);
++            address,
++            size,
++            endpoint->discard,
++            producer_count,
++            variant,
++            endpoint->benchmark_stats_file);
+         }
+         target() = address;
+         discard() = endpoint->discard;
+@@ -109,8 +120,7 @@
+       }
+       if (
+         transport.stopping.load(std::memory_order_relaxed) ||
+-        bytes.size() > transport.max_payload_size() ||
+-        !queue->writer.try_write_raw(TRACE_MESSAGE, bytes))
++        bytes.size() > transport.max_payload_size())
+       {
+         // This counter has one writer. Reporting is exclusively consumer-side.
+         queue->dropped.store(
+@@ -118,7 +128,52 @@
+           std::memory_order_relaxed);
+         return false;
+       }
++
++      bool written = false;
++      switch (transport.benchmark_variant())
++      {
++        case BenchmarkVariant::Baseline:
++        case BenchmarkVariant::Mpsc:
++        case BenchmarkVariant::Snapshot:
++        {
++          written = queue->writer.try_write_raw(TRACE_MESSAGE, bytes);
++          break;
++        }
++        case BenchmarkVariant::Allocate:
++        {
++          written = queue->writer.try_write(
++            TRACE_MESSAGE,
++            serializer::ByteRange{bytes.data(), bytes.size()});
++          break;
++        }
++        case BenchmarkVariant::Notify:
++        {
++          written = queue->writer.try_write_raw(TRACE_MESSAGE, bytes);
++          break;
++        }
++        case BenchmarkVariant::Legacy:
++        {
++          written = queue->writer.try_write(
++            TRACE_MESSAGE,
++            serializer::ByteRange{bytes.data(), bytes.size()});
++          break;
++        }
++      }
++
++      if (!written)
++      {
++        queue->dropped.store(
++          queue->dropped.load(std::memory_order_relaxed) + 1,
++          std::memory_order_relaxed);
++        return false;
++      }
+       ++queue->enqueued;
++      if (
++        transport.benchmark_variant() == BenchmarkVariant::Notify ||
++        transport.benchmark_variant() == BenchmarkVariant::Legacy)
++      {
++        transport.notify_enqueue(*queue);
++      }
+       return true;
+     }
+
+@@ -217,6 +272,66 @@
+     static constexpr ringbuffer::Message TRACE_MESSAGE =
+       ccf::ds::fnv_1a<ringbuffer::Message>("raft_trace");
+
++    enum class BenchmarkVariant
++    {
++      Baseline,
++      Mpsc,
++      Allocate,
++      Notify,
++      Snapshot,
++      Legacy,
++    };
++
++    static BenchmarkVariant parse_benchmark_variant(std::string_view name)
++    {
++      if (name == "baseline")
++      {
++        return BenchmarkVariant::Baseline;
++      }
++      if (name == "mpsc")
++      {
++        return BenchmarkVariant::Mpsc;
++      }
++      if (name == "allocate")
++      {
++        return BenchmarkVariant::Allocate;
++      }
++      if (name == "notify")
++      {
++        return BenchmarkVariant::Notify;
++      }
++      if (name == "snapshot")
++      {
++        return BenchmarkVariant::Snapshot;
++      }
++      if (name == "legacy")
++      {
++        return BenchmarkVariant::Legacy;
++      }
++      throw std::invalid_argument(
++        "Unknown raft trace benchmark variant: " + std::string(name));
++    }
++
++    static std::string_view benchmark_variant_name(BenchmarkVariant variant)
++    {
++      switch (variant)
++      {
++        case BenchmarkVariant::Baseline:
++          return "baseline";
++        case BenchmarkVariant::Mpsc:
++          return "mpsc";
++        case BenchmarkVariant::Allocate:
++          return "allocate";
++        case BenchmarkVariant::Notify:
++          return "notify";
++        case BenchmarkVariant::Snapshot:
++          return "snapshot";
++        case BenchmarkVariant::Legacy:
++          return "legacy";
++      }
++      std::abort();
++    }
++
+     static bool& discard()
+     {
+       static bool value = false;
+@@ -406,13 +521,14 @@
+       ringbuffer::Reader reader;
+       ringbuffer::Writer writer;
+       alignas(ringbuffer::CACHELINE_SIZE) size_t enqueued = 0;
++      size_t actual_notifications = 0;
+       alignas(ringbuffer::CACHELINE_SIZE) size_t consumed = 0;
+       alignas(ringbuffer::CACHELINE_SIZE) std::atomic<uint64_t> dropped = 0;
+
+-      explicit ProducerQueue(size_t size) :
++      ProducerQueue(size_t size, bool single_producer) :
+         storage(size / sizeof(uint64_t)),
+         reader({reinterpret_cast<uint8_t*>(storage.data()), size, &offsets}),
+-        writer(reader, true)
++        writer(reader, single_producer)
+       {}
+     };
+
+@@ -432,12 +548,42 @@
+       Address address;
+       size_t ring_size;
+       bool discard_received;
+-      std::vector<std::unique_ptr<ProducerQueue>> queues;
++      BenchmarkVariant variant;
++      std::optional<std::string> benchmark_stats_file;
++      std::vector<std::shared_ptr<ProducerQueue>> queues;
++      ccf::pal::Mutex registry_mutex;
++      ccf::ds::WorkBeacon work_beacon;
++      std::atomic<bool> notified = false;
+       uint64_t next_drop_report = 1;
+       std::chrono::steady_clock::time_point shutdown_deadline;
+       Connection connection;
+-      size_t records_read = 0;
++      uint64_t consumed_records = 0;
++      uint64_t consumer_wakeups = 0;
++      uint64_t scan_rounds = 0;
++      uint64_t empty_reads = 0;
++      uint64_t nonempty_reads = 0;
++      std::array<uint64_t, 65> read_batch_size_histogram = {};
++      bool benchmark_stats_written = false;
+       std::thread consumer;
++
++      enum class ScanResult
++      {
++        Idle,
++        Progress,
++        Expired,
++      };
++
++      bool uses_notifications() const
++      {
++        return variant == BenchmarkVariant::Notify ||
++          variant == BenchmarkVariant::Legacy;
++      }
++
++      bool uses_snapshot() const
++      {
++        return variant == BenchmarkVariant::Snapshot ||
++          variant == BenchmarkVariant::Legacy;
++      }
+
+       bool expired() const
+       {
+@@ -497,42 +643,87 @@
+         }
+       }
+
++      template <typename QueueList>
++      ScanResult scan(const QueueList& scan_queues)
++      {
++        bool progress = false;
++        ++scan_rounds;
++        for (const auto& queue : scan_queues)
++        {
++          if (expired())
++          {
++            abandon_pending();
++            report_drops();
++            connection.close();
++            return ScanResult::Expired;
++          }
++          const auto before =
++            queue->offsets.head.load(std::memory_order_relaxed);
++          const auto count = queue->reader.read(
++            64, [this, &queue](auto, const uint8_t* data, size_t size) {
++              write({data, size});
++              ++consumed_records;
++              ++queue->consumed;
++            });
++          ++read_batch_size_histogram[count];
++          if (count == 0)
++          {
++            ++empty_reads;
++          }
++          else
++          {
++            ++nonempty_reads;
++          }
++          progress |=
++            before != queue->offsets.head.load(std::memory_order_relaxed);
++        }
++        report_drops();
++        return progress ? ScanResult::Progress : ScanResult::Idle;
++      }
++
++      ScanResult scan_round()
++      {
++        if (uses_snapshot())
++        {
++          std::vector<std::shared_ptr<ProducerQueue>> snapshot;
++          {
++            ccf::pal::MutexGuard lock(registry_mutex);
++            snapshot = queues;
++          }
++          return scan(snapshot);
++        }
++        return scan(queues);
++      }
++
+       void run()
+       {
+         for (;;)
+         {
+-          bool progress;
++          ScanResult result;
+           do
+           {
+-            progress = false;
+-            for (auto& queue : queues)
++            result = scan_round();
++            if (result == ScanResult::Expired)
+             {
+-              if (expired())
+-              {
+-                abandon_pending();
+-                report_drops();
+-                connection.close();
+-                return;
+-              }
+-              const auto before =
+-                queue->offsets.head.load(std::memory_order_relaxed);
+-              queue->reader.read(
+-                64, [this, &queue](auto, const uint8_t* data, size_t size) {
+-                  write({data, size});
+-                  ++records_read;
+-                  ++queue->consumed;
+-                });
+-              progress |=
+-                before != queue->offsets.head.load(std::memory_order_relaxed);
++              return;
+             }
+-            report_drops();
+-          } while (progress);
++          } while (result == ScanResult::Progress);
++
+           if (stopping.load(std::memory_order_acquire))
+           {
+             connection.close();
+             return;
+           }
+-          std::this_thread::sleep_for(std::chrono::milliseconds(1));
++          if (uses_notifications())
++          {
++            work_beacon.wait_for_work();
++            notified.store(false, std::memory_order_release);
++          }
++          else
++          {
++            std::this_thread::sleep_for(std::chrono::milliseconds(1));
++          }
++          ++consumer_wakeups;
+         }
+       }
+
+@@ -570,20 +761,88 @@
+         }
+       }
+
++      void write_benchmark_stats() noexcept
++      {
++        if (!benchmark_stats_file.has_value() || benchmark_stats_written)
++        {
++          return;
++        }
++        benchmark_stats_written = true;
++
++        try
++        {
++          uint64_t enqueued = 0;
++          uint64_t consumed = 0;
++          std::vector<uint64_t> producer_actual_notifications;
++          producer_actual_notifications.reserve(queues.size());
++          for (const auto& queue : queues)
++          {
++            enqueued += queue->enqueued;
++            consumed += queue->consumed;
++            producer_actual_notifications.push_back(
++              queue->actual_notifications);
++          }
++
++          const auto producer_drop_total = producer_drops();
++          const auto transport_drop_total =
++            drops().load(std::memory_order_relaxed);
++          const nlohmann::json stats = {
++            {"variant", std::string(benchmark_variant_name(variant))},
++            {"enqueued", enqueued},
++            {"consumed", consumed},
++            {"drop_totals",
++             {{"total", producer_drop_total + transport_drop_total},
++              {"producer", producer_drop_total},
++              {"transport", transport_drop_total},
++              {"unbound",
++               unbound_drops.load(std::memory_order_relaxed)}}},
++            {"producer_actual_notifications",
++             producer_actual_notifications},
++            {"consumer_wakeups", consumer_wakeups},
++            {"scan_rounds", scan_rounds},
++            {"empty_reads", empty_reads},
++            {"nonempty_reads", nonempty_reads},
++            {"read_batch_size_histogram", read_batch_size_histogram},
++            {"consumed_records", consumed_records}};
++          files::dump(stats.dump(2), *benchmark_stats_file);
++        }
++        catch (const std::exception& e)
++        {
++          LOG_FAIL_FMT(
++            "Failed to write raft trace benchmark statistics to {}: {}",
++            *benchmark_stats_file,
++            e.what());
++        }
++        catch (...)
++        {
++          LOG_FAIL_FMT(
++            "Failed to write raft trace benchmark statistics to {}",
++            *benchmark_stats_file);
++        }
++      }
++
+     public:
+       BufferedTransport(
+         Address address_,
+         size_t ring_size_,
+         bool discard_received_,
+-        size_t producer_count) :
++        size_t producer_count,
++        BenchmarkVariant variant_,
++        std::optional<std::string> benchmark_stats_file_) :
+         address(address_),
+         ring_size(ring_size_),
+-        discard_received(discard_received_)
++        discard_received(discard_received_),
++        variant(variant_),
++        benchmark_stats_file(std::move(benchmark_stats_file_))
+       {
+         queues.reserve(producer_count);
++        const auto single_producer =
++          variant != BenchmarkVariant::Mpsc &&
++          variant != BenchmarkVariant::Legacy;
+         for (size_t i = 0; i < producer_count; ++i)
+         {
+-          queues.push_back(std::make_unique<ProducerQueue>(ring_size));
++          queues.push_back(
++            std::make_shared<ProducerQueue>(ring_size, single_producer));
+         }
+         consumer = std::thread([this] { run(); });
+       }
+@@ -599,6 +858,11 @@
+           ringbuffer::Const::header_size();
+       }
+
++      BenchmarkVariant benchmark_variant() const
++      {
++        return variant;
++      }
++
+       size_t consumed_count() const
+       {
+         if (consumer.joinable())
+@@ -606,7 +870,7 @@
+           throw std::logic_error(
+             "Read buffered trace statistics after shutdown");
+         }
+-        return records_read;
++        return consumed_records;
+       }
+
+       ProducerQueue& queue_at(size_t slot)
+@@ -622,6 +886,15 @@
+           total += queue->dropped.load(std::memory_order_relaxed);
+         }
+         return total;
++      }
++
++      void notify_enqueue(ProducerQueue& queue)
++      {
++        if (!notified.exchange(true, std::memory_order_acq_rel))
++        {
++          ++queue.actual_notifications;
++          work_beacon.notify_work_available();
++        }
+       }
+
+       // Producers must be stopped before this bounded drain begins.
+@@ -632,7 +905,12 @@
+           shutdown_deadline =
+             std::chrono::steady_clock::now() + std::chrono::seconds(2);
+           stopping.store(true, std::memory_order_release);
++          if (uses_notifications())
++          {
++            work_beacon.notify_work_available();
++          }
+           consumer.join();
++          write_benchmark_stats();
+         }
+       }
+     };

@@ -1,0 +1,95 @@
+{
+  "protocol": "Three repetitions per variant at 10000 offered RPS; 30 second measured cohorts after warmup and settling; RAM-backed node storage; all variants consumer-discard.",
+  "preregistration_commit": "bd4d76d20",
+  "preregistration_sha256": "2c4059c79caa1d4b0a51c8f4a5cec70d05f809c74fc134fa11557cab53e8e349",
+  "diagnostic_binary_sha256": "064735d4a0ab9601968acfd7c8de97d6fc17a81c650b052ef92547aa10acaa6f",
+  "summary": {
+    "baseline": {
+      "median_completed_rps": 8656.366666666667,
+      "min_completed_rps": 8577.6,
+      "max_completed_rps": 8658.833333333334,
+      "median_node_cpu_percent": 152.74258901292274,
+      "median_notifications": 0,
+      "median_wakeups": 25672,
+      "median_records_per_read": 20.14560180825014,
+      "loss_percent": 0.0
+    },
+    "mpsc": {
+      "median_completed_rps": 8661.9,
+      "min_completed_rps": 8630.766666666666,
+      "max_completed_rps": 8663.333333333334,
+      "median_node_cpu_percent": 148.26119456377995,
+      "median_notifications": 0,
+      "median_wakeups": 25791,
+      "median_records_per_read": 20.19583763007406,
+      "loss_percent": -0.06392212283059528
+    },
+    "allocate": {
+      "median_completed_rps": 8672.6,
+      "min_completed_rps": 8652.3,
+      "max_completed_rps": 8683.133333333333,
+      "median_node_cpu_percent": 150.09245014306416,
+      "median_notifications": 0,
+      "median_wakeups": 25671,
+      "median_records_per_read": 20.253637275805843,
+      "loss_percent": -0.18753056517168964
+    },
+    "notify": {
+      "median_completed_rps": 6904.266666666666,
+      "min_completed_rps": 6879.266666666666,
+      "max_completed_rps": 6921.633333333333,
+      "median_node_cpu_percent": 236.04752570916494,
+      "median_notifications": 348220,
+      "median_wakeups": 348222,
+      "median_records_per_read": 1.4890813533843215,
+      "loss_percent": 20.24059362858166
+    },
+    "snapshot": {
+      "median_completed_rps": 8667.666666666666,
+      "min_completed_rps": 8624.366666666667,
+      "max_completed_rps": 8695.833333333334,
+      "median_node_cpu_percent": 152.6790869339519,
+      "median_notifications": 0,
+      "median_wakeups": 25720,
+      "median_records_per_read": 20.1270142474958,
+      "loss_percent": -0.13053975686487806
+    },
+    "legacy": {
+      "median_completed_rps": 6955.866666666667,
+      "min_completed_rps": 6796.866666666667,
+      "max_completed_rps": 6987.433333333333,
+      "median_node_cpu_percent": 236.0902063200335,
+      "median_notifications": 350287,
+      "median_wakeups": 350289,
+      "median_records_per_read": 1.493952470847625,
+      "loss_percent": 19.644500579534906
+    }
+  },
+  "context_switches_per_second": {
+    "baseline": {
+      "voluntary_switches": 11608.868742418183,
+      "involuntary_switches": 6.835501570909025
+    },
+    "mpsc": {
+      "voluntary_switches": 11630.248191337758,
+      "involuntary_switches": 7.744323241855438
+    },
+    "allocate": {
+      "voluntary_switches": 11659.828739751338,
+      "involuntary_switches": 6.596627652101703
+    },
+    "notify": {
+      "voluntary_switches": 22825.93832271495,
+      "involuntary_switches": 9.32008943738921
+    },
+    "snapshot": {
+      "voluntary_switches": 11598.003670706594,
+      "involuntary_switches": 6.989404499356954
+    },
+    "legacy": {
+      "voluntary_switches": 22881.91882706839,
+      "involuntary_switches": 11.037357793665818
+    }
+  },
+  "interpretation": "Notification policy alone reproduced the approximately 20% loss. Other isolated hot-path changes were within 0.2% of baseline, smaller than run variation. Counters cover whole node runs except sampled CPU/context-switch metrics. These are client-capped exploratory results, not intrinsic server CPU capacity."
+}
