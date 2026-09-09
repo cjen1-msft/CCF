@@ -146,6 +146,8 @@ def normalize : {s : Ty} → Expr s → Expr s
   | _, .bool b => .bool b
   | _, .unit => .unit
   | _, .unknown i => .unknown i
+  -- Normalize each definition once during printing, not at every reference.
+  | _, .named group slot value => .named group slot value
   | _, .add a b => plus a.normalize b.normalize
   | _, .sub a b => minus a.normalize b.normalize
   | _, .lt a b => .lt a.normalize b.normalize

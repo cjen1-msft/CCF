@@ -43,7 +43,7 @@ def Expr.sorts {s : Ty} (e : Expr s) : List Ty :=
     | .take a b | .drop a b | .get? a b | .contains a b
     | .leftD a b | .rightD a b => a.sorts ++ b.sorts
     | .not a | .fst a | .snd a | .inl a | .inr a
-    | .isLeft a | .length a => a.sorts
+    | .isLeft a | .length a | .named _ _ a => a.sorts
     | .ite c a b | .set c a b => c.sorts ++ a.sorts ++ b.sorts
   children ++ s.dependencies
 
@@ -55,7 +55,7 @@ def Expr.unknowns : {s : Ty} → Expr s → List Nat
   | _, .take a b | _, .drop a b | _, .get? a b | _, .contains a b
   | _, .leftD a b | _, .rightD a b => a.unknowns ++ b.unknowns
   | _, .not a | _, .fst a | _, .snd a | _, .inl a | _, .inr a
-  | _, .isLeft a | _, .length a => a.unknowns
+  | _, .isLeft a | _, .length a | _, .named _ _ a => a.unknowns
   | _, .ite c a b | _, .set c a b => c.unknowns ++ a.unknowns ++ b.unknowns
 
 structure Printing where
@@ -65,6 +65,49 @@ structure Printing where
   sorts : Array String := #[]
   unknowns : Std.HashSet Nat := {}
   unknownDeclarations : Array String := #[]
+  stateDeclarations : Array String := #[]
+
+private structure NamedBinding where
+  group : Nat
+  slot : Nat
+  value : (s : Ty) × Expr s
+
+private structure Names where
+  definitions : Std.HashMap (Nat × Nat) ((s : Ty) × Expr s) := {}
+  bindings : Array NamedBinding := #[]
+
+private def collectNames {s : Ty} (groupCount current : Nat) (e : Expr s) :
+    StateT Names (Except String) Unit := do
+  match e with
+  | .named group slot value =>
+      if group ≥ groupCount then
+        throw s!"intermediate value refers to absent group {group}"
+      if group > current then
+        throw s!"group {current} refers to a future intermediate value in group {group}"
+      let names ← get
+      let definition : (s : Ty) × Expr s := ⟨s, value⟩
+      match names.definitions[(group, slot)]? with
+      | some prior =>
+          unless prior == definition do
+            throw s!"conflicting intermediate definition or type: state_{group}_{slot}"
+      | none =>
+          set { names with
+            definitions := names.definitions.insert (group, slot) definition
+            bindings := names.bindings.push ⟨group, slot, definition⟩ }
+          collectNames groupCount group value
+  | .nat _ | .bool _ | .unit | .unknown _ | .nil => pure ()
+  | .add a b | .sub a b | .lt a b | .eq a b
+  | .and a b | .pair a b | .append a b | .cons a b
+  | .take a b | .drop a b | .get? a b | .contains a b
+  | .leftD a b | .rightD a b =>
+      collectNames groupCount current a
+      collectNames groupCount current b
+  | .not a | .fst a | .snd a | .inl a | .inr a
+  | .isLeft a | .length a => collectNames groupCount current a
+  | .ite c a b | .set c a b =>
+      collectNames groupCount current c
+      collectNames groupCount current a
+      collectNames groupCount current b
 
 private def intern (s : Ty) (body : String) : StateM Printing String := do
   let state ← get
@@ -85,12 +128,13 @@ private def intern (s : Ty) (body : String) : StateM Printing String := do
     declared, sorts }
   return s!"e_{i}"
 
--- Generated definitions share subterms; they do not identify trace actions.
-def Expr.emit {s : Ty} (e : Expr s) : StateM Printing String := do
+-- Interning shares syntax; only named constants identify trace actions.
+private def Expr.emit {s : Ty} (e : Expr s) : StateM Printing String := do
   let body ← match e with
     | .nat n => pure (toString n)
     | .bool b => pure (if b then "true" else "false")
     | .unit => pure "unit"
+    | .named group slot _ => pure s!"state_{group}_{slot}"
     | .unknown i => do
         let state ← get
         if !state.unknowns.contains i then
@@ -141,15 +185,51 @@ def Expr.emit {s : Ty} (e : Expr s) : StateM Printing String := do
     | .contains xs v => do pure s!"(seq.contains {← xs.emit} (seq.unit {← v.emit}))"
   intern s body
 
-def prepare (assertions : List (Expr .bool)) : List String × Printing :=
-  let emitAll : StateM Printing (List String) :=
-    assertions.mapM (fun e => e.normalize.emit)
-  emitAll.run {}
+def prepareGroups (groups : List (List (Expr .bool))) :
+    Except String (List (List String) × Printing) := do
+  -- Validate original syntax, including names normalization might discard.
+  let collect : StateT Names (Except String) Unit := do
+    for (clauses, index) in groups.zipIdx do
+      for clause in clauses do
+        collectNames groups.length index clause
+  let (_, names) ← collect.run {}
+  let emitAll : StateM Printing (List (List String)) := do
+    let mut roots ← groups.mapM fun clauses => clauses.mapM fun e => e.normalize.emit
+    for binding in names.bindings do
+      let body ← binding.value.2.normalize.emit
+      let name := s!"state_{binding.group}_{binding.slot}"
+      roots := roots.modify binding.group (· ++ [s!"(= {name} {body})"])
+      modify fun state => { state with
+        stateDeclarations := state.stateDeclarations.push
+          s!"(declare-const {name} {binding.value.1.smt})" }
+    return roots
+  return emitAll.run {}
 
-def script (assertions : List (Expr .bool)) : String :=
-  let (roots, printed) := prepare assertions
-  String.intercalate "\n" <|
-    ["(set-logic ALL)"] ++ printed.sorts.toList ++ printed.unknownDeclarations.toList ++
-    printed.definitions.toList ++ roots.map (fun e => s!"(assert {e})") ++ ["(check-sat)", ""]
+def prepare (assertions : List (Expr .bool)) :
+    Except String (List String × Printing) := do
+  let (groups, printed) ← prepareGroups [assertions]
+  return (groups.flatten, printed)
+
+private def preamble (printed : Printing) : List String :=
+  ["(set-logic ALL)"] ++ printed.sorts.toList ++ printed.unknownDeclarations.toList ++
+    printed.stateDeclarations.toList ++ printed.definitions.toList
+
+def script (assertions : List (Expr .bool)) : Except String String := do
+  let (roots, printed) ← prepare assertions
+  return String.intercalate "\n" <|
+    preamble printed ++ roots.map (fun e => s!"(assert {e})") ++ ["(check-sat)", ""]
+
+/-- Zero-based groups retain total defining equalities in their owning action. -/
+def scriptGroups (groups : List (List (Expr .bool))) : Except String String := do
+  let (roots, printed) ← prepareGroups groups
+  let assertions := roots.zipIdx.map fun (clauses, index) =>
+    let body := match clauses with
+      | [] => "true"
+      | [clause] => clause
+      | _ => "(and " ++ String.intercalate " " clauses ++ ")"
+    s!"(assert (! {body} :named group_{index}))"
+  return String.intercalate "\n" <|
+    ["(set-option :produce-unsat-cores true)"] ++ preamble printed ++
+      assertions ++ ["(check-sat)", ""]
 
 end Symbolic

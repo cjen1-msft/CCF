@@ -22,10 +22,14 @@ def main (args : List String) : IO Unit := do
   | ["--smt", value] =>
       let some capacity := value.toNat?
         | throw (IO.userError "capacity must be a natural number")
-      IO.print (Symbolic.script [Symbolic.Container.ScalingTests.formula capacity])
+      match Symbolic.script [Symbolic.Container.ScalingTests.formula capacity] with
+      | .ok text => IO.print text
+      | .error message => throw (IO.userError message)
   | [] =>
       for capacity in [16, 32] do
-        let text := Symbolic.script [Symbolic.Container.ScalingTests.formula capacity]
+        let text ← match Symbolic.script [Symbolic.Container.ScalingTests.formula capacity] with
+          | .ok text => pure text
+          | .error message => throw (IO.userError message)
         if text.utf8ByteSize > 200000 then
           throw (IO.userError s!"queue capacity {capacity} produced {text.utf8ByteSize} bytes")
         IO.println s!"capacity={capacity} bytes={text.utf8ByteSize}"

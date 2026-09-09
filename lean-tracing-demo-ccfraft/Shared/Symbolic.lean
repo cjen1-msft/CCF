@@ -45,6 +45,7 @@ inductive Expr : Ty → Type where
   | bool (value : Bool) : Expr .bool
   | unit : Expr .unit
   | unknown (index : Nat) : Expr .nat
+  | named {s : Ty} (group slot : Nat) (value : Expr s) : Expr s
   | add : Expr .nat → Expr .nat → Expr .nat
   | sub : Expr .nat → Expr .nat → Expr .nat
   | lt : Expr .nat → Expr .nat → Expr .bool
@@ -69,12 +70,14 @@ inductive Expr : Ty → Type where
   | get? {a : Ty} : Expr (.seq a) → Expr .nat → Expr (.sum .unit a)
   | set {a : Ty} : Expr (.seq a) → Expr .nat → Expr a → Expr (.seq a)
   | contains {a : Ty} : Expr (.seq a) → Expr a → Expr .bool
+  deriving DecidableEq
 
 def Expr.eval (ρ : Assignment) : {s : Ty} → Expr s → s.Value
   | _, .nat n => n
   | _, .bool b => b
   | _, .unit => ()
   | _, .unknown i => ρ i
+  | _, .named _ _ value => value.eval ρ
   | _, .add a b => a.eval ρ + b.eval ρ
   | _, .sub a b => a.eval ρ - b.eval ρ
   | _, .lt a b => decide (a.eval ρ < b.eval ρ)
@@ -100,6 +103,10 @@ def Expr.eval (ρ : Assignment) : {s : Ty} → Expr s → s.Value
       match (a.eval ρ)[n.eval ρ]? with | none => .inl () | some v => .inr v
   | _, .set a n v => (a.eval ρ).set (n.eval ρ) (v.eval ρ)
   | _, .contains a v => decide (v.eval ρ ∈ a.eval ρ)
+
+@[simp] theorem eval_named {s : Ty} (ρ : Assignment)
+    (group slot : Nat) (value : Expr s) :
+    (Expr.named group slot value).eval ρ = value.eval ρ := rfl
 
 def Expr.or (a b : Expr .bool) : Expr .bool := .not (.and (.not a) (.not b))
 def Expr.le (a b : Expr .nat) : Expr .bool := .not (.lt b a)

@@ -254,6 +254,9 @@ def main (args : List String) : IO Unit :=
   | [] => CCFRaft.SymbolicTests.run
   | ["--smt", caseName] =>
       match CCFRaft.SymbolicTests.solverAssertions caseName with
-      | .ok formulas => IO.print (Symbolic.script formulas)
+      | .ok formulas =>
+          match Symbolic.script formulas with
+          | .ok text => IO.print text
+          | .error message => throw (IO.userError message)
       | .error message => throw (IO.userError message)
   | _ => throw (IO.userError "usage: SymbolicTests.lean [--smt CASE]")
