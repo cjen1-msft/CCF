@@ -32,6 +32,12 @@ name = "TraceJson"
 name = "TraceStateJson"
 
 [[lean_lib]]
+name = "TraceMessageSummary"
+
+[[lean_lib]]
+name = "TraceMessageSummaryJson"
+
+[[lean_lib]]
 name = "BoundedState"
 
 [[lean_lib]]
