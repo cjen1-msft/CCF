@@ -21,6 +21,46 @@ def equality (term : NatTerm 0) : Clause 0 :=
 #guard (.sub (.unknown 0) (.unknown 1) : NatTerm 2).toSmt ==
   "(ite (< unknown_0 unknown_1) 0 (- unknown_0 unknown_1))"
 
+def conditionalGuard : Expr 2 :=
+  .and (.lessThan (.unknown 0) (.unknown 1))
+    (.not (.equal (.unknown 0) (.literal 0)))
+
+#guard (conditionalGuard.ite (.literal 7) (.literal 9)).eval
+  (fun index => if index.val = 0 then 1 else 2) == 7
+#guard (conditionalGuard.ite (.literal 7) (.literal 9)).eval (fun _ => 1) == 9
+#guard (conditionalGuard.ite (.literal 7) (.literal 9)).eval
+  (fun index => if index.val = 0 then 0 else 2) == 9
+#guard ((.boolean true : Expr 0).ite (.literal 7) (.literal 9)).eval Fin.elim0 == 7
+#guard ((.boolean false : Expr 0).ite (.literal 7) (.literal 9)).eval Fin.elim0 == 9
+#guard (.iteEqual (.unknown 0) (.unknown 1) (.literal 7) (.literal 9) : NatTerm 2).toSmt ==
+  "(ite (= unknown_0 unknown_1) 7 9)"
+
+def guardedBranches : NatTerm 2 :=
+  conditionalGuard.ite
+    (.named 0 0 "true branch" (.literal 7))
+    (.named 0 1 "false branch" (.literal 9))
+
+#guard (guardedBranches.toSmt.splitOn "state_0_0").length == 2
+#guard (guardedBranches.toSmt.splitOn "state_0_1").length == 2
+
+def conditionalFrontier : Formula 0 :=
+  [{ label := "election", clauses := [] },
+   { label := "commit frontier", clauses := [] },
+   { label := "observation", clauses :=
+      [{ label := "observed commit", expression :=
+          .equal (.named 1 0 "selected signature"
+            ((.equal (namedValue 0 2) (.literal 2) : Expr 0).ite (.literal 2) (.literal 3)))
+            (.literal 3) }] }]
+
+#guard match conditionalFrontier.prepare with
+  | .ok prepared =>
+      (prepared.groups.map fun group => group.clauses.length) == [1, 1, 1] &&
+        match prepared.groups[1]? >>= fun group => group.clauses[0]? with
+        | some clause => clause.expression ==
+            "(= state_1_0 (ite (= state_0_0 2) 2 3))"
+        | none => false
+  | .error _ => false
+
 def dequeued : Formula 0 :=
   [{ label := "enqueue", clauses := [] },
    { label := "receive", clauses := [] },
@@ -75,6 +115,17 @@ def repeated : Formula 0 :=
   [{ label := "action", clauses :=
       [equality (.sub (namedValue 0 2) (namedValue 0 1))] }]
 
+#guard ([
+    NatTerm.iteEqual (namedValue 1 1) (.literal 1) (.literal 2) (.literal 3),
+    .iteEqual (.literal 1) (namedValue 1 1) (.literal 2) (.literal 3),
+    .iteEqual (.literal 1) (.literal 1) (namedValue 1 2) (.literal 3),
+    .iteEqual (.literal 1) (.literal 1) (.literal 2) (namedValue 1 3)
+  ] : List (NatTerm 0)).all fun term =>
+    rejected [{ label := "conditional", clauses := [equality term] }]
+#guard rejected
+  [{ label := "conditional", clauses :=
+      [equality (.iteEqual (namedValue 0 1) (.literal 1) (namedValue 0 2) (.literal 3))] }]
+
 #guard match (Formula.prepare
     [{ label := "action", clauses :=
         [equality (.sub (.literal 3) (namedValue 0 2))] }]) with
@@ -104,3 +155,9 @@ def repeated : Formula 0 :=
   | .error _ => false
 
 end TraceSmt.Tests
+
+run_cmd do
+  for axiomName in ← Lean.collectAxioms ``TraceSmt.Expr.ite_eval do
+    unless axiomName == ``propext || axiomName == ``Classical.choice ||
+        axiomName == ``Quot.sound do
+      throwError "conditional evaluation depends on unapproved axiom {axiomName}"

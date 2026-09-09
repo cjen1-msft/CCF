@@ -12,6 +12,7 @@ inductive NatTerm (holes : Nat) where
   | unknown (index : Fin holes)
   | add (left right : NatTerm holes)
   | sub (left right : NatTerm holes)
+  | iteEqual (left right whenEqual whenDifferent : NatTerm holes)
   | named (group slot : Nat) (label : String) (value : NatTerm holes)
   deriving Repr, DecidableEq
 
@@ -21,6 +22,10 @@ def NatTerm.eval {holes : Nat}
   | .unknown index => assignment index
   | .add left right => left.eval assignment + right.eval assignment
   | .sub left right => left.eval assignment - right.eval assignment
+  | .iteEqual left right whenEqual whenDifferent =>
+      if left.eval assignment = right.eval assignment then
+        whenEqual.eval assignment
+      else whenDifferent.eval assignment
   | .named _ _ _ value => value.eval assignment
 
 inductive Expr (holes : Nat) where
@@ -38,6 +43,51 @@ def Expr.Holds {holes : Nat}
   | .lessThan left right => left.eval assignment < right.eval assignment
   | .not value => Not (value.Holds assignment)
   | .and left right => left.Holds assignment /\ right.Holds assignment
+
+instance Expr.decidableHolds {holes : Nat} (assignment : Fin holes -> Nat) :
+    (expression : Expr holes) -> Decidable (expression.Holds assignment)
+  | .boolean value => inferInstanceAs (Decidable (value = true))
+  | .equal left right =>
+      inferInstanceAs (Decidable (left.eval assignment = right.eval assignment))
+  | .lessThan left right =>
+      inferInstanceAs (Decidable (left.eval assignment < right.eval assignment))
+  | .not value => @instDecidableNot _ (value.decidableHolds assignment)
+  | .and left right =>
+      @instDecidableAnd _
+        _ (left.decidableHolds assignment) (right.decidableHolds assignment)
+
+def Expr.ite {holes : Nat} (condition : Expr holes)
+    (whenTrue whenFalse : NatTerm holes) : NatTerm holes :=
+  match condition with
+  | .boolean value => if value then whenTrue else whenFalse
+  | .equal left right => .iteEqual left right whenTrue whenFalse
+  | .lessThan left right =>
+      .iteEqual (.sub right left) (.literal 0) whenFalse whenTrue
+  | .not value => value.ite whenFalse whenTrue
+  | .and left right =>
+      -- Keep each branch once even when the guard contains several conditions.
+      .iteEqual (left.ite (right.ite (.literal 1) (.literal 0)) (.literal 0))
+        (.literal 1) whenTrue whenFalse
+
+theorem Expr.ite_eval {holes : Nat} (assignment : Fin holes -> Nat)
+    (condition : Expr holes) (whenTrue whenFalse : NatTerm holes) :
+    (condition.ite whenTrue whenFalse).eval assignment =
+      if condition.Holds assignment then whenTrue.eval assignment else whenFalse.eval assignment := by
+  induction condition generalizing whenTrue whenFalse with
+  | boolean value => cases value <;> simp [ite, Holds]
+  | equal left right => rfl
+  | lessThan left right =>
+      by_cases less : left.eval assignment < right.eval assignment
+      · have nonzero : right.eval assignment - left.eval assignment ≠ 0 := by omega
+        simp [ite, Holds, NatTerm.eval, less, nonzero]
+      · have zero : right.eval assignment - left.eval assignment = 0 := by omega
+        simp [ite, Holds, NatTerm.eval, less, zero]
+  | not value ih =>
+      by_cases holds : value.Holds assignment <;> simp [ite, Holds, ih, holds]
+  | and left right leftIH rightIH =>
+      by_cases leftHolds : left.Holds assignment <;>
+        by_cases rightHolds : right.Holds assignment <;>
+          simp [ite, Holds, NatTerm.eval, leftIH, rightIH, leftHolds, rightHolds]
 
 structure Clause (holes : Nat) where
   label : String
@@ -79,6 +129,8 @@ def NatTerm.toSmt {holes : Nat} : NatTerm holes -> String
   | .add left right => s!"(+ {left.toSmt} {right.toSmt})"
   | .sub left right =>
       s!"(ite (< {left.toSmt} {right.toSmt}) 0 (- {left.toSmt} {right.toSmt}))"
+  | .iteEqual left right whenEqual whenDifferent =>
+      s!"(ite (= {left.toSmt} {right.toSmt}) {whenEqual.toSmt} {whenDifferent.toSmt})"
   | .named group slot _ _ => s!"state_{group}_{slot}"
 
 def Expr.toSmt {holes : Nat} : Expr holes -> String
@@ -116,6 +168,8 @@ def NatTerm.bindings {holes : Nat} : NatTerm holes -> List (Binding holes)
   | .unknown _ => []
   | .add left right => left.bindings ++ right.bindings
   | .sub left right => left.bindings ++ right.bindings
+  | .iteEqual left right whenEqual whenDifferent =>
+      left.bindings ++ right.bindings ++ whenEqual.bindings ++ whenDifferent.bindings
   | .named group slot label value =>
       value.bindings ++ [{ group, slot, label, value }]
 

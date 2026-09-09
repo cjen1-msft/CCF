@@ -47,6 +47,13 @@ def syntaxKey {holes : Nat} : NatTerm holes -> List SyntaxAtom
       let leftKey := left.syntaxKey
       let rightKey := right.syntaxKey
       natAtom 4 :: natAtom leftKey.length :: leftKey ++ rightKey
+  | .iteEqual left right whenEqual whenDifferent =>
+      let leftKey := left.syntaxKey
+      let rightKey := right.syntaxKey
+      let equalKey := whenEqual.syntaxKey
+      let differentKey := whenDifferent.syntaxKey
+      natAtom 5 :: natAtom leftKey.length :: natAtom rightKey.length ::
+        natAtom equalKey.length :: leftKey ++ (rightKey ++ (equalKey ++ differentKey))
 
 private theorem append_parts
     {α : Type}
@@ -100,6 +107,19 @@ theorem syntaxKey_injective {holes : Nat} :
         rcases append_parts equal.1 equal.2 with ⟨leftKey, rightKey⟩
         cases leftInjective leftKey
         cases rightInjective rightKey
+        rfl
+  | iteEqual left right whenEqual whenDifferent leftInjective rightInjective
+      equalInjective differentInjective =>
+      intro other equal
+      cases other <;> simp [syntaxKey, natAtom, stringAtom] at equal
+      case iteEqual left' right' whenEqual' whenDifferent' =>
+        rcases append_parts equal.1 equal.2.2.2 with ⟨leftKey, rest⟩
+        rcases append_parts equal.2.1 rest with ⟨rightKey, rest⟩
+        rcases append_parts equal.2.2.1 rest with ⟨equalKey, differentKey⟩
+        cases leftInjective leftKey
+        cases rightInjective rightKey
+        cases equalInjective equalKey
+        cases differentInjective differentKey
         rfl
 
 /--

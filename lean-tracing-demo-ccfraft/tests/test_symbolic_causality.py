@@ -16,7 +16,9 @@ from tests.test_client_request_encoding import CVC5, ROOT
 
 @unittest.skipUnless(CVC5 is not None and shutil.which("lake"), "needs Lean and cvc5")
 class SymbolicCausalityTests(unittest.TestCase):
-    def test_core_requires_entry_writer_and_conflicting_observation(self) -> None:
+    def assert_causal_fixture(
+        self, source: str, argument: str, groups: tuple[str, ...]
+    ) -> None:
         encoded = subprocess.run(
             [
                 "nice",
@@ -26,8 +28,8 @@ class SymbolicCausalityTests(unittest.TestCase):
                 "env",
                 "lean",
                 "--run",
-                "Shared/SymbolicTraceTests.lean",
-                "--smt",
+                source,
+                argument,
             ],
             cwd=ROOT,
             check=True,
@@ -47,11 +49,7 @@ class SymbolicCausalityTests(unittest.TestCase):
 
             for removed in ("group_0", "group_1", "group_2"):
                 with self.subTest(removed=removed):
-                    selected = [
-                        name
-                        for name in ("group_0", "group_1", "group_2", "group_3")
-                        if name != removed
-                    ]
+                    selected = [name for name in groups if name != removed]
                     path = output / f"without-{removed}.smt2"
                     path.write_text(
                         restrict_to_assertions(formula, selected), encoding="utf-8"
@@ -60,6 +58,20 @@ class SymbolicCausalityTests(unittest.TestCase):
                         run_solver(CVC5, path, output, f"without-{removed}").status,
                         "sat",
                     )
+
+    def test_core_requires_entry_writer_and_conflicting_observation(self) -> None:
+        self.assert_causal_fixture(
+            "Shared/SymbolicTraceTests.lean",
+            "--smt",
+            ("group_0", "group_1", "group_2", "group_3"),
+        )
+
+    def test_conditional_frontier_keeps_the_predicate_writer(self) -> None:
+        self.assert_causal_fixture(
+            "Shared/SmtConditionalFixtureMain.lean",
+            "--conditional",
+            ("group_0", "group_1", "group_2"),
+        )
 
 
 if __name__ == "__main__":

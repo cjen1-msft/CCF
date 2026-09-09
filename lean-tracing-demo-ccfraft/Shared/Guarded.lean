@@ -17,21 +17,6 @@ namespace TraceSmt
 
 universe u v
 
-instance Expr.decidableHolds {holes : Nat}
-    (assignment : Fin holes -> Nat) :
-    (expression : Expr holes) -> Decidable (expression.Holds assignment)
-  | .boolean value => inferInstanceAs (Decidable (value = true))
-  | .equal left right =>
-      inferInstanceAs
-        (Decidable (left.eval assignment = right.eval assignment))
-  | .lessThan left right =>
-      inferInstanceAs
-        (Decidable (left.eval assignment < right.eval assignment))
-  | .not value => @instDecidableNot _ (value.decidableHolds assignment)
-  | .and left right =>
-      @instDecidableAnd _
-        _ (left.decidableHolds assignment) (right.decidableHolds assignment)
-
 /-- Boolean implication expressed using the existing tiny expression language. -/
 def Expr.implies {holes : Nat}
     (left right : Expr holes) : Expr holes :=
