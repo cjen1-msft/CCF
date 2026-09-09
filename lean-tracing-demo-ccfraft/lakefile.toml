@@ -47,6 +47,9 @@ name = "TransactionMapping"
 name = "BoundedTrace"
 
 [[lean_lib]]
+name = "BoundedSymbolicTrace"
+
+[[lean_lib]]
 name = "TraceCertificate"
 
 [[lean_lib]]
@@ -76,3 +79,6 @@ name = "TraceStateObservation"
 
 [[lean_lib]]
 name = "TraceStateObservationJson"
+
+[[lean_lib]]
+name = "SymbolicTraceObservation"
