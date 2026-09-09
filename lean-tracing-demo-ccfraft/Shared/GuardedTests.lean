@@ -27,6 +27,13 @@ def equalityBranch : Guarded 2 String :=
 #guard equalityBranch.eval sameAssignment == "same"
 #guard equalityBranch.eval distinctAssignment == "different"
 
+#guard
+  (Guarded.branchSmart (.boolean true) (.pure 1) (.pure 2) :
+    Guarded 2 Nat).eval sameAssignment == 1
+#guard
+  (Guarded.branchSmart (.boolean false) (.pure 1) (.pure 2) :
+    Guarded 2 Nat).eval sameAssignment == 2
+
 def mappedBranch : Guarded 2 Nat :=
   equalityBranch.map String.length
 

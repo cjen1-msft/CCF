@@ -36,6 +36,7 @@ def instruction (unknowns : Array String) (json : Json) :
           | "role" => pure (.role node (← roleValue value))
           | "currentTerm" => pure (.currentTerm node (← value.getNat?))
           | "logLength" => pure (.logLength node (← value.getNat?))
+          | "queueLength" => pure (.queueLength node (← value.getNat?))
           | "commitIndex" => pure (.commitIndex node (← value.getNat?))
           | "allocated" => pure (.allocated node (← value.getBool?))
           | "joined" => pure (.joined node (← value.getBool?))
