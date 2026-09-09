@@ -4,6 +4,7 @@
 import EncodeTrace
 import Shared.SmtTests
 import Shared.SmtOrderTests
+import Shared.GuardedTests
 import MachineGenerated.TraceStateJsonTests
 import MachineGenerated.TraceCertificateTests
 import MachineGenerated.BoundedStateProofs
@@ -12,6 +13,7 @@ import MachineGenerated.TransactionMappingProofs
 import MachineGenerated.LeaderWriteMappingProofs
 import MachineGenerated.MessageEqualityTests
 import MachineGenerated.AppendEntriesMappingProofs
+import MachineGenerated.GuardedAppendEntriesTests
 
 run_cmd do
   for theoremName in [
@@ -27,7 +29,10 @@ run_cmd do
       ``CCFRaft.TransactionMapping.enabled_mapState_appendRetiredCommitted_iff,
       ``CCFRaft.MessageEquality.messageEqual_correct,
       ``CCFRaft.TransactionMapping.enabled_mapState_appendEntries_iff,
-      ``CCFRaft.TransactionMapping.mapState_appendEntries_with_dedup] do
+      ``CCFRaft.TransactionMapping.mapState_appendEntries_with_dedup,
+      ``TraceSmt.Guarded.test_holds,
+      ``TraceSmt.Guarded.eval_enqueueNoDup_map,
+      ``CCFRaft.GuardedAppendEntries.step_correct] do
     for axiomName in ← Lean.collectAxioms theoremName do
       unless axiomName == ``propext || axiomName == ``Classical.choice ||
           axiomName == ``Quot.sound do
