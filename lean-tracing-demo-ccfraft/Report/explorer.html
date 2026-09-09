@@ -1,0 +1,280 @@
+<!doctype html>
+<!-- Copyright (c) Microsoft Corporation. All rights reserved.
+     Licensed under the Apache 2.0 License. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Checked trace explorer</title>
+<style>
+:root { color-scheme: light dark; --bg:#f5f7fa; --card:#fff; --fg:#172b4d; --muted:#526078; --line:#ccd5e0; --accent:#165dce; --select:#eaf2ff; --core:#fff2cc; --core-line:#a66b00; }
+@media(prefers-color-scheme:dark) { :root { --bg:#111827; --card:#172033; --fg:#e7edf7; --muted:#a8b7ce; --line:#35445d; --accent:#8ebcff; --select:#233c63; --core:#423515; --core-line:#ebbb57; } }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui,"DejaVu Sans",sans-serif; }
+header { padding:18px 24px 12px; border-bottom:1px solid var(--line); background:var(--card); }
+h1 { margin:0; font-size:21px; letter-spacing:-.4px; }
+h2 { margin:0; font-size:15px; }
+p { margin:6px 0; }
+a { color:var(--accent); }
+button,input { font:inherit; color:inherit; }
+button { cursor:pointer; }
+button:focus-visible,a:focus-visible,input:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+.topline,.toolbar,.panel-head,.detail-head { display:flex; align-items:center; gap:12px; justify-content:space-between; }
+.muted { color:var(--muted); }
+.badge { border:1px solid var(--line); border-radius:5px; padding:2px 8px; font-size:12px; font-weight:650; white-space:nowrap; }
+.toolbar { padding-top:12px; flex-wrap:wrap; }
+.toolbar input { width:min(420px,100%); border:1px solid var(--line); border-radius:5px; background:var(--bg); padding:7px 10px; }
+.button { border:1px solid var(--line); border-radius:5px; padding:6px 10px; background:var(--card); }
+.button.primary { background:var(--accent); color:var(--card); border-color:var(--accent); }
+main { padding:16px 20px; }
+.panes { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) minmax(0,1fr); gap:12px; }
+.panel,.details { border:1px solid var(--line); border-radius:7px; background:var(--card); overflow:hidden; }
+.panel-head { min-height:46px; padding:10px 12px; border-bottom:1px solid var(--line); }
+.scroll { height:46vh; min-height:240px; overflow:auto; padding:6px; }
+.row { display:block; width:100%; text-align:left; border:1px solid transparent; border-radius:4px; background:none; padding:8px; margin:2px 0; }
+.row:hover { background:var(--bg); }
+.row.in-core { border-left:3px solid var(--core-line); background:var(--core); }
+.row.selected { border-color:var(--accent); background:var(--select); }
+.row .meta { display:block; color:var(--muted); font-size:12px; }
+.raw { font:12px/1.6 ui-monospace,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
+.empty { padding:24px 16px; color:var(--muted); }
+.details { margin-top:12px; }
+.detail-head { padding:12px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+.detail-body { max-height:32vh; min-height:100px; overflow:auto; padding:12px 16px; }
+.clause { padding:8px 10px; margin-bottom:6px; border:1px solid var(--line); border-radius:4px; }
+.clause.kept { border-left:3px solid var(--core-line); background:var(--core); }
+pre { margin:5px 0 0; font:12px/1.5 ui-monospace,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
+.notice { padding:8px 0 0; color:var(--muted); font-size:12px; }
+[hidden] { display:none!important; }
+@media(max-width:850px) { .panes { grid-template-columns:1fr; } .scroll { height:28vh; } .topline { align-items:flex-start; } header { padding:14px; } main { padding:12px; } }
+</style>
+</head>
+<body>
+<header>
+<div class="topline"><div><h1>Checked trace explorer</h1><p id="run-summary" class="muted"></p></div><span id="status" class="badge"></span></div>
+<div class="toolbar">
+<label>Find <input id="search" type="search" placeholder="Action, node, field, or raw text"></label>
+<div><a id="workspace">Open workspace</a> &middot; <a id="contract">Execution contract</a></div>
+</div>
+<p class="notice">A reduced core explains conflicting constraints. It is not a replayable subsequence of actions.</p>
+</header>
+<main>
+<div class="panes">
+<section class="panel" aria-labelledby="raw-title"><div class="panel-head"><h2 id="raw-title">Raw NDJSON</h2><span id="raw-count" class="muted"></span></div><div id="raw" class="scroll"></div></section>
+<section class="panel" aria-labelledby="trace-title"><div class="panel-head"><h2 id="trace-title">Ordered instructions</h2><span id="trace-count" class="muted"></span></div><div id="instructions" class="scroll"></div></section>
+<section class="panel" aria-labelledby="core-title"><div class="panel-head"><h2 id="core-title">Reduced core</h2><button id="reset-core" class="button" hidden>Group view</button></div><div id="core" class="scroll"></div></section>
+</div>
+<section class="details" aria-labelledby="detail-title">
+<div class="detail-head"><div><h2 id="detail-title">Select an action or observation</h2><p id="detail-summary" class="muted"></p></div><button id="refine" class="button primary" hidden>Show reduced clauses</button></div>
+<div id="detail" class="detail-body"><p class="muted">Its source events and labelled constraints appear here.</p></div>
+</section>
+<p id="core-note" class="notice" aria-live="polite"></p>
+</main>
+<script id="explorer-data" type="application/json">__EXPLORER_DATA__</script>
+<script>
+"use strict";
+const data = JSON.parse(document.getElementById("explorer-data").textContent);
+const byId = id => document.getElementById(id);
+const groups = new Map(data.groups.map(group => [group.name, group]));
+const coreNames = new Set(data.core);
+let selected = null;
+let activeRefinement = null;
+let query = "";
+
+function element(tag, text, className) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = text;
+  if (className) node.className = className;
+  return node;
+}
+function empty(container, message) {
+  container.append(element("p", message, "empty"));
+}
+function title(group) {
+  const instruction = group.instruction;
+  if (!instruction) return group.label;
+  if (instruction.kind === "observation") {
+    return `${instruction.variable} = ${JSON.stringify(instruction.value)}`;
+  }
+  return instruction.action || group.label;
+}
+function parameters(group) {
+  const instruction = group.instruction;
+  if (!instruction) return group.name;
+  const fields = Object.entries(instruction).filter(
+    ([key]) => !["kind", "action", "variable", "value", "provenance", "evidence", "rule"].includes(key)
+  );
+  return fields.map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join("  ");
+}
+function provenance(group) {
+  const entries = group.instruction && group.instruction.provenance;
+  if (!Array.isArray(entries)) return [];
+  return [...new Set(entries.map(entry => entry.line).filter(
+    line => Number.isInteger(line) && line > 0 && line <= data.raw_lines.length
+  ))];
+}
+function matches(value) {
+  return !query || JSON.stringify(value).toLowerCase().includes(query);
+}
+function groupButton(group, context = "") {
+  const button = element("button", undefined, "row");
+  button.type = "button";
+  button.dataset.group = group.name;
+  button.classList.toggle("in-core", coreNames.has(group.name));
+  button.classList.toggle("selected", selected === group.name);
+  button.setAttribute("aria-pressed", String(selected === group.name));
+  button.append(element("span", `${group.index}. ${title(group)}`));
+  button.append(element("span", [context, parameters(group)].filter(Boolean).join(" | "), "meta"));
+  button.addEventListener("click", () => selectGroup(group.name));
+  return button;
+}
+function renderRaw() {
+  const container = byId("raw");
+  container.replaceChildren();
+  byId("raw-count").textContent = `${data.raw_lines.length} lines`;
+  if (!data.raw_lines.length) {
+    empty(container, "No raw trace supplied. This run starts from a certificate.");
+    return;
+  }
+  const highlighted = new Set(selected ? provenance(groups.get(selected)) : []);
+  const coreLines = new Set(data.core.flatMap(name => provenance(groups.get(name))));
+  let shown = 0;
+  data.raw_lines.forEach((line, index) => {
+    if (!matches(line)) return;
+    shown += 1;
+    const button = element("button", `${index + 1}  ${line}`, "row raw");
+    button.type = "button";
+    button.dataset.line = String(index + 1);
+    button.classList.toggle("selected", highlighted.has(index + 1));
+    button.classList.toggle("in-core", coreLines.has(index + 1));
+    button.addEventListener("click", () => {
+      const group = data.groups.find(candidate => provenance(candidate).includes(index + 1));
+      if (group) selectGroup(group.name);
+      else byId("core-note").textContent = `Raw line ${index + 1} has no mapped instruction.`;
+    });
+    container.append(button);
+  });
+  if (!shown) empty(container, "No raw lines match.");
+}
+function renderInstructions() {
+  const container = byId("instructions");
+  container.replaceChildren();
+  const instructions = data.groups.filter(group => group.kind !== "bounds");
+  byId("trace-count").textContent = `${instructions.length} steps`;
+  const visible = instructions.filter(matches);
+  visible.forEach(group => container.append(groupButton(group)));
+  if (!visible.length) empty(container, "No instructions match.");
+}
+function renderCore() {
+  const container = byId("core");
+  container.replaceChildren();
+  byId("reset-core").hidden = activeRefinement === null;
+  if (data.result.status !== "unsat") {
+    empty(container, data.result.status === "sat"
+      ? "The constraints are satisfiable. There is no conflicting core."
+      : "The solver returned unknown. There is no established core.");
+    return;
+  }
+  if (activeRefinement === null) {
+    data.core.map(name => groups.get(name)).filter(matches)
+      .forEach(group => container.append(groupButton(group)));
+    byId("core-note").textContent =
+      `${data.core.length} groups remain. Select an action to inspect its constraints.`;
+    return;
+  }
+  const refinement = data.refinements[activeRefinement];
+  refinement.diagnosis.items.filter(matches).forEach(item => {
+    const group = groups.get(`group_${item.group_index}`);
+    if (item.granularity === "group") {
+      container.append(groupButton(group, "Fixed context"));
+    } else {
+      const button = element("button", undefined, "row in-core");
+      button.type = "button";
+      button.dataset.clause = item.name;
+      button.append(element("span", item.label));
+      button.append(element("span", item.name, "meta"));
+      button.addEventListener("click", () => {
+        selectGroup(group.name);
+        const detail = document.getElementById(`detail-${item.name}`);
+        if (detail) detail.scrollIntoView({block: "nearest"});
+      });
+      container.append(button);
+    }
+  });
+  const count = refinement.result.core_fixed_context_assertions;
+  byId("core-note").textContent =
+    `Reduced clauses for ${activeRefinement}. ${count} other groups stayed fixed. ` +
+    refinement.result.core_kind;
+}
+function renderDetails() {
+  const button = byId("refine");
+  button.hidden = selected === null || !data.refinements[selected];
+  if (selected === null) return;
+  const group = groups.get(selected);
+  byId("detail-title").textContent = `${group.index}. ${title(group)}`;
+  byId("detail-summary").textContent = `${group.kind} | ${group.clauses.length} labelled constraints | ${parameters(group)}`;
+  const container = byId("detail");
+  container.replaceChildren();
+  const lines = provenance(group);
+  if (data.raw_url && lines.length) {
+    const links = element("p");
+    lines.forEach(line => {
+      const link = element("a", `Raw line ${line}`);
+      link.href = `${data.raw_url}:${line}:1`;
+      links.append(link, document.createTextNode("  "));
+    });
+    container.append(links);
+  }
+  const instruction = group.instruction;
+  if (instruction && instruction.rule) container.append(element("p", `Reduction rule: ${instruction.rule}`, "muted"));
+  const kept = new Set(activeRefinement
+    ? data.refinements[activeRefinement].diagnosis.named_assertions : []);
+  group.clauses.forEach(clause => {
+    const row = element("div", undefined, "clause");
+    row.id = `detail-${clause.name}`;
+    row.classList.toggle("kept", kept.has(clause.name));
+    row.append(element("strong", clause.label));
+    row.append(element("span", `  ${clause.name}`, "muted"));
+    row.append(element("pre", clause.expression));
+    container.append(row);
+  });
+  if (!group.clauses.length) empty(container, "This group has no field constraints.");
+}
+function selectGroup(name) {
+  selected = name;
+  location.hash = name;
+  renderInstructions();
+  renderRaw();
+  renderCore();
+  renderDetails();
+  const raw = byId("raw").querySelector(".selected");
+  if (raw) raw.scrollIntoView({block: "nearest"});
+}
+byId("workspace").href = data.workspace_uri;
+byId("contract").href = data.source_url;
+byId("raw-title").title = data.raw_name || "No raw file supplied";
+byId("run-summary").textContent = `${data.run_name} | ${data.result.assurance.entry} entry | bounded model execution`;
+byId("status").textContent = data.result.status.toUpperCase();
+byId("search").addEventListener("input", event => {
+  query = event.target.value.toLowerCase().trim();
+  renderInstructions();
+  renderRaw();
+  renderCore();
+});
+byId("refine").addEventListener("click", () => {
+  activeRefinement = selected;
+  renderCore();
+  renderDetails();
+});
+byId("reset-core").addEventListener("click", () => {
+  activeRefinement = null;
+  renderCore();
+  renderDetails();
+});
+renderInstructions();
+renderRaw();
+renderCore();
+if (groups.has(location.hash.slice(1))) selectGroup(location.hash.slice(1));
+</script>
+</body>
+</html>

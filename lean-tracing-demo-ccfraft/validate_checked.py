@@ -279,19 +279,27 @@ def read_constraint_map(
     groups = _sequence(constraint_map.get("groups"), "constraint map groups")
     if not groups:
         raise ValidationError("constraint map has no groups")
-    for group in groups:
+    for index, group in enumerate(groups):
         entry = _mapping(group, "constraint map group")
         for field in ("index", "name", "label", "kind"):
             if field not in entry:
                 raise ValidationError(f"constraint map group has no {field}")
+        if type(entry["index"]) is not int or entry["index"] != index:
+            raise ValidationError("constraint map groups are not in encoder order")
+        if entry["name"] != f"group_{index}":
+            raise ValidationError("constraint map has an invalid group name")
+        if entry["kind"] not in ("bounds", "action", "observation"):
+            raise ValidationError("constraint map has an invalid group kind")
         clauses = _sequence(entry.get("clauses"), f"clauses of {entry['name']}")
-        for raw_clause in clauses:
+        for clause_index, raw_clause in enumerate(clauses):
             clause = _mapping(raw_clause, f"clause of {entry['name']}")
             for field in ("name", "label", "expression"):
                 if not isinstance(clause.get(field), str):
                     raise ValidationError(
                         f"clause of {entry['name']} has no string {field}"
                     )
+            if clause["name"] != f"group_{index}_clause_{clause_index}":
+                raise ValidationError("constraint map has an invalid clause name")
     if constraint_map.get("inspect_group") != inspect_group:
         raise ValidationError(
             f"constraint map reports inspect_group "
@@ -730,6 +738,7 @@ def explain_unsat(
     *,
     core_reduction_budget_seconds: float,
     inspect_group: int | None = None,
+    fixed_context_names: tuple[str, ...] | None = None,
 ) -> dict[str, object]:
     """Extract, reduce, and explain one UNSAT core.
 
@@ -756,17 +765,38 @@ def explain_unsat(
 
     candidate_path = output_directory / "formula-core-candidate.smt2"
 
+    reduction_seed = original_core_names
     if inspect_group is None:
+        if fixed_context_names is not None:
+            raise ValidationError("fixed context requires an inspected action")
         fixed_context: tuple[str, ...] = ()
         reducible = original_core_names
     else:
         clause_prefix = f"group_{inspect_group}_clause_"
-        fixed_context = tuple(
-            name for name in original_core_names if not name.startswith(clause_prefix)
+        fixed_context = (
+            tuple(
+                name
+                for name in original_core_names
+                if not name.startswith(clause_prefix)
+            )
+            if fixed_context_names is None
+            else fixed_context_names
         )
+        if any(not GROUP_NAME.fullmatch(name) for name in fixed_context):
+            raise ValidationError("fixed context must contain whole instruction groups")
+        if f"group_{inspect_group}" in fixed_context:
+            raise ValidationError("the inspected action cannot be fixed context")
         reducible = tuple(
             name for name in original_core_names if name.startswith(clause_prefix)
         )
+        if fixed_context_names is not None:
+            unexpected = set(original_core_names) - set(fixed_context) - set(reducible)
+            if unexpected:
+                raise ValidationError(
+                    f"refinement core escaped the fixed context: {sorted(unexpected)}"
+                )
+            reduction_seed = fixed_context + reducible
+            restrict_to_assertions(formula_text, reduction_seed)
     held = set(fixed_context)
 
     def check_candidate(
@@ -774,7 +804,7 @@ def explain_unsat(
         remaining_seconds: float,
     ) -> str:
         keep = held.union(candidate_names)
-        selected = tuple(name for name in original_core_names if name in keep)
+        selected = tuple(name for name in reduction_seed if name in keep)
         write_formula(
             candidate_path,
             restrict_to_assertions(formula_text, selected),
@@ -800,7 +830,7 @@ def explain_unsat(
             return "inconclusive"
 
     reduction = reduce_core(
-        original_core_names,
+        reduction_seed,
         fixed_context,
         reducible,
         check_candidate,
@@ -826,6 +856,8 @@ def explain_unsat(
     return {
         "core_kind": core_kind,
         "core_fixed_context_assertions": len(fixed_context),
+        "core_fixed_context_names": list(fixed_context),
+        "core_reduction_seed_assertions": len(reduction_seed),
         "core_reduction_budget_seconds": core_reduction_budget_seconds,
         "core_reduction_candidates": len(reducible),
         "core_reduction_checks": reduction.checks,
@@ -865,7 +897,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--inspect-group",
         type=int,
         help=(
-            "print the constraints of one clientRequest step as separate named "
+            "print the constraints of one action as separate named "
             "clauses; every other group stays one coarse assertion"
         ),
     )

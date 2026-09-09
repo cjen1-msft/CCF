@@ -613,11 +613,11 @@ class InspectGroupTests(ClientRequestSliceTestCase):
             "every named assertion must sit on one line for core restriction",
         )
 
-    def test_inspect_group_must_select_a_client_request(self) -> None:
+    def test_inspect_group_must_select_an_action(self) -> None:
         certificate = _certificate([_request(0), _observation("logLength", 1)])
         with self.assertRaises(CertificateRejected) as raised:
             self.run_runner(certificate, inspect_group=2, name="inspect-observation")
-        self.assertIn("clientRequest", str(raised.exception))
+        self.assertIn("must select an action", str(raised.exception))
 
     def test_inspect_group_zero_is_rejected_before_any_build(self) -> None:
         certificate = _certificate([_request(0)])
