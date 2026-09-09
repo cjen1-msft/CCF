@@ -155,6 +155,29 @@ class ExplorerTests(ExplorerFixture):
             generate_explorer(self.source, self.output, raw_trace=self.raw)
         self.assertFalse(self.output.exists())
 
+    def test_symbolic_run_links_its_actual_execution_contract(self) -> None:
+        self.mapping.update(
+            entry="symbolic",
+            certificate_schema="ccfraft-symbolic-trace/v1",
+            theorem="CCFRaft.SymbolicTraceEncoding.encode_holds_correct",
+        )
+        self.result["assurance"]["entry"] = "symbolic"
+        self.save()
+        generate_explorer(self.source, self.output, raw_trace=self.raw, refine=False)
+        payload = re.search(
+            r'<script id="explorer-data" type="application/json">(.*?)</script>',
+            self.output.read_text(encoding="utf-8"),
+            re.DOTALL,
+        )
+        self.assertIsNotNone(payload)
+        source_url = json.loads(payload.group(1))["source_url"]
+        self.assertIn("/BoundedSymbolicTrace.lean:", source_url)
+        line_number = int(source_url.rsplit(":", 2)[1])
+        source_lines = (
+            (TEMPLATE.parents[1] / "BoundedSymbolicTrace.lean").read_text().splitlines()
+        )
+        self.assertTrue(source_lines[line_number - 1].startswith("def Follows "))
+
     def test_malformed_group_and_clause_metadata_is_rejected(self) -> None:
         for field, value in (("index", True), ("index", 7), ("kind", "other")):
             with self.subTest(field=field, value=value):

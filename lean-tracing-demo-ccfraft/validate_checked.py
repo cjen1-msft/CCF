@@ -63,11 +63,13 @@ class CertificateRejected(ValidationError):
 
 
 CERTIFICATE_SCHEMA = "ccfraft-trace/v1"
+SYMBOLIC_CERTIFICATE_SCHEMA = "ccfraft-symbolic-trace/v1"
 CONSTRAINT_MAP_SCHEMA = "ccfraft-trace-constraints/v1"
 PROOF_GATE_TARGET = "EncodeTrace"
 ENCODER_TARGET = "encode_trace"
 ENCODER_BINARY = Path(".lake/build/bin") / ENCODER_TARGET
 DEFAULT_THEOREM = "CCFRaft.TraceEncoding.encode_correct"
+SYMBOLIC_THEOREM = "CCFRaft.SymbolicTraceEncoding.encode_holds_correct"
 INSPECT_GROUP_NOTE = (
     "this is a naming granularity, not a second encoding: the constraints are "
     "identical to the coarse run, but the selected group is printed as one "
@@ -262,13 +264,18 @@ def read_constraint_map(
             f"unsupported constraint map schema_version: {schema!r}; "
             f"expected {CONSTRAINT_MAP_SCHEMA!r}"
         )
-    if constraint_map.get("entry") not in ("bootstrap", "template"):
+    if constraint_map.get("entry") not in ("bootstrap", "template", "symbolic"):
         raise ValidationError(
             f"unsupported constraint map entry: {constraint_map.get('entry')!r}"
         )
     certificate_schema = constraint_map.get("certificate_schema")
     if not isinstance(certificate_schema, str) or not certificate_schema:
         raise ValidationError("constraint map has no certificate_schema")
+    symbolic = constraint_map["entry"] == "symbolic"
+    if symbolic != (certificate_schema == SYMBOLIC_CERTIFICATE_SCHEMA):
+        raise ValidationError("symbolic entry and certificate schema must agree")
+    if symbolic != (constraint_map.get("theorem") == SYMBOLIC_THEOREM):
+        raise ValidationError("symbolic entry and encoder theorem must agree")
     actions = _sequence(constraint_map.get("supported_actions"), "supported actions")
     if not actions or not all(isinstance(action, str) and action for action in actions):
         raise ValidationError(
@@ -405,6 +412,24 @@ def _assurance(
     inspect_group: int | None,
 ) -> dict[str, object]:
     theorem = constraint_map.get("theorem")
+    coverage = ", ".join(
+        str(action)
+        for action in _sequence(
+            constraint_map["supported_actions"], "supported actions"
+        )
+    )
+    coverage += (
+        " actions plus role, currentTerm, logLength, queueLength, commitIndex, "
+        "allocated, joined, and submitted observations"
+    )
+    if constraint_map["entry"] == "symbolic":
+        coverage += (
+            ", stored pre-vote and retirement fields, membershipState, and "
+            "firstMessageFrom packet summaries; the entry state and declared "
+            "transaction identifiers are symbolic"
+        )
+    else:
+        coverage += "; only transaction identifiers may be symbolic"
     return {
         "claim": "bounded-trace",
         "certificate_schema": constraint_map["certificate_schema"],
@@ -413,17 +438,7 @@ def _assurance(
         "bounds": constraint_map["bounds"],
         "unknowns": constraint_map["unknowns"],
         "supported_actions": constraint_map["supported_actions"],
-        "coverage": (
-            ", ".join(
-                str(action)
-                for action in _sequence(
-                    constraint_map["supported_actions"], "supported actions"
-                )
-            )
-            + " actions plus role, currentTerm, logLength, queueLength, commitIndex, "
-            "allocated, joined, and submitted observations; only transaction "
-            "identifiers may be symbolic"
-        ),
+        "coverage": coverage,
         "granularity": "clause" if inspect_group is not None else "group",
         "inspect_group": inspect_group,
         "encoder_theorem": theorem if isinstance(theorem, str) else DEFAULT_THEOREM,
@@ -485,7 +500,11 @@ def _record_failure(output_directory: Path, error: Exception) -> None:
 
 
 def _interpretation(status: str, entry: str) -> str:
-    profile = "bootstrap" if entry == "bootstrap" else "explicit entry-template"
+    profile = {
+        "bootstrap": "bootstrap",
+        "template": "explicit entry-template",
+        "symbolic": "symbolic entry-state",
+    }[entry]
     if status == "sat":
         return (
             f"the encoded {profile} trace constraints are jointly "
@@ -493,8 +512,13 @@ def _interpretation(status: str, entry: str) -> str:
             "encoded fragment was checked"
         )
     if status == "unsat":
+        unknowns = (
+            "structural entry holes and declared transaction unknowns"
+            if entry == "symbolic"
+            else "declared transaction unknowns"
+        )
         return (
-            "no assignment of the declared transaction unknowns satisfies the "
+            f"no assignment of the {unknowns} satisfies the "
             f"encoded {profile} trace constraints within the declared "
             "bounds"
         )

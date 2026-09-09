@@ -28,7 +28,11 @@ from Shared.solver import ValidationError  # noqa: E402
 from validate_checked import (  # noqa: E402
     CONSTRAINT_MAP_SCHEMA,
     ENCODER_BINARY,
+    SYMBOLIC_CERTIFICATE_SCHEMA,
+    SYMBOLIC_THEOREM,
     CertificateRejected,
+    _assurance,
+    _interpretation,
     build_proof_gate,
     core_diagnosis,
     encoder_failure,
@@ -729,6 +733,42 @@ class ConstraintMapTests(unittest.TestCase):
         payload = {**self.constraint_map, "entry": "template"}
         loaded = read_constraint_map(self._write(payload), inspect_group=None)
         self.assertEqual(loaded["entry"], "template")
+
+    def test_symbolic_map_describes_structural_unknowns(self) -> None:
+        payload = {
+            **self.constraint_map,
+            "entry": "symbolic",
+            "certificate_schema": SYMBOLIC_CERTIFICATE_SCHEMA,
+            "theorem": SYMBOLIC_THEOREM,
+        }
+        loaded = read_constraint_map(self._write(payload), inspect_group=None)
+        assurance = _assurance(loaded, inspect_group=None)
+        self.assertEqual(assurance["encoder_theorem"], SYMBOLIC_THEOREM)
+        self.assertIn("entry state", assurance["coverage"])
+        self.assertNotIn("only transaction", assurance["coverage"])
+        self.assertIn("firstMessageFrom", assurance["coverage"])
+        self.assertIn("structural entry holes", _interpretation("unsat", "symbolic"))
+        self.assertIn("symbolic entry-state", _interpretation("sat", "symbolic"))
+        self.assertEqual(
+            _interpretation("unknown", "symbolic"),
+            "cvc5 could not decide the encoded constraints",
+        )
+
+    def test_symbolic_map_requires_matching_schema_and_theorem(self) -> None:
+        for changed in (
+            {"entry": "symbolic"},
+            {"certificate_schema": SYMBOLIC_CERTIFICATE_SCHEMA},
+            {"theorem": SYMBOLIC_THEOREM},
+            {
+                "entry": "symbolic",
+                "certificate_schema": SYMBOLIC_CERTIFICATE_SCHEMA,
+            },
+        ):
+            with self.subTest(changed=changed), self.assertRaises(ValidationError):
+                read_constraint_map(
+                    self._write({**self.constraint_map, **changed}),
+                    inspect_group=None,
+                )
 
     def test_missing_or_empty_schema_coverage_is_rejected(self) -> None:
         for field, value in (

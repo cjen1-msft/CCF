@@ -15,7 +15,12 @@ from urllib.parse import quote
 from refine_checked import refine_checked_core
 from Shared.smt import SmtEncodingError, parse_unsat_core
 from Shared.solver import ValidationError
-from validate_checked import _mapping, _sequence, read_constraint_map
+from validate_checked import (
+    SYMBOLIC_CERTIFICATE_SCHEMA,
+    _mapping,
+    _sequence,
+    read_constraint_map,
+)
 
 ROOT = Path(__file__).resolve().parent
 TEMPLATE = ROOT / "Report" / "explorer.html"
@@ -104,6 +109,7 @@ def build_explorer_data(
     )
     return {
         "result": result,
+        "certificate_schema": constraint_map["certificate_schema"],
         "groups": groups,
         "core": list(core),
         "refinements": refinements,
@@ -142,7 +148,11 @@ def generate_explorer(
         cvc5=cvc5,
         workspace_uri=workspace_uri,
     )
-    contract = ROOT / "BoundedTrace.lean"
+    contract = ROOT / (
+        "BoundedSymbolicTrace.lean"
+        if data["certificate_schema"] == SYMBOLIC_CERTIFICATE_SCHEMA
+        else "BoundedTrace.lean"
+    )
     contract_lines = contract.read_text(encoding="utf-8").splitlines()
     contract_line = next(
         (
@@ -153,7 +163,7 @@ def generate_explorer(
         None,
     )
     if contract_line is None:
-        raise ValidationError("BoundedTrace.lean has no Follows execution contract")
+        raise ValidationError(f"{contract.name} has no Follows execution contract")
     data["source_url"] = (
         workspace_uri.rstrip("/")
         + "/"
