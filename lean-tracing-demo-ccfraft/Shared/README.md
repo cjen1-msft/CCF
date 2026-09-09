@@ -10,5 +10,6 @@ Model-specific preprocessing and reduction rules stay in `reduction.py`.
 trusted SMT-LIB serializer used by the checked trace encoder.
 `SmtOrder.lean` provides a computable structural ordering for symbolic terms,
 so finite sets can be enumerated without an unexecutable choice operation.
+`Equality.lean` lifts an exact symbolic equality into equality of finite lists.
 `smt.py` contains generic solver-query and core-reduction utilities.
 The legacy, CCF-specific projected encoding lives in `../ccfraft_projection.py`.
