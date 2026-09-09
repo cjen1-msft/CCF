@@ -34,6 +34,25 @@ def equalityBranch : Guarded 2 String :=
   (Guarded.branchSmart (.boolean false) (.pure 1) (.pure 2) :
     Guarded 2 Nat).eval sameAssignment == 2
 
+def isPure {holes : Nat} {α : Type} : Guarded holes α -> Bool
+  | .pure _ => true
+  | .branch _ _ _ => false
+
+#guard isPure (Guarded.branchSmart
+  (.and (.boolean false) (.equal unknown0 unknown1))
+  (.pure 1) (.pure 2))
+#guard isPure (Guarded.branchSmart
+  (.and (.boolean true) (.equal unknown0 unknown0))
+  (.pure 1) (.pure 2))
+#guard !isPure (Guarded.branchSmart
+  (.equal unknown0 unknown1) (.pure 1) (.pure 2))
+#guard !isPure (Guarded.branchSmart
+  (.equal (.named 1 0 "derived value" (.literal 1)) (.literal 1))
+  (.pure 1) (.pure 2) : Guarded 2 Nat)
+#guard isPure (Guarded.branchSmart
+  (.not (.lessThan (.literal 2) (.literal 1)))
+  (.pure 1) (.pure 2) : Guarded 2 Nat)
+
 def mappedBranch : Guarded 2 Nat :=
   equalityBranch.map String.length
 

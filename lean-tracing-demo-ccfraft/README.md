@@ -19,12 +19,14 @@ The runner builds `encode_trace` from the audited `EncodeTrace` module, then
 runs that executable. Repeated encodings do not re-elaborate the Lean proofs.
 
 The `ccfraft-trace/v1` schema accepts `clientRequest`,
-`signCommittableMessages`, `changeConfiguration`, and
-`appendRetiredCommitted`. Observations cover `role`, `currentTerm`,
-`logLength`, `commitIndex`, `allocated`, `joined`, and `submitted`.
+`signCommittableMessages`, `changeConfiguration`,
+`appendRetiredCommitted`, and `appendEntries`.
+Observations cover `role`, `currentTerm`, `logLength`, `queueLength`,
+`commitIndex`, `allocated`, `joined`, and `submitted`.
 Each action names its actor with `node`; `changeConfiguration` also supplies
-a `configuration` array of node IDs. Entry can be the canonical bootstrap or
-an explicit full-state template:
+a `configuration` array of node IDs. `appendEntries` supplies `destination`
+and `batchEnd`. Entry can be the canonical bootstrap or an explicit
+full-state template:
 
 ```bash
 python3 validate_checked.py \
@@ -37,6 +39,21 @@ symbolic old and new transaction IDs. Every other state field is explicit.
 Unknown roles, terms, allocation, and queue shapes are not supported yet.
 Other actions and raw NDJSON input remain unsupported. Unsupported syntax
 is an error; the runner never falls back to the projected backend.
+
+AppendEntries deduplication compares evaluated packets. Different transaction
+unknowns can alias, so a send may retain the existing queue or append a packet.
+The encoder carries these guarded alternatives through later actions and
+observations under the same assignment. Constant guards collapse without
+duplicating later frames. Queue-length observations use `node` to identify
+the receiving queue.
+
+Run the persistent send example:
+
+```bash
+python3 validate_checked.py \
+	Traces/Replication/send.json \
+	Artifacts/checked-traces/replication
+```
 
 The general schema declares exclusive `transaction_count`, `term_count`, and `index_count`
 limits, plus inclusive `log_capacity` and `queue_capacity` limits. Bounds
@@ -86,9 +103,12 @@ assertions in that run's solver core stay fixed. This does not yet reuse a
 previously reduced high-level core or provide the HTML explorer.
 `instruction_index` is one-based, matching the existing reduction diagnostics.
 Intermediate log lengths, accepted transaction IDs, refreshed retirement
-indices, allocation and join markers, and assigned sent indices have defining
-equalities in their action groups. Later constraints refer to these values
+indices, allocation and join markers, assigned sent indices, and queue lengths
+have defining equalities in their action groups. Later constraints refer to these values
 so the core can retain the actions that produced them.
+A new enqueue defines the prior queue length plus one; a duplicate retains
+the prior binding. Branch-local definitions have distinct names while references
+to earlier actions keep their original names.
 The equivalence theorem covers formula meaning. Diagnostic labels and their
 source mapping are infrastructure metadata, not an additional proved claim.
 Structural action guards are single clauses, so a failed guard does not yet
@@ -104,6 +124,18 @@ SAT and UNSAT apply only to the supplied entry template and declared bounds.
 They do not quantify over unspecified structural fields or establish an
 unbounded result. The existing `validate.py` entry point still uses the
 separate, unverified projection described below.
+
+To run the focused checked-encoder gate:
+
+```bash
+./check_checked.sh
+```
+
+Set `CVC5` to an executable path if the solver is not on `PATH`.
+The gate builds `ControlActionAudit`, `EncoderAudit`, and `encode_trace`,
+runs the replication and leader-write regressions, and requires SAT for the
+persistent send example. Missing tools fail the gate rather than skip tests.
+It does not build the unrelated safety proofs in `Demo`.
 
 ## Review these files
 

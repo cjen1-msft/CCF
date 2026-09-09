@@ -45,6 +45,58 @@ theorem Expr.implies_holds {holes : Nat}
       (left.Holds assignment -> right.Holds assignment) := by
   simp [Expr.implies, Expr.Holds]
 
+/-- Detect constant guards without evaluating unknowns or named definitions. -/
+def Expr.constant? {holes : Nat} : Expr holes -> Option Bool
+  | .boolean value => some value
+  | .equal left right =>
+      if left = right then some true else
+        match left, right with
+        | .literal a, .literal b => some (decide (a = b))
+        | _, _ => none
+  | .lessThan (.literal left) (.literal right) => some (decide (left < right))
+  | .lessThan _ _ => none
+  | .not value => value.constant?.map (! ·)
+  | .and left right =>
+      match left.constant?, right.constant? with
+      | some false, _ | _, some false => some false
+      | some true, some true => some true
+      | _, _ => none
+
+theorem Expr.constant?_correct {holes : Nat}
+    (assignment : Fin holes -> Nat)
+    (expression : Expr holes)
+    (value : Bool)
+    (known : expression.constant? = some value) :
+    expression.Holds assignment <-> value = true := by
+  induction expression generalizing value with
+  | boolean result => simpa [constant?, Expr.Holds] using known
+  | equal left right =>
+      by_cases same : left = right
+      · subst right
+        simpa [constant?, Expr.Holds] using known
+      · cases left <;> cases right <;>
+          simp_all [constant?, Expr.Holds, NatTerm.eval]
+  | lessThan left right =>
+      cases value <;> cases left <;> cases right <;>
+        simp_all [constant?, Expr.Holds, NatTerm.eval]
+  | not inner ih =>
+      cases result : inner.constant? with
+      | none => simp [constant?, result] at known
+      | some flag =>
+          have correct := ih flag result
+          cases flag <;> simp_all [constant?, Expr.Holds]
+  | and left right leftCorrect rightCorrect =>
+      cases leftValue : left.constant? with
+      | none =>
+          cases rightValue : right.constant? with
+          | none => simp [constant?, leftValue, rightValue] at known
+          | some flag => cases flag <;> simp_all [constant?, Expr.Holds]
+      | some flag =>
+          cases flag <;>
+            cases rightValue : right.constant? with
+            | none => simp_all [constant?, Expr.Holds]
+            | some flag => cases flag <;> simp_all [constant?, Expr.Holds]
+
 /-- A finite executable choice tree guarded by symbolic expressions. -/
 inductive Guarded (holes : Nat) (α : Type u) where
   | pure (value : α)
@@ -54,13 +106,13 @@ inductive Guarded (holes : Nat) (α : Type u) where
 
 namespace Guarded
 
-/-- Eliminate branches whose condition is already a Boolean constant. -/
+/-- Eliminate branches whose condition has a known Boolean value. -/
 def branchSmart {holes : Nat} {α : Type u}
     (condition : Expr holes)
     (thenTree elseTree : Guarded holes α) : Guarded holes α :=
-  match condition with
-  | .boolean true => thenTree
-  | .boolean false => elseTree
+  match condition.constant? with
+  | some true => thenTree
+  | some false => elseTree
   | _ => .branch condition thenTree elseTree
 
 /-- Evaluate one guarded tree under a concrete unknown assignment. -/
@@ -83,12 +135,11 @@ theorem eval_branchSmart {holes : Nat} {α : Type u}
         thenTree.eval assignment
       else
         elseTree.eval assignment := by
-  cases condition with
-  | boolean value => cases value <;> simp [branchSmart, Expr.Holds]
-  | equal => rfl
-  | lessThan => rfl
-  | not => rfl
-  | and => rfl
+  cases known : condition.constant? with
+  | none => simp [branchSmart, known, eval]
+  | some value =>
+      have correct := Expr.constant?_correct assignment condition value known
+      cases value <;> simp_all [branchSmart]
 
 /-- Apply a pure function to every leaf. -/
 def map {holes : Nat} {α : Type u} {β : Type v}

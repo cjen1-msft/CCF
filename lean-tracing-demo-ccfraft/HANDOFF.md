@@ -1,8 +1,9 @@
 # Resume the checked CCFRaft trace encoder
 
-This is a migration checkpoint, not a completed implementation. It supersedes
-the handoff in commit `dfd8669f5`. The user requested a portable handoff and a
-commit of all repository changes while the next encoder slice was in progress.
+The guarded AppendEntries trace slice is complete. This document supersedes
+the unfinished migration checkpoint in `f1c84033b`. Receive, control-action
+integration, symbolic entry controls, raw-trace integration, and the explorer
+remain unfinished.
 
 ## Start here
 
@@ -10,9 +11,9 @@ Repository: `cjen1-msft/CCF`. Branch: `lean-ccfraft-slices`.
 All paths below are relative to `lean-tracing-demo-ccfraft/`, unless stated
 otherwise. Do not assume the old machine's absolute paths exist.
 
-The last completed semantic preparation is `032f02820`. The checkpoint after
-that commit includes incomplete guarded trace encoding. In particular, accepted
-JSON syntax is ahead of the last confirmed executable encoder.
+The control-action mapping proofs in `032f02820` are not yet integrated into
+trace instructions. The executable now supports all five actions accepted by
+the general JSON schema, including guarded `appendEntries`.
 
 The session's commits have not been pushed by this assistant. Transfer this
 branch, not just the older remote branch. For an offline transfer, run this
@@ -39,18 +40,20 @@ work from this session, and their proposals are not an adopted specification.
 
 ## Restore the environment
 
-Use the versions in `lean-toolchain` and `lake-manifest.json`. This work used
-Lean 4.28.0 and cvc5 1.3.4. Python tests use the standard library. Black is the
-existing Python formatter.
+Use the versions in `lean-toolchain` and `lake-manifest.json`. The completed
+slice used Lean 4.28.0 and cvc5 1.3.4. Python tests use the standard library.
+Black is the existing Python formatter.
 
 Install the pinned Lean toolchain through elan. Restore Lake dependencies and
 their cached artifacts using the project's normal Lake workflow. Do not update
 the pinned mathlib revision merely to fix a build.
 
-The old host was Azure Linux 3 with Nix. A portable solver selection is:
+Ensure `tar` and `gzip` are available before fetching Lake release archives
+and running `lake exe cache get`. A Nix environment for restoration and the
+solver is:
 
 ```bash
-nix shell nixpkgs#cvc5
+nix shell nixpkgs#gnutar nixpkgs#gzip nixpkgs#cvc5
 export CVC5="$(command -v cvc5)"
 ```
 
@@ -62,15 +65,15 @@ Build a known independent target first:
 nice -n 10 lake build ControlActionAudit
 ```
 
-The eventual complete encoder gate and native executable are:
+The completed encoder audit and native executable are:
 
 ```bash
 nice -n 10 lake build EncoderAudit
 nice -n 10 lake build encode_trace
 ```
 
-These last two commands may fail at this checkpoint because guarded trace
-encoding is unfinished. Do not bypass the proof gate to get a solver verdict.
+These commands pass at this checkpoint.
+Do not bypass the proof gate to get a solver verdict.
 Do not run the entire default `Demo` target as the first diagnostic.
 
 `validate_checked.py` builds `encode_trace` from the audited `EncodeTrace`
@@ -135,11 +138,10 @@ membership are not a second formal correspondence theorem.
 | `50ed2728e` | Executable guarded AppendEntries step, aliasing regressions, shared tests in the audit |
 | `032f02820` | Mapping and enabledness proofs for eleven control actions, with `ControlActionAudit` |
 
-The last confirmed end-to-end CLI supports `clientRequest`,
-`signCommittableMessages`, `changeConfiguration`, and
-`appendRetiredCommitted`. Sixteen focused integration cases passed before
-native compilation. Twenty-two cases, including toolchain failure paths,
-passed through the native executable.
+The end-to-end CLI supports `clientRequest`,
+`signCommittableMessages`, `changeConfiguration`,
+`appendRetiredCommitted`, and `appendEntries`. The focused gate runs 37
+tests covering native encoding and toolchain failure paths.
 
 The general leader-write example returned SAT:
 
@@ -149,12 +151,12 @@ python3 validate_checked.py \
 	Artifacts/checked-traces/leader-writes --cvc5 "$CVC5"
 ```
 
-The guarded AppendEntries **step** is complete and proved, but this does not
-mean arbitrary traces containing it have passed the full encoder.
+The guarded AppendEntries step and full trace composition are now proved.
+The general same-assignment `encode_holds_correct` theorem remains unchanged.
 
-## Current partial slice
+## Completed guarded trace slice
 
-The checkpoint adds these reviewed interface changes:
+The general schema and reviewed interfaces include:
 
 - `Instruction.appendEntries source destination batchEnd`.
 - `Observation.queueLength node value`.
@@ -164,33 +166,32 @@ The checkpoint adds these reviewed interface changes:
 - Updated supported-action metadata and Python coverage text.
 - `tests/test_replication_encoding.py` and `Traces/Replication/send.json`.
 
-`MachineGenerated.TraceCertificateTests` passed, including required send
+`MachineGenerated.TraceCertificateTests` passes, including required send
 arguments and legacy-schema rejection. The persistent replication fixture
-matches its Python builder. The new replication solver tests have not passed
-as a group yet. README coverage still describes the last completed CLI slice.
+matches its Python builder and returns SAT. README coverage includes this slice.
 
-Active implementation files at migration:
+Implementation files:
 
 - `MachineGenerated/TraceEncoding.lean`
 - `MachineGenerated/TraceEncodingProofs.lean`
 - `Shared/Guarded.lean`
 - `Shared/GuardedTests.lean`
 
-These contain partial guarded-frame encoding, branch-specific binding
-namespaces, queue-length tracking, and associated proofs. Preserve this work.
-Do not revert it to make the old four-action build green.
+These implement guarded-frame encoding, branch-specific binding namespaces,
+queue-length tracking, and their proofs. Local AppendEntries tracking lemmas
+require an allocated sender because `next` can allocate a sender even when
+the action is disabled. The trace proof derives allocation from `Enabled`
+and rejects disabled actions. The public theorem still covers arbitrary
+entry templates.
 
-The paused agent's final notes, if available, are recorded in the checkpoint
-status section at the end of this document.
-
-## Complete guarded trace encoding next
+## Preserve the guarded trace invariants
 
 Keep one group for each instruction: group 0 is unknown domains, groups 1
 through N are instructions, and the final group is final-state bounds.
 Fine inspection must retain individually labelled field constraints.
 
 Use `GuardedAppendEntries.step` and `step_correct`, not a copied transition.
-Propagate guarded state alternatives through the whole trace. Bounds,
+Guarded state alternatives propagate through the whole trace. Bounds,
 enabledness and observations must constrain the selected branch under the
 same assignment.
 
@@ -211,20 +212,13 @@ Its definitions are unconditional total equations. Distinct branch-local
 names are therefore essential. Inlining every name is not an acceptable fix
 because it loses causal action attribution.
 
-After the proof and native executable build, run the focused integration set:
+Run the repeatable proof, native-build, integration, and persistent-fixture gate:
 
 ```bash
-nice -n 10 python3 -m unittest -v \
-	tests.test_replication_encoding \
-	tests.test_leader_writes \
-	tests.test_client_request_encoding.SatisfiableCertificateTests \
-	tests.test_client_request_encoding.ToolchainFailureTests \
-	tests.test_template_client_requests.TemplateClientRequestTests.test_distinct_names_do_not_imply_distinct_transaction_values \
-	tests.test_template_client_requests.TemplateClientRequestTests.test_log_capacity_core_keeps_the_causal_action \
-	tests.test_template_client_requests.TemplateClientRequestTests.test_retirement_refresh_bound_keeps_the_causal_action
+CVC5="$CVC5" ./check_checked.sh
 ```
 
-Then run the persistent send example:
+To run the persistent send example separately:
 
 ```bash
 python3 validate_checked.py \
@@ -232,11 +226,11 @@ python3 validate_checked.py \
 	Artifacts/checked-traces/replication --cvc5 "$CVC5"
 ```
 
-Critical regressions cover semantic packet aliases, forced distinctness,
-queue capacity, repeated heartbeats, causal send cores, fine inspection, and
-later writes after a symbolic queue branch. Update README only after these
-paths work. Independently review the evidence-backed result, then commit this
-slice before starting the next integration.
+Passing regressions cover semantic packet aliases, forced distinctness,
+same-assignment queue observations, queue capacity, repeated heartbeats,
+causal send cores, fine inspection, absent senders, and later writes after
+a symbolic queue branch. Shared guard and trace correspondence changes
+received separate independent reviews with no material findings.
 
 ## Remaining semantic work
 
@@ -344,25 +338,16 @@ Keep live legacy projection and runtime consumers until their replacements
 are connected.
 
 Ignored `.lake/` build products and `Artifacts/` solver outputs are not portable
-source dependencies. Regenerate them. The old Copilot session directory was
-`/home/cjen1-msft/.copilot/session-state/ad3933b2-6bbf-4ed0-bd2e-bfdd2b54f302/`.
-Its logs and SQLite task state are not required to resume from this document.
+source dependencies. Regenerate them. Session logs and task state are not
+required to resume from this document.
 
 ## Checkpoint status
 
-Stop requests were sent to both implementation agents before preparing this
-checkpoint. Do not resume their old IDs on the new machine. Resume from the
-committed files and the status recorded here.
+`check_checked.sh` passes with no skipped tests, and its persistent send example
+returns SAT. `EncoderAudit` enforces the allowed proof axioms transitively.
+No receive implementation files exist. Resume from committed files, not old
+agent handles.
 
-The agent handles were no longer available when migration resumed. No final
-stop acknowledgements or compiler-error handoffs could be retrieved.
-No receive implementation files were present in the checkpoint inventory.
-The guarded encoder sources contain the intended theorem declarations,
-including `encode_holds_correct` and `checkedEncoder`, but their presence is
-not evidence that the current versions compile. No explicit `sorry` or
-`admit` was found in the changed encoder and guarded helper sources.
-
-The latest fully completed independent command was
-`nice -n 10 lake build ControlActionAudit`. The whole guarded trace encoder
-has not been declared complete. This checkpoint intentionally preserves
-unfinished implementation rather than discarding it.
+The next integration is a small family of the already-proved control actions.
+Their observed fields need causal tracking; do not replace the missing
+tracking with constant observations merely to accept more action names.

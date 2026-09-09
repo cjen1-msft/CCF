@@ -47,9 +47,10 @@ theorem guardClauses_correct {holes : Nat}
       (condition.Holds assignment -> ClausesHold assignment clauses) := by
   constructor
   · intro guarded conditionHolds clause member
-    apply guarded
-    · exact List.mem_map.mpr ⟨clause, member, rfl⟩
-    · exact conditionHolds
+    have holds := guarded
+      { clause with expression := condition.implies clause.expression }
+      (List.mem_map.mpr ⟨clause, member, rfl⟩)
+    exact (Expr.implies_holds assignment _ _).mp holds conditionHolds
   · intro conditional clause member
     rcases List.mem_map.mp member with ⟨original, originalMember, rfl⟩
     exact (Expr.implies_holds assignment _ _).mpr fun conditionHolds =>
@@ -66,22 +67,8 @@ theorem guardedClauses_correct {holes : Nat} {α : Type}
   | branch condition thenTree elseTree thenCorrect elseCorrect =>
       simp only [guardedClauses, clausesHold_append,
         guardClauses_correct, Guarded.eval]
-      by_cases holds : condition.Holds assignment
-      · constructor
-        · rintro ⟨thenHolds, _⟩
-          exact thenCorrect.mp (thenHolds holds)
-        · intro selected
-          constructor
-          · exact fun _ => thenCorrect.mpr selected
-          · intro notHolds
-            exact (notHolds holds).elim
-      · constructor
-        · rintro ⟨_, elseHolds⟩
-          exact elseCorrect.mp (elseHolds holds)
-        · intro selected
-          constructor
-          · exact fun conditionHolds => (holds conditionHolds).elim
-          · exact fun _ => elseCorrect.mpr selected
+      by_cases holds : condition.Holds assignment <;>
+        simp [holds, Expr.Holds, thenCorrect, elseCorrect]
 
 theorem guardedGroup_correct {holes : Nat}
     (assignment : Fin holes -> Nat)
@@ -1076,6 +1063,7 @@ theorem attachAppendFrame_correct {holes : Nat}
     (tracking : Tracking holes)
     (trackingCorrect : TrackingCorrect assignment state tracking)
     (source destination : Node)
+    (sourceAllocated : state.allocated source)
     (batchEnd pathId : Nat)
     (tree : Guarded holes (Template holes))
     (priorLengthCorrect :
@@ -1124,9 +1112,12 @@ theorem attachAppendFrame_correct {holes : Nat}
         rw [stateCorrect]
         by_cases same : node = source
         · subst node
-          simpa [nextAppendEntriesTracking, next, mapState_allocated,
-            State.allocated, updateNode, NodeStore.allocated] using
+          have sourceMarker :
+              (tracking.allocated source).eval assignment = 1 := by
+            simpa only [mapState_allocated, sourceAllocated, if_true] using
               trackingCorrect.allocated source
+          simpa [nextAppendEntriesTracking, next, State.allocated,
+            updateNode, NodeStore.allocated] using sourceMarker
         · simpa [nextAppendEntriesTracking, next, same, mapState_allocated,
             State.allocated, updateNode, NodeStore.allocated] using
               trackingCorrect.allocated node
@@ -1172,8 +1163,10 @@ theorem attachAppendFrame_correct {holes : Nat}
             trackingCorrect.queueLengths, mapState]
           have lengths := congrArg
             (fun current => (current.network node).length) stateCorrect
-          simpa [mapState, next, targetNode, enqueueNoDup, updateQueue,
-            makeAppendEntriesRequest] using lengths.symm
+          simp only [next, enqueueNoDup] at lengths
+          split_ifs at lengths <;>
+            simpa [mapState, targetNode, updateQueue,
+              makeAppendEntriesRequest, Message.destination] using lengths.symm
 
 theorem appendFrames_correct {holes : Nat}
     (bounds : Bounds)
@@ -1182,13 +1175,14 @@ theorem appendFrames_correct {holes : Nat}
     (frame : Frame holes)
     (frameCorrect : FrameCorrect assignment frame)
     (source destination : Node)
+    (sourceAllocated : frame.state.allocated source)
     (batchEnd : Nat) :
     FrameCorrect assignment
       ((appendFrames position frame source destination batchEnd).eval
         assignment) := by
   apply attachAppendFrame_correct bounds assignment position
     (frame.state.network destination).length frame.state frame.tracking
-    frameCorrect source destination batchEnd frame.pathId
+    frameCorrect source destination sourceAllocated batchEnd frame.pathId
     (GuardedAppendEntries.step frame.state source destination batchEnd)
     rfl
   · exact GuardedAppendEntries.step_correct assignment frame.state
@@ -1285,6 +1279,7 @@ theorem encodeFrom_correct {holes : Nat}
               mapState_clientRequest (NatTerm.eval assignment) frame.state
                 node accepted
             simp only [accepted, NatTerm.eval] at commutes
+            simp only [Guarded.eval_map, clientRequestFrame]
             rw [commutes]
             tauto
           ·
@@ -1296,7 +1291,8 @@ theorem encodeFrom_correct {holes : Nat}
                 _ ↔ _
             rw [clientRequestGroup_correct bounds assignment frame.state
               frame.tracking frameCorrect node transaction]
-            simp [mappedEnabled]
+            dsimp only [frame] at mappedEnabled
+            simp [frame, mappedEnabled]
       | signCommittableMessages node =>
           by_cases enabled :
               Enabled frame.state (.signCommittableMessages node)
@@ -1321,7 +1317,9 @@ theorem encodeFrom_correct {holes : Nat}
                 (NatTerm.eval assignment) frame.state node).symm]
             rw [inductionHypothesis (position + 1)
               (frames.map (signatureFrame position node))
-              (by simpa [Guarded.eval_map, FrameCorrect, signatureFrame])]
+              (by simpa [Guarded.eval_map, FrameCorrect, signatureFrame]
+                using nextCorrect)]
+            simp only [Guarded.eval_map, signatureFrame]
             rw [mapState_signCommittableMessages]
             tauto
           · have mappedDisabled :=
@@ -1342,7 +1340,8 @@ theorem encodeFrom_correct {holes : Nat}
                 (.signCommittableMessages node))
               (enabled_mapState_signCommittableMessages_iff
                 (NatTerm.eval assignment) frame.state node).symm]
-            simp [mappedDisabled]
+            dsimp only [frame] at mappedDisabled
+            simp [frame, mappedDisabled]
       | changeConfiguration node configuration =>
           have nextCorrect :=
             nextConfigurationTracking_correct assignment position
@@ -1365,7 +1364,9 @@ theorem encodeFrom_correct {holes : Nat}
               (NatTerm.eval assignment) frame.state node configuration).symm]
           rw [inductionHypothesis (position + 1)
             (frames.map (configurationFrame position node configuration))
-            (by simpa [Guarded.eval_map, FrameCorrect, configurationFrame])]
+            (by simpa [Guarded.eval_map, FrameCorrect, configurationFrame]
+              using nextCorrect)]
+          simp only [Guarded.eval_map, configurationFrame]
           rw [mapState_changeConfiguration]
           tauto
       | appendRetiredCommitted node =>
@@ -1393,7 +1394,8 @@ theorem encodeFrom_correct {holes : Nat}
             rw [inductionHypothesis (position + 1)
               (frames.map (retiredCommittedFrame position node))
               (by simpa [Guarded.eval_map, FrameCorrect,
-                retiredCommittedFrame])]
+                retiredCommittedFrame] using nextCorrect)]
+            simp only [Guarded.eval_map, retiredCommittedFrame]
             rw [mapState_appendRetiredCommitted]
             tauto
           · have mappedDisabled :=
@@ -1414,7 +1416,8 @@ theorem encodeFrom_correct {holes : Nat}
                 (.appendRetiredCommitted node))
               (enabled_mapState_appendRetiredCommitted_iff
                 (NatTerm.eval assignment) frame.state node).symm]
-            simp [mappedDisabled]
+            dsimp only [frame] at mappedDisabled
+            simp [frame, mappedDisabled]
       | appendEntries source destination batchEnd =>
           simp only [encodeFrom, Formula.holds_cons, Follows]
           rw [guardedGroup_correct]
@@ -1433,15 +1436,23 @@ theorem encodeFrom_correct {holes : Nat}
             (enabled_mapState_appendEntries_iff
               (NatTerm.eval assignment) frame.state source destination
               batchEnd).symm]
-          rw [inductionHypothesis (position + 1)
-            (frames.bind fun current =>
-              appendFrames position current source destination batchEnd)
-            (by
-              simp only [Guarded.eval_bind]
-              exact appendFrames_correct bounds assignment position frame
-                frameCorrect source destination batchEnd)]
-          rw [Guarded.eval_bind, appendFrames_state_correct]
-          tauto
+          by_cases enabled :
+              Enabled frame.state (.appendEntries source destination batchEnd)
+          · rw [inductionHypothesis (position + 1)
+              (frames.bind fun current =>
+                appendFrames position current source destination batchEnd)
+              (by
+                simp only [Guarded.eval_bind]
+                exact appendFrames_correct bounds assignment position frame
+                  frameCorrect source destination enabled.1 batchEnd)]
+            rw [Guarded.eval_bind, appendFrames_state_correct]
+            tauto
+          · have mappedDisabled :=
+              mt (enabled_mapState_appendEntries_iff
+                (NatTerm.eval assignment) frame.state source destination
+                  batchEnd).mp enabled
+            dsimp only [frame] at mappedDisabled
+            simp [frame, mappedDisabled]
 
 theorem unknownDomains_correct {holes : Nat}
     (bounds : Bounds)

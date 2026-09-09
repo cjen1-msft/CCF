@@ -131,6 +131,12 @@ class ReplicationEncodingTests(ClientRequestSliceTestCase):
         )
         self.assertEqual(status, "unsat")
 
+    def test_absent_node_cannot_send(self) -> None:
+        status, _ = self.run_runner(
+            trace([send(node=7, destination=0, batch_end=0)], queue_capacity=1)
+        )
+        self.assertEqual(status, "unsat")
+
     def test_repeated_heartbeat_is_not_enqueued_twice(self) -> None:
         status, _ = self.run_runner(
             trace(
@@ -183,6 +189,57 @@ class ReplicationEncodingTests(ClientRequestSliceTestCase):
             )
         )
         self.assertEqual(status, "unsat")
+
+    def test_queue_branch_uses_the_same_assignment_as_observations(self) -> None:
+        entry = queued_entry()
+        entry["network"][0][0]["entries"][0]["content"]["transaction"] = 0
+        for aliases in (True, False):
+            for observed_length in (1, 2):
+                with self.subTest(aliases=aliases, observed_length=observed_length):
+                    status, output = self.run_runner(
+                        trace(
+                            [
+                                _submitted(0, aliases),
+                                send(node=1, destination=0),
+                                _observation("queueLength", observed_length, node=0),
+                            ],
+                            entry=entry,
+                            unknowns=["old"],
+                            transaction_count=2,
+                            queue_capacity=2,
+                        ),
+                        name=f"alias-{aliases}-length-{observed_length}",
+                    )
+                    expected_length = 1 if aliases else 2
+                    self.assertEqual(
+                        status, "sat" if observed_length == expected_length else "unsat"
+                    )
+                    mapping = json.loads(
+                        (output / "constraint-map.json").read_text(encoding="utf-8")
+                    )
+                    self.assertEqual(
+                        [group["kind"] for group in mapping["groups"]],
+                        ["bounds", "observation", "action", "observation", "bounds"],
+                    )
+
+    def test_heartbeat_deduplication_keeps_the_original_enqueue_binding(self) -> None:
+        status, output = self.run_runner(
+            trace(
+                [
+                    _request(0),
+                    send(),
+                    send(),
+                    send(),
+                    _observation("queueLength", 1, node=1),
+                ],
+                queue_capacity=2,
+            )
+        )
+        self.assertEqual(status, "unsat")
+        self.assertEqual(
+            self._core_names(output / "unsat-core.txt"),
+            {"group_2", "group_3", "group_5"},
+        )
 
     def test_later_writes_keep_branch_bindings_separate(self) -> None:
         status, _ = self.run_runner(

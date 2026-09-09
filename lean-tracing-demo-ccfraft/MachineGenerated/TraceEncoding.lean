@@ -8,11 +8,12 @@ import MachineGenerated.GuardedAppendEntries
 set_option autoImplicit false
 
 /-!
-# Full-template leader-write encoding
+# Full-template guarded trace encoding
 
 The encoder executes the reviewed model transition over the symbolic template.
 Transaction identifiers may be unknown. Named derived values preserve causal
 links in diagnostic cores; structural control fields come from the template.
+Guarded frames retain assignment-dependent queue alternatives after a send.
 -/
 
 namespace CCFRaft.TraceEncoding

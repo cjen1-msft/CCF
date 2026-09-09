@@ -45,4 +45,13 @@ example (assignment : Fin 2 -> Nat) :
         (.appendEntries source destination 1) :=
   step_correct assignment entry source destination 1
 
+private def heartbeatFrames : Nat -> Guarded 2 (State Node (NatTerm 2))
+  | 0 => .pure (withTransaction old)
+  | count + 1 =>
+      (heartbeatFrames count).bind fun state => step state source destination 1
+
+#guard match heartbeatFrames 4 with
+  | .pure state => (state.network destination).length == 2
+  | .branch _ _ _ => false
+
 end CCFRaft.GuardedAppendEntries.Tests
