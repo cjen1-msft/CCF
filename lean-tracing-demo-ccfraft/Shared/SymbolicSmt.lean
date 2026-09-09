@@ -76,6 +76,24 @@ private structure Names where
   definitions : Std.HashMap (Nat × Nat) ((s : Ty) × Expr s) := {}
   bindings : Array NamedBinding := #[]
 
+-- Repeated names share predecessor trees; do not traverse those trees again.
+private def sameDefinition : ((s : Ty) × Expr s) -> ((s : Ty) × Expr s) -> Bool
+  | ⟨leftTy, left⟩, ⟨rightTy, right⟩ =>
+      if sameType : leftTy = rightTy then
+        let left := sameType ▸ left
+        withPtrEq left right (fun _ => decide (left = right))
+          (by intro equal; simp [equal])
+      else false
+
+private theorem sameDefinition_correct (left right : (s : Ty) × Expr s) :
+    sameDefinition left right = decide (left = right) := by
+  rcases left with ⟨leftTy, left⟩
+  rcases right with ⟨rightTy, right⟩
+  by_cases sameType : leftTy = rightTy
+  · subst rightTy
+    simp [sameDefinition, withPtrEq]
+  · simp [sameDefinition, sameType]
+
 private def collectNames {s : Ty} (groupCount current : Nat) (e : Expr s) :
     StateT Names (Except String) Unit := do
   match e with
@@ -88,7 +106,7 @@ private def collectNames {s : Ty} (groupCount current : Nat) (e : Expr s) :
       let definition : (s : Ty) × Expr s := ⟨s, value⟩
       match names.definitions[(group, slot)]? with
       | some prior =>
-          unless prior == definition do
+          unless sameDefinition prior definition do
             throw s!"conflicting intermediate definition or type: state_{group}_{slot}"
       | none =>
           set { names with
