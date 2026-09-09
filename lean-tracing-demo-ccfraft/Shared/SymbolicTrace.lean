@@ -48,17 +48,26 @@ def Follows (semantics : Semantics stateTy State Action Observation)
       semantics.within state ∧ semantics.observes ρ state observation ∧
         Follows semantics ρ state rest
 
-/-- The list preserves instruction groups, with a separate final-bounds group. -/
-def encode (semantics : Semantics stateTy State Action Observation)
-    (state : Expr stateTy) : List (Instruction Action Observation) -> List (Expr .bool)
+/-- Instruction indices advance through observations as well as actions. -/
+def encodeWith (semantics : Semantics stateTy State Action Observation)
+    (nameState : Nat -> Expr stateTy -> Expr stateTy)
+    (group : Nat) (state : Expr stateTy) :
+    List (Instruction Action Observation) -> List (Expr .bool)
   | [] => [semantics.bounds state]
   | .action action :: rest =>
       let result := semantics.step state action
       .and (semantics.bounds state) result.enabled ::
-        encode semantics result.successor rest
+        encodeWith semantics nameState (group + 1)
+          (nameState group result.successor) rest
   | .observation observation :: rest =>
       .and (semantics.bounds state) (semantics.observe state observation) ::
-        encode semantics state rest
+        encodeWith semantics nameState (group + 1) state rest
+
+/-- The list preserves instruction groups, with a separate final-bounds group. -/
+def encode (semantics : Semantics stateTy State Action Observation)
+    (state : Expr stateTy) (trace : List (Instruction Action Observation)) :
+    List (Expr .bool) :=
+  encodeWith semantics (fun _ value => value) 0 state trace
 
 def Holds (ρ : Assignment) (groups : List (Expr .bool)) : Prop :=
   ∀ expression ∈ groups, expression.eval ρ = true
@@ -71,35 +80,52 @@ def Holds (ρ : Assignment) (groups : List (Expr .bool)) : Prop :=
     Holds ρ (head :: tail) ↔ head.eval ρ = true ∧ Holds ρ tail := by
   simp [Holds]
 
-theorem encode_correct (semantics : Semantics stateTy State Action Observation)
-    (ρ : Assignment) (state : Expr stateTy)
+theorem encodeWith_correct (semantics : Semantics stateTy State Action Observation)
+    (nameState : Nat -> Expr stateTy -> Expr stateTy)
+    (nameState_correct : ∀ ρ group state,
+      semantics.decode ρ (nameState group state) = semantics.decode ρ state)
+    (ρ : Assignment) (group : Nat) (state : Expr stateTy)
     (trace : List (Instruction Action Observation)) :
-    Holds ρ (encode semantics state trace) ↔
+    Holds ρ (encodeWith semantics nameState group state trace) ↔
       Follows semantics ρ (semantics.decode ρ state) trace := by
-  induction trace generalizing state with
-  | nil => simp [encode, Follows, semantics.bounds_correct]
+  induction trace generalizing group state with
+  | nil => simp [encodeWith, Follows, semantics.bounds_correct]
   | cons instruction rest inductionHypothesis =>
       by_cases bounded : semantics.within (semantics.decode ρ state)
       · cases instruction with
         | action action =>
             by_cases enabled : semantics.enabled ρ (semantics.decode ρ state) action
-            · simp [encode, Follows, Expr.eval, semantics.bounds_correct,
+            · simp [encodeWith, Follows, Expr.eval, semantics.bounds_correct,
                 semantics.enabled_correct ρ state action bounded, bounded, enabled,
-                inductionHypothesis, semantics.next_correct ρ state action bounded enabled]
-            · simp [encode, Follows, Expr.eval, semantics.bounds_correct,
+                inductionHypothesis, nameState_correct,
+                semantics.next_correct ρ state action bounded enabled]
+            · simp [encodeWith, Follows, Expr.eval, semantics.bounds_correct,
                 semantics.enabled_correct ρ state action bounded, bounded, enabled]
         | observation observation =>
-            simp [encode, Follows, Expr.eval, semantics.bounds_correct, bounded,
+            simp [encodeWith, Follows, Expr.eval, semantics.bounds_correct, bounded,
               semantics.observe_correct ρ state observation bounded, inductionHypothesis]
       · cases instruction <;>
-          simp [encode, Follows, Expr.eval, semantics.bounds_correct, bounded]
+          simp [encodeWith, Follows, Expr.eval, semantics.bounds_correct, bounded]
+
+theorem encode_correct (semantics : Semantics stateTy State Action Observation)
+    (ρ : Assignment) (state : Expr stateTy)
+    (trace : List (Instruction Action Observation)) :
+    Holds ρ (encode semantics state trace) ↔
+      Follows semantics ρ (semantics.decode ρ state) trace :=
+  encodeWith_correct semantics (fun _ value => value) (by intros; rfl) ρ 0 state trace
+
+theorem encodeWith_group_count (semantics : Semantics stateTy State Action Observation)
+    (nameState : Nat -> Expr stateTy -> Expr stateTy)
+    (group : Nat) (state : Expr stateTy) (trace : List (Instruction Action Observation)) :
+    (encodeWith semantics nameState group state trace).length = trace.length + 1 := by
+  induction trace generalizing group state with
+  | nil => rfl
+  | cons instruction rest inductionHypothesis =>
+      cases instruction <;> simp [encodeWith, inductionHypothesis, Nat.add_assoc]
 
 theorem encode_group_count (semantics : Semantics stateTy State Action Observation)
     (state : Expr stateTy) (trace : List (Instruction Action Observation)) :
-    (encode semantics state trace).length = trace.length + 1 := by
-  induction trace generalizing state with
-  | nil => rfl
-  | cons instruction rest inductionHypothesis =>
-      cases instruction <;> simp [encode, inductionHypothesis, Nat.add_assoc]
+    (encode semantics state trace).length = trace.length + 1 :=
+  encodeWith_group_count semantics (fun _ value => value) 0 state trace
 
 end Symbolic.Trace
