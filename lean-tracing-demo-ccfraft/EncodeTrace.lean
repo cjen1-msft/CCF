@@ -77,7 +77,7 @@ end CCFRaft.EncodeTrace
 def main (args : List String) : IO UInt32 := do
   let stderr <- IO.getStderr
   unless args.length = 2 || args.length = 3 do
-    stderr.putStrLn "usage: EncodeTrace.lean CERTIFICATE OUTPUT_DIR [INSPECT_GROUP]"
+    stderr.putStrLn "usage: encode_trace CERTIFICATE OUTPUT_DIR [INSPECT_GROUP]"
     return 1
   let text <- IO.FS.readFile args[0]!
   let decoded := do

@@ -46,6 +46,10 @@ name = "TraceCertificate"
 [[lean_lib]]
 name = "EncodeTrace"
 
+[[lean_exe]]
+name = "encode_trace"
+root = "EncodeTrace"
+
 [[lean_lib]]
 name = "EncoderAudit"
 
