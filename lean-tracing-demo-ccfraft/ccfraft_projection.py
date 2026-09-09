@@ -1,0 +1,1091 @@
+#!/usr/bin/env python3
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the Apache 2.0 License.
+
+"""Encode reduced CCFRaft certificates as projected-state SMT.
+
+This backend checks the term, role, log-length, commit-index, allocation, and
+joined projections requested by the demo. It deliberately over-approximates
+operations such as ``receive``. It is not the Lean-proved full symbolic
+lowering in ``MachineGenerated/Lowering.lean``, and it is not the Lean-checked
+client-request encoder behind ``validate_checked.py``.
+
+CCF may emit ``send_append_entries`` from inside an ``add_configuration``
+callback before the enclosing replicate updates ``last_idx``. The reducer
+puts those nested sends before the completed configuration action so every
+flat action advances exactly one boundary.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from typing import Any
+
+# _require is the shared guard that raises SmtEncodingError; it is imported
+# rather than copied so both backends report encoding failures the same way.
+from Shared.smt import SmtEncodingError, SmtFormula, _require
+
+__all__ = [
+    "ACTION_KINDS",
+    "CERTIFICATE_SCHEMA",
+    "FIELD_SORTS",
+    "MEMBERSHIP_VALUES",
+    "OBSERVATION_FIELDS",
+    "ROLE_VALUES",
+    "SmtEncodingError",
+    "SmtFormula",
+    "build_formula",
+]
+
+CERTIFICATE_SCHEMA = "ccfraft-reduction-certificate/v2"
+
+ROLE_VALUES = {
+    "none": 0,
+    "follower": 1,
+    "preVoteCandidate": 2,
+    "candidate": 3,
+    "leader": 4,
+}
+
+MEMBERSHIP_VALUES = {
+    "active": 0,
+    "retirementOrdered": 1,
+    "retirementSigned": 2,
+    "retirementCompleted": 3,
+    "retiredCommitted": 4,
+}
+
+FIELD_SORTS = {
+    "allocated": "Bool",
+    "joined": "Bool",
+    "pre_vote_status": "Bool",
+    "membership_state": "Int",
+    "retirement_index": "Int",
+    "retirement_committable_index": "Int",
+    "retired_committed_index": "Int",
+    "role": "Int",
+    "term": "Int",
+    "log_length": "Int",
+    "commit_index": "Int",
+}
+
+OBSERVATION_FIELDS = {
+    "allocated": "allocated",
+    "joined": "joined",
+    "preVoteStatus": "pre_vote_status",
+    "membershipState": "membership_state",
+    "retirementIndex": "retirement_index",
+    "retirementCommittableIndex": "retirement_committable_index",
+    "retiredCommittedIndex": "retired_committed_index",
+    "role": "role",
+    "currentTerm": "term",
+    "logLength": "log_length",
+    "commitIndex": "commit_index",
+}
+
+ACTION_KINDS = {
+    "advanceCommitIndex",
+    "appendEntries",
+    "appendRetiredCommitted",
+    "becomeCandidate",
+    "becomeLeader",
+    "becomePreVoteCandidate",
+    "checkQuorum",
+    "changeConfiguration",
+    "clientRequest",
+    "receive",
+    "proposeVote",
+    "requestPreVote",
+    "requestVote",
+    "signCommittableMessages",
+    "timeout",
+    "updateTerm",
+}
+
+
+def _sequence(value: Any, label: str) -> Sequence[Any]:
+    _require(
+        isinstance(value, Sequence) and not isinstance(value, (str, bytes)),
+        f"{label} must be an array",
+    )
+    return value
+
+
+def _mapping(value: Any, label: str) -> Mapping[str, Any]:
+    _require(isinstance(value, Mapping), f"{label} must be an object")
+    return value
+
+
+def _node(value: Any, label: str) -> str:
+    _require(
+        (isinstance(value, str) and value != "") or (type(value) is int and value >= 0),
+        f"{label} must be a non-empty string or natural number",
+    )
+    return str(value)
+
+
+def _node_sort_key(value: str) -> tuple[int, int, str]:
+    if value.isdigit():
+        return (0, int(value), value)
+    return (1, 0, value)
+
+
+def _first_line(item: Mapping[str, Any], label: str) -> int:
+    provenance = _sequence(item.get("provenance"), f"{label}.provenance")
+    lines: list[int] = []
+    for position, entry_value in enumerate(provenance, 1):
+        entry = _mapping(entry_value, f"{label}.provenance[{position}]")
+        line = entry.get("line")
+        _require(
+            type(line) is int and line > 0,
+            f"{label}.provenance[{position}].line must be positive",
+        )
+        _require(
+            isinstance(entry.get("timestamp"), str)
+            and str(entry["timestamp"]).isdigit(),
+            f"{label}.provenance[{position}].timestamp must be decimal",
+        )
+        _require(
+            isinstance(entry.get("function"), str) and bool(entry["function"]),
+            f"{label}.provenance[{position}].function is missing",
+        )
+        lines.append(line)
+    _require(lines, f"{label}.provenance must not be empty")
+    return min(lines)
+
+
+def _certificate_trace(
+    certificate: Mapping[str, Any],
+) -> Sequence[Any]:
+    _require(
+        certificate.get("artifact_kind") == "ccfraft_reduction_certificate",
+        "unsupported certificate artifact_kind",
+    )
+    _require(
+        certificate.get("schema_version") == CERTIFICATE_SCHEMA,
+        "unsupported certificate schema_version",
+    )
+    return _sequence(certificate.get("steps"), "steps")
+
+
+def _collect_nodes(
+    instructions: Sequence[Any],
+) -> tuple[str, ...]:
+    nodes: set[str] = set()
+
+    for position, value in enumerate(instructions, 1):
+        label = f"instruction {position}"
+        instruction = _mapping(value, label)
+        kind = instruction.get("kind")
+        _require(
+            kind in {"action", "observation"},
+            f"{label}.kind must be action or observation",
+        )
+        nodes.add(_node(instruction.get("node"), f"{label}.node"))
+        if "source" in instruction:
+            nodes.add(_node(instruction["source"], f"{label}.source"))
+        if "destination" in instruction:
+            nodes.add(_node(instruction["destination"], f"{label}.destination"))
+        if "configuration" in instruction:
+            configuration = _sequence(
+                instruction["configuration"],
+                f"{label}.configuration",
+            )
+            for member_position, member in enumerate(configuration, 1):
+                nodes.add(
+                    _node(
+                        member,
+                        f"{label}.configuration[{member_position}]",
+                    )
+                )
+        if kind == "observation" and instruction.get("variable") == "firstMessageFrom":
+            summary = _mapping(instruction.get("value"), f"{label}.value")
+            nodes.add(_node(summary.get("source"), f"{label}.value.source"))
+
+    _require(nodes, "certificate contains no node terms")
+    return tuple(sorted(nodes, key=_node_sort_key))
+
+
+def _state(field: str, boundary: int) -> str:
+    return f"state_{boundary:04d}_{field}"
+
+
+def _cell(field: str, boundary: int, node_index: int) -> str:
+    return f"{_state(field, boundary)}_node_{node_index:04d}"
+
+
+def _select(field: str, boundary: int, node_index: int) -> str:
+    return f"(select {_state(field, boundary)} {node_index})"
+
+
+def _eq(left: str, right: str | int | bool) -> str:
+    if isinstance(right, bool):
+        encoded = "true" if right else "false"
+    else:
+        encoded = str(right)
+    return f"(= {left} {encoded})"
+
+
+def _and(expressions: Sequence[str]) -> str:
+    if not expressions:
+        return "true"
+    if len(expressions) == 1:
+        return expressions[0]
+    return f"(and {' '.join(expressions)})"
+
+
+def _named(name: str, expression: str) -> str:
+    return f"(assert (! {expression} :named {name}))"
+
+
+def _same_field(
+    field: str,
+    before: int,
+    after: int,
+) -> str:
+    return _eq(_state(field, after), _state(field, before))
+
+
+def _frame_fields(
+    fields: Sequence[str],
+    before: int,
+    after: int,
+) -> list[str]:
+    return [_same_field(field, before, after) for field in fields]
+
+
+def _store(
+    field: str,
+    before: int,
+    updates: Sequence[tuple[int, str | int | bool]],
+) -> str:
+    expression = _state(field, before)
+    for node_index, value in updates:
+        if isinstance(value, bool):
+            encoded = "true" if value else "false"
+        else:
+            encoded = str(value)
+        expression = f"(store {expression} {node_index} {encoded})"
+    return expression
+
+
+def _update_array(
+    field: str,
+    before: int,
+    after: int,
+    updates: Sequence[tuple[int, str | int | bool]],
+) -> str:
+    return _eq(_state(field, after), _store(field, before, updates))
+
+
+def _action_node(
+    action: Mapping[str, Any],
+    field: str,
+    node_indices: Mapping[str, int],
+    label: str,
+) -> int:
+    _require(field in action, f"{label}.{field} is missing")
+    node = _node(action[field], f"{label}.{field}")
+    _require(node in node_indices, f"{label} refers to unknown node {node!r}")
+    return node_indices[node]
+
+
+def _transition_expression(
+    action: Mapping[str, Any],
+    position: int,
+    node_indices: Mapping[str, int],
+    before: int,
+    after: int,
+) -> str:
+    label = f"action boundary {position}"
+    _require(action.get("kind") == "action", f"{label}.kind must be action")
+    kind = action.get("action")
+    _require(kind in ACTION_KINDS, f"{label}.action is unsupported: {kind!r}")
+    fields = tuple(FIELD_SORTS)
+    constraints: list[str] = []
+
+    if kind == "clientRequest":
+        node = _action_node(action, "node", node_indices, label)
+        _require(
+            isinstance(action.get("transaction"), str) and bool(action["transaction"]),
+            f"{label}.transaction is missing",
+        )
+        constraints.extend(
+            [
+                _eq(_select("role", before, node), ROLE_VALUES["leader"]),
+                f"(not {_eq(_select('membership_state', before, node), MEMBERSHIP_VALUES['retiredCommitted'])})",
+                *_frame_fields(
+                    tuple(field for field in fields if field != "log_length"),
+                    before,
+                    after,
+                ),
+                _update_array(
+                    "log_length",
+                    before,
+                    after,
+                    [
+                        (
+                            node,
+                            f"(+ {_select('log_length', before, node)} 1)",
+                        )
+                    ],
+                ),
+            ]
+        )
+
+    elif kind in {"signCommittableMessages", "appendRetiredCommitted"}:
+        node = _action_node(action, "node", node_indices, label)
+        mutable = {
+            "log_length",
+            "membership_state",
+            "retirement_index",
+            "retirement_committable_index",
+            "retired_committed_index",
+        }
+        constraints.extend(
+            [
+                _eq(_select("role", before, node), ROLE_VALUES["leader"]),
+                f"(not {_eq(_select('membership_state', before, node), MEMBERSHIP_VALUES['retiredCommitted'])})",
+            ]
+        )
+        for field in fields:
+            if field not in mutable:
+                constraints.append(_same_field(field, before, after))
+            elif field == "log_length":
+                constraints.append(
+                    _update_array(
+                        field,
+                        before,
+                        after,
+                        [
+                            (
+                                node,
+                                f"(+ {_select(field, before, node)} 1)",
+                            )
+                        ],
+                    )
+                )
+            else:
+                constraints.append(
+                    _update_array(
+                        field,
+                        before,
+                        after,
+                        [(node, _select(field, after, node))],
+                    )
+                )
+
+    elif kind == "changeConfiguration":
+        source = _action_node(action, "node", node_indices, label)
+        configuration_values = _sequence(
+            action.get("configuration"),
+            f"{label}.configuration",
+        )
+        configuration = {
+            _node(value, f"{label}.configuration") for value in configuration_values
+        }
+        _require(configuration, f"{label}.configuration is empty")
+        members = {node_indices[node] for node in configuration}
+        constraints.append(_eq(_select("role", before, source), ROLE_VALUES["leader"]))
+        constraints.extend(
+            [
+                *_frame_fields(
+                    ("role", "term", "pre_vote_status", "commit_index"),
+                    before,
+                    after,
+                ),
+                _update_array(
+                    "log_length",
+                    before,
+                    after,
+                    [
+                        (
+                            source,
+                            f"(+ {_select('log_length', before, source)} 1)",
+                        )
+                    ],
+                ),
+            ]
+        )
+        for node_index in node_indices.values():
+            allocated_before = _select("allocated", before, node_index)
+            allocated_after = _select("allocated", after, node_index)
+            joined_before = _select("joined", before, node_index)
+            joined_after = _select("joined", after, node_index)
+            if node_index not in members:
+                constraints.extend(
+                    [
+                        _eq(allocated_after, allocated_before),
+                        _eq(joined_after, joined_before),
+                    ]
+                )
+            else:
+                constraints.extend(
+                    [
+                        f"(=> {allocated_before} {allocated_after})",
+                        f"(=> {joined_before} {joined_after})",
+                    ]
+                )
+            constraints.append(_eq(allocated_after, joined_after))
+        for field in (
+            "membership_state",
+            "retirement_index",
+            "retirement_committable_index",
+            "retired_committed_index",
+        ):
+            constraints.append(
+                _update_array(
+                    field,
+                    before,
+                    after,
+                    [(source, _select(field, after, source))],
+                )
+            )
+
+    elif kind in {
+        "appendEntries",
+        "requestVote",
+        "requestPreVote",
+        "proposeVote",
+    }:
+        source = _action_node(action, "node", node_indices, label)
+        if kind == "appendEntries":
+            _natural_value(action.get("batchEnd"), f"{label}.batchEnd")
+        destination = _action_node(
+            action,
+            "destination",
+            node_indices,
+            label,
+        )
+        required_role = {
+            "appendEntries": "leader",
+            "requestVote": "candidate",
+            "requestPreVote": "preVoteCandidate",
+            "proposeVote": "leader",
+        }[kind]
+        constraints.extend(
+            [
+                _eq(_select("role", before, source), ROLE_VALUES[required_role]),
+                _eq(_select("allocated", before, source), True),
+                _eq(_select("allocated", before, destination), True),
+            ]
+        )
+        constraints.extend(_frame_fields(fields, before, after))
+
+    elif kind == "receive":
+        _action_node(action, "source", node_indices, label)
+        destination = _action_node(
+            action,
+            "node",
+            node_indices,
+            label,
+        )
+        evidence = _mapping(action.get("evidence"), f"{label}.evidence")
+        message_type = evidence.get("messageType")
+        _require(
+            isinstance(message_type, str),
+            f"{label}.evidence.messageType is missing",
+        )
+        receives_propose_vote = message_type == "raft_propose_request_vote"
+        framed = ["allocated", "joined", "pre_vote_status"]
+        if not receives_propose_vote:
+            framed.append("term")
+        mutable = [
+            "role",
+            "log_length",
+            "commit_index",
+            "membership_state",
+            "retirement_index",
+            "retirement_committable_index",
+            "retired_committed_index",
+        ]
+        if receives_propose_vote:
+            mutable.append("term")
+        constraints.extend(
+            [
+                *_frame_fields(tuple(framed), before, after),
+                *[
+                    _update_array(
+                        field,
+                        before,
+                        after,
+                        [(destination, _select(field, after, destination))],
+                    )
+                    for field in mutable
+                ],
+            ]
+        )
+        if receives_propose_vote:
+            constraints.extend(
+                [
+                    _eq(
+                        _select("role", after, destination),
+                        ROLE_VALUES["candidate"],
+                    ),
+                    _eq(
+                        _select("term", after, destination),
+                        f"(+ {_select('term', before, destination)} 1)",
+                    ),
+                ]
+            )
+
+    elif kind == "advanceCommitIndex":
+        node = _action_node(action, "node", node_indices, label)
+        mutable = {
+            "commit_index",
+            "role",
+            "membership_state",
+            "retirement_index",
+            "retirement_committable_index",
+            "retired_committed_index",
+        }
+        constraints.extend(
+            [
+                _eq(_select("role", before, node), ROLE_VALUES["leader"]),
+                f"(> {_select('commit_index', after, node)} "
+                f"{_select('commit_index', before, node)})",
+                f"(<= {_select('commit_index', after, node)} "
+                f"{_select('log_length', after, node)})",
+            ]
+        )
+        for field in fields:
+            if field not in mutable:
+                constraints.append(_same_field(field, before, after))
+            else:
+                constraints.append(
+                    _update_array(
+                        field,
+                        before,
+                        after,
+                        [(node, _select(field, after, node))],
+                    )
+                )
+
+    elif kind == "timeout":
+        node = _action_node(action, "node", node_indices, label)
+        role = _select("role", before, node)
+        constraints.extend(
+            [
+                f"(or {_eq(role, ROLE_VALUES['follower'])} "
+                f"{_eq(role, ROLE_VALUES['preVoteCandidate'])} "
+                f"{_eq(role, ROLE_VALUES['candidate'])})",
+                _eq(_select("pre_vote_status", before, node), False),
+                f"(not {_eq(_select('membership_state', before, node), MEMBERSHIP_VALUES['retiredCommitted'])})",
+                _eq(_select("role", after, node), ROLE_VALUES["candidate"]),
+                _eq(
+                    _select("term", after, node),
+                    f"(+ {_select('term', before, node)} 1)",
+                ),
+            ]
+        )
+        constraints.extend(
+            [
+                *_frame_fields(
+                    tuple(field for field in fields if field not in {"role", "term"}),
+                    before,
+                    after,
+                ),
+                _update_array(
+                    "role",
+                    before,
+                    after,
+                    [(node, ROLE_VALUES["candidate"])],
+                ),
+                _update_array(
+                    "term",
+                    before,
+                    after,
+                    [(node, f"(+ {_select('term', before, node)} 1)")],
+                ),
+            ]
+        )
+
+    elif kind == "becomePreVoteCandidate":
+        node = _action_node(action, "node", node_indices, label)
+        role = _select("role", before, node)
+        constraints.extend(
+            [
+                f"(or {_eq(role, ROLE_VALUES['follower'])} "
+                f"{_eq(role, ROLE_VALUES['preVoteCandidate'])} "
+                f"{_eq(role, ROLE_VALUES['candidate'])})",
+                _eq(_select("pre_vote_status", before, node), True),
+                f"(not {_eq(_select('membership_state', before, node), MEMBERSHIP_VALUES['retiredCommitted'])})",
+                _eq(
+                    _select("role", after, node),
+                    ROLE_VALUES["preVoteCandidate"],
+                ),
+            ]
+        )
+        constraints.extend(
+            [
+                *_frame_fields(
+                    tuple(field for field in fields if field != "role"),
+                    before,
+                    after,
+                ),
+                _update_array(
+                    "role",
+                    before,
+                    after,
+                    [(node, ROLE_VALUES["preVoteCandidate"])],
+                ),
+            ]
+        )
+
+    elif kind == "becomeCandidate":
+        node = _action_node(action, "node", node_indices, label)
+        constraints.extend(
+            [
+                _eq(
+                    _select("role", before, node),
+                    ROLE_VALUES["preVoteCandidate"],
+                ),
+                _eq(_select("pre_vote_status", before, node), True),
+                f"(not {_eq(_select('membership_state', before, node), MEMBERSHIP_VALUES['retiredCommitted'])})",
+                _eq(_select("role", after, node), ROLE_VALUES["candidate"]),
+                _eq(
+                    _select("term", after, node),
+                    f"(+ {_select('term', before, node)} 1)",
+                ),
+            ]
+        )
+        constraints.extend(
+            [
+                *_frame_fields(
+                    tuple(field for field in fields if field not in {"role", "term"}),
+                    before,
+                    after,
+                ),
+                _update_array(
+                    "role",
+                    before,
+                    after,
+                    [(node, ROLE_VALUES["candidate"])],
+                ),
+                _update_array(
+                    "term",
+                    before,
+                    after,
+                    [(node, f"(+ {_select('term', before, node)} 1)")],
+                ),
+            ]
+        )
+
+    elif kind == "checkQuorum":
+        node = _action_node(action, "node", node_indices, label)
+        constraints.extend(
+            [
+                _eq(_select("role", before, node), ROLE_VALUES["leader"]),
+                _eq(_select("role", after, node), ROLE_VALUES["follower"]),
+            ]
+        )
+        constraints.extend(
+            [
+                *_frame_fields(
+                    tuple(field for field in fields if field != "role"),
+                    before,
+                    after,
+                ),
+                _update_array(
+                    "role",
+                    before,
+                    after,
+                    [(node, ROLE_VALUES["follower"])],
+                ),
+            ]
+        )
+
+    elif kind == "updateTerm":
+        _action_node(action, "source", node_indices, label)
+        destination = _action_node(
+            action,
+            "node",
+            node_indices,
+            label,
+        )
+        constraints.extend(
+            [
+                f"(> {_select('term', after, destination)} "
+                f"{_select('term', before, destination)})",
+                _eq(
+                    _select("role", after, destination),
+                    ROLE_VALUES["follower"],
+                ),
+            ]
+        )
+        constraints.extend(
+            [
+                *_frame_fields(
+                    tuple(field for field in fields if field not in {"role", "term"}),
+                    before,
+                    after,
+                ),
+                _update_array(
+                    "role",
+                    before,
+                    after,
+                    [(destination, ROLE_VALUES["follower"])],
+                ),
+                _update_array(
+                    "term",
+                    before,
+                    after,
+                    [(destination, _select("term", after, destination))],
+                ),
+            ]
+        )
+
+    elif kind == "becomeLeader":
+        node = _action_node(action, "node", node_indices, label)
+        mutable = {
+            "role",
+            "log_length",
+            "membership_state",
+            "retirement_index",
+            "retirement_committable_index",
+            "retired_committed_index",
+        }
+        constraints.extend(
+            [
+                _eq(_select("role", before, node), ROLE_VALUES["candidate"]),
+                f"(not {_eq(_select('membership_state', before, node), MEMBERSHIP_VALUES['retiredCommitted'])})",
+                _eq(_select("role", after, node), ROLE_VALUES["leader"]),
+                f"(<= {_select('log_length', after, node)} "
+                f"{_select('log_length', before, node)})",
+            ]
+        )
+        for field in fields:
+            if field not in mutable:
+                constraints.append(_same_field(field, before, after))
+            elif field == "role":
+                constraints.append(
+                    _update_array(
+                        field,
+                        before,
+                        after,
+                        [(node, ROLE_VALUES["leader"])],
+                    )
+                )
+            else:
+                constraints.append(
+                    _update_array(
+                        field,
+                        before,
+                        after,
+                        [(node, _select(field, after, node))],
+                    )
+                )
+
+    else:
+        raise AssertionError(f"unhandled action kind {kind}")
+
+    return _and(constraints)
+
+
+def _natural_value(value: Any, label: str) -> int:
+    _require(type(value) is int and value >= 0, f"{label} must be a natural number")
+    return value
+
+
+def _first_message_expression(
+    value: Any,
+    node_indices: Mapping[str, int],
+    label: str,
+) -> str:
+    summary = _mapping(value, f"{label}.value")
+    family = summary.get("messageType")
+    extras = {
+        "raft_append_entries": {
+            "batchEnd",
+            "leaderCommitIndex",
+            "previousIndex",
+        },
+        "raft_append_entries_response": {"lastLogIndex", "success"},
+        "raft_request_vote": {
+            "lastCommittableIndex",
+            "lastCommittableTerm",
+        },
+        "raft_request_pre_vote": {
+            "lastCommittableIndex",
+            "lastCommittableTerm",
+        },
+        "raft_request_vote_response": {"voteGranted"},
+        "raft_request_pre_vote_response": {"voteGranted"},
+        "raft_propose_request_vote": set(),
+    }
+    _require(family in extras, f"{label}.value.messageType is unsupported")
+    expected = {
+        "batchCount",
+        "batchPosition",
+        "messageType",
+        "source",
+        "term",
+        *extras[str(family)],
+    }
+    _require(
+        set(summary) == expected,
+        f"{label}.value fields do not match {family}",
+    )
+    source = _node(summary["source"], f"{label}.value.source")
+    _require(source in node_indices, f"{label}.value.source is unknown")
+    count = _natural_value(summary["batchCount"], f"{label}.value.batchCount")
+    position = _natural_value(
+        summary["batchPosition"],
+        f"{label}.value.batchPosition",
+    )
+    _require(count > 0, f"{label}.value.batchCount must be positive")
+    _require(
+        1 <= position <= count,
+        f"{label}.value.batchPosition is outside its batch",
+    )
+    _natural_value(summary["term"], f"{label}.value.term")
+    if family == "raft_append_entries":
+        _natural_value(summary["batchEnd"], f"{label}.value.batchEnd")
+        _natural_value(
+            summary["leaderCommitIndex"],
+            f"{label}.value.leaderCommitIndex",
+        )
+        _natural_value(summary["previousIndex"], f"{label}.value.previousIndex")
+    elif family == "raft_append_entries_response":
+        _natural_value(summary["lastLogIndex"], f"{label}.value.lastLogIndex")
+        _require(
+            summary["success"] in {"OK", "FAIL"},
+            f"{label}.value.success is unsupported",
+        )
+    elif family in {"raft_request_vote", "raft_request_pre_vote"}:
+        _natural_value(
+            summary["lastCommittableIndex"],
+            f"{label}.value.lastCommittableIndex",
+        )
+        _natural_value(
+            summary["lastCommittableTerm"],
+            f"{label}.value.lastCommittableTerm",
+        )
+    elif family in {
+        "raft_request_vote_response",
+        "raft_request_pre_vote_response",
+    }:
+        _require(
+            type(summary["voteGranted"]) is bool,
+            f"{label}.value.voteGranted must be Boolean",
+        )
+    else:
+        _require(
+            family == "raft_propose_request_vote",
+            f"{label}.value.messageType is unsupported",
+        )
+    return "true"
+
+
+def _observation_expression(
+    observation: Mapping[str, Any],
+    boundary: int,
+    node_indices: Mapping[str, int],
+    label: str,
+) -> str:
+    _require(observation.get("kind") == "observation", f"{label}.kind is invalid")
+    variable = observation.get("variable")
+    if variable == "firstMessageFrom":
+        return _first_message_expression(
+            observation.get("value"),
+            node_indices,
+            label,
+        )
+    _require(
+        variable in OBSERVATION_FIELDS,
+        f"{label}.variable is unsupported: {variable!r}",
+    )
+    node = _node(observation.get("node"), f"{label}.node")
+    _require(node in node_indices, f"{label} refers to unknown node {node!r}")
+    value = observation.get("value")
+    field = OBSERVATION_FIELDS[str(variable)]
+    if variable in {"allocated", "joined"}:
+        _require(type(value) is bool, f"{label}.value must be Boolean")
+        encoded: int | bool = value
+    elif variable == "preVoteStatus":
+        _require(
+            value in {"capable", "enabled"},
+            f"{label}.value has unknown pre-vote status",
+        )
+        encoded = value == "enabled"
+    elif variable == "membershipState":
+        _require(
+            value in MEMBERSHIP_VALUES,
+            f"{label}.value has unknown membership state",
+        )
+        encoded = MEMBERSHIP_VALUES[str(value)]
+    elif variable in {
+        "retirementIndex",
+        "retirementCommittableIndex",
+        "retiredCommittedIndex",
+    }:
+        _require(
+            value is None or (type(value) is int and value >= 0),
+            f"{label}.value must be null or a natural number",
+        )
+        encoded = -1 if value is None else value
+    elif variable == "role":
+        _require(value in ROLE_VALUES, f"{label}.value has unknown role")
+        encoded = ROLE_VALUES[str(value)]
+    else:
+        _natural_value(value, f"{label}.value")
+        encoded = value
+    return _eq(_select(field, boundary, node_indices[node]), encoded)
+
+
+def build_formula(certificate: Mapping[str, Any]) -> SmtFormula:
+    """Build a deterministic quantifier-free projected-state formula."""
+
+    instructions = _certificate_trace(certificate)
+    nodes = _collect_nodes(instructions)
+    node_indices = {node: index for index, node in enumerate(nodes)}
+    action_count = sum(
+        _mapping(value, f"instruction {position}").get("kind") == "action"
+        for position, value in enumerate(instructions, 1)
+    )
+    lines = [
+        "; Generated by ccfraft_projection.py.",
+        "; Projected state only. This is not the Lean-proved full lowering.",
+        "(set-logic QF_AUFLIA)",
+    ]
+    for index, node in enumerate(nodes):
+        lines.append(f"; node {index}: {node!r}")
+    for field, sort in FIELD_SORTS.items():
+        lines.append(f"(declare-const state_base_{field} (Array Int {sort}))")
+
+    for boundary in range(action_count + 1):
+        for field, sort in FIELD_SORTS.items():
+            for node_index in range(len(nodes)):
+                lines.append(
+                    f"(declare-const {_cell(field, boundary, node_index)} {sort})"
+                )
+            array = f"state_base_{field}"
+            for node_index in range(len(nodes)):
+                array = (
+                    f"(store {array} {node_index} "
+                    f"{_cell(field, boundary, node_index)})"
+                )
+            lines.append(
+                f"(define-fun {_state(field, boundary)} () "
+                f"(Array Int {sort}) {array})"
+            )
+
+    for boundary in range(action_count + 1):
+        for node_index in range(len(nodes)):
+            role = _select("role", boundary, node_index)
+            domain = _and(
+                [
+                    f"(and (>= {role} {ROLE_VALUES['none']}) "
+                    f"(<= {role} {ROLE_VALUES['leader']}))",
+                    f"(and (>= {_select('membership_state', boundary, node_index)} "
+                    f"{MEMBERSHIP_VALUES['active']}) "
+                    f"(<= {_select('membership_state', boundary, node_index)} "
+                    f"{MEMBERSHIP_VALUES['retiredCommitted']}))",
+                    f"(>= {_select('term', boundary, node_index)} 0)",
+                    f"(>= {_select('log_length', boundary, node_index)} 0)",
+                    f"(>= {_select('commit_index', boundary, node_index)} 0)",
+                    f"(>= {_select('retirement_index', boundary, node_index)} -1)",
+                    f"(>= {_select('retirement_committable_index', boundary, node_index)} -1)",
+                    f"(>= {_select('retired_committed_index', boundary, node_index)} -1)",
+                ]
+            )
+            lines.append(
+                _named(
+                    f"state_domain_boundary_{boundary:04d}_node_{node_index:04d}",
+                    domain,
+                )
+            )
+
+    for node_index in range(len(nodes)):
+        valid_entry = _and(
+            [
+                _eq(
+                    _select("allocated", 0, node_index),
+                    _select("joined", 0, node_index),
+                ),
+                f"(>= {_select('commit_index', 0, node_index)} 0)",
+                f"(<= {_select('commit_index', 0, node_index)} "
+                f"{_select('log_length', 0, node_index)})",
+            ]
+        )
+        lines.append(_named(f"valid_entry_node_{node_index:04d}", valid_entry))
+
+    boundary = 0
+    pending_message: tuple[str, str] | None = None
+    for instruction_index, value in enumerate(instructions, 1):
+        label = f"instruction {instruction_index}"
+        instruction = _mapping(value, label)
+        line = _first_line(instruction, label)
+        kind = instruction.get("kind")
+        if pending_message is not None:
+            expected_source, expected_destination = pending_message
+            _require(
+                kind == "action"
+                and instruction.get("action") == "receive"
+                and _node(instruction.get("source"), f"{label}.source")
+                == expected_source
+                and _node(instruction.get("node"), f"{label}.node")
+                == expected_destination,
+                f"{label} must receive the preceding firstMessageFrom evidence",
+            )
+            pending_message = None
+        elif kind == "action" and instruction.get("action") == "receive":
+            raise SmtEncodingError(
+                f"{label} receive has no preceding firstMessageFrom evidence"
+            )
+        if kind == "observation":
+            variable = instruction.get("variable")
+            if variable == "firstMessageFrom":
+                summary = _mapping(instruction.get("value"), f"{label}.value")
+                pending_message = (
+                    _node(summary.get("source"), f"{label}.value.source"),
+                    _node(instruction.get("node"), f"{label}.node"),
+                )
+                lines.append(
+                    f"; {label} validates firstMessageFrom evidence; "
+                    "queue selection is an unencoded projection constraint"
+                )
+                name = (
+                    f"evidence_instruction_{instruction_index:04d}_"
+                    f"action_boundary_{boundary:04d}_line_{line:04d}_"
+                    "firstMessageFrom_unencoded_projection"
+                )
+            else:
+                name = (
+                    f"observation_instruction_{instruction_index:04d}_"
+                    f"action_boundary_{boundary:04d}_line_{line:04d}_{variable}"
+                )
+            lines.append(
+                _named(
+                    name,
+                    _observation_expression(
+                        instruction,
+                        boundary,
+                        node_indices,
+                        label,
+                    ),
+                )
+            )
+            continue
+        _require(kind == "action", f"{label}.kind must be action or observation")
+        before = boundary
+        boundary += 1
+        action = instruction.get("action")
+        lines.append(
+            _named(
+                f"transition_instruction_{instruction_index:04d}_"
+                f"action_boundary_{boundary:04d}_line_{line:04d}_{action}",
+                _transition_expression(
+                    instruction,
+                    boundary,
+                    node_indices,
+                    before,
+                    boundary,
+                ),
+            )
+        )
+    _require(pending_message is None, "final firstMessageFrom has no receive action")
+    _require(boundary == action_count, "action boundary count is inconsistent")
+
+    lines.extend(["(check-sat)", ""])
+    return SmtFormula("\n".join(lines), nodes)

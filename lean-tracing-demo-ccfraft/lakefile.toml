@@ -1,6 +1,6 @@
 name = "lean-tracing-demo-ccfraft"
 version = "0.1.0"
-defaultTargets = ["Demo", "RuntimeAudit"]
+defaultTargets = ["Demo", "RuntimeAudit", "EncoderAudit"]
 
 [[require]]
 name = "mathlib"
@@ -18,6 +18,36 @@ name = "Properties"
 
 [[lean_lib]]
 name = "TraceProperties"
+
+[[lean_lib]]
+name = "TraceInstructions"
+
+[[lean_lib]]
+name = "LegacyClientRequestCertificate"
+
+[[lean_lib]]
+name = "TraceJson"
+
+[[lean_lib]]
+name = "TraceStateJson"
+
+[[lean_lib]]
+name = "BoundedState"
+
+[[lean_lib]]
+name = "TransactionMapping"
+
+[[lean_lib]]
+name = "BoundedTrace"
+
+[[lean_lib]]
+name = "TraceCertificate"
+
+[[lean_lib]]
+name = "EncodeTrace"
+
+[[lean_lib]]
+name = "EncoderAudit"
 
 [[lean_lib]]
 name = "RuntimeAudit"

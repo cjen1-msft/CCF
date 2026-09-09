@@ -16,9 +16,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from reduction import build_certificate
+from ccfraft_projection import ROLE_VALUES, build_formula
 from Shared.smt import (
-    ROLE_VALUES,
-    build_formula,
     parse_unsat_core,
     reduce_unsat_core,
     restrict_to_assertions,

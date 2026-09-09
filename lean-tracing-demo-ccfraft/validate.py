@@ -5,7 +5,7 @@
 """Validate a captured CCFRaft trace with the projected-state SMT backend.
 
 The SMT result covers only the term, role, log-length, commit-index,
-allocation, and joined projection in ``Shared/smt.py``. This executable does
+allocation, and joined projection in ``ccfraft_projection.py``. This executable does
 not run the Lean-proved full symbolic lowering.
 """
 
@@ -14,19 +14,25 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import shutil
 import subprocess
 import sys
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
 
 from reduction import ReductionError, preprocess, reduce, write_certificate
+from Shared.solver import (
+    SolverRun,
+    ValidationError,
+    find_cvc5,
+    query_payload,
+    run_solver,
+    solver_status,
+)
+from ccfraft_projection import build_formula
 from Shared.smt import (
     SmtEncodingError,
     add_query,
-    build_formula,
     parse_unsat_core,
     reduce_unsat_core,
     restrict_to_assertions,
@@ -34,19 +40,18 @@ from Shared.smt import (
 )
 from Shared.trace_io import NDJSONError, read_ndjson
 
+# Solver discovery, execution, and query reading now live in Shared/solver.py.
+# The private aliases below keep this module's historical names importable.
+_find_cvc5 = find_cvc5
+_solver_status = solver_status
+_run_solver = run_solver
+_query_payload = query_payload
 
-class ValidationError(RuntimeError):
-    """Report solver discovery, execution, or output failures."""
-
-
-@dataclass(frozen=True)
-class SolverRun:
-    """One complete cvc5 invocation."""
-
-    status: str
-    stdout: str
-    stderr: str
-    wall_time_ms: float
+__all__ = [
+    "SolverRun",
+    "ValidationError",
+    "validate",
+]
 
 
 TRANSITION_NAME = re.compile(

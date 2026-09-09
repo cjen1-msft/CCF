@@ -19,7 +19,7 @@ nix run nixpkgs#black -- --check --quiet \
   ./Shared/*.py \
   ./tests/*.py
 nix run nixpkgs#shellcheck -- "$script_path"
-nice -n 10 lake build Demo
+nice -n 10 lake build Demo EncoderAudit
 CVC5="$cvc5" python3 -m unittest discover -s tests -q
 
 run_trace() {

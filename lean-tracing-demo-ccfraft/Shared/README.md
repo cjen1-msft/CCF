@@ -5,3 +5,10 @@ It parses captured events, represents reduced traces and formulas, invokes
 cvc5, and records solver artifacts.
 
 Model-specific preprocessing and reduction rules stay in `reduction.py`.
+
+`Smt.lean` defines the shared symbolic expressions, their meaning, and the
+trusted SMT-LIB serializer used by the checked trace encoder.
+`SmtOrder.lean` provides a computable structural ordering for symbolic terms,
+so finite sets can be enumerated without an unexecutable choice operation.
+`smt.py` contains generic solver-query and core-reduction utilities.
+The legacy, CCF-specific projected encoding lives in `../ccfraft_projection.py`.
