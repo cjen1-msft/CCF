@@ -1,0 +1,86 @@
+{
+  "registered_at_utc": "2026-09-09T21:00:20Z",
+  "status": "Predictions registered before individual-change ablation runs",
+  "prior_evidence": "Not blinded: earlier combined changes improved ring-to-discard from about 6.9k to 8.65k completed RPS. No individual-change ablation results have been observed.",
+  "design": {
+    "base": "Corrected preallocated SPSC enqueue, raw byte copy, consumer polling",
+    "sink": "Consumer discard, excluding TCP work",
+    "target_rps": 10000,
+    "repetitions_per_variant": 3,
+    "measurement_seconds": 30,
+    "settling_seconds": 5,
+    "nodes": 2,
+    "worker_threads_per_node": 2,
+    "warmed_connections": 1000,
+    "locust_processes": 4,
+    "signature_interval_ms": 100,
+    "storage": "RAM-only tmpfs",
+    "order": [
+      ["baseline", "mpsc", "allocate", "notify", "snapshot", "legacy"],
+      ["legacy", "snapshot", "notify", "allocate", "mpsc", "baseline"],
+      ["allocate", "baseline", "snapshot", "mpsc", "legacy", "notify"]
+    ],
+    "primary_metric": "Successful completions per second",
+    "secondary_metrics": [
+      "Mean and p99 request latency",
+      "Missed arrivals and dispatch lag",
+      "Node CPU",
+      "Producer notification counts",
+      "Consumer wakeups, empty scans, and messages per nonempty read"
+    ],
+    "interpretation": "Restore one cost at a time on the corrected base. The legacy variant restores all four hot-path costs to reveal interactions. Three runs are exploratory, not a precise confidence interval."
+  },
+  "predictions": [
+    {
+      "variant": "baseline",
+      "change": "None",
+      "expected_impact": "Reference, approximately 8.5k-8.9k completed RPS",
+      "investigate_if_unexpected": "Check storage warnings, HTTP failures, missed arrivals, scheduler lag, and host load before attributing differences to code."
+    },
+    {
+      "variant": "mpsc",
+      "change": "Restore MPSC CAS reservation on each otherwise single-writer ring",
+      "expected_impact": "Low: less than 3% throughput loss",
+      "reason": "There is only one actual producer per ring, so CAS should not contend with another producer.",
+      "investigate_if_unexpected": "Inspect retry counts and cache-line contention; verify single-writer ownership."
+    },
+    {
+      "variant": "allocate",
+      "change": "Restore the per-message MemoryRegionSection allocation through Writer.try_write(ByteRange)",
+      "expected_impact": "Low: less than 5% throughput loss",
+      "reason": "Small allocations are producer-local and the serialized data buffer remains reused.",
+      "investigate_if_unexpected": "Inspect allocator samples, allocation size/count, and producer CPU."
+    },
+    {
+      "variant": "notify",
+      "change": "Restore coalesced producer WorkBeacon notifications and a notification-waiting consumer",
+      "expected_impact": "High: largest individual effect, roughly 10-25% throughput loss",
+      "reason": "This reintroduces mutex/futex work and producer-consumer scheduling handoffs. This prediction covers the notification policy, not only the mutex.",
+      "investigate_if_unexpected": "Compare actual notifications, consumer wakeups, batch sizes, and context-switch behavior."
+    },
+    {
+      "variant": "snapshot",
+      "change": "Restore the consumer's mutex-protected shared-pointer queue-list copy on every scan",
+      "expected_impact": "Low: less than 5% throughput loss",
+      "reason": "The list is small and no producer changes it during the measured window.",
+      "investigate_if_unexpected": "Inspect scan frequency, allocations, reference-count operations, and empty-read counts."
+    },
+    {
+      "variant": "legacy",
+      "change": "Restore all four hot-path costs above",
+      "expected_impact": "High: roughly 15-25% throughput loss",
+      "reason": "The previous combined implementation lost about 20%. Effects need not add linearly.",
+      "investigate_if_unexpected": "Check interactions between notification timing and consumer scan/batch frequency, then compare the diagnostic implementation with the original."
+    }
+  ],
+  "not_independently_identifiable_in_this_steady_state_test": [
+    {
+      "change": "Lazy queue allocation and first-use registration versus startup preallocation",
+      "reason": "All fixed producer threads have emitted before measurement; this is a startup-path difference."
+    },
+    {
+      "change": "Moving drop logging off producers",
+      "reason": "Healthy 1MiB-ring runs previously reported no trace drops. The logging path is not exercised; a separate constrained-ring stress test is required."
+    }
+  ]
+}
