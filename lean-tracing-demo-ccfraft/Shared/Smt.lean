@@ -11,6 +11,7 @@ inductive NatTerm (holes : Nat) where
   | literal (value : Nat)
   | unknown (index : Fin holes)
   | add (left right : NatTerm holes)
+  | sub (left right : NatTerm holes)
   | named (group slot : Nat) (label : String) (value : NatTerm holes)
   deriving Repr, DecidableEq
 
@@ -19,6 +20,7 @@ def NatTerm.eval {holes : Nat}
   | .literal value => value
   | .unknown index => assignment index
   | .add left right => left.eval assignment + right.eval assignment
+  | .sub left right => left.eval assignment - right.eval assignment
   | .named _ _ _ value => value.eval assignment
 
 inductive Expr (holes : Nat) where
@@ -75,6 +77,8 @@ def NatTerm.toSmt {holes : Nat} : NatTerm holes -> String
   | .literal value => toString value
   | .unknown index => s!"unknown_{index.val}"
   | .add left right => s!"(+ {left.toSmt} {right.toSmt})"
+  | .sub left right =>
+      s!"(ite (< {left.toSmt} {right.toSmt}) 0 (- {left.toSmt} {right.toSmt}))"
   | .named group slot _ _ => s!"state_{group}_{slot}"
 
 def Expr.toSmt {holes : Nat} : Expr holes -> String
@@ -111,6 +115,7 @@ def NatTerm.bindings {holes : Nat} : NatTerm holes -> List (Binding holes)
   | .literal _ => []
   | .unknown _ => []
   | .add left right => left.bindings ++ right.bindings
+  | .sub left right => left.bindings ++ right.bindings
   | .named group slot label value =>
       value.bindings ++ [{ group, slot, label, value }]
 

@@ -26,6 +26,7 @@ def representative : Finset Term := {
   .named 1 7 "a" (.literal 1),
   .named 1 7 "a" (.literal 0),
   .add u0 (.literal 3),
+  .sub u0 (.literal 3),
   nested
 }
 
@@ -43,7 +44,8 @@ def sortedRepresentative : List Term :=
   nested,
   .named 1 7 "a" (.literal 0),
   .named 1 7 "a" (.literal 1),
-  .named 1 7 "b" (.literal 0)
+  .named 1 7 "b" (.literal 0),
+  .sub u0 (.literal 3)
 ]
 #guard (.named 1 7 "a" (.literal 0) : Term) ∈ sortedRepresentative
 #guard (.named 1 7 "a" (.literal 1) : Term) ∈ sortedRepresentative

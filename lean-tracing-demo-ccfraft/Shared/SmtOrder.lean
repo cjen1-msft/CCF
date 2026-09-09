@@ -43,6 +43,10 @@ def syntaxKey {holes : Nat} : NatTerm holes -> List SyntaxAtom
   | .named group slot label value =>
       [natAtom 3, natAtom group, natAtom slot, stringAtom label] ++
         value.syntaxKey
+  | .sub left right =>
+      let leftKey := left.syntaxKey
+      let rightKey := right.syntaxKey
+      natAtom 4 :: natAtom leftKey.length :: leftKey ++ rightKey
 
 private theorem append_parts
     {α : Type}
@@ -88,6 +92,14 @@ theorem syntaxKey_injective {holes : Nat} :
         cases equal.2.1
         cases equal.2.2.1
         cases valueInjective equal.2.2.2
+        rfl
+  | sub left right leftInjective rightInjective =>
+      intro other equal
+      cases other <;> simp [syntaxKey, natAtom, stringAtom] at equal
+      case sub left' right' =>
+        rcases append_parts equal.1 equal.2 with ⟨leftKey, rightKey⟩
+        cases leftInjective leftKey
+        cases rightInjective rightKey
         rfl
 
 /--
