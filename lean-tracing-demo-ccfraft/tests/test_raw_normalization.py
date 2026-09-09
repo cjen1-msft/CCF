@@ -30,6 +30,33 @@ def action(name: str, node: str, **parameters: object) -> dict:
 
 
 class RawNormalizationTests(unittest.TestCase):
+    def test_symbolic_certificate_keeps_declared_bounds_without_defaults(self) -> None:
+        trace = normalize(certificate(action("clientRequest", "0", transaction="tx")))
+        bounds = {
+            "transaction_count": 2,
+            "term_count": 0,
+            "index_count": 0,
+            "log_capacity": 0,
+            "queue_capacity": 0,
+        }
+        result = trace.certificate(bounds)
+        self.assertEqual(result["schema_version"], "ccfraft-symbolic-trace/v1")
+        self.assertEqual(result["bounds"], bounds)
+        self.assertEqual(result["unknowns"], ["tx"])
+        self.assertEqual(result["entry"], "symbolic")
+        self.assertEqual(result["steps"], trace.steps)
+        result["steps"][0]["transaction"]["unknown"] = "changed"
+        self.assertEqual(trace.steps[0]["transaction"], {"unknown": "tx"})
+        for invalid in (
+            {},
+            {**bounds, "term_count": True},
+            {**bounds, "index_count": -1},
+            {**bounds, "queue_capacity": "1"},
+            {**bounds, "other": 1},
+        ):
+            with self.subTest(bounds=invalid), self.assertRaises(ReductionError):
+                trace.certificate(invalid)
+
     def test_all_saved_reductions_preserve_order_and_provenance(self) -> None:
         paths = sorted((ROOT / "Traces/Captured").glob("*.ndjson"))
         paths += sorted((ROOT / "Traces/Mutated").glob("*.ndjson"))

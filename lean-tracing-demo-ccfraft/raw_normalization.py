@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -80,6 +81,13 @@ PACKETS = {
     ),
     "raft_propose_request_vote": ("proposeVoteRequest", {}),
 }
+BOUND_FIELDS = {
+    "transaction_count",
+    "term_count",
+    "index_count",
+    "log_capacity",
+    "queue_capacity",
+}
 
 
 @dataclass(frozen=True)
@@ -90,6 +98,21 @@ class NormalizedTrace:
     unknowns: tuple[str, ...]
     steps: list[dict[str, Any]]
     evidence: dict[int, dict[str, Any]]
+
+    def certificate(self, bounds: Mapping[str, object]) -> dict[str, Any]:
+        """Declare a fully symbolic entry constrained by the ordered observations."""
+        _require(set(bounds) == BOUND_FIELDS, "declare exactly the five model bounds")
+        _require(
+            all(type(value) is int and value >= 0 for value in bounds.values()),
+            "model bounds must be non-negative integers",
+        )
+        return {
+            "schema_version": "ccfraft-symbolic-trace/v1",
+            "bounds": dict(bounds),
+            "unknowns": list(self.unknowns),
+            "entry": "symbolic",
+            "steps": deepcopy(self.steps),
+        }
 
 
 def _require(condition: bool, message: str) -> None:

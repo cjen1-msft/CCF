@@ -82,3 +82,9 @@ name = "TraceStateObservationJson"
 
 [[lean_lib]]
 name = "SymbolicTraceObservation"
+
+[[lean_lib]]
+name = "SymbolicTraceObservationJson"
+
+[[lean_lib]]
+name = "SymbolicTraceCertificate"
