@@ -104,7 +104,12 @@ def locust_file_path(file_name: str) -> str:
 
 
 def run_locust(
-    args: argparse.Namespace, network: Any, default_target: Any, workload: Workload
+    args: argparse.Namespace,
+    network: Any,
+    default_target: Any,
+    workload: Workload,
+    *,
+    run_time_s: int | None = None,
 ) -> dict[str, str]:
     """Run Locust to completion and return the workload's selected statistics."""
     csv_prefix = os.path.join(network.common_dir, CSV_PREFIX)
@@ -133,7 +138,9 @@ def run_locust(
     # The locustfile ends the run after a full measurement window following the
     # ramp. Locust's own deadline is only a generous backstop for a stuck ramp.
     spawn_time_s = math.ceil(args.users / args.spawn_rate)
-    run_time_ceiling_s = spawn_time_s + args.measure_time_s + RUN_TIME_MARGIN_S
+    run_time_ceiling_s = run_time_s or (
+        spawn_time_s + args.measure_time_s + RUN_TIME_MARGIN_S
+    )
     cmd += ["--run-time", f"{run_time_ceiling_s}s"]
 
     # Fork workers so the single-threaded client is not the bottleneck.

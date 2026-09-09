@@ -3,8 +3,11 @@
 
 """Locust-side helpers shared by benchmark workloads."""
 
+import json
 import logging
+import os
 import ssl
+import time
 from typing import Any
 
 import gevent
@@ -28,6 +31,8 @@ def register_steady_state_listeners(events: Any) -> None:
     @events.init.add_listener
     def on_init(environment: Any, **_kwargs: Any) -> None:
         """Measure for a fixed window after all users have spawned."""
+        if getattr(environment.parsed_options, "target_rps", None):
+            return
         # Workers receive spawning_complete too, but only the master ends runs.
         if isinstance(environment.runner, WorkerRunner):
             return
@@ -37,6 +42,17 @@ def register_steady_state_listeners(events: Any) -> None:
         def stop_after_measurement_window(**_kwargs: Any) -> None:
             nonlocal spawning_completed
             spawning_completed = True
+            if window_file := os.getenv("CCF_BENCHMARK_WINDOW"):
+                start = time.monotonic()
+                with open(window_file, "w", encoding="utf-8") as output:
+                    json.dump(
+                        {
+                            "start_monotonic": start,
+                            "end_monotonic": start
+                            + environment.parsed_options.measure_time_s,
+                        },
+                        output,
+                    )
             # --reset-stats runs on this event, so this is the reported window.
             gevent.spawn_later(
                 environment.parsed_options.measure_time_s, environment.runner.quit

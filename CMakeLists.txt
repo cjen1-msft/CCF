@@ -722,6 +722,35 @@ if(BUILD_TESTS)
     target_link_libraries(raft_test PRIVATE ccfcrypto ccf_tasks)
 
     add_unit_test(
+      raft_trace_test
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/consensus/aft/test/raft_trace.cpp
+    )
+    target_link_options(raft_trace_test PRIVATE "LINKER:--wrap=send")
+    set_tests_properties(raft_trace_test PROPERTIES TIMEOUT 30)
+    add_unit_test(
+      raft_trace_buffer_test
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/consensus/aft/test/raft_trace_buffer.cpp
+    )
+    target_link_options(
+      raft_trace_buffer_test
+      PRIVATE "LINKER:--wrap=send" "LINKER:--wrap=_Znwm"
+    )
+    set_tests_properties(raft_trace_buffer_test PROPERTIES TIMEOUT 30)
+    add_test(
+      NAME raft_trace_capture_test
+      COMMAND ${PYTHON} ${CMAKE_SOURCE_DIR}/tests/raft_trace_test.py
+    )
+    set_tests_properties(
+      raft_trace_capture_test
+      PROPERTIES LABELS unit TIMEOUT 30
+    )
+    add_test(
+      NAME rate_control_test
+      COMMAND ${PYTHON} ${CMAKE_SOURCE_DIR}/tests/rate_control_test.py
+    )
+    set_tests_properties(rate_control_test PROPERTIES LABELS unit TIMEOUT 30)
+
+    add_unit_test(
       raft_enclave_test
       ${CMAKE_CURRENT_SOURCE_DIR}/src/consensus/aft/test/enclave.cpp
     )
@@ -1036,6 +1065,19 @@ if(BUILD_TESTS)
     )
     set_property(TEST raft_scenario_test PROPERTY LABELS raft_scenario)
     set_property(TEST raft_scenario_test APPEND PROPERTY LABELS bucket_c)
+    if(CCF_RAFT_TRACING)
+      add_test(
+        NAME raft_scenario_buffered_test
+        COMMAND
+          ${PYTHON} ${CMAKE_SOURCE_DIR}/tests/raft_scenarios_runner.py
+          ./raft_driver --buffered ${CMAKE_SOURCE_DIR}/tests/raft_scenarios/
+          --output consensus_buffered
+      )
+      set_tests_properties(
+        raft_scenario_buffered_test
+        PROPERTIES LABELS "raft_scenario;bucket_c"
+      )
+    endif()
 
     if(COVERAGE)
       # The scenario runner spawns raft_driver once per scenario file; give
@@ -1074,6 +1116,10 @@ if(BUILD_TESTS)
     add_picobench(logger_bench SRCS src/ds/test/logger_bench.cpp)
     add_picobench(json_bench SRCS src/ds/test/json_bench.cpp)
     add_picobench(msgpack_bench SRCS src/msgpack/test/msgpack_bench.cpp)
+    add_picobench(
+      raft_trace_bench
+      SRCS src/consensus/aft/test/raft_trace_bench.cpp
+    )
     add_picobench(ring_buffer_bench SRCS src/ds/test/ring_buffer_bench.cpp)
     add_picobench(ledger_bench SRCS src/host/test/ledger_bench.cpp)
     add_picobench(crypto_bench SRCS src/crypto/test/bench.cpp LINK_LIBS)

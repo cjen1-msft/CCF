@@ -17,10 +17,12 @@
 #include "node/node_to_node.h"
 #include "node/node_types.h"
 #include "node/retired_nodes_cleanup.h"
-#include "raft_trace_msgpack.h"
-#include "raft_trace_sink.h"
 #include "raft_types.h"
 #include "service/tables/signatures.h"
+
+#ifdef CCF_RAFT_TRACING
+#  include "raft_trace_msgpack.h"
+#endif
 
 #include <algorithm>
 #include <list>
@@ -58,38 +60,6 @@
 #  define RAFT_DEBUG_FMT LOG_DEBUG_FMT
 #  define RAFT_INFO_FMT LOG_INFO_FMT
 #  define RAFT_FAIL_FMT LOG_FAIL_FMT
-#endif
-
-#define RAFT_TRACE_JSON_OUT(json_object) \
-  CCF_LOG_OUT(DEBUG, "raft_trace") << json_object
-
-// Only send_append_entries and recv_append_entries currently also export a
-// msgpack-encoded raft_trace event (see raft_trace_sink.h,
-// raft_trace_msgpack.h). The other call sites that used to build a
-// RAFT_TRACE_JSON_OUT event were removed while migrating to that sink and
-// are recoverable from git history; they will be reinstated (in the new
-// msgpack form) once this design is validated.
-
-#ifdef CCF_RAFT_TRACING
-
-static inline void add_committable_indices_start_and_end(
-  nlohmann::json& j, const std::shared_ptr<aft::State>& state)
-{
-  std::vector<aft::Index> committable_indices;
-  if (!state->committable_indices.empty())
-  {
-    committable_indices.push_back(state->committable_indices.front());
-    if (state->committable_indices.size() > 1)
-    {
-      committable_indices.push_back(state->committable_indices.back());
-    }
-  }
-  j["committable_indices"] = committable_indices;
-}
-
-#  define COMMITTABLE_INDICES(event_state, state) \
-    add_committable_indices_start_and_end(event_state, state);
-
 #endif
 
 #define LOG_ROLLBACK_INFO_FMT CCF_LOG_FMT(INFO, "rollback")
@@ -538,6 +508,10 @@ namespace aft
       RAFT_DEBUG_FMT(
         "Configurations: add new configuration at {}: {{{}}}", idx, conf);
 
+#ifdef CCF_RAFT_TRACING
+      trace::emit_add_configuration(*state, configurations, idx, conf);
+#endif
+
       // Detect when we are retired by observing a configuration
       // from which we are absent following a configuration in which
       // we were included. Note that this relies on retirement being
@@ -667,6 +641,10 @@ namespace aft
           index,
           (globally_committable ? " committable" : ""),
           hooks->size());
+
+#ifdef CCF_RAFT_TRACING
+        trace::emit_replicate(*state, term, index, globally_committable);
+#endif
 
         for (auto& hook : *hooks)
         {
@@ -1065,18 +1043,14 @@ namespace aft
       auto& node = all_other_nodes.at(to);
 
 #ifdef CCF_RAFT_TRACING
-      nlohmann::json j = {};
-      j["function"] = "send_append_entries";
-      j["packet"] = ae;
-      j["state"] = *state;
-      COMMITTABLE_INDICES(j["state"], state);
-      j["to_node_id"] = to;
-      j["match_idx"] = node.match_idx;
-      j["sent_idx"] = node.sent_idx;
-      RAFT_TRACE_JSON_OUT(j);
-
-      RaftTraceSink::send(trace::encode_send_append_entries(
-        *state, ae, to, node.match_idx, node.sent_idx));
+      trace::emit_state_packet_node_indices(
+        "send_append_entries",
+        *state,
+        ae,
+        "to_node_id",
+        to,
+        node.match_idx,
+        node.sent_idx);
 #endif
 
       // The host will append log entries to this message when it is
@@ -1111,15 +1085,8 @@ namespace aft
         r.term);
 
 #ifdef CCF_RAFT_TRACING
-      nlohmann::json j = {};
-      j["function"] = "recv_append_entries";
-      j["packet"] = r;
-      j["state"] = *state;
-      COMMITTABLE_INDICES(j["state"], state);
-      j["from_node_id"] = from;
-      RAFT_TRACE_JSON_OUT(j);
-
-      RaftTraceSink::send(trace::encode_recv_append_entries(*state, r, from));
+      trace::emit_state_packet_node(
+        "recv_append_entries", *state, r, "from_node_id", from);
 #endif
 
       // Don't check that the sender node ID is valid. Accept anything that
@@ -1369,6 +1336,11 @@ namespace aft
         auto& [ds, i] = ae;
         RAFT_DEBUG_FMT("Replicating on follower {}: {}", state->node_id, i);
 
+#ifdef CCF_RAFT_TRACING
+        trace::emit_state_node(
+          "execute_append_entries_sync", *state, "from_node_id", from);
+#endif
+
         bool track_deletes_on_missing_keys = false;
         ccf::kv::ApplyResult apply_success =
           ds->apply(track_deletes_on_missing_keys);
@@ -1547,6 +1519,11 @@ namespace aft
         response_idx,
         (answer == AppendEntriesResponseType::OK ? "ACK" : "NACK"));
 
+#ifdef CCF_RAFT_TRACING
+      trace::emit_state_packet_node(
+        "send_append_entries_response", *state, response, "to_node_id", to);
+#endif
+
       channels->send_authenticated(
         to, ccf::NodeMsgType::consensus_msg, response);
     }
@@ -1566,6 +1543,17 @@ namespace aft
           from);
         return;
       }
+
+#ifdef CCF_RAFT_TRACING
+      trace::emit_state_packet_node_indices(
+        "recv_append_entries_response",
+        *state,
+        r,
+        "from_node_id",
+        from,
+        node->second.match_idx,
+        node->second.sent_idx);
+#endif
 
       // Ignore if we're not the leader.
       if (state->leadership_state != ccf::kv::LeadershipState::Leader)
@@ -1666,6 +1654,11 @@ namespace aft
         .term_of_last_committable_idx =
           get_term_internal(last_committable_idx)};
 
+#ifdef CCF_RAFT_TRACING
+      trace::emit_state_packet_node(
+        "send_request_vote", *state, rpv, "to_node_id", to);
+#endif
+
       channels->send_authenticated(to, ccf::NodeMsgType::consensus_msg, rpv);
     }
 
@@ -1679,6 +1672,11 @@ namespace aft
         .last_committable_idx = last_committable_idx,
         .term_of_last_committable_idx =
           get_term_internal(last_committable_idx)};
+
+#ifdef CCF_RAFT_TRACING
+      trace::emit_state_packet_node(
+        "send_request_vote", *state, rv, "to_node_id", to);
+#endif
 
       channels->send_authenticated(to, ccf::NodeMsgType::consensus_msg, rv);
     }
@@ -1804,12 +1802,22 @@ namespace aft
     {
       std::lock_guard<ccf::pal::Mutex> guard(state->lock);
 
+#ifdef CCF_RAFT_TRACING
+      trace::emit_state_packet_node(
+        "recv_request_vote", *state, r, "from_node_id", from);
+#endif
+
       recv_request_vote_unsafe(from, r, ElectionType::RegularVote);
     }
 
     void recv_request_pre_vote(const ccf::NodeId& from, RequestPreVote r)
     {
       std::lock_guard<ccf::pal::Mutex> guard(state->lock);
+
+#ifdef CCF_RAFT_TRACING
+      trace::emit_state_packet_node(
+        "recv_request_vote", *state, r, "from_node_id", from);
+#endif
 
       // A pre-vote is a speculative request vote, so we translate it back to a
       // RequestVote to avoid duplicating the logic.
@@ -1863,6 +1871,11 @@ namespace aft
       ElectionType election_type)
     {
       std::lock_guard<ccf::pal::Mutex> guard(state->lock);
+
+#ifdef CCF_RAFT_TRACING
+      trace::emit_state_packet_node(
+        "recv_request_vote_response", *state, r, "from_node_id", from);
+#endif
 
       // Ignore if we don't recognise the node.
       auto node = all_other_nodes.find(from);
@@ -1980,6 +1993,11 @@ namespace aft
     {
       std::lock_guard<ccf::pal::Mutex> guard(state->lock);
 
+#ifdef CCF_RAFT_TRACING
+      trace::emit_state_packet_node(
+        "recv_propose_request_vote", *state, r, "from_node_id", from);
+#endif
+
       if (!is_retired_committed() && ticking && r.term == state->current_view)
       {
         RAFT_INFO_FMT(
@@ -2030,6 +2048,11 @@ namespace aft
         state->node_id,
         state->current_view);
 
+#ifdef CCF_RAFT_TRACING
+      trace::emit_state_configurations(
+        "become_pre_vote_candidate", *state, configurations);
+#endif
+
       add_vote_for_me(state->node_id);
 
       // Request votes only go to nodes in configurations, since only
@@ -2067,6 +2090,11 @@ namespace aft
 
       RAFT_INFO_FMT(
         "Becoming candidate {}: {}", state->node_id, state->current_view);
+
+#ifdef CCF_RAFT_TRACING
+      trace::emit_state_configurations(
+        "become_candidate", *state, configurations);
+#endif
 
       add_vote_for_me(state->node_id);
 
@@ -2115,6 +2143,10 @@ namespace aft
       RAFT_INFO_FMT(
         "Becoming leader {}: {}", state->node_id, state->current_view);
 
+#ifdef CCF_RAFT_TRACING
+      trace::emit_state_configurations("become_leader", *state, configurations);
+#endif
+
       // Try to advance commit at once if there are no other nodes.
       if (other_nodes_in_active_configs().size() == 0)
       {
@@ -2154,6 +2186,11 @@ namespace aft
         state->node_id,
         state->current_view,
         state->commit_idx);
+
+#ifdef CCF_RAFT_TRACING
+      trace::emit_state_configurations(
+        "become_follower", *state, configurations);
+#endif
     }
 
     // Called when a replica becomes aware of the existence of a new term
@@ -2459,6 +2496,10 @@ namespace aft
         return;
       }
 
+#ifdef CCF_RAFT_TRACING
+      trace::emit_commit(*state, configurations, idx);
+#endif
+
       compact_committable_indices(idx);
 
       state->commit_idx = idx;
@@ -2635,6 +2676,13 @@ namespace aft
       return *state;
     }
 
+#ifdef CCF_RAFT_TRACING
+    const State& get_state_for_trace() const
+    {
+      return *state;
+    }
+#endif
+
     void nominate_successor() override
     {
       if (state->leadership_state != ccf::kv::LeadershipState::Leader)
@@ -2651,6 +2699,11 @@ namespace aft
 
       if (successor.has_value())
       {
+#ifdef CCF_RAFT_TRACING
+        trace::emit_state_configurations(
+          "step_down_and_nominate_successor", *state, configurations);
+#endif
+
         send_propose_request_vote(successor.value());
       }
     }

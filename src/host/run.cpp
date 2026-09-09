@@ -582,6 +582,9 @@ namespace ccf
   {
     auto enclave_thread_start = [&](threading::ThreadID thread_id) {
       threading::set_current_thread_id(thread_id);
+#ifdef CCF_RAFT_TRACING
+      aft::RaftTraceSink::bind_producer(thread_id);
+#endif
       try
       {
         bool ret = enclave_run();
@@ -844,6 +847,13 @@ namespace ccf
     // prior to the KV being updated
     startup_config.network.rpc_interfaces = config.network.rpc_interfaces;
 
+#ifdef CCF_RAFT_TRACING
+    aft::RaftTraceSink::configure(
+      config.observability.fluentd, config.worker_threads + 2);
+    aft::RaftTraceSink::bind_producer(config.worker_threads + 1);
+    aft::RaftTraceSink::Lifetime trace_lifetime;
+#endif
+
     // Create the enclave node
     auto enclave_creation_result = create_enclave_node(
       config,
@@ -1077,13 +1087,6 @@ namespace ccf
 
     // set the host log level
     ccf::logger::config::level() = log_level;
-
-    if (config.observability.fluentd.has_value())
-    {
-      aft::RaftTraceSink::configure(aft::RaftTraceSink::Endpoint{
-        config.observability.fluentd->host,
-        config.observability.fluentd->port});
-    }
 
     asynchost::TimeBoundLogger::default_max_time =
       config.slow_io_logging_threshold;

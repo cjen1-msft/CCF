@@ -19,6 +19,7 @@ from locust import constant, events, task
 from locust.contrib.fasthttp import FastHttpUser
 
 import infra.locust_benchmark_support
+import infra.rate_control
 
 DEFAULT_ENDPOINT = "/records/blocking/{key}"
 
@@ -43,6 +44,9 @@ def _get_bodies(key_space_size: int) -> list[str]:
 @events.init_command_line_parser.add_listener
 def init_parser(parser):
     infra.locust_benchmark_support.add_common_arguments(parser)
+    parser.add_argument("--target-rps", type=int, nargs="+")
+    parser.add_argument("--settle-time-s", type=int, default=5)
+    parser.add_argument("--rate-results")
     parser.add_argument("--cert", help="Path to client certificate", required=True)
     parser.add_argument("--key", help="Path to client private key", required=True)
     parser.add_argument(
@@ -81,8 +85,18 @@ class Writer(FastHttpUser):
             opts.ca, cert_path=opts.cert, key_path=opts.key
         )
 
+    def on_start(self):
+        if self.environment.parsed_options.target_rps:
+            self.environment.rate_control.warm(self)
+
     @task
     def write(self):
+        if self.environment.parsed_options.target_rps:
+            self.environment.rate_control.execute(self)
+        else:
+            self.write_once()
+
+    def write_once(self):
         index = random.randrange(self.key_space_size)
         with self.client.put(
             self.endpoint_path.format(key=index),
@@ -98,6 +112,13 @@ class Writer(FastHttpUser):
                 response.success()
             else:
                 response.failure(f"Unexpected status {response.status_code}")
+            return response.status_code == EXPECTED_STATUS
+
+
+@events.init.add_listener
+def configure_mode(environment, **_kwargs):
+    if environment.parsed_options.target_rps:
+        infra.rate_control.install(environment)
 
 
 infra.locust_benchmark_support.register_steady_state_listeners(events)

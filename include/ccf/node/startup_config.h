@@ -142,10 +142,12 @@ namespace ccf
     {
       struct Fluentd
       {
-        // Address of a Fluentd instance's tcp (in_forward) listener that
-        // trace events (e.g. raft_trace) are exported to.
+        // Numeric IP address and decimal TCP port of an in_forward listener.
         std::string host;
         std::string port;
+        bool discard = false;
+        bool buffered = false;
+        ccf::ds::SizeString ring_buffer_size = {"1MB"};
 
         bool operator==(const Fluentd&) const = default;
       };

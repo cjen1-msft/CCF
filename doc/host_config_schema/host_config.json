@@ -611,6 +611,46 @@
       "description": "This section includes configuration for the logging of the node process",
       "additionalProperties": false
     },
+    "observability": {
+      "type": "object",
+      "description": "Optional trace export. Raft events require a build with CCF_RAFT_TRACING=ON. Without a Fluentd destination, no trace records are constructed or sent.",
+      "properties": {
+        "fluentd": {
+          "type": "object",
+          "description": "Destination for unencrypted, unauthenticated TCP export using Fluentd in_forward Message mode: [\"ccf.raft_trace\", EventTime, {\"h_ts\": sequence, \"msg\": event}]. Use a trusted collector. The process-wide sequence orders events across threads; drops leave gaps. By default each emitting thread owns a connection: connect can block, writes drop on backpressure, and an incomplete write gets one retry before the process aborts. Buffered mode moves all socket work to a consumer thread. Drops are counted process-wide and reported at powers of two. There is no acknowledgement or delivery guarantee.",
+          "properties": {
+            "host": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Numeric IPv4 or unbracketed IPv6 address of the Fluentd listener. Hostnames are not supported."
+            },
+            "port": {
+              "type": "string",
+              "pattern": "^[0-9]{1,5}$",
+              "description": "TCP port, expressed as a decimal string between 1 and 65535."
+            },
+            "discard": {
+              "type": "boolean",
+              "default": false,
+              "description": "Benchmarking mode: discard serialized records without socket writes or transport-drop accounting. With buffered=false this happens on the producer; with buffered=true records are copied into the rings and discarded by the consumer."
+            },
+            "buffered": {
+              "type": "boolean",
+              "default": false,
+              "description": "Copy completed MessagePack records into preallocated per-producer SPSC rings. Bound producers perform a bounded write-or-drop operation without allocation, mutexes, retry loops, logging, or wakeup syscalls. One consumer polls idle rings every 1 ms and writes TCP, or discards records when discard=true. The consumer reports drop counts at power-of-two thresholds. Shutdown allows up to two seconds to drain before abandoning remaining records."
+            },
+            "ring_buffer_size": {
+              "type": "string",
+              "default": "1MB",
+              "description": "Memory preallocated per producer slot in buffered mode. Must be a power of two between 1KB and 64MB. Allocation failure prevents startup. The maximum event size is half this capacity minus the 8-byte ring header."
+            }
+          },
+          "required": ["host", "port"],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "consensus": {
       "type": "object",
       "properties": {

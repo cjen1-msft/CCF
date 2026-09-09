@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 [7.0.14]: https://github.com/microsoft/CCF/releases/tag/ccf-7.0.14
 
+### Added
+
+- Builds with `CCF_RAFT_TRACING=ON` can export Raft trace records to a Fluentd `in_forward` TCP listener configured by `observability.fluentd`. Records are encoded as MessagePack instead of JSON console logs. Setting `observability.fluentd.buffered` copies encoded records into bounded per-thread ring buffers and moves TCP writes to one consumer thread; producers drop events rather than wait for buffer space. Setting `observability.fluentd.discard` discards records on the producer, or on the consumer when buffered, for ablation benchmarks. The scenario runner captures the TCP stream and preserves its trace-validation input.
+
 ### Fixed
 
 - If the view changed while a transaction was committing, the transaction could apply its writes to the local key-value store and then fail to replicate, leaving state that never reached consensus. The transaction's view is now validated atomically with the allocation of its version, so it is rejected before any map is modified, and `ccf::kv::CommitResult::FAIL_NO_REPLICATE` no longer implies a locally applied write (#8242).

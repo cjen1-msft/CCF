@@ -2,63 +2,71 @@
 // Licensed under the Apache 2.0 License.
 #pragma once
 
-// Hand-rolled msgpack encoding for raft_trace events, matching the fields
-// that the existing nlohmann::json-based RAFT_TRACE_JSON_OUT path already
-// serialises. Deliberately not routed through nlohmann::json::to_msgpack -
-// these writers go straight from the raft objects to msgpack bytes.
-//
-// Encoders are written to be branch-free where possible: map/array headers
-// use a fixed, compile-time-known count (no two-pass count-then-patch), and
-// enum-to-string lookups use array indexing rather than switch/if chains.
-// The one unavoidable branch per field is optional-vs-absent (encoded as
-// msgpack nil when absent), and the small few-way branch for
-// committable_indices size (0, 1 or 2 entries).
-
 #include "ccf/entity_id.h"
 #include "consensus/aft/impl/state.h"
+#include "consensus/aft/raft_trace_sink.h"
 #include "consensus/aft/raft_types.h"
 #include "msgpack/encode.h"
 #include "msgpack/fluentd_event_time.h"
 
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
+#include <limits>
 #include <optional>
 #include <string_view>
 #include <vector>
 
 namespace aft::trace
 {
-  inline void write_msgpack(std::vector<uint8_t>& buf, const ccf::NodeId& id)
+  constexpr std::string_view raft_trace_tag = "ccf.raft_trace";
+
+  inline uint32_t container_size(size_t size)
   {
-    ccf::msgpack::write_str(buf, id.value());
+    if (size > std::numeric_limits<uint32_t>::max())
+    {
+      throw std::length_error(
+        "Raft trace container exceeds MessagePack size limit");
+    }
+    return static_cast<uint32_t>(size);
+  }
+
+  inline void write_key(std::vector<uint8_t>& out, std::string_view key)
+  {
+    ccf::msgpack::write_str(out, key);
+  }
+
+  inline void write_msgpack(std::vector<uint8_t>& out, const ccf::NodeId& id)
+  {
+    ccf::msgpack::write_str(out, id.value());
   }
 
   inline void write_msgpack(
-    std::vector<uint8_t>& buf, ccf::kv::LeadershipState s)
+    std::vector<uint8_t>& out, ccf::kv::LeadershipState state)
   {
     static constexpr std::array<std::string_view, 5> names = {
       "None", "Leader", "Follower", "PreVoteCandidate", "Candidate"};
-    ccf::msgpack::write_str(buf, names.at(static_cast<uint8_t>(s)));
+    ccf::msgpack::write_str(out, names.at(static_cast<uint8_t>(state)));
   }
 
   inline void write_msgpack(
-    std::vector<uint8_t>& buf, ccf::kv::MembershipState s)
+    std::vector<uint8_t>& out, ccf::kv::MembershipState state)
   {
     static constexpr std::array<std::string_view, 2> names = {
       "Active", "Retired"};
-    ccf::msgpack::write_str(buf, names.at(static_cast<uint8_t>(s)));
+    ccf::msgpack::write_str(out, names.at(static_cast<uint8_t>(state)));
   }
 
   inline void write_msgpack(
-    std::vector<uint8_t>& buf, ccf::kv::RetirementPhase s)
+    std::vector<uint8_t>& out, ccf::kv::RetirementPhase phase)
   {
-    // Values start at 1 (Ordered), not 0.
     static constexpr std::array<std::string_view, 4> names = {
       "Ordered", "Signed", "Completed", "RetiredCommitted"};
-    ccf::msgpack::write_str(buf, names.at(static_cast<uint8_t>(s) - 1));
+    ccf::msgpack::write_str(out, names.at(static_cast<uint8_t>(phase) - 1));
   }
 
-  inline void write_msgpack(std::vector<uint8_t>& buf, aft::RaftMsgType m)
+  inline void write_msgpack(std::vector<uint8_t>& out, RaftMsgType message)
   {
     static constexpr std::array<std::string_view, 8> names = {
       "raft_append_entries",
@@ -69,204 +77,427 @@ namespace aft::trace
       "raft_propose_request_vote",
       "raft_request_pre_vote",
       "raft_request_pre_vote_response"};
-    ccf::msgpack::write_str(buf, names.at(static_cast<size_t>(m)));
+    ccf::msgpack::write_str(out, names.at(static_cast<size_t>(message)));
   }
 
-  // Writes `value` if present, else msgpack nil. `write_value` writes just
-  // the value (no key), matching the shape of the other write_msgpack
-  // overloads in this file.
-  template <typename T, typename F>
-  inline void write_msgpack_optional(
-    std::vector<uint8_t>& buf, const std::optional<T>& value, F&& write_value)
+  inline void write_msgpack(
+    std::vector<uint8_t>& out, AppendEntriesResponseType response)
+  {
+    static constexpr std::array<std::string_view, 2> names = {"OK", "FAIL"};
+    ccf::msgpack::write_str(out, names.at(static_cast<uint8_t>(response)));
+  }
+
+  template <typename T, typename WriteValue>
+  inline void write_optional(
+    std::vector<uint8_t>& out,
+    std::string_view key,
+    const std::optional<T>& value,
+    WriteValue&& write_value)
   {
     if (value.has_value())
     {
-      write_value(buf, *value);
-    }
-    else
-    {
-      ccf::msgpack::write_nil(buf);
+      write_key(out, key);
+      write_value(out, *value);
     }
   }
 
-  inline void write_msgpack(std::vector<uint8_t>& buf, const aft::State& state)
+  template <bool IncludeCommittableIndices = true>
+  inline void write_msgpack(std::vector<uint8_t>& out, const State& state)
   {
-    ccf::msgpack::write_map_header(buf, 12);
+    const auto optional_field_count =
+      static_cast<uint32_t>(state.retirement_phase.has_value()) +
+      static_cast<uint32_t>(state.retirement_idx.has_value()) +
+      static_cast<uint32_t>(state.retirement_committable_idx.has_value()) +
+      static_cast<uint32_t>(state.retired_committed_idx.has_value());
+    ccf::msgpack::write_map_header(
+      out, 7 + IncludeCommittableIndices + optional_field_count);
 
-    ccf::msgpack::write_str(buf, "node_id");
-    write_msgpack(buf, state.node_id);
+    write_key(out, "node_id");
+    write_msgpack(out, state.node_id);
+    write_key(out, "current_view");
+    ccf::msgpack::write_uint(out, state.current_view);
+    write_key(out, "last_idx");
+    ccf::msgpack::write_uint(out, state.last_idx);
+    write_key(out, "commit_idx");
+    ccf::msgpack::write_uint(out, state.commit_idx);
+    write_key(out, "leadership_state");
+    write_msgpack(out, state.leadership_state);
+    write_key(out, "membership_state");
+    write_msgpack(out, state.membership_state);
+    write_key(out, "pre_vote_enabled");
+    ccf::msgpack::write_bool(out, state.pre_vote_enabled);
 
-    ccf::msgpack::write_str(buf, "current_view");
-    ccf::msgpack::write_uint(buf, state.current_view);
-
-    ccf::msgpack::write_str(buf, "last_idx");
-    ccf::msgpack::write_uint(buf, state.last_idx);
-
-    ccf::msgpack::write_str(buf, "commit_idx");
-    ccf::msgpack::write_uint(buf, state.commit_idx);
-
-    ccf::msgpack::write_str(buf, "leadership_state");
-    write_msgpack(buf, state.leadership_state);
-
-    ccf::msgpack::write_str(buf, "membership_state");
-    write_msgpack(buf, state.membership_state);
-
-    ccf::msgpack::write_str(buf, "pre_vote_enabled");
-    ccf::msgpack::write_bool(buf, state.pre_vote_enabled);
-
-    ccf::msgpack::write_str(buf, "retirement_phase");
-    write_msgpack_optional(
-      buf,
+    write_optional(
+      out,
+      "retirement_phase",
       state.retirement_phase,
-      [](std::vector<uint8_t>& b, ccf::kv::RetirementPhase v) {
-        write_msgpack(b, v);
+      [](auto& buffer, auto value) { write_msgpack(buffer, value); });
+    write_optional(
+      out,
+      "retirement_idx",
+      state.retirement_idx,
+      [](auto& buffer, auto value) {
+        ccf::msgpack::write_uint(buffer, value);
       });
-
-    ccf::msgpack::write_str(buf, "retirement_idx");
-    write_msgpack_optional(
-      buf, state.retirement_idx, [](std::vector<uint8_t>& b, ccf::SeqNo v) {
-        ccf::msgpack::write_uint(b, v);
-      });
-
-    ccf::msgpack::write_str(buf, "retirement_committable_idx");
-    write_msgpack_optional(
-      buf,
+    write_optional(
+      out,
+      "retirement_committable_idx",
       state.retirement_committable_idx,
-      [](std::vector<uint8_t>& b, ccf::SeqNo v) {
-        ccf::msgpack::write_uint(b, v);
+      [](auto& buffer, auto value) {
+        ccf::msgpack::write_uint(buffer, value);
       });
-
-    ccf::msgpack::write_str(buf, "retired_committed_idx");
-    write_msgpack_optional(
-      buf,
+    write_optional(
+      out,
+      "retired_committed_idx",
       state.retired_committed_idx,
-      [](std::vector<uint8_t>& b, ccf::SeqNo v) {
-        ccf::msgpack::write_uint(b, v);
+      [](auto& buffer, auto value) {
+        ccf::msgpack::write_uint(buffer, value);
       });
 
-    // Mirrors add_committable_indices_start_and_end in raft.h: front and (if
-    // more than one entry) back of the deque, always as an array (empty if
-    // the deque is empty) rather than nil, to match the JSON field's shape.
-    ccf::msgpack::write_str(buf, "committable_indices");
-    const auto& committable_indices = state.committable_indices;
-    if (committable_indices.empty())
+    if constexpr (IncludeCommittableIndices)
     {
-      ccf::msgpack::write_array_header(buf, 0);
-    }
-    else if (committable_indices.size() == 1)
-    {
-      ccf::msgpack::write_array_header(buf, 1);
-      ccf::msgpack::write_uint(buf, committable_indices.front());
-    }
-    else
-    {
-      ccf::msgpack::write_array_header(buf, 2);
-      ccf::msgpack::write_uint(buf, committable_indices.front());
-      ccf::msgpack::write_uint(buf, committable_indices.back());
+      write_key(out, "committable_indices");
+      const auto& indices = state.committable_indices;
+      const auto count =
+        static_cast<uint32_t>(std::min<size_t>(indices.size(), 2));
+      ccf::msgpack::write_array_header(out, count);
+      if (count > 0)
+      {
+        ccf::msgpack::write_uint(out, indices.front());
+      }
+      if (count > 1)
+      {
+        ccf::msgpack::write_uint(out, indices.back());
+      }
     }
   }
 
   inline void write_msgpack(
-    std::vector<uint8_t>& buf, const aft::AppendEntries& ae)
+    std::vector<uint8_t>& out, const ccf::kv::Configuration::NodeInfo& node)
   {
-    ccf::msgpack::write_map_header(buf, 8);
-
-    ccf::msgpack::write_str(buf, "msg");
-    write_msgpack(buf, ae.msg);
-
-    ccf::msgpack::write_str(buf, "idx");
-    ccf::msgpack::write_uint(buf, ae.idx);
-
-    ccf::msgpack::write_str(buf, "prev_idx");
-    ccf::msgpack::write_uint(buf, ae.prev_idx);
-
-    ccf::msgpack::write_str(buf, "term");
-    ccf::msgpack::write_uint(buf, ae.term);
-
-    ccf::msgpack::write_str(buf, "prev_term");
-    ccf::msgpack::write_uint(buf, ae.prev_term);
-
-    ccf::msgpack::write_str(buf, "leader_commit_idx");
-    ccf::msgpack::write_uint(buf, ae.leader_commit_idx);
-
-    ccf::msgpack::write_str(buf, "term_of_idx");
-    ccf::msgpack::write_uint(buf, ae.term_of_idx);
-
-    ccf::msgpack::write_str(buf, "contains_new_view");
-    ccf::msgpack::write_bool(buf, ae.contains_new_view);
+    ccf::msgpack::write_map_header(out, 1);
+    write_key(out, "address");
+    ccf::msgpack::write_str(
+      out, ccf::make_net_address(node.hostname, node.port));
   }
 
-  // Fluentd Forward Protocol single entry: [tag, time, record]. write_record
-  // appends just the record's msgpack bytes (typically a single
-  // write_map_header + fields, as in the write_msgpack(..., State/
-  // AppendEntries) overloads above).
+  inline void write_configuration(
+    std::vector<uint8_t>& out,
+    Index idx,
+    const ccf::kv::Configuration::Nodes& nodes,
+    ccf::kv::ReconfigurationId rid)
+  {
+    ccf::msgpack::write_map_header(out, 3);
+    write_key(out, "idx");
+    ccf::msgpack::write_uint(out, idx);
+    write_key(out, "nodes");
+    ccf::msgpack::write_map_header(out, container_size(nodes.size()));
+    for (const auto& [node_id, node_info] : nodes)
+    {
+      write_msgpack(out, node_id);
+      write_msgpack(out, node_info);
+    }
+    write_key(out, "rid");
+    ccf::msgpack::write_uint(out, rid);
+  }
+
+  inline void write_msgpack(
+    std::vector<uint8_t>& out, const ccf::kv::Configuration& configuration)
+  {
+    write_configuration(
+      out, configuration.idx, configuration.nodes, configuration.rid);
+  }
+
+  template <typename Configurations>
+  inline void write_configurations(
+    std::vector<uint8_t>& out, const Configurations& configurations)
+  {
+    ccf::msgpack::write_array_header(
+      out, container_size(configurations.size()));
+    for (const auto& configuration : configurations)
+    {
+      write_msgpack(out, configuration);
+    }
+  }
+
+  inline void write_msgpack(
+    std::vector<uint8_t>& out, const AppendEntries& packet)
+  {
+    ccf::msgpack::write_map_header(out, 8);
+    write_key(out, "msg");
+    write_msgpack(out, packet.msg);
+    write_key(out, "idx");
+    ccf::msgpack::write_uint(out, packet.idx);
+    write_key(out, "prev_idx");
+    ccf::msgpack::write_uint(out, packet.prev_idx);
+    write_key(out, "term");
+    ccf::msgpack::write_uint(out, packet.term);
+    write_key(out, "prev_term");
+    ccf::msgpack::write_uint(out, packet.prev_term);
+    write_key(out, "leader_commit_idx");
+    ccf::msgpack::write_uint(out, packet.leader_commit_idx);
+    write_key(out, "term_of_idx");
+    ccf::msgpack::write_uint(out, packet.term_of_idx);
+    write_key(out, "contains_new_view");
+    ccf::msgpack::write_bool(out, packet.contains_new_view);
+  }
+
+  inline void write_msgpack(
+    std::vector<uint8_t>& out, const AppendEntriesResponse& packet)
+  {
+    ccf::msgpack::write_map_header(out, 4);
+    write_key(out, "msg");
+    write_msgpack(out, packet.msg);
+    write_key(out, "term");
+    ccf::msgpack::write_uint(out, packet.term);
+    write_key(out, "last_log_idx");
+    ccf::msgpack::write_uint(out, packet.last_log_idx);
+    write_key(out, "success");
+    write_msgpack(out, packet.success);
+  }
+
+  template <typename VoteRequest>
+  inline void write_vote_request(
+    std::vector<uint8_t>& out, const VoteRequest& packet)
+  {
+    ccf::msgpack::write_map_header(out, 4);
+    write_key(out, "msg");
+    write_msgpack(out, packet.msg);
+    write_key(out, "term");
+    ccf::msgpack::write_uint(out, packet.term);
+    write_key(out, "last_committable_idx");
+    ccf::msgpack::write_uint(out, packet.last_committable_idx);
+    write_key(out, "term_of_last_committable_idx");
+    ccf::msgpack::write_uint(out, packet.term_of_last_committable_idx);
+  }
+
+  inline void write_msgpack(
+    std::vector<uint8_t>& out, const RequestVote& packet)
+  {
+    write_vote_request(out, packet);
+  }
+
+  inline void write_msgpack(
+    std::vector<uint8_t>& out, const RequestPreVote& packet)
+  {
+    write_vote_request(out, packet);
+  }
+
+  template <typename VoteResponse>
+  inline void write_vote_response(
+    std::vector<uint8_t>& out, const VoteResponse& packet)
+  {
+    ccf::msgpack::write_map_header(out, 3);
+    write_key(out, "msg");
+    write_msgpack(out, packet.msg);
+    write_key(out, "term");
+    ccf::msgpack::write_uint(out, packet.term);
+    write_key(out, "vote_granted");
+    ccf::msgpack::write_bool(out, packet.vote_granted);
+  }
+
+  inline void write_msgpack(
+    std::vector<uint8_t>& out, const RequestVoteResponse& packet)
+  {
+    write_vote_response(out, packet);
+  }
+
+  inline void write_msgpack(
+    std::vector<uint8_t>& out, const RequestPreVoteResponse& packet)
+  {
+    write_vote_response(out, packet);
+  }
+
+  inline void write_msgpack(
+    std::vector<uint8_t>& out, const ProposeRequestVote& packet)
+  {
+    ccf::msgpack::write_map_header(out, 2);
+    write_key(out, "msg");
+    write_msgpack(out, packet.msg);
+    write_key(out, "term");
+    ccf::msgpack::write_uint(out, packet.term);
+  }
+
+  inline std::vector<uint8_t>& event_buffer()
+  {
+    thread_local auto buffer = [] {
+      std::vector<uint8_t> buffer;
+      buffer.reserve(2048);
+      return buffer;
+    }();
+    return buffer;
+  }
+
+  inline uint64_t next_sequence()
+  {
+    static std::atomic<uint64_t> sequence = 0;
+    return sequence.fetch_add(1, std::memory_order_relaxed);
+  }
+
   template <typename WriteRecord>
-  inline std::vector<uint8_t> build_fluentd_entry(
-    std::string_view tag, WriteRecord&& write_record)
+  inline void emit(uint32_t field_count, WriteRecord&& write_record)
   {
-    std::vector<uint8_t> buf;
-    ccf::msgpack::write_array_header(buf, 3);
-    ccf::msgpack::write_str(buf, tag);
+    if (!RaftTraceSink::is_configured())
+    {
+      return;
+    }
+    const auto sequence = next_sequence();
+    auto& buffer = event_buffer();
+    buffer.clear();
+    ccf::msgpack::write_array_header(buffer, 3);
+    ccf::msgpack::write_str(buffer, raft_trace_tag);
     ccf::msgpack::write_fluentd_event_time(
-      buf,
+      buffer,
       ccf::msgpack::FluentdEventTime::make(std::chrono::system_clock::now()));
-    write_record(buf);
-    return buf;
+    ccf::msgpack::write_map_header(buffer, 2);
+    write_key(buffer, "h_ts");
+    ccf::msgpack::write_uint(buffer, sequence);
+    write_key(buffer, "msg");
+    ccf::msgpack::write_map_header(buffer, field_count);
+    write_record(buffer);
+    RaftTraceSink::send(buffer);
   }
 
-  constexpr std::string_view raft_trace_tag = "ccf.raft_trace";
-
-  inline std::vector<uint8_t> encode_send_append_entries(
-    const aft::State& state,
-    const aft::AppendEntries& packet,
-    const ccf::NodeId& to_node_id,
-    aft::Index match_idx,
-    aft::Index sent_idx)
+  inline void write_function_and_state(
+    std::vector<uint8_t>& out, std::string_view function, const State& state)
   {
-    return build_fluentd_entry(
-      raft_trace_tag, [&](std::vector<uint8_t>& buf) {
-        ccf::msgpack::write_map_header(buf, 6);
-
-        ccf::msgpack::write_str(buf, "function");
-        ccf::msgpack::write_str(buf, "send_append_entries");
-
-        ccf::msgpack::write_str(buf, "packet");
-        write_msgpack(buf, packet);
-
-        ccf::msgpack::write_str(buf, "state");
-        write_msgpack(buf, state);
-
-        ccf::msgpack::write_str(buf, "to_node_id");
-        write_msgpack(buf, to_node_id);
-
-        ccf::msgpack::write_str(buf, "match_idx");
-        ccf::msgpack::write_uint(buf, match_idx);
-
-        ccf::msgpack::write_str(buf, "sent_idx");
-        ccf::msgpack::write_uint(buf, sent_idx);
-      });
+    write_key(out, "function");
+    ccf::msgpack::write_str(out, function);
+    write_key(out, "state");
+    write_msgpack(out, state);
   }
 
-  inline std::vector<uint8_t> encode_recv_append_entries(
-    const aft::State& state,
-    const aft::AppendEntries& packet,
-    const ccf::NodeId& from_node_id)
+  inline void emit_state_node(
+    std::string_view function,
+    const State& state,
+    std::string_view node_key,
+    const ccf::NodeId& node_id)
   {
-    return build_fluentd_entry(
-      raft_trace_tag, [&](std::vector<uint8_t>& buf) {
-        ccf::msgpack::write_map_header(buf, 4);
+    emit(3, [&](auto& out) {
+      write_function_and_state(out, function, state);
+      write_key(out, node_key);
+      write_msgpack(out, node_id);
+    });
+  }
 
-        ccf::msgpack::write_str(buf, "function");
-        ccf::msgpack::write_str(buf, "recv_append_entries");
+  template <typename Configurations>
+  inline void emit_state_configurations(
+    std::string_view function,
+    const State& state,
+    const Configurations& configurations)
+  {
+    emit(3, [&](auto& out) {
+      write_function_and_state(out, function, state);
+      write_key(out, "configurations");
+      write_configurations(out, configurations);
+    });
+  }
 
-        ccf::msgpack::write_str(buf, "packet");
-        write_msgpack(buf, packet);
+  template <typename Packet>
+  inline void emit_state_packet_node(
+    std::string_view function,
+    const State& state,
+    const Packet& packet,
+    std::string_view node_key,
+    const ccf::NodeId& node_id)
+  {
+    emit(4, [&](auto& out) {
+      write_function_and_state(out, function, state);
+      write_key(out, "packet");
+      write_msgpack(out, packet);
+      write_key(out, node_key);
+      write_msgpack(out, node_id);
+    });
+  }
 
-        ccf::msgpack::write_str(buf, "state");
-        write_msgpack(buf, state);
+  template <typename Packet>
+  inline void emit_state_packet_node_indices(
+    std::string_view function,
+    const State& state,
+    const Packet& packet,
+    std::string_view node_key,
+    const ccf::NodeId& node_id,
+    Index match_idx,
+    Index sent_idx)
+  {
+    emit(6, [&](auto& out) {
+      write_function_and_state(out, function, state);
+      write_key(out, "packet");
+      write_msgpack(out, packet);
+      write_key(out, node_key);
+      write_msgpack(out, node_id);
+      write_key(out, "match_idx");
+      ccf::msgpack::write_uint(out, match_idx);
+      write_key(out, "sent_idx");
+      ccf::msgpack::write_uint(out, sent_idx);
+    });
+  }
 
-        ccf::msgpack::write_str(buf, "from_node_id");
-        write_msgpack(buf, from_node_id);
-      });
+  template <typename Configurations>
+  inline void emit_add_configuration(
+    const State& state,
+    const Configurations& configurations,
+    Index idx,
+    const ccf::kv::Configuration::Nodes& nodes)
+  {
+    emit(4, [&](auto& out) {
+      write_function_and_state(out, "add_configuration", state);
+      write_key(out, "configurations");
+      write_configurations(out, configurations);
+      write_key(out, "args");
+      ccf::msgpack::write_map_header(out, 1);
+      write_key(out, "configuration");
+      write_configuration(out, idx, nodes, idx);
+    });
+  }
+
+  inline void emit_replicate(
+    const State& state, Term view, Index seqno, bool globally_committable)
+  {
+    emit(5, [&](auto& out) {
+      write_function_and_state(out, "replicate", state);
+      write_key(out, "view");
+      ccf::msgpack::write_uint(out, view);
+      write_key(out, "seqno");
+      ccf::msgpack::write_uint(out, seqno);
+      write_key(out, "globally_committable");
+      ccf::msgpack::write_bool(out, globally_committable);
+    });
+  }
+
+  template <typename Configurations>
+  inline void emit_commit(
+    const State& state, const Configurations& configurations, Index idx)
+  {
+    emit(4, [&](auto& out) {
+      write_function_and_state(out, "commit", state);
+      write_key(out, "args");
+      ccf::msgpack::write_map_header(out, 1);
+      write_key(out, "idx");
+      ccf::msgpack::write_uint(out, idx);
+      write_key(out, "configurations");
+      write_configurations(out, configurations);
+    });
+  }
+
+  template <typename Packet>
+  inline void emit_drop_pending_to(
+    const State& state,
+    const Packet& packet,
+    const ccf::NodeId& from,
+    const ccf::NodeId& to)
+  {
+    emit(5, [&](auto& out) {
+      write_key(out, "function");
+      ccf::msgpack::write_str(out, "drop_pending_to");
+      write_key(out, "state");
+      write_msgpack<false>(out, state);
+      write_key(out, "from_node_id");
+      write_msgpack(out, from);
+      write_key(out, "to_node_id");
+      write_msgpack(out, to);
+      write_key(out, "packet");
+      write_msgpack(out, packet);
+    });
   }
 } // namespace aft::trace

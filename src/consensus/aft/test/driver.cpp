@@ -22,12 +22,15 @@ int main(int argc, char** argv)
 {
   const regex delim{","};
   size_t lineno = 1;
-  auto driver = make_shared<RaftDriver>();
-
-  if (argc < 2)
+  if (argc != 2 && argc != 4 && argc != 5)
   {
     throw std::runtime_error(
-      "Too few arguments - first must be path to scenario");
+      "Expected a scenario path, optionally followed by a Fluentd host and "
+      "port and --buffered");
+  }
+  if (argc == 5 && std::string_view(argv[4]) != "--buffered")
+  {
+    throw std::runtime_error("The final argument must be --buffered");
   }
 
   // Log all raft steps to stdout (python wrapper raft_scenario_runner.py
@@ -40,12 +43,16 @@ int main(int argc, char** argv)
   ccf::logger::config::level() = ccf::LoggerLevel::DEBUG;
 
 #ifdef CCF_RAFT_TRACING
-  // Placeholder endpoint: send() currently only counts drops (step 0), so no
-  // actual connection is made yet. Wiring this up to an env var/CLI flag for
-  // step 1 is future work.
-  aft::RaftTraceSink::configure(
-    aft::RaftTraceSink::Endpoint{"127.0.0.1", "24224"});
+  if (argc >= 4)
+  {
+    aft::RaftTraceSink::Endpoint endpoint{argv[2], argv[3]};
+    endpoint.buffered = argc == 5;
+    aft::RaftTraceSink::configure(endpoint);
+    aft::RaftTraceSink::bind_producer(0);
+  }
 #endif
+  aft::RaftTraceSink::Lifetime trace_lifetime;
+  auto driver = make_shared<RaftDriver>();
 
   const std::string filename = argv[1];
 
@@ -82,8 +89,10 @@ int main(int argc, char** argv)
 #ifdef CCF_RAFT_TRACING
     if (!line.empty())
     {
-      std::cout << "{\"tag\": \"raft_trace\", \"cmd\": \"" << line << "\"}"
-                << std::endl;
+      aft::trace::emit(1, [&](auto& out) {
+        ccf::msgpack::write_str(out, "cmd");
+        ccf::msgpack::write_str(out, line);
+      });
     }
 #endif
     // Steps which don't alter state don't need to recheck invariants

@@ -7,9 +7,9 @@ import sys
 from collections import defaultdict
 from contextlib import contextmanager
 from heapq import merge
-from subprocess import PIPE, Popen
 
 from raft_scenarios_gen import generate_scenarios
+from raft_trace import as_log_lines, run_driver
 
 
 @contextmanager
@@ -133,6 +133,7 @@ if __name__ == "__main__":
 
     parser.add_argument("driver", type=str, help="Path to raft_driver binary")
     parser.add_argument("--gen-scenarios", action="store_true")
+    parser.add_argument("--buffered", action="store_true")
     parser.add_argument("files", nargs="*", type=str, help="Path to scenario files")
     parser.add_argument(
         "-o",
@@ -161,22 +162,17 @@ if __name__ == "__main__":
         ostream.write(f"## {os.path.basename(scenario)}\n\n")
         with block(ostream, "steps", 3), open(scenario, "r", encoding="utf-8") as scen:
             ostream.write(scen.read())
-        proc = Popen(
-            [args.driver, os.path.realpath(scenario)],
-            stdout=PIPE,
-            stderr=PIPE,
-            stdin=PIPE,
-        )
-        out, err = proc.communicate()
+        proc, records = run_driver(args.driver, scenario, buffered=args.buffered)
+        out, err = proc.stdout, proc.stderr
         test_result = test_result and proc.returncode == 0
 
         if err:
-            err_list.append([os.path.basename(scenario), err.decode()])
+            err_list.append([os.path.basename(scenario), err])
             with block(ostream, "stderr", 3):
-                ostream.write(err.decode())
+                ostream.write(err)
 
         mermaid, log = separate_log_lines(
-            out.decode(),
+            out + "\n" + "\n".join(json.dumps(e) for e in as_log_lines(records)),
             noop if "deprecated" in scenario else preprocess_for_trace_validation,
         )
 
