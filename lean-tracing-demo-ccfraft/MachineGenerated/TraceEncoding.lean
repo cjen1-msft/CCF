@@ -3,6 +3,7 @@
 
 import BoundedTrace
 import Shared.SmtOrder
+import MachineGenerated.GuardedAppendEntries
 
 set_option autoImplicit false
 
@@ -30,17 +31,25 @@ def markerSlot (base : Nat) (node : Node) : Nat :=
 def ALLOCATED_SLOT_BASE : Nat := 10
 def JOINED_SLOT_BASE : Nat := 30
 def SENT_INDEX_SLOT_BASE : Nat := 50
+def QUEUE_LENGTH_SLOT_BASE : Nat := 70
+def PATH_SLOT_STRIDE : Nat := 100
 
 #guard 4 < ALLOCATED_SLOT_BASE &&
   ALLOCATED_SLOT_BASE + NODE_COUNT ≤ JOINED_SLOT_BASE &&
-  JOINED_SLOT_BASE + NODE_COUNT ≤ SENT_INDEX_SLOT_BASE
+  JOINED_SLOT_BASE + NODE_COUNT ≤ SENT_INDEX_SLOT_BASE &&
+  SENT_INDEX_SLOT_BASE + NODE_COUNT ≤ QUEUE_LENGTH_SLOT_BASE &&
+  QUEUE_LENGTH_SLOT_BASE + NODE_COUNT ≤ PATH_SLOT_STRIDE
+
+def pathSlot (pathId base : Nat) : Nat :=
+  pathId * PATH_SLOT_STRIDE + base
 
 structure Tracking (holes : Nat) where
   logLengths : Node -> Value holes
-  retirementWriters : Node -> Option Nat
+  retirementWriters : Node -> Option (Nat × Nat)
   allocated : Node -> Value holes
   joined : Node -> Value holes
   sentIndex : Node -> Node -> Value holes
+  queueLengths : Node -> Value holes
 
 def constantClause {holes : Nat} (label : String) (condition : Prop)
     [Decidable condition] : Clause holes :=
@@ -109,14 +118,18 @@ def messageBoundsClauses {holes : Nat}
       [constantClause "message term domain" (request.term < bounds.termCount)]
 
 def optionalIndexClauses {holes : Nat}
-    (bounds : Bounds) (writer : Option Nat) (slot : Nat) (label : String) :
+    (bounds : Bounds)
+    (writer : Option (Nat × Nat))
+    (slot : Nat)
+    (label : String) :
     Option Nat -> List (Clause holes)
   | none => []
   | some index =>
       let value : Value holes :=
         match writer with
         | none => .literal index
-        | some group => .named group slot label (.literal index)
+        | some (group, pathId) =>
+            .named group (pathSlot pathId slot) label (.literal index)
       [lessClause s!"{label} domain" value bounds.indexCount]
 
 def localBoundsClauses {holes : Nat}
@@ -153,10 +166,13 @@ def nodeBoundsClauses {holes : Nat}
       localBoundsClauses bounds tracking node localState
 
 def queueBoundsClauses {holes : Nat}
-    (bounds : Bounds) (state : Template holes) (node : Node) :
+    (bounds : Bounds)
+    (state : Template holes)
+    (tracking : Tracking holes)
+    (node : Node) :
     List (Clause holes) :=
-  constantClause "queue capacity"
-      ((state.network node).length ≤ bounds.queueCapacity) ::
+  atMostClause "queue capacity"
+      (tracking.queueLengths node) bounds.queueCapacity ::
     (state.network node).flatMap (messageBoundsClauses bounds)
 
 def stateBoundsClauses {holes : Nat}
@@ -166,7 +182,8 @@ def stateBoundsClauses {holes : Nat}
     List (Clause holes) :=
   (List.finRange NODE_COUNT).flatMap
       (nodeBoundsClauses bounds state tracking) ++
-  (List.finRange NODE_COUNT).flatMap (queueBoundsClauses bounds state) ++
+  (List.finRange NODE_COUNT).flatMap
+      (queueBoundsClauses bounds state tracking) ++
   (submittedTerms state).map fun transaction =>
     lessClause "submitted transaction domain" transaction bounds.transactionCount
 
@@ -180,6 +197,8 @@ def observationExpression {holes : Nat}
       .boolean (decide ((assignmentState.nodes node).currentTerm = value))
   | .logLength node value =>
       .equal (tracking.logLengths node) (.literal value)
+  | .queueLength node value =>
+      .equal (tracking.queueLengths node) (.literal value)
   | .commitIndex node value =>
       .boolean (decide ((assignmentState.nodes node).commitIndex = value))
   | .allocated node value =>
@@ -253,33 +272,37 @@ def initialTracking {holes : Nat} (state : Template holes) : Tracking holes wher
   allocated := fun node => boolValue (decide (state.allocated node))
   joined := fun node => boolValue (decide (node ∈ state.hasJoined))
   sentIndex := fun node peer => .literal ((state.nodes node).sentIndex peer)
+  queueLengths := fun node => .literal (state.network node).length
 
 def nextLogLengths {holes : Nat}
     (position : Nat)
+    (pathId : Nat)
     (logLengths : Node -> Value holes)
     (node : Node) :
     Node -> Value holes :=
   Function.update logLengths node
-    (.named position 1 "next log length"
+    (.named position (pathSlot pathId 1) "next log length"
       (.add (logLengths node) (.literal 1)))
 
 def nextRetirementWriters
     (position : Nat)
-    (retirementWriters : Node -> Option Nat)
+    (pathId : Nat)
+    (retirementWriters : Node -> Option (Nat × Nat))
     (node : Node) :
-    Node -> Option Nat :=
-  Function.update retirementWriters node (some position)
+    Node -> Option (Nat × Nat) :=
+  Function.update retirementWriters node (some (position, pathId))
 
 def nextWriteTracking {holes : Nat}
-    (position : Nat) (tracking : Tracking holes) (node : Node) :
+    (position pathId : Nat) (tracking : Tracking holes) (node : Node) :
     Tracking holes :=
   { tracking with
-    logLengths := nextLogLengths position tracking.logLengths node
+    logLengths := nextLogLengths position pathId tracking.logLengths node
     retirementWriters :=
-      nextRetirementWriters position tracking.retirementWriters node }
+      nextRetirementWriters position pathId tracking.retirementWriters node }
 
 def nextConfigurationTracking {holes : Nat}
     (position : Nat)
+    (pathId : Nat)
     (state : Template holes)
     (tracking : Tracking holes)
     (source : Node)
@@ -291,7 +314,8 @@ def nextConfigurationTracking {holes : Nat}
     if state.allocated node then
       tracking.allocated node
     else if node = source ∨ node ∈ added then
-      .named position (markerSlot ALLOCATED_SLOT_BASE node)
+      .named position
+        (pathSlot pathId (markerSlot ALLOCATED_SLOT_BASE node))
         s!"allocated node {node.val}" (.literal 1)
     else
       tracking.allocated node
@@ -299,65 +323,218 @@ def nextConfigurationTracking {holes : Nat}
     if node ∈ state.hasJoined then
       tracking.joined node
     else if node ∈ added then
-      .named position (markerSlot JOINED_SLOT_BASE node)
+      .named position
+        (pathSlot pathId (markerSlot JOINED_SLOT_BASE node))
         s!"joined node {node.val}" (.literal 1)
     else
       tracking.joined node
   let sentIndex := fun node peer =>
     if node = source then
       if peer ∈ added then
-        .named position (markerSlot SENT_INDEX_SLOT_BASE peer)
+        .named position
+          (pathSlot pathId (markerSlot SENT_INDEX_SLOT_BASE peer))
           s!"sent index {peer.val}" (tracking.logLengths source)
       else
         tracking.sentIndex node peer
     else
       tracking.sentIndex node peer
-  { logLengths := nextLogLengths position tracking.logLengths source
+  { logLengths := nextLogLengths position pathId tracking.logLengths source
     retirementWriters :=
-      nextRetirementWriters position tracking.retirementWriters source
+      nextRetirementWriters position pathId tracking.retirementWriters source
     allocated
     joined
-    sentIndex }
+    sentIndex
+    queueLengths := tracking.queueLengths }
+
+def nextAppendEntriesTracking {holes : Nat}
+    (position pathId : Nat)
+    (tracking : Tracking holes)
+    (source destination : Node)
+    (batchEnd : Nat)
+    (queueGrew : Bool) :
+    Tracking holes :=
+  let queueLengths :=
+    Function.update tracking.queueLengths destination
+      (if queueGrew then
+        .named position
+          (pathSlot pathId (markerSlot QUEUE_LENGTH_SLOT_BASE destination))
+          s!"queue length {destination.val}"
+          (.add (tracking.queueLengths destination) (.literal 1))
+       else
+        tracking.queueLengths destination)
+  let sourceIndices :=
+    Function.update (tracking.sentIndex source) destination
+      (.named position
+        (pathSlot pathId (markerSlot SENT_INDEX_SLOT_BASE destination))
+        s!"sent index {destination.val}" (.literal batchEnd))
+  { tracking with
+    sentIndex := Function.update tracking.sentIndex source sourceIndices
+    queueLengths }
+
+structure Frame (holes : Nat) where
+  state : Template holes
+  tracking : Tracking holes
+  pathId : Nat
+
+def clientRequestFrame {holes : Nat}
+    (position : Nat)
+    (node : Node)
+    (accepted : Value holes)
+    (frame : Frame holes) :
+    Frame holes :=
+  { state := next frame.state (.clientRequest node accepted)
+    tracking :=
+      nextWriteTracking position frame.pathId frame.tracking node
+    pathId := frame.pathId }
+
+def signatureFrame {holes : Nat}
+    (position : Nat)
+    (node : Node)
+    (frame : Frame holes) :
+    Frame holes :=
+  { state := next frame.state (.signCommittableMessages node)
+    tracking :=
+      nextWriteTracking position frame.pathId frame.tracking node
+    pathId := frame.pathId }
+
+def configurationFrame {holes : Nat}
+    (position : Nat)
+    (node : Node)
+    (configuration : Finset Node)
+    (frame : Frame holes) :
+    Frame holes :=
+  { state := next frame.state (.changeConfiguration node configuration)
+    tracking :=
+      nextConfigurationTracking position frame.pathId frame.state
+        frame.tracking node configuration
+    pathId := frame.pathId }
+
+def retiredCommittedFrame {holes : Nat}
+    (position : Nat)
+    (node : Node)
+    (frame : Frame holes) :
+    Frame holes :=
+  { state := next frame.state (.appendRetiredCommitted node)
+    tracking :=
+      nextWriteTracking position frame.pathId frame.tracking node
+    pathId := frame.pathId }
+
+def guardClauses {holes : Nat}
+    (condition : Expr holes)
+    (clauses : List (Clause holes)) :
+    List (Clause holes) :=
+  clauses.map fun clause =>
+    { clause with expression := condition.implies clause.expression }
+
+def guardedClauses {holes : Nat} {α : Type}
+    (tree : Guarded holes α)
+    (clauses : α -> List (Clause holes)) :
+    List (Clause holes) :=
+  match tree with
+  | .pure value => clauses value
+  | .branch condition thenTree elseTree =>
+      guardClauses condition (guardedClauses thenTree clauses) ++
+        guardClauses (.not condition) (guardedClauses elseTree clauses)
+
+def guardedGroup {holes : Nat}
+    (label : String)
+    (frames : Guarded holes (Frame holes))
+    (clauses : Frame holes -> List (Clause holes)) :
+    Group holes :=
+  { label, clauses := guardedClauses frames clauses }
+
+def childPath (pathId : Nat) (right : Bool) : Nat :=
+  pathId * 2 + if right then 2 else 1
+
+def attachAppendFrame {holes : Nat}
+    (position priorLength : Nat)
+    (tracking : Tracking holes)
+    (source destination : Node)
+    (batchEnd : Nat)
+    (pathId : Nat) :
+    Guarded holes (Template holes) -> Guarded holes (Frame holes)
+  | .pure successor =>
+      let queueGrew :=
+        decide (priorLength < (successor.network destination).length)
+      .pure {
+        state := successor
+        tracking :=
+          nextAppendEntriesTracking position pathId tracking
+            source destination batchEnd queueGrew
+        pathId
+      }
+  | .branch condition thenTree elseTree =>
+      Guarded.branchSmart condition
+        (attachAppendFrame position priorLength tracking source destination
+          batchEnd (childPath pathId false) thenTree)
+        (attachAppendFrame position priorLength tracking source destination
+          batchEnd (childPath pathId true) elseTree)
+
+def appendFrames {holes : Nat}
+    (position : Nat)
+    (frame : Frame holes)
+    (source destination : Node)
+    (batchEnd : Nat) :
+    Guarded holes (Frame holes) :=
+  let priorLength := (frame.state.network destination).length
+  attachAppendFrame position priorLength frame.tracking source destination
+    batchEnd frame.pathId
+    (GuardedAppendEntries.step frame.state source destination batchEnd)
 
 def encodeFrom {holes : Nat}
     (bounds : Bounds)
     (position : Nat)
-    (state : Template holes)
-    (tracking : Tracking holes) :
+    (frames : Guarded holes (Frame holes)) :
     List (TraceInstructions.Instruction holes) -> Formula holes
   | [] =>
       [{ label := "final state bounds"
-         clauses := stateBoundsClauses bounds state tracking }]
+         clauses := guardedClauses frames fun frame =>
+           stateBoundsClauses bounds frame.state frame.tracking }]
   | .observation observation :: rest =>
-      observationGroup bounds state tracking observation ::
-        encodeFrom bounds (position + 1) state tracking rest
+      (guardedGroup "observation" frames fun frame =>
+        stateBoundsClauses bounds frame.state frame.tracking ++
+          observationClauses bounds frame.state frame.tracking observation) ::
+        encodeFrom bounds (position + 1) frames rest
   | .clientRequest node transaction :: rest =>
       let accepted :=
         .named position 0 "accepted transaction" transaction
-      clientRequestGroup bounds state tracking node transaction ::
+      (guardedGroup "clientRequest" frames fun frame =>
+        (clientRequestGroup bounds frame.state frame.tracking
+          node transaction).clauses) ::
         encodeFrom bounds (position + 1)
-          (next state (.clientRequest node accepted))
-          (nextWriteTracking position tracking node)
-          rest
+          (frames.map (clientRequestFrame position node accepted)) rest
   | .signCommittableMessages node :: rest =>
-      leaderWriteGroup "signCommittableMessages" bounds state tracking
-          (Enabled state (.signCommittableMessages node)) ::
+      (guardedGroup "signCommittableMessages" frames fun frame =>
+        (leaderWriteGroup "signCommittableMessages" bounds
+          frame.state frame.tracking
+          (Enabled frame.state (.signCommittableMessages node))).clauses) ::
         encodeFrom bounds (position + 1)
-          (next state (.signCommittableMessages node))
-          (nextWriteTracking position tracking node) rest
+          (frames.map (signatureFrame position node)) rest
   | .changeConfiguration node configuration :: rest =>
-      leaderWriteGroup "changeConfiguration" bounds state tracking
-          (Enabled state (.changeConfiguration node configuration)) ::
+      (guardedGroup "changeConfiguration" frames fun frame =>
+        (leaderWriteGroup "changeConfiguration" bounds
+          frame.state frame.tracking
+          (Enabled frame.state
+            (.changeConfiguration node configuration))).clauses) ::
         encodeFrom bounds (position + 1)
-          (next state (.changeConfiguration node configuration))
-          (nextConfigurationTracking position state tracking node configuration)
-          rest
+          (frames.map
+            (configurationFrame position node configuration)) rest
   | .appendRetiredCommitted node :: rest =>
-      leaderWriteGroup "appendRetiredCommitted" bounds state tracking
-          (Enabled state (.appendRetiredCommitted node)) ::
+      (guardedGroup "appendRetiredCommitted" frames fun frame =>
+        (leaderWriteGroup "appendRetiredCommitted" bounds
+          frame.state frame.tracking
+          (Enabled frame.state (.appendRetiredCommitted node))).clauses) ::
         encodeFrom bounds (position + 1)
-          (next state (.appendRetiredCommitted node))
-          (nextWriteTracking position tracking node) rest
+          (frames.map (retiredCommittedFrame position node)) rest
+  | .appendEntries source destination batchEnd :: rest =>
+      (guardedGroup "appendEntries" frames fun frame =>
+        (leaderWriteGroup "appendEntries" bounds frame.state frame.tracking
+          (Enabled frame.state
+            (.appendEntries source destination batchEnd))).clauses) ::
+        encodeFrom bounds (position + 1)
+          (frames.bind fun frame =>
+            appendFrames position frame source destination batchEnd)
+          rest
 
 def encode {holes : Nat}
     (bounds : Bounds)
@@ -368,6 +545,8 @@ def encode {holes : Nat}
     clauses := (List.finRange holes).map fun index =>
       lessClause s!"unknown {index.val} domain" (.unknown index)
         bounds.transactionCount } ::
-  encodeFrom bounds 1 entry (initialTracking entry) trace
+  encodeFrom bounds 1
+    (.pure { state := entry, tracking := initialTracking entry, pathId := 0 })
+    trace
 
 end CCFRaft.TraceEncoding

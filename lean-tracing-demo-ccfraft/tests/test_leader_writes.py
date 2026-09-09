@@ -32,6 +32,7 @@ def trace(
     term_count: int = 8,
     index_count: int = 4,
     log_capacity: int = 4,
+    queue_capacity: int = 0,
 ) -> dict[str, object]:
     return {
         "schema_version": "ccfraft-trace/v1",
@@ -42,7 +43,7 @@ def trace(
             "term_count": term_count,
             "index_count": index_count,
             "log_capacity": log_capacity,
-            "queue_capacity": 0,
+            "queue_capacity": queue_capacity,
         },
         "steps": steps,
     }
@@ -93,6 +94,7 @@ class LeaderWriteTests(ClientRequestSliceTestCase):
                 "signCommittableMessages",
                 "changeConfiguration",
                 "appendRetiredCommitted",
+                "appendEntries",
             ],
         )
         mapping = json.loads(

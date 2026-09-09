@@ -54,6 +54,15 @@ inductive Guarded (holes : Nat) (α : Type u) where
 
 namespace Guarded
 
+/-- Eliminate branches whose condition is already a Boolean constant. -/
+def branchSmart {holes : Nat} {α : Type u}
+    (condition : Expr holes)
+    (thenTree elseTree : Guarded holes α) : Guarded holes α :=
+  match condition with
+  | .boolean true => thenTree
+  | .boolean false => elseTree
+  | _ => .branch condition thenTree elseTree
+
 /-- Evaluate one guarded tree under a concrete unknown assignment. -/
 def eval {holes : Nat} {α : Type u}
     (assignment : Fin holes -> Nat) : Guarded holes α -> α
@@ -63,6 +72,23 @@ def eval {holes : Nat} {α : Type u}
         thenTree.eval assignment
       else
         elseTree.eval assignment
+
+@[simp]
+theorem eval_branchSmart {holes : Nat} {α : Type u}
+    (assignment : Fin holes -> Nat)
+    (condition : Expr holes)
+    (thenTree elseTree : Guarded holes α) :
+    (branchSmart condition thenTree elseTree).eval assignment =
+      if condition.Holds assignment then
+        thenTree.eval assignment
+      else
+        elseTree.eval assignment := by
+  cases condition with
+  | boolean value => cases value <;> simp [branchSmart, Expr.Holds]
+  | equal => rfl
+  | lessThan => rfl
+  | not => rfl
+  | and => rfl
 
 /-- Apply a pure function to every leaf. -/
 def map {holes : Nat} {α : Type u} {β : Type v}
@@ -143,7 +169,8 @@ def contains {holes : Nat} {α : Type u}
     (value : α) : List α -> Guarded holes Bool
   | [] => .pure false
   | head :: tail =>
-      .branch (equal value head) (.pure true) (contains equal value tail)
+      branchSmart
+        (equal value head) (.pure true) (contains equal value tail)
 
 /-- Keep an existing queue element, or append a new value exactly once. -/
 def enqueueNoDup {holes : Nat} {α : Type u}
@@ -170,7 +197,7 @@ theorem eval_contains {holes : Nat} {α : Type u} {β : Type v}
   | cons head tail ih =>
       apply Bool.eq_iff_iff.mpr
       rw [decide_eq_true_iff]
-      simp [contains, eval, ih, correct]
+      simp [contains, eval_branchSmart, eval, ih, correct]
 
 /--
 Evaluating guarded no-duplicate enqueue and decoding its leaves is exactly the

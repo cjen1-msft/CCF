@@ -14,9 +14,9 @@ to compile before any certificate is read. The checked fragment is deliberately 
 * entry is the canonical bootstrap or an explicit full-state template;
 * the template need not be reachable; its control fields and shape are concrete;
 * actions are clientRequest, signCommittableMessages, changeConfiguration,
-  and appendRetiredCommitted;
+  appendRetiredCommitted, and appendEntries;
 * the only observations are ``role``, ``currentTerm``, ``logLength``,
-  ``commitIndex``, ``allocated``, ``joined``, and ``submitted``;
+  ``queueLength``, ``commitIndex``, ``allocated``, ``joined``, and ``submitted``;
 * transaction identifiers may be concrete numbers or declared unknowns, and
   every unknown ranges over the declared ``transaction_count`` bound.
 
@@ -412,7 +412,7 @@ def _assurance(
                     constraint_map["supported_actions"], "supported actions"
                 )
             )
-            + " actions plus role, currentTerm, logLength, commitIndex, "
+            + " actions plus role, currentTerm, logLength, queueLength, commitIndex, "
             "allocated, joined, and submitted observations; only transaction "
             "identifiers may be symbolic"
         ),

@@ -27,6 +27,7 @@ inductive Observation (holes : Nat) where
   | role (node : Node) (value : Role)
   | currentTerm (node : Node) (value : Nat)
   | logLength (node : Node) (value : Nat)
+  | queueLength (node : Node) (value : Nat)
   | commitIndex (node : Node) (value : Nat)
   | allocated (node : Node) (value : Bool)
   | joined (node : Node) (value : Bool)
@@ -37,6 +38,7 @@ inductive Instruction (holes : Nat) where
   | signCommittableMessages (node : Node)
   | changeConfiguration (node : Node) (configuration : Finset Node)
   | appendRetiredCommitted (node : Node)
+  | appendEntries (source destination : Node) (batchEnd : Nat)
   | observation (value : Observation holes)
 
 def Instruction.isAction {holes : Nat} : Instruction holes -> Bool
@@ -44,7 +46,8 @@ def Instruction.isAction {holes : Nat} : Instruction holes -> Bool
   | _ => true
 
 def supportedActions : List String :=
-  ["clientRequest", "signCommittableMessages", "changeConfiguration", "appendRetiredCommitted"]
+  ["clientRequest", "signCommittableMessages", "changeConfiguration",
+   "appendRetiredCommitted", "appendEntries"]
 
 def Observation.Holds {holes : Nat}
     (bounds : Bounds)
@@ -53,6 +56,7 @@ def Observation.Holds {holes : Nat}
   | .role node value => (state.nodes node).role = value
   | .currentTerm node value => (state.nodes node).currentTerm = value
   | .logLength node value => (state.nodes node).log.length = value
+  | .queueLength node value => (state.network node).length = value
   | .commitIndex node value => (state.nodes node).commitIndex = value
   | .allocated node value => decide (state.allocated node) = value
   | .joined node value => decide (node ∈ state.hasJoined) = value

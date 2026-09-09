@@ -40,6 +40,12 @@ def instruction (unknowns : Array String) (json : Json) :
     | "appendRetiredCommitted" =>
         checkKeys json ["kind", "action", "node", "provenance", "rule"]
         pure (.appendRetiredCommitted (← field json "node" >>= nodeValue))
+    | "appendEntries" =>
+        checkKeys json ["kind", "action", "node", "destination", "batchEnd", "provenance", "rule"]
+        pure (.appendEntries
+          (← field json "node" >>= nodeValue)
+          (← field json "destination" >>= nodeValue)
+          (← field json "batchEnd" >>= Json.getNat?))
     | other => throw s!"unsupported action in checked trace: {other}"
 
 def decode (json : Json) : Except String Input := do

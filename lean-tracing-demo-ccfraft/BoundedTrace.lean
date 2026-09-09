@@ -8,7 +8,7 @@ import TraceInstructions
 set_option autoImplicit false
 
 /-!
-# Leader writes from a full entry-state template
+# Bounded actions from a full entry-state template
 
 Every structural field is explicit. Transaction identifiers may refer to shared
 unknowns, including identifiers already present in logs, packets, and submitted
@@ -51,6 +51,11 @@ def Follows {holes : Nat}
       BoundedState.WithinBounds bounds state /\
         Enabled state (.appendRetiredCommitted node) /\
           Follows bounds assignment (next state (.appendRetiredCommitted node)) rest
+  | .appendEntries source destination batchEnd :: rest =>
+      BoundedState.WithinBounds bounds state /\
+        Enabled state (.appendEntries source destination batchEnd) /\
+          Follows bounds assignment
+            (next state (.appendEntries source destination batchEnd)) rest
 
 def Satisfiable {holes : Nat}
     (bounds : Bounds) (entry : Template holes) (trace : List (Instruction holes)) : Prop :=

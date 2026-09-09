@@ -62,6 +62,34 @@ def writes (version : String) (actions : List Json) (limits : Json := bounds) : 
   | .error _ => true
   | .ok _ => false
 
+#guard match TraceCertificate.decode (writes "ccfraft-trace/v1"
+    [action "appendEntries" [("destination", toJson (1 : Nat)), ("batchEnd", toJson (1 : Nat))]]) with
+  | .ok input =>
+      match input.trace with
+      | [.appendEntries source destination batchEnd] =>
+          source.val == 0 && destination.val == 1 && batchEnd == 1
+      | _ => false
+  | .error _ => false
+
+#guard match TraceCertificate.decode (writes "ccfraft-trace/v1"
+    [action "appendEntries" [("destination", toJson (1 : Nat))]]) with
+  | .error _ => true
+  | .ok _ => false
+
+#guard match TraceCertificate.decode (writes "ccfraft-client-request/v2"
+    [action "appendEntries" [("destination", toJson (1 : Nat)), ("batchEnd", toJson (1 : Nat))]]) with
+  | .error _ => true
+  | .ok _ => false
+
+#guard match TraceCertificate.decode (writes "ccfraft-trace/v1"
+    [Json.mkObj [("kind", toJson "observation"), ("variable", toJson "queueLength"),
+      ("node", toJson (1 : Nat)), ("value", toJson (0 : Nat))]]) with
+  | .ok input =>
+      match input.trace with
+      | [.observation (.queueLength node value)] => node.val == 1 && value == 0
+      | _ => false
+  | .error _ => false
+
 #guard match TraceCertificate.decode
     (writes "ccfraft-trace/v1" [action "changeConfiguration"]) with
   | .error _ => true

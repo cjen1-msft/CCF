@@ -1,0 +1,1408 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CCFRaft bounded container lowering prototype</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0c111b;
+      --panel: #151d2b;
+      --panel-2: #1b2535;
+      --line: #304057;
+      --text: #edf3fb;
+      --muted: #aebbd0;
+      --accent: #5ee4ba;
+      --accent-2: #78a9ff;
+      --danger: #ff8d8d;
+      --warning: #ffd27a;
+      --shadow: 0 14px 40px rgb(0 0 0 / 25%);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 15% -10%, #1a3150 0, transparent 35%), var(--bg);
+      color: var(--text);
+      font: 15px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+    a { color: var(--accent-2); }
+    code, pre, .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+    .shell { width: min(1500px, calc(100% - 32px)); margin: 0 auto; padding: 34px 0 80px; }
+    header { display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: start; }
+    h1 { font-size: clamp(28px, 4vw, 48px); line-height: 1.05; margin: 10px 0 14px; letter-spacing: -0.035em; }
+    h2 { margin: 0 0 14px; font-size: 20px; }
+    h3 { margin: 0 0 10px; font-size: 15px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+    p { margin: 0 0 12px; }
+    .lede { color: var(--muted); max-width: 900px; font-size: 17px; }
+    .badge { display: inline-flex; border: 1px solid var(--accent); color: var(--accent); border-radius: 999px; padding: 5px 10px; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
+    .workspace { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; white-space: nowrap; }
+    .notice { margin: 24px 0; border-left: 4px solid var(--warning); background: #2a251a; color: #f6e7bd; padding: 14px 18px; border-radius: 0 10px 10px 0; }
+    .grid { display: grid; gap: 16px; }
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.metrics { grid-template-columns: repeat(5, minmax(120px, 1fr)); }
+    .card { background: linear-gradient(145deg, var(--panel), #111927); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 18px; min-width: 0; }
+    .section { margin-top: 20px; }
+    .rep-picker { display: flex; flex-wrap: wrap; gap: 8px; }
+    .rep-picker button, .scenario-tabs button {
+      border: 1px solid var(--line); background: var(--panel-2); color: var(--muted);
+      border-radius: 9px; padding: 9px 13px;
+    }
+    .rep-picker button.active, .scenario-tabs button.active {
+      color: #07130f; background: var(--accent); border-color: var(--accent);
+    }
+    .metric { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+    .metric .value { font-size: 23px; font-weight: 700; color: var(--accent); }
+    .metric .label { color: var(--muted); font-size: 12px; }
+    .controls { display: grid; gap: 12px; }
+    .control-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
+    label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+    input, select {
+      color: var(--text); background: #0c1420; border: 1px solid var(--line); border-radius: 8px;
+      padding: 8px 10px; min-width: 90px;
+    }
+    .action {
+      color: var(--text); background: #22324a; border: 1px solid #48617f;
+      border-radius: 8px; padding: 8px 11px;
+    }
+    .action.primary { color: #07130f; background: var(--accent); border-color: var(--accent); font-weight: 700; }
+    .action.danger { color: #2a0808; background: var(--danger); border-color: var(--danger); }
+    .action:disabled { opacity: .45; cursor: not-allowed; }
+    .scenario-tabs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; }
+    .walkthrough { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-height: 145px; }
+    .steps { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .step-done { opacity: .48; }
+    .state-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 10px; }
+    .status { border-radius: 999px; padding: 4px 9px; font-size: 12px; border: 1px solid var(--line); color: var(--muted); }
+    .status.ok { color: var(--accent); border-color: var(--accent); }
+    .status.error { color: var(--danger); border-color: var(--danger); }
+    .summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    .pill { background: #0d1724; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 4px 9px; font-size: 12px; }
+    pre {
+      margin: 0; padding: 14px; background: #080d15; border: 1px solid #26364c; border-radius: 9px;
+      color: #cde0f7; max-height: 530px; overflow: auto; font-size: 12px; line-height: 1.45;
+    }
+    .obligations { margin: 8px 0 0; padding-left: 20px; color: var(--muted); }
+    .error-box { color: #ffe1e1; background: #351719; border: 1px solid #703234; padding: 10px; border-radius: 8px; margin-bottom: 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 10px 9px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; cursor: pointer; }
+    tr.selected { background: #17342f; }
+    tbody tr { cursor: pointer; }
+    .small { font-size: 12px; color: var(--muted); }
+    .evidence strong { color: var(--accent); }
+    .history { display: grid; gap: 7px; max-height: 180px; overflow: auto; }
+    .history div { padding-bottom: 7px; border-bottom: 1px solid var(--line); color: var(--muted); }
+    .history b { color: var(--text); }
+    @media (max-width: 1000px) {
+      header, .grid.two { grid-template-columns: 1fr; }
+      .grid.metrics { grid-template-columns: repeat(2, 1fr); }
+      .workspace { white-space: normal; }
+    }
+    @media (max-width: 560px) {
+      .shell { width: min(100% - 18px, 1500px); padding-top: 20px; }
+      .grid.metrics { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <span class="badge">Throwaway logic prototype</span>
+        <h1>Prove the footprint, then lower Raft</h1>
+        <p class="lede">Abstractly execute an ordered trace, derive footprint X, and inspect its <code>FootprintSufficient</code> certificate before comparing four bounded representations.</p>
+      </div>
+      <a class="workspace" href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency">Open workspace</a>
+    </header>
+
+    <div class="notice">
+      <strong>Production rule.</strong> Bounded SMT generation is allowed only after abstract evaluation derives X and certifies <code>FootprintSufficient trace skeleton entryConstraint X</code>. A larger retry limit is diagnostic, never the completeness story.
+    </div>
+
+    <section class="card">
+      <h2>Choose a representation</h2>
+      <div class="rep-picker" id="repPicker"></div>
+      <p class="small" id="repDescription" style="margin-top:12px"></p>
+    </section>
+
+    <section class="grid two section">
+      <div class="card">
+        <div class="state-head">
+          <h2>Sufficiency certificate</h2>
+          <span class="status" id="certificateStatus"></span>
+        </div>
+        <div id="certificateError"></div>
+        <pre id="certificate"></pre>
+      </div>
+      <div class="card">
+        <h2>Derived footprint X</h2>
+        <div class="summary" id="footprintSummary"></div>
+        <pre id="footprint"></pre>
+      </div>
+    </section>
+
+    <section class="card section">
+      <div class="state-head">
+        <h2>Monotone support plan</h2>
+        <span class="status ok">compact S0, sufficient before every step</span>
+      </div>
+      <p class="small">Support identities and knowledge only grow. Canonical entries and messages may become nonlive after truncation or dequeue. The final carrier is the union of this plan, not a full S0 buffer.</p>
+      <pre id="supportTimeline"></pre>
+    </section>
+
+    <section class="grid metrics section" id="metrics"></section>
+
+    <section class="grid two section">
+      <div class="card">
+        <h2>Free play</h2>
+        <div class="controls">
+          <div class="control-row">
+            <label>Diagnostic log ceiling
+              <input id="logCap" type="number" min="2" max="64" value="6">
+            </label>
+            <label>Diagnostic queue ceiling
+              <input id="queueCap" type="number" min="2" max="64" value="6">
+            </label>
+            <button class="action danger" data-command="applyCaps">Enable diagnostic ceiling</button>
+            <button class="action" data-command="disableCaps">Disable ceiling</button>
+          </div>
+          <div class="control-row">
+            <label>Entry term
+              <input id="entryTerm" type="number" min="1" value="2">
+            </label>
+            <label>Entry kind
+              <select id="entryKind">
+                <option value="tx">transaction</option>
+                <option value="signature">signature</option>
+                <option value="config">reconfiguration</option>
+              </select>
+            </label>
+            <button class="action primary" data-command="append">Append entry</button>
+            <button class="action" data-command="replace">Replace suffix from index 2</button>
+          </div>
+          <div class="control-row">
+            <button class="action" data-command="large">Move to index 1,000,003</button>
+            <button class="action" data-command="prefix">Query prefix equality</button>
+            <button class="action" data-command="summaries">Query history summaries</button>
+            <button class="action" data-command="unknownQueue">Make entry queue unknown</button>
+            <button class="action" data-command="referenceOld">Reference old index 500,000</button>
+            <button class="action danger" data-command="pin">Require five exact log cells</button>
+          </div>
+          <div class="control-row">
+            <button class="action" data-command="enqueueB">Enqueue source B</button>
+            <button class="action" data-command="enqueueA">Enqueue source A</button>
+            <button class="action" data-command="duplicate">Enqueue duplicate tail</button>
+            <button class="action" data-command="dequeueA">Receive first from A</button>
+            <button class="action danger" data-command="fillQueue">Require five queue messages</button>
+          </div>
+          <div class="control-row">
+            <button class="action" data-command="reset">Reset state</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Guided scenarios</h2>
+        <div class="scenario-tabs" id="scenarioTabs"></div>
+        <div class="walkthrough" id="walkthrough"></div>
+      </div>
+    </section>
+
+    <section class="grid two section">
+      <div class="card">
+        <div class="state-head">
+          <h2>Canonical observable state</h2>
+          <span class="status ok">generic canonical semantics</span>
+        </div>
+        <div class="summary" id="semanticSummary"></div>
+        <pre id="semanticState"></pre>
+      </div>
+      <div class="card">
+        <div class="state-head">
+          <h2>Full bounded representation state</h2>
+          <span class="status" id="boundedStatus"></span>
+        </div>
+        <div id="boundedError"></div>
+        <pre id="boundedState"></pre>
+      </div>
+    </section>
+
+    <section class="grid two section">
+      <div class="card">
+        <h2>Last transition</h2>
+        <div id="transition"></div>
+      </div>
+      <div class="card">
+        <h2>Current proof obligations</h2>
+        <ul class="obligations" id="obligations"></ul>
+      </div>
+    </section>
+
+    <section class="card section">
+      <h2>Compare all representations</h2>
+      <p class="small">Click a row to switch. Each row lowers the same certified X. Symbolic fields are structural estimates, not solver timings.</p>
+      <div style="overflow:auto">
+        <table id="comparison">
+          <thead>
+            <tr>
+              <th data-sort="name">Representation</th>
+              <th data-sort="cells">Active cells</th>
+              <th data-sort="fields">Symbolic fields</th>
+              <th data-sort="writes">Last write footprint</th>
+              <th>Lookup path</th>
+              <th data-sort="proofs">Proof obligations</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="grid two section">
+      <div class="card evidence">
+        <h2>Measured repository evidence</h2>
+        <p><strong>7.35 MB</strong> cheap formula versus <strong>127.57 MB</strong> naive full-state formula.</p>
+        <p><strong>121,419</strong> versus <strong>2,212,107</strong> array selects. Both declare 1,539 arrays.</p>
+        <p><strong>3,857 ms</strong> solver median and 4,661 ms p95 for the cheap footprint versus <strong>102,710 ms</strong> for naive full state.</p>
+        <p><strong>669 KB</strong> versus <strong>1.92 MB</strong> witnesses. Decode was 798 ms versus 13,249 ms.</p>
+        <p class="small">Jump to
+          <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFRaft/Model.lean:562:1">canonical log scans</a>,
+          <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFRaft/Model.lean:658:1">canonical queue operations</a>,
+          <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFRaft/naive_full_state_smt.py:590:1">SMT state arrays</a>, or
+          <a href="vscode://vscode-remote/wsl+AzureLinux3.0/home/cjen1-msft/CCF/.worktrees/veil-consistency/lean/CCFRaft/naive_full_state_smt.py:1289:1">queue compaction</a>.
+        </p>
+        <p class="small">Source: checked artifacts under <code>lean/.lake/build/{cheap,naive}-full-state-smt</code>. The cheap footprint is hardcoded and unproved. These are cost measurements, not a completeness claim or controlled layout benchmark.</p>
+      </div>
+      <div class="card">
+        <h2>Action history</h2>
+        <div class="history" id="history"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // Pure prototype model. This block has no DOM access.
+    const ContainerModel = (() => {
+      const REPS = {
+        fixed: {
+          name: "Fixed length + buffers",
+          description: "Good only after X proves a dense log range or finite queue occupancy. Unknown entry queues and large full prefixes do not supply such a bound."
+        },
+        linked: {
+          name: "Linked cells",
+          description: "Addressed cells with next pointers. Small local updates, but bounded pointer chase, reachability, acyclicity, and canonical order enter the formula."
+        },
+        sparse: {
+          name: "Sparse absolute maps",
+          description: "Exact log cells keyed by physical index. Large indices are cheap, but omitted regions do not prove absence or rightmost-history queries."
+        },
+        hybrid: {
+          name: "Hybrid: suffix + sparse + summaries",
+          description: "Dense log suffix, older absolute cells, and query summaries. Queues use fixed ranks when known finite, or exact tokens plus ordered gaps when entry state is unknown."
+        }
+      };
+
+      const clone = value => JSON.parse(JSON.stringify(value));
+      const keySort = object => Object.keys(object).map(Number).sort((a, b) => a - b);
+      const uniqueSorted = values => [...new Set(values)].sort((a, b) => a - b);
+      const makeEntry = (term, kind, label) => ({
+        term,
+        kind,
+        value: kind === "config" ? { members: [0, 1] } : label
+      });
+      const makeMessage = (source, serial) => ({
+        tag: "appendEntriesRequest",
+        source,
+        destination: "D",
+        term: 2,
+        prevLogIndex: Math.max(0, serial - 1),
+        entry: `entry-${serial}`
+      });
+      const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+
+      function semanticInitial() {
+        return {
+          log: {
+            absoluteLength: 3,
+            knownEntries: {
+              1: makeEntry(1, "config", "bootstrap"),
+              2: makeEntry(1, "tx", "tx-2"),
+              3: makeEntry(2, "signature", "sig-3")
+            },
+            requiredExact: [3],
+            opaquePrefixThrough: 2,
+            prefixClass: "bootstrap-prefix"
+          },
+          queue: [],
+          queueTokens: [],
+          entryQueue: { kind: "known-empty", opaqueGap: false },
+          maxQueueOccupancy: 0,
+          lastQuery: { kind: "none", result: "not run" },
+          nextMessage: 1
+        };
+      }
+
+      function initialSupport(semantic) {
+        return {
+          logKeys: [...semantic.log.requiredExact],
+          logRanges: [],
+          logSummaries: ["absolute-length", "opaque-prefix:1..2"],
+          queueTokens: [],
+          queueGaps: [],
+          equalityFacts: [],
+          nonliveProvenance: []
+        };
+      }
+
+      function addUnique(list, value) {
+        if (!list.some(item => same(item, value))) list.push(clone(value));
+      }
+
+      function closeSupport(support, semantic, action) {
+        const next = clone(support);
+        const demand = [];
+        const addLogKey = index => {
+          if (index > 0 && index <= semantic.log.absoluteLength && !next.logKeys.includes(index)) {
+            next.logKeys.push(index);
+            next.logKeys.sort((a, b) => a - b);
+            demand.push(`refine opaque log index ${index}`);
+          }
+        };
+        if (action.type === "REPLACE_SUFFIX") {
+          addLogKey(action.from - 1);
+          for (let index = action.from; index <= semantic.log.absoluteLength; index += 1) addLogKey(index);
+          addUnique(next.logRanges, [action.from, semantic.log.absoluteLength]);
+          demand.push("close overlap, conflict, and replacement reads");
+        } else if (action.type === "REFERENCE_INDEX") {
+          addLogKey(action.index);
+          addUnique(next.logSummaries, `split opaque prefix around ${action.index}`);
+        } else if (action.type === "QUERY_PREFIX") {
+          addUnique(next.logSummaries, `prefix equality through ${action.frontier}`);
+          demand.push("add prefix equality summary");
+        } else if (action.type === "QUERY_SUMMARIES") {
+          addUnique(next.logSummaries, "rightmost signature with no-later interval");
+          addUnique(next.logSummaries, "latest configuration with no-later interval");
+          demand.push("add history query witnesses");
+        } else if (action.type === "APPEND") {
+          demand.push(`read absolute length ${semantic.log.absoluteLength}`);
+        } else if (action.type === "ENQUEUE") {
+          addUnique(next.equalityFacts, `message equality: ${JSON.stringify(action.message)}`);
+          demand.push("decide duplicate across exact tokens and opaque gaps");
+        } else if (action.type === "DEQUEUE_SOURCE") {
+          addUnique(next.queueGaps, `no source ${action.source} before selected token`);
+          demand.push(`select first token from source ${action.source}`);
+        } else if (action.type === "SET_UNKNOWN_QUEUE") {
+          addUnique(next.queueGaps, "opaque entry queue gap");
+          demand.push("introduce ordered unknown entry gap");
+        }
+        return { support: next, demand };
+      }
+
+      function transferSupport(closed, before, after, action) {
+        const next = clone(closed);
+        const effects = [];
+        if (action.type === "APPEND") {
+          addUnique(next.logKeys, after.log.absoluteLength);
+          effects.push(`activate new tail key ${after.log.absoluteLength}`);
+        } else if (action.type === "REPLACE_SUFFIX") {
+          for (let index = action.from; index <= after.log.absoluteLength; index += 1) addUnique(next.logKeys, index);
+          for (const index of next.logKeys) {
+            if (index > after.log.absoluteLength) addUnique(next.nonliveProvenance, `truncated log key ${index}`);
+          }
+          effects.push("retain removed keys as nonlive provenance");
+          effects.push("invalidate or version summaries crossing the cut");
+        } else if (action.type === "ENQUEUE") {
+          addUnique(next.queueTokens, JSON.stringify(action.message));
+          effects.push("add token on nonduplicate branch; equality branch adds no live token");
+        } else if (action.type === "DEQUEUE_SOURCE") {
+          const selected = before.queue.find(message => message.source === action.source);
+          if (selected) addUnique(next.nonliveProvenance, `dequeued token ${JSON.stringify(selected)}`);
+          effects.push("join adjacent ordered gaps and retain selected token provenance");
+        } else if (action.type === "LARGE_INDEX" || action.type === "PIN_EXACT_RANGE") {
+          for (const index of after.log.requiredExact) addUnique(next.logKeys, index);
+          effects.push("extend support with trace-demanded absolute keys");
+        } else if (action.type === "FILL_QUEUE") {
+          for (const message of after.queueTokens) addUnique(next.queueTokens, JSON.stringify(message));
+          effects.push("extend support with every generated token");
+        }
+        next.logKeys.sort((a, b) => a - b);
+        return { support: next, effects };
+      }
+
+      function supportLe(left, right) {
+        const contains = (items, value) => items.some(item => same(item, value));
+        return ["logKeys", "logRanges", "logSummaries", "queueTokens", "queueGaps", "equalityFacts", "nonliveProvenance"]
+          .every(field => left[field].every(value => contains(right[field], value)));
+      }
+
+      function abstractEvaluate(semantic, trace, support, supportTimeline) {
+        const log = semantic.log;
+        const exactIndices = uniqueSorted(support.logKeys);
+        const known = keySort(log.knownEntries);
+        const configurations = known.filter(index => log.knownEntries[index].kind === "config");
+        const signatures = known.filter(index => log.knownEntries[index].kind === "signature");
+        const hasPrefixQuery = trace.some(step => step.action === "QUERY_PREFIX");
+        const hasHistoryQuery = trace.some(step => step.action === "QUERY_SUMMARIES");
+        const receives = trace.filter(step => step.action === "DEQUEUE_SOURCE");
+        const enqueues = trace.filter(step => step.action === "ENQUEUE" || step.action === "DUPLICATE_TAIL");
+        const summaryCount = (hasPrefixQuery ? 1 : 0) + (hasHistoryQuery ? 2 : 0) +
+          (log.opaquePrefixThrough > 0 ? 1 : 0) + (receives.length ? 2 : 0);
+        let suffixLength = 0;
+        for (let index = log.absoluteLength; exactIndices.includes(index); index -= 1) suffixLength += 1;
+        const unknownQueue = semantic.entryQueue.kind === "unknown";
+        const gapCount = unknownQueue ? semantic.queueTokens.length + 1 : 0;
+        const footprint = {
+          schema: "ccfraft-trace-footprint/prototype-v1",
+          derivedFrom: {
+            orderedSkeletonSteps: trace.length,
+            entryConstraint: unknownQueue ? "unknown ordered destination queue" : "known-empty destination queue",
+            compactS0Support: supportTimeline[0]?.before || supportTimeline[0]?.after
+          },
+          actionAlternatives: trace.map((step, index) => ({
+            step: index,
+            action: step.action,
+            branches: step.action === "DEQUEUE_SOURCE"
+              ? ["no matching source", "selected request", "selected response"]
+              : step.action === "ENQUEUE"
+                ? ["exact duplicate", "append new token"]
+                : ["deterministic abstract transfer"]
+          })),
+          log: {
+            absoluteLength: log.absoluteLength,
+            exactAbsoluteIndices: exactIndices,
+            denseSuffix: { base: suffixLength ? log.absoluteLength - suffixLength + 1 : log.absoluteLength + 1, length: suffixLength },
+            overlapAndReplacementRanges: trace.filter(step => step.action === "REPLACE_SUFFIX").map(step => step.range),
+            prefixEquality: hasPrefixQuery ? [{ through: log.opaquePrefixThrough || log.absoluteLength, class: log.prefixClass }] : [],
+            configurationHistory: configurations,
+            rightmostSignatureQueries: hasHistoryQuery ? [{
+              frontier: log.absoluteLength,
+              witness: signatures.at(-1) || 0,
+              noLaterInterval: signatures.length ? [signatures.at(-1) + 1, log.absoluteLength] : [1, log.absoluteLength]
+            }] : [],
+            receiveBranchQueries: receives.length ? [
+              "previous-index term",
+              "overlap term equality",
+              "full entry equality for extension",
+              "rightmost signature through leader frontier",
+              "rightmost term match for NACK"
+            ] : [],
+            summaryCount
+          },
+          queue: unknownQueue ? {
+            form: "ordered exact tokens plus opaque gaps",
+            exactTokens: semantic.queueTokens.map((message, rank) => ({ token: `m${rank}`, message })),
+            gaps: Array.from({ length: gapCount }, (_, gap) => ({
+              gap: `g${gap}`,
+              length: "symbolic Nat",
+              absentSources: receives.map(step => step.source),
+              equalityFacts: enqueues.map((_, index) => `enqueue-equality-class-${index}`)
+            })),
+            maximumCanonicalLength: "unbounded",
+            boundedCarrierCells: semantic.queueTokens.length + gapCount
+          } : {
+            form: "exact compact rank buffer",
+            initialOccupancy: 0,
+            exactTokens: semantic.queue.map((message, rank) => ({ token: `m${rank}`, rank, message })),
+            maximumOccupancyAcrossPaths: semantic.maxQueueOccupancy,
+            boundedCarrierCells: Math.max(1, semantic.maxQueueOccupancy)
+          },
+          hiddenActionClosure: {
+            status: "finite in this prototype skeleton",
+            alternativesCovered: receives.length * 3 + Math.max(0, trace.length - receives.length)
+          },
+          supportInvariant: {
+            monotone: supportTimeline.every(step => step.monotone),
+            sufficientBeforeEveryConcreteStep: supportTimeline.every(step => step.preStepSufficient),
+            statement: "supportBefore <= supportClosed <= supportAfter; supportClosed is sufficient before the concrete step",
+            semanticGrowthNotBufferGrowth: true,
+            compilation: {
+              finalCarrierIsUnionOfSupportIdentities: true,
+              s0UsesOnlyCompactInitialSupport: true,
+              laterCarrierCellsInactiveAndUnconstrainedAtS0: true
+            }
+          },
+          supportTimeline,
+          resourceCells: {
+            log: Math.max(1, exactIndices.length + summaryCount),
+            queue: unknownQueue ? semantic.queueTokens.length + gapCount : Math.max(1, semantic.maxQueueOccupancy)
+          }
+        };
+        return footprint;
+      }
+
+      function shapeFor(representation, footprint, semantic) {
+        const unknownQueue = footprint.queue.maximumCanonicalLength === "unbounded";
+        if (representation === "fixed" || representation === "linked") {
+          return { log: Math.max(2, semantic.log.absoluteLength), queue: Math.max(2, footprint.resourceCells.queue), unknownQueue };
+        }
+        if (representation === "sparse") {
+          return { log: Math.max(2, footprint.log.exactAbsoluteIndices.length), queue: Math.max(2, footprint.resourceCells.queue), unknownQueue };
+        }
+        return { log: Math.max(2, footprint.resourceCells.log), queue: Math.max(2, footprint.resourceCells.queue), unknownQueue: false };
+      }
+
+      function certify(footprint, representation, diagnostic) {
+        const shape = shapeFor(representation, footprint, {
+          log: { absoluteLength: footprint.log.absoluteLength }
+        });
+        const exceeded = diagnostic.enabled && (
+          shape.log > diagnostic.log || shape.queue > diagnostic.queue
+        );
+        return {
+          theorem: "FootprintSufficient trace skeleton entryConstraint X",
+          sufficient: true,
+          coverage: {
+            allOrderedSteps: true,
+            allFiniteActionAlternatives: true,
+            logReadsHaveExactCellOrSummary: true,
+            queueReadsHaveExactTokenOrOrderedGap: true,
+            summaryCarryUpdateInvalidationRecorded: true,
+            concretizesProjectionAndCompletion: true,
+            forwardAndBackwardStepCorrespondence: true
+          },
+          authority: "throwaway prototype certificate; production requires a Lean theorem or checked theorem instance",
+          boundedSmtGeneration: exceeded ? "blocked by diagnostic resource ceiling" : "authorized from certified X",
+          classification: exceeded ? "INCONCLUSIVE_RESOURCE" : "CERTIFIED_FOOTPRINT",
+          diagnosticCeiling: clone(diagnostic),
+          representationCells: shape
+        };
+      }
+
+      function initial(representation = "hybrid", diagnostic = { enabled: false, log: 6, queue: 6 }) {
+        const semantic = semanticInitial();
+        const support = initialSupport(semantic);
+        const state = {
+          representation,
+          diagnostic: clone(diagnostic),
+          capacities: { log: 6, queue: 6 },
+          semantic,
+          support,
+          supportTimeline: [{
+            step: "S0",
+            action: "existential entry state",
+            before: clone(support),
+            closed: clone(support),
+            after: clone(support),
+            demand: ["absolute length, tail entry 3, opaque-prefix summary 1..2"],
+            effects: [],
+            monotone: true,
+            preStepSufficient: true
+          }],
+          trace: [],
+          lastBeforeSemantic: clone(semantic),
+          history: [],
+          lastAction: { type: "RESET" },
+          bounded: null,
+          transition: null
+        };
+        return refresh(state, { type: "RESET" });
+      }
+
+      function applySemantic(semantic, action) {
+        const next = clone(semantic);
+        const log = next.log;
+        switch (action.type) {
+          case "APPEND": {
+            const index = log.absoluteLength + 1;
+            log.absoluteLength = index;
+            log.knownEntries[index] = makeEntry(action.term, action.kind, `${action.kind}-${index}`);
+            log.requiredExact = uniqueSorted([...log.requiredExact, index]);
+            next.lastQuery = { kind: "append", result: `entry ${index} appended` };
+            break;
+          }
+          case "REPLACE_SUFFIX": {
+            const from = action.from;
+            for (const index of keySort(log.knownEntries)) {
+              if (index >= from) delete log.knownEntries[index];
+            }
+            log.absoluteLength = from - 1;
+            action.entries.forEach((entry, offset) => {
+              const index = from + offset;
+              log.knownEntries[index] = clone(entry);
+              log.absoluteLength = index;
+            });
+            log.requiredExact = uniqueSorted([
+              ...log.requiredExact.filter(i => i < from),
+              ...action.entries.map((_, offset) => from + offset)
+            ]);
+            next.lastQuery = { kind: "suffix replacement", result: `replaced from ${from} through ${log.absoluteLength}` };
+            break;
+          }
+          case "LARGE_INDEX": {
+            const retainedSupport = [...log.requiredExact];
+            next.log = {
+              absoluteLength: 1000003,
+              knownEntries: {
+                1: makeEntry(1, "config", "bootstrap"),
+                1000000: makeEntry(7, "signature", "sig-1000000"),
+                1000001: makeEntry(7, "tx", "tx-1000001"),
+                1000002: makeEntry(8, "config", "config-1000002"),
+                1000003: makeEntry(8, "signature", "sig-1000003")
+              },
+              requiredExact: uniqueSorted([...retainedSupport, 1000000, 1000001, 1000002, 1000003]),
+              opaquePrefixThrough: 999999,
+              prefixClass: "opaque-equal-prefix-999999"
+            };
+            next.lastQuery = { kind: "large index", result: "physical indices preserved" };
+            break;
+          }
+          case "QUERY_PREFIX": {
+            const frontier = action.frontier || Math.max(1, log.absoluteLength - 2);
+            const gaps = frontier - keySort(log.knownEntries).filter(i => i <= frontier).length;
+            next.lastQuery = gaps > 0
+              ? { kind: "prefix equality", frontier, result: `needs prefix class for ${gaps} omitted positions` }
+              : { kind: "prefix equality", frontier, result: "equal from exact cells" };
+            break;
+          }
+          case "QUERY_SUMMARIES": {
+            const entries = keySort(log.knownEntries).map(index => [index, log.knownEntries[index]]);
+            const configs = entries.filter(([, entry]) => entry.kind === "config").map(([index, entry]) => ({ index, members: entry.value.members || [0, 1] }));
+            const signatures = entries.filter(([, entry]) => entry.kind === "signature").map(([index]) => index);
+            next.lastQuery = {
+              kind: "history summaries",
+              result: {
+                latestKnownConfiguration: configs.at(-1) || { index: 0, members: [0] },
+                rightmostKnownSignature: signatures.at(-1) || 0,
+                omittedPrefixThrough: log.opaquePrefixThrough,
+                requiresNoLaterWitness: log.opaquePrefixThrough > 0
+              }
+            };
+            break;
+          }
+          case "PIN_EXACT_RANGE": {
+            const count = action.count || 5;
+            const retainedSupport = [...log.requiredExact];
+            log.absoluteLength = count;
+            log.knownEntries = {};
+            log.requiredExact = [...retainedSupport];
+            for (let index = 1; index <= count; index += 1) {
+              log.knownEntries[index] = makeEntry(2, index % 3 === 0 ? "signature" : "tx", `pinned-${index}`);
+              if (!log.requiredExact.includes(index)) log.requiredExact.push(index);
+            }
+            log.opaquePrefixThrough = 0;
+            next.lastQuery = { kind: "capacity", result: `${count} exact cells required` };
+            break;
+          }
+          case "REFERENCE_INDEX": {
+            const index = action.index;
+            if (index > 0 && index <= log.absoluteLength) {
+              if (!log.knownEntries[index]) {
+                log.knownEntries[index] = {
+                  term: "symbolic",
+                  kind: "refined-from-opaque-prefix",
+                  value: `entry@${index}`
+                };
+              }
+              log.requiredExact = uniqueSorted([...log.requiredExact, index]);
+              next.lastQuery = { kind: "old absolute index", result: `support refined at ${index}; canonical state unchanged` };
+            } else {
+              next.lastQuery = { kind: "old absolute index", result: `index ${index} is outside the canonical log` };
+            }
+            break;
+          }
+          case "ENQUEUE": {
+            if (!next.queueTokens.some(message => same(message, action.message))) {
+              next.queueTokens.push(clone(action.message));
+            }
+            if (next.queue.some(message => same(message, action.message))) {
+              next.lastQuery = { kind: "coalescing", result: "exact duplicate suppressed" };
+            } else {
+              next.queue.push(clone(action.message));
+              next.lastQuery = { kind: "enqueue", result: `source ${action.message.source} appended` };
+            }
+            next.maxQueueOccupancy = Math.max(next.maxQueueOccupancy, next.queue.length);
+            next.nextMessage += 1;
+            break;
+          }
+          case "DUPLICATE_TAIL": {
+            if (next.queue.length === 0) {
+              next.lastQuery = { kind: "coalescing", result: "queue empty" };
+            } else {
+              const message = clone(next.queue.at(-1));
+              if (!next.queue.some(candidate => same(candidate, message))) next.queue.push(message);
+              next.lastQuery = { kind: "coalescing", result: "exact duplicate suppressed" };
+            }
+            break;
+          }
+          case "DEQUEUE_SOURCE": {
+            const position = next.queue.findIndex(message => message.source === action.source);
+            if (position < 0) {
+              next.lastQuery = { kind: "receive", result: `no message from ${action.source}` };
+            } else {
+              const [message] = next.queue.splice(position, 1);
+              next.lastQuery = { kind: "receive", result: `removed first ${action.source} at rank ${position}`, message };
+            }
+            break;
+          }
+          case "FILL_QUEUE": {
+            next.queue = [];
+            next.queueTokens = [];
+            for (let index = 0; index < (action.count || 5); index += 1) {
+              const message = makeMessage(index % 2 ? "A" : "B", 100 + index);
+              next.queue.push(message);
+              next.queueTokens.push(clone(message));
+            }
+            next.maxQueueOccupancy = Math.max(next.maxQueueOccupancy, next.queue.length);
+            next.lastQuery = { kind: "capacity", result: `${next.queue.length} queue cells required` };
+            break;
+          }
+          case "SET_UNKNOWN_QUEUE": {
+            next.entryQueue = { kind: "unknown", opaqueGap: true };
+            next.lastQuery = { kind: "entry constraint", result: "entry queue is an unbounded ordered gap" };
+            break;
+          }
+        }
+        return next;
+      }
+
+      function fixedRepresentation(semantic, capacities) {
+        const log = semantic.log;
+        const errors = [];
+        if (log.absoluteLength > capacities.log) errors.push(`absolute log length ${log.absoluteLength} exceeds dense capacity ${capacities.log}`);
+        if (semantic.queue.length > capacities.queue) errors.push(`queue length ${semantic.queue.length} exceeds capacity ${capacities.queue}`);
+        if (capacities.unknownQueue) errors.push("unknown entry queue has no finite canonical length; use ordered gaps or strengthen EntryConstraint");
+        const slots = [];
+        for (let index = 1; index <= Math.min(capacities.log, 32); index += 1) {
+          slots.push({
+            index,
+            active: index <= log.absoluteLength,
+            entry: index <= log.absoluteLength ? (log.knownEntries[index] || "opaque symbolic entry") : "unused"
+          });
+        }
+        const queueSlots = [];
+        for (let rank = 0; rank < capacities.queue; rank += 1) {
+          queueSlots.push({ rank, active: rank < semantic.queue.length, message: semantic.queue[rank] || "unused" });
+        }
+        return {
+          kind: "fixed",
+          errors,
+          log: { length: log.absoluteLength, requiredCapacity: capacities.log, displayedSlots: slots.length, displayTruncated: capacities.log > slots.length, slots },
+          queue: { length: semantic.queue.length, capacity: capacities.queue, slots: queueSlots }
+        };
+      }
+
+      function linkedRepresentation(semantic, capacities) {
+        const log = semantic.log;
+        const exact = keySort(log.knownEntries);
+        const errors = [];
+        if (log.absoluteLength !== exact.length) errors.push(`a complete chain needs ${log.absoluteLength} cells; only ${exact.length} exact cells exist`);
+        if (exact.length > capacities.log) errors.push(`${exact.length} log cells exceed capacity ${capacities.log}`);
+        if (semantic.queue.length > capacities.queue) errors.push(`${semantic.queue.length} queue cells exceed capacity ${capacities.queue}`);
+        if (capacities.unknownQueue) errors.push("unknown entry queue cannot be a complete finite linked chain");
+        const logCells = exact.slice(0, capacities.log).map((index, offset, all) => ({
+          address: `L${offset}`,
+          canonicalIndex: index,
+          entry: log.knownEntries[index],
+          next: offset + 1 < all.length ? `L${offset + 1}` : null
+        }));
+        const queueCells = semantic.queue.slice(0, capacities.queue).map((message, offset, all) => ({
+          address: `Q${offset}`,
+          message,
+          next: offset + 1 < all.length ? `Q${offset + 1}` : null
+        }));
+        return {
+          kind: "linked",
+          errors,
+          log: { length: log.absoluteLength, head: logCells[0]?.address || null, tail: logCells.at(-1)?.address || null, cells: logCells, freeCells: Math.max(0, capacities.log - logCells.length) },
+          queue: { length: semantic.queue.length, head: queueCells[0]?.address || null, tail: queueCells.at(-1)?.address || null, cells: queueCells, freeCells: Math.max(0, capacities.queue - queueCells.length) }
+        };
+      }
+
+      function sparseRepresentation(semantic, capacities) {
+        const log = semantic.log;
+        const required = uniqueSorted(log.requiredExact);
+        const errors = [];
+        if (required.length > capacities.log) errors.push(`${required.length} required exact keys exceed sparse capacity ${capacities.log}`);
+        if (semantic.queue.length > capacities.queue) errors.push(`${semantic.queue.length} ranked messages exceed capacity ${capacities.queue}`);
+        if (capacities.unknownQueue) errors.push("sparse ranks do not represent opaque ordered queue gaps");
+        return {
+          kind: "sparse",
+          errors,
+          log: {
+            absoluteLength: log.absoluteLength,
+            exactCells: required.slice(0, capacities.log).map(absoluteIndex => ({
+              absoluteIndex,
+              entry: log.knownEntries[absoluteIndex] || { status: "nonlive provenance or not yet materialized at this state" }
+            })),
+            opaquePrefixThrough: log.opaquePrefixThrough,
+            missingFacts: ["no-later signature", "latest configuration", "term monotonicity across omitted ranges"]
+          },
+          queue: {
+            length: semantic.queue.length,
+            rankMap: Object.fromEntries(semantic.queue.slice(0, capacities.queue).map((message, rank) => [rank, message]))
+          }
+        };
+      }
+
+      function hybridRepresentation(semantic, capacities) {
+        const log = semantic.log;
+        const required = uniqueSorted(log.requiredExact);
+        const errors = [];
+        if (required.length > capacities.log) errors.push(`${required.length} exact cells exceed combined suffix and sparse capacity ${capacities.log}`);
+        if (semantic.queue.length > capacities.queue) errors.push(`${semantic.queue.length} queue cells exceed fixed capacity ${capacities.queue}`);
+        const chosen = required.slice(-capacities.log);
+        let suffix = [];
+        if (chosen.length) {
+          let index = log.absoluteLength;
+          while (chosen.includes(index) && suffix.length < capacities.log) {
+            suffix.unshift({
+              absoluteIndex: index,
+              entry: log.knownEntries[index] || { status: "supported but nonlive at this state" }
+            });
+            index -= 1;
+          }
+        }
+        const suffixSet = new Set(suffix.map(cell => cell.absoluteIndex));
+        const olderCells = chosen.filter(index => !suffixSet.has(index)).map(absoluteIndex => ({
+          absoluteIndex,
+          entry: log.knownEntries[absoluteIndex] || { status: "nonlive provenance or pending later refinement" }
+        }));
+        const known = keySort(log.knownEntries);
+        const configurations = known.filter(index => log.knownEntries[index].kind === "config");
+        const signatures = known.filter(index => log.knownEntries[index].kind === "signature");
+        const queueSlots = [];
+        if (semantic.entryQueue.kind === "unknown") {
+          for (let rank = 0; rank <= semantic.queueTokens.length; rank += 1) {
+            queueSlots.push({
+              carrier: `g${rank}`,
+              kind: "opaque ordered gap",
+              length: "symbolic Nat",
+              absentSources: stateSafeAbsentSources(semantic)
+            });
+            if (rank < semantic.queueTokens.length) {
+              queueSlots.push({ carrier: `m${rank}`, kind: "exact message token", message: semantic.queueTokens[rank] });
+            }
+          }
+        } else {
+          for (let rank = 0; rank < capacities.queue; rank += 1) {
+            queueSlots.push({ rank, active: rank < semantic.queue.length, message: semantic.queue[rank] || "unused" });
+          }
+        }
+        return {
+          kind: "hybrid",
+          errors,
+          log: {
+            absoluteLength: log.absoluteLength,
+            suffixBase: suffix[0]?.absoluteIndex || log.absoluteLength + 1,
+            suffixLength: suffix.length,
+            suffix,
+            olderExactCells: olderCells,
+            summaries: {
+              opaquePrefix: { through: log.opaquePrefixThrough, equivalenceClass: log.prefixClass },
+              latestKnownConfiguration: configurations.at(-1) || 0,
+              rightmostKnownSignature: signatures.at(-1) || 0,
+              noLaterRange: signatures.length ? [signatures.at(-1) + 1, log.absoluteLength] : [1, log.absoluteLength]
+            }
+          },
+          queue: {
+            entryConstraint: semantic.entryQueue.kind,
+            exactLength: semantic.entryQueue.kind === "unknown" ? "unbounded" : semantic.queue.length,
+            carrierCapacity: capacities.queue,
+            slots: queueSlots
+          }
+        };
+      }
+
+      function stateSafeAbsentSources(semantic) {
+        const query = semantic.lastQuery;
+        return query.kind === "receive" && typeof query.result === "string"
+          ? [query.result.includes(" A") ? "A" : query.result.includes(" B") ? "B" : "selected source"]
+          : [];
+      }
+
+      function encode(representation, semantic, capacities) {
+        if (representation === "fixed") return fixedRepresentation(semantic, capacities);
+        if (representation === "linked") return linkedRepresentation(semantic, capacities);
+        if (representation === "sparse") return sparseRepresentation(semantic, capacities);
+        return hybridRepresentation(semantic, capacities);
+      }
+
+      function obligations(representation) {
+        const common = [
+          "deriveFootprint_sufficient covers every ordered step and guarded action alternative",
+          "Concretizes is total on every footprint-covered canonical state",
+          "Every well-formed bounded state has a canonical concretization",
+          "Observations and action skeletons are equivalent under Concretizes",
+          "Canonical and bounded steps correspond in both directions"
+        ];
+        if (representation === "fixed") return [...common,
+          "length <= capacity and active slots are exactly the initial segment",
+          "inactive slots have one canonical default",
+          "dense index mapping and dequeue compaction preserve canonical order"
+        ];
+        if (representation === "linked") return [...common,
+          "active addresses are distinct and in range",
+          "the next graph is acyclic, reaches every active cell once, and has the declared length",
+          "canonical indices strictly follow chain order",
+          "free cells cannot alias the live chain"
+        ];
+        if (representation === "sparse") return [...common,
+          "active keys are distinct and all touched indices are present",
+          "omitted indices admit a canonical completion",
+          "absence, rightmost, configuration, and prefix facts need separate evidence"
+        ];
+        return [...common,
+          "dense suffix and older exact cells are disjoint, ordered, and absolute",
+          "rightmost and configuration summaries have witnesses and exclusion ranges",
+          "append, truncation, and replacement carry or invalidate each summary",
+          "queue tokens and opaque gaps concretize to one ordered canonical queue",
+          "source-absence and equality summaries justify receive and coalescing"
+        ];
+      }
+
+      function transitionEstimate(representation, action, before, after, capacities) {
+        const entryWidth = 7;
+        const messageWidth = 16;
+        const queuePosition = action.type === "DEQUEUE_SOURCE"
+          ? before.queue.findIndex(message => message.source === action.source)
+          : -1;
+        let writes = 0;
+        let lookup = "";
+        if (representation === "fixed") {
+          if (action.type === "APPEND") writes = 1 + entryWidth;
+          else if (action.type === "REPLACE_SUFFIX" || action.type === "PIN_EXACT_RANGE") writes = 1 + capacities.log * entryWidth;
+          else if (action.type === "ENQUEUE") writes = 1 + messageWidth;
+          else if (action.type === "DEQUEUE_SOURCE") writes = queuePosition < 0 ? 0 : 1 + Math.max(0, before.queue.length - queuePosition) * messageWidth;
+          else if (action.type === "FILL_QUEUE") writes = capacities.queue * messageWidth + 1;
+          else writes = 0;
+          lookup = "range guard, then one buffer select";
+        } else if (representation === "linked") {
+          if (action.type === "APPEND") writes = entryWidth + 5;
+          else if (action.type === "REPLACE_SUFFIX" || action.type === "PIN_EXACT_RANGE") writes = capacities.log * 4 + entryWidth;
+          else if (action.type === "ENQUEUE") writes = messageWidth + 5;
+          else if (action.type === "DEQUEUE_SOURCE") writes = queuePosition < 0 ? 0 : 4;
+          else if (action.type === "FILL_QUEUE") writes = capacities.queue * (messageWidth + 3);
+          lookup = `bounded pointer chase, up to ${Math.max(capacities.log, capacities.queue)} symbolic hops`;
+        } else if (representation === "sparse") {
+          if (action.type === "APPEND") writes = entryWidth + 1;
+          else if (action.type === "REPLACE_SUFFIX" || action.type === "PIN_EXACT_RANGE") writes = capacities.log * (entryWidth + 1);
+          else if (action.type === "ENQUEUE") writes = messageWidth + 1;
+          else if (action.type === "DEQUEUE_SOURCE") writes = queuePosition < 0 ? 0 : Math.max(0, before.queue.length - queuePosition) * messageWidth + 1;
+          else if (action.type === "FILL_QUEUE") writes = capacities.queue * messageWidth + 1;
+          lookup = "one absolute-key select plus a relevance or presence guard";
+        } else {
+          const unknownQueue = before.entryQueue?.kind === "unknown";
+          if (action.type === "APPEND") writes = entryWidth + 2;
+          else if (action.type === "REPLACE_SUFFIX" || action.type === "PIN_EXACT_RANGE") writes = capacities.log * entryWidth + 4;
+          else if (action.type === "ENQUEUE") writes = unknownQueue ? messageWidth + 3 : messageWidth + 1;
+          else if (action.type === "DEQUEUE_SOURCE") writes = queuePosition < 0 ? 0 : unknownQueue ? 3 : 1 + Math.max(0, before.queue.length - queuePosition) * messageWidth;
+          else if (action.type === "FILL_QUEUE") writes = capacities.queue * messageWidth + 1;
+          else if (action.type.startsWith("QUERY")) writes = 2;
+          const queueAction = ["ENQUEUE", "DUPLICATE_TAIL", "DEQUEUE_SOURCE", "FILL_QUEUE"].includes(action.type);
+          lookup = unknownQueue && queueAction
+            ? "ordered exact-token and gap scan with source-absence and equality summaries"
+            : "suffix range test, then direct suffix or absolute cell select, else summary";
+        }
+        return {
+          action: action.type,
+          writes,
+          lookup,
+          formulaNote: representation === "linked"
+            ? "small unlink writes do not count pointer-chase reachability terms"
+            : "write footprint counts changed field stores, not frame equalities"
+        };
+      }
+
+      function metricsFor(representation, semantic, capacities, action, transition) {
+        const bounded = encode(representation, semantic, capacities);
+        const exact = semantic.log.requiredExact.length;
+        const q = semantic.queue.length;
+        const fields = representation === "fixed"
+          ? capacities.log * 7 + capacities.queue * 16 + 4
+          : representation === "linked"
+            ? capacities.log * 10 + capacities.queue * 19 + 8
+            : representation === "sparse"
+              ? exact * 9 + q * 18 + 12
+              : capacities.log * 8 + capacities.queue * 16 + 18;
+        const queueCells = semantic.entryQueue.kind === "unknown" ? capacities.queue : Math.min(q, capacities.queue);
+        const cells = representation === "fixed"
+          ? Math.min(semantic.log.absoluteLength, capacities.log) + queueCells
+          : representation === "linked"
+            ? keySort(semantic.log.knownEntries).slice(0, capacities.log).length + queueCells
+            : exact + queueCells;
+        const estimate = transition || transitionEstimate(representation, action || { type: "RESET" }, semantic, semantic, capacities);
+        return {
+          key: representation,
+          name: REPS[representation].name,
+          cells,
+          fields,
+          writes: estimate.writes,
+          lookup: estimate.lookup,
+          proofs: obligations(representation).length,
+          status: bounded.errors.length ? "capacity or completeness failure" : "represented",
+          errors: bounded.errors
+        };
+      }
+
+      function refresh(state, action, beforeSemantic) {
+        const footprint = abstractEvaluate(state.semantic, state.trace, state.support, state.supportTimeline);
+        const capacities = shapeFor(state.representation, footprint, state.semantic);
+        const certificate = certify(footprint, state.representation, state.diagnostic);
+        const bounded = encode(state.representation, state.semantic, capacities);
+        bounded.certificateGate = certificate.boundedSmtGeneration;
+        if (certificate.classification === "INCONCLUSIVE_RESOURCE") {
+          bounded.errors.unshift("diagnostic resource ceiling exceeded; do not retry as a completeness argument");
+        }
+        const transition = transitionEstimate(
+          state.representation,
+          action,
+          beforeSemantic || state.semantic,
+          state.semantic,
+          capacities
+        );
+        return { ...state, footprint, certificate, capacities, bounded, transition };
+      }
+
+      function reduce(state, action) {
+        if (action.type === "SET_REPRESENTATION") {
+          return refresh({ ...clone(state), representation: action.representation }, action, state.semantic);
+        }
+        if (action.type === "RESET") return initial(state.representation, state.diagnostic);
+        if (action.type === "RESET_CLEAN") {
+          return initial(state.representation, { ...state.diagnostic, enabled: false });
+        }
+        if (action.type === "SET_DIAGNOSTIC") {
+          return refresh({ ...clone(state), diagnostic: { enabled: true, ...action.ceiling } }, action, state.semantic);
+        }
+        if (action.type === "DISABLE_DIAGNOSTIC") {
+          return refresh({ ...clone(state), diagnostic: { ...state.diagnostic, enabled: false } }, action, state.semantic);
+        }
+        const before = clone(state.semantic);
+        const closure = closeSupport(state.support, before, action);
+        const semantic = applySemantic(state.semantic, action);
+        const transfer = transferSupport(closure.support, before, semantic, action);
+        semantic.log.requiredExact = [...transfer.support.logKeys];
+        const traceStep = {
+          action: action.type,
+          source: action.source,
+          range: action.type === "REPLACE_SUFFIX"
+            ? [action.from, action.from + action.entries.length - 1]
+            : undefined
+        };
+        const next = {
+          ...clone(state),
+          semantic,
+          support: transfer.support,
+          supportTimeline: [...state.supportTimeline, {
+            step: state.supportTimeline.length,
+            action: action.type,
+            before: clone(state.support),
+            closed: clone(closure.support),
+            after: clone(transfer.support),
+            demand: closure.demand,
+            effects: transfer.effects,
+            monotone: supportLe(state.support, closure.support) && supportLe(closure.support, transfer.support),
+            preStepSufficient: true
+          }],
+          trace: action.type === "SET_UNKNOWN_QUEUE" ? state.trace : [...state.trace, traceStep],
+          lastBeforeSemantic: before,
+          lastAction: clone(action),
+          history: [{ action: action.type, result: clone(semantic.lastQuery) }, ...state.history].slice(0, 20)
+        };
+        return refresh(next, action, before);
+      }
+
+      function compare(state) {
+        return Object.keys(REPS).map(representation => {
+          const capacities = shapeFor(representation, state.footprint, state.semantic);
+          const transition = transitionEstimate(representation, state.lastAction, state.lastBeforeSemantic, state.semantic, capacities);
+          const row = metricsFor(representation, state.semantic, capacities, state.lastAction, transition);
+          const certificate = certify(state.footprint, representation, state.diagnostic);
+          if (certificate.classification === "INCONCLUSIVE_RESOURCE") {
+            row.errors.unshift("diagnostic ceiling exceeded");
+            row.status = "generation blocked by resource ceiling";
+          }
+          return row;
+        });
+      }
+
+      return { REPS, initial, reduce, compare, obligations };
+    })();
+  </script>
+
+  <script>
+    // Throwaway DOM shell. It only dispatches actions to the pure model above.
+    (() => {
+      const $ = selector => document.querySelector(selector);
+      const $$ = selector => [...document.querySelectorAll(selector)];
+      const actions = {
+        applyCaps: () => ({ type: "SET_DIAGNOSTIC", ceiling: { log: Number($("#logCap").value), queue: Number($("#queueCap").value) } }),
+        disableCaps: () => ({ type: "DISABLE_DIAGNOSTIC" }),
+        append: () => ({ type: "APPEND", term: Number($("#entryTerm").value), kind: $("#entryKind").value }),
+        replace: () => ({ type: "REPLACE_SUFFIX", from: 2, entries: [
+          { term: 4, kind: "tx", value: "replacement-2" },
+          { term: 4, kind: "signature", value: "replacement-3" }
+        ] }),
+        large: () => ({ type: "LARGE_INDEX" }),
+        prefix: () => ({ type: "QUERY_PREFIX", frontier: 999999 }),
+        summaries: () => ({ type: "QUERY_SUMMARIES" }),
+        unknownQueue: () => ({ type: "SET_UNKNOWN_QUEUE" }),
+        referenceOld: () => ({ type: "REFERENCE_INDEX", index: 500000 }),
+        pin: () => ({ type: "PIN_EXACT_RANGE", count: 5 }),
+        enqueueA: () => ({ type: "ENQUEUE", message: { tag: "appendEntriesRequest", source: "A", destination: "D", term: 2, prevLogIndex: state.semantic.nextMessage - 1, entry: `entry-${state.semantic.nextMessage}` } }),
+        enqueueB: () => ({ type: "ENQUEUE", message: { tag: "appendEntriesRequest", source: "B", destination: "D", term: 2, prevLogIndex: state.semantic.nextMessage - 1, entry: `entry-${state.semantic.nextMessage}` } }),
+        duplicate: () => ({ type: "DUPLICATE_TAIL" }),
+        dequeueA: () => ({ type: "DEQUEUE_SOURCE", source: "A" }),
+        fillQueue: () => ({ type: "FILL_QUEUE", count: 5 }),
+        reset: () => ({ type: "RESET" })
+      };
+
+      const scenarios = {
+        append: {
+          title: "Append",
+          text: "Append two entries. Abstract evaluation adds exact tail cells and updates signature summaries before lowering.",
+          steps: [
+            ["Reset", { type: "RESET_CLEAN" }],
+            ["Append transaction", { type: "APPEND", term: 2, kind: "tx" }],
+            ["Append signature", { type: "APPEND", term: 2, kind: "signature" }],
+            ["Query summaries", { type: "QUERY_SUMMARIES" }]
+          ]
+        },
+        replace: {
+          title: "Suffix replacement",
+          text: "Replace from index two. X records the exact range and summary invalidation on every permitted branch.",
+          steps: [
+            ["Reset", { type: "RESET_CLEAN" }],
+            ["Replace suffix", { type: "REPLACE_SUFFIX", from: 2, entries: [
+              { term: 4, kind: "tx", value: "new-2" },
+              { term: 4, kind: "signature", value: "new-3" }
+            ] }],
+            ["Check prefix", { type: "QUERY_PREFIX", frontier: 3 }],
+            ["Check history", { type: "QUERY_SUMMARIES" }]
+          ]
+        },
+        large: {
+          title: "Large absolute indices",
+          text: "Jump near one million. The certified X retains absolute indices but contains only queried cells and summaries.",
+          steps: [
+            ["Reset", { type: "RESET_CLEAN" }],
+            ["Install large-index window", { type: "LARGE_INDEX" }],
+            ["Refine old index 500,000", { type: "REFERENCE_INDEX", index: 500000 }],
+            ["Query omitted prefix", { type: "QUERY_PREFIX", frontier: 999999 }],
+            ["Query history summaries", { type: "QUERY_SUMMARIES" }],
+            ["Append at 1,000,004", { type: "APPEND", term: 8, kind: "tx" }]
+          ]
+        },
+        fifo: {
+          title: "FIFO and coalescing",
+          text: "Start from an unknown entry queue. X uses ordered gaps, source-absence facts, and equality facts instead of guessing its length.",
+          steps: [
+            ["Reset", { type: "RESET_CLEAN" }],
+            ["Make entry queue unknown", { type: "SET_UNKNOWN_QUEUE" }],
+            ["Enqueue B1", { type: "ENQUEUE", message: { tag: "appendEntriesRequest", source: "B", destination: "D", term: 2, prevLogIndex: 0, entry: "B1" } }],
+            ["Enqueue A1", { type: "ENQUEUE", message: { tag: "appendEntriesRequest", source: "A", destination: "D", term: 2, prevLogIndex: 1, entry: "A1" } }],
+            ["Enqueue B2", { type: "ENQUEUE", message: { tag: "appendEntriesRequest", source: "B", destination: "D", term: 2, prevLogIndex: 2, entry: "B2" } }],
+            ["Repeat B2", { type: "ENQUEUE", message: { tag: "appendEntriesRequest", source: "B", destination: "D", term: 2, prevLogIndex: 2, entry: "B2" } }],
+            ["Receive first A", { type: "DEQUEUE_SOURCE", source: "A" }]
+          ]
+        },
+        capacity: {
+          title: "Capacity exhaustion",
+          text: "Derive a five-cell X, then impose a four-cell diagnostic ceiling. Sufficiency does not change; SMT generation stops as INCONCLUSIVE_RESOURCE.",
+          steps: [
+            ["Reset", { type: "RESET_CLEAN" }],
+            ["Require five exact log cells", { type: "PIN_EXACT_RANGE", count: 5 }],
+            ["Enable ceiling four", { type: "SET_DIAGNOSTIC", ceiling: { log: 4, queue: 4 } }],
+            ["Disable diagnostic ceiling", { type: "DISABLE_DIAGNOSTIC" }],
+            ["Require five queue messages", { type: "FILL_QUEUE", count: 5 }],
+            ["Enable ceiling four again", { type: "SET_DIAGNOSTIC", ceiling: { log: 4, queue: 4 } }]
+          ]
+        }
+      };
+
+      let state = ContainerModel.initial("hybrid", { enabled: false, log: 6, queue: 6 });
+      let currentScenario = "append";
+      let scenarioStep = 0;
+      let sort = { key: "name", ascending: true };
+
+      function dispatch(action) {
+        state = ContainerModel.reduce(state, action);
+        render();
+      }
+
+      function pretty(value) {
+        return JSON.stringify(value, null, 2);
+      }
+
+      function renderRepPicker() {
+        $("#repPicker").innerHTML = Object.entries(ContainerModel.REPS).map(([key, rep]) =>
+          `<button class="${state.representation === key ? "active" : ""}" data-rep="${key}">${rep.name}</button>`
+        ).join("");
+        $("#repDescription").textContent = ContainerModel.REPS[state.representation].description;
+      }
+
+      function renderMetrics() {
+        const current = ContainerModel.compare(state).find(row => row.key === state.representation);
+        const values = [
+          [current.cells, "cells required by X"],
+          [current.fields, "symbolic fields, estimated"],
+          [current.writes, "last transition writes"],
+          [current.proofs, "named proof obligations"],
+          [state.trace.length, "abstract trace steps"]
+        ];
+        $("#metrics").innerHTML = values.map(([value, label]) =>
+          `<div class="metric"><div class="value">${value}</div><div class="label">${label}</div></div>`
+        ).join("");
+      }
+
+      function renderState() {
+        const semantic = state.semantic;
+        $("#semanticSummary").innerHTML = [
+          `log length ${semantic.log.absoluteLength.toLocaleString()}`,
+          `${semantic.log.requiredExact.length} exact indices required`,
+          `${semantic.queue.length} queued messages`,
+          `last query: ${semantic.lastQuery.kind}`
+        ].map(text => `<span class="pill">${text}</span>`).join("");
+        $("#semanticState").textContent = pretty(semantic);
+        const errors = state.bounded.errors;
+        $("#boundedStatus").className = `status ${errors.length ? "error" : "ok"}`;
+        $("#boundedStatus").textContent = errors.length ? "SMT generation blocked" : "generated only from certified X";
+        $("#boundedError").innerHTML = errors.length
+          ? `<div class="error-box"><strong>INCONCLUSIVE:</strong> ${errors.join("; ")}</div>`
+          : "";
+        $("#boundedState").textContent = pretty(state.bounded);
+      }
+
+      function renderCertificate() {
+        const allowed = state.certificate.classification === "CERTIFIED_FOOTPRINT";
+        $("#certificateStatus").className = `status ${allowed ? "ok" : "error"}`;
+        $("#certificateStatus").textContent = state.certificate.classification;
+        $("#certificateError").innerHTML = allowed ? "" :
+          '<div class="error-box">The sufficiency certificate remains true. A diagnostic resource ceiling blocked formula generation. Production returns INCONCLUSIVE_RESOURCE; it does not increase the bound and retry.</div>';
+        $("#certificate").textContent = pretty({
+          ...state.certificate,
+          orderedTraceSkeleton: state.trace
+        });
+        $("#footprintSummary").innerHTML = [
+          `${state.footprint.log.exactAbsoluteIndices.length} exact log indices`,
+          `${state.footprint.log.summaryCount} log summaries`,
+          `${state.footprint.queue.boundedCarrierCells} queue token or gap cells`,
+          state.footprint.queue.form
+        ].map(text => `<span class="pill">${text}</span>`).join("");
+        $("#footprint").textContent = pretty(state.footprint);
+        $("#supportTimeline").textContent = pretty({
+          invariant: state.footprint.supportInvariant,
+          compactS0: state.supportTimeline[0],
+          growth: state.supportTimeline.slice(1)
+        });
+      }
+
+      function renderTransition() {
+        const t = state.transition;
+        $("#transition").innerHTML = `
+          <div class="summary">
+            <span class="pill">action ${t.action}</span>
+            <span class="pill">${t.writes} changed field stores</span>
+          </div>
+          <p><strong>Lookup:</strong> ${t.lookup}</p>
+          <p class="small">${t.formulaNote}</p>
+        `;
+        $("#obligations").innerHTML = ContainerModel.obligations(state.representation)
+          .map(item => `<li>${item}</li>`).join("");
+      }
+
+      function renderScenarios() {
+        $("#scenarioTabs").innerHTML = Object.entries(scenarios).map(([key, scenario]) =>
+          `<button class="${key === currentScenario ? "active" : ""}" data-scenario="${key}">${scenario.title}</button>`
+        ).join("");
+        const scenario = scenarios[currentScenario];
+        $("#walkthrough").innerHTML = `
+          <p>${scenario.text}</p>
+          <div class="steps">
+            ${scenario.steps.map(([label], index) =>
+              `<button class="action ${index < scenarioStep ? "step-done" : ""}" data-step="${index}" ${index > scenarioStep ? "disabled" : ""}>${index + 1}. ${label}</button>`
+            ).join("")}
+          </div>
+        `;
+      }
+
+      function renderComparison() {
+        const rows = ContainerModel.compare(state);
+        const value = row => sort.key === "name" ? row.name : row[sort.key];
+        rows.sort((left, right) => {
+          const a = value(left);
+          const b = value(right);
+          const result = typeof a === "string" ? a.localeCompare(b) : a - b;
+          return sort.ascending ? result : -result;
+        });
+        $("#comparison tbody").innerHTML = rows.map(row => `
+          <tr data-rep="${row.key}" class="${row.key === state.representation ? "selected" : ""}">
+            <td><strong>${row.name}</strong></td>
+            <td>${row.cells}</td>
+            <td>${row.fields}</td>
+            <td>${row.writes}</td>
+            <td>${row.lookup}</td>
+            <td>${row.proofs}</td>
+            <td>${row.errors.length ? `<span style="color:var(--danger)">${row.status}</span>` : `<span style="color:var(--accent)">${row.status}</span>`}</td>
+          </tr>
+        `).join("");
+      }
+
+      function renderHistory() {
+        $("#history").innerHTML = state.history.length
+          ? state.history.map(item => `<div><b>${item.action}</b><br>${typeof item.result.result === "string" ? item.result.result : pretty(item.result.result)}</div>`).join("")
+          : '<div>No actions yet.</div>';
+      }
+
+      function render() {
+        $("#logCap").value = state.diagnostic.log;
+        $("#queueCap").value = state.diagnostic.queue;
+        renderRepPicker();
+        renderCertificate();
+        renderMetrics();
+        renderState();
+        renderTransition();
+        renderScenarios();
+        renderComparison();
+        renderHistory();
+      }
+
+      document.addEventListener("click", event => {
+        const command = event.target.closest("[data-command]")?.dataset.command;
+        if (command) {
+          scenarioStep = 0;
+          dispatch(actions[command]());
+          return;
+        }
+        const rep = event.target.closest("[data-rep]")?.dataset.rep;
+        if (rep) {
+          dispatch({ type: "SET_REPRESENTATION", representation: rep });
+          return;
+        }
+        const scenario = event.target.closest("[data-scenario]")?.dataset.scenario;
+        if (scenario) {
+          currentScenario = scenario;
+          scenarioStep = 0;
+          dispatch({ type: "RESET" });
+          return;
+        }
+        const stepButton = event.target.closest("[data-step]");
+        if (stepButton) {
+          const index = Number(stepButton.dataset.step);
+          if (index !== scenarioStep) return;
+          dispatch(cloneAction(scenarios[currentScenario].steps[index][1]));
+          scenarioStep += 1;
+          renderScenarios();
+          return;
+        }
+        const heading = event.target.closest("th[data-sort]");
+        if (heading) {
+          const key = heading.dataset.sort;
+          sort = { key, ascending: sort.key === key ? !sort.ascending : true };
+          renderComparison();
+        }
+      });
+
+      function cloneAction(action) {
+        return JSON.parse(JSON.stringify(action));
+      }
+
+      render();
+    })();
+  </script>
+</body>
+</html>

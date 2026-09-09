@@ -1,573 +1,368 @@
-# CCFRaft trace validation and TLA port handoff
+# Resume the checked CCFRaft trace encoder
 
-## Purpose
+This is a migration checkpoint, not a completed implementation. It supersedes
+the handoff in commit `dfd8669f5`. The user requested a portable handoff and a
+commit of all repository changes while the next encoder slice was in progress.
 
-Continue the CCFRaft Lean model and trace-validation work on another machine.
-The target is:
+## Start here
 
-1. Represent every behavior emitted by the 50 files in `tests/raft_scenarios/`.
-2. Prove the Lean model's safety and action lowering without `sorry`, new
-   axioms, or trusted evaluation shortcuts.
-3. Replace the executable projected SMT encoding with a complete encoding that
-   is proved equivalent to the typed Lean formula.
-4. Keep `reduction.py` as the only reducer.
+Repository: `cjen1-msft/CCF`. Branch: `lean-ccfraft-slices`.
+All paths below are relative to `lean-tracing-demo-ccfraft/`, unless stated
+otherwise. Do not assume the old machine's absolute paths exist.
 
-This document describes the working tree at handoff time. Read the repository
-artifacts for design detail instead of treating this file as a specification.
+The last completed semantic preparation is `032f02820`. The checkpoint after
+that commit includes incomplete guarded trace encoding. In particular, accepted
+JSON syntax is ahead of the last confirmed executable encoder.
 
-## Repository state
-
-- Repository: `cjen1-msft/CCF`
-- Worktree: `/home/cjen1-msft/CCF/.worktrees/veil-consistency`
-- Branch: `lean-ccfraft-slices`
-- Semantic handoff checkpoint:
-  `2740abd99e867bbe8b777e0102794cc300b4aa1c`
-  (`Checkpoint full Raft trace coverage port`)
-- Checkpoint parent:
-  `be96121c6a9d0caa9b78cafa7c9984a0d1163e67`
-- Remote branch contains the semantic checkpoint:
-  `origin/lean-ccfraft-slices` at `2740abd99`
-- Unrelated untracked directory: `arena-bounded-containers/`
-  - Do not add, delete, or modify it.
-
-The current semantic work is committed and pushed. Check out the remote branch
-or the semantic checkpoint above. Do not reset or rebase it before inspecting:
+The session's commits have not been pushed by this assistant. Transfer this
+branch, not just the older remote branch. For an offline transfer, run this
+from the repository root and copy the resulting bundle to the other machine:
 
 ```bash
+git bundle create ../ccf-checked-trace-handoff.bundle lean-ccfraft-slices
+```
+
+In an existing clone on the destination machine:
+
+```bash
+git fetch /path/to/ccf-checked-trace-handoff.bundle \
+	lean-ccfraft-slices:lean-ccfraft-slices
+git switch lean-ccfraft-slices
+cd lean-tracing-demo-ccfraft
 git status --short
-git diff --stat
 ```
 
-## Important decisions
+The sibling directory `../arena-bounded-containers/candidate-1/` contains
+pre-existing design documents and an HTML prototype. The migration request
+includes these files in the repository checkpoint. They were not implementation
+work from this session, and their proposals are not an adopted specification.
 
-### One reducer
+## Restore the environment
 
-`lean-tracing-demo-ccfraft/reduction.py` is the only reducer.
+Use the versions in `lean-toolchain` and `lake-manifest.json`. This work used
+Lean 4.28.0 and cvc5 1.3.4. Python tests use the standard library. Black is the
+existing Python formatter.
 
-`lean-tracing-demo-ccfraft/Reduction.lean` is deleted. Do not restore it.
+Install the pinned Lean toolchain through elan. Restore Lake dependencies and
+their cached artifacts using the project's normal Lake workflow. Do not update
+the pinned mathlib revision merely to fix a build.
 
-The reducer emits one ordered JSON `steps` array. Each step is either an
-action or an observation. Array order defines the state boundary.
-
-### Claim
-
-The Lean theorem in `TraceProperties.lean` defines
-`MidtraceSatisfiable`. It starts from an arbitrary `ValidEntryState`.
-
-The executable Python SMT backend in `Shared/smt.py` is still a projection.
-It is not proved equivalent to the typed Lean formula.
-
-Do not describe Python SAT or UNSAT as full Lean-model validation.
-
-### Entry-state retirement facts
-
-`ValidEntryState` now includes `RetirementInvariantFacts`. This prevents an
-arbitrary mid-trace witness from inventing `retirementCompleted` and gaining
-election eligibility.
-
-### Trace callbacks
-
-CCF can emit `send_append_entries` inside `add_configuration` before the outer
-`replicate` updates `last_idx`.
-
-The reducer emits `changeConfiguration` before these sends, because the model
-action is atomic. It omits only the stale `logLength` observation on these
-nested sends. The preprocessing artifact records
-`configuration-callback-mixed-snapshot`.
-
-### Terminal role abstraction
-
-C++ uses leadership state `None` after terminal retirement. The Lean model
-uses `follower`. The Python reducer normalizes a `retiredCommitted` node with
-raw role `None` to model role `follower`.
-
-## Committed foundation
-
-Key commits:
-
-- `be96121c6` - scenario coverage and proof gates
-- `6e67722c1` - colleague report
-- `9edfd91ec` - timing and report tooling
-- `d78ea540b` - semantic reducer rule names
-- `4c66094c1` - flat reduced traces
-- `2e80086b0` - budgeted UNSAT core reduction
-
-The current uncommitted work adds:
-
-- pre-vote
-- check-quorum same-term step-down
-- retirement and membership phases
-- successor nomination and proposal messages
-- expanded runtime parsers and witnesses
-- Python support for all emitted trace functions
-
-## Current executable coverage
-
-Regenerate the corpus artifact:
+The old host was Azure Linux 3 with Nix. A portable solver selection is:
 
 ```bash
-cd lean-tracing-demo-ccfraft
-python3 audit_trace_coverage.py
+nix shell nixpkgs#cvc5
+export CVC5="$(command -v cvc5)"
 ```
 
-Solve every scenario:
+The user has explicitly authorized cvc5 execution. Do not ask again.
+
+Build a known independent target first:
 
 ```bash
-PATH="/nix/store/74v9g1l0b43xbr9pd0acg0qcdgf9srgw-cvc5-1.3.4/bin:$PATH" \
-  python3 audit_trace_coverage.py \
-    --refresh-demo-certificates \
-    --solve \
-    --solver-timeout-seconds 300 \
-    --require-all
+nice -n 10 lake build ControlActionAudit
 ```
 
-Last confirmed result before the final Lean audit:
-
-```text
-scenarios=50 accepted=50 sat=50
-```
-
-Artifact:
-
-- `lean-tracing-demo-ccfraft/Measurements/corpus-coverage.json`
-
-The 50 scenarios emit 12,541 trace records.
-
-## Current Lean proof state
-
-Before successor nomination was added, these passed:
-
-```text
-RuntimeAudit: 659 theorems, 0 explicit axioms
-Demo: 1950 theorems, 0 explicit axioms
-```
-
-`MachineGenerated.ReconfigurationPreservation` now builds after adding the
-missing retirement invariant case for `receive`.
-
-`MachineGenerated.Proof` builds after restoring a combined
-`SystemInductiveInvariant` API.
-
-Current validation status:
+The eventual complete encoder gate and native executable are:
 
 ```bash
-cd lean-tracing-demo-ccfraft
-lake build MachineGenerated.Runtime.NaiveFullStateWitness
-lake build MachineGenerated.Runtime.TraceValidation
-lake build MachineGenerated.ReconfigurationPreservation
-lake build MachineGenerated.Proof
+nice -n 10 lake build EncoderAudit
+nice -n 10 lake build encode_trace
 ```
 
-The first two runtime targets passed. `MachineGenerated.Proof` passed before
-the cancelled proposal-vote changes landed.
+These last two commands may fail at this checkpoint because guarded trace
+encoding is unfinished. Do not bypass the proof gate to get a solver verdict.
+Do not run the entire default `Demo` target as the first diagnostic.
 
-The current `MachineGenerated.ReconfigurationPreservation` has not been
-validated after the last edit. Its last completed build failed at
-`retirementInvariantFacts_networkFrame`: the helper needed to prove that each
-AppendEntries request in a replacement network came from the old network. The
-helper now takes an `appendRequestBack` argument. Two argument-wiring errors
-were corrected. The last verification build was interrupted for handoff
-preparation, so run the target before trusting the proof state.
+`validate_checked.py` builds `encode_trace` from the audited `EncodeTrace`
+module and runs `.lake/build/bin/encode_trace`. It no longer runs
+`lake env lean --run` per certificate. The first native build compiled thousands
+of mathlib C objects and took many minutes. That is distinct from solver time.
+On the old host, a representative encoding fell from about 17 seconds to
+0.2 seconds after native compilation. The Lake build check still has overhead.
 
-Run this first, sequentially:
+Use low-priority builds. Do not add arbitrary memory limits or timeouts.
+Batch related test selectors, and avoid repeated full suites.
+
+## Required correctness boundary
+
+The user rejected the old Python SMT projection because its transitions had
+no proved link to `Model.lean`.
+
+Python should emit observations and proposed actions, including unknowns.
+Lean must generate constraints with a generic, machine-checked correspondence
+to the actual model. No proof is generated per trace.
+
+The reviewed contract is `BoundedTrace.VerifiedEncoder`. For every entry
+template, trace, bounds, and the **same assignment**, it requires:
+
+```lean
+(encode bounds entry trace).Holds assignment <->
+  (forall index, assignment index < bounds.transactionCount) /\
+    Follows bounds assignment
+      (TransactionMapping.mapState (TraceSmt.NatTerm.eval assignment) entry)
+      trace
+```
+
+`Follows` uses real `Model.Enabled` and `Model.next`, with full bounds before
+each instruction and at the end. `encode_holds_correct` is the pointwise
+theorem. `encode_correct` is its existential satisfiability corollary.
+
+Review boundaries:
+
+| Category | Files and responsibility |
+| --- | --- |
+| Reviewed model-specific contracts | `Model.lean`, `TraceInstructions.lean`, `BoundedTrace.lean`, `BoundedState.lean`, `TransactionMapping.lean`, JSON decoders, `EncodeTrace.lean`, audit entry points |
+| Machine-checked implementation | `MachineGenerated/` encoder, representation, equality, mapping and guarded-step proofs |
+| Reviewed reusable infrastructure | `Shared/Smt.lean`, `SmtOrder.lean`, `Equality.lean`, `Guarded.lean`, SMT serialization, solver execution, core reduction |
+
+The allowed proof axioms are `propext`, `Classical.choice`, and `Quot.sound`.
+No `sorry`, new axioms, `native_decide`, unsafe extraction, or runtime bypasses.
+The executable encoder must be computable.
+
+The theorem covers the formula AST's meaning. JSON decoding, serialization,
+the compiler, cvc5, and diagnostic provenance remain trusted. Labels and core
+membership are not a second formal correspondence theorem.
+
+## Completed commits
+
+| Commit | Completed unit |
+| --- | --- |
+| `c04ceca25` | Full explicit entry templates, four leader writes, pointwise checked encoder, Python orchestration, causal core diagnostics, removal of retired code |
+| `359931271` | Native audited encoder executable and build-cache invalidation |
+| `bd9e59adc` | Generic list equality and exact symbolic entry and packet equality under transaction aliasing |
+| `cf9b2ff2c` | Exact AppendEntries request mapping and conditional deduplication correction |
+| `83f4ea642` | Executable guarded choices with generic evaluation, composition and queue-operation proofs |
+| `50ed2728e` | Executable guarded AppendEntries step, aliasing regressions, shared tests in the audit |
+| `032f02820` | Mapping and enabledness proofs for eleven control actions, with `ControlActionAudit` |
+
+The last confirmed end-to-end CLI supports `clientRequest`,
+`signCommittableMessages`, `changeConfiguration`, and
+`appendRetiredCommitted`. Sixteen focused integration cases passed before
+native compilation. Twenty-two cases, including toolchain failure paths,
+passed through the native executable.
+
+The general leader-write example returned SAT:
 
 ```bash
-cd lean-tracing-demo-ccfraft
-nice -n 10 lake build MachineGenerated.ReconfigurationPreservation
-nice -n 10 lake build MachineGenerated.Proof
-nice -n 10 lake build Demo
-nice -n 10 lake build RuntimeAudit
+python3 validate_checked.py \
+	Traces/LeaderWrites/bootstrap-writes.json \
+	Artifacts/checked-traces/leader-writes --cvc5 "$CVC5"
 ```
 
-Do not run `lake build Demo RuntimeAudit` as one command on a memory-constrained
-machine. Lake compiled `ReconfigurationPreservation` and `Simulation` in
-parallel and used about 14 GiB. Sequential targets keep one Lean compiler
-active.
+The guarded AppendEntries **step** is complete and proved, but this does not
+mean arbitrary traces containing it have passed the full encoder.
 
-The axiom audit uses an explicit allowlist:
+## Current partial slice
 
-- `propext`
-- `Classical.choice`
-- `Quot.sound`
+The checkpoint adds these reviewed interface changes:
 
-It rejects explicit `CCFRaft` axioms and all other theorem dependencies.
+- `Instruction.appendEntries source destination batchEnd`.
+- `Observation.queueLength node value`.
+- A direct AppendEntries clause in `BoundedTrace.Follows`.
+- General-schema JSON fields `node`, `destination`, and `batchEnd`.
+- Queue-length observations through the observation decoder.
+- Updated supported-action metadata and Python coverage text.
+- `tests/test_replication_encoding.py` and `Traces/Replication/send.json`.
 
-## Current model coverage
+`MachineGenerated.TraceCertificateTests` passed, including required send
+arguments and legacy-schema rejection. The persistent replication fixture
+matches its Python builder. The new replication solver tests have not passed
+as a group yet. README coverage still describes the last completed CLI slice.
 
-`Model.lean` now includes:
+Active implementation files at migration:
 
-- `PreVoteCandidate`
-- per-node `PreVoteStatus`
-- pre-vote requests and responses
-- `becomePreVoteCandidate`
-- `becomeCandidate`
-- `requestPreVote`
-- `checkQuorum`
-- membership phases:
-  - active
-  - retirement ordered
-  - retirement signed
-  - retirement completed
-  - retired committed
-- retirement indices
-- `retiredCommitted` log entries
-- `appendRetiredCommitted`
-- `retirementCompleted` observer sets
-- proposal vote request messages
-- `proposeVote`
-- `advanceCommitIndexAndProposeVote`
+- `MachineGenerated/TraceEncoding.lean`
+- `MachineGenerated/TraceEncodingProofs.lean`
+- `Shared/Guarded.lean`
+- `Shared/GuardedTests.lean`
 
-Use `git diff -- Model.lean` to inspect the exact current action and state
-schemas.
+These contain partial guarded-frame encoding, branch-specific binding
+namespaces, queue-length tracking, and associated proofs. Preserve this work.
+Do not revert it to make the old four-action build green.
 
-## Reviews already performed
+The paused agent's final notes, if available, are recorded in the checkpoint
+status section at the end of this document.
 
-The latest retirement review found and drove fixes for:
+## Complete guarded trace encoding next
 
-1. Terminal retirement had left a node as leader.
-2. Retirement-completed nodes could not campaign.
-3. Runtime trace parsing did not classify configuration and retired appends.
-4. Full-state witnesses omitted retirement and pre-vote fields.
-5. Retirement facts were absent from the formal invariant.
-6. `ValidEntryState` allowed forged retirement eligibility.
-7. Retired-committed entries lacked formal provenance.
+Keep one group for each instruction: group 0 is unknown domains, groups 1
+through N are instructions, and the final group is final-state bounds.
+Fine inspection must retain individually labelled field constraints.
 
-The current worktree contains attempted fixes for all of these. Re-review them.
+Use `GuardedAppendEntries.step` and `step_correct`, not a copied transition.
+Propagate guarded state alternatives through the whole trace. Bounds,
+enabledness and observations must constrain the selected branch under the
+same assignment.
 
-Files:
+Preserve these diagnostic properties:
 
-- `MachineGenerated/Invariant.lean`
-- `MachineGenerated/ReconfigurationPreservation.lean`
-- `MachineGenerated/Runtime/TraceValidation.lean`
-- `MachineGenerated/Runtime/NaiveFullStateWitness.lean`
-- `TraceProperties.lean`
+- Existing log-length, transaction, retirement, allocation, join and sent-index
+  bindings remain causal.
+- An actual enqueue defines a named queue length from previous length plus
+  one. A duplicate retains the previous length.
+- Queue observations and capacity checks use the symbolic tracked length,
+  not an additional constant physical-length constraint.
+- Distinct branch histories get distinct slots for newly defined values.
+  Ancestor bindings retain their original names and owners.
+- Branches known to be true or false are simplified rather than multiplied.
 
-Do not assume that a successful build proves correspondence with C++ or TLA.
+`Formula.prepare` rejects conflicting definitions of the same group and slot.
+Its definitions are unconditional total equations. Distinct branch-local
+names are therefore essential. Inlining every name is not an acceptable fix
+because it loses causal action attribution.
 
-## Current Python semantics
-
-The sole reducer supports all 18 emitted trace function names.
-
-It now handles:
-
-- regular vote and pre-vote packets by `packet.msg`
-- same-term AppendEntries fallback
-- check-quorum `become_follower`
-- retirement membership and index observations
-- `cleanup_nodes` as `appendRetiredCommitted`
-- proposal vote sends and receives
-- dropped proposal destination correlation
-- terminal `None` to Lean `follower` normalization
-
-The projected SMT includes state fields for:
-
-- allocated
-- joined
-- role
-- pre-vote status
-- term
-- log length
-- commit index
-- membership state
-- retirement indices
-
-It still does not encode the complete model state.
-
-## Remaining proof work
-
-### 1. Finish successor nomination
-
-Verify all of these are present and proved:
-
-- `ProposeVoteRequest`
-- `.proposeVote source destination`
-- `.advanceCommitIndexAndProposeVote source destination`
-- proposal receive becomes candidate and increments term
-- lowering
-- preservation
-- public wrappers
-- simulator materialization completeness
-- runtime parsing
-- full-state witness support
-- focused examples
-
-The cancelled proposal agent left files in the worktree. Inspect before adding
-anything.
-
-### 2. Retired-committed provenance
-
-The formal invariant must prove the TLA `RetiredCommittedInv` property:
-
-> Every node named by a retired-committed entry has a prior committed
-> configuration that removes it.
-
-The old cached-index equality was insufficient.
-
-Search:
+After the proof and native executable build, run the focused integration set:
 
 ```bash
-rg -n "retiredCommitted|provenance|RetirementInvariantFacts" \
-  MachineGenerated/Invariant.lean \
-  MachineGenerated/ReconfigurationPreservation.lean
+nice -n 10 python3 -m unittest -v \
+	tests.test_replication_encoding \
+	tests.test_leader_writes \
+	tests.test_client_request_encoding.SatisfiableCertificateTests \
+	tests.test_client_request_encoding.ToolchainFailureTests \
+	tests.test_template_client_requests.TemplateClientRequestTests.test_distinct_names_do_not_imply_distinct_transaction_values \
+	tests.test_template_client_requests.TemplateClientRequestTests.test_log_capacity_core_keeps_the_causal_action \
+	tests.test_template_client_requests.TemplateClientRequestTests.test_retirement_refresh_bound_keeps_the_causal_action
 ```
 
-### 3. Complete SMT equivalence
-
-This is the largest remaining milestone.
-
-The Python SMT backend still over-approximates:
-
-- exact logs and entry contents
-- submitted transaction IDs
-- sent and match indices
-- vote state
-- exact configurations and quorums
-- queues and message contents
-- first-message-from-source
-- exact receive handlers
-- exact commit calculation
-- retirement observer sets
-
-Required theorem chain:
-
-```text
-Python certificate
-  -> typed Lean trace
-  -> typed Lean formula
-  -> emitted SMT-LIB
-```
-
-Prove:
-
-```text
-SMT satisfiable emitted text
-  iff FormulaSatisfiable
-  iff MidtraceSatisfiable
-```
-
-For SAT, reconstruct and replay a complete Lean witness.
-
-For UNSAT, decide whether cvc5 self-checking remains trusted or add an
-independent checker.
-
-### 4. Final 50-scenario gate
-
-After the Lean model and SMT equivalence are complete:
+Then run the persistent send example:
 
 ```bash
-python3 audit_trace_coverage.py \
-  --refresh-demo-certificates \
-  --solve \
-  --solver-timeout-seconds 300 \
-  --require-all
+python3 validate_checked.py \
+	Traces/Replication/send.json \
+	Artifacts/checked-traces/replication --cvc5 "$CVC5"
 ```
 
-Then run:
+Critical regressions cover semantic packet aliases, forced distinctness,
+queue capacity, repeated heartbeats, causal send cores, fine inspection, and
+later writes after a symbolic queue branch. Update README only after these
+paths work. Independently review the evidence-backed result, then commit this
+slice before starting the next integration.
 
-```bash
-./check_demo.sh
-```
+## Remaining semantic work
 
-## Generated and temporary files
+`ControlActionMappingProofs.lean` exports `mapState_<action>` and
+`enabled_mapState_<action>_iff` for:
 
-Do not commit these logs:
+`advanceCommitIndex`, `timeout`, `becomePreVoteCandidate`, `becomeCandidate`,
+`requestVote`, `requestPreVote`, `checkQuorum`, `updateTerm`, `becomeLeader`,
+`proposeVote`, and `advanceCommitIndexAndProposeVote`.
 
-- `lean-tracing-demo-ccfraft/.review-retirement.log`
-- `lean-tracing-demo-ccfraft/.review-runtime.log`
-- `lean-tracing-demo-ccfraft/.provenance-errors.log`
+These are arbitrary-state, non-injective mapping proofs. They are not yet
+accepted trace instructions. Integrate them into the guarded encoder in small
+families. Their local-state changes also need causal tracking for observed
+roles, terms, indices and truncated logs.
 
-The report servers on ports 8773 and 8774 are detached background processes.
-They are not needed on the new machine.
+### Receive
 
-## Toolchain and setup
+`receive` is the remaining semantic obstruction, not an ordinary unconditional
+mapping lemma. `noConflictExtension` compares full entry prefixes. Two
+syntactically different transaction terms can become equal after evaluation,
+changing both enabledness and successor state.
 
-Run commands from `lean-tracing-demo-ccfraft/` so Elan reads
-`lean-toolchain`.
+A receive implementation was requested in new `ReceiveMappingProofs.lean`,
+`GuardedReceive.lean`, and `GuardedReceiveTests.lean`. Any files present at
+checkpoint are partial unless the final notes explicitly say otherwise.
 
-Measured versions:
+The proposed approach is to prove ordinary handler mapping under an exact
+prefix-equality agreement, then use a guarded normalization of decode-equal
+prefix representatives before calling real `Model.Enabled` and `Model.next`.
+Normalizing either the incoming prefix or the local prefix must preserve the
+decoded pre-state, queue order, and absent node slots. This is a design
+proposal, not a completed proof.
 
-```text
-Lean 4.28.0
-Lake 5.0.0-src+7e01a1b
-Python 3.12.9
-cvc5 1.3.4
-Nix 2.34.7
-```
+The minimal regression has a follower with one transaction entry and a
+two-entry request whose first transaction uses another unknown. Equal terms
+do not imply equal transaction IDs. Aliasing can enable the extension while
+a distinct assignment leaves it disabled. Same-term candidate step-down
+must leave the request queued, as the actual model does.
 
-The machine-specific `/nix/store/.../cvc5` path in examples is not portable.
-On another Nix machine:
+### Symbolic entry controls and shapes
 
-```bash
-cvc5_store="$(nix build --no-link --print-out-paths nixpkgs#cvc5)"
-export PATH="$cvc5_store/bin:$PATH"
-cvc5 --version
-```
+Only transaction IDs are unknown in the completed encoder. Roles, terms,
+allocation, log shape and queue shape are explicit at entry. Guarded queue
+alternatives after a send do not solve arbitrary symbolic entry states.
 
-Restore the pinned Mathlib cache if needed:
+The intended next design uses verified guarded operations over bounded
+containers. Whole-state enumeration is not a practical substitute for
+15-node states. Do not fabricate concrete values for unobserved fields or
+silently strengthen the entry-state assumptions.
 
-```bash
-cd lean-tracing-demo-ccfraft
-lake exe cache get
-```
+### Raw trace integration and explorer
 
-## Exact focused Lean targets
+`reduction.py` remains the only reducer. `validate.py` still uses the unproved
+projection in `ccfraft_projection.py`. Do not restore the old `Reduction.lean`.
 
-Build these sequentially:
+The raw reducer's partial observations do not supply a complete explicit entry
+state. Connect it to the checked backend only after the missing symbolic entry
+semantics exist. Unsupported syntax must fail explicitly, never fall back.
+Remove the projection only after its live callers migrate.
 
-```bash
-lake build MachineGenerated.PreVoteExamples
-lake build MachineGenerated.CheckQuorumExamples
-lake build MachineGenerated.RetirementExamples
-lake build MachineGenerated.SuccessorNominationExamples
-lake build MachineGenerated.Runtime.RetirementConsistencyExamples
-lake build MachineGenerated.Runtime.SuccessorNominationExamples
-```
+The requested HTML explorer remains unimplemented. It has three horizontal
+panes: raw NDJSON, ordered reduced actions and observations with core
+highlighting, and the reduced core. Selecting an action opens its detailed
+constraints. Reduction first removes instruction groups, then refines one
+selected action while keeping the other reduced context fixed. Use "reduced",
+not "minimum". Existing `--inspect-group` does not yet implement this full
+two-stage workflow.
 
-Then build:
+## Data and diagnostic constraints
 
-```bash
-lake build Demo
-lake build RuntimeAudit
-```
+- Bounds on transactions, terms and indices are exclusive. Log and queue
+  capacities are inclusive.
+- Full bounds include all seven packet variants, queued payloads, every peer
+  index, optional retirement indices and submitted transaction IDs.
+- An absent node is not an allocated fresh node. Node tables have 15 slots.
+- Entry templates need not be reachable or satisfy extra protocol invariants.
+- Different unknown names may alias. Freshness uses evaluated submitted IDs.
+- Non-injective mapping may merge submitted IDs and packet identities.
+- `appendEntries` cannot use unconditional transaction-map commutation.
+  Its guarded step preserves real sender updates but suppresses an enqueue
+  when the evaluated packet is already queued.
+- A reduced SMT core is not a replayable subsequence of model actions.
+  Concrete state during encoding may depend on the full prefix.
+- Structural guards are currently coarse clauses. Not every failed
+  precondition has its own fine-grained label.
 
-The allowlist audit lives in:
+Schemas remain `ccfraft-trace/v1`, `ccfraft-client-request/v1`, and
+`ccfraft-client-request/v2`. Legacy schemas restrict actions to client
+requests. The v1 bootstrap adapter derives term count 2, index count 1 and
+queue capacity 0. General and v2 certificates declare all five bounds.
 
-- `lean-tracing-demo-ccfraft/Demo.lean`
-- `lean-tracing-demo-ccfraft/RuntimeAudit.lean`
+## Existing failures and cleanup
 
-## Current successor-nomination files
+Full safety proofs in the default `Demo` target had failures reproduced
+against the untouched starting commit. Do not attribute those failures to the
+new encoder or repair them as an unrelated part of this migration.
+`EncoderAudit`, `ControlActionAudit`, and targeted runtime tests are the
+relevant checks for these slices. `RuntimeAudit` had also passed earlier.
 
-The cancelled proposal agent left these uncommitted files and edits:
+Completed cleanup removed the old bootstrap-only encoder, 36 archived
+prototype files, `bootstrap_from_checkpoint.py`, and the unused long-trace
+probe. It moved 36 theorem blocks out of `Model.lean` into
+`MachineGenerated/ModelProofs.lean` without changing model definitions.
+Keep live legacy projection and runtime consumers until their replacements
+are connected.
 
-- `MachineGenerated/SuccessorNominationExamples.lean`
-- `MachineGenerated/Runtime/SuccessorNominationExamples.lean`
-- proposal message/action changes in `Model.lean`
-- lowering changes in `MachineGenerated/Lowering.lean`
-- preservation changes in
-  `MachineGenerated/ReconfigurationPreservation.lean`
-- simulator/runtime/witness changes under `MachineGenerated/Runtime/`
+Ignored `.lake/` build products and `Artifacts/` solver outputs are not portable
+source dependencies. Regenerate them. The old Copilot session directory was
+`/home/cjen1-msft/.copilot/session-state/ad3933b2-6bbf-4ed0-bd2e-bfdd2b54f302/`.
+Its logs and SQLite task state are not required to resume from this document.
 
-Search:
+## Checkpoint status
 
-```bash
-rg -n "ProposeVote|proposeVote|advanceCommitIndexAndProposeVote" \
-  Model.lean MachineGenerated
-```
+Stop requests were sent to both implementation agents before preparing this
+checkpoint. Do not resume their old IDs on the new machine. Resume from the
+committed files and the status recorded here.
 
-## Complete SMT implementation paths
+The agent handles were no longer available when migration resumed. No final
+stop acknowledgements or compiler-error handoffs could be retrieved.
+No receive implementation files were present in the checkpoint inventory.
+The guarded encoder sources contain the intended theorem declarations,
+including `encode_holds_correct` and `checkedEncoder`, but their presence is
+not evidence that the current versions compile. No explicit `sorry` or
+`admit` was found in the changed encoder and guarded helper sources.
 
-- Typed action/formula definitions:
-  `MachineGenerated/Lowering.lean`
-- Typed equivalence proof:
-  `MachineGenerated/LoweringProofs.lean`
-- Public trace contract:
-  `TraceProperties.lean`
-- Sole reducer and certificate schema:
-  `reduction.py`
-- Python SMT encoder and serializer:
-  `Shared/smt.py`
-- Solver runner and diagnostics:
-  `validate.py`
-- Old bounded SAT witness reconstruction:
-  `MachineGenerated/Runtime/NaiveFullStateWitness.lean`
-- Corpus gate:
-  `audit_trace_coverage.py`
-
-There is no current theorem connecting Python certificate decoding or emitted
-SMT-LIB to `MachineGenerated.Formula`.
-
-## Solver trust decision
-
-For this MVP, the user explicitly chose to trust cvc5 for SAT and UNSAT.
-Do not start a verified external proof checker unless that decision changes.
-
-Still prove the encoding and serializer correspond to the typed Lean formula.
-SAT should eventually reconstruct and replay a complete Lean witness. The
-cvc5 decision itself remains trusted.
-
-## Trace capture and emitted vocabulary
-
-`audit_trace_coverage.py` invokes `build/raft_driver` directly for every file
-under `tests/raft_scenarios/`.
-
-To capture one scenario while debugging:
-
-```bash
-python3 audit_trace_coverage.py \
-  --scenario reconfig_0_1 \
-  --capture-dir Artifacts/corpus-traces \
-  --output Artifacts/reconfig_0_1-coverage.json
-```
-
-The implementation emit sites are in:
-
-- `src/consensus/aft/raft.h`
-- `src/consensus/aft/test/driver.h`
-
-The complete current event and packet counts are in
-`Measurements/corpus-coverage.json`.
-
-## Audited reducer abstractions
-
-Two current transformations require focused regression coverage:
-
-1. `configuration-callback-mixed-snapshot`
-   - `add_configuration` mutates configuration/retirement state during the
-     outer `replicate`.
-   - Nested send callbacks see new membership state but stale `last_idx`.
-   - The reducer emits `changeConfiguration` before the sends and omits only
-     the nested send's stale `logLength`.
-2. Terminal role normalization
-   - C++ reports leadership state `None` for `RetiredCommitted`.
-   - Lean abstracts this as `follower`.
-   - `reduction.py` normalizes that one combination.
-
-The retired-committed append is identified from the explicit
-`cleanup_nodes,...` scenario command, not the writer's membership phase.
-
-## Unrelated report edits
-
-The worktree also contains dirty edits to:
-
-- `Report/colleague-overview.html`
-- `generate_colleague_report.py`
-
-These came from a separate report-copy-edit thread. Preserve them, but do not
-mix them into semantic reasoning. The next agent can commit them separately.
-
-## Suggested skills
-
-Invoke these skills before working:
-
-- `principle-sequence-verifiable-units`
-- `principle-fix-root-causes`
-- `principle-build-the-lever`
-- `machine-friendly-builds`
-- `technical-writing` when updating the handoff or report
-- `unslop` for any user-facing text
-
-Use `how` when explaining the architecture. Use `why` when reconstructing
-design rationale from history.
-
-## Recommended next steps
-
-1. Run the sequential build commands listed under "Current Lean proof state".
-2. Inspect the dirty proposal-vote files before editing.
-3. Run the focused successor nomination and retirement examples.
-4. Run the final independent semantic review.
-5. Commit the semantic model and proof slice separately from report edits.
-6. Start complete SMT equivalence only after the Lean model checkpoint is
-   clean and reviewed.
-
-## Handoff snapshot
-
-This document is committed separately from the semantic snapshot.
-
-- Semantic commit:
-  `2740abd99e867bbe8b777e0102794cc300b4aa1c`
-- Parent:
-  `be96121c6a9d0caa9b78cafa7c9984a0d1163e67`
-- Remote: `origin/lean-ccfraft-slices`
-- Semantic commit pushed: yes
-- Expected worktree after the handoff-document commit:
-  only unrelated `arena-bounded-containers/` remains untracked
+The latest fully completed independent command was
+`nice -n 10 lake build ControlActionAudit`. The whole guarded trace encoder
+has not been declared complete. This checkpoint intentionally preserves
+unfinished implementation rather than discarding it.

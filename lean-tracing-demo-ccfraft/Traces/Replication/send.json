@@ -1,0 +1,17 @@
+{
+  "schema_version": "ccfraft-trace/v1",
+  "entry": "bootstrap",
+  "unknowns": ["tx"],
+  "bounds": {
+    "transaction_count": 1,
+    "term_count": 2,
+    "index_count": 2,
+    "log_capacity": 1,
+    "queue_capacity": 1
+  },
+  "steps": [
+    {"kind": "action", "action": "clientRequest", "node": 0, "transaction": {"unknown": "tx"}},
+    {"kind": "action", "action": "appendEntries", "node": 0, "destination": 1, "batchEnd": 1},
+    {"kind": "observation", "node": 1, "variable": "queueLength", "value": 1}
+  ]
+}
