@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import EncodeTrace
+import ControlActionAudit
 import Shared.SmtTests
 import Shared.SmtOrderTests
 import Shared.GuardedTests
