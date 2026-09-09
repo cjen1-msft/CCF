@@ -15,6 +15,9 @@ python3 validate_checked.py \
 
 Add `--cvc5 /path/to/cvc5` if cvc5 is not on `PATH`.
 
+The runner builds `encode_trace` from the audited `EncodeTrace` module, then
+runs that executable. Repeated encodings do not re-elaborate the Lean proofs.
+
 The `ccfraft-trace/v1` schema accepts `clientRequest`,
 `signCommittableMessages`, `changeConfiguration`, and
 `appendRetiredCommitted`. Observations cover `role`, `currentTerm`,

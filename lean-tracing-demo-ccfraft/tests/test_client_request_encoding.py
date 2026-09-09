@@ -27,6 +27,7 @@ from Shared.smt import SmtEncodingError, add_query  # noqa: E402
 from Shared.solver import ValidationError  # noqa: E402
 from validate_checked import (  # noqa: E402
     CONSTRAINT_MAP_SCHEMA,
+    ENCODER_BINARY,
     CertificateRejected,
     build_proof_gate,
     core_diagnosis,
@@ -838,6 +839,44 @@ class ToolchainFailureTests(unittest.TestCase):
                 inspect_group=None,
             )
         self.assertIn("encoder entry point", str(raised.exception))
+
+    def test_encoder_runs_the_compiled_gate_without_reelaboration(self) -> None:
+        binary = self.workspace / ENCODER_BINARY
+        binary.parent.mkdir(parents=True)
+        binary.touch()
+        certificate = self.workspace / "certificate.json"
+        with patch(
+            "validate_checked.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, "", ""),
+        ) as run:
+            run_encoder(self.workspace, certificate, self.workspace, inspect_group=2)
+        self.assertEqual(
+            run.call_args.args[0],
+            [
+                str(binary.resolve()),
+                str(certificate.resolve()),
+                str(self.workspace.resolve()),
+                "2",
+            ],
+        )
+
+    def test_deleting_the_executable_invalidates_the_build_cache(self) -> None:
+        binary = self.workspace / ENCODER_BINARY
+        binary.parent.mkdir(parents=True)
+
+        def compile_gate(
+            *args: object, **kwargs: object
+        ) -> subprocess.CompletedProcess:
+            binary.touch()
+            return subprocess.CompletedProcess([], 0, "", "")
+
+        with patch("validate_checked.subprocess.run", side_effect=compile_gate) as run:
+            log = self.workspace / "build.log"
+            self.assertFalse(build_proof_gate(self.workspace, log)["cached"])
+            self.assertTrue(build_proof_gate(self.workspace, log)["cached"])
+            binary.unlink()
+            self.assertFalse(build_proof_gate(self.workspace, log)["cached"])
+        self.assertEqual(run.call_count, 2)
 
     @unittest.skipUnless(LAKE is not None, "needs lake")
     def test_a_failing_proof_gate_stops_the_run(self) -> None:

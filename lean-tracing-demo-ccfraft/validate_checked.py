@@ -65,7 +65,8 @@ class CertificateRejected(ValidationError):
 CERTIFICATE_SCHEMA = "ccfraft-trace/v1"
 CONSTRAINT_MAP_SCHEMA = "ccfraft-trace-constraints/v1"
 PROOF_GATE_TARGET = "EncodeTrace"
-ENCODER_SCRIPT = Path(*PROOF_GATE_TARGET.split(".")).with_suffix(".lean")
+ENCODER_TARGET = "encode_trace"
+ENCODER_BINARY = Path(".lake/build/bin") / ENCODER_TARGET
 DEFAULT_THEOREM = "CCFRaft.TraceEncoding.encode_correct"
 INSPECT_GROUP_NOTE = (
     "this is a naming granularity, not a second encoding: the constraints are "
@@ -101,10 +102,14 @@ def _lean_sources(project_root: Path) -> list[Path]:
 
 
 def _source_fingerprint(project_root: Path) -> tuple[tuple[str, int, int], ...]:
-    """Invalidate the cached gate when Lean source metadata changes."""
+    """Invalidate the cached gate when sources or the executable change."""
 
     entries: list[tuple[str, int, int]] = []
-    for path in _lean_sources(project_root):
+    paths = _lean_sources(project_root)
+    binary = project_root / ENCODER_BINARY
+    if binary.is_file():
+        paths.append(binary)
+    for path in paths:
         stat = path.stat()
         entries.append(
             (str(path.relative_to(project_root)), stat.st_mtime_ns, stat.st_size)
@@ -113,7 +118,7 @@ def _source_fingerprint(project_root: Path) -> tuple[tuple[str, int, int], ...]:
 
 
 def build_proof_gate(project_root: Path, log_path: Path) -> dict[str, object]:
-    """Compile the encoder correctness proof. A build failure stops the run."""
+    """Build the audited encoder executable. A build failure stops the run."""
 
     key = (str(project_root), _source_fingerprint(project_root))
     cached = _PROOF_GATE_BUILDS.get(key)
@@ -125,6 +130,7 @@ def build_proof_gate(project_root: Path, log_path: Path) -> dict[str, object]:
         )
         return {
             "target": PROOF_GATE_TARGET,
+            "build_target": ENCODER_TARGET,
             "checked": True,
             "cached": True,
             "log": log_path.name,
@@ -133,7 +139,7 @@ def build_proof_gate(project_root: Path, log_path: Path) -> dict[str, object]:
 
     started = time.perf_counter_ns()
     completed = subprocess.run(
-        ["nice", "-n", "10", "lake", "build", PROOF_GATE_TARGET],
+        ["nice", "-n", "10", "lake", "build", ENCODER_TARGET],
         cwd=project_root,
         check=False,
         capture_output=True,
@@ -148,9 +154,11 @@ def build_proof_gate(project_root: Path, log_path: Path) -> dict[str, object]:
             f"the proof gate {PROOF_GATE_TARGET} failed to build "
             f"(exit {completed.returncode}); see {log_path}"
         )
-    _PROOF_GATE_BUILDS[key] = wall_ms
+    _encoder_binary(project_root)
+    _PROOF_GATE_BUILDS[(str(project_root), _source_fingerprint(project_root))] = wall_ms
     return {
         "target": PROOF_GATE_TARGET,
+        "build_target": ENCODER_TARGET,
         "checked": True,
         "cached": False,
         "log": log_path.name,
@@ -158,14 +166,15 @@ def build_proof_gate(project_root: Path, log_path: Path) -> dict[str, object]:
     }
 
 
-def _encoder_script(project_root: Path) -> Path:
-    """Locate the command-line module the proof gate compiled."""
+def _encoder_binary(project_root: Path) -> Path:
+    """Locate the executable built from the audited command-line module."""
 
-    if (project_root / ENCODER_SCRIPT).is_file():
-        return ENCODER_SCRIPT
+    binary = project_root / ENCODER_BINARY
+    if binary.is_file():
+        return binary.resolve()
     raise ValidationError(
-        f"no checked encoder entry point at {ENCODER_SCRIPT}; the proof "
-        f"gate {PROOF_GATE_TARGET} and the command line must be the same module"
+        f"no checked encoder entry point at {binary}; build {ENCODER_TARGET} "
+        f"from the proof gate module {PROOF_GATE_TARGET}"
     )
 
 
@@ -193,13 +202,9 @@ def run_encoder(
 ) -> float:
     """Run the Lean encoder, which decodes the certificate and emits SMT."""
 
-    script = _encoder_script(project_root)
+    binary = _encoder_binary(project_root)
     command = [
-        "lake",
-        "env",
-        "lean",
-        "--run",
-        str(script),
+        str(binary),
         str(certificate_path.resolve()),
         str(output_directory.resolve()),
     ]
