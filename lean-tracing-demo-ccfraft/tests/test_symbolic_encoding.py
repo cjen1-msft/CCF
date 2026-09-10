@@ -62,6 +62,8 @@ class SymbolicEncodingTests(unittest.TestCase):
                     formula = output / f"{name}.smt2"
                     formula.write_text(encoded.stdout, encoding="utf-8")
                     self.assertTrue(encoded.stdout.startswith("(set-logic ALL)"))
+                    if name.startswith("entry-15-"):
+                        self.assertLess(len(encoded.stdout.encode("utf-8")), 1_000_000)
                     assert CVC5 is not None
                     self.assertEqual(
                         run_solver(CVC5, formula, output, name).status, expected

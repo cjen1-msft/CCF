@@ -57,11 +57,24 @@ private def rejected (groups : List (List (Expr .bool))) : Bool :=
 #guard rejected [[.eq (.named 2 0 (.nat 1)) (.nat 1)], []]
 -- A definition cannot refer to a future owner, even when discovered later.
 #guard rejected [[], [], [.eq (.named 0 0 (.named 1 0 (.nat 1))) (.nat 1)]]
+#guard rejected <|
+  let shared := Expr.eq (.named 1 0 (.nat 1)) (.nat 1)
+  [[], [], [shared, .named 0 0 shared]]
 #guard rejected [[.eq (.named 0 0 (.named 0 0 (.nat 1))) (.nat 1)]]
 -- Dead syntax must not hide invalid ownership or conflicting definitions.
 #guard rejected [[.and (.bool false) (.named 1 0 (.bool true))]]
 #guard rejected [[.eq (.named 0 0 (.nat 1)) (.nat 1),
   .ite (.bool true) (.bool true) (.eq (.named 0 0 (.nat 2)) (.nat 2))]]
+#guard rejected [[.eq (.fst (.pair (.nat 1) (.named 1 0 (.bool true)))) (.nat 1)], []]
+
+private def concealed (value : Expr .bool) : Expr .bool :=
+  .not (.not (.not (.not value)))
+
+#guard (concealed (.named 0 0 (.bool true))).memoKey ==
+  (concealed (.named 0 0 (.bool false))).memoKey
+#guard rejected [[concealed (.named 0 0 (.bool true)), concealed (.named 0 0 (.bool false))]]
+#guard !rejected [[concealed (.named 0 0 (.bool true)), concealed (.named 0 1 (.bool false))]]
+
 #guard !rejected [[.eq (.named 0 0 (.nat 1)) (.nat 1),
   .eq (.named 0 1 (.nat 2)) (.nat 2)]]
 #guard !rejected [[], [.eq (.named 0 0 (.nat 1)) (.named 1 0 (.nat 1))]]

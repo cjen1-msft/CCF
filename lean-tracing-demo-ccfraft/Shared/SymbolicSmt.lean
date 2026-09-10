@@ -1,7 +1,7 @@
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-import Shared.SymbolicNormalize
+import Shared.SymbolicNormalizeMemo
 
 set_option autoImplicit false
 
@@ -35,29 +35,6 @@ def Ty.declaration : Ty → List String
       let n := (Ty.sum a b).name
       [s!"(declare-datatype {n} ((left_{n} (getLeft_{n} {a.smt})) (right_{n} (getRight_{n} {b.smt}))))"]
 
-def Expr.sorts {s : Ty} (e : Expr s) : List Ty :=
-  let children := match e with
-    | .nat _ | .bool _ | .unit | .unknown _ | .nil => []
-    | .add a b | .sub a b | .lt a b | .eq a b
-    | .and a b | .pair a b | .append a b | .cons a b
-    | .take a b | .drop a b | .get? a b | .contains a b
-    | .leftD a b | .rightD a b => a.sorts ++ b.sorts
-    | .not a | .fst a | .snd a | .inl a | .inr a
-    | .isLeft a | .length a | .named _ _ a => a.sorts
-    | .ite c a b | .set c a b => c.sorts ++ a.sorts ++ b.sorts
-  children ++ s.dependencies
-
-def Expr.unknowns : {s : Ty} → Expr s → List Nat
-  | _, .unknown i => [i]
-  | _, .nat _ | _, .bool _ | _, .unit | _, .nil => []
-  | _, .add a b | _, .sub a b | _, .lt a b | _, .eq a b
-  | _, .and a b | _, .pair a b | _, .append a b | _, .cons a b
-  | _, .take a b | _, .drop a b | _, .get? a b | _, .contains a b
-  | _, .leftD a b | _, .rightD a b => a.unknowns ++ b.unknowns
-  | _, .not a | _, .fst a | _, .snd a | _, .inl a | _, .inr a
-  | _, .isLeft a | _, .length a | _, .named _ _ a => a.unknowns
-  | _, .ite c a b | _, .set c a b => c.unknowns ++ a.unknowns ++ b.unknowns
-
 structure Printing where
   terms : Std.HashMap (String × String) Nat := {}
   definitions : Array String := #[]
@@ -66,6 +43,8 @@ structure Printing where
   unknowns : Std.HashSet Nat := {}
   unknownDeclarations : Array String := #[]
   stateDeclarations : Array String := #[]
+  normalized : Expr.NormalizationState := {}
+  emitted : Std.HashMap UInt64 (List (((s : Ty) × Expr s) × String)) := {}
 
 private structure NamedBinding where
   group : Nat
@@ -75,27 +54,22 @@ private structure NamedBinding where
 private structure Names where
   definitions : Std.HashMap (Nat × Nat) ((s : Ty) × Expr s) := {}
   bindings : Array NamedBinding := #[]
+  visited : Std.HashMap (Nat × UInt64) (List ((s : Ty) × Expr s)) := {}
 
 -- Repeated names share predecessor trees; do not traverse those trees again.
-private def sameDefinition : ((s : Ty) × Expr s) -> ((s : Ty) × Expr s) -> Bool
-  | ⟨leftTy, left⟩, ⟨rightTy, right⟩ =>
-      if sameType : leftTy = rightTy then
-        let left := sameType ▸ left
-        withPtrEq left right (fun _ => decide (left = right))
-          (by intro equal; simp [equal])
-      else false
+private def sameDefinition (left right : (s : Ty) × Expr s) : Bool :=
+  @decide (left = right) (packedExprEq left right)
 
 private theorem sameDefinition_correct (left right : (s : Ty) × Expr s) :
-    sameDefinition left right = decide (left = right) := by
-  rcases left with ⟨leftTy, left⟩
-  rcases right with ⟨rightTy, right⟩
-  by_cases sameType : leftTy = rightTy
-  · subst rightTy
-    simp [sameDefinition, withPtrEq]
-  · simp [sameDefinition, sameType]
+    sameDefinition left right = decide (left = right) :=
+  packedExprEq_correct left right
 
 private def collectNames {s : Ty} (groupCount current : Nat) (e : Expr s) :
     StateT Names (Except String) Unit := do
+  let key : (s : Ty) × Expr s := ⟨s, e⟩
+  let bucket := (current, e.memoKey)
+  if ((← get).visited[bucket]?.getD []).any (fun prior => sameDefinition prior key) then
+    return
   match e with
   | .named group slot value =>
       if group ≥ groupCount then
@@ -126,6 +100,8 @@ private def collectNames {s : Ty} (groupCount current : Nat) (e : Expr s) :
       collectNames groupCount current c
       collectNames groupCount current a
       collectNames groupCount current b
+  modify fun state => { state with
+    visited := state.visited.insert bucket (key :: state.visited[bucket]?.getD []) }
 
 private def intern (s : Ty) (body : String) : StateM Printing String := do
   let state ← get
@@ -148,6 +124,11 @@ private def intern (s : Ty) (body : String) : StateM Printing String := do
 
 -- Interning shares syntax; only named constants identify trace actions.
 private def Expr.emit {s : Ty} (e : Expr s) : StateM Printing String := do
+  let key : (s : Ty) × Expr s := ⟨s, e⟩
+  let bucket := e.memoKey
+  if let some (_, printed) := ((← get).emitted[bucket]?.getD []).find? (fun (prior, _) =>
+      sameDefinition prior key) then
+    return printed
   let body ← match e with
     | .nat n => pure (toString n)
     | .bool b => pure (if b then "true" else "false")
@@ -201,7 +182,16 @@ private def Expr.emit {s : Ty} (e : Expr s) : StateM Printing String := do
         let index ← n.emit
         pure s!"(ite (< {index} (seq.len {values})) (seq.update {values} {index} (seq.unit {← v.emit})) {values})"
     | .contains xs v => do pure s!"(seq.contains {← xs.emit} (seq.unit {← v.emit}))"
-  intern s body
+  let result ← intern s body
+  modify fun state => { state with
+    emitted := state.emitted.insert bucket ((key, result) :: state.emitted[bucket]?.getD []) }
+  return result
+
+private def emitNormalized {s : Ty} (e : Expr s) : StateM Printing String := do
+  let state ← get
+  let (normalized, cache) := (e.normalizeMemoM).run state.normalized
+  set { state with normalized := cache }
+  normalized.emit
 
 def prepareGroups (groups : List (List (Expr .bool))) :
     Except String (List (List String) × Printing) := do
@@ -212,9 +202,9 @@ def prepareGroups (groups : List (List (Expr .bool))) :
         collectNames groups.length index clause
   let (_, names) ← collect.run {}
   let emitAll : StateM Printing (List (List String)) := do
-    let mut roots ← groups.mapM fun clauses => clauses.mapM fun e => e.normalize.emit
+    let mut roots ← groups.mapM fun clauses => clauses.mapM emitNormalized
     for binding in names.bindings do
-      let body ← binding.value.2.normalize.emit
+      let body ← emitNormalized binding.value.2
       let name := s!"state_{binding.group}_{binding.slot}"
       roots := roots.modify binding.group (· ++ [s!"(= {name} {body})"])
       modify fun state => { state with
