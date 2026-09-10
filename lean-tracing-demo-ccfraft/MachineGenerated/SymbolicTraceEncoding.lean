@@ -4,6 +4,7 @@
 import BoundedSymbolicTrace
 import MachineGenerated.SymbolicBounds
 import MachineGenerated.SymbolicTraceObservation
+import Shared.SymbolicNaming
 
 set_option autoImplicit false
 
@@ -52,8 +53,7 @@ def encode (bounds : BoundedState.Bounds) (adapter : Adapter bounds)
     (unknownCount : Nat) (entry : Expr (stateCodec bounds.transactionCount).ty)
     (instructions : List Instruction) : List (Expr .bool) :=
   transactionDomains bounds unknownCount ::
-    Trace.encodeWith (semantics bounds adapter)
-      (fun group successor => .named group 0 successor) 1
+    Trace.encodeWithState (semantics bounds adapter) nameChanged 1
       (.named 0 0 entry) instructions
 
 theorem follows_within (bounds : BoundedState.Bounds) (assignment : Assignment)
@@ -95,7 +95,9 @@ theorem encode_holds_correct (bounds : BoundedState.Bounds) (adapter : Adapter b
       TransactionDomains bounds unknownCount assignment ∧
         Follows bounds assignment (evalEntry bounds assignment entry) instructions := by
   rw [encode, Trace.holds_cons, transactionDomains_correct,
-    Trace.encodeWith_correct (nameState_correct := by intros; rfl), follows_correct]
+    Trace.encodeWithState_correct (nameState_correct := by
+      intros
+      simp only [semantics, evalEntry, Codec.decode, nameChanged_correct]), follows_correct]
   rfl
 
 theorem verifiedEncoder (adapters : ∀ bounds, Adapter bounds) :
@@ -107,6 +109,6 @@ theorem group_count (bounds : BoundedState.Bounds) (adapter : Adapter bounds)
     (unknownCount : Nat) (entry : Expr (stateCodec bounds.transactionCount).ty)
     (instructions : List Instruction) :
     (encode bounds adapter unknownCount entry instructions).length = instructions.length + 2 := by
-  simp [encode, Trace.encodeWith_group_count, Nat.add_assoc]
+  simp [encode, Trace.encodeWithState_group_count, Nat.add_assoc]
 
 end CCFRaft.SymbolicTraceEncoding

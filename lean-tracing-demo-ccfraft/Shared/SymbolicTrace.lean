@@ -49,13 +49,13 @@ def Follows (semantics : Semantics stateTy State Action Observation)
         Follows semantics ρ state rest
 
 private def encodeWithBounds (semantics : Semantics stateTy State Action Observation)
-    (nameState : Nat -> Expr stateTy -> Expr stateTy)
+    (nameState : Nat -> Expr stateTy -> Expr stateTy -> Expr stateTy)
     (group : Nat) (state : Expr stateTy) (stateBounds : Expr .bool) :
     List (Instruction Action Observation) -> List (Expr .bool)
   | [] => [stateBounds]
   | .action action :: rest =>
       let result := semantics.step state action
-      let successor := nameState group result.successor
+      let successor := nameState group state result.successor
       .and stateBounds result.enabled ::
         encodeWithBounds semantics nameState (group + 1)
           successor (semantics.bounds successor) rest
@@ -65,11 +65,43 @@ private def encodeWithBounds (semantics : Semantics stateTy State Action Observa
 
 /-- Instruction indices advance through observations as well as actions.
 Bounds are constructed once per state and reused through observations. -/
+def encodeWithState (semantics : Semantics stateTy State Action Observation)
+    (nameState : Nat -> Expr stateTy -> Expr stateTy -> Expr stateTy)
+    (group : Nat) (state : Expr stateTy)
+    (trace : List (Instruction Action Observation)) : List (Expr .bool) :=
+  encodeWithBounds semantics nameState group state (semantics.bounds state) trace
+
 def encodeWith (semantics : Semantics stateTy State Action Observation)
     (nameState : Nat -> Expr stateTy -> Expr stateTy)
     (group : Nat) (state : Expr stateTy)
     (trace : List (Instruction Action Observation)) : List (Expr .bool) :=
-  encodeWithBounds semantics nameState group state (semantics.bounds state) trace
+  encodeWithState semantics (fun owner _ after => nameState owner after) group state trace
+
+@[simp] theorem encodeWithState_nil
+    (semantics : Semantics stateTy State Action Observation)
+    (nameState : Nat -> Expr stateTy -> Expr stateTy -> Expr stateTy)
+    (group : Nat) (state : Expr stateTy) :
+    encodeWithState semantics nameState group state [] = [semantics.bounds state] := rfl
+
+@[simp] theorem encodeWithState_action
+    (semantics : Semantics stateTy State Action Observation)
+    (nameState : Nat -> Expr stateTy -> Expr stateTy -> Expr stateTy)
+    (group : Nat) (state : Expr stateTy) (action : Action)
+    (rest : List (Instruction Action Observation)) :
+    encodeWithState semantics nameState group state (.action action :: rest) =
+      let result := semantics.step state action
+      .and (semantics.bounds state) result.enabled ::
+        encodeWithState semantics nameState (group + 1)
+          (nameState group state result.successor) rest := rfl
+
+@[simp] theorem encodeWithState_observation
+    (semantics : Semantics stateTy State Action Observation)
+    (nameState : Nat -> Expr stateTy -> Expr stateTy -> Expr stateTy)
+    (group : Nat) (state : Expr stateTy) (observation : Observation)
+    (rest : List (Instruction Action Observation)) :
+    encodeWithState semantics nameState group state (.observation observation :: rest) =
+      .and (semantics.bounds state) (semantics.observe state observation) ::
+        encodeWithState semantics nameState (group + 1) state rest := rfl
 
 @[simp] theorem encodeWith_nil (semantics : Semantics stateTy State Action Observation)
     (nameState : Nat -> Expr stateTy -> Expr stateTy) (group : Nat) (state : Expr stateTy) :
@@ -109,13 +141,13 @@ def Holds (ρ : Assignment) (groups : List (Expr .bool)) : Prop :=
     Holds ρ (head :: tail) ↔ head.eval ρ = true ∧ Holds ρ tail := by
   simp [Holds]
 
-theorem encodeWith_correct (semantics : Semantics stateTy State Action Observation)
-    (nameState : Nat -> Expr stateTy -> Expr stateTy)
-    (nameState_correct : ∀ ρ group state,
-      semantics.decode ρ (nameState group state) = semantics.decode ρ state)
+theorem encodeWithState_correct (semantics : Semantics stateTy State Action Observation)
+    (nameState : Nat -> Expr stateTy -> Expr stateTy -> Expr stateTy)
+    (nameState_correct : ∀ ρ group before after,
+      semantics.decode ρ (nameState group before after) = semantics.decode ρ after)
     (ρ : Assignment) (group : Nat) (state : Expr stateTy)
     (trace : List (Instruction Action Observation)) :
-    Holds ρ (encodeWith semantics nameState group state trace) ↔
+    Holds ρ (encodeWithState semantics nameState group state trace) ↔
       Follows semantics ρ (semantics.decode ρ state) trace := by
   induction trace generalizing group state with
   | nil => simp [Follows, semantics.bounds_correct]
@@ -136,6 +168,18 @@ theorem encodeWith_correct (semantics : Semantics stateTy State Action Observati
       · cases instruction <;>
           simp [Follows, Expr.eval, semantics.bounds_correct, bounded]
 
+theorem encodeWith_correct (semantics : Semantics stateTy State Action Observation)
+    (nameState : Nat -> Expr stateTy -> Expr stateTy)
+    (nameState_correct : ∀ ρ group state,
+      semantics.decode ρ (nameState group state) = semantics.decode ρ state)
+    (ρ : Assignment) (group : Nat) (state : Expr stateTy)
+    (trace : List (Instruction Action Observation)) :
+    Holds ρ (encodeWith semantics nameState group state trace) ↔
+      Follows semantics ρ (semantics.decode ρ state) trace :=
+  encodeWithState_correct semantics (fun owner _ after => nameState owner after)
+    (fun assignment owner _ after => nameState_correct assignment owner after)
+    ρ group state trace
+
 theorem encode_correct (semantics : Semantics stateTy State Action Observation)
     (ρ : Assignment) (state : Expr stateTy)
     (trace : List (Instruction Action Observation)) :
@@ -143,14 +187,21 @@ theorem encode_correct (semantics : Semantics stateTy State Action Observation)
       Follows semantics ρ (semantics.decode ρ state) trace :=
   encodeWith_correct semantics (fun _ value => value) (by intros; rfl) ρ 0 state trace
 
-theorem encodeWith_group_count (semantics : Semantics stateTy State Action Observation)
-    (nameState : Nat -> Expr stateTy -> Expr stateTy)
+theorem encodeWithState_group_count (semantics : Semantics stateTy State Action Observation)
+    (nameState : Nat -> Expr stateTy -> Expr stateTy -> Expr stateTy)
     (group : Nat) (state : Expr stateTy) (trace : List (Instruction Action Observation)) :
-    (encodeWith semantics nameState group state trace).length = trace.length + 1 := by
+    (encodeWithState semantics nameState group state trace).length = trace.length + 1 := by
   induction trace generalizing group state with
   | nil => rfl
   | cons instruction rest inductionHypothesis =>
       cases instruction <;> simp [inductionHypothesis, Nat.add_assoc]
+
+theorem encodeWith_group_count (semantics : Semantics stateTy State Action Observation)
+    (nameState : Nat -> Expr stateTy -> Expr stateTy)
+    (group : Nat) (state : Expr stateTy) (trace : List (Instruction Action Observation)) :
+    (encodeWith semantics nameState group state trace).length = trace.length + 1 :=
+  encodeWithState_group_count semantics (fun owner _ after => nameState owner after)
+    group state trace
 
 theorem encode_group_count (semantics : Semantics stateTy State Action Observation)
     (state : Expr stateTy) (trace : List (Instruction Action Observation)) :
