@@ -31,6 +31,8 @@ The theorem requires tracked-key coverage and a fresh filler value.
 `QueuePresence` removes known-present sends while preserving the same initial
 queue, even when distinct symbolic keys alias. `QueueObservationBounds` derives
 initial-length bounds from source-local observations without assuming emptiness.
+`MonotoneIntervals` adds monotone, term-bounded single-log completion. It does
+not construct a full safety-invariant state.
 
 `QueueEncoding` emits typed count-read constraints with alias-safe observations
 and fresh function names. It does not yet encode FIFO guards, queue windows,

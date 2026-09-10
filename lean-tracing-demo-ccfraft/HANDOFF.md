@@ -46,6 +46,7 @@ New repository bridges extend that foundation:
 | Module | Proved boundary |
 | --- | --- |
 | `Sparse/VersionedIntervals.lean` | One root-array family for all aligned range-copy versions and interval queries, with finitely many shared cut samples. |
+| `Sparse/MonotoneIntervals.lean` | Joint finite-cut completion for one log with point facts, interval predicates, nondecreasing terms, and a current-term bound. |
 | `Sparse/AppendEntriesRanges.lean` | Actual send/receive index alignment. Enabled sends contain at most one entry; arbitrary initial packets remain unbounded. |
 | `Sparse/FiniteMembership.lean` | One finite initial set for a complete membership/insert trace, preserving key aliases. |
 | `Sparse/QueueReadback.lean` | Fixed-plan finite read/scalar constraints correspond to one count-array heap and imply a concrete whole-queue execution. |
@@ -64,6 +65,11 @@ New repository bridges extend that foundation:
 coverage, lawful equality, and a fresh filler value. Its conservative ancestor
 closure can be quadratic. Runtime emission and conditional queue operations
 remain separate obligations.
+
+Monotone completion does not change the arbitrary-initial-state contract above.
+Restricting that contract to `SafetyInductiveInvariant` still requires one joint
+invariant witness, including coherent proof-only histories. Local term and
+frontier bounds alone do not establish that witness.
 
 Presence normalization applies only to queue events. Callers must retain other
 observations and rebuild references for retained events. Destination-wide length
