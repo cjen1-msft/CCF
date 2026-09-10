@@ -46,6 +46,28 @@ def instruction (unknowns : Array String) (json : Json) :
           (← field json "node" >>= nodeValue)
           (← field json "destination" >>= nodeValue)
           (← field json "batchEnd" >>= Json.getNat?))
+    | "timeout" | "becomePreVoteCandidate" | "becomeCandidate"
+    | "advanceCommitIndex" | "checkQuorum" | "becomeLeader" =>
+        checkKeys json ["kind", "action", "node", "provenance", "rule"]
+        let node <- field json "node" >>= nodeValue
+        pure (match action with
+          | "timeout" => .timeout node
+          | "becomePreVoteCandidate" => .becomePreVoteCandidate node
+          | "becomeCandidate" => .becomeCandidate node
+          | "advanceCommitIndex" => .advanceCommitIndex node
+          | "checkQuorum" => .checkQuorum node
+          | _ => .becomeLeader node)
+    | "updateTerm" | "requestVote" | "requestPreVote" | "proposeVote"
+    | "advanceCommitIndexAndProposeVote" =>
+        checkKeys json ["kind", "action", "node", "destination", "provenance", "rule"]
+        let source <- field json "node" >>= nodeValue
+        let destination <- field json "destination" >>= nodeValue
+        pure (match action with
+          | "updateTerm" => .updateTerm source destination
+          | "requestVote" => .requestVote source destination
+          | "requestPreVote" => .requestPreVote source destination
+          | "proposeVote" => .proposeVote source destination
+          | _ => .advanceCommitIndexAndProposeVote source destination)
     | other => throw s!"unsupported action in checked trace: {other}"
 
 def decode (json : Json) : Except String Input := do

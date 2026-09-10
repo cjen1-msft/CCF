@@ -18,14 +18,21 @@ Add `--cvc5 /path/to/cvc5` if cvc5 is not on `PATH`.
 The runner builds `encode_trace` from the audited `EncodeTrace` module, then
 runs that executable. Repeated encodings do not re-elaborate the Lean proofs.
 
-The `ccfraft-trace/v1` schema accepts `clientRequest`,
-`signCommittableMessages`, `changeConfiguration`,
-`appendRetiredCommitted`, and `appendEntries`.
+The `ccfraft-trace/v1` schema accepts the four leader writes,
+`appendEntries`, and all eleven control actions:
+`advanceCommitIndex`, `timeout`, `becomePreVoteCandidate`, `becomeCandidate`,
+`requestVote`, `requestPreVote`, `checkQuorum`, `updateTerm`, `becomeLeader`,
+`proposeVote`, and `advanceCommitIndexAndProposeVote`.
 Observations cover `role`, `currentTerm`, `logLength`, `queueLength`,
 `commitIndex`, `allocated`, `joined`, and `submitted`.
-Each action names its actor with `node`; `changeConfiguration` also supplies
-a `configuration` array of node IDs. `appendEntries` supplies `destination`
-and `batchEnd`. Entry can be the canonical bootstrap or an explicit
+The leader writes are `clientRequest`, `signCommittableMessages`,
+`changeConfiguration`, and `appendRetiredCommitted`.
+Single-node actions use `node`. Two-node actions use `node` for the source
+and `destination` for the receiver. In particular, `updateTerm` updates the
+destination from a newer queued message from the source; it does not take
+an arbitrary term value. `clientRequest` supplies `transaction`,
+`changeConfiguration` supplies a `configuration` array, and `appendEntries`
+also supplies `batchEnd`. Entry can be the canonical bootstrap or an explicit
 full-state template:
 
 ```bash
@@ -100,10 +107,11 @@ one action's assertion granularity without changing its meaning. Group indices
 are recorded in the map; index 0 is the unknown-domain group, not an action.
 In this mode, reduction removes only clauses of the selected action. Other
 assertions in that run's solver core stay fixed. This does not yet reuse a
-previously reduced high-level core or provide the HTML explorer.
+previously reduced high-level core. Use `refine_checked.py` for that second stage.
 `instruction_index` is one-based, matching the existing reduction diagnostics.
-Intermediate log lengths, accepted transaction IDs, refreshed retirement
-indices, allocation and join markers, assigned sent indices, and queue lengths
+Intermediate log lengths, terms, commit frontiers, accepted transaction IDs,
+refreshed retirement indices and completion sets, allocation and join markers,
+assigned sent indices, and queue lengths
 have defining equalities in their action groups. Later constraints refer to these values
 so the core can retain the actions that produced them.
 A new enqueue defines the prior queue length plus one; a duplicate retains
@@ -133,9 +141,49 @@ To run the focused checked-encoder gate:
 
 Set `CVC5` to an executable path if the solver is not on `PATH`.
 The gate builds `ControlActionAudit`, `EncoderAudit`, and `encode_trace`,
-runs the replication and leader-write regressions, and requires SAT for the
+runs the checked action, diagnostic, and explorer regressions, and requires SAT for the
 persistent send example. Missing tools fail the gate rather than skip tests.
 It does not build the unrelated safety proofs in `Demo`.
+
+## Explore a reduced core
+
+First produce a group-level checked run. Then generate its explorer:
+
+```bash
+python3 validate_checked.py \
+	Traces/ClientRequests/wrong-log-length.json Artifacts/checked-traces/conflict
+python3 explore_checked.py \
+	Artifacts/checked-traces/conflict Artifacts/explorer/conflict.html
+```
+
+The standalone HTML has three panes: raw NDJSON, ordered actions and
+observations, and the reduced core. Selecting an instruction shows its labelled
+constraints and highlights its source lines. Pass `--raw-trace PATH` when the
+certificate's instruction provenance refers to that file. Without a raw file,
+the first pane says that the run starts from a certificate.
+
+For each action remaining in an UNSAT core, the generator precomputes a
+clause reduction with every other reduced group fixed. **Show reduced clauses**
+displays that result; **Group view** returns to the high-level core. No discarded
+group is restored. The report does not run a solver in the browser.
+`--no-refine` omits clause reductions but retains full constraint inspection.
+SAT and unknown runs show their status without a conflicting core.
+
+To refine just one action without generating a report:
+
+```bash
+python3 refine_checked.py Artifacts/checked-traces/conflict \
+	Artifacts/checked-traces/conflict-action-2 --inspect-group 2
+```
+
+The source directory remains unchanged. The refinement has its own formula,
+constraint map, diagnosis, solver outputs, and result. The operation rejects
+an action outside the reduced core or a formula that disagrees with its map.
+Saved run artifacts remain trusted local inputs.
+
+Both tools accept `--cvc5 PATH`. The explorer's `--workspace-uri` sets its
+remote VS Code workspace link. The report embeds its data and needs no network
+access except when you follow a source link.
 
 ## Review these files
 

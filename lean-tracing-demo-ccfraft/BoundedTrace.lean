@@ -56,6 +56,51 @@ def Follows {holes : Nat}
         Enabled state (.appendEntries source destination batchEnd) /\
           Follows bounds assignment
             (next state (.appendEntries source destination batchEnd)) rest
+  | .timeout node :: rest =>
+      BoundedState.WithinBounds bounds state /\
+        Enabled state (.timeout node) /\
+          Follows bounds assignment (next state (.timeout node)) rest
+  | .becomePreVoteCandidate node :: rest =>
+      BoundedState.WithinBounds bounds state /\
+        Enabled state (.becomePreVoteCandidate node) /\
+          Follows bounds assignment (next state (.becomePreVoteCandidate node)) rest
+  | .becomeCandidate node :: rest =>
+      BoundedState.WithinBounds bounds state /\
+        Enabled state (.becomeCandidate node) /\
+          Follows bounds assignment (next state (.becomeCandidate node)) rest
+  | .advanceCommitIndex node :: rest =>
+      BoundedState.WithinBounds bounds state /\
+        Enabled state (.advanceCommitIndex node) /\
+          Follows bounds assignment (next state (.advanceCommitIndex node)) rest
+  | .checkQuorum node :: rest =>
+      BoundedState.WithinBounds bounds state /\
+        Enabled state (.checkQuorum node) /\
+          Follows bounds assignment (next state (.checkQuorum node)) rest
+  | .updateTerm source destination :: rest =>
+      BoundedState.WithinBounds bounds state /\
+        Enabled state (.updateTerm source destination) /\
+          Follows bounds assignment (next state (.updateTerm source destination)) rest
+  | .becomeLeader node :: rest =>
+      BoundedState.WithinBounds bounds state /\
+        Enabled state (.becomeLeader node) /\
+          Follows bounds assignment (next state (.becomeLeader node)) rest
+  | .requestVote source destination :: rest =>
+      BoundedState.WithinBounds bounds state /\
+        Enabled state (.requestVote source destination) /\
+          Follows bounds assignment (next state (.requestVote source destination)) rest
+  | .requestPreVote source destination :: rest =>
+      BoundedState.WithinBounds bounds state /\
+        Enabled state (.requestPreVote source destination) /\
+          Follows bounds assignment (next state (.requestPreVote source destination)) rest
+  | .proposeVote source destination :: rest =>
+      BoundedState.WithinBounds bounds state /\
+        Enabled state (.proposeVote source destination) /\
+          Follows bounds assignment (next state (.proposeVote source destination)) rest
+  | .advanceCommitIndexAndProposeVote source destination :: rest =>
+      BoundedState.WithinBounds bounds state /\
+        Enabled state (.advanceCommitIndexAndProposeVote source destination) /\
+          Follows bounds assignment
+            (next state (.advanceCommitIndexAndProposeVote source destination)) rest
 
 def Satisfiable {holes : Nat}
     (bounds : Bounds) (entry : Template holes) (trace : List (Instruction holes)) : Prop :=

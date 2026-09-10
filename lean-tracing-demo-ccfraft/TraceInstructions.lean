@@ -39,6 +39,17 @@ inductive Instruction (holes : Nat) where
   | changeConfiguration (node : Node) (configuration : Finset Node)
   | appendRetiredCommitted (node : Node)
   | appendEntries (source destination : Node) (batchEnd : Nat)
+  | timeout (node : Node)
+  | becomePreVoteCandidate (node : Node)
+  | becomeCandidate (node : Node)
+  | advanceCommitIndex (node : Node)
+  | checkQuorum (node : Node)
+  | updateTerm (source destination : Node)
+  | becomeLeader (node : Node)
+  | requestVote (source destination : Node)
+  | requestPreVote (source destination : Node)
+  | proposeVote (source destination : Node)
+  | advanceCommitIndexAndProposeVote (source destination : Node)
   | observation (value : Observation holes)
 
 def Instruction.isAction {holes : Nat} : Instruction holes -> Bool
@@ -47,7 +58,10 @@ def Instruction.isAction {holes : Nat} : Instruction holes -> Bool
 
 def supportedActions : List String :=
   ["clientRequest", "signCommittableMessages", "changeConfiguration",
-   "appendRetiredCommitted", "appendEntries"]
+   "appendRetiredCommitted", "appendEntries", "timeout",
+   "becomePreVoteCandidate", "becomeCandidate", "advanceCommitIndex",
+   "checkQuorum", "updateTerm", "becomeLeader", "requestVote",
+   "requestPreVote", "proposeVote", "advanceCommitIndexAndProposeVote"]
 
 def Observation.Holds {holes : Nat}
     (bounds : Bounds)

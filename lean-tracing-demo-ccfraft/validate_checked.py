@@ -14,7 +14,8 @@ to compile before any certificate is read. The checked fragment is deliberately 
 * entry is the canonical bootstrap or an explicit full-state template;
 * the template need not be reachable; its control fields and shape are concrete;
 * actions are clientRequest, signCommittableMessages, changeConfiguration,
-  appendRetiredCommitted, and appendEntries;
+  appendRetiredCommitted, appendEntries, and the eleven control actions listed
+  in README.md;
 * the only observations are ``role``, ``currentTerm``, ``logLength``,
   ``queueLength``, ``commitIndex``, ``allocated``, ``joined``, and ``submitted``;
 * transaction identifiers may be concrete numbers or declared unknowns, and

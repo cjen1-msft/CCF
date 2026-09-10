@@ -15,6 +15,7 @@ import MachineGenerated.LeaderWriteMappingProofs
 import MachineGenerated.MessageEqualityTests
 import MachineGenerated.AppendEntriesMappingProofs
 import MachineGenerated.GuardedAppendEntriesTests
+import MachineGenerated.ControlTraceTests
 
 run_cmd do
   for theoremName in [
@@ -33,7 +34,30 @@ run_cmd do
       ``CCFRaft.TransactionMapping.mapState_appendEntries_with_dedup,
       ``TraceSmt.Guarded.test_holds,
       ``TraceSmt.Guarded.eval_enqueueNoDup_map,
-      ``CCFRaft.GuardedAppendEntries.step_correct] do
+      ``CCFRaft.GuardedAppendEntries.step_correct,
+      ``CCFRaft.TraceEncoding.nextControlTracking_correct,
+      ``CCFRaft.TraceEncoding.roleGuard_correct,
+      ``CCFRaft.TraceEncoding.actionGuard_correct,
+      ``CCFRaft.TraceEncoding.structuralClientExpr_correct,
+      ``CCFRaft.TraceEncoding.latestConfigurationValue_correct,
+      ``CCFRaft.TraceEncoding.currentConfigurationIndexValue_correct,
+      ``CCFRaft.TraceEncoding.highestCommittableValue_correct,
+      ``CCFRaft.TraceEncoding.refreshCompletedTracking_correct,
+      ``CCFRaft.TraceEncoding.controlQueueLengths_correct,
+      ``CCFRaft.TraceEncoding.appendQueueLength_correct,
+      ``CCFRaft.TraceEncoding.configurationRankLeExpr_correct,
+      ``CCFRaft.ControlTraceConfigurations.truncate_correct,
+      ``CCFRaft.ControlTraceConfigurations.truncatePure_correct,
+      ``CCFRaft.ControlTraceRetirement.retiredExpr_correct,
+      ``CCFRaft.ControlTraceRetirement.completedValue_correct,
+      ``CCFRaft.ControlTracePackets.equalExpr_correct,
+      ``CCFRaft.ControlTracePackets.appendEqualExpr_correct,
+      ``CCFRaft.TraceEncoding.rememberPacketTerm_correct,
+      ``CCFRaft.TraceEncoding.controlLogLengths_correct,
+      ``CCFRaft.TraceEncoding.controlSentIndices_correct,
+      ``CCFRaft.TraceEncoding.controlCommitIndices_correct,
+      ``CCFRaft.TraceEncoding.controlFrame_correct,
+      ``CCFRaft.TraceEncoding.encode_holds_correct] do
     for axiomName in ← Lean.collectAxioms theoremName do
       unless axiomName == ``propext || axiomName == ``Classical.choice ||
           axiomName == ``Quot.sound do

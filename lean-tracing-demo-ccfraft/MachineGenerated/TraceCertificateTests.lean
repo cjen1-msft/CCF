@@ -38,6 +38,34 @@ def writes (version : String) (actions : List Json) (limits : Json := bounds) : 
      ("bounds", limits), ("unknowns", toJson ([] : List String)),
      ("steps", toJson actions)]
 
+def unaryControls : List String :=
+  ["advanceCommitIndex", "timeout", "becomePreVoteCandidate", "becomeCandidate",
+   "checkQuorum", "becomeLeader"]
+
+def peerControls : List String :=
+  ["requestVote", "requestPreVote", "updateTerm", "proposeVote",
+   "advanceCommitIndexAndProposeVote"]
+
+#guard (unaryControls ++ peerControls).all fun name =>
+  let parameters := if name ∈ peerControls then [("destination", toJson (1 : Nat))] else []
+  match TraceCertificate.decode (writes "ccfraft-trace/v1" [action name parameters]) with
+  | .ok input => input.trace.length == 1 && input.trace.all (·.isAction)
+  | .error _ => false
+
+#guard peerControls.all fun name =>
+  match TraceCertificate.decode (writes "ccfraft-trace/v1" [action name]) with
+  | .error _ => true
+  | .ok _ => false
+
+#guard (unaryControls ++ peerControls).all fun name =>
+  let parameters := if name ∈ peerControls then [("destination", toJson (1 : Nat))] else []
+  ["ccfraft-client-request/v1", "ccfraft-client-request/v2"].all fun version =>
+    match TraceCertificate.decode
+      (writes version [action name parameters]
+        (if version == "ccfraft-client-request/v1" then legacyBounds else bounds)) with
+    | .error _ => true
+    | .ok _ => false
+
 #guard match TraceCertificate.decode (writes "ccfraft-trace/v1"
     [action "signCommittableMessages",
      action "changeConfiguration" [("configuration", toJson [0, 7])],

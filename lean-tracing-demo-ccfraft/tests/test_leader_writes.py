@@ -95,6 +95,17 @@ class LeaderWriteTests(ClientRequestSliceTestCase):
                 "changeConfiguration",
                 "appendRetiredCommitted",
                 "appendEntries",
+                "timeout",
+                "becomePreVoteCandidate",
+                "becomeCandidate",
+                "advanceCommitIndex",
+                "checkQuorum",
+                "updateTerm",
+                "becomeLeader",
+                "requestVote",
+                "requestPreVote",
+                "proposeVote",
+                "advanceCommitIndexAndProposeVote",
             ],
         )
         mapping = json.loads(
