@@ -45,6 +45,7 @@ Its interpreter preserves formula truth for the same assignment.
 numeral tokens.
 `SmtExpressionText` parses emitted nested expressions and preserves their
 evaluation under the same assignment.
+`SmtScriptText` extends that correspondence to complete generated scripts.
 The opt-in solver fixtures cover both explicit declarations and generated scripts:
 
 ```bash
@@ -55,7 +56,7 @@ CCF_SPARSE_SMT_TESTS=1 CVC5=/path/to/cvc5 \
 These fixtures cover term printing, not full trace correctness.
 
 This is a proof library, not a complete sparse trace validator. Full Model
-composition, SMT emission correspondence, and end-to-end performance remain
+composition, full-trace SMT correspondence, and end-to-end performance remain
 unfinished. The design and remaining work are in [HANDOFF.md](HANDOFF.md).
 
 ## Checked trace encoding

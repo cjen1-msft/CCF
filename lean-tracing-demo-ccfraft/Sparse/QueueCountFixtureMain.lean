@@ -1,4 +1,5 @@
 import Sparse.QueueEncoding
+import Sparse.SmtScriptText
 import Lean.Data.Json
 
 set_option autoImplicit false
@@ -9,8 +10,13 @@ open QueueEncoding QueueStream Smt Lean
 
 private def fixture (name expected : String) (input : SmtScript.Formula)
     (trace : List (Event InputInt)) (observations : List (Observation trace)) : Json :=
+  let formula := encode input [] trace observations
+  let script := SmtScript.render formula
   Json.mkObj [("name", toJson name), ("expected", toJson expected),
-    ("scope", toJson "count-read"), ("script", toJson (render input [] trace observations))]
+    ("scope", toJson "count-read"), ("script", toJson script),
+    ("parsed_script", toJson ((SmtScriptText.parse script).map SmtScript.renderCommands)),
+    ("command_value", toJson (SmtScript.run regressionInput (SmtScript.compile formula))),
+    ("parsed_value", toJson (SmtScriptText.runText regressionInput script))]
 
 private def sendOne : List (Event InputInt) := [.send (.literal 1)]
 private def sendSymbol : List (Event InputInt) := [.send (.symbolic 0)]

@@ -13,5 +13,6 @@ import Sparse.Smt
 import Sparse.SmtExpressionText
 import Sparse.SmtNumerals
 import Sparse.SmtScript
+import Sparse.SmtScriptText
 import Sparse.SmtText
 import Sparse.VersionedIntervals

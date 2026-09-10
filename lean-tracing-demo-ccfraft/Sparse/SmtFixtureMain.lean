@@ -6,6 +6,7 @@ import Sparse.SmtScript
 import Sparse.SmtText
 import Sparse.SmtNumerals
 import Sparse.SmtExpressionText
+import Sparse.SmtScriptText
 import Lean.Data.Json
 
 set_option autoImplicit false
@@ -41,11 +42,15 @@ private def fixture (name expected : String) (declarations : List String)
   let lines := ["(set-logic QF_UFLIA)"] ++ declarations ++
     assertions.map (fun assertion => "(assert " ++ assertion.render ++ ")") ++
     ["(check-sat)"]
+  let generated := SmtScript.render assertions
   Json.mkObj [
     ("name", toJson name),
     ("expected", toJson expected),
     ("script", toJson (String.intercalate "\n" lines ++ "\n")),
-    ("generated_script", toJson (SmtScript.render assertions)),
+    ("generated_script", toJson generated),
+    ("parsed_script", toJson ((SmtScriptText.parse generated).map SmtScript.renderCommands)),
+    ("command_value", toJson (SmtScript.run expressionAssignment (SmtScript.compile assertions))),
+    ("parsed_value", toJson (SmtScriptText.runText expressionAssignment generated)),
     ("expressions", toJson (assertions.map fun term =>
       expressionCase name term.render (some term.lower)))]
 
@@ -145,6 +150,33 @@ def expressionFixtures : List Json :=
     "(+ -1 2)", "(+ ci__0 2)", "unknown", "; comment\ntrue"].map
       (fun text => expressionCase "malformed" text none)
 
+private def scriptCase (name text : String) (parsed : Bool) (expected : Option Bool) : Json :=
+  Json.mkObj [("name", toJson name), ("text", toJson text),
+    ("expected_render", toJson (if parsed then some text else none)),
+    ("actual_render", toJson ((SmtScriptText.parse text).map SmtScript.renderCommands)),
+    ("expected_value", toJson expected),
+    ("actual_value", toJson (SmtScriptText.runText expressionAssignment text))]
+
+private def scriptBody (body : String) : String :=
+  "(set-logic QF_UFLIA)\n" ++ body ++ "(check-sat)\n"
+
+def scriptFixtures : List Json :=
+  let empty := scriptBody ""
+  [
+    scriptCase "empty-formula" empty true (some true),
+    scriptCase "false-assertion" (scriptBody "(assert false)\n") true (some false),
+    scriptCase "missing-declaration" (scriptBody "(assert cb__)\n") true none,
+    scriptCase "mismatched-signature" (scriptBody "(declare-fun ci__ () Bool)\n") true none,
+    scriptCase "duplicate-declaration"
+      (scriptBody "(declare-fun ci__ () Int)\n(declare-fun ci__ () Int)\n") true none,
+    scriptCase "nonboolean-assertion" (scriptBody "(assert 1)\n") true none,
+    scriptCase "wrong-arity" (scriptBody "(assert (= 1))\n") true none,
+    scriptCase "false-does-not-hide-error" (scriptBody "(assert false)\n(assert cb__)\n") true none
+  ] ++ ["", "(set-logic QF_UFLIA)\n(check-sat)", empty ++ empty,
+    empty ++ "(check-sat)\n", "(set-logic QF_UFLIA)\n", "(check-sat)\n",
+    scriptBody "(push 1)\n", empty ++ "\n", "; comment\n" ++ empty,
+    "(set-logic ALL)\n(check-sat)\n"].map (fun text => scriptCase "malformed" text false none)
+
 end CCFRaft.Sparse.SmtFixtures
 
 def main (args : List String) : IO UInt32 := do
@@ -154,10 +186,11 @@ def main (args : List String) : IO UInt32 := do
     | ["--symbols"] => some CCFRaft.Sparse.SmtFixtures.symbolFixtures
     | ["--numerals"] => some CCFRaft.Sparse.SmtFixtures.numeralFixtures
     | ["--expressions"] => some CCFRaft.Sparse.SmtFixtures.expressionFixtures
+    | ["--scripts"] => some CCFRaft.Sparse.SmtFixtures.scriptFixtures
     | _ => none
   let some fixtures := fixtures |
     let stderr <- IO.getStderr
-    stderr.putStrLn "usage: SmtFixtureMain.lean [--symbols | --numerals | --expressions]"
+    stderr.putStrLn "usage: SmtFixtureMain.lean [--symbols | --numerals | --expressions | --scripts]"
     return 1
   IO.println (Lean.Json.arr fixtures.toArray).compress
   return 0

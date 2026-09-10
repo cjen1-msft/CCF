@@ -44,6 +44,7 @@ class SparseSmtIntegrationTests(unittest.TestCase):
                 "nice", "-n", "10", "lake", "build",
                 "Sparse.SmtScript", "Sparse.SmtText", "Sparse.SmtNumerals",
                 "Sparse.SmtExpressionText",
+                "Sparse.SmtScriptText",
             ],
             cwd=ROOT, capture_output=True, text=True, check=True,
         )
@@ -51,6 +52,7 @@ class SparseSmtIntegrationTests(unittest.TestCase):
         cls.symbol_fixtures = load_fixtures("--symbols")
         cls.numeral_fixtures = load_fixtures("--numerals")
         cls.expression_fixtures = load_fixtures("--expressions")
+        cls.script_fixtures = load_fixtures("--scripts")
 
     def test_rendered_terms_match_solver_semantics(self) -> None:
         self.assertEqual(len(self.fixtures), 11)
@@ -101,6 +103,17 @@ class SparseSmtIntegrationTests(unittest.TestCase):
             expressions.extend(fixture["expressions"])
         for case in expressions:
             with self.subTest(name=case["name"], text=case["text"]):
+                self.assertEqual(case["actual_render"], case["expected_render"])
+                self.assertEqual(case["actual_value"], case["expected_value"])
+
+    def test_script_text_preserves_commands_and_fixed_assignment_truth(self) -> None:
+        for case in self.fixtures:
+            with self.subTest(case=case["name"]):
+                self.assertEqual(case["parsed_script"], case["generated_script"])
+                self.assertEqual(case["parsed_value"], case["command_value"])
+        self.assertEqual(len(self.script_fixtures), 18)
+        for case in self.script_fixtures:
+            with self.subTest(case=case["name"], text=case["text"]):
                 self.assertEqual(case["actual_render"], case["expected_render"])
                 self.assertEqual(case["actual_value"], case["expected_value"])
 

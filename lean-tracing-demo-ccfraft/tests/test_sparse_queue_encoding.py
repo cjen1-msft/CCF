@@ -26,7 +26,7 @@ class SparseQueueCountTests(unittest.TestCase):
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.artifacts = Path(cls.temporary.name)
         subprocess.run(
-            ["nice", "-n", "10", "lake", "build", "Sparse.QueueEncoding"],
+            ["nice", "-n", "10", "lake", "build", "Sparse.QueueEncoding", "Sparse.SmtScriptText"],
             cwd=ROOT, capture_output=True, text=True, check=True,
         )
         generated = subprocess.run(
@@ -45,6 +45,8 @@ class SparseQueueCountTests(unittest.TestCase):
             with self.subTest(case=case["name"]):
                 self.assertEqual(case["scope"], "count-read")
                 self.assertTrue(case["script"].isascii())
+                self.assertEqual(case["parsed_script"], case["script"])
+                self.assertEqual(case["parsed_value"], case["command_value"])
                 path = self.artifacts / (case["name"] + ".smt2")
                 path.write_text(case["script"], encoding="ascii")
                 result = run_solver(self.cvc5, path, self.artifacts, case["name"])
