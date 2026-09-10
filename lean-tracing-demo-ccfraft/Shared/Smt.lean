@@ -1,23 +1,11 @@
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-import Mathlib
+import Shared.SmtSharing
 
 set_option autoImplicit false
 
 namespace TraceSmt
-
-inductive NatTerm (holes : Nat) where
-  | literal (value : Nat)
-  | unknown (index : Fin holes)
-  | add (left right : NatTerm holes)
-  | sub (left right : NatTerm holes)
-  | iteEqual (left right whenEqual whenDifferent : NatTerm holes)
-  | named (group slot : Nat) (label : String) (value : NatTerm holes)
-  | min (left right : NatTerm holes)
-  | max (left right : NatTerm holes)
-  | clampIfEqual (left right old lower upper : NatTerm holes)
-  deriving Repr, DecidableEq
 
 def NatTerm.eval {holes : Nat}
     (assignment : Fin holes -> Nat) : NatTerm holes -> Nat
@@ -167,29 +155,120 @@ theorem Formula.holds_cons {holes : Nat}
       group.Holds assignment /\ rest.Holds assignment := by
   simp [Formula.Holds]
 
-def NatTerm.toSmt {holes : Nat} : NatTerm holes -> String
+private def NatTerm.toSmtTree {holes : Nat} : NatTerm holes -> String
   | .literal value => toString value
   | .unknown index => s!"unknown_{index.val}"
-  | .add left right => s!"(+ {left.toSmt} {right.toSmt})"
+  | .add left right => s!"(+ {left.toSmtTree} {right.toSmtTree})"
   | .sub left right =>
-      s!"(ite (< {left.toSmt} {right.toSmt}) 0 (- {left.toSmt} {right.toSmt}))"
+      s!"(ite (< {left.toSmtTree} {right.toSmtTree}) 0 (- {left.toSmtTree} {right.toSmtTree}))"
   | .iteEqual left right whenEqual whenDifferent =>
-      s!"(ite (= {left.toSmt} {right.toSmt}) {whenEqual.toSmt} {whenDifferent.toSmt})"
+      s!"(ite (= {left.toSmtTree} {right.toSmtTree}) {whenEqual.toSmtTree} {whenDifferent.toSmtTree})"
   | .named group slot _ _ => s!"state_{group}_{slot}"
   | .min left right =>
-      s!"(let ((min_left {left.toSmt}) (min_right {right.toSmt})) (ite (< min_left min_right) min_left min_right))"
+      s!"(let ((min_left {left.toSmtTree}) (min_right {right.toSmtTree})) (ite (< min_left min_right) min_left min_right))"
   | .max left right =>
-      s!"(let ((max_left {left.toSmt}) (max_right {right.toSmt})) (ite (< max_left max_right) max_right max_left))"
+      s!"(let ((max_left {left.toSmtTree}) (max_right {right.toSmtTree})) (ite (< max_left max_right) max_right max_left))"
   | .clampIfEqual left right old lower upper =>
-      s!"(let ((clamp_left {left.toSmt}) (clamp_right {right.toSmt}) (clamp_old {old.toSmt}) (clamp_lower {lower.toSmt}) (clamp_upper {upper.toSmt})) (let ((clamp_min (ite (< clamp_old clamp_upper) clamp_old clamp_upper))) (ite (= clamp_left clamp_right) (ite (< clamp_min clamp_lower) clamp_lower clamp_min) clamp_old)))"
+      s!"(let ((clamp_left {left.toSmtTree}) (clamp_right {right.toSmtTree}) (clamp_old {old.toSmtTree}) (clamp_lower {lower.toSmtTree}) (clamp_upper {upper.toSmtTree})) (let ((clamp_min (ite (< clamp_old clamp_upper) clamp_old clamp_upper))) (ite (= clamp_left clamp_right) (ite (< clamp_min clamp_lower) clamp_lower clamp_min) clamp_old)))"
 
-def Expr.toSmt {holes : Nat} : Expr holes -> String
+private def Expr.toSmtTree {holes : Nat} : Expr holes -> String
   | .boolean true => "true"
   | .boolean false => "false"
-  | .equal left right => s!"(= {left.toSmt} {right.toSmt})"
-  | .lessThan left right => s!"(< {left.toSmt} {right.toSmt})"
-  | .not value => s!"(not {value.toSmt})"
-  | .and left right => s!"(and {left.toSmt} {right.toSmt})"
+  | .equal left right => s!"(= {left.toSmtTree} {right.toSmtTree})"
+  | .lessThan left right => s!"(< {left.toSmtTree} {right.toSmtTree})"
+  | .not value => s!"(not {value.toSmtTree})"
+  | .and left right => s!"(and {left.toSmtTree} {right.toSmtTree})"
+
+private abbrev TermCache (holes : Nat) (α : Type) :=
+  Std.HashMap UInt64 (List (NatTerm holes × α))
+
+private structure TermPrinting (holes : Nat) where
+  cache : TermCache holes String := {}
+  definitions : Array (String × String) := #[]
+  shared : Bool := false
+
+private def NatTerm.atomic {holes : Nat} : NatTerm holes -> Bool
+  | .literal _ | .unknown _ | .named _ _ _ _ => true
+  | _ => false
+
+private def NatTerm.printMemo {holes : Nat} (term : NatTerm holes) :
+    StateM (TermPrinting holes) String := do
+  if term.atomic then
+    return term.toSmtTree
+  let key := term.memoKey
+  if let some reference := NatTerm.lookup term ((← get).cache[key]?.getD []) then
+    modify fun state => { state with shared := true }
+    return reference
+  let body ← match term with
+    | .literal _ | .unknown _ | .named _ _ _ _ => pure term.toSmtTree
+    | .add left right => do
+        let a ← left.printMemo
+        let b ← right.printMemo
+        pure s!"(+ {a} {b})"
+    | .sub left right => do
+        let a ← left.printMemo
+        let b ← right.printMemo
+        -- Saturating subtraction uses each operand twice in its SMT body.
+        if !left.atomic || !right.atomic then
+          modify fun state => { state with shared := true }
+        pure s!"(ite (< {a} {b}) 0 (- {a} {b}))"
+    | .iteEqual left right whenEqual whenDifferent => do
+        let a ← left.printMemo
+        let b ← right.printMemo
+        let c ← whenEqual.printMemo
+        let d ← whenDifferent.printMemo
+        pure s!"(ite (= {a} {b}) {c} {d})"
+    | .min left right => do
+        let a ← left.printMemo
+        let b ← right.printMemo
+        pure s!"(let ((min_left {a}) (min_right {b})) (ite (< min_left min_right) min_left min_right))"
+    | .max left right => do
+        let a ← left.printMemo
+        let b ← right.printMemo
+        pure s!"(let ((max_left {a}) (max_right {b})) (ite (< max_left max_right) max_right max_left))"
+    | .clampIfEqual left right old lower upper => do
+        let a ← left.printMemo
+        let b ← right.printMemo
+        let c ← old.printMemo
+        let d ← lower.printMemo
+        let e ← upper.printMemo
+        pure s!"(let ((clamp_left {a}) (clamp_right {b}) (clamp_old {c}) (clamp_lower {d}) (clamp_upper {e})) (let ((clamp_min (ite (< clamp_old clamp_upper) clamp_old clamp_upper))) (ite (= clamp_left clamp_right) (ite (< clamp_min clamp_lower) clamp_lower clamp_min) clamp_old)))"
+  let state ← get
+  let reference := s!"dag_{state.definitions.size}"
+  set { state with
+    cache := state.cache.insert key ((term, reference) :: state.cache[key]?.getD [])
+    definitions := state.definitions.push (reference, body) }
+  return reference
+termination_by sizeOf term
+
+private def Expr.printMemo {holes : Nat} : Expr holes -> StateM (TermPrinting holes) String
+  | .boolean value => pure (if value then "true" else "false")
+  | .equal left right => do
+      let a ← left.printMemo
+      let b ← right.printMemo
+      pure s!"(= {a} {b})"
+  | .lessThan left right => do
+      let a ← left.printMemo
+      let b ← right.printMemo
+      pure s!"(< {a} {b})"
+  | .not value => do pure s!"(not {← value.printMemo})"
+  | .and left right => do
+      let a ← left.printMemo
+      let b ← right.printMemo
+      pure s!"(and {a} {b})"
+
+private def TermPrinting.wrap {holes : Nat} (state : TermPrinting holes) (body : String) : String :=
+  String.join (state.definitions.toList.map fun (name, value) => s!"(let (({name} {value})) ") ++
+    body ++ String.ofList (List.replicate state.definitions.size ')')
+
+/-- Preserve tree printing when no repeated non-atomic operand needs a let. -/
+def NatTerm.toSmt {holes : Nat} (term : NatTerm holes) : String :=
+  let (body, state) := term.printMemo.run {}
+  if state.shared then state.wrap body else term.toSmtTree
+
+def Expr.toSmt {holes : Nat} (expression : Expr holes) : String :=
+  let (body, state) := expression.printMemo.run {}
+  if state.shared then state.wrap body else expression.toSmtTree
 
 def conjunction (expressions : List String) : String :=
   match expressions with
@@ -213,26 +292,56 @@ structure Binding (holes : Nat) where
   value : NatTerm holes
   deriving DecidableEq
 
-def NatTerm.bindings {holes : Nat} : NatTerm holes -> List (Binding holes)
-  | .literal _ => []
-  | .unknown _ => []
-  | .add left right => left.bindings ++ right.bindings
-  | .sub left right => left.bindings ++ right.bindings
-  | .iteEqual left right whenEqual whenDifferent =>
-      left.bindings ++ right.bindings ++ whenEqual.bindings ++ whenDifferent.bindings
-  | .named group slot label value =>
-      value.bindings ++ [{ group, slot, label, value }]
-  | .min left right => left.bindings ++ right.bindings
-  | .max left right => left.bindings ++ right.bindings
-  | .clampIfEqual left right old lower upper =>
-      left.bindings ++ right.bindings ++ old.bindings ++ lower.bindings ++ upper.bindings
+private structure BindingCollection (holes : Nat) where
+  cache : TermCache holes (Option Nat) := {}
+  bindings : Array (Binding holes) := #[]
+  error : Option String := none
 
-def Expr.bindings {holes : Nat} : Expr holes -> List (Binding holes)
-  | .boolean _ => []
-  | .equal left right => left.bindings ++ right.bindings
-  | .lessThan left right => left.bindings ++ right.bindings
-  | .not value => value.bindings
-  | .and left right => left.bindings ++ right.bindings
+private def latestOwner (left right : Option Nat) : Option Nat :=
+  match left, right with
+  | none, other | other, none => other
+  | some a, some b => some (Nat.max a b)
+
+private def NatTerm.collectBindings {holes : Nat} (term : NatTerm holes) :
+    StateM (BindingCollection holes) (Option Nat) := do
+  let key := term.memoKey
+  if let some owner := NatTerm.lookup term ((← get).cache[key]?.getD []) then
+    return owner
+  let mut owner := none
+  for child in term.children.attach do
+    owner := latestOwner owner (← child.val.collectBindings)
+  if let .named group slot label value := term then
+    if let some dependency := owner then
+      if dependency > group then
+        let message := s!"intermediate value in group {group} refers to future group {dependency}"
+        modify fun state => { state with error := state.error.orElse (fun _ => some message) }
+    modify fun state => { state with bindings := state.bindings.push { group, slot, label, value } }
+    owner := latestOwner owner (some group)
+  modify fun state =>
+    { state with cache := state.cache.insert key ((term, owner) :: state.cache[key]?.getD []) }
+  return owner
+termination_by sizeOf term
+decreasing_by exact NatTerm.child_smaller _ _ child.property
+
+private def Expr.collectBindings {holes : Nat} :
+    Expr holes -> StateM (BindingCollection holes) (Option Nat)
+  | .boolean _ => pure none
+  | .equal left right | .lessThan left right => do
+      let a ← left.collectBindings
+      let b ← right.collectBindings
+      return latestOwner a b
+  | .not value => value.collectBindings
+  | .and left right => do
+      let a ← left.collectBindings
+      let b ← right.collectBindings
+      return latestOwner a b
+
+/-- Reachable distinct definitions, in child-before-parent order. -/
+def NatTerm.bindings {holes : Nat} (term : NatTerm holes) : List (Binding holes) :=
+  (term.collectBindings.run {}).2.bindings.toList
+
+def Expr.bindings {holes : Nat} (expression : Expr holes) : List (Binding holes) :=
+  (expression.collectBindings.run {}).2.bindings.toList
 
 structure PrintedClause where
   label : String
@@ -253,17 +362,25 @@ Reject conflicting names rather than silently merging distinct definitions.
 def Formula.prepare {holes : Nat}
     (formula : Formula holes) : Except String Prepared := do
   let mut bindings : List (Binding holes) := []
+  let mut collection : BindingCollection holes := {}
   for (group, index) in formula.zipIdx do
     for clause in group.clauses do
-      for binding in clause.expression.bindings do
-        if binding.group >= formula.length then
-          throw s!"intermediate value refers to absent group {binding.group}"
-        if binding.group > index then
-          throw s!"group {index} refers to a future intermediate value in group {binding.group}"
+      let (owner, collected) := clause.expression.collectBindings.run collection
+      if let some message := collected.error then
+        throw message
+      if let some latest := owner then
+        if latest >= formula.length then
+          throw s!"intermediate value refers to absent group {latest}"
+        if latest > index then
+          throw s!"group {index} refers to a future intermediate value in group {latest}"
+      let discovered := collected.bindings.extract collection.bindings.size collected.bindings.size
+      collection := collected
+      for binding in discovered do
         match bindings.find? (fun prior =>
             prior.group == binding.group && prior.slot == binding.slot) with
         | some prior =>
-            unless prior == binding do
+            unless prior.label == binding.label &&
+                @decide (prior.value = binding.value) (NatTerm.sharedDecEq prior.value binding.value) do
               throw s!"conflicting intermediate definition: state_{binding.group}_{binding.slot}"
         | none => bindings := bindings ++ [binding]
   let declarations := (List.range holes).flatMap fun index =>

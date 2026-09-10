@@ -34,11 +34,18 @@ private theorem repeatedNackClamp_eval (count : Nat) :
   | zero => rfl
   | succ count ih => simp [repeatedNackClamp, nackStep, Expr.clamp_eval, Expr.Holds, NatTerm.eval, ih]
 
-#guard (oldRepeatedNackClamp 12).bindings.length == 16381
-#guard (oldRepeatedNackClamp 15).bindings.length == 131069
+private def treeBindingOccurrences (term : NatTerm 0) : Nat :=
+  (if let .named _ _ _ _ := term then 1 else 0) +
+    term.children.attach.foldl (fun count child => count + treeBindingOccurrences child.val) 0
+termination_by sizeOf term
+decreasing_by exact NatTerm.child_smaller _ _ child.property
+
+#guard treeBindingOccurrences (oldRepeatedNackClamp 12) == 16381
+#guard treeBindingOccurrences (oldRepeatedNackClamp 15) == 131069
 #guard [0, 1, 12, 15, 32, 64].all fun count =>
-  (repeatedNackClamp count).bindings.length == 3 * count + 1 &&
+  (repeatedNackClamp count).bindings.length == (if count = 0 then 1 else 2 * count + 2) &&
     (repeatedNackClamp count).eval Fin.elim0 == 2
+#guard [12, 15].all fun count => (oldRepeatedNackClamp count).bindings.length == 2 * count + 2
 
 private def clampOf {holes : Nat} (operand : Fin 5 -> NatTerm holes) : NatTerm holes :=
   .clampIfEqual (operand 0) (operand 1) (operand 2) (operand 3) (operand 4)
@@ -132,7 +139,7 @@ def run (solver : String) : IO Unit := do
     let term := repeatedNackClamp count
     let text := term.toSmt
     let query ← checked ((nackFormula count 2).prepare)
-    unless term.bindings.length == 3 * count + 1 &&
+    unless term.bindings.length == 2 * count + 2 &&
         (text.splitOn "state_0_0").length == 2 &&
         (text.splitOn "(let ((clamp_left ").length == count + 1 &&
         query.groups.map (fun group => group.clauses.length) ==

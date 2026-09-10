@@ -25,7 +25,7 @@ private def linearGrowth (depth : Nat) : Bool :=
   let step := (repeatedClamp 1).toSmt.utf8ByteSize - base
   let keyBase := (repeatedClamp 0).syntaxKey.length
   let keyStep := (repeatedClamp 1).syntaxKey.length - keyBase
-  term.bindings.length == 2 * depth + 1 &&
+  term.bindings.length == (if depth = 0 then 1 else 3) &&
     text.utf8ByteSize == base + depth * step &&
     term.syntaxKey.length == keyBase + depth * keyStep &&
     occurrences text "state_0_0" == 1 &&
