@@ -58,6 +58,7 @@ New repository bridges extend that foundation:
 | `Sparse/SmtScript.lean` | Generates unique typed declarations and commands. Command evaluation preserves formula truth for the same assignment. |
 | `Sparse/SmtText.lean` | Decodes exactly the canonical generated symbol names, with symbol-atom evaluation roundtrip for the existing renderer. |
 | `Sparse/SmtNumerals.lean` | Decodes canonical decimal numerals for arbitrary Nat, with a roundtrip proof over the actual core renderer. |
+| `Sparse/SmtExpressionText.lean` | Parses the existing expression renderer's output for arbitrary nesting, preserving structure and same-assignment evaluation without a depth cap. |
 
 `QueuePlan.generated_exists_iff` requires nonnegative initial length, tracked-key
 coverage, lawful equality, and a fresh filler value. Its conservative ancestor
@@ -74,7 +75,7 @@ SAT cases with invalid FIFO behavior to keep that boundary explicit.
 `tests/test_sparse_queue_encoding.py` uses the same opt-in environment as the
 scalar fixtures.
 
-Nested-expression and full-script text correspondence remain separate.
+Full-script text correspondence remains separate.
 The real cvc5 fixtures in
 `tests/test_sparse_smt.py` are opt-in through `CCF_SPARSE_SMT_TESTS=1` and `CVC5`;
 they exercise explicit declarations and generated scripts, not a full trace

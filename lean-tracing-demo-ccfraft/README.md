@@ -41,6 +41,8 @@ execution.
 Its interpreter preserves formula truth for the same assignment.
 `SmtText` and `SmtNumerals` prove exact decoding of generated symbol and decimal
 numeral tokens.
+`SmtExpressionText` parses emitted nested expressions and preserves their
+evaluation under the same assignment.
 The opt-in solver fixtures cover both explicit declarations and generated scripts:
 
 ```bash

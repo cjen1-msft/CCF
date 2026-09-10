@@ -43,12 +43,14 @@ class SparseSmtIntegrationTests(unittest.TestCase):
             [
                 "nice", "-n", "10", "lake", "build",
                 "Sparse.SmtScript", "Sparse.SmtText", "Sparse.SmtNumerals",
+                "Sparse.SmtExpressionText",
             ],
             cwd=ROOT, capture_output=True, text=True, check=True,
         )
         cls.fixtures = load_fixtures()
         cls.symbol_fixtures = load_fixtures("--symbols")
         cls.numeral_fixtures = load_fixtures("--numerals")
+        cls.expression_fixtures = load_fixtures("--expressions")
 
     def test_rendered_terms_match_solver_semantics(self) -> None:
         self.assertEqual(len(self.fixtures), 11)
@@ -91,6 +93,16 @@ class SparseSmtIntegrationTests(unittest.TestCase):
         for case in self.numeral_fixtures:
             with self.subTest(text=case["text"]):
                 self.assertEqual(case["actual"], case["expected"])
+
+    def test_expression_text_preserves_structure_and_evaluation(self) -> None:
+        self.assertEqual(len(self.expression_fixtures), 17)
+        expressions = list(self.expression_fixtures)
+        for fixture in self.fixtures:
+            expressions.extend(fixture["expressions"])
+        for case in expressions:
+            with self.subTest(name=case["name"], text=case["text"]):
+                self.assertEqual(case["actual_render"], case["expected_render"])
+                self.assertEqual(case["actual_value"], case["expected_value"])
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ import Sparse.QueuePresence
 import Sparse.QueueReadback
 import Sparse.ReadbackHints
 import Sparse.Smt
+import Sparse.SmtExpressionText
 import Sparse.SmtNumerals
 import Sparse.SmtScript
 import Sparse.SmtText

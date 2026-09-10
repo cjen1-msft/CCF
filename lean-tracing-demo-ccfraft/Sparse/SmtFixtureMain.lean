@@ -5,6 +5,7 @@ import Sparse.Smt
 import Sparse.SmtScript
 import Sparse.SmtText
 import Sparse.SmtNumerals
+import Sparse.SmtExpressionText
 import Lean.Data.Json
 
 set_option autoImplicit false
@@ -19,6 +20,22 @@ private def header (argument : Term .int) : Term .int := .app .int .int 0 argume
 private def equalHeader : List (Term .bool) :=
   [.equal (header first) (.integer 0), .equal (header second) (.integer 0)]
 
+private def expressionAssignment : Assignment where
+  constant ty _ := match ty with | .bool => false | .int => 0
+  unary _ result _ _ := match result with | .bool => false | .int => 0
+
+private def valueJson : Value -> Json
+  | .boolean value => Json.mkObj [("Bool", toJson value)]
+  | .integer value => Json.mkObj [("Int", toJson value)]
+
+private def expressionCase (name text : String) (expected : Option SExpr) : Json :=
+  let actual := SmtExpressionText.parse text
+  Json.mkObj [("name", toJson name), ("text", toJson text),
+    ("expected_render", toJson (expected.map SExpr.render)),
+    ("actual_render", toJson (actual.map SExpr.render)),
+    ("expected_value", toJson ((expected.bind (SExpr.eval expressionAssignment)).map valueJson)),
+    ("actual_value", toJson ((actual.bind (SExpr.eval expressionAssignment)).map valueJson))]
+
 private def fixture (name expected : String) (declarations : List String)
     (assertions : List (Term .bool)) : Json :=
   let lines := ["(set-logic QF_UFLIA)"] ++ declarations ++
@@ -28,7 +45,9 @@ private def fixture (name expected : String) (declarations : List String)
     ("name", toJson name),
     ("expected", toJson expected),
     ("script", toJson (String.intercalate "\n" lines ++ "\n")),
-    ("generated_script", toJson (SmtScript.render assertions))]
+    ("generated_script", toJson (SmtScript.render assertions)),
+    ("expressions", toJson (assertions.map fun term =>
+      expressionCase name term.render (some term.lower)))]
 
 -- Literal declarations independently check the generated symbol-name convention.
 private def packetDeclarations : List String :=
@@ -105,6 +124,27 @@ def numeralFixtures : List Json :=
   values.map (fun value => numeralFixture (Atom.numeral value).render (some value)) ++
     malformed.map (fun text => numeralFixture text none)
 
+private def nestedNegation : Nat -> SExpr
+  | 0 => .atom (.boolean true)
+  | depth + 1 => .list [.atom (.operator .not), nestedNegation depth]
+
+def expressionFixtures : List Json :=
+  let sum : SExpr := .list [.atom (.operator .add), .atom (.numeral 1), .atom (.numeral 2)]
+  let illTyped : SExpr := .list [.atom (.operator .ite), .atom (.boolean true),
+    .atom (.numeral 1), .atom (.boolean false)]
+  let wrongArity : SExpr := .list [.atom (.operator .add), .atom (.numeral 1)]
+  let nested := nestedNegation 256
+  [
+    expressionCase "mixed-whitespace" "\n(\t+\r 1 2)\t" (some sum),
+    expressionCase "unselected-branch-type-error" illTyped.render (some illTyped),
+    expressionCase "wrong-arity" wrongArity.render (some wrongArity),
+    expressionCase "empty-list" "()" (some (.list [])),
+    expressionCase "nested-empty-list" "(())" (some (.list [.list []])),
+    expressionCase "deep-nesting" nested.render (some nested)
+  ] ++ ["", "(", ")", "(+ 1 2", "(+ 1 2))", "true false", "(+ 01 2)",
+    "(+ -1 2)", "(+ ci__0 2)", "unknown", "; comment\ntrue"].map
+      (fun text => expressionCase "malformed" text none)
+
 end CCFRaft.Sparse.SmtFixtures
 
 def main (args : List String) : IO UInt32 := do
@@ -113,10 +153,11 @@ def main (args : List String) : IO UInt32 := do
     | [] => some CCFRaft.Sparse.SmtFixtures.fixtures
     | ["--symbols"] => some CCFRaft.Sparse.SmtFixtures.symbolFixtures
     | ["--numerals"] => some CCFRaft.Sparse.SmtFixtures.numeralFixtures
+    | ["--expressions"] => some CCFRaft.Sparse.SmtFixtures.expressionFixtures
     | _ => none
   let some fixtures := fixtures |
     let stderr <- IO.getStderr
-    stderr.putStrLn "usage: SmtFixtureMain.lean [--symbols | --numerals]"
+    stderr.putStrLn "usage: SmtFixtureMain.lean [--symbols | --numerals | --expressions]"
     return 1
   IO.println (Lean.Json.arr fixtures.toArray).compress
   return 0
