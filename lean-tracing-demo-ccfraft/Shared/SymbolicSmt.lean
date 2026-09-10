@@ -45,6 +45,7 @@ structure Printing where
   stateDeclarations : Array String := #[]
   normalized : Expr.NormalizationState := {}
   emitted : Std.HashMap UInt64 (List (((s : Ty) × Expr s) × String)) := {}
+  validatedNodes : Nat := 0
 
 private structure NamedBinding where
   group : Nat
@@ -54,7 +55,7 @@ private structure NamedBinding where
 private structure Names where
   definitions : Std.HashMap (Nat × Nat) ((s : Ty) × Expr s) := {}
   bindings : Array NamedBinding := #[]
-  visited : Std.HashMap (Nat × UInt64) (List ((s : Ty) × Expr s)) := {}
+  visited : Std.HashMap UInt64 (List (Nat × ((s : Ty) × Expr s))) := {}
 
 -- Repeated names share predecessor trees; do not traverse those trees again.
 private def sameDefinition (left right : (s : Ty) × Expr s) : Bool :=
@@ -67,8 +68,10 @@ private theorem sameDefinition_correct (left right : (s : Ty) × Expr s) :
 private def collectNames {s : Ty} (groupCount current : Nat) (e : Expr s) :
     StateT Names (Except String) Unit := do
   let key : (s : Ty) × Expr s := ⟨s, e⟩
-  let bucket := (current, e.memoKey)
-  if ((← get).visited[bucket]?.getD []).any (fun prior => sameDefinition prior key) then
+  let bucket := e.memoKey
+  -- Syntax valid under an earlier owner remains valid under a later owner.
+  if ((← get).visited[bucket]?.getD []).any (fun (owner, prior) =>
+      owner ≤ current && sameDefinition prior key) then
     return
   match e with
   | .named group slot value =>
@@ -101,7 +104,7 @@ private def collectNames {s : Ty} (groupCount current : Nat) (e : Expr s) :
       collectNames groupCount current a
       collectNames groupCount current b
   modify fun state => { state with
-    visited := state.visited.insert bucket (key :: state.visited[bucket]?.getD []) }
+    visited := state.visited.insert bucket ((current, key) :: state.visited[bucket]?.getD []) }
 
 private def intern (s : Ty) (body : String) : StateM Printing String := do
   let state ← get
@@ -211,7 +214,9 @@ def prepareGroups (groups : List (List (Expr .bool))) :
         stateDeclarations := state.stateDeclarations.push
           s!"(declare-const {name} {binding.value.1.smt})" }
     return roots
-  return emitAll.run {}
+  let (roots, printed) := emitAll.run {}
+  let validatedNodes := names.visited.fold (fun count _ entries => count + entries.length) 0
+  return (roots, { printed with validatedNodes })
 
 def prepare (assertions : List (Expr .bool)) :
     Except String (List String × Printing) := do
