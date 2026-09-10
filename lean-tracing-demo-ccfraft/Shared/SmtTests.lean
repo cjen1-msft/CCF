@@ -21,6 +21,16 @@ def equality (term : NatTerm 0) : Clause 0 :=
 #guard (.sub (.unknown 0) (.unknown 1) : NatTerm 2).toSmt ==
   "(ite (< unknown_0 unknown_1) 0 (- unknown_0 unknown_1))"
 
+#guard ([0, 1, 2, 7] : List Nat).all fun left =>
+  [0, 1, 2, 7].all fun right =>
+    ((.min (.literal left) (.literal right) : NatTerm 0).eval Fin.elim0 == Nat.min left right) &&
+    ((.max (.literal left) (.literal right) : NatTerm 0).eval Fin.elim0 == Nat.max left right)
+#guard (.max (.min (.literal 2) (.literal 5)) (.literal 7) : NatTerm 0).eval Fin.elim0 == 7
+#guard (.min (.unknown 0) (.unknown 1) : NatTerm 2).toSmt ==
+  "(let ((min_left unknown_0) (min_right unknown_1)) (ite (< min_left min_right) min_left min_right))"
+#guard (.max (.unknown 0) (.unknown 1) : NatTerm 2).toSmt ==
+  "(let ((max_left unknown_0) (max_right unknown_1)) (ite (< max_left max_right) max_right max_left))"
+
 def conditionalGuard : Expr 2 :=
   .and (.lessThan (.unknown 0) (.unknown 1))
     (.not (.equal (.unknown 0) (.literal 0)))
@@ -126,6 +136,16 @@ def repeated : Formula 0 :=
   [{ label := "conditional", clauses :=
       [equality (.iteEqual (namedValue 0 1) (.literal 1) (namedValue 0 2) (.literal 3))] }]
 
+#guard ([NatTerm.min, NatTerm.max] : List (NatTerm 0 -> NatTerm 0 -> NatTerm 0)).all
+  fun combine =>
+    rejected [{ label := "action", clauses :=
+      [equality (combine (namedValue 0 1) (namedValue 0 2))] }] &&
+    ([combine (namedValue 1 1) (.literal 0),
+      combine (.literal 0) (namedValue 1 1)] : List (NatTerm 0)).all fun term =>
+        rejected [{ label := "action", clauses := [equality term] }] &&
+        rejected [{ label := "action", clauses := [equality term] },
+          { label := "future", clauses := [] }]
+
 #guard match (Formula.prepare
     [{ label := "action", clauses :=
         [equality (.sub (.literal 3) (namedValue 0 2))] }]) with
@@ -157,7 +177,9 @@ def repeated : Formula 0 :=
 end TraceSmt.Tests
 
 run_cmd do
-  for axiomName in ← Lean.collectAxioms ``TraceSmt.Expr.ite_eval do
-    unless axiomName == ``propext || axiomName == ``Classical.choice ||
-        axiomName == ``Quot.sound do
-      throwError "conditional evaluation depends on unapproved axiom {axiomName}"
+  for name in [``TraceSmt.Expr.ite_eval, ``TraceSmt.NatTerm.min_eval,
+      ``TraceSmt.NatTerm.max_eval] do
+    for axiomName in ← Lean.collectAxioms name do
+      unless axiomName == ``propext || axiomName == ``Classical.choice ||
+          axiomName == ``Quot.sound do
+        throwError "{name} depends on unapproved axiom {axiomName}"

@@ -14,6 +14,8 @@ inductive NatTerm (holes : Nat) where
   | sub (left right : NatTerm holes)
   | iteEqual (left right whenEqual whenDifferent : NatTerm holes)
   | named (group slot : Nat) (label : String) (value : NatTerm holes)
+  | min (left right : NatTerm holes)
+  | max (left right : NatTerm holes)
   deriving Repr, DecidableEq
 
 def NatTerm.eval {holes : Nat}
@@ -27,6 +29,20 @@ def NatTerm.eval {holes : Nat}
         whenEqual.eval assignment
       else whenDifferent.eval assignment
   | .named _ _ _ value => value.eval assignment
+  | .min left right => Nat.min (left.eval assignment) (right.eval assignment)
+  | .max left right => Nat.max (left.eval assignment) (right.eval assignment)
+
+@[simp]
+theorem NatTerm.min_eval {holes : Nat} (assignment : Fin holes -> Nat)
+    (left right : NatTerm holes) :
+    (left.min right).eval assignment = Nat.min (left.eval assignment) (right.eval assignment) :=
+  rfl
+
+@[simp]
+theorem NatTerm.max_eval {holes : Nat} (assignment : Fin holes -> Nat)
+    (left right : NatTerm holes) :
+    (left.max right).eval assignment = Nat.max (left.eval assignment) (right.eval assignment) :=
+  rfl
 
 inductive Expr (holes : Nat) where
   | boolean (value : Bool)
@@ -132,6 +148,10 @@ def NatTerm.toSmt {holes : Nat} : NatTerm holes -> String
   | .iteEqual left right whenEqual whenDifferent =>
       s!"(ite (= {left.toSmt} {right.toSmt}) {whenEqual.toSmt} {whenDifferent.toSmt})"
   | .named group slot _ _ => s!"state_{group}_{slot}"
+  | .min left right =>
+      s!"(let ((min_left {left.toSmt}) (min_right {right.toSmt})) (ite (< min_left min_right) min_left min_right))"
+  | .max left right =>
+      s!"(let ((max_left {left.toSmt}) (max_right {right.toSmt})) (ite (< max_left max_right) max_right max_left))"
 
 def Expr.toSmt {holes : Nat} : Expr holes -> String
   | .boolean true => "true"
@@ -172,6 +192,8 @@ def NatTerm.bindings {holes : Nat} : NatTerm holes -> List (Binding holes)
       left.bindings ++ right.bindings ++ whenEqual.bindings ++ whenDifferent.bindings
   | .named group slot label value =>
       value.bindings ++ [{ group, slot, label, value }]
+  | .min left right => left.bindings ++ right.bindings
+  | .max left right => left.bindings ++ right.bindings
 
 def Expr.bindings {holes : Nat} : Expr holes -> List (Binding holes)
   | .boolean _ => []
