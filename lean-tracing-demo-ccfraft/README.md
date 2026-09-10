@@ -42,6 +42,9 @@ root-array witness. Its request list can still grow as cuts times references.
 Its rendered script is satisfiable iff one root-array family satisfies all
 observations under the input formula and explicit nonnegative index constraints.
 Entry-valued cells and universal predicate emission remain separate work.
+`EntryValue` supplies a fixed entry domain with signed integer scalars and
+node-set bitvectors, bijective with Model entries. SMT support for those sorts
+is not yet implemented.
 `ConfigurationSnapshot` characterizes complete positive-index Model snapshots
 with finite frontier queries. Raw callback-phase mapping is still separate.
 

@@ -2,6 +2,7 @@ import Sparse.FoundationAudit
 import Sparse.QueueAudit
 import Sparse.AppendEntriesRanges
 import Sparse.ConfigurationSnapshot
+import Sparse.EntryValue
 import Sparse.FiniteMembership
 import Sparse.IntervalDemandPlan
 import Sparse.IntervalEncoding

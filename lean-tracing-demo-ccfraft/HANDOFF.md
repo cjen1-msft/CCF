@@ -52,6 +52,7 @@ New repository bridges extend that foundation:
 | `Sparse/IntervalQueries.lean` | Finite read equations and reference-local cut predicates correspond to one root-array family for every universal query, preserving requested cut values. |
 | `Sparse/MonotoneIntervals.lean` | Joint finite-cut completion for one log with point facts, interval predicates, nondecreasing terms, and a current-term bound. |
 | `Sparse/ConfigurationSnapshot.lean` | Exact ordered positive-index Model snapshots and same-log completion using `2m+1` frontier-query records for `m` snapshot entries. |
+| `Sparse/EntryValue.lean` | Fixed nonrecursive content and entry values are bijective with actual Model values, with equality transport, decoded term ordering, guarded payload views, and pointwise array equivalence. |
 | `Sparse/AppendEntriesRanges.lean` | Actual send/receive index alignment. Enabled sends contain at most one entry; arbitrary initial packets remain unbounded. |
 | `Sparse/FiniteMembership.lean` | One finite initial set for a complete membership/insert trace, preserving key aliases. |
 | `Sparse/QueueReadback.lean` | Fixed-plan finite read/scalar constraints correspond to one count-array heap and imply a concrete whole-queue execution. |
@@ -103,6 +104,20 @@ boundaries, and sparse domains through actual emitted text. A million-root
 universe and a trillion-valued index each require two demands in their fixtures.
 The shared-ancestor case uses 400 versions and 401 demands, with both SAT and
 UNSAT controls. These are point-read components, not full Raft traces.
+
+The chosen entry representation uses fixed native datatypes with signed
+integer term/transaction fields and 15-bit node sets. `EntryValue` supplies
+the exact value domain, not its SMT declarations or text correspondence.
+Wrong-variant payload views return `none`. Future SMT selectors are total and
+underspecified on wrong variants, so their lowering needs a separate argument.
+Natural term ordering compares decoded values, never raw signed integers.
+
+The session's `sparse-entry-representation-design.md` records three designs and
+rerunnable probes. For 200 appends plus 200 point copies, fixed datatypes took
+82 ms median SAT versus 10.6 seconds for the measured canonical-token scheme.
+Those cvc5 process timings include startup and use a million-element initial
+extent without materializing it. They do not measure the native Lean emitter
+or full Raft traces.
 
 Configuration snapshots are derived Model observations, not a mutable global
 configuration variable. Empty positive-index snapshots do not remove implicit
