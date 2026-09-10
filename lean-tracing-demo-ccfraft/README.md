@@ -28,6 +28,9 @@ explicit plan and demand-closure invariant.
 For unconditional queue events, its finite constraints hold iff one concrete
 queue of the supplied length executes the entire trace.
 The theorem requires tracked-key coverage and a fresh filler value.
+`QueuePresence` removes known-present sends while preserving the same initial
+queue, even when distinct symbolic keys alias. `QueueObservationBounds` derives
+initial-length bounds from source-local observations without assuming emptiness.
 
 `SmtScript` declares each referenced typed symbol once and assembles assertions.
 Its interpreter preserves formula truth for the same assignment.

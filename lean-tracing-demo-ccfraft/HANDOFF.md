@@ -50,6 +50,8 @@ New repository bridges extend that foundation:
 | `Sparse/FiniteMembership.lean` | One finite initial set for a complete membership/insert trace, preserving key aliases. |
 | `Sparse/QueueReadback.lean` | Fixed-plan finite read/scalar constraints correspond to one count-array heap and imply a concrete whole-queue execution. |
 | `Sparse/QueuePlan.lean` | Constructs the plan and closed demands. Finite constraints hold iff one concrete queue of the supplied length executes the whole unconditional trace. |
+| `Sparse/QueuePresence.lean` | Removes known-present sends with same-initial-queue equivalence, under possibly aliased keys and sound disequality. |
+| `Sparse/QueueObservationBounds.lean` | Bounds initial source-local queue length using observed lengths and packets distinct from every earlier send. |
 | `Sparse/ReadbackHints.lean` | Unequal observed projection values justify key disequality and skipping a store. |
 | `Sparse/Smt.lean` | Typed Bool/Int terms lower to a strict s-expression interpreter; symbol names are injective. |
 | `Sparse/SmtScript.lean` | Generates unique typed declarations and commands. Command evaluation preserves formula truth for the same assignment. |
@@ -58,6 +60,10 @@ New repository bridges extend that foundation:
 coverage, lawful equality, and a fresh filler value. Its conservative ancestor
 closure can be quadratic. Runtime emission and conditional queue operations
 remain separate obligations.
+
+Presence normalization applies only to queue events. Callers must retain other
+observations and rebuild references for retained events. Destination-wide length
+observations do not imply these source-local bounds.
 
 Final emitted-text correspondence remains separate. The real cvc5 fixtures in
 `tests/test_sparse_smt.py` are opt-in through `CCF_SPARSE_SMT_TESTS=1` and `CVC5`;
