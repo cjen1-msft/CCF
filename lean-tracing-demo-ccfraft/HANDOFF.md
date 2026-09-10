@@ -1,8 +1,8 @@
 # Resume the checked CCFRaft trace encoder
 
-The guarded AppendEntries trace slice is complete. This document supersedes
-the unfinished migration checkpoint in `f1c84033b`. Receive, control-action
-integration, symbolic entry controls, raw-trace integration, and the explorer
+The guarded AppendEntries and control trace slices are complete. This document supersedes
+the unfinished migration checkpoint in `f1c84033b`. Receive trace integration,
+symbolic entry controls, and raw-trace integration
 remain unfinished.
 
 ## Start here
@@ -11,9 +11,9 @@ Repository: `cjen1-msft/CCF`. Branch: `lean-ccfraft-slices`.
 All paths below are relative to `lean-tracing-demo-ccfraft/`, unless stated
 otherwise. Do not assume the old machine's absolute paths exist.
 
-The control-action mapping proofs in `032f02820` are not yet integrated into
-trace instructions. The executable now supports all five actions accepted by
-the general JSON schema, including guarded `appendEntries`.
+The control-action mapping proofs in `032f02820` are integrated into
+trace instructions. The executable supports the four leader writes, guarded
+`appendEntries`, and all eleven control actions.
 
 The session's commits have not been pushed by this assistant. Transfer this
 branch, not just the older remote branch. For an offline transfer, run this
@@ -137,11 +137,32 @@ membership are not a second formal correspondence theorem.
 | `83f4ea642` | Executable guarded choices with generic evaluation, composition and queue-operation proofs |
 | `50ed2728e` | Executable guarded AppendEntries step, aliasing regressions, shared tests in the audit |
 | `032f02820` | Mapping and enabledness proofs for eleven control actions, with `ControlActionAudit` |
+| `c60b54f81` | Guarded AppendEntries trace encoding and same-assignment correspondence |
+| `2ca80ab43` | Truncated SMT natural subtraction for causal decreases |
+| `f5907da7e` | Guarded receive enabledness and successor correspondence, all packet variants |
+| `3c0bd951c` | Fixed-context core refinement and standalone source-linked explorer |
+| `88f246b25` | Raw identifier normalization and exact partial-message observation contract |
+| `9f7ddc1d7` | Stored retirement and pre-vote observation contract and decoder |
+| `f8836d49c` | Compositional symbolic state, exact bounds, finite containers and SMT serialization |
+| `9478d8430` | Generic symbolic trace composition and symbolic partial-message observations |
+| `8f3dd1b1d` | Symbolic stored retirement and pre-vote observations |
+| `c7fbf01ab` | Full-model symbolic trace contract and complete observation dispatch |
+| `e28cc28aa` | Strict symbolic certificate decoder with six saved raw-trace regressions |
+| `94850592f` | Typed intermediate names, owner-group equations, and strict serialization |
+| `c83a33f11` | Whole-state causal naming with proved indexed trace composition |
+| `efbafbaaa` | Symbolic assurance metadata and matching explorer contract links |
+| `dd1bea352` | Coarse and fine symbolic output with matching constraint metadata |
+| `e4f626a4b` | Exact named-definition comparison without repeated shared-tree traversal |
+| `432ba9feb` | Proved conditional natural values with causal predicate retention |
+| `a6274e2e8` | Shared solver reuse and restored PATH discovery in the raw runner |
+| `b7fa4f6d0` | All eleven control actions, complete causal tracking, and send scaling regressions |
 
 The end-to-end CLI supports `clientRequest`,
 `signCommittableMessages`, `changeConfiguration`,
-`appendRetiredCommitted`, and `appendEntries`. The focused gate runs 37
-tests covering native encoding and toolchain failure paths.
+`appendRetiredCommitted`, `appendEntries`, and all eleven control actions.
+The expanded `check_checked.sh` gate passes 184 tests without skips,
+including symbolic infrastructure and controls. Independent review closed the
+causal-tracking and repeated-send scaling findings.
 
 The general leader-write example returned SAT:
 
@@ -241,28 +262,36 @@ received separate independent reviews with no material findings.
 `requestVote`, `requestPreVote`, `checkQuorum`, `updateTerm`, `becomeLeader`,
 `proposeVote`, and `advanceCommitIndexAndProposeVote`.
 
-These are arbitrary-state, non-injective mapping proofs. They are not yet
-accepted trace instructions. Integrate them into the guarded encoder in small
-families. Their local-state changes also need causal tracking for observed
-roles, terms, indices and truncated logs.
+These arbitrary-state, non-injective mapping proofs are integrated into the
+guarded encoder. Repairs cover copied fields, conditional commit
+frontiers, retirement-completed sets, truncated term lookups, and downstream
+guards and bounds. Queue deduplication also avoids spurious retransmission
+writers. Both queue-update helpers retain the old length once and condition
+only the increment. Duplicate control sends also reuse unchanged network and
+tracking functions. The scaling regression checks binding traversal growth
+before 24- and 48-send native cases, without wall-clock limits.
+The complete 184-test gate passes, and independent review found no remaining
+issues. Concrete receive integration is next.
 
 ### Receive
 
-`receive` is the remaining semantic obstruction, not an ordinary unconditional
-mapping lemma. `noConflictExtension` compares full entry prefixes. Two
+`receive` requires guarded semantics, not an unconditional mapping lemma.
+`noConflictExtension` compares full entry prefixes. Two
 syntactically different transaction terms can become equal after evaluation,
 changing both enabledness and successor state.
 
-A receive implementation was requested in new `ReceiveMappingProofs.lean`,
-`GuardedReceive.lean`, and `GuardedReceiveTests.lean`. Any files present at
-checkpoint are partial unless the final notes explicitly say otherwise.
+`ReceiveMappingProofs.lean`, `GuardedReceive.lean`, and
+`GuardedReceiveTests.lean` implement and prove exact guarded receive semantics.
+The implementation uses direct symbolic prefix equality, not normalization.
+`GuardedReceive.step state source destination` returns guarded enabledness
+and successor fields. `step_enabledExpr_correct` and `step_correct` relate
+them to real `Enabled` and `next` under the same arbitrary assignment.
+The step has 100 executable regressions and a transitive allowed-axiom audit.
 
-The proposed approach is to prove ordinary handler mapping under an exact
-prefix-equality agreement, then use a guarded normalization of decode-equal
-prefix representatives before calling real `Model.Enabled` and `Model.next`.
-Normalizing either the incoming prefix or the local prefix must preserve the
-decoded pre-state, queue order, and absent node slots. This is a design
-proposal, not a completed proof.
+Trace integration remains pending. Constrain selected `enabledExpr` values
+under their branch guards. Track consumption with `.sub oldQueueLength 1`;
+deduplicate responses against the post-removal queue. For self-receives,
+compose removal and response insertion on the same tracked queue.
 
 The minimal regression has a follower with one transaction entry and a
 two-entry request whose first transaction uses another unknown. Equal terms
@@ -276,10 +305,55 @@ Only transaction IDs are unknown in the completed encoder. Roles, terms,
 allocation, log shape and queue shape are explicit at entry. Guarded queue
 alternatives after a send do not solve arbitrary symbolic entry states.
 
-The intended next design uses verified guarded operations over bounded
-containers. Whole-state enumeration is not a practical substitute for
-15-node states. Do not fabricate concrete values for unobserved fields or
-silently strengthen the entry-state assumptions.
+The compositional foundation is committed in `Shared/Symbolic*.lean`,
+`Shared/BoundedContainer.lean`, and `MachineGenerated/Symbolic*.lean`.
+It represents all 15 node slots, roles, scalar fields, finite sets, optional
+fields, logs, and packet queues without whole-state alternatives.
+`stateWithin_correct` proves exact agreement with full model bounds.
+Inactive fields do not inherit scalar-domain restrictions, so an all-absent
+empty state remains possible when scalar bounds are zero.
+
+`freshEntry_complete` currently requires the recursive `Fits` capacity
+predicate. The bridge from arbitrary bounded model states to that predicate,
+and actual symbolic model transition encoding, remain unfinished.
+`Shared.SymbolicTrace.encode_correct` composes adapters under the same
+assignment. Each adapter must prove real model enabledness, successor, and
+observation correspondence on bounded states. This generic theorem does not
+replace the unfinished model adapters.
+
+`BoundedSymbolicTrace.VerifiedEncoder` now states the actual-model symbolic
+contract for arbitrary entry expressions. Structural holes have their own
+types and capacity constraints. Explicit transaction names occupy indices
+`entryWidth bounds + nameIndex` and alone receive transaction-domain constraints.
+`MachineGenerated.SymbolicTraceEncoding.Adapter` requires exact rejection of
+disabled actions and unbounded actual successors. Its successor theorem
+requires representation only when the actual successor is bounded.
+Every `Follows` suffix already requires these bounds, so this condition does
+not weaken the public trace correspondence.
+
+`Expr.named` evaluates its underlying expression under the same assignment.
+Normalization retains the name. Grouped serialization gives each name a typed
+constant and a total defining equality in its producer group.
+The symbolic trace encoder names the initial state in group 0 and each
+successor in its action group. Observations advance instruction numbering
+without introducing state writes. `tests.test_symbolic_causality` checks that
+an inconsistent counter trace retains its entry, writer, and observation
+groups, and that removing any of them makes the constraints satisfiable.
+This test covers shared composition, not the unfinished model transitions.
+
+`Shared/SymbolicNamedScalingTests.lean` exercises repeated product updates
+whose fields share the previous named state. Structural comparison of every
+duplicate definition previously traversed those shared trees repeatedly.
+The serializer now uses Lean's safe `withPtrEq` API with structural equality
+as its fallback. `sameDefinition_correct` proves that the result is unchanged.
+The 64-update fixture serializes to 24,544 bytes and cvc5 accepts it.
+
+First-source queue selection uses a skipped-prefix accumulator. The earlier
+implementation traversed its recursive result three times per level.
+`Shared/SymbolicContainerScalingTests.lean` exercises complete selected-packet
+results at capacities 16 and 32, with a 200 KB serialized-size ceiling.
+`tests.test_symbolic_encoding` runs 13 cvc5 cases for operations, aliases,
+15-node entries, partial packets, finite selectors, and zero bounds.
 
 ### Raw trace integration and explorer
 
@@ -291,13 +365,38 @@ state. Connect it to the checked backend only after the missing symbolic entry
 semantics exist. Unsupported syntax must fail explicitly, never fall back.
 Remove the projection only after its live callers migrate.
 
-The requested HTML explorer remains unimplemented. It has three horizontal
+`raw_normalization.py` preserves instruction order and provenance, converts
+transaction names to shared unknowns, and retains correlation evidence
+separately by instruction index. Node IDs must remain canonical slots 0 through
+14 because renumbering would change the model's implicit bootstrap configuration.
+AppendEntries summaries constrain payload length as `batchEnd - previousIndex`,
+not the absolute batch end. Missing payloads and previous terms remain unobserved.
+`TraceMessageSummary` and `SymbolicMessageSummary` prove the exact partial
+observation against the first matching-source packet, not a later match.
+
+The strict `ccfraft-symbolic-trace/v1` decoder accepts `entry: "symbolic"`,
+all 17 model actions, and the complete symbolic observation type.
+`NormalizedTrace.certificate(bounds)` supplies its input without fabricating
+entry fields. Run `python3 -m unittest tests.test_symbolic_trace_decoding`
+to parse all six saved normalized traces through Lean. This is a decode-only
+check, not an execution or solver verdict.
+
+The HTML explorer is implemented by `explore_checked.py`. It has three horizontal
 panes: raw NDJSON, ordered reduced actions and observations with core
 highlighting, and the reduced core. Selecting an action opens its detailed
-constraints. Reduction first removes instruction groups, then refines one
-selected action while keeping the other reduced context fixed. Use "reduced",
-not "minimum". Existing `--inspect-group` does not yet implement this full
-two-stage workflow.
+constraints. `refine_checked.py` implements the second reduction stage inside
+an existing group-level core, keeping all other reduced groups fixed even if
+the solver's next core omits them. The static explorer precomputes these
+refinements for core actions and switches views without a browser solver.
+It displays raw files supplied with `--raw-trace`, using instruction provenance.
+The raw-to-checked semantic integration is still pending; displaying raw text
+does not establish that missing correspondence.
+
+See README's "Explore a reduced core" section. The generator rejects malformed
+metadata and stale or non-checked verdicts. Saved run artifacts themselves are
+trusted inputs. Browser interaction regressions are in `tests.test_explorer`;
+run them with Chromium on PATH. Missing browser support does not affect the
+Lean proof gate.
 
 ## Data and diagnostic constraints
 
@@ -317,7 +416,7 @@ two-stage workflow.
 - Structural guards are currently coarse clauses. Not every failed
   precondition has its own fine-grained label.
 
-Schemas remain `ccfraft-trace/v1`, `ccfraft-client-request/v1`, and
+Live schemas remain `ccfraft-trace/v1`, `ccfraft-client-request/v1`, and
 `ccfraft-client-request/v2`. Legacy schemas restrict actions to client
 requests. The v1 bootstrap adapter derives term count 2, index count 1 and
 queue capacity 0. General and v2 certificates declare all five bounds.
@@ -343,11 +442,11 @@ required to resume from this document.
 
 ## Checkpoint status
 
-`check_checked.sh` passes with no skipped tests, and its persistent send example
-returns SAT. `EncoderAudit` enforces the allowed proof axioms transitively.
-No receive implementation files exist. Resume from committed files, not old
-agent handles.
-
-The next integration is a small family of the already-proved control actions.
-Their observed fields need causal tracking; do not replace the missing
-tracking with constant observations merely to accept more action names.
+The last complete checked-encoder gate passed 129 tests with no skips and
+returned SAT for the persistent send example. The working gate now includes
+the new symbolic audits and solver tests. Rerun it after the in-flight control
+causality corrections before treating this as a completed integration.
+`EncoderAudit` enforces the allowed proof axioms transitively.
+The receive step is complete but not yet exposed as a trace instruction.
+Resume from committed files, not old agent handles. Symbolic entry-state
+lowering remains the prerequisite for migrating raw traces.
