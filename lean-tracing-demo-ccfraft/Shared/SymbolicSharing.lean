@@ -1,7 +1,7 @@
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-import Shared.Symbolic
+import Shared.SymbolicTypeSharing
 
 set_option autoImplicit false
 
@@ -88,7 +88,7 @@ private def childrenDecEq (left right : List PackedExpr)
 private def structuralExprEq (left right : PackedExpr) : Decidable (left = right) :=
   match left, right with
   | ⟨s, a⟩, ⟨t, b⟩ =>
-      match withPtrEqDecEq s t (fun _ => inferInstance) with
+      match s.sharedDecEq t with
       | .isFalse different => .isFalse (fun equal => different (congrArg Sigma.fst equal))
       | .isTrue same => by
           subst t
@@ -185,7 +185,7 @@ private def compareLoop {goal : Prop} (work : ComparisonWork goal)
             match findComparison ⟨s, a⟩ ⟨t, b⟩ (cache[key]?.getD []) with
             | some decision => compareLoop (.resume decision next) cache
             | none =>
-                match withPtrEqDecEq s t (fun _ => inferInstance) with
+                match s.sharedDecEq t with
                 | .isFalse different => compareLoop (.resume (.isFalse (fun equal =>
                     different (congrArg Sigma.fst equal))) saved) cache
                 | .isTrue same =>

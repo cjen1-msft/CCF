@@ -15,31 +15,59 @@ private structure Equivalent {s : Ty} (original : Expr s) where
 private abbrev Entry := (s : Ty) × (original : Expr s) × Equivalent original
 private abbrev Cache := Std.HashMap UInt64 (List Entry)
 
+structure NormalizationStats where
+  lookups : Nat := 0
+  candidates : Nat := 0
+  hits : Nat := 0
+  deriving Repr
+
+structure NormalizationState where
+  entries : Cache := {}
+  stats : Option NormalizationStats := none
+
+-- A depth-four prefix loses the field identity of nested record projections.
+-- Follow only the selector spine; side operands retain bounded-cost keys.
+private def normalizationKey : {s : Ty} → Expr s → UInt64
+  | _, .fst value => mixHash 13 (normalizationKey value)
+  | _, .snd value => mixHash 14 (normalizationKey value)
+  | _, .isLeft value => mixHash 17 (normalizationKey value)
+  | _, .leftD value fallback => mixHash (mixHash 18 fallback.memoKey) (normalizationKey value)
+  | _, .rightD value fallback => mixHash (mixHash 19 fallback.memoKey) (normalizationKey value)
+  | _, .length value => mixHash 23 (normalizationKey value)
+  | _, .get? value index => mixHash (mixHash 26 index.memoKey) (normalizationKey value)
+  | _, value => value.memoKey
+
 private def findEquivalent {s : Ty} (original : Expr s) :
-    List Entry → Option (Equivalent original)
-  | [] => none
-  | ⟨t, prior, result⟩ :: rest =>
-      match withPtrEqDecEq t s (fun _ => inferInstance) with
+    List Entry → Nat → Option (Equivalent original) × Nat
+  | [], count => (none, count)
+  | ⟨t, prior, result⟩ :: rest, count =>
+      match t.sharedDecEq s with
       | .isTrue sameType =>
         let candidate : Expr s := sameType ▸ prior
         let cached : Equivalent candidate := by subst s; exact result
         match candidate.sharedDecEq original with
-        | .isTrue same => some (same ▸ cached)
-        | .isFalse _ => findEquivalent original rest
-      | .isFalse _ => findEquivalent original rest
+        | .isTrue same => (some (same ▸ cached), count + 1)
+        | .isFalse _ => findEquivalent original rest (count + 1)
+      | .isFalse _ => findEquivalent original rest (count + 1)
 
 private def memoize {s : Ty} (original : Expr s)
-    (compute : Unit → StateM Cache (Equivalent original)) :
-    StateM Cache (Equivalent original) := do
-  let key := original.memoKey
-  if let some result := findEquivalent original ((← get)[key]?.getD []) then
+    (compute : Unit → StateM NormalizationState (Equivalent original)) :
+    StateM NormalizationState (Equivalent original) := do
+  let key := normalizationKey original
+  let (found, candidates) := findEquivalent original ((← get).entries[key]?.getD []) 0
+  modify fun state => { state with stats := state.stats.map fun stats =>
+    { lookups := stats.lookups + 1, candidates := stats.candidates + candidates,
+      hits := stats.hits + if found.isSome then 1 else 0 } }
+  if let some result := found then
     return result
   let result ← compute ()
-  modify fun cache => cache.insert key (⟨_, original, result⟩ :: cache[key]?.getD [])
+  modify fun state =>
+    let entries := state.entries.insert key (⟨_, original, result⟩ :: state.entries[key]?.getD [])
+    { state with entries }
   return result
 
 private def firstCached {a b : Ty} (original : Expr (.pair a b)) :
-    StateM Cache (Equivalent original.fst) :=
+    StateM NormalizationState (Equivalent original.fst) :=
   memoize original.fst fun _ => do
     match original with
     | .pair left _ => pure ⟨left, fun _ => rfl⟩
@@ -53,7 +81,7 @@ private def firstCached {a b : Ty} (original : Expr (.pair a b)) :
 termination_by sizeOf original
 
 private def secondCached {a b : Ty} (original : Expr (.pair a b)) :
-    StateM Cache (Equivalent original.snd) :=
+    StateM NormalizationState (Equivalent original.snd) :=
   memoize original.snd fun _ => do
     match original with
     | .pair _ right => pure ⟨right, fun _ => rfl⟩
@@ -67,7 +95,7 @@ private def secondCached {a b : Ty} (original : Expr (.pair a b)) :
 termination_by sizeOf original
 
 private def testLeftCached {a b : Ty} (original : Expr (.sum a b)) :
-    StateM Cache (Equivalent original.isLeft) :=
+    StateM NormalizationState (Equivalent original.isLeft) :=
   memoize original.isLeft fun _ => do
     match original with
     | .inl _ => pure ⟨.bool true, fun _ => rfl⟩
@@ -82,7 +110,7 @@ private def testLeftCached {a b : Ty} (original : Expr (.sum a b)) :
 termination_by sizeOf original
 
 private def fromLeftCached {a b : Ty} (original : Expr (.sum a b)) (fallback : Expr a) :
-    StateM Cache (Equivalent (original.leftD fallback)) :=
+    StateM NormalizationState (Equivalent (original.leftD fallback)) :=
   memoize (original.leftD fallback) fun _ => do
     match original with
     | .inl value => pure ⟨value, fun _ => rfl⟩
@@ -97,7 +125,7 @@ private def fromLeftCached {a b : Ty} (original : Expr (.sum a b)) (fallback : E
 termination_by sizeOf original
 
 private def fromRightCached {a b : Ty} (original : Expr (.sum a b)) (fallback : Expr b) :
-    StateM Cache (Equivalent (original.rightD fallback)) :=
+    StateM NormalizationState (Equivalent (original.rightD fallback)) :=
   memoize (original.rightD fallback) fun _ => do
     match original with
     | .inl _ => pure ⟨fallback, fun _ => rfl⟩
@@ -112,7 +140,7 @@ private def fromRightCached {a b : Ty} (original : Expr (.sum a b)) (fallback : 
 termination_by sizeOf original
 
 private def sizeCached {a : Ty} (original : Expr (.seq a)) :
-    StateM Cache (Equivalent original.length) :=
+    StateM NormalizationState (Equivalent original.length) :=
   memoize original.length fun _ => do
     match original with
     | .nil => pure ⟨.nat 0, fun _ => rfl⟩
@@ -143,7 +171,7 @@ private def sizeCached {a : Ty} (original : Expr (.seq a)) :
 termination_by sizeOf original
 
 private def selectCached {a : Ty} (original : Expr (.seq a)) (index : Expr .nat) :
-    StateM Cache (Equivalent (original.get? index)) :=
+    StateM NormalizationState (Equivalent (original.get? index)) :=
   memoize (original.get? index) fun _ => do
     match original with
     | .nil => pure ⟨.inl .unit, fun _ => rfl⟩
@@ -171,7 +199,7 @@ private def selectCached {a : Ty} (original : Expr (.seq a)) (index : Expr .nat)
 termination_by sizeOf original
 
 private def normalizeCached : {s : Ty} → (original : Expr s) →
-    StateM Cache (Equivalent original)
+    StateM NormalizationState (Equivalent original)
   | _, original => memoize original fun _ => do
       match original with
         | .nat value => pure ⟨.nat value, fun _ => rfl⟩
@@ -336,20 +364,15 @@ private def normalizeCached : {s : Ty} → (original : Expr s) →
               simp only [eval, value.correct, candidate.correct]⟩
 termination_by _ original => sizeOf original
 
-structure NormalizationState where
-  entries : Cache := {}
-
 def normalizeMemoM {s : Ty} (original : Expr s) :
     StateM NormalizationState (Expr s) := do
-  let state ← get
-  let (result, entries) := (normalizeCached original).run state.entries
-  MonadStateOf.set ({ entries } : NormalizationState)
+  let result ← normalizeCached original
   return result.value
 
 theorem normalizeMemoM_correct {s : Ty} (assignment : Assignment)
     (original : Expr s) (state : NormalizationState) :
     ((normalizeMemoM original).run state).1.eval assignment = original.eval assignment :=
-  ((normalizeCached original).run state.entries).1.correct assignment
+  ((normalizeCached original).run state).1.correct assignment
 
 /-- Normalize shared nodes once and skip payloads discarded by constructors. -/
 def normalizeMemo {s : Ty} (original : Expr s) : Expr s :=
