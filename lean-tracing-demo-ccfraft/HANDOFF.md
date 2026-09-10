@@ -156,6 +156,8 @@ membership are not a second formal correspondence theorem.
 | `432ba9feb` | Proved conditional natural values with causal predicate retention |
 | `a6274e2e8` | Shared solver reuse and restored PATH discovery in the raw runner |
 | `b7fa4f6d0` | All eleven control actions, complete causal tracking, and send scaling regressions |
+| `214a222af` | Exact memoized equality for independently allocated symbolic expression DAGs |
+| `ff7faf2be` | Proved symbolic evaluation with an assignment-local cache |
 
 The end-to-end CLI supports `clientRequest`,
 `signCommittableMessages`, `changeConfiguration`,
@@ -348,6 +350,32 @@ The serializer now uses Lean's safe `withPtrEq` API with structural equality
 as its fallback. `sameDefinition_correct` proves that the result is unchanged.
 The 64-update fixture serializes to 24,544 bytes and cvc5 accepts it.
 
+`Shared/SymbolicSharing.lean` adds opt-in typed equality for independently
+allocated expression DAGs. Address hints select cache buckets, but every hit
+still checks both typed expressions. The safe Lean API requires the result to
+be independent of those hints. Equality proofs and the transitive axiom audit
+cover that boundary. Separate doubled and overlapping DAGs at depth 64 compare
+in about 2 ms in the fixture.
+
+`Shared/SymbolicEvalMemo.lean` provides `Expr.evalMemo` and `Expr.evalMemoM`.
+Cached values carry proofs for the assignment indexed by `EvaluationState`.
+The same-assignment theorem preserves `Expr.eval`; names evaluate their
+underlying definitions. Regressions cover all constructors, short-circuiting,
+hash collisions, and independently allocated DAGs.
+
+Run these committed units separately:
+
+```bash
+nice -n 10 lake build Shared.SymbolicSharingMain Shared.SymbolicEvalMemoMain
+nice -n 10 lake env lean --run Shared/SymbolicSharingMain.lean
+nice -n 10 lake env lean --run Shared/SymbolicEvalMemoMain.lean
+```
+
+These libraries do not complete symbolic Receive integration. Normalization
+and serialization must also preserve sharing without losing useful selector
+and sequence simplification. Native Receive execution remains a separate
+gate; small DAG regressions do not establish its performance.
+
 First-source queue selection uses a skipped-prefix accumulator. The earlier
 implementation traversed its recursive result three times per level.
 `Shared/SymbolicContainerScalingTests.lean` exercises complete selected-packet
@@ -442,10 +470,11 @@ required to resume from this document.
 
 ## Checkpoint status
 
-The last complete checked-encoder gate passed 129 tests with no skips and
-returned SAT for the persistent send example. The working gate now includes
-the new symbolic audits and solver tests. Rerun it after the in-flight control
-causality corrections before treating this as a completed integration.
+The last complete checked-encoder gate passed 184 tests with no skips and
+returned SAT for the persistent send example. It includes the control
+causality and repeated-send corrections. The two newer shared-DAG libraries
+have separate proof, runtime, and independent-review results; the full gate
+must run again after Receive and the symbolic model adapters are integrated.
 `EncoderAudit` enforces the allowed proof axioms transitively.
 The receive step is complete but not yet exposed as a trace instruction.
 Resume from committed files, not old agent handles. Symbolic entry-state
