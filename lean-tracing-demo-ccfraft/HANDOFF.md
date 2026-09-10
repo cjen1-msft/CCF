@@ -55,6 +55,7 @@ New repository bridges extend that foundation:
 | `Sparse/ReadbackHints.lean` | Unequal observed projection values justify key disequality and skipping a store. |
 | `Sparse/Smt.lean` | Typed Bool/Int terms lower to a strict s-expression interpreter; symbol names are injective. |
 | `Sparse/SmtScript.lean` | Generates unique typed declarations and commands. Command evaluation preserves formula truth for the same assignment. |
+| `Sparse/SmtText.lean` | Decodes exactly the canonical generated symbol names, with symbol-atom evaluation roundtrip for the existing renderer. |
 
 `QueuePlan.generated_exists_iff` requires nonnegative initial length, tracked-key
 coverage, lawful equality, and a fresh filler value. Its conservative ancestor
@@ -65,7 +66,8 @@ Presence normalization applies only to queue events. Callers must retain other
 observations and rebuild references for retained events. Destination-wide length
 observations do not imply these source-local bounds.
 
-Final emitted-text correspondence remains separate. The real cvc5 fixtures in
+Numeral, nested-expression, and full-script text correspondence remain separate.
+The real cvc5 fixtures in
 `tests/test_sparse_smt.py` are opt-in through `CCF_SPARSE_SMT_TESTS=1` and `CVC5`;
 they exercise explicit declarations and generated scripts, not a full trace
 validator. Command evaluation distinguishes false assertions from malformed

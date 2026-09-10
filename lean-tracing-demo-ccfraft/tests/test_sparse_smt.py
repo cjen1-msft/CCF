@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the Apache 2.0 License.
 
-"""Opt-in checks of Lean-rendered scalar terms against cvc5."""
+"""Opt-in scalar SMT rendering and generated-symbol decoding checks."""
 
 import json
 import os
@@ -29,7 +29,7 @@ class SparseSmtIntegrationTests(unittest.TestCase):
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.artifacts = Path(cls.temporary.name)
         subprocess.run(
-            ["nice", "-n", "10", "lake", "build", "Sparse.SmtScript"],
+            ["nice", "-n", "10", "lake", "build", "Sparse.SmtScript", "Sparse.SmtText"],
             cwd=ROOT, capture_output=True, text=True, check=True,
         )
         generated = subprocess.run(
@@ -37,6 +37,14 @@ class SparseSmtIntegrationTests(unittest.TestCase):
             cwd=ROOT, capture_output=True, text=True, check=True,
         )
         cls.fixtures = json.loads(generated.stdout)
+        symbols = subprocess.run(
+            [
+                "nice", "-n", "10", "lake", "env", "lean", "--run",
+                "Sparse/SmtFixtureMain.lean", "--symbols",
+            ],
+            cwd=ROOT, capture_output=True, text=True, check=True,
+        )
+        cls.symbol_fixtures = json.loads(symbols.stdout)
 
     def test_rendered_terms_match_solver_semantics(self) -> None:
         self.assertEqual(len(self.fixtures), 11)
@@ -61,6 +69,15 @@ class SparseSmtIntegrationTests(unittest.TestCase):
             ]
             with self.subTest(case=case["name"]):
                 self.assertEqual(len(declarations), len(set(declarations)))
+
+    def test_symbol_tokens_roundtrip_and_reject_malformed_names(self) -> None:
+        self.assertEqual(len(self.symbol_fixtures), 77)
+        self.assertEqual(
+            sum(case["expected"] is None for case in self.symbol_fixtures), 11
+        )
+        for case in self.symbol_fixtures:
+            with self.subTest(text=case["text"]):
+                self.assertEqual(case["actual"], case["expected"])
 
 
 if __name__ == "__main__":

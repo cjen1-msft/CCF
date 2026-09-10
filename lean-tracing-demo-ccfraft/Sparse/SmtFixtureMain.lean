@@ -3,6 +3,7 @@
 
 import Sparse.Smt
 import Sparse.SmtScript
+import Sparse.SmtText
 import Lean.Data.Json
 
 set_option autoImplicit false
@@ -66,12 +67,43 @@ def fixtures : List Json :=
       (equalHeader ++ [.not (.equal first second)])
   ]
 
+private def sortJson : Ty -> Json
+  | .bool => toJson "Bool"
+  | .int => toJson "Int"
+
+private def symbolJson : Symbol -> Json
+  | .constant ty id =>
+    Json.mkObj [("kind", toJson "constant"), ("result", sortJson ty), ("id", toJson id)]
+  | .unary domain result id =>
+    Json.mkObj [("kind", toJson "unary"), ("domain", sortJson domain),
+      ("result", sortJson result), ("id", toJson id)]
+
+private def symbolFixture (text : String) (expected : Option Symbol) : Json :=
+  Json.mkObj [("text", toJson text), ("expected", toJson (expected.map symbolJson)),
+    ("actual", toJson ((SmtText.parseSymbol text).map symbolJson))]
+
+def symbolFixtures : List Json :=
+  let ids := [0, 1, 2, 3, 15, 16, 255, 256, 1024, 1000000, 2 ^ 128 + 1]
+  let symbols := ids.flatMap fun id =>
+    [Symbol.constant .bool id, Symbol.constant .int id,
+      Symbol.unary .bool .bool id, Symbol.unary .bool .int id,
+      Symbol.unary .int .bool id, Symbol.unary .int .int id]
+  let malformed := ["", "ci_", "cx__", "fix_1", "ci__2", "ci__0", "fii_10",
+    " ci__", "ci__ ", "ci__) (check-sat)", "ci__" ++ String.singleton (Char.ofNat 955)]
+  symbols.map (fun sym => symbolFixture sym.name (some sym)) ++
+    malformed.map (fun text => symbolFixture text none)
+
 end CCFRaft.Sparse.SmtFixtures
 
 def main (args : List String) : IO UInt32 := do
-  unless args.isEmpty do
+  let fixtures :=
+    match args with
+    | [] => some CCFRaft.Sparse.SmtFixtures.fixtures
+    | ["--symbols"] => some CCFRaft.Sparse.SmtFixtures.symbolFixtures
+    | _ => none
+  let some fixtures := fixtures |
     let stderr <- IO.getStderr
-    stderr.putStrLn "usage: SmtFixtureMain.lean"
+    stderr.putStrLn "usage: SmtFixtureMain.lean [--symbols]"
     return 1
-  IO.println (Lean.Json.arr CCFRaft.Sparse.SmtFixtures.fixtures.toArray).compress
+  IO.println (Lean.Json.arr fixtures.toArray).compress
   return 0
