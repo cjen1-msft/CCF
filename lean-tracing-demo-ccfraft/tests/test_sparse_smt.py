@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the Apache 2.0 License.
 
-"""Opt-in scalar SMT rendering and generated-symbol decoding checks."""
+"""Opt-in scalar SMT rendering and token-decoding checks."""
 
 import json
 import os
@@ -14,6 +14,17 @@ from Shared.solver import find_cvc5, run_solver
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_fixtures(*args: str) -> list[dict]:
+    generated = subprocess.run(
+        [
+            "nice", "-n", "10", "lake", "env", "lean", "--run",
+            "Sparse/SmtFixtureMain.lean", *args,
+        ],
+        cwd=ROOT, capture_output=True, text=True, check=True,
+    )
+    return json.loads(generated.stdout)
 
 
 @unittest.skipUnless(
@@ -29,22 +40,15 @@ class SparseSmtIntegrationTests(unittest.TestCase):
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.artifacts = Path(cls.temporary.name)
         subprocess.run(
-            ["nice", "-n", "10", "lake", "build", "Sparse.SmtScript", "Sparse.SmtText"],
-            cwd=ROOT, capture_output=True, text=True, check=True,
-        )
-        generated = subprocess.run(
-            ["nice", "-n", "10", "lake", "env", "lean", "--run", "Sparse/SmtFixtureMain.lean"],
-            cwd=ROOT, capture_output=True, text=True, check=True,
-        )
-        cls.fixtures = json.loads(generated.stdout)
-        symbols = subprocess.run(
             [
-                "nice", "-n", "10", "lake", "env", "lean", "--run",
-                "Sparse/SmtFixtureMain.lean", "--symbols",
+                "nice", "-n", "10", "lake", "build",
+                "Sparse.SmtScript", "Sparse.SmtText", "Sparse.SmtNumerals",
             ],
             cwd=ROOT, capture_output=True, text=True, check=True,
         )
-        cls.symbol_fixtures = json.loads(symbols.stdout)
+        cls.fixtures = load_fixtures()
+        cls.symbol_fixtures = load_fixtures("--symbols")
+        cls.numeral_fixtures = load_fixtures("--numerals")
 
     def test_rendered_terms_match_solver_semantics(self) -> None:
         self.assertEqual(len(self.fixtures), 11)
@@ -76,6 +80,15 @@ class SparseSmtIntegrationTests(unittest.TestCase):
             sum(case["expected"] is None for case in self.symbol_fixtures), 11
         )
         for case in self.symbol_fixtures:
+            with self.subTest(text=case["text"]):
+                self.assertEqual(case["actual"], case["expected"])
+
+    def test_numeral_tokens_roundtrip_and_reject_malformed_text(self) -> None:
+        self.assertEqual(len(self.numeral_fixtures), 24)
+        self.assertEqual(
+            sum(case["expected"] is None for case in self.numeral_fixtures), 14
+        )
+        for case in self.numeral_fixtures:
             with self.subTest(text=case["text"]):
                 self.assertEqual(case["actual"], case["expected"])
 

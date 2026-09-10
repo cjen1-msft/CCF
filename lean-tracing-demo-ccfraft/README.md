@@ -34,7 +34,8 @@ initial-length bounds from source-local observations without assuming emptiness.
 
 `SmtScript` declares each referenced typed symbol once and assembles assertions.
 Its interpreter preserves formula truth for the same assignment.
-`SmtText` proves exact decoding of generated symbol tokens.
+`SmtText` and `SmtNumerals` prove exact decoding of generated symbol and decimal
+numeral tokens.
 The opt-in solver fixtures cover both explicit declarations and generated scripts:
 
 ```bash

@@ -4,6 +4,7 @@
 import Sparse.Smt
 import Sparse.SmtScript
 import Sparse.SmtText
+import Sparse.SmtNumerals
 import Lean.Data.Json
 
 set_option autoImplicit false
@@ -93,6 +94,17 @@ def symbolFixtures : List Json :=
   symbols.map (fun sym => symbolFixture sym.name (some sym)) ++
     malformed.map (fun text => symbolFixture text none)
 
+private def numeralFixture (text : String) (expected : Option Nat) : Json :=
+  Json.mkObj [("text", toJson text), ("expected", toJson expected),
+    ("actual", toJson (SmtNumerals.parseNumeral text))]
+
+def numeralFixtures : List Json :=
+  let values := [0, 1, 9, 10, 99, 100, 255, 1000000, 2 ^ 128 + 1, 10 ^ 100]
+  let malformed := ["", "00", "01", "-1", "-0", "+1", "(- 1)", "1_000",
+    "0x10", "1.0", " 1", "1 ", "1) (check-sat)", String.singleton (Char.ofNat 1633)]
+  values.map (fun value => numeralFixture (Atom.numeral value).render (some value)) ++
+    malformed.map (fun text => numeralFixture text none)
+
 end CCFRaft.Sparse.SmtFixtures
 
 def main (args : List String) : IO UInt32 := do
@@ -100,10 +112,11 @@ def main (args : List String) : IO UInt32 := do
     match args with
     | [] => some CCFRaft.Sparse.SmtFixtures.fixtures
     | ["--symbols"] => some CCFRaft.Sparse.SmtFixtures.symbolFixtures
+    | ["--numerals"] => some CCFRaft.Sparse.SmtFixtures.numeralFixtures
     | _ => none
   let some fixtures := fixtures |
     let stderr <- IO.getStderr
-    stderr.putStrLn "usage: SmtFixtureMain.lean [--symbols]"
+    stderr.putStrLn "usage: SmtFixtureMain.lean [--symbols | --numerals]"
     return 1
   IO.println (Lean.Json.arr fixtures.toArray).compress
   return 0

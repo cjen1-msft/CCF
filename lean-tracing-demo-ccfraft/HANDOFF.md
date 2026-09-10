@@ -56,6 +56,7 @@ New repository bridges extend that foundation:
 | `Sparse/Smt.lean` | Typed Bool/Int terms lower to a strict s-expression interpreter; symbol names are injective. |
 | `Sparse/SmtScript.lean` | Generates unique typed declarations and commands. Command evaluation preserves formula truth for the same assignment. |
 | `Sparse/SmtText.lean` | Decodes exactly the canonical generated symbol names, with symbol-atom evaluation roundtrip for the existing renderer. |
+| `Sparse/SmtNumerals.lean` | Decodes canonical decimal numerals for arbitrary Nat, with a roundtrip proof over the actual core renderer. |
 
 `QueuePlan.generated_exists_iff` requires nonnegative initial length, tracked-key
 coverage, lawful equality, and a fresh filler value. Its conservative ancestor
@@ -66,7 +67,7 @@ Presence normalization applies only to queue events. Callers must retain other
 observations and rebuild references for retained events. Destination-wide length
 observations do not imply these source-local bounds.
 
-Numeral, nested-expression, and full-script text correspondence remain separate.
+Nested-expression and full-script text correspondence remain separate.
 The real cvc5 fixtures in
 `tests/test_sparse_smt.py` are opt-in through `CCF_SPARSE_SMT_TESTS=1` and `CVC5`;
 they exercise explicit declarations and generated scripts, not a full trace
