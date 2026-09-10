@@ -38,6 +38,10 @@ and a visited worklist. Use it instead of `IntervalReadback`'s recursive
 reference constructor, which can repeat shared ancestors exponentially.
 `IntervalQueries` composes demanded reads and finite-cut predicates into one
 root-array witness. Its request list can still grow as cuts times references.
+`IntervalEncoding` emits symbolic point-read constraints over Int-valued arrays.
+Its rendered script is satisfiable iff one root-array family satisfies all
+observations under the input formula and explicit nonnegative index constraints.
+Entry-valued cells and universal predicate emission remain separate work.
 `ConfigurationSnapshot` characterizes complete positive-index Model snapshots
 with finite frontier queries. Raw callback-phase mapping is still separate.
 
@@ -58,10 +62,11 @@ The opt-in solver fixtures cover both explicit declarations and generated script
 
 ```bash
 CCF_SPARSE_SMT_TESTS=1 CVC5=/path/to/cvc5 \
-	python3 -m unittest tests.test_sparse_smt tests.test_sparse_queue_encoding
+	python3 -m unittest tests.test_sparse_smt tests.test_sparse_queue_encoding \
+		tests.test_sparse_interval_encoding
 ```
 
-These fixtures cover term printing, not full trace correctness.
+These fixtures cover emitted component constraints, not full trace correctness.
 
 The planner's runtime cases use the same opt-in flag:
 

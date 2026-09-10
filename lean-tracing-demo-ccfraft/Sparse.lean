@@ -4,6 +4,7 @@ import Sparse.AppendEntriesRanges
 import Sparse.ConfigurationSnapshot
 import Sparse.FiniteMembership
 import Sparse.IntervalDemandPlan
+import Sparse.IntervalEncoding
 import Sparse.IntervalQueries
 import Sparse.MonotoneIntervals
 import Sparse.QueueEncoding

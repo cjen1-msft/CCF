@@ -48,6 +48,7 @@ New repository bridges extend that foundation:
 | `Sparse/VersionedIntervals.lean` | One root-array family for all aligned range-copy versions and interval queries, with finitely many shared cut samples. |
 | `Sparse/IntervalReadback.lean` | Flat demanded-read equations correspond to one root-array family. Its recursive closure constructor is a semantic reference, not the runtime path. |
 | `Sparse/IntervalDemandPlan.lean` | A flattened descriptor table and visited worklist generate minimal closed demands, preserving exact requested-value completion. |
+| `Sparse/IntervalEncoding.lean` | Typed point-read constraints and their rendered text correspond to one Int-valued root-array family, with symbolic indices, explicit nonnegative domains, and input-preserving fresh functions. |
 | `Sparse/IntervalQueries.lean` | Finite read equations and reference-local cut predicates correspond to one root-array family for every universal query, preserving requested cut values. |
 | `Sparse/MonotoneIntervals.lean` | Joint finite-cut completion for one log with point facts, interval predicates, nondecreasing terms, and a current-term bound. |
 | `Sparse/ConfigurationSnapshot.lean` | Exact ordered positive-index Model snapshots and same-log completion using `2m+1` frontier-query records for `m` snapshot entries. |
@@ -89,6 +90,19 @@ Visited-list membership remains linear, so no linear-time bound is claimed.
 memo deduplication. Locality avoids unreferenced versions but does not establish
 minimal cross-position requests or fast compilation. Its arrays are total;
 callers must encode physical log-length clipping explicitly.
+
+`IntervalEncoding` interprets graph endpoints and observation positions as
+scalar symbol IDs, not literal indices. Equal-valued tokens share the same UF
+read. All graph bounds and requested positions must be nonnegative, including
+unused graph bounds. Cells remain unrestricted Int values.
+Freshness covers the supplied input formula, not arbitrary external reservations.
+The final spare function slot is preserved.
+
+The 92 cases in `tests/test_sparse_interval_encoding.py` cover aliases, splice
+boundaries, and sparse domains through actual emitted text. A million-root
+universe and a trillion-valued index each require two demands in their fixtures.
+The shared-ancestor case uses 400 versions and 401 demands, with both SAT and
+UNSAT controls. These are point-read components, not full Raft traces.
 
 Configuration snapshots are derived Model observations, not a mutable global
 configuration variable. Empty positive-index snapshots do not remove implicit
