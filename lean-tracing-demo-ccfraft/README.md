@@ -24,6 +24,10 @@ membership traces, projection-backed readback hints, and typed scalar SMT terms.
 They are ordinary repository source, separate from the exported snapshots.
 `QueueReadback` connects finite equations to a whole queue execution under an
 explicit plan and demand-closure invariant.
+`QueuePlan.generated_exists_iff` constructs that plan and its closed demands.
+For unconditional queue events, its finite constraints hold iff one concrete
+queue of the supplied length executes the entire trace.
+The theorem requires tracked-key coverage and a fresh filler value.
 
 The opt-in solver fixtures exercise Lean-rendered scalar terms:
 

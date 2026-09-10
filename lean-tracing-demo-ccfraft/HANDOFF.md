@@ -49,11 +49,17 @@ New repository bridges extend that foundation:
 | `Sparse/AppendEntriesRanges.lean` | Actual send/receive index alignment. Enabled sends contain at most one entry; arbitrary initial packets remain unbounded. |
 | `Sparse/FiniteMembership.lean` | One finite initial set for a complete membership/insert trace, preserving key aliases. |
 | `Sparse/QueueReadback.lean` | Fixed-plan finite read/scalar constraints correspond to one count-array heap and imply a concrete whole-queue execution. |
+| `Sparse/QueuePlan.lean` | Constructs the plan and closed demands. Finite constraints hold iff one concrete queue of the supplied length executes the whole unconditional trace. |
 | `Sparse/ReadbackHints.lean` | Unequal observed projection values justify key disequality and skipping a store. |
 | `Sparse/Smt.lean` | Typed Bool/Int terms lower to a strict s-expression interpreter; symbol names are injective. |
 
-Plan construction, script/declaration assembly, and final emitted-text
-correspondence are separate obligations. The real cvc5 fixtures in
+`QueuePlan.generated_exists_iff` requires nonnegative initial length, tracked-key
+coverage, lawful equality, and a fresh filler value. Its conservative ancestor
+closure can be quadratic. Runtime emission and conditional queue operations
+remain separate obligations.
+
+Script/declaration assembly and final emitted-text correspondence are separate
+obligations. The real cvc5 fixtures in
 `tests/test_sparse_smt.py` are opt-in through `CCF_SPARSE_SMT_TESTS=1` and `CVC5`;
 they exercise scalar term rendering, not a full trace validator.
 
