@@ -48,6 +48,7 @@ New repository bridges extend that foundation:
 | `Sparse/VersionedIntervals.lean` | One root-array family for all aligned range-copy versions and interval queries, with finitely many shared cut samples. |
 | `Sparse/IntervalReadback.lean` | Flat demanded-read equations correspond to one root-array family. Its recursive closure constructor is a semantic reference, not the runtime path. |
 | `Sparse/IntervalDemandPlan.lean` | A flattened descriptor table and visited worklist generate minimal closed demands, preserving exact requested-value completion. |
+| `Sparse/IntervalQueries.lean` | Finite read equations and reference-local cut predicates correspond to one root-array family for every universal query, preserving requested cut values. |
 | `Sparse/MonotoneIntervals.lean` | Joint finite-cut completion for one log with point facts, interval predicates, nondecreasing terms, and a current-term bound. |
 | `Sparse/AppendEntriesRanges.lean` | Actual send/receive index alignment. Enabled sends contain at most one entry; arbitrary initial packets remain unbounded. |
 | `Sparse/FiniteMembership.lean` | One finite initial set for a complete membership/insert trace, preserving key aliases. |
@@ -81,6 +82,11 @@ constructor repeats shared ancestors exponentially. In one forced-clock run,
 401 demands took 40.2 milliseconds. These are planner-only measurements.
 Visited-list membership remains linear, so no linear-time bound is claimed.
 `Sparse/IntervalDemandFixtureMain.lean --benchmark` reproduces the new path.
+
+`IntervalQueries` still forms a global-cut/reference-occurrence product before
+memo deduplication. Locality avoids unreferenced versions but does not establish
+minimal cross-position requests or fast compilation. Its arrays are total;
+callers must encode physical log-length clipping explicitly.
 
 Presence normalization applies only to queue events. Callers must retain other
 observations and rebuild references for retained events. Destination-wide length
