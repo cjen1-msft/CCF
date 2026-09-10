@@ -6,4 +6,5 @@ import Sparse.QueuePlan
 import Sparse.QueueReadback
 import Sparse.ReadbackHints
 import Sparse.Smt
+import Sparse.SmtScript
 import Sparse.VersionedIntervals

@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.Smt
+import Sparse.SmtScript
 import Lean.Data.Json
 
 set_option autoImplicit false
@@ -24,7 +25,8 @@ private def fixture (name expected : String) (declarations : List String)
   Json.mkObj [
     ("name", toJson name),
     ("expected", toJson expected),
-    ("script", toJson (String.intercalate "\n" lines ++ "\n"))]
+    ("script", toJson (String.intercalate "\n" lines ++ "\n")),
+    ("generated_script", toJson (SmtScript.render assertions))]
 
 -- Literal declarations independently check the generated symbol-name convention.
 private def packetDeclarations : List String :=
@@ -34,6 +36,9 @@ private def packetDeclarations : List String :=
 def fixtures : List Json :=
   let arithmetic : Term .bool := .equal (.sub (.integer (-2)) (.integer 3)) (.integer (-5))
   [
+    fixture "empty-formula" "sat" [] [],
+    fixture "repeated-symbols" "sat" ["(declare-const ci__ Int)"]
+      [.equal first first, .equal first first],
     fixture "negative-arithmetic" "sat" [] [arithmetic],
     fixture "negative-contradiction" "unsat" [] [.not arithmetic],
     fixture "arithmetic-uf-alias" "unsat" ["(declare-fun fii_ (Int) Int)"]

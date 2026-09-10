@@ -29,7 +29,9 @@ For unconditional queue events, its finite constraints hold iff one concrete
 queue of the supplied length executes the entire trace.
 The theorem requires tracked-key coverage and a fresh filler value.
 
-The opt-in solver fixtures exercise Lean-rendered scalar terms:
+`SmtScript` declares each referenced typed symbol once and assembles assertions.
+Its interpreter preserves formula truth for the same assignment.
+The opt-in solver fixtures cover both explicit declarations and generated scripts:
 
 ```bash
 CCF_SPARSE_SMT_TESTS=1 CVC5=/path/to/cvc5 python3 -m unittest tests.test_sparse_smt

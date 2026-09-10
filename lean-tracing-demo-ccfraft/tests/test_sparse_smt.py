@@ -29,7 +29,7 @@ class SparseSmtIntegrationTests(unittest.TestCase):
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.artifacts = Path(cls.temporary.name)
         subprocess.run(
-            ["nice", "-n", "10", "lake", "build", "Sparse.Smt"],
+            ["nice", "-n", "10", "lake", "build", "Sparse.SmtScript"],
             cwd=ROOT, capture_output=True, text=True, check=True,
         )
         generated = subprocess.run(
@@ -39,16 +39,28 @@ class SparseSmtIntegrationTests(unittest.TestCase):
         cls.fixtures = json.loads(generated.stdout)
 
     def test_rendered_terms_match_solver_semantics(self) -> None:
-        self.assertEqual(len(self.fixtures), 9)
+        self.assertEqual(len(self.fixtures), 11)
         self.assertEqual(len({case["name"] for case in self.fixtures}), len(self.fixtures))
         for case in self.fixtures:
+            for renderer in ("script", "generated_script"):
+                with self.subTest(case=case["name"], renderer=renderer):
+                    script = case[renderer]
+                    self.assertTrue(script.isascii())
+                    stem = case["name"] + "-" + renderer
+                    path = self.artifacts / (stem + ".smt2")
+                    path.write_text(script, encoding="ascii")
+                    result = run_solver(self.cvc5, path, self.artifacts, stem)
+                    self.assertEqual(result.status, case["expected"])
+
+    def test_generated_declarations_are_unique(self) -> None:
+        for case in self.fixtures:
+            declarations = [
+                line.split()[1]
+                for line in case["generated_script"].splitlines()
+                if line.startswith("(declare-fun ")
+            ]
             with self.subTest(case=case["name"]):
-                script = case["script"]
-                self.assertTrue(script.isascii())
-                path = self.artifacts / (case["name"] + ".smt2")
-                path.write_text(script, encoding="ascii")
-                result = run_solver(self.cvc5, path, self.artifacts, case["name"])
-                self.assertEqual(result.status, case["expected"])
+                self.assertEqual(len(declarations), len(set(declarations)))
 
 
 if __name__ == "__main__":
