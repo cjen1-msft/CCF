@@ -43,8 +43,9 @@ with finite frontier queries. Raw callback-phase mapping is still separate.
 
 `QueueEncoding` emits typed count-read constraints with alias-safe observations
 and fresh function names. `QueueScalarEncoding` adds queue guards, windows,
-and shared packet order. Initial prefix accounting and count budgets remain
-unfinished, so the combined SAT result alone does not establish a queue execution.
+and shared packet order. `QueueInitialEncoding` adds the initial prefix histogram
+and alias-aware count budget, preserving the existing input, count, and order
+functions. Full queue existence for the emitted formula remains separate work.
 
 `SmtScript` declares each referenced typed symbol once and assembles assertions.
 Its interpreter preserves formula truth for the same assignment.

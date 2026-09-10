@@ -1,5 +1,6 @@
 import Sparse.QueueEncoding
 import Sparse.QueueScalarEncoding
+import Sparse.QueueInitialEncoding
 import Sparse.SmtScriptText
 import Lean.Data.Json
 
@@ -29,6 +30,12 @@ private def scalarFixture (name expected : String) (input : SmtScript.Formula)
     ("count_range_end", toJson (freshBase input + QueueReadback.writeCount trace + 1)),
     ("scalar_base", toJson (QueueScalarEncoding.scalarBase input [] trace observations))] ++
     formulaFields (QueueScalarEncoding.encode input [] trace observations length))
+
+private def initialFixture (name expected : String) (input : SmtScript.Formula)
+    (trace : List (Event InputInt)) (length : InputInt) : Json :=
+  Json.mkObj ([("name", toJson name), ("expected", toJson expected),
+    ("scope", toJson "count-scalar-initial")] ++
+    formulaFields (QueueInitialEncoding.encode input trace length))
 
 private def sendOne : List (Event InputInt) := [.send (.literal 1)]
 private def sendSymbol : List (Event InputInt) := [.send (.symbolic 0)]
@@ -115,16 +122,79 @@ def scalarFixtures : List Json :=
       [.equal (.app .int .int 1 (.integer 0)) (.integer 44)] sendOne [] (.literal 0)
   ]
 
+def initialFixtures : List Json :=
+  [
+    initialFixture "empty-queue" "sat" [] [] (.literal 0),
+    initialFixture "negative-length" "unsat" [] [] (.literal (-1)),
+    initialFixture "unknown-million-length" "sat" [] [.length 1000000] (.symbolic 10),
+    initialFixture "empty-peek" "unsat" [] [.peek (.symbolic 0)] (.literal 0),
+    initialFixture "sent-key-remains-present" "sat" []
+      [.send (.symbolic 0), .peek (.symbolic 0), .send (.symbolic 0), .length 1] (.literal 0),
+    initialFixture "duplicate-send-cannot-grow" "unsat" []
+      [.send (.symbolic 0), .peek (.symbolic 0), .send (.symbolic 0), .length 2] (.literal 0),
+    initialFixture "initial-head-is-present" "sat" []
+      [.peek (.symbolic 0), .send (.symbolic 0), .length 1] (.literal 1),
+    initialFixture "initial-head-cannot-be-fresh" "unsat" []
+      [.peek (.symbolic 0), .send (.symbolic 0), .length 2] (.literal 1),
+    initialFixture "aliased-keys-count-once" "sat" [sameKeys]
+      [.peek (.symbolic 0), .peek (.symbolic 1)] (.literal 1),
+    initialFixture "distinct-keys-cannot-share-head" "unsat" [.not sameKeys]
+      [.peek (.symbolic 0), .peek (.symbolic 1)] (.literal 1),
+    initialFixture "distinct-key-cannot-fit-budget" "unsat" [.not sameKeys]
+      [.peek (.symbolic 0), .send (.symbolic 1), .length 1] (.literal 1),
+    initialFixture "distinct-key-is-appended" "sat" [.not sameKeys]
+      [.peek (.symbolic 0), .send (.symbolic 1), .length 2] (.literal 1),
+    initialFixture "initial-duplicates-allowed" "sat" []
+      [.pop (.symbolic 0), .pop (.symbolic 0), .length 0] (.literal 2),
+    initialFixture "insufficient-initial-duplicates" "unsat" []
+      [.pop (.symbolic 0), .pop (.symbolic 0), .length 0] (.literal 1),
+    initialFixture "new-send-not-in-initial-histogram" "sat" []
+      [.pop (.symbolic 0), .pop (.symbolic 0), .send (.symbolic 0),
+       .peek (.symbolic 0), .length 1] (.literal 2),
+    initialFixture "last-unconsumed-peek" "sat"
+      [.equal (.unknown .int 1) (.unknown .int 2)]
+      [.pop (.symbolic 0), .peek (.symbolic 1), .peek (.symbolic 2)] (.literal 2),
+    initialFixture "earlier-peek-still-constrains-order" "unsat"
+      [.not (.equal (.unknown .int 1) (.unknown .int 2))]
+      [.pop (.symbolic 0), .peek (.symbolic 1), .peek (.symbolic 2)] (.literal 2),
+    initialFixture "first-send-can-already-be-present" "sat" []
+      [.send (.symbolic 0), .length 1] (.literal 1),
+    initialFixture "empty-budget-forces-append" "unsat" []
+      [.length 0, .send (.symbolic 0), .length 0] (.literal 0),
+    initialFixture "unknown-large-prefix" "sat" []
+      [.peek (.symbolic 0), .pop (.symbolic 0), .length 999999] (.symbolic 10)
+  ]
+
+def exhaustiveFixtures : List Json :=
+  let choices : List (Prod String (Prod Nat (Event InputInt))) :=
+    [("send", 0, .send (.symbolic 0)), ("send", 1, .send (.symbolic 1)),
+     ("pop", 0, .pop (.symbolic 0)), ("pop", 1, .pop (.symbolic 1)),
+     ("peek", 0, .peek (.symbolic 0)), ("peek", 1, .peek (.symbolic 1)),
+     ("length", 0, .length 0), ("length", 1, .length 1), ("length", 2, .length 2)]
+  ([0, 1, 2] : List Nat).flatMap fun length =>
+    [false, true].flatMap fun aliases =>
+      choices.flatMap fun left =>
+        choices.map fun right =>
+          let input := [if aliases then sameKeys else .not sameKeys]
+          let trace := [left.2.2, right.2.2]
+          let name := s!"{length}-{aliases}-{left.1}{left.2.1}-{right.1}{right.2.1}"
+          Json.mkObj ([("name", toJson name), ("initial_length", toJson length),
+            ("aliases", toJson aliases),
+            ("events", toJson [(left.1, left.2.1), (right.1, right.2.1)])] ++
+            formulaFields (QueueInitialEncoding.encode input trace (.literal (length : Int))))
+
 end CCFRaft.Sparse.QueueCountFixtures
 
 def main (args : List String) : IO UInt32 := do
   let fixtures := match args with
     | [] => some CCFRaft.Sparse.QueueCountFixtures.fixtures
     | ["--scalar"] => some CCFRaft.Sparse.QueueCountFixtures.scalarFixtures
+    | ["--initial"] => some CCFRaft.Sparse.QueueCountFixtures.initialFixtures
+    | ["--exhaustive"] => some CCFRaft.Sparse.QueueCountFixtures.exhaustiveFixtures
     | _ => none
   let some fixtures := fixtures |
     let stderr <- IO.getStderr
-    stderr.putStrLn "usage: QueueCountFixtureMain.lean [--scalar]"
+    stderr.putStrLn "usage: QueueCountFixtureMain.lean [--scalar | --initial | --exhaustive]"
     return 1
   IO.println (Lean.Json.arr fixtures.toArray).compress
   return 0

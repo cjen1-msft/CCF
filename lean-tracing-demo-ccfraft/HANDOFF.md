@@ -59,6 +59,7 @@ New repository bridges extend that foundation:
 | `Sparse/QueueObservationBounds.lean` | Bounds initial source-local queue length using observed lengths and packets distinct from every earlier send. |
 | `Sparse/QueueEncoding.lean` | Typed count-read formulas correspond to one root/store family, preserving symbolic aliases and pre-existing input formulas through fresh function allocation. |
 | `Sparse/QueueScalarEncoding.lean` | Adds exact guards, windows, shared order, and nonnegative initial length under one assignment, preserving every reserved count function. |
+| `Sparse/QueueInitialEncoding.lean` | Adds the initial prefix histogram and alias-aware distinct-key budget with a constructive assignment extension that preserves input, counts, windows, and order. |
 | `Sparse/ReadbackHints.lean` | Unequal observed projection values justify key disequality and skipping a store. |
 | `Sparse/Smt.lean` | Typed Bool/Int terms lower to a strict s-expression interpreter; symbol names are injective. |
 | `Sparse/SmtScript.lean` | Generates unique typed declarations and commands. Command evaluation preserves formula truth for the same assignment. |
@@ -101,11 +102,31 @@ Presence normalization applies only to queue events. Callers must retain other
 observations and rebuild references for retained events. Destination-wide length
 observations do not imply these source-local bounds.
 
-The count/scalar composition still lacks initial prefix histograms and
-alias-aware initial budgets. Its solver fixtures include SAT cases with
-inconsistent initial counts to keep that boundary explicit.
+The count-only and count/scalar solver fixtures include SAT cases with
+inconsistent initial counts to keep those boundaries explicit.
+`QueueInitialEncoding` adds initial prefix histograms and alias-aware budgets.
+It includes the last unconsumed peek without counting repeated earlier peeks
+as extra initial occurrences. Its public entry point accepts no extra count
+observations. Full unconditional queue existence for the emitted formula
+remains separate work.
 `tests/test_sparse_queue_encoding.py` uses the same opt-in environment as the
 scalar fixtures.
+
+The initial-accounting fixtures include 20 focused cases and 486 two-event
+cases compared with a concrete queue interpreter. Those pairs use nine event
+forms, initial lengths from zero through two, and both alias partitions of two
+keys. Reproduce them with `CCF_SPARSE_SMT_TESTS=1` and `CVC5`:
+
+```bash
+python3 -m unittest tests.test_sparse_queue_encoding
+```
+
+Native queue emission still needs a proved key summary. At 80 same-key events,
+the occurrence-based grids produce 741 KB for repeated sends or 1 MB for
+alternating sends and pops. Both take about 2.35 seconds before solving.
+The session's `queue_initial_scale_probe.lean` and
+`queue-initial-scale-baseline.jsonl` record this baseline. Syntactic-key
+deduplication is the next optimization after the queue proof unit.
 
 Generated scalar scripts now have text correspondence. Complete trace encoding
 and solver implementation correctness remain separate obligations.

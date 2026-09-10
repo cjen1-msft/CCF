@@ -7,6 +7,7 @@ import Sparse.IntervalDemandPlan
 import Sparse.IntervalQueries
 import Sparse.MonotoneIntervals
 import Sparse.QueueEncoding
+import Sparse.QueueInitialEncoding
 import Sparse.QueueObservationBounds
 import Sparse.QueuePlan
 import Sparse.QueuePresence
