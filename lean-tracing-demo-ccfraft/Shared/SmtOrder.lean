@@ -62,6 +62,15 @@ def syntaxKey {holes : Nat} : NatTerm holes -> List SyntaxAtom
       let leftKey := left.syntaxKey
       let rightKey := right.syntaxKey
       natAtom 7 :: natAtom leftKey.length :: leftKey ++ rightKey
+  | .clampIfEqual left right old lower upper =>
+      let leftKey := left.syntaxKey
+      let rightKey := right.syntaxKey
+      let oldKey := old.syntaxKey
+      let lowerKey := lower.syntaxKey
+      let upperKey := upper.syntaxKey
+      natAtom 8 :: natAtom leftKey.length :: natAtom rightKey.length ::
+        natAtom oldKey.length :: natAtom lowerKey.length ::
+        leftKey ++ (rightKey ++ (oldKey ++ (lowerKey ++ upperKey)))
 
 private theorem append_parts
     {α : Type}
@@ -144,6 +153,21 @@ theorem syntaxKey_injective {holes : Nat} :
         rcases append_parts equal.1 equal.2 with ⟨leftKey, rightKey⟩
         cases leftInjective leftKey
         cases rightInjective rightKey
+        rfl
+  | clampIfEqual left right old lower upper leftInjective rightInjective
+      oldInjective lowerInjective upperInjective =>
+      intro other equal
+      cases other <;> simp [syntaxKey, natAtom, stringAtom] at equal
+      case clampIfEqual left' right' old' lower' upper' =>
+        rcases append_parts equal.1 equal.2.2.2.2 with ⟨leftKey, rest⟩
+        rcases append_parts equal.2.1 rest with ⟨rightKey, rest⟩
+        rcases append_parts equal.2.2.1 rest with ⟨oldKey, rest⟩
+        rcases append_parts equal.2.2.2.1 rest with ⟨lowerKey, upperKey⟩
+        cases leftInjective leftKey
+        cases rightInjective rightKey
+        cases oldInjective oldKey
+        cases lowerInjective lowerKey
+        cases upperInjective upperKey
         rfl
 
 /--

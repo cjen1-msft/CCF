@@ -16,6 +16,7 @@ inductive NatTerm (holes : Nat) where
   | named (group slot : Nat) (label : String) (value : NatTerm holes)
   | min (left right : NatTerm holes)
   | max (left right : NatTerm holes)
+  | clampIfEqual (left right old lower upper : NatTerm holes)
   deriving Repr, DecidableEq
 
 def NatTerm.eval {holes : Nat}
@@ -31,6 +32,19 @@ def NatTerm.eval {holes : Nat}
   | .named _ _ _ value => value.eval assignment
   | .min left right => Nat.min (left.eval assignment) (right.eval assignment)
   | .max left right => Nat.max (left.eval assignment) (right.eval assignment)
+  | .clampIfEqual left right old lower upper =>
+      if left.eval assignment = right.eval assignment then
+        Nat.max (Nat.min (old.eval assignment) (upper.eval assignment)) (lower.eval assignment)
+      else old.eval assignment
+
+@[simp]
+theorem NatTerm.clampIfEqual_eval {holes : Nat} (assignment : Fin holes -> Nat)
+    (left right old lower upper : NatTerm holes) :
+    (clampIfEqual left right old lower upper).eval assignment =
+      if left.eval assignment = right.eval assignment then
+        Nat.max (Nat.min (old.eval assignment) (upper.eval assignment)) (lower.eval assignment)
+      else old.eval assignment :=
+  rfl
 
 @[simp]
 theorem NatTerm.min_eval {holes : Nat} (assignment : Fin holes -> Nat)
@@ -105,6 +119,20 @@ theorem Expr.ite_eval {holes : Nat} (assignment : Fin holes -> Nat)
         by_cases rightHolds : right.Holds assignment <;>
           simp [ite, Holds, NatTerm.eval, leftIH, rightIH, leftHolds, rightHolds]
 
+/-- Conditional clamping stores the unchanged operand only once. -/
+def Expr.clamp {holes : Nat} (condition : Expr holes)
+    (old lower upper : NatTerm holes) : NatTerm holes :=
+  .clampIfEqual (condition.ite (.literal 1) (.literal 0)) (.literal 1) old lower upper
+
+theorem Expr.clamp_eval {holes : Nat} (assignment : Fin holes -> Nat)
+    (condition : Expr holes) (old lower upper : NatTerm holes) :
+    (condition.clamp old lower upper).eval assignment =
+      if condition.Holds assignment then
+        Nat.max (Nat.min (old.eval assignment) (upper.eval assignment)) (lower.eval assignment)
+      else old.eval assignment := by
+  by_cases holds : condition.Holds assignment <;>
+    simp [clamp, NatTerm.eval, ite_eval, holds]
+
 structure Clause (holes : Nat) where
   label : String
   expression : Expr holes
@@ -152,6 +180,8 @@ def NatTerm.toSmt {holes : Nat} : NatTerm holes -> String
       s!"(let ((min_left {left.toSmt}) (min_right {right.toSmt})) (ite (< min_left min_right) min_left min_right))"
   | .max left right =>
       s!"(let ((max_left {left.toSmt}) (max_right {right.toSmt})) (ite (< max_left max_right) max_right max_left))"
+  | .clampIfEqual left right old lower upper =>
+      s!"(let ((clamp_left {left.toSmt}) (clamp_right {right.toSmt}) (clamp_old {old.toSmt}) (clamp_lower {lower.toSmt}) (clamp_upper {upper.toSmt})) (let ((clamp_min (ite (< clamp_old clamp_upper) clamp_old clamp_upper))) (ite (= clamp_left clamp_right) (ite (< clamp_min clamp_lower) clamp_lower clamp_min) clamp_old)))"
 
 def Expr.toSmt {holes : Nat} : Expr holes -> String
   | .boolean true => "true"
@@ -194,6 +224,8 @@ def NatTerm.bindings {holes : Nat} : NatTerm holes -> List (Binding holes)
       value.bindings ++ [{ group, slot, label, value }]
   | .min left right => left.bindings ++ right.bindings
   | .max left right => left.bindings ++ right.bindings
+  | .clampIfEqual left right old lower upper =>
+      left.bindings ++ right.bindings ++ old.bindings ++ lower.bindings ++ upper.bindings
 
 def Expr.bindings {holes : Nat} : Expr holes -> List (Binding holes)
   | .boolean _ => []
