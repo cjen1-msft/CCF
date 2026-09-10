@@ -56,6 +56,7 @@ New repository bridges extend that foundation:
 | `Sparse/QueuePresence.lean` | Removes known-present sends with same-initial-queue equivalence, under possibly aliased keys and sound disequality. |
 | `Sparse/QueueObservationBounds.lean` | Bounds initial source-local queue length using observed lengths and packets distinct from every earlier send. |
 | `Sparse/QueueEncoding.lean` | Typed count-read formulas correspond to one root/store family, preserving symbolic aliases and pre-existing input formulas through fresh function allocation. |
+| `Sparse/QueueScalarEncoding.lean` | Adds exact guards, windows, shared order, and nonnegative initial length under one assignment, preserving every reserved count function. |
 | `Sparse/ReadbackHints.lean` | Unequal observed projection values justify key disequality and skipping a store. |
 | `Sparse/Smt.lean` | Typed Bool/Int terms lower to a strict s-expression interpreter; symbol names are injective. |
 | `Sparse/SmtScript.lean` | Generates unique typed declarations and commands. Command evaluation preserves formula truth for the same assignment. |
@@ -85,9 +86,9 @@ Presence normalization applies only to queue events. Callers must retain other
 observations and rebuild references for retained events. Destination-wide length
 observations do not imply these source-local bounds.
 
-The executable count-read block still lacks queue guards/windows, initial
-prefix histograms, and alias-aware initial budgets. Its solver fixtures include
-SAT cases with invalid FIFO behavior to keep that boundary explicit.
+The count/scalar composition still lacks initial prefix histograms and
+alias-aware initial budgets. Its solver fixtures include SAT cases with
+inconsistent initial counts to keep that boundary explicit.
 `tests/test_sparse_queue_encoding.py` uses the same opt-in environment as the
 scalar fixtures.
 

@@ -1,4 +1,5 @@
 import Sparse.QueueEncoding
+import Sparse.QueueScalarEncoding
 import Sparse.SmtScriptText
 import Lean.Data.Json
 
@@ -8,15 +9,26 @@ namespace CCFRaft.Sparse.QueueCountFixtures
 
 open QueueEncoding QueueStream Smt Lean
 
-private def fixture (name expected : String) (input : SmtScript.Formula)
-    (trace : List (Event InputInt)) (observations : List (Observation trace)) : Json :=
-  let formula := encode input [] trace observations
+private def formulaFields (formula : SmtScript.Formula) : List (Prod String Json) :=
   let script := SmtScript.render formula
-  Json.mkObj [("name", toJson name), ("expected", toJson expected),
-    ("scope", toJson "count-read"), ("script", toJson script),
+  [("script", toJson script),
     ("parsed_script", toJson ((SmtScriptText.parse script).map SmtScript.renderCommands)),
     ("command_value", toJson (SmtScript.run regressionInput (SmtScript.compile formula))),
     ("parsed_value", toJson (SmtScriptText.runText regressionInput script))]
+
+private def fixture (name expected : String) (input : SmtScript.Formula)
+    (trace : List (Event InputInt)) (observations : List (Observation trace)) : Json :=
+  Json.mkObj ([("name", toJson name), ("expected", toJson expected),
+    ("scope", toJson "count-read")] ++ formulaFields (encode input [] trace observations))
+
+private def scalarFixture (name expected : String) (input : SmtScript.Formula)
+    (trace : List (Event InputInt)) (observations : List (Observation trace))
+    (length : InputInt) : Json :=
+  Json.mkObj ([("name", toJson name), ("expected", toJson expected),
+    ("scope", toJson "count-and-scalar"),
+    ("count_range_end", toJson (freshBase input + QueueReadback.writeCount trace + 1)),
+    ("scalar_base", toJson (QueueScalarEncoding.scalarBase input [] trace observations))] ++
+    formulaFields (QueueScalarEncoding.encode input [] trace observations length))
 
 private def sendOne : List (Event InputInt) := [.send (.literal 1)]
 private def sendSymbol : List (Event InputInt) := [.send (.symbolic 0)]
@@ -68,12 +80,51 @@ def fixtures : List Json :=
       [{ version := 0, key := .literal 1, expected := .literal 0 }]
   ]
 
+def scalarFixtures : List Json :=
+  [
+    scalarFixture "duplicate-send-and-pop" "sat" [] regressionTrace regressionObservations
+      (.literal 0),
+    scalarFixture "duplicate-send-wrong-length" "unsat" []
+      [.send (.literal (-2)), .send (.literal (-2)), .pop (.literal (-2)), .length 1]
+      [{ version := 0, key := .literal (-2), expected := .literal 0 }] (.literal 0),
+    scalarFixture "empty-peek" "unsat" [] [.peek (.literal 1)] [] (.literal 0),
+    scalarFixture "empty-pop" "unsat" [] popOne
+      [{ version := 0, key := .literal 1, expected := .literal 1 }] (.literal 0),
+    scalarFixture "nonpositive-pop-count" "unsat" [] popOne
+      [{ version := 0, key := .literal 1, expected := .literal 0 }] (.literal 1),
+    scalarFixture "negative-initial-length" "unsat" [] [] [] (.literal (-1)),
+    scalarFixture "unknown-million-initial-length" "sat" []
+      [.length 1000000, .peek (.symbolic 0), .pop (.symbolic 0), .length 999999]
+      [{ version := 0, key := .symbolic 0, expected := .literal 1 }] (.symbolic 10),
+    scalarFixture "repeated-peeks-cannot-differ" "unsat" [.not sameKeys]
+      [.peek (.symbolic 0), .peek (.symbolic 1)] [] (.literal 1),
+    scalarFixture "repeated-peeks-can-alias" "sat" [sameKeys]
+      [.peek (.symbolic 0), .peek (.symbolic 1)] [] (.literal 1),
+    scalarFixture "send-order-cannot-differ" "unsat" [.not sameKeys]
+      [.send (.symbolic 0), .peek (.symbolic 1)]
+      [{ version := 0, key := .symbolic 0, expected := .literal 0 }] (.literal 0),
+    scalarFixture "send-order-can-alias" "sat" [sameKeys]
+      [.send (.symbolic 0), .peek (.symbolic 1)]
+      [{ version := 0, key := .symbolic 0, expected := .literal 0 }] (.literal 0),
+    scalarFixture "initial-budget-still-missing" "sat" []
+      [.length 0, .send (.literal 1), .length 0]
+      [{ version := 0, key := .literal 1, expected := .literal 1 }] (.literal 0),
+    scalarFixture "initial-histogram-still-missing" "sat" [] [.peek (.literal 1)]
+      [{ version := 0, key := .literal 1, expected := .literal 0 }] (.literal 1),
+    scalarFixture "unrendered-count-version-reserved" "sat"
+      [.equal (.app .int .int 1 (.integer 0)) (.integer 44)] sendOne [] (.literal 0)
+  ]
+
 end CCFRaft.Sparse.QueueCountFixtures
 
 def main (args : List String) : IO UInt32 := do
-  unless args.isEmpty do
+  let fixtures := match args with
+    | [] => some CCFRaft.Sparse.QueueCountFixtures.fixtures
+    | ["--scalar"] => some CCFRaft.Sparse.QueueCountFixtures.scalarFixtures
+    | _ => none
+  let some fixtures := fixtures |
     let stderr <- IO.getStderr
-    stderr.putStrLn "usage: QueueCountFixtureMain.lean"
+    stderr.putStrLn "usage: QueueCountFixtureMain.lean [--scalar]"
     return 1
-  IO.println (Lean.Json.arr CCFRaft.Sparse.QueueCountFixtures.fixtures.toArray).compress
+  IO.println (Lean.Json.arr fixtures.toArray).compress
   return 0
