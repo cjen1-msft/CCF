@@ -32,6 +32,11 @@ The theorem requires tracked-key coverage and a fresh filler value.
 queue, even when distinct symbolic keys alias. `QueueObservationBounds` derives
 initial-length bounds from source-local observations without assuming emptiness.
 
+`QueueEncoding` emits typed count-read constraints with alias-safe observations
+and fresh function names. It does not yet encode FIFO guards, queue windows,
+or initial count budgets, so its SAT result alone does not establish a queue
+execution.
+
 `SmtScript` declares each referenced typed symbol once and assembles assertions.
 Its interpreter preserves formula truth for the same assignment.
 `SmtText` and `SmtNumerals` prove exact decoding of generated symbol and decimal
@@ -39,7 +44,8 @@ numeral tokens.
 The opt-in solver fixtures cover both explicit declarations and generated scripts:
 
 ```bash
-CCF_SPARSE_SMT_TESTS=1 CVC5=/path/to/cvc5 python3 -m unittest tests.test_sparse_smt
+CCF_SPARSE_SMT_TESTS=1 CVC5=/path/to/cvc5 \
+	python3 -m unittest tests.test_sparse_smt tests.test_sparse_queue_encoding
 ```
 
 These fixtures cover term printing, not full trace correctness.
