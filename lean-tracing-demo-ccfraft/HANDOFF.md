@@ -41,6 +41,22 @@ node-set codecs, signed indices, finite readback, and joint configuration and
 signature completion. These results have independent source reviews. They are
 not a complete SMT serialization or full sparse Model composition proof.
 
+New repository bridges extend that foundation:
+
+| Module | Proved boundary |
+| --- | --- |
+| `Sparse/VersionedIntervals.lean` | One root-array family for all aligned range-copy versions and interval queries, with finitely many shared cut samples. |
+| `Sparse/AppendEntriesRanges.lean` | Actual send/receive index alignment. Enabled sends contain at most one entry; arbitrary initial packets remain unbounded. |
+| `Sparse/FiniteMembership.lean` | One finite initial set for a complete membership/insert trace, preserving key aliases. |
+| `Sparse/QueueReadback.lean` | Fixed-plan finite read/scalar constraints correspond to one count-array heap and imply a concrete whole-queue execution. |
+| `Sparse/ReadbackHints.lean` | Unequal observed projection values justify key disequality and skipping a store. |
+| `Sparse/Smt.lean` | Typed Bool/Int terms lower to a strict s-expression interpreter; symbol names are injective. |
+
+Plan construction, script/declaration assembly, and final emitted-text
+correspondence are separate obligations. The real cvc5 fixtures in
+`tests/test_sparse_smt.py` are opt-in through `CCF_SPARSE_SMT_TESTS=1` and `CVC5`;
+they exercise scalar term rendering, not a full trace validator.
+
 `export_sparse_proofs.py` and `Sparse/provenance.json` preserve the export's
 source hashes and reversible proof-body mapping. Re-exporting needs the original
 session files through `--source-dir`; checking and building do not. The exporter
@@ -57,6 +73,12 @@ packet aliases still exceed the target. Additional count bounds are proved
 redundant for the same heap, but the experiment slows 100-event symbolic SAT
 from 3.54 seconds to 5.75 seconds and remains disabled. No full Raft performance
 claim follows from these measurements.
+
+Synthetic partial-header observations now support disequality specialization.
+With four potentially aliased keys per header class, a 400-event SAT case drops
+from 126.70 seconds to 2.50 seconds. An unknown-initial-length case with
+million-scale observations still takes 8.63 seconds. These are queue-only
+experiments, not matched CCF traces.
 
 Git bundles contain committed repository files, not uncommitted additions.
 Transfer session experiments and reports separately. Do not download replacement

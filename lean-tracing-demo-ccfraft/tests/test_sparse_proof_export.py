@@ -118,6 +118,13 @@ class SparseProofSnapshotTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             exporter.check(exporter.ROOT)
 
+    def test_sparse_sources_are_ascii(self) -> None:
+        sources = [exporter.ROOT / "Sparse.lean"]
+        sources.extend((exporter.ROOT / "Sparse").rglob("*.lean"))
+        for source in sources:
+            with self.subTest(source=source.relative_to(exporter.ROOT)):
+                self.assertTrue(source.read_bytes().isascii(), str(source))
+
 
 if __name__ == "__main__":
     unittest.main()

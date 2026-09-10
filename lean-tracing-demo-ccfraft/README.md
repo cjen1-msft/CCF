@@ -19,6 +19,20 @@ not need the original session artifacts. `Sparse/provenance.json` records the
 source hashes and proof-body hashes. The exporter changes namespaces and removes
 diagnostic printing and the historical session command log.
 
+New bridge modules add aligned multi-version interval completion, finite
+membership traces, projection-backed readback hints, and typed scalar SMT terms.
+They are ordinary repository source, separate from the exported snapshots.
+`QueueReadback` connects finite equations to a whole queue execution under an
+explicit plan and demand-closure invariant.
+
+The opt-in solver fixtures exercise Lean-rendered scalar terms:
+
+```bash
+CCF_SPARSE_SMT_TESTS=1 CVC5=/path/to/cvc5 python3 -m unittest tests.test_sparse_smt
+```
+
+These fixtures cover term printing, not full trace correctness.
+
 This is a proof library, not a complete sparse trace validator. Full Model
 composition, SMT emission correspondence, and end-to-end performance remain
 unfinished. The design and remaining work are in [HANDOFF.md](HANDOFF.md).
