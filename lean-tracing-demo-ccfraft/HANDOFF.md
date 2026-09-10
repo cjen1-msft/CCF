@@ -49,6 +49,7 @@ New repository bridges extend that foundation:
 | `Sparse/IntervalReadback.lean` | Flat demanded-read equations correspond to one root-array family. Its recursive closure constructor is a semantic reference, not the runtime path. |
 | `Sparse/IntervalDemandPlan.lean` | A flattened descriptor table and visited worklist generate minimal closed demands, preserving exact requested-value completion. |
 | `Sparse/IntervalEncoding.lean` | Typed point-read constraints and their rendered text correspond to one Int-valued root-array family, with symbolic indices, explicit nonnegative domains, and input-preserving fresh functions. |
+| `Sparse/IntervalPredicate.lean` | Explicit Int comparisons lower with generated locality and alias-preserving semantics. Deduplication before the cut/reference product preserves all planned-demand membership. |
 | `Sparse/IntervalQueries.lean` | Finite read equations and reference-local cut predicates correspond to one root-array family for every universal query, preserving requested cut values. |
 | `Sparse/MonotoneIntervals.lean` | Joint finite-cut completion for one log with point facts, interval predicates, nondecreasing terms, and a current-term bound. |
 | `Sparse/ConfigurationSnapshot.lean` | Exact ordered positive-index Model snapshots and same-log completion using `2m+1` frontier-query records for `m` snapshot entries. |
@@ -91,6 +92,19 @@ Visited-list membership remains linear, so no linear-time bound is claimed.
 memo deduplication. Locality avoids unreferenced versions but does not establish
 minimal cross-position requests or fast compilation. Its arrays are total;
 callers must encode physical log-length clipping explicitly.
+
+`IntervalPredicate` removes occurrence duplicates before that product while
+preserving its membership and the planner's dependency closure. Distinct cuts
+still multiply distinct version references. Its typed comparisons use ordinary
+Int order. Pointwise `ne` is not an existential mismatch.
+The caller-supplied `zeroID` is only metadata, not an assertion that its value
+is zero. Fresh zero allocation, guarded predicates, and universal completion
+remain separate work.
+
+`tests/test_sparse_interval_predicate.py` covers 144 comparisons across cell
+and input operands, two position-alias controls, and request deduplication.
+Repeating one cut ID and one cell self-equality predicate 400 times yields one
+request and two planned demands in its shared-root case.
 
 `IntervalEncoding` interprets graph endpoints and observation positions as
 scalar symbol IDs, not literal indices. Equal-valued tokens share the same UF
