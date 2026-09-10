@@ -128,80 +128,121 @@ private def findComparison (left right : PackedExpr) :
           some (by simpa only [← sameLeft, ← sameRight] using prior.decision)
       | _, _ => findComparison left right rest
 
-private def childrenMemo {goal : Prop} (left right : List PackedExpr)
-    (compare : ∀ child ∈ left, ∀ other, ComparisonCache ->
-      (Decidable (child = other) -> ComparisonCache -> Decidable goal) -> Decidable goal)
-    (cache : ComparisonCache)
-    (done : Decidable (left = right) -> ComparisonCache -> Decidable goal) : Decidable goal :=
-  match left, right with
-  | [], [] => done (.isTrue rfl) cache
-  | [], _ :: _ => done (.isFalse (by simp)) cache
-  | _ :: _, [] => done (.isFalse (by simp)) cache
-  | a :: as, b :: bs =>
-      compare a (by simp) b cache fun head cache =>
-        match head with
-        | .isFalse different => done (.isFalse (fun equal =>
-            different (List.cons.inj equal).1)) cache
-        | .isTrue same =>
-            childrenMemo as bs (fun child member other =>
-                compare child (List.mem_cons_of_mem _ member) other) cache fun tail cache =>
-              match tail with
-              | .isFalse different => done (.isFalse (fun equal =>
-                  different (List.cons.inj equal).2)) cache
-              | .isTrue rest => done (.isTrue (by cases same; cases rest; rfl)) cache
+-- These frames replace higher-order continuations: completed siblings must not
+-- keep native call frames alive while the rest of a wide expression is compared.
+private inductive ComparisonKont (goal : Prop) : Prop -> Type where
+  | done : ComparisonKont goal goal
+  | save (left right : PackedExpr) (key : USize × USize)
+      (next : ComparisonKont goal (left = right)) : ComparisonKont goal (left = right)
+  | convert {p q : Prop} (equivalent : p ↔ q)
+      (next : ComparisonKont goal q) : ComparisonKont goal p
+  | tail (a b : PackedExpr) (as bs : List PackedExpr)
+      (next : ComparisonKont goal (a :: as = b :: bs)) : ComparisonKont goal (a = b)
 
--- Addresses select buckets, never establish equality. A decision of a fixed
--- proposition is unique, so the continuation's result is address-independent.
-private def compareMemo {goal : Prop} :
-    (left right : PackedExpr) -> ComparisonCache ->
-    (Decidable (left = right) -> ComparisonCache -> Decidable goal) -> Decidable goal
-  | ⟨s, a⟩, ⟨t, b⟩, cache, done =>
-      withPtrAddr a (fun leftAddress =>
-        withPtrAddr b (fun rightAddress =>
-          let key := (leftAddress, rightAddress)
-          let finish := fun decision cache =>
-            done decision (cache.insert key
-              (⟨⟨s, a⟩, ⟨t, b⟩, decision⟩ :: cache[key]?.getD []))
-          if leftAddress == rightAddress then
-            finish (structuralExprEq ⟨s, a⟩ ⟨t, b⟩) cache
+private inductive ComparisonWork (goal : Prop) where
+  | compare (left right : PackedExpr) (next : ComparisonKont goal (left = right))
+  | children (left right : List PackedExpr) (next : ComparisonKont goal (left = right))
+  | resume {p : Prop} (decision : Decidable p) (next : ComparisonKont goal p)
+
+-- Proof-only work budget: a constructor has at most three children, and each
+-- child adds fewer than 64 frame-processing steps. No size traversal runs.
+private noncomputable def childrenCost : List PackedExpr -> Nat
+  | [] => 1
+  | child :: rest => 64 * sizeOf child.2 + 7 + childrenCost rest
+
+private noncomputable def ComparisonKont.cost {goal p : Prop} : ComparisonKont goal p -> Nat
+  | .done => 0
+  | .save _ _ _ next => next.cost + 1
+  | .convert _ next => next.cost + 1
+  | .tail _ _ as _ next => childrenCost as + 2 + next.cost
+
+private noncomputable def ComparisonWork.cost {goal : Prop} : ComparisonWork goal -> Nat
+  | .compare left _ next => 64 * sizeOf left.2 + 4 + next.cost
+  | .children left _ next => childrenCost left + next.cost
+  | .resume _ next => next.cost
+
+private theorem childrenCost_smaller {s : Ty} (e : Expr s) :
+    childrenCost (signature e).children + 2 < 64 * sizeOf e + 4 := by
+  cases e <;> simp [signature, childrenCost] <;> omega
+
+@[inline] private def withAddresses {goal : Prop} (left right : PackedExpr)
+    (run : USize × USize -> Decidable goal) : Decidable goal :=
+  withPtrAddr left.2 (fun a =>
+    withPtrAddr right.2 (fun b => run (a, b)) (fun _ _ => Subsingleton.elim _ _))
+    (fun _ _ => Subsingleton.elim _ _)
+
+-- Addresses select buckets, never establish equality. All recursive calls
+-- return to this same loop; address independence follows from the fixed goal.
+private def compareLoop {goal : Prop} (work : ComparisonWork goal)
+    (cache : ComparisonCache) : Decidable goal :=
+  match work with
+  | .compare ⟨s, a⟩ ⟨t, b⟩ next =>
+      withAddresses ⟨s, a⟩ ⟨t, b⟩ (fun key =>
+          let saved := ComparisonKont.save ⟨s, a⟩ ⟨t, b⟩ key next
+          if key.1 == key.2 then
+            compareLoop (.resume (structuralExprEq ⟨s, a⟩ ⟨t, b⟩) saved) cache
           else
             match findComparison ⟨s, a⟩ ⟨t, b⟩ (cache[key]?.getD []) with
-            | some decision => done decision cache
+            | some decision => compareLoop (.resume decision next) cache
             | none =>
                 match withPtrEqDecEq s t (fun _ => inferInstance) with
-                | .isFalse different => finish (.isFalse (fun equal =>
-                    different (congrArg Sigma.fst equal))) cache
-                | .isTrue same => by
-                    subst t
+                | .isFalse different => compareLoop (.resume (.isFalse (fun equal =>
+                    different (congrArg Sigma.fst equal))) saved) cache
+                | .isTrue same =>
+                    let typedB : Expr s := same.symm ▸ b
+                    have packedEqual :
+                        a = typedB ↔ (⟨s, a⟩ : PackedExpr) = ⟨t, b⟩ := by
+                      cases same
+                      simp [typedB]
                     let lhs := signature a
-                    let rhs := signature b
-                    let packed := fun (decision : Decidable (a = b)) =>
-                      @decidable_of_iff ((⟨s, a⟩ : PackedExpr) = ⟨s, b⟩)
-                        (a = b) (by simp) decision
-                    exact if header : lhs.tag = rhs.tag ∧ lhs.scalars = rhs.scalars then
-                      childrenMemo (signature a).children (signature b).children
-                        (fun child member other cache continuation =>
-                          compareMemo child other cache continuation) cache fun children cache =>
-                            match children with
-                            | .isTrue equal =>
-                                finish (packed (.isTrue (signature_injective (by
-                                  cases ha : signature a
-                                  cases hb : signature b
-                                  simp_all [lhs, rhs])))) cache
-                            | .isFalse different =>
-                                finish (packed (.isFalse (fun equal =>
-                                  different (congrArg (fun e => (signature e).children) equal)))) cache
+                    let rhs := signature typedB
+                    if header : lhs.tag = rhs.tag ∧ lhs.scalars = rhs.scalars then
+                      compareLoop (.children lhs.children rhs.children (.convert (by
+                        constructor
+                        · intro equal
+                          apply packedEqual.mp
+                          exact signature_injective (by
+                            cases ha : signature a
+                            cases hb : signature typedB
+                            simp_all [lhs, rhs])
+                        · intro equal
+                          exact congrArg (fun e => (signature e).children)
+                            (packedEqual.mpr equal)) saved)) cache
                     else
-                      finish (packed (.isFalse (fun equal =>
-                        header (by cases equal; exact ⟨rfl, rfl⟩)))) cache)
-          (fun _ _ => Subsingleton.elim _ _))
-        (fun _ _ => Subsingleton.elim _ _)
-termination_by left _ _ _ => sizeOf left.2
-decreasing_by all_goals exact child_smaller _ _ member
+                      compareLoop (.resume (.isFalse (fun equal =>
+                        header (by
+                          have expressionEqual := packedEqual.mpr equal
+                          simp_all [lhs, rhs]))) saved) cache)
+  | .children [] [] next => compareLoop (.resume (.isTrue rfl) next) cache
+  | .children [] (_ :: _) next => compareLoop (.resume (.isFalse (by simp)) next) cache
+  | .children (_ :: _) [] next => compareLoop (.resume (.isFalse (by simp)) next) cache
+  | .children (a :: as) (b :: bs) next =>
+      compareLoop (.compare a b (.tail a b as bs next)) cache
+  | .resume decision continuation =>
+      match continuation, decision with
+      | .done, decision => decision
+      | .save left right key next, decision =>
+          compareLoop (.resume decision next)
+            (cache.insert key (⟨left, right, decision⟩ :: cache[key]?.getD []))
+      | .convert equivalent next, decision =>
+          compareLoop (.resume (@decidable_of_iff _ _ equivalent decision) next) cache
+      | .tail a b as bs next, .isFalse different =>
+          compareLoop (.resume (.isFalse (fun equal =>
+            different (List.cons.inj equal).1)) next) cache
+      | .tail a b as bs next, .isTrue same =>
+          compareLoop (.children as bs (.convert (by
+            simp only [List.cons.injEq, same, true_and]) next)) cache
+termination_by work.cost
+decreasing_by
+  all_goals dsimp only [ComparisonWork.cost, ComparisonKont.cost]
+  all_goals first
+    | omega
+    | have := childrenCost_smaller a; omega
+    | simp only [childrenCost]; omega
 
 /-- Exact typed equality, including independently allocated shared subgraphs. -/
 def packedExprEq (left right : (s : Ty) × Expr s) : Decidable (left = right) :=
-  compareMemo left right {} (fun decision _ => decision)
+  compareLoop (.compare left right .done) {}
 
 /-- Opt-in equality for local memo tables, without changing the global instance. -/
 def Expr.sharedDecEq {s : Ty} (a b : Expr s) : Decidable (a = b) :=

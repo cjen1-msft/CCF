@@ -87,6 +87,27 @@ private def sharedPrefixMismatch (depth : Nat) : Bool :=
 
 #guard sharedPrefixMismatch 40
 
+private def tree : Nat -> Nat -> Expr .nat
+  | 0, index => .nat index
+  | depth + 1, index => .add (tree depth (2 * index)) (tree depth (2 * index + 1))
+
+private def separateTree : Nat -> Nat -> Expr .nat
+  | 0, index => .nat (index + 1 - 1)
+  | depth + 1, index =>
+      .add (separateTree depth (index + index)) (separateTree depth (index + index + 1))
+
+-- A shallow tree can visit thousands of distinct nodes. The old CPS comparison
+-- accumulated call frames across completed siblings, not just along tree depth.
+#guard same (tree 10 0) (separateTree 10 0)
+#guard !same (.add (tree 10 0) (.nat 0)) (.add (separateTree 10 0) (.nat 1))
+
+private def chain (depth : Nat) : Expr .nat :=
+  (List.range depth).foldl (fun child index => .add child (.nat index)) (.unknown 0)
+
+private def separateChain (depth : Nat) : Expr .nat :=
+  (List.range depth).foldl (fun child index =>
+    .add child (.nat (index + 1 - 1))) (.unknown 0)
+
 example {s : Ty} (a b : Expr s) :
     letI : DecidableEq (Expr s) := Expr.sharedDecEq
     decide (a = b) = true ↔ a = b := by
@@ -108,6 +129,17 @@ def profile : IO Unit := do
         same (overlapping depth).1 (separateOverlapping depth).1 do
       throw (IO.userError "separate equal expression graphs compared unequal")
     IO.println s!"independent DAG depth={depth} elapsed_ms={(← IO.monoMsNow) - start}"
+  for depth in [10, 12, 14] do
+    let left := tree depth 0
+    let right := separateTree depth 0
+    let start ← IO.monoMsNow
+    unless same left right && !same (.add left (.nat 0)) (.add right (.nat 1)) do
+      throw (IO.userError "wide independent tree equality or late mismatch failed")
+    IO.println s!"independent tree depth={depth} nodes={2 ^ (depth + 1) - 1} elapsed_ms={(← IO.monoMsNow) - start}"
+  let start ← IO.monoMsNow
+  unless same (chain 4096) (separateChain 4096) do
+    throw (IO.userError "deep independent chain compared unequal")
+  IO.println s!"independent chain depth=4096 elapsed_ms={(← IO.monoMsNow) - start}"
 
 end Symbolic.SharingTests
 
