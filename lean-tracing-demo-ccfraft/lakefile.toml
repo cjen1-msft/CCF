@@ -72,6 +72,9 @@ name = "RuntimeAudit"
 name = "Shared"
 
 [[lean_lib]]
+name = "Sparse"
+
+[[lean_lib]]
 name = "MachineGenerated"
 
 [[lean_lib]]

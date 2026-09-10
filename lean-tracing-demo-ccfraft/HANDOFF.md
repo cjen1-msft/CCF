@@ -1,5 +1,73 @@
 # Resume the checked CCFRaft trace encoder
 
+## Current direction: sparse exact encoding
+
+The user superseded the eager bounded-entry architecture described below.
+Keep that implementation as a reference; do not resume its unfinished integration
+as the delivery path.
+
+The required contract is:
+
+```text
+SAT(encode(trace)) <=> one concrete initial state has an execution
+                       matching every ordered action and observation
+```
+
+Initial state is arbitrary, not necessarily reachable from bootstrap. Missing
+observations do not mean absent nodes or empty queues. Discover state on demand.
+Do not enumerate a million-entry initial ledger or expand predecessor expressions
+through the trace. Historical constraints may accumulate; current-state summaries
+must remain compact and have proved correspondence with the model.
+
+Recorded actions are complete and their supplied order is authoritative for now.
+Clock drift, reordering, and missing-action reconstruction are deferred.
+The target is roughly 1-2 seconds warm SAT for 400 events. Unknown, timeout, and
+encoding failure are not SAT or UNSAT verdicts.
+
+### Sparse proofs are in the repository working tree
+
+The interrupted export is repaired. `Sparse/` contains 22 exported proof and
+audit modules, with the reviewed theorem bodies preserved under new namespaces.
+`Sparse.lean` imports the foundation audit and the separate queue audit.
+
+```bash
+python3 export_sparse_proofs.py --check
+nice -n 10 lake build Sparse
+```
+
+The library includes exact sparse storage operations, source-local queue
+completion and traces, all-17-action queue congruence, complete-packet and
+node-set codecs, signed indices, finite readback, and joint configuration and
+signature completion. These results have independent source reviews. They are
+not a complete SMT serialization or full sparse Model composition proof.
+
+`export_sparse_proofs.py` and `Sparse/provenance.json` preserve the export's
+source hashes and reversible proof-body mapping. Re-exporting needs the original
+session files through `--source-dir`; checking and building do not. The exporter
+refuses changed sources or destinations.
+
+Solver experiments, their tests, and review reports remain in the `files/`
+directory of session `a2575280-4399-475e-920a-ec0b48e8b85f`. Its
+`check_sparse_prototypes.py` still rebuilds the original dependency graph and
+rejects non-ASCII source or unexpected transitive axioms.
+
+Full Model composition, emitted SMT correspondence, and production runtime
+integration remain unfinished. Literal-packet fixtures are fast; fully unresolved
+packet aliases still exceed the target. Additional count bounds are proved
+redundant for the same heap, but the experiment slows 100-event symbolic SAT
+from 3.54 seconds to 5.75 seconds and remains disabled. No full Raft performance
+claim follows from these measurements.
+
+Git bundles contain committed repository files, not uncommitted additions.
+Transfer session experiments and reports separately. Do not download replacement
+tools or formatters without fresh authorization; the user declined a formatter
+download during this work.
+
+## Historical bounded-backend checkpoint
+
+The remainder records the earlier implementation and its proof boundary.
+Its bounded contract is not the new sparse delivery contract.
+
 The guarded AppendEntries and control trace slices are complete. This document supersedes
 the unfinished migration checkpoint in `f1c84033b`. Receive trace integration,
 symbolic entry controls, and raw-trace integration

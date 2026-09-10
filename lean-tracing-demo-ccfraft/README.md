@@ -1,7 +1,27 @@
 # CCFRaft trace validation demo
 
-This directory contains a standalone demonstration of mid-trace validation
-against the CCFRaft Lean model.
+This directory contains the bounded trace validator and work on a sparse exact
+encoder for the CCFRaft Lean model.
+
+## Sparse proof foundation
+
+`Sparse/` contains the reviewed semantic proofs for sparse logs, source-local
+queues, integer and packet representations, and finite log summaries.
+The entry point `Sparse.lean` imports their transitive axiom audits.
+
+```bash
+python3 export_sparse_proofs.py --check
+nice -n 10 lake build Sparse
+```
+
+These commands use repository files and the pinned Lake dependencies. They do
+not need the original session artifacts. `Sparse/provenance.json` records the
+source hashes and proof-body hashes. The exporter changes namespaces and removes
+diagnostic printing and the historical session command log.
+
+This is a proof library, not a complete sparse trace validator. Full Model
+composition, SMT emission correspondence, and end-to-end performance remain
+unfinished. The design and remaining work are in [HANDOFF.md](HANDOFF.md).
 
 ## Checked trace encoding
 
