@@ -38,6 +38,8 @@ and a visited worklist. Use it instead of `IntervalReadback`'s recursive
 reference constructor, which can repeat shared ancestors exponentially.
 `IntervalQueries` composes demanded reads and finite-cut predicates into one
 root-array witness. Its request list can still grow as cuts times references.
+`ConfigurationSnapshot` characterizes complete positive-index Model snapshots
+with finite frontier queries. Raw callback-phase mapping is still separate.
 
 `QueueEncoding` emits typed count-read constraints with alias-safe observations
 and fresh function names. `QueueScalarEncoding` adds queue guards, windows,

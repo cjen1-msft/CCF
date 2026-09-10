@@ -50,6 +50,7 @@ New repository bridges extend that foundation:
 | `Sparse/IntervalDemandPlan.lean` | A flattened descriptor table and visited worklist generate minimal closed demands, preserving exact requested-value completion. |
 | `Sparse/IntervalQueries.lean` | Finite read equations and reference-local cut predicates correspond to one root-array family for every universal query, preserving requested cut values. |
 | `Sparse/MonotoneIntervals.lean` | Joint finite-cut completion for one log with point facts, interval predicates, nondecreasing terms, and a current-term bound. |
+| `Sparse/ConfigurationSnapshot.lean` | Exact ordered positive-index Model snapshots and same-log completion using `2m+1` frontier-query records for `m` snapshot entries. |
 | `Sparse/AppendEntriesRanges.lean` | Actual send/receive index alignment. Enabled sends contain at most one entry; arbitrary initial packets remain unbounded. |
 | `Sparse/FiniteMembership.lean` | One finite initial set for a complete membership/insert trace, preserving key aliases. |
 | `Sparse/QueueReadback.lean` | Fixed-plan finite read/scalar constraints correspond to one count-array heap and imply a concrete whole-queue execution. |
@@ -87,6 +88,14 @@ Visited-list membership remains linear, so no linear-time bound is claimed.
 memo deduplication. Locality avoids unreferenced versions but does not establish
 minimal cross-position requests or fast compilation. Its arrays are total;
 callers must encode physical log-length clipping explicitly.
+
+Configuration snapshots are derived Model observations, not a mutable global
+configuration variable. Empty positive-index snapshots do not remove implicit
+configuration zero from Model quorum behavior. Raw snapshot fields remain
+unwired: C++ callbacks can update the configuration cache and send before the
+enclosing ledger action finishes. They need a phase-refinement mapping, not
+reordering or discarded observations. Address-only changes also remain outside
+the current Model projection.
 
 Presence normalization applies only to queue events. Callers must retain other
 observations and rebuild references for retained events. Destination-wide length
