@@ -33,6 +33,9 @@ queue, even when distinct symbolic keys alias. `QueueObservationBounds` derives
 initial-length bounds from source-local observations without assuming emptiness.
 `MonotoneIntervals` adds monotone, term-bounded single-log completion. It does
 not construct a full safety-invariant state.
+`IntervalDemandPlan.plan` computes dependency closure with a flattened table
+and a visited worklist. Use it instead of `IntervalReadback`'s recursive
+reference constructor, which can repeat shared ancestors exponentially.
 
 `QueueEncoding` emits typed count-read constraints with alias-safe observations
 and fresh function names. It does not yet encode FIFO guards, queue windows,
@@ -54,6 +57,15 @@ CCF_SPARSE_SMT_TESTS=1 CVC5=/path/to/cvc5 \
 ```
 
 These fixtures cover term printing, not full trace correctness.
+
+The planner's runtime cases use the same opt-in flag:
+
+```bash
+CCF_SPARSE_SMT_TESTS=1 python3 -m unittest tests.test_sparse_interval_demands
+nice -n 10 lake env lean --run Sparse/IntervalDemandFixtureMain.lean --benchmark
+```
+
+The benchmark measures demand planning only, not SMT generation or solving.
 
 This is a proof library, not a complete sparse trace validator. Full Model
 composition, full-trace SMT correspondence, and end-to-end performance remain

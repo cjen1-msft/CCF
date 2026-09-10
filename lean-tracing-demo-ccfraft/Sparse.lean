@@ -2,6 +2,7 @@ import Sparse.FoundationAudit
 import Sparse.QueueAudit
 import Sparse.AppendEntriesRanges
 import Sparse.FiniteMembership
+import Sparse.IntervalDemandPlan
 import Sparse.MonotoneIntervals
 import Sparse.QueueEncoding
 import Sparse.QueueObservationBounds

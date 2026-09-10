@@ -46,6 +46,8 @@ New repository bridges extend that foundation:
 | Module | Proved boundary |
 | --- | --- |
 | `Sparse/VersionedIntervals.lean` | One root-array family for all aligned range-copy versions and interval queries, with finitely many shared cut samples. |
+| `Sparse/IntervalReadback.lean` | Flat demanded-read equations correspond to one root-array family. Its recursive closure constructor is a semantic reference, not the runtime path. |
+| `Sparse/IntervalDemandPlan.lean` | A flattened descriptor table and visited worklist generate minimal closed demands, preserving exact requested-value completion. |
 | `Sparse/MonotoneIntervals.lean` | Joint finite-cut completion for one log with point facts, interval predicates, nondecreasing terms, and a current-term bound. |
 | `Sparse/AppendEntriesRanges.lean` | Actual send/receive index alignment. Enabled sends contain at most one entry; arbitrary initial packets remain unbounded. |
 | `Sparse/FiniteMembership.lean` | One finite initial set for a complete membership/insert trace, preserving key aliases. |
@@ -71,6 +73,13 @@ Monotone completion does not change the arbitrary-initial-state contract above.
 Restricting that contract to `SafetyInductiveInvariant` still requires one joint
 invariant witness, including coherent proof-only histories. Local term and
 frontier bounds alone do not establish that witness.
+
+Use `IntervalDemandPlan.plan` for executable dependency closure. The reference
+constructor repeats shared ancestors exponentially. In one forced-clock run,
+14 demands dropped from 6.21 seconds to 0.106 milliseconds; 400 versions with
+401 demands took 40.2 milliseconds. These are planner-only measurements.
+Visited-list membership remains linear, so no linear-time bound is claimed.
+`Sparse/IntervalDemandFixtureMain.lean --benchmark` reproduces the new path.
 
 Presence normalization applies only to queue events. Callers must retain other
 observations and rebuild references for retained events. Destination-wide length
