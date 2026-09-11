@@ -29,6 +29,8 @@ Its entry predicate is `True`, and its ordered recursion uses the actual
 `Enabled` and `next`. Adjacent observations share one boundary, and all actions
 and observations share one unknown-value assignment.
 Its input functions are semantic parameters, not finite parsed syntax.
+`ModelInputSyntax` now supplies closed finite syntax over that contract.
+It is not yet a parser or an SMT encoder.
 Emitted action clauses and raw-record refinement
 remain separate obligations. In particular, raw send attempts are not evidence
 of successful Model sends.
@@ -69,6 +71,7 @@ New repository bridges extend that foundation:
 | `Sparse/IntervalQueries.lean` | Finite read equations and reference-local cut predicates correspond to one root-array family for every universal query, preserving requested cut values. |
 | `Sparse/MonotoneIntervals.lean` | Joint finite-cut completion for one log with point facts, interval predicates, nondecreasing terms, and a current-term bound. |
 | `Sparse/ModelTrace.lean` | One arbitrary initial State and shared Nat assignment satisfy ordered actual Model actions/observations. All-17-action queue congruence preserves the contract, including destination totals and configuration snapshots. |
+| `Sparse/ModelInputSyntax.lean` | Closed finite syntax for every action and observation preserves one shared Nat assignment, finite unknown support, exact ground quoting, and the unrestricted ModelTrace execution contract. |
 | `Sparse/LogMatchSummary.lean` | Exact `findHighestPossibleMatch` summary, uniqueness, and zero-based EntryValue correspondence hold for arbitrary logs without term-ordering assumptions. |
 | `Sparse/StateFrame.lean` | Finite typed-reference domains correspond to relative realization against one supplied Entry root family, submitted set, and network. Realizations have one unique non-network frame. |
 | `Sparse/StateFrameInitial.lean` | Canonical independent slots and fresh log roots represent every arbitrary actual Model state, preserving all old roots and outside-owned constants. Whole UFs and selector interpretations remain unchanged. |
@@ -155,6 +158,25 @@ constraints. Relative realization still takes one supplied G/R/Q/U.
 trillion-valued reservations and 634 native domain cases. These include all
 39 numeric columns on nodes 0 and 14, dormant values, aliases, and independent
 global fields.
+
+`ModelInputSyntax` covers all 17 actions, all 12 top-level observations, and
+their nested records. `NatAtom n` refers only to literals or `Fin n` slots.
+`BoolAtom n` adds literals and explicit zero tests under the same total Nat
+assignment. A shared value of 7 is still 7 numerically and false as a zero test.
+There is no zero-or-one domain, dynamic unknown lookup, or function-valued leaf.
+Nodes, sets, enums, Option tags, and finite list shapes are literal.
+Distinct names have distinct slots but may denote equal values.
+
+`evalTrace_congr` depends only on the finite set of actually used slots.
+`instantiate_quote` embeds every ground trace, including disabled actions,
+malformed expected packet destinations, some zero, and ordered duplicate
+configuration indices. It neither repairs nor drops impossible observations.
+`satisfiable_iff` quantifies one Nat assignment and one arbitrary actual State
+for the entire ordered trace. Adjacent observations inspect one state.
+Million-valued summaries retain fixed syntax size without constructing payloads.
+String name resolution, parsing, scalar allocation, and emitted constraints
+remain separate. Arbitrary semantic ModelTrace functions need not have finite
+support and are not claimed to belong to this syntax.
 
 Use `IntervalDemandPlan.plan` for executable dependency closure. The reference
 constructor repeats shared ancestors exponentially. In one forced-clock run,

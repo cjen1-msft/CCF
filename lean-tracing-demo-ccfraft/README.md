@@ -104,6 +104,12 @@ actions. One arbitrary initial state and one shared Nat assignment satisfy the
 entire ordered trace. Queue partition congruence preserves its observations,
 including destination totals and active configuration snapshots. Its input
 functions are semantic parameters, not a decoder or finite SMT input syntax.
+`ModelInputSyntax` adds closed finite syntax for every action and observation.
+Nat fields use literals or declared unknown slots. Bool fields can test those
+same Nat slots for zero without restricting their values to zero or one.
+Ground quoting preserves every trace exactly, including invalid actions.
+Its execution theorem retains one assignment and one arbitrary initial State.
+Parsing and SMT lowering remain separate work.
 `StateFrame` stores typed scalar IDs and fixed-size tables, not expression
 histories. Its finite domain check corresponds to a unique non-network state
 for supplied shared log roots and a submitted set. Local domains apply only to
