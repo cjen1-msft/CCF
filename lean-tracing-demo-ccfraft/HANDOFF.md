@@ -34,8 +34,15 @@ queue correspondence, and existing encoder send accounting. Repeated equal
 heartbeats and replies are retained. The guarded AppendEntries equality
 branch is gone. See [FIFO Model sends](README.md#fifo-model-sends).
 
-Next work is still substantial: the remaining actions, native-array queue
-encoding, reducer integration, and initial-state
+The native FIFO storage primitive is also implemented in
+`Sparse/NativeArrayQueue.lean` and `native_queue_arrays.py`. It uses a total
+array, head, and live length, with source-local send/dequeue correspondence.
+Its ordered-trace theorem and delayed initial-array readback cover arbitrary
+initial queues. Packet encoding and Model action guards are not part of this
+storage helper. See [Native FIFO storage](README.md#native-fifo-storage).
+
+Next work is still substantial: the remaining actions, packet and queue
+integration, reducer integration, and full initial-state
 materialization. Do not resume the old worker fan-out or claim full encoder
 completion. Finish and measure one action or shared operation at a time.
 The independent duplicate-suppression utilities are not Model send semantics.

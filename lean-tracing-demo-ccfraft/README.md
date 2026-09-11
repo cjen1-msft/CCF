@@ -146,6 +146,42 @@ The full default build has separate retirement-invariant proof failures in
 `MachineGenerated/ReconfigurationPreservation.lean`. Those failures reproduce
 on the preceding commit `45f1acbc8`, before the FIFO correction.
 
+### Native FIFO storage
+
+`Sparse/NativeArrayQueue.lean` represents a queue with a total message array,
+a head index, and a live length. Enqueue stores at `head + length`. Dequeue
+requires a matching live head and advances the head index. Neither operation
+copies the queue or scans existing messages for equality.
+
+The module proves ordered send, receive, length, and point observations
+equivalent to finite-list execution from one arbitrary initial queue. Its
+source-local network operations correspond to `CCFRaft.enqueue` and
+`takeFirstFrom`. Initial-network realization requires every live message's
+source to match its source partition.
+
+`native_queue_arrays.QueueArray` emits these storage commands for a
+caller-supplied SMT element sort. It accepts trusted generated SMT terms,
+not raw trace input. Packet encoding and Model action guards still need to be
+integrated. The printer remains outside the Lean theorem.
+
+Named array versions retain earlier boundaries. Later observations can
+constrain and materialize values in the original queue. Cells before the live
+head and after the live end remain irrelevant. The readback regression queries
+the original array after a receive and a later point observation.
+
+```bash
+nice -n 10 lake build Sparse.NativeArrayQueue
+CCF_NATIVE_ARRAY_TESTS=1 CVC5=/path/to/cvc5 \
+  python3 -m unittest discover -s tests -p test_native_queue_arrays.py -v
+```
+
+The suite runs 208 solver cases, including 196 finite-oracle combinations,
+symbolic message aliases, source isolation, live bounds, and delayed readback.
+The initial 400-operation run took about 0.6 ms to encode and 2.8 seconds to
+solve. A trillion-element symbolic queue used 563 bytes of SMT and solved in
+about 7 ms. These are storage-only measurements, not full-trace performance.
+`CCF_NATIVE_ARRAY_ARTIFACTS` retains scripts and `queue-measurements.json`.
+
 ## Sparse proof foundation
 
 `Sparse/` contains the reviewed semantic proofs for sparse logs, source-local

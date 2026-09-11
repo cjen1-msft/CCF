@@ -28,6 +28,7 @@ import Sparse.LogMatchSummary
 import Sparse.LogMatchEncoding
 import Sparse.MonotoneIntervals
 import Sparse.NativeArrayCheckQuorum
+import Sparse.NativeArrayQueue
 import Sparse.NativeConstructors
 import Sparse.NativeNodeOperations
 import Sparse.NativeNodeSets
