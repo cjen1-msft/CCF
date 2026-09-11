@@ -22,6 +22,7 @@ import Sparse.ModelTrace
 import Sparse.MonotoneIntervals
 import Sparse.NativeConstructors
 import Sparse.NativeNodeOperations
+import Sparse.NativeNodeSets
 import Sparse.NativeSelectors
 import Sparse.NativeSorts
 import Sparse.PacketIdentity

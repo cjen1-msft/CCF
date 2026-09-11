@@ -99,6 +99,7 @@ New repository bridges extend that foundation:
 | `Sparse/NativeConstructors.lean` | Native literals, every Content constructor, Entry construction, and total Entry projections preserve typed evaluation through lowering and rendered text. |
 | `Sparse/NativeSelectors.lean` | Structured Content testers and total payload selectors use one arbitrary shared interpretation. Matching-guard builders preserve interpretation independence under equal operand and fallback values. |
 | `Sparse/NativeNodeOperations.lean` | Fixed 15-bit AND/OR/complement and static node membership match actual Finset operations through typed evaluation and rendered text. |
+| `Sparse/NativeNodeSets.lean` | Derived set operations, mathematical cardinality, fixed-node filtering, and strict actual Model configuration majority have same-assignment formula/text meanings and exact symbol maxima. |
 | `Sparse/SmtNodes.lean` | Canonical node masks have exactly 15 MSB-first bits and parse back to the original value. |
 | `Sparse/SmtScript.lean` | Generates unique typed declarations and commands. Command evaluation preserves formula truth for the same assignment. |
 | `Sparse/SmtText.lean` | Decodes exactly the canonical generated symbol names, with symbol-atom evaluation roundtrip for the existing renderer. |
@@ -268,7 +269,7 @@ Missing, duplicate, dependency-invalid, and mismatched declarations remain
 errors, including after false assertions.
 `SmtScript.compileCached` shares symbol collection and required sorts across
 schema selection and declarations. Its compiler rewrite proves exact command-list
-equality. The 1,004 native fixtures compare rendered bytes with the uncached
+equality. The 1,950 native fixtures compare rendered bytes with the uncached
 command construction.
 The 105 selector cases include proper-constructor identities, arbitrary
 wrong-constructor values, matching-guard fallbacks, aliases, and independence
@@ -277,7 +278,19 @@ The 512 mask cases compare AND, OR, complement, and all 15 membership positions
 against independent Python bit operations. Complement is within the fixed
 15-node universe, not the observed membership. Node 0 is the rightmost printed
 bit. `NativeNodeOperations` proves actual Finset and text correspondence without
-membership UFs. Cardinality, quorum, and finite-node filter builders remain open.
+membership UFs.
+`NativeNodeSets` adds set operations, cardinality, filtering, and the actual
+single-configuration majority. Cardinality is mathematical Int in `[0,15]`.
+Majority excludes outsiders, rejects ties, and fails for empty configurations.
+Filters retain every predicate's symbols, including those under an empty mask.
+Its 946 solver controls use independent Python set and bit-count calculations.
+The builders introduce no sort, UF, assignment field, or fresh binding.
+Cardinality repeats its operand 15 times. Majority repeats support 30 times
+and configuration 45 times before those operands expand. This is a fixed
+expansion, not a full-trace performance result.
+Callers must still distinguish skipping a non-configuration from testing an
+empty configuration. Active configurations and complete quorum readers remain
+separate Model-integration obligations.
 
 Native Term literals, all Content constructors, Entry construction, and total
 Entry projections are integrated. Required-sort discovery includes native

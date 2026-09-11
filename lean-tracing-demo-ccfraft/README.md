@@ -76,7 +76,10 @@ The SMT evaluator and text layer now use one shared, arbitrary selector
 interpretation. Matching-guard builders reuse those laws.
 `NativeNodeOperations` adds fixed-width AND, OR, complement, and static node
 membership, with exact correspondence to Model node sets and rendered text.
-Cardinality and quorum builders remain separate work.
+`NativeNodeSets` derives set operations, mathematical cardinality, filtering,
+and the actual single-configuration majority predicate. Empty configurations
+and ties fail; supporters outside the configuration do not count.
+Active-configuration scans and full quorum integration remain separate work.
 `PacketIdentity` characterizes complete packet equality by tagged headers,
 payload lengths, and bounded entry reads. It proves finite key-class
 injectivity from both identity directions. `PacketRealization` constructs one
