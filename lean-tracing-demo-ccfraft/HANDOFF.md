@@ -60,6 +60,7 @@ New repository bridges extend that foundation:
 | `Sparse/IntervalEncoding.lean` | Typed point-read constraints and their rendered text correspond to one Int-valued root-array family, with symbolic indices, explicit nonnegative domains, and input-preserving fresh functions. |
 | `Sparse/TypedIntervalEncoding.lean` | Typed point constraints for all five sorts correspond to one original assignment and one root family, reserving every constant/expectation symbol and preserving complete external functions. |
 | `Sparse/TypedIntervalReadBlock.lean` | Arbitrary requests and a supplied base yield typed equations equivalent to one root family preserving every planned read. Installation preserves constants, selectors, and reserved external UFs. |
+| `Sparse/TypedJointPredicateEncoding.lean` | Formula and rendered-text satisfiability correspond to all Entry points and universal predicates over one original assignment and one shared root family. |
 | `Sparse/IntervalPredicate.lean` | Explicit Int comparisons lower with generated locality and alias-preserving semantics. Deduplication before the cut/reference product preserves all planned-demand membership. |
 | `Sparse/IntervalQueryEncoding.lean` | Rendered guarded universal Int queries are satisfiable iff one original assignment and one root-array family satisfy the input, nonnegative bounds, and all queries. |
 | `Sparse/JointIntervalCompletion.lean` | One root family satisfies all universal queries while preserving every joint requested value, including arbitrary root/version points and inactive query-cut reads. |
@@ -192,7 +193,7 @@ The 432 native cases include 360 typed splice controls, 16 nested constructor
 and projection controls, eight selector/tester controls, and SAT/UNSAT cases for
 400 Entry points and 400 shared versions. Those require 800 and 401 demands,
 respectively. One point in a million-root universe still requires one demand.
-Typed universal emission and packet constraint emission remain open.
+Packet constraint emission remains open.
 `EntryPredicate` supplies typed local predicates and a `LocalQuery` adapter.
 Only version-cell leaves use the current position. External terms stay fixed.
 Reference and symbol summaries retain inactive branches and remove duplicate
@@ -210,6 +211,17 @@ read has a consistency equation and a nonnegative position.
 The caller reserves `[base, base + roots + versions)`, including unused slots.
 Installation from any root family preserves original constants, selectors,
 and outside-range UFs. Input and graph terms require explicit freshness bounds.
+`TypedJointPredicateEncoding` now emits joint Entry points and universals.
+It reserves fresh zero and one complete root/version UF block, retaining all
+original point equalities. Every query is checked at every shared cut, including
+point positions. Its final formula/text iff uses one original assignment and
+one root family. Empty intervals remain vacuous, but disabled bodies do not
+remove domain or symbol reservations.
+`tests/test_sparse_typed_joint.py` covers 590 scripts, including 576 comparisons
+with an independent two-value array oracle. The 400-point and 400-version
+controls use 806 and 1,604 planned reads. These are component cases, not a
+full-trace performance result. Existential mismatch still requires fresh
+witness positions added to the same cuts and completion.
 
 The chosen entry representation uses fixed native datatypes with signed
 integer term/transaction fields and 15-bit node sets. `EntryValue` supplies

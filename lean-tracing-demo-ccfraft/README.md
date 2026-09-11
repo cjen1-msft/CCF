@@ -51,15 +51,17 @@ universal queries with one root family and an exact rendered-text existence
 theorem.
 `TypedIntervalEncoding` now emits point constraints for all five SMT sorts,
 including Entry-valued arrays. Constants and expectations use one original
-assignment, and all points share one root family. Typed universal emission
-remains separate work.
+assignment, and all points share one root family.
 `EntryPredicate` supplies typed Entry comparisons, generated version references,
 and locality proofs for the generic query interface. Raw signed-code ordering
-and decoded natural ordering are explicit, separate choices. Joint emission and
-existential mismatch witnesses remain open.
+and decoded natural ordering are explicit, separate choices.
 `TypedIntervalReadBlock` accepts arbitrary root/version requests without point
 expectations. Its flat equations preserve every planned read in one root family,
 with explicit domains and caller-supplied symbol reservations.
+`TypedJointPredicateEncoding` emits Entry points and universal predicates
+against one root family, with a formula and rendered-text existence iff.
+It retains every point equality and checks each universal at point cuts.
+Existential mismatch witnesses remain open.
 `EntryValue` supplies a fixed entry domain with signed integer scalars and
 node-set bitvectors, bijective with Model entries. `Smt` now supports native
 unknowns, equality, conditionals, and unary functions for nodes, content, and
@@ -145,7 +147,7 @@ CCF_SPARSE_SMT_TESTS=1 CVC5=/path/to/cvc5 \
 		tests.test_sparse_interval_encoding tests.test_sparse_interval_predicate \
 		tests.test_sparse_interval_queries tests.test_sparse_joint_encoding \
 		tests.test_sparse_native_sorts tests.test_sparse_typed_intervals \
-		tests.test_sparse_entry_predicate
+		tests.test_sparse_entry_predicate tests.test_sparse_typed_joint
 ```
 
 These fixtures cover emitted component constraints, not full trace correctness.
