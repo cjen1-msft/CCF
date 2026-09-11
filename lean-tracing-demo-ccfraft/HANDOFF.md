@@ -77,9 +77,10 @@ retains solver artifacts and distinguishes SAT, UNSAT, unknown, and input errors
 The internal Lean input is canonical JSON to reject duplicate-key text before
 any encoding. The Python wrapper accepts ordinary JSON and canonicalizes it.
 
-The supported typed trace now has a Model-to-script theorem under explicit
-compilation and initial-state premises. The JSON boundary and full Model
-coverage remain unfinished. No observation specialization is applied by the current compiler.
+The supported trace now has a Model-to-script theorem, and the actual JSON
+compiler establishes its compilation and initial-state premises.
+Full Model coverage remains unfinished. No observation specialization is
+applied by the current compiler.
 Reducer integration, remaining action coverage, and initial-state materialization
 remain unfinished. The new Lean encoder is experimental, not a proved validator.
 `Sparse/NativeQuorumEncoding.lean` now connects the exact `currentCandidate` and
@@ -226,11 +227,24 @@ the same successful-compilation and initial-state premises. Both named and
 unnamed scripts are covered. The SMT interpretation is explicit Lean
 semantics for the generated subset; cvc5 itself is not verified.
 
-The next Lean slice closes the JSON wrapper's connection to those premises,
-then expands Model action and observation coverage before raw reducer
-integration. Keep the full-model assurance flag false: current coverage is
-still one action and seven observation kinds, and the JSON wrapper has not
-yet been connected by theorem to the typed compilation premises.
+`NativeEncode.decodeDocument` now produces `Decoded`, carrying a positive
+width, a nonempty bootstrap set, and typed instructions. It checks nonemptiness
+on the decoded set rather than retaining a separate source-array check.
+`initialEncoding` and `compileDecoded` are shared by the actual JSON path.
+[`NativeDecoded`](Sparse/NativeDecoded.lean) proves that successful compilation
+establishes the initial columns, empty assertion list, reference bounds,
+bootstrap, and trace-execution premises.
+`encode_document_iff` covers plain output. `encodeDetails_document_iff` covers
+the actual script field returned in details mode. Both equate script
+satisfiability with `DocumentConsistent`, defined through the actual decoder.
+The proof-only bootstrap witness chooses a member of the nonempty set. It
+does not impose an initial leader or fresh initial Model state in SMT.
+Lean's JSON parser, IO runtime, and cvc5 are not verified by these theorems.
+
+Next, expand Model actions and observations before raw reducer integration.
+Keep the full-model assurance flag false: current coverage is still one
+action and seven observation kinds. No change to the reducer's untrusted
+interpretation boundary follows from proving the JSON encoder.
 
 Follow [Representation design priorities](README.md#representation-design-priorities):
 start with the simplest representation to prove correct, using native SMT

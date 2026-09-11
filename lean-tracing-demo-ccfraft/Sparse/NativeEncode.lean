@@ -272,6 +272,16 @@ structure Compiled where
   assertions : Array (Expr .bool)
   groups : Array Group
 
+structure Decoded where
+  width : PNat
+  bootstrap : Finset (Fin width)
+  bootstrapNonempty : bootstrap.Nonempty
+  instructions : Array (NativeArrayCheckQuorum.Instruction (Fin width) Nat)
+
+def initialEncoding (width : PNat) (bootstrap : Finset (Fin width)) : Encoding width :=
+  { bootstrap := encodeBits bootstrap
+    symbolsBounded := by simp }
+
 def compileInstructions {width : PNat} (index : Nat) (groups : Array Group) :
     List (NativeArrayCheckQuorum.Instruction (Fin width) Nat) -> EncodeM width (Array Group)
   | [] => fun state => .ok (groups, state)
@@ -283,28 +293,32 @@ def compileInstructions {width : PNat} (index : Nat) (groups : Array Group) :
         (groups.push { instruction := some index, start := state.assertions.size, stop := after.assertions.size })
         rest after
 
-def compile (document : Json) : Except String Compiled := do
+def compileDecoded (input : Decoded) : Except String Compiled := do
+  let (_, start) <- (initialDomains input.width).run (initialEncoding input.width input.bootstrap)
+  let groups := #[{ instruction := none, start := 0, stop := start.assertions.size : Group }]
+  let (groups, final) <- (compileInstructions 0 groups input.instructions.toList).run start
+  return { assertions := final.assertions, groups }
+
+def decodeDocument (document : Json) : Except String Decoded := do
   fields document ["nodes", "bootstrap", "instructions"]
   let names <- (<- (<- field document "nodes").getArr?).mapM Json.getStr?
   unless names.toList.Nodup && names.all (fun name => !name.isEmpty) do
     throw "nodes must be distinct nonempty strings"
   if positive : 0 < names.size then
     let width : PNat := ⟨names.size, positive⟩
-    let bootstrap <- field document "bootstrap"
-    if (<- bootstrap.getArr?).isEmpty then throw "bootstrap must be nonempty"
-    let initial : Encoding width := {
-      bootstrap := encodeBits (<- decodeNodeSet width names bootstrap)
-      symbolsBounded := by simp }
-    let records <- (<- field document "instructions").getArr?
-    let instructions <- records.mapIdxM fun index record =>
-      match decodeInstruction width names record with
-      | .error error => .error s!"instruction {index}: {error}"
-      | .ok item => .ok item
-    let (_, start) <- (initialDomains width).run initial
-    let groups := #[{ instruction := none, start := 0, stop := start.assertions.size : Group }]
-    let (groups, final) <- (compileInstructions 0 groups instructions.toList).run start
-    return { assertions := final.assertions, groups }
+    let bootstrap <- decodeNodeSet width names (<- field document "bootstrap")
+    if nonempty : bootstrap.Nonempty then
+      let records <- (<- field document "instructions").getArr?
+      let instructions <- records.mapIdxM fun index record =>
+        match decodeInstruction width names record with
+        | .error error => .error s!"instruction {index}: {error}"
+        | .ok item => .ok item
+      return { width, bootstrap, bootstrapNonempty := nonempty, instructions }
+    else throw "bootstrap must be nonempty"
   else throw "nodes must be nonempty"
+
+def compile (document : Json) : Except String Compiled := do
+  compileDecoded (<- decodeDocument document)
 
 def encode (document : Json) : Except String String := do
   return renderScript (← compile document).assertions.toList

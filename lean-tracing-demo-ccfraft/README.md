@@ -157,10 +157,19 @@ same compilation and initial-state premises, the emitted text has a satisfying
 assignment exactly when the supported Model trace has an execution.
 The theorem covers named and unnamed scripts. It does not verify cvc5.
 
-This Lean encoder remains experimental. The JSON boundary, remaining Model
-actions, and raw reducer integration are unfinished. The API's full-model
-assurance flag remains false; the theorem covers the current typed subset
-under explicit premises.
+[`NativeDecoded`](Sparse/NativeDecoded.lean) connects actual JSON compilation
+to those premises. `decodeDocument` returns a positive identity width, a
+nonempty bootstrap set, and typed instructions. `compileDecoded` uses the
+shared initial-state constructor and trace driver.
+`encode_document_iff` covers plain output; `encodeDetails_document_iff` covers
+the script field returned to the explorer pipeline. Both equate script
+satisfiability with `DocumentConsistent`, whose meaning uses the actual
+decoder. This does not prove that a raw-event reducer interpreted the
+implementation correctly, or verify Lean's JSON parser and IO runtime.
+
+This Lean encoder remains experimental. Remaining Model actions, observations,
+and raw reducer integration are unfinished. The API's full-model assurance
+flag remains false; current coverage is one action and seven observation kinds.
 
 The older Python reference has broader action coverage:
 `native_arrays.py` accepts `checkQuorum`, `requestVote`, `requestPreVote`, and

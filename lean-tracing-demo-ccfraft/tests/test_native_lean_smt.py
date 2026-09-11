@@ -5,15 +5,15 @@
 
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
-from Shared.solver import find_cvc5, run_solver
-from native_run import NativeRun
 from explorer_api import ExplorerApi
+from native_run import NativeRun
+from Shared.solver import find_cvc5, run_solver
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -181,9 +181,14 @@ class NativeLeanSmtTests(unittest.TestCase):
             cases.append((f"entry-variant-{index}", [observed], "sat"))
             other = dict(
                 observed,
-                value={"term": 10**30, "content": contents[(index + 1) % len(contents)]},
+                value={
+                    "term": 10**30,
+                    "content": contents[(index + 1) % len(contents)],
+                },
             )
-            cases.append((f"entry-variant-{index}-conflict", [observed, other], "unsat"))
+            cases.append(
+                (f"entry-variant-{index}-conflict", [observed, other], "unsat")
+            )
         cases.append(
             (
                 "configuration-members-ignore-order-and-duplicates",
@@ -211,6 +216,21 @@ class NativeLeanSmtTests(unittest.TestCase):
                 for (name, _, expected), script in zip(cases, scripts)
             ]
         )
+
+    def test_decoded_bootstrap_sets(self):
+        variants = [["a", "b"], ["b", "a"], ["b", "a", "a"], ["a"]]
+        scripts = self.encode(
+            [
+                {
+                    "nodes": ["a", "b"],
+                    "bootstrap": bootstrap,
+                    "instructions": [{"kind": "checkQuorum", "node": "a"}],
+                }
+                for bootstrap in variants
+            ]
+        )
+        self.assertEqual(scripts[1:3], [scripts[0], scripts[0]])
+        self.assertNotEqual(scripts[0], scripts[3])
 
     def test_input_errors_do_not_emit_smt(self):
         valid = {"nodes": ["a"], "bootstrap": ["a"], "instructions": []}
@@ -241,6 +261,22 @@ class NativeLeanSmtTests(unittest.TestCase):
                 ),
             ),
         ]
+        invalid.extend(
+            (
+                name,
+                json.dumps(
+                    dict(valid, bootstrap=bootstrap),
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            )
+            for name, bootstrap in [
+                ("empty-bootstrap", []),
+                ("undeclared-bootstrap-node", ["b"]),
+                ("non-array-bootstrap", "a"),
+                ("non-string-bootstrap-node", [0]),
+            ]
+        )
         for name, document in invalid:
             with self.subTest(name=name):
                 result = subprocess.run(
