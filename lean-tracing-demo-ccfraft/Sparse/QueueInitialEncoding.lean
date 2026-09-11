@@ -567,6 +567,21 @@ def encode (input : SmtScript.Formula) (trace : List (Event InputInt)) (length :
     initialBlock (QueueEncoding.freshBase input) (auxBase input trace length) length
       (CountedQueue.readHeads trace) (eventKeys trace)
 
+def encodeCached (input : SmtScript.Formula) (trace : List (Event InputInt)) (length : InputInt) : SmtScript.Formula :=
+  let keys := eventKeys trace
+  let countBase := QueueEncoding.freshBase input
+  let counts := input ++ QueueEncoding.countFormula keys trace [] countBase
+  let scalarBase := max (QueueEncoding.freshBase counts) (countBase + QueueReadback.writeCount trace + 1)
+  let scalars := counts ++
+    (QueueScalarEncoding.initialBlock scalarBase length ++
+      QueueScalarEncoding.scalarBlock countBase scalarBase trace)
+  let auxiliaryBase := max (QueueEncoding.freshBase scalars) (scalarBase + 3)
+  scalars ++ initialBlock countBase auxiliaryBase length (CountedQueue.readHeads trace) keys
+
+@[csimp] theorem encode_eq_cached : encode = encodeCached := by
+  funext input trace length
+  rfl
+
 def render (input : SmtScript.Formula) (trace : List (Event InputInt)) (length : InputInt) : String :=
   SmtScript.render (encode input trace length)
 

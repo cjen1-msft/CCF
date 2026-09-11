@@ -125,6 +125,11 @@ class SparseQueueEncodingTests(unittest.TestCase):
         self.assertEqual(cases["distinct-literal-pop-preserves-present"]["encoded_events"], 3)
         self.assertEqual(cases["contradictory-earlier-length-retained"]["encoded_events"], 3)
 
+    def test_cached_compiler_preserves_exact_scripts(self) -> None:
+        cases = load_fixtures("--cache-equivalence")
+        self.assertEqual([case["case"] for case in cases], list(range(24)))
+        self.assertTrue(all(case["bytes"] > 0 for case in cases))
+
     def assert_exhaustive(self, cases: list[dict], scope: str) -> None:
         self.assertEqual(len(cases), 486)
         self.assertEqual(len({case["name"] for case in cases}), len(cases))

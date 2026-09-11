@@ -207,9 +207,44 @@ def exhaustiveFixtures (summarize : Bool := false) : List Json :=
             formulaFields (if summarize then QueueSummaryEncoding.encode input trace (.literal length)
               else QueueInitialEncoding.encode input trace (.literal length)))
 
+@[noinline] private def referenceInitialEncode (input : SmtScript.Formula)
+    (trace : List (Event InputInt)) (length : InputInt) : SmtScript.Formula :=
+  QueueScalarEncoding.encode input (QueueInitialEncoding.eventKeys trace) trace [] length ++
+    QueueInitialEncoding.initialBlock (QueueEncoding.freshBase input)
+      (QueueInitialEncoding.auxBase input trace length) length
+      (CountedQueue.readHeads trace) (QueueInitialEncoding.eventKeys trace)
+
+private theorem reference_initial_exact (input : SmtScript.Formula)
+    (trace : List (Event InputInt)) (length : InputInt) :
+    referenceInitialEncode input trace length = QueueInitialEncoding.encode input trace length := rfl
+
+def cacheEquivalenceFixtures : IO (List Json) := do
+  let traces : List (List (Event InputInt)) :=
+    [[], [.peek (.symbolic 0)],
+      [.send (.symbolic 0), .send (.symbolic 1), .pop (.symbolic 0), .peek (.symbolic 1), .length 1],
+      [.pop (.literal (-2)), .peek (.literal (-2)), .length 1]]
+  let inputs : List SmtScript.Formula :=
+    [[], [.equal (.unknown .int 0) (.unknown .int 1),
+      .equal (.app .int .int 2001 (.integer (-8))) (.integer 5), .unknown .bool 7]]
+  let lengths : List InputInt := [.literal 0, .literal (-1), .symbolic 9999]
+  let mut results := []
+  for trace in traces do
+    for input in inputs do
+      for length in lengths do
+        let current <- IO.mkRef (QueueInitialEncoding.render input trace length)
+        let reference <- IO.mkRef (SmtScript.render (referenceInitialEncode input trace length))
+        let script <- current.get
+        if script != ( <- reference.get) then
+          throw (IO.userError s!"cached queue script mismatch in case {results.length}")
+        results := Json.mkObj [("case", toJson results.length), ("bytes", toJson script.utf8ByteSize)] :: results
+  return results.reverse
+
 end CCFRaft.Sparse.QueueCountFixtures
 
 def main (args : List String) : IO UInt32 := do
+  if args == ["--cache-equivalence"] then
+    IO.println (Lean.toJson ( <- CCFRaft.Sparse.QueueCountFixtures.cacheEquivalenceFixtures)).compress
+    return 0
   let fixtures := match args with
     | [] => some CCFRaft.Sparse.QueueCountFixtures.fixtures
     | ["--scalar"] => some CCFRaft.Sparse.QueueCountFixtures.scalarFixtures
@@ -221,7 +256,7 @@ def main (args : List String) : IO UInt32 := do
     | _ => none
   let some fixtures := fixtures |
     let stderr <- IO.getStderr
-    stderr.putStrLn "usage: QueueCountFixtureMain.lean [--scalar | --initial | --exhaustive | --summary-initial | --summary-exhaustive]"
+    stderr.putStrLn "usage: QueueCountFixtureMain.lean [--scalar | --initial | --exhaustive | --summary-initial | --summary-exhaustive | --cache-equivalence]"
     return 1
   IO.println (Lean.Json.arr fixtures.toArray).compress
   return 0
