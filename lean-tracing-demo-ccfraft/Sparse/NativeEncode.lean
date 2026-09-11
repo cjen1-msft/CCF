@@ -69,13 +69,13 @@ def fresh {width : PNat} : EncodeM width Nat := fun state =>
       intro formula member symbol occurs
       exact Nat.lt_trans (state.symbolsBounded formula member symbol occurs) (Nat.lt_succ_self _) })
 
-def define {width : PNat} {sort : Ty} (value : Expr sort) : EncodeM width Nat := do
-  let state <- get
-  unless value.symbols.all (fun symbol => symbol.2 < state.next) do
-    throw "internal encoder error: definition references an unallocated SMT symbol"
-  let id <- fresh
-  assertion (.equal (.free sort id) value)
-  return id
+def define {width : PNat} {sort : Ty} (value : Expr sort) : EncodeM width Nat := fun state =>
+  if value.symbols.all (fun symbol => symbol.2 < state.next) then
+    ((do
+      let id <- fresh
+      assertion (.equal (.free sort id) value)
+      return id) : EncodeM width Nat).run state
+  else .error "internal encoder error: definition references an unallocated SMT symbol"
 
 def allocated {context : List Ty} (node : Nat) : Term context .bool :=
   .select (.free (.array .int .bool) 0) (.integer node)

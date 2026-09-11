@@ -135,9 +135,15 @@ the four separate assertion loops. The assertion and fresh primitives expose
 their state transformations directly instead of hiding them behind monadic
 get/set operations.
 
-The next Lean slice composes fresh witnesses and definitions through actual
-`checkQuorum` execution, then proves the whole ordered trace. The lowering/text
-proof also remains.
+`fresh_success`, `define_success`, and `define_satisfiability` now connect actual
+allocation and definition execution to symbol freshness and satisfiability.
+`quorum_success` proves the exact ordered clauses and all four new symbol IDs
+produced by actual `checkQuorum` execution. `quorum_model_success` takes a
+satisfying assignment for that block to an enabled Model step and represented
+successor, retaining the predecessor assertions.
+
+The next Lean slice proves the whole ordered trace and its converse. The
+lowering/text proof also remains.
 Do not treat the conditional reader theorem as a full action or script proof.
 Close those boundaries before migrating the remaining actions.
 

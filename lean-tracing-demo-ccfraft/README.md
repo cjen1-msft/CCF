@@ -113,7 +113,10 @@ clauses for all seven supported observations match the Model, under the
 represented columns and initial domains.
 `NativeCompilerEncoding` connects initial domains and observation clauses to
 actual state-transformer execution, preserving prior assertions and column
-references. Action sequencing and the whole-trace theorem remain unfinished.
+references. It also proves the exact `checkQuorum` witness indices, bindings,
+and resulting column versions. A satisfying assignment for that executed block
+gives an enabled Model step and represented successor. The whole-trace theorem
+remains unfinished.
 
 This Lean encoder remains experimental. Neither complete Model-to-script
 equivalence nor text-renderer correctness is proved. The 150-case actual-Model
