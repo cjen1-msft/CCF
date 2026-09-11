@@ -46,10 +46,11 @@ structure NodeColumns where
   votesGranted : Nat := 11
   preVotesGranted : Nat := 12
   membershipState : Nat := 13
+  sentIndex : Nat := 14
 
 structure Encoding (width : PNat) extends NodeColumns where
   bootstrap : BitVec width
-  next : Nat := 14
+  next : Nat := 15
   assertions : Array (Expr .bool) := #[]
   symbolsBounded : forall formula, formula ∈ assertions ->
     forall symbol, symbol ∈ formula.symbols -> symbol.2 < next
@@ -98,6 +99,17 @@ def read {context : List Ty} {sort : Ty} (column node : Nat)
 def length {context : List Ty} (node : Nat) : Term context .int := read 3 node (.integer 0)
 def commit {context : List Ty} (node : Nat) : Term context .int := read 4 node (.integer 0)
 
+def peerIndex {context : List Ty} (column node : Nat) (peer : Term context .int) :
+    Term context .int :=
+  .ite (allocated node)
+    (.select (.select (.free (.array .int (.array .int .int)) column) (.integer node)) peer)
+    (.integer 0)
+
+def peerDomain (width : PNat) (column node : Nat) : Expr .bool :=
+  .forall_ .int (implies
+    (.and (.le (.integer 0) (.bound .here)) (lt (.bound .here) (.integer width.val)))
+    (.le (.integer 0) (peerIndex column node (.bound .here))))
+
 def entryAt {context : List Ty} (width : PNat) (node : Nat)
     (index : Term context .int) : Term context (entryTy width) :=
   .select (.select (.free (.array .int (.array .int (entryTy width))) 6) (.integer node)) index
@@ -125,7 +137,8 @@ def initialNodeDomains (width : PNat) (node : Nat) : List (Expr .bool) :=
     optionalNatDomain (read 9 node (.inl .unit)),
     optionalNodeDomain width (read 10 node (.inl .unit)),
     all [.le (.integer 0) (read 13 node (.integer 0)),
-      .le (read 13 node (.integer 0)) (.integer 4)]]
+      .le (read 13 node (.integer 0)) (.integer 4)],
+    peerDomain width 14 node]
 
 def initialAssertions (width : PNat) : List (Expr .bool) :=
   (List.range width.val).flatMap (initialNodeDomains width)
@@ -287,6 +300,10 @@ def decodeInstruction (width : PNat) (names : Array String) (value : Json) :
       | "retiredCommitted" => pure .retiredCommitted
       | _ => throw s!"unknown membership state {expected}"
     return .membershipState node membership
+  | "sentIndex" =>
+    fields value ["kind", "node", "peer", "value"]
+    let peer <- resolve width names (<- field value "peer")
+    return .sentIndex node peer (<- natural (<- field value "value"))
   | _ => throw s!"unsupported native Lean instruction {kind}"
 
 def observationClauses {width : PNat} (columns : NodeColumns) :
@@ -314,6 +331,8 @@ def observationClauses {width : PNat} (columns : NodeColumns) :
     .ok [.equal (read columns.preVotesGranted node.val (.bits 0)) (.bits (encodeBits expected))]
   | .membershipState node expected =>
     .ok [.equal (read columns.membershipState node.val (.integer 0)) (.integer (membershipCode expected))]
+  | .sentIndex node peer expected =>
+    .ok [.equal (peerIndex columns.sentIndex node.val (.integer peer.val)) (.integer expected)]
   | _ => .error "unsupported native Lean observation"
 
 def instruction {width : PNat} (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) :

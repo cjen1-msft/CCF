@@ -48,10 +48,10 @@ reducer integration. See README's "Native explorer API" section.
 
 The first Lean encoder slice is now implemented in `Sparse/NativeEncode.lean`
 and `Sparse/NativeEncodeMain.lean`, with `native_lean.py` as its JSON and solver
-wrapper. It supports `checkQuorum` and fourteen observation kinds, including
+wrapper. It supports `checkQuorum` and fifteen observation kinds, including
 the nullable `retirementIndex`, `retirementCommittableIndex`, and
 `retiredCommittedIndex` fields, nullable `votedFor`, both vote sets, and
-`membershipState`.
+`membershipState` and `sentIndex`.
 The Python reference still supports six actions and the broader observation
 schema. Do not confuse these coverage levels or fall back to Python SMT emission.
 
@@ -246,7 +246,7 @@ Lean's JSON parser, IO runtime, and cvc5 are not verified by these theorems.
 
 Next, expand Model actions and observations before raw reducer integration.
 Keep the full-model assurance flag false: current coverage is still one
-action and fourteen observation kinds. No change to the reducer's untrusted
+action and fifteen observation kinds. No change to the reducer's untrusted
 interpretation boundary follows from proving the JSON encoder.
 
 `NativeOptional` is the next value-codec unit for local-state coverage.
@@ -317,7 +317,15 @@ bounded codec. All five states have observation and quorum-frame cases.
 An absent node reads `active`, but a membership observation does not imply
 retirement-index values or bootstrap reachability. Initial realization and
 the full JSON-to-script proof cover arbitrary membership states.
-Next add the peer-index tables `sentIndex` and `matchIndex`.
+`sentIndex` adds nested integer-array column 14, with fresh allocation at 15.
+`peerIndex` reads zero for an absent source and otherwise selects the peer cell.
+`NativePeerEncoding.peer_domain_correct` proves that the actual quantified
+SMT domain covers exactly the declared identities. Outside-universe cells are
+ignored, not zeroed. The initial-state and full JSON-to-script proofs now cover
+the table. Generated cases include independent rows and peers, self cells,
+21 identities, absent peers, and indices of `10^30` with an empty source log.
+`initialAssignment` proofs unfold `entryTy` to distinguish nested integer arrays
+from nested entry arrays. Next add `matchIndex` to complete local observations.
 
 Follow [Representation design priorities](README.md#representation-design-priorities):
 start with the simplest representation to prove correct, using native SMT

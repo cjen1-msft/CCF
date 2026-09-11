@@ -22,6 +22,7 @@ RETIREMENT_FIELDS = (
     "retiredCommittedIndex",
 )
 VOTE_SET_FIELDS = ("votesGranted", "preVotesGranted")
+PEER_INDEX_FIELDS = ("sentIndex",)
 MEMBERSHIP_STATES = (
     "active",
     "retirementOrdered",
@@ -469,6 +470,79 @@ class NativeLeanSmtTests(unittest.TestCase):
             ]
         )
 
+    def test_peer_index_observations(self):
+        names = ["a", "b"] + [f"node-{index}" for index in range(2, 21)]
+        cases = []
+        for kind in PEER_INDEX_FIELDS:
+            cases.extend(
+                (
+                    name,
+                    [
+                        dict(item, peer=names[-1]) if item["kind"] == kind else item
+                        for item in instructions
+                    ],
+                    expected,
+                )
+                for name, instructions, expected in self.framed_observation_cases(
+                    kind, 0, 10**30, 7
+                )
+            )
+            cases.extend(
+                [
+                    (
+                        f"{kind}-beyond-log",
+                        [
+                            {"kind": "logLength", "node": "a", "value": 0},
+                            {
+                                "kind": kind,
+                                "node": "a",
+                                "peer": names[-1],
+                                "value": 10**30,
+                            },
+                        ],
+                        "sat",
+                    ),
+                    (
+                        f"{kind}-absent-peer",
+                        [
+                            {"kind": "allocated", "node": names[-1], "value": False},
+                            {
+                                "kind": kind,
+                                "node": "a",
+                                "peer": names[-1],
+                                "value": 42,
+                            },
+                        ],
+                        "sat",
+                    ),
+                    (
+                        f"{kind}-independent-cells",
+                        [
+                            {"kind": kind, "node": "a", "peer": "a", "value": 1},
+                            {"kind": kind, "node": "a", "peer": "b", "value": 2},
+                            {"kind": kind, "node": "b", "peer": "a", "value": 3},
+                        ],
+                        "sat",
+                    ),
+                ]
+            )
+        scripts = self.encode(
+            [
+                {
+                    "nodes": names,
+                    "bootstrap": ["a", "b"],
+                    "instructions": instructions,
+                }
+                for _, instructions, _ in cases
+            ]
+        )
+        self.solve(
+            [
+                {"name": name, "script": script, "expected": expected}
+                for (name, _, expected), script in zip(cases, scripts)
+            ]
+        )
+
     def test_decoded_bootstrap_sets(self):
         variants = [["a", "b"], ["b", "a"], ["b", "a", "a"], ["a"]]
         scripts = self.encode(
@@ -615,6 +689,28 @@ class NativeLeanSmtTests(unittest.TestCase):
                 ("numeric", 0),
                 ("boolean", False),
                 ("null", None),
+            ]
+        )
+        invalid.extend(
+            (
+                f"{kind}-{name}",
+                json.dumps(
+                    dict(
+                        valid,
+                        instructions=[
+                            {"kind": kind, "node": "a", "peer": peer, "value": value}
+                        ],
+                    ),
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            )
+            for kind in PEER_INDEX_FIELDS
+            for name, peer, value in [
+                ("undeclared-peer", "b", 0),
+                ("numeric-peer", 0, 0),
+                ("negative-index", "a", -1),
+                ("null-index", "a", None),
             ]
         )
         for name, document in invalid:
