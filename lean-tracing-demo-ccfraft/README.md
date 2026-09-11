@@ -93,6 +93,11 @@ and a fresh filler without caller premises or a capacity bound.
 Its initial compiler caches count and scalar formulas across allocation stages.
 The compiler rewrite preserves the exact assertion list and generated IDs.
 Conditional operations and complete packet keys remain separate work.
+`ConditionalQueueAccounting` proves cursor replay for fixed Boolean guards
+equivalent to replaying the selected events. Active pops and one pending peek
+give the exact demanded initial-prefix histogram under shared-order agreement.
+This is a semantic reference, not a guarded SMT compiler or runtime storage
+representation. Typed guard evaluation and concrete-queue completion remain open.
 `QueueSummaryEncoding` composes the whole-queue compiler with proved presence
 normalization. It removes sends known to leave the queue unchanged, while
 preserving the same initial queue and every pop, peek, and length observation.

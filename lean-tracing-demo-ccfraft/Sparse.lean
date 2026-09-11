@@ -3,6 +3,7 @@ import Sparse.QueueAudit
 import Sparse.AppendEntriesRanges
 import Sparse.ConfigurationSnapshot
 import Sparse.ConfigurationPublication
+import Sparse.ConditionalQueueAccounting
 import Sparse.EntryValue
 import Sparse.EntrySelectorSemantics
 import Sparse.FiniteMembership
