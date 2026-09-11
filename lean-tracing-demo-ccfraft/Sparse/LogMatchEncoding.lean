@@ -1,5 +1,5 @@
 import Sparse.LogMatchSummary
-import Sparse.TypedJointPredicateEncoding
+import Sparse.TypedJointContext
 
 set_option autoImplicit false
 
@@ -301,8 +301,7 @@ def Context (assignment : Assignment) (input : SmtScript.Formula)
     (graph : SymbolicGraph roots .entry size) (queries : List (Query size))
     (points : List (Observation roots size .entry)) (clauses : List (Clause size))
     (arrays : RootArrays roots EntryValue.Entry) : Prop :=
-  SmtScript.Holds assignment input /\ Domains assignment graph queries points /\
-    Concrete assignment graph queries points arrays /\ Existentials assignment graph clauses arrays
+  TypedJointContext.Context assignment input graph queries points clauses arrays
 
 -- The old compiler's zero boundary is above every caller symbol and metadata ID.
 -- It is a reservation bound here, not an allocated or independently installed zero.
@@ -313,59 +312,8 @@ theorem install_context (original : Assignment) (spec : Spec size) (first : Nat)
     (reserved : TypedJointPredicateEncoding.Witness.zero input graph queries points clauses <= first) :
     Context (install original spec first) input graph queries points clauses arrays <->
       Context original input graph queries points clauses arrays := by
-  have bounds := TypedJointPredicateEncoding.allocation_bounds input graph queries points
-  have old := Nat.le_trans (TypedJointPredicateEncoding.Witness.old_bound input graph queries points clauses) reserved
-  have lift (id : Nat) (small : id < TypedJointPredicateEncoding.zeroId input graph queries points) :
-      id < first := Nat.lt_of_lt_of_le small old
-  have terms := fun {sort : Ty} (term : Term sort) below => install_term original spec first term below
-  have graph_eq := install_graph original spec first graph (lift _ bounds.2.1)
-  have query_eq : localQueries (install original spec first) queries = localQueries original queries := by
-    apply List.map_congr_left
-    intro query member
-    exact TypedJointPredicateEncoding.query_congr _ _ first query
-      (lift _ (Nat.lt_of_le_of_lt (TypedJointPredicateEncoding.query_bound queries query member) bounds.2.2.1)) terms
-  have domains_eq : Domains (install original spec first) graph queries points <->
-      Domains original graph queries points := by
-    apply forall_congr'
-    intro id
-    apply forall_congr'
-    intro member
-    rw [install_outside original spec first .int id (Or.inl
-      (lift id (TypedJointPredicateEncoding.metadata_bound input graph queries points id member)))]
-  have points_eq :
-      TypedIntervalEncoding.ObservationsHold (install original spec first)
-        (IntervalReadback.actual (interpret original graph) arrays) points <->
-      TypedIntervalEncoding.ObservationsHold original
-        (IntervalReadback.actual (interpret original graph) arrays) points := by
-    apply forall_congr'
-    intro point
-    apply forall_congr'
-    intro member
-    have small := lift _ (Nat.lt_of_le_of_lt (TypedIntervalEncoding.observation_bound points point member) bounds.2.2.2)
-    have position := install_outside original spec first .int point.position
-      (Or.inl (Nat.lt_of_le_of_lt (Nat.le_max_left _ _) small))
-    have expected := terms point.expected (Nat.lt_of_le_of_lt (Nat.le_max_right _ _) small)
-    simp only [natValue, position, expected]
-  have witnesses_eq : Existentials (install original spec first) graph clauses arrays <->
-      Existentials original graph clauses arrays := by
-    apply forall_congr'
-    intro index
-    have small := TypedJointPredicateEncoding.Witness.new_bound input graph queries points clauses index
-    have query_below := Nat.lt_of_lt_of_le small.1 reserved
-    have same_query := TypedJointPredicateEncoding.query_congr _ _ first clauses[index.val].toQuery query_below terms
-    have lower := install_outside original spec first .int clauses[index.val].lower
-      (Or.inl (Nat.lt_of_le_of_lt clauses[index.val].toQuery.bounds.1 query_below))
-    have upper := install_outside original spec first .int clauses[index.val].upper
-      (Or.inl (Nat.lt_of_le_of_lt clauses[index.val].toQuery.bounds.2.1 query_below))
-    have enable := terms clauses[index.val].enable (Nat.lt_of_lt_of_le small.2 reserved)
-    have predicate := fun values => TypedJointPredicateEncoding.predicate_congr _ _ first clauses[index.val].predicate
-      (Nat.lt_of_le_of_lt clauses[index.val].toQuery.bounds.2.2 query_below) values terms
-    dsimp only
-    rw [lower, upper, enable, same_query, graph_eq]
-    simp only [predicate]
-  have input_eq : SmtScript.Holds (install original spec first) input <-> SmtScript.Holds original input :=
-    ScalarExtension.formula_below original first _ input (lift _ bounds.1)
-  simp only [Context, Concrete, graph_eq, query_eq, input_eq, domains_eq, points_eq, witnesses_eq]
+  unfold Context install
+  exact TypedJointContext.install_context original first _ input graph queries points clauses arrays reserved
 
 -- These are precisely the semantic arguments to one outer Witness invocation.
 def Assembled (assignment : Assignment) (input : SmtScript.Formula)
@@ -402,8 +350,8 @@ theorem assembled_correct (assignment : Assignment) (input : SmtScript.Formula)
       (And.intro (by rw [facts.clip]; exact Int.natCast_nonneg _)
         (by rw [facts.anchor]; exact Int.natCast_nonneg _))
   unfold Assembled
-  rw [Context, QueueEncoding.holds_append, concrete, domains]
-  unfold Context Meaning
+  rw [Context, TypedJointContext.Context, QueueEncoding.holds_append, concrete, domains]
+  unfold Context TypedJointContext.Context Meaning
   tauto
 
 theorem installed_assembled_iff (original : Assignment) (input : SmtScript.Formula)
@@ -555,6 +503,41 @@ theorem reservation_edges (original : Assignment) :
   And.intro (install_outside original spec 4 .int 3 (Or.inl (by decide)))
     (And.intro (install_outside original spec 4 .int 6 (Or.inr (by decide)))
       (And.intro rfl rfl))
+
+-- Context extraction compatibility.
+theorem context_abi (assignment : Assignment) (input : SmtScript.Formula)
+    (graph : SymbolicGraph roots .entry size) (queries : List (Query size))
+    (points : List (Observation roots size .entry)) (clauses : List (Clause size))
+    (arrays : RootArrays roots EntryValue.Entry) :
+    Context assignment input graph queries points clauses arrays =
+      (SmtScript.Holds assignment input /\ Domains assignment graph queries points /\
+        Concrete assignment graph queries points arrays /\ Existentials assignment graph clauses arrays) := rfl
+
+theorem install_context_abi (original : Assignment) (spec : Spec size) (first : Nat)
+    (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry))
+    (clauses : List (Clause size)) (arrays : RootArrays roots EntryValue.Entry)
+    (reserved : TypedJointPredicateEncoding.Witness.zero input graph queries points clauses <= first) :
+    install_context original spec first input graph queries points clauses arrays reserved =
+      TypedJointContext.install_context (count := 2) original first (Fin.cases
+        (((min (natValue original spec.index) (natValue original spec.length)) : Nat) : Int)
+        (fun _ : Fin 1 => ((natValue original spec.best - 1 : Nat) : Int)))
+        input graph queries points clauses arrays reserved := rfl
+
+theorem encode_abi (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry))
+    (clauses : List (Clause size)) (spec : Spec size) (first : Nat) :
+    encode input graph queries points clauses spec first =
+      TypedJointPredicateEncoding.Witness.encode (input ++ constraints spec first) graph
+        (suffix spec first :: anchorQuery spec first :: queries) points clauses := rfl
+
+theorem render_abi (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry))
+    (clauses : List (Clause size)) (spec : Spec size) (first : Nat) :
+    render input graph queries points clauses spec first =
+      TypedJointPredicateEncoding.Witness.render (input ++ constraints spec first) graph
+        (suffix spec first :: anchorQuery spec first :: queries) points clauses := rfl
+-- End context extraction compatibility.
 
 end Regression
 

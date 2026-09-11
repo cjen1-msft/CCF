@@ -67,6 +67,10 @@ It retains every point equality and checks each universal at point cuts.
 Its `Witness` encoder adds guarded local existential clauses, including bounded
 mismatch. Referenced witnesses add cuts to every universal, and one completion
 preserves all witnesses and points. Empty clause lists retain the old scripts.
+`TypedJointContext` preserves that entire caller context when a reader installs
+a fresh Int scalar block. Input, graph metadata, points, universal queries, and
+existential clauses retain the same meaning on the same root family.
+`LogMatchEncoding` reuses this proof without changing its emitted scripts.
 `EntryValue` supplies a fixed entry domain with signed integer scalars and
 node-set bitvectors, bijective with Model entries. `Smt` now supports native
 unknowns, equality, conditionals, and unary functions for nodes, content, and
