@@ -36,10 +36,10 @@ class SparseSymbolBoundsTests(unittest.TestCase):
                 "unary-bool-int": 8, "unary-int-int": 9, "nested-arithmetic": 13,
                 "inactive-branch": 101, "inactive-implication": 102,
                 "same-id-different-signatures": 21, "large-id": 2**129 + 4,
-                "many-symbols": 1200,
+                "many-symbols": 1200, "nonadjacent-symbols": 5,
             },
         )
-        self.assertEqual(len(cases), 14)
+        self.assertEqual(len(cases), 15)
 
 
 if __name__ == "__main__":

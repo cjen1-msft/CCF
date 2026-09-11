@@ -21,13 +21,23 @@ private def cases : List (Prod String SmtScript.Formula) := [
   ("same-id-different-signatures", [
     .and (.unknown .bool 20) (.equal (.app .int .int 20 (.integer 0)) (.unknown .int 20))]),
   ("large-id", [.unknown .bool (2 ^ 129 + 3)]),
+  ("nonadjacent-symbols", [.unknown .bool 3, .unknown .bool 4, .unknown .bool 3]),
   ("many-symbols", (List.range 200).map fun id =>
     .equal (.app .int .int (id + 1000) (.unknown .int id)) (.unknown .int id))
 ]
 
 def run : IO Unit := do
   for (name, formula) in cases do
-    let reference := (SmtScript.symbols formula).toFinset.sup QueueEncoding.symbolId + 1
+    let referenceSymbols := (formula.flatMap SmtScript.termSymbols).dedup
+    let collected := SymbolCollection.dedup (formula.flatMap SmtScript.termSymbols)
+    let referenceCommands : List SmtScript.Command :=
+      [.setLogic] ++ referenceSymbols.map (fun symbol =>
+        .declare (SmtScript.Declaration.ofSymbol symbol)) ++
+        formula.map (fun term => .assertion term.lower) ++ [.checkSat]
+    if referenceSymbols != collected || referenceSymbols != SmtScript.symbols formula ||
+        SmtScript.renderCommands referenceCommands != SmtScript.render formula then
+      throw (IO.userError s!"symbol collection mismatch: {name}")
+    let reference := referenceSymbols.toFinset.sup QueueEncoding.symbolId + 1
     let summary := SymbolBounds.freshBase formula
     let compiled := QueueEncoding.freshBase formula
     let allocated := fun base =>

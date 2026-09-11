@@ -1,5 +1,4 @@
-import Sparse.Smt
-import Mathlib.Data.List.Dedup
+import Sparse.SymbolCollection
 
 -- Command-AST semantics only, not an SMT-LIB text-parser or solver theorem.
 set_option autoImplicit false
@@ -40,6 +39,13 @@ theorem lower_symbols {ty : Ty} (term : Term ty) :
 
 def symbols (formula : Formula) : List Symbol :=
   (formula.flatMap termSymbols).dedup
+
+def collectedSymbols (formula : Formula) : List Symbol :=
+  SymbolCollection.dedup (formula.flatMap termSymbols)
+
+@[csimp] theorem symbols_eq_collected : symbols = collectedSymbols := by
+  funext formula
+  exact (SymbolCollection.dedup_eq (formula.flatMap termSymbols)).symm
 
 theorem symbol_coverage (formula : Formula) (sym : Symbol) :
     sym IN symbols formula <->
