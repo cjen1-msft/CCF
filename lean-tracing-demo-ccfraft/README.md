@@ -127,6 +127,16 @@ roots remain unchanged. Concrete log encoding is proof-only.
 `StateFrameEncoding` emits the exact allocation-guarded numeric domains.
 Its formula and rendered text agree with the finite domain checker.
 Log, queue, submitted-set, and action constraints are separate.
+`FrameObservationEncoding` emits allocated, joined, role, current-term,
+commit-index, log-length, and all six nested state observations. Absent local
+fields use actual fresh-node values; global fields remain independent.
+Its checked adapter rejects every action and unsupported observation explicitly.
+`ObservationTraceEncoding.render` supplies canonical source/frame allocation.
+For every accepted observation-only trace, its rendered-text satisfiability
+is equivalent to `ModelInputSyntax.Satisfiable` for that entire trace.
+Both directions retain one source assignment and one arbitrary initial state.
+This interface takes typed Lean input, not JSON or raw CCF records.
+It does not yet encode actions, queue observations, or log-content observations.
 `LogMatchSummary` characterizes the actual NACK log reader by a matching anchor
 and exclusion of later matches. It handles unsorted terms and clipped bounds.
 Its zero-based storage theorem uses decoded Entry terms, not raw signed order.
@@ -201,7 +211,7 @@ CCF_SPARSE_SMT_TESTS=1 CVC5=/path/to/cvc5 \
 		tests.test_sparse_native_sorts tests.test_sparse_typed_intervals \
 		tests.test_sparse_entry_predicate tests.test_sparse_typed_joint \
 		tests.test_sparse_model_input_scalars tests.test_sparse_conditional_specialization \
-		tests.test_sparse_log_match
+		tests.test_sparse_log_match tests.test_sparse_frame_observations
 ```
 
 These fixtures cover emitted component constraints, not full trace correctness.

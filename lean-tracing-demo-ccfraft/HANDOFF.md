@@ -78,6 +78,8 @@ New repository bridges extend that foundation:
 | `Sparse/StateFrame.lean` | Finite typed-reference domains correspond to relative realization against one supplied Entry root family, submitted set, and network. Realizations have one unique non-network frame. |
 | `Sparse/StateFrameInitial.lean` | Canonical independent slots and fresh log roots represent every arbitrary actual Model state, preserving all old roots and outside-owned constants. Whole UFs and selector interpretations remain unchanged. |
 | `Sparse/StateFrameEncoding.lean` | Fifteen allocation-guarded clauses encode exactly the existing numeric domains under the same assignment. Text execution returns the domain checker's Boolean result. |
+| `Sparse/FrameObservationEncoding.lean` | Twelve observation leaves lower under one source assignment and relative frame realization. Absent local fields are fresh, globals independent, and unsupported observations/actions explicitly rejected. |
+| `Sparse/ObservationTraceEncoding.lean` | Canonical source/frame allocation closes rendered-text satisfiability iff actual ModelInputSyntax.Satisfiable for every accepted observation-only trace, without initial-state restrictions. |
 | `Sparse/ConfigurationSnapshot.lean` | Exact ordered positive-index Model snapshots and same-log completion using `2m+1` frontier-query records for `m` snapshot entries. |
 | `Sparse/ConfigurationPublication.lean` | Separate local candidate for one configuration begin, successful empty callback send, and publication close on the same core-state chain. No production Model or raw-validator change. |
 | `Sparse/EntryValue.lean` | Fixed nonrecursive content and entry values are bijective with actual Model values, with equality transport, decoded term ordering, guarded payload views, and pointwise array equivalence. |
@@ -161,6 +163,33 @@ constraints. Relative realization still takes one supplied G/R/Q/U.
 trillion-valued reservations and 634 native domain cases. These include all
 39 numeric columns on nodes 0 and 14, dormant values, aliases, and independent
 global fields.
+
+`FrameObservationEncoding` supports seven top-level observation constructors:
+allocated, joined, role, currentTerm, commitIndex, logLength, and state.
+The six nested state forms bring the total to twelve leaves.
+`checkTrace` rejects every action and the five other observation constructors.
+It preserves accepted order and duplicates, including adjacent contradictions.
+The formula has n source-domain clauses, fifteen frame-domain clauses, and one
+equality per observation. It allocates no new frame or source slots.
+Its realization theorem remains relative to one supplied graph, root family,
+network, and submitted set.
+
+`ObservationTraceEncoding` closes that relative boundary with canonical
+source slots `[0,n)` and frame slots `[n,n+662)`.
+`jointly_representable` represents any given source assignment and actual
+Model State together. No reachability, log-size, or queue-size bound is assumed.
+`rendered_exists_iff` connects successful public `render` output directly to
+`ModelInputSyntax.Satisfiable`, retaining one state and assignment for the
+entire accepted trace. The forward proof chooses unobserved log contents,
+queues, and submitted IDs only to construct an existential witness.
+The reverse proof covers arbitrary values of those components.
+Rejected inputs produce errors, not UNSAT scripts.
+The interface consumes typed Lean syntax; JSON, actions, packet observations,
+configuration observations, and raw CCF integration remain unfinished.
+`tests/test_sparse_frame_observations.py` covers 140 native solver cases and
+eight explicit rejections through relative and canonical public entry points.
+These include shared numeric/zero-test values, independent absent globals,
+source/frame separation, aliases, and million-entry log lengths.
 
 `ModelInputSyntax` covers all 17 actions, all 12 top-level observations, and
 their nested records. `NatAtom n` refers only to literals or `Fin n` slots.

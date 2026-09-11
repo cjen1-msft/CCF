@@ -12,6 +12,7 @@ import Sparse.EntryPredicate
 import Sparse.EntrySelectorSemantics
 import Sparse.FiniteMembership
 import Sparse.FiniteQueueTransport
+import Sparse.FrameObservationEncoding
 import Sparse.IntervalDemandPlan
 import Sparse.IntervalEncoding
 import Sparse.IntervalPredicate
@@ -30,6 +31,7 @@ import Sparse.NativeNodeOperations
 import Sparse.NativeNodeSets
 import Sparse.NativeSelectors
 import Sparse.NativeSorts
+import Sparse.ObservationTraceEncoding
 import Sparse.PacketIdentity
 import Sparse.PacketRealization
 import Sparse.PacketQueueWitness
