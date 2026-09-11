@@ -115,8 +115,11 @@ represented columns and initial domains.
 actual state-transformer execution, preserving prior assertions and column
 references. It also proves the exact `checkQuorum` witness indices, bindings,
 and resulting column versions. A satisfying assignment for that executed block
-gives an enabled Model step and represented successor. The whole-trace theorem
-remains unfinished.
+gives an enabled Model step and represented successor.
+`NativeTraceEncoding.compiled_trace_model` composes the executed initial block
+and shared typed trace driver into one Model execution. This is the soundness
+direction for typed terms. Whole-trace completeness and text correctness
+remain unfinished.
 
 This Lean encoder remains experimental. Neither complete Model-to-script
 equivalence nor text-renderer correctness is proved. The 150-case actual-Model

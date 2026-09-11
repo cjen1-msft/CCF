@@ -271,6 +271,17 @@ structure Compiled where
   assertions : Array (Expr .bool)
   groups : Array Group
 
+def compileInstructions {width : PNat} (index : Nat) (groups : Array Group) :
+    List (NativeArrayCheckQuorum.Instruction (Fin width) Nat) -> EncodeM width (Array Group)
+  | [] => fun state => .ok (groups, state)
+  | item :: rest => fun state =>
+    match (instruction item).run state with
+    | .error error => .error s!"instruction {index}: {error}"
+    | .ok (_, after) =>
+      compileInstructions (index + 1)
+        (groups.push { instruction := some index, start := state.assertions.size, stop := after.assertions.size })
+        rest after
+
 def compile (document : Json) : Except String Compiled := do
   fields document ["nodes", "bootstrap", "instructions"]
   let names <- (<- (<- field document "nodes").getArr?).mapM Json.getStr?
@@ -283,16 +294,14 @@ def compile (document : Json) : Except String Compiled := do
     let initial : Encoding width := {
       bootstrap := encodeBits (<- decodeNodeSet width names bootstrap)
       symbolsBounded := by simp }
-    let instructions <- (<- field document "instructions").getArr?
-    let (groups, final) <- (do
-      initialDomains width
-      let mut groups : Array Group := #[{ instruction := none, start := 0, stop := (← get).assertions.size }]
-      for index in [:instructions.size] do
-        let start := (← get).assertions.size
-        try instruction (<- decodeInstruction width names instructions[index]!)
-        catch error => throw s!"instruction {index}: {error}"
-        groups := groups.push { instruction := some index, start, stop := (← get).assertions.size }
-      return groups).run initial
+    let records <- (<- field document "instructions").getArr?
+    let instructions <- records.mapIdxM fun index record =>
+      match decodeInstruction width names record with
+      | .error error => .error s!"instruction {index}: {error}"
+      | .ok item => .ok item
+    let (_, start) <- (initialDomains width).run initial
+    let groups := #[{ instruction := none, start := 0, stop := start.assertions.size : Group }]
+    let (groups, final) <- (compileInstructions 0 groups instructions.toList).run start
     return { assertions := final.assertions, groups }
   else throw "nodes must be nonempty"
 

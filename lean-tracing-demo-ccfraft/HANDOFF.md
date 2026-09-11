@@ -142,8 +142,18 @@ produced by actual `checkQuorum` execution. `quorum_model_success` takes a
 satisfying assignment for that block to an enabled Model step and represented
 successor, retaining the predecessor assertions.
 
-The next Lean slice proves the whole ordered trace and its converse. The
-lowering/text proof also remains.
+`compileInstructions` is now the shared typed trace driver used by the JSON
+wrapper. It retains instruction groups and indexed errors while accumulating
+groups without repeated concatenation. `NativeTraceEncoding` proves prefix
+assertion preservation and whole-trace soundness for that actual driver.
+`compiled_trace_model` combines the executed initial block with the whole
+ordered trace to produce one Model execution from one satisfying typed-term
+assignment. Its inputs identify the initial role/follower columns and the
+matching bootstrap set. It does not establish SMT text semantics.
+
+The next Lean slice proves whole-trace completeness by extending assignments
+at fresh witness and array symbols while preserving old assertions and column
+representations. The lowering/text proof also remains.
 Do not treat the conditional reader theorem as a full action or script proof.
 Close those boundaries before migrating the remaining actions.
 

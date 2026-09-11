@@ -34,6 +34,7 @@ import Sparse.NativeEncodeProofs
 import Sparse.NativeInitialEncoding
 import Sparse.NativeObservationEncoding
 import Sparse.NativeCompilerEncoding
+import Sparse.NativeTraceEncoding
 import Sparse.NativeNodeEncoding
 import Sparse.NativeQuorumEncoding
 import Sparse.NativeConstructors

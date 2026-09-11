@@ -236,6 +236,28 @@ theorem quorum_holds {width : PNat} (node : Nat) (before after : Encoding width)
   rw [(quorum_success node before after run).clauses]
   simp [quorumClauses, Holds, or_imp, forall_and, and_assoc]
 
+theorem quorum_native_success {width : PNat} [Bootstrap (Fin width)]
+    (node : Fin width) (before after : Encoding width)
+    (run : (checkQuorum node.val).run before = .ok ((), after))
+    (assignment : Assignment) (holds : Holds after.assertions.toList assignment)
+    (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
+    (columns : NodeColumnsRep assignment before.role before.newFollower arrays)
+    (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION) :
+    Holds before.assertions.toList assignment /\ NativeArrayCheckQuorum.enabled arrays node /\
+      NodeColumnsRep assignment after.role after.newFollower (NativeArrayCheckQuorum.step arrays node) := by
+  obtain ⟨previous, guards, roleBinding, followerBinding⟩ :=
+    (quorum_holds node.val before after run assignment).mp holds
+  have enabled := (node_columns_enabled assignment before.bootstrap before.role before.newFollower
+    arrays node before.next (before.next + 1) (by omega) columns sameBootstrap).mp
+      ⟨assignment .int before.next, assignment .int (before.next + 1), by
+        simpa [Assignment.set] using guards⟩
+  have present : (arrays node).isSome = true :=
+    (columns.allocated node).symm.trans (guards (allocated node.val) (by simp [leadingGuards]))
+  have effect := node_columns_step assignment before.role before.newFollower
+    (before.next + 2) (before.next + 3) arrays node columns present roleBinding followerBinding
+  have shape := quorum_success node.val before after run
+  exact ⟨previous, enabled, by simpa only [shape.role, shape.newFollower] using effect⟩
+
 theorem quorum_model_success {width : PNat} [Bootstrap (Fin width)]
     (node : Fin width) (before after : Encoding width)
     (run : (checkQuorum node.val).run before = .ok ((), after))
@@ -248,18 +270,10 @@ theorem quorum_model_success {width : PNat} [Bootstrap (Fin width)]
       NodeColumnsRep assignment after.role after.newFollower (NativeArrayCheckQuorum.step arrays node) /\
       NativeArrayCheckQuorum.Rep (NativeArrayCheckQuorum.step arrays node)
         (CCFRaft.next model (.checkQuorum node)) := by
-  obtain ⟨previous, guards, roleBinding, followerBinding⟩ :=
-    (quorum_holds node.val before after run assignment).mp holds
-  have enabled := (node_columns_model_enabled assignment before.bootstrap before.role before.newFollower
-    arrays model node before.next (before.next + 1) (by omega) columns represented sameBootstrap).mp
-      ⟨assignment .int before.next, assignment .int (before.next + 1), by
-        simpa [Assignment.set] using guards⟩
-  have present : (arrays node).isSome = true :=
-    (columns.allocated node).symm.trans (guards (allocated node.val) (by simp [leadingGuards]))
-  have effect := node_columns_model_step assignment before.role before.newFollower
-    (before.next + 2) (before.next + 3) arrays model node columns represented present roleBinding followerBinding
-  have shape := quorum_success node.val before after run
-  exact ⟨previous, enabled, by simpa only [shape.role, shape.newFollower] using effect.1, effect.2⟩
+  obtain ⟨previous, enabled, afterColumns⟩ :=
+    quorum_native_success node before after run assignment holds arrays columns sameBootstrap
+  exact ⟨previous, (NativeArrayCheckQuorum.enabled_correct arrays model represented node).mp enabled,
+    afterColumns, NativeArrayCheckQuorum.step_correct arrays model represented node⟩
 
 end CCFRaft.NativeEncode
 
