@@ -100,6 +100,11 @@ source-local packets. Exact key equality is still a required premise, not
 an emitted packet constraint.
 `ConfigurationSnapshot` characterizes complete positive-index Model snapshots
 with finite frontier queries. Raw callback-phase mapping is still separate.
+`ConfigurationReaderEncoding` emits two scalar bindings and two content-only
+queries for the actual current configuration at a clipped log frontier.
+Its same-assignment theorem uses one supplied root family. Physical empty
+configurations and positive-index copies of the bootstrap mask remain distinct.
+Entry terms do not affect this reader. Caller-context composition is separate.
 `ConfigurationPublication` is a separate local candidate for one successful
 leader callback. It preserves one linked begin/send/close chain but does not
 change the Model or raw validator.
@@ -215,7 +220,8 @@ CCF_SPARSE_SMT_TESTS=1 CVC5=/path/to/cvc5 \
 		tests.test_sparse_native_sorts tests.test_sparse_typed_intervals \
 		tests.test_sparse_entry_predicate tests.test_sparse_typed_joint \
 		tests.test_sparse_model_input_scalars tests.test_sparse_conditional_specialization \
-		tests.test_sparse_log_match tests.test_sparse_frame_observations
+		tests.test_sparse_log_match tests.test_sparse_frame_observations \
+		tests.test_sparse_configuration_reader
 ```
 
 These fixtures cover emitted component constraints, not full trace correctness.

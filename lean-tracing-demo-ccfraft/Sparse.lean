@@ -2,6 +2,7 @@ import Sparse.FoundationAudit
 import Sparse.QueueAudit
 import Sparse.AppendEntriesRanges
 import Sparse.ConfigurationSnapshot
+import Sparse.ConfigurationReaderEncoding
 import Sparse.ConfigurationPublication
 import Sparse.ConditionalQueueAccounting
 import Sparse.ConditionalQueueEncoding

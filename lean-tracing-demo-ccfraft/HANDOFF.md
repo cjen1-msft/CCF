@@ -82,6 +82,7 @@ New repository bridges extend that foundation:
 | `Sparse/FrameObservationEncoding.lean` | Twelve observation leaves lower under one source assignment and relative frame realization. Absent local fields are fresh, globals independent, and unsupported observations/actions explicitly rejected. |
 | `Sparse/ObservationTraceEncoding.lean` | Canonical source/frame allocation closes rendered-text satisfiability iff actual ModelInputSyntax.Satisfiable for every accepted observation-only trace, without initial-state restrictions. |
 | `Sparse/ConfigurationSnapshot.lean` | Exact ordered positive-index Model snapshots and same-log completion using `2m+1` frontier-query records for `m` snapshot entries. |
+| `Sparse/ConfigurationReaderEncoding.lean` | Two scalar bindings and content-only anchor/suffix queries characterize actual currentConfigurationAt on one supplied root family. Latest-at-length and exact source-symbol accounting are proved separately. |
 | `Sparse/ConfigurationPublication.lean` | Separate local candidate for one configuration begin, successful empty callback send, and publication close on the same core-state chain. No production Model or raw-validator change. |
 | `Sparse/EntryValue.lean` | Fixed nonrecursive content and entry values are bijective with actual Model values, with equality transport, decoded term ordering, guarded payload views, and pointwise array equivalence. |
 | `Sparse/EntryPredicate.lean` | Cell-local comparisons, Content tests/selectors, mask operations, cardinality, and configuration majority lower under one assignment with finite-reference locality and exact symbol bounds. Raw signed and decoded natural order remain distinct. |
@@ -130,6 +131,21 @@ Monotone completion does not change the arbitrary-initial-state contract above.
 Restricting that contract to `SafetyInductiveInvariant` still requires one joint
 invariant witness, including coherent proof-only histories. Local term and
 frontier bounds alone do not establish that witness.
+
+`ConfigurationReaderEncoding.meaning_correct` equates the emitted scalar
+constraints and two universal query meanings with exact arithmetic bindings
+and the actual current configuration at the requested frontier.
+The result retains both index and mask, including physical empty masks and
+positive-index bootstrap-equal masks. Index zero uses the selected Bootstrap.
+Frontiers may exceed log length. No Entry term is constrained.
+`latest_at_length` supplies the actual latest-configuration bridge.
+The relation uses one supplied graph/root family, not a new completion witness.
+Caller-context installation, rendered existence, frame integration, snapshots,
+active unions, majority, and actions remain separate work.
+`tests/test_sparse_configuration_reader.py` exercises 460 native cases through
+one shared joint compiler. Controls include a finite content oracle, alternative
+Bootstrap, raw signed terms, shared-reader conflicts, caller witnesses, source
+aliases, high unused metadata, and million/trillion-entry sparse logs.
 
 `StateFrame` has 662 reference occurrences in fixed-size tables, not necessarily
 distinct IDs. It stores no expression history. Domains constrain allocated
