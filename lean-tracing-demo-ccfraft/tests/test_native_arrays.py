@@ -13,6 +13,7 @@ import time
 import unittest
 
 from native_arrays import (
+    GLOBAL_FIELDS,
     NODE_FIELDS,
     ROLES,
     SOLVER_ARGUMENTS,
@@ -153,6 +154,12 @@ class NativeArrayInputTests(unittest.TestCase):
             trace([observation("sentIndex", 0)]),
             trace([peer_index("matchIndex", 0, peer="missing")]),
             trace([peer_index("sentIndex", True)]),
+            trace([{"kind": "hasJoined", "value": ["missing"]}]),
+            trace([observation("preVoteStatus", "unknown")]),
+            trace([observation("retirementCompleted", None)]),
+            trace([{"kind": "submittedTxId", "txId": -1, "value": True}]),
+            trace([{"kind": "submittedTxId", "txId": 7, "value": 1}]),
+            trace([{"kind": "hasJoined", "node": "a", "value": []}]),
             trace([dict(vote(), destination="missing")]),
             trace([dict(vote(), extra=True)]),
             trace([observation("allocated", 1)]),
@@ -396,13 +403,80 @@ class NativeArraySolverTests(unittest.TestCase):
             instruction["kind"]
             for case in cases
             for instruction in case["trace"]["instructions"]
-            if "node" in instruction and "value" in instruction
+            if "node" in instruction
+            and "value" in instruction
+            and instruction["kind"] not in GLOBAL_FIELDS
         }
         self.assertEqual(observations, (NODE_FIELDS.keys() - {"logs"}) | {"entry"})
         self.assertEqual({case["expected"] for case in cases}, {"sat", "unsat"})
         for number, case in enumerate(cases):
             with self.subTest(number=number):
                 self.solve(f"full-node-model-{number}", case["trace"], case["expected"])
+
+    def test_global_history(self):
+        for before, after in (
+            ({"kind": "hasJoined", "value": ["b"]}, {"kind": "hasJoined", "value": []}),
+            (
+                observation("preVoteStatus", "enabled"),
+                observation("preVoteStatus", "capable"),
+            ),
+            (
+                observation("retirementCompleted", ["b"]),
+                observation("retirementCompleted", []),
+            ),
+            (
+                {"kind": "submittedTxId", "txId": 10**12, "value": True},
+                {"kind": "submittedTxId", "txId": 10**12, "value": False},
+            ),
+        ):
+            kind = before["kind"]
+            self.solve(f"global-frame-{kind}", trace([before, action(), before]), "sat")
+            self.solve(
+                f"global-conflict-{kind}", trace([before, action(), after]), "unsat"
+            )
+        self.solve(
+            "globals-independent-of-allocation",
+            trace(
+                [
+                    observation("allocated", False),
+                    observation("preVoteStatus", "enabled"),
+                    observation("retirementCompleted", ["a"]),
+                    {"kind": "hasJoined", "value": ["a"]},
+                ]
+            ),
+            "sat",
+        )
+        self.solve(
+            "submitted-arbitrary-identities",
+            trace(
+                [
+                    {"kind": "submittedTxId", "txId": key, "value": present}
+                    for key, present in (
+                        (0, False),
+                        (7, True),
+                        (10**12, True),
+                        (10**12 + 1, False),
+                    )
+                ]
+            ),
+            "sat",
+        )
+        script = encode(trace([{"kind": "submittedTxId", "txId": 7, "value": True}]))
+        self.solve_script(
+            "submitted-live-bound",
+            script.replace(
+                "(check-sat)", "(assert (= submitted_limit_0 7))\n(check-sat)"
+            ),
+            "unsat",
+        )
+        self.solve_script(
+            "submitted-tail",
+            script.replace(
+                "(check-sat)",
+                "(assert (select global_submittedTxIds_0 submitted_limit_0))\n(check-sat)",
+            ),
+            "unsat",
+        )
 
     def test_full_node_history(self):
         values = {

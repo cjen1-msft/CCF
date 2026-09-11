@@ -3,6 +3,7 @@
 
 import Sparse.NativeArrayCheckQuorum
 import Sparse.NativeArrayQueue
+import Sparse.NativeArrayNatSet
 import Sparse.ConfigSignature
 
 set_option autoImplicit false
@@ -140,13 +141,25 @@ theorem packet_correct (arrays : Arrays N T) (state : State N T) (rep : Rep arra
   simp only [packet, request_correct arrays state rep source destination signature latest]
   cases preVote <;> rfl
 
+structure Globals (N T : Type) where
+  submittedTxIds : Finset T
+  hasJoined : Finset N
+  preVoteStatus : N -> PreVoteStatus
+  retirementCompleted : N -> Finset N
+
+def Globals.ofModel (state : State N T) : Globals N T :=
+  { submittedTxIds := state.submittedTxIds, hasJoined := state.hasJoined,
+    preVoteStatus := state.preVoteStatus, retirementCompleted := state.retirementCompleted }
+
 structure Frame (N T : Type) where
   nodes : Arrays N T
   queues : NativeArrayQueue.Network N T
+  globals : Globals N T
 
-def Frame.Rep (frame : Frame N T) (state : State N T) : Prop :=
-  NativeArrayCheckQuorum.Rep frame.nodes state /\
-    NativeArrayQueue.decodeNetwork frame.queues = Sparse.Queue.abstractNetwork state.network
+structure Frame.Rep (frame : Frame N T) (state : State N T) : Prop where
+  nodes : NativeArrayCheckQuorum.Rep frame.nodes state
+  queues : NativeArrayQueue.decodeNetwork frame.queues = Sparse.Queue.abstractNetwork state.network
+  globals : frame.globals = Globals.ofModel state
 
 def Frame.Valid (frame : Frame N T) : Prop :=
   forall destination, Sparse.Queue.WellFormed (NativeArrayQueue.decodeNetwork frame.queues destination)
@@ -163,12 +176,13 @@ theorem vote_rep (frame : Frame N T) (state : State N T) (rep : frame.Rep state)
     (frame.vote preVote source destination signature).Rep
       (CCFRaft.next state (action preVote source destination)) := by
   constructor
-  · cases preVote <;> exact rep.1
+  · cases preVote <;> exact rep.nodes
   · change NativeArrayQueue.decodeNetwork (NativeArrayQueue.send frame.queues
       (packet (get frame.nodes source) preVote source destination signature)) = _
-    rw [NativeArrayQueue.model_send_correct frame.queues state.network rep.2,
-      packet_correct frame.nodes state rep.1 preVote source destination signature latest]
+    rw [NativeArrayQueue.model_send_correct frame.queues state.network rep.queues,
+      packet_correct frame.nodes state rep.nodes preVote source destination signature latest]
     cases preVote <;> rfl
+  · cases preVote <;> exact rep.globals
 
 def Frame.nodeStep (frame : Frame N T) (instruction : NativeArrayCheckQuorum.Instruction N T) :
     Frame N T :=
@@ -187,7 +201,7 @@ theorem node_step_rep (frame : Frame N T) (state : State N T) (rep : frame.Rep s
     (frame.nodeStep instruction).Rep (nodeModelStep state instruction) := by
   cases instruction <;> first
     | exact rep
-    | exact ⟨NativeArrayCheckQuorum.step_correct _ _ rep.1 _, rep.2⟩
+    | exact ⟨NativeArrayCheckQuorum.step_correct _ _ rep.nodes _, rep.queues, rep.globals⟩
 
 def sourceAllowed (nodes : Arrays N T) : Message N T -> Prop
   | .appendEntriesResponse response => (nodes response.source).isSome = true
@@ -215,12 +229,12 @@ theorem newer_correct (frame : Frame N T) (state : State N T) (rep : frame.Rep s
     (source destination : N) :
     newerMessage? frame source destination = CCFRaft.newerMessage? state source destination := by
   unfold newerMessage? CCFRaft.newerMessage?
-  rw [NativeArrayQueue.model_peek_correct frame.queues state.network rep.2 source destination]
+  rw [NativeArrayQueue.model_peek_correct frame.queues state.network rep.queues source destination]
   cases taken : takeFirstFrom source (state.network destination) with
   | none => rfl
   | some pair =>
-    simp [source_allowed_correct frame.nodes state rep.1,
-      ← get_rep frame.nodes state rep.1 destination, Local.toModel]
+    simp [source_allowed_correct frame.nodes state rep.nodes,
+      ← get_rep frame.nodes state rep.nodes destination, Local.toModel]
 
 def Frame.updateTerm (frame : Frame N T) (source destination : N) : Frame N T :=
   match newerMessage? frame source destination with
@@ -243,15 +257,20 @@ theorem update_term_rep (frame : Frame N T) (state : State N T) (rep : frame.Rep
     · intro peer
       by_cases same : peer = destination
       · subst peer
-        have fields := get_rep frame.nodes state rep.1 destination
+        have fields := get_rep frame.nodes state rep.nodes destination
         simp [State.node?, updateNode, Local.Rep, ← fields, Local.toModel]
-      · simpa [State.node?, updateNode, same] using rep.1 peer
-    · exact rep.2
+      · simpa [State.node?, updateNode, same] using rep.nodes peer
+    · exact rep.queues
+    · exact rep.globals
 
 inductive Instruction (N T : Type) where
   | node (instruction : NativeArrayCheckQuorum.Instruction N T)
   | vote (preVote : Bool) (source destination : N)
   | updateTerm (source destination : N)
+  | submittedTxId (txId : T) (expected : Bool)
+  | hasJoined (expected : Finset N)
+  | preVoteStatus (node : N) (expected : PreVoteStatus)
+  | retirementCompleted (node : N) (expected : Finset N)
   | queueLength (source destination : N) (expected : Nat)
   | queuePoint (source destination : N) (index : Nat) (expected : Message N T)
 
@@ -268,6 +287,12 @@ def follows (frame : Frame N T) : List (Instruction N T) -> Prop
       (frame.nodes destination).isSome = true /\
         (newerMessage? frame source destination).isSome = true /\
           follows (frame.updateTerm source destination) rest
+  | .submittedTxId txId expected :: rest =>
+      decide (txId ∈ frame.globals.submittedTxIds) = expected /\ follows frame rest
+  | .hasJoined expected :: rest => frame.globals.hasJoined = expected /\ follows frame rest
+  | .preVoteStatus node expected :: rest => frame.globals.preVoteStatus node = expected /\ follows frame rest
+  | .retirementCompleted node expected :: rest =>
+      frame.globals.retirementCompleted node = expected /\ follows frame rest
   | .queueLength source destination expected :: rest =>
       (frame.queues destination source).length = expected /\ follows frame rest
   | .queuePoint source destination index expected :: rest =>
@@ -286,6 +311,12 @@ def modelFollows (state : State N T) : List (Instruction N T) -> Prop
   | .updateTerm source destination :: rest =>
       CCFRaft.Enabled state (.updateTerm source destination) /\
         modelFollows (CCFRaft.next state (.updateTerm source destination)) rest
+  | .submittedTxId txId expected :: rest =>
+      decide (txId ∈ state.submittedTxIds) = expected /\ modelFollows state rest
+  | .hasJoined expected :: rest => state.hasJoined = expected /\ modelFollows state rest
+  | .preVoteStatus node expected :: rest => state.preVoteStatus node = expected /\ modelFollows state rest
+  | .retirementCompleted node expected :: rest =>
+      state.retirementCompleted node = expected /\ modelFollows state rest
   | .queueLength source destination expected :: rest =>
       (Sparse.Queue.partition source (state.network destination)).length = expected /\
         modelFollows state rest
@@ -300,10 +331,10 @@ theorem follows_correct (trace : List (Instruction N T)) (frame : Frame N T) (st
   | cons instruction rest ih =>
     cases instruction with
     | node instruction =>
-      exact and_congr (NativeArrayCheckQuorum.follows_correct [instruction] _ _ rep.1)
+      exact and_congr (NativeArrayCheckQuorum.follows_correct [instruction] _ _ rep.nodes)
         (ih _ _ (node_step_rep frame state rep instruction))
     | vote preVote source destination =>
-      apply and_congr (enabled_correct frame.nodes state rep.1 preVote source destination)
+      apply and_congr (enabled_correct frame.nodes state rep.nodes preVote source destination)
       constructor
       · rintro ⟨signature, latest, held⟩
         exact (ih _ _ (vote_rep frame state rep preVote source destination signature latest)).mp held
@@ -315,17 +346,25 @@ theorem follows_correct (trace : List (Instruction N T)) (frame : Frame N T) (st
           (ih _ _ (vote_rep frame state rep preVote source destination signature latest)).mpr held⟩
     | updateTerm source destination =>
       simp only [follows, modelFollows, CCFRaft.Enabled,
-        allocated_rep frame.nodes state rep.1, newer_correct frame state rep,
+        allocated_rep frame.nodes state rep.nodes, newer_correct frame state rep,
         ih _ _ (update_term_rep frame state rep source destination), and_assoc]
     | queueLength source destination expected =>
-      have same := congrArg List.length (congrFun (congrFun rep.2 destination) source)
+      have same := congrArg List.length (congrFun (congrFun rep.queues destination) source)
       simp only [NativeArrayQueue.decodeNetwork, NativeArrayQueue.Queue.decode_length,
         Sparse.Queue.abstractNetwork] at same
       simp only [follows, modelFollows, same, ih frame state rep]
     | queuePoint source destination index expected =>
-      have same := congrFun (congrFun rep.2 destination) source
+      have same := congrFun (congrFun rep.queues destination) source
       simp only [NativeArrayQueue.decodeNetwork, Sparse.Queue.abstractNetwork] at same
       simp only [follows, modelFollows, NativeArrayQueue.Queue.point_correct, same, ih frame state rep]
+    | submittedTxId txId expected =>
+      simp only [follows, modelFollows, rep.globals, Globals.ofModel, ih frame state rep]
+    | hasJoined expected =>
+      simp only [follows, modelFollows, rep.globals, Globals.ofModel, ih frame state rep]
+    | preVoteStatus node expected =>
+      simp only [follows, modelFollows, rep.globals, Globals.ofModel, ih frame state rep]
+    | retirementCompleted node expected =>
+      simp only [follows, modelFollows, rep.globals, Globals.ofModel, ih frame state rep]
 
 private def filler : Message N T :=
   .proposeVoteRequest { term := 0, source := INITIAL_LEADER, destination := INITIAL_LEADER }
@@ -333,26 +372,31 @@ private def filler : Message N T :=
 def Frame.ofModel (state : State N T) : Frame N T :=
   { nodes := NativeArrayCheckQuorum.ofModel state
     queues := fun destination source =>
-      NativeArrayQueue.Queue.ofList filler (Sparse.Queue.partition source (state.network destination)) }
+      NativeArrayQueue.Queue.ofList filler (Sparse.Queue.partition source (state.network destination))
+    globals := Globals.ofModel state }
 
 theorem of_model_rep (state : State N T) : (Frame.ofModel state).Rep state := by
-  refine ⟨NativeArrayCheckQuorum.of_model_rep state, ?_⟩
+  refine ⟨NativeArrayCheckQuorum.of_model_rep state, ?_, rfl⟩
   funext destination source
   simp [Frame.ofModel, NativeArrayQueue.decodeNetwork, Sparse.Queue.abstractNetwork]
 
 theorem of_model_valid (state : State N T) : (Frame.ofModel state).Valid := by
   unfold Frame.Valid
-  rw [(of_model_rep state).2]
+  rw [(of_model_rep state).queues]
   exact fun destination => Sparse.Queue.partition_wellFormed (state.network destination)
 
 noncomputable def Frame.realize [Fintype N] (frame : Frame N T) : State N T :=
   { NativeArrayCheckQuorum.realize frame.nodes with
-    network := Sparse.Queue.realizeNetwork (NativeArrayQueue.decodeNetwork frame.queues) }
+    network := Sparse.Queue.realizeNetwork (NativeArrayQueue.decodeNetwork frame.queues)
+    submittedTxIds := frame.globals.submittedTxIds
+    hasJoined := frame.globals.hasJoined
+    preVoteStatus := frame.globals.preVoteStatus
+    retirementCompleted := frame.globals.retirementCompleted }
 
 theorem realize_rep [Fintype N] (frame : Frame N T) (valid : frame.Valid) :
     frame.Rep frame.realize := by
   exact ⟨NativeArrayCheckQuorum.realize_rep frame.nodes,
-    (Sparse.Queue.network_realizability _ valid).symm⟩
+    (Sparse.Queue.network_realizability _ valid).symm, rfl⟩
 
 theorem exists_iff [Fintype N] (trace : List (Instruction N T)) :
     (exists frame, frame.Valid /\ follows frame trace) <->
@@ -363,6 +407,20 @@ theorem exists_iff [Fintype N] (trace : List (Instruction N T)) :
   · rintro ⟨state, held⟩
     exact ⟨Frame.ofModel state, of_model_valid state,
       (follows_correct trace _ _ (of_model_rep state)).mpr held⟩
+
+theorem exists_submitted_array_iff [Fintype N] (trace : List (Instruction N Nat)) :
+    (exists array : NativeArrayNatSet.Array, array.Valid /\
+      exists frame : Frame N Nat, frame.Valid /\
+        frame.globals.submittedTxIds = array.decode /\ follows frame trace) <->
+      exists state, modelFollows state trace := by
+  constructor
+  · rintro ⟨array, _, frame, valid, _, holds⟩
+    exact (exists_iff trace).mp ⟨frame, valid, holds⟩
+  · intro holds
+    rcases (exists_iff trace).mpr holds with ⟨frame, valid, follows⟩
+    exact ⟨NativeArrayNatSet.Array.ofFinset frame.globals.submittedTxIds,
+      NativeArrayNatSet.of_finset_valid _, frame, valid,
+      (NativeArrayNatSet.of_finset_correct _).symm, follows⟩
 
 end CCFRaft.NativeArrayVote
 

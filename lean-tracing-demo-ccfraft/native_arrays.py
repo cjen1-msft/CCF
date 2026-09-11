@@ -28,6 +28,13 @@ MEMBERSHIP_STATES = (
     "retiredCommitted",
 )
 PEER_INDICES = ("sentIndex", "matchIndex")
+PRE_VOTE_STATUSES = ("capable", "enabled")
+GLOBAL_FIELDS = {
+    "submittedTxIds": "(Array Int Bool)",
+    "hasJoined": "Nodes",
+    "preVoteStatus": "(Array Node PreVoteStatus)",
+    "retirementCompleted": "(Array Node Nodes)",
+}
 NODE_FIELDS = {
     "allocated": ("Bool", None),
     "role": ("Role", "r_none"),
@@ -61,6 +68,12 @@ def natural(value: object, where: str) -> int:
     if type(value) is not int or value < 0:
         raise ValidationError(f"{where}: expected a natural number")
     return value
+
+
+def boolean(value: object, where: str) -> str:
+    if type(value) is not bool:
+        raise ValidationError(f"{where}: expected a bool")
+    return str(value).lower()
 
 
 def unique_object(pairs: list[tuple[str, object]]) -> dict:
@@ -103,6 +116,7 @@ class Encoder:
             f"(declare-datatype MembershipState ({' '.join(f'(m_{state})' for state in MEMBERSHIP_STATES)}))",
             "(declare-datatype OptionalNode ((noNode) (someNode (nodeValue Node))))",
             "(declare-datatype OptionalNat ((noNat) (someNat (natValue Int))))",
+            "(declare-datatype PreVoteStatus ((p_capable) (p_enabled)))",
             "(declare-datatype Content ((transaction (tx Int)) (signature) "
             "(reconfiguration (members Nodes)) (retiredCommitted (retired Nodes))))",
             "(declare-datatype Entry ((entry (term Int) (content Content))))",
@@ -112,6 +126,7 @@ class Encoder:
         self.lines.extend(packet_declarations())
         self.refs = {name: name + "_0" for name in NODE_FIELDS}
         self.declared_fields: set[str] = set()
+        self.global_refs: dict[str, str] = {}
         self.log_domains: set[str] = set()
         self.queues: dict[tuple[str, str], QueueArray] = {}
         self.configuration_indices: dict[tuple[str, ...], str] = {}
@@ -147,6 +162,46 @@ class Encoder:
         if not isinstance(value, str) or value not in self.nodes:
             raise ValidationError(f"{where}: undeclared node {value!r}")
         return self.nodes[value]
+
+    def global_field(self, name: str) -> str:
+        if name not in self.global_refs:
+            symbol = f"global_{name}_0"
+            self.global_refs[name] = symbol
+            self.lines.append(f"(declare-const {symbol} {GLOBAL_FIELDS[name]})")
+            if name == "submittedTxIds":
+                self.lines.append("(declare-const submitted_limit_0 Int)")
+                self.assertion("(<= 0 submitted_limit_0)")
+                self.assertion(
+                    f"(forall ((tx Int)) (=> (or (< tx 0) (<= submitted_limit_0 tx)) "
+                    f"(not (select {symbol} tx))))"
+                )
+        return self.global_refs[name]
+
+    def observe_global(self, kind: str, instruction: dict) -> None:
+        expected = {"kind", "value"}
+        if kind in {"preVoteStatus", "retirementCompleted"}:
+            expected.add("node")
+        elif kind == "submittedTxId":
+            expected.add("txId")
+        fields(instruction, expected, f"instruction {self.event}")
+        name = "submittedTxIds" if kind == "submittedTxId" else kind
+        observed = self.global_field(name)
+        value = instruction["value"]
+        if kind == "submittedTxId":
+            tx_id = natural(instruction["txId"], "submittedTxId.txId")
+            observed = f"(select {observed} {tx_id})"
+            value = boolean(value, f"instruction {self.event}")
+        else:
+            if kind != "hasJoined":
+                node = self.node(instruction["node"], f"instruction {self.event} node")
+                observed = f"(select {observed} {node})"
+            if kind == "preVoteStatus":
+                if not isinstance(value, str) or value not in PRE_VOTE_STATUSES:
+                    raise ValidationError(f"preVoteStatus: unknown value {value!r}")
+                value = "p_" + value
+            else:
+                value = self.mask(value, kind)
+        self.assertion(f"(= {observed} {value})")
 
     def mask(self, value: object, where: str) -> str:
         """Encode a set without imposing a fixed node-count limit."""
@@ -355,9 +410,7 @@ class Encoder:
             if sort == "Node":
                 argument = self.node(value[name], f"packet.{name}")
             elif sort == "Bool":
-                if type(value[name]) is not bool:
-                    raise ValidationError(f"packet.{name}: expected a bool")
-                argument = str(value[name]).lower()
+                argument = boolean(value[name], f"packet.{name}")
             elif sort == "(Array Int Entry)":
                 if not isinstance(value[name], list):
                     raise ValidationError("packet.entries: expected an entry list")
@@ -398,9 +451,7 @@ class Encoder:
     def observation_value(self, kind: str, value: object) -> str:
         sort = NODE_FIELDS[kind][0]
         if sort == "Bool":
-            if type(value) is not bool:
-                raise ValidationError(f"instruction {self.event}: expected a bool")
-            return str(value).lower()
+            return boolean(value, f"instruction {self.event}")
         if sort in {"Role", "MembershipState"}:
             choices, prefix = (
                 (ROLES, "r") if sort == "Role" else (MEMBERSHIP_STATES, "m")
@@ -433,11 +484,23 @@ class Encoder:
                 "updateTerm",
                 "queueLength",
                 "queuePoint",
+                "submittedTxId",
+                "hasJoined",
+                "preVoteStatus",
+                "retirementCompleted",
             }
             if not isinstance(kind, str) or kind not in supported:
                 raise ValidationError(
                     f"instruction {self.event}: unsupported kind {kind!r}"
                 )
+            if kind in {
+                "submittedTxId",
+                "hasJoined",
+                "preVoteStatus",
+                "retirementCompleted",
+            }:
+                self.observe_global(kind, instruction)
+                continue
             if kind in {
                 "requestVote",
                 "requestPreVote",

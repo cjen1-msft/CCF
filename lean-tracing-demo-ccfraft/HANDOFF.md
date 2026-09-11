@@ -78,8 +78,17 @@ The 360-case `NativeArrayNodeFixtureMain` compares complete Model records
 before and after the four supported actions. See
 [Native local node state](README.md#native-local-node-state).
 
+Global observations now cover `hasJoined`, `preVoteStatus`,
+`retirementCompleted`, and membership in `submittedTxIds`. They remain
+independent of allocation. The shared frame correspondence preserves all global
+fields alongside complete node records and source-local queues.
+Submitted IDs use a Boolean array with an unknown finite upper bound, not an
+exhaustive transaction-ID universe. `NativeArrayNatSet` proves complete finite-set
+representation, and `exists_submitted_array_iff` connects it to the same Model
+execution. See [Native global state](README.md#native-global-state).
+
 Next work is still substantial: the remaining actions, receive and log mutation
-integration, global state observations, reducer integration, and full initial-state
+integration, reducer integration, and full initial-state
 materialization. Do not resume the old worker fan-out or claim full encoder
 completion. Finish and measure one action or shared operation at a time.
 The independent duplicate-suppression utilities are not Model send semantics.

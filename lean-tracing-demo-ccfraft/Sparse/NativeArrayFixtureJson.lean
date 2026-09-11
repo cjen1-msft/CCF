@@ -63,6 +63,16 @@ def nodeObservations (node : Fin 3) (state : NodeState (Fin 3) Nat) : List Json 
       Json.mkObj [("kind", toJson "entry"), ("node", toJson (nodeName node)),
         ("index", toJson index), ("value", entryJson entry)])
 
+def globalObservations (state : State (Fin 3) Nat) (txIds : List Nat) : List Json :=
+  [Json.mkObj [("kind", toJson "hasJoined"), ("value", toJson (nodeNames state.hasJoined))]] ++
+    (List.finRange 3).flatMap (fun node =>
+      [Json.mkObj [("kind", toJson "preVoteStatus"), ("node", toJson (nodeName node)),
+        ("value", toJson (if state.preVoteStatus node = .enabled then "enabled" else "capable"))],
+       Json.mkObj [("kind", toJson "retirementCompleted"), ("node", toJson (nodeName node)),
+        ("value", toJson (nodeNames (state.retirementCompleted node)))]]) ++
+    txIds.map (fun txId => Json.mkObj [("kind", toJson "submittedTxId"), ("txId", toJson txId),
+      ("value", toJson (decide (txId ∈ state.submittedTxIds)))])
+
 def messageJson (message : Message (Fin 3) Nat) : Json :=
   let fields := [("term", toJson message.term),
     ("source", toJson (nodeName message.source)), ("destination", toJson (nodeName message.destination))]

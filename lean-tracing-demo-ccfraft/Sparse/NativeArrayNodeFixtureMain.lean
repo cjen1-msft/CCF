@@ -29,7 +29,9 @@ private def fixture (membership : MembershipState) (index : Option Nat)
         [.requestVoteRequest {
           term := 9, source := 0, destination := 1,
           lastCommittableTerm := 8, lastCommittableIndex := 10 }] else []
-      submittedTxIds := {}, hasJoined := {} }
+      submittedTxIds := {7, 1000000000000}, hasJoined := {2}
+      preVoteStatus := fun node => if node = 2 then .enabled else .capable
+      retirementCompleted := fun node => if node = 2 then {0, 1} else {2} }
   let action : Action (Fin 3) Nat :=
     if kind = 0 then .checkQuorum 1 else if kind = 1 then .updateTerm 0 1
     else if kind = 2 then .requestVote 1 0 else .requestPreVote 1 0
@@ -37,9 +39,10 @@ private def fixture (membership : MembershipState) (index : Option Nat)
     else Json.mkObj [("kind", toJson (if kind = 1 then "updateTerm" else if kind = 2 then "requestVote" else "requestPreVote")),
       ("source", toJson (if kind = 1 then "a" else "b")), ("destination", toJson (if kind = 1 then "b" else "a"))]
   let observations := fun (state : State (Fin 3) Nat) =>
-    (List.finRange 3).flatMap fun node =>
+    globalObservations state [0, 5, 7, 999999999999, 1000000000000, 1000000000001] ++
+    (List.finRange 3).flatMap (fun node =>
       Json.mkObj [("kind", toJson "allocated"), ("node", toJson (nodeName node)),
-        ("value", toJson (state.node? node).isSome)] :: nodeObservations node (state.nodes node)
+        ("value", toJson (state.node? node).isSome)] :: nodeObservations node (state.nodes node))
   let instructions := observations state ++
     [Json.mkObj [("kind", toJson "queueLength"), ("source", toJson "a"), ("destination", toJson "b"),
       ("value", toJson 1)],

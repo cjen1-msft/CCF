@@ -165,8 +165,39 @@ nodes, optional values, nonempty vote sets, and peer indices beyond log length.
 Declaring unused peer-table domains raised the 400-record combined benchmark
 to 10.4 seconds. First-use declarations reduced it to 1.13 seconds, with about
 3.9 ms spent encoding.
-Global state observations, including submitted transaction IDs, join history,
-pre-vote status, and completed-retirement sets, are not yet supported.
+Global fields use the separate observations below.
+
+### Native global state
+
+Global observations share the same initial state and ordered execution as
+node and queue observations:
+
+| Kind | Fields besides `kind` |
+| --- | --- |
+| `hasJoined` | `value`: a set of declared node identities. |
+| `preVoteStatus` | `node`, `value`: `capable` or `enabled`. |
+| `retirementCompleted` | `node`, `value`: a set of declared node identities. |
+| `submittedTxId` | `txId`: a natural number, `value`: a Boolean membership observation. |
+
+For example, `{"kind": "submittedTxId", "txId": 1000000000000, "value": true}`
+requires that transaction ID to have been submitted. Transaction IDs do not
+need an exhaustive declared universe.
+
+Global fields do not use absent-node defaults. An unallocated identity can
+have enabled pre-votes, appear in join history, or have recorded completed
+retirements. All four currently supported actions preserve global fields.
+
+Submitted transactions use a Boolean array and a symbolic natural upper bound.
+Cells outside the finite nonnegative prefix are false. The bound is unknown,
+not a cap supplied by the trace. `Sparse/NativeArrayNatSet.lean` proves that
+this represents every finite set of natural-number IDs. The emitter does not
+enumerate the prefix, even when an observed ID is a trillion.
+
+`NativeArrayVote.exists_submitted_array_iff` connects that array's decoded set
+to the same initial Model state as the remaining fields. The JSON adapter and
+SMT printer remain outside the theorem. The complete-state fixture now includes
+global observations before and after all four actions, including unallocated
+identities and trillion-valued transaction IDs.
 
 ### Native vote sends
 
