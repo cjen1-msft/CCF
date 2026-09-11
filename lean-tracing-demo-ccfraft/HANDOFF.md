@@ -151,9 +151,25 @@ ordered trace to produce one Model execution from one satisfying typed-term
 assignment. Its inputs identify the initial role/follower columns and the
 matching bootstrap set. It does not establish SMT text semantics.
 
-The next Lean slice proves whole-trace completeness by extending assignments
-at fresh witness and array symbols while preserving old assertions and column
-representations. The lowering/text proof also remains.
+`NativeSmt.Assignment.AgreesBelow` now captures agreement on earlier symbols.
+`NativeAssignmentEncoding` proves that fresh extensions preserve existing
+assertions, node columns, and initial domains. `ReferencesValid` tracks the
+static columns and current role/follower references below the fresh counter.
+`quorum_complete` constructs witnesses and both array assignments for every
+enabled native step without changing earlier symbols.
+
+`NativeTraceCompleteness.compiled_trace_iff` now proves both directions for
+the complete supported typed trace. Its premises are successful initial and
+trace compilation, an initially empty assertion list, initial columns 1 and 2,
+valid references, and the matching bootstrap set. The completeness direction
+starts from an arbitrary Model state, not a bootstrap-reachable state.
+`Assignment.default` supplies otherwise unused proof-witness values; it emits
+no default-state constraints.
+
+The next Lean slice closes the typed-term-to-SMT-text boundary, including
+symbol naming and binding. Do not flip the full Model-to-script assurance flag
+yet. JSON decoding, remaining action coverage, and raw reducer integration
+still need their documented delivery work.
 Do not treat the conditional reader theorem as a full action or script proof.
 Close those boundaries before migrating the remaining actions.
 

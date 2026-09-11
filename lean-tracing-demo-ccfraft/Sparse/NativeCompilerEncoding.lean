@@ -177,6 +177,9 @@ structure QuorumResult {width : PNat} (before after : Encoding width) (node : Na
   newFollower : after.newFollower = before.next + 3
   next : after.next = before.next + 4
   clauses : after.assertions.toList = before.assertions.toList ++ quorumClauses before node
+  guardSymbols : forall formula, formula ∈ (leadingGuards before.role node ++
+      configurationGuards width before.bootstrap node before.next (before.next + 1)) ->
+    forall symbol, symbol ∈ formula.symbols -> symbol.2 < before.next + 2
 
 theorem quorum_success {width : PNat} (node : Nat) (before after : Encoding width)
     (run : (checkQuorum node).run before = .ok ((), after)) :
@@ -222,6 +225,14 @@ theorem quorum_success {width : PNat} (node : Nat) (before after : Encoding widt
     rw [sixthClauses, Array.toList_push, fifthClauses, Array.toList_push, fourthClauses,
       thirdClauses, secondClauses, firstClauses, currentIndex, witnessIndex, roleIndex, followerIndex]
     simp [quorumClauses, List.append_assoc]
+  · intro formula member symbol occurs
+    have physical : formula ∈ fourth.assertions.toList := by
+      rw [fourthClauses, thirdClauses, secondClauses, firstClauses, currentIndex, witnessIndex,
+        List.append_assoc]
+      exact List.mem_append_right _ member
+    have bounded := fourth.symbolsBounded formula (by simpa using physical) symbol occurs
+    rw [fourthFrame.next, thirdNext, secondNext, firstFrame.next] at bounded
+    exact bounded
 
 theorem quorum_holds {width : PNat} (node : Nat) (before after : Encoding width)
     (run : (checkQuorum node).run before = .ok ((), after)) (assignment : Assignment) :

@@ -24,6 +24,15 @@ abbrev Ty.denote : Ty -> Type
   | .pair first second => first.denote × second.denote
   | .sum left right => Sum left.denote right.denote
 
+def Ty.default : (sort : Ty) -> sort.denote
+  | .bool => false
+  | .int => 0
+  | .unit => ()
+  | .bits _ => 0
+  | .array _ value => fun _ => value.default
+  | .pair first second => (first.default, second.default)
+  | .sum left _ => .inl left.default
+
 def Ty.code : Ty -> String
   | .bool => "B"
   | .int => "I"
@@ -57,6 +66,8 @@ theorem Variable.index_lt {context : List Ty} {sort : Ty} (ref : Variable contex
 
 abbrev Assignment := (sort : Ty) -> Nat -> sort.denote
 abbrev Locals (context : List Ty) := (sort : Ty) -> Variable context sort -> sort.denote
+
+def Assignment.default : Assignment := fun sort _ => sort.default
 
 def Locals.empty : Locals [] := fun _ ref => nomatch ref
 
@@ -264,6 +275,47 @@ theorem Term.eval_set_of_fresh {context : List Ty} {sort updated : Ty}
 
 def Holds (assertions : List (Term [] .bool)) (assignment : Assignment) : Prop :=
   forall formula, formula ∈ assertions -> formula.eval assignment Locals.empty = true
+
+def Assignment.AgreesBelow (limit : Nat) (left right : Assignment) : Prop :=
+  forall sort id, id < limit -> left sort id = right sort id
+
+theorem Assignment.AgreesBelow.trans {limit : Nat} {first middle last : Assignment}
+    (left : first.AgreesBelow limit middle) (right : middle.AgreesBelow limit last) :
+    first.AgreesBelow limit last :=
+  fun sort id within => (left sort id within).trans (right sort id within)
+
+theorem Assignment.AgreesBelow.restrict {small large : Nat} {left right : Assignment}
+    (same : left.AgreesBelow large right) (within : small <= large) :
+    left.AgreesBelow small right :=
+  fun sort id bound => same sort id (Nat.lt_of_lt_of_le bound within)
+
+theorem Assignment.agrees_below_set (assignment : Assignment) (limit : Nat) (sort : Ty)
+    (id : Nat) (value : sort.denote) (fresh : limit <= id) :
+    assignment.AgreesBelow limit (assignment.set sort id value) := by
+  intro other index within
+  by_cases same : other = sort
+  · subst other
+    have different : index ≠ id := by omega
+    simp [Assignment.set, different]
+  · simp [Assignment.set, same]
+
+theorem Term.eval_agrees_below {context : List Ty} {sort : Ty} (expression : Term context sort)
+    (left right : Assignment) (locals : Locals context) (limit : Nat)
+    (bounded : forall symbol, symbol ∈ expression.symbols -> symbol.2 < limit)
+    (same : left.AgreesBelow limit right) :
+    expression.eval left locals = expression.eval right locals := by
+  apply expression.eval_congr
+  intro ty id occurs
+  exact same ty id (bounded (ty, id) occurs)
+
+theorem Holds.agrees_below {assertions : List (Term [] .bool)} {left right : Assignment}
+    (holds : Holds assertions left) (limit : Nat)
+    (bounded : forall formula, formula ∈ assertions ->
+      forall symbol, symbol ∈ formula.symbols -> symbol.2 < limit)
+    (same : left.AgreesBelow limit right) : Holds assertions right := by
+  intro formula member
+  rw [<- formula.eval_agrees_below left right Locals.empty limit (bounded formula member) same]
+  exact holds formula member
 
 theorem fresh_binding_exists (assertions : List (Term [] .bool)) {sort : Ty}
     (expression : Term [] sort) (id : Nat)

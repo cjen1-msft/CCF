@@ -118,8 +118,12 @@ and resulting column versions. A satisfying assignment for that executed block
 gives an enabled Model step and represented successor.
 `NativeTraceEncoding.compiled_trace_model` composes the executed initial block
 and shared typed trace driver into one Model execution. This is the soundness
-direction for typed terms. Whole-trace completeness and text correctness
-remain unfinished.
+direction for typed terms. `NativeTraceCompleteness.compiled_trace_iff` proves
+both directions for successful typed compilation from the empty initial
+assertion list, valid column references, and a matching bootstrap set.
+The proof extends fresh assignments without changing earlier assertions,
+represented columns, or initial domains. It covers the current `checkQuorum`
+and observation subset, not the remaining Model actions or SMT text semantics.
 
 This Lean encoder remains experimental. Neither complete Model-to-script
 equivalence nor text-renderer correctness is proved. The 150-case actual-Model
