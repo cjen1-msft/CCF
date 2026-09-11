@@ -106,9 +106,32 @@ def scaleFixtures : List Json :=
        (repeatedChild 399)
        ([point (.version 399) 2 left] ++ if valid then [] else [point (.version 399) 2 right])]
 
+def constructorFixtures : List Json :=
+  let contents : List (Term .content) :=
+    [.transaction (.app .int .int 3002 (.integer (-7))), .signature,
+     .reconfiguration (.app .nodes .nodes 3001 (.nodes 16384)),
+     .retiredCommitted (.nodes 32767)]
+  (contents.mapIdx fun index content =>
+    let value := Term.entry (.unknown .int 3000) content
+    [false, true].flatMap fun constant =>
+      [true, false].map fun valid =>
+        let expected := Term.entry
+          (.add (.entryTerm value) (.integer (if valid then 0 else 1)))
+          (.entryContent value)
+        let verdict := if valid then "sat" else "unsat"
+        if constant then
+          fixture s!"constructor-{index}-constant-{verdict}" verdict [fixed 2 0, fixed 3000 (-2)]
+            (.push (.empty : SymbolicGraph 0 .entry 0) (.constant value))
+            [point (.version 0) 2 expected]
+        else
+          fixture s!"constructor-{index}-root-{verdict}" verdict [fixed 2 0, fixed 3000 (-2)]
+            (rootGraph .entry)
+            [point (.root 0) 2 value, point (.version 0) 2 expected]).flatten
+
 end CCFRaft.Sparse.TypedIntervalFixtures
 
 def main : IO Unit :=
   IO.println (Lean.toJson (CCFRaft.Sparse.TypedIntervalFixtures.fixtures ++
     CCFRaft.Sparse.TypedIntervalFixtures.boundaryFixtures ++
-    CCFRaft.Sparse.TypedIntervalFixtures.scaleFixtures)).compress
+    CCFRaft.Sparse.TypedIntervalFixtures.scaleFixtures ++
+    CCFRaft.Sparse.TypedIntervalFixtures.constructorFixtures)).compress

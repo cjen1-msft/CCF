@@ -262,13 +262,17 @@ theorem eval_install (original : Assignment) (first : Nat) (values : Fin count -
     {result : Ty} (term : Term result) (below : SymbolBounds.termMax term < first) :
     term.eval (installUF original first values) = term.eval original := by
   induction term with
-  | boolean _ | integer _ | unknown _ _ => rfl
+  | boolean _ | integer _ | nodes _ | signature | unknown _ _ => rfl
+  | transaction value ih | reconfiguration value ih | retiredCommitted value ih
+  | entryTerm value ih | entryContent value ih =>
+    simp only [Term.eval, ih below]
   | app domain result id argument ih =>
     have bounds : id < first /\ SymbolBounds.termMax argument < first := by
       simpa only [SymbolBounds.termMax, max_lt_iff] using below
     simp only [Term.eval, ih bounds.2, install_outside original first values domain result id (Or.inl bounds.1)]
   | add left right ihl ihr | sub left right ihl ihr | le left right ihl ihr
-  | equal left right ihl ihr | and left right ihl ihr | implies left right ihl ihr =>
+  | equal left right ihl ihr | and left right ihl ihr | implies left right ihl ihr
+  | entry left right ihl ihr =>
     have bounds : SymbolBounds.termMax left < first /\ SymbolBounds.termMax right < first := by
       simpa only [SymbolBounds.termMax, max_lt_iff] using below
     simp only [Term.eval, ihl bounds.1, ihr bounds.2]

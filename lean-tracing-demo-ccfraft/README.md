@@ -56,7 +56,9 @@ remain separate work.
 `EntryValue` supplies a fixed entry domain with signed integer scalars and
 node-set bitvectors, bijective with Model entries. `Smt` now supports native
 unknowns, equality, conditionals, and unary functions for nodes, content, and
-entries. Native literals, constructors, and field selectors remain separate work.
+entries. `NativeConstructors` adds exact 15-bit literals, all Content constructors,
+Entry construction, and total Entry term/content projections. Content testers
+and payload selectors remain separate work.
 `EntrySelectorSemantics` proves guarded payload reads independent of arbitrary
 wrong-constructor selector values, without hiding failures in unused branches.
 The actual SMT evaluator and text layer are not yet connected to those laws.
@@ -121,7 +123,9 @@ CCF_SPARSE_SMT_TESTS=1 CVC5=/path/to/cvc5 \
 ```
 
 These fixtures cover emitted component constraints, not full trace correctness.
-The native-sort cases cover all five constant sorts and all 25 unary signatures.
+The native-sort cases cover all five constant sorts, all 25 unary signatures,
+and native constructors and Entry projections. They check all 32,768 node masks
+against independent MSB-first formatting.
 Scalar scripts retain QF_UFLIA text. Native scripts use ALL and fixed datatype
 schemas, with dependency, declaration, and signature checks before evaluation.
 

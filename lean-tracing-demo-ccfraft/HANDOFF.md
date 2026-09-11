@@ -78,6 +78,8 @@ New repository bridges extend that foundation:
 | `Sparse/ReadbackHints.lean` | Unequal observed projection values justify key disequality and skipping a store. |
 | `Sparse/Smt.lean` | Bool/Int terms and native node/content/entry unknowns, equality, conditionals, and unary functions lower to a strict interpreter. Symbol names are injective. |
 | `Sparse/NativeSorts.lean` | All five constant sorts and 25 unary signatures, fixed schema availability, canonical text, and strict error handling have kernel regressions and an axiom audit. |
+| `Sparse/NativeConstructors.lean` | Native literals, every Content constructor, Entry construction, and total Entry projections preserve typed evaluation through lowering and rendered text. |
+| `Sparse/SmtNodes.lean` | Canonical node masks have exactly 15 MSB-first bits and parse back to the original value. |
 | `Sparse/SmtScript.lean` | Generates unique typed declarations and commands. Command evaluation preserves formula truth for the same assignment. |
 | `Sparse/SmtText.lean` | Decodes exactly the canonical generated symbol names, with symbol-atom evaluation roundtrip for the existing renderer. |
 | `Sparse/SmtNumerals.lean` | Decodes canonical decimal numerals for arbitrary Nat, with a roundtrip proof over the actual core renderer. |
@@ -171,7 +173,8 @@ Graph constants and point expectations are typed input terms. Its allocator
 includes even unused constants and metadata-only functions, and its reserved
 UF range has no spare slot. The same assignment interprets all input terms,
 and one shared root family satisfies every observation.
-The 408 native cases include 360 typed splice controls and SAT/UNSAT cases for
+The 424 native cases include 360 typed splice controls, 16 nested constructor
+and projection controls with metadata-only symbols, and SAT/UNSAT cases for
 400 Entry points and 400 shared versions. Those require 800 and 401 demands,
 respectively. One point in a million-root universe still requires one demand.
 Typed universal predicates and packet constraint emission remain open.
@@ -181,14 +184,17 @@ integer term/transaction fields and 15-bit node sets. `EntryValue` supplies
 the exact value domain. Fixed native sorts and schema/text correspondence
 are now integrated with the current queue and joint interval compilers.
 `tests/test_sparse_native_sorts.py` supplies 73 real solver controls for unknowns,
-equality, conditionals, and all unary signatures. Scalar names and QF_UFLIA
+equality, conditionals, and all unary signatures, plus 314 constructor and
+Entry-projection controls. It checks all 32,768 node masks against independent
+MSB-first formatting and rejects malformed masks. Scalar names and QF_UFLIA
 scripts remain unchanged. Native scripts use ALL and the fixed schemas.
 Missing, duplicate, dependency-invalid, and mismatched declarations remain
 errors, including after false assertions.
 
-Native Term literals, constructors, testers, and selectors are not integrated.
-Required-sort discovery currently follows symbol signatures; symbol-free
-native expressions must extend discovery and schema preflight before use.
+Native Term literals, all Content constructors, Entry construction, and total
+Entry projections are integrated. Required-sort discovery includes native
+operations without symbols, and raw schema preflight checks dead branches.
+Content testers and payload selectors are not integrated.
 Wrong-variant payload views return `none`. SMT selectors are total and
 underspecified on wrong variants. `EntrySelectorSemantics` proves guarded
 results independent of every such interpretation. The tester and selector

@@ -15,6 +15,7 @@ import Sparse.IntervalQueries
 import Sparse.JointIntervalCompletion
 import Sparse.JointIntervalEncoding
 import Sparse.MonotoneIntervals
+import Sparse.NativeConstructors
 import Sparse.NativeSorts
 import Sparse.PacketIdentity
 import Sparse.PacketRealization
@@ -31,6 +32,7 @@ import Sparse.QueueReadback
 import Sparse.ReadbackHints
 import Sparse.Smt
 import Sparse.SmtExpressionText
+import Sparse.SmtNodes
 import Sparse.SmtNumerals
 import Sparse.SmtScript
 import Sparse.SmtScriptText

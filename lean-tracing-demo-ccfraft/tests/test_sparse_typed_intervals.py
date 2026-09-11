@@ -42,7 +42,7 @@ class SparseTypedIntervalTests(unittest.TestCase):
             cwd=ROOT, capture_output=True, text=True, check=True,
         )
         cases = json.loads(generated.stdout)
-        self.assertEqual(len(cases), 408)
+        self.assertEqual(len(cases), 424)
         by_name = {case["name"]: case for case in cases}
         self.assertEqual(len(by_name), len(cases))
         requested = os.environ.get("CVC5")
@@ -66,6 +66,13 @@ class SparseTypedIntervalTests(unittest.TestCase):
         self.assertGreater(by_name["expected-function-metadata"]["base"], 2000)
         self.assertEqual(by_name["million-roots-trillion-position"]["demands"], 1)
         self.assertEqual(by_name["empty-native"]["demands"], 0)
+        for index, maximum in enumerate((3002, 3000, 3001, 3000)):
+            for shape in ("constant", "root"):
+                for verdict in ("sat", "unsat"):
+                    self.assertGreater(
+                        by_name[f"constructor-{index}-{shape}-{verdict}"]["base"],
+                        maximum,
+                    )
         for verdict in ("sat", "unsat"):
             self.assertEqual(by_name[f"entry-400-points-{verdict}"]["demands"], 800)
             self.assertEqual(by_name[f"entry-400-versions-{verdict}"]["demands"], 401)
