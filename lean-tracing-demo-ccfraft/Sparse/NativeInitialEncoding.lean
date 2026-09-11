@@ -73,7 +73,7 @@ noncomputable def initialArrays (width : PNat) (assignment : Assignment)
 
 theorem initial_arrays_rep (width : PNat) (assignment : Assignment)
     (domains : forall node : Fin width, NodeDomain width assignment node.val) :
-    NodeColumnsRep assignment 1 2 (initialArrays width assignment domains) := by
+    NodeColumnsRep assignment {} (initialArrays width assignment domains) := by
   constructor
   · intro node
     cases present : assignment (.array .int .bool) 0 node.val <;>
@@ -137,7 +137,7 @@ theorem initial_assertions_domains (width : PNat) (assignment : Assignment) :
 theorem initial_assertions_model (width : PNat) [Bootstrap (Fin width)] (assignment : Assignment)
     (holds : Holds (initialAssertions width) assignment) :
     exists (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) (model : State (Fin width) Nat),
-      NodeColumnsRep assignment 1 2 arrays /\ NativeArrayCheckQuorum.Rep arrays model := by
+      NodeColumnsRep assignment {} arrays /\ NativeArrayCheckQuorum.Rep arrays model := by
   let domains := (initial_assertions_domains width assignment).mp holds
   let arrays := initialArrays width assignment domains
   exact ⟨arrays, NativeArrayCheckQuorum.realize arrays, initial_arrays_rep width assignment domains,
@@ -177,7 +177,7 @@ noncomputable def initialAssignment (width : PNat) (seed : Assignment)
 
 theorem initial_assignment_rep (width : PNat) (seed : Assignment)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) :
-    NodeColumnsRep (initialAssignment width seed arrays) 1 2 arrays := by
+    NodeColumnsRep (initialAssignment width seed arrays) {} arrays := by
   constructor <;> intro node
   all_goals
     cases found : arrays node <;>
@@ -209,7 +209,7 @@ theorem initial_assignment_domains (width : PNat) (seed : Assignment)
 theorem model_initial_assertions (width : PNat) [Bootstrap (Fin width)] (seed : Assignment)
     (model : State (Fin width) Nat) :
     exists (assignment : Assignment) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat),
-      Holds (initialAssertions width) assignment /\ NodeColumnsRep assignment 1 2 arrays /\
+      Holds (initialAssertions width) assignment /\ NodeColumnsRep assignment {} arrays /\
         NativeArrayCheckQuorum.Rep arrays model := by
   let arrays := NativeArrayCheckQuorum.ofModel model
   exact ⟨initialAssignment width seed arrays, arrays,

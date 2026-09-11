@@ -244,11 +244,11 @@ def decodeInstruction (width : PNat) (names : Array String) (value : Json) :
     return .entry node index expected
   | _ => throw s!"unsupported native Lean instruction {kind}"
 
-def observationClauses {width : PNat} (roleColumn followerColumn : Nat) :
+def observationClauses {width : PNat} (columns : NodeColumns) :
     NativeArrayCheckQuorum.Instruction (Fin width) Nat -> Except String (List (Expr .bool))
   | .allocated node expected => .ok [.equal (allocated node.val) (.boolean expected)]
-  | .role node expected => .ok [.equal (read roleColumn node.val (.integer 0)) (.integer (roleCode expected))]
-  | .newFollower node expected => .ok [.equal (read followerColumn node.val (.boolean true)) (.boolean expected)]
+  | .role node expected => .ok [.equal (read columns.role node.val (.integer 0)) (.integer (roleCode expected))]
+  | .newFollower node expected => .ok [.equal (read columns.newFollower node.val (.boolean true)) (.boolean expected)]
   | .logLength node expected => .ok [.equal (length node.val) (.integer expected)]
   | .commit node expected => .ok [.equal (commit node.val) (.integer expected)]
   | .currentTerm node expected => .ok [.equal (read 5 node.val (.integer 0)) (.integer expected)]
@@ -262,7 +262,7 @@ def instruction {width : PNat} (item : NativeArrayCheckQuorum.Instruction (Fin w
   | .checkQuorum node => checkQuorum node.val
   | _ =>
     let state <- get
-    assertAll (<- observationClauses state.role state.newFollower item)
+    assertAll (<- observationClauses state.toNodeColumns item)
 
 structure Group where
   instruction : Option Nat

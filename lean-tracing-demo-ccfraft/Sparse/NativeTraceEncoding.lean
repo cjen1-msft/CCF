@@ -13,7 +13,7 @@ theorem instruction_cases {width : PNat}
     (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) (before after : Encoding width)
     (run : (instruction item).run before = .ok ((), after)) :
     (exists node, item = .checkQuorum node /\ (checkQuorum node.val).run before = .ok ((), after)) \/
-    (exists clauses, observationClauses before.role before.newFollower item = .ok clauses /\
+    (exists clauses, observationClauses before.toNodeColumns item = .ok clauses /\
       (assertAll clauses).run before = .ok ((), after)) := by
   cases item
   case checkQuorum node => exact Or.inl ⟨node, rfl, run⟩
@@ -54,8 +54,8 @@ theorem observation_cons {width : PNat} [Bootstrap (Fin width)]
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
     (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat)
     (rest : List (NativeArrayCheckQuorum.Instruction (Fin width) Nat))
-    (roleColumn followerColumn : Nat) (clauses : List (Expr .bool))
-    (emitted : observationClauses roleColumn followerColumn item = .ok clauses) :
+    (columns : NodeColumns) (clauses : List (Expr .bool))
+    (emitted : observationClauses columns item = .ok clauses) :
     NativeArrayCheckQuorum.follows arrays (item :: rest) <->
       NativeArrayCheckQuorum.follows arrays [item] /\ NativeArrayCheckQuorum.follows arrays rest := by
   cases item <;> simp [observationClauses] at emitted
@@ -67,7 +67,7 @@ theorem compile_instructions_sound {width : PNat} [Bootstrap (Fin width)]
     (run : (compileInstructions index groups items).run before = .ok (result, after))
     (assignment : Assignment) (holds : Holds after.assertions.toList assignment)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
-    (columns : NodeColumnsRep assignment before.role before.newFollower arrays)
+    (columns : NodeColumnsRep assignment before.toNodeColumns arrays)
     (domains : forall node : Fin width, NodeDomain width assignment node.val)
     (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION) :
     NativeArrayCheckQuorum.follows arrays items := by
@@ -90,20 +90,20 @@ theorem compile_instructions_sound {width : PNat} [Bootstrap (Fin width)]
           rw [(quorum_success node.val before middle action).bootstrap, sameBootstrap]
         exact ⟨enabled, ih middle _ _ run _ afterColumns bootstrap⟩
       · have frame := (assert_all_success clauses before middle asserted).1
-        have observed := (observation_correct assignment before.role before.newFollower arrays columns
+        have observed := (observation_correct assignment before.toNodeColumns arrays columns
           domains item clauses emitted).mp
             ((assert_all_holds clauses before middle asserted assignment).mp middleHolds).2
-        have afterColumns : NodeColumnsRep assignment middle.role middle.newFollower arrays := by
-          simpa only [frame.role, frame.newFollower] using columns
+        have afterColumns : NodeColumnsRep assignment middle.toNodeColumns arrays := by
+          simpa only [frame.columns] using columns
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [frame.bootstrap, sameBootstrap]
-        exact (observation_cons arrays item rest _ _ clauses emitted).mpr
+        exact (observation_cons arrays item rest _ clauses emitted).mpr
           ⟨observed, ih middle _ _ run arrays afterColumns bootstrap⟩
 
 theorem compiled_trace_model {width : PNat} [Bootstrap (Fin width)]
     (items : List (NativeArrayCheckQuorum.Instruction (Fin width) Nat))
     (initial started final : Encoding width) (index : Nat) (groups result : Array Group)
-    (initialRole : initial.role = 1) (initialFollower : initial.newFollower = 2)
+    (initialColumns : initial.toNodeColumns = {})
     (start : (initialDomains width).run initial = .ok ((), started))
     (run : (compileInstructions index groups items).run started = .ok (result, final))
     (assignment : Assignment) (holds : Holds final.assertions.toList assignment)
@@ -114,8 +114,8 @@ theorem compiled_trace_model {width : PNat} [Bootstrap (Fin width)]
   have domains := (initialHolds.mp startedHolds).2
   obtain ⟨arrays, model, columns, represented⟩ :=
     initial_assertions_model width assignment ((initial_assertions_domains width assignment).mpr domains)
-  have startedColumns : NodeColumnsRep assignment started.role started.newFollower arrays := by
-    simpa only [frame.role, frame.newFollower, initialRole, initialFollower] using columns
+  have startedColumns : NodeColumnsRep assignment started.toNodeColumns arrays := by
+    simpa only [frame.columns, initialColumns] using columns
   have bootstrap : decodeBits started.bootstrap = INITIAL_CONFIGURATION := by
     rw [frame.bootstrap, sameBootstrap]
   exact ⟨model, (NativeArrayCheckQuorum.follows_correct items arrays model represented).mp

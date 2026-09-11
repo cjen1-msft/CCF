@@ -10,8 +10,8 @@ namespace CCFRaft.NativeEncode
 open NativeSmt
 
 theorem entry_observation_correct {width : PNat} (assignment : Assignment)
-    (roleColumn followerColumn : Nat) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
-    (rep : NodeColumnsRep assignment roleColumn followerColumn arrays)
+    (columns : NodeColumns) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
+    (rep : NodeColumnsRep assignment columns arrays)
     (domains : forall node : Fin width, NodeDomain width assignment node.val)
     (node : Fin width) (index : Nat) (expected : Entry (Fin width) Nat) :
     Holds [lt (.integer index) (length node.val),
@@ -35,31 +35,31 @@ theorem entry_observation_correct {width : PNat} (assignment : Assignment)
   rw [rep.entries node index within]
 
 theorem observation_correct {width : PNat} [Bootstrap (Fin width)] (assignment : Assignment)
-    (roleColumn followerColumn : Nat) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
-    (rep : NodeColumnsRep assignment roleColumn followerColumn arrays)
+    (columns : NodeColumns) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
+    (rep : NodeColumnsRep assignment columns arrays)
     (domains : forall node : Fin width, NodeDomain width assignment node.val)
     (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) (clauses : List (Expr .bool))
-    (emitted : observationClauses roleColumn followerColumn item = .ok clauses) :
+    (emitted : observationClauses columns item = .ok clauses) :
     Holds clauses assignment <-> NativeArrayCheckQuorum.follows arrays [item] := by
   cases item <;> simp [observationClauses] at emitted
   all_goals subst clauses
   case entry node index expected =>
     simpa only [NativeArrayCheckQuorum.follows, and_true] using
-      entry_observation_correct assignment roleColumn followerColumn arrays rep domains node index expected
+      entry_observation_correct assignment columns arrays rep domains node index expected
   all_goals
     simp [Holds, NativeArrayCheckQuorum.follows, Term.eval, rep.allocated, rep.role,
       rep.newFollower, rep.currentTerm, rep.commit, rep.length, role_code_eq]
 
 theorem observation_model_correct {width : PNat} [Bootstrap (Fin width)]
-    (assignment : Assignment) (roleColumn followerColumn : Nat)
+    (assignment : Assignment) (columns : NodeColumns)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) (model : State (Fin width) Nat)
-    (columns : NodeColumnsRep assignment roleColumn followerColumn arrays)
+    (columnRep : NodeColumnsRep assignment columns arrays)
     (represented : NativeArrayCheckQuorum.Rep arrays model)
     (domains : forall node : Fin width, NodeDomain width assignment node.val)
     (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) (clauses : List (Expr .bool))
-    (emitted : observationClauses roleColumn followerColumn item = .ok clauses) :
+    (emitted : observationClauses columns item = .ok clauses) :
     Holds clauses assignment <-> NativeArrayCheckQuorum.modelFollows model [item] :=
-  (observation_correct assignment roleColumn followerColumn arrays columns domains item clauses emitted).trans
+  (observation_correct assignment columns arrays columnRep domains item clauses emitted).trans
     (NativeArrayCheckQuorum.follows_correct [item] arrays model represented)
 
 end CCFRaft.NativeEncode

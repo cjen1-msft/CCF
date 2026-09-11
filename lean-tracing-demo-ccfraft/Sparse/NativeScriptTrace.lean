@@ -13,7 +13,7 @@ open NativeSmt
 theorem compiled_script_iff {width : PNat} [Bootstrap (Fin width)]
     (items : List (NativeArrayCheckQuorum.Instruction (Fin width) Nat))
     (initial started final : Encoding width) (index : Nat) (groups result : Array Group) (named : Bool)
-    (initialRole : initial.role = 1) (initialFollower : initial.newFollower = 2)
+    (initialColumns : initial.toNodeColumns = {})
     (empty : initial.assertions = #[]) (valid : ReferencesValid initial)
     (start : (initialDomains width).run initial = .ok ((), started))
     (run : (compileInstructions index groups items).run started = .ok (result, final))
@@ -22,7 +22,7 @@ theorem compiled_script_iff {width : PNat} [Bootstrap (Fin width)]
       runScriptText assignment (renderScript final.assertions.toList named) = some true) <->
       (exists model : State (Fin width) Nat, NativeArrayCheckQuorum.modelFollows model items) := by
   simp only [script_text_holds]
-  exact compiled_trace_iff items initial started final index groups result initialRole initialFollower
+  exact compiled_trace_iff items initial started final index groups result initialColumns
     empty valid start run sameBootstrap
 
 end CCFRaft.NativeEncode

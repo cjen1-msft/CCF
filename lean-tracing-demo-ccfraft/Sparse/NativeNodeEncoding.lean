@@ -37,13 +37,13 @@ theorem get_step {width : PNat} (arrays : NativeArrayCheckQuorum.Arrays (Fin wid
     simp [NativeArrayCheckQuorum.get, NativeArrayCheckQuorum.step]
   · simp [NativeArrayCheckQuorum.get, NativeArrayCheckQuorum.step, same]
 
-structure NodeColumnsRep {width : PNat} (assignment : Assignment) (roleColumn followerColumn : Nat)
+structure NodeColumnsRep {width : PNat} (assignment : Assignment) (columns : NodeColumns)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) : Prop where
   allocated : forall (node : Fin width), (NativeEncode.allocated node.val : Expr .bool).eval assignment Locals.empty =
     (arrays node).isSome
-  role : forall (node : Fin width), (read roleColumn node.val (.integer 0)).eval assignment Locals.empty =
+  role : forall (node : Fin width), (read columns.role node.val (.integer 0)).eval assignment Locals.empty =
     roleCode (NativeArrayCheckQuorum.get arrays node).role
-  newFollower : forall (node : Fin width), (read followerColumn node.val (.boolean true)).eval assignment Locals.empty =
+  newFollower : forall (node : Fin width), (read columns.newFollower node.val (.boolean true)).eval assignment Locals.empty =
     (NativeArrayCheckQuorum.get arrays node).isNewFollower
   currentTerm : forall (node : Fin width), (read 5 node.val (.integer 0)).eval assignment Locals.empty =
     ((NativeArrayCheckQuorum.get arrays node).currentTerm : Int)
@@ -56,8 +56,8 @@ structure NodeColumnsRep {width : PNat} (assignment : Assignment) (roleColumn fo
       (NativeArrayCheckQuorum.get arrays node).log.entries index
 
 theorem NodeColumnsRep.configuration_log {width : PNat} {assignment : Assignment}
-    {roleColumn followerColumn : Nat} {arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat}
-    (rep : NodeColumnsRep assignment roleColumn followerColumn arrays) (node : Fin width) :
+    {columns : NodeColumns} {arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat}
+    (rep : NodeColumnsRep assignment columns arrays) (node : Fin width) :
     ConfigurationLogRep assignment node.val (NativeArrayCheckQuorum.get arrays node).log
       (NativeArrayCheckQuorum.get arrays node).commit := by
   refine ⟨rep.length node, rep.commit node, ?_⟩
@@ -66,9 +66,9 @@ theorem NodeColumnsRep.configuration_log {width : PNat} {assignment : Assignment
   simpa [modelEntry, entryAt, Term.eval] using entry
 
 theorem NodeColumnsRep.set_integer {width : PNat} {assignment : Assignment}
-    {roleColumn followerColumn : Nat} {arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat}
-    (rep : NodeColumnsRep assignment roleColumn followerColumn arrays) (id : Nat) (value : Int) :
-    NodeColumnsRep (assignment.set .int id value) roleColumn followerColumn arrays := by
+    {columns : NodeColumns} {arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat}
+    (rep : NodeColumnsRep assignment columns arrays) (id : Nat) (value : Int) :
+    NodeColumnsRep (assignment.set .int id value) columns arrays := by
   constructor
   · intro node
     simpa [NativeEncode.allocated, Term.eval, Assignment.set] using rep.allocated node
@@ -86,13 +86,13 @@ theorem NodeColumnsRep.set_integer {width : PNat} {assignment : Assignment}
     simpa [entryAt, Term.eval, Assignment.set] using rep.entries node index within
 
 theorem node_columns_enabled {width : PNat} [Bootstrap (Fin width)]
-    (assignment : Assignment) (bootstrap : BitVec width) (roleColumn followerColumn : Nat)
+    (assignment : Assignment) (bootstrap : BitVec width) (columns : NodeColumns)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) (node : Fin width)
     (currentId witnessId : Nat) (different : currentId ≠ witnessId)
-    (rep : NodeColumnsRep assignment roleColumn followerColumn arrays)
+    (rep : NodeColumnsRep assignment columns arrays)
     (sameBootstrap : decodeBits bootstrap = INITIAL_CONFIGURATION) :
     (exists (currentValue : Int) (witnessValue : Int),
-      Holds (leadingGuards roleColumn node.val ++
+      Holds (leadingGuards columns.role node.val ++
         configurationGuards width bootstrap node.val currentId witnessId)
         ((assignment.set .int currentId currentValue).set .int witnessId witnessValue)) <->
       NativeArrayCheckQuorum.enabled arrays node := by
@@ -120,32 +120,33 @@ theorem node_columns_enabled {width : PNat} [Bootstrap (Fin width)]
     simp only [leaderGuard, Term.eval, decide_eq_true_eq, extended.role, leaderModel, roleCode]
 
 theorem node_columns_model_enabled {width : PNat} [Bootstrap (Fin width)]
-    (assignment : Assignment) (bootstrap : BitVec width) (roleColumn followerColumn : Nat)
+    (assignment : Assignment) (bootstrap : BitVec width) (columns : NodeColumns)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) (model : State (Fin width) Nat)
     (node : Fin width) (currentId witnessId : Nat) (different : currentId ≠ witnessId)
-    (rep : NodeColumnsRep assignment roleColumn followerColumn arrays)
+    (rep : NodeColumnsRep assignment columns arrays)
     (modelRep : NativeArrayCheckQuorum.Rep arrays model)
     (sameBootstrap : decodeBits bootstrap = INITIAL_CONFIGURATION) :
     (exists (currentValue : Int) (witnessValue : Int),
-      Holds (leadingGuards roleColumn node.val ++
+      Holds (leadingGuards columns.role node.val ++
         configurationGuards width bootstrap node.val currentId witnessId)
         ((assignment.set .int currentId currentValue).set .int witnessId witnessValue)) <->
       CCFRaft.Enabled model (.checkQuorum node) :=
-  (node_columns_enabled assignment bootstrap roleColumn followerColumn arrays node currentId witnessId
+  (node_columns_enabled assignment bootstrap columns arrays node currentId witnessId
     different rep sameBootstrap).trans (NativeArrayCheckQuorum.enabled_correct arrays model modelRep node)
 
 theorem node_columns_step {width : PNat} (assignment : Assignment)
-    (beforeRole beforeFollower afterRole afterFollower : Nat)
+    (before : NodeColumns) (afterRole afterFollower : Nat)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) (node : Fin width)
-    (rep : NodeColumnsRep assignment beforeRole beforeFollower arrays)
+    (rep : NodeColumnsRep assignment before arrays)
     (present : (arrays node).isSome = true)
     (roleBinding : (Term.equal (.free (.array .int .int) afterRole)
-      (stepDownRole beforeRole node.val)).eval
+      (stepDownRole before.role node.val)).eval
         assignment Locals.empty = true)
     (followerBinding : (Term.equal (.free (.array .int .bool) afterFollower)
-      (stepDownFollower beforeFollower node.val)).eval
+      (stepDownFollower before.newFollower node.val)).eval
         assignment Locals.empty = true) :
-    NodeColumnsRep assignment afterRole afterFollower (NativeArrayCheckQuorum.step arrays node) := by
+    NodeColumnsRep assignment { before with role := afterRole, newFollower := afterFollower }
+      (NativeArrayCheckQuorum.step arrays node) := by
   simp only [stepDownRole] at roleBinding
   simp only [stepDownFollower] at followerBinding
   have allocatedNode : (allocated node.val : Expr .bool).eval assignment Locals.empty = true :=
@@ -157,7 +158,7 @@ theorem node_columns_step {width : PNat} (assignment : Assignment)
       simpa [NativeArrayCheckQuorum.step] using allocatedNode
     · simpa [NativeArrayCheckQuorum.step, same] using rep.allocated peer
   · intro peer
-    rw [stored_read_correct assignment beforeRole afterRole node.val peer.val
+    rw [stored_read_correct assignment before.role afterRole node.val peer.val
       (.integer 0) (.integer 1) allocatedNode roleBinding, get_step]
     by_cases same : peer = node
     · subst peer
@@ -165,7 +166,7 @@ theorem node_columns_step {width : PNat} (assignment : Assignment)
     · have different : peer.val ≠ node.val := fun equal => same (Fin.ext equal)
       simpa [same, different] using rep.role peer
   · intro peer
-    rw [stored_read_correct assignment beforeFollower afterFollower node.val peer.val
+    rw [stored_read_correct assignment before.newFollower afterFollower node.val peer.val
       (.boolean true) (.boolean true) allocatedNode followerBinding, get_step]
     by_cases same : peer = node
     · subst peer
@@ -192,18 +193,19 @@ theorem node_columns_step {width : PNat} (assignment : Assignment)
     · simpa [same] using rep.entries peer index (by simpa [same] using within)
 
 theorem node_columns_model_step {width : PNat} [Bootstrap (Fin width)]
-    (assignment : Assignment) (beforeRole beforeFollower afterRole afterFollower : Nat)
+    (assignment : Assignment) (before : NodeColumns) (afterRole afterFollower : Nat)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) (model : State (Fin width) Nat)
-    (node : Fin width) (rep : NodeColumnsRep assignment beforeRole beforeFollower arrays)
+    (node : Fin width) (rep : NodeColumnsRep assignment before arrays)
     (modelRep : NativeArrayCheckQuorum.Rep arrays model) (present : (arrays node).isSome = true)
     (roleBinding : (Term.equal (.free (.array .int .int) afterRole)
-      (stepDownRole beforeRole node.val)).eval assignment Locals.empty = true)
+      (stepDownRole before.role node.val)).eval assignment Locals.empty = true)
     (followerBinding : (Term.equal (.free (.array .int .bool) afterFollower)
-      (stepDownFollower beforeFollower node.val)).eval assignment Locals.empty = true) :
-    NodeColumnsRep assignment afterRole afterFollower (NativeArrayCheckQuorum.step arrays node) /\
+      (stepDownFollower before.newFollower node.val)).eval assignment Locals.empty = true) :
+    NodeColumnsRep assignment { before with role := afterRole, newFollower := afterFollower }
+      (NativeArrayCheckQuorum.step arrays node) /\
       NativeArrayCheckQuorum.Rep (NativeArrayCheckQuorum.step arrays node)
         (CCFRaft.next model (.checkQuorum node)) :=
-  ⟨node_columns_step assignment beforeRole beforeFollower afterRole afterFollower arrays node rep present
+  ⟨node_columns_step assignment before afterRole afterFollower arrays node rep present
       roleBinding followerBinding,
     NativeArrayCheckQuorum.step_correct arrays model modelRep node⟩
 

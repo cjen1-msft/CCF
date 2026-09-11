@@ -41,7 +41,7 @@ theorem compileDecoded_script_iff (input : Decoded) [Bootstrap (Fin input.width)
           Pure.pure, Except.pure] using success
       subst compiled
       exact compiled_script_iff input.instructions.toList
-        (initialEncoding input.width input.bootstrap) started final 0 groups result named rfl rfl rfl
+        (initialEncoding input.width input.bootstrap) started final 0 groups result named rfl rfl
         ⟨by simp [initialEncoding], by simp [initialEncoding], by simp [initialEncoding]⟩ first trace
         (by simpa only [initialEncoding, decode_encode_bits] using sameBootstrap)
 

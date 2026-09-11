@@ -138,7 +138,7 @@ theorem assert_all_holds {width : PNat} (formulas : List (Expr .bool))
 theorem observation_instruction_run {width : PNat}
     (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) (before : Encoding width)
     (clauses : List (Expr .bool))
-    (emitted : observationClauses before.role before.newFollower item = .ok clauses) :
+    (emitted : observationClauses before.toNodeColumns item = .ok clauses) :
     (instruction item).run before = (assertAll clauses).run before := by
   cases item <;> simp [observationClauses] at emitted
   all_goals subst clauses; rfl
@@ -146,11 +146,11 @@ theorem observation_instruction_run {width : PNat}
 theorem observation_instruction_success {width : PNat} [Bootstrap (Fin width)]
     (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) (before after : Encoding width)
     (clauses : List (Expr .bool))
-    (emitted : observationClauses before.role before.newFollower item = .ok clauses)
+    (emitted : observationClauses before.toNodeColumns item = .ok clauses)
     (run : (instruction item).run before = .ok ((), after))
     (assignment : Assignment) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
     (model : State (Fin width) Nat)
-    (columns : NodeColumnsRep assignment before.role before.newFollower arrays)
+    (columns : NodeColumnsRep assignment before.toNodeColumns arrays)
     (represented : NativeArrayCheckQuorum.Rep arrays model)
     (domains : forall node : Fin width, NodeDomain width assignment node.val) :
     SameReferences before after /\
@@ -159,7 +159,7 @@ theorem observation_instruction_success {width : PNat} [Bootstrap (Fin width)]
   rw [observation_instruction_run item before clauses emitted] at run
   refine ⟨(assert_all_success clauses before after run).1, ?_⟩
   rw [assert_all_holds clauses before after run assignment,
-    observation_model_correct assignment before.role before.newFollower arrays model columns
+    observation_model_correct assignment before.toNodeColumns arrays model columns
       represented domains item clauses emitted]
 
 theorem initial_domains_success {width : PNat} (before after : Encoding width)
@@ -266,33 +266,33 @@ theorem quorum_native_success {width : PNat} [Bootstrap (Fin width)]
     (run : (checkQuorum node.val).run before = .ok ((), after))
     (assignment : Assignment) (holds : Holds after.assertions.toList assignment)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
-    (columns : NodeColumnsRep assignment before.role before.newFollower arrays)
+    (columns : NodeColumnsRep assignment before.toNodeColumns arrays)
     (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION) :
     Holds before.assertions.toList assignment /\ NativeArrayCheckQuorum.enabled arrays node /\
-      NodeColumnsRep assignment after.role after.newFollower (NativeArrayCheckQuorum.step arrays node) := by
+      NodeColumnsRep assignment after.toNodeColumns (NativeArrayCheckQuorum.step arrays node) := by
   obtain ⟨previous, guards, roleBinding, followerBinding⟩ :=
     (quorum_holds node.val before after run assignment).mp holds
-  have enabled := (node_columns_enabled assignment before.bootstrap before.role before.newFollower
+  have enabled := (node_columns_enabled assignment before.bootstrap before.toNodeColumns
     arrays node before.next (before.next + 1) (by omega) columns sameBootstrap).mp
       ⟨assignment .int before.next, assignment .int (before.next + 1), by
         simpa [Assignment.set] using guards⟩
   have present : (arrays node).isSome = true :=
     (columns.allocated node).symm.trans (guards (allocated node.val) (by simp [leadingGuards]))
-  have effect := node_columns_step assignment before.role before.newFollower
+  have effect := node_columns_step assignment before.toNodeColumns
     (before.next + 2) (before.next + 3) arrays node columns present roleBinding followerBinding
   have shape := quorum_success node.val before after run
-  exact ⟨previous, enabled, by simpa only [shape.role, shape.newFollower] using effect⟩
+  exact ⟨previous, enabled, by simpa only [shape.columns] using effect⟩
 
 theorem quorum_model_success {width : PNat} [Bootstrap (Fin width)]
     (node : Fin width) (before after : Encoding width)
     (run : (checkQuorum node.val).run before = .ok ((), after))
     (assignment : Assignment) (holds : Holds after.assertions.toList assignment)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) (model : State (Fin width) Nat)
-    (columns : NodeColumnsRep assignment before.role before.newFollower arrays)
+    (columns : NodeColumnsRep assignment before.toNodeColumns arrays)
     (represented : NativeArrayCheckQuorum.Rep arrays model)
     (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION) :
     Holds before.assertions.toList assignment /\ CCFRaft.Enabled model (.checkQuorum node) /\
-      NodeColumnsRep assignment after.role after.newFollower (NativeArrayCheckQuorum.step arrays node) /\
+      NodeColumnsRep assignment after.toNodeColumns (NativeArrayCheckQuorum.step arrays node) /\
       NativeArrayCheckQuorum.Rep (NativeArrayCheckQuorum.step arrays node)
         (CCFRaft.next model (.checkQuorum node)) := by
   obtain ⟨previous, enabled, afterColumns⟩ :=

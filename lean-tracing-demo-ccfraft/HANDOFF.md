@@ -261,10 +261,14 @@ retirement-index fields.
 column record. `QuorumResult.columns` specifies the record update, with
 derived role and follower equalities for callers. All prior scripts remain
 byte-for-byte unchanged.
-The next refactor changes `NodeColumnsRep` and observation/compiler callers
-to take this record instead of separate role and follower indices. Then add
-the optional retirement-index columns and their observations, keeping the
-whole-script and JSON correspondence theorems in the normal build.
+`NodeColumnsRep`, `observationClauses`, and their callers now take this record
+instead of separate role and follower indices. Quorum representation updates
+retain the predecessor record's unchanged fields. Trace and script proofs
+now assume the default initial column record rather than separate role and
+follower premises; the actual JSON compiler discharges this premise.
+All prior scripts remain unchanged.
+Next add the optional retirement-index columns and their observations,
+keeping the whole-script and JSON correspondence theorems in the normal build.
 
 Follow [Representation design priorities](README.md#representation-design-priorities):
 start with the simplest representation to prove correct, using native SMT
