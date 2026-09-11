@@ -409,7 +409,7 @@ theorem install_constant_other (original : Assignment) (input : SmtScript.Formul
     (ty : Smt.Ty) (id : Nat) (different : Not (id = zeroId input graph queries observations)) :
     (install original input graph queries observations arrays).constant ty id = original.constant ty id := by
   cases ty with
-  | bool => rfl
+  | bool | nodes | content | entry => rfl
   | int => exact IntervalQueryEncoding.setZero_other original _ id different
 
 theorem install_metadata (original : Assignment) (input : SmtScript.Formula) (graph : SymbolicGraph roots size)
@@ -542,7 +542,12 @@ private def regressionAssignment (position : Int) : Assignment where
     match ty with
     | .bool => false
     | .int => if id = 1 then 10 else if id = 2 \/ id = 3 then position else 0
-  unary _ result _ _ := match result with | .bool => false | .int => 0
+    | .nodes => 0
+    | .content => .signature
+    | .entry => { term := 0, content := .signature }
+  unary _ result _ _ := match result with
+    | .bool => false | .int => 0 | .nodes => 0
+    | .content => .signature | .entry => { term := 0, content := .signature }
 
 private def singleGraph : SymbolicGraph 1 1 := .push .empty (.root 0)
 
