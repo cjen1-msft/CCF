@@ -12,7 +12,8 @@ import tempfile
 import time
 import unittest
 
-from native_arrays import SOLVER_ARGUMENTS, encode, unique_object
+from native_arrays import ROLES, SOLVER_ARGUMENTS, Encoder, encode, unique_object
+from native_packets import PACKET_FIELDS
 from Shared.solver import ValidationError, find_cvc5, run_solver, solver_status
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,6 +44,47 @@ def entry(index, content, term=1, node="a"):
     }
 
 
+def vote(pre_vote=False, source="a", destination="b"):
+    return {
+        "kind": "requestPreVote" if pre_vote else "requestVote",
+        "source": source,
+        "destination": destination,
+    }
+
+
+def queue_length(value, source="a", destination="b"):
+    return dict(
+        vote(source=source, destination=destination), kind="queueLength", value=value
+    )
+
+
+def queue_point(index, pre_vote=False, **packet_fields):
+    return {
+        "kind": "queuePoint",
+        "source": "a",
+        "destination": "b",
+        "index": index,
+        "value": {
+            "kind": "requestPreVote" if pre_vote else "requestVoteRequest",
+            "term": 4,
+            "lastCommittableTerm": 0,
+            "lastCommittableIndex": 0,
+            "source": "a",
+            "destination": "b",
+            **packet_fields,
+        },
+    }
+
+
+def vote_initial(pre_vote=False):
+    return [
+        observation("role", "preVoteCandidate" if pre_vote else "candidate"),
+        observation("logLength", 0),
+        observation("currentTerm", 4),
+        observation("commit", 0),
+    ]
+
+
 class NativeArrayInputTests(unittest.TestCase):
     def test_strict_input(self):
         valid = trace([observation("logLength", 0)])
@@ -56,6 +98,14 @@ class NativeArrayInputTests(unittest.TestCase):
             trace([observation("logLength", -1)]),
             trace([observation("logLength", True)]),
             trace([observation("commit", 1.5)]),
+            trace([observation("currentTerm", -1)]),
+            trace([queue_length(True)]),
+            trace([queue_point(-1)]),
+            trace([queue_point(0, term=-1)]),
+            trace([queue_point(0, kind="appendEntriesResponse")]),
+            trace([queue_point(0, source="missing")]),
+            trace([dict(vote(), destination="missing")]),
+            trace([dict(vote(), extra=True)]),
             trace([observation("allocated", 1)]),
             trace([observation("role", "bogus")]),
             trace([observation("role", [])]),
@@ -103,6 +153,25 @@ class NativeArrayInputTests(unittest.TestCase):
         for line in script.splitlines():
             self.assertEqual(line.count("("), line.count(")"), line)
 
+    def test_vote_reader_versions(self):
+        encoder = Encoder(trace([]))
+        first = encoder.configuration_index("n0")
+        snapshot = encoder.election_snapshot("n0")
+        self.assertEqual(first, encoder.configuration_index("n0"))
+        self.assertEqual(snapshot, encoder.election_snapshot("n0"))
+        encoder.refs["role"] = "role_1"
+        self.assertEqual(first, encoder.configuration_index("n0"))
+        self.assertEqual(snapshot, encoder.election_snapshot("n0"))
+        encoder.event += 1
+        encoder.refs["commit"] = "commit_1"
+        self.assertNotEqual(first, encoder.configuration_index("n0"))
+        self.assertNotEqual(snapshot, encoder.election_snapshot("n0"))
+        script = encode(trace([vote(), vote()]))
+        self.assertEqual(script.count("(declare-const signature_n0_"), 1)
+        self.assertEqual(script.count("(declare-const current_n0_"), 1)
+        self.assertIn("(store q_n1_n0_cells_1 ", script)
+        self.assertNotIn("(store (store", script)
+
 
 @unittest.skipUnless(
     os.environ.get("CCF_NATIVE_ARRAY_TESTS") == "1",
@@ -131,6 +200,9 @@ class NativeArraySolverTests(unittest.TestCase):
         started = time.perf_counter_ns()
         script = encode(document)
         encoder_ms = (time.perf_counter_ns() - started) / 1_000_000
+        self.solve_script(name, script, expected, encoder_ms)
+
+    def solve_script(self, name, script, expected, encoder_ms=0):
         path = self.artifacts / f"{name}.smt2"
         path.write_text(script, encoding="ascii")
         result = run_solver(
@@ -185,7 +257,7 @@ class NativeArraySolverTests(unittest.TestCase):
                     for filename in ("trace.smt2", "trace.stdout", "trace.stderr"):
                         self.assertTrue((output / filename).is_file())
 
-    def test_actual_model_oracle(self):
+    def model_fixtures(self, module):
         subprocess.run(
             [
                 "nice",
@@ -193,7 +265,7 @@ class NativeArraySolverTests(unittest.TestCase):
                 "10",
                 "lake",
                 "build",
-                "Sparse.NativeArrayCheckQuorumFixtureMain",
+                f"Sparse.{module}",
             ],
             cwd=ROOT,
             capture_output=True,
@@ -209,19 +281,230 @@ class NativeArraySolverTests(unittest.TestCase):
                 "env",
                 "lean",
                 "--run",
-                "Sparse/NativeArrayCheckQuorumFixtureMain.lean",
+                f"Sparse/{module}.lean",
             ],
             cwd=ROOT,
             capture_output=True,
             text=True,
             check=True,
         )
-        cases = json.loads(generated.stdout)
+        return json.loads(generated.stdout)
+
+    def test_actual_model_oracle(self):
+        cases = self.model_fixtures("NativeArrayCheckQuorumFixtureMain")
         self.assertEqual(len(cases), 150)
         self.assertEqual({case["expected"] for case in cases}, {"sat", "unsat"})
         for number, case in enumerate(cases):
             with self.subTest(number=number):
                 self.solve(f"model-{number}", case["trace"], case["expected"])
+
+    def test_vote_model_oracle(self):
+        cases = self.model_fixtures("NativeArrayVoteFixtureMain")
+        self.assertEqual(len(cases), 400)
+        self.assertEqual({case["expected"] for case in cases}, {"sat", "unsat"})
+        for number, case in enumerate(cases):
+            with self.subTest(number=number):
+                self.solve(f"vote-model-{number}", case["trace"], case["expected"])
+
+    def test_vote_guards_and_packets(self):
+        for pre_vote in (False, True):
+            initial = vote_initial(pre_vote)
+            send = vote(pre_vote)
+            for role in ROLES:
+                expected = "sat" if role == initial[0]["value"] else "unsat"
+                self.solve(
+                    f"vote-role-{pre_vote}-{role}",
+                    trace([observation("role", role), *initial[1:], send]),
+                    expected,
+                )
+            for node in ("a", "b"):
+                self.solve(
+                    f"vote-absent-{pre_vote}-{node}",
+                    trace([*initial, observation("allocated", False, node), send]),
+                    "unsat",
+                )
+            self.solve(
+                f"vote-self-{pre_vote}",
+                trace([*initial, dict(send, destination="a")]),
+                "unsat",
+            )
+            base = [*initial, queue_length(0), send]
+            self.solve(
+                f"vote-duplicates-{pre_vote}",
+                trace(
+                    [
+                        *base,
+                        queue_point(0, pre_vote),
+                        send,
+                        queue_length(2),
+                        queue_point(1, pre_vote),
+                    ]
+                ),
+                "sat",
+            )
+            self.solve(
+                f"vote-not-deduplicated-{pre_vote}",
+                trace([*base, send, queue_length(1)]),
+                "unsat",
+            )
+            wrong_fields = {
+                "kind": "requestVoteRequest" if pre_vote else "requestPreVote",
+                "term": 5,
+                "lastCommittableTerm": 1,
+                "lastCommittableIndex": 1,
+                "source": "b",
+                "destination": "a",
+            }
+            for field, wrong in wrong_fields.items():
+                self.solve(
+                    f"vote-wrong-{pre_vote}-{field}",
+                    trace([*base, queue_point(0, pre_vote, **{field: wrong})]),
+                    "unsat",
+                )
+
+    def test_vote_initial_queues_and_history(self):
+        for name, instructions, expected in (
+            (
+                "late-initial-packet",
+                [vote(), queue_point(0, term=7), queue_point(1), queue_length(2)],
+                "sat",
+            ),
+            (
+                "late-initial-source",
+                [queue_length(1), queue_point(0, source="b")],
+                "unsat",
+            ),
+            (
+                "malformed-initial-destination",
+                [queue_length(1), queue_point(0, destination="a")],
+                "sat",
+            ),
+            (
+                "initial-packet-conflict",
+                [queue_point(0, term=7), vote(), queue_point(0, term=8)],
+                "unsat",
+            ),
+            (
+                "queue-frame",
+                [queue_length(3, "b", "a"), vote(), queue_length(3, "b", "a")],
+                "sat",
+            ),
+            (
+                "queue-frame-conflict",
+                [queue_length(3, "b", "a"), vote(), queue_length(4, "b", "a")],
+                "unsat",
+            ),
+            ("point-live-bound", [queue_length(0), vote(), queue_point(1)], "unsat"),
+            ("term-history", [vote(), observation("currentTerm", 5)], "unsat"),
+            ("late-initial-role", [vote(), observation("role", "leader")], "unsat"),
+            (
+                "combined-node-and-vote",
+                [action("b"), vote(), observation("role", "follower", "b")],
+                "sat",
+            ),
+        ):
+            with self.subTest(name=name):
+                self.solve(name, trace([*vote_initial(), *instructions]), expected)
+        self.solve(
+            "late-vote-term",
+            trace(
+                [
+                    queue_length(0),
+                    vote(),
+                    queue_point(0, term=7),
+                    observation("currentTerm", 8),
+                ]
+            ),
+            "unsat",
+        )
+
+    def test_vote_scale(self):
+        length = 10**12
+        self.solve(
+            "vote-symbolic-log-and-queue",
+            trace(
+                [
+                    observation("role", "candidate"),
+                    observation("logLength", length),
+                    observation("commit", length),
+                    observation("currentTerm", 4),
+                    entry(length - 1, "signature", term=9),
+                    queue_length(length),
+                    vote(),
+                    queue_length(length + 1),
+                    queue_point(
+                        length, lastCommittableIndex=length, lastCommittableTerm=9
+                    ),
+                ]
+            ),
+            "sat",
+        )
+        nodes = [f"node-{index}" for index in range(21)]
+        self.solve(
+            "vote-twenty-one-nodes",
+            trace(
+                [
+                    observation("logLength", 0, nodes[0]),
+                    vote(source=nodes[0], destination=nodes[-1]),
+                ],
+                nodes=nodes,
+                bootstrap=nodes,
+            ),
+            "sat",
+        )
+        instructions = [
+            observation("role", "candidate"),
+            observation("logLength", 0),
+            observation("currentTerm", 4),
+            queue_length(0),
+        ]
+        for index in range(198):
+            instructions.extend([vote(), queue_length(index + 1)])
+        self.assertEqual(len(instructions), 400)
+        self.solve("vote-four-hundred-records", trace(instructions), "sat")
+
+    def test_initial_packet_domains(self):
+        script = encode(trace([queue_length(1)]))
+        script = script.replace(
+            "(check-sat)",
+            "(declare-const payload (Array Int Entry))\n"
+            "(assert (= (select payload 0) (entry 0 (transaction 7))))\n"
+            "(assert (= (select payload 1) (entry (- 1) signature)))\n(check-sat)",
+        )
+        for kind, schema in PACKET_FIELDS.items():
+            arguments = {
+                field: {
+                    "Int": "0",
+                    "Bool": "false",
+                    "Node": "n0",
+                    "(Array Int Entry)": "payload",
+                }[sort]
+                for field, sort in schema
+            }
+            if kind == "appendEntriesRequest":
+                arguments["entriesLength"] = "1"
+            variants = [("valid", arguments, "sat")]
+            variants.extend(
+                (field, dict(arguments, **{field: "(- 1)"}), "unsat")
+                for field, sort in schema
+                if sort == "Int"
+            )
+            if kind == "appendEntriesRequest":
+                variants.append(
+                    ("live-payload", dict(arguments, entriesLength="2"), "unsat")
+                )
+            for name, values, expected in variants:
+                packet = (
+                    f"(msg_{kind} {' '.join(values[field] for field, _ in schema)})"
+                )
+                constrained = script.replace(
+                    "(check-sat)",
+                    f"(assert (= (select q_n1_n0_cells_0 q_n1_n0_head_0) {packet}))\n(check-sat)",
+                )
+                with self.subTest(kind=kind, name=name):
+                    self.solve_script(
+                        f"packet-domain-{kind}-{name}", constrained, expected
+                    )
 
     def test_state_and_history(self):
         cases = [
@@ -235,6 +518,7 @@ class NativeArraySolverTests(unittest.TestCase):
                     observation("newFollower", True),
                     observation("logLength", 0),
                     observation("commit", 0),
+                    observation("currentTerm", 0),
                 ],
                 "sat",
             ),

@@ -24,7 +24,7 @@ reuse its architecture in the revised encoder.
 The first delivered native-array slice is described in
 [Native-array prototype](README.md#native-array-prototype).
 `Sparse/NativeArrayCheckQuorum.lean` proves direct-array execution equivalence
-for the actual `checkQuorum` action and six observation kinds. The standalone
+for the actual `checkQuorum` action and seven observation kinds. The standalone
 `native_arrays.py` emitter uses native arrays and trace-sized identity sets.
 Its printer is tested against actual Model guards, but is not covered by the
 Lean theorem. Normal `lake build Sparse` includes the new axiom audit.
@@ -41,7 +41,20 @@ Its ordered-trace theorem and delayed initial-array readback cover arbitrary
 initial queues. Packet encoding and Model action guards are not part of this
 storage helper. See [Native FIFO storage](README.md#native-fifo-storage).
 
-Next work is still substantial: the remaining actions, packet and queue
+Vote sends are integrated in `Sparse/NativeArrayVote.lean` and `native_arrays.py`.
+The combined `exists_iff` theorem covers one arbitrary initial state for node
+observations, `checkQuorum`, both vote sends, and source-local queue observations.
+All seven initial packet variants remain representable. Explicit packet
+observations accept vote requests only. Source partitions constrain packet
+sources, not destinations. The JSON adapter and SMT printer remain outside
+the theorem. `NativeArrayVoteFixtureMain` derives 400 cases from actual Model
+functions. See [Native vote sends](README.md#native-vote-sends).
+
+The first 400-record vote case took about 3 ms to encode and 2.24 seconds to
+solve. A combined trillion-entry log and trillion-message initial queue solved
+in about 39 ms. No new representation optimization was needed for this slice.
+
+Next work is still substantial: the remaining actions, receive and payload
 integration, reducer integration, and full initial-state
 materialization. Do not resume the old worker fan-out or claim full encoder
 completion. Finish and measure one action or shared operation at a time.

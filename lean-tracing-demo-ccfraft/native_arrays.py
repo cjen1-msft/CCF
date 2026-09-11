@@ -2,11 +2,11 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the Apache 2.0 License.
 
-"""Native-array checkQuorum prototype, not the complete trace validator.
+"""Native-array checkQuorum and vote-send prototype, not the full trace validator.
 
 Input is reduced Model observations/actions. The Lean correspondence lives in
-Sparse/NativeArrayCheckQuorum.lean; this JSON adapter and SMT printer are trusted.
-Transaction IDs are natural numbers. Entry observation indices are zero-based.
+Sparse/NativeArrayVote.lean; this JSON adapter and SMT printer are trusted.
+Transaction IDs are natural numbers. Log and queue point indices are zero-based.
 """
 
 from __future__ import annotations
@@ -15,6 +15,8 @@ import argparse
 import json
 from pathlib import Path
 
+from native_packets import PACKET_FIELDS, packet_declarations
+from native_queue_arrays import QueueArray
 from Shared.solver import ValidationError, find_cvc5, run_solver
 
 ROLES = ("none", "follower", "preVoteCandidate", "candidate", "leader")
@@ -75,7 +77,10 @@ class Encoder:
             "(declare-datatype Content ((transaction (tx Int)) (signature) "
             "(reconfiguration (members Nodes)) (retiredCommitted (retired Nodes))))",
             "(declare-datatype Entry ((entry (term Int) (content Content))))",
+            "(define-fun entryDomain ((e Entry)) Bool "
+            "(and (<= 0 (term e)) (=> ((_ is transaction) (content e)) (<= 0 (tx (content e))))))",
         ]
+        self.lines.extend(packet_declarations())
         self.refs = {}
         for name, sort in (
             ("allocated", "Bool"),
@@ -83,15 +88,19 @@ class Encoder:
             ("newFollower", "Bool"),
             ("logLength", "Int"),
             ("commit", "Int"),
+            ("currentTerm", "Int"),
             ("logs", "(Array Int Entry)"),
         ):
             self.refs[name] = name + "_0"
             self.lines.append(f"(declare-const {name}_0 (Array Node {sort}))")
         self.log_domains: set[str] = set()
+        self.queues: dict[tuple[str, str], QueueArray] = {}
+        self.configuration_indices: dict[tuple[str, ...], str] = {}
+        self.election_snapshots: dict[tuple[str, ...], tuple[str, str]] = {}
         self.event = 0
         self.clause = 0
         for node in self.nodes.values():
-            for name in ("logLength", "commit"):
+            for name in ("logLength", "commit", "currentTerm"):
                 self.lines.append(f"(assert (<= 0 (select {self.refs[name]} {node})))")
 
     def node(self, value: object, where: str) -> str:
@@ -127,6 +136,7 @@ class Encoder:
             "newFollower": "true",
             "logLength": "0",
             "commit": "0",
+            "currentTerm": "0",
         }
         return f"(ite {self.read('allocated', node)} {cell} {default[name]})"
 
@@ -138,8 +148,7 @@ class Encoder:
             entry = f"(select {log} k)"
             self.assertion(
                 f"(forall ((k Int)) (=> (and (<= 0 k) (< k {self.read('logLength', node)})) "
-                f"(and (<= 0 (term {entry})) "
-                f"(=> ((_ is transaction) (content {entry})) (<= 0 (tx (content {entry})))))))"
+                f"(entryDomain {entry})))"
             )
         return log
 
@@ -164,19 +173,23 @@ class Encoder:
             )
         return f"(entry {term} {encoded})"
 
-    def check_quorum(self, node: str) -> None:
-        """Encode the proved current-index and active-peer characterizations."""
+    def log_key(self, node: str) -> tuple[str, ...]:
+        return tuple(
+            self.refs[field] for field in ("logs", "logLength", "commit", "allocated")
+        ) + (node,)
+
+    def configuration_index(self, node: str) -> str:
+        """Share the reader only while its observed state components are unchanged."""
+        key = self.log_key(node)
+        if key in self.configuration_indices:
+            return self.configuration_indices[key]
         log = self.log(node)
         length, commit = self.read("logLength", node), self.read("commit", node)
-        current, clip, witness = (
-            f"{name}_{self.event}" for name in ("current", "clip", "witness")
-        )
-        for name in (current, clip, witness):
+        current, clip = (f"{name}_{node}_{self.event}" for name in ("current", "clip"))
+        for name in (current, clip):
             self.lines.append(f"(declare-const {name} Int)")
         self.assertion(f"(= {clip} (ite (< {commit} {length}) {commit} {length}))")
         config = lambda index: f"(content (select {log} (- {index} 1)))"
-        self.assertion(self.read("allocated", node))
-        self.assertion(f"(= {self.read('role', node)} r_leader)")
         self.assertion(
             f"(and (<= 0 {current}) (<= {current} {clip}) "
             f"(or (= {current} 0) ((_ is reconfiguration) {config(current)})))"
@@ -185,15 +198,28 @@ class Encoder:
             f"(forall ((k Int)) (=> (and (< {current} k) (<= k {clip})) "
             f"(not ((_ is reconfiguration) {config('k')}))))"
         )
-        position = int(node[1:])
-        self_bit = f"(_ bv{1 << position} {self.width})"
+        self.configuration_indices[key] = current
+        return current
+
+    def active_peer(self, node: str, candidates: str) -> None:
+        current = self.configuration_index(node)
+        log, length = self.log(node), self.read("logLength", node)
+        witness = f"active_witness_{node}_{self.event}"
+        self.lines.append(f"(declare-const {witness} Int)")
+        config = lambda index: f"(content (select {log} (- {index} 1)))"
         zero = f"(_ bv0 {self.width})"
-        other = lambda mask: f"(distinct (bvand {mask} (bvnot {self_bit})) {zero})"
+        other = lambda mask: f"(distinct (bvand {mask} {candidates}) {zero})"
         self.assertion(
             f"(or (and (= {current} 0) {other(self.bootstrap)}) "
             f"(and (<= 1 {witness}) (<= {witness} {length}) (<= {current} {witness}) "
             f"((_ is reconfiguration) {config(witness)}) {other(f'(members {config(witness)})')}))"
         )
+
+    def check_quorum(self, node: str) -> None:
+        """Encode the proved current-index and active-peer characterizations."""
+        self.assertion(self.read("allocated", node))
+        self.assertion(f"(= {self.read('role', node)} r_leader)")
+        self.active_peer(node, f"(bvnot (_ bv{1 << int(node[1:])} {self.width}))")
         for name, sort, value in (
             ("role", "Role", "r_follower"),
             ("newFollower", "Bool", "true"),
@@ -202,6 +228,96 @@ class Encoder:
             self.refs[name] = f"{name}_{self.event + 1}"
             self.lines.append(f"(declare-const {self.refs[name]} (Array Node {sort}))")
             self.assertion(f"(= {self.refs[name]} (store {old} {node} {value}))")
+
+    def election_snapshot(self, node: str) -> tuple[str, str]:
+        key = self.log_key(node)
+        if key in self.election_snapshots:
+            return self.election_snapshots[key]
+        log, length = self.log(node), self.read("logLength", node)
+        signature, index, term = (
+            f"{name}_{node}_{self.event}"
+            for name in ("signature", "last_index", "last_term")
+        )
+        for name in (signature, index, term):
+            self.lines.append(f"(declare-const {name} Int)")
+        self.assertion(
+            f"(and (<= 0 {signature}) (<= {signature} {length}) "
+            f"(or (= {signature} 0) ((_ is signature) (content (select {log} (- {signature} 1))))))"
+        )
+        self.assertion(
+            f"(forall ((k Int)) (=> (and (< {signature} k) (<= k {length})) "
+            f"(not ((_ is signature) (content (select {log} (- k 1)))))))"
+        )
+        commit = self.read("commit", node)
+        self.assertion(
+            f"(= {index} (ite (< {commit} {signature}) {signature} {commit}))"
+        )
+        self.assertion(
+            f"(= {term} (ite (and (< 0 {index}) (<= {index} {length})) "
+            f"(term (select {log} (- {index} 1))) 0))"
+        )
+        self.election_snapshots[key] = index, term
+        return index, term
+
+    def emit_queue(self, queue: QueueArray) -> None:
+        for command in queue.commands:
+            if command.startswith("(assert "):
+                self.assertion(command[len("(assert ") : -1])
+            else:
+                self.lines.append(command)
+        queue.commands.clear()
+
+    def queue(self, source: str, destination: str) -> QueueArray:
+        key = source, destination
+        if key not in self.queues:
+            queue = QueueArray(f"q_{destination}_{source}", "Packet")
+            self.queues[key] = queue
+            self.emit_queue(queue)
+            packet = f"(select {queue.cells} (+ {queue.head} i))"
+            self.assertion(
+                f"(forall ((i Int)) (=> (and (<= 0 i) (< i {queue.length})) "
+                f"(and (= (messageSource {packet}) {source}) (messageDomain {packet}))))"
+            )
+        return self.queues[key]
+
+    def request_vote(self, source: str, destination: str, pre_vote: bool) -> None:
+        self.assertion(self.read("allocated", source))
+        self.assertion(self.read("allocated", destination))
+        role = "preVoteCandidate" if pre_vote else "candidate"
+        self.assertion(f"(= {self.read('role', source)} r_{role})")
+        self.assertion(f"(distinct {source} {destination})")
+        self.active_peer(source, f"(_ bv{1 << int(destination[1:])} {self.width})")
+        index, term = self.election_snapshot(source)
+        kind = "requestPreVote" if pre_vote else "requestVoteRequest"
+        packet = f"(msg_{kind} {self.read('currentTerm', source)} {term} {index} {source} {destination})"
+        queue = self.queue(source, destination)
+        queue.send(packet)
+        self.emit_queue(queue)
+
+    def packet(self, value: object) -> str:
+        if not isinstance(value, dict) or value.get("kind") not in (
+            "requestVoteRequest",
+            "requestPreVote",
+        ):
+            raise ValidationError(
+                "queuePoint: only vote-request packet observations are supported"
+            )
+        kind = value["kind"]
+        schema = PACKET_FIELDS[kind]
+        fields(
+            value,
+            {"kind", *(name for name, _ in schema)},
+            f"instruction {self.event} packet",
+        )
+        arguments = [
+            (
+                self.node(value[name], f"packet.{name}")
+                if sort == "Node"
+                else str(natural(value[name], f"packet.{name}"))
+            )
+            for name, sort in schema
+        ]
+        return f"(msg_{kind} {' '.join(arguments)})"
 
     def render(self) -> str:
         """Reject unsupported input rather than silently weakening the trace."""
@@ -216,13 +332,46 @@ class Encoder:
                 "newFollower",
                 "logLength",
                 "commit",
+                "currentTerm",
                 "entry",
                 "checkQuorum",
+                "requestVote",
+                "requestPreVote",
+                "queueLength",
+                "queuePoint",
             }
             if not isinstance(kind, str) or kind not in supported:
                 raise ValidationError(
                     f"instruction {self.event}: unsupported kind {kind!r}"
                 )
+            if kind in {"requestVote", "requestPreVote", "queueLength", "queuePoint"}:
+                expected = {"kind", "source", "destination"}
+                if kind in {"queueLength", "queuePoint"}:
+                    expected.add("value")
+                if kind == "queuePoint":
+                    expected.add("index")
+                fields(instruction, expected, f"instruction {self.event}")
+                source = self.node(
+                    instruction["source"], f"instruction {self.event} source"
+                )
+                destination = self.node(
+                    instruction["destination"], f"instruction {self.event} destination"
+                )
+                if kind in {"requestVote", "requestPreVote"}:
+                    self.request_vote(source, destination, kind == "requestPreVote")
+                else:
+                    queue = self.queue(source, destination)
+                    if kind == "queueLength":
+                        queue.observe_length(
+                            str(natural(instruction["value"], "queueLength"))
+                        )
+                    else:
+                        queue.point(
+                            str(natural(instruction["index"], "queuePoint index")),
+                            self.packet(instruction["value"]),
+                        )
+                    self.emit_queue(queue)
+                continue
             expected = {"kind", "node"}
             if kind != "checkQuorum":
                 expected.add("value")
@@ -244,7 +393,7 @@ class Encoder:
                         f"instruction {self.event}: unknown role {value!r}"
                     )
                 value = "r_" + value
-            elif kind in {"logLength", "commit"}:
+            elif kind in {"logLength", "commit", "currentTerm"}:
                 value = str(natural(value, f"instruction {self.event}"))
             else:
                 index = natural(instruction["index"], f"instruction {self.event} index")

@@ -50,12 +50,13 @@ or restricting possible executions is not a performance optimization.
 
 ### Native-array prototype
 
-`native_arrays.py` implements the first slice of the revised design. It accepts
-`checkQuorum` and observations of allocation, role, new-follower status, log
-length, commit index, and exact live entries. Other instructions are errors.
+`native_arrays.py` accepts `checkQuorum`, `requestVote`, and `requestPreVote`.
+Node observations cover allocation, role, new-follower status, current term,
+log length, commit index, and exact live entries. Source-local queues support
+length and exact vote-request packet observations. Other instructions are errors.
 It does not replace the full validator or consume raw CCF traces.
 
-`Sparse/NativeArrayCheckQuorum.lean` proves that its direct-array trace semantics
+`Sparse/NativeArrayVote.lean` proves that the combined direct-array trace semantics
 admit a state exactly when the same observations and actual Model actions admit
 a Model execution. The initial state is arbitrary. The proof covers any finite
 node type and leaves unobserved Model fields unrestricted. The JSON adapter and
@@ -81,7 +82,8 @@ Entry observation indices are zero-based.
 An `entry` observation additionally has an `index` and a value such as
 `{"term": 1, "content": {"reconfiguration": ["a", "b"]}}`. Other contents are
 `"signature"`, `{"transaction": 7}`, and `{"retiredCommitted": ["a"]}`.
-The remaining observation kinds are `allocated`, `newFollower`, and `commit`.
+The remaining node observation kinds are `allocated`, `newFollower`, `commit`,
+and `currentTerm`.
 Role values use the Model names `none`, `follower`, `preVoteCandidate`,
 `candidate`, and `leader`.
 
@@ -116,6 +118,65 @@ Additional cases cover state framing, contradictory later observations, absent
 defaults, live-tail separation, 21 identities, symbolic logs, and explicit input
 rejection. `CCF_NATIVE_ARRAY_ARTIFACTS=/path/to/output` retains the emitted
 formulas, solver output, and `measurements.json` for comparison.
+
+### Native vote sends
+
+Vote sends append to the queue selected by source and destination. They require
+allocated endpoints, distinct identities, the matching candidate role, and
+destination membership in the source's active configuration union. Both actions
+leave node state unchanged. Equal sends occupy distinct queue positions.
+
+```json
+{
+  "nodes": ["a", "b"],
+  "bootstrap": ["a", "b"],
+  "instructions": [
+    {"kind": "role", "node": "a", "value": "candidate"},
+    {"kind": "logLength", "node": "a", "value": 0},
+    {"kind": "currentTerm", "node": "a", "value": 4},
+    {"kind": "commit", "node": "a", "value": 0},
+    {"kind": "queueLength", "source": "a", "destination": "b", "value": 0},
+    {"kind": "requestVote", "source": "a", "destination": "b"},
+    {"kind": "queuePoint", "source": "a", "destination": "b", "index": 0,
+     "value": {"kind": "requestVoteRequest", "term": 4,
+               "lastCommittableTerm": 0, "lastCommittableIndex": 0,
+               "source": "a", "destination": "b"}}
+  ]
+}
+```
+
+For pre-votes, use role `preVoteCandidate` and action and packet kind
+`requestPreVote`. Queue point indices are zero-based offsets from the live head.
+The packet's last committable index is the maximum of the commit index and
+the last signature index. Its term is zero if that index is zero or outside
+the live log. Arbitrary initial state does not imply monotone log terms or
+a commit index bounded by log length.
+
+Initial queues remain arbitrary. All seven Model packet variants are available
+to the solver, although explicit packet observations currently accept only
+vote requests. Each live packet's source must match its source partition.
+A packet's destination need not match its containing queue, as the Model permits
+malformed initial queues. Initial packet and entry tails remain irrelevant.
+
+`NativeArrayVote.exists_iff` covers one initial Model state for the entire
+combined node-and-queue trace. The theorem does not cover the Python adapter
+or SMT printer. Configuration and signature readers share a scalar summary
+only while their state-version keys match.
+
+```bash
+nice -n 10 lake build Sparse Sparse.NativeArrayVoteFixtureMain
+CCF_NATIVE_ARRAY_TESTS=1 CVC5=/path/to/cvc5 \
+  python3 -m unittest discover -s tests -p 'test_native*arrays.py' -v
+```
+
+The vote fixture derives 400 verdicts and packet snapshots from actual Model
+functions. It covers both send actions, current and pending configurations,
+signature and commit frontiers, nonmonotone terms, and initial duplicates.
+Additional cases cover every initial packet variant's numeric domains,
+late observations, malformed destinations, source isolation, and 21 identities.
+The first combined trillion-entry log and trillion-message queue case took
+about 39 ms to solve. A synthetic 400-record vote trace took about 3 ms to encode
+and 2.24 seconds to solve. These are not full-action trace benchmarks.
 
 ### FIFO Model sends
 
@@ -161,8 +222,8 @@ source to match its source partition.
 
 `native_queue_arrays.QueueArray` emits these storage commands for a
 caller-supplied SMT element sort. It accepts trusted generated SMT terms,
-not raw trace input. Packet encoding and Model action guards still need to be
-integrated. The printer remains outside the Lean theorem.
+not raw trace input. The vote-send prototype integrates packet sorts and the
+two vote-send guards. The printer remains outside the Lean theorem.
 
 Named array versions retain earlier boundaries. Later observations can
 constrain and materialize values in the original queue. Cells before the live

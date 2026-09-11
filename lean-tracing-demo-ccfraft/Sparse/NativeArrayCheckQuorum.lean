@@ -107,7 +107,7 @@ def OtherAt (log : Log N T) (current : Nat) (node : N) : Prop :=
     exists index nodes, current <= index /\ Reconfiguration log index nodes /\
       exists peer, peer ∈ nodes /\ peer ≠ node
 
-private theorem mem_union (configurations : List (Configuration N)) (initial : Finset N) (peer : N) :
+theorem mem_union (configurations : List (Configuration N)) (initial : Finset N) (peer : N) :
     peer ∈ configurations.foldl (fun nodes configuration => nodes ∪ configuration.nodes) initial <->
       peer ∈ initial \/ exists configuration, configuration ∈ configurations /\ peer ∈ configuration.nodes := by
   induction configurations generalizing initial with
@@ -146,23 +146,24 @@ structure Local (N T : Type) where
   isNewFollower : Bool
   commit : Nat
   log : Log N T
+  currentTerm : Nat
 
 def Local.fresh : Local N T :=
-  { role := .none, isNewFollower := true, commit := 0,
+  { role := .none, isNewFollower := true, commit := 0, currentTerm := 0,
     log := { length := 0, entries := fun _ => { term := 0, content := .signature } } }
 
 def Local.ofModel (state : NodeState N T) : Local N T :=
   { role := state.role, isNewFollower := state.isNewFollower,
-    commit := state.commitIndex, log := Log.ofList state.log }
+    commit := state.commitIndex, log := Log.ofList state.log, currentTerm := state.currentTerm }
 
 def Local.toModel (row : Local N T) : NodeState N T :=
   { (freshNodeState : NodeState N T) with
     role := row.role, isNewFollower := row.isNewFollower,
-    commitIndex := row.commit, log := row.log.decode }
+    commitIndex := row.commit, log := row.log.decode, currentTerm := row.currentTerm }
 
 def Local.Rep (row : Local N T) (state : NodeState N T) : Prop :=
   row.role = state.role /\ row.isNewFollower = state.isNewFollower /\
-    row.commit = state.commitIndex /\ row.log.decode = state.log
+    row.commit = state.commitIndex /\ row.log.decode = state.log /\ row.currentTerm = state.currentTerm
 
 abbrev Arrays (N T : Type) := N -> Option (Local N T)
 
@@ -199,10 +200,10 @@ theorem enabled_correct (arrays : Arrays N T) (state : State N T) (rep : Rep arr
   apply and_congr Iff.rfl
   apply and_congr Iff.rfl
   simp only [current_index_correct]
-  rw [show (get arrays node).log.decode = (state.nodes node).log from fields.2.2.2,
+  rw [show (get arrays node).log.decode = (state.nodes node).log from fields.2.2.2.1,
     show (get arrays node).commit = (state.nodes node).commitIndex from fields.2.2.1]
   simp only [exists_eq_left']
-  exact other_at_correct _ _ node fields.2.2.2.symm
+  exact other_at_correct _ _ node fields.2.2.2.1.symm
 
 theorem step_correct (arrays : Arrays N T) (state : State N T) (rep : Rep arrays state) (node : N) :
     Rep (step arrays node) (CCFRaft.next state (.checkQuorum node)) := by
@@ -238,6 +239,7 @@ inductive Instruction (N T : Type) where
   | newFollower (node : N) (expected : Bool)
   | logLength (node : N) (expected : Nat)
   | commit (node : N) (expected : Nat)
+  | currentTerm (node : N) (expected : Nat)
   | entry (node : N) (index : Nat) (expected : Entry N T)
   | checkQuorum (node : N)
 
@@ -248,6 +250,7 @@ def follows (arrays : Arrays N T) : List (Instruction N T) -> Prop
   | .newFollower node expected :: rest => (get arrays node).isNewFollower = expected /\ follows arrays rest
   | .logLength node expected :: rest => (get arrays node).log.length = expected /\ follows arrays rest
   | .commit node expected :: rest => (get arrays node).commit = expected /\ follows arrays rest
+  | .currentTerm node expected :: rest => (get arrays node).currentTerm = expected /\ follows arrays rest
   | .entry node index expected :: rest =>
     (index < (get arrays node).log.length /\ (get arrays node).log.entries index = expected) /\
       follows arrays rest
@@ -260,6 +263,7 @@ def modelFollows (state : State N T) : List (Instruction N T) -> Prop
   | .newFollower node expected :: rest => (state.nodes node).isNewFollower = expected /\ modelFollows state rest
   | .logLength node expected :: rest => (state.nodes node).log.length = expected /\ modelFollows state rest
   | .commit node expected :: rest => (state.nodes node).commitIndex = expected /\ modelFollows state rest
+  | .currentTerm node expected :: rest => (state.nodes node).currentTerm = expected /\ modelFollows state rest
   | .entry node index expected :: rest => (state.nodes node).log[index]? = some expected /\ modelFollows state rest
   | .checkQuorum node :: rest =>
     CCFRaft.Enabled state (.checkQuorum node) /\ modelFollows (CCFRaft.next state (.checkQuorum node)) rest
@@ -281,14 +285,16 @@ theorem follows_correct (trace : List (Instruction N T)) (arrays : Arrays N T) (
       simp only [follows, modelFollows, (get_rep arrays state rep node).2.1, ih arrays state rep]
     | logLength node expected =>
       have fields := get_rep arrays state rep node
-      have same := congrArg List.length fields.2.2.2
+      have same := congrArg List.length fields.2.2.2.1
       simp only [Log.decode_length] at same
       simp only [follows, modelFollows, same, ih arrays state rep]
     | commit node expected =>
       simp only [follows, modelFollows, (get_rep arrays state rep node).2.2.1, ih arrays state rep]
+    | currentTerm node expected =>
+      simp only [follows, modelFollows, (get_rep arrays state rep node).2.2.2.2, ih arrays state rep]
     | entry node index expected =>
       simp only [follows, modelFollows, Log.entry_correct,
-        (get_rep arrays state rep node).2.2.2, ih arrays state rep]
+        (get_rep arrays state rep node).2.2.2.1, ih arrays state rep]
     | checkQuorum node =>
       exact and_congr (enabled_correct arrays state rep node)
         (ih _ _ (step_correct arrays state rep node))
