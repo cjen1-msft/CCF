@@ -17,6 +17,7 @@ import Sparse.JointIntervalEncoding
 import Sparse.MonotoneIntervals
 import Sparse.PacketIdentity
 import Sparse.PacketRealization
+import Sparse.PacketQueueWitness
 import Sparse.QueueEncoding
 import Sparse.QueueInitialEncoding
 import Sparse.QueueObservationBounds

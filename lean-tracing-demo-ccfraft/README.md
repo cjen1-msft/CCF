@@ -63,6 +63,9 @@ reads. Graph consistency and emitted packet constraints remain separate work.
 `FiniteQueueTransport` proves whole-queue transport using only an equivalence
 between finite tracked supports and fresh fillers. Untracked values can collapse
 to one filler without losing queue positions or initial multiplicities.
+`PacketQueueWitness` derives those supports and fillers from complete
+source-local packets. Exact key equality is still a required premise, not
+an emitted packet constraint.
 `ConfigurationSnapshot` characterizes complete positive-index Model snapshots
 with finite frontier queries. Raw callback-phase mapping is still separate.
 `ConfigurationPublication` is a separate local candidate for one successful
@@ -80,6 +83,8 @@ and order functions. `QueueTraceEncoding` closes both directions for the actual 
 script: satisfiability is equivalent to one initial Int queue executing the
 entire unconditional event trace. It derives tracked-key coverage, alignment,
 and a fresh filler without caller premises or a capacity bound.
+Its initial compiler caches count and scalar formulas across allocation stages.
+The compiler rewrite preserves the exact assertion list and generated IDs.
 Conditional operations and complete packet keys remain separate work.
 `QueueSummaryEncoding` composes the whole-queue compiler with proved presence
 normalization. It removes sends known to leave the queue unchanged, while

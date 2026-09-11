@@ -61,6 +61,7 @@ New repository bridges extend that foundation:
 | `Sparse/EntrySelectorSemantics.lean` | Total wrong-constructor selector interpretations are represented without restriction. Correctly guarded reads are interpretation-independent, with strict branch-success requirements. |
 | `Sparse/PacketIdentity.lean` | Complete packet equality/disequality is characterized by seven-tag headers, lengths, and bounded entry equality/mismatch. Both identity directions yield an injective finite key-class map. |
 | `Sparse/PacketRealization.lean` | One unique complete packet family follows from valid flat descriptors and shared Entry reads. Identity depends only on complete headers, lengths, and live entries. |
+| `Sparse/PacketQueueWitness.lean` | Exact finite packet-key identity yields whole-queue existence in both directions, with generated supports and fillers and one shared-read packet family. |
 | `Sparse/AppendEntriesRanges.lean` | Actual send/receive index alignment. Enabled sends contain at most one entry; arbitrary initial packets remain unbounded. |
 | `Sparse/FiniteMembership.lean` | One finite initial set for a complete membership/insert trace, preserving key aliases. |
 | `Sparse/FiniteQueueTransport.lean` | Whole-queue existence transports through finite tracked-support equivalence and fresh fillers. Untracked contents may collapse, but no queue positions are lost. |
@@ -191,8 +192,7 @@ Entry read family and flat descriptors. Its optional addresses allow empty
 packets without dummy arrays. Nonempty payloads require an address, and
 nonappend tags require zero payload length. Shared graph consistency remains
 a composition premise. The unit has a target build and independent review.
-Conditional equality/mismatch emission and packet-specific queue transport
-remain open. Initial packet payloads must not
+Conditional equality/mismatch emission remains open. Initial packet payloads must not
 be equated with current sender logs, and whole-array tail equality is not
 finite-payload identity.
 
@@ -200,7 +200,12 @@ finite-payload identity.
 value equivalence. It separates every tracked key from all other values, while
 allowing untracked values to share a fresh filler. Both directions preserve
 initial queue length and multiplicities. The parent reviewed and built this
-unit. Linking the finite supports to complete packet descriptions remains open.
+unit. `PacketQueueWitness` constructs the supports and fillers from complete
+source-local packet occurrences with exact key-equality classes. Its shared-read
+corollary retains descriptor validity and source conditions. Both directions
+preserve one initial queue for the entire trace, including duplicate positions.
+Destination need not equal the queue source. Packet-key constraints, conditional
+events, and whole-network composition are still separate obligations.
 
 Configuration snapshots are derived Model observations, not a mutable global
 configuration variable. Empty positive-index snapshots do not remove implicit
@@ -267,6 +272,15 @@ of formula construction and 2.035 seconds in cvc5. Formula construction is
 the next emitter bottleneck. Fifteen native cases compare the hash collector,
 compiled collection, allocation bounds, and complete scripts against the
 explicit old list algorithm.
+
+`QueueInitialEncoding.encodeCached` then removes repeated count and scalar
+construction across allocation stages. Its kernel-proved compiler equality
+preserves the exact assertion list, IDs, reservations, and script bytes.
+The permanent queue fixtures compare 24 cases with the original construction.
+The parent four-key 400-event cycle run now takes 0.450 seconds for emission
+and 2.520 seconds including cvc5, with the same 400,062-byte script.
+The two-second target remains unmet. Count-formula construction accounts for
+most remaining emitter time.
 
 `QueueInitialEncoding` adds initial prefix histograms and alias-aware budgets.
 Its key list is syntactically unique. Distinct symbolic names remain separate
