@@ -198,12 +198,6 @@ def Term.syntax : {context : List Ty} -> {sort : Ty} -> Term context sort -> Nat
 def Term.render {context : List Ty} {sort : Ty} (expression : Term context sort) : String :=
   expression.syntax.render
 
-def prelude : List String := [
-  "(set-logic ALL)",
-  "(declare-datatype NativeUnit ((native_unit)))",
-  "(declare-datatypes ((NativePair 2)) ((par (A B) ((native_pair (native_fst A) (native_snd B))))))",
-  "(declare-datatypes ((NativeSum 2)) ((par (A B) ((native_left (native_left_value A)) (native_right (native_right_value B))))))"]
-
 def Term.symbols : {context : List Ty} -> {sort : Ty} -> Term context sort -> List (Ty × Nat)
   | _, _, .free sort id => [(sort, id)]
   | _, _, .boolean _ | _, _, .integer _ | _, _, .unit | _, _, .bits _ | _, _, .bound _ => []
@@ -216,17 +210,6 @@ def Term.symbols : {context : List Ty} -> {sort : Ty} -> Term context sort -> Li
   | _, _, .bitsNot value | _, _, .bit value _ => value.symbols
   | _, _, .ite first second third | _, _, .store first second third
   | _, _, .cases first second third => first.symbols ++ second.symbols ++ third.symbols
-
-def assertionName (index : Nat) : String := s!"assertion_{index}"
-
-def renderScript (assertions : List (Term [] .bool)) (named : Bool := false) : String :=
-  let symbols := (assertions.flatMap Term.symbols).dedup
-  let declarations := symbols.map fun (sort, id) =>
-    s!"(declare-const {symbolName sort id} {sort.render})"
-  String.intercalate "\n" (prelude ++ declarations ++
-    assertions.mapIdx (fun index expression =>
-      if named then s!"(assert (! {expression.render} :named {assertionName index}))"
-      else s!"(assert {expression.render})") ++ ["(check-sat)", ""])
 
 theorem select_store (assignment : Assignment) {context : List Ty} {key value : Ty}
     (locals : Locals context) (array : Term context (.array key value))

@@ -190,8 +190,15 @@ sorts even when one branch is not selected.
 `Term.closed_render_eval` starts from an empty named environment.
 Both modules pass the normal Sparse axiom audit without new axioms or budgets.
 
-The next Lean slice covers the datatype prelude, declarations, named assertion
-wrappers, and complete script parsing and interpretation. Then compose it with
+`NativeScript` now owns `renderScript`, which renders explicit command trees
+instead of interpolating command strings. Its kernel proof pins the exact
+datatype prelude. `NativeScriptSyntax` proves that every generated command
+parses back to its tree and that declarations parse to their original sort
+and ID. Mismatched sorts and bound-variable names fail declaration parsing.
+The refactor preserves all 150 old Model-case scripts byte for byte.
+
+The next Lean slice covers complete script parsing, declaration coverage,
+named assertion interpretation, and command sequencing. Then compose it with
 `compiled_trace_iff`. Do not flip the full Model-to-script assurance flag yet.
 JSON decoding, remaining action coverage, and raw reducer integration
 still need their documented delivery work.

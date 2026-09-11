@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeValues
+import Sparse.NativeScript
 import Sparse.NativeArrayCheckQuorum
 import Lean.Data.Json
 

@@ -90,6 +90,10 @@ arities. `NativeLowering.Term.render_eval` proves that parsing and interpreting
 every emitted term gives its typed value. This covers operators, named binders,
 arrays, bitvectors, products, and sums. It does not cover script commands,
 declarations, or the datatype prelude.
+`NativeScript` also builds script commands as explicit trees.
+`NativeScriptSyntax` proves each command's text round trip and checks that a
+declaration's parsed sort agrees with its symbol name. The emitted prelude
+is pinned by a kernel proof. Full script interpretation remains separate.
 `NativeSmtFixtureMain` carries kernel-checked expected verdicts for emitted
 formulas. `NativeEncodeProofs` covers configuration selectors, bitset decoding,
 and allocation-guarded read specialization.
