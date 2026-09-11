@@ -75,6 +75,7 @@ New repository bridges extend that foundation:
 | `Sparse/QueueScalarEncoding.lean` | Adds exact guards, windows, shared order, and nonnegative initial length under one assignment, preserving every reserved count function. |
 | `Sparse/QueueInitialEncoding.lean` | Adds the initial prefix histogram and alias-aware distinct-key budget with a constructive assignment extension that preserves input, counts, windows, and order. |
 | `Sparse/ConditionalQueueAccounting.lean` | Fixed-Boolean guarded replay equals selected cursor replay. Active pops and a pending peek give the exact bounded read histogram under shared-order agreement. |
+| `Sparse/ConditionalQueueEncoding.lean` | Typed guard bindings preserve source terms/functions and give exact single-clause active/inactive count and scalar equations under one allocated assignment. |
 | `Sparse/QueueTraceEncoding.lean` | The actual emitted formula and rendered text are satisfiable iff one initial Int queue of the interpreted length executes the whole unconditional event trace under the original input. |
 | `Sparse/QueueSummaryEncoding.lean` | Proved presence normalization removes redundant sends before whole-queue emission, preserving the same initial queue and the original trace existence contract. |
 | `Sparse/ReadbackHints.lean` | Unequal observed projection values justify key disequality and skipping a store. |
@@ -372,8 +373,15 @@ The histogram equals the occurrence count in the selected `readHeads` prefix,
 including repeated or aliased keys. The cursor corollary derives order agreement
 from replay, without an additional initial-state invariant.
 Its function-update summary is a semantic reference, not the runtime emitter.
-Typed guards, flat inactive-write equations, allocation, and whole-queue
-completion remain separate work.
+`ConditionalQueueEncoding` binds original typed guards to flat references,
+without asserting the guards themselves. It proves single-clause correspondence
+for active updates and inactive count/head/tail identity, preserving original
+terms and complete external functions through allocation. Guard event indices
+are independent of count-write IDs. Supplied count states require explicit
+source and target range proofs.
+These equations cover only the listed keys, not entire generated count UFs.
+Whole-trace annotation, coherent total count-family construction, conditional
+histogram composition, and concrete-queue completion remain open.
 
 The initial-accounting fixtures include 20 focused cases and 486 two-event
 cases compared with a concrete queue interpreter. Those pairs use nine event

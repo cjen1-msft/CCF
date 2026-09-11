@@ -4,6 +4,7 @@ import Sparse.AppendEntriesRanges
 import Sparse.ConfigurationSnapshot
 import Sparse.ConfigurationPublication
 import Sparse.ConditionalQueueAccounting
+import Sparse.ConditionalQueueEncoding
 import Sparse.EntryValue
 import Sparse.EntryPredicate
 import Sparse.EntrySelectorSemantics

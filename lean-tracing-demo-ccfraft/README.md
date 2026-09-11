@@ -102,7 +102,11 @@ Conditional operations and complete packet keys remain separate work.
 equivalent to replaying the selected events. Active pops and one pending peek
 give the exact demanded initial-prefix histogram under shared-order agreement.
 This is a semantic reference, not a guarded SMT compiler or runtime storage
-representation. Typed guard evaluation and concrete-queue completion remain open.
+representation. It does not provide typed guards or concrete-queue completion.
+`ConditionalQueueEncoding` binds typed guards without asserting them and proves
+one clause's active update or inactive count/head/tail identity. Its allocator
+preserves original terms and complete external functions. Whole-trace alignment,
+initial accounting composition, and concrete-queue completion remain open.
 `QueueSummaryEncoding` composes the whole-queue compiler with proved presence
 normalization. It removes sends known to leave the queue unchanged, while
 preserving the same initial queue and every pop, peek, and length observation.
