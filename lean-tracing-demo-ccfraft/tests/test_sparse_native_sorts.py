@@ -128,6 +128,40 @@ class SparseNativeSortTests(unittest.TestCase):
     def test_native_node_scripts(self) -> None:
         self.assert_node_cases(self.load("--nodes"))
 
+    def assert_node_set_cases(self, cases: list[dict]) -> None:
+        self.assertEqual(len(cases), 946)
+        self.assertEqual(Counter(case["expected"] for case in cases), {"sat": 473, "unsat": 473})
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                operation, *values = case["name"].split("-")
+                left = int(values[0])
+                if operation in ("card", "selectorcard"):
+                    holds = left.bit_count() == int(values[1])
+                elif operation == "nonempty":
+                    holds = (left != 0) == (values[1] == "true")
+                else:
+                    right = int(values[1])
+                    if operation == "majority":
+                        holds = (2 * (left & right).bit_count() > right.bit_count()) == (values[2] == "true")
+                    elif operation == "subset":
+                        holds = (left & ~right == 0) == (values[2] == "true")
+                    elif operation == "difference":
+                        holds = left & ~right == int(values[2])
+                    elif operation == "insert":
+                        holds = left | (1 << right) == int(values[2])
+                    elif operation == "erase":
+                        holds = left & ~(1 << right) == int(values[2])
+                    elif operation == "filter":
+                        holds = left & right == int(values[2])
+                    else:
+                        self.fail(f"Unknown node-set operation: {operation}")
+                self.assertEqual(case["expected"], "sat" if holds else "unsat")
+                self.assertEqual(case["prelude"][0], "(set-logic ALL)")
+        self.assert_scripts(cases)
+
+    def test_native_node_set_scripts(self) -> None:
+        self.assert_node_set_cases(self.load("--sets"))
+
     def assert_masks(self, data: dict) -> None:
         self.assertEqual(len(data["masks"]), 32768)
         for expected, (value, text, parsed) in enumerate(data["masks"]):
