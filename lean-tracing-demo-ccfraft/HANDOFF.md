@@ -74,8 +74,8 @@ benchmark. A retained constraint-removal experiment isolated unused peer-table
 domains as the main cost. Fields now declare their original array and domain
 on first read or write, retaining later references and earlier stores.
 The same benchmark then solved in 1.13 seconds, with about 3.9 ms spent encoding.
-The 360-case `NativeArrayNodeFixtureMain` compares complete Model records
-before and after the four supported actions. See
+The 540-case `NativeArrayNodeFixtureMain` compares complete Model records
+before and after the six supported actions. See
 [Native local node state](README.md#native-local-node-state).
 
 Global observations now cover `hasJoined`, `preVoteStatus`,
@@ -86,6 +86,16 @@ Submitted IDs use a Boolean array with an unknown finite upper bound, not an
 exhaustive transaction-ID universe. `NativeArrayNatSet` proves complete finite-set
 representation, and `exists_submitted_array_iff` connects it to the same Model
 execution. See [Native global state](README.md#native-global-state).
+
+`timeout` and `becomePreVoteCandidate` are integrated with exact campaign
+eligibility and complete state effects. A 400-case mode in
+`NativeArrayVoteFixtureMain` compares configuration and signature frontiers
+against actual Model guards. Repeated-timeout encoding took about 4.5 ms for
+400 records and solved in 2.45 seconds. See
+[Native election starts](README.md#native-election-starts).
+The next election step, `becomeCandidate`, needs the active-configuration
+majority reader. Leader promotion additionally changes logs and retirement
+state. Neither is implemented yet.
 
 Next work is still substantial: the remaining actions, receive and log mutation
 integration, reducer integration, and full initial-state

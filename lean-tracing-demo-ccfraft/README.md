@@ -51,7 +51,7 @@ or restricting possible executions is not a performance optimization.
 ### Native-array prototype
 
 `native_arrays.py` accepts `checkQuorum`, `requestVote`, `requestPreVote`, and
-`updateTerm`.
+`updateTerm`, plus `timeout` and `becomePreVoteCandidate`.
 Node observations cover allocation and every local `NodeState` field.
 Logs use length and exact live-entry observations. Source-local queues support
 length and exact packet observations. Other instructions are errors.
@@ -159,8 +159,8 @@ CCF_NATIVE_ARRAY_TESTS=1 CVC5=/path/to/cvc5 \
   python3 -m unittest discover -s tests -p 'test_native*arrays.py' -v
 ```
 
-The node fixture derives 360 cases from complete Model records before and
-after the four supported actions. It covers all membership states, absent
+The node fixture derives 540 cases from complete Model records before and
+after the six supported actions. It covers all membership states, absent
 nodes, optional values, nonempty vote sets, and peer indices beyond log length.
 Declaring unused peer-table domains raised the 400-record combined benchmark
 to 10.4 seconds. First-use declarations reduced it to 1.13 seconds, with about
@@ -185,7 +185,7 @@ need an exhaustive declared universe.
 
 Global fields do not use absent-node defaults. An unallocated identity can
 have enabled pre-votes, appear in join history, or have recorded completed
-retirements. All four currently supported actions preserve global fields.
+retirements. All six currently supported actions preserve global fields.
 
 Submitted transactions use a Boolean array and a symbolic natural upper bound.
 Cells outside the finite nonnegative prefix are false. The bound is unknown,
@@ -196,8 +196,41 @@ enumerate the prefix, even when an observed ID is a trillion.
 `NativeArrayVote.exists_submitted_array_iff` connects that array's decoded set
 to the same initial Model state as the remaining fields. The JSON adapter and
 SMT printer remain outside the theorem. The complete-state fixture now includes
-global observations before and after all four actions, including unallocated
+global observations before and after all six actions, including unallocated
 identities and trillion-valued transaction IDs.
+
+### Native election starts
+
+`{"kind": "timeout", "node": "a"}` starts an ordinary election when pre-voting
+is not enabled. It increments the term, changes the role to `candidate`,
+sets `votedFor` to the node, replaces `votesGranted` with the self vote,
+and clears `preVotesGranted`.
+
+`{"kind": "becomePreVoteCandidate", "node": "a"}` requires enabled pre-voting.
+It changes the role to `preVoteCandidate` and replaces `preVotesGranted` with
+the self pre-vote. It preserves the term and ordinary vote fields.
+
+Both actions require an allocated follower, candidate, or pre-vote candidate,
+with membership other than `retiredCommitted`. The node must belong to an
+active configuration no later than the last signature, or appear in its own
+completed-retirement set. An active configuration after the last signature
+does not authorize campaigning by itself.
+
+The shared execution theorem includes both actions and their complete state
+effects. Current-configuration and signature summaries are reused while their
+input versions remain unchanged. `NativeArrayVoteFixtureMain` generates 400
+Model-derived election-start cases with its `campaign` argument:
+
+```bash
+nice -n 10 lake build Sparse.NativeArrayVoteFixtureMain
+lake env lean --run Sparse/NativeArrayVoteFixtureMain.lean campaign
+CCF_NATIVE_ARRAY_TESTS=1 CVC5=/path/to/cvc5 \
+  python3 -m unittest discover -s tests -p test_native_arrays.py -v
+```
+
+The initial 400-record repeated-timeout benchmark took about 4.5 ms to encode
+and 2.45 seconds to solve. Pre-vote majority promotion through `becomeCandidate`
+and promotion through `becomeLeader` are not yet supported.
 
 ### Native vote sends
 

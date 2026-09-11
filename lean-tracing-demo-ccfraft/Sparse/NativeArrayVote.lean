@@ -69,6 +69,40 @@ theorem signature_index_correct (log : Log N T) (index : Nat) :
   simp only [maxCommittableIndexUpTo, List.take_length, Nat.min_self] at spec
   simpa only [SignatureIndex, signature_at_correct, Log.decode_length] using spec.symm
 
+def CampaignAt (log : Log N T) (current signature : Nat) (node : N) : Prop :=
+  (current = 0 /\ node ∈ INITIAL_CONFIGURATION) \/
+    exists index nodes, current <= index /\ index <= signature /\
+      Reconfiguration log index nodes /\ node ∈ nodes
+
+theorem campaign_at_correct (log : Log N T) (state : NodeState N T) (node : N)
+    (same : state.log = log.decode) :
+    CampaignAt log (currentConfiguration state).index (maxCommittableIndex state.log) node <->
+      campaignEligible node state := by
+  simp only [campaignEligible, List.any_eq_true, decide_eq_true_eq, activeConfigurations,
+    List.mem_filter, allConfigurations, List.mem_cons]
+  constructor
+  · rintro (⟨zero, member⟩ | ⟨index, nodes, lower, upper, physical, member⟩)
+    · exact ⟨implicitConfiguration, ⟨Or.inl rfl, by simp [implicitConfiguration, zero]⟩,
+        member, by simp [implicitConfiguration]⟩
+    · refine ⟨{ index, nodes }, ⟨Or.inr ?_, lower⟩, member, upper⟩
+      rw [same, Sparse.ConfigurationSnapshot.mem_configurations_iff]
+      exact (reconfiguration_correct _ _ _).mp physical
+  · rintro ⟨configuration, ⟨member, lower⟩, included, upper⟩
+    rcases member with implicit | physical
+    · subst configuration
+      exact Or.inl ⟨by simpa [implicitConfiguration] using lower, included⟩
+    · refine Or.inr ⟨configuration.index, configuration.nodes, lower, upper, ?_, included⟩
+      apply (reconfiguration_correct _ _ _).mpr
+      rw [same, Sparse.ConfigurationSnapshot.mem_configurations_iff] at physical
+      exact physical
+
+theorem campaign_member (state : NodeState N T) (node : N) (eligible : campaignEligible node state) :
+    node ∈ activeNodeUnion state := by
+  simp only [campaignEligible, List.any_eq_true, decide_eq_true_eq] at eligible
+  rcases eligible with ⟨configuration, active, member, _⟩
+  simp only [activeNodeUnion, mem_union]
+  exact Or.inr ⟨configuration, active, member⟩
+
 def termAt (log : Log N T) (index : Nat) : Nat :=
   if 0 < index /\ index <= log.length then (log.entries (index - 1)).term else 0
 
@@ -263,10 +297,85 @@ theorem update_term_rep (frame : Frame N T) (state : State N T) (rep : frame.Rep
     · exact rep.queues
     · exact rep.globals
 
+def campaignAction (preVote : Bool) (node : N) : Action N T :=
+  if preVote then .becomePreVoteCandidate node else .timeout node
+
+def campaignEnabled (frame : Frame N T) (preVote : Bool) (node : N) : Prop :=
+  (frame.nodes node).isSome = true /\
+    ((get frame.nodes node).role = .follower \/
+      (get frame.nodes node).role = .preVoteCandidate \/ (get frame.nodes node).role = .candidate) /\
+    (get frame.nodes node).membershipState ≠ .retiredCommitted /\
+    frame.globals.preVoteStatus node = (if preVote then .enabled else .capable) /\
+    exists current, CurrentIndex (get frame.nodes node).log (get frame.nodes node).commit current /\
+      exists signature, SignatureIndex (get frame.nodes node).log signature /\
+        (CampaignAt (get frame.nodes node).log current signature node \/
+          node ∈ frame.globals.retirementCompleted node)
+
+theorem campaign_enabled_correct (frame : Frame N T) (state : State N T) (rep : frame.Rep state)
+    (preVote : Bool) (node : N) :
+    campaignEnabled frame preVote node <-> CCFRaft.Enabled state (campaignAction preVote node) := by
+  have fields := get_rep frame.nodes state rep.nodes node
+  have log : (get frame.nodes node).log.decode = (state.nodes node).log :=
+    congrArg NodeState.log fields
+  have commit : (get frame.nodes node).commit = (state.nodes node).commitIndex :=
+    congrArg NodeState.commitIndex fields
+  have role : (get frame.nodes node).role = (state.nodes node).role :=
+    congrArg NodeState.role fields
+  have membership : (get frame.nodes node).membershipState = (state.nodes node).membershipState :=
+    congrArg NodeState.membershipState fields
+  have ready :
+      (exists current, CurrentIndex (get frame.nodes node).log (get frame.nodes node).commit current /\
+        exists signature, SignatureIndex (get frame.nodes node).log signature /\
+          (CampaignAt (get frame.nodes node).log current signature node \/
+            node ∈ frame.globals.retirementCompleted node)) <->
+      (campaignEligible node (state.nodes node) \/ node ∈ state.retirementCompleted node) := by
+    simp only [current_index_correct, signature_index_correct, log, commit,
+      rep.globals, Globals.ofModel, exists_eq_left']
+    exact or_congr (campaign_at_correct _ _ node log.symm) Iff.rfl
+  have redundant :
+      (node ∈ activeNodeUnion (state.nodes node) /\
+        campaignEligible node (state.nodes node)) <->
+      campaignEligible node (state.nodes node) :=
+    ⟨And.right, fun eligible => ⟨campaign_member _ _ eligible, eligible⟩⟩
+  simp only [campaignEnabled, ready]
+  cases preVote <;> cases status : state.preVoteStatus node <;>
+    simp [campaignAction, CCFRaft.Enabled,
+      allocated_rep frame.nodes state rep.nodes, rep.globals, Globals.ofModel,
+      role, membership, status, redundant, and_comm, and_left_comm]
+
+def Frame.campaign (frame : Frame N T) (preVote : Bool) (node : N) : Frame N T :=
+  let row := get frame.nodes node
+  let updated := if preVote then { row with role := .preVoteCandidate, preVotesGranted := {node} }
+    else
+      { row with
+        role := .candidate
+        currentTerm := row.currentTerm + 1
+        votedFor := some node
+        votesGranted := {node}
+        preVotesGranted := ∅ }
+  { frame with nodes := Function.update frame.nodes node (some updated) }
+
+theorem campaign_rep (frame : Frame N T) (state : State N T) (rep : frame.Rep state)
+    (preVote : Bool) (node : N) :
+    (frame.campaign preVote node).Rep (CCFRaft.next state (campaignAction preVote node)) := by
+  constructor
+  · intro peer
+    by_cases same : peer = node
+    · subst peer
+      have fields := get_rep frame.nodes state rep.nodes node
+      cases preVote <;>
+        simp [Frame.campaign, campaignAction, CCFRaft.next, State.node?, updateNode,
+          Local.Rep, ← fields, Local.toModel]
+    · cases preVote <;>
+        simpa [Frame.campaign, campaignAction, CCFRaft.next, State.node?, updateNode, same] using rep.nodes peer
+  · cases preVote <;> exact rep.queues
+  · cases preVote <;> exact rep.globals
+
 inductive Instruction (N T : Type) where
   | node (instruction : NativeArrayCheckQuorum.Instruction N T)
   | vote (preVote : Bool) (source destination : N)
   | updateTerm (source destination : N)
+  | campaign (preVote : Bool) (node : N)
   | submittedTxId (txId : T) (expected : Bool)
   | hasJoined (expected : Finset N)
   | preVoteStatus (node : N) (expected : PreVoteStatus)
@@ -287,6 +396,8 @@ def follows (frame : Frame N T) : List (Instruction N T) -> Prop
       (frame.nodes destination).isSome = true /\
         (newerMessage? frame source destination).isSome = true /\
           follows (frame.updateTerm source destination) rest
+  | .campaign preVote node :: rest =>
+      campaignEnabled frame preVote node /\ follows (frame.campaign preVote node) rest
   | .submittedTxId txId expected :: rest =>
       decide (txId ∈ frame.globals.submittedTxIds) = expected /\ follows frame rest
   | .hasJoined expected :: rest => frame.globals.hasJoined = expected /\ follows frame rest
@@ -311,6 +422,9 @@ def modelFollows (state : State N T) : List (Instruction N T) -> Prop
   | .updateTerm source destination :: rest =>
       CCFRaft.Enabled state (.updateTerm source destination) /\
         modelFollows (CCFRaft.next state (.updateTerm source destination)) rest
+  | .campaign preVote node :: rest =>
+      CCFRaft.Enabled state (campaignAction preVote node) /\
+        modelFollows (CCFRaft.next state (campaignAction preVote node)) rest
   | .submittedTxId txId expected :: rest =>
       decide (txId ∈ state.submittedTxIds) = expected /\ modelFollows state rest
   | .hasJoined expected :: rest => state.hasJoined = expected /\ modelFollows state rest
@@ -348,6 +462,9 @@ theorem follows_correct (trace : List (Instruction N T)) (frame : Frame N T) (st
       simp only [follows, modelFollows, CCFRaft.Enabled,
         allocated_rep frame.nodes state rep.nodes, newer_correct frame state rep,
         ih _ _ (update_term_rep frame state rep source destination), and_assoc]
+    | campaign preVote node =>
+      exact and_congr (campaign_enabled_correct frame state rep preVote node)
+        (ih _ _ (campaign_rep frame state rep preVote node))
     | queueLength source destination expected =>
       have same := congrArg List.length (congrFun (congrFun rep.queues destination) source)
       simp only [NativeArrayQueue.decodeNetwork, NativeArrayQueue.Queue.decode_length,

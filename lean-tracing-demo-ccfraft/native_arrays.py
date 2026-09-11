@@ -2,7 +2,7 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the Apache 2.0 License.
 
-"""Native-array vote and term-update prototype, not the full trace validator.
+"""Native-array control-action prototype, not the full trace validator.
 
 Input is reduced Model observations/actions. The Lean correspondence lives in
 Sparse/NativeArrayVote.lean; this JSON adapter and SMT printer are trusted.
@@ -130,6 +130,7 @@ class Encoder:
         self.log_domains: set[str] = set()
         self.queues: dict[tuple[str, str], QueueArray] = {}
         self.configuration_indices: dict[tuple[str, ...], str] = {}
+        self.signature_indices: dict[tuple[str, ...], str] = {}
         self.election_snapshots: dict[tuple[str, ...], tuple[str, str]] = {}
         self.event = 0
         self.clause = 0
@@ -293,7 +294,13 @@ class Encoder:
         self.configuration_indices[key] = current
         return current
 
-    def active_peer(self, node: str, candidates: str) -> None:
+    def active_peer(
+        self,
+        node: str,
+        candidates: str,
+        upper: str | None = None,
+        alternative: str = "false",
+    ) -> None:
         current = self.configuration_index(node)
         log, length = self.log(node), self.read("logLength", node)
         witness = f"active_witness_{node}_{self.event}"
@@ -301,9 +308,11 @@ class Encoder:
         config = lambda index: f"(content (select {log} (- {index} 1)))"
         zero = f"(_ bv0 {self.width})"
         other = lambda mask: f"(distinct (bvand {mask} {candidates}) {zero})"
+        upper = length if upper is None else upper
         self.assertion(
-            f"(or (and (= {current} 0) {other(self.bootstrap)}) "
+            f"(or {alternative} (and (= {current} 0) {other(self.bootstrap)}) "
             f"(and (<= 1 {witness}) (<= {witness} {length}) (<= {current} {witness}) "
+            f"(<= {witness} {upper}) "
             f"((_ is reconfiguration) {config(witness)}) {other(f'(members {config(witness)})')}))"
         )
 
@@ -326,17 +335,13 @@ class Encoder:
         self.lines.append(f"(declare-const {self.refs[name]} (Array Node {sort}))")
         self.assertion(f"(= {self.refs[name]} (store {old} {node} {value}))")
 
-    def election_snapshot(self, node: str) -> tuple[str, str]:
+    def signature_index(self, node: str) -> str:
         key = self.log_key(node)
-        if key in self.election_snapshots:
-            return self.election_snapshots[key]
+        if key in self.signature_indices:
+            return self.signature_indices[key]
         log, length = self.log(node), self.read("logLength", node)
-        signature, index, term = (
-            f"{name}_{node}_{self.event}"
-            for name in ("signature", "last_index", "last_term")
-        )
-        for name in (signature, index, term):
-            self.lines.append(f"(declare-const {name} Int)")
+        signature = f"signature_{node}_{self.event}"
+        self.lines.append(f"(declare-const {signature} Int)")
         self.assertion(
             f"(and (<= 0 {signature}) (<= {signature} {length}) "
             f"(or (= {signature} 0) ((_ is signature) (content (select {log} (- {signature} 1))))))"
@@ -345,6 +350,20 @@ class Encoder:
             f"(forall ((k Int)) (=> (and (< {signature} k) (<= k {length})) "
             f"(not ((_ is signature) (content (select {log} (- k 1)))))))"
         )
+        self.signature_indices[key] = signature
+        return signature
+
+    def election_snapshot(self, node: str) -> tuple[str, str]:
+        key = self.log_key(node)
+        if key in self.election_snapshots:
+            return self.election_snapshots[key]
+        log, length = self.log(node), self.read("logLength", node)
+        signature = self.signature_index(node)
+        index, term = (
+            f"{name}_{node}_{self.event}" for name in ("last_index", "last_term")
+        )
+        for name in (index, term):
+            self.lines.append(f"(declare-const {name} Int)")
         commit = self.read("commit", node)
         self.assertion(
             f"(= {index} (ite (< {commit} {signature}) {signature} {commit}))"
@@ -355,6 +374,37 @@ class Encoder:
         )
         self.election_snapshots[key] = index, term
         return index, term
+
+    def campaign(self, node: str, pre_vote: bool) -> None:
+        self.assertion(self.read("allocated", node))
+        role = self.read("role", node)
+        self.assertion(
+            f"(or (= {role} r_follower) (= {role} r_preVoteCandidate) (= {role} r_candidate))"
+        )
+        self.assertion(
+            f"(distinct {self.read('membershipState', node)} m_retiredCommitted)"
+        )
+        status = "p_enabled" if pre_vote else "p_capable"
+        self.assertion(
+            f"(= (select {self.global_field('preVoteStatus')} {node}) {status})"
+        )
+        self_bit = f"(_ bv{1 << int(node[1:])} {self.width})"
+        retired = f"(select {self.global_field('retirementCompleted')} {node})"
+        alternative = f"(distinct (bvand {retired} {self_bit}) (_ bv0 {self.width}))"
+        self.active_peer(node, self_bit, self.signature_index(node), alternative)
+        if pre_vote:
+            self.store("role", node, "r_preVoteCandidate")
+            self.store("preVotesGranted", node, self_bit)
+        else:
+            term = f"(+ {self.read('currentTerm', node)} 1)"
+            for field, value in (
+                ("role", "r_candidate"),
+                ("currentTerm", term),
+                ("votedFor", f"(someNode {node})"),
+                ("votesGranted", self_bit),
+                ("preVotesGranted", f"(_ bv0 {self.width})"),
+            ):
+                self.store(field, node, value)
 
     def emit_queue(self, queue: QueueArray) -> None:
         for command in queue.commands:
@@ -482,6 +532,8 @@ class Encoder:
                 "requestVote",
                 "requestPreVote",
                 "updateTerm",
+                "timeout",
+                "becomePreVoteCandidate",
                 "queueLength",
                 "queuePoint",
                 "submittedTxId",
@@ -538,7 +590,7 @@ class Encoder:
                     self.emit_queue(queue)
                 continue
             expected = {"kind", "node"}
-            if kind != "checkQuorum":
+            if kind not in {"checkQuorum", "timeout", "becomePreVoteCandidate"}:
                 expected.add("value")
             if kind == "entry":
                 expected.add("index")
@@ -548,6 +600,9 @@ class Encoder:
             node = self.node(instruction["node"], f"instruction {self.event}")
             if kind == "checkQuorum":
                 self.check_quorum(node)
+                continue
+            if kind in {"timeout", "becomePreVoteCandidate"}:
+                self.campaign(node, kind == "becomePreVoteCandidate")
                 continue
             value = instruction["value"]
             if kind == "entry":

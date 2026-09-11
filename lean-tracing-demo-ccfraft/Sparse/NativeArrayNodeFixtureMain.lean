@@ -15,7 +15,8 @@ private instance : Bootstrap (Fin 3) :=
 
 private def fixture (membership : MembershipState) (index : Option Nat)
     (votedFor : Option (Fin 3)) (allocated : Bool) (kind : Nat) : Json :=
-  let role := if kind = 2 then Role.candidate else if kind = 3 then .preVoteCandidate else .leader
+  let role := if 4 <= kind then Role.follower
+    else if kind = 2 then .candidate else if kind = 3 then .preVoteCandidate else .leader
   let state : State (Fin 3) Nat :=
     { nodes := NodeStore.ofFinset (if allocated then {0, 1} else {0}) fun node =>
         if node = 1 then
@@ -30,12 +31,15 @@ private def fixture (membership : MembershipState) (index : Option Nat)
           term := 9, source := 0, destination := 1,
           lastCommittableTerm := 8, lastCommittableIndex := 10 }] else []
       submittedTxIds := {7, 1000000000000}, hasJoined := {2}
-      preVoteStatus := fun node => if node = 2 then .enabled else .capable
+      preVoteStatus := fun node => if node = 2 \/ (node = 1 /\ kind = 5) then .enabled else .capable
       retirementCompleted := fun node => if node = 2 then {0, 1} else {2} }
   let action : Action (Fin 3) Nat :=
     if kind = 0 then .checkQuorum 1 else if kind = 1 then .updateTerm 0 1
-    else if kind = 2 then .requestVote 1 0 else .requestPreVote 1 0
+    else if kind = 2 then .requestVote 1 0 else if kind = 3 then .requestPreVote 1 0
+    else if kind = 4 then .timeout 1 else .becomePreVoteCandidate 1
   let event := if kind = 0 then Json.mkObj [("kind", toJson "checkQuorum"), ("node", toJson "b")]
+    else if 4 <= kind then Json.mkObj [("kind", toJson (if kind = 4 then "timeout" else "becomePreVoteCandidate")),
+      ("node", toJson "b")]
     else Json.mkObj [("kind", toJson (if kind = 1 then "updateTerm" else if kind = 2 then "requestVote" else "requestPreVote")),
       ("source", toJson (if kind = 1 then "a" else "b")), ("destination", toJson (if kind = 1 then "b" else "a"))]
   let observations := fun (state : State (Fin 3) Nat) =>
@@ -61,7 +65,7 @@ def cases : List Json :=
       [none, some 0, some 99].flatMap fun index =>
         [none, some 0, some 2].flatMap fun votedFor =>
           [false, true].flatMap fun allocated =>
-            [0, 1, 2, 3].map (fixture membership index votedFor allocated)
+            [0, 1, 2, 3, 4, 5].map (fixture membership index votedFor allocated)
 
 end CCFRaft.NativeArrayNodeFixtures
 

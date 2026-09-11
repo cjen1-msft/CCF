@@ -339,7 +339,7 @@ class NativeArraySolverTests(unittest.TestCase):
                     for filename in ("trace.smt2", "trace.stdout", "trace.stderr"):
                         self.assertTrue((output / filename).is_file())
 
-    def model_fixtures(self, module):
+    def model_fixtures(self, module, *arguments):
         subprocess.run(
             [
                 "nice",
@@ -364,6 +364,7 @@ class NativeArraySolverTests(unittest.TestCase):
                 "lean",
                 "--run",
                 f"Sparse/{module}.lean",
+                *arguments,
             ],
             cwd=ROOT,
             capture_output=True,
@@ -388,6 +389,14 @@ class NativeArraySolverTests(unittest.TestCase):
             with self.subTest(number=number):
                 self.solve(f"vote-model-{number}", case["trace"], case["expected"])
 
+    def test_campaign_model_oracle(self):
+        cases = self.model_fixtures("NativeArrayVoteFixtureMain", "campaign")
+        self.assertEqual(len(cases), 400)
+        self.assertEqual({case["expected"] for case in cases}, {"sat", "unsat"})
+        for number, case in enumerate(cases):
+            with self.subTest(number=number):
+                self.solve(f"campaign-model-{number}", case["trace"], case["expected"])
+
     def test_term_model_oracle(self):
         cases = self.model_fixtures("NativeArrayTermFixtureMain")
         self.assertEqual(len(cases), 168)
@@ -398,7 +407,7 @@ class NativeArraySolverTests(unittest.TestCase):
 
     def test_full_node_model_oracle(self):
         cases = self.model_fixtures("NativeArrayNodeFixtureMain")
-        self.assertEqual(len(cases), 360)
+        self.assertEqual(len(cases), 540)
         observations = {
             instruction["kind"]
             for case in cases
@@ -477,6 +486,135 @@ class NativeArraySolverTests(unittest.TestCase):
             ),
             "unsat",
         )
+
+    def test_election_start(self):
+        for pre_vote in (False, True):
+            kind = "becomePreVoteCandidate" if pre_vote else "timeout"
+            start = {"kind": kind, "node": "a"}
+            base = [
+                observation("logLength", 0),
+                observation("currentTerm", 7),
+                observation("membershipState", "active"),
+                observation("preVoteStatus", "enabled" if pre_vote else "capable"),
+            ]
+            for role in ROLES:
+                self.solve(
+                    f"{kind}-role-{role}",
+                    trace([*base, observation("role", role), start]),
+                    (
+                        "sat"
+                        if role in ("follower", "candidate", "preVoteCandidate")
+                        else "unsat"
+                    ),
+                )
+            initial = [*base, observation("role", "follower")]
+            self.solve(
+                f"{kind}-wrong-status",
+                trace(
+                    [
+                        *(item for item in initial if item["kind"] != "preVoteStatus"),
+                        observation(
+                            "preVoteStatus", "capable" if pre_vote else "enabled"
+                        ),
+                        start,
+                    ]
+                ),
+                "unsat",
+            )
+            self.solve(
+                f"{kind}-retired",
+                trace(
+                    [
+                        *(
+                            item
+                            for item in initial
+                            if item["kind"] != "membershipState"
+                        ),
+                        observation("membershipState", "retiredCommitted"),
+                        start,
+                    ]
+                ),
+                "unsat",
+            )
+            self.solve(
+                f"{kind}-repeat",
+                trace(
+                    [
+                        *initial,
+                        start,
+                        start,
+                        observation("currentTerm", 7 if pre_vote else 9),
+                        observation(
+                            "role", "preVoteCandidate" if pre_vote else "candidate"
+                        ),
+                    ]
+                ),
+                "sat",
+            )
+            self.solve(
+                f"{kind}-send",
+                trace(
+                    [
+                        *initial,
+                        queue_length(0),
+                        start,
+                        vote(pre_vote),
+                        queue_point(0, pre_vote, term=7 if pre_vote else 8),
+                    ]
+                ),
+                "sat",
+            )
+            # A config after the last signature is active but cannot authorize campaigning.
+            unsigned = [
+                observation("role", "follower"),
+                observation("preVoteStatus", "enabled" if pre_vote else "capable"),
+                observation("membershipState", "active"),
+                observation("logLength", 2),
+                observation("commit", 0),
+                entry(0, "signature"),
+                entry(1, {"reconfiguration": ["a"]}),
+                observation("retirementCompleted", []),
+            ]
+            self.solve(
+                f"{kind}-unsigned-configuration",
+                trace([*unsigned, start], bootstrap=["b"]),
+                "unsat",
+            )
+            signed = [
+                observation("role", "follower"),
+                observation("preVoteStatus", "enabled" if pre_vote else "capable"),
+                observation("membershipState", "active"),
+                observation("logLength", 2),
+                observation("commit", 0),
+                entry(0, {"reconfiguration": ["a"]}),
+                entry(1, "signature"),
+                observation("retirementCompleted", []),
+            ]
+            self.solve(
+                f"{kind}-signed-configuration",
+                trace([*signed, start], bootstrap=["b"]),
+                "sat",
+            )
+            self.solve(
+                f"{kind}-retirement-history-escape",
+                trace(
+                    [*unsigned[:-1], observation("retirementCompleted", ["a"]), start],
+                    bootstrap=["b"],
+                ),
+                "sat",
+            )
+        records = [
+            observation("role", "follower"),
+            observation("logLength", 0),
+            observation("currentTerm", 0),
+            observation("preVoteStatus", "capable"),
+        ]
+        for term in range(1, 199):
+            records.extend(
+                [{"kind": "timeout", "node": "a"}, observation("currentTerm", term)]
+            )
+        self.assertEqual(len(records), 400)
+        self.solve("election-four-hundred-records", trace(records), "sat")
 
     def test_full_node_history(self):
         values = {

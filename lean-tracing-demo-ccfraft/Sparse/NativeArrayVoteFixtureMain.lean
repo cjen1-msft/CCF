@@ -21,7 +21,7 @@ private def point (index : Nat) (value : Json) : Json :=
   Json.mkObj [("kind", toJson "queuePoint"), ("source", toJson "a"),
     ("destination", toJson "b"), ("index", toJson index), ("value", value)]
 
-private def fixture (preVote twoPeers : Bool) (contents : List (EntryContent (Fin 3) Nat))
+private def fixture (start preVote twoPeers : Bool) (contents : List (EntryContent (Fin 3) Nat))
     (commit : Nat) : Json :=
   letI : Bootstrap (Fin 3) :=
     { configuration := if twoPeers then {0, 1} else {0}
@@ -40,7 +40,8 @@ private def fixture (preVote twoPeers : Bool) (contents : List (EntryContent (Fi
         else freshNodeState
       network := fun _ => []
       submittedTxIds := {}
-      hasJoined := {} }
+      hasJoined := {}
+      preVoteStatus := fun _ => if preVote then .enabled else .capable }
   let request := makeRequestVoteRequest state 0 1
   let message : Message (Fin 3) Nat :=
     if preVote then .requestPreVote (makeRequestPreVote state 0 1)
@@ -48,29 +49,40 @@ private def fixture (preVote twoPeers : Bool) (contents : List (EntryContent (Fi
   let copies := if log.length = 2 then 2 else 0
   let state := { state with network := fun node => if node = 1 then List.replicate copies message else [] }
   let action : Action (Fin 3) Nat :=
-    if preVote then .requestPreVote 0 1 else .requestVote 0 1
+    if start then
+      if preVote then .becomePreVoteCandidate 0 else .timeout 0
+    else if preVote then .requestPreVote 0 1 else .requestVote 0 1
   let allowed := decide (CCFRaft.Enabled state action)
   let packet := messageJson message
   let points := log.zipIdx.map fun (entry, index) =>
     Json.mkObj [("kind", toJson "entry"), ("node", toJson "a"), ("index", toJson index),
       ("value", entryJson entry)]
+  let event := if start then
+      Json.mkObj [("kind", toJson (if preVote then "becomePreVoteCandidate" else "timeout")), ("node", toJson "a")]
+    else Json.mkObj [("kind", toJson (if preVote then "requestPreVote" else "requestVote")),
+      ("source", toJson "a"), ("destination", toJson "b")]
+  let extra := if start then
+      [observation "membershipState" (toJson "active"),
+        observation "preVoteStatus" (toJson (if preVote then "enabled" else "capable")),
+        observation "retirementCompleted" (toJson ([] : List String))]
+    else []
   let instructions :=
     [observation "allocated" (toJson true),
       Json.mkObj [("kind", toJson "allocated"), ("node", toJson "b"), ("value", toJson true)],
       observation "role" (toJson (if preVote then "preVoteCandidate" else "candidate")),
       observation "logLength" (toJson log.length), observation "commit" (toJson commit),
       observation "currentTerm" (toJson 4), queueLength copies] ++
-    points ++ (List.range copies).map (fun index => point index packet) ++
-    [Json.mkObj [("kind", toJson (if preVote then "requestPreVote" else "requestVote")),
-      ("source", toJson "a"), ("destination", toJson "b")],
-      queueLength ((CCFRaft.next state action).network 1).length, point copies packet]
+    points ++ (List.range copies).map (fun index => point index packet) ++ extra ++
+    [event, queueLength ((CCFRaft.next state action).network 1).length] ++
+    (if start then nodeObservations 0 ((CCFRaft.next state action).nodes 0)
+     else [point copies packet])
   Json.mkObj [
     ("expected", toJson (if allowed then "sat" else "unsat")),
     ("trace", Json.mkObj [("nodes", toJson (["a", "b", "c"] : List String)),
       ("bootstrap", toJson (nodeNames (INITIAL_CONFIGURATION (Node := Fin 3)))),
       ("instructions", toJson instructions)])]
 
-def cases : List Json :=
+def cases (start : Bool := false) : List Json :=
   let alphabet : List (EntryContent (Fin 3) Nat) :=
     [.signature, .transaction 7, .reconfiguration {}, .reconfiguration {0},
       .reconfiguration {1}, .retiredCommitted {1}]
@@ -79,9 +91,13 @@ def cases : List Json :=
       (fun left => alphabet.map fun right => [left, right])
   [false, true].flatMap fun preVote =>
     [false, true].flatMap fun peers =>
-      logs.flatMap fun log => [0, 1, 2, 3].map fun commit => fixture preVote peers log commit
+      logs.flatMap fun log => [0, 1, 2, 3].map fun commit => fixture start preVote peers log commit
 
 end CCFRaft.NativeArrayVoteFixtures
 
-def main : IO Unit :=
-  IO.println (Lean.toJson CCFRaft.NativeArrayVoteFixtures.cases).compress
+def main (args : List String) : IO Unit := do
+  let start <- match args with
+    | [] => pure false
+    | ["campaign"] => pure true
+    | _ => throw (IO.userError "expected no arguments or 'campaign'")
+  IO.println (Lean.toJson (CCFRaft.NativeArrayVoteFixtures.cases start)).compress
