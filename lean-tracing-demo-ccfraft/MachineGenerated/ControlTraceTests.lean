@@ -31,8 +31,8 @@ def repeatedVote : Frame 0 := controlFrame 4 (.requestVote node1 node0) voted
 
 #guard decide (Enabled reelected.state (.requestVote node1 node0))
 #guard (voted.state.network node0).length == 1
-#guard (repeatedVote.state.network node0).length == 1
-#guard (repeatedVote.tracking.queueLengths node0).eval Fin.elim0 == 1
+#guard (repeatedVote.state.network node0).length == 2
+#guard (repeatedVote.tracking.queueLengths node0).eval Fin.elim0 == 2
 #guard (repeatedVote.tracking.queueLengths node0).bindings.any (·.group == 3)
 #guard (repeatedVote.tracking.queueLengths node0).bindings.any (·.group == 4)
 #guard (repeatedVote.tracking.packetTerms

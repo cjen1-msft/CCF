@@ -117,6 +117,35 @@ defaults, live-tail separation, 21 identities, symbolic logs, and explicit input
 rejection. `CCF_NATIVE_ARRAY_ARTIFACTS=/path/to/output` retains the emitted
 formulas, solver output, and `measurements.json` for comparison.
 
+### FIFO Model sends
+
+`CCFRaft.enqueue` appends every successful send, including messages equal to
+pending messages. This replaces the old `enqueueNoDup` behavior. The
+source-local queue correspondence in `Sparse/Queue.lean` now preserves
+duplicates too. Receiving removes the first message from the selected source.
+It does not remove other equal messages.
+
+This models successful FIFO emission. It does not model connection-establishment
+buffer replacement, failed sends, or arbitrary network loss and reordering.
+A raw send-attempt record still does not establish that a send succeeded.
+
+The older guarded AppendEntries encoder no longer branches on packet equality.
+Its mapping theorem holds even when two distinct symbolic packets decode to
+equal packets. Queue-length expressions count every send and reply.
+The generic `Shared` no-duplicate container helpers remain separate utilities,
+not the Model's send operation.
+
+```bash
+nice -n 10 lake build Sparse MachineGenerated.FifoNetworkTests \
+  MachineGenerated.GuardedAppendEntriesTests MachineGenerated.TraceEncodingProofs
+```
+
+`FifoNetworkTests` checks repeated sends, unaffected destinations, and an actual
+execution that consumes two equal heartbeats and retains both equal replies.
+The full default build has separate retirement-invariant proof failures in
+`MachineGenerated/ReconfigurationPreservation.lean`. Those failures reproduce
+on the preceding commit `45f1acbc8`, before the FIFO correction.
+
 ## Sparse proof foundation
 
 `Sparse/` contains the reviewed semantic proofs for sparse logs, source-local
@@ -132,6 +161,9 @@ These commands use repository files and the pinned Lake dependencies. They do
 not need the original session artifacts. `Sparse/provenance.json` records the
 source hashes and proof-body hashes. The exporter changes namespaces and removes
 diagnostic printing and the historical session command log.
+The manifest retains original hashes when a proof is revised. Its explicit
+`revision` record supplies a reason and the maintained proof hash. The FIFO
+queue proof is such a revision, not a namespace-only copy of its old source.
 
 New bridge modules add aligned multi-version interval completion, finite
 membership traces, projection-backed readback hints, and typed scalar SMT terms.

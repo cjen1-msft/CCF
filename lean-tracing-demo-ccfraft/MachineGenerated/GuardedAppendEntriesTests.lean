@@ -30,14 +30,14 @@ private def distinct : Fin 2 -> Nat := fun index => index.val
 
 private def symbolic := step entry source destination 1
 
-#guard ((symbolic.eval aliased).network destination).length == 1
+#guard ((symbolic.eval aliased).network destination).length == 2
 #guard ((symbolic.eval distinct).network destination).length == 2
 #guard ((symbolic.eval aliased).nodes source).sentIndex destination == 1
 #guard ((symbolic.eval distinct).nodes source).sentIndex destination == 1
 
 #guard ((next entry (.appendEntries source destination 1)).network destination).length == 2
 #guard ((next (mapState (NatTerm.eval aliased) entry)
-  (.appendEntries source destination 1)).network destination).length == 1
+  (.appendEntries source destination 1)).network destination).length == 2
 
 example (assignment : Fin 2 -> Nat) :
     mapState (NatTerm.eval assignment) (symbolic.eval assignment) =
@@ -51,7 +51,7 @@ private def heartbeatFrames : Nat -> Guarded 2 (State Node (NatTerm 2))
       (heartbeatFrames count).bind fun state => step state source destination 1
 
 #guard match heartbeatFrames 4 with
-  | .pure state => (state.network destination).length == 2
+  | .pure state => (state.network destination).length == 4
   | .branch _ _ _ => false
 
 end CCFRaft.GuardedAppendEntries.Tests

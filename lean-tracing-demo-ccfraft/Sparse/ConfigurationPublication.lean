@@ -292,7 +292,7 @@ theorem callback_not_model_enabled (state : State N T) (token : Frame N)
 
 theorem callback_core_effect (state : State N T) (token : Frame N) (pending : Pending state token) :
     callbackCore state token =
-      { state with network := enqueueNoDup state.network (.appendEntriesRequest (packet state token)) } := by
+      { state with network := enqueue state.network (.appendEntriesRequest (packet state token)) } := by
   have cursor : updateIndex (state.nodes token.write.source).sentIndex token.write.peer token.published =
       (state.nodes token.write.source).sentIndex := by
     rw [updateIndex, <- pending.cursor]
@@ -315,7 +315,7 @@ theorem callback_core_effect (state : State N T) (token : Frame N) (pending : Pe
   simpa only using congrArg
     (fun nodes => { state with
       nodes := nodes
-      network := enqueueNoDup state.network (.appendEntriesRequest (packet state token)) }) same
+      network := enqueue state.network (.appendEntriesRequest (packet state token)) }) same
 
 theorem callback_pending (state : State N T) (token : Frame N) (pending : Pending state token) :
     Pending (callbackCore state token) token := by

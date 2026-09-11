@@ -1105,14 +1105,7 @@ theorem finishFrame_correct {holes : Nat} (assignment : Fin holes -> Nat)
 @[simp]
 theorem controlSuccessor_eq_next {holes : Nat} (state : Template holes) (action : Action Node (Value holes)) :
     controlSuccessor state action = next state action := by
-  have network (node : Node) :
-      (demoteRetiredCommitted (advanceCommitState state node) node).network = state.network := by
-    dsimp only [demoteRetiredCommitted]
-    split_ifs <;> rfl
-  cases action <;> simp only [controlSuccessor]
-  all_goals first
-    | rfl
-    | (split_ifs <;> simp_all [next, enqueueNoDup, network])
+  rfl
 
 @[simp]
 theorem controlFrame_state {holes : Nat} (position : Nat) (action : Action Node (Value holes)) (frame : Frame holes) :
@@ -1951,20 +1944,8 @@ theorem guardedAppendEntries_queue_length {holes : Nat}
         (state.network destination).length \/
       (successor.network destination).length =
         (state.network destination).length + 1 := by
-  simp only [GuardedAppendEntries.step, Guarded.eval_map]
-  cases duplicate :
-      (Guarded.contains MessageEquality.messageEqual
-        (Message.appendEntriesRequest
-          (makeAppendEntriesRequest state source destination batchEnd))
-        (state.network destination)).eval assignment with
-  | true => simp [duplicate]
-  | false =>
-      simp only [duplicate, Bool.false_eq_true, if_false]
-      unfold next enqueueNoDup
-      simp only [Message.destination]
-      split
-      · simp
-      · simp [updateQueue, makeAppendEntriesRequest]
+  simp [GuardedAppendEntries.step, Guarded.eval, next, enqueue,
+    updateQueue, makeAppendEntriesRequest, Message.destination]
 
 theorem attachAppendFrame_correct {holes : Nat}
     (bounds : Bounds)
@@ -2074,10 +2055,9 @@ theorem attachAppendFrame_correct {holes : Nat}
             trackingCorrect.queueLengths, mapState]
           have lengths := congrArg
             (fun current => (current.network node).length) stateCorrect
-          simp only [next, enqueueNoDup] at lengths
-          split_ifs at lengths <;>
-            simpa [mapState, targetNode, updateQueue,
-              makeAppendEntriesRequest, Message.destination] using lengths.symm
+          simp only [next, enqueue] at lengths
+          simpa [mapState, targetNode, updateQueue,
+            makeAppendEntriesRequest, Message.destination] using lengths.symm
       · intro node
         have preserved := congrArg (fun current => (current.nodes node).currentTerm)
           stateCorrect
@@ -2187,36 +2167,8 @@ theorem appendQueueLength_correct {holes : Nat}
     (source destination : Node) (batchEnd : Nat) :
     (appendQueueLength position pathId state tracking source destination batchEnd).eval assignment =
       ((next (mapState (NatTerm.eval assignment) state) (.appendEntries source destination batchEnd)).network destination).length := by
-  let request := makeAppendEntriesRequest state source destination batchEnd
-  let term := tracking.currentTerms source
-  let fields := fun field value => ControlTracePackets.snapshotValue
-    (appendPacketFields position pathId state tracking source destination batchEnd field value)
-  have termCorrect : term.eval assignment = request.term := by
-    simp [term, request, NatTerm.eval, correct.currentTerms, makeAppendEntriesRequest]
-  have fieldsCorrect : ∀ field value, (fields field value).eval assignment = value := by
-    intro field value
-    simpa [fields] using
-      appendPacketFields_correct assignment position pathId state tracking correct source destination batchEnd field value
-  have duplicate :
-      (anyExpr ((state.network destination).map fun previous =>
-        ControlTracePackets.appendEqualExpr term fields tracking.packetTerms tracking.packetFields request previous)).Holds assignment ↔
-      (.appendEntriesRequest (makeAppendEntriesRequest (mapState (NatTerm.eval assignment) state) source destination batchEnd)) ∈
-        (mapState (NatTerm.eval assignment) state).network destination := by
-    rw [← mapMessage_makeAppendEntriesRequest]
-    simp only [anyExpr_correct, List.mem_map, exists_exists_and_eq_and,
-      ControlTracePackets.appendEqualExpr_correct assignment term fields tracking.packetTerms tracking.packetFields request
-        termCorrect fieldsCorrect correct.packetTerms correct.packetFields]
-    simp [mapState, request, eq_comm]
-  simp only [appendQueueLength, NatTerm.eval, Expr.ite_eval]
-  change (tracking.queueLengths destination).eval assignment +
-    (if (anyExpr ((state.network destination).map fun previous =>
-      ControlTracePackets.appendEqualExpr term fields tracking.packetTerms tracking.packetFields request previous)).Holds assignment
-    then _ else _) = _
-  have routed :
-      (Message.appendEntriesRequest (makeAppendEntriesRequest (mapState (NatTerm.eval assignment) state)
-        source destination batchEnd)).destination = destination := rfl
-  simp [duplicate, correct.queueLengths, next, enqueueNoDup, updateQueue, ite_apply, routed]
-  split_ifs <;> simp_all
+  simp [appendQueueLength, NatTerm.eval, correct.queueLengths, next,
+    enqueue, updateQueue, makeAppendEntriesRequest, Message.destination]
 
 theorem rememberAppendPacketFrame_correct {holes : Nat}
     (assignment : Fin holes -> Nat) (position : Nat)
@@ -2400,33 +2352,8 @@ theorem controlQueueLength_correct {holes : Nat}
     (term : message.term = (state.nodes source).currentTerm)
     (fieldsCorrect : ∀ field value, (fields field value).eval assignment = value) :
     (controlQueueLength position pathId state tracking source message fields).eval assignment =
-      (enqueueNoDup state.network message message.destination).length := by
-  let outgoingTerms := Function.update tracking.packetTerms message
-    (tracking.currentTerms source)
-  let outgoingFields := Function.update tracking.packetFields message
-    (fun field value => ControlTracePackets.snapshotValue (fields field value))
-  have termsCorrect : ∀ packet, (outgoingTerms packet).eval assignment = packet.term := by
-    intro packet
-    by_cases same : packet = message
-    · subst packet
-      simp [outgoingTerms, NatTerm.eval, correct.currentTerms, term]
-    · simp [outgoingTerms, same, correct.packetTerms]
-  have fieldsCorrect' : ∀ packet field value, (outgoingFields packet field value).eval assignment = value := by
-    intro packet field value
-    by_cases same : packet = message <;> simp [outgoingFields, same, fieldsCorrect, correct.packetFields]
-  have duplicate :
-      (anyExpr ((state.network message.destination).map fun previous =>
-        ControlTracePackets.equalExpr outgoingTerms tracking.packetTerms outgoingFields tracking.packetFields message previous)).Holds
-          assignment ↔ message ∈ state.network message.destination := by
-    simp [anyExpr_correct, ControlTracePackets.equalExpr_correct assignment _ _ _ _
-      termsCorrect correct.packetTerms fieldsCorrect' correct.packetFields]
-  simp only [controlQueueLength, NatTerm.eval, Expr.ite_eval]
-  change (tracking.queueLengths message.destination).eval assignment +
-    (if (anyExpr ((state.network message.destination).map fun previous =>
-      ControlTracePackets.equalExpr outgoingTerms tracking.packetTerms outgoingFields tracking.packetFields message previous)).Holds assignment
-    then _ else _) = _
-  simp [duplicate, correct.queueLengths, mapState, enqueueNoDup, updateQueue, ite_apply]
-  split_ifs <;> simp
+      (enqueue state.network message message.destination).length := by
+  simp [controlQueueLength, NatTerm.eval, correct.queueLengths, mapState, enqueue, updateQueue]
 
 theorem controlQueueUpdate_correct {holes : Nat}
     (assignment : Fin holes -> Nat) (position pathId : Nat)
@@ -2436,11 +2363,11 @@ theorem controlQueueUpdate_correct {holes : Nat}
     (fieldsCorrect : ∀ field value, (fields field value).eval assignment = value) (node : Node) :
     ((Function.update tracking.queueLengths message.destination
       (controlQueueLength position pathId state tracking source message fields)) node).eval assignment =
-      (enqueueNoDup state.network message node).length := by
+      (enqueue state.network message node).length := by
   by_cases same : node = message.destination
   · subst node
     simpa using controlQueueLength_correct assignment position pathId state tracking correct source message fields term fieldsCorrect
-  · simp [Function.update_apply, same, enqueueNoDup, updateQueue, apply_ite, ite_apply, correct.queueLengths, mapState]
+  · simp [Function.update_apply, same, enqueue, updateQueue, apply_ite, ite_apply, correct.queueLengths, mapState]
 
 theorem controlQueueLengths_correct {holes : Nat}
     (assignment : Fin holes -> Nat) (position pathId : Nat)
@@ -2654,11 +2581,11 @@ theorem controlSendFrame_correct {holes : Nat}
     (destination : Node) (frame : Frame holes) (correct : FrameCorrect assignment frame)
     (packet : Message Node (Value holes)) (routed : packet.destination = destination)
     (shape : next frame.state action =
-      { frame.state with network := enqueueNoDup frame.state.network packet }) :
+      { frame.state with network := enqueue frame.state.network packet }) :
     FrameCorrect assignment (controlSendFrame position action destination frame) := by
   have rawCorrect := rawControlFrame_correct assignment position action frame correct
   have stateEq : (rawControlFrame position action frame).state =
-      { frame.state with network := enqueueNoDup frame.state.network packet } := by
+      { frame.state with network := enqueue frame.state.network packet } := by
     simpa [rawControlFrame] using shape
   have queues : ∀ node,
       (Function.update frame.tracking.queueLengths destination
@@ -2668,7 +2595,7 @@ theorem controlSendFrame_correct {holes : Nat}
     by_cases same : node = destination
     · subst node
       simpa using rawCorrect.queueLengths destination
-    · simpa [Function.update_apply, same, stateEq, mapState, enqueueNoDup, updateQueue, routed, ite_apply]
+    · simpa [Function.update_apply, same, stateEq, mapState, enqueue, updateQueue, routed, ite_apply]
         using correct.queueLengths node
   dsimp only [controlSendFrame]
   split_ifs

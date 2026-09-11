@@ -15,11 +15,7 @@ def step {holes : Nat}
     (state : State Node (NatTerm holes))
     (source destination : Node) (batchEnd : Nat) :
     Guarded holes (State Node (NatTerm holes)) :=
-  let message := Message.appendEntriesRequest
-    (makeAppendEntriesRequest state source destination batchEnd)
-  let advanced := next state (.appendEntries source destination batchEnd)
-  (Guarded.contains messageEqual message (state.network destination)).map fun duplicate =>
-    if duplicate then { advanced with network := state.network } else advanced
+  .pure (next state (.appendEntries source destination batchEnd))
 
 theorem step_correct {holes : Nat}
     (assignment : Fin holes -> Nat)
@@ -29,10 +25,8 @@ theorem step_correct {holes : Nat}
         ((step state source destination batchEnd).eval assignment) =
       next (mapState (NatTerm.eval assignment) state)
         (.appendEntries source destination batchEnd) := by
-  rw [step, Guarded.eval_map,
-    Guarded.eval_contains assignment _ _ (messageEqual_correct assignment)]
-  simpa using
-    mapState_appendEntries_with_dedup (NatTerm.eval assignment)
+  simpa [step, Guarded.eval] using
+    mapState_appendEntries (NatTerm.eval assignment)
       state source destination batchEnd
 
 end CCFRaft.GuardedAppendEntries

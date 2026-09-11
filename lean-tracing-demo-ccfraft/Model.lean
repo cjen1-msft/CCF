@@ -786,17 +786,14 @@ def messageEntries
     List (Entry Node TxId) :=
   (log.drop previousIndex).take (batchEnd - previousIndex)
 
-/-- Append a message unless an exactly equal message is already queued. -/
-def enqueueNoDup
+/-- Append each successful send, including messages equal to pending messages. -/
+def enqueue
     (network : Node -> List (Message Node TxId))
     (message : Message Node TxId) :
     Node -> List (Message Node TxId) :=
   let destination := message.destination
   let queue := network destination
-  if message ∈ queue then
-    network
-  else
-    updateQueue network destination (queue ++ [message])
+  updateQueue network destination (queue ++ [message])
 
 /-- Remove the first message from a source while preserving all other order. -/
 def takeFirstFrom
@@ -1283,7 +1280,7 @@ def reply
     (remaining : List (Message Node TxId))
     (response : AppendEntriesResponse Node) :
     Node -> List (Message Node TxId) :=
-  enqueueNoDup
+  enqueue
     (updateQueue network requestDestination remaining)
     (.appendEntriesResponse response)
 
@@ -1345,7 +1342,7 @@ def handleReceive?
                   { state with
                     nodes := updateNode state.nodes destination nextNode
                     network :=
-                      enqueueNoDup
+                      enqueue
                         (updateQueue state.network destination remaining)
                         (.requestVoteResponse response) }
         | .requestVoteResponse response =>
@@ -1377,7 +1374,7 @@ def handleReceive?
                   { state with
                     nodes := updateNode state.nodes destination nextNode
                     network :=
-                      enqueueNoDup
+                      enqueue
                         (updateQueue state.network destination remaining)
                         (.requestPreVoteResponse response) }
         | .requestPreVoteResponse response =>
@@ -1881,7 +1878,7 @@ def next
               sentIndex :=
                 updateIndex sourceState.sentIndex destination batchEnd }
         network :=
-          enqueueNoDup state.network (.appendEntriesRequest request) }
+          enqueue state.network (.appendEntriesRequest request) }
   | .receive source destination =>
       (handleReceive? state source destination).getD state
   | .advanceCommitIndex node =>
@@ -1902,12 +1899,12 @@ def next
       let request := makeRequestVoteRequest state source destination
       { state with
         network :=
-          enqueueNoDup state.network (.requestVoteRequest request) }
+          enqueue state.network (.requestVoteRequest request) }
   | .requestPreVote source destination =>
       let request := makeRequestPreVote state source destination
       { state with
         network :=
-          enqueueNoDup state.network (.requestPreVote request) }
+          enqueue state.network (.requestPreVote request) }
   | .checkQuorum node =>
       stepDownState state node
   | .updateTerm source destination =>
@@ -1948,14 +1945,14 @@ def next
       let request := makeProposeVoteRequest state source destination
       { state with
         network :=
-          enqueueNoDup state.network (.proposeVoteRequest request) }
+          enqueue state.network (.proposeVoteRequest request) }
   | .advanceCommitIndexAndProposeVote source destination =>
       let advanced :=
         demoteRetiredCommitted (advanceCommitState state source) source
       let request := makeProposeVoteRequest state source destination
       { advanced with
         network :=
-          enqueueNoDup advanced.network (.proposeVoteRequest request) }
+          enqueue advanced.network (.proposeVoteRequest request) }
 
 /-- Package arbitrary-term Raft as a reusable executable transition system. -/
 def system [DecidableEq TxId] : ExecutableTransitionSystem where

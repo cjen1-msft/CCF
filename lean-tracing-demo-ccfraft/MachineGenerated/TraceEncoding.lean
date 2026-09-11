@@ -213,16 +213,9 @@ def anyExpr {holes : Nat} (values : List (Expr holes)) : Expr holes :=
 def appendQueueLength {holes : Nat}
     (position pathId : Nat) (state : Template holes) (tracking : Tracking holes)
     (source destination : Node) (batchEnd : Nat) : Value holes :=
-  let request := makeAppendEntriesRequest state source destination batchEnd
-  let term := tracking.currentTerms source
-  let fields := fun field value => ControlTracePackets.snapshotValue
-    (appendPacketFields position pathId state tracking source destination batchEnd field value)
-  let duplicate := anyExpr ((state.network destination).map fun previous =>
-    ControlTracePackets.appendEqualExpr term fields tracking.packetTerms tracking.packetFields request previous)
   .add (tracking.queueLengths destination)
-    (duplicate.ite (.literal 0)
-      (.named position (pathSlot pathId (markerSlot QUEUE_LENGTH_SLOT_BASE destination))
-        s!"queue growth {destination.val}" (.literal 1)))
+    (.named position (pathSlot pathId (markerSlot QUEUE_LENGTH_SLOT_BASE destination))
+      s!"queue growth {destination.val}" (.literal 1))
 
 def configurationSnapshots {holes : Nat}
     (state : Template holes) (tracking : Tracking holes) (node : Node) :
@@ -1130,16 +1123,9 @@ def nextControlTracking {holes : Nat}
 def controlQueueLength {holes : Nat}
     (position pathId : Nat) (state : Template holes) (tracking : Tracking holes)
     (source : Node) (message : Message Node (Value holes)) (fields : Nat -> Nat -> Value holes) : Value holes :=
-  let outgoingTerms := Function.update tracking.packetTerms message
-    (tracking.currentTerms source)
-  let outgoingFields := Function.update tracking.packetFields message
-    (fun field value => ControlTracePackets.snapshotValue (fields field value))
-  let duplicate := anyExpr ((state.network message.destination).map fun previous =>
-    ControlTracePackets.equalExpr outgoingTerms tracking.packetTerms outgoingFields tracking.packetFields message previous)
   .add (tracking.queueLengths message.destination)
-    (duplicate.ite (.literal 0)
-      (.named position (pathSlot pathId (markerSlot QUEUE_LENGTH_SLOT_BASE message.destination))
-        s!"queue growth {message.destination.val}" (.literal 1)))
+    (.named position (pathSlot pathId (markerSlot QUEUE_LENGTH_SLOT_BASE message.destination))
+      s!"queue growth {message.destination.val}" (.literal 1))
 
 def controlQueueLengths {holes : Nat}
     (position pathId : Nat) (state : Template holes) (tracking : Tracking holes)
@@ -1274,21 +1260,7 @@ def finishFrame {holes : Nat} (position : Nat) (node : Node) (frame : Frame hole
 
 def controlSuccessor {holes : Nat} (state : Template holes) (action : Action Node (Value holes)) :
     Template holes :=
-  let successor := next state action
-  let packet : Option (Message Node (Value holes)) :=
-    match action with
-    | .requestVote source destination => some (.requestVoteRequest (makeRequestVoteRequest state source destination))
-    | .requestPreVote source destination => some (.requestPreVote (makeRequestPreVote state source destination))
-    | .proposeVote source destination | .advanceCommitIndexAndProposeVote source destination =>
-        some (.proposeVoteRequest (makeProposeVoteRequest state source destination))
-    | _ => none
-  match packet with
-  | none => successor
-  | some message =>
-      -- Reuse the function rather than replaying every earlier no-op enqueue on lookup.
-      if message ∈ state.network message.destination then
-        { successor with network := state.network }
-      else successor
+  next state action
 
 def rawControlFrame {holes : Nat}
     (position : Nat) (action : Action Node (Value holes))

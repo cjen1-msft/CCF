@@ -1,14 +1,13 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the Apache 2.0 License.
 
-"""Export reviewed sparse proofs and check their namespace-only correspondence."""
+"""Check original sparse exports and explicitly recorded maintained revisions."""
 
 import argparse
 import hashlib
 import json
 from pathlib import Path
 import re
-
 
 ROOT = Path(__file__).resolve().parent
 SOURCES = {
@@ -110,9 +109,14 @@ def sha256(content: bytes) -> str:
 def proof_body(source: str) -> str:
     """Remove diagnostic printing and the historical session command log."""
     source = source.partition("\n/-!\nCommand log,")[0]
-    return "\n".join(
-        line for line in source.splitlines() if not line.startswith("#print axioms ")
-    ).rstrip() + "\n"
+    return (
+        "\n".join(
+            line
+            for line in source.splitlines()
+            if not line.startswith("#print axioms ")
+        ).rstrip()
+        + "\n"
+    )
 
 
 def rename(source: str, replacements: dict[str, str]) -> str:
@@ -136,7 +140,9 @@ def export(source_directory: Path, destination_root: Path) -> None:
         content = rename(body, replacements).encode("ascii")
         destination = destination_root / (target.replace(".", "/") + ".lean")
         if destination.exists() and destination.read_bytes() != content:
-            raise ValueError(f"refusing to overwrite a changed destination: {destination}")
+            raise ValueError(
+                f"refusing to overwrite a changed destination: {destination}"
+            )
         pending.append((destination, content))
         records.append(
             {
@@ -150,7 +156,7 @@ def export(source_directory: Path, destination_root: Path) -> None:
     manifest_text = (json.dumps(records, indent=2) + "\n").encode("ascii")
     if manifest.exists():
         previous = json.loads(manifest.read_text(encoding="ascii"))
-        if not previous or previous != records[:len(previous)]:
+        if not previous or previous != records[: len(previous)]:
             raise ValueError("refusing to overwrite changed proof provenance")
     for destination, content in pending:
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -166,15 +172,31 @@ def check(destination_root: Path) -> None:
     if [record["source"] for record in records] != list(SOURCES):
         raise ValueError("proof provenance has unexpected source modules")
     replacements = {target: name for name, (target, _) in SOURCES.items()}
+    revised = 0
     for record in records:
         target, expected_source = SOURCES[record["source"]]
         if record["target"] != target or record["source_sha256"] != expected_source:
             raise ValueError(f"proof provenance changed: {record['source']}")
         destination = destination_root / (target.replace(".", "/") + ".lean")
         restored = rename(destination.read_text(encoding="ascii"), replacements)
-        if sha256(restored.encode("ascii")) != record["proof_body_sha256"]:
+        expected_body = record["proof_body_sha256"]
+        if "revision" in record:
+            revision = record["revision"]
+            if (
+                not isinstance(revision, dict)
+                or set(revision) != {"reason", "proof_body_sha256"}
+                or not isinstance(revision["reason"], str)
+                or not revision["reason"].strip()
+            ):
+                raise ValueError(f"invalid maintained revision: {target}")
+            expected_body = revision["proof_body_sha256"]
+            revised += 1
+        if sha256(restored.encode("ascii")) != expected_body:
             raise ValueError(f"exported proof changed: {target}")
-    print(f"Reviewed proof bodies preserved: {len(records)} modules.")
+    print(
+        f"Original proof bodies preserved: {len(records) - revised} modules; "
+        f"maintained revisions checked: {revised}."
+    )
 
 
 def main() -> None:

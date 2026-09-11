@@ -116,7 +116,7 @@ theorem singletonDropsUnknownResponse :
     let queued : State Node ExampleTxId := {
       start with
       network :=
-        enqueueNoDup start.network (.requestVoteResponse response)
+        enqueue start.network (.requestVoteResponse response)
     }
     newerMessage? queued node1 node0 = none /\
       (match handleReceive? queued node1 node0 with
@@ -143,7 +143,7 @@ theorem singletonAcceptsUnknownRequest :
     let queued : State Node ExampleTxId := {
       start with
       network :=
-        enqueueNoDup start.network (.requestVoteRequest request)
+        enqueue start.network (.requestVoteRequest request)
     }
     let actions : List (Action Node ExampleTxId) := [
       .updateTerm node1 node0,

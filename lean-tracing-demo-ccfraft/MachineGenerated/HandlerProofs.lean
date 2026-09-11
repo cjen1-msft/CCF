@@ -1113,28 +1113,24 @@ theorem messageEntriesLength
   omega
 
 /-- A message after enqueue was either already present or is the new message. -/
-theorem memEnqueueNoDup
+theorem memEnqueue
     (network : Node -> List (Message Node TxId))
     (newMessage message : Message Node TxId)
     (destination : Node)
-    (member : message ∈ enqueueNoDup network newMessage destination) :
+    (member : message ∈ enqueue network newMessage destination) :
     message ∈ network destination \/
       (destination = newMessage.destination /\ message = newMessage) := by
-  unfold enqueueNoDup at member
-  by_cases duplicate : newMessage ∈ network newMessage.destination
-  · simp [duplicate] at member
-    exact Or.inl member
-  · simp [duplicate] at member
-    by_cases destinationEq : destination = newMessage.destination
-    · subst destination
-      simp at member
-      rcases member with oldMember | newMember
-      · exact Or.inl oldMember
-      · exact Or.inr ⟨rfl, newMember⟩
-    · have oldMember :
-          message ∈ network destination := by
-        simpa [updateQueue, Function.update, destinationEq] using member
-      exact Or.inl oldMember
+  unfold enqueue at member
+  by_cases destinationEq : destination = newMessage.destination
+  · subst destination
+    simp at member
+    rcases member with oldMember | newMember
+    · exact Or.inl oldMember
+    · exact Or.inr ⟨rfl, newMember⟩
+  · have oldMember :
+        message ∈ network destination := by
+      simpa [updateQueue, Function.update, destinationEq] using member
+    exact Or.inl oldMember
 
 /-- Selecting a source message returns that source and preserves queue membership. -/
 theorem takeFirstFromSound

@@ -4641,7 +4641,7 @@ theorem appendRequestMemberBeforeReply
           state.network queuedDestination := by
   intro queuedDestination queuedRequest member
   rcases
-      memEnqueueNoDup
+      memEnqueue
         (updateQueue state.network destination remaining)
         (.appendEntriesResponse response)
         (.appendEntriesRequest queuedRequest)
@@ -13616,21 +13616,18 @@ theorem canProduceAppendAckAt_role
       simpa [protocolNodeState] using accepted.2.1
     · contradiction
 
-/-- Enqueue-with-deduplication never removes an existing queued message. -/
+/-- FIFO enqueue never removes an existing queued message. -/
 theorem memEnqueueNoDupOfMem
     (network : Node -> List (Message Node TxId))
     (newMessage message : Message Node TxId)
     (destination : Node)
     (member : message ∈ network destination) :
-    message ∈ enqueueNoDup network newMessage destination := by
-  unfold enqueueNoDup
-  by_cases duplicate : newMessage ∈ network newMessage.destination
-  · simpa [duplicate] using member
-  · simp only [duplicate, ↓reduceIte]
-    by_cases destinationEq : destination = newMessage.destination
-    · subst destination
-      simp [updateQueue, member]
-    · simpa [updateQueue, Function.update, destinationEq] using member
+    message ∈ enqueue network newMessage destination := by
+  unfold enqueue
+  by_cases destinationEq : destination = newMessage.destination
+  · subst destination
+    simp [updateQueue, member]
+  · simpa [updateQueue, Function.update, destinationEq] using member
 
 /--
 Sending AppendEntries can add only the request destination to a potential
@@ -13727,7 +13724,7 @@ theorem appendEntriesPotentialAckerDelta
           Message.appendEntriesResponse response ∈
             state.network leader := by
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.appendEntriesRequest request)
                 (.appendEntriesResponse response) leader
                 (by simpa [next, CCFRaft.next, request] using queued) with
@@ -13784,7 +13781,7 @@ theorem appendEntriesPotentialAckerDelta
           Message.appendEntriesRequest queuedRequest ∈
             state.network peer := by
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.appendEntriesRequest request)
                 (.appendEntriesRequest queuedRequest) peer
                 (by simpa [next, CCFRaft.next, request] using queued) with
@@ -14157,8 +14154,8 @@ theorem potentialAckersBeyondLeaderLog
 theorem memEnqueueNoDupSelf
     (network : Node -> List (Message Node TxId))
     (message : Message Node TxId) :
-    message ∈ enqueueNoDup network message message.destination := by
-  unfold enqueueNoDup
+    message ∈ enqueue network message message.destination := by
+  unfold enqueue
   by_cases duplicate : message ∈ network message.destination
   · simpa [duplicate] using duplicate
   · simp [duplicate, updateQueue]
@@ -18242,7 +18239,7 @@ theorem requestVotePreservesSystemInductiveInvariant
             Message.appendEntriesResponse response ∈
               state.network leader := by
           rcases
-              memEnqueueNoDup
+              memEnqueue
                 state.network (.requestVoteRequest request)
                   (.appendEntriesResponse response) leader
                   (by simpa [next, CCFRaft.next, request] using member) with
@@ -18310,7 +18307,7 @@ theorem requestVotePreservesSystemInductiveInvariant
             Message.requestVoteResponse response ∈
               state.network candidate := by
           rcases
-              memEnqueueNoDup
+              memEnqueue
                 state.network (.requestVoteRequest request)
                   (.requestVoteResponse response) candidate
                   (by simpa [next, CCFRaft.next, request] using member) with
@@ -18405,7 +18402,7 @@ theorem requestVotePreservesSystemInductiveInvariant
           Message.appendEntriesRequest queuedRequest ∈
             state.network peer := by
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.requestVoteRequest request)
                 (.appendEntriesRequest queuedRequest) peer
                 (by simpa [next, CCFRaft.next] using member) with
@@ -18514,7 +18511,7 @@ theorem requestVotePreservesSystemInductiveInvariant
   · constructor
     · intro queuedDestination message member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteRequest request)
               message queuedDestination
               (by simpa [next, CCFRaft.next, request] using member) with
@@ -18528,7 +18525,7 @@ theorem requestVotePreservesSystemInductiveInvariant
           Message.appendEntriesRequest queuedRequest ∈
             state.network queuedDestination := by
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.requestVoteRequest request)
                 (.appendEntriesRequest queuedRequest) queuedDestination
                 (by simpa [next, CCFRaft.next, request] using member) with
@@ -18543,7 +18540,7 @@ theorem requestVotePreservesSystemInductiveInvariant
           Message.appendEntriesResponse response ∈
             state.network queuedDestination := by
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.requestVoteRequest request)
                 (.appendEntriesResponse response) queuedDestination
                 (by simpa [next, CCFRaft.next, request] using member) with
@@ -18555,7 +18552,7 @@ theorem requestVotePreservesSystemInductiveInvariant
           queuedDestination response old
     · intro queuedDestination queuedRequest member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteRequest request)
               (.requestVoteRequest queuedRequest) queuedDestination
               (by simpa [next, CCFRaft.next, request] using member) with
@@ -18622,7 +18619,7 @@ theorem requestVotePreservesSystemInductiveInvariant
           Message.requestVoteResponse response ∈
             state.network queuedDestination := by
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.requestVoteRequest request)
                 (.requestVoteResponse response) queuedDestination
                 (by simpa [next, CCFRaft.next, request] using member) with
@@ -18653,7 +18650,7 @@ theorem requestVotePreservesSystemInductiveInvariant
         simp [next, CCFRaft.next]
       · intro queuedDestination queuedRequest member
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.requestVoteRequest request)
                 (.appendEntriesRequest queuedRequest)
                 queuedDestination
@@ -18682,7 +18679,7 @@ theorem requestVotePreservesSystemInductiveInvariant
               simp [next, CCFRaft.next, NodeState.committedLog])
             (fun queuedDestination queuedRequest member => by
               rcases
-                  memEnqueueNoDup
+                  memEnqueue
                     state.network (.requestVoteRequest request)
                       (.appendEntriesRequest queuedRequest)
                       queuedDestination
@@ -18696,7 +18693,7 @@ theorem requestVotePreservesSystemInductiveInvariant
     · intro evidence supportedPrefix queuedDestination queuedRequest
         known queued sameTerm
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteRequest request)
               (.appendEntriesRequest queuedRequest)
               queuedDestination
@@ -18831,7 +18828,7 @@ theorem requestVotePreservesSystemInductiveInvariant
           Message.appendEntriesRequest queuedRequest ∈
             state.network queuedDestination := by
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.requestVoteRequest request)
                 (.appendEntriesRequest queuedRequest)
                 queuedDestination
@@ -18857,7 +18854,7 @@ theorem requestVotePreservesSystemInductiveInvariant
           (afterAppendHistory := appendHistory)
       · intro queuedDestination queuedRequest queued
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.requestVoteRequest request)
                 (.appendEntriesRequest queuedRequest)
                 queuedDestination
@@ -18899,7 +18896,7 @@ theorem requestVotePreservesSystemInductiveInvariant
             simp [next, CCFRaft.next, NodeState.committedLog])
           (fun queuedDestination queuedRequest member => by
             rcases
-                memEnqueueNoDup
+                memEnqueue
                   state.network (.requestVoteRequest request)
                   (.appendEntriesRequest queuedRequest)
                   queuedDestination
@@ -18947,7 +18944,7 @@ theorem requestVotePreservesSystemInductiveInvariant
           Message.appendEntriesRequest queuedRequest ∈
             state.network queuedDestination := by
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.requestVoteRequest request)
                 (.appendEntriesRequest queuedRequest)
                 queuedDestination
@@ -18972,7 +18969,7 @@ theorem requestVotePreservesSystemInductiveInvariant
           Message.appendEntriesRequest queuedRequest ∈
             state.network queuedDestination := by
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.requestVoteRequest request)
                 (.appendEntriesRequest queuedRequest)
                 queuedDestination
@@ -18988,7 +18985,7 @@ theorem requestVotePreservesSystemInductiveInvariant
           Message.appendEntriesRequest queuedRequest ∈
             state.network queuedDestination := by
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.requestVoteRequest request)
                 (.appendEntriesRequest queuedRequest)
                 queuedDestination
@@ -19033,7 +19030,7 @@ theorem requestVotePreservesSystemInductiveInvariant
           Message.appendEntriesRequest queuedRequest ∈
             state.network queuedDestination := by
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.requestVoteRequest request)
                 (.appendEntriesRequest queuedRequest)
                 queuedDestination
@@ -19090,7 +19087,7 @@ theorem requestVotePreservesSystemInductiveInvariant
         facts.joinedCarriers.grantedVotes node member
     · intro queuedDestination queuedRequest member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteRequest request)
               (.requestVoteRequest queuedRequest) queuedDestination
               (by simpa [next, CCFRaft.next, request] using member) with
@@ -19109,7 +19106,7 @@ theorem requestVotePreservesSystemInductiveInvariant
           Message.appendEntriesRequest queuedRequest ∈
             state.network queuedDestination := by
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.requestVoteRequest request)
                 (.appendEntriesRequest queuedRequest) queuedDestination
                 (by simpa [next, CCFRaft.next, request] using member) with
@@ -19125,7 +19122,7 @@ theorem requestVotePreservesSystemInductiveInvariant
           Message.appendEntriesRequest queuedRequest ∈
             state.network queuedDestination := by
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.requestVoteRequest request)
                 (.appendEntriesRequest queuedRequest) queuedDestination
                 (by simpa [next, CCFRaft.next, request] using member) with
@@ -19141,7 +19138,7 @@ theorem requestVotePreservesSystemInductiveInvariant
           Message.requestVoteResponse response ∈
             state.network queuedDestination := by
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.requestVoteRequest request)
                 (.requestVoteResponse response) queuedDestination
                 (by simpa [next, CCFRaft.next, request] using member) with
@@ -19165,7 +19162,7 @@ theorem requestVotePreservesSystemInductiveInvariant
             Message.appendEntriesResponse response ∈
               state.network queuedDestination := by
           rcases
-              memEnqueueNoDup
+              memEnqueue
                 state.network (.requestVoteRequest request)
                   (.appendEntriesResponse response) queuedDestination
                   (by simpa [next, CCFRaft.next, request] using member) with
@@ -19455,7 +19452,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
             Message.appendEntriesResponse response ∈
               state.network leader := by
           rcases
-              memEnqueueNoDup
+              memEnqueue
                 state.network (.appendEntriesRequest request)
                   (.appendEntriesResponse response) leader
                   (by simpa [next, CCFRaft.next, request] using member) with
@@ -19522,7 +19519,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
             Message.requestVoteResponse response ∈
               state.network candidate := by
           rcases
-              memEnqueueNoDup
+              memEnqueue
                 state.network (.appendEntriesRequest request)
                   (.requestVoteResponse response) candidate
                   (by simpa [next, CCFRaft.next, request] using member) with
@@ -19739,7 +19736,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
   · constructor
     · intro queuedDestination message member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.appendEntriesRequest request)
               message queuedDestination
               (by simpa [next, CCFRaft.next, request] using member) with
@@ -19750,7 +19747,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
         simpa [request, makeAppendEntriesRequest] using destinationEq.symm
     · intro queuedDestination queuedRequest member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.appendEntriesRequest request)
               (.appendEntriesRequest queuedRequest) queuedDestination
               (by simpa [next, CCFRaft.next, request] using member) with
@@ -19784,7 +19781,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
           Message.appendEntriesResponse response ∈
             state.network queuedDestination := by
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.appendEntriesRequest request)
                 (.appendEntriesResponse response) queuedDestination
                 (by simpa [next, CCFRaft.next, request] using member) with
@@ -19812,7 +19809,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
           Message.requestVoteRequest voteRequest ∈
             state.network queuedDestination := by
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.appendEntriesRequest request)
                 (.requestVoteRequest voteRequest) queuedDestination
                 (by simpa [next, CCFRaft.next, request] using member) with
@@ -19844,7 +19841,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
           Message.requestVoteResponse response ∈
             state.network queuedDestination := by
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.appendEntriesRequest request)
                 (.requestVoteResponse response) queuedDestination
                 (by simpa [next, CCFRaft.next, request] using member) with
@@ -19902,7 +19899,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
             Message.appendEntriesRequest queuedRequest ∈
               state.network queuedDestination := by
           rcases
-              memEnqueueNoDup
+              memEnqueue
                 state.network (.appendEntriesRequest request)
                   (.appendEntriesRequest queuedRequest)
                   queuedDestination
@@ -19967,7 +19964,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
               Message.appendEntriesRequest queuedRequest ∈
                 state.network queuedDestination := by
             rcases
-                memEnqueueNoDup
+                memEnqueue
                   state.network (.appendEntriesRequest request)
                     (.appendEntriesRequest queuedRequest)
                     queuedDestination
@@ -20029,7 +20026,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
                   Message.appendEntriesRequest knownRequest ∈
                     state.network knownDestination := by
                 rcases
-                    memEnqueueNoDup
+                    memEnqueue
                       state.network (.appendEntriesRequest request)
                         (.appendEntriesRequest knownRequest)
                         knownDestination
@@ -20073,7 +20070,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
             Message.appendEntriesRequest queuedRequest ∈
               state.network queuedDestination := by
           rcases
-              memEnqueueNoDup
+              memEnqueue
                 state.network (.appendEntriesRequest request)
                   (.appendEntriesRequest queuedRequest)
                   queuedDestination
@@ -20193,7 +20190,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
             Message.appendEntriesRequest queuedRequest ∈
               state.network queuedDestination := by
           rcases
-              memEnqueueNoDup
+              memEnqueue
                 state.network (.appendEntriesRequest request)
                   (.appendEntriesRequest queuedRequest)
                   queuedDestination
@@ -20235,7 +20232,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
             Message.appendEntriesRequest queuedRequest ∈
               state.network queuedDestination := by
           rcases
-              memEnqueueNoDup
+              memEnqueue
                 state.network (.appendEntriesRequest request)
                   (.appendEntriesRequest queuedRequest)
                   queuedDestination
@@ -20266,7 +20263,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
             Message.appendEntriesRequest queuedRequest ∈
               state.network queuedDestination := by
           rcases
-              memEnqueueNoDup
+              memEnqueue
                 state.network (.appendEntriesRequest request)
                   (.appendEntriesRequest queuedRequest)
                   queuedDestination
@@ -20942,7 +20939,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
             Message.appendEntriesRequest queuedRequest ∈
               state.network queuedDestination := by
           rcases
-              memEnqueueNoDup
+              memEnqueue
                 state.network (.appendEntriesRequest request)
                   (.appendEntriesRequest queuedRequest)
                   queuedDestination
@@ -20991,7 +20988,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
             Message.appendEntriesRequest queuedRequest ∈
               state.network queuedDestination := by
           rcases
-              memEnqueueNoDup
+              memEnqueue
                 state.network (.appendEntriesRequest request)
                   (.appendEntriesRequest queuedRequest)
                   queuedDestination
@@ -21061,7 +21058,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
               Message.appendEntriesRequest queuedRequest ∈
                 state.network queuedDestination := by
             rcases
-                memEnqueueNoDup
+                memEnqueue
                   state.network (.appendEntriesRequest request)
                     (.appendEntriesRequest queuedRequest)
                     queuedDestination
@@ -21130,7 +21127,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
             Message.appendEntriesRequest queuedRequest ∈
               state.network queuedDestination := by
           rcases
-              memEnqueueNoDup
+              memEnqueue
                 state.network (.appendEntriesRequest request)
                   (.appendEntriesRequest queuedRequest)
                   queuedDestination
@@ -21191,7 +21188,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
             Message.appendEntriesRequest queuedRequest ∈
               state.network queuedDestination := by
           rcases
-              memEnqueueNoDup
+              memEnqueue
                 state.network (.appendEntriesRequest request)
                   (.appendEntriesRequest queuedRequest)
                   queuedDestination
@@ -21222,7 +21219,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
             Message.appendEntriesRequest queuedRequest ∈
               state.network queuedDestination := by
           rcases
-              memEnqueueNoDup
+              memEnqueue
                 state.network (.appendEntriesRequest request)
                   (.appendEntriesRequest queuedRequest)
                   queuedDestination
@@ -21283,7 +21280,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
             Message.appendEntriesRequest queuedRequest ∈
               state.network queuedDestination := by
           rcases
-              memEnqueueNoDup
+              memEnqueue
                 state.network (.appendEntriesRequest request)
                   (.appendEntriesRequest queuedRequest)
                   queuedDestination
@@ -21347,7 +21344,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
           Message.requestVoteRequest queuedRequest ∈
             state.network queuedDestination := by
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.appendEntriesRequest request)
                 (.requestVoteRequest queuedRequest) queuedDestination
                 (by simpa [next, CCFRaft.next] using member) with
@@ -21359,7 +21356,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
           queuedDestination queuedRequest old
     · intro queuedDestination queuedRequest member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.appendEntriesRequest request)
               (.appendEntriesRequest queuedRequest) queuedDestination
               (by simpa [next, CCFRaft.next] using member) with
@@ -21376,7 +21373,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
     · intro queuedDestination queuedRequest member configuration configured
         peer inNodes
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.appendEntriesRequest request)
               (.appendEntriesRequest queuedRequest) queuedDestination
               (by simpa [next, CCFRaft.next] using member) with
@@ -21416,7 +21413,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
           Message.requestVoteResponse response ∈
             state.network queuedDestination := by
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.appendEntriesRequest request)
                 (.requestVoteResponse response) queuedDestination
                 (by simpa [next, CCFRaft.next] using member) with
@@ -21440,7 +21437,7 @@ theorem appendEntriesPreservesSystemInductiveInvariant
             Message.appendEntriesResponse response ∈
               state.network queuedDestination := by
           rcases
-              memEnqueueNoDup
+              memEnqueue
                 state.network (.appendEntriesRequest request)
                   (.appendEntriesResponse response) queuedDestination
                   (by simpa [next, CCFRaft.next] using member) with
@@ -38151,7 +38148,7 @@ theorem requestPreVotePreservesSystemInductiveInvariant
       state after invariant rfl (fun _ => Iff.rfl) (fun _ => rfl)
   intro queuedDestination message member
   rcases
-      memEnqueueNoDup
+      memEnqueue
         state.network (.requestPreVote request)
           message queuedDestination
           (by simpa [after, next, CCFRaft.next, request] using member) with
@@ -38170,18 +38167,18 @@ theorem enqueueProposeVoteRequestPreservesSystemInductiveInvariant
     SafetyInductiveInvariant
       { state with
         network :=
-          enqueueNoDup state.network (.proposeVoteRequest request) } := by
+          enqueue state.network (.proposeVoteRequest request) } := by
   let after : State Node TxId :=
     { state with
       network :=
-        enqueueNoDup state.network (.proposeVoteRequest request) }
+        enqueue state.network (.proposeVoteRequest request) }
   change SafetyInductiveInvariant after
   apply
     safetyInertNetworkChangePreservesSystemInductiveInvariant
       state after invariant rfl (fun _ => Iff.rfl) (fun _ => rfl)
   intro queuedDestination message member
   rcases
-      memEnqueueNoDup
+      memEnqueue
         state.network (.proposeVoteRequest request)
           message queuedDestination
           (by simpa [after] using member) with
@@ -41289,7 +41286,7 @@ theorem appendRequestMemAfterVoteRequestReceive
         some (.requestVoteRequest request, remaining)) :
     forall queuedDestination queuedRequest,
       Message.appendEntriesRequest queuedRequest ∈
-          enqueueNoDup
+          enqueue
             (updateQueue network destination remaining)
             (.requestVoteResponse response)
             queuedDestination ↔
@@ -41299,7 +41296,7 @@ theorem appendRequestMemAfterVoteRequestReceive
   constructor
   · intro member
     rcases
-        memEnqueueNoDup
+        memEnqueue
           (updateQueue network destination remaining)
           (.requestVoteResponse response)
           (.appendEntriesRequest queuedRequest)
@@ -41334,7 +41331,7 @@ theorem appendResponseMemAfterVoteRequestReceive
         some (.requestVoteRequest request, remaining)) :
     forall queuedDestination queuedResponse,
       Message.appendEntriesResponse queuedResponse ∈
-          enqueueNoDup
+          enqueue
             (updateQueue network destination remaining)
             (.requestVoteResponse response)
             queuedDestination ↔
@@ -41344,7 +41341,7 @@ theorem appendResponseMemAfterVoteRequestReceive
   constructor
   · intro member
     rcases
-        memEnqueueNoDup
+        memEnqueue
           (updateQueue network destination remaining)
           (.requestVoteResponse response)
           (.appendEntriesResponse queuedResponse)
@@ -41379,7 +41376,7 @@ theorem voteRequestMemBackAfterVoteRequestReceive
         some (.requestVoteRequest request, remaining)) :
     forall queuedDestination queuedRequest,
       Message.requestVoteRequest queuedRequest ∈
-          enqueueNoDup
+          enqueue
             (updateQueue network destination remaining)
             (.requestVoteResponse response)
             queuedDestination ->
@@ -41387,7 +41384,7 @@ theorem voteRequestMemBackAfterVoteRequestReceive
           network queuedDestination := by
   intro queuedDestination queuedRequest member
   rcases
-      memEnqueueNoDup
+      memEnqueue
         (updateQueue network destination remaining)
         (.requestVoteResponse response)
         (.requestVoteRequest queuedRequest)
@@ -41415,7 +41412,7 @@ theorem voteResponseMemAfterVoteRequestReceive
     (queuedDestination : Node)
     (member :
       Message.requestVoteResponse queuedResponse ∈
-        enqueueNoDup
+        enqueue
           (updateQueue network destination remaining)
           (.requestVoteResponse response)
           queuedDestination) :
@@ -41424,7 +41421,7 @@ theorem voteResponseMemAfterVoteRequestReceive
       (queuedDestination = response.destination /\
         queuedResponse = response) := by
   rcases
-      memEnqueueNoDup
+      memEnqueue
         (updateQueue network destination remaining)
         (.requestVoteResponse response)
         (.requestVoteResponse queuedResponse)
@@ -41456,7 +41453,7 @@ theorem oldVoteResponseMemAfterVoteRequestReceive
       Message.requestVoteResponse queuedResponse ∈
         network queuedDestination) :
     Message.requestVoteResponse queuedResponse ∈
-      enqueueNoDup
+      enqueue
         (updateQueue network destination remaining)
         (.requestVoteResponse response)
         queuedDestination := by
@@ -41487,7 +41484,7 @@ theorem voteRequestMemAfterAppendRequestReceive
   constructor
   · intro member
     rcases
-        memEnqueueNoDup
+        memEnqueue
           (updateQueue network destination remaining)
           (.appendEntriesResponse response)
           (.requestVoteRequest queuedRequest)
@@ -41528,7 +41525,7 @@ theorem voteResponseMemAfterAppendRequestReceive
   constructor
   · intro member
     rcases
-        memEnqueueNoDup
+        memEnqueue
           (updateQueue network destination remaining)
           (.appendEntriesResponse response)
           (.requestVoteResponse queuedResponse)
@@ -41569,7 +41566,7 @@ theorem appendResponseMemAfterAppendRequestReceive
       (queuedDestination = response.destination /\
         queuedResponse = response) := by
   rcases
-      memEnqueueNoDup
+      memEnqueue
         (updateQueue network destination remaining)
         (.appendEntriesResponse response)
         (.appendEntriesResponse queuedResponse)
@@ -42178,7 +42175,7 @@ theorem effectiveAckersAfterVoteRequestReceive
         some (.requestVoteRequest request, remaining))
     (networkEq :
       after.network =
-        enqueueNoDup
+        enqueue
           (updateQueue state.network destination remaining)
           (.requestVoteResponse response))
     (hasJoinedEq : after.hasJoined = state.hasJoined)
@@ -42252,7 +42249,7 @@ theorem effectiveElectionVotersBeforeSubsetAfterVoteRequestReceive
         some (.requestVoteRequest request, remaining))
     (networkEq :
       after.network =
-        enqueueNoDup
+        enqueue
           (updateQueue state.network destination remaining)
           (.requestVoteResponse response))
     (hasJoinedEq : after.hasJoined = state.hasJoined)
@@ -42432,7 +42429,7 @@ theorem effectiveElectionVotersAfterGrantedRequestSubsetPotential
       { state with
         nodes := updateNode state.nodes destination nextNode
         network :=
-          enqueueNoDup
+          enqueue
             (updateQueue state.network destination remaining)
             (.requestVoteResponse response) }
     forall candidate,
@@ -42447,7 +42444,7 @@ theorem effectiveElectionVotersAfterGrantedRequestSubsetPotential
     { state with
       nodes := updateNode state.nodes destination nextNode
       network :=
-        enqueueNoDup
+        enqueue
           (updateQueue state.network destination remaining)
           (.requestVoteResponse response) }
   let post := handleRequestVoteRequestLocalPost handled
@@ -42508,7 +42505,7 @@ theorem effectiveElectionVotersAfterGrantedRequestSubsetPotential
       ⟨queuedResponse, queuedMember, granted, queuedTerm,
         queuedSource, queuedDestination⟩
     rcases
-        memEnqueueNoDup
+        memEnqueue
           (updateQueue state.network destination remaining)
           (.requestVoteResponse response)
           (.requestVoteResponse queuedResponse)
@@ -42639,7 +42636,7 @@ theorem effectiveElectionMajorityAfterGrantedRequestWasPotential
       { state with
         nodes := updateNode state.nodes destination nextNode
         network :=
-          enqueueNoDup
+          enqueue
             (updateQueue state.network destination remaining)
             (.requestVoteResponse response) }
     forall candidate,
@@ -42658,7 +42655,7 @@ theorem effectiveElectionMajorityAfterGrantedRequestWasPotential
           ({ state with
             nodes := updateNode state.nodes destination nextNode
             network :=
-              enqueueNoDup
+              enqueue
                 (updateQueue state.network destination remaining)
                 (.requestVoteResponse response) }.nodes candidate) =
         activeConfigurations (state.nodes candidate) := by
@@ -42827,7 +42824,7 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
     SafetyInductiveInvariant
       { state with
         network :=
-          enqueueNoDup state.network (.requestVoteResponse response) } := by
+          enqueue state.network (.requestVoteResponse response) } := by
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
@@ -42845,7 +42842,7 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
   let after : State Node TxId :=
     { state with
       network :=
-        enqueueNoDup state.network (.requestVoteResponse response) }
+        enqueue state.network (.requestVoteResponse response) }
   have appendRequestEq :
       forall destination request,
         Message.appendEntriesRequest request ∈ after.network destination ↔
@@ -42855,7 +42852,7 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
     constructor
     · intro member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteResponse response)
               (.appendEntriesRequest request) destination
               (by simpa [after] using member) with
@@ -42877,7 +42874,7 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
     constructor
     · intro member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteResponse response)
               (.appendEntriesResponse queuedResponse) destination
               (by simpa [after] using member) with
@@ -42944,7 +42941,7 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
           ⟨queuedResponse, member, granted, responseTerm,
             responseSource, responseDestination⟩
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.requestVoteResponse response)
                 (.requestVoteResponse queuedResponse) candidate
                 (by simpa [after] using member) with
@@ -43113,7 +43110,7 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
   · constructor
     · intro destination message member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteResponse response)
               message destination
               (by simpa [after] using member) with
@@ -43132,7 +43129,7 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
             ((appendResponseEq destination queuedResponse).mp member)
     · intro destination request member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteResponse response)
               (.requestVoteRequest request) destination
               (by simpa [after] using member) with
@@ -43141,7 +43138,7 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
       · simp at new
     · intro destination queuedResponse member granted
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteResponse response)
               (.requestVoteResponse queuedResponse) destination
               (by simpa [after] using member) with
@@ -43429,7 +43426,7 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
     · exact facts.joinedCarriers.grantedVotes
     · intro destination request member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteResponse response)
               (.requestVoteRequest request) destination
               (by simpa [after] using member) with
@@ -43440,7 +43437,7 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
       · simp at new
     · intro destination request member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteResponse response)
               (.appendEntriesRequest request) destination
               (by simpa [after] using member) with
@@ -43454,7 +43451,7 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
           Message.appendEntriesRequest request ∈
             state.network destination := by
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.requestVoteResponse response)
                 (.appendEntriesRequest request) destination
                 (by simpa [after] using member) with
@@ -43466,7 +43463,7 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
           destination request old configuration configured inNodes
     · intro destination queuedResponse member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteResponse response)
               (.requestVoteResponse queuedResponse) destination
               (by simpa [after] using member) with
@@ -43481,7 +43478,7 @@ theorem enqueueRejectedVoteResponsePreservesSystemInductiveInvariant
       · exact facts.joinedCarriers.runtimeNodes.positiveMatches
       · intro destination queuedResponse member
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.requestVoteResponse response)
                 (.appendEntriesResponse queuedResponse) destination
                 (by simpa [after] using member) with
@@ -43514,7 +43511,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
       { state with
         nodes := updateNode state.nodes destination nextNode
         network :=
-          enqueueNoDup state.network (.requestVoteResponse response) } := by
+          enqueue state.network (.requestVoteResponse response) } := by
   rcases invariant with
     ⟨votes, appendHistory, responseHistory,
       voteRequestHistory, voteCandidateHistory, voteVoterHistory, facts⟩
@@ -43581,7 +43578,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
     { state with
       nodes := updateNode state.nodes destination nextNode
       network :=
-        enqueueNoDup state.network (.requestVoteResponse response) }
+        enqueue state.network (.requestVoteResponse response) }
   have roleEq :
       forall node,
         (after.nodes node).role = (state.nodes node).role := by
@@ -43689,7 +43686,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
     constructor
     · intro member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteResponse response)
               (.appendEntriesRequest queuedRequest) queuedDestination
               (by simpa [after] using member) with
@@ -43712,7 +43709,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
     constructor
     · intro member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteResponse response)
               (.appendEntriesResponse queuedResponse) queuedDestination
               (by simpa [after] using member) with
@@ -43884,7 +43881,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
         ⟨queuedResponse, queuedMember, queuedGranted, responseTerm,
           responseSource, responseDestination⟩
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteResponse response)
               (.requestVoteResponse queuedResponse) candidate
               (by simpa [after] using queuedMember) with
@@ -44315,7 +44312,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
   · constructor
     · intro queuedDestination message member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteResponse response)
               message queuedDestination
               (by simpa [after] using member) with
@@ -44355,7 +44352,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
                 (Or.inr (by simpa [roleEq] using preVoteCandidate))⟩
     · intro queuedDestination queuedRequest member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteResponse response)
               (.requestVoteRequest queuedRequest) queuedDestination
               (by simpa [after] using member) with
@@ -44368,7 +44365,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
       · simp at new
     · intro queuedDestination queuedResponse member queuedGranted
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteResponse response)
               (.requestVoteResponse queuedResponse) queuedDestination
               (by simpa [after] using member) with
@@ -45296,7 +45293,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
           (by simpa [votesGrantedEq] using member)
     · intro queuedDestination queuedRequest member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteResponse response)
               (.requestVoteRequest queuedRequest) queuedDestination
               (by simpa [after] using member) with
@@ -45307,7 +45304,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
       · simp at new
     · intro queuedDestination queuedRequest member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteResponse response)
               (.appendEntriesRequest queuedRequest) queuedDestination
               (by simpa [after] using member) with
@@ -45322,7 +45319,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
           Message.appendEntriesRequest queuedRequest ∈
             state.network queuedDestination := by
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.requestVoteResponse response)
                 (.appendEntriesRequest queuedRequest) queuedDestination
                 (by simpa [after] using member) with
@@ -45335,7 +45332,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
             inNodes
     · intro queuedDestination queuedResponse member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteResponse response)
               (.requestVoteResponse queuedResponse) queuedDestination
               (by simpa [after] using member) with
@@ -45359,7 +45356,7 @@ theorem enqueueGrantedVoteResponsePreservesSystemInductiveInvariant
             (by simpa [matchEq] using positive)
       · intro queuedDestination queuedResponse member
         rcases
-            memEnqueueNoDup
+            memEnqueue
               state.network (.requestVoteResponse response)
                 (.appendEntriesResponse queuedResponse) queuedDestination
                 (by simpa [after] using member) with
@@ -47653,7 +47650,7 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
   · constructor
     · intro queuedDestination message member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             (updateQueue state.network destination remaining)
             (.appendEntriesResponse response)
             message queuedDestination
@@ -47950,7 +47947,7 @@ theorem receiveAppendEntriesRequestPreservesSystemInductiveInvariant
             oldPositive
       · intro queuedDestination queuedResponse member
         rcases
-            memEnqueueNoDup
+            memEnqueue
               (updateQueue state.network destination remaining)
               (.appendEntriesResponse response)
               (.appendEntriesResponse queuedResponse) queuedDestination
@@ -48115,7 +48112,7 @@ theorem receiveRequestVoteRequestPreservesSystemInductiveInvariant
       { state with
         nodes := updateNode state.nodes destination nextNode
         network :=
-          enqueueNoDup
+          enqueue
             (updateQueue state.network destination remaining)
             (.requestVoteResponse response) } := by
   let post := handleRequestVoteRequestLocalPost handled
@@ -48123,12 +48120,12 @@ theorem receiveRequestVoteRequestPreservesSystemInductiveInvariant
     { state with
       nodes := updateNode state.nodes destination nextNode
       network :=
-        enqueueNoDup state.network (.requestVoteResponse response) }
+        enqueue state.network (.requestVoteResponse response) }
   let after : State Node TxId :=
     { state with
       nodes := updateNode state.nodes destination nextNode
       network :=
-        enqueueNoDup
+        enqueue
           (updateQueue state.network destination remaining)
           (.requestVoteResponse response) }
   have enqueuedInvariant : SafetyInductiveInvariant enqueued := by
@@ -48183,7 +48180,7 @@ theorem receiveRequestVoteRequestPreservesSystemInductiveInvariant
           message ∈ enqueued.network queuedDestination := by
     intro queuedDestination message member
     rcases
-        memEnqueueNoDup
+        memEnqueue
           (updateQueue state.network destination remaining)
           (.requestVoteResponse response)
           message queuedDestination
@@ -48235,7 +48232,7 @@ theorem receiveRequestVoteRequestPreservesSystemInductiveInvariant
             state.network (.requestVoteResponse response)
     · intro member
       rcases
-          memEnqueueNoDup
+          memEnqueue
             state.network (.requestVoteResponse response)
               (.requestVoteResponse queuedResponse)
               queuedDestination
@@ -48330,7 +48327,7 @@ theorem receiveRequestVoteRequestPreservesSystemInductiveInvariant
             Message.appendEntriesResponse queuedResponse ∈
               state.network leader := by
           rcases
-              memEnqueueNoDup
+              memEnqueue
                 state.network (.requestVoteResponse response)
                   (.appendEntriesResponse queuedResponse)
                   leader (by simpa [enqueued] using member) with
@@ -48342,7 +48339,7 @@ theorem receiveRequestVoteRequestPreservesSystemInductiveInvariant
               after.network leader := by
           rw [show
             after.network =
-              enqueueNoDup
+              enqueue
                 (updateQueue state.network destination remaining)
                 (.requestVoteResponse response) by rfl]
           exact
@@ -48391,7 +48388,7 @@ theorem receiveRequestPreVotePreservesSystemInductiveInvariant
       { state with
         nodes := updateNode state.nodes destination nextNode
         network :=
-          enqueueNoDup
+          enqueue
             (updateQueue state.network destination remaining)
             (.requestPreVoteResponse response) } := by
   have nextNodeEq :
@@ -48406,7 +48403,7 @@ theorem receiveRequestPreVotePreservesSystemInductiveInvariant
   let after : State Node TxId :=
     { state with
       network :=
-        enqueueNoDup
+        enqueue
           (updateQueue state.network destination remaining)
           (.requestPreVoteResponse response) }
   have remainingOld := (takeFirstFromSound taken).2.2
@@ -48418,7 +48415,7 @@ theorem receiveRequestPreVotePreservesSystemInductiveInvariant
               message.destination = queuedDestination) := by
     intro queuedDestination message member
     rcases
-        memEnqueueNoDup
+        memEnqueue
           (updateQueue state.network destination remaining)
           (.requestPreVoteResponse response)
           message queuedDestination
@@ -51146,13 +51143,13 @@ theorem retirementInvariantFactsPreserved
     simpa [next, CCFRaft.next, makeProposeVoteRequest] using
       retirementInvariantFacts_networkFrame
         state
-          (enqueueNoDup state.network
+          (enqueue state.network
             (.proposeVoteRequest
               (makeProposeVoteRequest state source destination)))
           oldFacts
           (by
             intro target request member
-            simpa [enqueueNoDup] using member)
+            simpa [enqueue] using member)
   | advanceCommitIndexAndProposeVote source destination =>
     let advanced :=
       demoteRetiredCommitted (advanceCommitState state source) source
@@ -51163,11 +51160,11 @@ theorem retirementInvariantFactsPreserved
     simpa [next, CCFRaft.next, advanced, request] using
       retirementInvariantFacts_networkFrame
         advanced
-          (enqueueNoDup advanced.network (.proposeVoteRequest request))
+          (enqueue advanced.network (.proposeVoteRequest request))
           advancedFacts
           (by
             intro target appendRequest member
-            simpa [enqueueNoDup] using member)
+            simpa [enqueue] using member)
 
 theorem initialSystemInductiveInvariant :
     SystemInductiveInvariant (initialState : State Node TxId) :=

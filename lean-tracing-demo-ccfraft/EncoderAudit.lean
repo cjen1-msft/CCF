@@ -31,7 +31,7 @@ run_cmd do
       ``CCFRaft.TransactionMapping.enabled_mapState_appendRetiredCommitted_iff,
       ``CCFRaft.MessageEquality.messageEqual_correct,
       ``CCFRaft.TransactionMapping.enabled_mapState_appendEntries_iff,
-      ``CCFRaft.TransactionMapping.mapState_appendEntries_with_dedup,
+      ``CCFRaft.TransactionMapping.mapState_appendEntries,
       ``TraceSmt.Guarded.test_holds,
       ``TraceSmt.Guarded.eval_enqueueNoDup_map,
       ``CCFRaft.GuardedAppendEntries.step_correct,

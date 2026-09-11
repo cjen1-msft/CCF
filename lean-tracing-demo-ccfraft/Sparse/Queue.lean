@@ -156,37 +156,32 @@ theorem cross_source_swap (a b : Message N T)
   next =>
     by_cases hb : b.source = source <;> simp [partition, ha, hb]
 
-section Dedup
+section Enqueue
 
 variable [DecidableEq T]
 
 def sparseEnqueue (queues : Sparse N T) (m : Message N T) : Sparse N T :=
   let queue := queues m.destination m.source
-  if Membership.mem queue m then queues
-  else replaceSource queues m.destination m.source (queue ++ [m])
+  replaceSource queues m.destination m.source (queue ++ [m])
 
 theorem enqueue_correct (network : Network N T) (m : Message N T) :
-    abstractNetwork (enqueueNoDup network m) =
+    abstractNetwork (enqueue network m) =
       sparseEnqueue (abstractNetwork network) m := by
-  have hm := own_partition_mem (network m.destination) m
-  simp only [enqueueNoDup, sparseEnqueue, abstractNetwork, hm]
-  split
-  next => rfl
+  simp only [enqueue, sparseEnqueue, abstractNetwork]
+  funext d s
+  by_cases hd : d = m.destination
   next =>
-    funext d s
-    by_cases hd : d = m.destination
+    subst d
+    by_cases hs : s = m.source
     next =>
-      subst d
-      by_cases hs : s = m.source
-      next =>
-        subst s
-        simp [abstractNetwork, replaceSource, updateQueue, partition]
-      next =>
-        have hs' : Not (m.source = s) := Ne.symm hs
-        simp [abstractNetwork, replaceSource, updateQueue, partition, hs, hs']
-    next => simp [abstractNetwork, replaceSource, updateQueue, hd]
+      subst s
+      simp [abstractNetwork, replaceSource, updateQueue, partition]
+    next =>
+      have hs' : Not (m.source = s) := Ne.symm hs
+      simp [abstractNetwork, replaceSource, updateQueue, partition, hs, hs']
+  next => simp [abstractNetwork, replaceSource, updateQueue, hd]
 
-end Dedup
+end Enqueue
 
 def WellFormed (queues : N -> List (Message N T)) : Prop :=
   forall source m, Membership.mem (queues source) m -> m.source = source
@@ -301,7 +296,7 @@ inductive Command (N T : Type) where
 def emitConcrete (network : Network N T) (emitted : Option (Message N T)) : Network N T :=
   match emitted with
   | none => network
-  | some m => enqueueNoDup network m
+  | some m => enqueue network m
 
 def emitSparse (queues : Sparse N T) (emitted : Option (Message N T)) : Sparse N T :=
   match emitted with
@@ -318,7 +313,7 @@ theorem emit_correct (network : Network N T) (emitted : Option (Message N T)) :
 def concreteStep (command : Command N T) (network : Network N T) :
     Option (Network N T) :=
   match command with
-  | .send m => some (enqueueNoDup network m)
+  | .send m => some (enqueue network m)
   | .receive source destination selected emitted =>
     match takeFirstFrom source (network destination) with
     | none => none
@@ -447,11 +442,11 @@ example :
       some (selfRequest, [otherPacket, .appendEntriesResponse selfResponse]) := by
   decide
 
--- A self-reply checks the queue after removal and retains an existing duplicate.
+-- A self-reply appends after removal, including an existing equal response.
 example :
     (reply (fun _ => [otherPacket, selfRequest, .appendEntriesResponse selfResponse])
       node0 [otherPacket, .appendEntriesResponse selfResponse] selfResponse) node0 =
-        [otherPacket, .appendEntriesResponse selfResponse] := by
+        [otherPacket, .appendEntriesResponse selfResponse, .appendEntriesResponse selfResponse] := by
   decide
 
 -- With no duplicate, the reply appends behind the untouched other-source packet.

@@ -3,7 +3,11 @@
     "source": "SparseQueuePrototype",
     "source_sha256": "27ee040556106a6aa9ef23b4ab022dfa1aa6d36e42262c88ba86b3125c21b2d6",
     "target": "Sparse.Queue",
-    "proof_body_sha256": "00ff8601c9740816f4dbc7bbf05846f82d6adf22db13893a3e9db9853f3c45f8"
+    "proof_body_sha256": "00ff8601c9740816f4dbc7bbf05846f82d6adf22db13893a3e9db9853f3c45f8",
+    "revision": {
+      "reason": "Preserve every successful FIFO send instead of suppressing equal pending messages.",
+      "proof_body_sha256": "d4559038664405238f4246625caf1418f70a7e53a37a3e95db61d07b01571f2c"
+    }
   },
   {
     "source": "SparseQueueModelPrototype",

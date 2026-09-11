@@ -57,7 +57,7 @@ theorem staleProposalIsConsumed :
     let state : State Node (Fin 1) :=
       { (initialState : State Node (Fin 1)) with
         nodes := updateNode initialNodes node1 newerFollower
-        network := enqueueNoDup (fun _ => []) (.proposeVoteRequest request) }
+        network := enqueue (fun _ => []) (.proposeVoteRequest request) }
     let after := next state (.receive node0 node1)
     Enabled state (.receive node0 node1) /\
       after.network node1 = [] /\
@@ -78,7 +78,7 @@ theorem retiredCommittedDestinationIgnoresProposal :
     let state : State Node (Fin 1) :=
       { (initialState : State Node (Fin 1)) with
         nodes := updateNode initialNodes node1 terminal
-        network := enqueueNoDup (fun _ => []) (.proposeVoteRequest request) }
+        network := enqueue (fun _ => []) (.proposeVoteRequest request) }
     let after := next state (.receive node0 node1)
     Enabled state (.receive node0 node1) /\
       after.network node1 = [] /\

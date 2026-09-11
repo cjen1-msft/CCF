@@ -183,15 +183,10 @@ theorem nonRequest_eq_map (f : TxId -> OtherTxId)
 theorem enqueue_map (f : TxId -> OtherTxId)
     (network : Node -> List (Message Node TxId))
     (message : Message Node TxId) (fixed : NonRequest message) :
-    (fun node => (enqueueNoDup network message node).map (mapMessage f)) =
-      enqueueNoDup (fun node => (network node).map (mapMessage f))
+    (fun node => (enqueue network message node).map (mapMessage f)) =
+      enqueue (fun node => (network node).map (mapMessage f))
         (mapMessage f message) := by
-  apply enqueueNoDup_map_of_fixed f network message _ rfl
-  constructor
-  · intro member
-    obtain ⟨other, member, same⟩ := List.mem_map.mp member
-    exact (nonRequest_eq_map f message other fixed).mp same.symm ▸ member
-  · exact fun member => List.mem_map.mpr ⟨message, member, rfl⟩
+  exact enqueue_map_of_fixed f network message _ rfl
 
 @[simp] theorem updateQueue_map (f : TxId -> OtherTxId)
     (network : Node -> List (Message Node TxId))

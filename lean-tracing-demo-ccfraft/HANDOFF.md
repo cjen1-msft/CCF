@@ -29,12 +29,19 @@ for the actual `checkQuorum` action and six observation kinds. The standalone
 Its printer is tested against actual Model guards, but is not covered by the
 Lean theorem. Normal `lake build Sparse` includes the new axiom audit.
 
-Next work is still substantial: the remaining actions, the FIFO Model
-correction, queue encoding, reducer integration, and initial-state
+The FIFO correction is implemented in `CCFRaft.enqueue`, the source-local
+queue correspondence, and existing encoder send accounting. Repeated equal
+heartbeats and replies are retained. The guarded AppendEntries equality
+branch is gone. See [FIFO Model sends](README.md#fifo-model-sends).
+
+Next work is still substantial: the remaining actions, native-array queue
+encoding, reducer integration, and initial-state
 materialization. Do not resume the old worker fan-out or claim full encoder
 completion. Finish and measure one action or shared operation at a time.
-The existing duplicate-suppressing queue proofs describe the old Model and
-must not be presented as successful FIFO production-send semantics.
+The independent duplicate-suppression utilities are not Model send semantics.
+The default build has pre-existing retirement-invariant proof failures in
+`MachineGenerated/ReconfigurationPreservation.lean`, reproduced in an isolated
+worktree at `45f1acbc8`. Do not weaken those proofs to make the build pass.
 
 The required encoder contract, for the reduced Model trace, is:
 

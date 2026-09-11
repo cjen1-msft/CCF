@@ -552,7 +552,7 @@ theorem proposeVoteRequest_mem_mapMessage
   | cons message messages inductionHypothesis =>
       cases message <;> simp_all [mapMessage]
 
-theorem enqueueNoDup_map_of_fixed
+theorem enqueue_map_of_fixed
     [DecidableEq Node]
     [DecidableEq TxId]
     [DecidableEq OtherTxId]
@@ -560,34 +560,22 @@ theorem enqueueNoDup_map_of_fixed
     (network : Node -> List (Message Node TxId))
     (message : Message Node TxId)
     (mappedMessage : Message Node OtherTxId)
-    (mapped : mapMessage f message = mappedMessage)
-    (membership :
-      mappedMessage ∈
-          (network message.destination).map (mapMessage f) ↔
-        message ∈ network message.destination) :
-    (fun node => (enqueueNoDup network message node).map (mapMessage f)) =
-      enqueueNoDup
+    (mapped : mapMessage f message = mappedMessage) :
+    (fun node => (enqueue network message node).map (mapMessage f)) =
+      enqueue
         (fun node => (network node).map (mapMessage f))
         mappedMessage := by
-  unfold enqueueNoDup
+  unfold enqueue
   dsimp
   have destinationEq :
       mappedMessage.destination = message.destination := by
     rw [← mapped, mapMessage_destination]
   rw [destinationEq]
-  by_cases present : message ∈ network message.destination
-  · have mappedPresent := membership.mpr present
-    simp [present, mappedPresent]
-  · have mappedPresent :
-        mappedMessage ∉
-          (network message.destination).map (mapMessage f) :=
-      fun found => present (membership.mp found)
-    simp only [present, mappedPresent, if_false]
-    funext node
-    by_cases same : node = message.destination
-    · subst node
-      simp [updateQueue, mapped]
-    · simp [updateQueue, same]
+  funext node
+  by_cases same : node = message.destination
+  · subst node
+    simp [updateQueue, mapped]
+  · simp [updateQueue, same]
 
 theorem mapState_advanceCommitIndex
     [DecidableEq Node] [DecidableEq TxId] [DecidableEq OtherTxId]
@@ -678,11 +666,10 @@ theorem mapState_requestVote
   rw [makeRequestVoteRequest_mapState]
   simp only [mapState]
   congr 1
-  apply enqueueNoDup_map_of_fixed f state.network
+  apply enqueue_map_of_fixed f state.network
     (.requestVoteRequest (makeRequestVoteRequest state source destination))
     (.requestVoteRequest (makeRequestVoteRequest state source destination))
-  · rfl
-  · exact requestVoteRequest_mem_mapMessage f _ _
+  rfl
 
 theorem enabled_mapState_requestVote_iff
     [DecidableEq Node] [DecidableEq TxId] [DecidableEq OtherTxId]
@@ -705,11 +692,10 @@ theorem mapState_requestPreVote
   rw [makeRequestPreVote_mapState]
   simp only [mapState]
   congr 1
-  apply enqueueNoDup_map_of_fixed f state.network
+  apply enqueue_map_of_fixed f state.network
     (.requestPreVote (makeRequestPreVote state source destination))
     (.requestPreVote (makeRequestPreVote state source destination))
-  · rfl
-  · exact requestPreVote_mem_mapMessage f _ _
+  rfl
 
 theorem enabled_mapState_requestPreVote_iff
     [DecidableEq Node] [DecidableEq TxId] [DecidableEq OtherTxId]
@@ -898,11 +884,10 @@ theorem mapState_proposeVote
   rw [makeProposeVoteRequest_mapState]
   simp only [mapState]
   congr 1
-  apply enqueueNoDup_map_of_fixed f state.network
+  apply enqueue_map_of_fixed f state.network
     (.proposeVoteRequest (makeProposeVoteRequest state source destination))
     (.proposeVoteRequest (makeProposeVoteRequest state source destination))
-  · rfl
-  · exact proposeVoteRequest_mem_mapMessage f _ _
+  rfl
 
 theorem enabled_mapState_proposeVote_iff
     [DecidableEq Node] [DecidableEq TxId] [DecidableEq OtherTxId]
@@ -939,11 +924,10 @@ theorem mapState_advanceCommitIndexAndProposeVote
     have networkMapped :=
       congrArg State.network advancedCommutes
     rw [← networkMapped]
-    apply enqueueNoDup_map_of_fixed f advanced.network
+    apply enqueue_map_of_fixed f advanced.network
       (.proposeVoteRequest (makeProposeVoteRequest state source destination))
       (.proposeVoteRequest (makeProposeVoteRequest state source destination))
-    · rfl
-    · exact proposeVoteRequest_mem_mapMessage f _ _
+    rfl
 
 theorem enabled_mapState_advanceCommitIndexAndProposeVote_iff
     [DecidableEq Node] [DecidableEq TxId] [DecidableEq OtherTxId]

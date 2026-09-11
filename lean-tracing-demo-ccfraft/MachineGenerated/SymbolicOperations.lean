@@ -35,16 +35,13 @@ theorem logSlice_correct (ρ : Assignment) (log : Expr logCodec.ty)
     List.map_take, List.map_drop]
 
 def queueEnqueue (queue : Expr queueCodec.ty) (message : Expr messageCodec.ty) :
-    Expr queueCodec.ty := Container.enqueueNoDup queue message
+    Expr queueCodec.ty := .append queue (.cons message .nil)
 
 theorem queueEnqueue_correct (ρ : Assignment) (queue : Expr queueCodec.ty)
     (message : Expr messageCodec.ty) :
     queueCodec.decode ρ (queueEnqueue queue message) =
-      if messageCodec.decode ρ message ∈ queueCodec.decode ρ queue then
-        queueCodec.decode ρ queue
-      else queueCodec.decode ρ queue ++ [messageCodec.decode ρ message] := by
-  simp [queueEnqueue, Container.enqueueNoDup, Expr.eval, Codec.decode, Codec.list]
-  split <;> simp_all
+      queueCodec.decode ρ queue ++ [messageCodec.decode ρ message] := by
+  simp [queueEnqueue, Expr.eval, Codec.decode, Codec.list]
 
 def logPrefixEqual (n : Expr .nat) (a b : Expr logCodec.ty) : Expr .bool :=
   Container.prefixEqual n a b

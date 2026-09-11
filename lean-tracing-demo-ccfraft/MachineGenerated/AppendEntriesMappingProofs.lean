@@ -31,61 +31,34 @@ theorem mapMessage_makeAppendEntriesRequest
   <;> simp [makeAppendEntriesRequest, mapMessage, mapNodeState, messageEntries,
     termAt, entryAt?, zero, mapEntry, Option.map_map, Function.comp_def]
 
-theorem map_enqueueNoDup_of_not_mem
+theorem map_enqueue
     (f : TxId -> OtherTxId)
     (network : Node -> List (Message Node TxId))
-    (message : Message Node TxId)
-    (absent : mapMessage f message ∉
-      (network message.destination).map (mapMessage f)) :
-    (fun node => (enqueueNoDup network message node).map (mapMessage f)) =
-      enqueueNoDup (fun node => (network node).map (mapMessage f))
+    (message : Message Node TxId) :
+    (fun node => (enqueue network message node).map (mapMessage f)) =
+      enqueue (fun node => (network node).map (mapMessage f))
         (mapMessage f message) := by
   have destination : (mapMessage f message).destination = message.destination := by
     cases message <;> rfl
-  have syntacticAbsent : message ∉ network message.destination := by
-    intro member
-    exact absent (List.mem_map.mpr ⟨message, member, rfl⟩)
   funext node
-  simp [enqueueNoDup, destination, absent, syntacticAbsent, updateQueue]
+  simp [enqueue, destination, updateQueue]
   by_cases same : node = message.destination
   <;> simp [Function.update_apply, same]
 
-/--
-Mapping may create a duplicate packet, so retain the sender update but undo
-the template enqueue in that branch. Only the mapped result is a model step.
--/
-theorem mapState_appendEntries_with_dedup
+/-- Mapping payloads preserves FIFO sends even when distinct packets become equal. -/
+theorem mapState_appendEntries
     (f : TxId -> OtherTxId) (state : State Node TxId)
     (source destination : Node) (batchEnd : Nat) :
-    let message := Message.appendEntriesRequest
-      (makeAppendEntriesRequest state source destination batchEnd)
-    let advanced := next state (.appendEntries source destination batchEnd)
-    mapState f
-      (if mapMessage f message ∈
-          (state.network destination).map (mapMessage f)
-       then { advanced with network := state.network }
-       else advanced) =
+    mapState f (next state (.appendEntries source destination batchEnd)) =
       next (mapState f state) (.appendEntries source destination batchEnd) := by
   have request := mapMessage_makeAppendEntriesRequest f state source destination batchEnd
   simp only [mapState] at request
-  dsimp only
-  split
-  · rename_i duplicate
-    unfold next
-    simp only [mapState, mapNodeStore_get]
-    congr 1
-    · rw [mapNodeStore_updateNode]
-      rfl
-    · rw [← request]
-      simp only [enqueueNoDup]
-      exact (if_pos duplicate).symm
-  · rename_i absent
-    unfold next
-    simp only [mapState, mapNodeStore_get]
-    congr 1
-    · rw [mapNodeStore_updateNode]
-      rfl
-    · rw [← request]
-      exact map_enqueueNoDup_of_not_mem f state.network _ absent
+  unfold next
+  simp only [mapState, mapNodeStore_get]
+  congr 1
+  · rw [mapNodeStore_updateNode]
+    rfl
+  · rw [← request]
+    exact map_enqueue f state.network _
 
 end CCFRaft.TransactionMapping
