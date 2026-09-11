@@ -64,12 +64,14 @@ class SparseQueueEncodingTests(unittest.TestCase):
                 "nice", "-n", "10", "lake", "build", "Sparse.QueueEncoding",
                 "Sparse.QueueScalarEncoding", "Sparse.SmtScriptText",
                 "Sparse.QueueInitialEncoding", "Sparse.QueueTraceEncoding",
+                "Sparse.QueueSummaryEncoding",
             ],
             cwd=ROOT, capture_output=True, text=True, check=True,
         )
         cls.fixtures = load_fixtures()
         cls.scalar_fixtures = load_fixtures("--scalar")
         cls.initial_fixtures = load_fixtures("--initial")
+        cls.summary_fixtures = load_fixtures("--summary-initial")
 
     def assert_scripts(self, fixtures: list[dict], scope: str) -> None:
         self.assertEqual(len({case["name"] for case in fixtures}), len(fixtures))
@@ -110,7 +112,20 @@ class SparseQueueEncodingTests(unittest.TestCase):
         self.assertEqual(cases["last-unconsumed-peek"]["tracked_keys"], 3)
 
     def test_exhaustive_two_event_traces(self) -> None:
-        cases = load_fixtures("--exhaustive")
+        for flag in ("--exhaustive", "--summary-exhaustive"):
+            with self.subTest(compiler=flag):
+                self.assert_exhaustive(load_fixtures(flag), flag.removeprefix("--"))
+
+    def test_summary_scripts(self) -> None:
+        self.assertEqual(len(self.summary_fixtures), 25)
+        self.assert_scripts(self.summary_fixtures, "summary-whole-queue")
+        cases = {case["name"]: case for case in self.summary_fixtures}
+        self.assertEqual(cases["sent-key-remains-present"]["encoded_events"], 3)
+        self.assertEqual(cases["alias-pop-requires-send"]["encoded_events"], 4)
+        self.assertEqual(cases["distinct-literal-pop-preserves-present"]["encoded_events"], 3)
+        self.assertEqual(cases["contradictory-earlier-length-retained"]["encoded_events"], 3)
+
+    def assert_exhaustive(self, cases: list[dict], scope: str) -> None:
         self.assertEqual(len(cases), 486)
         self.assertEqual(len({case["name"] for case in cases}), len(cases))
         verdicts = set()
@@ -126,7 +141,7 @@ class SparseQueueEncodingTests(unittest.TestCase):
             with self.subTest(case=case["name"], expected=expected):
                 self.assertEqual(case["parsed_script"], case["script"])
                 self.assertEqual(case["parsed_value"], case["command_value"])
-                name = "exhaustive-" + case["name"]
+                name = scope + "-" + case["name"]
                 path = self.artifacts / (name + ".smt2")
                 path.write_text(case["script"], encoding="ascii")
                 result = run_solver(self.cvc5, path, self.artifacts, name)

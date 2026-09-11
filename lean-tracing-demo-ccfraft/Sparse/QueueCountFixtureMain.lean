@@ -2,6 +2,7 @@ import Sparse.QueueEncoding
 import Sparse.QueueScalarEncoding
 import Sparse.QueueInitialEncoding
 import Sparse.QueueTraceEncoding
+import Sparse.QueueSummaryEncoding
 import Sparse.SmtScriptText
 import Lean.Data.Json
 
@@ -34,12 +35,14 @@ private def scalarFixture (name expected : String) (input : SmtScript.Formula)
     ("scalar_base", toJson (QueueScalarEncoding.scalarBase input [] trace observations))] ++
     formulaFields (QueueScalarEncoding.encode input [] trace observations length))
 
-private def initialFixture (name expected : String) (input : SmtScript.Formula)
+private def initialFixture (summarize : Bool) (name expected : String) (input : SmtScript.Formula)
     (trace : List (Event InputInt)) (length : InputInt) : Json :=
   Json.mkObj ([("name", toJson name), ("expected", toJson expected),
-    ("scope", toJson "count-scalar-initial"),
+    ("scope", toJson (if summarize then "summary-whole-queue" else "count-scalar-initial")),
+    ("encoded_events", toJson (if summarize then QueueSummaryEncoding.normalize trace else trace).length),
     ("tracked_keys", toJson (QueueInitialEncoding.eventKeys trace).length)] ++
-    formulaFields (QueueInitialEncoding.encode input trace length))
+    formulaFields (if summarize then QueueSummaryEncoding.encode input trace length
+      else QueueInitialEncoding.encode input trace length))
 
 private def sendOne : List (Event InputInt) := [.send (.literal 1)]
 private def sendSymbol : List (Event InputInt) := [.send (.symbolic 0)]
@@ -126,7 +129,8 @@ def scalarFixtures : List Json :=
       [.equal (.app .int .int 1 (.integer 0)) (.integer 44)] sendOne [] (.literal 0)
   ]
 
-def initialFixtures : List Json :=
+def initialFixtures (summarize : Bool := false) : List Json :=
+  let initialFixture := initialFixture summarize
   [
     initialFixture "empty-queue" "sat" [] [] (.literal 0),
     initialFixture "negative-length" "unsat" [] [] (.literal (-1)),
@@ -169,7 +173,22 @@ def initialFixtures : List Json :=
       [.peek (.symbolic 0), .pop (.symbolic 0), .length 999999] (.symbolic 10)
   ]
 
-def exhaustiveFixtures : List Json :=
+def summaryRegressions : List Json :=
+  let fixture := initialFixture true
+  [
+    fixture "alias-pop-requires-send" "sat" [sameKeys]
+      [.send (.symbolic 0), .pop (.symbolic 1), .send (.symbolic 0), .length 1] (.literal 0),
+    fixture "alias-pop-final-zero-impossible" "unsat" [sameKeys]
+      [.send (.symbolic 0), .pop (.symbolic 1), .send (.symbolic 0), .length 0] (.literal 0),
+    fixture "distinct-literal-pop-preserves-present" "sat" []
+      [.send (.literal 0), .pop (.literal 1), .send (.literal 0), .length 1] (.literal 1),
+    fixture "distinct-literal-pop-cannot-grow" "unsat" []
+      [.send (.literal 0), .pop (.literal 1), .send (.literal 0), .length 2] (.literal 1),
+    fixture "contradictory-earlier-length-retained" "unsat" []
+      [.send (.literal 0), .length 2, .send (.literal 0), .length 1] (.literal 0)
+  ]
+
+def exhaustiveFixtures (summarize : Bool := false) : List Json :=
   let choices : List (Prod String (Prod Nat (Event InputInt))) :=
     [("send", 0, .send (.symbolic 0)), ("send", 1, .send (.symbolic 1)),
      ("pop", 0, .pop (.symbolic 0)), ("pop", 1, .pop (.symbolic 1)),
@@ -185,7 +204,8 @@ def exhaustiveFixtures : List Json :=
           Json.mkObj ([("name", toJson name), ("initial_length", toJson length),
             ("aliases", toJson aliases),
             ("events", toJson [(left.1, left.2.1), (right.1, right.2.1)])] ++
-            formulaFields (QueueInitialEncoding.encode input trace (.literal (length : Int))))
+            formulaFields (if summarize then QueueSummaryEncoding.encode input trace (.literal length)
+              else QueueInitialEncoding.encode input trace (.literal length)))
 
 end CCFRaft.Sparse.QueueCountFixtures
 
@@ -195,10 +215,13 @@ def main (args : List String) : IO UInt32 := do
     | ["--scalar"] => some CCFRaft.Sparse.QueueCountFixtures.scalarFixtures
     | ["--initial"] => some CCFRaft.Sparse.QueueCountFixtures.initialFixtures
     | ["--exhaustive"] => some CCFRaft.Sparse.QueueCountFixtures.exhaustiveFixtures
+    | ["--summary-initial"] => some (CCFRaft.Sparse.QueueCountFixtures.initialFixtures true ++
+        CCFRaft.Sparse.QueueCountFixtures.summaryRegressions)
+    | ["--summary-exhaustive"] => some (CCFRaft.Sparse.QueueCountFixtures.exhaustiveFixtures true)
     | _ => none
   let some fixtures := fixtures |
     let stderr <- IO.getStderr
-    stderr.putStrLn "usage: QueueCountFixtureMain.lean [--scalar | --initial | --exhaustive]"
+    stderr.putStrLn "usage: QueueCountFixtureMain.lean [--scalar | --initial | --exhaustive | --summary-initial | --summary-exhaustive]"
     return 1
   IO.println (Lean.Json.arr fixtures.toArray).compress
   return 0

@@ -22,6 +22,16 @@ class SparseQueueScalingTests(unittest.TestCase):
     def test_emission_and_solver_scaling(self) -> None:
         size = int(os.environ.get("CCF_SPARSE_QUEUE_EVENTS", "400"))
         self.assertGreaterEqual(size, 3)
+        keys = os.environ.get("CCF_SPARSE_QUEUE_KEYS")
+        arguments = ["--fixtures", str(size)]
+        if keys is not None:
+            keys = int(keys)
+            self.assertGreater(keys, 0)
+            self.assertLess(keys, size)
+            arguments = ["--mixed-fixtures", str(size), str(keys)]
+        summarized = os.environ.get("CCF_SPARSE_QUEUE_SUMMARIES") == "1"
+        if summarized:
+            arguments.insert(0, "--summarize")
         subprocess.run(
             ["nice", "-n", "10", "lake", "build", "Sparse.QueueEncodingScaleMain"],
             cwd=ROOT, capture_output=True, text=True, check=True,
@@ -29,7 +39,7 @@ class SparseQueueScalingTests(unittest.TestCase):
         generated = subprocess.run(
             [
                 "nice", "-n", "10", "lake", "env", "lean", "--run",
-                "Sparse/QueueEncodingScaleMain.lean", "--fixtures", str(size),
+                "Sparse/QueueEncodingScaleMain.lean", *arguments,
             ],
             cwd=ROOT, capture_output=True, text=True, check=True,
         )
@@ -43,11 +53,34 @@ class SparseQueueScalingTests(unittest.TestCase):
             for case in cases:
                 with self.subTest(case=case["case"]):
                     self.assertEqual(case["events"], size)
-                    self.assertEqual(case["tracked_keys"], 1)
-                    self.assertEqual(
-                        case["query_pairs"],
-                        size - (2 if case["case"].startswith("unknown-million-") else 1),
-                    )
+                    if keys is None:
+                        self.assertEqual(case["tracked_keys"], 1)
+                        cycle = case["case"].startswith("cycle-")
+                        unknown = case["case"].startswith("unknown-million-")
+                        self.assertEqual(
+                            case["encoded_events"],
+                            (3 if unknown else 2) if summarized and not cycle else size,
+                        )
+                        self.assertEqual(
+                            case["query_pairs"],
+                            1 if summarized and not cycle else size - (2 if unknown else 1),
+                        )
+                    else:
+                        cycle = case["case"].startswith("mixed-symbolic-cycle-")
+                        last_write = {
+                            (index // 2 if cycle else index) % keys: index
+                            for index in range(size - 1)
+                        }
+                        if summarized and not cycle:
+                            last_write = {index: index for index in range(keys)}
+                        self.assertEqual(
+                            case["encoded_events"],
+                            keys + 1 if summarized and not cycle else size,
+                        )
+                        self.assertEqual(case["tracked_keys"], len(last_write))
+                        self.assertEqual(
+                            case["query_pairs"], sum(index + 1 for index in last_write.values())
+                        )
                     self.assertTrue(case["script"].isascii())
                     self.assertEqual(case["bytes"], len(case["script"].encode("ascii")))
                     path = artifacts / (case["case"] + ".smt2")
