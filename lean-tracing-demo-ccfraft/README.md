@@ -108,7 +108,9 @@ functions are semantic parameters, not a decoder or finite SMT input syntax.
 histories. Its finite domain check corresponds to a unique non-network state
 for supplied shared log roots and a submitted set. Local domains apply only to
 allocated nodes; absent lookup stays fresh while globals remain independent.
-Canonical independent slots and coverage of every initial state remain open.
+`StateFrameInitial` allocates 662 distinct scalar slots and fifteen fresh log
+roots. Every arbitrary Model state has a representation while existing prefix
+roots remain unchanged. Concrete log encoding is proof-only.
 `LogMatchSummary` characterizes the actual NACK log reader by a matching anchor
 and exclusion of later matches. It handles unsorted terms and clipped bounds.
 Its zero-based storage theorem uses decoded Entry terms, not raw signed order.

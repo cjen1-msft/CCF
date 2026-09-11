@@ -29,7 +29,7 @@ Its entry predicate is `True`, and its ordered recursion uses the actual
 `Enabled` and `next`. Adjacent observations share one boundary, and all actions
 and observations share one unknown-value assignment.
 Its input functions are semantic parameters, not finite parsed syntax.
-Canonical initial-state coverage, emitted action clauses, and raw-record refinement
+Emitted action clauses and raw-record refinement
 remain separate obligations. In particular, raw send attempts are not evidence
 of successful Model sends.
 
@@ -71,6 +71,7 @@ New repository bridges extend that foundation:
 | `Sparse/ModelTrace.lean` | One arbitrary initial State and shared Nat assignment satisfy ordered actual Model actions/observations. All-17-action queue congruence preserves the contract, including destination totals and configuration snapshots. |
 | `Sparse/LogMatchSummary.lean` | Exact `findHighestPossibleMatch` summary, uniqueness, and zero-based EntryValue correspondence hold for arbitrary logs without term-ordering assumptions. |
 | `Sparse/StateFrame.lean` | Finite typed-reference domains correspond to relative realization against one supplied Entry root family, submitted set, and network. Realizations have one unique non-network frame. |
+| `Sparse/StateFrameInitial.lean` | Canonical independent slots and fresh log roots represent every arbitrary actual Model state, preserving all old roots and outside-owned constants. Whole UFs and selector interpretations remain unchanged. |
 | `Sparse/ConfigurationSnapshot.lean` | Exact ordered positive-index Model snapshots and same-log completion using `2m+1` frontier-query records for `m` snapshot entries. |
 | `Sparse/ConfigurationPublication.lean` | Separate local candidate for one configuration begin, successful empty callback send, and publication close on the same core-state chain. No production Model or raw-validator change. |
 | `Sparse/EntryValue.lean` | Fixed nonrecursive content and entry values are bijective with actual Model values, with equality transport, decoded term ordering, guarded payload views, and pointwise array equivalence. |
@@ -128,7 +129,19 @@ submitted, and network globals remain independent. Optional indices distinguish
 none from some zero. Active negative codes are rejected.
 Log decoding is proof-only and uses one supplied graph/root family.
 Relative realization and uniqueness do not establish arbitrary-state coverage
-for aliased IDs or fixed roots. Canonical independent slots remain open.
+for aliased IDs or fixed roots.
+`StateFrameInitial` supplies canonical allocation and arbitrary-state coverage.
+It reserves 585 Int, 30 Bool, and 47 Nodes slots in `[base, base+662)`.
+Numeric IDs are distinct, not merely typed symbol pairs. Each row and peer
+field is independent. Fifteen fresh log roots follow any supplied root prefix,
+whose entire functions remain unchanged.
+The assignment witness preserves outside-owned constants, including wrong-sort
+constants within that numeric span, and all UFs and selectors. The caller must
+reserve the scalar span away from source constants it needs to preserve.
+`arbitrary_state_coverage` and `decode_original` cover every actual State,
+including arbitrary network contents and inconsistent retirement metadata.
+Concrete log encoding is proof-only. Fixed-root coverage retains explicit
+compatibility; symbolic graph preservation remains a separate obligation.
 
 Use `IntervalDemandPlan.plan` for executable dependency closure. The reference
 constructor repeats shared ancestors exponentially. In one forced-clock run,
