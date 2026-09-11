@@ -107,6 +107,10 @@ fresh values for currently unobserved fields; the clauses do not require those
 values. `model_initial_assertions` proves the converse for arbitrary Model
 states, including states with non-fresh unobserved fields. Whole-compiler and
 execution correspondence remain unfinished.
+The JSON decoder now produces typed Model-level instructions and entries.
+`NativeObservationEncoding.observation_model_correct` proves that the actual
+clauses for all seven supported observations match the Model, under the
+represented columns and initial domains.
 
 This Lean encoder remains experimental. Neither complete Model-to-script
 equivalence nor text-renderer correctness is proved. The 150-case actual-Model

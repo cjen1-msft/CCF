@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeValues
+import Sparse.NativeArrayCheckQuorum
 import Lean.Data.Json
 
 set_option autoImplicit false
@@ -174,66 +175,92 @@ def natural (value : Json) : Except String Nat := do
     | _ => throw "expected a natural number, not a negative number"
   | _ => throw "expected a natural number"
 
-def resolve (names : Array String) (value : Json) : Except String Nat := do
+def resolve (width : PNat) (names : Array String) (value : Json) : Except String (Fin width) := do
   let name <- value.getStr?
   match names.toList.idxOf? name with
-  | some index => return index
+  | some index =>
+    if within : index < width.val then return ⟨index, within⟩
+    else throw "internal encoder error: identity index exceeds the declared width"
   | none => throw s!"undeclared node {name}"
 
-def mask (width : PNat) (names : Array String) (value : Json) : Except String (BitVec width) := do
-  let mut result : BitVec width := 0
+def decodeNodeSet (width : PNat) (names : Array String) (value : Json) :
+    Except String (Finset (Fin width)) := do
+  let mut result : Finset (Fin width) := {}
   for node in <- value.getArr? do
-    result := result ||| BitVec.ofNat width (2 ^ (<- resolve names node))
+    result := insert (<- resolve width names node) result
   return result
 
 def decodeEntry (width : PNat) (names : Array String) (value : Json) :
-    Except String (Expr (entryTy width)) := do
+    Except String (Entry (Fin width) Nat) := do
   fields value ["term", "content"]
   let term <- natural (<- field value "term")
   let content <- field value "content"
-  let encoded <- match content with
-    | .str "signature" => pure (Term.inl .unit)
+  let decoded <- match content with
+    | .str "signature" => pure EntryContent.signature
     | .obj object => do
       match object.toList with
-      | [("transaction", value)] => pure (.inr (.inl (.integer (<- natural value))))
-      | [("reconfiguration", value)] => pure (.inr (.inr (.inl (.bits (<- mask width names value)))))
-      | [("retiredCommitted", value)] => pure (.inr (.inr (.inr (.bits (<- mask width names value)))))
+      | [("transaction", value)] => pure (.transaction (<- natural value))
+      | [("reconfiguration", value)] => pure (.reconfiguration (<- decodeNodeSet width names value))
+      | [("retiredCommitted", value)] => pure (.retiredCommitted (<- decodeNodeSet width names value))
       | _ => throw "expected one typed entry payload"
     | _ => throw "expected signature or one typed entry payload"
-  return .pair (.integer term) encoded
+  return { term, content := decoded }
 
-def instruction {width : PNat} (names : Array String) (value : Json) : EncodeM width Unit := do
+def decodeInstruction (width : PNat) (names : Array String) (value : Json) :
+    Except String (NativeArrayCheckQuorum.Instruction (Fin width) Nat) := do
   let kind <- (<- field value "kind").getStr?
-  let node <- resolve names (<- field value "node")
-  let state <- get
+  let node <- resolve width names (<- field value "node")
   match kind with
   | "checkQuorum" =>
     fields value ["kind", "node"]
-    checkQuorum node
+    return .checkQuorum node
   | "allocated" | "newFollower" =>
     fields value ["kind", "node", "value"]
     let expected <- (<- field value "value").getBool?
-    let actual := if kind = "allocated" then allocated node
-      else read state.newFollower node (.boolean true)
-    assertion (.equal actual (.boolean expected))
+    return if kind = "allocated" then .allocated node expected else .newFollower node expected
   | "role" =>
     fields value ["kind", "node", "value"]
     let expected <- (<- field value "value").getStr?
-    let roles := ["none", "follower", "preVoteCandidate", "candidate", "leader"]
-    let some code := roles.idxOf? expected | throw s!"unknown role {expected}"
-    assertion (.equal (read state.role node (.integer 0)) (.integer code))
+    let role <- match expected with
+      | "none" => pure Role.none
+      | "follower" => pure .follower
+      | "preVoteCandidate" => pure .preVoteCandidate
+      | "candidate" => pure .candidate
+      | "leader" => pure .leader
+      | _ => throw s!"unknown role {expected}"
+    return .role node role
   | "logLength" | "commit" | "currentTerm" =>
     fields value ["kind", "node", "value"]
     let expected <- natural (<- field value "value")
-    let column := if kind = "logLength" then 3 else if kind = "commit" then 4 else 5
-    assertion (.equal (read column node (.integer 0)) (.integer expected))
+    return if kind = "logLength" then .logLength node expected
+      else if kind = "commit" then .commit node expected else .currentTerm node expected
   | "entry" =>
     fields value ["kind", "node", "index", "value"]
     let index <- natural (<- field value "index")
     let expected <- decodeEntry width names (<- field value "value")
-    assertion (lt (.integer index) (length node))
-    assertion (.equal (entryAt width node (.integer index)) expected)
+    return .entry node index expected
   | _ => throw s!"unsupported native Lean instruction {kind}"
+
+def observationClauses {width : PNat} (roleColumn followerColumn : Nat) :
+    NativeArrayCheckQuorum.Instruction (Fin width) Nat -> Except String (List (Expr .bool))
+  | .allocated node expected => .ok [.equal (allocated node.val) (.boolean expected)]
+  | .role node expected => .ok [.equal (read roleColumn node.val (.integer 0)) (.integer (roleCode expected))]
+  | .newFollower node expected => .ok [.equal (read followerColumn node.val (.boolean true)) (.boolean expected)]
+  | .logLength node expected => .ok [.equal (length node.val) (.integer expected)]
+  | .commit node expected => .ok [.equal (commit node.val) (.integer expected)]
+  | .currentTerm node expected => .ok [.equal (read 5 node.val (.integer 0)) (.integer expected)]
+  | .entry node index expected => .ok [lt (.integer index) (length node.val),
+      .equal (entryAt width node.val (.integer index)) (entryTerm expected)]
+  | _ => .error "unsupported native Lean observation"
+
+def instruction {width : PNat} (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) :
+    EncodeM width Unit := do
+  match item with
+  | .checkQuorum node => checkQuorum node.val
+  | _ =>
+    let state <- get
+    for formula in <- observationClauses state.role state.newFollower item do
+      assertion formula
 
 structure Group where
   instruction : Option Nat
@@ -254,14 +281,16 @@ def compile (document : Json) : Except String Compiled := do
     let width : PNat := ⟨names.size, positive⟩
     let bootstrap <- field document "bootstrap"
     if (<- bootstrap.getArr?).isEmpty then throw "bootstrap must be nonempty"
-    let initial : Encoding width := { bootstrap := <- mask width names bootstrap, symbolsBounded := by simp }
+    let initial : Encoding width := {
+      bootstrap := encodeBits (<- decodeNodeSet width names bootstrap)
+      symbolsBounded := by simp }
     let instructions <- (<- field document "instructions").getArr?
     let (groups, final) <- (do
       initialDomains width
       let mut groups : Array Group := #[{ instruction := none, start := 0, stop := (← get).assertions.size }]
       for index in [:instructions.size] do
         let start := (← get).assertions.size
-        try instruction names instructions[index]!
+        try instruction (<- decodeInstruction width names instructions[index]!)
         catch error => throw s!"instruction {index}: {error}"
         groups := groups.push { instruction := some index, start, stop := (← get).assertions.size }
       return groups).run initial

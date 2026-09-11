@@ -118,8 +118,16 @@ clauses do not impose those values. The normal Sparse target audits both modules
 retains the seed assignment's other symbols. The original Model state remains
 the represented state, so its unobserved fields need not be fresh.
 
-The next Lean slice is observation encoding, followed by whole-compiler
-sequencing. The lowering/text proof also remains.
+The JSON decoder now returns typed `NativeArrayCheckQuorum.Instruction` values
+with identities in `Fin width` and actual Model entry payloads. The encoder uses
+`entryTerm` and the shared `observationClauses` rather than constructing
+observation expressions in the JSON parser. `NativeObservationEncoding` proves
+all seven supported observation kinds against actual Model observations.
+Entry equality uses the live-index assertion before applying the value-domain
+round trip. The refactor preserves all 150 earlier Model-case scripts exactly.
+
+The next Lean slice is whole-compiler sequencing. The lowering/text proof
+also remains.
 Do not treat the conditional reader theorem as a full action or script proof.
 Close those boundaries before migrating the remaining actions.
 

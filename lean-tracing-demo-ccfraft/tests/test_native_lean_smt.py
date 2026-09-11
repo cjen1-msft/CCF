@@ -145,6 +145,73 @@ class NativeLeanSmtTests(unittest.TestCase):
         )
         self.assertLess(len(scripts[-1]), 100_000)
 
+    def test_typed_observation_values(self):
+        cases = []
+        roles = ["none", "follower", "preVoteCandidate", "candidate", "leader"]
+        for index, role in enumerate(roles):
+            observed = {"kind": "role", "node": "a", "value": role}
+            cases.append((f"role-{role}", [observed], "sat"))
+            cases.append(
+                (
+                    f"role-{role}-conflict",
+                    [
+                        observed,
+                        {
+                            "kind": "role",
+                            "node": "a",
+                            "value": roles[(index + 1) % len(roles)],
+                        },
+                    ],
+                    "unsat",
+                )
+            )
+        contents = [
+            "signature",
+            {"transaction": 10**30},
+            {"reconfiguration": ["a", "b"]},
+            {"retiredCommitted": ["b"]},
+        ]
+        for index, content in enumerate(contents):
+            observed = {
+                "kind": "entry",
+                "node": "a",
+                "index": 0,
+                "value": {"term": 10**30, "content": content},
+            }
+            cases.append((f"entry-variant-{index}", [observed], "sat"))
+            other = dict(
+                observed,
+                value={"term": 10**30, "content": contents[(index + 1) % len(contents)]},
+            )
+            cases.append((f"entry-variant-{index}-conflict", [observed, other], "unsat"))
+        cases.append(
+            (
+                "configuration-members-ignore-order-and-duplicates",
+                [
+                    {
+                        "kind": "entry",
+                        "node": "a",
+                        "index": 0,
+                        "value": {"term": 0, "content": {"reconfiguration": members}},
+                    }
+                    for members in (["a", "b"], ["b", "a", "b"])
+                ],
+                "sat",
+            )
+        )
+        scripts = self.encode(
+            [
+                {"nodes": ["a", "b"], "bootstrap": ["a"], "instructions": instructions}
+                for _, instructions, _ in cases
+            ]
+        )
+        self.solve(
+            [
+                {"name": name, "script": script, "expected": expected}
+                for (name, _, expected), script in zip(cases, scripts)
+            ]
+        )
+
     def test_input_errors_do_not_emit_smt(self):
         valid = {"nodes": ["a"], "bootstrap": ["a"], "instructions": []}
         invalid = [
