@@ -74,6 +74,13 @@ theorem observation_correct {width : PNat} [Bootstrap (Fin width)] (assignment :
     simp only [BitVec.ofNat_eq_ofNat] at represented
     rw [represented, encode_bits_eq]
     simp [NativeArrayCheckQuorum.follows]
+  case preVotesGranted node expected =>
+    simp only [Holds, List.mem_cons, List.not_mem_nil, or_false, forall_eq,
+      Term.eval, decide_eq_true_eq]
+    have represented := rep.preVotesGranted node
+    simp only [BitVec.ofNat_eq_ofNat] at represented
+    rw [represented, encode_bits_eq]
+    simp [NativeArrayCheckQuorum.follows]
   all_goals
     simp [Holds, NativeArrayCheckQuorum.follows, Term.eval, rep.allocated, rep.role,
       rep.newFollower, rep.currentTerm, rep.commit, rep.length, role_code_eq]

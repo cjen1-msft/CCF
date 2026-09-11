@@ -48,9 +48,9 @@ reducer integration. See README's "Native explorer API" section.
 
 The first Lean encoder slice is now implemented in `Sparse/NativeEncode.lean`
 and `Sparse/NativeEncodeMain.lean`, with `native_lean.py` as its JSON and solver
-wrapper. It supports `checkQuorum` and twelve observation kinds, including
+wrapper. It supports `checkQuorum` and thirteen observation kinds, including
 the nullable `retirementIndex`, `retirementCommittableIndex`, and
-`retiredCommittedIndex` fields, nullable `votedFor`, and the `votesGranted` set.
+`retiredCommittedIndex` fields, nullable `votedFor`, and both vote sets.
 The Python reference still supports six actions and the broader observation
 schema. Do not confuse these coverage levels or fall back to Python SMT emission.
 
@@ -245,7 +245,7 @@ Lean's JSON parser, IO runtime, and cvc5 are not verified by these theorems.
 
 Next, expand Model actions and observations before raw reducer integration.
 Keep the full-model assurance flag false: current coverage is still one
-action and twelve observation kinds. No change to the reducer's untrusted
+action and thirteen observation kinds. No change to the reducer's untrusted
 interpretation boundary follows from proving the JSON encoder.
 
 `NativeOptional` is the next value-codec unit for local-state coverage.
@@ -304,7 +304,10 @@ Set-specific cases cover ordering, duplicates, 21 identities, and absent voters
 outside the bootstrap set. `NativeValues` now proves empty-set encoding and
 encoding injectivity. Normalize bitvector literals with `BitVec.ofNat_eq_ofNat`
 before applying representation equalities if simplification changes `0` to `0#width`.
-Next add `preVotesGranted`, then `membershipState`, `sentIndex`, and `matchIndex`.
+`preVotesGranted` adds bitvector column 12, with fresh allocation starting at 13.
+The same proof chain covers this set, and the generated cases now run for
+both vote sets. A separate case preserves distinct values for the two sets
+across a quorum step. Next add `membershipState`, `sentIndex`, and `matchIndex`.
 
 Follow [Representation design priorities](README.md#representation-design-priorities):
 start with the simplest representation to prove correct, using native SMT

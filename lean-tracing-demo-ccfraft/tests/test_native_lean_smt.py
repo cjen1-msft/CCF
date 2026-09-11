@@ -21,7 +21,7 @@ RETIREMENT_FIELDS = (
     "retirementCommittableIndex",
     "retiredCommittedIndex",
 )
-VOTE_SET_FIELDS = ("votesGranted",)
+VOTE_SET_FIELDS = ("votesGranted", "preVotesGranted")
 
 
 @unittest.skipUnless(
@@ -375,6 +375,26 @@ class NativeLeanSmtTests(unittest.TestCase):
                 {"name": name, "script": script, "expected": expected}
                 for (name, _, expected), script in zip(cases, scripts)
             ]
+        )
+
+    def test_vote_set_independence(self):
+        observed = [
+            {"kind": "votesGranted", "node": "a", "value": ["a"]},
+            {"kind": "preVotesGranted", "node": "a", "value": ["b"]},
+        ]
+        script = self.encode(
+            [
+                {
+                    "nodes": ["a", "b"],
+                    "bootstrap": ["a", "b"],
+                    "instructions": observed
+                    + [{"kind": "checkQuorum", "node": "a"}]
+                    + observed,
+                }
+            ]
+        )[0]
+        self.solve(
+            [{"name": "independent-vote-sets", "script": script, "expected": "sat"}]
         )
 
     def test_decoded_bootstrap_sets(self):

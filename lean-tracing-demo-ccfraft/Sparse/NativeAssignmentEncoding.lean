@@ -10,7 +10,7 @@ namespace CCFRaft.NativeEncode
 open NativeSmt
 
 structure ReferencesValid {width : PNat} (state : Encoding width) : Prop where
-  minimum : 12 <= state.next
+  minimum : 13 <= state.next
   role : state.role < state.next
   newFollower : state.newFollower < state.next
   retirementIndex : state.retirementIndex < state.next
@@ -18,6 +18,7 @@ structure ReferencesValid {width : PNat} (state : Encoding width) : Prop where
   retiredCommittedIndex : state.retiredCommittedIndex < state.next
   votedFor : state.votedFor < state.next
   votesGranted : state.votesGranted < state.next
+  preVotesGranted : state.preVotesGranted < state.next
 
 theorem instruction_references {width : PNat}
     (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) (before after : Encoding width)
@@ -48,6 +49,9 @@ theorem instruction_references {width : PNat}
     · have bound := valid.votesGranted
       simp only [shape.columns, shape.next]
       omega
+    · have bound := valid.preVotesGranted
+      simp only [shape.columns, shape.next]
+      omega
   · have frame := (assert_all_success clauses before after asserted).1
     exact ⟨by simpa only [frame.next] using valid.minimum,
       by simpa only [frame.next, frame.role] using valid.role,
@@ -56,7 +60,8 @@ theorem instruction_references {width : PNat}
       by simpa only [frame.next, frame.columns] using valid.retirementCommittableIndex,
       by simpa only [frame.next, frame.columns] using valid.retiredCommittedIndex,
       by simpa only [frame.next, frame.columns] using valid.votedFor,
-      by simpa only [frame.next, frame.columns] using valid.votesGranted⟩
+      by simpa only [frame.next, frame.columns] using valid.votesGranted,
+      by simpa only [frame.next, frame.columns] using valid.preVotesGranted⟩
 
 theorem Encoding.holds_agrees_below {width : PNat} (state : Encoding width)
     (left right : Assignment) (holds : Holds state.assertions.toList left)
@@ -82,6 +87,7 @@ theorem NodeColumnsRep.agrees_below {width : PNat} (state : Encoding width)
   have committed := same (.array .int optionalIntTy) state.retiredCommittedIndex valid.retiredCommittedIndex
   have voted := same (.array .int optionalIntTy) state.votedFor valid.votedFor
   have votes := same (.array .int (.bits width)) state.votesGranted valid.votesGranted
+  have preVotes := same (.array .int (.bits width)) state.preVotesGranted valid.preVotesGranted
   constructor
   · intro node
     simpa only [NativeEncode.allocated, Term.eval, <- allocation] using rep.allocated node
@@ -107,9 +113,11 @@ theorem NodeColumnsRep.agrees_below {width : PNat} (state : Encoding width)
     simpa only [read, NativeEncode.allocated, Term.eval, <- allocation, <- voted] using rep.votedFor node
   · intro node
     simpa only [read, NativeEncode.allocated, Term.eval, <- allocation, <- votes] using rep.votesGranted node
+  · intro node
+    simpa only [read, NativeEncode.allocated, Term.eval, <- allocation, <- preVotes] using rep.preVotesGranted node
 
 theorem NodeDomain.agrees_below {width : PNat} (limit : Nat) (left right : Assignment)
-    (node : Nat) (domain : NodeDomain width left node) (minimum : 12 <= limit)
+    (node : Nat) (domain : NodeDomain width left node) (minimum : 13 <= limit)
     (same : left.AgreesBelow limit right) : NodeDomain width right node := by
   have allocation := same (.array .int .bool) 0 (by omega)
   have roles := same (.array .int .int) 1 (by omega)
