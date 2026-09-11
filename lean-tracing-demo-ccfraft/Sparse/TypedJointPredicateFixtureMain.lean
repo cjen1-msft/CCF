@@ -170,6 +170,55 @@ def witnessEdgeFixtures : List Json :=
      [{ lower := 0, upper := 1, enable := .boolean true,
         predicate := .ne (.input (.configurationNodes .signature)) (.input (.app .content .nodes 0 .signature)) }]]
 
+def nativeFixtures : List Json :=
+  let content : Operand 1 .content := .entryContent (.cell 0)
+  let nodes := Operand.configurationNodes content
+  let quorum := Predicate.guardedConfigurationMajority (.input (.nodes 1)) content
+  let matching := Predicate.and (.isContent .reconfiguration content) (.majority (.input (.nodes 1)) nodes)
+  let singletonInput := [fixed 0 0, fixed 1 1, fixed 2 0]
+  let entry := fun mask => Term.entry (.integer 0) (.reconfiguration (.nodes mask))
+  let positions := [fixed 0 0, fixed 1 2, fixed 2 0, fixed 3 1]
+  let conditions : Vector (Term .bool) NODE_COUNT := Vector.ofFn fun node => .unknown .bool (1000 + node.val)
+  let conditionInput := List.ofFn fun node : Node => Term.equal conditions[node] (.boolean (node.val == 0))
+  let filtered := Predicate.eq (.cardinality (nodes.filterByFixed conditions)) (.input (.integer 1))
+  [fixture "native-forall-signature" singletonInput rootGraph
+     [{ lower := 0, upper := 1, predicate := quorum }] [point (.root 0) 2 left] (verdict "sat"),
+   fixture "native-forall-empty-configuration" singletonInput rootGraph
+     [{ lower := 0, upper := 1, predicate := quorum }] [point (.root 0) 2 (entry 0)] (verdict "unsat"),
+   fixture "native-forall-tie" singletonInput rootGraph
+     [{ lower := 0, upper := 1, predicate := quorum }] [point (.root 0) 2 (entry 16385)] (verdict "unsat"),
+   fixture "native-forall-majority" singletonInput rootGraph
+     [{ lower := 0, upper := 1, predicate := quorum }] [point (.root 0) 2 (entry 1)] (verdict "sat"),
+   fixture "native-exists-signature" singletonInput rootGraph [] [point (.root 0) 2 left] (verdict "unsat")
+     [{ lower := 0, upper := 1, predicate := matching, enable := .boolean true }],
+   fixture "native-exists-configuration" singletonInput rootGraph [] [point (.root 0) 2 (entry 1)] (verdict "sat")
+     [{ lower := 0, upper := 1, predicate := matching, enable := .boolean true }]] ++
+  [true, false].flatMap (fun valid =>
+    let expected := verdict (if valid then "sat" else "unsat")
+    let points := [point (.root 0) 2 (entry 1), point (.version 0) 3 (entry (if valid then 16384 else 16385))]
+    [fixture s!"native-cardinality-{valid}" positions rootGraph
+       [{ lower := 0, upper := 1, predicate := .eq (.cardinality nodes) (.input (.integer 1)) }]
+       points expected,
+     fixture s!"native-filter-{valid}" (positions ++ conditionInput) rootGraph
+       [{ lower := 0, upper := 1, predicate := filtered }]
+       [point (.root 0) 2 (entry 16385), point (.version 0) 3 (entry (if valid then 1 else 16384))] expected,
+     fixture s!"native-wrong-selector-{valid}"
+       (singletonInput ++ [.equal (.configurationNodes .signature) (.nodes 21845),
+         .equal (.app .content .nodes 0 .signature) (.nodes 0)]) rootGraph
+       [{ lower := 0, upper := 1, predicate := .eq nodes (.input (.nodes 21845)) }]
+       [point (.root 0) 2 left] expected
+       [{ lower := 0, upper := 1, enable := .boolean true,
+          predicate := .eq nodes (.input (.nodes (if valid then 21845 else 0))) }]]) ++
+  [fixture "native-inactive-filter-metadata" singletonInput rootGraph
+     [{ lower := 0, upper := 1,
+        predicate := .eq (.cardinality (nodes.filterByFixed EntryPredicate.Regression.inactiveConditions))
+          (.input (.integer 0)) }]
+     [point (.root 0) 2 (entry 32767)] (verdict "sat"),
+   fixture "native-no-reference-witness" [fixed 0 0, fixed 1 1000000]
+     (.empty : SymbolicGraph 0 .entry 0) [] [] (verdict "sat")
+     [{ lower := 0, upper := 1, enable := .boolean true,
+        predicate := .eq (.cardinality (.input (.nodes 32767))) (.input (.integer 15)) }]]
+
 end CCFRaft.Sparse.TypedJointPredicateFixtures
 
 def main (args : List String) : IO UInt32 := do
@@ -179,9 +228,10 @@ def main (args : List String) : IO UInt32 := do
         CCFRaft.Sparse.TypedJointPredicateFixtures.scaleFixtures)
     | ["--witnesses"] => some (CCFRaft.Sparse.TypedJointPredicateFixtures.witnessBoundaryFixtures ++
         CCFRaft.Sparse.TypedJointPredicateFixtures.witnessEdgeFixtures)
+    | ["--native"] => some CCFRaft.Sparse.TypedJointPredicateFixtures.nativeFixtures
     | _ => none
   let some cases := cases |
-    ( <- IO.getStderr).putStrLn "usage: TypedJointPredicateFixtureMain.lean [--witnesses]"
+    ( <- IO.getStderr).putStrLn "usage: TypedJointPredicateFixtureMain.lean [--witnesses | --native]"
     return 1
   IO.println (Lean.toJson cases).compress
   return 0

@@ -55,6 +55,9 @@ assignment, and all points share one root family.
 `EntryPredicate` supplies typed Entry comparisons, generated version references,
 and locality proofs for the generic query interface. Raw signed-code ordering
 and decoded natural ordering are explicit, separate choices.
+Cell-local Content tests, payload selectors, mask operations, cardinality,
+and configuration majority share those proofs. Filters take fifteen fixed
+external conditions. Query bodies still have no scan-position operand.
 `TypedIntervalReadBlock` accepts arbitrary root/version requests without point
 expectations. Its flat equations preserve every planned read in one root family,
 with explicit domains and caller-supplied symbol reservations.

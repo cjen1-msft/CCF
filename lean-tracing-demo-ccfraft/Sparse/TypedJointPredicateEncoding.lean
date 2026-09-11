@@ -405,26 +405,60 @@ theorem term_symbol_bound (term : Term ty) (limit : Nat) (below : SymbolBounds.t
   rw [SymbolBounds.termMax_correct] at below
   exact Nat.lt_of_le_of_lt (Finset.le_sup (f := SymbolBounds.symbolId) (List.mem_toFinset.mpr member)) below
 
+private def contentLiteral : EntryValue.Content -> Term .content
+  | .transaction value => .transaction (.integer value)
+  | .signature => .signature
+  | .reconfiguration value => .reconfiguration (.nodes value)
+  | .retiredCommitted value => .retiredCommitted (.nodes value)
+
+private theorem contentLiteral_eval (assignment : Assignment) (value : EntryValue.Content) :
+    (contentLiteral value).eval assignment = value := by
+  cases value <;> rfl
+
+private theorem contentLiteral_max (value : EntryValue.Content) :
+    SymbolBounds.termMax (contentLiteral value) = 0 := by
+  cases value <;> rfl
+
 theorem operand_congr (left right : Assignment) (limit : Nat) (operand : Operand size ty)
     (below : operand.externalMax < limit) (cells : Fin size -> EntryValue.Entry)
     (terms : forall {sort : Ty}, forall term : Term sort, SymbolBounds.termMax term < limit ->
       term.eval left = term.eval right) : operand.eval left cells = operand.eval right cells := by
+  have positive : 0 < limit := Nat.lt_of_le_of_lt (Nat.zero_le _) below
   induction operand with
   | cell _ => rfl
   | input term => exact terms term below
   | decodedInput term => simp only [Operand.eval, terms term below]
-  | entryTerm operand ih | entryContent operand ih | decodedTerm operand ih =>
+  | entryTerm operand ih | entryContent operand ih | decodedTerm operand ih
+  | nodesNot operand ih | cardinality operand ih =>
     simp only [Operand.eval, ih below]
+  | nodesAnd a b ihl ihr | nodesOr a b ihl ihr =>
+    have bounds := max_lt_iff.mp below
+    simp only [Operand.eval, ihl bounds.1, ihr bounds.2]
+  -- Closed literals expose raw selector behavior, not unused selector-record fields.
+  | transactionId operand ih =>
+    have same := terms (.transactionId (contentLiteral (operand.eval right cells)))
+     (by simpa only [SymbolBounds.termMax, contentLiteral_max] using positive)
+    simpa only [Operand.eval, ih below, Term.eval, contentLiteral_eval] using same
+  | configurationNodes operand ih =>
+    have same := terms (.configurationNodes (contentLiteral (operand.eval right cells)))
+     (by simpa only [SymbolBounds.termMax, contentLiteral_max] using positive)
+    simpa only [Operand.eval, ih below, Term.eval, contentLiteral_eval] using same
+  | retiredNodes operand ih =>
+    have same := terms (.retiredNodes (contentLiteral (operand.eval right cells)))
+     (by simpa only [SymbolBounds.termMax, contentLiteral_max] using positive)
+    simpa only [Operand.eval, ih below, Term.eval, contentLiteral_eval] using same
 
 theorem predicate_congr (left right : Assignment) (limit : Nat) (predicate : Predicate size)
     (below : predicate.externalMax < limit) (cells : Fin size -> EntryValue.Entry)
     (terms : forall {sort : Ty}, forall term : Term sort, SymbolBounds.termMax term < limit ->
       term.eval left = term.eval right) : predicate.eval left cells = predicate.eval right cells := by
   induction predicate with
-  | eq a b | ne a b | le a b | lt a b =>
+  | eq a b | ne a b | le a b | lt a b | majority a b =>
     have bounds : a.externalMax < limit /\ b.externalMax < limit := max_lt_iff.mp below
     simp only [Predicate.eval, operand_congr left right limit a bounds.1 cells terms,
       operand_congr left right limit b bounds.2 cells terms]
+  | isContent tag value =>
+    simp only [Predicate.eval, operand_congr left right limit value below cells terms]
   | input term => exact terms term below
   | not value ih => simp only [Predicate.eval, ih below]
   | and a b ihl ihr | implies a b ihl ihr =>

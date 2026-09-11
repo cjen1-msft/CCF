@@ -74,7 +74,7 @@ New repository bridges extend that foundation:
 | `Sparse/ConfigurationSnapshot.lean` | Exact ordered positive-index Model snapshots and same-log completion using `2m+1` frontier-query records for `m` snapshot entries. |
 | `Sparse/ConfigurationPublication.lean` | Separate local candidate for one configuration begin, successful empty callback send, and publication close on the same core-state chain. No production Model or raw-validator change. |
 | `Sparse/EntryValue.lean` | Fixed nonrecursive content and entry values are bijective with actual Model values, with equality transport, decoded term ordering, guarded payload views, and pointwise array equivalence. |
-| `Sparse/EntryPredicate.lean` | Typed Entry predicates lower under one assignment, derive finite-reference locality and exact external-symbol bounds, and distinguish raw signed-code comparisons from decoded natural order. |
+| `Sparse/EntryPredicate.lean` | Cell-local comparisons, Content tests/selectors, mask operations, cardinality, and configuration majority lower under one assignment with finite-reference locality and exact symbol bounds. Raw signed and decoded natural order remain distinct. |
 | `Sparse/EntrySelectorSemantics.lean` | Total wrong-constructor selector interpretations are represented without restriction. Correctly guarded reads are interpretation-independent, with strict branch-success requirements. |
 | `Sparse/PacketIdentity.lean` | Complete packet equality/disequality is characterized by seven-tag headers, lengths, and bounded entry equality/mismatch. Both identity directions yield an injective finite key-class map. |
 | `Sparse/PacketRealization.lean` | One unique complete packet family follows from valid flat descriptors and shared Entry reads. Identity depends only on complete headers, lengths, and live entries. |
@@ -222,6 +222,17 @@ shows why checking only existing cuts can miss a difference between them.
 `tests/test_sparse_entry_predicate.py` checks 620 emitted formulas against
 independent Python comparisons, covering raw and decoded signed values, fixed
 external operands, and complete Entry tag identity.
+Another 550 cases cover cell-dependent Content tests, payloads, mask operations,
+cardinality, majority, and fixed-condition filters with independent Python
+oracles. Cardinality is mathematical Int. Transaction payload selectors still
+return raw signed codes.
+`filterByFixed` takes a Vector of fifteen external Bool Terms and retains all
+their symbols. It does not bind a scan position. `guardedConfigurationMajority`
+skips non-configurations but rejects genuine empty configurations.
+The joint compiler's congruence proofs retain their original signatures.
+Low-ID Content literals expose raw selector agreement without assuming equality
+of unused selector-record fields. Fourteen joint native controls cover points,
+universals, witnesses, wrong selectors, and inactive high-ID conditions.
 `TypedIntervalReadBlock` provides the shared read block for the joint compiler.
 It supports all five sorts, root/version requests, and an arbitrary UF base,
 without expected-value proxies. The planner runs once, and every planned

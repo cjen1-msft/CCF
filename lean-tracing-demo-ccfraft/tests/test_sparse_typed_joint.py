@@ -104,6 +104,14 @@ class SparseTypedJointTests(unittest.TestCase):
         self.assertEqual(by_name["closed-million-witness"]["demands"], 0)
         self.assertLess(len(by_name["closed-million-witness"]["script"]), 10000)
 
+    def test_cell_native_joint_queries(self) -> None:
+        cases = self.load("--native")
+        self.assertEqual(len(cases), 14)
+        self.assert_cases(cases)
+        by_name = {case["name"]: case for case in cases}
+        self.assertGreater(by_name["native-inactive-filter-metadata"]["zero"], 1000000)
+        self.assertEqual(by_name["native-no-reference-witness"]["demands"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
