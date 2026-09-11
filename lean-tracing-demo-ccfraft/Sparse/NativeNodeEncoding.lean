@@ -72,6 +72,9 @@ structure NodeColumnsRep {width : PNat} (assignment : Assignment) (columns : Nod
   preVotesGranted : forall (node : Fin width),
     (read columns.preVotesGranted node.val (.bits 0) : Expr (.bits width)).eval assignment Locals.empty =
       encodeBits (NativeArrayCheckQuorum.get arrays node).preVotesGranted
+  membershipState : forall (node : Fin width),
+    (read columns.membershipState node.val (.integer 0)).eval assignment Locals.empty =
+      membershipCode (NativeArrayCheckQuorum.get arrays node).membershipState
 
 theorem NodeColumnsRep.configuration_log {width : PNat} {assignment : Assignment}
     {columns : NodeColumns} {arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat}
@@ -114,6 +117,8 @@ theorem NodeColumnsRep.set_integer {width : PNat} {assignment : Assignment}
     simpa [read, NativeEncode.allocated, Term.eval, Assignment.set] using rep.votesGranted node
   · intro node
     simpa [read, NativeEncode.allocated, Term.eval, Assignment.set] using rep.preVotesGranted node
+  · intro node
+    simpa [read, NativeEncode.allocated, Term.eval, Assignment.set] using rep.membershipState node
 
 theorem node_columns_enabled {width : PNat} [Bootstrap (Fin width)]
     (assignment : Assignment) (bootstrap : BitVec width) (columns : NodeColumns)
@@ -243,6 +248,10 @@ theorem node_columns_step {width : PNat} (assignment : Assignment)
     by_cases same : peer = node <;> simp_all
   · intro peer
     have previous := rep.preVotesGranted peer
+    rw [get_step]
+    by_cases same : peer = node <;> simp_all
+  · intro peer
+    have previous := rep.membershipState peer
     rw [get_step]
     by_cases same : peer = node <;> simp_all
 

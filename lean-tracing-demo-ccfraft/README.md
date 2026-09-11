@@ -61,10 +61,11 @@ The Lean migration starts with `Sparse/NativeEncode.lean`.
 It accepts `checkQuorum` and the `allocated`, `role`, `newFollower`, `logLength`,
 `commit`, `currentTerm`, `entry`, `retirementIndex`,
 `retirementCommittableIndex`, `retiredCommittedIndex`, `votedFor`, and
-`votesGranted` and `preVotesGranted` observations.
+`votesGranted`, `preVotesGranted`, and `membershipState` observations.
 All retirement fields accept a natural number or `null`. `votedFor` accepts
 a declared identity or `null`. Both vote-set fields accept a list of declared
-identities, interpreted as a set. Other instructions are errors.
+identities, interpreted as a set. `membershipState` accepts the five Model
+membership-state names. Other instructions are errors.
 `native_lean.py` handles JSON input and solver execution. It delegates all SMT
 construction to Lean, with no Python encoder fallback.
 
@@ -174,7 +175,7 @@ implementation correctly, or verify Lean's JSON parser and IO runtime.
 
 This Lean encoder remains experimental. Remaining Model actions, observations,
 and raw reducer integration are unfinished. The API's full-model assurance
-flag remains false; current coverage is one action and thirteen observation kinds.
+flag remains false; current coverage is one action and fourteen observation kinds.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.
@@ -190,6 +191,9 @@ Both vote sets use one bit per declared identity. Duplicate names and list
 order do not change the set. An absent node reads an empty set, and recorded
 voters need not be allocated or belong to the bootstrap configuration.
 The two sets remain independent through `checkQuorum`.
+Membership states share the existing finite enum mapping in `Shared/Membership.lean`.
+An absent node reads `active`. Membership observations do not infer retirement
+indices or bootstrap reachability.
 The remaining optional fields are not yet accepted by the Lean encoder.
 `Encoding` now inherits its mutable column references from `NodeColumns`.
 Compiler frame proofs preserve that whole record, and the quorum result

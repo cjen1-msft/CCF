@@ -83,7 +83,8 @@ theorem observation_correct {width : PNat} [Bootstrap (Fin width)] (assignment :
     simp [NativeArrayCheckQuorum.follows]
   all_goals
     simp [Holds, NativeArrayCheckQuorum.follows, Term.eval, rep.allocated, rep.role,
-      rep.newFollower, rep.currentTerm, rep.commit, rep.length, role_code_eq]
+      rep.newFollower, rep.currentTerm, rep.commit, rep.length, rep.membershipState,
+      role_code_eq, membership_code_eq]
 
 theorem observation_model_correct {width : PNat} [Bootstrap (Fin width)]
     (assignment : Assignment) (columns : NodeColumns)

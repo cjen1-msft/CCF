@@ -48,9 +48,10 @@ reducer integration. See README's "Native explorer API" section.
 
 The first Lean encoder slice is now implemented in `Sparse/NativeEncode.lean`
 and `Sparse/NativeEncodeMain.lean`, with `native_lean.py` as its JSON and solver
-wrapper. It supports `checkQuorum` and thirteen observation kinds, including
+wrapper. It supports `checkQuorum` and fourteen observation kinds, including
 the nullable `retirementIndex`, `retirementCommittableIndex`, and
-`retiredCommittedIndex` fields, nullable `votedFor`, and both vote sets.
+`retiredCommittedIndex` fields, nullable `votedFor`, both vote sets, and
+`membershipState`.
 The Python reference still supports six actions and the broader observation
 schema. Do not confuse these coverage levels or fall back to Python SMT emission.
 
@@ -245,7 +246,7 @@ Lean's JSON parser, IO runtime, and cvc5 are not verified by these theorems.
 
 Next, expand Model actions and observations before raw reducer integration.
 Keep the full-model assurance flag false: current coverage is still one
-action and thirteen observation kinds. No change to the reducer's untrusted
+action and fourteen observation kinds. No change to the reducer's untrusted
 interpretation boundary follows from proving the JSON encoder.
 
 `NativeOptional` is the next value-codec unit for local-state coverage.
@@ -307,7 +308,16 @@ before applying representation equalities if simplification changes `0` to `0#wi
 `preVotesGranted` adds bitvector column 12, with fresh allocation starting at 13.
 The same proof chain covers this set, and the generated cases now run for
 both vote sets. A separate case preserves distinct values for the two sets
-across a quorum step. Next add `membershipState`, `sentIndex`, and `matchIndex`.
+across a quorum step.
+`membershipState` adds integer column 13, constrained to codes 0 through 4.
+Fresh allocation starts at 14. The existing membership equivalence now lives
+in `Shared/Membership.lean`; `SymbolicModel.membershipEquiv` remains an alias
+for compatibility. Native code uses this pure mapping without importing the
+bounded codec. All five states have observation and quorum-frame cases.
+An absent node reads `active`, but a membership observation does not imply
+retirement-index values or bootstrap reachability. Initial realization and
+the full JSON-to-script proof cover arbitrary membership states.
+Next add the peer-index tables `sentIndex` and `matchIndex`.
 
 Follow [Representation design priorities](README.md#representation-design-priorities):
 start with the simplest representation to prove correct, using native SMT

@@ -45,10 +45,11 @@ structure NodeColumns where
   votedFor : Nat := 10
   votesGranted : Nat := 11
   preVotesGranted : Nat := 12
+  membershipState : Nat := 13
 
 structure Encoding (width : PNat) extends NodeColumns where
   bootstrap : BitVec width
-  next : Nat := 13
+  next : Nat := 14
   assertions : Array (Expr .bool) := #[]
   symbolsBounded : forall formula, formula ∈ assertions ->
     forall symbol, symbol ∈ formula.symbols -> symbol.2 < next
@@ -122,7 +123,9 @@ def initialNodeDomains (width : PNat) (node : Nat) : List (Expr .bool) :=
     optionalNatDomain (read 7 node (.inl .unit)),
     optionalNatDomain (read 8 node (.inl .unit)),
     optionalNatDomain (read 9 node (.inl .unit)),
-    optionalNodeDomain width (read 10 node (.inl .unit))]
+    optionalNodeDomain width (read 10 node (.inl .unit)),
+    all [.le (.integer 0) (read 13 node (.integer 0)),
+      .le (read 13 node (.integer 0)) (.integer 4)]]
 
 def initialAssertions (width : PNat) : List (Expr .bool) :=
   (List.range width.val).flatMap (initialNodeDomains width)
@@ -273,6 +276,17 @@ def decodeInstruction (width : PNat) (names : Array String) (value : Json) :
     fields value ["kind", "node", "value"]
     let expected <- decodeNodeSet width names (<- field value "value")
     return if kind = "votesGranted" then .votesGranted node expected else .preVotesGranted node expected
+  | "membershipState" =>
+    fields value ["kind", "node", "value"]
+    let expected <- (<- field value "value").getStr?
+    let membership <- match expected with
+      | "active" => pure MembershipState.active
+      | "retirementOrdered" => pure .retirementOrdered
+      | "retirementSigned" => pure .retirementSigned
+      | "retirementCompleted" => pure .retirementCompleted
+      | "retiredCommitted" => pure .retiredCommitted
+      | _ => throw s!"unknown membership state {expected}"
+    return .membershipState node membership
   | _ => throw s!"unsupported native Lean instruction {kind}"
 
 def observationClauses {width : PNat} (columns : NodeColumns) :
@@ -298,6 +312,8 @@ def observationClauses {width : PNat} (columns : NodeColumns) :
     .ok [.equal (read columns.votesGranted node.val (.bits 0)) (.bits (encodeBits expected))]
   | .preVotesGranted node expected =>
     .ok [.equal (read columns.preVotesGranted node.val (.bits 0)) (.bits (encodeBits expected))]
+  | .membershipState node expected =>
+    .ok [.equal (read columns.membershipState node.val (.integer 0)) (.integer (membershipCode expected))]
   | _ => .error "unsupported native Lean observation"
 
 def instruction {width : PNat} (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) :

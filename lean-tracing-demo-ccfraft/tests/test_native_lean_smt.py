@@ -22,6 +22,13 @@ RETIREMENT_FIELDS = (
     "retiredCommittedIndex",
 )
 VOTE_SET_FIELDS = ("votesGranted", "preVotesGranted")
+MEMBERSHIP_STATES = (
+    "active",
+    "retirementOrdered",
+    "retirementSigned",
+    "retirementCompleted",
+    "retiredCommitted",
+)
 
 
 @unittest.skipUnless(
@@ -397,6 +404,71 @@ class NativeLeanSmtTests(unittest.TestCase):
             [{"name": "independent-vote-sets", "script": script, "expected": "sat"}]
         )
 
+    def test_membership_observations(self):
+        def observed(value):
+            return {"kind": "membershipState", "node": "a", "value": value}
+
+        quorum = {"kind": "checkQuorum", "node": "a"}
+        cases = self.framed_observation_cases(
+            "membershipState", "active", "retirementOrdered", "retiredCommitted"
+        )
+        for index, state in enumerate(MEMBERSHIP_STATES):
+            cases.extend(
+                [
+                    (f"membership-{state}", [observed(state)], "sat"),
+                    (
+                        f"membership-{state}-conflict",
+                        [
+                            observed(state),
+                            observed(
+                                MEMBERSHIP_STATES[(index + 1) % len(MEMBERSHIP_STATES)]
+                            ),
+                        ],
+                        "unsat",
+                    ),
+                    (
+                        f"membership-{state}-frame",
+                        [observed(state), quorum, observed(state)],
+                        "sat",
+                    ),
+                    (
+                        f"membership-{state}-absent",
+                        [
+                            {"kind": "allocated", "node": "a", "value": False},
+                            observed(state),
+                        ],
+                        "sat" if state == "active" else "unsat",
+                    ),
+                ]
+            )
+        cases.append(
+            (
+                "membership-does-not-infer-retirement-indices",
+                [observed("retiredCommitted")]
+                + [
+                    {"kind": kind, "node": "a", "value": None}
+                    for kind in RETIREMENT_FIELDS
+                ],
+                "sat",
+            )
+        )
+        scripts = self.encode(
+            [
+                {
+                    "nodes": ["a", "b"],
+                    "bootstrap": ["a", "b"],
+                    "instructions": instructions,
+                }
+                for _, instructions, _ in cases
+            ]
+        )
+        self.solve(
+            [
+                {"name": name, "script": script, "expected": expected}
+                for (name, _, expected), script in zip(cases, scripts)
+            ]
+        )
+
     def test_decoded_bootstrap_sets(self):
         variants = [["a", "b"], ["b", "a"], ["b", "a", "a"], ["a"]]
         scripts = self.encode(
@@ -521,6 +593,27 @@ class NativeLeanSmtTests(unittest.TestCase):
                 ("undeclared", ["b"]),
                 ("numeric", [0]),
                 ("non-array", "a"),
+                ("null", None),
+            ]
+        )
+        invalid.extend(
+            (
+                f"membership-{name}",
+                json.dumps(
+                    dict(
+                        valid,
+                        instructions=[
+                            {"kind": "membershipState", "node": "a", "value": value}
+                        ],
+                    ),
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            )
+            for name, value in [
+                ("unknown", "retired"),
+                ("numeric", 0),
+                ("boolean", False),
                 ("null", None),
             ]
         )

@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Model
+import Shared.Membership
 import Sparse.NativeSmt
 
 set_option autoImplicit false
@@ -36,6 +37,31 @@ theorem role_code_decode (value : Fin 5) : roleCode (decodeRole value) = (value.
 
 theorem role_code_bounds (role : Role) : 0 <= roleCode role /\ roleCode role <= 4 := by
   cases role <;> decide +kernel
+
+def membershipCode (state : MembershipState) : Int :=
+  (MembershipState.equiv.symm state).val
+
+def decodeMembership (value : Fin 5) : MembershipState := MembershipState.equiv value
+
+theorem membership_code_eq (left right : MembershipState) :
+    membershipCode left = membershipCode right <-> left = right := by
+  constructor
+  · intro same
+    exact MembershipState.equiv.symm.injective (Fin.ext (Int.ofNat_inj.mp same))
+  · intro same
+    rw [same]
+
+theorem membership_code_decode (value : Fin 5) :
+    membershipCode (decodeMembership value) = (value.val : Int) := by
+  simp [membershipCode, decodeMembership]
+
+theorem membership_code_bounds (state : MembershipState) :
+    0 <= membershipCode state /\ membershipCode state <= 4 := by
+  have bound := (MembershipState.equiv.symm state).isLt
+  dsimp [membershipCode]
+  omega
+
+@[simp] theorem membership_code_active : membershipCode .active = 0 := rfl
 
 def decodeBits {width : PNat} (bits : BitVec width) : Finset (Fin width) :=
   Finset.univ.filter fun node => bits.getLsbD node.val = true

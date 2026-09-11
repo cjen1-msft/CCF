@@ -31,6 +31,7 @@ structure NodeDomain (width : PNat) (assignment : Assignment) (node : Nat) : Pro
   votedFor :
     (optionalDecode (nodeValue? width)
       ((read 10 node (.inl .unit) : Expr optionalIntTy).eval assignment Locals.empty)).isSome = true
+  membershipState : 0 <= scalarValue assignment 13 node /\ scalarValue assignment 13 node <= 4
 
 theorem initial_node_domains_correct (width : PNat) (assignment : Assignment) (node : Nat) :
     Holds (initialNodeDomains width node) assignment <-> NodeDomain width assignment node := by
@@ -76,6 +77,10 @@ noncomputable def initialRow (width : PNat) (assignment : Assignment) (node : Fi
       ((read 11 node.val (.bits 0) : Expr (.bits width)).eval assignment Locals.empty)
     preVotesGranted := decodeBits
       ((read 12 node.val (.bits 0) : Expr (.bits width)).eval assignment Locals.empty)
+    membershipState := decodeMembership ⟨(scalarValue assignment 13 node.val).toNat, by
+      have within := domain.membershipState.2
+      have nonnegative := Int.toNat_of_nonneg domain.membershipState.1
+      omega⟩
     log := {
       length := (scalarValue assignment 3 node.val).toNat
       entries := fun index => modelEntry
@@ -180,6 +185,14 @@ theorem initial_arrays_rep (width : PNat) (assignment : Assignment)
     · simp [initialArrays, NativeArrayCheckQuorum.get, present, read, allocated, Term.eval,
         NativeArrayCheckQuorum.Local.fresh, NativeArrayCheckQuorum.Local.ofModel, freshNodeState]
 
+  · intro node
+    by_cases present : assignment (.array .int .bool) 0 node.val = true
+    · simp [initialArrays, NativeArrayCheckQuorum.get, present, initialRow,
+        membership_code_decode, scalarValue, read, allocated, Term.eval]
+      simpa [scalarValue, present] using (domains node).membershipState.1
+    · simp [initialArrays, NativeArrayCheckQuorum.get, present, read, allocated, Term.eval,
+        NativeArrayCheckQuorum.Local.fresh, NativeArrayCheckQuorum.Local.ofModel, freshNodeState]
+
 theorem initial_assertions_domains (width : PNat) (assignment : Assignment) :
     Holds (initialAssertions width) assignment <->
       (forall node : Fin width, NodeDomain width assignment node.val) := by
@@ -245,8 +258,10 @@ noncomputable def initialAssignment (width : PNat) (seed : Assignment)
       (NativeArrayCheckQuorum.get arrays node).votedFor)
   let assignment := assignment.set (.array .int (.bits width)) 11
     (nodeArray 0 fun node => encodeBits (NativeArrayCheckQuorum.get arrays node).votesGranted)
-  assignment.set (.array .int (.bits width)) 12
+  let assignment := assignment.set (.array .int (.bits width)) 12
     (nodeArray 0 fun node => encodeBits (NativeArrayCheckQuorum.get arrays node).preVotesGranted)
+  assignment.set (.array .int .int) 13
+    (nodeArray 0 fun node => membershipCode (NativeArrayCheckQuorum.get arrays node).membershipState)
 
 theorem initial_assignment_rep (width : PNat) (seed : Assignment)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) :
@@ -299,6 +314,11 @@ theorem initial_assignment_domains (width : PNat) (seed : Assignment)
     rw [rep.votedFor node, optional_decode_value (fun peer : Fin width => (peer.val : Int))
       (nodeValue? width) node_value_round_trip]
     rfl
+
+  · change 0 <= (read 13 node.val (.integer 0)).eval (initialAssignment width seed arrays) Locals.empty /\
+      (read 13 node.val (.integer 0)).eval (initialAssignment width seed arrays) Locals.empty <= 4
+    rw [rep.membershipState node]
+    exact membership_code_bounds _
 
 theorem model_initial_assertions (width : PNat) [Bootstrap (Fin width)] (seed : Assignment)
     (model : State (Fin width) Nat) :
