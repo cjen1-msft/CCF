@@ -77,8 +77,9 @@ retains solver artifacts and distinguishes SAT, UNSAT, unknown, and input errors
 The internal Lean input is canonical JSON to reject duplicate-key text before
 any encoding. The Python wrapper accepts ordinary JSON and canonicalizes it.
 
-The full Model-to-emitted-script theorem and whole-script correctness are still
-missing. No observation specialization is applied by the current compiler.
+The supported typed trace now has a Model-to-script theorem under explicit
+compilation and initial-state premises. The JSON boundary and full Model
+coverage remain unfinished. No observation specialization is applied by the current compiler.
 Reducer integration, remaining action coverage, and initial-state materialization
 remain unfinished. The new Lean encoder is experimental, not a proved validator.
 `Sparse/NativeQuorumEncoding.lean` now connects the exact `currentCandidate` and
@@ -211,13 +212,25 @@ exactly the typed term's free references, including references under binders.
 reference. `declaration_names_unique` rules out duplicate declaration names
 after deduplication.
 
-The next Lean slice covers named assertion interpretation and command
-sequencing. Then compose it with
-`compiled_trace_iff`. Do not flip the full Model-to-script assurance flag yet.
-JSON decoding, remaining action coverage, and raw reducer integration
-still need their documented delivery work.
-Do not treat the conditional reader theorem as a full action or script proof.
-Close those boundaries before migrating the remaining actions.
+`NativeScriptRun` now interprets complete generated scripts. It requires the
+fixed prelude, rejects duplicate or mismatched declarations, and permits
+declarations only before assertions. It checks reference coverage, Boolean
+assertion values, indexed named wrappers, and the single final `check-sat`.
+It also rejects a malformed suffix after a false assertion.
+`script_text_holds` proves equivalence with typed assertion satisfaction.
+[`NativeScriptTrace`](Sparse/NativeScriptTrace.lean) proves
+`NativeEncode.compiled_script_iff` by composing this with `compiled_trace_iff`.
+The emitted text has a satisfying
+assignment exactly when the supported Model trace has an execution, under
+the same successful-compilation and initial-state premises. Both named and
+unnamed scripts are covered. The SMT interpretation is explicit Lean
+semantics for the generated subset; cvc5 itself is not verified.
+
+The next Lean slice closes the JSON wrapper's connection to those premises,
+then expands Model action and observation coverage before raw reducer
+integration. Keep the full-model assurance flag false: current coverage is
+still one action and seven observation kinds, and the JSON wrapper has not
+yet been connected by theorem to the typed compilation premises.
 
 Follow [Representation design priorities](README.md#representation-design-priorities):
 start with the simplest representation to prove correct, using native SMT

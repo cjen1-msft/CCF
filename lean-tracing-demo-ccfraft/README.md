@@ -93,13 +93,18 @@ declarations, or the datatype prelude.
 `NativeScript` also builds script commands as explicit trees.
 `NativeScriptSyntax` proves each command's text round trip and checks that a
 declaration's parsed sort agrees with its symbol name. The emitted prelude
-is pinned by a kernel proof. Full script interpretation remains separate.
+is pinned by a kernel proof.
 `NativeScriptText` proves the whole emitted script parses to the exact command list,
 including the final newline and all named assertions. The reader accepts the
 generated one-command-per-line format, not arbitrary SMT-LIB layout.
 `NativeReferences` proves that scanning the emitted expression trees finds
 exactly the typed terms' free symbols. Every reference has a generated
 declaration, and declaration names are unique.
+`NativeScriptRun` interprets complete generated scripts. It requires the fixed
+prelude, unique declarations before assertions, declared references, Boolean
+assertions, and one final `check-sat`. Named wrappers must use the emitter's
+indexed names. A false assertion does not hide a malformed later command.
+`script_text_holds` equates this interpretation with typed assertion satisfaction.
 `NativeSmtFixtureMain` carries kernel-checked expected verdicts for emitted
 formulas. `NativeEncodeProofs` covers configuration selectors, bitset decoding,
 and allocation-guarded read specialization.
@@ -126,8 +131,7 @@ node columns and a matching Model state.
 clauses as represented node columns and a Model state. Its witness supplies
 fresh values for currently unobserved fields; the clauses do not require those
 values. `model_initial_assertions` proves the converse for arbitrary Model
-states, including states with non-fresh unobserved fields. Whole-compiler and
-execution correspondence remain unfinished.
+states, including states with non-fresh unobserved fields.
 The JSON decoder now produces typed Model-level instructions and entries.
 `NativeObservationEncoding.observation_model_correct` proves that the actual
 clauses for all seven supported observations match the Model, under the
@@ -146,9 +150,17 @@ The proof extends fresh assignments without changing earlier assertions,
 represented columns, or initial domains. It covers the current `checkQuorum`
 and observation subset, not the remaining Model actions or SMT text semantics.
 
-This Lean encoder remains experimental. Complete Model-to-script equivalence
-and whole-script text correctness are not proved. The 150-case actual-Model
-comparison does not replace those proofs. Raw reducer integration is unfinished.
+[`NativeScriptTrace`](Sparse/NativeScriptTrace.lean) proves
+`NativeEncode.compiled_script_iff`, which composes typed trace equivalence
+with whole-script interpretation. Under the
+same compilation and initial-state premises, the emitted text has a satisfying
+assignment exactly when the supported Model trace has an execution.
+The theorem covers named and unnamed scripts. It does not verify cvc5.
+
+This Lean encoder remains experimental. The JSON boundary, remaining Model
+actions, and raw reducer integration are unfinished. The API's full-model
+assurance flag remains false; the theorem covers the current typed subset
+under explicit premises.
 
 The older Python reference has broader action coverage:
 `native_arrays.py` accepts `checkQuorum`, `requestVote`, `requestPreVote`, and

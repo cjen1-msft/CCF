@@ -37,6 +37,7 @@ import Sparse.NativeLowering
 import Sparse.NativeScriptSyntax
 import Sparse.NativeScriptText
 import Sparse.NativeReferences
+import Sparse.NativeScriptTrace
 import Sparse.NativeInitialEncoding
 import Sparse.NativeObservationEncoding
 import Sparse.NativeCompilerEncoding
