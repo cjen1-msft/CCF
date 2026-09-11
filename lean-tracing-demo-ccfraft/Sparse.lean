@@ -23,6 +23,7 @@ import Sparse.ModelTrace
 import Sparse.ModelInputSyntax
 import Sparse.ModelInputScalarEncoding
 import Sparse.LogMatchSummary
+import Sparse.LogMatchEncoding
 import Sparse.MonotoneIntervals
 import Sparse.NativeConstructors
 import Sparse.NativeNodeOperations

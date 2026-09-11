@@ -130,6 +130,11 @@ Log, queue, submitted-set, and action constraints are separate.
 `LogMatchSummary` characterizes the actual NACK log reader by a matching anchor
 and exclusion of later matches. It handles unsorted terms and clipped bounds.
 Its zero-based storage theorem uses decoded Entry terms, not raw signed order.
+`LogMatchEncoding` emits that reader using two derived scalars and two universal
+queries, without a separate anchor witness. Its formula and rendered-text
+existence theorems retain the caller's points, queries, and witnesses on one
+shared Entry root family. Connecting the reader to a StateFrame log and the
+actual NACK handler remains separate.
 
 `QueueEncoding` emits typed count-read constraints with alias-safe observations
 and fresh function names. It summarizes each syntactic key's maximum demanded
@@ -195,7 +200,8 @@ CCF_SPARSE_SMT_TESTS=1 CVC5=/path/to/cvc5 \
 		tests.test_sparse_interval_queries tests.test_sparse_joint_encoding \
 		tests.test_sparse_native_sorts tests.test_sparse_typed_intervals \
 		tests.test_sparse_entry_predicate tests.test_sparse_typed_joint \
-		tests.test_sparse_model_input_scalars tests.test_sparse_conditional_specialization
+		tests.test_sparse_model_input_scalars tests.test_sparse_conditional_specialization \
+		tests.test_sparse_log_match
 ```
 
 These fixtures cover emitted component constraints, not full trace correctness.

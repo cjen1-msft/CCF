@@ -74,6 +74,7 @@ New repository bridges extend that foundation:
 | `Sparse/ModelInputSyntax.lean` | Closed finite syntax for every action and observation preserves one shared Nat assignment, finite unknown support, exact ground quoting, and the unrestricted ModelTrace execution contract. |
 | `Sparse/ModelInputScalarEncoding.lean` | Nat, Bool zero tests, and optional Nat fields lower under one shared assignment. Exact full-block domains and reservation retain unused declarations; installation preserves existing frames under explicit Int-slot disjointness. |
 | `Sparse/LogMatchSummary.lean` | Exact `findHighestPossibleMatch` summary, uniqueness, and zero-based EntryValue correspondence hold for arbitrary logs without term-ordering assumptions. |
+| `Sparse/LogMatchEncoding.lean` | Two derived scalar bindings and universal anchor/suffix queries encode the actual clipped log-match reader. Formula/text existence keeps all caller constraints on one assignment and shared Entry root family. |
 | `Sparse/StateFrame.lean` | Finite typed-reference domains correspond to relative realization against one supplied Entry root family, submitted set, and network. Realizations have one unique non-network frame. |
 | `Sparse/StateFrameInitial.lean` | Canonical independent slots and fresh log roots represent every arbitrary actual Model state, preserving all old roots and outside-owned constants. Whole UFs and selector interpretations remain unchanged. |
 | `Sparse/StateFrameEncoding.lean` | Fifteen allocation-guarded clauses encode exactly the existing numeric domains under the same assignment. Text execution returns the domain checker's Boolean result. |
@@ -205,6 +206,24 @@ The caller still owns placement relative to graph and other compiler metadata.
 `tests/test_sparse_model_input_scalars.py` covers 170 native cases, including
 shared zero tests, source aliases, unused negative declarations, optional zero,
 and constant-size declarations at trillion-valued offsets.
+
+`LogMatchEncoding` binds `clip = min(index, length)` and
+`anchor = max(best-1, 0)` in two fresh scalar slots.
+An eligible anchor and exclusion of later matches determine the exact reader
+result. Both predicates are universal: `[anchor,best)` is empty at best=0
+and a singleton otherwise, so the reader needs no existential position scalar.
+Terms use decoded Entry ordering against a mathematical Nat threshold.
+Source fields may alias, but negative values are rejected.
+The public formula and rendered-text iffs keep one original assignment and one
+root family satisfying the entire caller context and reader result.
+The two slots must follow every source ID and the existing caller symbol and
+metadata boundary. Installation preserves all caller points, queries, witness
+clauses, complete UFs, and selectors.
+The caller still connects the graph version and prefix length to its actual
+StateFrame log. No NACK-handler refinement is claimed.
+`tests/test_sparse_log_match.py` covers 423 finite-oracle cases and 23 additional
+cases, including unsorted terms, conflicting readers, caller witnesses,
+source aliases, and trillion-length single-point constraints.
 
 Use `IntervalDemandPlan.plan` for executable dependency closure. The reference
 constructor repeats shared ancestors exponentially. In one forced-clock run,
