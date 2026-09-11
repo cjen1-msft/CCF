@@ -189,6 +189,9 @@ version references. Domain constraints, fresh allocation, and shared completion
 belong to the later joint compiler.
 Pointwise `ne` is not an existential mismatch. Its interior-mismatch regression
 shows why checking only existing cuts can miss a difference between them.
+`tests/test_sparse_entry_predicate.py` checks 620 emitted formulas against
+independent Python comparisons, covering raw and decoded signed values, fixed
+external operands, and complete Entry tag identity.
 
 The chosen entry representation uses fixed native datatypes with signed
 integer term/transaction fields and 15-bit node sets. `EntryValue` supplies

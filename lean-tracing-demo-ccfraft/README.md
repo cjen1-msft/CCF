@@ -135,7 +135,8 @@ CCF_SPARSE_SMT_TESTS=1 CVC5=/path/to/cvc5 \
 	python3 -m unittest tests.test_sparse_smt tests.test_sparse_queue_encoding \
 		tests.test_sparse_interval_encoding tests.test_sparse_interval_predicate \
 		tests.test_sparse_interval_queries tests.test_sparse_joint_encoding \
-		tests.test_sparse_native_sorts tests.test_sparse_typed_intervals
+		tests.test_sparse_native_sorts tests.test_sparse_typed_intervals \
+		tests.test_sparse_entry_predicate
 ```
 
 These fixtures cover emitted component constraints, not full trace correctness.
