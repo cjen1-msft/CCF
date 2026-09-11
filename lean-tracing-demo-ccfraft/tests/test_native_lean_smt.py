@@ -16,6 +16,7 @@ from native_run import NativeRun
 from Shared.solver import find_cvc5, run_solver
 
 ROOT = Path(__file__).resolve().parents[1]
+RETIREMENT_FIELDS = ("retirementIndex", "retirementCommittableIndex")
 
 
 @unittest.skipUnless(
@@ -217,9 +218,9 @@ class NativeLeanSmtTests(unittest.TestCase):
             ]
         )
 
-    def test_retirement_index_observations(self):
+    def retirement_index_cases(self, kind):
         def observed(value):
-            return {"kind": "retirementIndex", "node": "a", "value": value}
+            return {"kind": kind, "node": "a", "value": value}
 
         quorum = {"kind": "checkQuorum", "node": "a"}
         absent = {"kind": "allocated", "node": "a", "value": False}
@@ -244,6 +245,28 @@ class NativeLeanSmtTests(unittest.TestCase):
                 "unsat",
             ),
         ]
+        return [
+            (f"{kind}-{name}", instructions, expected)
+            for name, instructions, expected in cases
+        ]
+
+    def test_retirement_index_observations(self):
+        cases = [
+            case
+            for kind in RETIREMENT_FIELDS
+            for case in self.retirement_index_cases(kind)
+        ]
+        independent = [
+            {"kind": kind, "node": "a", "value": index}
+            for index, kind in enumerate(RETIREMENT_FIELDS)
+        ]
+        cases.append(
+            (
+                "independent-retirement-fields",
+                independent + [{"kind": "checkQuorum", "node": "a"}] + independent,
+                "sat",
+            )
+        )
         scripts = self.encode(
             [
                 {
@@ -323,13 +346,13 @@ class NativeLeanSmtTests(unittest.TestCase):
         )
         invalid.extend(
             (
-                f"retirement-{name}",
+                f"{kind}-{name}",
                 json.dumps(
                     dict(
                         valid,
                         instructions=[
                             {
-                                "kind": "retirementIndex",
+                                "kind": kind,
                                 "node": "a",
                                 "value": value,
                             }
@@ -339,6 +362,7 @@ class NativeLeanSmtTests(unittest.TestCase):
                     sort_keys=True,
                 ),
             )
+            for kind in RETIREMENT_FIELDS
             for name, value in [
                 ("negative", -1),
                 ("fractional", 1.5),

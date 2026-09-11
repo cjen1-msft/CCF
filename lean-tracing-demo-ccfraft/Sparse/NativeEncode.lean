@@ -40,10 +40,11 @@ structure NodeColumns where
   role : Nat := 1
   newFollower : Nat := 2
   retirementIndex : Nat := 7
+  retirementCommittableIndex : Nat := 8
 
 structure Encoding (width : PNat) extends NodeColumns where
   bootstrap : BitVec width
-  next : Nat := 8
+  next : Nat := 9
   assertions : Array (Expr .bool) := #[]
   symbolsBounded : forall formula, formula ∈ assertions ->
     forall symbol, symbol ∈ formula.symbols -> symbol.2 < next
@@ -114,7 +115,8 @@ def initialNodeDomains (width : PNat) (node : Nat) : List (Expr .bool) :=
     .forall_ .int (implies
       (.and (.le (.integer 0) (.bound .here)) (lt (.bound .here) (length node)))
       (entryDomain (entryAt width node (.bound .here)))),
-    optionalNatDomain (read 7 node (.inl .unit))]
+    optionalNatDomain (read 7 node (.inl .unit)),
+    optionalNatDomain (read 8 node (.inl .unit))]
 
 def initialAssertions (width : PNat) : List (Expr .bool) :=
   (List.range width.val).flatMap (initialNodeDomains width)
@@ -245,13 +247,14 @@ def decodeInstruction (width : PNat) (names : Array String) (value : Json) :
     let index <- natural (<- field value "index")
     let expected <- decodeEntry width names (<- field value "value")
     return .entry node index expected
-  | "retirementIndex" =>
+  | "retirementIndex" | "retirementCommittableIndex" =>
     fields value ["kind", "node", "value"]
     let value <- field value "value"
     let expected <- match value with
       | .null => pure none
       | _ => some <$> natural value
-    return .retirementIndex node expected
+    return if kind = "retirementIndex" then .retirementIndex node expected
+      else .retirementCommittableIndex node expected
   | _ => throw s!"unsupported native Lean instruction {kind}"
 
 def observationClauses {width : PNat} (columns : NodeColumns) :
@@ -266,6 +269,8 @@ def observationClauses {width : PNat} (columns : NodeColumns) :
       .equal (entryAt width node.val (.integer index)) (entryTerm expected)]
   | .retirementIndex node expected =>
     .ok [.equal (read columns.retirementIndex node.val (.inl .unit)) (optionalTerm Nat.cast expected)]
+  | .retirementCommittableIndex node expected =>
+    .ok [.equal (read columns.retirementCommittableIndex node.val (.inl .unit)) (optionalTerm Nat.cast expected)]
   | _ => .error "unsupported native Lean observation"
 
 def instruction {width : PNat} (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) :

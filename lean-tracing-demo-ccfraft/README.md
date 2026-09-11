@@ -59,8 +59,9 @@ or restricting possible executions is not a performance optimization.
 
 The Lean migration starts with `Sparse/NativeEncode.lean`.
 It accepts `checkQuorum` and the `allocated`, `role`, `newFollower`, `logLength`,
-`commit`, `currentTerm`, `entry`, and `retirementIndex` observations.
-`retirementIndex` accepts a natural number or `null`. Other instructions are errors.
+`commit`, `currentTerm`, `entry`, `retirementIndex`, and
+`retirementCommittableIndex` observations. Both retirement fields accept a natural
+number or `null`. Other instructions are errors.
 `native_lean.py` handles JSON input and solver execution. It delegates all SMT
 construction to Lean, with no Python encoder fallback.
 
@@ -170,15 +171,15 @@ implementation correctly, or verify Lean's JSON parser and IO runtime.
 
 This Lean encoder remains experimental. Remaining Model actions, observations,
 and raw reducer integration are unfinished. The API's full-model assurance
-flag remains false; current coverage is one action and eight observation kinds.
+flag remains false; current coverage is one action and nine observation kinds.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.
 Invalid payloads fail decoding rather than becoming `none` or wrapping to
 another identity. The module proves round trips, exact literal equality,
-and emitted domain predicates. `retirementIndex` is wired through initial
+and emitted domain predicates. Both retirement fields are wired through initial
 state realization, observation compilation, and the JSON-to-script theorem.
-Its value is not bounded by the log length. Observing `null` does not imply
+Their values are not bounded by the log length. Observing `null` does not imply
 that the node is allocated, but a non-null value requires an allocated node.
 The remaining optional fields are not yet accepted by the Lean encoder.
 `Encoding` now inherits its mutable column references from `NodeColumns`.

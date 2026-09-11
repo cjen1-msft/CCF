@@ -102,16 +102,16 @@ theorem definition_preserves_satisfiability {width : PNat} {sort : Ty}
 private def initial : Encoding ⟨1, by decide⟩ :=
   { bootstrap := 1, symbolsBounded := by simp }
 
-example : (assertion (.free .bool 8)).run initial =
+example : (assertion (.free .bool initial.next)).run initial =
     .error "internal encoder error: assertion references an unallocated SMT symbol" := by
   rfl
 
-example : (define (.free .int 8)).run initial =
+example : (define (.free .int initial.next)).run initial =
     .error "internal encoder error: definition references an unallocated SMT symbol" := by
   rfl
 
 example : ((define (.integer 42)).run initial).map
-    (fun (id, state) => (id, state.next, state.assertions.size)) = .ok (8, 9, 1) := by
+    (fun (id, state) => (id, state.next, state.assertions.size)) = .ok (initial.next, initial.next + 1, 1) := by
   rfl
 
 example : ((assertion (.forall_ .bool (.bound .here))).run initial).map

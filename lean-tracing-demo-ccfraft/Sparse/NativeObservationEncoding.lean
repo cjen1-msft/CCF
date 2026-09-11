@@ -51,6 +51,11 @@ theorem observation_correct {width : PNat} [Bootstrap (Fin width)] (assignment :
     rw [optional_nat_literal_correct, rep.retirementIndex node,
       optional_decode_value Nat.cast naturalValue? natural_value_round_trip]
     simp [NativeArrayCheckQuorum.follows]
+  case retirementCommittableIndex node expected =>
+    simp only [Holds, List.mem_cons, List.not_mem_nil, or_false, forall_eq]
+    rw [optional_nat_literal_correct, rep.retirementCommittableIndex node,
+      optional_decode_value Nat.cast naturalValue? natural_value_round_trip]
+    simp [NativeArrayCheckQuorum.follows]
   all_goals
     simp [Holds, NativeArrayCheckQuorum.follows, Term.eval, rep.allocated, rep.role,
       rep.newFollower, rep.currentTerm, rep.commit, rep.length, role_code_eq]

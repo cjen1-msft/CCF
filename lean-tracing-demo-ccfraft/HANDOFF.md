@@ -48,8 +48,8 @@ reducer integration. See README's "Native explorer API" section.
 
 The first Lean encoder slice is now implemented in `Sparse/NativeEncode.lean`
 and `Sparse/NativeEncodeMain.lean`, with `native_lean.py` as its JSON and solver
-wrapper. It supports `checkQuorum` and eight observation kinds, including
-the nullable `retirementIndex` field.
+wrapper. It supports `checkQuorum` and nine observation kinds, including
+the nullable `retirementIndex` and `retirementCommittableIndex` fields.
 The Python reference still supports six actions and the broader observation
 schema. Do not confuse these coverage levels or fall back to Python SMT emission.
 
@@ -244,7 +244,7 @@ Lean's JSON parser, IO runtime, and cvc5 are not verified by these theorems.
 
 Next, expand Model actions and observations before raw reducer integration.
 Keep the full-model assurance flag false: current coverage is still one
-action and eight observation kinds. No change to the reducer's untrusted
+action and nine observation kinds. No change to the reducer's untrusted
 interpretation boundary follows from proving the JSON encoder.
 
 `NativeOptional` is the next value-codec unit for local-state coverage.
@@ -253,10 +253,12 @@ Decoding distinguishes a valid absent value, `some none`, from invalid payloads,
 `none`. It rejects negative indices and identities outside the declared width.
 The proofs cover round trips, exact literal equality, and actual domain terms.
 `NativeSmtFixtureMain` now has 25 kernel-backed solver cases, including nine
-optional-value cases. The codecs are now wired for `retirementIndex`.
-`votedFor` and the other retirement-index fields remain to be integrated.
+optional-value cases. The codecs are now wired for `retirementIndex` and
+`retirementCommittableIndex`. `votedFor` and `retiredCommittedIndex` remain
+to be integrated.
 
-`Encoding` now inherits `role`, `newFollower`, and `retirementIndex` from `NodeColumns`.
+`Encoding` now inherits `role`, `newFollower`, and both retirement-index
+references from `NodeColumns`.
 `SameReferences`, `fresh_success`, and `define_success` preserve the complete
 column record. `QuorumResult.columns` specifies the record update, with
 derived role and follower equalities for callers. All prior scripts remain
@@ -278,8 +280,14 @@ with an empty log, explicit absent nodes, conflicting observations, and
 preservation across quorum steps. Invalid JSON values remain input errors.
 The new domain clauses and fresh-symbol numbering intentionally change the
 old scripts, so the pre-retirement hash manifest no longer applies.
-Next add `retirementCommittableIndex` and `retiredCommittedIndex` using this
-same checked path, then `votedFor` and the other local fields.
+`retirementCommittableIndex` now adds column 8, with fresh allocation starting
+at 9. The same complete proof chain covers this field. The generated optional
+observation matrix runs the same cases for both fields and checks that distinct
+field values remain independent through a quorum step. No ordering or log-length
+bounds were added. Domain correspondence now uses the `NodeDomain` structure
+instead of repeating every field in an intermediate conjunction.
+Next add `retiredCommittedIndex` using this same checked path, then `votedFor`
+and the other local fields.
 
 Follow [Representation design priorities](README.md#representation-design-priorities):
 start with the simplest representation to prove correct, using native SMT
