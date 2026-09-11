@@ -97,8 +97,10 @@ and commit index. It handles all integer scan positions and derives a natural
 current-index witness from the asserted domain.
 `configuration_guards_exists_correct` additionally covers the other-peer guard
 and both existential index assignments without changing represented log state.
-The initial-state representation and full action/execution correspondence remain
-unfinished.
+`NativeNodeEncoding` connects the shared guard expressions and both step-down
+stores to actual Model enabledness and successor state, assuming represented
+node columns and a matching Model state. The initial-state representation and
+whole-compiler/execution correspondence remain unfinished.
 
 This Lean encoder remains experimental. Neither complete Model-to-script
 equivalence nor text-renderer correctness is proved. The 150-case actual-Model

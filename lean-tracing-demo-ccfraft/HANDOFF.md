@@ -95,9 +95,18 @@ including the bootstrap branch where the physical witness is unused.
 connect both existential index assignments to `CurrentIndex` and `OtherAt`.
 Assigning these integer witnesses leaves the represented log state unchanged.
 
-The next Lean slice must combine the configuration guards with allocation/role
-and the state update. Initial-domain realization, the complete compiler/execution
-correspondence, and the lowering/text proof remain.
+`Sparse/NativeNodeEncoding.lean` now defines `NodeColumnsRep` for the seven
+currently observed column kinds. `node_columns_model_enabled` connects the exact
+shared `leadingGuards` and `configurationGuards` expressions to actual Model
+enabledness. `node_columns_model_step` connects `stepDownRole` and
+`stepDownFollower` stores to the actual Model successor. The full native-array
+record correspondence proves that unobserved Model fields are preserved too.
+Both results assume the input representations; they do not establish them.
+The refactor still preserves all 150 old emitted Model-case scripts byte for byte.
+
+The next Lean slice must establish initial-domain realization and observation
+encoding, then compose the actual compiler across a whole trace. The lowering/text
+proof also remains.
 Do not treat the conditional reader theorem as a full action or script proof.
 Close those boundaries before migrating the remaining actions.
 

@@ -31,6 +31,7 @@ import Sparse.NativeArrayCheckQuorum
 import Sparse.NativeArrayQueue
 import Sparse.NativeArrayVote
 import Sparse.NativeEncodeProofs
+import Sparse.NativeNodeEncoding
 import Sparse.NativeQuorumEncoding
 import Sparse.NativeConstructors
 import Sparse.NativeNodeOperations

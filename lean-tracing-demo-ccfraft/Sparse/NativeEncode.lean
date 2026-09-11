@@ -98,6 +98,15 @@ def entryAt {context : List Ty} (width : PNat) (node : Nat)
     (index : Term context .int) : Term context (entryTy width) :=
   .select (.select (.free (.array .int (.array .int (entryTy width))) 6) (.integer node)) index
 
+def leaderGuard (column node : Nat) : Expr .bool :=
+  .equal (read column node (.integer 0)) (.integer 4)
+
+def stepDownRole (column node : Nat) : Expr (.array .int .int) :=
+  .store (.free (.array .int .int) column) (.integer node) (.integer 1)
+
+def stepDownFollower (column node : Nat) : Expr (.array .int .bool) :=
+  .store (.free (.array .int .bool) column) (.integer node) (.boolean true)
+
 def initialDomains (width : PNat) : EncodeM width Unit := do
   for node in List.range width.val do
     assertion (all [.le (.integer 0) (read 1 node (.integer 0)),
@@ -132,19 +141,24 @@ def otherConfiguration (width : PNat) (bootstrap : BitVec width)
       isConfiguration (.snd (entryAt width node (.sub witness (.integer 1)))),
       hasOther (members (.snd (entryAt width node (.sub witness (.integer 1)))))])
 
+def leadingGuards (roleColumn node : Nat) : List (Expr .bool) :=
+  [allocated node, leaderGuard roleColumn node]
+
+def configurationGuards (width : PNat) (bootstrap : BitVec width)
+    (node currentId witnessId : Nat) : List (Expr .bool) :=
+  [currentCandidate width node currentId, noLaterConfiguration width node currentId,
+    otherConfiguration width bootstrap node currentId witnessId]
+
 def checkQuorum {width : PNat} (node : Nat) : EncodeM width Unit := do
   let before <- get
-  assertion (allocated node)
-  assertion (.equal (read before.role node (.integer 0)) (.integer 4))
+  for formula in leadingGuards before.role node do
+    assertion formula
   let currentId <- fresh
   let witnessId <- fresh
-  assertion (currentCandidate width node currentId)
-  assertion (noLaterConfiguration width node currentId)
-  assertion (otherConfiguration width before.bootstrap node currentId witnessId)
-  let roleId <- define
-    (.store (.free (.array .int .int) before.role) (.integer node) (.integer 1))
-  let followerId <- define
-    (.store (.free (.array .int .bool) before.newFollower) (.integer node) (.boolean true))
+  for formula in configurationGuards width before.bootstrap node currentId witnessId do
+    assertion formula
+  let roleId <- define (stepDownRole before.role node)
+  let followerId <- define (stepDownFollower before.newFollower node)
   modify fun state => { state with role := roleId, newFollower := followerId }
 
 def fields (value : Json) (expected : List String) : Except String Unit := do
