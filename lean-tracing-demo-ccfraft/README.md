@@ -99,8 +99,13 @@ current-index witness from the asserted domain.
 and both existential index assignments without changing represented log state.
 `NativeNodeEncoding` connects the shared guard expressions and both step-down
 stores to actual Model enabledness and successor state, assuming represented
-node columns and a matching Model state. The initial-state representation and
-whole-compiler/execution correspondence remain unfinished.
+node columns and a matching Model state.
+`NativeValues` proves round trips for node sets and valid entry values.
+`NativeInitialEncoding.initial_assertions_model` realizes the initial domain
+clauses as represented node columns and a Model state. Its witness supplies
+fresh values for currently unobserved fields; the clauses do not require those
+values. The converse for arbitrary Model states and whole-compiler/execution
+correspondence remain unfinished.
 
 This Lean encoder remains experimental. Neither complete Model-to-script
 equivalence nor text-renderer correctness is proved. The 150-case actual-Model

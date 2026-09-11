@@ -104,9 +104,18 @@ record correspondence proves that unobserved Model fields are preserved too.
 Both results assume the input representations; they do not establish them.
 The refactor still preserves all 150 old emitted Model-case scripts byte for byte.
 
-The next Lean slice must establish initial-domain realization and observation
-encoding, then compose the actual compiler across a whole trace. The lowering/text
-proof also remains.
+`Sparse/NativeValues.lean` now contains the shared role, node-set, and entry
+codecs. It proves both value round trips under explicit natural-number domains,
+plus correspondence for the emitted entry-domain and entry-literal expressions.
+`Sparse/NativeInitialEncoding.lean` connects the actual `initialAssertions`
+list to per-node domains and realizes those domains as `NodeColumnsRep` and
+a Model state. This is the soundness direction for the initial columns.
+Its proof-only witness chooses fresh values for unobserved fields; the emitted
+clauses do not impose those values. The normal Sparse target audits both modules.
+
+The next Lean slice must prove that arbitrary Model states can populate the
+initial columns without restricting unobserved fields. Observation encoding and
+whole-compiler sequencing follow. The lowering/text proof also remains.
 Do not treat the conditional reader theorem as a full action or script proof.
 Close those boundaries before migrating the remaining actions.
 

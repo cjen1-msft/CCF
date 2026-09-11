@@ -9,19 +9,6 @@ namespace CCFRaft.NativeEncode
 
 open NativeSmt
 
-def roleCode : Role -> Int
-  | .none => 0
-  | .follower => 1
-  | .preVoteCandidate => 2
-  | .candidate => 3
-  | .leader => 4
-
-theorem role_code_leader (role : Role) : roleCode role = 4 <-> role = .leader := by
-  cases role <;> simp [roleCode]
-
-def modelEntry {width : PNat} (value : (entryTy width).denote) : Entry (Fin width) Nat :=
-  { term := value.1.toNat, content := decodeContent value.2 }
-
 theorem stored_read_correct {sort : Ty} (assignment : Assignment)
     (before after node peer : Nat) (default value : Expr sort)
     (present : (allocated node : Expr .bool).eval assignment Locals.empty = true)

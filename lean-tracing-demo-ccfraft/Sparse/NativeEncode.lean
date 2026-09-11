@@ -1,7 +1,7 @@
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-import Sparse.NativeSmt
+import Sparse.NativeValues
 import Lean.Data.Json
 
 set_option autoImplicit false
@@ -11,11 +11,6 @@ namespace CCFRaft.NativeEncode
 open Lean NativeSmt
 
 abbrev Expr (sort : Ty) := Term [] sort
-
-def contentTy (width : PNat) : Ty :=
-  .sum .unit (.sum .int (.sum (.bits width) (.bits width)))
-
-def entryTy (width : PNat) : Ty := .pair .int (contentTy width)
 
 def implies {context : List Ty} (premise conclusion : Term context .bool) : Term context .bool :=
   .or (.not premise) conclusion
@@ -37,12 +32,6 @@ def members {context : List Ty} {width : PNat}
   .cases content (.bits 0)
     (.cases (.bound .here) (.bits 0)
       (.cases (.bound .here) (.bound .here) (.bits 0)))
-
-def entryDomain {context : List Ty} {width : PNat}
-    (entry : Term context (entryTy width)) : Term context .bool :=
-  .and (.le (.integer 0) (.fst entry))
-    (.cases (.snd entry) (.boolean true)
-      (.cases (.bound .here) (.le (.integer 0) (.bound .here)) (.boolean true)))
 
 structure Encoding (width : PNat) where
   bootstrap : BitVec width
@@ -107,15 +96,22 @@ def stepDownRole (column node : Nat) : Expr (.array .int .int) :=
 def stepDownFollower (column node : Nat) : Expr (.array .int .bool) :=
   .store (.free (.array .int .bool) column) (.integer node) (.boolean true)
 
-def initialDomains (width : PNat) : EncodeM width Unit := do
-  for node in List.range width.val do
-    assertion (all [.le (.integer 0) (read 1 node (.integer 0)),
-      .le (read 1 node (.integer 0)) (.integer 4)])
-    for column in [3, 4, 5] do
-      assertion (.le (.integer 0) (read column node (.integer 0)))
-    assertion (.forall_ .int (implies
+def initialNodeDomains (width : PNat) (node : Nat) : List (Expr .bool) :=
+  [all [.le (.integer 0) (read 1 node (.integer 0)),
+      .le (read 1 node (.integer 0)) (.integer 4)],
+    .le (.integer 0) (read 3 node (.integer 0)),
+    .le (.integer 0) (read 4 node (.integer 0)),
+    .le (.integer 0) (read 5 node (.integer 0)),
+    .forall_ .int (implies
       (.and (.le (.integer 0) (.bound .here)) (lt (.bound .here) (length node)))
-      (entryDomain (entryAt width node (.bound .here)))))
+      (entryDomain (entryAt width node (.bound .here))))]
+
+def initialAssertions (width : PNat) : List (Expr .bool) :=
+  (List.range width.val).flatMap (initialNodeDomains width)
+
+def initialDomains (width : PNat) : EncodeM width Unit := do
+  for formula in initialAssertions width do
+    assertion formula
 
 def currentCandidate (width : PNat) (node currentId : Nat) : Expr .bool :=
   let current : Expr .int := .free .int currentId

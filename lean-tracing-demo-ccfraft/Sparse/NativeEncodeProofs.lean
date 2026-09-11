@@ -17,13 +17,6 @@ theorem implies_eval {context : List Ty} (premise conclusion : Term context .boo
   cases first : premise.eval assignment locals <;>
     cases second : conclusion.eval assignment locals <;> simp [implies, Term.eval, first, second]
 
-def decodeBits {width : PNat} (bits : BitVec width) : Finset (Fin width) :=
-  Finset.univ.filter fun node => bits.getLsbD node.val = true
-
-@[simp] theorem decode_bits_member {width : PNat} (bits : BitVec width) (node : Fin width) :
-    node ∈ decodeBits bits <-> bits.getLsbD node.val = true := by
-  simp [decodeBits]
-
 @[simp] theorem decode_bits_zero (width : PNat) : decodeBits (0 : BitVec width) = ∅ := by
   ext node
   simp
@@ -53,13 +46,6 @@ theorem other_bits_correct {width : PNat} (bits : BitVec width) (node : Fin widt
       ((decodeBits bits).erase node).Nonempty := by
   rw [Finset.nonempty_iff_ne_empty, <- decode_bits_erase]
   exact (not_congr (decode_bits_empty_iff _)).symm
-
-def decodeContent {width : PNat} :
-    (contentTy width).denote -> EntryContent (Fin width) Nat
-  | .inl _ => .signature
-  | .inr (.inl tx) => .transaction tx.toNat
-  | .inr (.inr (.inl nodes)) => .reconfiguration (decodeBits nodes)
-  | .inr (.inr (.inr nodes)) => .retiredCommitted (decodeBits nodes)
 
 theorem configuration_decoding {context : List Ty} {width : PNat}
     (content : Term context (contentTy width)) (assignment : Assignment) (locals : Locals context)
