@@ -60,6 +60,7 @@ import Sparse.StateFrameEncoding
 import Sparse.SymbolBounds
 import Sparse.SymbolCollection
 import Sparse.TypedIntervalEncoding
+import Sparse.TypedGraphAddress
 import Sparse.TypedIntervalReadBlock
 import Sparse.TypedJointContext
 import Sparse.TypedJointPredicateEncoding

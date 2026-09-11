@@ -61,6 +61,10 @@ external conditions. Query bodies still have no scan-position operand.
 `TypedIntervalReadBlock` accepts arbitrary root/version requests without point
 expectations. Its flat equations preserve every planned read in one root family,
 with explicit domains and caller-supplied symbol reservations.
+`TypedGraphAddress` resolves root or version addresses to version IDs on the
+same graph roots. It reuses a root alias or appends one, preserving all old
+values, endpoint metadata, and source symbols. Prepare addresses before building
+version-typed queries; this adapter does not reindex existing queries.
 `TypedJointPredicateEncoding` emits Entry points and universal predicates
 against one root family, with a formula and rendered-text existence iff.
 It retains every point equality and checks each universal at point cuts.
