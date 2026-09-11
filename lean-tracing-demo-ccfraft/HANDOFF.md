@@ -26,6 +26,13 @@ specialization a proof premise without trusting Python's interpretation of the
 raw trace. The requested stopping point includes reducer integration, not just
 additional action prototypes.
 
+The user also requested an explorer API and continued serial work through the
+evening, with brief progress updates that do not end the work. The existing
+`explore_checked.py` generates static HTML for the old checked backend.
+The native explorer API must retain native-run inputs, instruction/constraint
+provenance, and distinct solver outcomes without inheriting old proof claims.
+Do not restart worker fan-out.
+
 The first Lean encoder slice is now implemented in `Sparse/NativeEncode.lean`
 and `Sparse/NativeEncodeMain.lean`, with `native_lean.py` as its JSON and solver
 wrapper. It supports only `checkQuorum` and seven scalar/log observation kinds.
@@ -69,9 +76,15 @@ and commit index. The proof converts the SMT integer scan to natural Model
 positions and derives a natural current-index witness from the asserted domain.
 The refactor preserves all 150 previously emitted Model-case scripts byte for byte.
 
-The next Lean slice must cover `otherConfiguration`, then combine that guard
-with allocation/role and the state update. Initial-domain realization, the
-complete compiler/execution correspondence, and the lowering/text proof remain.
+`other_configuration_exact` now characterizes the exact peer-guard expression,
+including the bootstrap branch where the physical witness is unused.
+`other_configuration_exists_correct` and `configuration_guards_exists_correct`
+connect both existential index assignments to `CurrentIndex` and `OtherAt`.
+Assigning these integer witnesses leaves the represented log state unchanged.
+
+The next Lean slice must combine the configuration guards with allocation/role
+and the state update. Initial-domain realization, the complete compiler/execution
+correspondence, and the lowering/text proof remain.
 Do not treat the conditional reader theorem as a full action or script proof.
 Close those boundaries before migrating the remaining actions.
 

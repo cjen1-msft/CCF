@@ -31,6 +31,17 @@ theorem ConfigurationLogRep.commit_at {context : List Ty} {width : PNat}
     (NativeEncode.commit node : Term context .int).eval assignment locals = (committed : Int) := by
   simpa only [NativeEncode.commit, read, allocated, Term.eval] using rep.commit
 
+theorem ConfigurationLogRep.set_integer {width : PNat}
+    {assignment : Assignment} {node : Nat} {log : NativeArrayCheckQuorum.Log (Fin width) Nat}
+    {committed : Nat} (rep : ConfigurationLogRep assignment node log committed)
+    (id : Nat) (value : Int) :
+    ConfigurationLogRep (assignment.set .int id value) node log committed := by
+  constructor
+  · simpa [NativeEncode.length, read, allocated, Term.eval, Assignment.set] using rep.length
+  · simpa [NativeEncode.commit, read, allocated, Term.eval, Assignment.set] using rep.commit
+  · intro index within
+    simpa [Assignment.set] using rep.contents index within
+
 theorem reconfiguration_at_correct {context : List Ty} {width : PNat}
     (assignment : Assignment) (locals : Locals context) (node : Nat)
     (log : NativeArrayCheckQuorum.Log (Fin width) Nat) (committed : Nat)
@@ -40,6 +51,30 @@ theorem reconfiguration_at_correct {context : List Ty} {width : PNat}
     (isConfiguration (.snd (entryAt width node position))).eval assignment locals = true <->
       exists nodes, NativeArrayCheckQuorum.Reconfiguration log index nodes := by
   rw [configuration_exists]
+  have index_cast : (index : Int) - 1 = ((index - 1 : Nat) : Int) := by omega
+  simp only [entryAt, Term.eval, same, index_cast]
+  have contents := rep.contents (index - 1) (by omega)
+  dsimp only [entryTy] at contents
+  rw [contents]
+  simp [NativeArrayCheckQuorum.Reconfiguration, positive, within]
+
+theorem reconfiguration_payload_at_correct {context : List Ty} {width : PNat}
+    (assignment : Assignment) (locals : Locals context) (node : Nat)
+    (log : NativeArrayCheckQuorum.Log (Fin width) Nat) (committed : Nat)
+    (rep : ConfigurationLogRep assignment node log committed) (index : Nat)
+    (positive : 0 < index) (within : index <= log.length) (position : Term context .int)
+    (same : position.eval assignment locals = (index : Int) - 1)
+    (predicate : Finset (Fin width) -> Prop) :
+    ((isConfiguration (.snd (entryAt width node position))).eval assignment locals = true /\
+      predicate (decodeBits ((members (.snd (entryAt width node position))).eval assignment locals))) <->
+      (exists nodes, NativeArrayCheckQuorum.Reconfiguration log index nodes /\ predicate nodes) := by
+  have decoded :
+      (exists nodes, decodeContent ((.snd (entryAt width node position) : Term context (contentTy width)).eval
+        assignment locals) = .reconfiguration nodes /\ predicate nodes) <->
+      ((isConfiguration (.snd (entryAt width node position))).eval assignment locals = true /\
+        predicate (decodeBits ((members (.snd (entryAt width node position))).eval assignment locals))) := by
+    simp only [configuration_decoding, and_assoc, exists_and_left, exists_eq_left']
+  rw [<- decoded]
   have index_cast : (index : Int) - 1 = ((index - 1 : Nat) : Int) := by omega
   simp only [entryAt, Term.eval, same, index_cast]
   have contents := rep.contents (index - 1) (by omega)
@@ -159,6 +194,131 @@ theorem current_configuration_model_correct {width : PNat} [Bootstrap (Fin width
       (currentConfigurationAt log.decode committed).index = current :=
   (current_index_constraints_correct assignment node currentId log committed current rep same).trans
     (NativeArrayCheckQuorum.current_index_correct log committed current)
+
+theorem other_configuration_exact {width : PNat}
+    (assignment : Assignment) (bootstrap : BitVec width) (node : Fin width)
+    (currentId witnessId : Nat) (log : NativeArrayCheckQuorum.Log (Fin width) Nat)
+    (committed current : Nat) (rep : ConfigurationLogRep assignment node.val log committed)
+    (sameCurrent : assignment .int currentId = (current : Int)) :
+    (otherConfiguration width bootstrap node.val currentId witnessId).eval assignment Locals.empty = true <->
+      ((current = 0 /\ ((decodeBits bootstrap).erase node).Nonempty) \/
+        exists (index : Nat) (nodes : Finset (Fin width)), assignment .int witnessId = (index : Int) /\ current <= index /\
+          NativeArrayCheckQuorum.Reconfiguration log index nodes /\ (nodes.erase node).Nonempty) := by
+  simp only [otherConfiguration, all, List.foldr_cons, List.foldr_nil, Term.eval,
+    Bool.or_eq_true, Bool.and_eq_true, Bool.not_eq_true', decide_eq_false_iff_not,
+    decide_eq_true_eq, sameCurrent, rep.length, and_true, Int.natCast_eq_zero,
+    other_bits_correct]
+  apply or_congr Iff.rfl
+  constructor
+  · rintro ⟨positive, lower, within, configuration, other⟩
+    have nonnegative : 0 <= assignment .int witnessId := le_trans (by decide : (0 : Int) <= 1) positive
+    let index := (assignment .int witnessId).toNat
+    have sameWitness : assignment .int witnessId = (index : Int) :=
+      (Int.toNat_of_nonneg nonnegative).symm
+    have positiveNat : 0 < index := by
+      have bound : (1 : Int) <= (index : Int) := by simpa only [sameWitness] using positive
+      have boundNat : 1 <= index := by exact_mod_cast bound
+      omega
+    have withinNat : index <= log.length := by
+      exact_mod_cast (show (index : Int) <= (log.length : Int) by simpa only [sameWitness] using within)
+    have lowerNat : current <= index := by
+      exact_mod_cast (show (current : Int) <= (index : Int) by simpa only [sameWitness] using lower)
+    have decoded := (reconfiguration_payload_at_correct assignment Locals.empty node.val log committed rep
+      index positiveNat withinNat (.sub (.free .int witnessId) (.integer 1))
+      (by simp [Term.eval, sameWitness]) (fun nodes => (nodes.erase node).Nonempty)).mp
+        ⟨configuration, other⟩
+    rcases decoded with ⟨nodes, physical, peer⟩
+    exact ⟨index, nodes, sameWitness, lowerNat, physical, peer⟩
+  · rintro ⟨index, nodes, sameWitness, lower, physical, peer⟩
+    have decoded := (reconfiguration_payload_at_correct assignment Locals.empty node.val log committed rep
+      index physical.1 physical.2.1 (.sub (.free .int witnessId) (.integer 1))
+      (by simp [Term.eval, sameWitness]) (fun nodes => (nodes.erase node).Nonempty)).mpr
+        ⟨nodes, physical, peer⟩
+    refine ⟨?_, ?_, ?_, decoded.1, decoded.2⟩
+    · rw [sameWitness]
+      exact Int.ofNat_le.mpr (show 1 <= index by have positive := physical.1; omega)
+    · rw [sameWitness]
+      exact Int.ofNat_le.mpr lower
+    · rw [sameWitness]
+      exact Int.ofNat_le.mpr physical.2.1
+
+theorem other_configuration_exists_correct {width : PNat} [Bootstrap (Fin width)]
+    (assignment : Assignment) (bootstrap : BitVec width) (node : Fin width)
+    (currentId witnessId : Nat) (different : currentId ≠ witnessId)
+    (log : NativeArrayCheckQuorum.Log (Fin width) Nat) (committed current : Nat)
+    (rep : ConfigurationLogRep assignment node.val log committed)
+    (sameCurrent : assignment .int currentId = (current : Int))
+    (sameBootstrap : decodeBits bootstrap = INITIAL_CONFIGURATION) :
+    (exists value : Int, (otherConfiguration width bootstrap node.val currentId witnessId).eval
+      (assignment.set .int witnessId value) Locals.empty = true) <->
+      NativeArrayCheckQuorum.OtherAt log current node := by
+  have currentPreserved (value : Int) :
+      (assignment.set .int witnessId value) .int currentId = (current : Int) := by
+    simp [Assignment.set, different, sameCurrent]
+  constructor
+  · rintro ⟨value, accepted⟩
+    have decoded := (other_configuration_exact (assignment.set .int witnessId value) bootstrap
+      node currentId witnessId log committed current (rep.set_integer witnessId value)
+      (currentPreserved value)).mp accepted
+    rcases decoded with initial | physical
+    · refine Or.inl ⟨initial.1, ?_⟩
+      simpa [sameBootstrap, Finset.Nonempty, Finset.mem_erase, and_comm] using initial.2
+    · rcases physical with ⟨index, nodes, _, lower, configuration, other⟩
+      refine Or.inr ⟨index, nodes, lower, configuration, ?_⟩
+      simpa [Finset.Nonempty, Finset.mem_erase, and_comm] using other
+  · intro enabled
+    rcases enabled with initial | physical
+    · refine ⟨0, (other_configuration_exact (assignment.set .int witnessId 0) bootstrap
+        node currentId witnessId log committed current (rep.set_integer witnessId 0)
+        (currentPreserved 0)).mpr (Or.inl ⟨initial.1, ?_⟩)⟩
+      simpa [sameBootstrap, Finset.Nonempty, Finset.mem_erase, and_comm] using initial.2
+    · rcases physical with ⟨index, nodes, lower, configuration, other⟩
+      refine ⟨index, (other_configuration_exact (assignment.set .int witnessId index) bootstrap
+        node currentId witnessId log committed current (rep.set_integer witnessId index)
+        (currentPreserved index)).mpr (Or.inr ⟨index, nodes, ?_, lower, configuration, ?_⟩)⟩
+      · simp [Assignment.set]
+      · simpa [Finset.Nonempty, Finset.mem_erase, and_comm] using other
+
+theorem configuration_guards_exists_correct {width : PNat} [Bootstrap (Fin width)]
+    (assignment : Assignment) (bootstrap : BitVec width) (node : Fin width)
+    (currentId witnessId : Nat) (different : currentId ≠ witnessId)
+    (log : NativeArrayCheckQuorum.Log (Fin width) Nat) (committed : Nat)
+    (rep : ConfigurationLogRep assignment node.val log committed)
+    (sameBootstrap : decodeBits bootstrap = INITIAL_CONFIGURATION) :
+    (exists (currentValue : Int) (witnessValue : Int),
+      let extended := (assignment.set .int currentId currentValue).set .int witnessId witnessValue
+      (currentCandidate width node.val currentId).eval extended Locals.empty = true /\
+      (noLaterConfiguration width node.val currentId).eval extended Locals.empty = true /\
+      (otherConfiguration width bootstrap node.val currentId witnessId).eval extended Locals.empty = true) <->
+      (exists current, NativeArrayCheckQuorum.CurrentIndex log committed current /\
+        NativeArrayCheckQuorum.OtherAt log current node) := by
+  constructor
+  · rintro ⟨currentValue, witnessValue, candidate, latest, other⟩
+    let base := assignment.set .int currentId currentValue
+    let extended := base.set .int witnessId witnessValue
+    have repBase := rep.set_integer currentId currentValue
+    have repExtended := repBase.set_integer witnessId witnessValue
+    obtain ⟨current, sameCurrent, correct⟩ :=
+      (current_index_witness_correct extended node.val currentId log committed repExtended).mp
+        ⟨candidate, latest⟩
+    have sameBase : base .int currentId = (current : Int) := by
+      simpa [base, extended, Assignment.set, different] using sameCurrent
+    exact ⟨current, correct,
+      (other_configuration_exists_correct base bootstrap node currentId witnessId different
+        log committed current repBase sameBase sameBootstrap).mp ⟨witnessValue, other⟩⟩
+  · rintro ⟨current, correct, other⟩
+    let base := assignment.set .int currentId current
+    have repBase := rep.set_integer currentId current
+    have sameBase : base .int currentId = (current : Int) := by simp [base, Assignment.set]
+    obtain ⟨witnessValue, accepted⟩ :=
+      (other_configuration_exists_correct base bootstrap node currentId witnessId different
+        log committed current repBase sameBase sameBootstrap).mpr other
+    have sameExtended : (base.set .int witnessId witnessValue) .int currentId = (current : Int) := by
+      simp [base, Assignment.set, different]
+    have selected := (current_index_constraints_correct (base.set .int witnessId witnessValue)
+      node.val currentId log committed current (repBase.set_integer witnessId witnessValue)
+      sameExtended).mpr correct
+    exact ⟨current, witnessValue, selected.1, selected.2, accepted⟩
 
 end CCFRaft.NativeEncode
 

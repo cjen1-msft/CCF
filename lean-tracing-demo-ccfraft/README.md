@@ -94,8 +94,11 @@ their predecessors into later expressions.
 `currentCandidate` and `noLaterConfiguration` clauses used by the compiler to
 `currentConfigurationAt`. The proof assumes matching live-log contents, length,
 and commit index. It handles all integer scan positions and derives a natural
-current-index witness from the asserted domain. The initial-state representation,
-other-peer guard, and full action/execution correspondence remain unfinished.
+current-index witness from the asserted domain.
+`configuration_guards_exists_correct` additionally covers the other-peer guard
+and both existential index assignments without changing represented log state.
+The initial-state representation and full action/execution correspondence remain
+unfinished.
 
 This Lean encoder remains experimental. Neither complete Model-to-script
 equivalence nor text-renderer correctness is proved. The 150-case actual-Model
