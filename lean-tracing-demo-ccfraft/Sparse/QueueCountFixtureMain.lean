@@ -1,6 +1,7 @@
 import Sparse.QueueEncoding
 import Sparse.QueueScalarEncoding
 import Sparse.QueueInitialEncoding
+import Sparse.QueueTraceEncoding
 import Sparse.SmtScriptText
 import Lean.Data.Json
 

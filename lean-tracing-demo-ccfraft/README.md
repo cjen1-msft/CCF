@@ -60,7 +60,11 @@ with finite frontier queries. Raw callback-phase mapping is still separate.
 and fresh function names. `QueueScalarEncoding` adds queue guards, windows,
 and shared packet order. `QueueInitialEncoding` adds the initial prefix histogram
 and alias-aware count budget, preserving the existing input, count, and order
-functions. Full queue existence for the emitted formula remains separate work.
+functions. `QueueTraceEncoding` closes both directions for the actual rendered
+script: satisfiability is equivalent to one initial Int queue executing the
+entire unconditional event trace. It derives tracked-key coverage, alignment,
+and a fresh filler without caller premises or a capacity bound.
+Conditional operations and complete packet keys remain separate work.
 `SymbolBounds` computes fresh IDs without constructing symbol sets. A proved
 compiler rewrite preserves the original allocation bound exactly.
 

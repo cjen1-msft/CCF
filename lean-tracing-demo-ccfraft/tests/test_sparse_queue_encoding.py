@@ -63,7 +63,7 @@ class SparseQueueEncodingTests(unittest.TestCase):
             [
                 "nice", "-n", "10", "lake", "build", "Sparse.QueueEncoding",
                 "Sparse.QueueScalarEncoding", "Sparse.SmtScriptText",
-                "Sparse.QueueInitialEncoding",
+                "Sparse.QueueInitialEncoding", "Sparse.QueueTraceEncoding",
             ],
             cwd=ROOT, capture_output=True, text=True, check=True,
         )

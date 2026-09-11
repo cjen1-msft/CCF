@@ -1,4 +1,4 @@
-import Sparse.QueueInitialEncoding
+import Sparse.QueueTraceEncoding
 import Lean.Data.Json
 
 namespace CCFRaft.Sparse.QueueEncodingScale

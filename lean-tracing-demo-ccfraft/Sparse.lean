@@ -17,6 +17,7 @@ import Sparse.QueueObservationBounds
 import Sparse.QueuePlan
 import Sparse.QueuePresence
 import Sparse.QueueScalarEncoding
+import Sparse.QueueTraceEncoding
 import Sparse.QueueReadback
 import Sparse.ReadbackHints
 import Sparse.Smt

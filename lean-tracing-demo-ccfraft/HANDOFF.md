@@ -65,6 +65,7 @@ New repository bridges extend that foundation:
 | `Sparse/QueueEncoding.lean` | Typed count-read formulas correspond to one root/store family, preserving symbolic aliases and pre-existing input formulas through fresh function allocation. |
 | `Sparse/QueueScalarEncoding.lean` | Adds exact guards, windows, shared order, and nonnegative initial length under one assignment, preserving every reserved count function. |
 | `Sparse/QueueInitialEncoding.lean` | Adds the initial prefix histogram and alias-aware distinct-key budget with a constructive assignment extension that preserves input, counts, windows, and order. |
+| `Sparse/QueueTraceEncoding.lean` | The actual emitted formula and rendered text are satisfiable iff one initial Int queue of the interpreted length executes the whole unconditional event trace under the original input. |
 | `Sparse/ReadbackHints.lean` | Unequal observed projection values justify key disequality and skipping a store. |
 | `Sparse/Smt.lean` | Typed Bool/Int terms lower to a strict s-expression interpreter; symbol names are injective. |
 | `Sparse/SmtScript.lean` | Generates unique typed declarations and commands. Command evaluation preserves formula truth for the same assignment. |
@@ -172,10 +173,18 @@ inconsistent initial counts to keep those boundaries explicit.
 `QueueInitialEncoding` adds initial prefix histograms and alias-aware budgets.
 It includes the last unconsumed peek without counting repeated earlier peeks
 as extra initial occurrences. Its public entry point accepts no extra count
-observations. Full unconditional queue existence for the emitted formula
-remains separate work.
+observations.
 `tests/test_sparse_queue_encoding.py` uses the same opt-in environment as the
 scalar fixtures.
+
+`QueueTraceEncoding.rendered_exists_iff` closes the unconditional whole-queue
+contract for that entry point. It derives count-graph and demand alignment,
+tracked-key coverage, and a fresh filler. The converse preserves every original
+constant and each input UF. Exact Int-cast queue-length equality rejects negative
+initial lengths. No caller Plan, closure, filler, or capacity premise remains.
+Peeks and length observations are included in the event trace. Extra count
+observations, conditional events, complete packets, and Model states remain
+outside this theorem.
 
 The initial-accounting fixtures include 20 focused cases and 486 two-event
 cases compared with a concrete queue interpreter. Those pairs use nine event
@@ -203,7 +212,7 @@ They also compare allocated script bytes.
 construction separately. The session's `queue-initial-scale-baseline.jsonl`,
 `queue-initial-scale-phases.jsonl`, and `queue-initial-scale-summary.jsonl`
 record the before/after evidence. These are emission-only measurements.
-Syntactic-key deduplication is the next optimization after the queue proof unit.
+Syntactic-key deduplication is the next optimization of this proved queue unit.
 
 Generated scalar scripts now have text correspondence. Complete trace encoding
 and solver implementation correctness remain separate obligations.
