@@ -44,4 +44,5 @@ import Sparse.SmtText
 import Sparse.SymbolBounds
 import Sparse.SymbolCollection
 import Sparse.TypedIntervalEncoding
+import Sparse.TypedIntervalReadBlock
 import Sparse.VersionedIntervals

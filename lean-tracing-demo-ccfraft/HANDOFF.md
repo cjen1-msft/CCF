@@ -50,6 +50,7 @@ New repository bridges extend that foundation:
 | `Sparse/IntervalDemandPlan.lean` | A flattened descriptor table and visited worklist generate minimal closed demands, preserving exact requested-value completion. |
 | `Sparse/IntervalEncoding.lean` | Typed point-read constraints and their rendered text correspond to one Int-valued root-array family, with symbolic indices, explicit nonnegative domains, and input-preserving fresh functions. |
 | `Sparse/TypedIntervalEncoding.lean` | Typed point constraints for all five sorts correspond to one original assignment and one root family, reserving every constant/expectation symbol and preserving complete external functions. |
+| `Sparse/TypedIntervalReadBlock.lean` | Arbitrary requests and a supplied base yield typed equations equivalent to one root family preserving every planned read. Installation preserves constants, selectors, and reserved external UFs. |
 | `Sparse/IntervalPredicate.lean` | Explicit Int comparisons lower with generated locality and alias-preserving semantics. Deduplication before the cut/reference product preserves all planned-demand membership. |
 | `Sparse/IntervalQueryEncoding.lean` | Rendered guarded universal Int queries are satisfiable iff one original assignment and one root-array family satisfy the input, nonnegative bounds, and all queries. |
 | `Sparse/JointIntervalCompletion.lean` | One root family satisfies all universal queries while preserving every joint requested value, including arbitrary root/version points and inactive query-cut reads. |
@@ -192,6 +193,13 @@ shows why checking only existing cuts can miss a difference between them.
 `tests/test_sparse_entry_predicate.py` checks 620 emitted formulas against
 independent Python comparisons, covering raw and decoded signed values, fixed
 external operands, and complete Entry tag identity.
+`TypedIntervalReadBlock` provides the shared read block for the joint compiler.
+It supports all five sorts, root/version requests, and an arbitrary UF base,
+without expected-value proxies. The planner runs once, and every planned
+read has a consistency equation and a nonnegative position.
+The caller reserves `[base, base + roots + versions)`, including unused slots.
+Installation from any root family preserves original constants, selectors,
+and outside-range UFs. Input and graph terms require explicit freshness bounds.
 
 The chosen entry representation uses fixed native datatypes with signed
 integer term/transaction fields and 15-bit node sets. `EntryValue` supplies

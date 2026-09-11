@@ -57,6 +57,9 @@ remains separate work.
 and locality proofs for the generic query interface. Raw signed-code ordering
 and decoded natural ordering are explicit, separate choices. Joint emission and
 existential mismatch witnesses remain open.
+`TypedIntervalReadBlock` accepts arbitrary root/version requests without point
+expectations. Its flat equations preserve every planned read in one root family,
+with explicit domains and caller-supplied symbol reservations.
 `EntryValue` supplies a fixed entry domain with signed integer scalars and
 node-set bitvectors, bijective with Model entries. `Smt` now supports native
 unknowns, equality, conditionals, and unary functions for nodes, content, and
