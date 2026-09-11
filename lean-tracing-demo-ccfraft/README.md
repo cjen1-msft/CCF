@@ -109,10 +109,14 @@ Nat fields use literals or declared unknown slots. Bool fields can test those
 same Nat slots for zero without restricting their values to zero or one.
 Ground quoting preserves every trace exactly, including invalid actions.
 Its execution theorem retains one assignment and one arbitrary initial State.
-Parsing and SMT lowering remain separate work.
+Parsing and complete input encoding remain separate work.
 `python3 scripts/generate_model_input_syntax.py --check` checks the generated prefix
 without writing. Use `--write` after changing its schemas. The generator
 preserves the manual trace-boundary definitions and proofs byte-for-byte.
+`ModelInputScalarEncoding` lowers Nat, Bool zero tests, and optional Nat fields
+under one source assignment. It reserves every declared slot, including unused
+names, and rejects negative source values. Its source installer preserves
+existing frame values under explicit Int-slot disjointness.
 `StateFrame` stores typed scalar IDs and fixed-size tables, not expression
 histories. Its finite domain check corresponds to a unique non-network state
 for supplied shared log roots and a submitted set. Local domains apply only to
@@ -184,7 +188,8 @@ CCF_SPARSE_SMT_TESTS=1 CVC5=/path/to/cvc5 \
 		tests.test_sparse_interval_encoding tests.test_sparse_interval_predicate \
 		tests.test_sparse_interval_queries tests.test_sparse_joint_encoding \
 		tests.test_sparse_native_sorts tests.test_sparse_typed_intervals \
-		tests.test_sparse_entry_predicate tests.test_sparse_typed_joint
+		tests.test_sparse_entry_predicate tests.test_sparse_typed_joint \
+		tests.test_sparse_model_input_scalars
 ```
 
 These fixtures cover emitted component constraints, not full trace correctness.

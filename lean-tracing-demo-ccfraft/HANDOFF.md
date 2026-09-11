@@ -72,6 +72,7 @@ New repository bridges extend that foundation:
 | `Sparse/MonotoneIntervals.lean` | Joint finite-cut completion for one log with point facts, interval predicates, nondecreasing terms, and a current-term bound. |
 | `Sparse/ModelTrace.lean` | One arbitrary initial State and shared Nat assignment satisfy ordered actual Model actions/observations. All-17-action queue congruence preserves the contract, including destination totals and configuration snapshots. |
 | `Sparse/ModelInputSyntax.lean` | Closed finite syntax for every action and observation preserves one shared Nat assignment, finite unknown support, exact ground quoting, and the unrestricted ModelTrace execution contract. |
+| `Sparse/ModelInputScalarEncoding.lean` | Nat, Bool zero tests, and optional Nat fields lower under one shared assignment. Exact full-block domains and reservation retain unused declarations; installation preserves existing frames under explicit Int-slot disjointness. |
 | `Sparse/LogMatchSummary.lean` | Exact `findHighestPossibleMatch` summary, uniqueness, and zero-based EntryValue correspondence hold for arbitrary logs without term-ordering assumptions. |
 | `Sparse/StateFrame.lean` | Finite typed-reference domains correspond to relative realization against one supplied Entry root family, submitted set, and network. Realizations have one unique non-network frame. |
 | `Sparse/StateFrameInitial.lean` | Canonical independent slots and fresh log roots represent every arbitrary actual Model state, preserving all old roots and outside-owned constants. Whole UFs and selector interpretations remain unchanged. |
@@ -174,7 +175,7 @@ configuration indices. It neither repairs nor drops impossible observations.
 `satisfiable_iff` quantifies one Nat assignment and one arbitrary actual State
 for the entire ordered trace. Adjacent observations inspect one state.
 Million-valued summaries retain fixed syntax size without constructing payloads.
-String name resolution, parsing, scalar allocation, and emitted constraints
+String name resolution, parsing, and complete observation/action emission
 remain separate. Arbitrary semantic ModelTrace functions need not have finite
 support and are not claimed to belong to this syntax.
 
@@ -187,6 +188,22 @@ existing copy, and default paths are relative to the script's project.
 The generator is not a runtime or build dependency.
 `tests/test_model_input_generator.py` covers regeneration, nonmutation,
 permissions, malformed input, and relocation.
+
+`ModelInputScalarEncoding` reserves source Int slots `[base, base+n)`.
+`sourceNat`, `sourceBool`, and `sourceOption` share one total Nat assignment.
+Nat values use mathematical Int casts, not Entry signed codes. Optional values
+use the existing none=0, some n=n+1 convention.
+`encodeDomains` emits exactly n nonnegative clauses, including unused names.
+Its formula and rendered text hold iff one total Nat assignment represents
+every declared source slot. Distinct slots may hold equal values.
+`ScalarExtension.install` supplies the assignment while preserving all UFs,
+selectors, outside constants, and every non-Int constant.
+Preserving an existing frame additionally requires `FrameDisjoint` over its
+full Int-symbol inventory, including dormant fields.
+The caller still owns placement relative to graph and other compiler metadata.
+`tests/test_sparse_model_input_scalars.py` covers 170 native cases, including
+shared zero tests, source aliases, unused negative declarations, optional zero,
+and constant-size declarations at trillion-valued offsets.
 
 Use `IntervalDemandPlan.plan` for executable dependency closure. The reference
 constructor repeats shared ancestors exponentially. In one forced-clock run,
