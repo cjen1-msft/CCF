@@ -54,6 +54,10 @@ is not yet implemented.
 `EntrySelectorSemantics` proves guarded payload reads independent of arbitrary
 wrong-constructor selector values, without hiding failures in unused branches.
 The actual SMT evaluator and text layer are not yet connected to those laws.
+`PacketIdentity` characterizes complete packet equality by tagged headers,
+payload lengths, and bounded entry reads. It proves finite key-class
+injectivity from both identity directions, but does not yet compile sparse
+packet constraints or transport queues.
 `ConfigurationSnapshot` characterizes complete positive-index Model snapshots
 with finite frontier queries. Raw callback-phase mapping is still separate.
 `ConfigurationPublication` is a separate local candidate for one successful

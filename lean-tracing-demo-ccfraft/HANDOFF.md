@@ -58,6 +58,7 @@ New repository bridges extend that foundation:
 | `Sparse/ConfigurationPublication.lean` | Separate local candidate for one configuration begin, successful empty callback send, and publication close on the same core-state chain. No production Model or raw-validator change. |
 | `Sparse/EntryValue.lean` | Fixed nonrecursive content and entry values are bijective with actual Model values, with equality transport, decoded term ordering, guarded payload views, and pointwise array equivalence. |
 | `Sparse/EntrySelectorSemantics.lean` | Total wrong-constructor selector interpretations are represented without restriction. Correctly guarded reads are interpretation-independent, with strict branch-success requirements. |
+| `Sparse/PacketIdentity.lean` | Complete packet equality/disequality is characterized by seven-tag headers, lengths, and bounded entry equality/mismatch. Both identity directions yield an injective finite key-class map. |
 | `Sparse/AppendEntriesRanges.lean` | Actual send/receive index alignment. Enabled sends contain at most one entry; arbitrary initial packets remain unbounded. |
 | `Sparse/FiniteMembership.lean` | One finite initial set for a complete membership/insert trace, preserving key aliases. |
 | `Sparse/QueueReadback.lean` | Fixed-plan finite read/scalar constraints correspond to one count-array heap and imply a concrete whole-queue execution. |
@@ -167,6 +168,16 @@ rerunnable probes. For 200 appends plus 200 point copies, fixed datatypes took
 Those cvc5 process timings include startup and use a million-element initial
 extent without materializing it. They do not measure the native Lean emitter
 or full Raft traces.
+
+`PacketIdentity` retains every active header field and every ordered payload
+entry, including duplicate entries, terms, and configuration masks. Header
+Nat fields remain bijective signed codes; lengths and positions are ordinary
+Nat. The fixed-value theorem starts with coherent complete packets. It does
+not construct packet witnesses from independent sparse projections.
+Sparse payload completion, conditional equality/mismatch emission, and
+finite-support queue transport remain open. Initial packet payloads must not
+be equated with current sender logs, and whole-array tail equality is not
+finite-payload identity.
 
 Configuration snapshots are derived Model observations, not a mutable global
 configuration variable. Empty positive-index snapshots do not remove implicit

@@ -13,6 +13,7 @@ import Sparse.IntervalQueryEncoding
 import Sparse.IntervalQueries
 import Sparse.JointIntervalCompletion
 import Sparse.MonotoneIntervals
+import Sparse.PacketIdentity
 import Sparse.QueueEncoding
 import Sparse.QueueInitialEncoding
 import Sparse.QueueObservationBounds
