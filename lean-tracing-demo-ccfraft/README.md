@@ -48,7 +48,11 @@ root-array witness and an exact rendered-text existence theorem.
 `JointIntervalCompletion` proves joint completion with exact point preservation
 on those same roots. `JointIntervalEncoding` emits both point observations and
 universal queries with one root family and an exact rendered-text existence
-theorem. Entry-valued cells remain separate work.
+theorem.
+`TypedIntervalEncoding` now emits point constraints for all five SMT sorts,
+including Entry-valued arrays. Constants and expectations use one original
+assignment, and all points share one root family. Typed universal predicates
+remain separate work.
 `EntryValue` supplies a fixed entry domain with signed integer scalars and
 node-set bitvectors, bijective with Model entries. `Smt` now supports native
 unknowns, equality, conditionals, and unary functions for nodes, content, and
@@ -113,7 +117,7 @@ CCF_SPARSE_SMT_TESTS=1 CVC5=/path/to/cvc5 \
 	python3 -m unittest tests.test_sparse_smt tests.test_sparse_queue_encoding \
 		tests.test_sparse_interval_encoding tests.test_sparse_interval_predicate \
 		tests.test_sparse_interval_queries tests.test_sparse_joint_encoding \
-		tests.test_sparse_native_sorts
+		tests.test_sparse_native_sorts tests.test_sparse_typed_intervals
 ```
 
 These fixtures cover emitted component constraints, not full trace correctness.

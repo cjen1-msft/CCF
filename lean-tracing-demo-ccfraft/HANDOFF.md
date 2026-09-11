@@ -49,6 +49,7 @@ New repository bridges extend that foundation:
 | `Sparse/IntervalReadback.lean` | Flat demanded-read equations correspond to one root-array family. Its recursive closure constructor is a semantic reference, not the runtime path. |
 | `Sparse/IntervalDemandPlan.lean` | A flattened descriptor table and visited worklist generate minimal closed demands, preserving exact requested-value completion. |
 | `Sparse/IntervalEncoding.lean` | Typed point-read constraints and their rendered text correspond to one Int-valued root-array family, with symbolic indices, explicit nonnegative domains, and input-preserving fresh functions. |
+| `Sparse/TypedIntervalEncoding.lean` | Typed point constraints for all five sorts correspond to one original assignment and one root family, reserving every constant/expectation symbol and preserving complete external functions. |
 | `Sparse/IntervalPredicate.lean` | Explicit Int comparisons lower with generated locality and alias-preserving semantics. Deduplication before the cut/reference product preserves all planned-demand membership. |
 | `Sparse/IntervalQueryEncoding.lean` | Rendered guarded universal Int queries are satisfiable iff one original assignment and one root-array family satisfy the input, nonnegative bounds, and all queries. |
 | `Sparse/JointIntervalCompletion.lean` | One root family satisfies all universal queries while preserving every joint requested value, including arbitrary root/version points and inactive query-cut reads. |
@@ -164,6 +165,16 @@ Its 311 native cases include 288 bound, point, and alias combinations checked
 against a finite-array oracle. Point-only 400-position emission needs 800
 demands, and one point in a million-root domain needs one demand.
 The compiler and extracted universal helpers have an independent review.
+
+`TypedIntervalEncoding` extends point emission to all five native/scalar sorts.
+Graph constants and point expectations are typed input terms. Its allocator
+includes even unused constants and metadata-only functions, and its reserved
+UF range has no spare slot. The same assignment interprets all input terms,
+and one shared root family satisfies every observation.
+The 408 native cases include 360 typed splice controls and SAT/UNSAT cases for
+400 Entry points and 400 shared versions. Those require 800 and 401 demands,
+respectively. One point in a million-root universe still requires one demand.
+Typed universal predicates and packet constraint emission remain open.
 
 The chosen entry representation uses fixed native datatypes with signed
 integer term/transaction fields and 15-bit node sets. `EntryValue` supplies
