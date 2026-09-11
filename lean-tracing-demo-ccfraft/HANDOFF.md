@@ -77,7 +77,7 @@ retains solver artifacts and distinguishes SAT, UNSAT, unknown, and input errors
 The internal Lean input is canonical JSON to reject duplicate-key text before
 any encoding. The Python wrapper accepts ordinary JSON and canonicalizes it.
 
-The full Model-to-emitted-script theorem and renderer correctness are still
+The full Model-to-emitted-script theorem and whole-script correctness are still
 missing. No observation specialization is applied by the current compiler.
 Reducer integration, remaining action coverage, and initial-state materialization
 remain unfinished. The new Lean encoder is experimental, not a proved validator.
@@ -181,9 +181,19 @@ The renderer uses shared `Variable.level` and `binderName` definitions.
 `NamedLocals.Rep.cons` proves that binding at the current context length
 represents the new local value without changing older scoped reads.
 
-The next Lean slice interprets operators and declarations in those trees and
-connects named evaluation to the typed evaluator. Do not flip the full Model-to-script assurance flag
-yet. JSON decoding, remaining action coverage, and raw reducer integration
+`NativeInterpretation` now interprets raw expression trees, including parsed
+sorts and names. It rejects wrong types and arities. Quantifiers require a
+Boolean body for every bound value, and matches check both branches' result
+sorts even when one branch is not selected.
+`NativeLowering.Term.syntax_eval` proves correspondence for every constructor.
+`Term.render_eval` composes it with the parser round trip, and
+`Term.closed_render_eval` starts from an empty named environment.
+Both modules pass the normal Sparse axiom audit without new axioms or budgets.
+
+The next Lean slice covers the datatype prelude, declarations, named assertion
+wrappers, and complete script parsing and interpretation. Then compose it with
+`compiled_trace_iff`. Do not flip the full Model-to-script assurance flag yet.
+JSON decoding, remaining action coverage, and raw reducer integration
 still need their documented delivery work.
 Do not treat the conditional reader theorem as a full action or script proof.
 Close those boundaries before migrating the remaining actions.

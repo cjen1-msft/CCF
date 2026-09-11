@@ -81,10 +81,15 @@ expressions are deliberately absent: cvc5 rejects that syntax. A fresh array
 can instead be constrained with `forall`.
 Sorts and terms now render through explicit S-expression trees.
 `NativeSyntaxProofs` proves that their emitted text parses back to those trees.
-This round trip does not yet prove operator, binding, or declaration semantics.
+This round trip alone does not prove evaluation or declaration semantics.
 `NativeNames` proves unique free-symbol names across recursive sorts and IDs,
 separates them from bound names, and proves that a new named binder preserves
 older scoped variable reads.
+`NativeInterpretation` reads raw expression trees, rejecting wrong sorts and
+arities. `NativeLowering.Term.render_eval` proves that parsing and interpreting
+every emitted term gives its typed value. This covers operators, named binders,
+arrays, bitvectors, products, and sums. It does not cover script commands,
+declarations, or the datatype prelude.
 `NativeSmtFixtureMain` carries kernel-checked expected verdicts for emitted
 formulas. `NativeEncodeProofs` covers configuration selectors, bitset decoding,
 and allocation-guarded read specialization.
@@ -131,8 +136,8 @@ The proof extends fresh assignments without changing earlier assertions,
 represented columns, or initial domains. It covers the current `checkQuorum`
 and observation subset, not the remaining Model actions or SMT text semantics.
 
-This Lean encoder remains experimental. Neither complete Model-to-script
-equivalence nor text-renderer correctness is proved. The 150-case actual-Model
+This Lean encoder remains experimental. Complete Model-to-script equivalence
+and whole-script text correctness are not proved. The 150-case actual-Model
 comparison does not replace those proofs. Raw reducer integration is unfinished.
 
 The older Python reference has broader action coverage:
