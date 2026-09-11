@@ -108,28 +108,39 @@ def initialDomains (width : PNat) : EncodeM width Unit := do
       (.and (.le (.integer 0) (.bound .here)) (lt (.bound .here) (length node)))
       (entryDomain (entryAt width node (.bound .here)))))
 
+def currentCandidate (width : PNat) (node currentId : Nat) : Expr .bool :=
+  let current : Expr .int := .free .int currentId
+  all [.le (.integer 0) current, .le current (length node), .le current (commit node),
+    .or (.equal current (.integer 0))
+      (isConfiguration (.snd (entryAt width node (.sub current (.integer 1)))))]
+
+def noLaterConfiguration (width : PNat) (node currentId : Nat) : Expr .bool :=
+  .forall_ .int (implies
+    (all [lt (.free .int currentId) (.bound .here),
+      .le (.bound .here) (length node), .le (.bound .here) (commit node)])
+    (.not (isConfiguration (.snd (entryAt width node (.sub (.bound .here) (.integer 1)))))))
+
+def otherConfiguration (width : PNat) (bootstrap : BitVec width)
+    (node currentId witnessId : Nat) : Expr .bool :=
+  let current : Expr .int := .free .int currentId
+  let witness : Expr .int := .free .int witnessId
+  let others : Expr (.bits width) := .bitsNot (.bits (BitVec.ofNat width (2 ^ node)))
+  let hasOther := fun (nodes : Expr (.bits width)) =>
+    Term.not (.equal (.bitsAnd nodes others) (.bits 0))
+  .or (.and (.equal current (.integer 0)) (hasOther (.bits bootstrap)))
+    (all [.le (.integer 1) witness, .le current witness, .le witness (length node),
+      isConfiguration (.snd (entryAt width node (.sub witness (.integer 1)))),
+      hasOther (members (.snd (entryAt width node (.sub witness (.integer 1)))))])
+
 def checkQuorum {width : PNat} (node : Nat) : EncodeM width Unit := do
   let before <- get
   assertion (allocated node)
   assertion (.equal (read before.role node (.integer 0)) (.integer 4))
   let currentId <- fresh
   let witnessId <- fresh
-  let current : Expr .int := .free .int currentId
-  let witness : Expr .int := .free .int witnessId
-  assertion (all [.le (.integer 0) current, .le current (length node), .le current (commit node),
-    .or (.equal current (.integer 0))
-      (isConfiguration (.snd (entryAt width node (.sub current (.integer 1)))))])
-  assertion (.forall_ .int (implies
-    (all [lt (.free .int currentId) (.bound .here),
-      .le (.bound .here) (length node), .le (.bound .here) (commit node)])
-    (.not (isConfiguration (.snd (entryAt width node (.sub (.bound .here) (.integer 1))))))))
-  let others : Expr (.bits width) := .bitsNot (.bits (BitVec.ofNat width (2 ^ node)))
-  let hasOther := fun (nodes : Expr (.bits width)) =>
-    Term.not (.equal (.bitsAnd nodes others) (.bits 0))
-  assertion (.or (.and (.equal current (.integer 0)) (hasOther (.bits before.bootstrap)))
-    (all [.le (.integer 1) witness, .le current witness, .le witness (length node),
-      isConfiguration (.snd (entryAt width node (.sub witness (.integer 1)))),
-      hasOther (members (.snd (entryAt width node (.sub witness (.integer 1)))))]))
+  assertion (currentCandidate width node currentId)
+  assertion (noLaterConfiguration width node currentId)
+  assertion (otherConfiguration width before.bootstrap node currentId witnessId)
   let roleId <- define
     (.store (.free (.array .int .int) before.role) (.integer node) (.integer 1))
   let followerId <- define

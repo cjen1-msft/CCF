@@ -10,6 +10,13 @@ namespace CCFRaft.NativeEncode
 
 open NativeSmt
 
+theorem implies_eval {context : List Ty} (premise conclusion : Term context .bool)
+    (assignment : Assignment) (locals : Locals context) :
+    (implies premise conclusion).eval assignment locals = true <->
+      (premise.eval assignment locals = true -> conclusion.eval assignment locals = true) := by
+  cases first : premise.eval assignment locals <;>
+    cases second : conclusion.eval assignment locals <;> simp [implies, Term.eval, first, second]
+
 def decodeBits {width : PNat} (bits : BitVec width) : Finset (Fin width) :=
   Finset.univ.filter fun node => bits.getLsbD node.val = true
 
@@ -54,11 +61,12 @@ def decodeContent {width : PNat} :
   | .inr (.inr (.inl nodes)) => .reconfiguration (decodeBits nodes)
   | .inr (.inr (.inr nodes)) => .retiredCommitted (decodeBits nodes)
 
-theorem configuration_selector_correct {context : List Ty} {width : PNat}
-    (content : Term context (contentTy width)) (assignment : Assignment) (locals : Locals context) :
-    (isConfiguration content).eval assignment locals = true <->
-      decodeContent (content.eval assignment locals) =
-        .reconfiguration (decodeBits ((members content).eval assignment locals)) := by
+theorem configuration_decoding {context : List Ty} {width : PNat}
+    (content : Term context (contentTy width)) (assignment : Assignment) (locals : Locals context)
+    (nodes : Finset (Fin width)) :
+    decodeContent (content.eval assignment locals) = .reconfiguration nodes <->
+      (isConfiguration content).eval assignment locals = true /\
+        decodeBits ((members content).eval assignment locals) = nodes := by
   cases decoded : content.eval assignment locals with
   | inl payload => simp [isConfiguration, members, Term.eval, decoded, decodeContent]
   | inr rest =>
@@ -66,6 +74,20 @@ theorem configuration_selector_correct {context : List Ty} {width : PNat}
     | inl tx => simp [isConfiguration, members, Term.eval, decoded, decodeContent, Locals.cons]
     | inr more =>
       cases more <;> simp [isConfiguration, members, Term.eval, decoded, decodeContent, Locals.cons]
+
+theorem configuration_selector_correct {context : List Ty} {width : PNat}
+    (content : Term context (contentTy width)) (assignment : Assignment) (locals : Locals context) :
+    (isConfiguration content).eval assignment locals = true <->
+      decodeContent (content.eval assignment locals) =
+        .reconfiguration (decodeBits ((members content).eval assignment locals)) := by
+  simpa using (configuration_decoding content assignment locals
+    (decodeBits ((members content).eval assignment locals))).symm
+
+theorem configuration_exists {context : List Ty} {width : PNat}
+    (content : Term context (contentTy width)) (assignment : Assignment) (locals : Locals context) :
+    (isConfiguration content).eval assignment locals = true <->
+      exists nodes, decodeContent (content.eval assignment locals) = .reconfiguration nodes := by
+  simp only [configuration_decoding, exists_and_left, exists_eq', and_true]
 
 theorem asserted_read_specialization {context : List Ty} {sort : Ty} (column node : Nat)
     (default : Term context sort) (assignment : Assignment) (locals : Locals context)

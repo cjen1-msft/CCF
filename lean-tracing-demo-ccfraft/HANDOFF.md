@@ -61,10 +61,19 @@ The full Model-to-emitted-script theorem and renderer correctness are still
 missing. No observation specialization is applied by the current compiler.
 Reducer integration, remaining action coverage, and initial-state materialization
 remain unfinished. The new Lean encoder is experimental, not a proved validator.
-The next Lean slice must connect the actual `checkQuorum` compiler output to
-`NativeArrayCheckQuorum.enabled` and `step`, including initial domains, witnesses,
-and shared array versions. Close the lowering/text proof boundary before treating
-that action as the proved baseline for migrating the remaining actions.
+`Sparse/NativeQuorumEncoding.lean` now connects the exact `currentCandidate` and
+`noLaterConfiguration` expressions used by `checkQuorum` to
+`NativeArrayCheckQuorum.CurrentIndex` and actual `currentConfigurationAt`.
+`ConfigurationLogRep` explicitly assumes matching live-log contents, length,
+and commit index. The proof converts the SMT integer scan to natural Model
+positions and derives a natural current-index witness from the asserted domain.
+The refactor preserves all 150 previously emitted Model-case scripts byte for byte.
+
+The next Lean slice must cover `otherConfiguration`, then combine that guard
+with allocation/role and the state update. Initial-domain realization, the
+complete compiler/execution correspondence, and the lowering/text proof remain.
+Do not treat the conditional reader theorem as a full action or script proof.
+Close those boundaries before migrating the remaining actions.
 
 Follow [Representation design priorities](README.md#representation-design-priorities):
 start with the simplest representation to prove correct, using native SMT

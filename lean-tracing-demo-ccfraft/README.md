@@ -90,6 +90,13 @@ proves that a fresh equality binding preserves satisfiability of the existing
 typed assertions. This covers naming intermediate arrays without expanding
 their predecessors into later expressions.
 
+`NativeQuorumEncoding.current_configuration_model_correct` connects the exact
+`currentCandidate` and `noLaterConfiguration` clauses used by the compiler to
+`currentConfigurationAt`. The proof assumes matching live-log contents, length,
+and commit index. It handles all integer scan positions and derives a natural
+current-index witness from the asserted domain. The initial-state representation,
+other-peer guard, and full action/execution correspondence remain unfinished.
+
 This Lean encoder remains experimental. Neither complete Model-to-script
 equivalence nor text-renderer correctness is proved. The 150-case actual-Model
 comparison does not replace those proofs. Raw reducer integration is unfinished.
