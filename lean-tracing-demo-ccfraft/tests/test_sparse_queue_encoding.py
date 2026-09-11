@@ -88,6 +88,11 @@ class SparseQueueEncodingTests(unittest.TestCase):
     def test_count_read_scripts(self) -> None:
         self.assertEqual(len(self.fixtures), 13)
         self.assert_scripts(self.fixtures, "count-read")
+        cases = {case["name"]: case for case in self.fixtures}
+        self.assertEqual(cases["duplicate-send"]["query_pairs"], 4)
+        self.assertEqual(cases["duplicate-send-contradiction"]["query_pairs"], 4)
+        self.assertEqual(cases["other-key-preserved"]["query_pairs"], 3)
+        self.assertEqual(cases["aliased-root-counts"]["query_pairs"], 2)
 
     def test_scalar_scripts(self) -> None:
         self.assertEqual(len(self.scalar_fixtures), 14)

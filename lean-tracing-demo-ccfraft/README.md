@@ -65,7 +65,9 @@ leader callback. It preserves one linked begin/send/close chain but does not
 change the Model or raw validator.
 
 `QueueEncoding` emits typed count-read constraints with alias-safe observations
-and fresh function names. `QueueScalarEncoding` adds queue guards, windows,
+and fresh function names. It summarizes each syntactic key's maximum demanded
+version before expanding its prefix once, preserving every constraint.
+`QueueScalarEncoding` adds queue guards, windows,
 and shared packet order. `QueueInitialEncoding` adds the initial prefix histogram
 and alias-aware count budget. It deduplicates syntactic keys without removing
 events or initial-prefix occurrences, preserving the existing input, count,

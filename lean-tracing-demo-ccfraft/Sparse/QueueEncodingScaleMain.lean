@@ -28,6 +28,8 @@ private def profile (name : String) (trace : List (Event QueueEncoding.InputInt)
     ("case", Lean.toJson name),
     ("events", Lean.toJson trace.length),
     ("tracked_keys", Lean.toJson (QueueInitialEncoding.eventKeys trace).length),
+    ("query_pairs", Lean.toJson (QueueEncoding.syntaxQueries
+      (QueueInitialEncoding.eventKeys trace) trace []).length),
     ("encoding_ns", Lean.toJson (finish - start)),
     ("formula_ns", Lean.toJson (encoded - start)),
     ("commands_ns", Lean.toJson (compiled - encoded)),

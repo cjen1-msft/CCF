@@ -105,6 +105,14 @@ theorem input_symbol_bound (input : SmtScript.Formula) (symbol : Symbol)
     (SmtScript.symbols input).toFinset symbol by simpa using member)
   exact Nat.lt_succ_of_le bound
 
+theorem fresh_base_congr (left right : SmtScript.Formula)
+    (same : forall term, Membership.mem left term <-> Membership.mem right term) :
+    freshBase left = freshBase right := by
+  have symbols : (SmtScript.symbols left).toFinset = (SmtScript.symbols right).toFinset := by
+    ext symbol
+    simp only [List.mem_toFinset, SmtScript.symbol_coverage, same]
+  simp only [freshBase, symbols]
+
 theorem fresh_symbol (input : SmtScript.Formula) (version : Nat) :
     Not (Membership.mem (SmtScript.symbols input) (.unary .int .int (freshBase input + version))) := by
   intro member
@@ -167,13 +175,147 @@ theorem ancestor_list_mem {size : Nat} (limit : Fin (size + 1)) (key : InputInt)
   simp only [ancestorList, List.mem_ofFn, QueuePlan.ancestors,
     Finset.mem_image, Finset.mem_univ, true_and]
 
+theorem ancestor_list_nodup {size : Nat} (limit : Fin (size + 1)) (key : InputInt) :
+    (ancestorList limit key).Nodup := by
+  apply List.nodup_ofFn.mpr
+  intro left right equal
+  apply Fin.ext
+  exact congrArg (fun query => query.1.val) equal
+
+def extendDemand {size : Nat} (seed : Prod (Fin (size + 1)) InputInt) :
+    List (Prod (Fin (size + 1)) InputInt) -> List (Prod (Fin (size + 1)) InputInt)
+  | [] => [seed]
+  | entry :: rest =>
+    if seed.2 = entry.2 then (max seed.1 entry.1, entry.2) :: rest
+    else entry :: extendDemand seed rest
+
+def summarizeDemands {size : Nat} :
+    List (Prod (Fin (size + 1)) InputInt) -> List (Prod (Fin (size + 1)) InputInt)
+  | [] => []
+  | seed :: rest => extendDemand seed (summarizeDemands rest)
+
+def Covers {size : Nat} (seeds : List (Prod (Fin (size + 1)) InputInt))
+    (query : Prod (Fin (size + 1)) InputInt) : Prop :=
+  exists seed, Membership.mem seeds seed /\ query.2 = seed.2 /\ query.1 <= seed.1
+
+theorem covers_cons {size : Nat} (seed query : Prod (Fin (size + 1)) InputInt)
+    (rest : List (Prod (Fin (size + 1)) InputInt)) :
+    Covers (seed :: rest) query <->
+      (query.2 = seed.2 /\ query.1 <= seed.1) \/ Covers rest query := by
+  simp [Covers]
+
+theorem extend_covers {size : Nat} (seed query : Prod (Fin (size + 1)) InputInt)
+    (rest : List (Prod (Fin (size + 1)) InputInt)) :
+    Covers (extendDemand seed rest) query <->
+      (query.2 = seed.2 /\ query.1 <= seed.1) \/ Covers rest query := by
+  induction rest with
+  | nil => simp [extendDemand, Covers]
+  | cons entry rest ih =>
+    by_cases same : seed.2 = entry.2
+    next => simp [extendDemand, same, covers_cons, and_or_left, or_assoc]
+    next => simp [extendDemand, same, covers_cons, ih, or_left_comm]
+
+theorem summary_covers {size : Nat} (seeds : List (Prod (Fin (size + 1)) InputInt))
+    (query : Prod (Fin (size + 1)) InputInt) :
+    Covers (summarizeDemands seeds) query <-> Covers seeds query := by
+  induction seeds with
+  | nil => rfl
+  | cons seed rest ih => simp only [summarizeDemands, extend_covers, covers_cons, ih]
+
+theorem extend_keys_mem {size : Nat} (seed : Prod (Fin (size + 1)) InputInt)
+    (rest : List (Prod (Fin (size + 1)) InputInt)) (key : InputInt) :
+    Membership.mem ((extendDemand seed rest).map Prod.snd) key <->
+      key = seed.2 \/ Membership.mem (rest.map Prod.snd) key := by
+  induction rest with
+  | nil => simp [extendDemand]
+  | cons entry rest ih =>
+    by_cases same : seed.2 = entry.2 <;>
+      simp [extendDemand, same, ih, or_left_comm]
+
+theorem extend_keys_nodup {size : Nat} (seed : Prod (Fin (size + 1)) InputInt)
+    (rest : List (Prod (Fin (size + 1)) InputInt)) (unique : (rest.map Prod.snd).Nodup) :
+    ((extendDemand seed rest).map Prod.snd).Nodup := by
+  induction rest with
+  | nil => simp [extendDemand]
+  | cons entry rest ih =>
+    by_cases same : seed.2 = entry.2
+    next => simpa [extendDemand, same] using unique
+    next =>
+      simp only [List.map_cons, List.nodup_cons] at unique
+      simp only [extendDemand, if_neg same, List.map_cons, List.nodup_cons, extend_keys_mem]
+      exact And.intro (not_or_intro (Ne.symm same) unique.1) (ih unique.2)
+
+theorem summary_keys_nodup {size : Nat} (seeds : List (Prod (Fin (size + 1)) InputInt)) :
+    ((summarizeDemands seeds).map Prod.snd).Nodup := by
+  induction seeds with
+  | nil => simp [summarizeDemands]
+  | cons seed rest ih => exact extend_keys_nodup seed _ ih
+
+def prefixQueries {size : Nat} (seeds : List (Prod (Fin (size + 1)) InputInt)) :
+    List (Prod (Fin (size + 1)) InputInt) :=
+  (summarizeDemands seeds).flatMap (fun seed => ancestorList seed.1 seed.2)
+
+theorem prefix_queries_mem {size : Nat} (seeds : List (Prod (Fin (size + 1)) InputInt))
+    (query : Prod (Fin (size + 1)) InputInt) :
+    Membership.mem (prefixQueries seeds) query <-> Covers seeds query := by
+  rw [Iff.symm (summary_covers seeds query)]
+  cases query with
+  | mk version key =>
+    simp [prefixQueries, Covers, ancestor_list_mem, QueuePlan.mem_ancestors, and_comm]
+
+theorem prefix_queries_exact {size : Nat} (seeds : List (Prod (Fin (size + 1)) InputInt)) :
+    (prefixQueries seeds).toFinset =
+      (seeds.flatMap (fun seed => ancestorList seed.1 seed.2)).toFinset := by
+  ext query
+  rw [List.mem_toFinset, prefix_queries_mem, List.mem_toFinset]
+  cases query with
+  | mk version key =>
+    simp [Covers, ancestor_list_mem, QueuePlan.mem_ancestors, and_comm]
+
+theorem prefix_queries_nodup {size : Nat} (seeds : List (Prod (Fin (size + 1)) InputInt)) :
+    (prefixQueries seeds).Nodup := by
+  apply List.nodup_flatMap.mpr
+  refine And.intro (fun seed _ => ancestor_list_nodup seed.1 seed.2) ?_
+  have separated : List.Pairwise (fun left right => Not (left.2 = right.2)) (summarizeDemands seeds) := by
+    simpa only [List.Nodup, List.pairwise_map] using summary_keys_nodup seeds
+  apply separated.imp
+  intro left right different
+  change List.Disjoint (ancestorList left.1 left.2) (ancestorList right.1 right.2)
+  rw [List.disjoint_left]
+  intro query left_member right_member
+  have left_key := ((QueuePlan.mem_ancestors left.1 query.1 left.2 query.2).mp
+    ((ancestor_list_mem left.1 left.2 query).mp left_member)).2
+  have right_key := ((QueuePlan.mem_ancestors right.1 query.1 right.2 query.2).mp
+    ((ancestor_list_mem right.1 right.2 query).mp right_member)).2
+  exact different (left_key.symm.trans right_key)
+
+def demandSeeds (keys : List InputInt) (trace : List (Event InputInt))
+    (observations : List (Observation trace)) :
+    List (Prod (Fin (writeCount trace + 1)) InputInt) :=
+  keys.map (fun key => (0, key)) ++
+    (List.ofFn (fun index : Fin (writeCount trace) =>
+      (index.castSucc, (QueuePlan.operation trace index).key))) ++
+    observations.map (fun observation => (observation.version, observation.key))
+
 def syntaxQueries (keys : List InputInt) (trace : List (Event InputInt))
     (observations : List (Observation trace)) :
     List (Prod (Fin (writeCount trace + 1)) InputInt) :=
-  keys.flatMap (ancestorList 0) ++
-    (List.ofFn (fun index : Fin (writeCount trace) =>
-      ancestorList index.castSucc (QueuePlan.operation trace index).key)).flatten ++
-    observations.flatMap (fun observation => ancestorList observation.version observation.key)
+  prefixQueries (demandSeeds keys trace observations)
+
+theorem syntax_queries_nodup (keys : List InputInt) (trace : List (Event InputInt))
+    (observations : List (Observation trace)) : (syntaxQueries keys trace observations).Nodup :=
+  prefix_queries_nodup _
+
+theorem syntax_queries_exact (keys : List InputInt) (trace : List (Event InputInt))
+    (observations : List (Observation trace)) :
+    (syntaxQueries keys trace observations).toFinset =
+      (keys.flatMap (ancestorList 0) ++
+        (List.ofFn (fun index : Fin (writeCount trace) =>
+          ancestorList index.castSucc (QueuePlan.operation trace index).key)).flatten ++
+        observations.flatMap (fun observation : Observation trace =>
+          ancestorList observation.version observation.key)).toFinset := by
+  rw [syntaxQueries, prefix_queries_exact]
+  simp [demandSeeds, List.flatMap, List.map_ofFn, Function.comp_def]
 
 theorem syntax_members (keys : List InputInt) (trace : List (Event InputInt))
     (observations : List (Observation trace)) (query : Prod (Fin (writeCount trace + 1)) InputInt) :
@@ -181,7 +323,12 @@ theorem syntax_members (keys : List InputInt) (trace : List (Event InputInt))
       Membership.mem (QueuePlan.demands keys.toFinset trace) query \/
       exists observation, Membership.mem observations observation /\
         Membership.mem (QueuePlan.ancestors observation.version observation.key) query := by
-  simp [syntaxQueries, QueuePlan.demands, ancestor_list_mem, or_assoc]
+  rw [syntaxQueries, prefix_queries_mem]
+  cases query with
+  | mk version key =>
+    simp [Covers, demandSeeds, QueuePlan.demands, QueuePlan.mem_ancestors,
+      and_or_left, exists_or, and_assoc, or_assoc, and_comm, eq_comm]
+    simp only [Fin.le_def, Fin.val_castSucc, and_left_comm]
 
 def syntaxDemands (keys : List InputInt) (trace : List (Event InputInt))
     (observations : List (Observation trace)) :
@@ -304,6 +451,27 @@ def countFormula (keys : List InputInt) (trace : List (Event InputInt))
 def encode (input : SmtScript.Formula) (keys : List InputInt)
     (trace : List (Event InputInt)) (observations : List (Observation trace)) : SmtScript.Formula :=
   input ++ countFormula keys trace observations (freshBase input)
+
+theorem encode_members_preserved (input : SmtScript.Formula) (keys : List InputInt)
+    (trace : List (Event InputInt)) (observations : List (Observation trace)) (term : Term .bool) :
+    Membership.mem (encode input keys trace observations) term <->
+      Membership.mem (input ++
+        (((demandSeeds keys trace observations).flatMap (fun seed => ancestorList seed.1 seed.2)).map
+          (readEquation trace (freshBase input)) ++ observations.map (observationEquation (freshBase input)))) term := by
+  have members (query : Prod (Fin (writeCount trace + 1)) InputInt) :
+      Membership.mem (syntaxQueries keys trace observations) query <->
+        Membership.mem ((demandSeeds keys trace observations).flatMap (fun seed => ancestorList seed.1 seed.2)) query := by
+    change Membership.mem (prefixQueries (demandSeeds keys trace observations)) query <-> _
+    rw [Iff.symm List.mem_toFinset, prefix_queries_exact, List.mem_toFinset]
+  simp only [encode, countFormula, List.mem_append, List.mem_map, members]
+
+theorem allocation_bound_preserved (input : SmtScript.Formula) (keys : List InputInt)
+    (trace : List (Event InputInt)) (observations : List (Observation trace)) :
+    freshBase (encode input keys trace observations) =
+      freshBase (input ++
+        (((demandSeeds keys trace observations).flatMap (fun seed => ancestorList seed.1 seed.2)).map
+          (readEquation trace (freshBase input)) ++ observations.map (observationEquation (freshBase input)))) :=
+  fresh_base_congr _ _ (encode_members_preserved input keys trace observations)
 
 def render (input : SmtScript.Formula) (keys : List InputInt)
     (trace : List (Event InputInt)) (observations : List (Observation trace)) : String :=
@@ -536,6 +704,26 @@ def regressionObservations : List (Observation regressionTrace) :=
 
 def regressionCounts (version : Fin (writeCount regressionTrace + 1)) (key : Int) : Int :=
   if key = -2 then (if version.val = 1 \/ version.val = 2 then 1 else 0) else -7
+
+theorem observed_prefix_regression :
+    syntaxQueries [.literal (-2), .literal (-2)] regressionTrace regressionObservations =
+      ancestorList (3 : Fin (writeCount regressionTrace + 1)) (.literal (-2)) := by
+  decide +kernel
+
+theorem unobserved_prefix_regression :
+    syntaxQueries [.literal (-2), .literal (-2)] regressionTrace [] =
+      ancestorList (2 : Fin (writeCount regressionTrace + 1)) (.literal (-2)) := by
+  decide +kernel
+
+theorem merged_prefixes {size : Nat} (left right : Fin (size + 1)) (key : InputInt) :
+    prefixQueries [(left, key), (right, key)] = ancestorList (max left right) key := by
+  simp [prefixQueries, summarizeDemands, extendDemand]
+
+theorem distinct_prefixes {size : Nat} (left right : Fin (size + 1)) (first second : InputInt)
+    (different : Not (first = second)) :
+    prefixQueries [(left, first), (right, second)] =
+      ancestorList right second ++ ancestorList left first := by
+  simp [prefixQueries, summarizeDemands, extendDemand, different]
 
 theorem duplicate_send_regression :
     SmtScript.run (installCounts regressionInput (freshBase []) regressionCounts)

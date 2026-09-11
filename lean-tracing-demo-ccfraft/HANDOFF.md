@@ -208,6 +208,20 @@ observations do not imply these source-local bounds.
 
 The count-only and count/scalar solver fixtures include SAT cases with
 inconsistent initial counts to keep those boundaries explicit.
+`QueueEncoding` summarizes the maximum demanded version for each syntactic key,
+then expands that prefix once. The generated key/version pairs are unique.
+Proofs preserve the old assertion membership and allocation bound, including
+all observation equations. Distinct symbolic names still use shared UFs when
+their values alias. Fixture metadata reports `query_pairs` to catch repeated
+ancestor expansion.
+
+The 400-event queue-only controls after this summary measured 1.419 seconds
+for repeated-send SAT, 2.400 seconds for send/pop SAT, and 1.790 seconds for
+unknown-million-length SAT. Each combines emission with the median of three
+cvc5 process times. The cycle case still misses the two-second target.
+Declaration construction accounts for 0.63-0.84 seconds in these runs.
+These one-key fixtures do not establish full-Raft or multi-key performance.
+
 `QueueInitialEncoding` adds initial prefix histograms and alias-aware budgets.
 Its key list is syntactically unique. Distinct symbolic names remain separate
 even when they denote the same value, and every `readHeads` occurrence remains.

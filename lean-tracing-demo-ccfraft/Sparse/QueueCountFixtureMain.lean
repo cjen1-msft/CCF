@@ -21,7 +21,9 @@ private def formulaFields (formula : SmtScript.Formula) : List (Prod String Json
 private def fixture (name expected : String) (input : SmtScript.Formula)
     (trace : List (Event InputInt)) (observations : List (Observation trace)) : Json :=
   Json.mkObj ([("name", toJson name), ("expected", toJson expected),
-    ("scope", toJson "count-read")] ++ formulaFields (encode input [] trace observations))
+    ("scope", toJson "count-read"),
+    ("query_pairs", toJson (syntaxQueries [] trace observations).length)] ++
+    formulaFields (encode input [] trace observations))
 
 private def scalarFixture (name expected : String) (input : SmtScript.Formula)
     (trace : List (Event InputInt)) (observations : List (Observation trace))
