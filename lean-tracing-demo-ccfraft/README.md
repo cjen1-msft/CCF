@@ -106,6 +106,9 @@ histories. Its finite domain check corresponds to a unique non-network state
 for supplied shared log roots and a submitted set. Local domains apply only to
 allocated nodes; absent lookup stays fresh while globals remain independent.
 Canonical independent slots and coverage of every initial state remain open.
+`LogMatchSummary` characterizes the actual NACK log reader by a matching anchor
+and exclusion of later matches. It handles unsorted terms and clipped bounds.
+Its zero-based storage theorem uses decoded Entry terms, not raw signed order.
 
 `QueueEncoding` emits typed count-read constraints with alias-safe observations
 and fresh function names. It summarizes each syntactic key's maximum demanded

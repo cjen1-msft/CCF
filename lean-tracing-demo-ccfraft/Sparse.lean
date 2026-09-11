@@ -19,6 +19,7 @@ import Sparse.IntervalQueries
 import Sparse.JointIntervalCompletion
 import Sparse.JointIntervalEncoding
 import Sparse.ModelTrace
+import Sparse.LogMatchSummary
 import Sparse.MonotoneIntervals
 import Sparse.NativeConstructors
 import Sparse.NativeNodeOperations

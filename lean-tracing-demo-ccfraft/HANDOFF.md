@@ -69,6 +69,7 @@ New repository bridges extend that foundation:
 | `Sparse/IntervalQueries.lean` | Finite read equations and reference-local cut predicates correspond to one root-array family for every universal query, preserving requested cut values. |
 | `Sparse/MonotoneIntervals.lean` | Joint finite-cut completion for one log with point facts, interval predicates, nondecreasing terms, and a current-term bound. |
 | `Sparse/ModelTrace.lean` | One arbitrary initial State and shared Nat assignment satisfy ordered actual Model actions/observations. All-17-action queue congruence preserves the contract, including destination totals and configuration snapshots. |
+| `Sparse/LogMatchSummary.lean` | Exact `findHighestPossibleMatch` summary, uniqueness, and zero-based EntryValue correspondence hold for arbitrary logs without term-ordering assumptions. |
 | `Sparse/StateFrame.lean` | Finite typed-reference domains correspond to relative realization against one supplied Entry root family, submitted set, and network. Realizations have one unique non-network frame. |
 | `Sparse/ConfigurationSnapshot.lean` | Exact ordered positive-index Model snapshots and same-log completion using `2m+1` frontier-query records for `m` snapshot entries. |
 | `Sparse/ConfigurationPublication.lean` | Separate local candidate for one configuration begin, successful empty callback send, and publication close on the same core-state chain. No production Model or raw-validator change. |
