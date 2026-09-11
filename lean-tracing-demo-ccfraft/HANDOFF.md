@@ -44,8 +44,8 @@ storage helper. See [Native FIFO storage](README.md#native-fifo-storage).
 Vote sends are integrated in `Sparse/NativeArrayVote.lean` and `native_arrays.py`.
 The combined `exists_iff` theorem covers one arbitrary initial state for node
 observations, `checkQuorum`, both vote sends, and source-local queue observations.
-All seven initial packet variants remain representable. Explicit packet
-observations accept vote requests only. Source partitions constrain packet
+All seven packet variants are accepted as exact observations, including
+AppendEntries payload lists. Source partitions constrain packet
 sources, not destinations. The JSON adapter and SMT printer remain outside
 the theorem. `NativeArrayVoteFixtureMain` derives 400 cases from actual Model
 functions. See [Native vote sends](README.md#native-vote-sends).
@@ -54,7 +54,16 @@ The first 400-record vote case took about 3 ms to encode and 2.24 seconds to
 solve. A combined trillion-entry log and trillion-message initial queue solved
 in about 39 ms. No new representation optimization was needed for this slice.
 
-Next work is still substantial: the remaining actions, receive and payload
+`updateTerm` is also integrated into the shared trace theorem and emitter.
+It reads the selected source head without consuming it. Requests allow unknown
+senders, responses require allocated senders, and the action does not validate
+the packet destination. These are actual Model behaviors, not added guards.
+`NativeArrayTermFixtureMain` derives 168 cases from actual `Enabled` and `next`.
+A combined 400-record vote-send and term-update trace across 100 identities
+took about 3.7 ms to encode and 1.21 seconds to solve. See
+[Native term updates and packet observations](README.md#native-term-updates-and-packet-observations).
+
+Next work is still substantial: the remaining actions, receive and log mutation
 integration, reducer integration, and full initial-state
 materialization. Do not resume the old worker fan-out or claim full encoder
 completion. Finish and measure one action or shared operation at a time.

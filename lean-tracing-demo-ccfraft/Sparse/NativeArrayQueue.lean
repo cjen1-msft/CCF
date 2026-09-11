@@ -82,6 +82,16 @@ theorem Queue.head_correct (queue : Queue M) (expected : M) :
       queue.decode.head? = some expected := by
   simpa [List.head?_eq_getElem?] using queue.point_correct 0 expected
 
+def Queue.peek (queue : Queue M) : Option M :=
+  if 0 < queue.length then some (queue.cells queue.head) else none
+
+theorem Queue.peek_correct (queue : Queue M) : queue.peek = queue.decode.head? := by
+  by_cases live : 0 < queue.length
+  · rw [Queue.peek, if_pos live, queue.head_tail live]
+    rfl
+  · have empty : queue.length = 0 := by omega
+    simp [Queue.peek, Queue.decode, empty]
+
 inductive Instruction (M : Type) where
   | length (expected : Nat)
   | point (index : Nat) (expected : M)
@@ -183,6 +193,24 @@ theorem model_pop_correct (network : Network N T) (model : Sparse.Queue.Network 
         Sparse.Queue.partition source rest := by
     simp [Sparse.Queue.abstractNetwork, spec.2.1]
   rw [pop_source_correct, same, Sparse.Queue.dequeue_correct model destination source message rest taken, tail]
+
+theorem model_peek_correct (network : Network N T) (model : Sparse.Queue.Network N T)
+    (same : decodeNetwork network = Sparse.Queue.abstractNetwork model)
+    (source destination : N) :
+    (network destination source).peek =
+      (takeFirstFrom source (model destination)).map Prod.fst := by
+  rw [Queue.peek_correct]
+  have partition := congrFun (congrFun same destination) source
+  change (network destination source).decode = Sparse.Queue.partition source (model destination) at partition
+  rw [partition]
+  cases taken : takeFirstFrom source (model destination) with
+  | none =>
+    rw [(Sparse.Queue.take_none_iff source (model destination)).mp taken]
+    rfl
+  | some pair =>
+    rcases pair with ⟨message, rest⟩
+    rw [(Sparse.Queue.take_some_spec source (model destination) message rest taken).2.1]
+    rfl
 
 theorem model_initial_exists [Fintype N] (network : Network N T)
     (wellFormed : forall destination, Sparse.Queue.WellFormed (decodeNetwork network destination)) :

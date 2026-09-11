@@ -57,7 +57,7 @@ PACKET_FIELDS = {
 
 def packet_declarations() -> list[str]:
     """Keep unknown initial packets unrestricted in kind, with natural live fields."""
-    constructors, sources, domains = [], [], []
+    constructors, sources, terms, needs_source, domains = [], [], [], [], []
     for kind, fields in PACKET_FIELDS.items():
         constructors.append(
             f"(msg_{kind} "
@@ -66,6 +66,10 @@ def packet_declarations() -> list[str]:
         )
         pattern = f"(msg_{kind} {' '.join(name for name, _ in fields)})"
         sources.append(f"({pattern} source)")
+        terms.append(f"({pattern} term)")
+        needs_source.append(
+            f"({pattern} {'true' if kind.endswith('Response') else 'false'})"
+        )
         natural_fields = [f"(<= 0 {name})" for name, sort in fields if sort == "Int"]
         if kind == "appendEntriesRequest":
             natural_fields.append(
@@ -76,5 +80,7 @@ def packet_declarations() -> list[str]:
     return [
         f"(declare-datatype Packet ({' '.join(constructors)}))",
         f"(define-fun messageSource ((m Packet)) Node (match m ({' '.join(sources)})))",
+        f"(define-fun messageTerm ((m Packet)) Int (match m ({' '.join(terms)})))",
+        f"(define-fun messageNeedsSource ((m Packet)) Bool (match m ({' '.join(needs_source)})))",
         f"(define-fun messageDomain ((m Packet)) Bool (match m ({' '.join(domains)})))",
     ]

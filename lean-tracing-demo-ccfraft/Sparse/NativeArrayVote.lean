@@ -190,9 +190,68 @@ theorem node_step_rep (frame : Frame N T) (state : State N T) (rep : frame.Rep s
     | exact rep
     | exact ⟨NativeArrayCheckQuorum.step_correct _ _ rep.1 _, rep.2⟩
 
+def sourceAllowed (nodes : Arrays N T) : Message N T -> Prop
+  | .appendEntriesResponse response => (nodes response.source).isSome = true
+  | .requestVoteResponse response => (nodes response.source).isSome = true
+  | .requestPreVoteResponse response => (nodes response.source).isSome = true
+  | _ => True
+
+instance (nodes : Arrays N T) (message : Message N T) :
+    Decidable (sourceAllowed nodes message) := by
+  cases message <;> simp only [sourceAllowed] <;> infer_instance
+
+theorem source_allowed_correct (arrays : Arrays N T) (state : State N T)
+    (rep : Rep arrays state) (message : Message N T) :
+    sourceAllowed arrays message <-> messageSourceAllowed state message := by
+  cases message <;> simp [sourceAllowed, messageSourceAllowed, allocated_rep arrays state rep]
+
+def newerMessage? (frame : Frame N T) (source destination : N) : Option (Message N T) := do
+  let selected <- (frame.queues destination source).peek
+  if sourceAllowed frame.nodes selected /\
+      (get frame.nodes destination).currentTerm < selected.term then
+    some selected
+  else none
+
+theorem newer_correct (frame : Frame N T) (state : State N T) (rep : frame.Rep state)
+    (source destination : N) :
+    newerMessage? frame source destination = CCFRaft.newerMessage? state source destination := by
+  unfold newerMessage? CCFRaft.newerMessage?
+  rw [NativeArrayQueue.model_peek_correct frame.queues state.network rep.2 source destination]
+  cases taken : takeFirstFrom source (state.network destination) with
+  | none => rfl
+  | some pair =>
+    simp [source_allowed_correct frame.nodes state rep.1,
+      (get_rep frame.nodes state rep.1 destination).2.2.2.2]
+
+def Frame.updateTerm (frame : Frame N T) (source destination : N) : Frame N T :=
+  match newerMessage? frame source destination with
+  | none => frame
+  | some selected =>
+    { frame with
+      nodes := Function.update frame.nodes destination
+        (some { get frame.nodes destination with
+          role := .follower, currentTerm := selected.term, isNewFollower := true }) }
+
+theorem update_term_rep (frame : Frame N T) (state : State N T) (rep : frame.Rep state)
+    (source destination : N) :
+    (frame.updateTerm source destination).Rep (CCFRaft.next state (.updateTerm source destination)) := by
+  simp only [Frame.updateTerm, CCFRaft.next, newer_correct frame state rep]
+  cases found : CCFRaft.newerMessage? state source destination with
+  | none => exact rep
+  | some selected =>
+    constructor
+    · intro peer
+      by_cases same : peer = destination
+      · subst peer
+        have fields := get_rep frame.nodes state rep.1 destination
+        simp [State.node?, updateNode, Local.Rep, fields.2.2]
+      · simpa [State.node?, updateNode, same] using rep.1 peer
+    · exact rep.2
+
 inductive Instruction (N T : Type) where
   | node (instruction : NativeArrayCheckQuorum.Instruction N T)
   | vote (preVote : Bool) (source destination : N)
+  | updateTerm (source destination : N)
   | queueLength (source destination : N) (expected : Nat)
   | queuePoint (source destination : N) (index : Nat) (expected : Message N T)
 
@@ -205,6 +264,10 @@ def follows (frame : Frame N T) : List (Instruction N T) -> Prop
       enabled frame.nodes preVote source destination /\
         exists signature, SignatureIndex (get frame.nodes source).log signature /\
           follows (frame.vote preVote source destination signature) rest
+  | .updateTerm source destination :: rest =>
+      (frame.nodes destination).isSome = true /\
+        (newerMessage? frame source destination).isSome = true /\
+          follows (frame.updateTerm source destination) rest
   | .queueLength source destination expected :: rest =>
       (frame.queues destination source).length = expected /\ follows frame rest
   | .queuePoint source destination index expected :: rest =>
@@ -220,6 +283,9 @@ def modelFollows (state : State N T) : List (Instruction N T) -> Prop
   | .vote preVote source destination :: rest =>
       CCFRaft.Enabled state (action preVote source destination) /\
         modelFollows (CCFRaft.next state (action preVote source destination)) rest
+  | .updateTerm source destination :: rest =>
+      CCFRaft.Enabled state (.updateTerm source destination) /\
+        modelFollows (CCFRaft.next state (.updateTerm source destination)) rest
   | .queueLength source destination expected :: rest =>
       (Sparse.Queue.partition source (state.network destination)).length = expected /\
         modelFollows state rest
@@ -247,6 +313,10 @@ theorem follows_correct (trace : List (Instruction N T)) (frame : Frame N T) (st
           (signature_index_correct _ _).mpr rfl
         exact ⟨signature, latest,
           (ih _ _ (vote_rep frame state rep preVote source destination signature latest)).mpr held⟩
+    | updateTerm source destination =>
+      simp only [follows, modelFollows, CCFRaft.Enabled,
+        allocated_rep frame.nodes state rep.1, newer_correct frame state rep,
+        ih _ _ (update_term_rep frame state rep source destination), and_assoc]
     | queueLength source destination expected =>
       have same := congrArg List.length (congrFun (congrFun rep.2 destination) source)
       simp only [NativeArrayQueue.decodeNetwork, NativeArrayQueue.Queue.decode_length,

@@ -2,7 +2,7 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the Apache 2.0 License.
 
-"""Native-array checkQuorum and vote-send prototype, not the full trace validator.
+"""Native-array vote and term-update prototype, not the full trace validator.
 
 Input is reduced Model observations/actions. The Lean correspondence lives in
 Sparse/NativeArrayVote.lean; this JSON adapter and SMT printer are trusted.
@@ -224,10 +224,13 @@ class Encoder:
             ("role", "Role", "r_follower"),
             ("newFollower", "Bool", "true"),
         ):
-            old = self.refs[name]
-            self.refs[name] = f"{name}_{self.event + 1}"
-            self.lines.append(f"(declare-const {self.refs[name]} (Array Node {sort}))")
-            self.assertion(f"(= {self.refs[name]} (store {old} {node} {value}))")
+            self.store(name, sort, node, value)
+
+    def store(self, name: str, sort: str, node: str, value: str) -> None:
+        old = self.refs[name]
+        self.refs[name] = f"{name}_{self.event + 1}"
+        self.lines.append(f"(declare-const {self.refs[name]} (Array Node {sort}))")
+        self.assertion(f"(= {self.refs[name]} (store {old} {node} {value}))")
 
     def election_snapshot(self, node: str) -> tuple[str, str]:
         key = self.log_key(node)
@@ -295,29 +298,61 @@ class Encoder:
         self.emit_queue(queue)
 
     def packet(self, value: object) -> str:
-        if not isinstance(value, dict) or value.get("kind") not in (
-            "requestVoteRequest",
-            "requestPreVote",
+        if (
+            not isinstance(value, dict)
+            or not isinstance(value.get("kind"), str)
+            or value["kind"] not in PACKET_FIELDS
         ):
-            raise ValidationError(
-                "queuePoint: only vote-request packet observations are supported"
-            )
+            raise ValidationError("queuePoint: expected a supported packet kind")
         kind = value["kind"]
         schema = PACKET_FIELDS[kind]
         fields(
             value,
-            {"kind", *(name for name, _ in schema)},
+            {"kind", *(name for name, _ in schema if name != "entriesLength")},
             f"instruction {self.event} packet",
         )
-        arguments = [
-            (
-                self.node(value[name], f"packet.{name}")
-                if sort == "Node"
-                else str(natural(value[name], f"packet.{name}"))
-            )
-            for name, sort in schema
-        ]
+        arguments = []
+        for name, sort in schema:
+            if sort == "Node":
+                argument = self.node(value[name], f"packet.{name}")
+            elif sort == "Bool":
+                if type(value[name]) is not bool:
+                    raise ValidationError(f"packet.{name}: expected a bool")
+                argument = str(value[name]).lower()
+            elif sort == "(Array Int Entry)":
+                if not isinstance(value[name], list):
+                    raise ValidationError("packet.entries: expected an entry list")
+                entries = [self.entry(entry) for entry in value[name]]
+                argument = f"observed_entries_{self.event}"
+                self.lines.append(f"(declare-const {argument} (Array Int Entry))")
+                for index, entry in enumerate(entries):
+                    self.assertion(f"(= (select {argument} {index}) {entry})")
+            elif name == "entriesLength":
+                argument = str(len(value["entries"]))
+            else:
+                argument = str(natural(value[name], f"packet.{name}"))
+            arguments.append(argument)
         return f"(msg_{kind} {' '.join(arguments)})"
+
+    def update_term(self, source: str, destination: str) -> None:
+        queue = self.queue(source, destination)
+        selected = f"selected_{destination}_{source}_{self.event}"
+        self.lines.append(f"(declare-const {selected} Packet)")
+        self.assertion(f"(< 0 {queue.length})")
+        self.assertion(f"(= {selected} (select {queue.cells} {queue.head}))")
+        self.assertion(self.read("allocated", destination))
+        self.assertion(
+            f"(=> (messageNeedsSource {selected}) "
+            f"{self.read('allocated', f'(messageSource {selected})')})"
+        )
+        term = f"(messageTerm {selected})"
+        self.assertion(f"(< {self.read('currentTerm', destination)} {term})")
+        for name, sort, value in (
+            ("role", "Role", "r_follower"),
+            ("currentTerm", "Int", term),
+            ("newFollower", "Bool", "true"),
+        ):
+            self.store(name, sort, destination, value)
 
     def render(self) -> str:
         """Reject unsupported input rather than silently weakening the trace."""
@@ -337,6 +372,7 @@ class Encoder:
                 "checkQuorum",
                 "requestVote",
                 "requestPreVote",
+                "updateTerm",
                 "queueLength",
                 "queuePoint",
             }
@@ -344,7 +380,13 @@ class Encoder:
                 raise ValidationError(
                     f"instruction {self.event}: unsupported kind {kind!r}"
                 )
-            if kind in {"requestVote", "requestPreVote", "queueLength", "queuePoint"}:
+            if kind in {
+                "requestVote",
+                "requestPreVote",
+                "updateTerm",
+                "queueLength",
+                "queuePoint",
+            }:
                 expected = {"kind", "source", "destination"}
                 if kind in {"queueLength", "queuePoint"}:
                     expected.add("value")
@@ -359,6 +401,8 @@ class Encoder:
                 )
                 if kind in {"requestVote", "requestPreVote"}:
                     self.request_vote(source, destination, kind == "requestPreVote")
+                elif kind == "updateTerm":
+                    self.update_term(source, destination)
                 else:
                     queue = self.queue(source, destination)
                     if kind == "queueLength":

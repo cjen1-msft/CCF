@@ -2,26 +2,16 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeArrayVote
-import Lean.Data.Json
+import Sparse.NativeArrayFixtureJson
 
 set_option autoImplicit false
 
 namespace CCFRaft.NativeArrayVoteFixtures
 
-open Lean
+open Lean NativeArrayFixtures
 
 private def observation (kind : String) (value : Json) : Json :=
   Json.mkObj [("kind", toJson kind), ("node", toJson "a"), ("value", value)]
-
-private def names (nodes : Finset (Fin 3)) : List String :=
-  ((List.finRange 3).filter fun node => node ∈ nodes).map
-    fun node => if node = 0 then "a" else if node = 1 then "b" else "c"
-
-private def contentJson : EntryContent (Fin 3) Nat -> Json
-  | .signature => toJson "signature"
-  | .transaction tx => Json.mkObj [("transaction", toJson tx)]
-  | .reconfiguration nodes => Json.mkObj [("reconfiguration", toJson (names nodes))]
-  | .retiredCommitted nodes => Json.mkObj [("retiredCommitted", toJson (names nodes))]
 
 private def queueLength (length : Nat) : Json :=
   Json.mkObj [("kind", toJson "queueLength"), ("source", toJson "a"),
@@ -60,19 +50,10 @@ private def fixture (preVote twoPeers : Bool) (contents : List (EntryContent (Fi
   let action : Action (Fin 3) Nat :=
     if preVote then .requestPreVote 0 1 else .requestVote 0 1
   let allowed := decide (CCFRaft.Enabled state action)
-  let (term, lastTerm, lastIndex) :=
-    if preVote then
-      let request := makeRequestPreVote state 0 1
-      (request.term, request.lastCommittableTerm, request.lastCommittableIndex)
-    else (request.term, request.lastCommittableTerm, request.lastCommittableIndex)
-  let packet := Json.mkObj [
-    ("kind", toJson (if preVote then "requestPreVote" else "requestVoteRequest")),
-    ("term", toJson term), ("lastCommittableTerm", toJson lastTerm),
-    ("lastCommittableIndex", toJson lastIndex),
-    ("source", toJson "a"), ("destination", toJson "b")]
+  let packet := messageJson message
   let points := log.zipIdx.map fun (entry, index) =>
     Json.mkObj [("kind", toJson "entry"), ("node", toJson "a"), ("index", toJson index),
-      ("value", Json.mkObj [("term", toJson entry.term), ("content", contentJson entry.content)])]
+      ("value", entryJson entry)]
   let instructions :=
     [observation "allocated" (toJson true),
       Json.mkObj [("kind", toJson "allocated"), ("node", toJson "b"), ("value", toJson true)],
@@ -86,7 +67,7 @@ private def fixture (preVote twoPeers : Bool) (contents : List (EntryContent (Fi
   Json.mkObj [
     ("expected", toJson (if allowed then "sat" else "unsat")),
     ("trace", Json.mkObj [("nodes", toJson (["a", "b", "c"] : List String)),
-      ("bootstrap", toJson (names (INITIAL_CONFIGURATION (Node := Fin 3)))),
+      ("bootstrap", toJson (nodeNames (INITIAL_CONFIGURATION (Node := Fin 3)))),
       ("instructions", toJson instructions)])]
 
 def cases : List Json :=

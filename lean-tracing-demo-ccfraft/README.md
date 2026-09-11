@@ -50,10 +50,11 @@ or restricting possible executions is not a performance optimization.
 
 ### Native-array prototype
 
-`native_arrays.py` accepts `checkQuorum`, `requestVote`, and `requestPreVote`.
+`native_arrays.py` accepts `checkQuorum`, `requestVote`, `requestPreVote`, and
+`updateTerm`.
 Node observations cover allocation, role, new-follower status, current term,
 log length, commit index, and exact live entries. Source-local queues support
-length and exact vote-request packet observations. Other instructions are errors.
+length and exact packet observations. Other instructions are errors.
 It does not replace the full validator or consume raw CCF traces.
 
 `Sparse/NativeArrayVote.lean` proves that the combined direct-array trace semantics
@@ -153,8 +154,8 @@ the live log. Arbitrary initial state does not imply monotone log terms or
 a commit index bounded by log length.
 
 Initial queues remain arbitrary. All seven Model packet variants are available
-to the solver, although explicit packet observations currently accept only
-vote requests. Each live packet's source must match its source partition.
+to the solver and to explicit observations. Each live packet's source must match
+its source partition.
 A packet's destination need not match its containing queue, as the Model permits
 malformed initial queues. Initial packet and entry tails remain irrelevant.
 
@@ -177,6 +178,57 @@ late observations, malformed destinations, source isolation, and 21 identities.
 The first combined trillion-entry log and trillion-message queue case took
 about 39 ms to solve. A synthetic 400-record vote trace took about 3 ms to encode
 and 2.24 seconds to solve. These are not full-action trace benchmarks.
+
+### Native term updates and packet observations
+
+`{"kind": "updateTerm", "source": "a", "destination": "b"}` reads the first
+live packet from `a` in `b`'s queue. The destination must be allocated and its
+current term must be lower than the packet term. Responses require an allocated
+source. Requests, including vote proposals, do not.
+
+The action leaves the packet queued. It changes the destination's current term
+to the packet term, sets its role to `follower`, and sets `newFollower` to true.
+Other nodes, logs, commit indices, and queues remain unchanged. Repeating the
+action on the same packet fails its strict term guard.
+
+Like `CCFRaft.newerMessage?`, this action does not validate the packet's
+destination field. Receive handles that separately. Term updates are not a
+replacement for receive, which is not yet supported by this prototype.
+The shared `NativeArrayVote.exists_iff` theorem includes term updates in the
+same execution as vote sends and observations.
+
+Every `queuePoint` packet has `kind`, `term`, `source`, and `destination`.
+Additional fields use these exact Model names:
+
+| Packet kind | Additional fields |
+| --- | --- |
+| `appendEntriesRequest` | `prevLogIndex`, `prevLogTerm`, `entries`, `leaderCommit` |
+| `appendEntriesResponse` | `success`, `lastLogIndex` |
+| `requestVoteRequest` | `lastCommittableTerm`, `lastCommittableIndex` |
+| `requestPreVote` | `lastCommittableTerm`, `lastCommittableIndex` |
+| `requestVoteResponse` | `voteGranted` |
+| `requestPreVoteResponse` | `voteGranted` |
+| `proposeVoteRequest` | None |
+
+`success` and `voteGranted` are Booleans. Numeric fields are natural numbers.
+`entries` is an explicit list of entry values in the same format as log
+observations. The emitter derives its length. Do not supply `entriesLength`.
+Only listed payload entries are constrained. Array tails remain irrelevant,
+including across repeated observations of one packet.
+
+```bash
+nice -n 10 lake build Sparse Sparse.NativeArrayTermFixtureMain
+CCF_NATIVE_ARRAY_TESTS=1 CVC5=/path/to/cvc5 \
+  python3 -m unittest discover -s tests -p 'test_native*arrays.py' -v
+```
+
+The term fixture derives 168 cases from actual `Enabled` and `next`, across
+all packet kinds, endpoint allocation, term comparisons, and malformed
+destinations. Other cases cover exact payloads, retained duplicate packets,
+source-head selection, and contradictory later observations.
+A 400-record trace combining vote sends and term updates across 100 identities
+took about 3.7 ms to encode and 1.21 seconds to solve in the initial run.
+The adapter and printer remain outside the Lean theorem.
 
 ### FIFO Model sends
 

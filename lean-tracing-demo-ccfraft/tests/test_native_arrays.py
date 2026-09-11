@@ -58,6 +58,10 @@ def queue_length(value, source="a", destination="b"):
     )
 
 
+def update_term(source="a", destination="b"):
+    return dict(vote(source=source, destination=destination), kind="updateTerm")
+
+
 def queue_point(index, pre_vote=False, **packet_fields):
     return {
         "kind": "queuePoint",
@@ -85,6 +89,16 @@ def vote_initial(pre_vote=False):
     ]
 
 
+def queued_packet(kind, index=0, **overrides):
+    value = {
+        field: {"Int": 0, "Bool": False, "Node": "a", "(Array Int Entry)": []}[sort]
+        for field, sort in PACKET_FIELDS[kind]
+        if field != "entriesLength"
+    }
+    value.update({"kind": kind, "destination": "b", **overrides})
+    return dict(queue_point(index), value=value)
+
+
 class NativeArrayInputTests(unittest.TestCase):
     def test_strict_input(self):
         valid = trace([observation("logLength", 0)])
@@ -104,6 +118,19 @@ class NativeArrayInputTests(unittest.TestCase):
             trace([queue_point(0, term=-1)]),
             trace([queue_point(0, kind="appendEntriesResponse")]),
             trace([queue_point(0, source="missing")]),
+            trace([queue_point(0, kind=[])]),
+            trace([queued_packet("appendEntriesRequest", entries={})]),
+            trace(
+                [
+                    queued_packet(
+                        "appendEntriesRequest",
+                        entries=[{"term": -1, "content": "signature"}],
+                    )
+                ]
+            ),
+            trace([queued_packet("appendEntriesRequest", entriesLength=0)]),
+            trace([queued_packet("requestVoteResponse", voteGranted=1)]),
+            trace([queued_packet("appendEntriesResponse", success="false")]),
             trace([dict(vote(), destination="missing")]),
             trace([dict(vote(), extra=True)]),
             trace([observation("allocated", 1)]),
@@ -305,6 +332,160 @@ class NativeArraySolverTests(unittest.TestCase):
         for number, case in enumerate(cases):
             with self.subTest(number=number):
                 self.solve(f"vote-model-{number}", case["trace"], case["expected"])
+
+    def test_term_model_oracle(self):
+        cases = self.model_fixtures("NativeArrayTermFixtureMain")
+        self.assertEqual(len(cases), 168)
+        self.assertEqual({case["expected"] for case in cases}, {"sat", "unsat"})
+        for number, case in enumerate(cases):
+            with self.subTest(number=number):
+                self.solve(f"term-model-{number}", case["trace"], case["expected"])
+
+    def test_term_history(self):
+        initial = [
+            *vote_initial(),
+            observation("currentTerm", 1, "b"),
+            queue_length(0),
+            vote(),
+        ]
+        cases = [
+            (
+                "term-update",
+                [
+                    update_term(),
+                    observation("currentTerm", 4, "b"),
+                    observation("role", "follower", "b"),
+                    observation("newFollower", True, "b"),
+                    queue_length(1),
+                    queue_point(0),
+                ],
+                "sat",
+            ),
+            ("term-no-pop", [update_term(), queue_length(0)], "unsat"),
+            ("term-repeat-disabled", [update_term(), update_term()], "unsat"),
+            (
+                "term-source-frame",
+                [
+                    update_term(),
+                    observation("role", "candidate"),
+                    observation("currentTerm", 4),
+                ],
+                "sat",
+            ),
+            (
+                "term-source-conflict",
+                [update_term(), observation("currentTerm", 5)],
+                "unsat",
+            ),
+            (
+                "term-role-conflict",
+                [update_term(), observation("role", "leader", "b")],
+                "unsat",
+            ),
+            (
+                "term-late-packet-conflict",
+                [update_term(), queue_point(0, term=5)],
+                "unsat",
+            ),
+            (
+                "term-other-queue",
+                [queue_length(3, "b", "a"), update_term(), queue_length(3, "b", "a")],
+                "sat",
+            ),
+            ("term-check-quorum-disabled", [update_term(), action("b")], "unsat"),
+        ]
+        for name, instructions, expected in cases:
+            with self.subTest(name=name):
+                self.solve(name, trace([*initial, *instructions]), expected)
+        self.solve("term-empty-queue", trace([queue_length(0), update_term()]), "unsat")
+        for role in ROLES:
+            self.solve(
+                f"term-any-role-{role}",
+                trace([observation("role", role, "b"), *initial, update_term()]),
+                "sat",
+            )
+        self.solve(
+            "term-first-source-head",
+            trace(
+                [
+                    observation("currentTerm", 2, "b"),
+                    queue_length(2),
+                    queue_point(0, term=1),
+                    queue_point(1, term=3),
+                    update_term(),
+                ]
+            ),
+            "unsat",
+        )
+        self.solve(
+            "term-symbolic-queue",
+            trace(
+                [
+                    queue_length(10**12),
+                    update_term(),
+                    queue_length(10**12),
+                    observation("currentTerm", 7, "b"),
+                    queue_point(0, term=7),
+                ]
+            ),
+            "sat",
+        )
+
+    def test_full_packet_observations(self):
+        for kind in PACKET_FIELDS:
+            point = queued_packet(kind)
+            self.solve(
+                f"packet-repeat-{kind}", trace([queue_length(1), point, point]), "sat"
+            )
+            changed = copy.deepcopy(point)
+            changed["value"]["term"] = 1
+            self.solve(f"packet-conflict-{kind}", trace([point, changed]), "unsat")
+        payload = [
+            {"term": 8, "content": "signature"},
+            {"term": 2, "content": {"transaction": 7}},
+            {"term": 1, "content": {"reconfiguration": ["a"]}},
+        ]
+        point = queued_packet("appendEntriesRequest", entries=payload)
+        self.solve("packet-live-payload", trace([point, point]), "sat")
+        changed = copy.deepcopy(point)
+        changed["value"]["entries"][1]["content"]["transaction"] = 8
+        self.solve("packet-live-payload-conflict", trace([point, changed]), "unsat")
+        self.solve(
+            "packet-payload-length-conflict",
+            trace([point, queued_packet("appendEntriesRequest")]),
+            "unsat",
+        )
+        script = encode(trace([point]))
+        self.solve_script(
+            "packet-observation-tail",
+            script.replace(
+                "(check-sat)",
+                "(assert (= (select observed_entries_0 3) (entry (- 1) signature)))\n(check-sat)",
+            ),
+            "sat",
+        )
+
+    def test_term_scale(self):
+        nodes = [f"node-{index}" for index in range(100)]
+        instructions = [
+            observation("role", "candidate", nodes[0]),
+            observation("logLength", 0, nodes[0]),
+            observation("currentTerm", 4, nodes[0]),
+            observation("commit", 0, nodes[0]),
+        ]
+        for node in nodes[1:]:
+            instructions.extend(
+                [
+                    vote(source=nodes[0], destination=node),
+                    update_term(nodes[0], node),
+                    queue_length(1, nodes[0], node),
+                    observation("currentTerm", 4, node),
+                ]
+            )
+        self.assertEqual(len(instructions), 400)
+        self.solve(
+            "term-four-hundred-records", trace(instructions, nodes, nodes), "sat"
+        )
 
     def test_vote_guards_and_packets(self):
         for pre_vote in (False, True):

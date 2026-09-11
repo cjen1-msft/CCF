@@ -1273,7 +1273,7 @@ def newerMessage?
   else
     none
 
-/-- Consume a request and enqueue its response without duplicates. -/
+/-- Consume a request and append its response, preserving equal pending replies. -/
 def reply
     (network : Node -> List (Message Node TxId))
     (requestDestination : Node)
