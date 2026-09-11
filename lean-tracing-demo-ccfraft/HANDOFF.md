@@ -246,6 +246,16 @@ Keep the full-model assurance flag false: current coverage is still one
 action and seven observation kinds. No change to the reducer's untrusted
 interpretation boundary follows from proving the JSON encoder.
 
+`NativeOptional` is the next value-codec unit for local-state coverage.
+It uses the existing sum datatype for optional natural indices and identities.
+Decoding distinguishes a valid absent value, `some none`, from invalid payloads,
+`none`. It rejects negative indices and identities outside the declared width.
+The proofs cover round trips, exact literal equality, and actual domain terms.
+`NativeSmtFixtureMain` now has 25 kernel-backed solver cases, including nine
+optional-value cases. The optional codecs are not yet wired into JSON
+observations or state columns. They are intended for `votedFor` and the three
+retirement-index fields.
+
 Follow [Representation design priorities](README.md#representation-design-priorities):
 start with the simplest representation to prove correct, using native SMT
 arrays and live lengths. Measure representative solver workloads before

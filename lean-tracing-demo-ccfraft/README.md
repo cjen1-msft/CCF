@@ -171,6 +171,12 @@ This Lean encoder remains experimental. Remaining Model actions, observations,
 and raw reducer integration are unfinished. The API's full-model assurance
 flag remains false; current coverage is one action and seven observation kinds.
 
+`NativeOptional` supplies codecs for the next local-state observations.
+Optional natural indices and node identities use `NativeSum NativeUnit Int`.
+Invalid payloads fail decoding rather than becoming `none` or wrapping to
+another identity. The module proves round trips, exact literal equality,
+and emitted domain predicates. These codecs do not yet add accepted input kinds.
+
 The older Python reference has broader action coverage:
 `native_arrays.py` accepts `checkQuorum`, `requestVote`, `requestPreVote`, and
 `updateTerm`, plus `timeout` and `becomePreVoteCandidate`.

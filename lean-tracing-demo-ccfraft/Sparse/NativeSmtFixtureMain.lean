@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeScript
+import Sparse.NativeOptional
 import Lean.Data.Json
 
 set_option autoImplicit false
@@ -139,10 +140,38 @@ private def arithmetic : Case :=
     expected := true
     correct := by intro assignment; simp [Term.eval] }
 
+private def optionalNatural (name : String) (value : Option Int) : Case :=
+  { name
+    formula := NativeEncode.optionalNatDomain (NativeEncode.optionalTerm id value)
+    expected := match value with | none => true | some index => decide (0 <= index)
+    correct := by
+      intro assignment
+      cases value <;>
+        simp [NativeEncode.optionalNatDomain, NativeEncode.optionalTerm, Term.eval, Locals.cons] }
+
+private def optionalIdentity (name : String) (width : PNat) (value : Option Int) : Case :=
+  { name
+    formula := NativeEncode.optionalNodeDomain width (NativeEncode.optionalTerm id value)
+    expected := match value with | none => true | some node => decide (0 <= node /\ node < width.val)
+    correct := by
+      intro assignment
+      apply Bool.eq_iff_iff.mpr
+      cases value <;>
+        simp [NativeEncode.optionalNodeDomain, NativeEncode.optionalTerm, Term.eval, Locals.cons] }
+
 def cases : List Case := [
   stored, wrongStore, nestedArray, constantArray, pair, sum, capture, nestedQuantifiers,
   wideBits, widerBits, bitsOperations, unitAndSecond, typedSymbols, overwrittenStore,
-  assertedCondition, arithmetic]
+  assertedCondition, arithmetic,
+  optionalNatural "optional-index-none" none,
+  optionalNatural "optional-index-zero" (some 0),
+  optionalNatural "optional-index-large" (some (10 ^ 30)),
+  optionalNatural "optional-index-negative" (some (-1)),
+  optionalIdentity "optional-node-none" ⟨21, by decide⟩ none,
+  optionalIdentity "optional-node-zero" ⟨21, by decide⟩ (some 0),
+  optionalIdentity "optional-node-last" ⟨21, by decide⟩ (some 20),
+  optionalIdentity "optional-node-past-end" ⟨21, by decide⟩ (some 21),
+  optionalIdentity "optional-node-negative" ⟨21, by decide⟩ (some (-1))]
 
 end CCFRaft.NativeSmt
 
