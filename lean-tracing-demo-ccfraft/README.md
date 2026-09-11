@@ -111,6 +111,9 @@ allocated nodes; absent lookup stays fresh while globals remain independent.
 `StateFrameInitial` allocates 662 distinct scalar slots and fifteen fresh log
 roots. Every arbitrary Model state has a representation while existing prefix
 roots remain unchanged. Concrete log encoding is proof-only.
+`StateFrameEncoding` emits the exact allocation-guarded numeric domains.
+Its formula and rendered text agree with the finite domain checker.
+Log, queue, submitted-set, and action constraints are separate.
 `LogMatchSummary` characterizes the actual NACK log reader by a matching anchor
 and exclusion of later matches. It handles unsorted terms and clipped bounds.
 Its zero-based storage theorem uses decoded Entry terms, not raw signed order.

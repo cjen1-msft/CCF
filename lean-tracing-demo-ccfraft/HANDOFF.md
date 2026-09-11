@@ -72,6 +72,7 @@ New repository bridges extend that foundation:
 | `Sparse/LogMatchSummary.lean` | Exact `findHighestPossibleMatch` summary, uniqueness, and zero-based EntryValue correspondence hold for arbitrary logs without term-ordering assumptions. |
 | `Sparse/StateFrame.lean` | Finite typed-reference domains correspond to relative realization against one supplied Entry root family, submitted set, and network. Realizations have one unique non-network frame. |
 | `Sparse/StateFrameInitial.lean` | Canonical independent slots and fresh log roots represent every arbitrary actual Model state, preserving all old roots and outside-owned constants. Whole UFs and selector interpretations remain unchanged. |
+| `Sparse/StateFrameEncoding.lean` | Fifteen allocation-guarded clauses encode exactly the existing numeric domains under the same assignment. Text execution returns the domain checker's Boolean result. |
 | `Sparse/ConfigurationSnapshot.lean` | Exact ordered positive-index Model snapshots and same-log completion using `2m+1` frontier-query records for `m` snapshot entries. |
 | `Sparse/ConfigurationPublication.lean` | Separate local candidate for one configuration begin, successful empty callback send, and publication close on the same core-state chain. No production Model or raw-validator change. |
 | `Sparse/EntryValue.lean` | Fixed nonrecursive content and entry values are bijective with actual Model values, with equality transport, decoded term ordering, guarded payload views, and pointwise array equivalence. |
@@ -142,6 +143,18 @@ reserve the scalar span away from source constants it needs to preserve.
 including arbitrary network contents and inconsistent retirement metadata.
 Concrete log encoding is proof-only. Fixed-root coverage retains explicit
 compatibility; symbolic graph preservation remains a separate obligation.
+`StateFrameEncoding` emits 42 numeric checks per row inside fifteen
+allocation guards. Active owners require valid peer fields even when those
+peers are unallocated. Dormant negative values remain legal unless their IDs
+also serve an active row. Aliases are preserved.
+The same-assignment formula and text theorems cover domains only. Scope,
+graph/root consistency, queues, submitted sets, and actions are not encoded.
+Native globals and local nonnumeric fields have no additional domain
+constraints. Relative realization still takes one supplied G/R/Q/U.
+`tests/test_sparse_state_frame.py` covers four fixed-size metadata cases through
+trillion-valued reservations and 634 native domain cases. These include all
+39 numeric columns on nodes 0 and 14, dormant values, aliases, and independent
+global fields.
 
 Use `IntervalDemandPlan.plan` for executable dependency closure. The reference
 constructor repeats shared ancestors exponentially. In one forced-clock run,

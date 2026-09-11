@@ -49,6 +49,7 @@ import Sparse.SmtScriptText
 import Sparse.SmtText
 import Sparse.StateFrame
 import Sparse.StateFrameInitial
+import Sparse.StateFrameEncoding
 import Sparse.SymbolBounds
 import Sparse.SymbolCollection
 import Sparse.TypedIntervalEncoding
