@@ -521,6 +521,45 @@ oracle cases covering every guard mask for the two-event matrix.
 Million-entry controls emit fewer than 10,000 bytes without constructing a
 million-element queue.
 
+`Sparse/ConditionalQueueScaleMain.lean` supplies the frozen native conditional
+baseline. `scripts/benchmark_conditional_queue.py` builds its 35 project C
+modules against existing package native objects. It records source and C hashes,
+the native binary hash, and package-object size and modification time.
+It refuses changed inputs, missing artifacts, and overwritten evidence.
+This is not a hermetic build or a package-source rebuild.
+The [README benchmark commands](README.md#sparse-proof-foundation) use no
+session-local scripts.
+
+The baseline emitted all 54 cases at 40 and 400 events. All 27 small cases and
+12 large cases have three successful solver processes. The remaining 15 large
+cases were not started, not classified as timeouts or solver verdicts.
+Every fixture starts empty. At 400 events, there are 399 writes and a final
+length observation. Alternating guards enable 200 writes.
+Emission timing excludes native startup and persistence. Solver medians include
+startup, parsing, and solving in three fresh cvc5 processes.
+
+| 400-event case | Script bytes | Warm emission ms | Solver median ms |
+| --- | ---: | ---: | ---: |
+| Four literal keys, alternating guards, SAT | 671098 | 29.779 | 1954.064 |
+| Four symbolic keys, alternating guards, SAT | 740293 | 35.614 | 14382.216 |
+| Four symbolic keys, all guards true, SAT | 740094 | 37.512 | 3922.183 |
+| 199 symbolic keys, alternating guards, UNSAT | 31667475 | 1728.986 | 155693.653 |
+| 399 symbolic sends, alternating guards, SAT | 61913978 | 3421.912 | Not run |
+
+The count grid grows as writes times keys. Initial-prefix histograms and
+alias checks add further products. These measurements fail the runtime target.
+Session-only array prototypes reduce the four-symbolic-key alternating SAT
+median to 1808.896 ms, but require `--arrays-exp` and have no encoding proof.
+They support only an empty initial queue and are not the production encoder.
+Known-guard selection followed by existing proved queue normalization is the
+next smaller optimization. Unknown guards must retain the exact fallback.
+
+The portable runner's `cycleDistinct` argument retains that name in evidence
+paths. Native metadata calls the corresponding shape `cycle19` at 40 events
+and `cycle199` at 400. The offline benchmark tests cover all 54 names.
+The parent also ran fresh distinct-cycle SAT and UNSAT controls after fixing
+this naming check. Audit reports that separate run as 2/54, not complete.
+
 The initial-accounting fixtures include 20 focused cases and 486 two-event
 cases compared with a concrete queue interpreter. Those pairs use nine event
 forms, initial lengths from zero through two, and both alias partitions of two

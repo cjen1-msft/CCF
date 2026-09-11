@@ -221,6 +221,33 @@ not full-Raft timings or a runtime pass threshold.
 `CCF_SPARSE_QUEUE_SUMMARIES=1` selects `QueueSummaryEncoding`; the event count
 still includes all original events, with `encoded_events` reported separately.
 
+For native conditional-queue measurements, use Python 3.11 or later and the
+existing pinned Lean and package native artifacts:
+
+```bash
+python3 scripts/benchmark_conditional_queue.py --build
+python3 scripts/benchmark_conditional_queue.py --cvc5 /path/to/cvc5
+python3 scripts/benchmark_conditional_queue.py --audit
+```
+
+The default case has 40 events. `--events 400 --keys symbolic` selects the
+four-key symbolic case. `--shape cycleDistinct` increases the key count, and
+`--verdict unsat` selects its contradictory length control.
+Use a fresh `--output` directory for another baseline. The tool refuses to
+overwrite build or case evidence and does not download or rebuild packages.
+It builds only the fixture's 35 project native modules, not the full library.
+Cached package objects are checked by size and modification time, not rebuilt
+or content-hashed. The build is not hermetic.
+
+The fixture measures one warm emission and three fresh cvc5 processes.
+`--audit` distinguishes completed, emission-only, partial, and missing cases.
+Only `--audit --require-complete` requires all 54 cases. Every case here has an
+empty initial queue, so this matrix does not cover general queue completion.
+The baseline misses the runtime target. At 400 events, four symbolic keys with
+alternating guards take 14.38 seconds median in cvc5. A 399-symbolic-key send
+case emits 61.9 MB. Of 54 emitted cases, 39 have three solver runs and 15 were
+not started. These are component measurements, not full Model traces.
+
 This is a proof library, not a complete sparse trace validator. Full Model
 composition, full-trace SMT correspondence, and end-to-end performance remain
 unfinished. The design and remaining work are in [HANDOFF.md](HANDOFF.md).
