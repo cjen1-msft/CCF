@@ -65,6 +65,7 @@ class SparseQueueEncodingTests(unittest.TestCase):
                 "Sparse.QueueScalarEncoding", "Sparse.SmtScriptText",
                 "Sparse.QueueInitialEncoding", "Sparse.QueueTraceEncoding",
                 "Sparse.QueueSummaryEncoding",
+                "Sparse.ConditionalQueueTraceEncoding", "Sparse.QueueCountFixtureMain",
             ],
             cwd=ROOT, capture_output=True, text=True, check=True,
         )
@@ -130,15 +131,30 @@ class SparseQueueEncodingTests(unittest.TestCase):
         self.assertEqual([case["case"] for case in cases], list(range(54)))
         self.assertTrue(all(case["bytes"] > 0 for case in cases))
 
-    def assert_exhaustive(self, cases: list[dict], scope: str) -> None:
-        self.assertEqual(len(cases), 486)
+    def test_conditional_queue_scripts(self) -> None:
+        cases = load_fixtures("--conditional")
+        self.assertEqual(len(cases), 15)
+        self.assert_scripts(cases, "conditional-whole-queue")
+        for case in cases:
+            if "million" in case["name"]:
+                self.assertLess(len(case["script"]), 10000)
+
+    def test_conditional_exhaustive_traces(self) -> None:
+        self.assert_exhaustive(load_fixtures("--conditional-exhaustive"), "conditional", conditional=True)
+
+    def assert_exhaustive(self, cases: list[dict], scope: str, conditional: bool = False) -> None:
+        self.assertEqual(len(cases), 1944 if conditional else 486)
         self.assertEqual(len({case["name"] for case in cases}), len(cases))
         verdicts = set()
         for case in cases:
             # Two named keys plus one class for all unobserved initial values.
             alphabet = (0, 2) if case["aliases"] else (0, 1, 2)
+            events = case["events"]
+            if conditional:
+                self.assertEqual(len(case["active"]), len(events))
+                events = [event for event, active in zip(events, case["active"]) if active]
             possible = any(
-                concrete_follows(queue, case["events"], case["aliases"])
+                concrete_follows(queue, events, case["aliases"])
                 for queue in product(alphabet, repeat=case["initial_length"])
             )
             expected = "sat" if possible else "unsat"

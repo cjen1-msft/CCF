@@ -90,6 +90,7 @@ New repository bridges extend that foundation:
 | `Sparse/QueueInitialEncoding.lean` | Adds the initial prefix histogram and alias-aware distinct-key budget with a constructive assignment extension that preserves input, counts, windows, and order. |
 | `Sparse/ConditionalQueueAccounting.lean` | Fixed-Boolean guarded replay equals selected cursor replay. Active pops and a pending peek give the exact bounded read histogram under shared-order agreement. |
 | `Sparse/ConditionalQueueEncoding.lean` | Typed guard bindings preserve source terms/functions. Static annotation and a finite count grid yield one coherent guarded cursor replay with original guard/key interpretation. |
+| `Sparse/ConditionalQueueTraceEncoding.lean` | Formula and actual rendered-text satisfiability correspond to one initial Int queue executing the selected trace under one original assignment, with exact initial length. |
 | `Sparse/QueueTraceEncoding.lean` | The actual emitted formula and rendered text are satisfiable iff one initial Int queue of the interpreted length executes the whole unconditional event trace under the original input. |
 | `Sparse/QueueSummaryEncoding.lean` | Proved presence normalization removes redundant sends before whole-queue emission, preserving the same initial queue and the original trace existence contract. |
 | `Sparse/ReadbackHints.lean` | Unequal observed projection values justify key disequality and skipping a store. |
@@ -109,8 +110,8 @@ New repository bridges extend that foundation:
 
 `QueuePlan.generated_exists_iff` requires nonnegative initial length, tracked-key
 coverage, lawful equality, and a fresh filler value. Its conservative ancestor
-closure can be quadratic. Runtime emission and conditional queue operations
-remain separate obligations.
+closure can be quadratic. The runtime emitters below cover unconditional and
+conditional queue events.
 
 Monotone completion does not change the arbitrary-initial-state contract above.
 Restricting that contract to `SafetyInductiveInvariant` still requires one joint
@@ -455,8 +456,19 @@ One canonical total count family agrees with every tracked read and yields
 one guarded cursor replay. Raw count UFs may still differ off-grid.
 The 320-case kernel oracle covers aliases, inactive writes, and intervening
 peeks. This is a replay soundness bridge, not a concrete-queue iff.
-Conditional histogram composition, initial budget, and concrete-queue
-completion remain open. The rectangular grid has no performance clearance.
+`ConditionalQueueTraceEncoding` closes the concrete-queue formula and text iff.
+It counts only active pops below the initial-length cutoff and adds the final
+pending peek only when its head is still in that prefix. The existing
+alias-aware budget supplies one initial queue, not a witness per row or branch.
+The converse retains original guard meanings, constants, and complete source
+UFs. Its witness installer also preserves the complete selector interpretation.
+The full auxiliary reservation ends at `nextBase`, including unused slots.
+No initial capacity or key-distinctness premise is added.
+The rectangular grid still has no performance clearance.
+The queue test module adds 15 conditional regressions and 1,944 finite concrete
+oracle cases covering every guard mask for the two-event matrix.
+Million-entry controls emit fewer than 10,000 bytes without constructing a
+million-element queue.
 
 The initial-accounting fixtures include 20 focused cases and 486 two-event
 cases compared with a concrete queue interpreter. Those pairs use nine event

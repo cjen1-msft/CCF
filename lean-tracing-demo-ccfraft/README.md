@@ -117,7 +117,7 @@ entire unconditional event trace. It derives tracked-key coverage, alignment,
 and a fresh filler without caller premises or a capacity bound.
 Its initial compiler caches count and scalar formulas across allocation stages.
 The compiler rewrite preserves the exact assertion list and generated IDs.
-Conditional operations and complete packet keys remain separate work.
+Complete packet keys remain separate work.
 `ConditionalQueueAccounting` proves cursor replay for fixed Boolean guards
 equivalent to replaying the selected events. Active pops and one pending peek
 give the exact demanded initial-prefix histogram under shared-order agreement.
@@ -126,8 +126,12 @@ representation. It does not provide typed guards or concrete-queue completion.
 `ConditionalQueueEncoding` binds typed guards without asserting them and proves
 one clause's active update or inactive count/head/tail identity. Its allocator
 preserves original terms and complete external functions. Static annotation and
-a finite count grid now yield one coherent guarded cursor replay. Initial
-accounting composition and concrete-queue completion remain open.
+a finite count grid yield one coherent guarded cursor replay.
+`ConditionalQueueTraceEncoding` composes that replay with active-pop accounting,
+the final pending peek, and the alias-aware initial budget. Its formula and text
+are satisfiable iff one initial queue executes the selected original trace.
+Initial length is exact and unbounded. The rectangular grid has no performance
+clearance.
 `QueueSummaryEncoding` composes the whole-queue compiler with proved presence
 normalization. It removes sends known to leave the queue unchanged, while
 preserving the same initial queue and every pop, peek, and length observation.

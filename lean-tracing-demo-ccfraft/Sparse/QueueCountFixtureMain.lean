@@ -3,6 +3,7 @@ import Sparse.QueueScalarEncoding
 import Sparse.QueueInitialEncoding
 import Sparse.QueueTraceEncoding
 import Sparse.QueueSummaryEncoding
+import Sparse.ConditionalQueueTraceEncoding
 import Sparse.SmtScriptText
 import Lean.Data.Json
 
@@ -188,12 +189,14 @@ def summaryRegressions : List Json :=
       [.send (.literal 0), .length 2, .send (.literal 0), .length 1] (.literal 0)
   ]
 
-def exhaustiveFixtures (summarize : Bool := false) : List Json :=
-  let choices : List (Prod String (Prod Nat (Event InputInt))) :=
+private def exhaustiveChoices : List (Prod String (Prod Nat (Event InputInt))) :=
     [("send", 0, .send (.symbolic 0)), ("send", 1, .send (.symbolic 1)),
      ("pop", 0, .pop (.symbolic 0)), ("pop", 1, .pop (.symbolic 1)),
      ("peek", 0, .peek (.symbolic 0)), ("peek", 1, .peek (.symbolic 1)),
      ("length", 0, .length 0), ("length", 1, .length 1), ("length", 2, .length 2)]
+
+def exhaustiveFixtures (summarize : Bool := false) : List Json :=
+  let choices := exhaustiveChoices
   ([0, 1, 2] : List Nat).flatMap fun length =>
     [false, true].flatMap fun aliases =>
       choices.flatMap fun left =>
@@ -206,6 +209,74 @@ def exhaustiveFixtures (summarize : Bool := false) : List Json :=
             ("events", toJson [(left.1, left.2.1), (right.1, right.2.1)])] ++
             formulaFields (if summarize then QueueSummaryEncoding.encode input trace (.literal length)
               else QueueInitialEncoding.encode input trace (.literal length)))
+
+def conditionalExhaustiveFixtures : List Json :=
+  ([0, 1, 2] : List Nat).flatMap fun length =>
+    [false, true].flatMap fun aliases =>
+      exhaustiveChoices.flatMap fun left =>
+        exhaustiveChoices.flatMap fun right =>
+          [false, true].flatMap fun leftActive =>
+            [false, true].map fun rightActive =>
+              let leftGuard := Term.unknown .bool 10
+              let rightGuard := Term.unknown .bool 11
+              let input := [if aliases then sameKeys else .not sameKeys,
+                .equal leftGuard (.boolean leftActive), .equal rightGuard (.boolean rightActive)]
+              let name := s!"{length}-{aliases}-{left.1}{left.2.1}-{right.1}{right.2.1}-{leftActive}-{rightActive}"
+              Json.mkObj ([("name", toJson name), ("initial_length", toJson length),
+                ("aliases", toJson aliases), ("active", toJson [leftActive, rightActive]),
+                ("events", toJson [(left.1, left.2.1), (right.1, right.2.1)])] ++
+                formulaFields (ConditionalQueueTraceEncoding.encode input
+                  [(leftGuard, left.2.2), (rightGuard, right.2.2)] (.literal length)))
+
+def conditionalFixtures : List Json :=
+  let fixed := fun (active : Bool) (event : Event InputInt) => (Term.boolean active, event)
+  let guard := Term.equal (.app .int .int 500 (.integer 0)) (.integer 7)
+  let nativeGuard := Term.isContent .signature (.unknown .content 30)
+  let fixture := fun name expected input entries length =>
+    Json.mkObj ([("name", toJson name), ("expected", toJson expected),
+      ("scope", toJson "conditional-whole-queue")] ++
+      formulaFields (ConditionalQueueTraceEncoding.encode input entries length))
+  [
+    fixture "inactive-pop-preserves-head" "sat" [.not sameKeys]
+      [fixed true (.peek (.symbolic 0)), fixed false (.pop (.symbolic 1)),
+       fixed true (.peek (.symbolic 0)), fixed true (.length 1)] (.literal 1),
+    fixture "inactive-pop-cannot-shrink" "unsat" []
+      [fixed false (.pop (.literal 0)), fixed true (.length 0)] (.literal 1),
+    fixture "inactive-last-peek" "sat" [.not sameKeys]
+      [fixed true (.peek (.symbolic 0)), fixed false (.peek (.symbolic 1))] (.literal 1),
+    fixture "alias-initial-duplicates" "sat" [sameKeys]
+      [fixed true (.pop (.symbolic 0)), fixed false (.pop (.literal 9)),
+       fixed true (.pop (.symbolic 1)), fixed true (.length 0)] (.literal 2),
+    fixture "active-send-suppresses-duplicate" "sat" []
+      [fixed true (.send (.literal 0)), fixed false (.pop (.literal 0)),
+       fixed true (.send (.literal 0)), fixed true (.length 1)] (.literal 0),
+    fixture "active-send-cannot-grow-duplicate" "unsat" []
+      [fixed true (.send (.literal 0)), fixed false (.pop (.literal 0)),
+       fixed true (.send (.literal 0)), fixed true (.length 2)] (.literal 0),
+    fixture "last-peek-outside-initial-prefix" "sat" []
+      [fixed true (.pop (.literal 0)), fixed true (.send (.literal 1)),
+       fixed true (.peek (.literal 1))] (.literal 1),
+    fixture "guard-only-source-uf" "sat" []
+      [(guard, .send (.literal 0)), (guard, .pop (.literal 0)),
+       (.not guard, .pop (.literal 0))] (.literal 0),
+    fixture "shared-source-guard-forced-false" "unsat" [.not guard]
+      [(guard, .send (.literal 0)), (guard, .pop (.literal 0)),
+       (.not guard, .pop (.literal 0))] (.literal 0),
+    fixture "native-guard-true" "sat" [.equal (.unknown .content 30) .signature]
+      [(nativeGuard, .send (.literal 0)), (nativeGuard, .pop (.literal 0)),
+       fixed true (.length 0)] (.literal 0),
+    fixture "native-guard-false" "sat" [.equal (.unknown .content 30) (.transaction (.integer 7))]
+      [(nativeGuard, .pop (.literal 0)), fixed true (.length 0)] (.literal 0),
+    fixture "negative-initial-length" "unsat" [] [] (.literal (-1)),
+    fixture "million-initial-entries" "sat" []
+      [fixed true (.peek (.literal 0)), fixed true (.pop (.literal 0)),
+       fixed true (.length 999999)] (.literal 1000000),
+    fixture "million-initial-contradiction" "unsat" []
+      [fixed true (.peek (.literal 0)), fixed true (.pop (.literal 0)),
+       fixed true (.length 1000000)] (.literal 1000000),
+    fixture "symbolic-million-length" "sat" [.equal (.unknown .int 1000000) (.integer 1000000)]
+      [fixed false (.pop (.literal 0)), fixed true (.length 1000000)] (.symbolic 1000000)
+  ]
 
 @[noinline] private def referenceInitialEncode (input : SmtScript.Formula)
     (trace : List (Event InputInt)) (length : InputInt) : SmtScript.Formula :=
@@ -282,10 +353,12 @@ def main (args : List String) : IO UInt32 := do
     | ["--summary-initial"] => some (CCFRaft.Sparse.QueueCountFixtures.initialFixtures true ++
         CCFRaft.Sparse.QueueCountFixtures.summaryRegressions)
     | ["--summary-exhaustive"] => some (CCFRaft.Sparse.QueueCountFixtures.exhaustiveFixtures true)
+    | ["--conditional"] => some CCFRaft.Sparse.QueueCountFixtures.conditionalFixtures
+    | ["--conditional-exhaustive"] => some CCFRaft.Sparse.QueueCountFixtures.conditionalExhaustiveFixtures
     | _ => none
   let some fixtures := fixtures |
     let stderr <- IO.getStderr
-    stderr.putStrLn "usage: QueueCountFixtureMain.lean [--scalar | --initial | --exhaustive | --summary-initial | --summary-exhaustive | --cache-equivalence]"
+    stderr.putStrLn "usage: QueueCountFixtureMain.lean [--scalar | --initial | --exhaustive | --summary-initial | --summary-exhaustive | --conditional | --conditional-exhaustive | --cache-equivalence]"
     return 1
   IO.println (Lean.Json.arr fixtures.toArray).compress
   return 0
