@@ -46,8 +46,9 @@ observations under the input formula and explicit nonnegative index constraints.
 `IntervalQueryEncoding` emits guarded universal Int predicates with one shared
 root-array witness and an exact rendered-text existence theorem.
 `JointIntervalCompletion` proves joint completion with exact point preservation
-on those same roots. Its typed compiler integration and entry-valued cells
-remain separate work.
+on those same roots. `JointIntervalEncoding` emits both point observations and
+universal queries with one root family and an exact rendered-text existence
+theorem. Entry-valued cells remain separate work.
 `EntryValue` supplies a fixed entry domain with signed integer scalars and
 node-set bitvectors, bijective with Model entries. SMT support for those sorts
 is not yet implemented.
@@ -56,8 +57,12 @@ wrong-constructor selector values, without hiding failures in unused branches.
 The actual SMT evaluator and text layer are not yet connected to those laws.
 `PacketIdentity` characterizes complete packet equality by tagged headers,
 payload lengths, and bounded entry reads. It proves finite key-class
-injectivity from both identity directions, but does not yet compile sparse
-packet constraints or transport queues.
+injectivity from both identity directions. `PacketRealization` constructs one
+unique complete packet family from valid flat descriptors and shared Entry
+reads. Graph consistency and emitted packet constraints remain separate work.
+`FiniteQueueTransport` proves whole-queue transport using only an equivalence
+between finite tracked supports and fresh fillers. Untracked values can collapse
+to one filler without losing queue positions or initial multiplicities.
 `ConfigurationSnapshot` characterizes complete positive-index Model snapshots
 with finite frontier queries. Raw callback-phase mapping is still separate.
 `ConfigurationPublication` is a separate local candidate for one successful
@@ -76,11 +81,20 @@ script: satisfiability is equivalent to one initial Int queue executing the
 entire unconditional event trace. It derives tracked-key coverage, alignment,
 and a fresh filler without caller premises or a capacity bound.
 Conditional operations and complete packet keys remain separate work.
+`QueueSummaryEncoding` composes the whole-queue compiler with proved presence
+normalization. It removes sends known to leave the queue unchanged, while
+preserving the same initial queue and every pop, peek, and length observation.
+Possible aliases invalidate remembered presence after a pop unless literal
+inequality proves otherwise. This transforms queue events, not full Raft actions
+or external references to intermediate count versions.
 `SymbolBounds` computes fresh IDs without constructing symbol sets. A proved
 compiler rewrite preserves the original allocation bound exactly.
 
 `SmtScript` declares each referenced typed symbol once and assembles assertions.
 Its interpreter preserves formula truth for the same assignment.
+`SymbolCollection` replaces repeated symbol-list scans with a hash-set pass.
+Its exact list-equality theorem preserves the last-occurrence declaration order
+and every script byte through a compiler rewrite.
 `SmtText` and `SmtNumerals` prove exact decoding of generated symbol and decimal
 numeral tokens.
 `SmtExpressionText` parses emitted nested expressions and preserves their
@@ -92,7 +106,7 @@ The opt-in solver fixtures cover both explicit declarations and generated script
 CCF_SPARSE_SMT_TESTS=1 CVC5=/path/to/cvc5 \
 	python3 -m unittest tests.test_sparse_smt tests.test_sparse_queue_encoding \
 		tests.test_sparse_interval_encoding tests.test_sparse_interval_predicate \
-		tests.test_sparse_interval_queries
+		tests.test_sparse_interval_queries tests.test_sparse_joint_encoding
 ```
 
 These fixtures cover emitted component constraints, not full trace correctness.
@@ -128,6 +142,9 @@ The suite reports one emission time plus the median of three cvc5 process
 times. Cases cover repeated sends, send/pop cycles, and unknown initial length
 constrained by million-element observations. These are queue-only measurements,
 not full-Raft timings or a runtime pass threshold.
+`CCF_SPARSE_QUEUE_KEYS=4` selects four-key literal and unresolved-symbolic cases.
+`CCF_SPARSE_QUEUE_SUMMARIES=1` selects `QueueSummaryEncoding`; the event count
+still includes all original events, with `encoded_events` reported separately.
 
 This is a proof library, not a complete sparse trace validator. Full Model
 composition, full-trace SMT correspondence, and end-to-end performance remain

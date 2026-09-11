@@ -52,6 +52,7 @@ New repository bridges extend that foundation:
 | `Sparse/IntervalPredicate.lean` | Explicit Int comparisons lower with generated locality and alias-preserving semantics. Deduplication before the cut/reference product preserves all planned-demand membership. |
 | `Sparse/IntervalQueryEncoding.lean` | Rendered guarded universal Int queries are satisfiable iff one original assignment and one root-array family satisfy the input, nonnegative bounds, and all queries. |
 | `Sparse/JointIntervalCompletion.lean` | One root family satisfies all universal queries while preserving every joint requested value, including arbitrary root/version points and inactive query-cut reads. |
+| `Sparse/JointIntervalEncoding.lean` | Actual rendered point observations and universal Int queries are satisfiable iff one original assignment and one root family satisfy all of them. |
 | `Sparse/IntervalQueries.lean` | Finite read equations and reference-local cut predicates correspond to one root-array family for every universal query, preserving requested cut values. |
 | `Sparse/MonotoneIntervals.lean` | Joint finite-cut completion for one log with point facts, interval predicates, nondecreasing terms, and a current-term bound. |
 | `Sparse/ConfigurationSnapshot.lean` | Exact ordered positive-index Model snapshots and same-log completion using `2m+1` frontier-query records for `m` snapshot entries. |
@@ -59,8 +60,10 @@ New repository bridges extend that foundation:
 | `Sparse/EntryValue.lean` | Fixed nonrecursive content and entry values are bijective with actual Model values, with equality transport, decoded term ordering, guarded payload views, and pointwise array equivalence. |
 | `Sparse/EntrySelectorSemantics.lean` | Total wrong-constructor selector interpretations are represented without restriction. Correctly guarded reads are interpretation-independent, with strict branch-success requirements. |
 | `Sparse/PacketIdentity.lean` | Complete packet equality/disequality is characterized by seven-tag headers, lengths, and bounded entry equality/mismatch. Both identity directions yield an injective finite key-class map. |
+| `Sparse/PacketRealization.lean` | One unique complete packet family follows from valid flat descriptors and shared Entry reads. Identity depends only on complete headers, lengths, and live entries. |
 | `Sparse/AppendEntriesRanges.lean` | Actual send/receive index alignment. Enabled sends contain at most one entry; arbitrary initial packets remain unbounded. |
 | `Sparse/FiniteMembership.lean` | One finite initial set for a complete membership/insert trace, preserving key aliases. |
+| `Sparse/FiniteQueueTransport.lean` | Whole-queue existence transports through finite tracked-support equivalence and fresh fillers. Untracked contents may collapse, but no queue positions are lost. |
 | `Sparse/QueueReadback.lean` | Fixed-plan finite read/scalar constraints correspond to one count-array heap and imply a concrete whole-queue execution. |
 | `Sparse/QueuePlan.lean` | Constructs the plan and closed demands. Finite constraints hold iff one concrete queue of the supplied length executes the whole unconditional trace. |
 | `Sparse/QueuePresence.lean` | Removes known-present sends with same-initial-queue equivalence, under possibly aliased keys and sound disequality. |
@@ -69,6 +72,7 @@ New repository bridges extend that foundation:
 | `Sparse/QueueScalarEncoding.lean` | Adds exact guards, windows, shared order, and nonnegative initial length under one assignment, preserving every reserved count function. |
 | `Sparse/QueueInitialEncoding.lean` | Adds the initial prefix histogram and alias-aware distinct-key budget with a constructive assignment extension that preserves input, counts, windows, and order. |
 | `Sparse/QueueTraceEncoding.lean` | The actual emitted formula and rendered text are satisfiable iff one initial Int queue of the interpreted length executes the whole unconditional event trace under the original input. |
+| `Sparse/QueueSummaryEncoding.lean` | Proved presence normalization removes redundant sends before whole-queue emission, preserving the same initial queue and the original trace existence contract. |
 | `Sparse/ReadbackHints.lean` | Unequal observed projection values justify key disequality and skipping a store. |
 | `Sparse/Smt.lean` | Typed Bool/Int terms lower to a strict s-expression interpreter; symbol names are injective. |
 | `Sparse/SmtScript.lean` | Generates unique typed declarations and commands. Command evaluation preserves formula truth for the same assignment. |
@@ -77,6 +81,7 @@ New repository bridges extend that foundation:
 | `Sparse/SmtExpressionText.lean` | Parses the existing expression renderer's output for arbitrary nesting, preserving structure and same-assignment evaluation without a depth cap. |
 | `Sparse/SmtScriptText.lean` | Parses complete generated scripts back to their commands and preserves fixed-assignment truth, using the compiler's LF-separated subset. |
 | `Sparse/SymbolBounds.lean` | Direct structural maxima equal the original symbol-set allocation bound. A kernel-proved compiler rewrite preserves fresh IDs without constructing those sets. |
+| `Sparse/SymbolCollection.lean` | Tail-recursive hash-set collection equals `List.dedup` exactly, including last-occurrence order. The SmtScript compiler rewrite preserves declarations and text. |
 
 `QueuePlan.generated_exists_iff` requires nonnegative initial length, tracked-key
 coverage, lawful equality, and a fresh filler value. Its conservative ancestor
@@ -136,8 +141,8 @@ Its 187 native cases include 162 bound/alias combinations compared with a
 finite-array oracle. Other cases cover hidden splice cuts, million-scale
 domains, repeated queries, and 400 shared versions.
 Passing a point-read formula as input does not identify its roots with this
-compiler's fresh roots. Joint typed point/universal emission, existential
-mismatch, entry values, and Model integration remain open.
+compiler's fresh roots. Use `JointIntervalEncoding` for linked points and queries.
+Existential mismatch, entry values, and Model integration remain open.
 The composer must carry the full `nextFunctionId` reservation, including
 unprinted slots, rather than scan only emitted declarations.
 
@@ -148,8 +153,15 @@ Completion preserves all requested values, including points outside intervals,
 without dummy queries, successor scalars, or synthetic versions.
 The value type needs no equality or inhabitant instance.
 `tests/test_sparse_joint_interval.py` covers executable demand construction,
-including 400 point positions and a million-root universe. Typed allocation
-and rendered-text integration are still separate.
+including 400 point positions and a million-root universe.
+
+`JointIntervalEncoding` supplies typed allocation and rendered-text correspondence.
+It reserves every point-position and expected-symbol ID, retains all point
+equalities, and uses one shared read block with the full function reservation.
+Its 311 native cases include 288 bound, point, and alias combinations checked
+against a finite-array oracle. Point-only 400-position emission needs 800
+demands, and one point in a million-root domain needs one demand.
+The compiler and extracted universal helpers have an independent review.
 
 The chosen entry representation uses fixed native datatypes with signed
 integer term/transaction fields and 15-bit node sets. `EntryValue` supplies
@@ -174,10 +186,21 @@ entry, including duplicate entries, terms, and configuration masks. Header
 Nat fields remain bijective signed codes; lengths and positions are ordinary
 Nat. The fixed-value theorem starts with coherent complete packets. It does
 not construct packet witnesses from independent sparse projections.
-Sparse payload completion, conditional equality/mismatch emission, and
-finite-support queue transport remain open. Initial packet payloads must not
+`PacketRealization` constructs complete packet witnesses from one shared
+Entry read family and flat descriptors. Its optional addresses allow empty
+packets without dummy arrays. Nonempty payloads require an address, and
+nonappend tags require zero payload length. Shared graph consistency remains
+a composition premise. The unit has a target build and independent review.
+Conditional equality/mismatch emission and packet-specific queue transport
+remain open. Initial packet payloads must not
 be equated with current sender logs, and whole-array tail equality is not
 finite-payload identity.
+
+`FiniteQueueTransport` supplies generic whole-trace transport without a global
+value equivalence. It separates every tracked key from all other values, while
+allowing untracked values to share a fresh filler. Both directions preserve
+initial queue length and multiplicities. The parent reviewed and built this
+unit. Linking the finite supports to complete packet descriptions remains open.
 
 Configuration snapshots are derived Model observations, not a mutable global
 configuration variable. Empty positive-index snapshots do not remove implicit
@@ -221,6 +244,29 @@ unknown-million-length SAT. Each combines emission with the median of three
 cvc5 process times. The cycle case still misses the two-second target.
 Declaration construction accounts for 0.63-0.84 seconds in these runs.
 These one-key fixtures do not establish full-Raft or multi-key performance.
+
+Four-key 400-event controls exposed the remaining cost. Without presence
+normalization, literal sends took 5.147 seconds SAT, unresolved symbolic sends
+11.823 seconds, and symbolic send/pop cycles 5.651 seconds.
+`QueueSummaryEncoding` now reuses `QueuePresence.normalize` with proved literal
+differences and composes its same-initial-queue iff with the rendered-text iff.
+It preserves every pop, peek, and length observation. No full Raft action or
+external intermediate-version reference may be deleted through this API.
+
+With `CCF_SPARSE_QUEUE_SUMMARIES=1`, the same four-key send traces encode five
+queue events and take 15-17 ms SAT. The cycle retains all 400 events and still
+takes 5.640 seconds. Normalization is included in emission time.
+`CCF_SPARSE_QUEUE_KEYS=4` selects these cases in the existing scaling suite.
+The 25 focused summary cases and all 486 finite-oracle cases pass alongside
+the unnormalized controls. The new composition has an independent review.
+
+The subsequent `SymbolCollection` compiler rewrite reduced four-key cycle
+declaration construction from 2.414 seconds to 0.117 seconds with identical
+400,062-byte scripts. Total SAT remains 3.412 seconds, including 1.161 seconds
+of formula construction and 2.035 seconds in cvc5. Formula construction is
+the next emitter bottleneck. Fifteen native cases compare the hash collector,
+compiled collection, allocation bounds, and complete scripts against the
+explicit old list algorithm.
 
 `QueueInitialEncoding` adds initial prefix histograms and alias-aware budgets.
 Its key list is syntactically unique. Distinct symbolic names remain separate

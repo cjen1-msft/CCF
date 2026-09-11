@@ -6,14 +6,17 @@ import Sparse.ConfigurationPublication
 import Sparse.EntryValue
 import Sparse.EntrySelectorSemantics
 import Sparse.FiniteMembership
+import Sparse.FiniteQueueTransport
 import Sparse.IntervalDemandPlan
 import Sparse.IntervalEncoding
 import Sparse.IntervalPredicate
 import Sparse.IntervalQueryEncoding
 import Sparse.IntervalQueries
 import Sparse.JointIntervalCompletion
+import Sparse.JointIntervalEncoding
 import Sparse.MonotoneIntervals
 import Sparse.PacketIdentity
+import Sparse.PacketRealization
 import Sparse.QueueEncoding
 import Sparse.QueueInitialEncoding
 import Sparse.QueueObservationBounds
@@ -21,6 +24,7 @@ import Sparse.QueuePlan
 import Sparse.QueuePresence
 import Sparse.QueueScalarEncoding
 import Sparse.QueueTraceEncoding
+import Sparse.QueueSummaryEncoding
 import Sparse.QueueReadback
 import Sparse.ReadbackHints
 import Sparse.Smt
@@ -30,4 +34,5 @@ import Sparse.SmtScript
 import Sparse.SmtScriptText
 import Sparse.SmtText
 import Sparse.SymbolBounds
+import Sparse.SymbolCollection
 import Sparse.VersionedIntervals
