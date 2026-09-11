@@ -59,8 +59,9 @@ with finite frontier queries. Raw callback-phase mapping is still separate.
 `QueueEncoding` emits typed count-read constraints with alias-safe observations
 and fresh function names. `QueueScalarEncoding` adds queue guards, windows,
 and shared packet order. `QueueInitialEncoding` adds the initial prefix histogram
-and alias-aware count budget, preserving the existing input, count, and order
-functions. `QueueTraceEncoding` closes both directions for the actual rendered
+and alias-aware count budget. It deduplicates syntactic keys without removing
+events or initial-prefix occurrences, preserving the existing input, count,
+and order functions. `QueueTraceEncoding` closes both directions for the actual rendered
 script: satisfiability is equivalent to one initial Int queue executing the
 entire unconditional event trace. It derives tracked-key coverage, alignment,
 and a fresh filler without caller premises or a capacity bound.

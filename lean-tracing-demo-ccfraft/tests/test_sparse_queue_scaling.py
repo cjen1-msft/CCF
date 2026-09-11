@@ -43,6 +43,7 @@ class SparseQueueScalingTests(unittest.TestCase):
             for case in cases:
                 with self.subTest(case=case["case"]):
                     self.assertEqual(case["events"], size)
+                    self.assertEqual(case["tracked_keys"], 1)
                     self.assertTrue(case["script"].isascii())
                     self.assertEqual(case["bytes"], len(case["script"].encode("ascii")))
                     path = artifacts / (case["case"] + ".smt2")

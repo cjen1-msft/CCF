@@ -100,8 +100,54 @@ theorem tally_final (counts : Int -> Int) (keys : List Int) :
 
 def eventKeys : List (Event InputInt) -> List InputInt
   | [] => []
-  | .send key :: rest | .pop key :: rest | .peek key :: rest => key :: eventKeys rest
+  | .send key :: rest | .pop key :: rest | .peek key :: rest => (eventKeys rest).insert key
   | .length _ :: rest => eventKeys rest
+
+theorem event_keys_mem (trace : List (Event InputInt)) (key : InputInt) :
+    Membership.mem (eventKeys trace) key <->
+      Membership.mem trace (.send key) \/ Membership.mem trace (.pop key) \/ Membership.mem trace (.peek key) := by
+  induction trace with
+  | nil => simp [eventKeys]
+  | cons event rest ih =>
+    cases event <;> simp [eventKeys, ih, or_assoc, or_left_comm, or_comm]
+
+theorem event_keys_nodup (trace : List (Event InputInt)) : (eventKeys trace).Nodup := by
+  induction trace with
+  | nil => simp [eventKeys]
+  | cons event rest ih =>
+    cases event with
+    | send key | pop key | peek key => exact ih.insert
+    | length length => exact ih
+
+theorem interpreted_event_keys_mem (assignment : Assignment) (trace : List (Event InputInt)) (value : Int) :
+    Membership.mem ((eventKeys trace).map (InputInt.eval assignment)).toFinset value <->
+      exists key : InputInt, key.eval assignment = value /\
+        (Membership.mem trace (.send key) \/ Membership.mem trace (.pop key) \/ Membership.mem trace (.peek key)) := by
+  simp only [List.mem_toFinset, List.mem_map, event_keys_mem, and_comm]
+
+theorem repeated_send_keys (key : InputInt) (count : Nat) :
+    eventKeys (List.replicate count (.send key)) = if count = 0 then [] else [key] := by
+  induction count with
+  | zero => rfl
+  | succ count ih =>
+    rw [List.replicate_succ, eventKeys, ih]
+    cases count <;> simp
+
+theorem repeated_cycle_keys_reads (key : InputInt) (count : Nat) :
+    eventKeys ((List.replicate count [Event.send key, .pop key]).flatten) =
+      (if count = 0 then [] else [key]) /\
+    CountedQueue.readHeads ((List.replicate count [Event.send key, .pop key]).flatten) =
+      List.replicate count key := by
+  induction count with
+  | zero => simp [eventKeys, CountedQueue.readHeads]
+  | succ count ih =>
+    simp only [List.replicate_succ, List.flatten_cons, List.cons_append, List.nil_append,
+      eventKeys, CountedQueue.readHeads, ih.1, ih.2]
+    cases count <;> simp
+
+theorem distinct_symbolic_keys (left right : Nat) (different : Not (left = right)) :
+    eventKeys [.send (.symbolic left), .peek (.symbolic right)] = [.symbolic left, .symbolic right] := by
+  simp [eventKeys, different]
 
 theorem read_heads_eval (assignment : Assignment) (trace : List (Event InputInt)) :
     CountedQueue.readHeads (QueueScalarEncoding.evalTrace assignment trace) =
@@ -128,7 +174,7 @@ theorem tracked_uses (assignment : Assignment) (trace : List (Event InputInt)) :
       cases event with
       | send key | pop key | peek key =>
         exact And.intro (included key (by simp [eventKeys]))
-          (ih keys (fun later member => included later (List.mem_cons_of_mem key member)))
+          (ih keys (fun later member => included later (by simp [eventKeys, member])))
       | length length => exact ih keys included
   apply covered
   intro key member
@@ -809,6 +855,13 @@ theorem empty_initial_length (original : Assignment) (countBase base : Nat) (len
   refine And.intro (install_aux_correct original countBase base length [] [] before) (And.intro ?_ ?_)
   next => rw [install_inputs]; exact nonnegative
   next => simp [IntegerQueue.RawInitialFacts]
+
+theorem negative_length_rejected (assignment : Assignment) (input : SmtScript.Formula)
+    (trace : List (Event InputInt)) (length : InputInt) (negative : length.eval assignment < 0) :
+    Not (SmtScript.Holds assignment (encode input trace length)) := by
+  intro holds
+  have nonnegative := ((encode_correct assignment input trace length).mp holds).2.2.1.1
+  exact not_lt_of_ge nonnegative negative
 
 end CCFRaft.Sparse.QueueInitialEncoding
 

@@ -99,6 +99,10 @@ class SparseQueueEncodingTests(unittest.TestCase):
     def test_initial_accounting_scripts(self) -> None:
         self.assertEqual(len(self.initial_fixtures), 20)
         self.assert_scripts(self.initial_fixtures, "count-scalar-initial")
+        cases = {case["name"]: case for case in self.initial_fixtures}
+        self.assertEqual(cases["initial-duplicates-allowed"]["tracked_keys"], 1)
+        self.assertEqual(cases["aliased-keys-count-once"]["tracked_keys"], 2)
+        self.assertEqual(cases["last-unconsumed-peek"]["tracked_keys"], 3)
 
     def test_exhaustive_two_event_traces(self) -> None:
         cases = load_fixtures("--exhaustive")

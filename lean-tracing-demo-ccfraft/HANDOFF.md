@@ -171,6 +171,8 @@ observations do not imply these source-local bounds.
 The count-only and count/scalar solver fixtures include SAT cases with
 inconsistent initial counts to keep those boundaries explicit.
 `QueueInitialEncoding` adds initial prefix histograms and alias-aware budgets.
+Its key list is syntactically unique. Distinct symbolic names remain separate
+even when they denote the same value, and every `readHeads` occurrence remains.
 It includes the last unconsumed peek without counting repeated earlier peeks
 as extra initial occurrences. Its public entry point accepts no extra count
 observations.
@@ -195,12 +197,14 @@ keys. Reproduce them with `CCF_SPARSE_SMT_TESTS=1` and `CVC5`:
 python3 -m unittest tests.test_sparse_queue_encoding
 ```
 
-Native queue emission still needs a proved key summary. At 80 same-key events,
-the occurrence-based grids produce 741 KB for repeated sends or 1 MB for
-alternating sends and pops. Before the allocation summary, both took about
-2.35 seconds before solving. `SymbolBounds` reduces those one-run totals to
-1.33 and 1.43 seconds, with unchanged script byte counts. The grids themselves
-remain redundant.
+At 80 same-key events, the original accounting grids produced 741 KB for
+repeated sends or 1 MB for alternating sends and pops. Both took about
+2.35 seconds before solving. `SymbolBounds` reduced those one-run totals to
+1.33 and 1.43 seconds, with unchanged script byte counts.
+Syntactic-key deduplication then reduced them to 325 KB and 297 KB, both about
+0.79 seconds. The whole-execution iffs remain unchanged.
+Count-query ancestor prefixes still overlap in `QueueEncoding.syntaxQueries`;
+each key's maximum demanded version is the next summary to prove.
 
 `QueueEncoding.freshBase_eq_summary` is a kernel-proved `[csimp]` equality.
 It retains the original specification and replaces compiled allocation calls
@@ -212,7 +216,8 @@ They also compare allocated script bytes.
 construction separately. The session's `queue-initial-scale-baseline.jsonl`,
 `queue-initial-scale-phases.jsonl`, and `queue-initial-scale-summary.jsonl`
 record the before/after evidence. These are emission-only measurements.
-Syntactic-key deduplication is the next optimization of this proved queue unit.
+`queue-dedup-small-profile.jsonl` records the later key-dedup measurements.
+No 400-event performance result follows from these smaller profiles.
 
 `tests/test_sparse_queue_scaling.py` is separately enabled by
 `CCF_SPARSE_QUEUE_SCALING=1`, with `CCF_SPARSE_QUEUE_EVENTS` defaulting to 400.

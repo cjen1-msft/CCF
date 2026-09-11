@@ -35,7 +35,8 @@ private def scalarFixture (name expected : String) (input : SmtScript.Formula)
 private def initialFixture (name expected : String) (input : SmtScript.Formula)
     (trace : List (Event InputInt)) (length : InputInt) : Json :=
   Json.mkObj ([("name", toJson name), ("expected", toJson expected),
-    ("scope", toJson "count-scalar-initial")] ++
+    ("scope", toJson "count-scalar-initial"),
+    ("tracked_keys", toJson (QueueInitialEncoding.eventKeys trace).length)] ++
     formulaFields (QueueInitialEncoding.encode input trace length))
 
 private def sendOne : List (Event InputInt) := [.send (.literal 1)]
