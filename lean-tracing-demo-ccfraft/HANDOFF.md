@@ -48,9 +48,9 @@ reducer integration. See README's "Native explorer API" section.
 
 The first Lean encoder slice is now implemented in `Sparse/NativeEncode.lean`
 and `Sparse/NativeEncodeMain.lean`, with `native_lean.py` as its JSON and solver
-wrapper. It supports `checkQuorum` and ten observation kinds, including
+wrapper. It supports `checkQuorum` and eleven observation kinds, including
 the nullable `retirementIndex`, `retirementCommittableIndex`, and
-`retiredCommittedIndex` fields.
+`retiredCommittedIndex` fields and nullable `votedFor`.
 The Python reference still supports six actions and the broader observation
 schema. Do not confuse these coverage levels or fall back to Python SMT emission.
 
@@ -245,7 +245,7 @@ Lean's JSON parser, IO runtime, and cvc5 are not verified by these theorems.
 
 Next, expand Model actions and observations before raw reducer integration.
 Keep the full-model assurance flag false: current coverage is still one
-action and ten observation kinds. No change to the reducer's untrusted
+action and eleven observation kinds. No change to the reducer's untrusted
 interpretation boundary follows from proving the JSON encoder.
 
 `NativeOptional` is the next value-codec unit for local-state coverage.
@@ -255,9 +255,9 @@ Decoding distinguishes a valid absent value, `some none`, from invalid payloads,
 The proofs cover round trips, exact literal equality, and actual domain terms.
 `NativeSmtFixtureMain` now has 25 kernel-backed solver cases, including nine
 optional-value cases. The codecs are now wired for all three retirement-index
-fields. `votedFor` remains to be integrated.
+fields and `votedFor`.
 
-`Encoding` now inherits `role`, `newFollower`, and all three retirement-index
+`Encoding` now inherits `role`, `newFollower`, `votedFor`, and all three retirement-index
 references from `NodeColumns`.
 `SameReferences`, `fresh_success`, and `define_success` preserve the complete
 column record. `QuorumResult.columns` specifies the record update, with
@@ -289,7 +289,15 @@ instead of repeating every field in an intermediate conjunction.
 `retiredCommittedIndex` adds column 9, with fresh allocation starting at 10.
 Its initial-state and full trace/script correspondence are complete.
 The generated observation matrix now exercises all three retirement fields.
-Next add `votedFor` using the optional-identity codec, then the other local fields.
+`votedFor` adds column 10 and an allocation-guarded optional-identity domain.
+Fresh allocation now starts at 11. The initial-state, observation, assignment,
+quorum-frame, and JSON-to-script proofs cover the field. The shared optional
+observation generator exercises nulls, conflicting values, absent source nodes,
+and frame preservation for both indices and identities. Identity cases use
+21 declared nodes, self votes, and an absent target outside the bootstrap set.
+No target-allocation or configuration-membership constraint was added.
+Next add `votesGranted` and `preVotesGranted` using the existing bitset codec,
+then `membershipState`, `sentIndex`, and `matchIndex`.
 
 Follow [Representation design priorities](README.md#representation-design-priorities):
 start with the simplest representation to prove correct, using native SMT

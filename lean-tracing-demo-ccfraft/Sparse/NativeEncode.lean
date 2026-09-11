@@ -42,10 +42,11 @@ structure NodeColumns where
   retirementIndex : Nat := 7
   retirementCommittableIndex : Nat := 8
   retiredCommittedIndex : Nat := 9
+  votedFor : Nat := 10
 
 structure Encoding (width : PNat) extends NodeColumns where
   bootstrap : BitVec width
-  next : Nat := 10
+  next : Nat := 11
   assertions : Array (Expr .bool) := #[]
   symbolsBounded : forall formula, formula ∈ assertions ->
     forall symbol, symbol ∈ formula.symbols -> symbol.2 < next
@@ -118,7 +119,8 @@ def initialNodeDomains (width : PNat) (node : Nat) : List (Expr .bool) :=
       (entryDomain (entryAt width node (.bound .here)))),
     optionalNatDomain (read 7 node (.inl .unit)),
     optionalNatDomain (read 8 node (.inl .unit)),
-    optionalNatDomain (read 9 node (.inl .unit))]
+    optionalNatDomain (read 9 node (.inl .unit)),
+    optionalNodeDomain width (read 10 node (.inl .unit))]
 
 def initialAssertions (width : PNat) : List (Expr .bool) :=
   (List.range width.val).flatMap (initialNodeDomains width)
@@ -258,6 +260,13 @@ def decodeInstruction (width : PNat) (names : Array String) (value : Json) :
     return if kind = "retirementIndex" then .retirementIndex node expected
       else if kind = "retirementCommittableIndex" then .retirementCommittableIndex node expected
       else .retiredCommittedIndex node expected
+  | "votedFor" =>
+    fields value ["kind", "node", "value"]
+    let value <- field value "value"
+    let expected <- match value with
+      | .null => pure none
+      | _ => some <$> resolve width names value
+    return .votedFor node expected
   | _ => throw s!"unsupported native Lean instruction {kind}"
 
 def observationClauses {width : PNat} (columns : NodeColumns) :
@@ -276,6 +285,9 @@ def observationClauses {width : PNat} (columns : NodeColumns) :
     .ok [.equal (read columns.retirementCommittableIndex node.val (.inl .unit)) (optionalTerm Nat.cast expected)]
   | .retiredCommittedIndex node expected =>
     .ok [.equal (read columns.retiredCommittedIndex node.val (.inl .unit)) (optionalTerm Nat.cast expected)]
+  | .votedFor node expected =>
+    .ok [.equal (read columns.votedFor node.val (.inl .unit))
+      (optionalTerm (fun peer : Fin width => (peer.val : Int)) expected)]
   | _ => .error "unsupported native Lean observation"
 
 def instruction {width : PNat} (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) :

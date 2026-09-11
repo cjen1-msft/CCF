@@ -28,6 +28,9 @@ structure NodeDomain (width : PNat) (assignment : Assignment) (node : Nat) : Pro
   retiredCommittedIndex :
     (optionalDecode naturalValue?
       ((read 9 node (.inl .unit) : Expr optionalIntTy).eval assignment Locals.empty)).isSome = true
+  votedFor :
+    (optionalDecode (nodeValue? width)
+      ((read 10 node (.inl .unit) : Expr optionalIntTy).eval assignment Locals.empty)).isSome = true
 
 theorem initial_node_domains_correct (width : PNat) (assignment : Assignment) (node : Nat) :
     Holds (initialNodeDomains width node) assignment <-> NodeDomain width assignment node := by
@@ -46,6 +49,7 @@ theorem initial_node_domains_correct (width : PNat) (assignment : Assignment) (n
     or_imp, forall_and, forall_eq]
   rw [logDomain]
   repeat rw [optional_nat_domain_correct]
+  rw [optional_node_domain_correct]
   simp only [all, List.foldr_cons, List.foldr_nil,
     Term.eval, Bool.and_eq_true, decide_eq_true_eq, and_true]
   constructor <;> aesop (add safe constructors NodeDomain) (add safe cases NodeDomain)
@@ -66,6 +70,8 @@ noncomputable def initialRow (width : PNat) (assignment : Assignment) (node : Fi
       ((read 8 node.val (.inl .unit) : Expr optionalIntTy).eval assignment Locals.empty)).get domain.retirementCommittableIndex
     retiredCommittedIndex := (optionalDecode naturalValue?
       ((read 9 node.val (.inl .unit) : Expr optionalIntTy).eval assignment Locals.empty)).get domain.retiredCommittedIndex
+    votedFor := (optionalDecode (nodeValue? width)
+      ((read 10 node.val (.inl .unit) : Expr optionalIntTy).eval assignment Locals.empty)).get domain.votedFor
     log := {
       length := (scalarValue assignment 3 node.val).toNat
       entries := fun index => modelEntry
@@ -149,6 +155,15 @@ theorem initial_arrays_rep (width : PNat) (assignment : Assignment)
       simpa [initialArrays, NativeArrayCheckQuorum.get, present, initialRow] using value
     · simp [initialArrays, NativeArrayCheckQuorum.get, present, read, allocated, Term.eval,
         NativeArrayCheckQuorum.Local.fresh, NativeArrayCheckQuorum.Local.ofModel, freshNodeState, optionalValue]
+  · intro node
+    by_cases present : assignment (.array .int .bool) 0 node.val = true
+    · have value := optional_value_of_valid (fun peer : Fin width => (peer.val : Int))
+        (nodeValue? width) node_value_round_trip node_value_exact
+        ((read 10 node.val (.inl .unit) : Expr optionalIntTy).eval assignment Locals.empty)
+        (domains node).votedFor
+      simpa [initialArrays, NativeArrayCheckQuorum.get, present, initialRow] using value
+    · simp [initialArrays, NativeArrayCheckQuorum.get, present, read, allocated, Term.eval,
+        NativeArrayCheckQuorum.Local.fresh, NativeArrayCheckQuorum.Local.ofModel, freshNodeState, optionalValue]
 
 theorem initial_assertions_domains (width : PNat) (assignment : Assignment) :
     Holds (initialAssertions width) assignment <->
@@ -208,8 +223,11 @@ noncomputable def initialAssignment (width : PNat) (seed : Assignment)
     (nodeArray (.inl ()) fun node => optionalValue Nat.cast (NativeArrayCheckQuorum.get arrays node).retirementIndex)
   let assignment := assignment.set (.array .int optionalIntTy) 8
     (nodeArray (.inl ()) fun node => optionalValue Nat.cast (NativeArrayCheckQuorum.get arrays node).retirementCommittableIndex)
-  assignment.set (.array .int optionalIntTy) 9
+  let assignment := assignment.set (.array .int optionalIntTy) 9
     (nodeArray (.inl ()) fun node => optionalValue Nat.cast (NativeArrayCheckQuorum.get arrays node).retiredCommittedIndex)
+  assignment.set (.array .int optionalIntTy) 10
+    (nodeArray (.inl ()) fun node => optionalValue (fun peer : Fin width => (peer.val : Int))
+      (NativeArrayCheckQuorum.get arrays node).votedFor)
 
 theorem initial_assignment_rep (width : PNat) (seed : Assignment)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) :
@@ -255,6 +273,12 @@ theorem initial_assignment_domains (width : PNat) (seed : Assignment)
       ((read 9 node.val (.inl .unit) : Expr optionalIntTy).eval
         (initialAssignment width seed arrays) Locals.empty)).isSome = true
     rw [rep.retiredCommittedIndex node, optional_decode_value Nat.cast naturalValue? natural_value_round_trip]
+    rfl
+  · change (optionalDecode (nodeValue? width)
+      ((read 10 node.val (.inl .unit) : Expr optionalIntTy).eval
+        (initialAssignment width seed arrays) Locals.empty)).isSome = true
+    rw [rep.votedFor node, optional_decode_value (fun peer : Fin width => (peer.val : Int))
+      (nodeValue? width) node_value_round_trip]
     rfl
 
 theorem model_initial_assertions (width : PNat) [Bootstrap (Fin width)] (seed : Assignment)
