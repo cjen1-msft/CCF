@@ -86,7 +86,7 @@ New repository bridges extend that foundation:
 | `Sparse/QueueScalarEncoding.lean` | Adds exact guards, windows, shared order, and nonnegative initial length under one assignment, preserving every reserved count function. |
 | `Sparse/QueueInitialEncoding.lean` | Adds the initial prefix histogram and alias-aware distinct-key budget with a constructive assignment extension that preserves input, counts, windows, and order. |
 | `Sparse/ConditionalQueueAccounting.lean` | Fixed-Boolean guarded replay equals selected cursor replay. Active pops and a pending peek give the exact bounded read histogram under shared-order agreement. |
-| `Sparse/ConditionalQueueEncoding.lean` | Typed guard bindings preserve source terms/functions and give exact single-clause active/inactive count and scalar equations under one allocated assignment. |
+| `Sparse/ConditionalQueueEncoding.lean` | Typed guard bindings preserve source terms/functions. Static annotation and a finite count grid yield one coherent guarded cursor replay with original guard/key interpretation. |
 | `Sparse/QueueTraceEncoding.lean` | The actual emitted formula and rendered text are satisfiable iff one initial Int queue of the interpreted length executes the whole unconditional event trace under the original input. |
 | `Sparse/QueueSummaryEncoding.lean` | Proved presence normalization removes redundant sends before whole-queue emission, preserving the same initial queue and the original trace existence contract. |
 | `Sparse/ReadbackHints.lean` | Unequal observed projection values justify key disequality and skipping a store. |
@@ -400,9 +400,15 @@ for active updates and inactive count/head/tail identity, preserving original
 terms and complete external functions through allocation. Guard event indices
 are independent of count-write IDs. Supplied count states require explicit
 source and target range proofs.
-These equations cover only the listed keys, not entire generated count UFs.
-Whole-trace annotation, coherent total count-family construction, conditional
-histogram composition, and concrete-queue completion remain open.
+The trace block now preserves original event order and associates each write
+with its original guard position. Its count grid has exactly writes times
+tracked keys equations, including inactive writes.
+One canonical total count family agrees with every tracked read and yields
+one guarded cursor replay. Raw count UFs may still differ off-grid.
+The 320-case kernel oracle covers aliases, inactive writes, and intervening
+peeks. This is a replay soundness bridge, not a concrete-queue iff.
+Conditional histogram composition, initial budget, and concrete-queue
+completion remain open. The rectangular grid has no performance clearance.
 
 The initial-accounting fixtures include 20 focused cases and 486 two-event
 cases compared with a concrete queue interpreter. Those pairs use nine event

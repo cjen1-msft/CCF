@@ -1,4 +1,5 @@
 import Sparse.QueueInitialEncoding
+import Sparse.ConditionalQueueAccounting
 
 set_option autoImplicit false
 
@@ -565,6 +566,632 @@ theorem untracked_counts_unrestricted :
   norm_num [changedOutside] at at_untracked
 
 end Regression
+
+abbrev Entry := Prod (Term .bool) (Event InputInt)
+
+structure Row where
+  eventIndex : Nat
+  source : Nat
+  entry : Entry
+
+def Row.clause (row : Row) : Clause InputInt := clauseFor row.source row.entry.2
+
+def annotate (eventIndex source : Nat) : List Entry -> List Row
+  | [] => []
+  | entry :: rest =>
+    { eventIndex, source, entry } ::
+      annotate (eventIndex + 1) (clauseFor source entry.2).target rest
+
+theorem annotate_length (eventIndex source : Nat) (entries : List Entry) :
+    (annotate eventIndex source entries).length = entries.length := by
+  induction entries generalizing eventIndex source with
+  | nil => rfl
+  | cons entry rest ih => simp [annotate, ih]
+
+theorem annotate_entries (eventIndex source : Nat) (entries : List Entry) :
+    (annotate eventIndex source entries).map Row.entry = entries := by
+  induction entries generalizing eventIndex source with
+  | nil => rfl
+  | cons entry rest ih => simp [annotate, ih]
+
+theorem annotate_clauses (eventIndex source : Nat) (entries : List Entry) :
+    (annotate eventIndex source entries).map Row.clause =
+      QueueClause.compile source (source + 1) (entries.map Prod.snd) := by
+  induction entries generalizing eventIndex source with
+  | nil => rfl
+  | cons entry rest ih =>
+    cases entry with
+    | mk guard event =>
+      cases event <;> simp [annotate, Row.clause, clauseFor, QueueClause.compile, QueueClause.writes, ih]
+
+theorem annotate_at (eventIndex source : Nat) (entries : List Entry) (index : Fin entries.length) :
+    let row := (annotate eventIndex source entries)[index.val]'(by rw [annotate_length]; exact index.isLt)
+    row.eventIndex = eventIndex + index.val /\ row.entry = entries[index.val] := by
+  induction entries generalizing eventIndex source with
+  | nil => exact Fin.elim0 index
+  | cons entry rest ih =>
+    cases index using Fin.cases with
+    | zero => simp [annotate]
+    | succ index =>
+      simpa [annotate, Nat.add_assoc, Nat.add_comm, Nat.add_left_comm] using
+        ih (eventIndex + 1) (clauseFor source entry.2).target index
+
+theorem row_index (entries : List Entry) (row : Row) (member : Membership.mem (annotate 0 0 entries) row) :
+    exists index : Fin entries.length, row.eventIndex = index.val /\ row.entry = entries[index.val] := by
+  cases List.mem_iff_getElem.mp member with
+  | intro index witness =>
+    cases witness with
+    | intro bound selected =>
+      have inside : index < entries.length := by simpa [annotate_length] using bound
+      refine Exists.intro (Fin.mk index inside) ?_
+      have at_index := annotate_at 0 0 entries (Fin.mk index inside)
+      simpa only [Nat.zero_add, selected] using at_index
+
+def writeRows (entries : List Entry) : List Row :=
+  (annotate 0 0 entries).filter (fun row => QueueClause.writes row.entry.2)
+
+theorem write_rows_clauses (entries : List Entry) :
+    (writeRows entries).map Row.clause =
+      (QueuePlan.operations (entries.map Prod.snd)).mapIdx (QueuePlan.writeClause 0) := by
+  have filtered :
+      ((annotate 0 0 entries).filter (fun row => QueueClause.writes row.entry.2)).map Row.clause =
+        ((annotate 0 0 entries).map Row.clause).filter (fun clause => QueueClause.writes clause.event) := by
+    simp only [List.filter_map, Function.comp_def, Row.clause, clauseFor]
+  rw [writeRows, filtered, annotate_clauses, QueuePlan.compile_writes]
+
+theorem write_rows_length (entries : List Entry) :
+    (writeRows entries).length = QueueReadback.writeCount (entries.map Prod.snd) := by
+  have length := congrArg List.length (write_rows_clauses entries)
+  simpa [QueuePlan.operations_length] using length
+
+theorem write_row_at (entries : List Entry) (index : Fin (writeRows entries).length) :
+    let row := (writeRows entries)[index.val]
+    row.source = index.val /\ row.clause.target = index.val + 1 /\
+      row.entry.2 = (QueuePlan.operation (entries.map Prod.snd)
+        (Fin.mk index.val (by rw [Eq.symm (write_rows_length entries)]; exact index.isLt))).event := by
+  have equal := congrArg (fun rows => rows[index.val]?) (write_rows_clauses entries)
+  have operation_bound : index.val < (QueuePlan.operations (entries.map Prod.snd)).length := by
+    simp [QueuePlan.operations_length, Eq.symm (write_rows_length entries)]
+  simp only [List.getElem?_map, List.getElem?_eq_getElem index.isLt,
+    List.getElem?_mapIdx, List.getElem?_eq_getElem operation_bound, Option.map_some,
+    Option.some.injEq] at equal
+  have source := congrArg Clause.source equal
+  have target := congrArg Clause.target equal
+  have event := congrArg Clause.event equal
+  exact And.intro (by simpa [Row.clause, clauseFor, QueuePlan.writeClause] using source)
+    (And.intro (by simpa [QueuePlan.writeClause] using target)
+      (by simpa [Row.clause, clauseFor, QueuePlan.writeClause, QueuePlan.operation] using event))
+
+theorem write_operation_table (entries : List Entry) (index : Fin (writeRows entries).length) :
+    ((writeRows entries)[index.val]).entry.2 =
+      ((QueueEncoding.operationArray (entries.map Prod.snd))[index.val]'(by
+        rw [QueueEncoding.operation_array_size, Eq.symm (write_rows_length entries)]
+        exact index.isLt)).event := by
+  rw [QueueEncoding.operation_array_lookup (entries.map Prod.snd)
+    (Fin.mk index.val (by rw [Eq.symm (write_rows_length entries)]; exact index.isLt))]
+  exact (write_row_at entries index).2.2
+
+def keysOf (entries : List Entry) : List InputInt := QueueInitialEncoding.eventKeys (entries.map Prod.snd)
+
+def countGrid (guardsBase countsBase : Nat) (entries : List Entry) : SmtScript.Formula :=
+  let keys := keysOf entries
+  (writeRows entries).flatMap fun row =>
+    keys.map (countEquation guardsBase countsBase row.eventIndex row.source row.entry.2)
+
+theorem count_grid_length (guardsBase countsBase : Nat) (entries : List Entry) :
+    (countGrid guardsBase countsBase entries).length =
+      QueueReadback.writeCount (entries.map Prod.snd) * (keysOf entries).length := by
+  rw [Eq.symm (write_rows_length entries)]
+  unfold countGrid
+  generalize writeRows entries = rows
+  induction rows with
+  | nil => simp
+  | cons row rest ih => simp [ih, Nat.add_mul, Nat.add_comm]
+
+def scalarRows (guardsBase countsBase fieldsBase : Nat) (entries : List Entry) : SmtScript.Formula :=
+  (annotate 0 0 entries).flatMap fun row =>
+    scalarFormula guardsBase countsBase fieldsBase row.eventIndex row.source row.entry.2
+
+def traceBlock (guardsBase countsBase fieldsBase : Nat) (entries : List Entry) : SmtScript.Formula :=
+  guardBindings guardsBase (entries.map Prod.fst) ++
+    (countGrid guardsBase countsBase entries ++ scalarRows guardsBase countsBase fieldsBase entries)
+
+theorem holds_flatMap (assignment : Assignment) {T : Type} (items : List T)
+    (formulas : T -> SmtScript.Formula) :
+    SmtScript.Holds assignment (items.flatMap formulas) <->
+      forall item, Membership.mem items item -> SmtScript.Holds assignment (formulas item) := by
+  constructor
+  next =>
+    intro holds item member term present
+    exact holds term (List.mem_flatMap.mpr (Exists.intro item (And.intro member present)))
+  next =>
+    intro holds term member
+    cases List.mem_flatMap.mp member with
+    | intro item spec => exact holds item spec.1 term spec.2
+
+theorem readonly_count (assignment : Assignment) (guardsBase countsBase eventIndex source : Nat)
+    (event : Event InputInt) (readonly : QueueClause.writes event = false) (key : InputInt) :
+    (countEquation guardsBase countsBase eventIndex source event key).eval assignment = true := by
+  cases event <;> simp_all [QueueClause.writes, countEquation, clauseFor, activeCount, Term.eval]
+
+theorem trace_block_facts (assignment : Assignment) (guardsBase countsBase fieldsBase : Nat)
+    (entries : List Entry) (holds : SmtScript.Holds assignment (traceBlock guardsBase countsBase fieldsBase entries))
+    (row : Row) (member : Membership.mem (annotate 0 0 entries) row) :
+    ClauseFacts assignment assignment (row.entry.1.eval assignment)
+      countsBase fieldsBase row.source row.entry.2 (keysOf entries) := by
+  have blocks := (QueueEncoding.holds_append _ _ _).mp holds
+  have components := (QueueEncoding.holds_append _ _ _).mp blocks.2
+  have scalar := (holds_flatMap _ _ _).mp components.2 row member
+  have counts : SmtScript.Holds assignment
+      ((keysOf entries).map (countEquation guardsBase countsBase row.eventIndex row.source row.entry.2)) := by
+    by_cases writing : QueueClause.writes row.entry.2 = true
+    next =>
+      exact (holds_flatMap _ _ _).mp components.1 row (List.mem_filter.mpr (And.intro member writing))
+    next =>
+      intro term present
+      cases List.mem_map.mp present with
+      | intro key spec =>
+        rw [Eq.symm spec.2]
+        exact readonly_count assignment guardsBase countsBase row.eventIndex row.source row.entry.2
+          (by cases flag : QueueClause.writes row.entry.2 <;> simp_all) key
+  have fact := (clause_correct assignment guardsBase countsBase fieldsBase row.eventIndex row.source
+    row.entry.2 (keysOf entries)).mp ((QueueEncoding.holds_append _ _ _).mpr (And.intro counts scalar))
+  cases row_index entries row member with
+  | intro index spec =>
+    have bound := bound_guard_ref assignment guardsBase (entries.map Prod.fst) blocks.1
+      (Fin.mk index.val (by simpa only [List.length_map] using index.isLt))
+    simp only [List.getElem_map] at bound
+    rw [spec.1, bound] at fact
+    simpa only [spec.2] using fact
+
+theorem trace_block_correct (assignment : Assignment) (guardsBase countsBase fieldsBase : Nat)
+    (entries : List Entry) :
+    SmtScript.Holds assignment (traceBlock guardsBase countsBase fieldsBase entries) <->
+      SmtScript.Holds assignment (guardBindings guardsBase (entries.map Prod.fst)) /\
+        forall row, Membership.mem (annotate 0 0 entries) row ->
+          ClauseFacts assignment assignment (row.entry.1.eval assignment)
+            countsBase fieldsBase row.source row.entry.2 (keysOf entries) := by
+  constructor
+  next =>
+    intro holds
+    exact And.intro ((QueueEncoding.holds_append _ _ _).mp holds).1
+      (trace_block_facts assignment guardsBase countsBase fieldsBase entries holds)
+  next =>
+    intro spec
+    have each : forall row, Membership.mem (annotate 0 0 entries) row ->
+        SmtScript.Holds assignment
+          (clauseFormula guardsBase countsBase fieldsBase row.eventIndex row.source row.entry.2 (keysOf entries)) := by
+      intro row member
+      rw [clause_correct]
+      cases row_index entries row member with
+      | intro index ids =>
+        have guard := bound_guard_ref assignment guardsBase (entries.map Prod.fst) spec.1
+          (Fin.mk index.val (by simpa only [List.length_map] using index.isLt))
+        rw [ids.1, guard]
+        simpa only [List.getElem_map, ids.2] using spec.2 row member
+    apply (QueueEncoding.holds_append _ _ _).mpr
+    refine And.intro spec.1 ((QueueEncoding.holds_append _ _ _).mpr (And.intro ?_ ?_))
+    next =>
+      apply (holds_flatMap _ _ _).mpr
+      intro row member
+      exact ((QueueEncoding.holds_append _ _ _).mp (each row (List.mem_filter.mp member).1)).1
+    next =>
+      apply (holds_flatMap _ _ _).mpr
+      intro row member
+      exact ((QueueEncoding.holds_append _ _ _).mp (each row member)).2
+
+def countStep (counts : Int -> Int) (event : Event Int) : Int -> Int :=
+  (QueueClause.advance { counts, window := { head := 0, tail := 0 } } event).counts
+
+theorem advance_counts (cursor : Cursor Int) (event : Event Int) :
+    (QueueClause.advance cursor event).counts = countStep cursor.counts event := by
+  cases event with
+  | send key => by_cases zero : cursor.counts key = 0 <;> simp [countStep, QueueClause.advance, zero]
+  | pop key => rfl
+  | peek key => rfl
+  | length length => rfl
+
+theorem advance_counts_agree (assignment : Assignment) (keys : List InputInt)
+    (left right : Cursor Int) (event : Event InputInt)
+    (used : CountedQueue.Uses keys.toFinset [event])
+    (agree : forall key, Membership.mem keys key -> left.counts (key.eval assignment) = right.counts (key.eval assignment))
+    (query : InputInt) (member : Membership.mem keys query) :
+    (QueueClause.advance left (QueueScalarEncoding.evalEvent assignment event)).counts (query.eval assignment) =
+      (QueueClause.advance right (QueueScalarEncoding.evalEvent assignment event)).counts (query.eval assignment) := by
+  cases event with
+  | send key =>
+    have same := agree key (List.mem_toFinset.mp used.1)
+    by_cases zero : right.counts (key.eval assignment) = 0 <;>
+      simp [QueueScalarEncoding.evalEvent, QueueClause.advance, same, zero, Function.update_apply, agree query member]
+  | pop key =>
+    have same := agree key (List.mem_toFinset.mp used.1)
+    simp [QueueScalarEncoding.evalEvent, QueueClause.advance, Function.update_apply, same, agree query member]
+  | peek key => exact agree query member
+  | length length => exact agree query member
+
+theorem guard_windows_agree (assignment : Assignment) (keys : List InputInt)
+    (order : Int -> Int) (left right : Cursor Int) (event : Event InputInt)
+    (used : CountedQueue.Uses keys.toFinset [event]) (window : left.window = right.window)
+    (agree : forall key, Membership.mem keys key -> left.counts (key.eval assignment) = right.counts (key.eval assignment)) :
+    (QueueClause.guard order left (QueueScalarEncoding.evalEvent assignment event) <->
+      QueueClause.guard order right (QueueScalarEncoding.evalEvent assignment event)) /\
+    (QueueClause.advance left (QueueScalarEncoding.evalEvent assignment event)).window =
+      (QueueClause.advance right (QueueScalarEncoding.evalEvent assignment event)).window := by
+  cases event with
+  | send key =>
+    have same := agree key (List.mem_toFinset.mp used.1)
+    by_cases zero : right.counts (key.eval assignment) = 0 <;>
+      simp [QueueScalarEncoding.evalEvent, QueueClause.guard, QueueClause.advance, same, zero, window]
+  | pop key =>
+    have same := agree key (List.mem_toFinset.mp used.1)
+    simp [QueueScalarEncoding.evalEvent, QueueClause.guard, QueueClause.advance, same, window]
+  | peek key => simp [QueueScalarEncoding.evalEvent, QueueClause.guard, QueueClause.advance, window]
+  | length length => simp [QueueScalarEncoding.evalEvent, QueueClause.guard, QueueClause.advance, window]
+
+theorem row_covered (entries : List Entry) (row : Row) (member : Membership.mem (annotate 0 0 entries) row) :
+    CountedQueue.Uses (keysOf entries).toFinset [row.entry.2] := by
+  have entry_member : Membership.mem entries row.entry := by
+    rw [Eq.symm (annotate_entries 0 0 entries)]
+    exact List.mem_map.mpr (Exists.intro row (And.intro member rfl))
+  have event_member : Membership.mem (entries.map Prod.snd) row.entry.2 :=
+    List.mem_map.mpr (Exists.intro row.entry (And.intro entry_member rfl))
+  cases event : row.entry.2 with
+  | send key | pop key | peek key =>
+    have tracked : Membership.mem (keysOf entries) key := by
+      rw [keysOf, QueueInitialEncoding.event_keys_mem]
+      simp only [event] at event_member
+      tauto
+    simp [CountedQueue.Uses, tracked]
+  | length length => simp [CountedQueue.Uses]
+
+-- A semantic total family. Emitted equations never expand this recursion.
+def canonicalFamily (assignment : Assignment) (root : Int -> Int) (rows : List Row) : Nat -> Int -> Int
+  | 0 => root
+  | index + 1 =>
+    let prior := canonicalFamily assignment root rows index
+    match rows[index]? with
+    | none => prior
+    | some row =>
+      if row.entry.1.eval assignment then countStep prior (QueueScalarEncoding.evalEvent assignment row.entry.2)
+      else prior
+
+theorem canonical_step (assignment : Assignment) (root : Int -> Int) (rows : List Row)
+    (index : Fin rows.length) :
+    canonicalFamily assignment root rows (index.val + 1) =
+      if rows[index.val].entry.1.eval assignment then
+        countStep (canonicalFamily assignment root rows index.val)
+          (QueueScalarEncoding.evalEvent assignment rows[index.val].entry.2)
+      else canonicalFamily assignment root rows index.val := by
+  simp only [canonicalFamily, List.getElem?_eq_getElem index.isLt]
+
+theorem canonical_row_step (assignment : Assignment) (root : Int -> Int)
+    (entries : List Entry) (row : Row) (member : Membership.mem (annotate 0 0 entries) row) :
+    canonicalFamily assignment root (writeRows entries) row.clause.target =
+      if row.entry.1.eval assignment then
+        countStep (canonicalFamily assignment root (writeRows entries) row.source)
+          (QueueScalarEncoding.evalEvent assignment row.entry.2)
+      else canonicalFamily assignment root (writeRows entries) row.source := by
+  by_cases writing : QueueClause.writes row.entry.2 = true
+  next =>
+    have present : Membership.mem (writeRows entries) row := List.mem_filter.mpr (And.intro member writing)
+    cases List.mem_iff_getElem.mp present with
+    | intro index witness =>
+      cases witness with
+      | intro bound selected =>
+        have ids := write_row_at entries (Fin.mk index bound)
+        have step := canonical_step assignment root (writeRows entries) (Fin.mk index bound)
+        simp only [selected] at ids step
+        rw [ids.1, ids.2.1]
+        exact step
+  next =>
+    cases event : row.entry.2 <;>
+      simp_all [QueueClause.writes, Row.clause, clauseFor, countStep,
+        QueueScalarEncoding.evalEvent, QueueClause.advance]
+
+theorem canonical_agrees (assignment : Assignment) (guardsBase countsBase fieldsBase : Nat)
+    (entries : List Entry) (holds : SmtScript.Holds assignment (traceBlock guardsBase countsBase fieldsBase entries))
+    (version : Nat) (bound : version <= (writeRows entries).length)
+    (key : InputInt) (tracked : Membership.mem (keysOf entries) key) :
+    canonicalFamily assignment (assignment.unary .int .int countsBase) (writeRows entries) version
+      (key.eval assignment) =
+        assignment.unary .int .int (countsBase + version) (key.eval assignment) := by
+  induction version generalizing key with
+  | zero => simp [canonicalFamily]
+  | succ version ih =>
+    have inside : version < (writeRows entries).length := by omega
+    let index : Fin (writeRows entries).length := Fin.mk version inside
+    let row := (writeRows entries)[version]
+    have member : Membership.mem (annotate 0 0 entries) row :=
+      (List.mem_filter.mp (List.getElem_mem inside)).1
+    have ids := write_row_at entries index
+    change row.source = version /\ row.clause.target = version + 1 /\ _ at ids
+    have facts := trace_block_facts assignment guardsBase countsBase fieldsBase entries holds row member
+    have agreement :
+        forall query, Membership.mem (keysOf entries) query ->
+          (canonicalFamily assignment (assignment.unary .int .int countsBase) (writeRows entries) version)
+              (query.eval assignment) =
+            assignment.unary .int .int (countsBase + version) (query.eval assignment) := by
+      intro query present
+      exact ih (by omega) query present
+    have transfer := advance_counts_agree assignment (keysOf entries)
+      { counts := canonicalFamily assignment (assignment.unary .int .int countsBase) (writeRows entries) version
+        window := { head := 0, tail := 0 } }
+      (QueueScalarEncoding.rawHeap assignment countsBase fieldsBase row.source) row.entry.2
+      (row_covered entries row member) (by simpa [QueueScalarEncoding.rawHeap, ids.1] using agreement) key tracked
+    have equation := facts.1 key tracked
+    have target : (clauseFor row.source row.entry.2).target = version + 1 := ids.2.1
+    simp only [target] at equation
+    have step := canonical_step assignment (assignment.unary .int .int countsBase) (writeRows entries) index
+    change canonicalFamily assignment _ _ (version + 1) = _ at step
+    rw [step]
+    change ((if row.entry.1.eval assignment then
+      countStep (canonicalFamily assignment (assignment.unary .int .int countsBase) (writeRows entries) version)
+        (QueueScalarEncoding.evalEvent assignment row.entry.2)
+      else canonicalFamily assignment (assignment.unary .int .int countsBase) (writeRows entries) version) :
+      Int -> Int) (key.eval assignment) = _
+    cases active : row.entry.1.eval assignment with
+    | false =>
+      simp only [active, Bool.false_eq_true, ite_false] at equation
+      simp only [Bool.false_eq_true, ite_false]
+      rw [agreement key tracked]
+      simpa [QueueScalarEncoding.rawHeap, ids.1] using equation.symm
+    | true =>
+      simp only [active, ite_true] at equation
+      simp only [ite_true]
+      unfold countStep
+      rw [transfer]
+      simpa [QueueScalarEncoding.rawHeap, ids.1] using equation.symm
+
+theorem canonical_actual_agrees (assignment : Assignment) (guardsBase countsBase fieldsBase : Nat)
+    (entries : List Entry) (holds : SmtScript.Holds assignment (traceBlock guardsBase countsBase fieldsBase entries))
+    (version : Nat) (bound : version <= (writeRows entries).length) (value : Int)
+    (tracked : Membership.mem ((keysOf entries).map (InputInt.eval assignment)).toFinset value) :
+    canonicalFamily assignment (assignment.unary .int .int countsBase) (writeRows entries) version value =
+      assignment.unary .int .int (countsBase + version) value := by
+  cases List.mem_map.mp (List.mem_toFinset.mp tracked) with
+  | intro key spec =>
+    rw [Eq.symm spec.2]
+    exact canonical_agrees assignment guardsBase countsBase fieldsBase entries holds version bound key spec.1
+
+theorem annotation_bounds (entries : List Entry) (row : Row)
+    (member : Membership.mem (annotate 0 0 entries) row) :
+    row.source <= (writeRows entries).length /\ row.clause.target <= (writeRows entries).length := by
+  have compiled : Membership.mem (QueueClause.compile 0 1 (entries.map Prod.snd)) row.clause := by
+    rw [Eq.symm (annotate_clauses 0 0 entries)]
+    exact List.mem_map.mpr (Exists.intro row (And.intro member rfl))
+  simpa [Row.clause, clauseFor, write_rows_length] using
+    QueuePlan.compile_bounds (entries.map Prod.snd) 0 row.clause compiled
+
+def coherentHeap (assignment : Assignment) (countsBase fieldsBase : Nat)
+    (entries : List Entry) : QueueClause.Heap Int :=
+  fun version =>
+    { counts := canonicalFamily assignment (assignment.unary .int .int countsBase) (writeRows entries) version
+      window := QueueScalarEncoding.windows assignment fieldsBase version }
+
+def RowHolds (assignment : Assignment) (order : Int -> Int) (heap : QueueClause.Heap Int) (row : Row) : Prop :=
+  if row.entry.1.eval assignment then
+    QueueClause.guard order (heap row.source) (QueueScalarEncoding.evalEvent assignment row.entry.2) /\
+      heap row.clause.target = QueueClause.advance (heap row.source) (QueueScalarEncoding.evalEvent assignment row.entry.2)
+  else heap row.clause.target = heap row.source
+
+theorem coherent_row (assignment : Assignment) (guardsBase countsBase fieldsBase : Nat)
+    (entries : List Entry) (holds : SmtScript.Holds assignment (traceBlock guardsBase countsBase fieldsBase entries))
+    (row : Row) (member : Membership.mem (annotate 0 0 entries) row) :
+    RowHolds assignment (QueueScalarEncoding.order assignment fieldsBase)
+      (coherentHeap assignment countsBase fieldsBase entries) row := by
+  have bounds := annotation_bounds entries row member
+  have facts := trace_block_facts assignment guardsBase countsBase fieldsBase entries holds row member
+  have agreement :
+      forall key, Membership.mem (keysOf entries) key ->
+        (coherentHeap assignment countsBase fieldsBase entries row.source).counts (key.eval assignment) =
+          (QueueScalarEncoding.rawHeap assignment countsBase fieldsBase row.source).counts (key.eval assignment) := by
+    intro key tracked
+    exact canonical_agrees assignment guardsBase countsBase fieldsBase entries holds row.source bounds.1 key tracked
+  have transfer := guard_windows_agree assignment (keysOf entries) (QueueScalarEncoding.order assignment fieldsBase)
+    (coherentHeap assignment countsBase fieldsBase entries row.source)
+    (QueueScalarEncoding.rawHeap assignment countsBase fieldsBase row.source)
+    row.entry.2 (row_covered entries row member) rfl agreement
+  have counts := canonical_row_step assignment (assignment.unary .int .int countsBase) entries row member
+  unfold RowHolds
+  cases active : row.entry.1.eval assignment with
+  | false =>
+    simp only [ClauseFacts, active, Bool.false_eq_true, ite_false] at facts
+    simp only [active, Bool.false_eq_true, ite_false] at counts
+    simp only [Bool.false_eq_true, ite_false]
+    apply (QueueClause.cursor_eq_iff _ _).mpr
+    exact And.intro facts.2.1 (And.intro facts.2.2 counts)
+  | true =>
+    simp only [ClauseFacts, active, ite_true] at facts
+    simp only [active, ite_true] at counts
+    simp only [ite_true]
+    refine And.intro (transfer.1.mpr facts.2.1) ?_
+    apply (QueueClause.cursor_eq_iff _ _).mpr
+    exact And.intro (facts.2.2.1.trans (congrArg SignedWindow.head transfer.2).symm)
+      (And.intro (facts.2.2.2.trans (congrArg SignedWindow.tail transfer.2).symm)
+        (counts.trans (advance_counts (coherentHeap assignment countsBase fieldsBase entries row.source)
+          (QueueScalarEncoding.evalEvent assignment row.entry.2)).symm))
+
+def evaluate (assignment : Assignment) (entries : List Entry) :
+    List (ConditionalQueueAccounting.GuardedEvent Int) :=
+  entries.map fun entry => (entry.1.eval assignment, QueueScalarEncoding.evalEvent assignment entry.2)
+
+theorem annotated_replay (assignment : Assignment) (order : Int -> Int) (heap : QueueClause.Heap Int)
+    (entries : List Entry) (eventIndex source : Nat)
+    (holds : forall row, Membership.mem (annotate eventIndex source entries) row -> RowHolds assignment order heap row) :
+    ConditionalQueueAccounting.replay order (heap source) (evaluate assignment entries) := by
+  induction entries generalizing eventIndex source with
+  | nil => trivial
+  | cons entry rest ih =>
+    have first := holds { eventIndex, source, entry } (by simp [annotate])
+    have tail := ih (eventIndex + 1) (clauseFor source entry.2).target
+      (fun row member => holds row (List.mem_cons_of_mem _ member))
+    simp only [RowHolds, Row.clause] at first
+    cases active : entry.1.eval assignment with
+    | false =>
+      simp only [active, Bool.false_eq_true, ite_false] at first
+      simpa only [evaluate, List.map_cons, active, ConditionalQueueAccounting.replay, first] using tail
+    | true =>
+      simp only [active, ite_true] at first
+      simp only [evaluate, List.map_cons, active, ConditionalQueueAccounting.replay]
+      change QueueClause.guard order (heap source) (QueueScalarEncoding.evalEvent assignment entry.2) /\
+        ConditionalQueueAccounting.replay order
+          (QueueClause.advance (heap source) (QueueScalarEncoding.evalEvent assignment entry.2))
+          (evaluate assignment rest)
+      exact And.intro first.1 (by simpa only [first.2] using tail)
+
+theorem trace_block_coherent_replay (assignment : Assignment) (guardsBase countsBase fieldsBase : Nat)
+    (entries : List Entry) (holds : SmtScript.Holds assignment (traceBlock guardsBase countsBase fieldsBase entries)) :
+    (forall version, version <= QueueReadback.writeCount (entries.map Prod.snd) ->
+      forall key, Membership.mem (keysOf entries) key ->
+        (coherentHeap assignment countsBase fieldsBase entries version).counts (key.eval assignment) =
+          assignment.unary .int .int (countsBase + version) (key.eval assignment)) /\
+    ConditionalQueueAccounting.replay (QueueScalarEncoding.order assignment fieldsBase)
+      { counts := assignment.unary .int .int countsBase
+        window := QueueScalarEncoding.windows assignment fieldsBase 0 }
+      (evaluate assignment entries) := by
+  constructor
+  next =>
+    intro version bound key tracked
+    exact canonical_agrees assignment guardsBase countsBase fieldsBase entries holds version
+      (by simpa [write_rows_length] using bound) key tracked
+  next =>
+    have follows := annotated_replay assignment (QueueScalarEncoding.order assignment fieldsBase)
+      (coherentHeap assignment countsBase fieldsBase entries) entries 0 0
+      (coherent_row assignment guardsBase countsBase fieldsBase entries holds)
+    simpa only [coherentHeap, canonicalFamily] using follows
+
+theorem evaluate_installed {size : Nat} (original : Assignment) (input : SmtScript.Formula)
+    (entries : List Entry) (counts : Fin (size + 1) -> Int -> Int)
+    (windows : Nat -> SignedWindow) (order : Int -> Int) :
+    evaluate (install original input (entries.map Prod.fst) counts windows order) entries =
+      evaluate original entries := by
+  unfold evaluate
+  apply List.map_congr_left
+  intro entry member
+  rw [install_event, install_source_term original input (entries.map Prod.fst) counts windows order _]
+  exact List.mem_append_right input (List.mem_map.mpr (Exists.intro entry (And.intro member rfl)))
+
+theorem installed_trace_replay (original : Assignment) (input : SmtScript.Formula) (entries : List Entry)
+    (counts : Fin (QueueReadback.writeCount (entries.map Prod.snd) + 1) -> Int -> Int)
+    (windows : Nat -> SignedWindow) (order : Int -> Int)
+    (holds : SmtScript.Holds (install original input (entries.map Prod.fst) counts windows order)
+      (input ++ traceBlock (guardBase input (entries.map Prod.fst)) (countBase input (entries.map Prod.fst))
+        (scalarBase input (entries.map Prod.fst) (QueueReadback.writeCount (entries.map Prod.snd))) entries)) :
+    SmtScript.Holds original input /\
+      ConditionalQueueAccounting.replay order { counts := counts 0, window := windows 0 } (evaluate original entries) := by
+  have parts := (QueueEncoding.holds_append _ _ _).mp holds
+  refine And.intro ((install_input _ _ _ _ _ _).mp parts.1) ?_
+  have follows := (trace_block_coherent_replay _ _ _ _ entries parts.2).2
+  have root :
+      (install original input (entries.map Prod.fst) counts windows order).unary .int .int
+        (countBase input (entries.map Prod.fst)) = counts 0 := by
+    simpa only [Nat.add_zero] using install_counts original input (entries.map Prod.fst) counts windows order 0
+  simpa only [root, install_order, install_windows, evaluate_installed] using follows
+
+namespace ReplayRegression
+
+def original (aliases : Bool) : Assignment where
+  constant ty id :=
+    match ty with
+    | .int => if id = 1 && !aliases then 1 else 0
+    | ty => Regression.original.constant ty id
+  unary := Regression.original.unary
+
+def entries (mask : Nat) : List Entry :=
+  [(.boolean (mask.testBit 0), .send (.symbolic 0)),
+   (.boolean (mask.testBit 1), .peek (.symbolic 0)),
+   (.boolean (mask.testBit 2), .pop (.symbolic 1)),
+   (.boolean (mask.testBit 3), .peek (.symbolic 0)),
+   (.boolean (mask.testBit 4), .pop (.symbolic 0))]
+
+theorem static_indices :
+    (annotate 0 0 (entries 31)).map (fun row => (row.eventIndex, row.source, row.clause.target)) =
+      [(0, 0, 1), (1, 1, 1), (2, 1, 2), (3, 2, 2), (4, 2, 3)] /\
+    (writeRows (entries 31)).map Row.eventIndex = [0, 2, 4] := by decide
+
+def initialCursor (queue : List Int) : Cursor Int :=
+  { counts := fun key => queue.count key, window := { head := 0, tail := queue.length } }
+
+def snapshots (assignment : Assignment) (queue : List Int) (items : List Entry) : List (Cursor Int) :=
+  (writeRows items).scanl (fun cursor row =>
+    if row.entry.1.eval assignment then QueueClause.advance cursor (QueueScalarEncoding.evalEvent assignment row.entry.2)
+    else cursor) (initialCursor queue)
+
+theorem snapshots_length (assignment : Assignment) (queue : List Int) (items : List Entry) :
+    (snapshots assignment queue items).length = QueueReadback.writeCount (items.map Prod.snd) + 1 := by
+  simp [snapshots, write_rows_length]
+
+def orderFor (assignment : Assignment) (queue : List Int) (items : List Entry) : Int -> Int :=
+  let state := items.foldl (fun state entry =>
+    if entry.1.eval assignment then
+      let event := QueueScalarEncoding.evalEvent assignment entry.2
+      let cells := match event with
+        | .send key => if state.1.counts key = 0 then state.2 ++ [key] else state.2
+        | _ => state.2
+      (QueueClause.advance state.1 event, cells)
+    else state) (initialCursor queue, queue)
+  fun position => if position < 0 then 99 else state.2[position.toNat]?.getD 99
+
+def fixture (assignment : Assignment) (queue : List Int) (items : List Entry) : Assignment :=
+  let states := snapshots assignment queue items
+  let counts (index : Fin (QueueReadback.writeCount (items.map Prod.snd) + 1)) :=
+    (states[index.val]'(by rw [snapshots_length]; exact index.isLt)).counts
+  let windows := fun index => (states[index]?.getD (initialCursor queue)).window
+  install assignment [] (items.map Prod.fst) counts windows (orderFor assignment queue items)
+
+def guardDecision (order : Int -> Int) (cursor : Cursor Int) (event : Event Int) :
+    Decidable (QueueClause.guard order cursor event) := by
+  cases event <;> unfold QueueClause.guard <;> infer_instance
+
+def replayDecision (order : Int -> Int) : (cursor : Cursor Int) ->
+    (trace : List (ConditionalQueueAccounting.GuardedEvent Int)) ->
+      Decidable (ConditionalQueueAccounting.replay order cursor trace)
+  | _, [] => isTrue True.intro
+  | cursor, (false, _) :: rest => replayDecision order cursor rest
+  | cursor, (true, event) :: rest =>
+    letI := guardDecision order cursor event
+    letI := replayDecision order (QueueClause.advance cursor event) rest
+    show Decidable (QueueClause.guard order cursor event /\
+      ConditionalQueueAccounting.replay order (QueueClause.advance cursor event) rest) from inferInstance
+
+def agrees (aliases : Bool) (queue : List Int) (mask : Nat) : Bool :=
+  let assignment := original aliases
+  let items := entries mask
+  let actual := (traceBlock (guardBase [] (items.map Prod.fst)) (countBase [] (items.map Prod.fst))
+    (scalarBase [] (items.map Prod.fst) (QueueReadback.writeCount (items.map Prod.snd))) items).all
+      (fun term => term.eval (fixture assignment queue items))
+  let expected := @decide
+    (ConditionalQueueAccounting.replay (orderFor assignment queue items) (initialCursor queue) (evaluate assignment items))
+    (replayDecision (orderFor assignment queue items) (initialCursor queue) (evaluate assignment items))
+  actual == expected
+
+theorem finite_oracle :
+    [false, true].all (fun aliases =>
+      ([[], [0], [0, 0], [1], [2]] : List (List Int)).all (fun queue =>
+        (List.range 32).all (fun mask => agrees aliases queue mask))) = true := by decide +kernel
+
+theorem inactive_write_identity :
+    canonicalFamily (original true) (fun _ => 0) (writeRows (entries 27)) 2 =
+      canonicalFamily (original true) (fun _ => 0) (writeRows (entries 27)) 1 := by
+  funext key
+  rfl
+
+def offGridEntries : List Entry := [(.boolean false, .send (.literal 0))]
+
+def offGridModel : Assignment :=
+  install Regression.original [] (offGridEntries.map Prod.fst) Regression.changedOutside
+    Regression.emptyWindows (fun _ => 77)
+
+theorem off_grid_raw_disagreement :
+    (traceBlock (guardBase [] (offGridEntries.map Prod.fst))
+      (countBase [] (offGridEntries.map Prod.fst)) (scalarBase [] (offGridEntries.map Prod.fst) 1)
+      offGridEntries).all (fun term => term.eval offGridModel) = true /\
+    offGridModel.unary .int .int (countBase [] (offGridEntries.map Prod.fst)) 99 = 0 /\
+    offGridModel.unary .int .int (countBase [] (offGridEntries.map Prod.fst) + 1) 99 = 7 /\
+    canonicalFamily offGridModel (offGridModel.unary .int .int (countBase [] (offGridEntries.map Prod.fst)))
+      (writeRows offGridEntries) 1 99 = 0 := by decide
+
+end ReplayRegression
 
 end CCFRaft.Sparse.ConditionalQueueEncoding
 

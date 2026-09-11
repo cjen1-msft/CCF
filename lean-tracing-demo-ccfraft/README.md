@@ -113,8 +113,9 @@ This is a semantic reference, not a guarded SMT compiler or runtime storage
 representation. It does not provide typed guards or concrete-queue completion.
 `ConditionalQueueEncoding` binds typed guards without asserting them and proves
 one clause's active update or inactive count/head/tail identity. Its allocator
-preserves original terms and complete external functions. Whole-trace alignment,
-initial accounting composition, and concrete-queue completion remain open.
+preserves original terms and complete external functions. Static annotation and
+a finite count grid now yield one coherent guarded cursor replay. Initial
+accounting composition and concrete-queue completion remain open.
 `QueueSummaryEncoding` composes the whole-queue compiler with proved presence
 normalization. It removes sends known to leave the queue unchanged, while
 preserving the same initial queue and every pop, peek, and length observation.
