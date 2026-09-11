@@ -3,6 +3,7 @@
 
 import Shared.SymbolicData
 import Shared.BoundedContainer
+import Shared.Membership
 import MachineGenerated.BoundedStateProofs
 
 set_option autoImplicit false
@@ -24,15 +25,7 @@ def roleEquiv : Fin 5 ≃ Role where
 
 abbrev roleCodec : Codec Role := (Codec.fin 4).transport roleEquiv
 
-def membershipEquiv : Fin 5 ≃ MembershipState where
-  toFun := fun i => match i.val with
-    | 0 => .active | 1 => .retirementOrdered | 2 => .retirementSigned
-    | 3 => .retirementCompleted | _ => .retiredCommitted
-  invFun := fun r => match r with
-    | .active => 0 | .retirementOrdered => 1 | .retirementSigned => 2
-    | .retirementCompleted => 3 | .retiredCommitted => 4
-  left_inv := by intro i; fin_cases i <;> rfl
-  right_inv := by intro r; cases r <;> rfl
+abbrev membershipEquiv : Fin 5 ≃ MembershipState := MembershipState.equiv
 
 abbrev membershipCodec : Codec MembershipState :=
   (Codec.fin 4).transport membershipEquiv
