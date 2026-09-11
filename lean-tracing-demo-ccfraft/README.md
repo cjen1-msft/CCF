@@ -59,7 +59,8 @@ or restricting possible executions is not a performance optimization.
 
 The Lean migration starts with `Sparse/NativeEncode.lean`.
 It accepts `checkQuorum` and the `allocated`, `role`, `newFollower`, `logLength`,
-`commit`, `currentTerm`, and `entry` observations. Other instructions are errors.
+`commit`, `currentTerm`, `entry`, and `retirementIndex` observations.
+`retirementIndex` accepts a natural number or `null`. Other instructions are errors.
 `native_lean.py` handles JSON input and solver execution. It delegates all SMT
 construction to Lean, with no Python encoder fallback.
 
@@ -134,7 +135,7 @@ values. `model_initial_assertions` proves the converse for arbitrary Model
 states, including states with non-fresh unobserved fields.
 The JSON decoder now produces typed Model-level instructions and entries.
 `NativeObservationEncoding.observation_model_correct` proves that the actual
-clauses for all seven supported observations match the Model, under the
+clauses for the supported observations match the Model, under the
 represented columns and initial domains.
 `NativeCompilerEncoding` connects initial domains and observation clauses to
 actual state-transformer execution, preserving prior assertions and column
@@ -169,13 +170,17 @@ implementation correctly, or verify Lean's JSON parser and IO runtime.
 
 This Lean encoder remains experimental. Remaining Model actions, observations,
 and raw reducer integration are unfinished. The API's full-model assurance
-flag remains false; current coverage is one action and seven observation kinds.
+flag remains false; current coverage is one action and eight observation kinds.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.
 Invalid payloads fail decoding rather than becoming `none` or wrapping to
 another identity. The module proves round trips, exact literal equality,
-and emitted domain predicates. These codecs do not yet add accepted input kinds.
+and emitted domain predicates. `retirementIndex` is wired through initial
+state realization, observation compilation, and the JSON-to-script theorem.
+Its value is not bounded by the log length. Observing `null` does not imply
+that the node is allocated, but a non-null value requires an allocated node.
+The remaining optional fields are not yet accepted by the Lean encoder.
 `Encoding` now inherits its mutable column references from `NodeColumns`.
 Compiler frame proofs preserve that whole record, and the quorum result
 specifies a record update for the two changed fields.

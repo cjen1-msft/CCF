@@ -48,7 +48,8 @@ reducer integration. See README's "Native explorer API" section.
 
 The first Lean encoder slice is now implemented in `Sparse/NativeEncode.lean`
 and `Sparse/NativeEncodeMain.lean`, with `native_lean.py` as its JSON and solver
-wrapper. It supports only `checkQuorum` and seven scalar/log observation kinds.
+wrapper. It supports `checkQuorum` and eight observation kinds, including
+the nullable `retirementIndex` field.
 The Python reference still supports six actions and the broader observation
 schema. Do not confuse these coverage levels or fall back to Python SMT emission.
 
@@ -97,7 +98,7 @@ including the bootstrap branch where the physical witness is unused.
 connect both existential index assignments to `CurrentIndex` and `OtherAt`.
 Assigning these integer witnesses leaves the represented log state unchanged.
 
-`Sparse/NativeNodeEncoding.lean` now defines `NodeColumnsRep` for the seven
+`Sparse/NativeNodeEncoding.lean` now defines `NodeColumnsRep` for the supported
 currently observed column kinds. `node_columns_model_enabled` connects the exact
 shared `leadingGuards` and `configurationGuards` expressions to actual Model
 enabledness. `node_columns_model_step` connects `stepDownRole` and
@@ -116,7 +117,7 @@ Its proof-only witness chooses fresh values for unobserved fields; the emitted
 clauses do not impose those values. The normal Sparse target audits both modules.
 
 `model_initial_assertions` now proves the converse for arbitrary Model states.
-`initialAssignment` populates the seven initial columns from native arrays and
+`initialAssignment` populates the initial columns from native arrays and
 retains the seed assignment's other symbols. The original Model state remains
 the represented state, so its unobserved fields need not be fresh.
 
@@ -124,7 +125,7 @@ The JSON decoder now returns typed `NativeArrayCheckQuorum.Instruction` values
 with identities in `Fin width` and actual Model entry payloads. The encoder uses
 `entryTerm` and the shared `observationClauses` rather than constructing
 observation expressions in the JSON parser. `NativeObservationEncoding` proves
-all seven supported observation kinds against actual Model observations.
+the supported observation kinds against actual Model observations.
 Entry equality uses the live-index assertion before applying the value-domain
 round trip. The refactor preserves all 150 earlier Model-case scripts exactly.
 
@@ -243,7 +244,7 @@ Lean's JSON parser, IO runtime, and cvc5 are not verified by these theorems.
 
 Next, expand Model actions and observations before raw reducer integration.
 Keep the full-model assurance flag false: current coverage is still one
-action and seven observation kinds. No change to the reducer's untrusted
+action and eight observation kinds. No change to the reducer's untrusted
 interpretation boundary follows from proving the JSON encoder.
 
 `NativeOptional` is the next value-codec unit for local-state coverage.
@@ -252,11 +253,10 @@ Decoding distinguishes a valid absent value, `some none`, from invalid payloads,
 `none`. It rejects negative indices and identities outside the declared width.
 The proofs cover round trips, exact literal equality, and actual domain terms.
 `NativeSmtFixtureMain` now has 25 kernel-backed solver cases, including nine
-optional-value cases. The optional codecs are not yet wired into JSON
-observations or state columns. They are intended for `votedFor` and the three
-retirement-index fields.
+optional-value cases. The codecs are now wired for `retirementIndex`.
+`votedFor` and the other retirement-index fields remain to be integrated.
 
-`Encoding` now inherits `role` and `newFollower` from `NodeColumns`.
+`Encoding` now inherits `role`, `newFollower`, and `retirementIndex` from `NodeColumns`.
 `SameReferences`, `fresh_success`, and `define_success` preserve the complete
 column record. `QuorumResult.columns` specifies the record update, with
 derived role and follower equalities for callers. All prior scripts remain
@@ -266,9 +266,20 @@ instead of separate role and follower indices. Quorum representation updates
 retain the predecessor record's unchanged fields. Trace and script proofs
 now assume the default initial column record rather than separate role and
 follower premises; the actual JSON compiler discharges this premise.
-All prior scripts remain unchanged.
-Next add the optional retirement-index columns and their observations,
-keeping the whole-script and JSON correspondence theorems in the normal build.
+That refactor left the prior scripts unchanged.
+
+The first new column, `retirementIndex`, is now complete. Column 7 stores
+optional natural values, and fresh allocation starts at 8. Each identity has
+an allocation-guarded domain clause for that column. Missing nodes read `none`;
+allocated nodes retain arbitrary valid optional indices. The initial-state,
+quorum-frame, observation, assignment, whole-trace, and JSON-to-script proofs
+all cover the new field. Solver cases cover null versus zero, a `10^30` index
+with an empty log, explicit absent nodes, conflicting observations, and
+preservation across quorum steps. Invalid JSON values remain input errors.
+The new domain clauses and fresh-symbol numbering intentionally change the
+old scripts, so the pre-retirement hash manifest no longer applies.
+Next add `retirementCommittableIndex` and `retiredCommittedIndex` using this
+same checked path, then `votedFor` and the other local fields.
 
 Follow [Representation design priorities](README.md#representation-design-priorities):
 start with the simplest representation to prove correct, using native SMT

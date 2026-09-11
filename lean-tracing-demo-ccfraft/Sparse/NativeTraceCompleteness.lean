@@ -75,7 +75,8 @@ theorem model_compiled_trace {width : PNat} [Bootstrap (Fin width)]
   have startedValid : ReferencesValid started :=
     ⟨by simpa only [frame.next] using valid.minimum,
       by simpa only [frame.next, frame.role] using valid.role,
-      by simpa only [frame.next, frame.newFollower] using valid.newFollower⟩
+      by simpa only [frame.next, frame.newFollower] using valid.newFollower,
+      by simpa only [frame.next, frame.columns] using valid.retirementIndex⟩
   have bootstrap : decodeBits started.bootstrap = INITIAL_CONFIGURATION := by
     rw [frame.bootstrap, sameBootstrap]
   exact compile_instructions_complete items started final index groups result run assignment startedHolds arrays

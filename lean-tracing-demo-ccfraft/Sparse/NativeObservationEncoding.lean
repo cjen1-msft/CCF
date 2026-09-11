@@ -46,6 +46,11 @@ theorem observation_correct {width : PNat} [Bootstrap (Fin width)] (assignment :
   case entry node index expected =>
     simpa only [NativeArrayCheckQuorum.follows, and_true] using
       entry_observation_correct assignment columns arrays rep domains node index expected
+  case retirementIndex node expected =>
+    simp only [Holds, List.mem_cons, List.not_mem_nil, or_false, forall_eq]
+    rw [optional_nat_literal_correct, rep.retirementIndex node,
+      optional_decode_value Nat.cast naturalValue? natural_value_round_trip]
+    simp [NativeArrayCheckQuorum.follows]
   all_goals
     simp [Holds, NativeArrayCheckQuorum.follows, Term.eval, rep.allocated, rep.role,
       rep.newFollower, rep.currentTerm, rep.commit, rep.length, role_code_eq]

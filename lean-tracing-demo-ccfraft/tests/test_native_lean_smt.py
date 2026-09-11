@@ -217,6 +217,50 @@ class NativeLeanSmtTests(unittest.TestCase):
             ]
         )
 
+    def test_retirement_index_observations(self):
+        def observed(value):
+            return {"kind": "retirementIndex", "node": "a", "value": value}
+
+        quorum = {"kind": "checkQuorum", "node": "a"}
+        absent = {"kind": "allocated", "node": "a", "value": False}
+        cases = [
+            ("retirement-none", [observed(None)], "sat"),
+            ("retirement-zero", [observed(0)], "sat"),
+            ("retirement-absent-node", [absent, observed(None)], "sat"),
+            ("retirement-requires-node", [absent, observed(0)], "unsat"),
+            (
+                "retirement-beyond-log",
+                [
+                    {"kind": "logLength", "node": "a", "value": 0},
+                    observed(10**30),
+                ],
+                "sat",
+            ),
+            ("retirement-conflict", [observed(None), observed(0)], "unsat"),
+            ("retirement-quorum-frame", [observed(7), quorum, observed(7)], "sat"),
+            (
+                "retirement-quorum-conflict",
+                [observed(7), quorum, observed(None)],
+                "unsat",
+            ),
+        ]
+        scripts = self.encode(
+            [
+                {
+                    "nodes": ["a", "b"],
+                    "bootstrap": ["a", "b"],
+                    "instructions": instructions,
+                }
+                for _, instructions, _ in cases
+            ]
+        )
+        self.solve(
+            [
+                {"name": name, "script": script, "expected": expected}
+                for (name, _, expected), script in zip(cases, scripts)
+            ]
+        )
+
     def test_decoded_bootstrap_sets(self):
         variants = [["a", "b"], ["b", "a"], ["b", "a", "a"], ["a"]]
         scripts = self.encode(
@@ -275,6 +319,31 @@ class NativeLeanSmtTests(unittest.TestCase):
                 ("undeclared-bootstrap-node", ["b"]),
                 ("non-array-bootstrap", "a"),
                 ("non-string-bootstrap-node", [0]),
+            ]
+        )
+        invalid.extend(
+            (
+                f"retirement-{name}",
+                json.dumps(
+                    dict(
+                        valid,
+                        instructions=[
+                            {
+                                "kind": "retirementIndex",
+                                "node": "a",
+                                "value": value,
+                            }
+                        ],
+                    ),
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            )
+            for name, value in [
+                ("negative", -1),
+                ("fractional", 1.5),
+                ("boolean", True),
+                ("string", "1"),
             ]
         )
         for name, document in invalid:

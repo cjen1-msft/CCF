@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeValues
+import Sparse.NativeOptional
 import Sparse.NativeScript
 import Sparse.NativeArrayCheckQuorum
 import Lean.Data.Json
@@ -38,10 +39,11 @@ def members {context : List Ty} {width : PNat}
 structure NodeColumns where
   role : Nat := 1
   newFollower : Nat := 2
+  retirementIndex : Nat := 7
 
 structure Encoding (width : PNat) extends NodeColumns where
   bootstrap : BitVec width
-  next : Nat := 7
+  next : Nat := 8
   assertions : Array (Expr .bool) := #[]
   symbolsBounded : forall formula, formula ∈ assertions ->
     forall symbol, symbol ∈ formula.symbols -> symbol.2 < next
@@ -111,7 +113,8 @@ def initialNodeDomains (width : PNat) (node : Nat) : List (Expr .bool) :=
     .le (.integer 0) (read 5 node (.integer 0)),
     .forall_ .int (implies
       (.and (.le (.integer 0) (.bound .here)) (lt (.bound .here) (length node)))
-      (entryDomain (entryAt width node (.bound .here))))]
+      (entryDomain (entryAt width node (.bound .here)))),
+    optionalNatDomain (read 7 node (.inl .unit))]
 
 def initialAssertions (width : PNat) : List (Expr .bool) :=
   (List.range width.val).flatMap (initialNodeDomains width)
@@ -242,6 +245,13 @@ def decodeInstruction (width : PNat) (names : Array String) (value : Json) :
     let index <- natural (<- field value "index")
     let expected <- decodeEntry width names (<- field value "value")
     return .entry node index expected
+  | "retirementIndex" =>
+    fields value ["kind", "node", "value"]
+    let value <- field value "value"
+    let expected <- match value with
+      | .null => pure none
+      | _ => some <$> natural value
+    return .retirementIndex node expected
   | _ => throw s!"unsupported native Lean instruction {kind}"
 
 def observationClauses {width : PNat} (columns : NodeColumns) :
@@ -254,6 +264,8 @@ def observationClauses {width : PNat} (columns : NodeColumns) :
   | .currentTerm node expected => .ok [.equal (read 5 node.val (.integer 0)) (.integer expected)]
   | .entry node index expected => .ok [lt (.integer index) (length node.val),
       .equal (entryAt width node.val (.integer index)) (entryTerm expected)]
+  | .retirementIndex node expected =>
+    .ok [.equal (read columns.retirementIndex node.val (.inl .unit)) (optionalTerm Nat.cast expected)]
   | _ => .error "unsupported native Lean observation"
 
 def instruction {width : PNat} (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) :

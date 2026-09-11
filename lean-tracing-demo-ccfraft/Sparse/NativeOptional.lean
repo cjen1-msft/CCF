@@ -56,6 +56,13 @@ theorem optional_value_iff {α : Type} (encode : α -> Int) (decode : Int -> Opt
         cases Option.some.inj same
         exact congrArg Sum.inr (exactValue value _ successful).symm
 
+theorem optional_value_of_valid {α : Type} (encode : α -> Int) (decode : Int -> Option α)
+    (roundTrip : forall value, decode (encode value) = some value)
+    (exactValue : forall value decoded, decode value = some decoded -> encode decoded = value)
+    (value : optionalIntTy.denote) (valid : (optionalDecode decode value).isSome = true) :
+    value = optionalValue encode ((optionalDecode decode value).get valid) :=
+  (optional_value_iff encode decode roundTrip exactValue value _).mpr (Option.some_get valid).symm
+
 def naturalValue? (value : Int) : Option Nat :=
   if 0 <= value then some value.toNat else none
 

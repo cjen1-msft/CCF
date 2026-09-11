@@ -54,6 +54,9 @@ structure NodeColumnsRep {width : PNat} (assignment : Assignment) (columns : Nod
   entries : forall (node : Fin width) (index : Nat), index < (NativeArrayCheckQuorum.get arrays node).log.length ->
     modelEntry ((entryAt width node.val (.integer index) : Expr (entryTy width)).eval assignment Locals.empty) =
       (NativeArrayCheckQuorum.get arrays node).log.entries index
+  retirementIndex : forall (node : Fin width),
+    (read columns.retirementIndex node.val (.inl .unit) : Expr optionalIntTy).eval assignment Locals.empty =
+      optionalValue Nat.cast (NativeArrayCheckQuorum.get arrays node).retirementIndex
 
 theorem NodeColumnsRep.configuration_log {width : PNat} {assignment : Assignment}
     {columns : NodeColumns} {arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat}
@@ -84,6 +87,8 @@ theorem NodeColumnsRep.set_integer {width : PNat} {assignment : Assignment}
     simpa [NativeEncode.length, read, NativeEncode.allocated, Term.eval, Assignment.set] using rep.length node
   · intro node index within
     simpa [entryAt, Term.eval, Assignment.set] using rep.entries node index within
+  · intro node
+    simpa [read, NativeEncode.allocated, Term.eval, Assignment.set] using rep.retirementIndex node
 
 theorem node_columns_enabled {width : PNat} [Bootstrap (Fin width)]
     (assignment : Assignment) (bootstrap : BitVec width) (columns : NodeColumns)
@@ -191,6 +196,10 @@ theorem node_columns_step {width : PNat} (assignment : Assignment)
     · subst peer
       simpa using rep.entries node index (by simpa using within)
     · simpa [same] using rep.entries peer index (by simpa [same] using within)
+  · intro peer
+    have previous := rep.retirementIndex peer
+    rw [get_step]
+    by_cases same : peer = node <;> simp_all
 
 theorem node_columns_model_step {width : PNat} [Bootstrap (Fin width)]
     (assignment : Assignment) (before : NodeColumns) (afterRole afterFollower : Nat)
