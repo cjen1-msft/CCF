@@ -86,6 +86,11 @@ with finite frontier queries. Raw callback-phase mapping is still separate.
 `ConfigurationPublication` is a separate local candidate for one successful
 leader callback. It preserves one linked begin/send/close chain but does not
 change the Model or raw validator.
+`ModelTrace` defines the unbounded target contract using the actual 17 Model
+actions. One arbitrary initial state and one shared Nat assignment satisfy the
+entire ordered trace. Queue partition congruence preserves its observations,
+including destination totals and active configuration snapshots. Its input
+functions are semantic parameters, not a decoder or finite SMT input syntax.
 
 `QueueEncoding` emits typed count-read constraints with alias-safe observations
 and fresh function names. It summarizes each syntactic key's maximum demanded

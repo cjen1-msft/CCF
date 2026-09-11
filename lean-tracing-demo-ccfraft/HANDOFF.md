@@ -24,6 +24,15 @@ Clock drift, reordering, and missing-action reconstruction are deferred.
 The target is roughly 1-2 seconds warm SAT for 400 events. Unknown, timeout, and
 encoding failure are not SAT or UNSAT verdicts.
 
+`Sparse.ModelTrace.Satisfiable` now states this unbounded Model-side target.
+Its entry predicate is `True`, and its ordered recursion uses the actual
+`Enabled` and `next`. Adjacent observations share one boundary, and all actions
+and observations share one unknown-value assignment.
+Its input functions are semantic parameters, not finite parsed syntax.
+Finite state realization, emitted action clauses, and raw-record refinement
+remain separate obligations. In particular, raw send attempts are not evidence
+of successful Model sends.
+
 ### Sparse proofs are in the repository working tree
 
 The interrupted export is repaired. `Sparse/` contains 22 exported proof and
@@ -57,6 +66,7 @@ New repository bridges extend that foundation:
 | `Sparse/JointIntervalEncoding.lean` | Actual rendered point observations and universal Int queries are satisfiable iff one original assignment and one root family satisfy all of them. |
 | `Sparse/IntervalQueries.lean` | Finite read equations and reference-local cut predicates correspond to one root-array family for every universal query, preserving requested cut values. |
 | `Sparse/MonotoneIntervals.lean` | Joint finite-cut completion for one log with point facts, interval predicates, nondecreasing terms, and a current-term bound. |
+| `Sparse/ModelTrace.lean` | One arbitrary initial State and shared Nat assignment satisfy ordered actual Model actions/observations. All-17-action queue congruence preserves the contract, including destination totals and configuration snapshots. |
 | `Sparse/ConfigurationSnapshot.lean` | Exact ordered positive-index Model snapshots and same-log completion using `2m+1` frontier-query records for `m` snapshot entries. |
 | `Sparse/ConfigurationPublication.lean` | Separate local candidate for one configuration begin, successful empty callback send, and publication close on the same core-state chain. No production Model or raw-validator change. |
 | `Sparse/EntryValue.lean` | Fixed nonrecursive content and entry values are bijective with actual Model values, with equality transport, decoded term ordering, guarded payload views, and pointwise array equivalence. |

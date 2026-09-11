@@ -17,6 +17,7 @@ import Sparse.IntervalQueryEncoding
 import Sparse.IntervalQueries
 import Sparse.JointIntervalCompletion
 import Sparse.JointIntervalEncoding
+import Sparse.ModelTrace
 import Sparse.MonotoneIntervals
 import Sparse.NativeConstructors
 import Sparse.NativeSelectors
