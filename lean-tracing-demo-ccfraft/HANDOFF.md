@@ -113,9 +113,13 @@ a Model state. This is the soundness direction for the initial columns.
 Its proof-only witness chooses fresh values for unobserved fields; the emitted
 clauses do not impose those values. The normal Sparse target audits both modules.
 
-The next Lean slice must prove that arbitrary Model states can populate the
-initial columns without restricting unobserved fields. Observation encoding and
-whole-compiler sequencing follow. The lowering/text proof also remains.
+`model_initial_assertions` now proves the converse for arbitrary Model states.
+`initialAssignment` populates the seven initial columns from native arrays and
+retains the seed assignment's other symbols. The original Model state remains
+the represented state, so its unobserved fields need not be fresh.
+
+The next Lean slice is observation encoding, followed by whole-compiler
+sequencing. The lowering/text proof also remains.
 Do not treat the conditional reader theorem as a full action or script proof.
 Close those boundaries before migrating the remaining actions.
 

@@ -143,6 +143,79 @@ theorem initial_assertions_model (width : PNat) [Bootstrap (Fin width)] (assignm
   exact ⟨arrays, NativeArrayCheckQuorum.realize arrays, initial_arrays_rep width assignment domains,
     NativeArrayCheckQuorum.realize_rep arrays⟩
 
+def nodeArray {width : PNat} {value : Type} (default : value)
+    (rows : Fin width -> value) (index : Int) : value :=
+  if within : 0 <= index /\ index < (width.val : Int) then
+    rows ⟨index.toNat, by
+      have bound := within.2
+      have nonnegative := Int.toNat_of_nonneg within.1
+      omega⟩
+  else default
+
+@[simp] theorem node_array_at {width : PNat} {value : Type} (default : value)
+    (rows : Fin width -> value) (node : Fin width) :
+    nodeArray default rows node.val = rows node := by
+  simp [nodeArray, Int.ofNat_lt.mpr node.isLt]
+
+noncomputable def initialAssignment (width : PNat) (seed : Assignment)
+    (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) : Assignment :=
+  let assignment := seed.set (.array .int .bool) 0
+    (nodeArray false fun node => (arrays node).isSome)
+  let assignment := assignment.set (.array .int .int) 1
+    (nodeArray 0 fun node => roleCode (NativeArrayCheckQuorum.get arrays node).role)
+  let assignment := assignment.set (.array .int .bool) 2
+    (nodeArray true fun node => (NativeArrayCheckQuorum.get arrays node).isNewFollower)
+  let assignment := assignment.set (.array .int .int) 3
+    (nodeArray 0 fun node => (NativeArrayCheckQuorum.get arrays node).log.length)
+  let assignment := assignment.set (.array .int .int) 4
+    (nodeArray 0 fun node => (NativeArrayCheckQuorum.get arrays node).commit)
+  let assignment := assignment.set (.array .int .int) 5
+    (nodeArray 0 fun node => (NativeArrayCheckQuorum.get arrays node).currentTerm)
+  assignment.set (.array .int (.array .int (entryTy width))) 6
+    (nodeArray (fun _ => entryValue (width := width) { term := 0, content := .signature })
+      fun node index => entryValue ((NativeArrayCheckQuorum.get arrays node).log.entries index.toNat))
+
+theorem initial_assignment_rep (width : PNat) (seed : Assignment)
+    (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) :
+    NodeColumnsRep (initialAssignment width seed arrays) 1 2 arrays := by
+  constructor <;> intro node
+  all_goals
+    cases found : arrays node <;>
+      simp [allocated, read, commit, length, entryAt, Term.eval, initialAssignment,
+        Assignment.set, NativeArrayCheckQuorum.get, found, NativeArrayCheckQuorum.Local.fresh,
+        NativeArrayCheckQuorum.Local.ofModel, freshNodeState, roleCode]
+
+theorem initial_assignment_domains (width : PNat) (seed : Assignment)
+    (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) (node : Fin width) :
+    NodeDomain width (initialAssignment width seed arrays) node.val := by
+  have rep := initial_assignment_rep width seed arrays
+  constructor
+  · change 0 <= (read 1 node.val (.integer 0)).eval (initialAssignment width seed arrays) Locals.empty /\
+      (read 1 node.val (.integer 0)).eval (initialAssignment width seed arrays) Locals.empty <= 4
+    rw [rep.role node]
+    exact role_code_bounds _
+  · change 0 <= (length node.val : Expr .int).eval (initialAssignment width seed arrays) Locals.empty
+    rw [rep.length node]
+    exact Int.natCast_nonneg _
+  · change 0 <= (commit node.val : Expr .int).eval (initialAssignment width seed arrays) Locals.empty
+    rw [rep.commit node]
+    exact Int.natCast_nonneg _
+  · change 0 <= (read 5 node.val (.integer 0)).eval (initialAssignment width seed arrays) Locals.empty
+    rw [rep.currentTerm node]
+    exact Int.natCast_nonneg _
+  · intro index _
+    simp [initialAssignment, Assignment.set]
+
+theorem model_initial_assertions (width : PNat) [Bootstrap (Fin width)] (seed : Assignment)
+    (model : State (Fin width) Nat) :
+    exists (assignment : Assignment) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat),
+      Holds (initialAssertions width) assignment /\ NodeColumnsRep assignment 1 2 arrays /\
+        NativeArrayCheckQuorum.Rep arrays model := by
+  let arrays := NativeArrayCheckQuorum.ofModel model
+  exact ⟨initialAssignment width seed arrays, arrays,
+    (initial_assertions_domains width _).mpr (initial_assignment_domains width seed arrays),
+    initial_assignment_rep width seed arrays, NativeArrayCheckQuorum.of_model_rep model⟩
+
 end CCFRaft.NativeEncode
 
 run_cmd do
