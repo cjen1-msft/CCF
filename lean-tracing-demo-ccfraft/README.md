@@ -97,6 +97,9 @@ is pinned by a kernel proof. Full script interpretation remains separate.
 `NativeScriptText` proves the whole emitted script parses to the exact command list,
 including the final newline and all named assertions. The reader accepts the
 generated one-command-per-line format, not arbitrary SMT-LIB layout.
+`NativeReferences` proves that scanning the emitted expression trees finds
+exactly the typed terms' free symbols. Every reference has a generated
+declaration, and declaration names are unique.
 `NativeSmtFixtureMain` carries kernel-checked expected verdicts for emitted
 formulas. `NativeEncodeProofs` covers configuration selectors, bitset decoding,
 and allocation-guarded read specialization.

@@ -204,8 +204,15 @@ lines, and parses every line. This is the emitted format, not a general
 SMT-LIB layout parser. The proof uses the shared expression parser and
 `List.splitOn_intercalate`; it does not add another token parser.
 
-The next Lean slice covers declaration coverage, named assertion interpretation,
-and command sequencing. Then compose it with
+`NativeReferences` now scans raw expression atoms in the same numeral-first
+order as interpretation. `Term.syntax_symbols` proves that the scan finds
+exactly the typed term's free references, including references under binders.
+`declared_syntax_symbols` proves that the generated declarations cover every
+reference. `declaration_names_unique` rules out duplicate declaration names
+after deduplication.
+
+The next Lean slice covers named assertion interpretation and command
+sequencing. Then compose it with
 `compiled_trace_iff`. Do not flip the full Model-to-script assurance flag yet.
 JSON decoding, remaining action coverage, and raw reducer integration
 still need their documented delivery work.

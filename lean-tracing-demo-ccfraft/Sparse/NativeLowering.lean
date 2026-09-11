@@ -24,12 +24,14 @@ theorem eval_numeral (assignment : Assignment) (environment : NamedLocals) (valu
   have parsed : parseNumeral (toString value) = some value := Sparse.SmtNumerals.parseNumeral_render value
   simp [evalAtom, parsed]
 
+theorem symbolName_not_numeral (sort : Ty) (id : Nat) :
+    parseNumeral (symbolName sort id) = none := by
+  simp only [parseNumeral, symbolName, String.toList_append]
+  rfl
+
 theorem eval_free (assignment : Assignment) (environment : NamedLocals) (sort : Ty) (id : Nat) :
     evalAtom assignment environment (symbolName sort id) = some ⟨sort, assignment sort id⟩ := by
-  have notNumeral : parseNumeral (symbolName sort id) = none := by
-    simp only [parseNumeral, symbolName, String.toList_append]
-    rfl
-  simp [evalAtom, notNumeral, parse_symbol_name]
+  simp [evalAtom, symbolName_not_numeral, parse_symbol_name]
 
 theorem eval_binder (assignment : Assignment) (environment : NamedLocals) (level : Nat) :
     evalAtom assignment environment (binderName level) = environment level := by
