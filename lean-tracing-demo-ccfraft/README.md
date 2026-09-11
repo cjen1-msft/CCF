@@ -82,6 +82,9 @@ can instead be constrained with `forall`.
 Sorts and terms now render through explicit S-expression trees.
 `NativeSyntaxProofs` proves that their emitted text parses back to those trees.
 This round trip does not yet prove operator, binding, or declaration semantics.
+`NativeNames` proves unique free-symbol names across recursive sorts and IDs,
+separates them from bound names, and proves that a new named binder preserves
+older scoped variable reads.
 `NativeSmtFixtureMain` carries kernel-checked expected verdicts for emitted
 formulas. `NativeEncodeProofs` covers configuration selectors, bitset decoding,
 and allocation-guarded read specialization.

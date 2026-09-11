@@ -174,8 +174,15 @@ tree. It reuses the existing decimal-token safety proofs, not the old bounded
 encoder. The old syntax reader has a closed atom vocabulary and cannot parse
 the new native sorts or binders.
 
-The next Lean slice proves symbol naming, binding, operator, and declaration
-semantics for those trees. Do not flip the full Model-to-script assurance flag
+`NativeNames` now decodes recursive sort codes and full free-symbol names.
+`symbolName_injective` rules out collisions across sorts and IDs.
+Bound names round-trip separately and cannot equal free names.
+The renderer uses shared `Variable.level` and `binderName` definitions.
+`NamedLocals.Rep.cons` proves that binding at the current context length
+represents the new local value without changing older scoped reads.
+
+The next Lean slice interprets operators and declarations in those trees and
+connects named evaluation to the typed evaluator. Do not flip the full Model-to-script assurance flag
 yet. JSON decoding, remaining action coverage, and raw reducer integration
 still need their documented delivery work.
 Do not treat the conditional reader theorem as a full action or script proof.

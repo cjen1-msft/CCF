@@ -66,6 +66,9 @@ theorem Variable.index_lt {context : List Ty} {sort : Ty} (ref : Variable contex
     ref.index < context.length := by
   induction ref <;> simp_all [index]
 
+def Variable.level {context : List Ty} {sort : Ty} (ref : Variable context sort) : Nat :=
+  context.length - (ref.index + 1)
+
 abbrev Assignment := (sort : Ty) -> Nat -> sort.denote
 abbrev Locals (context : List Ty) := (sort : Ty) -> Variable context sort -> sort.denote
 
@@ -151,6 +154,7 @@ noncomputable def Term.eval (assignment : Assignment) :
   | _, _, locals, .bit value index => (value.eval assignment locals).getLsbD index
 
 def symbolName (sort : Ty) (id : Nat) : String := s!"c_{sort.code}_{id}"
+def binderName (level : Nat) : String := s!"b{level}"
 
 def Term.syntax : {context : List Ty} -> {sort : Ty} -> Term context sort -> NativeSExpr.Expr
   | _, _, .boolean value => .atom (if value then "true" else "false")
@@ -160,7 +164,7 @@ def Term.syntax : {context : List Ty} -> {sort : Ty} -> Term context sort -> Nat
   | _, _, .bits (width := width) value =>
     .list [.atom "_", .atom s!"bv{value.toNat}", .atom (toString width.val)]
   | _, _, .free sort id => .atom (symbolName sort id)
-  | context, _, .bound ref => .atom s!"b{context.length - (ref.index + 1)}"
+  | _, _, .bound ref => .atom (binderName ref.level)
   | _, _, .add left right => .list [.atom "+", left.syntax, right.syntax]
   | _, _, .sub left right => .list [.atom "-", left.syntax, right.syntax]
   | _, _, .le left right => .list [.atom "<=", left.syntax, right.syntax]
@@ -170,7 +174,7 @@ def Term.syntax : {context : List Ty} -> {sort : Ty} -> Term context sort -> Nat
   | _, _, .or left right => .list [.atom "or", left.syntax, right.syntax]
   | _, _, .ite condition yes no => .list [.atom "ite", condition.syntax, yes.syntax, no.syntax]
   | context, _, .forall_ sort body =>
-    .list [.atom "forall", .list [.list [.atom s!"b{context.length}", sort.syntax]], body.syntax]
+    .list [.atom "forall", .list [.list [.atom (binderName context.length), sort.syntax]], body.syntax]
   | _, _, .select array index => .list [.atom "select", array.syntax, index.syntax]
   | _, _, .store array index value => .list [.atom "store", array.syntax, index.syntax, value.syntax]
   | _, _, .pair left right => .list [.atom "native_pair", left.syntax, right.syntax]
@@ -182,8 +186,8 @@ def Term.syntax : {context : List Ty} -> {sort : Ty} -> Term context sort -> Nat
     .list [.list [.atom "as", .atom "native_right", (Ty.sum first second).syntax], value.syntax]
   | context, _, .cases value left right =>
     .list [.atom "match", value.syntax, .list [
-      .list [.list [.atom "native_left", .atom s!"b{context.length}"], left.syntax],
-      .list [.list [.atom "native_right", .atom s!"b{context.length}"], right.syntax]]]
+      .list [.list [.atom "native_left", .atom (binderName context.length)], left.syntax],
+      .list [.list [.atom "native_right", .atom (binderName context.length)], right.syntax]]]
   | _, _, .bitsAnd left right => .list [.atom "bvand", left.syntax, right.syntax]
   | _, _, .bitsOr left right => .list [.atom "bvor", left.syntax, right.syntax]
   | _, _, .bitsNot value => .list [.atom "bvnot", value.syntax]

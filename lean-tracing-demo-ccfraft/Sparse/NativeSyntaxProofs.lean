@@ -39,7 +39,7 @@ theorem symbolName_safe (sort : Ty) (id : Nat) : SafeAtom (symbolName sort id) :
     (safe_atom_append (safe_atom_append (by decide +kernel) sort.code_safe) (by decide +kernel))
     (numeral_safe id)
 
-theorem binder_safe (depth : Nat) : SafeAtom s!"b{depth}" :=
+theorem binder_safe (depth : Nat) : SafeAtom (binderName depth) :=
   safe_atom_append (by decide +kernel) (numeral_safe depth)
 
 theorem Ty.syntax_safe (sort : Ty) : sort.syntax.Safe := by
@@ -76,8 +76,8 @@ theorem Term.syntax_safe : {context : List Ty} -> {sort : Ty} ->
       numeral_safe width.val⟩
   | _, _, .free sort id => by
     simpa only [Term.syntax, NativeSExpr.Expr.Safe] using symbolName_safe sort id
-  | context, _, .bound ref => by
-    simpa only [Term.syntax, NativeSExpr.Expr.Safe] using binder_safe (context.length - (ref.index + 1))
+  | _, _, .bound ref => by
+    simpa only [Term.syntax, NativeSExpr.Expr.Safe] using binder_safe ref.level
   | _, _, .add left right | _, _, .sub left right | _, _, .le left right
   | _, _, .equal left right | _, _, .and left right | _, _, .or left right
   | _, _, .select left right | _, _, .pair left right
