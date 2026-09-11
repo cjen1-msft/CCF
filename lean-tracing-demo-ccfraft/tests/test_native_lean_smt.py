@@ -21,6 +21,7 @@ RETIREMENT_FIELDS = (
     "retirementCommittableIndex",
     "retiredCommittedIndex",
 )
+VOTE_SET_FIELDS = ("votesGranted",)
 
 
 @unittest.skipUnless(
@@ -222,23 +223,25 @@ class NativeLeanSmtTests(unittest.TestCase):
             ]
         )
 
-    def optional_observation_cases(self, kind, value, other):
+    def framed_observation_cases(self, kind, default, value, other):
+        """Cases for fields preserved by checkQuorum, including absent-node defaults."""
+
         def observed(value):
             return {"kind": kind, "node": "a", "value": value}
 
         quorum = {"kind": "checkQuorum", "node": "a"}
         absent = {"kind": "allocated", "node": "a", "value": False}
         cases = [
-            ("none", [observed(None)], "sat"),
+            ("default", [observed(default)], "sat"),
             ("value", [observed(value)], "sat"),
-            ("absent-node", [absent, observed(None)], "sat"),
+            ("absent-node", [absent, observed(default)], "sat"),
             ("requires-node", [absent, observed(value)], "unsat"),
-            ("none-conflict", [observed(None), observed(value)], "unsat"),
+            ("default-conflict", [observed(default), observed(value)], "unsat"),
             ("value-conflict", [observed(value), observed(other)], "unsat"),
             ("quorum-frame", [observed(value), quorum, observed(value)], "sat"),
             (
                 "quorum-conflict",
-                [observed(value), quorum, observed(None)],
+                [observed(value), quorum, observed(default)],
                 "unsat",
             ),
         ]
@@ -251,7 +254,7 @@ class NativeLeanSmtTests(unittest.TestCase):
         cases = [
             case
             for kind in RETIREMENT_FIELDS
-            for case in self.optional_observation_cases(kind, 0, 10**30)
+            for case in self.framed_observation_cases(kind, None, 0, 10**30)
         ]
         cases.extend(
             (
@@ -294,7 +297,7 @@ class NativeLeanSmtTests(unittest.TestCase):
 
     def test_voted_for_observations(self):
         names = ["a", "b"] + [f"node-{index}" for index in range(2, 21)]
-        cases = self.optional_observation_cases("votedFor", names[-1], "a")
+        cases = self.framed_observation_cases("votedFor", None, names[-1], "a")
         cases.extend(
             [
                 (
@@ -312,6 +315,51 @@ class NativeLeanSmtTests(unittest.TestCase):
                 ),
             ]
         )
+        scripts = self.encode(
+            [
+                {
+                    "nodes": names,
+                    "bootstrap": ["a", "b"],
+                    "instructions": instructions,
+                }
+                for _, instructions, _ in cases
+            ]
+        )
+        self.solve(
+            [
+                {"name": name, "script": script, "expected": expected}
+                for (name, _, expected), script in zip(cases, scripts)
+            ]
+        )
+
+    def test_vote_set_observations(self):
+        names = ["a", "b"] + [f"node-{index}" for index in range(2, 21)]
+        cases = []
+        for kind in VOTE_SET_FIELDS:
+            cases.extend(self.framed_observation_cases(kind, [], [names[-1]], ["a"]))
+            cases.extend(
+                [
+                    (
+                        f"{kind}-order-and-duplicates",
+                        [
+                            {"kind": kind, "node": "a", "value": members}
+                            for members in (
+                                ["a", names[-1]],
+                                [names[-1], "a", names[-1]],
+                            )
+                        ],
+                        "sat",
+                    ),
+                    (
+                        f"{kind}-absent-voter-outside-bootstrap",
+                        [
+                            {"kind": "allocated", "node": names[-1], "value": False},
+                            {"kind": kind, "node": "a", "value": [names[-1]]},
+                        ],
+                        "sat",
+                    ),
+                ]
+            )
         scripts = self.encode(
             [
                 {
@@ -434,6 +482,26 @@ class NativeLeanSmtTests(unittest.TestCase):
                 ("numeric", 0),
                 ("boolean", False),
                 ("array", ["a"]),
+            ]
+        )
+        invalid.extend(
+            (
+                f"{kind}-{name}",
+                json.dumps(
+                    dict(
+                        valid,
+                        instructions=[{"kind": kind, "node": "a", "value": value}],
+                    ),
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            )
+            for kind in VOTE_SET_FIELDS
+            for name, value in [
+                ("undeclared", ["b"]),
+                ("numeric", [0]),
+                ("non-array", "a"),
+                ("null", None),
             ]
         )
         for name, document in invalid:

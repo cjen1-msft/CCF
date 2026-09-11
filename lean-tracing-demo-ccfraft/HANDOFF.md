@@ -48,9 +48,9 @@ reducer integration. See README's "Native explorer API" section.
 
 The first Lean encoder slice is now implemented in `Sparse/NativeEncode.lean`
 and `Sparse/NativeEncodeMain.lean`, with `native_lean.py` as its JSON and solver
-wrapper. It supports `checkQuorum` and eleven observation kinds, including
+wrapper. It supports `checkQuorum` and twelve observation kinds, including
 the nullable `retirementIndex`, `retirementCommittableIndex`, and
-`retiredCommittedIndex` fields and nullable `votedFor`.
+`retiredCommittedIndex` fields, nullable `votedFor`, and the `votesGranted` set.
 The Python reference still supports six actions and the broader observation
 schema. Do not confuse these coverage levels or fall back to Python SMT emission.
 
@@ -245,7 +245,7 @@ Lean's JSON parser, IO runtime, and cvc5 are not verified by these theorems.
 
 Next, expand Model actions and observations before raw reducer integration.
 Keep the full-model assurance flag false: current coverage is still one
-action and eleven observation kinds. No change to the reducer's untrusted
+action and twelve observation kinds. No change to the reducer's untrusted
 interpretation boundary follows from proving the JSON encoder.
 
 `NativeOptional` is the next value-codec unit for local-state coverage.
@@ -257,8 +257,7 @@ The proofs cover round trips, exact literal equality, and actual domain terms.
 optional-value cases. The codecs are now wired for all three retirement-index
 fields and `votedFor`.
 
-`Encoding` now inherits `role`, `newFollower`, `votedFor`, and all three retirement-index
-references from `NodeColumns`.
+`Encoding` now inherits `NodeColumns`, the record of column references.
 `SameReferences`, `fresh_success`, and `define_success` preserve the complete
 column record. `QuorumResult.columns` specifies the record update, with
 derived role and follower equalities for callers. All prior scripts remain
@@ -296,8 +295,16 @@ observation generator exercises nulls, conflicting values, absent source nodes,
 and frame preservation for both indices and identities. Identity cases use
 21 declared nodes, self votes, and an absent target outside the bootstrap set.
 No target-allocation or configuration-membership constraint was added.
-Next add `votesGranted` and `preVotesGranted` using the existing bitset codec,
-then `membershipState`, `sentIndex`, and `matchIndex`.
+`votesGranted` adds bitvector column 11, with fresh allocation starting at 12.
+The identity universe determines its width, so no additional value-domain
+constraint is needed. Initial realization, Model completeness, observation
+equality, quorum preservation, and the JSON-to-script theorem cover the field.
+The shared frame-case generator covers optional fields and vote sets.
+Set-specific cases cover ordering, duplicates, 21 identities, and absent voters
+outside the bootstrap set. `NativeValues` now proves empty-set encoding and
+encoding injectivity. Normalize bitvector literals with `BitVec.ofNat_eq_ofNat`
+before applying representation equalities if simplification changes `0` to `0#width`.
+Next add `preVotesGranted`, then `membershipState`, `sentIndex`, and `matchIndex`.
 
 Follow [Representation design priorities](README.md#representation-design-priorities):
 start with the simplest representation to prove correct, using native SMT

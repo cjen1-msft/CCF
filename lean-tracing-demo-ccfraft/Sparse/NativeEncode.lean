@@ -43,10 +43,11 @@ structure NodeColumns where
   retirementCommittableIndex : Nat := 8
   retiredCommittedIndex : Nat := 9
   votedFor : Nat := 10
+  votesGranted : Nat := 11
 
 structure Encoding (width : PNat) extends NodeColumns where
   bootstrap : BitVec width
-  next : Nat := 11
+  next : Nat := 12
   assertions : Array (Expr .bool) := #[]
   symbolsBounded : forall formula, formula ∈ assertions ->
     forall symbol, symbol ∈ formula.symbols -> symbol.2 < next
@@ -267,6 +268,9 @@ def decodeInstruction (width : PNat) (names : Array String) (value : Json) :
       | .null => pure none
       | _ => some <$> resolve width names value
     return .votedFor node expected
+  | "votesGranted" =>
+    fields value ["kind", "node", "value"]
+    return .votesGranted node (<- decodeNodeSet width names (<- field value "value"))
   | _ => throw s!"unsupported native Lean instruction {kind}"
 
 def observationClauses {width : PNat} (columns : NodeColumns) :
@@ -288,6 +292,8 @@ def observationClauses {width : PNat} (columns : NodeColumns) :
   | .votedFor node expected =>
     .ok [.equal (read columns.votedFor node.val (.inl .unit))
       (optionalTerm (fun peer : Fin width => (peer.val : Int)) expected)]
+  | .votesGranted node expected =>
+    .ok [.equal (read columns.votesGranted node.val (.bits 0)) (.bits (encodeBits expected))]
   | _ => .error "unsupported native Lean observation"
 
 def instruction {width : PNat} (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) :

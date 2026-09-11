@@ -72,6 +72,8 @@ noncomputable def initialRow (width : PNat) (assignment : Assignment) (node : Fi
       ((read 9 node.val (.inl .unit) : Expr optionalIntTy).eval assignment Locals.empty)).get domain.retiredCommittedIndex
     votedFor := (optionalDecode (nodeValue? width)
       ((read 10 node.val (.inl .unit) : Expr optionalIntTy).eval assignment Locals.empty)).get domain.votedFor
+    votesGranted := decodeBits
+      ((read 11 node.val (.bits 0) : Expr (.bits width)).eval assignment Locals.empty)
     log := {
       length := (scalarValue assignment 3 node.val).toNat
       entries := fun index => modelEntry
@@ -164,6 +166,11 @@ theorem initial_arrays_rep (width : PNat) (assignment : Assignment)
       simpa [initialArrays, NativeArrayCheckQuorum.get, present, initialRow] using value
     · simp [initialArrays, NativeArrayCheckQuorum.get, present, read, allocated, Term.eval,
         NativeArrayCheckQuorum.Local.fresh, NativeArrayCheckQuorum.Local.ofModel, freshNodeState, optionalValue]
+  · intro node
+    by_cases present : assignment (.array .int .bool) 0 node.val = true
+    · simp [initialArrays, NativeArrayCheckQuorum.get, present, initialRow]
+    · simp [initialArrays, NativeArrayCheckQuorum.get, present, read, allocated, Term.eval,
+        NativeArrayCheckQuorum.Local.fresh, NativeArrayCheckQuorum.Local.ofModel, freshNodeState]
 
 theorem initial_assertions_domains (width : PNat) (assignment : Assignment) :
     Holds (initialAssertions width) assignment <->
@@ -225,9 +232,11 @@ noncomputable def initialAssignment (width : PNat) (seed : Assignment)
     (nodeArray (.inl ()) fun node => optionalValue Nat.cast (NativeArrayCheckQuorum.get arrays node).retirementCommittableIndex)
   let assignment := assignment.set (.array .int optionalIntTy) 9
     (nodeArray (.inl ()) fun node => optionalValue Nat.cast (NativeArrayCheckQuorum.get arrays node).retiredCommittedIndex)
-  assignment.set (.array .int optionalIntTy) 10
+  let assignment := assignment.set (.array .int optionalIntTy) 10
     (nodeArray (.inl ()) fun node => optionalValue (fun peer : Fin width => (peer.val : Int))
       (NativeArrayCheckQuorum.get arrays node).votedFor)
+  assignment.set (.array .int (.bits width)) 11
+    (nodeArray 0 fun node => encodeBits (NativeArrayCheckQuorum.get arrays node).votesGranted)
 
 theorem initial_assignment_rep (width : PNat) (seed : Assignment)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) :

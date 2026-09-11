@@ -60,9 +60,11 @@ or restricting possible executions is not a performance optimization.
 The Lean migration starts with `Sparse/NativeEncode.lean`.
 It accepts `checkQuorum` and the `allocated`, `role`, `newFollower`, `logLength`,
 `commit`, `currentTerm`, `entry`, `retirementIndex`,
-`retirementCommittableIndex`, `retiredCommittedIndex`, and `votedFor` observations.
+`retirementCommittableIndex`, `retiredCommittedIndex`, `votedFor`, and
+`votesGranted` observations.
 All retirement fields accept a natural number or `null`. `votedFor` accepts
-a declared identity or `null`. Other instructions are errors.
+a declared identity or `null`. `votesGranted` accepts a list of declared
+identities, interpreted as a set. Other instructions are errors.
 `native_lean.py` handles JSON input and solver execution. It delegates all SMT
 construction to Lean, with no Python encoder fallback.
 
@@ -172,7 +174,7 @@ implementation correctly, or verify Lean's JSON parser and IO runtime.
 
 This Lean encoder remains experimental. Remaining Model actions, observations,
 and raw reducer integration are unfinished. The API's full-model assurance
-flag remains false; current coverage is one action and eleven observation kinds.
+flag remains false; current coverage is one action and twelve observation kinds.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.
@@ -184,6 +186,9 @@ Their values are not bounded by the log length. Observing `null` does not imply
 that the node is allocated, but a non-null value requires an allocated node.
 `votedFor` uses the same optional-value proofs with a finite-identity domain.
 The target identity need not be allocated or belong to the bootstrap configuration.
+`votesGranted` uses one bit per declared identity. Duplicate names and list
+order do not change the set. An absent node reads an empty set, and recorded
+voters need not be allocated or belong to the bootstrap configuration.
 The remaining optional fields are not yet accepted by the Lean encoder.
 `Encoding` now inherits its mutable column references from `NodeColumns`.
 Compiler frame proofs preserve that whole record, and the quorum result

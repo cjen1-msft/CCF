@@ -64,6 +64,14 @@ def encodeBits {width : PNat} (nodes : Finset (Fin width)) : BitVec width :=
   intro index within
   simpa using encode_bits_bit (decodeBits bits) ⟨index, within⟩
 
+@[simp] theorem encode_bits_empty {width : PNat} :
+    encodeBits (∅ : Finset (Fin width)) = 0 := by
+  simpa [decodeBits] using encode_decode_bits (0 : BitVec width)
+
+theorem encode_bits_eq {width : PNat} (left right : Finset (Fin width)) :
+    encodeBits left = encodeBits right <-> left = right :=
+  ⟨fun equal => by simpa using congrArg decodeBits equal, congrArg encodeBits⟩
+
 def decodeContent {width : PNat} :
     (contentTy width).denote -> EntryContent (Fin width) Nat
   | .inl _ => .signature
