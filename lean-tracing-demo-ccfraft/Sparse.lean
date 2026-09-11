@@ -17,6 +17,7 @@ import Sparse.JointIntervalCompletion
 import Sparse.JointIntervalEncoding
 import Sparse.MonotoneIntervals
 import Sparse.NativeConstructors
+import Sparse.NativeSelectors
 import Sparse.NativeSorts
 import Sparse.PacketIdentity
 import Sparse.PacketRealization

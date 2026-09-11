@@ -244,6 +244,11 @@ def installUF (original : Assignment) (first : Nat) (values : Fin count -> Int -
           (values (Fin.mk (id - first) (by omega)) (cast (congrArg Ty.denote sorts.1) argument))
       else original.unary domain result id
     else original.unary domain result id
+  selectors := original.selectors
+
+@[simp] theorem install_selectors (original : Assignment) (first : Nat)
+    (values : Fin count -> Int -> ty.denote) :
+    (installUF original first values).selectors = original.selectors := rfl
 
 theorem install_at (original : Assignment) (first : Nat) (values : Fin count -> Int -> ty.denote) (index : Fin count) :
     (installUF original first values).unary .int ty (first + index.val) = values index := by
@@ -266,6 +271,10 @@ theorem eval_install (original : Assignment) (first : Nat) (values : Fin count -
   | transaction value ih | reconfiguration value ih | retiredCommitted value ih
   | entryTerm value ih | entryContent value ih =>
     simp only [Term.eval, ih below]
+  | isContent tag value ih =>
+    simp only [Term.eval, ih below]
+  | transactionId value ih | configurationNodes value ih | retiredNodes value ih =>
+    simp only [Term.eval, ih below, install_selectors]
   | app domain result id argument ih =>
     have bounds : id < first /\ SymbolBounds.termMax argument < first := by
       simpa only [SymbolBounds.termMax, max_lt_iff] using below

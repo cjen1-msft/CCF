@@ -57,11 +57,12 @@ remain separate work.
 node-set bitvectors, bijective with Model entries. `Smt` now supports native
 unknowns, equality, conditionals, and unary functions for nodes, content, and
 entries. `NativeConstructors` adds exact 15-bit literals, all Content constructors,
-Entry construction, and total Entry term/content projections. Content testers
-and payload selectors remain separate work.
+Entry construction, and total Entry term/content projections. `NativeSelectors`
+adds structured Content testers and total payload selectors.
 `EntrySelectorSemantics` proves guarded payload reads independent of arbitrary
 wrong-constructor selector values, without hiding failures in unused branches.
-The actual SMT evaluator and text layer are not yet connected to those laws.
+The SMT evaluator and text layer now use one shared, arbitrary selector
+interpretation. Matching-guard builders reuse those laws.
 `PacketIdentity` characterizes complete packet equality by tagged headers,
 payload lengths, and bounded entry reads. It proves finite key-class
 injectivity from both identity directions. `PacketRealization` constructs one
@@ -131,7 +132,7 @@ CCF_SPARSE_SMT_TESTS=1 CVC5=/path/to/cvc5 \
 
 These fixtures cover emitted component constraints, not full trace correctness.
 The native-sort cases cover all five constant sorts, all 25 unary signatures,
-and native constructors and Entry projections. They check all 32,768 node masks
+and native constructors, Entry projections, and Content selectors. They check all 32,768 node masks
 against independent MSB-first formatting.
 Scalar scripts retain QF_UFLIA text. Native scripts use ALL and fixed datatype
 schemas, with dependency, declaration, and signature checks before evaluation.

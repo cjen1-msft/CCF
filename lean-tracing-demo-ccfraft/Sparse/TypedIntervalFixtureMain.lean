@@ -128,10 +128,36 @@ def constructorFixtures : List Json :=
             (rootGraph .entry)
             [point (.root 0) 2 value, point (.version 0) 2 expected]).flatten
 
+def selectorFixtures : List Json :=
+  [true, false].flatMap fun valid =>
+    let verdict := if valid then "sat" else "unsat"
+    let value := Term.unknown .content 3000
+    let input := [fixed 2 0, Term.equal value .signature]
+    [fixture s!"selector-tx-{verdict}" verdict
+       (input ++ [.equal (.app .content .int 0 value) (.integer 0),
+         .equal (.transactionId value) (.integer 7)])
+       (.push (.empty : SymbolicGraph 0 .entry 0)
+         (.constant (.entry (.integer 0) (.transaction (.transactionId value)))))
+       [point (.version 0) 2 (.entry (.integer 0) (.transaction (.integer (if valid then 7 else 8))))],
+     fixture s!"selector-cfg-{verdict}" verdict
+       (input ++ [.equal (.app .content .nodes 0 value) (.nodes 0),
+         .equal (.configurationNodes value) (.nodes 16384)])
+       (.push (.empty : SymbolicGraph 0 .nodes 0) (.constant (.configurationNodes value)))
+       [point (.version 0) 2 (.nodes (if valid then 16384 else 1))],
+     fixture s!"selector-retired-{verdict}" verdict
+       (input ++ [.equal (.app .content .nodes 1 value) (.nodes 0),
+         .equal (.retiredNodes value) (.nodes 32767)])
+       (.push (.empty : SymbolicGraph 0 .nodes 0) (.constant (.retiredNodes value)))
+       [point (.version 0) 2 (.nodes (if valid then 32767 else 0))],
+     fixture s!"selector-tester-{verdict}" verdict input
+       (.push (.empty : SymbolicGraph 0 .bool 0) (.constant (.isContent .signature value)))
+       [point (.version 0) 2 (.boolean valid)]]
+
 end CCFRaft.Sparse.TypedIntervalFixtures
 
 def main : IO Unit :=
   IO.println (Lean.toJson (CCFRaft.Sparse.TypedIntervalFixtures.fixtures ++
     CCFRaft.Sparse.TypedIntervalFixtures.boundaryFixtures ++
     CCFRaft.Sparse.TypedIntervalFixtures.scaleFixtures ++
-    CCFRaft.Sparse.TypedIntervalFixtures.constructorFixtures)).compress
+    CCFRaft.Sparse.TypedIntervalFixtures.constructorFixtures ++
+    CCFRaft.Sparse.TypedIntervalFixtures.selectorFixtures)).compress
