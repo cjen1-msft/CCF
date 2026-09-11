@@ -50,6 +50,7 @@ New repository bridges extend that foundation:
 | `Sparse/IntervalDemandPlan.lean` | A flattened descriptor table and visited worklist generate minimal closed demands, preserving exact requested-value completion. |
 | `Sparse/IntervalEncoding.lean` | Typed point-read constraints and their rendered text correspond to one Int-valued root-array family, with symbolic indices, explicit nonnegative domains, and input-preserving fresh functions. |
 | `Sparse/IntervalPredicate.lean` | Explicit Int comparisons lower with generated locality and alias-preserving semantics. Deduplication before the cut/reference product preserves all planned-demand membership. |
+| `Sparse/IntervalQueryEncoding.lean` | Rendered guarded universal Int queries are satisfiable iff one original assignment and one root-array family satisfy the input, nonnegative bounds, and all queries. |
 | `Sparse/IntervalQueries.lean` | Finite read equations and reference-local cut predicates correspond to one root-array family for every universal query, preserving requested cut values. |
 | `Sparse/MonotoneIntervals.lean` | Joint finite-cut completion for one log with point facts, interval predicates, nondecreasing terms, and a current-term bound. |
 | `Sparse/ConfigurationSnapshot.lean` | Exact ordered positive-index Model snapshots and same-log completion using `2m+1` frontier-query records for `m` snapshot entries. |
@@ -99,9 +100,8 @@ callers must encode physical log-length clipping explicitly.
 preserving its membership and the planner's dependency closure. Distinct cuts
 still multiply distinct version references. Its typed comparisons use ordinary
 Int order. Pointwise `ne` is not an existential mismatch.
-The caller-supplied `zeroID` is only metadata, not an assertion that its value
-is zero. Fresh zero allocation, guarded predicates, and universal completion
-remain separate work.
+The caller-supplied `zeroID` in this lower-level module is only metadata,
+not an assertion that its value is zero.
 
 `tests/test_sparse_interval_predicate.py` covers 144 comparisons across cell
 and input operands, two position-alias controls, and request deduplication.
@@ -120,6 +120,22 @@ boundaries, and sparse domains through actual emitted text. A million-root
 universe and a trillion-valued index each require two demands in their fixtures.
 The shared-ancestor case uses 400 versions and 401 demands, with both SAT and
 UNSAT controls. These are point-read components, not full Raft traces.
+
+`IntervalQueryEncoding` composes fresh zero allocation, guarded predicates,
+and universal completion. It reserves input, graph, query, and operand IDs,
+then preserves their original meanings through scalar and UF installation.
+Global shared cuts handle overlapping queries and symbolic aliases.
+Empty-reference predicates still emit guards, so a constant-false predicate
+on a nonempty interval is rejected.
+
+Its 187 native cases include 162 bound/alias combinations compared with a
+finite-array oracle. Other cases cover hidden splice cuts, million-scale
+domains, repeated queries, and 400 shared versions.
+Passing a point-read formula as input does not identify its roots with this
+compiler's fresh roots. Joint point/universal observations, existential
+mismatch, entry values, and Model integration remain open.
+The composer must carry the full `nextFunctionId` reservation, including
+unprinted slots, rather than scan only emitted declarations.
 
 The chosen entry representation uses fixed native datatypes with signed
 integer term/transaction fields and 15-bit node sets. `EntryValue` supplies

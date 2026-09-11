@@ -43,7 +43,10 @@ IDs and version references before constructing their request product.
 `IntervalEncoding` emits symbolic point-read constraints over Int-valued arrays.
 Its rendered script is satisfiable iff one root-array family satisfies all
 observations under the input formula and explicit nonnegative index constraints.
-Entry-valued cells and universal predicate emission remain separate work.
+`IntervalQueryEncoding` emits guarded universal Int predicates with one shared
+root-array witness and an exact rendered-text existence theorem.
+Combining point observations with those universal queries on the same roots
+remains separate work, as do entry-valued cells.
 `EntryValue` supplies a fixed entry domain with signed integer scalars and
 node-set bitvectors, bijective with Model entries. SMT support for those sorts
 is not yet implemented.
@@ -73,7 +76,8 @@ The opt-in solver fixtures cover both explicit declarations and generated script
 ```bash
 CCF_SPARSE_SMT_TESTS=1 CVC5=/path/to/cvc5 \
 	python3 -m unittest tests.test_sparse_smt tests.test_sparse_queue_encoding \
-		tests.test_sparse_interval_encoding tests.test_sparse_interval_predicate
+		tests.test_sparse_interval_encoding tests.test_sparse_interval_predicate \
+		tests.test_sparse_interval_queries
 ```
 
 These fixtures cover emitted component constraints, not full trace correctness.
