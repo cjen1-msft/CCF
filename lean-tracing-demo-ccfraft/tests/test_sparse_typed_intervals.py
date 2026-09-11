@@ -42,7 +42,7 @@ class SparseTypedIntervalTests(unittest.TestCase):
             cwd=ROOT, capture_output=True, text=True, check=True,
         )
         cases = json.loads(generated.stdout)
-        self.assertEqual(len(cases), 432)
+        self.assertEqual(len(cases), 440)
         by_name = {case["name"]: case for case in cases}
         self.assertEqual(len(by_name), len(cases))
         requested = os.environ.get("CVC5")

@@ -153,6 +153,25 @@ def selectorFixtures : List Json :=
        (.push (.empty : SymbolicGraph 0 .bool 0) (.constant (.isContent .signature value)))
        [point (.version 0) 2 (.boolean valid)]]
 
+def nodeOperationFixtures : List Json :=
+  let content := Term.unknown .content 3000
+  let mask := Term.configurationNodes content
+  let input := [fixed 2 0, Term.equal content .signature,
+    .equal (.app .content .nodes 0 content) (.nodes 0), .equal mask (.nodes 21845)]
+  let operations : List (Prod (Term .nodes) (BitVec NODE_COUNT)) :=
+    [(.nodesAnd mask (.nodes 10922), 0), (.nodesOr mask (.nodes 10922), 32767),
+     (.nodesNot mask, 10922)]
+  [true, false].flatMap fun valid =>
+    let verdict := if valid then "sat" else "unsat"
+    (operations.mapIdx fun index (operation, answer) =>
+      fixture s!"node-operation-{index}-{verdict}" verdict input
+        (.push (.empty : SymbolicGraph 0 .nodes 0) (.constant operation))
+        [point (.version 0) 2 (.nodes (if valid then answer else answer ^^^ 1))]) ++
+    [fixture s!"node-membership-{verdict}" verdict input
+      (.push (.empty : SymbolicGraph 0 .bool 0)
+        (.constant (.equal (.nodesAnd mask (.nodes 16384)) (.nodes 16384))))
+      [point (.version 0) 2 (.boolean valid)]]
+
 end CCFRaft.Sparse.TypedIntervalFixtures
 
 def main : IO Unit :=
@@ -160,4 +179,5 @@ def main : IO Unit :=
     CCFRaft.Sparse.TypedIntervalFixtures.boundaryFixtures ++
     CCFRaft.Sparse.TypedIntervalFixtures.scaleFixtures ++
     CCFRaft.Sparse.TypedIntervalFixtures.constructorFixtures ++
-    CCFRaft.Sparse.TypedIntervalFixtures.selectorFixtures)).compress
+    CCFRaft.Sparse.TypedIntervalFixtures.selectorFixtures ++
+    CCFRaft.Sparse.TypedIntervalFixtures.nodeOperationFixtures)).compress

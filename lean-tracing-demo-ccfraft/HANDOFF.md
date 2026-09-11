@@ -95,6 +95,7 @@ New repository bridges extend that foundation:
 | `Sparse/NativeSorts.lean` | All five constant sorts and 25 unary signatures, fixed schema availability, canonical text, and strict error handling have kernel regressions and an axiom audit. |
 | `Sparse/NativeConstructors.lean` | Native literals, every Content constructor, Entry construction, and total Entry projections preserve typed evaluation through lowering and rendered text. |
 | `Sparse/NativeSelectors.lean` | Structured Content testers and total payload selectors use one arbitrary shared interpretation. Matching-guard builders preserve interpretation independence under equal operand and fallback values. |
+| `Sparse/NativeNodeOperations.lean` | Fixed 15-bit AND/OR/complement and static node membership match actual Finset operations through typed evaluation and rendered text. |
 | `Sparse/SmtNodes.lean` | Canonical node masks have exactly 15 MSB-first bits and parse back to the original value. |
 | `Sparse/SmtScript.lean` | Generates unique typed declarations and commands. Command evaluation preserves formula truth for the same assignment. |
 | `Sparse/SmtText.lean` | Decodes exactly the canonical generated symbol names, with symbol-atom evaluation roundtrip for the existing renderer. |
@@ -189,8 +190,9 @@ Graph constants and point expectations are typed input terms. Its allocator
 includes even unused constants and metadata-only functions, and its reserved
 UF range has no spare slot. The same assignment interprets all input terms,
 and one shared root family satisfies every observation.
-The 432 native cases include 360 typed splice controls, 16 nested constructor
-and projection controls, eight selector/tester controls, and SAT/UNSAT cases for
+The 440 native cases include 360 typed splice controls, 16 nested constructor
+and projection controls, eight selector/tester controls, eight nested mask
+operation controls, and SAT/UNSAT cases for
 400 Entry points and 400 shared versions. Those require 800 and 401 demands,
 respectively. One point in a million-root universe still requires one demand.
 Packet constraint emission remains open.
@@ -236,11 +238,16 @@ Missing, duplicate, dependency-invalid, and mismatched declarations remain
 errors, including after false assertions.
 `SmtScript.compileCached` shares symbol collection and required sorts across
 schema selection and declarations. Its compiler rewrite proves exact command-list
-equality. The 492 native fixtures compare rendered bytes with the uncached
+equality. The 1,004 native fixtures compare rendered bytes with the uncached
 command construction.
 The 105 selector cases include proper-constructor identities, arbitrary
 wrong-constructor values, matching-guard fallbacks, aliases, and independence
 from ordinary user UFs.
+The 512 mask cases compare AND, OR, complement, and all 15 membership positions
+against independent Python bit operations. Complement is within the fixed
+15-node universe, not the observed membership. Node 0 is the rightmost printed
+bit. `NativeNodeOperations` proves actual Finset and text correspondence without
+membership UFs. Cardinality, quorum, and finite-node filter builders remain open.
 
 Native Term literals, all Content constructors, Entry construction, and total
 Entry projections are integrated. Required-sort discovery includes native

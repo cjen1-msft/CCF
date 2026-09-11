@@ -72,6 +72,9 @@ adds structured Content testers and total payload selectors.
 wrong-constructor selector values, without hiding failures in unused branches.
 The SMT evaluator and text layer now use one shared, arbitrary selector
 interpretation. Matching-guard builders reuse those laws.
+`NativeNodeOperations` adds fixed-width AND, OR, complement, and static node
+membership, with exact correspondence to Model node sets and rendered text.
+Cardinality and quorum builders remain separate work.
 `PacketIdentity` characterizes complete packet equality by tagged headers,
 payload lengths, and bounded entry reads. It proves finite key-class
 injectivity from both identity directions. `PacketRealization` constructs one
@@ -152,7 +155,8 @@ CCF_SPARSE_SMT_TESTS=1 CVC5=/path/to/cvc5 \
 
 These fixtures cover emitted component constraints, not full trace correctness.
 The native-sort cases cover all five constant sorts, all 25 unary signatures,
-and native constructors, Entry projections, and Content selectors. They check all 32,768 node masks
+and native constructors, Entry projections, Content selectors, and node-mask
+operations. They check all 32,768 node masks
 against independent MSB-first formatting.
 Scalar scripts retain QF_UFLIA text. Native scripts use ALL and fixed datatype
 schemas, with dependency, declaration, and signature checks before evaluation.

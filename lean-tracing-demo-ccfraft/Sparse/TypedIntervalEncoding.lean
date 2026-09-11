@@ -269,7 +269,7 @@ theorem eval_install (original : Assignment) (first : Nat) (values : Fin count -
   induction term with
   | boolean _ | integer _ | nodes _ | signature | unknown _ _ => rfl
   | transaction value ih | reconfiguration value ih | retiredCommitted value ih
-  | entryTerm value ih | entryContent value ih =>
+  | entryTerm value ih | entryContent value ih | nodesNot value ih =>
     simp only [Term.eval, ih below]
   | isContent tag value ih =>
     simp only [Term.eval, ih below]
@@ -281,7 +281,7 @@ theorem eval_install (original : Assignment) (first : Nat) (values : Fin count -
     simp only [Term.eval, ih bounds.2, install_outside original first values domain result id (Or.inl bounds.1)]
   | add left right ihl ihr | sub left right ihl ihr | le left right ihl ihr
   | equal left right ihl ihr | and left right ihl ihr | implies left right ihl ihr
-  | entry left right ihl ihr =>
+  | entry left right ihl ihr | nodesAnd left right ihl ihr | nodesOr left right ihl ihr =>
     have bounds : SymbolBounds.termMax left < first /\ SymbolBounds.termMax right < first := by
       simpa only [SymbolBounds.termMax, max_lt_iff] using below
     simp only [Term.eval, ihl bounds.1, ihr bounds.2]

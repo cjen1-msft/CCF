@@ -20,6 +20,7 @@ import Sparse.JointIntervalEncoding
 import Sparse.ModelTrace
 import Sparse.MonotoneIntervals
 import Sparse.NativeConstructors
+import Sparse.NativeNodeOperations
 import Sparse.NativeSelectors
 import Sparse.NativeSorts
 import Sparse.PacketIdentity
