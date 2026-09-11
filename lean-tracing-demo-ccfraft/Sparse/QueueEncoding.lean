@@ -72,6 +72,8 @@ theorem eval_install {size : Nat} (original : Assignment) (base : Nat)
   induction term with
   | boolean value => rfl
   | integer value => rfl
+  | nodes value => rfl
+  | signature => rfl
   | unknown ty id => rfl
   | app domain result id argument ih =>
     have id_bound := below (.unary domain result id) (by simp [SmtScript.termSymbols])
@@ -87,6 +89,13 @@ theorem eval_install {size : Nat} (original : Assignment) (base : Nat)
     have left_eq := ihl (fun symbol member => below symbol (by simp [SmtScript.termSymbols, member]))
     have right_eq := ihr (fun symbol member => below symbol (by simp [SmtScript.termSymbols, member]))
     simp only [Term.eval, left_eq, right_eq]
+  | entry left right ihl ihr =>
+    have left_eq := ihl (fun symbol member => below symbol (by simp [SmtScript.termSymbols, member]))
+    have right_eq := ihr (fun symbol member => below symbol (by simp [SmtScript.termSymbols, member]))
+    simp only [Term.eval, left_eq, right_eq]
+  | transaction value ih | reconfiguration value ih | retiredCommitted value ih
+  | entryTerm value ih | entryContent value ih =>
+    simp only [Term.eval, ih below]
   | not value ih =>
     exact congrArg Bool.not (ih below)
   | ite condition yes no ihc ihy ihn =>

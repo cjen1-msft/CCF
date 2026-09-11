@@ -11,13 +11,15 @@ def symbolId : Symbol -> Nat
   | .constant _ id | .unary _ _ id => id
 
 def termMax : {ty : Ty} -> Term ty -> Nat
-  | _, .boolean _ | _, .integer _ => 0
+  | _, .boolean _ | _, .integer _ | _, .nodes _ | _, .signature => 0
   | _, .unknown _ id => id
   | _, .app _ _ id argument => max id (termMax argument)
   | _, .add left right | _, .sub left right | _, .le left right
-  | _, .equal left right | _, .and left right | _, .implies left right =>
+  | _, .equal left right | _, .and left right | _, .implies left right
+  | _, .entry left right =>
     max (termMax left) (termMax right)
-  | _, .not value => termMax value
+  | _, .not value | _, .transaction value | _, .reconfiguration value
+  | _, .retiredCommitted value | _, .entryTerm value | _, .entryContent value => termMax value
   | _, .ite condition yes no => max (termMax condition) (max (termMax yes) (termMax no))
 
 theorem termMax_correct {ty : Ty} (term : Term ty) :

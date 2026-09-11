@@ -21,10 +21,19 @@ private def parseFixed : List Char -> Option Atom
   | ['a', 'n', 'd'] => some (.operator .and)
   | ['=', '>'] => some (.operator .implies)
   | ['i', 't', 'e'] => some (.operator .ite)
+  | ['c', 'c', 'f', '_', 's', 'i', 'g'] => some .signature
+  | ['c', 'c', 'f', '_', 't', 'x'] => some (.operator .transaction)
+  | ['c', 'c', 'f', '_', 'c', 'f', 'g'] => some (.operator .reconfiguration)
+  | ['c', 'c', 'f', '_', 'r', 'e', 't', 'i', 'r', 'e', 'd'] => some (.operator .retiredCommitted)
+  | ['c', 'c', 'f', '_', 'e', 'n', 't', 'r', 'y'] => some (.operator .entry)
+  | ['c', 'c', 'f', '_', 't', 'e', 'r', 'm'] => some (.operator .entryTerm)
+  | ['c', 'c', 'f', '_', 'c', 'o', 'n', 't', 'e', 'n', 't'] => some (.operator .entryContent)
   | _ => none
 
 def parseAtom (text : String) : Option Atom :=
-  match parseFixed text.toList with
+  if text.toList.head? = some '#' then
+    (SmtNodes.parseChars text.toList).map Atom.nodes
+  else match parseFixed text.toList with
   | some value => some value
   | none =>
     match parseSymbol text with
@@ -82,6 +91,13 @@ private theorem decimal_not_symbol (d : Nat) (hd : d < 10) (rest : List Char) :
 theorem parseAtom_render (atom : Atom) : parseAtom atom.render = some atom := by
   cases atom with
   | boolean b => cases b <;> decide +kernel
+  | signature => decide +kernel
+  | nodes value =>
+    simp only [parseAtom, Atom.render, SmtNodes.render, String.toList_ofList,
+      SmtNodes.chars, List.cons_append, List.nil_append, List.head?_cons, ite_true]
+    simpa only [SmtNodes.render, String.toList_ofList, SmtNodes.chars,
+      List.cons_append, List.nil_append, Option.map_some] using
+      congrArg (Option.map Atom.nodes) (SmtNodes.parse_render value)
   | operator op => cases op <;> decide +kernel
   | symbol sym =>
     have fixed : parseFixed sym.name.toList = none := by
@@ -89,7 +105,10 @@ theorem parseAtom_render (atom : Atom) : parseAtom atom.render = some atom := by
       cases sym with
       | constant ty id => cases ty <;> rfl
       | unary domain result id => cases domain <;> cases result <;> rfl
-    simp [parseAtom, Atom.render, fixed, parseSymbol_name]
+    have head : Not (sym.name.toList.head? = some '#') := by
+      rw [actual_name_chars]
+      cases sym <;> simp [symbolChars]
+    simp [parseAtom, Atom.render, head, fixed, parseSymbol_name]
   | numeral n =>
     cases numeral_head n with
     | intro d hd =>
@@ -100,7 +119,12 @@ theorem parseAtom_render (atom : Atom) : parseAtom atom.render = some atom := by
         have noSymbol : parseSymbol (Atom.numeral n).render = none := by
           rw [text]
           exact decimal_not_symbol d hr.1 rest
-        simp [parseAtom, hr.2, decimal_not_fixed d hr.1 rest, noSymbol, parseNumeral_render]
+        have head : Not ((Atom.numeral n).render.toList.head? = some '#') := by
+          rw [hr.2]
+          have hd := hr.1
+          interval_cases d <;> simp only [List.head?_cons, Option.some.injEq] <;> decide +kernel
+        simp only [parseAtom, if_neg head]
+        simp [hr.2, decimal_not_fixed d hr.1 rest, noSymbol, parseNumeral_render]
 
 def whitespace (c : Char) : Bool :=
   c == ' ' || c == '\t' || c == '\n' || c == '\r'
@@ -142,6 +166,17 @@ private theorem digits_safe (fuel n : Nat) (suffix : List Char) (safe : Safe suf
 theorem atom_render_safe (atom : Atom) : Safe atom.render.toList := by
   cases atom with
   | boolean b => cases b <;> decide +kernel
+  | signature => decide +kernel
+  | nodes value =>
+    simp only [Atom.render, SmtNodes.render, String.toList_ofList, SmtNodes.chars]
+    apply safe_append
+    next => decide +kernel
+    next =>
+      intro c hc
+      cases List.mem_map.mp hc with
+      | intro bit hb =>
+        rw [<- hb.2]
+        cases bit <;> rfl
   | operator op => cases op <;> decide +kernel
   | numeral n =>
     change Safe (Nat.repr n).toList

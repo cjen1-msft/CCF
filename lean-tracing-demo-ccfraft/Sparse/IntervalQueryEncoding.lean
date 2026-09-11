@@ -58,7 +58,7 @@ theorem term_setZero (original : Assignment) (zeroID : Nat) {ty : Smt.Ty} (term 
       QueueEncoding.symbolId symbol < zeroID) :
     term.eval (setZero original zeroID) = term.eval original := by
   induction term with
-  | boolean _ | integer _ => rfl
+  | boolean _ | integer _ | nodes _ | signature => rfl
   | unknown ty id =>
     have small := below (.constant ty id) (by simp [SmtScript.termSymbols])
     have different : Not (id = zeroID) := by change id < zeroID at small; omega
@@ -76,6 +76,13 @@ theorem term_setZero (original : Assignment) (zeroID : Nat) {ty : Smt.Ty} (term 
     have hr := ihr (fun symbol present => below symbol (by simp [SmtScript.termSymbols, present]))
     simp only [Term.eval, hl, hr]
   | not value ih => exact congrArg Bool.not (ih below)
+  | transaction value ih | reconfiguration value ih | retiredCommitted value ih
+  | entryTerm value ih | entryContent value ih =>
+    simp only [Term.eval, ih below]
+  | entry left right ihl ihr =>
+    have hl := ihl (fun symbol present => below symbol (by simp [SmtScript.termSymbols, present]))
+    have hr := ihr (fun symbol present => below symbol (by simp [SmtScript.termSymbols, present]))
+    simp only [Term.eval, hl, hr]
   | ite condition yes no ihc ihy ihn =>
     have hc := ihc (fun symbol present => below symbol (by simp [SmtScript.termSymbols, present]))
     have hy := ihy (fun symbol present => below symbol (by simp [SmtScript.termSymbols, present]))

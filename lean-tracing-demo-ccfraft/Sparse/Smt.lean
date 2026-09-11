@@ -1,7 +1,7 @@
 import Mathlib.Data.List.Basic
 import Mathlib.Data.Nat.Bits
 import Lean.Util.CollectAxioms
-import Sparse.EntryValue
+import Sparse.SmtNodes
 
 -- Fixed value sorts only. Int packet tokens do not serialize completeMessage.
 -- The proved boundary is typed IR -> SExpr evaluation, not rendered-text parsing.
@@ -36,6 +36,14 @@ structure Assignment where
 inductive Term : Ty -> Type where
   | boolean (value : Bool) : Term .bool
   | integer (value : Int) : Term .int
+  | nodes (value : BitVec NODE_COUNT) : Term .nodes
+  | transaction (txId : Term .int) : Term .content
+  | signature : Term .content
+  | reconfiguration (nodes : Term .nodes) : Term .content
+  | retiredCommitted (nodes : Term .nodes) : Term .content
+  | entry (term : Term .int) (content : Term .content) : Term .entry
+  | entryTerm (entry : Term .entry) : Term .int
+  | entryContent (entry : Term .entry) : Term .content
   | unknown (ty : Ty) (id : Nat) : Term ty
   | app (domain result : Ty) (id : Nat) (argument : Term domain) : Term result
   | add (left right : Term .int) : Term .int
@@ -50,6 +58,14 @@ inductive Term : Ty -> Type where
 def Term.eval (assignment : Assignment) : {ty : Ty} -> Term ty -> ty.denote
   | _, .boolean value => value
   | _, .integer value => value
+  | _, .nodes value => value
+  | _, .transaction txId => .transaction (txId.eval assignment)
+  | _, .signature => .signature
+  | _, .reconfiguration value => .reconfiguration (value.eval assignment)
+  | _, .retiredCommitted value => .retiredCommitted (value.eval assignment)
+  | _, .entry term content => { term := term.eval assignment, content := content.eval assignment }
+  | _, .entryTerm value => (value.eval assignment).term
+  | _, .entryContent value => (value.eval assignment).content
   | _, .unknown ty id => assignment.constant ty id
   | _, .app domain result id argument =>
     assignment.unary domain result id (argument.eval assignment)
@@ -69,11 +85,14 @@ inductive Symbol where
 
 inductive Operator where
   | add | minus | le | equal | not | and | implies | ite
+  | transaction | reconfiguration | retiredCommitted | entry | entryTerm | entryContent
   deriving DecidableEq, Repr
 
 inductive Atom where
   | boolean (value : Bool)
   | numeral (value : Nat)
+  | nodes (value : BitVec NODE_COUNT)
+  | signature
   | symbol (name : Symbol)
   | operator (op : Operator)
   deriving DecidableEq, Repr
@@ -116,6 +135,12 @@ theorem asType_embed (ty : Ty) (value : ty.denote) :
 
 -- Wrong arities and sorts fail, including mismatched unselected ite branches.
 def applyHead (assignment : Assignment) : Atom -> List Value -> Option Value
+  | .operator .transaction, [.integer txId] => some (.content (.transaction txId))
+  | .operator .reconfiguration, [.nodes nodes] => some (.content (.reconfiguration nodes))
+  | .operator .retiredCommitted, [.nodes nodes] => some (.content (.retiredCommitted nodes))
+  | .operator .entry, [.integer term, .content content] => some (.entry { term, content })
+  | .operator .entryTerm, [.entry entry] => some (.integer entry.term)
+  | .operator .entryContent, [.entry entry] => some (.content entry.content)
   | .symbol (.unary domain result id), [argument] => do
     let value <- argument.asType domain
     pure (embed result (assignment.unary domain result id value))
@@ -146,6 +171,8 @@ def applyHead (assignment : Assignment) : Atom -> List Value -> Option Value
 def SExpr.eval (assignment : Assignment) : SExpr -> Option Value
   | .atom (.boolean value) => some (.boolean value)
   | .atom (.numeral value) => some (.integer (Int.ofNat value))
+  | .atom (.nodes value) => some (.nodes value)
+  | .atom .signature => some (.content .signature)
   | .atom (.symbol (.constant ty id)) => some (embed ty (assignment.constant ty id))
   | .list (.atom head :: arguments) => do
     let values <- arguments.mapM (SExpr.eval assignment)
@@ -162,6 +189,14 @@ def signedLiteral : Int -> SExpr
 def Term.lower : {ty : Ty} -> Term ty -> SExpr
   | _, .boolean value => .atom (.boolean value)
   | _, .integer value => signedLiteral value
+  | _, .nodes value => .atom (.nodes value)
+  | _, .transaction txId => call (.operator .transaction) [txId.lower]
+  | _, .signature => .atom .signature
+  | _, .reconfiguration value => call (.operator .reconfiguration) [value.lower]
+  | _, .retiredCommitted value => call (.operator .retiredCommitted) [value.lower]
+  | _, .entry term content => call (.operator .entry) [term.lower, content.lower]
+  | _, .entryTerm value => call (.operator .entryTerm) [value.lower]
+  | _, .entryContent value => call (.operator .entryContent) [value.lower]
   | _, .unknown ty id => .atom (.symbol (.constant ty id))
   | _, .app domain result id argument =>
     call (.symbol (.unary domain result id)) [argument.lower]
@@ -185,6 +220,13 @@ theorem lower_correct (assignment : Assignment) {ty : Ty} (term : Term ty) :
   induction term with
   | boolean value => simp [Term.lower, SExpr.eval, Term.eval, embed]
   | integer value => exact signedLiteral_eval assignment value
+  | nodes value => simp [Term.lower, SExpr.eval, Term.eval, embed]
+  | signature => simp [Term.lower, SExpr.eval, Term.eval, embed]
+  | transaction value ih | reconfiguration value ih | retiredCommitted value ih
+  | entryTerm value ih | entryContent value ih =>
+    simp [Term.lower, call, SExpr.eval, ih, applyHead, Term.eval, embed]
+  | entry term content iht ihc =>
+    simp [Term.lower, call, SExpr.eval, iht, ihc, applyHead, Term.eval, embed]
   | unknown ty id => simp [Term.lower, SExpr.eval, Term.eval]
   | app domain result id argument ih =>
     simp [Term.lower, call, SExpr.eval, ih, applyHead, Term.eval]
@@ -298,6 +340,8 @@ def Atom.render : Atom -> String
   | .boolean true => "true"
   | .boolean false => "false"
   | .numeral n => toString n
+  | .nodes value => SmtNodes.render value
+  | .signature => "ccf_sig"
   | .symbol sym => sym.name
   | .operator .add => "+"
   | .operator .minus => "-"
@@ -307,6 +351,12 @@ def Atom.render : Atom -> String
   | .operator .and => "and"
   | .operator .implies => "=>"
   | .operator .ite => "ite"
+  | .operator .transaction => "ccf_tx"
+  | .operator .reconfiguration => "ccf_cfg"
+  | .operator .retiredCommitted => "ccf_retired"
+  | .operator .entry => "ccf_entry"
+  | .operator .entryTerm => "ccf_term"
+  | .operator .entryContent => "ccf_content"
 
 -- This renderer accepts no raw user strings. No text-parser roundtrip is claimed.
 def SExpr.render : SExpr -> String

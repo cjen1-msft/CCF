@@ -15,13 +15,15 @@ def Holds (assignment : Assignment) (formula : Formula) : Prop :=
   forall term, term IN formula -> term.eval assignment = true
 
 def termSymbols : {ty : Ty} -> Term ty -> List Symbol
-  | _, .boolean _ | _, .integer _ => []
+  | _, .boolean _ | _, .integer _ | _, .nodes _ | _, .signature => []
   | _, .unknown ty id => [.constant ty id]
   | _, .app domain result id argument => .unary domain result id :: termSymbols argument
   | _, .add left right | _, .sub left right | _, .le left right
-  | _, .equal left right | _, .and left right | _, .implies left right =>
+  | _, .equal left right | _, .and left right | _, .implies left right
+  | _, .entry left right =>
     termSymbols left ++ termSymbols right
-  | _, .not value => termSymbols value
+  | _, .not value | _, .transaction value | _, .reconfiguration value
+  | _, .retiredCommitted value | _, .entryTerm value | _, .entryContent value => termSymbols value
   | _, .ite condition yes no => termSymbols condition ++ termSymbols yes ++ termSymbols no
 
 def exprSymbols : SExpr -> List Symbol
@@ -156,9 +158,50 @@ instance (declared : List Symbol) (expression : SExpr) : Decidable (Covered decl
 def symbolTypes (symbol : Symbol) : List Ty :=
   symbolDomain symbol ++ [symbolResult symbol]
 
--- Unit 1 has no native literals or constructors: native values enter through symbols.
+def termNativeTypes : {ty : Ty} -> Term ty -> List Ty
+  | _, .boolean _ | _, .integer _ | _, .unknown _ _ => []
+  | _, .nodes _ => [.nodes]
+  | _, .signature => [.content]
+  | _, .transaction value | _, .reconfiguration value | _, .retiredCommitted value =>
+    .content :: termNativeTypes value
+  | _, .entry left right => .entry :: (termNativeTypes left ++ termNativeTypes right)
+  | _, .entryTerm value | _, .entryContent value => .entry :: termNativeTypes value
+  | _, .app _ _ _ value | _, .not value => termNativeTypes value
+  | _, .add left right | _, .sub left right | _, .le left right
+  | _, .equal left right | _, .and left right | _, .implies left right =>
+    termNativeTypes left ++ termNativeTypes right
+  | _, .ite condition yes no =>
+    termNativeTypes condition ++ termNativeTypes yes ++ termNativeTypes no
+
+def operatorNativeTypes : Operator -> List Ty
+  | .transaction | .reconfiguration | .retiredCommitted => [.content]
+  | .entry | .entryTerm | .entryContent => [.entry]
+  | .add | .minus | .le | .equal | .not | .and | .implies | .ite => []
+
+def atomNativeTypes : Atom -> List Ty
+  | .nodes _ => [.nodes]
+  | .signature => [.content]
+  | .operator op => operatorNativeTypes op
+  | .boolean _ | .numeral _ | .symbol _ => []
+
+def exprNativeTypes : SExpr -> List Ty
+  | .atom atom => atomNativeTypes atom
+  | .list values => values.flatMap exprNativeTypes
+
+theorem signedLiteral_nativeTypes (value : Int) :
+    exprNativeTypes (signedLiteral value) = [] := by
+  cases value <;> simp only [signedLiteral, call, exprNativeTypes, atomNativeTypes, operatorNativeTypes,
+    List.flatMap_cons, List.flatMap_nil, List.nil_append]
+
+theorem lower_nativeTypes {ty : Ty} (term : Term ty) :
+    exprNativeTypes term.lower = termNativeTypes term := by
+  induction term <;>
+    simp_all only [Term.lower, termNativeTypes, exprNativeTypes, atomNativeTypes, operatorNativeTypes, call,
+      signedLiteral_nativeTypes, List.flatMap_cons, List.flatMap_nil,
+      List.nil_append, List.append_nil, List.cons_append, List.append_assoc]
+
 def requiredTypes (formula : Formula) : List Ty :=
-  (symbols formula).flatMap symbolTypes
+  (symbols formula).flatMap symbolTypes ++ formula.flatMap termNativeTypes
 
 def available (native : Bool) (schemas : List Schema) : Ty -> Bool
   | .bool | .int => true
@@ -179,6 +222,7 @@ def schemaCheck (native : Bool) (schemas : List Schema) : List Command -> Bool
   | .assertion expression :: rest =>
     (exprSymbols expression).all (fun symbol =>
       (symbolTypes symbol).all (available native schemas)) &&
+      (exprNativeTypes expression).all (available native schemas) &&
       schemaCheck native schemas rest
   | .checkSat :: rest => schemaCheck native schemas rest
   | _ => false
@@ -313,7 +357,9 @@ theorem schemaCheck_declarations (native : Bool) (schemas : List Schema)
 theorem schemaCheck_assertions (native : Bool) (schemas : List Schema) (formula : Formula)
     (supported : forall term, term IN formula -> forall symbol,
       symbol IN exprSymbols term.lower -> forall ty, ty IN symbolTypes symbol ->
-        available native schemas ty = true) :
+        available native schemas ty = true)
+    (nativeSupported : forall term, term IN formula -> forall ty,
+      ty IN termNativeTypes term -> available native schemas ty = true) :
     schemaCheck native schemas
       (formula.map (fun term => Command.assertion term.lower) ++ [.checkSat]) = true := by
   induction formula with
@@ -323,21 +369,31 @@ theorem schemaCheck_assertions (native : Bool) (schemas : List Schema) (formula 
         (symbolTypes symbol).all (available native schemas)) = true :=
       List.all_eq_true.mpr (fun symbol hs =>
         List.all_eq_true.mpr (supported term (by simp) symbol hs))
+    have nativeHere : (exprNativeTypes term.lower).all (available native schemas) = true := by
+      rw [lower_nativeTypes]
+      exact List.all_eq_true.mpr (nativeSupported term (by simp))
     have later := ih (fun t ht => supported t (by simp [ht]))
-    simp only [List.map_cons, List.cons_append, schemaCheck, here, Bool.true_and, later]
+      (fun t ht => nativeSupported t (by simp [ht]))
+    simp only [List.map_cons, List.cons_append, schemaCheck, here, nativeHere, Bool.true_and, later]
 
 theorem schemaCheck_compiledBody (native : Bool) (schemas : List Schema) (formula : Formula)
     (supported : forall ty, ty IN requiredTypes formula -> available native schemas ty = true) :
     schemaCheck native schemas (compiledBody formula) = true := by
   have symbolSupported (symbol : Symbol) (hs : symbol IN symbols formula)
       (ty : Ty) (ht : ty IN symbolTypes symbol) : available native schemas ty = true :=
-    supported ty (List.mem_flatMap.mpr (Exists.intro symbol (And.intro hs ht)))
+    supported ty (List.mem_append.mpr (Or.inl
+      (List.mem_flatMap.mpr (Exists.intro symbol (And.intro hs ht)))))
   unfold compiledBody
   rw [List.append_assoc, schemaCheck_declarations]
   next =>
     apply schemaCheck_assertions
-    intro term ht symbol hs
-    exact symbolSupported symbol (covered_lower formula ht symbol hs)
+    next =>
+      intro term ht symbol hs
+      exact symbolSupported symbol (covered_lower formula ht symbol hs)
+    next =>
+      intro term ht ty hty
+      exact supported ty (List.mem_append.mpr (Or.inr
+        (List.mem_flatMap.mpr (Exists.intro term (And.intro ht hty)))))
   next =>
     intro declaration hd
     cases List.mem_map.mp hd with
@@ -446,7 +502,7 @@ theorem signed_script_text_regression :
     render signedFormula =
       "(set-logic QF_UFLIA)\n(assert (= (- (- 2) 3) (- 5)))\n(check-sat)\n" := by
   simp only [render, renderCommands, compile, prelude, requiredTypes, compiledBody,
-    declarations, symbols, signedFormula, termSymbols, Command.render, Term.lower,
+    declarations, symbols, signedFormula, termSymbols, termNativeTypes, Command.render, Term.lower,
     signedLiteral, call, SExpr.render, Atom.render, List.flatMap_cons, List.flatMap_nil,
     List.map_cons, List.map_nil, List.nil_append, List.cons_append, List.dedup_nil,
     List.not_mem_nil, if_false]
@@ -482,8 +538,8 @@ theorem assertion_error_regression (assignment : Assignment) :
        .assertion (.atom (.symbol (.constant .bool 0))), .checkSat] = none /\
     run assignment (compile [.boolean false]) = some false := by
   simp [run, runBody, Covered, exprSymbols, SExpr.eval, Value.asType, compile,
-    prelude, requiredTypes, compiledBody, schemaCheck, available, symbolTypes,
-    symbolDomain, symbolResult, declarations, symbols, termSymbols, Term.lower]
+    prelude, requiredTypes, termNativeTypes, compiledBody, schemaCheck, available, symbolTypes,
+    symbolDomain, symbolResult, declarations, symbols, termSymbols, Term.lower, exprNativeTypes, atomNativeTypes]
 
 end CCFRaft.Sparse.SmtScript
 
