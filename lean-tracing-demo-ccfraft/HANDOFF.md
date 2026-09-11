@@ -29,7 +29,7 @@ Its entry predicate is `True`, and its ordered recursion uses the actual
 `Enabled` and `next`. Adjacent observations share one boundary, and all actions
 and observations share one unknown-value assignment.
 Its input functions are semantic parameters, not finite parsed syntax.
-Finite state realization, emitted action clauses, and raw-record refinement
+Canonical initial-state coverage, emitted action clauses, and raw-record refinement
 remain separate obligations. In particular, raw send attempts are not evidence
 of successful Model sends.
 
@@ -68,6 +68,7 @@ New repository bridges extend that foundation:
 | `Sparse/IntervalQueries.lean` | Finite read equations and reference-local cut predicates correspond to one root-array family for every universal query, preserving requested cut values. |
 | `Sparse/MonotoneIntervals.lean` | Joint finite-cut completion for one log with point facts, interval predicates, nondecreasing terms, and a current-term bound. |
 | `Sparse/ModelTrace.lean` | One arbitrary initial State and shared Nat assignment satisfy ordered actual Model actions/observations. All-17-action queue congruence preserves the contract, including destination totals and configuration snapshots. |
+| `Sparse/StateFrame.lean` | Finite typed-reference domains correspond to relative realization against one supplied Entry root family, submitted set, and network. Realizations have one unique non-network frame. |
 | `Sparse/ConfigurationSnapshot.lean` | Exact ordered positive-index Model snapshots and same-log completion using `2m+1` frontier-query records for `m` snapshot entries. |
 | `Sparse/ConfigurationPublication.lean` | Separate local candidate for one configuration begin, successful empty callback send, and publication close on the same core-state chain. No production Model or raw-validator change. |
 | `Sparse/EntryValue.lean` | Fixed nonrecursive content and entry values are bijective with actual Model values, with equality transport, decoded term ordering, guarded payload views, and pointwise array equivalence. |
@@ -114,6 +115,16 @@ Monotone completion does not change the arbitrary-initial-state contract above.
 Restricting that contract to `SafetyInductiveInvariant` still requires one joint
 invariant witness, including coherent proof-only histories. Local term and
 frontier bounds alone do not establish that witness.
+
+`StateFrame` has 662 reference occurrences in fixed-size tables, not necessarily
+distinct IDs. It stores no expression history. Domains constrain allocated
+local rows only, while scope checks retain dormant references.
+Absent local lookup is exactly freshNodeState; joined, pre-vote, completion,
+submitted, and network globals remain independent. Optional indices distinguish
+none from some zero. Active negative codes are rejected.
+Log decoding is proof-only and uses one supplied graph/root family.
+Relative realization and uniqueness do not establish arbitrary-state coverage
+for aliased IDs or fixed roots. Canonical independent slots remain open.
 
 Use `IntervalDemandPlan.plan` for executable dependency closure. The reference
 constructor repeats shared ancestors exponentially. In one forced-clock run,

@@ -96,6 +96,11 @@ actions. One arbitrary initial state and one shared Nat assignment satisfy the
 entire ordered trace. Queue partition congruence preserves its observations,
 including destination totals and active configuration snapshots. Its input
 functions are semantic parameters, not a decoder or finite SMT input syntax.
+`StateFrame` stores typed scalar IDs and fixed-size tables, not expression
+histories. Its finite domain check corresponds to a unique non-network state
+for supplied shared log roots and a submitted set. Local domains apply only to
+allocated nodes; absent lookup stays fresh while globals remain independent.
+Canonical independent slots and coverage of every initial state remain open.
 
 `QueueEncoding` emits typed count-read constraints with alias-safe observations
 and fresh function names. It summarizes each syntactic key's maximum demanded
