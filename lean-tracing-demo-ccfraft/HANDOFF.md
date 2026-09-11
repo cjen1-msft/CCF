@@ -59,6 +59,7 @@ New repository bridges extend that foundation:
 | `Sparse/ConfigurationSnapshot.lean` | Exact ordered positive-index Model snapshots and same-log completion using `2m+1` frontier-query records for `m` snapshot entries. |
 | `Sparse/ConfigurationPublication.lean` | Separate local candidate for one configuration begin, successful empty callback send, and publication close on the same core-state chain. No production Model or raw-validator change. |
 | `Sparse/EntryValue.lean` | Fixed nonrecursive content and entry values are bijective with actual Model values, with equality transport, decoded term ordering, guarded payload views, and pointwise array equivalence. |
+| `Sparse/EntryPredicate.lean` | Typed Entry predicates lower under one assignment, derive finite-reference locality and exact external-symbol bounds, and distinguish raw signed-code comparisons from decoded natural order. |
 | `Sparse/EntrySelectorSemantics.lean` | Total wrong-constructor selector interpretations are represented without restriction. Correctly guarded reads are interpretation-independent, with strict branch-success requirements. |
 | `Sparse/PacketIdentity.lean` | Complete packet equality/disequality is characterized by seven-tag headers, lengths, and bounded entry equality/mismatch. Both identity directions yield an injective finite key-class map. |
 | `Sparse/PacketRealization.lean` | One unique complete packet family follows from valid flat descriptors and shared Entry reads. Identity depends only on complete headers, lengths, and live entries. |
@@ -179,7 +180,14 @@ The 432 native cases include 360 typed splice controls, 16 nested constructor
 and projection controls, eight selector/tester controls, and SAT/UNSAT cases for
 400 Entry points and 400 shared versions. Those require 800 and 401 demands,
 respectively. One point in a million-root universe still requires one demand.
-Typed universal predicates and packet constraint emission remain open.
+Typed universal emission and packet constraint emission remain open.
+`EntryPredicate` supplies typed local predicates and a `LocalQuery` adapter.
+Only version-cell leaves use the current position. External terms stay fixed.
+Reference and symbol summaries retain inactive branches and remove duplicate
+version references. Domain constraints, fresh allocation, and shared completion
+belong to the later joint compiler.
+Pointwise `ne` is not an existential mismatch. Its interior-mismatch regression
+shows why checking only existing cuts can miss a difference between them.
 
 The chosen entry representation uses fixed native datatypes with signed
 integer term/transaction fields and 15-bit node sets. `EntryValue` supplies

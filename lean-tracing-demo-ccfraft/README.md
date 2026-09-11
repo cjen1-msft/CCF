@@ -51,8 +51,12 @@ universal queries with one root family and an exact rendered-text existence
 theorem.
 `TypedIntervalEncoding` now emits point constraints for all five SMT sorts,
 including Entry-valued arrays. Constants and expectations use one original
-assignment, and all points share one root family. Typed universal predicates
-remain separate work.
+assignment, and all points share one root family. Typed universal emission
+remains separate work.
+`EntryPredicate` supplies typed Entry comparisons, generated version references,
+and locality proofs for the generic query interface. Raw signed-code ordering
+and decoded natural ordering are explicit, separate choices. Joint emission and
+existential mismatch witnesses remain open.
 `EntryValue` supplies a fixed entry domain with signed integer scalars and
 node-set bitvectors, bijective with Model entries. `Smt` now supports native
 unknowns, equality, conditionals, and unary functions for nodes, content, and

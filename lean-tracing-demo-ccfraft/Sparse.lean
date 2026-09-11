@@ -5,6 +5,7 @@ import Sparse.ConfigurationSnapshot
 import Sparse.ConfigurationPublication
 import Sparse.ConditionalQueueAccounting
 import Sparse.EntryValue
+import Sparse.EntryPredicate
 import Sparse.EntrySelectorSemantics
 import Sparse.FiniteMembership
 import Sparse.FiniteQueueTransport
