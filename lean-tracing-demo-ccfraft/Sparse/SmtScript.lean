@@ -266,6 +266,23 @@ def compiledBody (formula : Formula) : List Command :=
 
 def compile (formula : Formula) : List Command := prelude formula ++ compiledBody formula
 
+def compileCached (formula : Formula) : List Command :=
+  let syms := symbols formula
+  let types := syms.flatMap symbolTypes ++ formula.flatMap termNativeTypes
+  let header :=
+    if .entry IN types then
+      [.setNativeLogic, .declareSchema .content, .declareSchema .entry]
+    else if .content IN types then
+      [.setNativeLogic, .declareSchema .content]
+    else if .nodes IN types then [.setNativeLogic]
+    else [.setLogic]
+  header ++ ((syms.map Declaration.ofSymbol).map Command.declare ++
+    formula.map (fun term => Command.assertion term.lower) ++ [.checkSat])
+
+@[csimp] theorem compile_eq_cached : compile = compileCached := by
+  funext formula
+  rfl
+
 def ScalarOnly (formula : Formula) : Prop :=
   forall ty, ty IN requiredTypes formula -> ty = .bool \/ ty = .int
 

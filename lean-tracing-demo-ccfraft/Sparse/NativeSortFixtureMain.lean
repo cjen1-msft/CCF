@@ -22,6 +22,8 @@ private def fixture (name expected : String) (formula : SmtScript.Formula) : Lea
     ("declarations", Lean.toJson (SmtScript.declarations formula).length),
     ("prelude", Lean.toJson ((SmtScript.prelude formula).map SmtScript.Command.render)),
     ("script", Lean.toJson script),
+    ("reference_script", Lean.toJson (SmtScript.renderCommands
+      (SmtScript.prelude formula ++ SmtScript.compiledBody formula))),
     ("parsed_script", Lean.toJson ((SmtScriptText.parse script).map SmtScript.renderCommands)),
     ("command_value", Lean.toJson (SmtScript.run assignment (SmtScript.compile formula))),
     ("parsed_value", Lean.toJson (SmtScriptText.runText assignment script))]

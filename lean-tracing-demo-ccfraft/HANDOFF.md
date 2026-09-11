@@ -190,6 +190,10 @@ MSB-first formatting and rejects malformed masks. Scalar names and QF_UFLIA
 scripts remain unchanged. Native scripts use ALL and the fixed schemas.
 Missing, duplicate, dependency-invalid, and mismatched declarations remain
 errors, including after false assertions.
+`SmtScript.compileCached` shares symbol collection and required sorts across
+schema selection and declarations. Its compiler rewrite proves exact command-list
+equality. The 387 native fixtures compare rendered bytes with the uncached
+command construction.
 
 Native Term literals, all Content constructors, Entry construction, and total
 Entry projections are integrated. Required-sort discovery includes native
@@ -318,6 +322,10 @@ Before native-sort integration, four-key cycle emission fell to 0.235 seconds
 and emission plus cvc5 to 2.261 seconds. After integration, the same scalar
 script takes 0.329 seconds to emit and 2.352 seconds including cvc5.
 Schema discovery adds work but changes none of its 400,062 bytes.
+Sharing schema and declaration discovery then reduced matched command
+construction from 226 to 119 milliseconds, with identical bytes. The solver
+rerun measured 0.240 seconds emission and 2.269 seconds total for SAT,
+and 0.750 seconds total for UNSAT. The two-second SAT target remains unmet.
 These remain component timings, not full-Raft performance.
 
 `QueueInitialEncoding` adds initial prefix histograms and alias-aware budgets.

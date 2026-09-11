@@ -61,6 +61,7 @@ class SparseNativeSortTests(unittest.TestCase):
             for case in cases:
                 with self.subTest(case=case["name"]):
                     self.assertTrue(case["script"].isascii())
+                    self.assertEqual(case["reference_script"], case["script"])
                     self.assertEqual(case["parsed_script"], case["script"])
                     self.assertIsNotNone(case["command_value"])
                     self.assertEqual(case["parsed_value"], case["command_value"])

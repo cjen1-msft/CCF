@@ -104,6 +104,8 @@ compiler rewrite preserves the original allocation bound exactly.
 
 `SmtScript` declares each referenced typed symbol once and assembles assertions.
 Its interpreter preserves formula truth for the same assignment.
+Its compiler shares symbol and native-sort discovery across schema selection
+and declarations, with a proof that the command list is unchanged.
 `SymbolCollection` replaces repeated symbol-list scans with a hash-set pass.
 Its exact list-equality theorem preserves the last-occurrence declaration order
 and every script byte through a compiler rewrite.
