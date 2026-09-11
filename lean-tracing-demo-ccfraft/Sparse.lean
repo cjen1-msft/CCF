@@ -10,6 +10,7 @@ import Sparse.IntervalEncoding
 import Sparse.IntervalPredicate
 import Sparse.IntervalQueryEncoding
 import Sparse.IntervalQueries
+import Sparse.JointIntervalCompletion
 import Sparse.MonotoneIntervals
 import Sparse.QueueEncoding
 import Sparse.QueueInitialEncoding

@@ -51,6 +51,7 @@ New repository bridges extend that foundation:
 | `Sparse/IntervalEncoding.lean` | Typed point-read constraints and their rendered text correspond to one Int-valued root-array family, with symbolic indices, explicit nonnegative domains, and input-preserving fresh functions. |
 | `Sparse/IntervalPredicate.lean` | Explicit Int comparisons lower with generated locality and alias-preserving semantics. Deduplication before the cut/reference product preserves all planned-demand membership. |
 | `Sparse/IntervalQueryEncoding.lean` | Rendered guarded universal Int queries are satisfiable iff one original assignment and one root-array family satisfy the input, nonnegative bounds, and all queries. |
+| `Sparse/JointIntervalCompletion.lean` | One root family satisfies all universal queries while preserving every joint requested value, including arbitrary root/version points and inactive query-cut reads. |
 | `Sparse/IntervalQueries.lean` | Finite read equations and reference-local cut predicates correspond to one root-array family for every universal query, preserving requested cut values. |
 | `Sparse/MonotoneIntervals.lean` | Joint finite-cut completion for one log with point facts, interval predicates, nondecreasing terms, and a current-term bound. |
 | `Sparse/ConfigurationSnapshot.lean` | Exact ordered positive-index Model snapshots and same-log completion using `2m+1` frontier-query records for `m` snapshot entries. |
@@ -133,10 +134,20 @@ Its 187 native cases include 162 bound/alias combinations compared with a
 finite-array oracle. Other cases cover hidden splice cuts, million-scale
 domains, repeated queries, and 400 shared versions.
 Passing a point-read formula as input does not identify its roots with this
-compiler's fresh roots. Joint point/universal observations, existential
+compiler's fresh roots. Joint typed point/universal emission, existential
 mismatch, entry values, and Model integration remain open.
 The composer must carry the full `nextFunctionId` reservation, including
 unprinted slots, rather than scan only emitted declarations.
+
+`JointIntervalCompletion` supplies the semantic joint witness. It adds every
+point position to the shared cuts and checks every query at those extended
+cuts. Point-only addresses enter the request list only at their own positions.
+Completion preserves all requested values, including points outside intervals,
+without dummy queries, successor scalars, or synthetic versions.
+The value type needs no equality or inhabitant instance.
+`tests/test_sparse_joint_interval.py` covers executable demand construction,
+including 400 point positions and a million-root universe. Typed allocation
+and rendered-text integration are still separate.
 
 The chosen entry representation uses fixed native datatypes with signed
 integer term/transaction fields and 15-bit node sets. `EntryValue` supplies

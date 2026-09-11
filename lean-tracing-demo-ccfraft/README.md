@@ -45,8 +45,9 @@ Its rendered script is satisfiable iff one root-array family satisfies all
 observations under the input formula and explicit nonnegative index constraints.
 `IntervalQueryEncoding` emits guarded universal Int predicates with one shared
 root-array witness and an exact rendered-text existence theorem.
-Combining point observations with those universal queries on the same roots
-remains separate work, as do entry-valued cells.
+`JointIntervalCompletion` proves joint completion with exact point preservation
+on those same roots. Its typed compiler integration and entry-valued cells
+remain separate work.
 `EntryValue` supplies a fixed entry domain with signed integer scalars and
 node-set bitvectors, bijective with Model entries. SMT support for those sorts
 is not yet implemented.
