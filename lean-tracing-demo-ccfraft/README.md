@@ -79,6 +79,9 @@ SAT, UNSAT, unknown, and encoding errors remain distinct outcomes.
 arbitrary-width bitvectors, and product and sum datatypes. Symbolic constant-array
 expressions are deliberately absent: cvc5 rejects that syntax. A fresh array
 can instead be constrained with `forall`.
+Sorts and terms now render through explicit S-expression trees.
+`NativeSyntaxProofs` proves that their emitted text parses back to those trees.
+This round trip does not yet prove operator, binding, or declaration semantics.
 `NativeSmtFixtureMain` carries kernel-checked expected verdicts for emitted
 formulas. `NativeEncodeProofs` covers configuration selectors, bitset decoding,
 and allocation-guarded read specialization.

@@ -1,7 +1,7 @@
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-import Mathlib
+import Sparse.NativeSExpr
 
 set_option autoImplicit false
 
@@ -42,14 +42,16 @@ def Ty.code : Ty -> String
   | .pair first second => "P" ++ first.code ++ second.code
   | .sum left right => "S" ++ left.code ++ right.code
 
-def Ty.render : Ty -> String
-  | .bool => "Bool"
-  | .int => "Int"
-  | .unit => "NativeUnit"
-  | .bits width => s!"(_ BitVec {width.val})"
-  | .array key value => s!"(Array {key.render} {value.render})"
-  | .pair first second => s!"(NativePair {first.render} {second.render})"
-  | .sum left right => s!"(NativeSum {left.render} {right.render})"
+def Ty.syntax : Ty -> NativeSExpr.Expr
+  | .bool => .atom "Bool"
+  | .int => .atom "Int"
+  | .unit => .atom "NativeUnit"
+  | .bits width => .list [.atom "_", .atom "BitVec", .atom (toString width.val)]
+  | .array key value => .list [.atom "Array", key.syntax, value.syntax]
+  | .pair first second => .list [.atom "NativePair", first.syntax, second.syntax]
+  | .sum left right => .list [.atom "NativeSum", left.syntax, right.syntax]
+
+def Ty.render (sort : Ty) : String := sort.syntax.render
 
 inductive Variable : List Ty -> Ty -> Type where
   | here {context : List Ty} {sort : Ty} : Variable (sort :: context) sort
@@ -150,38 +152,47 @@ noncomputable def Term.eval (assignment : Assignment) :
 
 def symbolName (sort : Ty) (id : Nat) : String := s!"c_{sort.code}_{id}"
 
-def Term.render : {context : List Ty} -> {sort : Ty} -> Term context sort -> String
-  | _, _, .boolean value => if value then "true" else "false"
-  | _, _, .integer (.ofNat value) => toString value
-  | _, _, .integer (.negSucc value) => s!"(- {value + 1})"
-  | _, _, .unit => "native_unit"
-  | _, _, .bits (width := width) value => s!"(_ bv{value.toNat} {width.val})"
-  | _, _, .free sort id => symbolName sort id
-  | context, _, .bound ref => s!"b{context.length - (ref.index + 1)}"
-  | _, _, .add left right => s!"(+ {left.render} {right.render})"
-  | _, _, .sub left right => s!"(- {left.render} {right.render})"
-  | _, _, .le left right => s!"(<= {left.render} {right.render})"
-  | _, _, .equal left right => s!"(= {left.render} {right.render})"
-  | _, _, .not value => s!"(not {value.render})"
-  | _, _, .and left right => s!"(and {left.render} {right.render})"
-  | _, _, .or left right => s!"(or {left.render} {right.render})"
-  | _, _, .ite condition yes no => s!"(ite {condition.render} {yes.render} {no.render})"
-  | context, _, .forall_ sort body => s!"(forall ((b{context.length} {sort.render})) {body.render})"
-  | _, _, .select array index => s!"(select {array.render} {index.render})"
-  | _, _, .store array index value => s!"(store {array.render} {index.render} {value.render})"
-  | _, _, .pair left right => s!"(native_pair {left.render} {right.render})"
-  | _, _, .fst value => s!"(native_fst {value.render})"
-  | _, _, .snd value => s!"(native_snd {value.render})"
+def Term.syntax : {context : List Ty} -> {sort : Ty} -> Term context sort -> NativeSExpr.Expr
+  | _, _, .boolean value => .atom (if value then "true" else "false")
+  | _, _, .integer (.ofNat value) => .atom (toString value)
+  | _, _, .integer (.negSucc value) => .list [.atom "-", .atom (toString (value + 1))]
+  | _, _, .unit => .atom "native_unit"
+  | _, _, .bits (width := width) value =>
+    .list [.atom "_", .atom s!"bv{value.toNat}", .atom (toString width.val)]
+  | _, _, .free sort id => .atom (symbolName sort id)
+  | context, _, .bound ref => .atom s!"b{context.length - (ref.index + 1)}"
+  | _, _, .add left right => .list [.atom "+", left.syntax, right.syntax]
+  | _, _, .sub left right => .list [.atom "-", left.syntax, right.syntax]
+  | _, _, .le left right => .list [.atom "<=", left.syntax, right.syntax]
+  | _, _, .equal left right => .list [.atom "=", left.syntax, right.syntax]
+  | _, _, .not value => .list [.atom "not", value.syntax]
+  | _, _, .and left right => .list [.atom "and", left.syntax, right.syntax]
+  | _, _, .or left right => .list [.atom "or", left.syntax, right.syntax]
+  | _, _, .ite condition yes no => .list [.atom "ite", condition.syntax, yes.syntax, no.syntax]
+  | context, _, .forall_ sort body =>
+    .list [.atom "forall", .list [.list [.atom s!"b{context.length}", sort.syntax]], body.syntax]
+  | _, _, .select array index => .list [.atom "select", array.syntax, index.syntax]
+  | _, _, .store array index value => .list [.atom "store", array.syntax, index.syntax, value.syntax]
+  | _, _, .pair left right => .list [.atom "native_pair", left.syntax, right.syntax]
+  | _, _, .fst value => .list [.atom "native_fst", value.syntax]
+  | _, _, .snd value => .list [.atom "native_snd", value.syntax]
   | _, .sum first second, .inl value =>
-      s!"((as native_left {(Ty.sum first second).render}) {value.render})"
+    .list [.list [.atom "as", .atom "native_left", (Ty.sum first second).syntax], value.syntax]
   | _, .sum first second, .inr value =>
-      s!"((as native_right {(Ty.sum first second).render}) {value.render})"
+    .list [.list [.atom "as", .atom "native_right", (Ty.sum first second).syntax], value.syntax]
   | context, _, .cases value left right =>
-      s!"(match {value.render} (((native_left b{context.length}) {left.render}) ((native_right b{context.length}) {right.render})))"
-  | _, _, .bitsAnd left right => s!"(bvand {left.render} {right.render})"
-  | _, _, .bitsOr left right => s!"(bvor {left.render} {right.render})"
-  | _, _, .bitsNot value => s!"(bvnot {value.render})"
-  | _, _, .bit value index => s!"(= ((_ extract {index.val} {index.val}) {value.render}) #b1)"
+    .list [.atom "match", value.syntax, .list [
+      .list [.list [.atom "native_left", .atom s!"b{context.length}"], left.syntax],
+      .list [.list [.atom "native_right", .atom s!"b{context.length}"], right.syntax]]]
+  | _, _, .bitsAnd left right => .list [.atom "bvand", left.syntax, right.syntax]
+  | _, _, .bitsOr left right => .list [.atom "bvor", left.syntax, right.syntax]
+  | _, _, .bitsNot value => .list [.atom "bvnot", value.syntax]
+  | _, _, .bit value index =>
+    .list [.atom "=", .list [.list [
+      .atom "_", .atom "extract", .atom (toString index.val), .atom (toString index.val)], value.syntax], .atom "#b1"]
+
+def Term.render {context : List Ty} {sort : Ty} (expression : Term context sort) : String :=
+  expression.syntax.render
 
 def prelude : List String := [
   "(set-logic ALL)",

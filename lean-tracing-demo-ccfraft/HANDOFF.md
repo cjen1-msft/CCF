@@ -166,8 +166,16 @@ starts from an arbitrary Model state, not a bootstrap-reachable state.
 `Assignment.default` supplies otherwise unused proof-witness values; it emits
 no default-state constraints.
 
-The next Lean slice closes the typed-term-to-SMT-text boundary, including
-symbol naming and binding. Do not flip the full Model-to-script assurance flag
+`NativeSExpr` now parses and renders the generated unquoted S-expression
+grammar, with a kernel-proved safe-atom round trip and malformed-input cases.
+`Ty.syntax` and `Term.syntax` are the actual trees used by the native renderer.
+`NativeSyntaxProofs` proves that every emitted sort and term parses back to its
+tree. It reuses the existing decimal-token safety proofs, not the old bounded
+encoder. The old syntax reader has a closed atom vocabulary and cannot parse
+the new native sorts or binders.
+
+The next Lean slice proves symbol naming, binding, operator, and declaration
+semantics for those trees. Do not flip the full Model-to-script assurance flag
 yet. JSON decoding, remaining action coverage, and raw reducer integration
 still need their documented delivery work.
 Do not treat the conditional reader theorem as a full action or script proof.
