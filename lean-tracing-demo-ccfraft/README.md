@@ -83,6 +83,13 @@ can instead be constrained with `forall`.
 formulas. `NativeEncodeProofs` covers configuration selectors, bitset decoding,
 and allocation-guarded read specialization.
 
+The encoder also carries a proof that every assertion references only symbol
+indices below its next fresh index. Definition inputs are checked before that
+index advances, preventing self-referential definitions. `fresh_binding_exists`
+proves that a fresh equality binding preserves satisfiability of the existing
+typed assertions. This covers naming intermediate arrays without expanding
+their predecessors into later expressions.
+
 This Lean encoder remains experimental. Neither complete Model-to-script
 equivalence nor text-renderer correctness is proved. The 150-case actual-Model
 comparison does not replace those proofs. Raw reducer integration is unfinished.

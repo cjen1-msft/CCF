@@ -42,6 +42,15 @@ suite. `NativeEncodeProofs` proves the bitset/configuration selectors and
 assertion-backed allocation specialization. Normal `lake build Sparse` includes
 the new core and encoding axiom audits.
 
+Fresh definitions now use `NativeEncode.define`. The `Encoding.symbolsBounded`
+invariant keeps assertion symbols below `next`, and definition inputs are
+checked before allocating the new index. `NativeSmt.Term.eval_congr` and
+`eval_set_of_fresh` prove symbol locality. `fresh_binding_exists` and
+`NativeEncode.definition_preserves_satisfiability` justify adding a fresh
+equality binding to the existing typed assertions.
+The locality proof uses structural recursion over terms. Automatic dependent
+induction exceeded the default heartbeat budget; no budget increase was needed.
+
 The first Lean action emitter matches 150 actual-Model `checkQuorum` cases.
 It also handles 21 identities and a trillion-entry symbolic log. The wrapper
 retains solver artifacts and distinguishes SAT, UNSAT, unknown, and input errors.
@@ -52,6 +61,10 @@ The full Model-to-emitted-script theorem and renderer correctness are still
 missing. No observation specialization is applied by the current compiler.
 Reducer integration, remaining action coverage, and initial-state materialization
 remain unfinished. The new Lean encoder is experimental, not a proved validator.
+The next Lean slice must connect the actual `checkQuorum` compiler output to
+`NativeArrayCheckQuorum.enabled` and `step`, including initial domains, witnesses,
+and shared array versions. Close the lowering/text proof boundary before treating
+that action as the proved baseline for migrating the remaining actions.
 
 Follow [Representation design priorities](README.md#representation-design-priorities):
 start with the simplest representation to prove correct, using native SMT

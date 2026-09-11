@@ -50,16 +50,39 @@ structure Encoding (width : PNat) where
   newFollower : Nat := 2
   next : Nat := 7
   assertions : Array (Expr .bool) := #[]
+  symbolsBounded : forall formula, formula ∈ assertions ->
+    forall symbol, symbol ∈ formula.symbols -> symbol.2 < next
 
 abbrev EncodeM (width : PNat) := StateT (Encoding width) (Except String)
 
-def assertion {width : PNat} (formula : Expr .bool) : EncodeM width Unit :=
-  modify fun state => { state with assertions := state.assertions.push formula }
+def assertion {width : PNat} (formula : Expr .bool) : EncodeM width Unit := do
+  let state <- get
+  if known : formula.symbols.all (fun symbol => symbol.2 < state.next) then
+    set { state with
+      assertions := state.assertions.push formula
+      symbolsBounded := by
+        intro expression member symbol occurs
+        rcases Array.mem_push.mp member with previous | rfl
+        · exact state.symbolsBounded expression previous symbol occurs
+        · simpa only [decide_eq_true_eq] using List.all_eq_true.mp known symbol occurs }
+  else throw "internal encoder error: assertion references an unallocated SMT symbol"
 
 def fresh {width : PNat} : EncodeM width Nat := do
   let state <- get
-  set { state with next := state.next + 1 }
+  set { state with
+    next := state.next + 1
+    symbolsBounded := by
+      intro formula member symbol occurs
+      exact Nat.lt_trans (state.symbolsBounded formula member symbol occurs) (Nat.lt_succ_self _) }
   return state.next
+
+def define {width : PNat} {sort : Ty} (value : Expr sort) : EncodeM width Nat := do
+  let state <- get
+  unless value.symbols.all (fun symbol => symbol.2 < state.next) do
+    throw "internal encoder error: definition references an unallocated SMT symbol"
+  let id <- fresh
+  assertion (.equal (.free sort id) value)
+  return id
 
 def allocated {context : List Ty} (node : Nat) : Term context .bool :=
   .select (.free (.array .int .bool) 0) (.integer node)
@@ -107,12 +130,10 @@ def checkQuorum {width : PNat} (node : Nat) : EncodeM width Unit := do
     (all [.le (.integer 1) witness, .le current witness, .le witness (length node),
       isConfiguration (.snd (entryAt width node (.sub witness (.integer 1)))),
       hasOther (members (.snd (entryAt width node (.sub witness (.integer 1)))))]))
-  let roleId <- fresh
-  let followerId <- fresh
-  assertion (.equal (.free (.array .int .int) roleId)
-    (.store (.free (.array .int .int) before.role) (.integer node) (.integer 1)))
-  assertion (.equal (.free (.array .int .bool) followerId)
-    (.store (.free (.array .int .bool) before.newFollower) (.integer node) (.boolean true)))
+  let roleId <- define
+    (.store (.free (.array .int .int) before.role) (.integer node) (.integer 1))
+  let followerId <- define
+    (.store (.free (.array .int .bool) before.newFollower) (.integer node) (.boolean true))
   modify fun state => { state with role := roleId, newFollower := followerId }
 
 def fields (value : Json) (expected : List String) : Except String Unit := do
@@ -202,7 +223,7 @@ def encode (document : Json) : Except String String := do
     let width : PNat := ⟨names.size, positive⟩
     let bootstrap <- field document "bootstrap"
     if (<- bootstrap.getArr?).isEmpty then throw "bootstrap must be nonempty"
-    let initial : Encoding width := { bootstrap := <- mask width names bootstrap }
+    let initial : Encoding width := { bootstrap := <- mask width names bootstrap, symbolsBounded := by simp }
     let instructions <- (<- field document "instructions").getArr?
     let (_, final) <- (do
       initialDomains width

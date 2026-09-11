@@ -77,6 +77,39 @@ theorem asserted_read_specialization {context : List Ty} {sort : Ty} (column nod
   cases observed : (allocated node : Term context .bool).eval assignment locals <;>
     simp [read, Term.eval, <- observed]
 
+theorem definition_preserves_satisfiability {width : PNat} {sort : Ty}
+    (state : Encoding width) (value : Expr sort)
+    (known : value.symbols.all (fun symbol => symbol.2 < state.next) = true) :
+    (exists assignment, Holds state.assertions.toList assignment) <->
+      (exists assignment, Holds state.assertions.toList assignment /\
+        (Term.equal (.free sort state.next) value).eval assignment Locals.empty = true) := by
+  apply fresh_binding_exists
+  · intro formula member occurs
+    have bound := state.symbolsBounded formula (by simpa using member) (sort, state.next) occurs
+    exact Nat.lt_irrefl _ bound
+  · intro occurs
+    have bound := List.all_eq_true.mp known (sort, state.next) occurs
+    simp at bound
+
+private def initial : Encoding ⟨1, by decide⟩ :=
+  { bootstrap := 1, symbolsBounded := by simp }
+
+example : (assertion (.free .bool 7)).run initial =
+    .error "internal encoder error: assertion references an unallocated SMT symbol" := by
+  rfl
+
+example : (define (.free .int 7)).run initial =
+    .error "internal encoder error: definition references an unallocated SMT symbol" := by
+  rfl
+
+example : ((define (.integer 42)).run initial).map
+    (fun (id, state) => (id, state.next, state.assertions.size)) = .ok (7, 8, 1) := by
+  rfl
+
+example : ((assertion (.forall_ .bool (.bound .here))).run initial).map
+    (fun (_, state) => state.assertions.size) = .ok 1 := by
+  rfl
+
 end CCFRaft.NativeEncode
 
 run_cmd do

@@ -205,6 +205,84 @@ theorem select_store (assignment : Assignment) {context : List Ty} {key value : 
       element.eval assignment locals := by
   simp [Term.eval]
 
+theorem Term.eval_congr {context : List Ty} {sort : Ty} (expression : Term context sort)
+    (left right : Assignment) (locals : Locals context)
+    (same : forall ty id, (ty, id) ∈ expression.symbols -> left ty id = right ty id) :
+    expression.eval left locals = expression.eval right locals := by
+  match expression with
+  | .boolean _ | .integer _ | .unit | .bits _ | .bound _ => rfl
+  | .free ty id => exact same ty id (by simp [symbols])
+  | .add first second | .sub first second | .le first second
+  | .equal first second | .and first second | .or first second
+  | .select first second | .pair first second
+  | .bitsAnd first second | .bitsOr first second =>
+    simp only [symbols, List.mem_append, or_imp, forall_and] at same
+    simp only [eval, eval_congr first left right locals same.1,
+      eval_congr second left right locals same.2]
+  | .not value | .fst value | .snd value | .inl value | .inr value
+  | .bitsNot value | .bit value _ =>
+    simp only [symbols] at same
+    simp only [eval, eval_congr value left right locals same]
+  | .ite first second third | .store first second third =>
+    simp only [symbols, List.mem_append, or_imp, forall_and] at same
+    simp only [eval, eval_congr first left right locals same.1.1,
+      eval_congr second left right locals same.1.2,
+      eval_congr third left right locals same.2]
+  | .forall_ _ body =>
+    simp only [symbols] at same
+    simp only [eval]
+    simp_rw [eval_congr body left right _ same]
+  | .cases value first second =>
+    simp only [symbols, List.mem_append, or_imp, forall_and] at same
+    simp only [eval, eval_congr value left right locals same.1.1]
+    cases value.eval right locals with
+    | inl argument => exact eval_congr first left right (locals.cons argument) same.1.2
+    | inr argument => exact eval_congr second left right (locals.cons argument) same.2
+termination_by structural expression
+
+def Assignment.set (assignment : Assignment) (sort : Ty) (id : Nat) (value : sort.denote) : Assignment :=
+  Function.update assignment sort (Function.update (assignment sort) id value)
+
+theorem Term.eval_set_of_fresh {context : List Ty} {sort updated : Ty}
+    (expression : Term context sort) (assignment : Assignment) (locals : Locals context)
+    (id : Nat) (value : updated.denote) (fresh : (updated, id) ∉ expression.symbols) :
+    expression.eval (assignment.set updated id value) locals = expression.eval assignment locals := by
+  apply expression.eval_congr
+  intro ty name occurs
+  by_cases sameSort : ty = updated
+  · subst ty
+    have different : name ≠ id := by
+      intro same
+      subst name
+      exact fresh occurs
+    simp [Assignment.set, different]
+  · simp [Assignment.set, sameSort]
+
+def Holds (assertions : List (Term [] .bool)) (assignment : Assignment) : Prop :=
+  forall formula, formula ∈ assertions -> formula.eval assignment Locals.empty = true
+
+theorem fresh_binding_exists (assertions : List (Term [] .bool)) {sort : Ty}
+    (expression : Term [] sort) (id : Nat)
+    (freshAssertions : forall formula, formula ∈ assertions -> (sort, id) ∉ formula.symbols)
+    (freshExpression : (sort, id) ∉ expression.symbols) :
+    (exists assignment, Holds assertions assignment) <->
+      (exists assignment, Holds assertions assignment /\
+        (Term.equal (.free sort id) expression).eval assignment Locals.empty = true) := by
+  constructor
+  · rintro ⟨assignment, holds⟩
+    let value := expression.eval assignment Locals.empty
+    let extended := assignment.set sort id value
+    refine ⟨extended, ?_, ?_⟩
+    · intro formula member
+      rw [Term.eval_set_of_fresh formula assignment Locals.empty id value
+        (freshAssertions formula member)]
+      exact holds formula member
+    · simp only [Term.eval, decide_eq_true_eq]
+      rw [Term.eval_set_of_fresh expression assignment Locals.empty id value freshExpression]
+      simp [extended, Assignment.set, value]
+  · rintro ⟨assignment, holds, _⟩
+    exact ⟨assignment, holds⟩
+
 theorem asserted_ite (assignment : Assignment) {context : List Ty} (locals : Locals context)
     (condition yes no : Term context .bool) :
     (condition.eval assignment locals = true /\
