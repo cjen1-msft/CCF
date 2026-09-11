@@ -126,8 +126,18 @@ all seven supported observation kinds against actual Model observations.
 Entry equality uses the live-index assertion before applying the value-domain
 round trip. The refactor preserves all 150 earlier Model-case scripts exactly.
 
-The next Lean slice is whole-compiler sequencing. The lowering/text proof
-also remains.
+`NativeCompilerEncoding` now proves exact assertion append and block sequencing
+for the actual state transformer. `observation_instruction_success` connects
+executed observation instructions to Model observations while retaining the
+existing assertions and column references. `initial_domains_success` connects
+the executed initial block to its node domains. Shared `assertAll` replaces
+the four separate assertion loops. The assertion and fresh primitives expose
+their state transformations directly instead of hiding them behind monadic
+get/set operations.
+
+The next Lean slice composes fresh witnesses and definitions through actual
+`checkQuorum` execution, then proves the whole ordered trace. The lowering/text
+proof also remains.
 Do not treat the conditional reader theorem as a full action or script proof.
 Close those boundaries before migrating the remaining actions.
 

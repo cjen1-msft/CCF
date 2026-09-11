@@ -33,6 +33,7 @@ import Sparse.NativeArrayVote
 import Sparse.NativeEncodeProofs
 import Sparse.NativeInitialEncoding
 import Sparse.NativeObservationEncoding
+import Sparse.NativeCompilerEncoding
 import Sparse.NativeNodeEncoding
 import Sparse.NativeQuorumEncoding
 import Sparse.NativeConstructors

@@ -45,26 +45,29 @@ structure Encoding (width : PNat) where
 
 abbrev EncodeM (width : PNat) := StateT (Encoding width) (Except String)
 
-def assertion {width : PNat} (formula : Expr .bool) : EncodeM width Unit := do
-  let state <- get
+def assertion {width : PNat} (formula : Expr .bool) : EncodeM width Unit := fun state =>
   if known : formula.symbols.all (fun symbol => symbol.2 < state.next) then
-    set { state with
+    .ok ((), { state with
       assertions := state.assertions.push formula
       symbolsBounded := by
         intro expression member symbol occurs
         rcases Array.mem_push.mp member with previous | rfl
         · exact state.symbolsBounded expression previous symbol occurs
-        · simpa only [decide_eq_true_eq] using List.all_eq_true.mp known symbol occurs }
-  else throw "internal encoder error: assertion references an unallocated SMT symbol"
+        · simpa only [decide_eq_true_eq] using List.all_eq_true.mp known symbol occurs })
+  else .error "internal encoder error: assertion references an unallocated SMT symbol"
 
-def fresh {width : PNat} : EncodeM width Nat := do
-  let state <- get
-  set { state with
+def assertAll {width : PNat} : List (Expr .bool) -> EncodeM width Unit
+  | [] => pure ()
+  | formula :: rest => do
+    assertion formula
+    assertAll rest
+
+def fresh {width : PNat} : EncodeM width Nat := fun state =>
+  .ok (state.next, { state with
     next := state.next + 1
     symbolsBounded := by
       intro formula member symbol occurs
-      exact Nat.lt_trans (state.symbolsBounded formula member symbol occurs) (Nat.lt_succ_self _) }
-  return state.next
+      exact Nat.lt_trans (state.symbolsBounded formula member symbol occurs) (Nat.lt_succ_self _) })
 
 def define {width : PNat} {sort : Ty} (value : Expr sort) : EncodeM width Nat := do
   let state <- get
@@ -110,9 +113,8 @@ def initialNodeDomains (width : PNat) (node : Nat) : List (Expr .bool) :=
 def initialAssertions (width : PNat) : List (Expr .bool) :=
   (List.range width.val).flatMap (initialNodeDomains width)
 
-def initialDomains (width : PNat) : EncodeM width Unit := do
-  for formula in initialAssertions width do
-    assertion formula
+def initialDomains (width : PNat) : EncodeM width Unit :=
+  assertAll (initialAssertions width)
 
 def currentCandidate (width : PNat) (node currentId : Nat) : Expr .bool :=
   let current : Expr .int := .free .int currentId
@@ -148,12 +150,10 @@ def configurationGuards (width : PNat) (bootstrap : BitVec width)
 
 def checkQuorum {width : PNat} (node : Nat) : EncodeM width Unit := do
   let before <- get
-  for formula in leadingGuards before.role node do
-    assertion formula
+  assertAll (leadingGuards before.role node)
   let currentId <- fresh
   let witnessId <- fresh
-  for formula in configurationGuards width before.bootstrap node currentId witnessId do
-    assertion formula
+  assertAll (configurationGuards width before.bootstrap node currentId witnessId)
   let roleId <- define (stepDownRole before.role node)
   let followerId <- define (stepDownFollower before.newFollower node)
   modify fun state => { state with role := roleId, newFollower := followerId }
@@ -259,8 +259,7 @@ def instruction {width : PNat} (item : NativeArrayCheckQuorum.Instruction (Fin w
   | .checkQuorum node => checkQuorum node.val
   | _ =>
     let state <- get
-    for formula in <- observationClauses state.role state.newFollower item do
-      assertion formula
+    assertAll (<- observationClauses state.role state.newFollower item)
 
 structure Group where
   instruction : Option Nat

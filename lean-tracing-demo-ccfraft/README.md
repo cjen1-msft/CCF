@@ -111,6 +111,9 @@ The JSON decoder now produces typed Model-level instructions and entries.
 `NativeObservationEncoding.observation_model_correct` proves that the actual
 clauses for all seven supported observations match the Model, under the
 represented columns and initial domains.
+`NativeCompilerEncoding` connects initial domains and observation clauses to
+actual state-transformer execution, preserving prior assertions and column
+references. Action sequencing and the whole-trace theorem remain unfinished.
 
 This Lean encoder remains experimental. Neither complete Model-to-script
 equivalence nor text-renderer correctness is proved. The 150-case actual-Model
