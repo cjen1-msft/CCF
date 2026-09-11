@@ -16,7 +16,11 @@ from native_run import NativeRun
 from Shared.solver import find_cvc5, run_solver
 
 ROOT = Path(__file__).resolve().parents[1]
-RETIREMENT_FIELDS = ("retirementIndex", "retirementCommittableIndex")
+RETIREMENT_FIELDS = (
+    "retirementIndex",
+    "retirementCommittableIndex",
+    "retiredCommittedIndex",
+)
 
 
 @unittest.skipUnless(

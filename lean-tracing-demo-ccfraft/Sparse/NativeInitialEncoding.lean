@@ -25,6 +25,9 @@ structure NodeDomain (width : PNat) (assignment : Assignment) (node : Nat) : Pro
   retirementCommittableIndex :
     (optionalDecode naturalValue?
       ((read 8 node (.inl .unit) : Expr optionalIntTy).eval assignment Locals.empty)).isSome = true
+  retiredCommittedIndex :
+    (optionalDecode naturalValue?
+      ((read 9 node (.inl .unit) : Expr optionalIntTy).eval assignment Locals.empty)).isSome = true
 
 theorem initial_node_domains_correct (width : PNat) (assignment : Assignment) (node : Nat) :
     Holds (initialNodeDomains width node) assignment <-> NodeDomain width assignment node := by
@@ -61,6 +64,8 @@ noncomputable def initialRow (width : PNat) (assignment : Assignment) (node : Fi
       ((read 7 node.val (.inl .unit) : Expr optionalIntTy).eval assignment Locals.empty)).get domain.retirementIndex
     retirementCommittableIndex := (optionalDecode naturalValue?
       ((read 8 node.val (.inl .unit) : Expr optionalIntTy).eval assignment Locals.empty)).get domain.retirementCommittableIndex
+    retiredCommittedIndex := (optionalDecode naturalValue?
+      ((read 9 node.val (.inl .unit) : Expr optionalIntTy).eval assignment Locals.empty)).get domain.retiredCommittedIndex
     log := {
       length := (scalarValue assignment 3 node.val).toNat
       entries := fun index => modelEntry
@@ -136,6 +141,14 @@ theorem initial_arrays_rep (width : PNat) (assignment : Assignment)
       simpa [initialArrays, NativeArrayCheckQuorum.get, present, initialRow] using value
     · simp [initialArrays, NativeArrayCheckQuorum.get, present, read, allocated, Term.eval,
         NativeArrayCheckQuorum.Local.fresh, NativeArrayCheckQuorum.Local.ofModel, freshNodeState, optionalValue]
+  · intro node
+    by_cases present : assignment (.array .int .bool) 0 node.val = true
+    · have value := optional_value_of_valid Nat.cast naturalValue? natural_value_round_trip natural_value_exact
+        ((read 9 node.val (.inl .unit) : Expr optionalIntTy).eval assignment Locals.empty)
+        (domains node).retiredCommittedIndex
+      simpa [initialArrays, NativeArrayCheckQuorum.get, present, initialRow] using value
+    · simp [initialArrays, NativeArrayCheckQuorum.get, present, read, allocated, Term.eval,
+        NativeArrayCheckQuorum.Local.fresh, NativeArrayCheckQuorum.Local.ofModel, freshNodeState, optionalValue]
 
 theorem initial_assertions_domains (width : PNat) (assignment : Assignment) :
     Holds (initialAssertions width) assignment <->
@@ -193,8 +206,10 @@ noncomputable def initialAssignment (width : PNat) (seed : Assignment)
       fun node index => entryValue ((NativeArrayCheckQuorum.get arrays node).log.entries index.toNat))
   let assignment := assignment.set (.array .int optionalIntTy) 7
     (nodeArray (.inl ()) fun node => optionalValue Nat.cast (NativeArrayCheckQuorum.get arrays node).retirementIndex)
-  assignment.set (.array .int optionalIntTy) 8
+  let assignment := assignment.set (.array .int optionalIntTy) 8
     (nodeArray (.inl ()) fun node => optionalValue Nat.cast (NativeArrayCheckQuorum.get arrays node).retirementCommittableIndex)
+  assignment.set (.array .int optionalIntTy) 9
+    (nodeArray (.inl ()) fun node => optionalValue Nat.cast (NativeArrayCheckQuorum.get arrays node).retiredCommittedIndex)
 
 theorem initial_assignment_rep (width : PNat) (seed : Assignment)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) :
@@ -235,6 +250,11 @@ theorem initial_assignment_domains (width : PNat) (seed : Assignment)
       ((read 8 node.val (.inl .unit) : Expr optionalIntTy).eval
         (initialAssignment width seed arrays) Locals.empty)).isSome = true
     rw [rep.retirementCommittableIndex node, optional_decode_value Nat.cast naturalValue? natural_value_round_trip]
+    rfl
+  · change (optionalDecode naturalValue?
+      ((read 9 node.val (.inl .unit) : Expr optionalIntTy).eval
+        (initialAssignment width seed arrays) Locals.empty)).isSome = true
+    rw [rep.retiredCommittedIndex node, optional_decode_value Nat.cast naturalValue? natural_value_round_trip]
     rfl
 
 theorem model_initial_assertions (width : PNat) [Bootstrap (Fin width)] (seed : Assignment)

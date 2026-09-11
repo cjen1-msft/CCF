@@ -10,11 +10,12 @@ namespace CCFRaft.NativeEncode
 open NativeSmt
 
 structure ReferencesValid {width : PNat} (state : Encoding width) : Prop where
-  minimum : 9 <= state.next
+  minimum : 10 <= state.next
   role : state.role < state.next
   newFollower : state.newFollower < state.next
   retirementIndex : state.retirementIndex < state.next
   retirementCommittableIndex : state.retirementCommittableIndex < state.next
+  retiredCommittedIndex : state.retiredCommittedIndex < state.next
 
 theorem instruction_references {width : PNat}
     (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) (before after : Encoding width)
@@ -36,12 +37,16 @@ theorem instruction_references {width : PNat}
     · have bound := valid.retirementCommittableIndex
       simp only [shape.columns, shape.next]
       omega
+    · have bound := valid.retiredCommittedIndex
+      simp only [shape.columns, shape.next]
+      omega
   · have frame := (assert_all_success clauses before after asserted).1
     exact ⟨by simpa only [frame.next] using valid.minimum,
       by simpa only [frame.next, frame.role] using valid.role,
       by simpa only [frame.next, frame.newFollower] using valid.newFollower,
       by simpa only [frame.next, frame.columns] using valid.retirementIndex,
-      by simpa only [frame.next, frame.columns] using valid.retirementCommittableIndex⟩
+      by simpa only [frame.next, frame.columns] using valid.retirementCommittableIndex,
+      by simpa only [frame.next, frame.columns] using valid.retiredCommittedIndex⟩
 
 theorem Encoding.holds_agrees_below {width : PNat} (state : Encoding width)
     (left right : Assignment) (holds : Holds state.assertions.toList left)
@@ -64,6 +69,7 @@ theorem NodeColumnsRep.agrees_below {width : PNat} (state : Encoding width)
   have logs := same (.array .int (.array .int (entryTy width))) 6 (by omega)
   have retirement := same (.array .int optionalIntTy) state.retirementIndex valid.retirementIndex
   have committable := same (.array .int optionalIntTy) state.retirementCommittableIndex valid.retirementCommittableIndex
+  have committed := same (.array .int optionalIntTy) state.retiredCommittedIndex valid.retiredCommittedIndex
   constructor
   · intro node
     simpa only [NativeEncode.allocated, Term.eval, <- allocation] using rep.allocated node
@@ -83,9 +89,11 @@ theorem NodeColumnsRep.agrees_below {width : PNat} (state : Encoding width)
     simpa only [read, NativeEncode.allocated, Term.eval, <- allocation, <- retirement] using rep.retirementIndex node
   · intro node
     simpa only [read, NativeEncode.allocated, Term.eval, <- allocation, <- committable] using rep.retirementCommittableIndex node
+  · intro node
+    simpa only [read, NativeEncode.allocated, Term.eval, <- allocation, <- committed] using rep.retiredCommittedIndex node
 
 theorem NodeDomain.agrees_below {width : PNat} (limit : Nat) (left right : Assignment)
-    (node : Nat) (domain : NodeDomain width left node) (minimum : 9 <= limit)
+    (node : Nat) (domain : NodeDomain width left node) (minimum : 10 <= limit)
     (same : left.AgreesBelow limit right) : NodeDomain width right node := by
   have allocation := same (.array .int .bool) 0 (by omega)
   have roles := same (.array .int .int) 1 (by omega)
@@ -95,6 +103,7 @@ theorem NodeDomain.agrees_below {width : PNat} (limit : Nat) (left right : Assig
   have logs := same (.array .int (.array .int (entryTy width))) 6 (by omega)
   have retirement := same (.array .int optionalIntTy) 7 (by omega)
   have committable := same (.array .int optionalIntTy) 8 (by omega)
+  have committed := same (.array .int optionalIntTy) 9 (by omega)
   constructor
   · simpa only [scalarValue, <- allocation, <- roles] using domain.role
   · simpa only [scalarValue, <- allocation, <- lengths] using domain.length
@@ -106,6 +115,7 @@ theorem NodeDomain.agrees_below {width : PNat} (limit : Nat) (left right : Assig
     simpa only [<- logs] using domain.entries index previous
   · simpa only [read, NativeEncode.allocated, Term.eval, <- allocation, <- retirement] using domain.retirementIndex
   · simpa only [read, NativeEncode.allocated, Term.eval, <- allocation, <- committable] using domain.retirementCommittableIndex
+  · simpa only [read, NativeEncode.allocated, Term.eval, <- allocation, <- committed] using domain.retiredCommittedIndex
 
 theorem assigned_definition {sort : Ty} (value : Expr sort) (assignment : Assignment)
     (id : Nat) (fresh : (sort, id) ∉ value.symbols) :
