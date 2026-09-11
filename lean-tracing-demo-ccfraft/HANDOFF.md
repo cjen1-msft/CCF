@@ -197,8 +197,15 @@ parses back to its tree and that declarations parse to their original sort
 and ID. Mismatched sorts and bound-variable names fail declaration parsing.
 The refactor preserves all 150 old Model-case scripts byte for byte.
 
-The next Lean slice covers complete script parsing, declaration coverage,
-named assertion interpretation, and command sequencing. Then compose it with
+`NativeScriptText` now proves `script_text_parses` for the complete emitted
+script. Safe generated expressions contain no LF characters, so each command
+occupies one line. The reader requires the final LF, rejects blank command
+lines, and parses every line. This is the emitted format, not a general
+SMT-LIB layout parser. The proof uses the shared expression parser and
+`List.splitOn_intercalate`; it does not add another token parser.
+
+The next Lean slice covers declaration coverage, named assertion interpretation,
+and command sequencing. Then compose it with
 `compiled_trace_iff`. Do not flip the full Model-to-script assurance flag yet.
 JSON decoding, remaining action coverage, and raw reducer integration
 still need their documented delivery work.

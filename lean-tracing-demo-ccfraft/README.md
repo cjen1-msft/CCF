@@ -94,6 +94,9 @@ declarations, or the datatype prelude.
 `NativeScriptSyntax` proves each command's text round trip and checks that a
 declaration's parsed sort agrees with its symbol name. The emitted prelude
 is pinned by a kernel proof. Full script interpretation remains separate.
+`NativeScriptText` proves the whole emitted script parses to the exact command list,
+including the final newline and all named assertions. The reader accepts the
+generated one-command-per-line format, not arbitrary SMT-LIB layout.
 `NativeSmtFixtureMain` carries kernel-checked expected verdicts for emitted
 formulas. `NativeEncodeProofs` covers configuration selectors, bitset decoding,
 and allocation-guarded read specialization.

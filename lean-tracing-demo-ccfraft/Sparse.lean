@@ -35,6 +35,7 @@ import Sparse.NativeSyntaxProofs
 import Sparse.NativeNames
 import Sparse.NativeLowering
 import Sparse.NativeScriptSyntax
+import Sparse.NativeScriptText
 import Sparse.NativeInitialEncoding
 import Sparse.NativeObservationEncoding
 import Sparse.NativeCompilerEncoding
