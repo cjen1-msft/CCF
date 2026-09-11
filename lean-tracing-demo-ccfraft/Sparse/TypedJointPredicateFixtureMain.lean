@@ -21,17 +21,27 @@ private def point {roots size : Nat} (address : IntervalReadback.Address roots s
 
 private def fixture {roots size : Nat} (name : String) (input : SmtScript.Formula)
     (graph : SymbolicGraph roots .entry size) (queries : List (Query size))
-    (points : List (Observation roots size .entry)) (metadata : List (Prod String Json)) : Json :=
-  let formula := TypedJointPredicateEncoding.encode input graph queries points
+    (points : List (Observation roots size .entry)) (metadata : List (Prod String Json))
+    (clauses : List (Witness.Clause size) := []) : Json :=
+  let formula := Witness.encode input graph queries points clauses
   let script := SmtScript.render formula
-  let zeroID := zeroId input graph queries points
+  let zeroID := if clauses.isEmpty then zeroId input graph queries points
+    else Witness.zero input graph queries points clauses
+  let firstID := if clauses.isEmpty then first input graph queries points
+    else Witness.base input graph queries points clauses
+  let cutList := if clauses.isEmpty then cutIds zeroID graph queries points
+    else Witness.cuts zeroID graph queries points clauses
+  let requests := if clauses.isEmpty then seeds zeroID graph queries points
+    else Witness.demands zeroID graph queries points clauses
   Json.mkObj ([
     ("name", toJson name), ("script", toJson script),
-    ("zero", toJson zeroID), ("first", toJson (first input graph queries points)),
-    ("next", toJson (TypedJointPredicateEncoding.nextFunctionId input graph queries points)),
+    ("zero", toJson zeroID), ("first", toJson firstID),
+    ("next", toJson (firstID + roots + size)), ("witnesses", toJson clauses.length),
+    ("empty_unchanged", toJson (if clauses.isEmpty then
+      script == TypedJointPredicateEncoding.render input graph queries points else true)),
     ("roots", toJson roots), ("versions", toJson size), ("points", toJson points.length),
-    ("cuts", toJson (cutIds zeroID graph queries points).length),
-    ("demands", toJson (TypedIntervalReadBlock.planned graph (seeds zeroID graph queries points)).length),
+    ("cuts", toJson cutList.length),
+    ("demands", toJson (TypedIntervalReadBlock.planned graph requests).length),
     ("parsed_script", toJson ((SmtScriptText.parse script).map SmtScript.renderCommands)),
     ("command_value", toJson (SmtScript.run QueueEncoding.regressionInput (SmtScript.compile formula))),
     ("parsed_value", toJson (SmtScriptText.runText QueueEncoding.regressionInput script))] ++ metadata)
@@ -100,9 +110,78 @@ def scaleFixtures : List Json :=
        ([point (.version 399) 2 left] ++ if valid then [] else [point (.version 399) 2 right])
        (verdict expected)]
 
+def witnessBoundaryFixtures : List Json :=
+  comparisons.flatMap fun (kind, body) =>
+    (List.range 3).flatMap fun lower =>
+      (List.range 3).flatMap fun upper =>
+        (List.range 4).flatMap fun position =>
+          [false, true].flatMap fun different =>
+            [false, true].flatMap fun enabled =>
+              [false, true].map fun universal =>
+                fixture s!"witness-{kind}-{lower}-{upper}-{position}-{different}-{enabled}-{universal}"
+                  [fixed 0 lower, fixed 1 upper, fixed 2 position] twoRoots
+                  (if universal then
+                    [{ lower := 0, upper := 1, predicate := .eq (.cell 0) (.cell 1) }] else [])
+                  [point (.root 0) 2 left, point (.version 1) 2 (if different then right else left)]
+                  [("kind", toJson kind), ("lower", toJson lower), ("upper", toJson upper),
+                   ("position", toJson position), ("different", toJson different), ("enabled", toJson enabled),
+                   ("universal_equal", toJson universal)]
+                  [{ lower := 0, upper := 1, predicate := body, enable := .boolean enabled }]
+
+def witnessEdgeFixtures : List Json :=
+  let mismatch : Witness.Clause 1 :=
+    { lower := 0, upper := 1, predicate := .ne (.cell 0) (.input left), enable := .boolean true }
+  let guard := Term.equal (.app .int .entry 5 (.integer 0)) left
+  [fixture "interior-mismatch" [fixed 0 0, fixed 1 3, fixed 2 0, fixed 3 2] rootGraph []
+     [point (.root 0) 2 left, point (.version 0) 3 left] (verdict "sat") [mismatch],
+   fixture "overlapping-universal-mismatch" [fixed 0 0, fixed 1 3, fixed 2 0, fixed 3 2] rootGraph
+     [{ lower := 0, upper := 1, predicate := .eq (.cell 0) (.input left) }]
+     [point (.root 0) 2 left, point (.version 0) 3 left] (verdict "unsat") [mismatch],
+   fixture "singleton-point-conflict" [fixed 0 0, fixed 1 1, fixed 2 0] rootGraph []
+     [point (.root 0) 2 left] (verdict "unsat") [mismatch],
+   fixture "aliased-witness-conflict" [fixed 0 0, fixed 1 1] rootGraph [] [] (verdict "unsat")
+     [mismatch, { mismatch with predicate := .eq (.cell 0) (.input left) }],
+   fixture "separate-witnesses" [fixed 0 0, fixed 1 2] rootGraph [] [] (verdict "sat")
+     [mismatch, { mismatch with predicate := .eq (.cell 0) (.input left) }],
+   fixture "root-version-witness-alias" [fixed 0 0, fixed 1 1]
+     (.push (.push (.empty : SymbolicGraph 1 .entry 0) (.root 0)) (.root 0)) [] [] (verdict "unsat")
+     [{ lower := 0, upper := 1, predicate := .ne (.cell 0) (.cell 1), enable := .boolean true }],
+   fixture "closed-million-witness" [fixed 0 0, fixed 1 1000000]
+     (.empty : SymbolicGraph 0 .entry 0) [] [] (verdict "sat")
+     [{ lower := 0, upper := 1, predicate := .input (.boolean true), enable := .boolean true }],
+   fixture "closed-false-witness" [fixed 0 0, fixed 1 1]
+     (.empty : SymbolicGraph 0 .entry 0) [] [] (verdict "unsat")
+     [{ lower := 0, upper := 1, predicate := .input (.boolean false), enable := .boolean true }],
+   fixture "disabled-reversed-witness" [fixed 0 2, fixed 1 0]
+     (.empty : SymbolicGraph 0 .entry 0) [] [] (verdict "sat")
+     [{ lower := 0, upper := 1, predicate := .input (.boolean false), enable := .boolean false }],
+   fixture "disabled-negative-witness" [fixed 0 (-1), fixed 1 0]
+     (.empty : SymbolicGraph 0 .entry 0) [] [] (verdict "unsat")
+     [{ lower := 0, upper := 1, predicate := .input (.boolean false), enable := .boolean false }],
+   fixture "guard-only-array-uf" [fixed 0 0, fixed 1 1] rootGraph [] [] (verdict "sat")
+     [{ mismatch with enable := guard },
+      { mismatch with enable := .not guard, predicate := .eq (.cell 0) (.input left) }],
+   fixture "disabled-high-guard" [fixed 0 0, fixed 1 0] rootGraph [] [] (verdict "sat")
+     [{ mismatch with enable := .app .entry .bool 7000 (.unknown .entry 9000) }],
+   fixture "wrong-selector-witness" [fixed 0 0, fixed 1 1,
+       .equal (.app .content .nodes 0 .signature) (.nodes 0),
+       .equal (.configurationNodes .signature) (.nodes 21845)]
+     (.empty : SymbolicGraph 0 .entry 0) [] [] (verdict "sat")
+     [{ lower := 0, upper := 1, enable := .boolean true,
+        predicate := .ne (.input (.configurationNodes .signature)) (.input (.app .content .nodes 0 .signature)) }]]
+
 end CCFRaft.Sparse.TypedJointPredicateFixtures
 
-def main : IO Unit :=
-  IO.println (Lean.toJson (CCFRaft.Sparse.TypedJointPredicateFixtures.boundaryFixtures ++
-    CCFRaft.Sparse.TypedJointPredicateFixtures.edgeFixtures ++
-    CCFRaft.Sparse.TypedJointPredicateFixtures.scaleFixtures)).compress
+def main (args : List String) : IO UInt32 := do
+  let cases := match args with
+    | [] => some (CCFRaft.Sparse.TypedJointPredicateFixtures.boundaryFixtures ++
+        CCFRaft.Sparse.TypedJointPredicateFixtures.edgeFixtures ++
+        CCFRaft.Sparse.TypedJointPredicateFixtures.scaleFixtures)
+    | ["--witnesses"] => some (CCFRaft.Sparse.TypedJointPredicateFixtures.witnessBoundaryFixtures ++
+        CCFRaft.Sparse.TypedJointPredicateFixtures.witnessEdgeFixtures)
+    | _ => none
+  let some cases := cases |
+    ( <- IO.getStderr).putStrLn "usage: TypedJointPredicateFixtureMain.lean [--witnesses]"
+    return 1
+  IO.println (Lean.toJson cases).compress
+  return 0

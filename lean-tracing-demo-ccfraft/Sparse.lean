@@ -36,6 +36,7 @@ import Sparse.QueueTraceEncoding
 import Sparse.QueueSummaryEncoding
 import Sparse.QueueReadback
 import Sparse.ReadbackHints
+import Sparse.ScalarExtension
 import Sparse.Smt
 import Sparse.SmtExpressionText
 import Sparse.SmtNodes

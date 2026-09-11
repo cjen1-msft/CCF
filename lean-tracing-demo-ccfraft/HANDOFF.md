@@ -60,7 +60,8 @@ New repository bridges extend that foundation:
 | `Sparse/IntervalEncoding.lean` | Typed point-read constraints and their rendered text correspond to one Int-valued root-array family, with symbolic indices, explicit nonnegative domains, and input-preserving fresh functions. |
 | `Sparse/TypedIntervalEncoding.lean` | Typed point constraints for all five sorts correspond to one original assignment and one root family, reserving every constant/expectation symbol and preserving complete external functions. |
 | `Sparse/TypedIntervalReadBlock.lean` | Arbitrary requests and a supplied base yield typed equations equivalent to one root family preserving every planned read. Installation preserves constants, selectors, and reserved external UFs. |
-| `Sparse/TypedJointPredicateEncoding.lean` | Formula and rendered-text satisfiability correspond to all Entry points and universal predicates over one original assignment and one shared root family. |
+| `Sparse/TypedJointPredicateEncoding.lean` | Formula and rendered-text satisfiability correspond to all Entry points and universal predicates over one original assignment and one shared root family. `Witness` adds guarded local existentials to that same family. |
+| `Sparse/ScalarExtension.lean` | Fresh Int scalar-block installation preserves all other constants, complete UFs, and selector interpretations. |
 | `Sparse/IntervalPredicate.lean` | Explicit Int comparisons lower with generated locality and alias-preserving semantics. Deduplication before the cut/reference product preserves all planned-demand membership. |
 | `Sparse/IntervalQueryEncoding.lean` | Rendered guarded universal Int queries are satisfiable iff one original assignment and one root-array family satisfy the input, nonnegative bounds, and all queries. |
 | `Sparse/JointIntervalCompletion.lean` | One root family satisfies all universal queries while preserving every joint requested value, including arbitrary root/version points and inactive query-cut reads. |
@@ -175,7 +176,8 @@ finite-array oracle. Other cases cover hidden splice cuts, million-scale
 domains, repeated queries, and 400 shared versions.
 Passing a point-read formula as input does not identify its roots with this
 compiler's fresh roots. Use `JointIntervalEncoding` for linked points and queries.
-Existential mismatch, entry values, and Model integration remain open.
+This Int compiler has no existential or Entry support. The typed Entry pipeline
+below supplies both. Model integration remains open.
 The composer must carry the full `nextFunctionId` reservation, including
 unprinted slots, rather than scan only emitted declarations.
 
@@ -233,8 +235,24 @@ remove domain or symbol reservations.
 `tests/test_sparse_typed_joint.py` covers 590 scripts, including 576 comparisons
 with an independent two-value array oracle. The 400-point and 400-version
 controls use 806 and 1,604 planned reads. These are component cases, not a
-full-trace performance result. Existential mismatch still requires fresh
-witness positions added to the same cuts and completion.
+full-trace performance result.
+`TypedJointPredicateEncoding.Witness` adds guarded local existentials.
+Each occurrence gets one nonnegative position. Referenced positions join every
+universal's cuts, while each body reads its versions at that one position.
+One completion preserves every point and witness. A body without references
+adds no reads or witness cuts, but retains its bounds and enable implication.
+Original bounds remain nonnegative even when disabled. The converse chooses
+zero for disabled witnesses; the formula permits any nonnegative position.
+`Witness.encode_exists_iff` and `Witness.rendered_exists_iff` use one original
+assignment and one root family for points, universals, and all existentials.
+Empty clause lists delegate to the old encoder and preserve its script.
+For `n` clauses, reserve scalar IDs `[z, z+n+1)` and the entire UF interval
+`[Witness.base ..., Witness.base ... + roots + versions)`.
+`ScalarExtension` preserves complete UFs and selectors before the read-block
+installer runs. Original constants outside the scalar block remain unchanged.
+The same test module adds 1,165 witness scripts, including 1,152 finite-array
+oracle cases. Controls cover interior mismatch, overlapping universal equality,
+aliased witnesses, empty and disabled intervals, and source-symbol capture.
 
 The chosen entry representation uses fixed native datatypes with signed
 integer term/transaction fields and 15-bit node sets. `EntryValue` supplies

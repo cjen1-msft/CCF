@@ -2,6 +2,7 @@ import Sparse.EntryPredicate
 import Sparse.TypedIntervalReadBlock
 import Sparse.JointIntervalCompletion
 import Sparse.IntervalQueryEncoding
+import Sparse.ScalarExtension
 
 set_option autoImplicit false
 
@@ -648,6 +649,670 @@ theorem rendered_exists_iff (input : SmtScript.Formula) (graph : SymbolicGraph r
         SmtScript.Holds original input /\ Domains original graph queries points /\ Concrete original graph queries points arrays := by
   simp only [render, <- SmtScriptText.formula_text_iff, encode_exists_iff]
 
+namespace Witness
+
+structure Clause (size : Nat) extends Query size where
+  enable : Term .bool
+
+def Clause.maximum (clause : Clause size) : Nat :=
+  max clause.toQuery.externalMax (SymbolBounds.termMax clause.enable)
+
+def maximum : List (Clause size) -> Nat
+  | [] => 0
+  | clause :: rest => max clause.maximum (maximum rest)
+
+theorem maximum_member (clauses : List (Clause size)) (clause : Clause size)
+    (member : Membership.mem clauses clause) : clause.maximum <= maximum clauses := by
+  induction clauses with
+  | nil => simp at member
+  | cons head rest ih =>
+    cases List.mem_cons.mp member with
+    | inl same => subst clause; exact Nat.le_max_left _ _
+    | inr present => exact Nat.le_trans (ih present) (Nat.le_max_right _ _)
+
+theorem clause_bound (clauses : List (Clause size)) (index : Fin clauses.length) :
+    clauses[index.val].maximum <= maximum clauses :=
+  maximum_member clauses _ (List.getElem_mem index.isLt)
+
+def zero (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry))
+    (clauses : List (Clause size)) : Nat :=
+  max (zeroId input graph queries points) (maximum clauses + 1)
+
+def base (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry))
+    (clauses : List (Clause size)) : Nat :=
+  zero input graph queries points clauses + (clauses.length + 1)
+
+def witnessId (zeroID : Nat) (index : Nat) : Nat := zeroID + (index + 1)
+
+def extra (zeroID : Nat) (clauses : List (Clause size)) : List (Demand roots size) :=
+  (List.finRange clauses.length).flatMap (fun index =>
+    clauses[index.val].predicate.references.map (fun version => (Address.version version, witnessId zeroID index.val)))
+
+def requests (zeroID : Nat) (points : List (Observation roots size .entry))
+    (clauses : List (Clause size)) : List (Demand roots size) :=
+  TypedIntervalEncoding.requested points ++ extra zeroID clauses
+
+def cuts (zeroID : Nat) (graph : SymbolicGraph roots .entry size) (queries : List (Query size))
+    (points : List (Observation roots size .entry)) (clauses : List (Clause size)) : List Nat :=
+  (cutIds zeroID graph queries points ++ (extra (roots := roots) zeroID clauses).map Prod.snd).dedup
+
+def demands (zeroID : Nat) (graph : SymbolicGraph roots .entry size) (queries : List (Query size))
+    (points : List (Observation roots size .entry)) (clauses : List (Clause size)) : List (Demand roots size) :=
+  requestsFrom (cuts zeroID graph queries points clauses) (queries.map Query.predicate) (requests zeroID points clauses)
+
+def decodedRequests (assignment : Assignment) (zeroID : Nat) (points : List (Observation roots size .entry))
+    (clauses : List (Clause size)) : List (Demand roots size) :=
+  (requests zeroID points clauses).map (fun demand => (demand.1, natValue assignment demand.2))
+
+def clauseTerm (first zeroID : Nat) (clauses : List (Clause size)) (index : Fin clauses.length) : Term .bool :=
+  let clause := clauses[index.val]
+  let position := witnessId zeroID index.val
+  .and (.and (.le (.integer 0) (natTerm clause.lower)) (.le (.integer 0) (natTerm clause.upper)))
+    (.and (.le (.integer 0) (natTerm position))
+      (.implies clause.enable
+        (.and (.and (.le (natTerm clause.lower) (natTerm position))
+          (.not (.le (natTerm clause.upper) (natTerm position))))
+          (clause.predicate.lower roots first position))))
+
+def finiteClauses (first zeroID : Nat) (clauses : List (Clause size)) : SmtScript.Formula :=
+  (List.finRange clauses.length).map (clauseTerm (roots := roots) first zeroID clauses)
+
+def LocalWitnesses (assignment : Assignment) (zeroID : Nat) (clauses : List (Clause size))
+    (cells : Reads roots size EntryValue.Entry) : Prop :=
+  forall index : Fin clauses.length,
+    let clause := clauses[index.val]
+    let position := witnessId zeroID index.val
+    0 <= assignment.constant .int clause.lower /\ 0 <= assignment.constant .int clause.upper /\
+    0 <= assignment.constant .int position /\
+    (clause.enable.eval assignment = true ->
+      (clause.toQuery.toLocalQuery assignment).toQuery.Inside (natValue assignment position) /\
+        clause.predicate.eval assignment (fun version => cells (.version version) (natValue assignment position)) = true)
+
+def Existentials (assignment : Assignment) (graph : SymbolicGraph roots .entry size)
+    (clauses : List (Clause size)) (arrays : RootArrays roots EntryValue.Entry) : Prop :=
+  forall index : Fin clauses.length,
+    let clause := clauses[index.val]
+    0 <= assignment.constant .int clause.lower /\ 0 <= assignment.constant .int clause.upper /\
+    (clause.enable.eval assignment = true -> exists position : Nat,
+      (clause.toQuery.toLocalQuery assignment).toQuery.Inside position /\
+        clause.predicate.eval assignment (VersionedIntervals.evaluate (interpret assignment graph) arrays position) = true)
+
+def scalarValues {count : Nat} (positions : Fin count -> Nat) : Fin (count + 1) -> Int :=
+  Fin.cases 0 (fun index => (positions index : Int))
+
+def install (original : Assignment) (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry))
+    (clauses : List (Clause size)) (positions : Fin clauses.length -> Nat)
+    (arrays : RootArrays roots EntryValue.Entry) : Assignment :=
+  TypedIntervalReadBlock.install
+    (ScalarExtension.install original (zero input graph queries points clauses) (scalarValues positions))
+    (base input graph queries points clauses) graph arrays
+
+theorem source_term (original : Assignment) (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry))
+    (clauses : List (Clause size)) (positions : Fin clauses.length -> Nat)
+    (arrays : RootArrays roots EntryValue.Entry) (term : Term ty)
+    (below : SymbolBounds.termMax term < zero input graph queries points clauses) :
+    term.eval (install original input graph queries points clauses positions arrays) = term.eval original := by
+  have higher : zero input graph queries points clauses < base input graph queries points clauses := by
+    unfold base
+    omega
+  exact ((TypedIntervalReadBlock.install_source_term _ _ graph arrays term (Nat.lt_trans below higher)).1).trans
+    (ScalarExtension.eval_below original _ _ term below)
+
+theorem original_constant (original : Assignment) (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry))
+    (clauses : List (Clause size)) (positions : Fin clauses.length -> Nat)
+    (arrays : RootArrays roots EntryValue.Entry) (sort : Ty) (id : Nat)
+    (outside : id < zero input graph queries points clauses \/ base input graph queries points clauses <= id) :
+    (install original input graph queries points clauses positions arrays).constant sort id = original.constant sort id :=
+  ScalarExtension.outside original _ _ sort id outside
+
+theorem original_function (original : Assignment) (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry))
+    (clauses : List (Clause size)) (positions : Fin clauses.length -> Nat)
+    (arrays : RootArrays roots EntryValue.Entry) (domain result : Ty) (id : Nat)
+    (outside : id < base input graph queries points clauses \/
+      base input graph queries points clauses + roots + size <= id) :
+    (install original input graph queries points clauses positions arrays).unary domain result id =
+      original.unary domain result id :=
+  TypedIntervalReadBlock.install_external _ _ graph arrays domain result id outside
+
+theorem original_selectors (original : Assignment) (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry))
+    (clauses : List (Clause size)) (positions : Fin clauses.length -> Nat)
+    (arrays : RootArrays roots EntryValue.Entry) :
+    (install original input graph queries points clauses positions arrays).selectors = original.selectors := rfl
+
+theorem installed_zero (original : Assignment) (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry))
+    (clauses : List (Clause size)) (positions : Fin clauses.length -> Nat)
+    (arrays : RootArrays roots EntryValue.Entry) :
+    (install original input graph queries points clauses positions arrays).constant .int
+      (zero input graph queries points clauses) = 0 := by
+  exact ScalarExtension.at_index original _ (scalarValues positions) (0 : Fin (clauses.length + 1))
+
+theorem installed_witness (original : Assignment) (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry))
+    (clauses : List (Clause size)) (positions : Fin clauses.length -> Nat)
+    (arrays : RootArrays roots EntryValue.Entry) (index : Fin clauses.length) :
+    (install original input graph queries points clauses positions arrays).constant .int
+      (witnessId (zero input graph queries points clauses) index.val) = (positions index : Int) :=
+  ScalarExtension.at_index original _ (scalarValues positions) index.succ
+
+theorem extra_member (zeroID : Nat) (clauses : List (Clause size)) (index : Fin clauses.length)
+    (version : Fin size) (member : Membership.mem clauses[index.val].predicate.references version) :
+    Membership.mem (extra (roots := roots) zeroID clauses) (.version version, witnessId zeroID index.val) :=
+  List.mem_flatMap.mpr (Exists.intro index (And.intro (List.mem_finRange index)
+    (List.mem_map.mpr (Exists.intro version (And.intro member rfl)))))
+
+theorem raw_requested (zeroID : Nat) (graph : SymbolicGraph roots .entry size) (queries : List (Query size))
+    (points : List (Observation roots size .entry)) (clauses : List (Clause size))
+    (demand : Demand roots size) (member : Membership.mem (requests zeroID points clauses) demand) :
+    Membership.mem (demands zeroID graph queries points clauses) demand :=
+  List.mem_dedup.mpr (List.mem_append.mpr (Or.inr member))
+
+theorem raw_cut (zeroID : Nat) (graph : SymbolicGraph roots .entry size) (queries : List (Query size))
+    (points : List (Observation roots size .entry)) (clauses : List (Clause size))
+    (demand : Demand roots size) (member : Membership.mem (requests zeroID points clauses) demand) :
+    Membership.mem (cuts zeroID graph queries points clauses) demand.2 := by
+  apply List.mem_dedup.mpr
+  cases List.mem_append.mp member with
+  | inl point =>
+    apply List.mem_append.mpr
+    apply Or.inl
+    cases List.mem_map.mp point with
+    | intro observation spec =>
+      cases spec.2
+      exact List.mem_dedup.mpr (List.mem_cons_of_mem _ (List.mem_append.mpr
+        (Or.inr (List.mem_map.mpr (Exists.intro observation (And.intro spec.1 rfl))))))
+  | inr extra => exact List.mem_append.mpr (Or.inr (List.mem_map.mpr (Exists.intro demand (And.intro extra rfl))))
+
+theorem reference_requested (zeroID : Nat) (graph : SymbolicGraph roots .entry size) (queries : List (Query size))
+    (points : List (Observation roots size .entry)) (clauses : List (Clause size))
+    (query : Query size) (selected : Membership.mem queries query) (position : Nat)
+    (cut : Membership.mem (cuts zeroID graph queries points clauses) position) (version : Fin size)
+    (referenced : Membership.mem query.predicate.references version) :
+    Membership.mem (demands zeroID graph queries points clauses) (.version version, position) := by
+  apply List.mem_dedup.mpr
+  apply List.mem_append.mpr
+  apply Or.inl
+  exact List.mem_map.mpr (Exists.intro (position, version) (And.intro (List.mem_product.mpr
+    (And.intro cut ((EntryPredicate.references_mem _ _).mpr (Exists.intro query.predicate
+      (And.intro (List.mem_map.mpr (Exists.intro query (And.intro selected rfl))) referenced))))) rfl))
+
+theorem cut_image (assignment : Assignment) (zeroID : Nat) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry))
+    (clauses : List (Clause size)) (initialized : assignment.constant .int zeroID = 0) (position : Nat) :
+    Membership.mem (JointIntervalCompletion.cuts (interpret assignment graph) (localQueries assignment queries)
+      (decodedRequests assignment zeroID points clauses)) position <->
+      exists id, Membership.mem (cuts zeroID graph queries points clauses) id /\ natValue assignment id = position := by
+  have split :
+      Membership.mem (JointIntervalCompletion.cuts (interpret assignment graph) (localQueries assignment queries)
+        (decodedRequests assignment zeroID points clauses)) position <->
+      Membership.mem (JointIntervalCompletion.cuts (interpret assignment graph) (localQueries assignment queries)
+        (semanticPoints assignment points)) position \/
+      Membership.mem ((extra (roots := roots) zeroID clauses).map (fun demand => natValue assignment demand.2)) position := by
+    simp [JointIntervalCompletion.cuts_membership, decodedRequests, requests, TypedIntervalEncoding.requested,
+      semanticPoints, List.map_map, Function.comp_def, or_assoc]
+  rw [split, TypedJointPredicateEncoding.cut_image assignment zeroID graph queries points initialized]
+  simp [cuts, or_and_right, exists_or, List.mem_map]
+  aesop
+
+theorem clauses_correct (assignment : Assignment) (first zeroID : Nat) (clauses : List (Clause size)) :
+    SmtScript.Holds assignment (finiteClauses (roots := roots) first zeroID clauses) <->
+      LocalWitnesses assignment zeroID clauses (reads (roots := roots) (ty := .entry) assignment first) := by
+  simp only [finiteClauses, SmtScript.Holds, List.forall_mem_map, List.mem_finRange, forall_const, LocalWitnesses]
+  apply forall_congr'
+  intro index
+  dsimp only
+  by_cases hl : 0 <= assignment.constant .int clauses[index.val].lower <;>
+    by_cases hu : 0 <= assignment.constant .int clauses[index.val].upper <;>
+    by_cases hw : 0 <= assignment.constant .int (witnessId zeroID index.val)
+  all_goals try { simp [clauseTerm, Term.eval, natTerm, hl, hu, hw]; done }
+  rw [clauses[index.val].toQuery.inside_iff assignment _ hl hu hw]
+  simp [clauseTerm, Term.eval, natTerm, hl, hu, hw,
+    clauses[index.val].predicate.lower_correct assignment roots first (witnessId zeroID index.val) hw]
+  cases clauses[index.val].enable.eval assignment <;> simp
+
+def guards (first : Nat) (cutIds : List Nat) (queries : List (Query size)) : SmtScript.Formula :=
+  queries.flatMap (fun query => cutIds.map (guardTerm (roots := roots) first query))
+
+def GuardsHold (assignment : Assignment) (first : Nat) (cutIds : List Nat) (queries : List (Query size)) : Prop :=
+  forall query, Membership.mem queries query -> forall id, Membership.mem cutIds id ->
+    (query.toLocalQuery assignment).toQuery.Inside (natValue assignment id) ->
+      query.predicate.eval assignment
+        (fun version => reads (ty := .entry) assignment first (Address.version (roots := roots) version)
+          (natValue assignment id)) = true
+
+theorem guards_correct (assignment : Assignment) (first : Nat) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry)) (cutIds : List Nat)
+    (domains : Domains assignment graph queries points)
+    (nonnegative : forall id, Membership.mem cutIds id -> 0 <= assignment.constant .int id) :
+    SmtScript.Holds assignment (guards (roots := roots) first cutIds queries) <->
+      GuardsHold (roots := roots) assignment first cutIds queries := by
+  simp only [guards, SmtScript.Holds, List.forall_mem_flatMap, List.forall_mem_map, GuardsHold]
+  apply forall_congr'
+  intro query
+  apply forall_congr'
+  intro member
+  apply forall_congr'
+  intro id
+  apply forall_congr'
+  intro cut
+  have bounds := query_nonnegative assignment graph queries points domains query member
+  exact guard_correct assignment first query id bounds.1 bounds.2 (nonnegative id cut)
+
+theorem cut_nonnegative (assignment : Assignment) (zeroID : Nat) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry)) (clauses : List (Clause size))
+    (initialized : assignment.constant .int zeroID = 0) (domains : Domains assignment graph queries points)
+    (witnesses : forall index : Fin clauses.length, 0 <= assignment.constant .int (witnessId zeroID index.val))
+    (id : Nat) (member : Membership.mem (cuts zeroID graph queries points clauses) id) :
+    0 <= assignment.constant .int id := by
+  cases List.mem_append.mp (List.mem_dedup.mp member) with
+  | inl old => exact TypedJointPredicateEncoding.cut_nonnegative assignment zeroID graph queries points initialized domains id old
+  | inr extraPosition =>
+    cases List.mem_map.mp extraPosition with
+    | intro demand spec =>
+      cases List.mem_flatMap.mp spec.1 with
+      | intro index selected =>
+        cases List.mem_map.mp selected.2 with
+        | intro version same =>
+          cases same.2
+          rw [<- spec.2]
+          exact witnesses index
+
+theorem planned_nonnegative (assignment : Assignment) (zeroID : Nat) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry)) (clauses : List (Clause size))
+    (nonnegative : forall id, Membership.mem (cuts zeroID graph queries points clauses) id ->
+      0 <= assignment.constant .int id) (demand : Demand roots size)
+    (member : Membership.mem (TypedIntervalReadBlock.planned graph (demands zeroID graph queries points clauses)) demand) :
+    0 <= assignment.constant .int demand.2 := by
+  apply plan_positions graph _ (fun id => 0 <= assignment.constant .int id) ?_ demand member
+  intro cell present
+  apply nonnegative
+  cases List.mem_append.mp (List.mem_dedup.mp present) with
+  | inl query =>
+    cases List.mem_map.mp query with
+    | intro pair spec => cases spec.2; exact (List.mem_product.mp spec.1).1
+  | inr point => exact raw_cut zeroID graph queries points clauses cell point
+
+theorem complete (assignment : Assignment) (first zeroID : Nat) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry)) (clauses : List (Clause size))
+    (initialized : assignment.constant .int zeroID = 0)
+    (nonnegative : forall id, Membership.mem (cuts zeroID graph queries points clauses) id ->
+      0 <= assignment.constant .int id)
+    (equations : SmtScript.Holds assignment
+      (TypedIntervalReadBlock.equations first graph (demands zeroID graph queries points clauses)))
+    (valid : GuardsHold (roots := roots) assignment first (cuts zeroID graph queries points clauses) queries) :
+    exists arrays : RootArrays roots EntryValue.Entry,
+      VersionedIntervals.Realizes (interpret assignment graph) (IntervalQueries.schemas (localQueries assignment queries)) arrays /\
+      TypedIntervalReadBlock.Agrees assignment graph (requests zeroID points clauses) (reads assignment first) arrays := by
+  cases (TypedIntervalReadBlock.equations_readback_iff assignment first graph (demands zeroID graph queries points clauses)
+      (planned_nonnegative assignment zeroID graph queries points clauses nonnegative)).mp equations with
+  | intro sampled agree =>
+    have predicates : JointIntervalCompletion.CutPredicates (interpret assignment graph) (localQueries assignment queries)
+        (decodedRequests assignment zeroID points clauses) (actual (interpret assignment graph) sampled) := by
+      intro localQuery member cut active
+      cases List.mem_map.mp member with
+      | intro query selected =>
+        cases selected.2
+        cases (cut_image assignment zeroID graph queries points clauses initialized cut.val).mp cut.property with
+        | intro id cutSpec =>
+          have same := query.predicate.locality assignment
+            (fun version => actual (interpret assignment graph) sampled (.version version) cut.val)
+            (fun version => reads (ty := .entry) assignment first (.version version) cut.val)
+            (fun version referenced => by
+              rw [<- cutSpec.2]
+              exact agree _ (TypedIntervalReadBlock.requested_mem graph _ _
+                (reference_requested zeroID graph queries points clauses query selected.1 id cutSpec.1 version referenced)))
+          change query.predicate.eval assignment _ = true
+          rw [same, <- cutSpec.2]
+          rw [<- cutSpec.2] at active
+          exact valid query selected.1 id cutSpec.1 active
+    refine Exists.intro (JointIntervalCompletion.complete (interpret assignment graph) (localQueries assignment queries)
+      (decodedRequests assignment zeroID points clauses) sampled) (And.intro ?_ ?_)
+    next => exact JointIntervalCompletion.completion_realizes _ _ _ sampled predicates
+    next =>
+      intro demand member
+      have cut := JointIntervalCompletion.point_cut (interpret assignment graph) (localQueries assignment queries)
+        (decodedRequests assignment zeroID points clauses) _
+        (List.mem_map.mpr (Exists.intro demand (And.intro member rfl)))
+      exact (JointIntervalCompletion.actual_complete_at_cut _ _ _ sampled demand.1
+        (Subtype.mk (natValue assignment demand.2) cut)).trans
+        (agree _ (TypedIntervalReadBlock.requested_mem graph _ _ (raw_requested zeroID graph queries points clauses demand member)))
+
+def block (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size) (queries : List (Query size))
+    (points : List (Observation roots size .entry)) (clauses : List (Clause size)) : SmtScript.Formula :=
+  let zeroID := zero input graph queries points clauses
+  let first := base input graph queries points clauses
+  let cutIds := cuts zeroID graph queries points clauses
+  let requested := requestsFrom cutIds (queries.map Query.predicate) (requests zeroID points clauses)
+  input ++ [.equal (natTerm zeroID) (.integer 0)] ++ TypedIntervalReadBlock.domainFormula (boundIds graph queries points) ++
+    finiteClauses (roots := roots) first zeroID clauses ++ TypedIntervalReadBlock.equations first graph requested ++
+    guards (roots := roots) first cutIds queries ++ pointFormula first points
+
+def Facts (assignment : Assignment) (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry)) (clauses : List (Clause size)) : Prop :=
+  let zeroID := zero input graph queries points clauses
+  let first := base input graph queries points clauses
+  SmtScript.Holds assignment input /\ assignment.constant .int zeroID = 0 /\ Domains assignment graph queries points /\
+    LocalWitnesses assignment zeroID clauses (reads (roots := roots) (ty := .entry) assignment first) /\
+    SmtScript.Holds assignment (TypedIntervalReadBlock.equations first graph (demands zeroID graph queries points clauses)) /\
+    GuardsHold (roots := roots) assignment first (cuts zeroID graph queries points clauses) queries /\
+    TypedIntervalEncoding.ObservationsHold assignment (reads assignment first) points
+
+theorem block_correct (assignment : Assignment) (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry)) (clauses : List (Clause size)) :
+    SmtScript.Holds assignment (block input graph queries points clauses) <-> Facts assignment input graph queries points clauses := by
+  have domain_iff : SmtScript.Holds assignment (TypedIntervalReadBlock.domainFormula (boundIds graph queries points)) <->
+      Domains assignment graph queries points := by
+    simp [TypedIntervalReadBlock.domainFormula, Domains, SmtScript.Holds, natTerm, Term.eval]
+  have zero_iff (id : Nat) : SmtScript.Holds assignment [.equal (natTerm id) (.integer 0)] <->
+      assignment.constant .int id = 0 := by simp [SmtScript.Holds, Term.eval, natTerm]
+  simp only [block, QueueEncoding.holds_append, zero_iff, domain_iff, clauses_correct, and_assoc, Facts]
+  apply and_congr_right
+  intro _
+  apply and_congr_right
+  intro initialized
+  apply and_congr_right
+  intro domains
+  apply and_congr_right
+  intro witnesses
+  exact and_congr Iff.rfl (and_congr
+    (guards_correct assignment _ graph queries points _ domains
+      (cut_nonnegative assignment _ graph queries points clauses initialized domains (fun index => (witnesses index).2.2.1)))
+    (points_correct assignment _ graph queries points domains))
+
+theorem block_sound (assignment : Assignment) (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry)) (clauses : List (Clause size))
+    (holds : SmtScript.Holds assignment (block input graph queries points clauses)) :
+    SmtScript.Holds assignment input /\ Domains assignment graph queries points /\
+      exists arrays : RootArrays roots EntryValue.Entry,
+        Concrete assignment graph queries points arrays /\ Existentials assignment graph clauses arrays := by
+  have spec := (block_correct assignment input graph queries points clauses).mp holds
+  let zeroID := zero input graph queries points clauses
+  let first := base input graph queries points clauses
+  have witnesses := spec.2.2.2.1
+  cases complete assignment first zeroID graph queries points clauses spec.2.1
+      (cut_nonnegative assignment zeroID graph queries points clauses spec.2.1 spec.2.2.1
+        (fun index => (witnesses index).2.2.1)) spec.2.2.2.2.1 spec.2.2.2.2.2.1 with
+  | intro arrays completed =>
+    refine And.intro spec.1 (And.intro spec.2.2.1 (Exists.intro arrays (And.intro (And.intro completed.1 ?_) ?_)))
+    next =>
+      intro point member
+      exact (completed.2 _ (List.mem_append.mpr (Or.inl
+        (List.mem_map.mpr (Exists.intro point (And.intro member rfl)))))).trans (spec.2.2.2.2.2.2 point member)
+    next =>
+      intro index
+      have witnessed := witnesses index
+      refine And.intro witnessed.1 (And.intro witnessed.2.1 ?_)
+      intro enabled
+      have at_witness := witnessed.2.2.2 enabled
+      refine Exists.intro (natValue assignment (witnessId zeroID index.val)) (And.intro at_witness.1 ?_)
+      have same := clauses[index.val].predicate.locality assignment
+        (VersionedIntervals.evaluate (interpret assignment graph) arrays (natValue assignment (witnessId zeroID index.val)))
+        (fun version => reads (ty := .entry) assignment first (Address.version (roots := roots) version)
+          (natValue assignment (witnessId zeroID index.val)))
+        (fun version referenced => completed.2 _ (List.mem_append.mpr (Or.inr (extra_member zeroID clauses index version referenced))))
+      rw [same]
+      exact at_witness.2
+
+def Chosen (assignment : Assignment) (graph : SymbolicGraph roots .entry size) (clauses : List (Clause size))
+    (arrays : RootArrays roots EntryValue.Entry) (positions : Fin clauses.length -> Nat) : Prop :=
+  forall index : Fin clauses.length,
+    let clause := clauses[index.val]
+    0 <= assignment.constant .int clause.lower /\ 0 <= assignment.constant .int clause.upper /\
+    (clause.enable.eval assignment = true ->
+      (clause.toQuery.toLocalQuery assignment).toQuery.Inside (positions index) /\
+        clause.predicate.eval assignment (VersionedIntervals.evaluate (interpret assignment graph) arrays (positions index)) = true)
+
+theorem choose_positions (assignment : Assignment) (graph : SymbolicGraph roots .entry size)
+    (clauses : List (Clause size)) (arrays : RootArrays roots EntryValue.Entry)
+    (valid : Existentials assignment graph clauses arrays) :
+    exists positions : Fin clauses.length -> Nat, Chosen assignment graph clauses arrays positions /\
+      forall index, clauses[index.val].enable.eval assignment = false -> positions index = 0 := by
+  classical
+  have each (index : Fin clauses.length) : exists position : Nat,
+      (clauses[index.val].enable.eval assignment = true ->
+        (clauses[index.val].toQuery.toLocalQuery assignment).toQuery.Inside position /\
+        clauses[index.val].predicate.eval assignment (VersionedIntervals.evaluate (interpret assignment graph) arrays position) = true) /\
+      (clauses[index.val].enable.eval assignment = false -> position = 0) := by
+    by_cases enabled : clauses[index.val].enable.eval assignment = true
+    next =>
+      cases (valid index).2.2 enabled with
+      | intro position witnessed =>
+        exact Exists.intro position (And.intro (fun _ => witnessed) (by simp [enabled]))
+    next =>
+      exact Exists.intro 0 (And.intro (fun impossible => False.elim (enabled impossible)) (fun _ => rfl))
+  choose positions selected using each
+  refine Exists.intro positions (And.intro ?_ (fun index => (selected index).2))
+  intro index
+  exact And.intro (valid index).1 (And.intro (valid index).2.1 (selected index).1)
+
+theorem old_bound (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size) (queries : List (Query size))
+    (points : List (Observation roots size .entry)) (clauses : List (Clause size)) :
+    zeroId input graph queries points <= zero input graph queries points clauses := Nat.le_max_left _ _
+
+theorem new_bound (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size) (queries : List (Query size))
+    (points : List (Observation roots size .entry)) (clauses : List (Clause size)) (index : Fin clauses.length) :
+    clauses[index.val].toQuery.externalMax < zero input graph queries points clauses /\
+      SymbolBounds.termMax clauses[index.val].enable < zero input graph queries points clauses := by
+  have small : clauses[index.val].maximum < zero input graph queries points clauses :=
+    Nat.lt_of_le_of_lt (clause_bound clauses index)
+      (Nat.lt_of_lt_of_le (Nat.lt_succ_self (maximum clauses)) (Nat.le_max_right _ _))
+  exact And.intro (Nat.lt_of_le_of_lt (Nat.le_max_left _ _) small) (Nat.lt_of_le_of_lt (Nat.le_max_right _ _) small)
+
+theorem clause_functions (original : Assignment) (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry)) (clauses : List (Clause size))
+    (positions : Fin clauses.length -> Nat) (arrays : RootArrays roots EntryValue.Entry)
+    (index : Fin clauses.length) (domain result : Ty) (id : Nat)
+    (mentioned : Membership.mem (SmtScript.termSymbols clauses[index.val].enable) (.unary domain result id) \/
+      Membership.mem clauses[index.val].predicate.externalSymbols (.unary domain result id)) :
+    (install original input graph queries points clauses positions arrays).unary domain result id =
+      original.unary domain result id := by
+  have bounds := new_bound input graph queries points clauses index
+  have below : id < zero input graph queries points clauses := by
+    cases mentioned with
+    | inl guard => exact term_symbol_bound _ _ bounds.2 _ guard
+    | inr body =>
+      exact Nat.lt_of_le_of_lt (clauses[index.val].predicate.external_symbol_bound _ body)
+        (Nat.lt_of_le_of_lt clauses[index.val].toQuery.bounds.2.2 bounds.1)
+  apply original_function
+  exact Or.inl (by unfold base; omega)
+
+theorem read_actual (original : Assignment) (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry)) (clauses : List (Clause size))
+    (positions : Fin clauses.length -> Nat) (arrays : RootArrays roots EntryValue.Entry) :
+    reads (install original input graph queries points clauses positions arrays) (base input graph queries points clauses) =
+      actual (interpret (install original input graph queries points clauses positions arrays) graph) arrays := by
+  have bound := Nat.lt_of_lt_of_le (allocation_bounds input graph queries points).2.1 (old_bound input graph queries points clauses)
+  have below : TypedIntervalEncoding.graphMax graph < base input graph queries points clauses := by unfold base; omega
+  rw [show interpret (install original input graph queries points clauses positions arrays) graph =
+    interpret (ScalarExtension.install original (zero input graph queries points clauses) (scalarValues positions)) graph from
+      TypedIntervalReadBlock.install_graph _ _ graph arrays below]
+  exact TypedIntervalReadBlock.install_reads _ _ graph arrays
+
+theorem source_graph (original : Assignment) (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry)) (clauses : List (Clause size))
+    (positions : Fin clauses.length -> Nat) (arrays : RootArrays roots EntryValue.Entry) :
+    interpret (install original input graph queries points clauses positions arrays) graph = interpret original graph :=
+  graph_congr _ _ _ graph
+    (Nat.lt_of_lt_of_le (allocation_bounds input graph queries points).2.1 (old_bound input graph queries points clauses))
+    (fun term below => source_term original input graph queries points clauses positions arrays term below)
+
+theorem chosen_installed (original : Assignment) (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry)) (clauses : List (Clause size))
+    (positions : Fin clauses.length -> Nat) (arrays : RootArrays roots EntryValue.Entry)
+    (chosen : Chosen original graph clauses arrays positions) :
+    LocalWitnesses (install original input graph queries points clauses positions arrays)
+      (zero input graph queries points clauses) clauses
+      (reads (roots := roots) (ty := .entry) (install original input graph queries points clauses positions arrays)
+        (base input graph queries points clauses)) := by
+  intro index
+  have bounds := new_bound input graph queries points clauses index
+  have terms := fun {sort : Ty} (term : Term sort) below =>
+    source_term original input graph queries points clauses positions arrays term below
+  have lower := terms (natTerm clauses[index.val].lower) (Nat.lt_of_le_of_lt clauses[index.val].toQuery.bounds.1 bounds.1)
+  have upper := terms (natTerm clauses[index.val].upper) (Nat.lt_of_le_of_lt clauses[index.val].toQuery.bounds.2.1 bounds.1)
+  have enabled := terms clauses[index.val].enable bounds.2
+  have sameQuery := query_congr _ original _ clauses[index.val].toQuery bounds.1 terms
+  have body := fun cells => predicate_congr _ original _ clauses[index.val].predicate
+    (Nat.lt_of_le_of_lt clauses[index.val].toQuery.bounds.2.2 bounds.1) cells terms
+  dsimp only
+  simp only [natTerm, Term.eval] at lower upper
+  rw [lower, upper, installed_witness]
+  refine And.intro (chosen index).1 (And.intro (chosen index).2.1 (And.intro (Int.natCast_nonneg _) ?_))
+  intro active
+  rw [enabled] at active
+  have valid := (chosen index).2.2 active
+  simp only [natValue, installed_witness, Int.toNat_natCast, sameQuery, read_actual, source_graph, body]
+  exact valid
+
+theorem source_problem (original : Assignment) (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry)) (clauses : List (Clause size))
+    (positions : Fin clauses.length -> Nat) (arrays : RootArrays roots EntryValue.Entry)
+    (spec : SmtScript.Holds original input /\ Domains original graph queries points /\
+      Concrete original graph queries points arrays) :
+    SmtScript.Holds (install original input graph queries points clauses positions arrays) input /\
+    Domains (install original input graph queries points clauses positions arrays) graph queries points /\
+    Concrete (install original input graph queries points clauses positions arrays) graph queries points arrays := by
+  have bounds := allocation_bounds input graph queries points
+  have lift (value : Nat) (small : value < zeroId input graph queries points) :=
+    Nat.lt_of_lt_of_le small (old_bound input graph queries points clauses)
+  have terms := fun {sort : Ty} (term : Term sort) below =>
+    source_term original input graph queries points clauses positions arrays term below
+  refine And.intro ?_ (And.intro ?_ (And.intro ?_ ?_))
+  next =>
+    intro term member
+    rw [terms term (lift _ (Nat.lt_of_le_of_lt (TypedIntervalEncoding.formula_term_bound input term member) bounds.1))]
+    exact spec.1 term member
+  next =>
+    intro id member
+    have same := terms (natTerm id) (lift id (metadata_bound input graph queries points id member))
+    change (install original input graph queries points clauses positions arrays).constant .int id = original.constant .int id at same
+    rw [same]
+    exact spec.2.1 id member
+  next =>
+    have sameQueries : localQueries (install original input graph queries points clauses positions arrays) queries =
+        localQueries original queries := by
+      apply List.map_congr_left
+      intro query member
+      exact query_congr _ original _ query (lift _ (Nat.lt_of_le_of_lt (query_bound queries query member) bounds.2.2.1)) terms
+    change VersionedIntervals.Realizes _ (IntervalQueries.schemas _) arrays
+    rw [source_graph, sameQueries]
+    exact spec.2.2.1
+  next =>
+    intro point member
+    have small := lift _ (Nat.lt_of_le_of_lt (TypedIntervalEncoding.observation_bound points point member) bounds.2.2.2)
+    have position := terms (natTerm point.position) (Nat.lt_of_le_of_lt (Nat.le_max_left _ _) small)
+    have expected := terms point.expected (Nat.lt_of_le_of_lt (Nat.le_max_right _ _) small)
+    simp only [natTerm, Term.eval] at position
+    change actual _ arrays point.address (natValue _ point.position) = _
+    rw [source_graph, expected]
+    simp only [natValue, position]
+    exact spec.2.2.2 point member
+
+theorem block_satisfies (original : Assignment) (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry)) (clauses : List (Clause size))
+    (positions : Fin clauses.length -> Nat) (arrays : RootArrays roots EntryValue.Entry)
+    (spec : SmtScript.Holds original input /\ Domains original graph queries points /\
+      Concrete original graph queries points arrays)
+    (chosen : Chosen original graph clauses arrays positions) :
+    SmtScript.Holds (install original input graph queries points clauses positions arrays)
+      (block input graph queries points clauses) := by
+  apply (block_correct _ input graph queries points clauses).mpr
+  have source := source_problem original input graph queries points clauses positions arrays spec
+  have initialized := installed_zero original input graph queries points clauses positions arrays
+  have witnesses := chosen_installed original input graph queries points clauses positions arrays chosen
+  refine And.intro source.1 (And.intro initialized (And.intro source.2.1 (And.intro witnesses
+    (And.intro ?_ (And.intro ?_ ?_)))))
+  next =>
+    apply (TypedIntervalReadBlock.equations_correct _ _ graph _
+      (planned_nonnegative _ _ graph queries points clauses
+        (cut_nonnegative _ _ graph queries points clauses initialized source.2.1
+          (fun index => (witnesses index).2.2.1)))).mpr
+    rw [read_actual]
+    exact fun address position _ => IntervalReadback.actual_equation _ arrays address position
+  next =>
+    intro query member id _ active
+    rw [read_actual]
+    exact source.2.2.1 (query.toLocalQuery _).toQuery
+      (List.mem_map.mpr (Exists.intro (query.toLocalQuery _) (And.intro
+        (List.mem_map.mpr (Exists.intro query (And.intro member rfl))) rfl))) _ active
+  next =>
+    rw [read_actual]
+    exact source.2.2.2
+
+theorem block_exists_iff (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry)) (clauses : List (Clause size)) :
+    (exists assignment : Assignment, SmtScript.Holds assignment (block input graph queries points clauses)) <->
+      exists original : Assignment, exists arrays : RootArrays roots EntryValue.Entry,
+        SmtScript.Holds original input /\ Domains original graph queries points /\
+        Concrete original graph queries points arrays /\ Existentials original graph clauses arrays := by
+  constructor
+  next =>
+    intro witness
+    cases witness with
+    | intro assignment holds =>
+      have spec := block_sound assignment input graph queries points clauses holds
+      cases spec.2.2 with
+      | intro arrays valid =>
+        exact Exists.intro assignment (Exists.intro arrays (And.intro spec.1 (And.intro spec.2.1 valid)))
+  next =>
+    intro witness
+    cases witness with
+    | intro original witness =>
+      cases witness with
+      | intro arrays spec =>
+        cases choose_positions original graph clauses arrays spec.2.2.2 with
+        | intro positions chosen =>
+          exact Exists.intro (install original input graph queries points clauses positions arrays)
+            (block_satisfies original input graph queries points clauses positions arrays
+              (And.intro spec.1 (And.intro spec.2.1 spec.2.2.1)) chosen.1)
+
+def encode (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry)) :
+    List (Clause size) -> SmtScript.Formula
+  | [] => TypedJointPredicateEncoding.encode input graph queries points
+  | clause :: rest => block input graph queries points (clause :: rest)
+
+def render (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry)) (clauses : List (Clause size)) : String :=
+  SmtScript.render (encode input graph queries points clauses)
+
+theorem encode_empty (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry)) :
+    encode input graph queries points [] = TypedJointPredicateEncoding.encode input graph queries points := rfl
+
+theorem render_empty (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry)) :
+    render input graph queries points [] = TypedJointPredicateEncoding.render input graph queries points := rfl
+
+theorem encode_exists_iff (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry)) (clauses : List (Clause size)) :
+    (exists assignment : Assignment, SmtScript.Holds assignment (encode input graph queries points clauses)) <->
+      exists original : Assignment, exists arrays : RootArrays roots EntryValue.Entry,
+        SmtScript.Holds original input /\ Domains original graph queries points /\
+        Concrete original graph queries points arrays /\ Existentials original graph clauses arrays := by
+  cases clauses with
+  | nil =>
+    simpa [encode, Existentials] using TypedJointPredicateEncoding.encode_exists_iff input graph queries points
+  | cons clause rest => exact block_exists_iff input graph queries points (clause :: rest)
+
+theorem rendered_exists_iff (input : SmtScript.Formula) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry)) (clauses : List (Clause size)) :
+    (exists assignment : Assignment, SmtScriptText.runText assignment
+      (render input graph queries points clauses) = some true) <->
+      exists original : Assignment, exists arrays : RootArrays roots EntryValue.Entry,
+        SmtScript.Holds original input /\ Domains original graph queries points /\
+        Concrete original graph queries points arrays /\ Existentials original graph clauses arrays := by
+  simp only [render, <- SmtScriptText.formula_text_iff, encode_exists_iff]
+
+end Witness
+
 namespace Regression
 
 def signature : Term .entry := .entry (.integer (-1)) .signature
@@ -824,6 +1489,183 @@ theorem empty_mode :
 
 end Regression
 
+namespace WitnessRegression
+
+open Regression
+
+def mismatch : Witness.Clause 1 :=
+  { lower := 0, upper := 1, predicate := .ne (.cell 0) (.input signature), enable := .boolean true }
+
+def closed (enabled value : Bool) : Witness.Clause 0 :=
+  { lower := 0, upper := 1, predicate := .input (.boolean value), enable := .boolean enabled }
+
+def interiorArrays : RootArrays 1 EntryValue.Entry := fun _ position =>
+  if position = 1 then { term := 0, content := .transaction 7 } else { term := -1, content := .signature }
+
+def check (original : Assignment) (graph : SymbolicGraph roots .entry size)
+    (queries : List (Query size)) (points : List (Observation roots size .entry)) (clauses : List (Witness.Clause size))
+    (positions : Fin clauses.length -> Nat) (arrays : RootArrays roots EntryValue.Entry) : Bool :=
+  TypedIntervalReadBlock.Regression.check (Witness.install original [] graph queries points clauses positions arrays)
+    (Witness.encode [] graph queries points clauses)
+
+theorem interior_only_mismatch_sat :
+    exists assignment : Assignment, SmtScriptText.runText assignment
+      (Witness.render [bound 0 0, bound 1 3, bound 2 2] rootGraph []
+        [point 0 signature, point 2 signature] [mismatch]) = some true := by
+  refine Exists.intro (Witness.install (TypedIntervalEncoding.Regression.fixtureAssignment 0 3 2)
+    [bound 0 0, bound 1 3, bound 2 2] rootGraph [] [point 0 signature, point 2 signature] [mismatch]
+    (fun _ => 1) interiorArrays) ?_
+  apply (SmtScriptText.formula_text_iff _ _).mp
+  apply (TypedIntervalReadBlock.Regression.check_correct _ _).mp
+  decide +kernel
+
+theorem universal_equality_mismatch_unsat :
+    Not (exists assignment : Assignment, SmtScriptText.runText assignment
+      (Witness.render [] rootGraph [equalSignature] [] [mismatch]) = some true) := by
+  intro witness
+  cases (Witness.rendered_exists_iff _ _ _ _ _).mp witness with
+  | intro assignment witness =>
+    cases witness with
+    | intro arrays spec =>
+      cases (spec.2.2.2 (0 : Fin 1)).2.2 rfl with
+      | intro position witnessed =>
+        have uniform := spec.2.2.1.1 (equalSignature.toLocalQuery assignment).toQuery
+          (by simp [IntervalQueries.schemas, localQueries]) position witnessed.1
+        exact (of_decide_eq_true witnessed.2) (of_decide_eq_true uniform)
+
+theorem enabled_empty_or_reversed_unsat (lower upper : Nat) (reversed : upper <= lower) :
+    Not (exists assignment : Assignment, SmtScriptText.runText assignment
+      (Witness.render [bound 0 lower, bound 1 upper] (.empty : SymbolicGraph 0 .entry 0) [] []
+        [closed true true]) = some true) := by
+  intro witness
+  cases (Witness.rendered_exists_iff _ _ _ _ _).mp witness with
+  | intro assignment witness =>
+    cases witness with
+    | intro arrays spec =>
+      have low := bound_value assignment 0 lower (spec.1 _ (by simp))
+      have high := bound_value assignment 1 upper (spec.1 _ (by simp))
+      cases (spec.2.2.2 (0 : Fin 1)).2.2 rfl with
+      | intro position witnessed =>
+        have inside := witnessed.1
+        change natValue assignment 0 <= position /\ position < natValue assignment 1 at inside
+        simp only [natValue, low, high, Int.toNat_natCast] at inside
+        omega
+
+theorem disabled_empty_sat :
+    exists assignment : Assignment, SmtScriptText.runText assignment
+      (Witness.render [bound 0 0, bound 1 0] (.empty : SymbolicGraph 0 .entry 0) [] []
+        [closed false false]) = some true := by
+  refine Exists.intro (Witness.install (TypedIntervalEncoding.Regression.fixtureAssignment 0 0 0)
+    [bound 0 0, bound 1 0] .empty [] [] [closed false false] (fun _ => 0) (fun root => Fin.elim0 root)) ?_
+  apply (SmtScriptText.formula_text_iff _ _).mp
+  apply (TypedIntervalReadBlock.Regression.check_correct _ _).mp
+  decide +kernel
+
+theorem singleton_point_conflict :
+    Not (exists assignment : Assignment, SmtScriptText.runText assignment
+      (Witness.render [bound 0 1, bound 1 2, bound 2 1] rootGraph [] [point 2 signature] [mismatch]) = some true) := by
+  intro witness
+  cases (Witness.rendered_exists_iff _ _ _ _ _).mp witness with
+  | intro assignment witness =>
+    cases witness with
+    | intro arrays spec =>
+      have low := bound_value assignment 0 1 (spec.1 _ (by simp))
+      have high := bound_value assignment 1 2 (spec.1 _ (by simp))
+      have pointPosition := bound_value assignment 2 1 (spec.1 _ (by simp))
+      cases (spec.2.2.2 (0 : Fin 1)).2.2 rfl with
+      | intro position witnessed =>
+        have inside := witnessed.1
+        change natValue assignment 0 <= position /\ position < natValue assignment 1 at inside
+        have unique : position = 1 := by
+          simp only [natValue, low, high] at inside
+          omega
+        have observed := spec.2.2.1.2 (point 2 signature) (by simp)
+        change arrays 0 (natValue assignment 2) = signature.eval assignment at observed
+        simp only [natValue, pointPosition] at observed
+        subst position
+        exact (of_decide_eq_true witnessed.2) observed
+
+def closedCheck (lower upper : Nat) (enabled value : Bool) (position : Nat) : Bool :=
+  check (TypedIntervalEncoding.Regression.fixtureAssignment lower upper 0) .empty [] []
+    [closed enabled value] (fun _ => position) (fun root => Fin.elim0 root)
+
+theorem no_reference_and_disabled_controls :
+    closedCheck 2 2 true true 2 = false /\ closedCheck 3 1 true true 3 = false /\
+    closedCheck 0 0 false false 0 = true /\ closedCheck 0 1 true false 0 = false /\
+    closedCheck 0 1 true true 0 = true /\
+    Witness.extra (roots := 0) 10 [closed true true] = [] /\
+    Witness.cuts 10 (.empty : SymbolicGraph 0 .entry 0) [] [] [closed true true] = [10] /\
+    Witness.demands 10 (.empty : SymbolicGraph 0 .entry 0) [] [] [closed true true] = [] /\
+    (Witness.finiteClauses (roots := 0) 12 10 [closed true true]).length = 1 := by
+  decide +kernel
+
+theorem disabled_negative_domains_and_witness :
+    check negativeBounds .empty [] [] [closed false false] (fun _ => 0) (fun root => Fin.elim0 root) = false /\
+    let original := TypedIntervalEncoding.Regression.fixtureAssignment 0 0 0
+    let graph : SymbolicGraph 0 .entry 0 := .empty
+    let clauses := [closed false false]
+    let emitted := Witness.install original [] graph [] [] clauses (fun _ => 0) (fun root => Fin.elim0 root)
+    TypedIntervalReadBlock.Regression.check
+      (ScalarExtension.install emitted (Witness.witnessId (Witness.zero [] graph [] [] clauses) 0)
+        (fun _ : Fin 1 => -1))
+      (Witness.encode [] graph [] [] clauses) = false := by
+  decide +kernel
+
+def repeatedMismatch : Witness.Clause 1 :=
+  { mismatch with predicate := .and mismatch.predicate mismatch.predicate }
+
+def aliasGraph : SymbolicGraph 1 .entry 2 := .push rootGraph (.root 0)
+
+def aliasClause (same : Bool) : Witness.Clause 2 :=
+  { lower := 0, upper := 1, enable := .boolean true,
+    predicate := if same then .eq (.cell 0) (.cell 1) else .ne (.cell 0) (.cell 1) }
+
+theorem witness_position_and_version_aliases :
+    let original := TypedIntervalEncoding.Regression.fixtureAssignment 0 3 1
+    check original rootGraph [] [point 2 transaction] [mismatch, mismatch] (fun _ => 1) interiorArrays = true /\
+    check original rootGraph [] [point 2 signature] [mismatch] (fun _ => 1) interiorArrays = false /\
+    check original rootGraph [equalSignature] [] [mismatch] (fun _ => 1) interiorArrays = false /\
+    check original aliasGraph [] [] [aliasClause true] (fun _ => 1) interiorArrays = true /\
+    check original aliasGraph [] [] [aliasClause false] (fun _ => 1) interiorArrays = false /\
+    (Witness.extra (roots := 1) 10 [repeatedMismatch, repeatedMismatch]).length = 2 /\
+    (Witness.cuts 10 rootGraph [equalSignature, equalSignature] [point 2 signature, point 2 signature]
+      [repeatedMismatch, repeatedMismatch]).length = 6 /\
+    (Witness.demands 10 rootGraph [equalSignature, equalSignature] [point 2 signature, point 2 signature]
+      [repeatedMismatch, repeatedMismatch]).length = 7 := by
+  decide +kernel
+
+def guardOnly : Witness.Clause 1 :=
+  { mismatch with enable := .equal (.app .int .entry 4 (.integer 0)) signature }
+
+def highGuard : Witness.Clause 1 :=
+  { mismatch with enable := .app .int .bool 40000 (natTerm 50000) }
+
+theorem guard_reservations :
+    max (zeroId [] rootGraph [] []) (guardOnly.toQuery.externalMax + 1) + (1 + 1) = 4 /\
+    Witness.zero [] rootGraph [] [] [guardOnly] = 5 /\
+    Witness.base [] rootGraph [] [] [guardOnly] = 7 /\
+    Witness.zero [] unusedGraph [disabled] [highPoint] [highGuard] = 50001 /\
+    Witness.base [] unusedGraph [disabled] [highPoint] [highGuard] = 50003 := by
+  decide +kernel
+
+theorem guard_whole_function_preserved (original : Assignment) :
+    (Witness.install original [] rootGraph [] [] [guardOnly] (fun _ => 1) interiorArrays).unary .int .entry 4 =
+      original.unary .int .entry 4 := by
+  apply Witness.clause_functions original [] rootGraph [] [] [guardOnly] (fun _ => 1) interiorArrays (0 : Fin 1)
+  exact Or.inl (by decide +kernel)
+
+def wrongEntry : Term .entry :=
+  .entry (.transactionId (.entryContent signature))
+    (.reconfiguration (.nodesNot (.configurationNodes (.entryContent signature))))
+
+theorem nested_wrong_selectors_preserved (original : Assignment) :
+    wrongEntry.eval (Witness.install original [] rootGraph [] [] [guardOnly] (fun _ => 1) interiorArrays) =
+      wrongEntry.eval original := by
+  apply Witness.source_term
+  decide +kernel
+
+end WitnessRegression
+
 end CCFRaft.Sparse.TypedJointPredicateEncoding
 
 run_cmd do
@@ -839,3 +1681,7 @@ run_cmd do
 
 #print axioms CCFRaft.Sparse.TypedJointPredicateEncoding.rendered_exists_iff
 #print axioms CCFRaft.Sparse.TypedJointPredicateEncoding.install_query_functions
+#print axioms CCFRaft.Sparse.TypedJointPredicateEncoding.Witness.rendered_exists_iff
+#print axioms CCFRaft.Sparse.TypedJointPredicateEncoding.Witness.original_function
+#print axioms CCFRaft.Sparse.TypedJointPredicateEncoding.Witness.original_selectors
+#print axioms CCFRaft.Sparse.TypedJointPredicateEncoding.Witness.clause_functions
