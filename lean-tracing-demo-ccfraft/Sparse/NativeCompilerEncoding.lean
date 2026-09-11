@@ -11,15 +11,21 @@ open NativeSmt
 
 structure SameReferences {width : PNat} (before after : Encoding width) : Prop where
   bootstrap : after.bootstrap = before.bootstrap
-  role : after.role = before.role
-  newFollower : after.newFollower = before.newFollower
+  columns : after.toNodeColumns = before.toNodeColumns
   next : after.next = before.next
+
+theorem SameReferences.role {width : PNat} {before after : Encoding width} (same : SameReferences before after) :
+    after.role = before.role :=
+  congrArg NodeColumns.role same.columns
+
+theorem SameReferences.newFollower {width : PNat} {before after : Encoding width}
+    (same : SameReferences before after) : after.newFollower = before.newFollower :=
+  congrArg NodeColumns.newFollower same.columns
 
 theorem SameReferences.trans {width : PNat} {first middle last : Encoding width}
     (left : SameReferences first middle) (right : SameReferences middle last) :
     SameReferences first last :=
-  ⟨right.bootstrap.trans left.bootstrap, right.role.trans left.role,
-    right.newFollower.trans left.newFollower, right.next.trans left.next⟩
+  ⟨right.bootstrap.trans left.bootstrap, right.columns.trans left.columns, right.next.trans left.next⟩
 
 theorem bind_run {width : PNat} {firstValue lastValue : Type}
     (first : EncodeM width firstValue) (second : firstValue -> EncodeM width lastValue)
@@ -45,23 +51,23 @@ theorem assertion_success {width : PNat} (formula : Expr .bool) (before after : 
   simp only [assertion, StateT.run] at run
   split at run
   · cases run
-    exact ⟨⟨rfl, rfl, rfl, rfl⟩, rfl⟩
+    exact ⟨⟨rfl, rfl, rfl⟩, rfl⟩
   · contradiction
 
 theorem fresh_success {width : PNat} (before after : Encoding width) (id : Nat)
     (run : fresh.run before = .ok (id, after)) :
     id = before.next /\ after.next = before.next + 1 /\ after.bootstrap = before.bootstrap /\
-      after.role = before.role /\ after.newFollower = before.newFollower /\
+      after.toNodeColumns = before.toNodeColumns /\
       after.assertions = before.assertions := by
   simp only [fresh, StateT.run, Except.ok.injEq, Prod.mk.injEq] at run
   rcases run with ⟨rfl, rfl⟩
-  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
+  exact ⟨rfl, rfl, rfl, rfl, rfl⟩
 
 theorem define_success {width : PNat} {sort : Ty} (value : Expr sort)
     (before after : Encoding width) (id : Nat)
     (run : (define value).run before = .ok (id, after)) :
     id = before.next /\ after.next = before.next + 1 /\ after.bootstrap = before.bootstrap /\
-      after.role = before.role /\ after.newFollower = before.newFollower /\
+      after.toNodeColumns = before.toNodeColumns /\
       after.assertions = before.assertions.push (.equal (.free sort id) value) := by
   simp only [define, StateT.run] at run
   split at run
@@ -79,10 +85,10 @@ theorem define_success {width : PNat} {sort : Ty} (value : Expr sort)
     dsimp only at sameId sameFinal
     subst allocatedId
     subst final
-    obtain ⟨sameId, next, bootstrap, role, follower, previous⟩ := fresh_success before middle id allocated
+    obtain ⟨sameId, next, bootstrap, columns, previous⟩ := fresh_success before middle id allocated
     obtain ⟨frame, appended⟩ := assertion_success _ middle after asserted
     exact ⟨sameId, frame.next.trans next, frame.bootstrap.trans bootstrap,
-      frame.role.trans role, frame.newFollower.trans follower, by rw [appended, previous]⟩
+      frame.columns.trans columns, by rw [appended, previous]⟩
   · contradiction
 
 theorem define_known {width : PNat} {sort : Ty} (value : Expr sort)
@@ -99,7 +105,7 @@ theorem define_satisfiability {width : PNat} {sort : Ty} (value : Expr sort)
     (run : (define value).run before = .ok (id, after)) :
     (exists assignment, Holds after.assertions.toList assignment) <->
       (exists assignment, Holds before.assertions.toList assignment) := by
-  obtain ⟨sameId, _, _, _, _, appended⟩ := define_success value before after id run
+  obtain ⟨sameId, _, _, _, appended⟩ := define_success value before after id run
   rw [appended, sameId]
   simpa [Holds, or_imp, forall_and] using
     (definition_preserves_satisfiability before value (define_known value before after id run)).symm
@@ -111,7 +117,7 @@ theorem assert_all_success {width : PNat} (formulas : List (Expr .bool))
   | nil =>
     have same : before = after := congrArg Prod.snd (Except.ok.inj run)
     subst after
-    exact ⟨⟨rfl, rfl, rfl, rfl⟩, by simp⟩
+    exact ⟨⟨rfl, rfl, rfl⟩, by simp⟩
   | cons formula rest ih =>
     obtain ⟨value, middle, first, second⟩ :=
       (bind_run (assertion formula) (fun _ => assertAll rest) before after ()).mp run
@@ -173,13 +179,21 @@ def quorumClauses {width : PNat} (before : Encoding width) (node : Nat) : List (
 
 structure QuorumResult {width : PNat} (before after : Encoding width) (node : Nat) : Prop where
   bootstrap : after.bootstrap = before.bootstrap
-  role : after.role = before.next + 2
-  newFollower : after.newFollower = before.next + 3
+  columns : after.toNodeColumns =
+    { before.toNodeColumns with role := before.next + 2, newFollower := before.next + 3 }
   next : after.next = before.next + 4
   clauses : after.assertions.toList = before.assertions.toList ++ quorumClauses before node
   guardSymbols : forall formula, formula ∈ (leadingGuards before.role node ++
       configurationGuards width before.bootstrap node before.next (before.next + 1)) ->
     forall symbol, symbol ∈ formula.symbols -> symbol.2 < before.next + 2
+
+theorem QuorumResult.role {width : PNat} {before after : Encoding width} {node : Nat}
+    (result : QuorumResult before after node) : after.role = before.next + 2 :=
+  congrArg NodeColumns.role result.columns
+
+theorem QuorumResult.newFollower {width : PNat} {before after : Encoding width} {node : Nat}
+    (result : QuorumResult before after node) : after.newFollower = before.next + 3 :=
+  congrArg NodeColumns.newFollower result.columns
 
 theorem quorum_success {width : PNat} (node : Nat) (before after : Encoding width)
     (run : (checkQuorum node).run before = .ok ((), after)) :
@@ -198,14 +212,14 @@ theorem quorum_success {width : PNat} (node : Nat) (before after : Encoding widt
   dsimp only at final
   rw [<- final]
   obtain ⟨firstFrame, firstClauses⟩ := assert_all_success _ before first leading
-  obtain ⟨currentIdEq, secondNext, secondBootstrap, secondRole, secondFollower, secondClauses⟩ :=
+  obtain ⟨currentIdEq, secondNext, secondBootstrap, secondColumns, secondClauses⟩ :=
     fresh_success first second currentId current
-  obtain ⟨witnessIdEq, thirdNext, thirdBootstrap, thirdRole, thirdFollower, thirdClauses⟩ :=
+  obtain ⟨witnessIdEq, thirdNext, thirdBootstrap, thirdColumns, thirdClauses⟩ :=
     fresh_success second third witnessId witness
   obtain ⟨fourthFrame, fourthClauses⟩ := assert_all_success _ third fourth configuration
-  obtain ⟨roleIdEq, fifthNext, fifthBootstrap, fifthRole, fifthFollower, fifthClauses⟩ :=
+  obtain ⟨roleIdEq, fifthNext, fifthBootstrap, fifthColumns, fifthClauses⟩ :=
     define_success _ fourth fifth roleId role
-  obtain ⟨followerIdEq, sixthNext, sixthBootstrap, sixthRole, sixthFollower, sixthClauses⟩ :=
+  obtain ⟨followerIdEq, sixthNext, sixthBootstrap, sixthColumns, sixthClauses⟩ :=
     define_success _ fifth sixth followerId follower
   have currentIndex : currentId = before.next := currentIdEq.trans firstFrame.next
   have witnessIndex : witnessId = before.next + 1 := by
@@ -217,8 +231,8 @@ theorem quorum_success {width : PNat} (node : Nat) (before after : Encoding widt
   constructor
   · exact sixthBootstrap.trans (fifthBootstrap.trans (fourthFrame.bootstrap.trans
       (thirdBootstrap.trans (secondBootstrap.trans firstFrame.bootstrap))))
-  · exact roleIndex
-  · exact followerIndex
+  · simpa only [sixthColumns, fifthColumns, fourthFrame.columns, thirdColumns,
+      secondColumns, firstFrame.columns, roleIndex, followerIndex]
   · dsimp only
     rw [sixthNext, fifthNext, fourthFrame.next, thirdNext, secondNext, firstFrame.next]
   · dsimp only

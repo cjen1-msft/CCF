@@ -176,6 +176,9 @@ Optional natural indices and node identities use `NativeSum NativeUnit Int`.
 Invalid payloads fail decoding rather than becoming `none` or wrapping to
 another identity. The module proves round trips, exact literal equality,
 and emitted domain predicates. These codecs do not yet add accepted input kinds.
+`Encoding` now inherits its mutable column references from `NodeColumns`.
+Compiler frame proofs preserve that whole record, and the quorum result
+specifies a record update for the two changed fields.
 
 The older Python reference has broader action coverage:
 `native_arrays.py` accepts `checkQuorum`, `requestVote`, `requestPreVote`, and

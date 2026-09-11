@@ -35,10 +35,12 @@ def members {context : List Ty} {width : PNat}
     (.cases (.bound .here) (.bits 0)
       (.cases (.bound .here) (.bound .here) (.bits 0)))
 
-structure Encoding (width : PNat) where
-  bootstrap : BitVec width
+structure NodeColumns where
   role : Nat := 1
   newFollower : Nat := 2
+
+structure Encoding (width : PNat) extends NodeColumns where
+  bootstrap : BitVec width
   next : Nat := 7
   assertions : Array (Expr .bool) := #[]
   symbolsBounded : forall formula, formula ∈ assertions ->

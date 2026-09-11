@@ -256,6 +256,16 @@ optional-value cases. The optional codecs are not yet wired into JSON
 observations or state columns. They are intended for `votedFor` and the three
 retirement-index fields.
 
+`Encoding` now inherits `role` and `newFollower` from `NodeColumns`.
+`SameReferences`, `fresh_success`, and `define_success` preserve the complete
+column record. `QuorumResult.columns` specifies the record update, with
+derived role and follower equalities for callers. All prior scripts remain
+byte-for-byte unchanged.
+The next refactor changes `NodeColumnsRep` and observation/compiler callers
+to take this record instead of separate role and follower indices. Then add
+the optional retirement-index columns and their observations, keeping the
+whole-script and JSON correspondence theorems in the normal build.
+
 Follow [Representation design priorities](README.md#representation-design-priorities):
 start with the simplest representation to prove correct, using native SMT
 arrays and live lengths. Measure representative solver workloads before
