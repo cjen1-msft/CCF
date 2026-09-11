@@ -33,6 +33,19 @@ The native explorer API must retain native-run inputs, instruction/constraint
 provenance, and distinct solver outcomes without inheriting old proof claims.
 Do not restart worker fan-out.
 
+The first native explorer API is implemented in `explorer_api.py` and
+`native_run.py`. Lean `encodeDetails` emits named SMT clauses and instruction
+ranges from the actual compiled assertion array. `native_lean.py` retains the
+exact input, encoding metadata, solver outputs, and a hash manifest written only
+after a successful solver invocation. cvc5 supplies the core through
+`--produce-unsat-cores --dump-unsat-cores`; Python does not construct SMT queries.
+The API is read-only, binds to loopback, and serves a fixed startup snapshot.
+It exposes run status, input, paginated instructions, named constraints, and the
+solver core. It rejects mixed artifacts and never adopts old checked-backend
+proof claims. `Traces/native_quorum_conflict.json` is a deliberate synthetic
+UNSAT example, not a captured trace. Raw-event/code provenance still depends on
+reducer integration. See README's "Native explorer API" section.
+
 The first Lean encoder slice is now implemented in `Sparse/NativeEncode.lean`
 and `Sparse/NativeEncodeMain.lean`, with `native_lean.py` as its JSON and solver
 wrapper. It supports only `checkQuorum` and seven scalar/log observation kinds.

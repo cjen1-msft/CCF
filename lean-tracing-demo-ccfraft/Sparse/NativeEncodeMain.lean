@@ -11,10 +11,11 @@ def main (arguments : List String) : IO UInt32 := do
       throw "expected canonical JSON: sorted keys, no extra whitespace or duplicate keys"
     match arguments with
     | [] => CCFRaft.NativeEncode.encode document
+    | ["--details"] => return (← CCFRaft.NativeEncode.encodeDetails document).compress
     | ["--batch"] => do
       let scripts <- (<- document.getArr?).mapM CCFRaft.NativeEncode.encode
       return (Lean.toJson scripts).compress
-    | _ => throw "usage: NativeEncodeMain [--batch]"
+    | _ => throw "usage: NativeEncodeMain [--batch | --details]"
   match result with
   | .ok output =>
     IO.println output

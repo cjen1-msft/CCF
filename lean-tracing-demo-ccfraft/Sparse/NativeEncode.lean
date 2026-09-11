@@ -225,7 +225,17 @@ def instruction {width : PNat} (names : Array String) (value : Json) : EncodeM w
     assertion (.equal (entryAt width node (.integer index)) expected)
   | _ => throw s!"unsupported native Lean instruction {kind}"
 
-def encode (document : Json) : Except String String := do
+structure Group where
+  instruction : Option Nat
+  start : Nat
+  stop : Nat
+  deriving ToJson
+
+structure Compiled where
+  assertions : Array (Expr .bool)
+  groups : Array Group
+
+def compile (document : Json) : Except String Compiled := do
   fields document ["nodes", "bootstrap", "instructions"]
   let names <- (<- (<- field document "nodes").getArr?).mapM Json.getStr?
   unless names.toList.Nodup && names.all (fun name => !name.isEmpty) do
@@ -236,12 +246,30 @@ def encode (document : Json) : Except String String := do
     if (<- bootstrap.getArr?).isEmpty then throw "bootstrap must be nonempty"
     let initial : Encoding width := { bootstrap := <- mask width names bootstrap, symbolsBounded := by simp }
     let instructions <- (<- field document "instructions").getArr?
-    let (_, final) <- (do
+    let (groups, final) <- (do
       initialDomains width
+      let mut groups : Array Group := #[{ instruction := none, start := 0, stop := (← get).assertions.size }]
       for index in [:instructions.size] do
+        let start := (← get).assertions.size
         try instruction names instructions[index]!
-        catch error => throw s!"instruction {index}: {error}").run initial
-    return renderScript final.assertions.toList
+        catch error => throw s!"instruction {index}: {error}"
+        groups := groups.push { instruction := some index, start, stop := (← get).assertions.size }
+      return groups).run initial
+    return { assertions := final.assertions, groups }
   else throw "nodes must be nonempty"
+
+def encode (document : Json) : Except String String := do
+  return renderScript (← compile document).assertions.toList
+
+def encodeDetails (document : Json) : Except String Json := do
+  let compiled <- compile document
+  let clauses := compiled.assertions.mapIdx fun index expression =>
+    Json.mkObj [("name", toJson (assertionName index)), ("expression", toJson expression.render)]
+  return Json.mkObj [
+    ("schema", toJson "ccfraft-native-encoding/v1"),
+    ("input", document),
+    ("script", toJson (renderScript compiled.assertions.toList true)),
+    ("groups", toJson compiled.groups),
+    ("clauses", toJson clauses)]
 
 end CCFRaft.NativeEncode

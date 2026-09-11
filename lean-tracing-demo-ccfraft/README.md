@@ -175,6 +175,59 @@ defaults, live-tail separation, 21 identities, symbolic logs, and explicit input
 rejection. `CCF_NATIVE_ARRAY_ARTIFACTS=/path/to/output` retains the emitted
 formulas, solver output, and `measurements.json` for comparison.
 
+### Native explorer API
+
+`explorer_api.py` exposes one completed `native_lean.py` run as read-only JSON.
+It does not use the older checked-backend explorer or claim full encoder proof.
+Lean emits named clauses and half-open clause ranges for each instruction.
+The initial-domain group has no instruction owner.
+
+#### Run the API
+
+```sh
+lake build Sparse.NativeEncodeMain
+python3 native_lean.py Traces/native_quorum_conflict.json --output-dir /tmp/native-explorer --cvc5 /path/to/cvc5
+python3 explorer_api.py /tmp/native-explorer --port 8091
+```
+
+The example is synthetic reduced input, not a captured implementation trace.
+It deliberately observes a leader after `checkQuorum` steps that node down, so
+the result is UNSAT.
+
+The server binds only to `127.0.0.1`. For remote access, forward the port through
+SSH. It reads a fixed snapshot at startup; restart it to inspect a newer run.
+
+```sh
+curl http://127.0.0.1:8091/api/run
+curl 'http://127.0.0.1:8091/api/instructions?offset=0&limit=20'
+curl http://127.0.0.1:8091/api/core
+```
+
+#### HTTP endpoints
+
+| GET endpoint | Response |
+| --- | --- |
+| `/api/run` | Solver outcome, proof status, identity universe, counts, and endpoint links |
+| `/api/input` | Exact reduced Model input |
+| `/api/instructions?offset=0&limit=50` | Ordered instruction page and core membership |
+| `/api/instructions/{index}` | One instruction and all of its emitted constraints |
+| `/api/constraints/{name}` | One named constraint, its instruction owner, and core membership |
+| `/api/core` | Solver-reported core and affected instruction indices |
+
+`HEAD` returns the same headers without a body. Invalid parameters return 400,
+missing items return 404, and writes return 405. Page limits range from 1 to 200.
+The API has no solver-execution or filesystem-selection endpoint.
+
+Native runs retain `input.json`, `encoding.json`, `trace.smt2`, solver stdout and
+stderr, and a final `result.json` manifest. The loader rejects mixed or changed
+artifacts, mismatched inputs, malformed clause ownership, unknown core labels,
+and unsupported proof claims. Hashes check consistency, not authenticity; local
+run artifacts remain trusted inputs.
+
+SAT, UNSAT, and unknown remain distinct. The core is not minimized and is not a
+replayable instruction subsequence. The API currently exposes reduced-input
+provenance only; raw-event/code links depend on the unfinished reducer integration.
+
 ### Native local node state
 
 The local representation covers all 14 fields of `Model.NodeState`.

@@ -1,0 +1,10 @@
+{
+  "nodes": ["a", "b"],
+  "bootstrap": ["a", "b"],
+  "instructions": [
+    {"kind": "role", "node": "a", "value": "leader"},
+    {"kind": "logLength", "node": "a", "value": 0},
+    {"kind": "checkQuorum", "node": "a"},
+    {"kind": "role", "node": "a", "value": "leader"}
+  ]
+}

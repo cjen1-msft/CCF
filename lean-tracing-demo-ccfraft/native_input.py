@@ -5,7 +5,19 @@
 
 from __future__ import annotations
 
+import json
+
 from Shared.solver import ValidationError
+
+
+def canonical_json(document: object) -> str:
+    return json.dumps(
+        document,
+        separators=(",", ":"),
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+    )
 
 
 def unique_object(pairs: list[tuple[str, object]]) -> dict:

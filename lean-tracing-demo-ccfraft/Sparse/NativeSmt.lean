@@ -191,12 +191,16 @@ def Term.symbols : {context : List Ty} -> {sort : Ty} -> Term context sort -> Li
   | _, _, .ite first second third | _, _, .store first second third
   | _, _, .cases first second third => first.symbols ++ second.symbols ++ third.symbols
 
-def renderScript (assertions : List (Term [] .bool)) : String :=
+def assertionName (index : Nat) : String := s!"assertion_{index}"
+
+def renderScript (assertions : List (Term [] .bool)) (named : Bool := false) : String :=
   let symbols := (assertions.flatMap Term.symbols).dedup
   let declarations := symbols.map fun (sort, id) =>
     s!"(declare-const {symbolName sort id} {sort.render})"
   String.intercalate "\n" (prelude ++ declarations ++
-    assertions.map (fun expression => s!"(assert {expression.render})") ++ ["(check-sat)", ""])
+    assertions.mapIdx (fun index expression =>
+      if named then s!"(assert (! {expression.render} :named {assertionName index}))"
+      else s!"(assert {expression.render})") ++ ["(check-sat)", ""])
 
 theorem select_store (assignment : Assignment) {context : List Ty} {key value : Ty}
     (locals : Locals context) (array : Term context (.array key value))

@@ -12,6 +12,8 @@ import tempfile
 import unittest
 
 from Shared.solver import find_cvc5, run_solver
+from native_run import NativeRun
+from explorer_api import ExplorerApi
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -241,6 +243,15 @@ class NativeLeanSmtTests(unittest.TestCase):
                     self.assertEqual(summary["encoder"], "native-lean-experimental")
                     for artifact in ("trace.smt2", "trace.stdout", "trace.stderr"):
                         self.assertTrue((output / artifact).is_file())
+                    snapshot = NativeRun.load(output)
+                    api = ExplorerApi(snapshot)
+                    self.assertEqual(api.get("/api/run")["result"]["status"], status)
+                    self.assertEqual(
+                        api.get("/api/instructions")["total"], len(instructions)
+                    )
+                    self.assertEqual(
+                        bool(api.get("/api/core")["clauses"]), status == "unsat"
+                    )
 
 
 if __name__ == "__main__":
