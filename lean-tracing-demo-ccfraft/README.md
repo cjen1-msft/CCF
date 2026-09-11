@@ -3,6 +3,120 @@
 This directory contains the bounded trace validator and work on a sparse exact
 encoder for the CCFRaft Lean model.
 
+## Aim of trace validation
+
+Trace validation checks whether recorded implementation behavior is consistent
+with our believed protocol Model, under explicit trace interpretation and
+environment assumptions. Its purpose is to expose disagreements and trace them
+back to recorded events and implementation code.
+
+The intended encoder proof boundary is:
+
+```text
+SMT satisfiable <=> one Model execution satisfies all reduced actions
+                   and observations under the stated assumptions
+```
+
+This is a target, not a claim that the full encoder is complete. It does not
+prove that the reducer faithfully interprets the implementation.
+
+UNSAT means the recorded facts, reduction, assumptions, and Model are
+inconsistent together. The cause may be an implementation bug, a Model bug,
+a reduction bug, or an invalid assumption. UNSAT is not automatically evidence
+of a production safety violation. SAT establishes consistency with the Model
+for this trace, not correctness of the implementation in general.
+
+Reduction must retain every recorded fact it can interpret faithfully, with
+its source location and event boundary. Unsupported or ambiguous records must
+produce explicit diagnostics rather than silent omission or repair. Conflicting
+constraints should lead back to the relevant trace records and code so that the
+cause can be investigated. Unknown, timeout, and validation or encoding errors
+are separate outcomes, not SAT or UNSAT.
+
+## Representation design priorities
+
+The bounded representation trades ease of proving correctness against SMT
+solver time. Start with the simplest representation whose correspondence to
+the Model can be proved directly. The baseline should use native SMT arrays
+and explicit live lengths rather than custom finite-point completion machinery.
+This is the revised design direction, not a description of the completed code.
+
+Measure that baseline on representative traces before adding optimizations.
+If solver time is unacceptable, target the measured bottleneck. More complex
+representations and harder preservation proofs are justified only by demonstrated
+solver-time improvements. Each optimization must preserve satisfiability in
+both directions under the same observations and assumptions. Dropping facts
+or restricting possible executions is not a performance optimization.
+
+### Native-array prototype
+
+`native_arrays.py` implements the first slice of the revised design. It accepts
+`checkQuorum` and observations of allocation, role, new-follower status, log
+length, commit index, and exact live entries. Other instructions are errors.
+It does not replace the full validator or consume raw CCF traces.
+
+`Sparse/NativeArrayCheckQuorum.lean` proves that its direct-array trace semantics
+admit a state exactly when the same observations and actual Model actions admit
+a Model execution. The initial state is arbitrary. The proof covers any finite
+node type and leaves unobserved Model fields unrestricted. The JSON adapter and
+SMT-LIB printer are outside this theorem.
+
+The input declares an exhaustive identity universe and a nonempty bootstrap
+configuration. Its size is not fixed at 15. Every identity in an instruction or
+entry payload must belong to that universe. Transaction IDs are natural numbers.
+Entry observation indices are zero-based.
+
+```json
+{
+  "nodes": ["a", "b"],
+  "bootstrap": ["a", "b"],
+  "instructions": [
+    {"kind": "logLength", "node": "a", "value": 1000000},
+    {"kind": "checkQuorum", "node": "a"},
+    {"kind": "role", "node": "a", "value": "follower"}
+  ]
+}
+```
+
+An `entry` observation additionally has an `index` and a value such as
+`{"term": 1, "content": {"reconfiguration": ["a", "b"]}}`. Other contents are
+`"signature"`, `{"transaction": 7}`, and `{"retiredCommitted": ["a"]}`.
+The remaining observation kinds are `allocated`, `newFollower`, and `commit`.
+Role values use the Model names `none`, `follower`, `preVoteCandidate`,
+`candidate`, and `leader`.
+
+```bash
+python3 native_arrays.py trace.json --output-dir native-output --cvc5 /path/to/cvc5
+```
+
+The command writes `trace.smt2`, solver stdout, and solver stderr to the output
+directory, then prints JSON containing `status` and `solver_ms`. Clauses named
+`event_I_J` refer to zero-based instruction `I`. Input and solver failures exit
+with an error. `unknown` remains a separate solver status.
+
+The emitter keeps named node-array versions and total Entry arrays with live
+lengths. It never enumerates symbolic log positions. Tail entries are irrelevant,
+and later observations constrain the same initial arrays. The prototype does
+not yet provide an initial-state materialization command.
+
+The solver uses `--arrays-exp --mbqi`. cvc5 1.3.4 returned `unknown` without these
+options on the million-entry probe. With them, the initial run solved its
+trillion-entry SAT case in about 16 ms. A synthetic trace with 400 records and
+200 nodes took about 2.9 seconds, with about 3 ms spent encoding. Solver times
+include process startup. These are not representative full-action trace benchmarks.
+
+```bash
+nice -n 10 lake build Sparse.NativeArrayCheckQuorumFixtureMain
+CCF_NATIVE_ARRAY_TESTS=1 CVC5=/path/to/cvc5 \
+  python3 -m unittest discover -s tests -p test_native_arrays.py -v
+```
+
+The fixture computes 150 expected verdicts from actual `CCFRaft.Enabled` guards.
+Additional cases cover state framing, contradictory later observations, absent
+defaults, live-tail separation, 21 identities, symbolic logs, and explicit input
+rejection. `CCF_NATIVE_ARRAY_ARTIFACTS=/path/to/output` retains the emitted
+formulas, solver output, and `measurements.json` for comparison.
+
 ## Sparse proof foundation
 
 `Sparse/` contains the reviewed semantic proofs for sparse logs, source-local

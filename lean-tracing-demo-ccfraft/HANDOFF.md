@@ -1,15 +1,45 @@
 # Resume the checked CCFRaft trace encoder
 
-## Current direction: sparse exact encoding
+## Current direction: native-array exact encoding
 
 The user superseded the eager bounded-entry architecture described below.
 Keep that implementation as a reference; do not resume its unfinished integration
 as the delivery path.
 
-The required contract is:
+The diagnostic aim and proof boundary are defined in
+[Aim of trace validation](README.md#aim-of-trace-validation).
+UNSAT identifies a disagreement among recorded facts, reduction, assumptions,
+and the Model. It does not by itself identify an implementation bug.
+The reducer's interpretation of implementation events remains a hypothesis to
+test, not a proved implementation refinement.
+
+Follow [Representation design priorities](README.md#representation-design-priorities):
+start with the simplest representation to prove correct, using native SMT
+arrays and live lengths. Measure representative solver workloads before
+introducing more complex representations. Optimize measured bottlenecks only
+when the solver-time gain justifies the additional correctness proof.
+The existing sparse proof library is available work, not a requirement to
+reuse its architecture in the revised encoder.
+
+The first delivered native-array slice is described in
+[Native-array prototype](README.md#native-array-prototype).
+`Sparse/NativeArrayCheckQuorum.lean` proves direct-array execution equivalence
+for the actual `checkQuorum` action and six observation kinds. The standalone
+`native_arrays.py` emitter uses native arrays and trace-sized identity sets.
+Its printer is tested against actual Model guards, but is not covered by the
+Lean theorem. Normal `lake build Sparse` includes the new axiom audit.
+
+Next work is still substantial: the remaining actions, the FIFO Model
+correction, queue encoding, reducer integration, and initial-state
+materialization. Do not resume the old worker fan-out or claim full encoder
+completion. Finish and measure one action or shared operation at a time.
+The existing duplicate-suppressing queue proofs describe the old Model and
+must not be presented as successful FIFO production-send semantics.
+
+The required encoder contract, for the reduced Model trace, is:
 
 ```text
-SAT(encode(trace)) <=> one concrete initial state has an execution
+SAT(encode(trace)) <=> one concrete Model initial state has an execution
                        matching every ordered action and observation
 ```
 
@@ -31,9 +61,9 @@ and observations share one unknown-value assignment.
 Its input functions are semantic parameters, not finite parsed syntax.
 `ModelInputSyntax` now supplies closed finite syntax over that contract.
 It is not yet a parser or an SMT encoder.
-Emitted action clauses and raw-record refinement
-remain separate obligations. In particular, raw send attempts are not evidence
-of successful Model sends.
+Emitted action clauses remain unfinished. Raw-record interpretation is a
+separate diagnostic concern outside the encoder theorem. In particular, raw
+send attempts are not evidence of successful Model sends.
 
 ### Sparse proofs are in the repository working tree
 
