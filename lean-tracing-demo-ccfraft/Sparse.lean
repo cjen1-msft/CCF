@@ -23,4 +23,5 @@ import Sparse.SmtNumerals
 import Sparse.SmtScript
 import Sparse.SmtScriptText
 import Sparse.SmtText
+import Sparse.SymbolBounds
 import Sparse.VersionedIntervals

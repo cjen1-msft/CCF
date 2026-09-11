@@ -70,6 +70,7 @@ New repository bridges extend that foundation:
 | `Sparse/SmtNumerals.lean` | Decodes canonical decimal numerals for arbitrary Nat, with a roundtrip proof over the actual core renderer. |
 | `Sparse/SmtExpressionText.lean` | Parses the existing expression renderer's output for arbitrary nesting, preserving structure and same-assignment evaluation without a depth cap. |
 | `Sparse/SmtScriptText.lean` | Parses complete generated scripts back to their commands and preserves fixed-assignment truth, using the compiler's LF-separated subset. |
+| `Sparse/SymbolBounds.lean` | Direct structural maxima equal the original symbol-set allocation bound. A kernel-proved compiler rewrite preserves fresh IDs without constructing those sets. |
 
 `QueuePlan.generated_exists_iff` requires nonnegative initial length, tracked-key
 coverage, lawful equality, and a fresh filler value. Its conservative ancestor
@@ -166,10 +167,22 @@ python3 -m unittest tests.test_sparse_queue_encoding
 
 Native queue emission still needs a proved key summary. At 80 same-key events,
 the occurrence-based grids produce 741 KB for repeated sends or 1 MB for
-alternating sends and pops. Both take about 2.35 seconds before solving.
-The session's `queue_initial_scale_probe.lean` and
-`queue-initial-scale-baseline.jsonl` record this baseline. Syntactic-key
-deduplication is the next optimization after the queue proof unit.
+alternating sends and pops. Before the allocation summary, both took about
+2.35 seconds before solving. `SymbolBounds` reduces those one-run totals to
+1.33 and 1.43 seconds, with unchanged script byte counts. The grids themselves
+remain redundant.
+
+`QueueEncoding.freshBase_eq_summary` is a kernel-proved `[csimp]` equality.
+It retains the original specification and replaces compiled allocation calls
+with a direct maximum. The native allocation fixtures compare the reference,
+summary, and compiled bounds, including inactive branches and large IDs.
+They also compare allocated script bytes.
+
+`Sparse/QueueEncodingScaleMain.lean` profiles formula, declaration, and text
+construction separately. The session's `queue-initial-scale-baseline.jsonl`,
+`queue-initial-scale-phases.jsonl`, and `queue-initial-scale-summary.jsonl`
+record the before/after evidence. These are emission-only measurements.
+Syntactic-key deduplication is the next optimization after the queue proof unit.
 
 Generated scalar scripts now have text correspondence. Complete trace encoding
 and solver implementation correctness remain separate obligations.

@@ -1,5 +1,6 @@
 import Sparse.QueuePlan
 import Sparse.SmtScript
+import Sparse.SymbolBounds
 
 -- Count-read block only. Queue guards, windows, and initial accounting are not emitted.
 set_option autoImplicit false
@@ -22,11 +23,14 @@ def InputInt.term : InputInt -> Term .int
 def InputInt.eval (assignment : Assignment) (value : InputInt) : Int :=
   value.term.eval assignment
 
-def symbolId : Symbol -> Nat
-  | .constant _ id | .unary _ _ id => id
+abbrev symbolId := SymbolBounds.symbolId
 
 def freshBase (input : SmtScript.Formula) : Nat :=
   (SmtScript.symbols input).toFinset.sup symbolId + 1
+
+@[csimp] theorem freshBase_eq_summary : freshBase = SymbolBounds.freshBase := by
+  funext input
+  simp only [freshBase, SymbolBounds.freshBase, SymbolBounds.formulaMax_correct, symbolId]
 
 def installCounts {size : Nat} (original : Assignment) (base : Nat)
     (counts : Fin (size + 1) -> Int -> Int) : Assignment where

@@ -55,6 +55,8 @@ and fresh function names. `QueueScalarEncoding` adds queue guards, windows,
 and shared packet order. `QueueInitialEncoding` adds the initial prefix histogram
 and alias-aware count budget, preserving the existing input, count, and order
 functions. Full queue existence for the emitted formula remains separate work.
+`SymbolBounds` computes fresh IDs without constructing symbol sets. A proved
+compiler rewrite preserves the original allocation bound exactly.
 
 `SmtScript` declares each referenced typed symbol once and assembles assertions.
 Its interpreter preserves formula truth for the same assignment.
@@ -81,6 +83,16 @@ nice -n 10 lake env lean --run Sparse/IntervalDemandFixtureMain.lean --benchmark
 ```
 
 The benchmark measures demand planning only, not SMT generation or solving.
+
+Queue emission has a separate phase profile for repeated-key traces:
+
+```bash
+nice -n 10 lake env lean --run Sparse/QueueEncodingScaleMain.lean 20 40 80
+```
+
+It reports formula, declaration, and text construction times without running a
+solver. `tests.test_sparse_symbol_bounds` compares the optimized allocation
+with the original algorithm under the same opt-in flag.
 
 This is a proof library, not a complete sparse trace validator. Full Model
 composition, full-trace SMT correspondence, and end-to-end performance remain
