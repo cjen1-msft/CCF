@@ -20,9 +20,10 @@ def termSymbols : {ty : Ty} -> Term ty -> List Symbol
   | _, .app domain result id argument => .unary domain result id :: termSymbols argument
   | _, .add left right | _, .sub left right | _, .le left right
   | _, .equal left right | _, .and left right | _, .implies left right
+  | _, .nodesAnd left right | _, .nodesOr left right
   | _, .entry left right =>
     termSymbols left ++ termSymbols right
-  | _, .not value | _, .transaction value | _, .reconfiguration value
+  | _, .not value | _, .nodesNot value | _, .transaction value | _, .reconfiguration value
   | _, .retiredCommitted value | _, .entryTerm value | _, .entryContent value
   | _, .isContent _ value | _, .transactionId value
   | _, .configurationNodes value | _, .retiredNodes value => termSymbols value
@@ -167,6 +168,9 @@ def symbolTypes (symbol : Symbol) : List Ty :=
 def termNativeTypes : {ty : Ty} -> Term ty -> List Ty
   | _, .boolean _ | _, .integer _ | _, .unknown _ _ => []
   | _, .nodes _ => [.nodes]
+  | _, .nodesAnd left right | _, .nodesOr left right =>
+    .nodes :: (termNativeTypes left ++ termNativeTypes right)
+  | _, .nodesNot value => .nodes :: termNativeTypes value
   | _, .signature => [.content]
   | _, .transaction value | _, .reconfiguration value | _, .retiredCommitted value =>
     .content :: termNativeTypes value
@@ -182,6 +186,7 @@ def termNativeTypes : {ty : Ty} -> Term ty -> List Ty
     termNativeTypes condition ++ termNativeTypes yes ++ termNativeTypes no
 
 def operatorNativeTypes : Operator -> List Ty
+  | .nodesAnd | .nodesOr | .nodesNot => [.nodes]
   | .transaction | .reconfiguration | .retiredCommitted
   | .transactionId | .configurationNodes | .retiredNodes => [.content]
   | .entry | .entryTerm | .entryContent => [.entry]

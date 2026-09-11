@@ -1,5 +1,6 @@
 import Sparse.NativeConstructors
 import Sparse.NativeSelectors
+import Sparse.NativeNodeOperations
 import Lean.Data.Json
 
 set_option autoImplicit false
@@ -155,6 +156,36 @@ def selectorFixtures : List Lean.Json :=
    fixture "different-guard-operand" "sat"
      [.equal (.ite (.isContent .transaction tx) (.transactionId sig) (.integer 0)) (.integer 7)]]
 
+private def masks : List (BitVec NODE_COUNT) := [0, 1, 2, 16384, 32767, 21845, 10922, 32766]
+
+def nodeFixtures : List Lean.Json :=
+  masks.flatMap (fun left =>
+    masks.flatMap fun right =>
+      [true, false].flatMap fun useAnd =>
+        [true, false].map fun valid =>
+          let answer := if useAnd then left &&& right else left ||| right
+          let proposed := if valid then answer else answer ^^^ 1
+          let value := if useAnd then Term.nodesAnd (.unknown .nodes 0) (.unknown .nodes 1)
+            else Term.nodesOr (.unknown .nodes 0) (.unknown .nodes 1)
+          fixture s!"{if useAnd then "and" else "or"}-{left.toNat}-{right.toNat}-{proposed.toNat}"
+            (if valid then "sat" else "unsat")
+            [.equal (.unknown .nodes 0) (.nodes left), .equal (.unknown .nodes 1) (.nodes right),
+             .equal value (.nodes proposed)]) ++
+  masks.flatMap (fun value =>
+    [true, false].map fun valid =>
+      let answer := ~~~value
+      let proposed := if valid then answer else answer ^^^ 1
+      fixture s!"not-{value.toNat}-{proposed.toNat}" (if valid then "sat" else "unsat")
+        [.equal (.unknown .nodes 0) (.nodes value),
+         .equal (.nodesNot (.unknown .nodes 0)) (.nodes proposed)]) ++
+  masks.flatMap (fun value =>
+    (List.ofFn fun node : Node =>
+      [true, false].map fun wanted =>
+        fixture s!"member-{value.toNat}-{node.val}-{wanted}"
+          (if value.getLsbD node.val == wanted then "sat" else "unsat")
+          [.equal (.unknown .nodes 0) (.nodes value),
+           .equal (NativeNodeOperations.member node (.unknown .nodes 0)) (.boolean wanted)]).flatten)
+
 end CCFRaft.Sparse.NativeSortFixtures
 
 def main (args : List String) : IO UInt32 := do
@@ -163,9 +194,10 @@ def main (args : List String) : IO UInt32 := do
     | ["--constructors"] => some (Lean.toJson CCFRaft.Sparse.NativeSortFixtures.constructorFixtures)
     | ["--masks"] => some CCFRaft.Sparse.NativeSortFixtures.maskFixtures
     | ["--selectors"] => some (Lean.toJson CCFRaft.Sparse.NativeSortFixtures.selectorFixtures)
+    | ["--nodes"] => some (Lean.toJson CCFRaft.Sparse.NativeSortFixtures.nodeFixtures)
     | _ => none
   let some result := result |
-    ( <- IO.getStderr).putStrLn "usage: NativeSortFixtureMain.lean [--constructors | --masks | --selectors]"
+    ( <- IO.getStderr).putStrLn "usage: NativeSortFixtureMain.lean [--constructors | --masks | --selectors | --nodes]"
     return 1
   IO.println result.compress
   return 0

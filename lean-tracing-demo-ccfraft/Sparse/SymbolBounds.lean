@@ -16,9 +16,10 @@ def termMax : {ty : Ty} -> Term ty -> Nat
   | _, .app _ _ id argument => max id (termMax argument)
   | _, .add left right | _, .sub left right | _, .le left right
   | _, .equal left right | _, .and left right | _, .implies left right
+  | _, .nodesAnd left right | _, .nodesOr left right
   | _, .entry left right =>
     max (termMax left) (termMax right)
-  | _, .not value | _, .transaction value | _, .reconfiguration value
+  | _, .not value | _, .nodesNot value | _, .transaction value | _, .reconfiguration value
   | _, .retiredCommitted value | _, .entryTerm value | _, .entryContent value
   | _, .isContent _ value | _, .transactionId value
   | _, .configurationNodes value | _, .retiredNodes value => termMax value

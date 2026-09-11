@@ -105,6 +105,29 @@ class SparseNativeSortTests(unittest.TestCase):
     def test_native_selector_scripts(self) -> None:
         self.assert_selector_cases(self.load("--selectors"))
 
+    def assert_node_cases(self, cases: list[dict]) -> None:
+        self.assertEqual(len(cases), 512)
+        self.assertEqual(Counter(case["expected"] for case in cases), {"sat": 256, "unsat": 256})
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                operation, *values = case["name"].split("-")
+                if operation == "member":
+                    mask, node = map(int, values[:2])
+                    holds = bool((mask >> node) & 1) == (values[2] == "true")
+                elif operation == "not":
+                    mask, proposed = map(int, values)
+                    holds = (~mask & 32767) == proposed
+                else:
+                    left, right, proposed = map(int, values)
+                    self.assertIn(operation, ("and", "or"))
+                    holds = (left & right if operation == "and" else left | right) == proposed
+                self.assertEqual(case["expected"], "sat" if holds else "unsat")
+                self.assertEqual(case["prelude"], ["(set-logic ALL)"])
+        self.assert_scripts(cases)
+
+    def test_native_node_scripts(self) -> None:
+        self.assert_node_cases(self.load("--nodes"))
+
     def assert_masks(self, data: dict) -> None:
         self.assertEqual(len(data["masks"]), 32768)
         for expected, (value, text, parsed) in enumerate(data["masks"]):

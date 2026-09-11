@@ -90,6 +90,8 @@ theorem eval_install {size : Nat} (original : Assignment) (base : Nat)
   | le left right ihl ihr
   | equal left right ihl ihr
   | and left right ihl ihr
+  | nodesAnd left right ihl ihr
+  | nodesOr left right ihl ihr
   | implies left right ihl ihr =>
     have left_eq := ihl (fun symbol member => below symbol (by simp [SmtScript.termSymbols, member]))
     have right_eq := ihr (fun symbol member => below symbol (by simp [SmtScript.termSymbols, member]))
@@ -99,7 +101,7 @@ theorem eval_install {size : Nat} (original : Assignment) (base : Nat)
     have right_eq := ihr (fun symbol member => below symbol (by simp [SmtScript.termSymbols, member]))
     simp only [Term.eval, left_eq, right_eq]
   | transaction value ih | reconfiguration value ih | retiredCommitted value ih
-  | entryTerm value ih | entryContent value ih | isContent _ value ih =>
+  | entryTerm value ih | entryContent value ih | isContent _ value ih | nodesNot value ih =>
     simp only [Term.eval, ih below]
   | transactionId value ih | configurationNodes value ih | retiredNodes value ih =>
     simp only [Term.eval, ih below, install_selectors]

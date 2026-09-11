@@ -75,13 +75,15 @@ theorem term_setZero (original : Assignment) (zeroID : Nat) {ty : Smt.Ty} (term 
   | le left right ihl ihr
   | equal left right ihl ihr
   | and left right ihl ihr
+  | nodesAnd left right ihl ihr
+  | nodesOr left right ihl ihr
   | implies left right ihl ihr =>
     have hl := ihl (fun symbol present => below symbol (by simp [SmtScript.termSymbols, present]))
     have hr := ihr (fun symbol present => below symbol (by simp [SmtScript.termSymbols, present]))
     simp only [Term.eval, hl, hr]
   | not value ih => exact congrArg Bool.not (ih below)
   | transaction value ih | reconfiguration value ih | retiredCommitted value ih
-  | entryTerm value ih | entryContent value ih | isContent _ value ih =>
+  | entryTerm value ih | entryContent value ih | isContent _ value ih | nodesNot value ih =>
     simp only [Term.eval, ih below]
   | transactionId value ih | configurationNodes value ih | retiredNodes value ih =>
     simp only [Term.eval, ih below, setZero_selectors]

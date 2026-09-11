@@ -53,6 +53,9 @@ inductive Term : Ty -> Type where
   | boolean (value : Bool) : Term .bool
   | integer (value : Int) : Term .int
   | nodes (value : BitVec NODE_COUNT) : Term .nodes
+  | nodesAnd (left right : Term .nodes) : Term .nodes
+  | nodesOr (left right : Term .nodes) : Term .nodes
+  | nodesNot (value : Term .nodes) : Term .nodes
   | transaction (txId : Term .int) : Term .content
   | signature : Term .content
   | reconfiguration (nodes : Term .nodes) : Term .content
@@ -79,6 +82,9 @@ def Term.eval (assignment : Assignment) : {ty : Ty} -> Term ty -> ty.denote
   | _, .boolean value => value
   | _, .integer value => value
   | _, .nodes value => value
+  | _, .nodesAnd left right => left.eval assignment &&& right.eval assignment
+  | _, .nodesOr left right => left.eval assignment ||| right.eval assignment
+  | _, .nodesNot value => ~~~(value.eval assignment)
   | _, .transaction txId => .transaction (txId.eval assignment)
   | _, .signature => .signature
   | _, .reconfiguration value => .reconfiguration (value.eval assignment)
@@ -109,6 +115,7 @@ inductive Symbol where
 
 inductive Operator where
   | add | minus | le | equal | not | and | implies | ite
+  | nodesAnd | nodesOr | nodesNot
   | transaction | reconfiguration | retiredCommitted | entry | entryTerm | entryContent
   | transactionId | configurationNodes | retiredNodes
   deriving DecidableEq, Repr
@@ -178,6 +185,9 @@ theorem asType_embed (ty : Ty) (value : ty.denote) :
 
 -- Wrong arities and sorts fail, including mismatched unselected ite branches.
 def applyHead (assignment : Assignment) : Atom -> List Value -> Option Value
+  | .operator .nodesAnd, [.nodes left, .nodes right] => some (.nodes (left &&& right))
+  | .operator .nodesOr, [.nodes left, .nodes right] => some (.nodes (left ||| right))
+  | .operator .nodesNot, [.nodes value] => some (.nodes (~~~value))
   | .operator .transactionId, [.content content] =>
     some (.integer (EntrySelectorSemantics.rawTx assignment.selectors content))
   | .operator .configurationNodes, [.content content] =>
@@ -251,6 +261,9 @@ def Term.lower : {ty : Ty} -> Term ty -> SExpr
   | _, .boolean value => .atom (.boolean value)
   | _, .integer value => signedLiteral value
   | _, .nodes value => .atom (.nodes value)
+  | _, .nodesAnd left right => call (.operator .nodesAnd) [left.lower, right.lower]
+  | _, .nodesOr left right => call (.operator .nodesOr) [left.lower, right.lower]
+  | _, .nodesNot value => call (.operator .nodesNot) [value.lower]
   | _, .transaction txId => call (.operator .transaction) [txId.lower]
   | _, .signature => .atom .signature
   | _, .reconfiguration value => call (.operator .reconfiguration) [value.lower]
@@ -286,6 +299,10 @@ theorem lower_correct (assignment : Assignment) {ty : Ty} (term : Term ty) :
   | boolean value => simp [Term.lower, SExpr.eval, Term.eval, embed]
   | integer value => exact signedLiteral_eval assignment value
   | nodes value => simp [Term.lower, SExpr.eval, Term.eval, embed]
+  | nodesAnd left right ihl ihr | nodesOr left right ihl ihr =>
+    simp [Term.lower, call, SExpr.eval, ihl, ihr, applyHead, Term.eval, embed]
+  | nodesNot value ih =>
+    simp [Term.lower, call, SExpr.eval, ih, applyHead, Term.eval, embed]
   | signature => simp [Term.lower, SExpr.eval, Term.eval, embed]
   | transaction value ih | reconfiguration value ih | retiredCommitted value ih
   | entryTerm value ih | entryContent value ih | transactionId value ih
@@ -421,6 +438,9 @@ def Atom.render : Atom -> String
   | .operator .and => "and"
   | .operator .implies => "=>"
   | .operator .ite => "ite"
+  | .operator .nodesAnd => "bvand"
+  | .operator .nodesOr => "bvor"
+  | .operator .nodesNot => "bvnot"
   | .operator .transaction => "ccf_tx"
   | .operator .reconfiguration => "ccf_cfg"
   | .operator .retiredCommitted => "ccf_retired"

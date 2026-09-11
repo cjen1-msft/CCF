@@ -21,6 +21,9 @@ private def parseFixed : List Char -> Option Atom
   | ['a', 'n', 'd'] => some (.operator .and)
   | ['=', '>'] => some (.operator .implies)
   | ['i', 't', 'e'] => some (.operator .ite)
+  | ['b', 'v', 'a', 'n', 'd'] => some (.operator .nodesAnd)
+  | ['b', 'v', 'o', 'r'] => some (.operator .nodesOr)
+  | ['b', 'v', 'n', 'o', 't'] => some (.operator .nodesNot)
   | ['c', 'c', 'f', '_', 's', 'i', 'g'] => some .signature
   | ['c', 'c', 'f', '_', 't', 'x'] => some (.operator .transaction)
   | ['c', 'c', 'f', '_', 'c', 'f', 'g'] => some (.operator .reconfiguration)
