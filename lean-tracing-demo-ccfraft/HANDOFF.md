@@ -54,6 +54,7 @@ New repository bridges extend that foundation:
 | `Sparse/MonotoneIntervals.lean` | Joint finite-cut completion for one log with point facts, interval predicates, nondecreasing terms, and a current-term bound. |
 | `Sparse/ConfigurationSnapshot.lean` | Exact ordered positive-index Model snapshots and same-log completion using `2m+1` frontier-query records for `m` snapshot entries. |
 | `Sparse/EntryValue.lean` | Fixed nonrecursive content and entry values are bijective with actual Model values, with equality transport, decoded term ordering, guarded payload views, and pointwise array equivalence. |
+| `Sparse/EntrySelectorSemantics.lean` | Total wrong-constructor selector interpretations are represented without restriction. Correctly guarded reads are interpretation-independent, with strict branch-success requirements. |
 | `Sparse/AppendEntriesRanges.lean` | Actual send/receive index alignment. Enabled sends contain at most one entry; arbitrary initial packets remain unbounded. |
 | `Sparse/FiniteMembership.lean` | One finite initial set for a complete membership/insert trace, preserving key aliases. |
 | `Sparse/QueueReadback.lean` | Fixed-plan finite read/scalar constraints correspond to one count-array heap and imply a concrete whole-queue execution. |
@@ -123,8 +124,12 @@ UNSAT controls. These are point-read components, not full Raft traces.
 The chosen entry representation uses fixed native datatypes with signed
 integer term/transaction fields and 15-bit node sets. `EntryValue` supplies
 the exact value domain, not its SMT declarations or text correspondence.
-Wrong-variant payload views return `none`. Future SMT selectors are total and
-underspecified on wrong variants, so their lowering needs a separate argument.
+Wrong-variant payload views return `none`. SMT selectors are total and
+underspecified on wrong variants. `EntrySelectorSemantics` proves guarded
+results independent of every such interpretation. The tester and selector
+must use the same content operand, and both branches must evaluate successfully.
+Connecting these laws to the actual eager SExpr evaluator and emitted text
+remains separate work.
 Natural term ordering compares decoded values, never raw signed integers.
 
 The session's `sparse-entry-representation-design.md` records three designs and

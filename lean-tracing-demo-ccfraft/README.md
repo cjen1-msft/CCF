@@ -47,6 +47,9 @@ Entry-valued cells and universal predicate emission remain separate work.
 `EntryValue` supplies a fixed entry domain with signed integer scalars and
 node-set bitvectors, bijective with Model entries. SMT support for those sorts
 is not yet implemented.
+`EntrySelectorSemantics` proves guarded payload reads independent of arbitrary
+wrong-constructor selector values, without hiding failures in unused branches.
+The actual SMT evaluator and text layer are not yet connected to those laws.
 `ConfigurationSnapshot` characterizes complete positive-index Model snapshots
 with finite frontier queries. Raw callback-phase mapping is still separate.
 
