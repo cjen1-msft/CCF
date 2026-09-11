@@ -56,6 +56,9 @@ wrong-constructor selector values, without hiding failures in unused branches.
 The actual SMT evaluator and text layer are not yet connected to those laws.
 `ConfigurationSnapshot` characterizes complete positive-index Model snapshots
 with finite frontier queries. Raw callback-phase mapping is still separate.
+`ConfigurationPublication` is a separate local candidate for one successful
+leader callback. It preserves one linked begin/send/close chain but does not
+change the Model or raw validator.
 
 `QueueEncoding` emits typed count-read constraints with alias-safe observations
 and fresh function names. `QueueScalarEncoding` adds queue guards, windows,

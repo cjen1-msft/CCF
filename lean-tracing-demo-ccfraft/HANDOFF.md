@@ -55,6 +55,7 @@ New repository bridges extend that foundation:
 | `Sparse/IntervalQueries.lean` | Finite read equations and reference-local cut predicates correspond to one root-array family for every universal query, preserving requested cut values. |
 | `Sparse/MonotoneIntervals.lean` | Joint finite-cut completion for one log with point facts, interval predicates, nondecreasing terms, and a current-term bound. |
 | `Sparse/ConfigurationSnapshot.lean` | Exact ordered positive-index Model snapshots and same-log completion using `2m+1` frontier-query records for `m` snapshot entries. |
+| `Sparse/ConfigurationPublication.lean` | Separate local candidate for one configuration begin, successful empty callback send, and publication close on the same core-state chain. No production Model or raw-validator change. |
 | `Sparse/EntryValue.lean` | Fixed nonrecursive content and entry values are bijective with actual Model values, with equality transport, decoded term ordering, guarded payload views, and pointwise array equivalence. |
 | `Sparse/EntrySelectorSemantics.lean` | Total wrong-constructor selector interpretations are represented without restriction. Correctly guarded reads are interpretation-independent, with strict branch-success requirements. |
 | `Sparse/AppendEntriesRanges.lean` | Actual send/receive index alignment. Enabled sends contain at most one entry; arbitrary initial packets remain unbounded. |
@@ -174,6 +175,21 @@ unwired: C++ callbacks can update the configuration cache and send before the
 enclosing ledger action finishes. They need a phase-refinement mapping, not
 reordering or discarded observations. Address-only changes also remain outside
 the current Model projection.
+
+The reproduced callback conflict also involves the send guard: after the Model
+configuration action, the observed empty end-2 send is disabled because that
+guard requires end 3. Observation placement alone cannot fix the conflict.
+`ConfigurationPublication` supplies a bounded local alternative with a compact
+frame derived from its preceding begin. It preserves the original Model action
+path in idle and proves exact callback packet/enqueue effects.
+Its callback is explicitly not an enabled original Model action.
+
+This candidate requires one fresh peer, an active source before and after,
+an in-range old commit, a matched enclosing write, and successful transport.
+Raw send records describe attempts, not success evidence. Failure, interleaving,
+general callbacks, raw pairing, and full C++ refinement remain unproved.
+`Pending` alone is not a history certificate; execution must retain the
+linked Step chain from idle. The arbitrary-state production contract is unchanged.
 
 Presence normalization applies only to queue events. Callers must retain other
 observations and rebuild references for retained events. Destination-wide length
