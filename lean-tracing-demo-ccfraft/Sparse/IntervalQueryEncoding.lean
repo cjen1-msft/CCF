@@ -48,6 +48,10 @@ def setZero (original : Assignment) (zeroID : Nat) : Assignment where
     | .int => if id = zeroID then 0 else original.constant .int id
     | ty => original.constant ty id
   unary := original.unary
+  selectors := original.selectors
+
+@[simp] theorem setZero_selectors (original : Assignment) (zeroID : Nat) :
+    (setZero original zeroID).selectors = original.selectors := rfl
 
 theorem setZero_other (original : Assignment) (zeroID id : Nat) (different : Not (id = zeroID)) :
     (setZero original zeroID).constant .int id = original.constant .int id := by
@@ -77,8 +81,10 @@ theorem term_setZero (original : Assignment) (zeroID : Nat) {ty : Smt.Ty} (term 
     simp only [Term.eval, hl, hr]
   | not value ih => exact congrArg Bool.not (ih below)
   | transaction value ih | reconfiguration value ih | retiredCommitted value ih
-  | entryTerm value ih | entryContent value ih =>
+  | entryTerm value ih | entryContent value ih | isContent _ value ih =>
     simp only [Term.eval, ih below]
+  | transactionId value ih | configurationNodes value ih | retiredNodes value ih =>
+    simp only [Term.eval, ih below, setZero_selectors]
   | entry left right ihl ihr =>
     have hl := ihl (fun symbol present => below symbol (by simp [SmtScript.termSymbols, present]))
     have hr := ihr (fun symbol present => below symbol (by simp [SmtScript.termSymbols, present]))

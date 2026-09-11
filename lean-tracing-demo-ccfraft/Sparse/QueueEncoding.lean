@@ -42,6 +42,11 @@ def installCounts {size : Nat} (original : Assignment) (base : Nat)
         counts (Fin.mk (id - base) (by omega))
       else original.unary .int .int id
     | domain, result => original.unary domain result id
+  selectors := original.selectors
+
+@[simp] theorem install_selectors {size : Nat} (original : Assignment) (base : Nat)
+    (counts : Fin (size + 1) -> Int -> Int) :
+    (installCounts original base counts).selectors = original.selectors := rfl
 
 @[simp] theorem install_at {size : Nat} (original : Assignment) (base : Nat)
     (counts : Fin (size + 1) -> Int -> Int) (version : Fin (size + 1)) :
@@ -94,8 +99,10 @@ theorem eval_install {size : Nat} (original : Assignment) (base : Nat)
     have right_eq := ihr (fun symbol member => below symbol (by simp [SmtScript.termSymbols, member]))
     simp only [Term.eval, left_eq, right_eq]
   | transaction value ih | reconfiguration value ih | retiredCommitted value ih
-  | entryTerm value ih | entryContent value ih =>
+  | entryTerm value ih | entryContent value ih | isContent _ value ih =>
     simp only [Term.eval, ih below]
+  | transactionId value ih | configurationNodes value ih | retiredNodes value ih =>
+    simp only [Term.eval, ih below, install_selectors]
   | not value ih =>
     exact congrArg Bool.not (ih below)
   | ite condition yes no ihc ihy ihn =>

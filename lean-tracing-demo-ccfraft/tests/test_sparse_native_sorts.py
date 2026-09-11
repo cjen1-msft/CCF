@@ -91,6 +91,20 @@ class SparseNativeSortTests(unittest.TestCase):
     def test_native_constructor_scripts(self) -> None:
         self.assert_constructor_cases(self.load("--constructors"))
 
+    def assert_selector_cases(self, cases: list[dict]) -> None:
+        self.assertEqual(len(cases), 105)
+        self.assertEqual(Counter(case["expected"] for case in cases), {"sat": 58, "unsat": 47})
+        self.assert_scripts(cases)
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                if "tester" in case["name"]:
+                    self.assertIn("((_ is ccf_", case["script"])
+                self.assertEqual(case["prelude"][0], "(set-logic ALL)")
+                self.assertGreaterEqual(len(case["prelude"]), 2)
+
+    def test_native_selector_scripts(self) -> None:
+        self.assert_selector_cases(self.load("--selectors"))
+
     def assert_masks(self, data: dict) -> None:
         self.assertEqual(len(data["masks"]), 32768)
         for expected, (value, text, parsed) in enumerate(data["masks"]):

@@ -1,4 +1,5 @@
 import Sparse.NativeConstructors
+import Sparse.NativeSelectors
 import Lean.Data.Json
 
 set_option autoImplicit false
@@ -96,6 +97,64 @@ def maskFixtures : Lean.Json :=
     ("invalid", Lean.toJson (invalid.map fun text =>
       (text, (SmtExpressionText.parseAtom text).isNone)))]
 
+private def checkPair (name : String) (claim : Term .bool) : List Lean.Json :=
+  [fixture (name ++ "-sat") "sat" [claim],
+   fixture (name ++ "-unsat") "unsat" [.not claim]]
+
+private def selectorCases {ty : Ty} (name : String)
+    (raw guarded : Term .content -> Term ty) (proper : Term .content) (payload : Term ty)
+    (wrong : List (Term .content)) (first second : Term ty) : List Lean.Json :=
+  checkPair (name ++ "-proper") (.equal (raw proper) payload) ++
+  (wrong.mapIdx fun index value =>
+    [fixture s!"{name}-wrong-{index}-first" "sat" [.equal (raw value) first],
+     fixture s!"{name}-wrong-{index}-second" "sat" [.equal (raw value) second],
+     fixture s!"{name}-coherence-{index}" "unsat"
+       [.equal (raw value) first, .equal (raw value) second]]).flatten ++
+  [fixture (name ++ "-alias") "unsat"
+     [.equal (.unknown .content 10) .signature,
+      .not (.equal (raw (.unknown .content 10)) (raw .signature))]] ++
+  checkPair (name ++ "-guarded-proper") (.equal (guarded proper) payload) ++
+  (wrong.mapIdx fun index value =>
+    checkPair s!"{name}-guarded-{index}" (.equal (guarded value) first)).flatten
+
+def selectorFixtures : List Lean.Json :=
+  let tx := Term.transaction (.integer (-5))
+  let sig := Term.signature
+  let cfg := Term.reconfiguration (.nodes 16384)
+  let retired := Term.retiredCommitted (.nodes 32767)
+  let tags : List ContentTag := [.transaction, .signature, .reconfiguration, .retiredCommitted]
+  (tags.mapIdx fun tagIndex tag =>
+    ([tx, sig, cfg, retired].mapIdx fun valueIndex value =>
+      checkPair s!"tester-{tagIndex}-{valueIndex}"
+        (.equal (.isContent tag value) (.boolean (tagIndex == valueIndex)))).flatten).flatten ++
+  (tags.mapIdx fun index tag =>
+    let test := Term.isContent tag (.unknown .content 10)
+    checkPair s!"unknown-tester-{index}" (.equal test test)).flatten ++
+  selectorCases "tx" Term.transactionId (fun value => NativeSelectors.txOr value (.integer (-9)))
+    tx (.integer (-5)) [sig, cfg, retired] (.integer (-9)) (.integer 7) ++
+  selectorCases "cfg" Term.configurationNodes (fun value => NativeSelectors.cfgOr value (.nodes 1))
+    cfg (.nodes 16384) [tx, sig, retired] (.nodes 1) (.nodes 2) ++
+  selectorCases "retired" Term.retiredNodes (fun value => NativeSelectors.retiredOr value (.nodes 2))
+    retired (.nodes 32767) [tx, sig, cfg] (.nodes 2) (.nodes 3) ++
+  [fixture "tx-independent-uf" "sat"
+     [.equal (.app .content .int 0 sig) (.integer 0),
+      .equal (.transactionId sig) (.integer 7)],
+   fixture "cfg-independent-uf" "sat"
+     [.equal (.app .content .nodes 0 sig) (.nodes 0),
+      .equal (.configurationNodes sig) (.nodes 1)],
+   fixture "retired-independent-uf" "sat"
+     [.equal (.app .content .nodes 1 sig) (.nodes 0),
+      .equal (.retiredNodes sig) (.nodes 2)],
+   fixture "guarded-forced-wrong-values" "sat"
+     [.equal (.transactionId sig) (.integer 7),
+      .equal (.configurationNodes sig) (.nodes 32767),
+      .equal (.retiredNodes sig) (.nodes 16384),
+      .equal (NativeSelectors.txOr sig (.integer (-9))) (.integer (-9)),
+      .equal (NativeSelectors.cfgOr sig (.nodes 1)) (.nodes 1),
+      .equal (NativeSelectors.retiredOr sig (.nodes 2)) (.nodes 2)],
+   fixture "different-guard-operand" "sat"
+     [.equal (.ite (.isContent .transaction tx) (.transactionId sig) (.integer 0)) (.integer 7)]]
+
 end CCFRaft.Sparse.NativeSortFixtures
 
 def main (args : List String) : IO UInt32 := do
@@ -103,9 +162,10 @@ def main (args : List String) : IO UInt32 := do
     | [] => some (Lean.toJson CCFRaft.Sparse.NativeSortFixtures.fixtures)
     | ["--constructors"] => some (Lean.toJson CCFRaft.Sparse.NativeSortFixtures.constructorFixtures)
     | ["--masks"] => some CCFRaft.Sparse.NativeSortFixtures.maskFixtures
+    | ["--selectors"] => some (Lean.toJson CCFRaft.Sparse.NativeSortFixtures.selectorFixtures)
     | _ => none
   let some result := result |
-    ( <- IO.getStderr).putStrLn "usage: NativeSortFixtureMain.lean [--constructors | --masks]"
+    ( <- IO.getStderr).putStrLn "usage: NativeSortFixtureMain.lean [--constructors | --masks | --selectors]"
     return 1
   IO.println result.compress
   return 0

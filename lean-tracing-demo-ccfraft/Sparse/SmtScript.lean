@@ -23,7 +23,9 @@ def termSymbols : {ty : Ty} -> Term ty -> List Symbol
   | _, .entry left right =>
     termSymbols left ++ termSymbols right
   | _, .not value | _, .transaction value | _, .reconfiguration value
-  | _, .retiredCommitted value | _, .entryTerm value | _, .entryContent value => termSymbols value
+  | _, .retiredCommitted value | _, .entryTerm value | _, .entryContent value
+  | _, .isContent _ value | _, .transactionId value
+  | _, .configurationNodes value | _, .retiredNodes value => termSymbols value
   | _, .ite condition yes no => termSymbols condition ++ termSymbols yes ++ termSymbols no
 
 def exprSymbols : SExpr -> List Symbol
@@ -34,10 +36,14 @@ def exprSymbols : SExpr -> List Symbol
 theorem signedLiteral_symbols (value : Int) : exprSymbols (signedLiteral value) = [] := by
   cases value <;> simp [signedLiteral, call, exprSymbols]
 
+theorem tag_symbols (tag : ContentTag) : exprSymbols (.atom tag.atom) = [] := by
+  cases tag <;> simp only [ContentTag.atom, exprSymbols]
+
 theorem lower_symbols {ty : Ty} (term : Term ty) :
     exprSymbols term.lower = termSymbols term := by
   induction term <;>
-    simp_all [Term.lower, termSymbols, exprSymbols, call, signedLiteral_symbols, List.append_assoc]
+    simp_all [Term.lower, termSymbols, exprSymbols, call, tester, tag_symbols,
+      signedLiteral_symbols, List.append_assoc]
 
 def symbols (formula : Formula) : List Symbol :=
   (formula.flatMap termSymbols).dedup
@@ -164,6 +170,8 @@ def termNativeTypes : {ty : Ty} -> Term ty -> List Ty
   | _, .signature => [.content]
   | _, .transaction value | _, .reconfiguration value | _, .retiredCommitted value =>
     .content :: termNativeTypes value
+  | _, .isContent _ value | _, .transactionId value
+  | _, .configurationNodes value | _, .retiredNodes value => .content :: termNativeTypes value
   | _, .entry left right => .entry :: (termNativeTypes left ++ termNativeTypes right)
   | _, .entryTerm value | _, .entryContent value => .entry :: termNativeTypes value
   | _, .app _ _ _ value | _, .not value => termNativeTypes value
@@ -174,7 +182,8 @@ def termNativeTypes : {ty : Ty} -> Term ty -> List Ty
     termNativeTypes condition ++ termNativeTypes yes ++ termNativeTypes no
 
 def operatorNativeTypes : Operator -> List Ty
-  | .transaction | .reconfiguration | .retiredCommitted => [.content]
+  | .transaction | .reconfiguration | .retiredCommitted
+  | .transactionId | .configurationNodes | .retiredNodes => [.content]
   | .entry | .entryTerm | .entryContent => [.entry]
   | .add | .minus | .le | .equal | .not | .and | .implies | .ite => []
 
@@ -182,7 +191,10 @@ def atomNativeTypes : Atom -> List Ty
   | .nodes _ => [.nodes]
   | .signature => [.content]
   | .operator op => operatorNativeTypes op
-  | .boolean _ | .numeral _ | .symbol _ => []
+  | .boolean _ | .numeral _ | .symbol _ | .indexMarker | .isKeyword => []
+
+theorem tag_nativeTypes (tag : ContentTag) : atomNativeTypes tag.atom = [.content] := by
+  cases tag <;> rfl
 
 def exprNativeTypes : SExpr -> List Ty
   | .atom atom => atomNativeTypes atom
@@ -195,8 +207,15 @@ theorem signedLiteral_nativeTypes (value : Int) :
 
 theorem lower_nativeTypes {ty : Ty} (term : Term ty) :
     exprNativeTypes term.lower = termNativeTypes term := by
-  induction term <;>
-    simp_all only [Term.lower, termNativeTypes, exprNativeTypes, atomNativeTypes, operatorNativeTypes, call,
+  induction term with
+  | isContent tag value ih =>
+    cases tag <;>
+      simp only [Term.lower, termNativeTypes, tester, exprNativeTypes, ContentTag.atom,
+        atomNativeTypes, operatorNativeTypes, List.flatMap_cons, List.flatMap_nil,
+        List.nil_append, List.append_nil, List.cons_append, ih]
+  | _ =>
+    simp_all only [Term.lower, termNativeTypes, exprNativeTypes,
+      atomNativeTypes, operatorNativeTypes, call,
       signedLiteral_nativeTypes, List.flatMap_cons, List.flatMap_nil,
       List.nil_append, List.append_nil, List.cons_append, List.append_assoc]
 

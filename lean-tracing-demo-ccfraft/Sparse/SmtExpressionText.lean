@@ -28,6 +28,13 @@ private def parseFixed : List Char -> Option Atom
   | ['c', 'c', 'f', '_', 'e', 'n', 't', 'r', 'y'] => some (.operator .entry)
   | ['c', 'c', 'f', '_', 't', 'e', 'r', 'm'] => some (.operator .entryTerm)
   | ['c', 'c', 'f', '_', 'c', 'o', 'n', 't', 'e', 'n', 't'] => some (.operator .entryContent)
+  | ['_'] => some .indexMarker
+  | ['i', 's'] => some .isKeyword
+  | ['c', 'c', 'f', '_', 't', 'x', '_', 'i', 'd'] => some (.operator .transactionId)
+  | ['c', 'c', 'f', '_', 'c', 'f', 'g', '_', 'n', 'o', 'd', 'e', 's'] =>
+    some (.operator .configurationNodes)
+  | ['c', 'c', 'f', '_', 'r', 'e', 't', 'i', 'r', 'e', 'd', '_', 'n', 'o', 'd', 'e', 's'] =>
+    some (.operator .retiredNodes)
   | _ => none
 
 def parseAtom (text : String) : Option Atom :=
@@ -91,7 +98,7 @@ private theorem decimal_not_symbol (d : Nat) (hd : d < 10) (rest : List Char) :
 theorem parseAtom_render (atom : Atom) : parseAtom atom.render = some atom := by
   cases atom with
   | boolean b => cases b <;> decide +kernel
-  | signature => decide +kernel
+  | signature | indexMarker | isKeyword => decide +kernel
   | nodes value =>
     simp only [parseAtom, Atom.render, SmtNodes.render, String.toList_ofList,
       SmtNodes.chars, List.cons_append, List.nil_append, List.head?_cons, ite_true]
@@ -166,7 +173,7 @@ private theorem digits_safe (fuel n : Nat) (suffix : List Char) (safe : Safe suf
 theorem atom_render_safe (atom : Atom) : Safe atom.render.toList := by
   cases atom with
   | boolean b => cases b <;> decide +kernel
-  | signature => decide +kernel
+  | signature | indexMarker | isKeyword => decide +kernel
   | nodes value =>
     simp only [Atom.render, SmtNodes.render, String.toList_ofList, SmtNodes.chars]
     apply safe_append

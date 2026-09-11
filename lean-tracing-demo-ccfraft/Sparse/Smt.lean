@@ -2,6 +2,7 @@ import Mathlib.Data.List.Basic
 import Mathlib.Data.Nat.Bits
 import Lean.Util.CollectAxioms
 import Sparse.SmtNodes
+import Sparse.EntrySelectorSemantics
 
 -- Fixed value sorts only. Int packet tokens do not serialize completeMessage.
 -- The proved boundary is typed IR -> SExpr evaluation, not rendered-text parsing.
@@ -31,6 +32,21 @@ instance (ty : Ty) : DecidableEq ty.denote := by
 structure Assignment where
   constant : (ty : Ty) -> Nat -> ty.denote
   unary : (domain result : Ty) -> Nat -> domain.denote -> result.denote
+  -- Legacy record constructors may omit this field; explicit interpretations are unrestricted.
+  selectors : EntrySelectorSemantics.WrongSelectors :=
+    { txWrong := unary .content .int 0,
+      cfgWrong := unary .content .nodes 0,
+      retiredWrong := unary .content .nodes 1 }
+
+inductive ContentTag where
+  | transaction | signature | reconfiguration | retiredCommitted
+  deriving DecidableEq, Repr
+
+def ContentTag.test : ContentTag -> EntryValue.Content -> Bool
+  | .transaction => EntryValue.Content.isTransaction
+  | .signature => EntryValue.Content.isSignature
+  | .reconfiguration => EntryValue.Content.isReconfiguration
+  | .retiredCommitted => EntryValue.Content.isRetiredCommitted
 
 -- IDs identify symbols, not expressions that retain a previous AST.
 inductive Term : Ty -> Type where
@@ -44,6 +60,10 @@ inductive Term : Ty -> Type where
   | entry (term : Term .int) (content : Term .content) : Term .entry
   | entryTerm (entry : Term .entry) : Term .int
   | entryContent (entry : Term .entry) : Term .content
+  | isContent (tag : ContentTag) (value : Term .content) : Term .bool
+  | transactionId (value : Term .content) : Term .int
+  | configurationNodes (value : Term .content) : Term .nodes
+  | retiredNodes (value : Term .content) : Term .nodes
   | unknown (ty : Ty) (id : Nat) : Term ty
   | app (domain result : Ty) (id : Nat) (argument : Term domain) : Term result
   | add (left right : Term .int) : Term .int
@@ -66,6 +86,10 @@ def Term.eval (assignment : Assignment) : {ty : Ty} -> Term ty -> ty.denote
   | _, .entry term content => { term := term.eval assignment, content := content.eval assignment }
   | _, .entryTerm value => (value.eval assignment).term
   | _, .entryContent value => (value.eval assignment).content
+  | _, .isContent tag value => tag.test (value.eval assignment)
+  | _, .transactionId value => EntrySelectorSemantics.rawTx assignment.selectors (value.eval assignment)
+  | _, .configurationNodes value => EntrySelectorSemantics.rawCfg assignment.selectors (value.eval assignment)
+  | _, .retiredNodes value => EntrySelectorSemantics.rawRetired assignment.selectors (value.eval assignment)
   | _, .unknown ty id => assignment.constant ty id
   | _, .app domain result id argument =>
     assignment.unary domain result id (argument.eval assignment)
@@ -86,6 +110,7 @@ inductive Symbol where
 inductive Operator where
   | add | minus | le | equal | not | and | implies | ite
   | transaction | reconfiguration | retiredCommitted | entry | entryTerm | entryContent
+  | transactionId | configurationNodes | retiredNodes
   deriving DecidableEq, Repr
 
 inductive Atom where
@@ -93,9 +118,27 @@ inductive Atom where
   | numeral (value : Nat)
   | nodes (value : BitVec NODE_COUNT)
   | signature
+  | indexMarker
+  | isKeyword
   | symbol (name : Symbol)
   | operator (op : Operator)
   deriving DecidableEq, Repr
+
+def ContentTag.atom : ContentTag -> Atom
+  | .transaction => .operator .transaction
+  | .signature => .signature
+  | .reconfiguration => .operator .reconfiguration
+  | .retiredCommitted => .operator .retiredCommitted
+
+def ContentTag.parseAtom : Atom -> Option ContentTag
+  | .operator .transaction => some .transaction
+  | .signature => some .signature
+  | .operator .reconfiguration => some .reconfiguration
+  | .operator .retiredCommitted => some .retiredCommitted
+  | _ => none
+
+@[simp] theorem ContentTag.parse_atom (tag : ContentTag) :
+    ContentTag.parseAtom tag.atom = some tag := by cases tag <;> rfl
 
 inductive SExpr where
   | atom (value : Atom)
@@ -135,6 +178,12 @@ theorem asType_embed (ty : Ty) (value : ty.denote) :
 
 -- Wrong arities and sorts fail, including mismatched unselected ite branches.
 def applyHead (assignment : Assignment) : Atom -> List Value -> Option Value
+  | .operator .transactionId, [.content content] =>
+    some (.integer (EntrySelectorSemantics.rawTx assignment.selectors content))
+  | .operator .configurationNodes, [.content content] =>
+    some (.nodes (EntrySelectorSemantics.rawCfg assignment.selectors content))
+  | .operator .retiredNodes, [.content content] =>
+    some (.nodes (EntrySelectorSemantics.rawRetired assignment.selectors content))
   | .operator .transaction, [.integer txId] => some (.content (.transaction txId))
   | .operator .reconfiguration, [.nodes nodes] => some (.content (.reconfiguration nodes))
   | .operator .retiredCommitted, [.nodes nodes] => some (.content (.retiredCommitted nodes))
@@ -168,6 +217,12 @@ def applyHead (assignment : Assignment) : Atom -> List Value -> Option Value
     some (.entry (if condition then yes else no))
   | _, _ => none
 
+def applyTester (constructor : Atom) : List Value -> Option Value
+  | [.content content] => do
+    let tag <- ContentTag.parseAtom constructor
+    some (.boolean (tag.test content))
+  | _ => none
+
 def SExpr.eval (assignment : Assignment) : SExpr -> Option Value
   | .atom (.boolean value) => some (.boolean value)
   | .atom (.numeral value) => some (.integer (Int.ofNat value))
@@ -177,10 +232,16 @@ def SExpr.eval (assignment : Assignment) : SExpr -> Option Value
   | .list (.atom head :: arguments) => do
     let values <- arguments.mapM (SExpr.eval assignment)
     applyHead assignment head values
+  | .list (.list [.atom .indexMarker, .atom .isKeyword, .atom constructor] :: arguments) => do
+    let values <- arguments.mapM (SExpr.eval assignment)
+    applyTester constructor values
   | _ => none
 
 def call (head : Atom) (arguments : List SExpr) : SExpr :=
   .list (.atom head :: arguments)
+
+def tester (tag : ContentTag) (argument : SExpr) : SExpr :=
+  .list [.list [.atom .indexMarker, .atom .isKeyword, .atom tag.atom], argument]
 
 def signedLiteral : Int -> SExpr
   | .ofNat n => .atom (.numeral n)
@@ -197,6 +258,10 @@ def Term.lower : {ty : Ty} -> Term ty -> SExpr
   | _, .entry term content => call (.operator .entry) [term.lower, content.lower]
   | _, .entryTerm value => call (.operator .entryTerm) [value.lower]
   | _, .entryContent value => call (.operator .entryContent) [value.lower]
+  | _, .isContent tag value => tester tag value.lower
+  | _, .transactionId value => call (.operator .transactionId) [value.lower]
+  | _, .configurationNodes value => call (.operator .configurationNodes) [value.lower]
+  | _, .retiredNodes value => call (.operator .retiredNodes) [value.lower]
   | _, .unknown ty id => .atom (.symbol (.constant ty id))
   | _, .app domain result id argument =>
     call (.symbol (.unary domain result id)) [argument.lower]
@@ -223,10 +288,13 @@ theorem lower_correct (assignment : Assignment) {ty : Ty} (term : Term ty) :
   | nodes value => simp [Term.lower, SExpr.eval, Term.eval, embed]
   | signature => simp [Term.lower, SExpr.eval, Term.eval, embed]
   | transaction value ih | reconfiguration value ih | retiredCommitted value ih
-  | entryTerm value ih | entryContent value ih =>
+  | entryTerm value ih | entryContent value ih | transactionId value ih
+  | configurationNodes value ih | retiredNodes value ih =>
     simp [Term.lower, call, SExpr.eval, ih, applyHead, Term.eval, embed]
   | entry term content iht ihc =>
     simp [Term.lower, call, SExpr.eval, iht, ihc, applyHead, Term.eval, embed]
+  | isContent tag value ih =>
+    simp [Term.lower, tester, SExpr.eval, ih, applyTester, Term.eval, embed]
   | unknown ty id => simp [Term.lower, SExpr.eval, Term.eval]
   | app domain result id argument ih =>
     simp [Term.lower, call, SExpr.eval, ih, applyHead, Term.eval]
@@ -342,6 +410,8 @@ def Atom.render : Atom -> String
   | .numeral n => toString n
   | .nodes value => SmtNodes.render value
   | .signature => "ccf_sig"
+  | .indexMarker => "_"
+  | .isKeyword => "is"
   | .symbol sym => sym.name
   | .operator .add => "+"
   | .operator .minus => "-"
@@ -357,6 +427,9 @@ def Atom.render : Atom -> String
   | .operator .entry => "ccf_entry"
   | .operator .entryTerm => "ccf_term"
   | .operator .entryContent => "ccf_content"
+  | .operator .transactionId => "ccf_tx_id"
+  | .operator .configurationNodes => "ccf_cfg_nodes"
+  | .operator .retiredNodes => "ccf_retired_nodes"
 
 -- This renderer accepts no raw user strings. No text-parser roundtrip is claimed.
 def SExpr.render : SExpr -> String

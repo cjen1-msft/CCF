@@ -149,8 +149,8 @@ theorem invalid_native_applications (assignment : Assignment) :
       call (.operator .entryContent) [.atom .signature]]).eval assignment = none := by
   simp [call, SExpr.eval, applyHead]
 
-theorem content_selectors_and_testers_absent :
-    ["ccf_tx_id", "ccf_cfg_nodes", "ccf_retired_nodes", "is-ccf_sig"].all
+theorem unstructured_testers_absent :
+    ["is-ccf_tx", "is-ccf_cfg", "is-ccf_retired", "is-ccf_sig"].all
       (fun text => (SmtExpressionText.parseAtom text).isNone) = true := by
   decide +kernel
 
