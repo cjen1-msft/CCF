@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 
 from native_packets import PACKET_FIELDS, packet_declarations
+from native_input import unique_object
 from native_queue_arrays import QueueArray
 from Shared.solver import ValidationError, find_cvc5, run_solver
 
@@ -74,16 +75,6 @@ def boolean(value: object, where: str) -> str:
     if type(value) is not bool:
         raise ValidationError(f"{where}: expected a bool")
     return str(value).lower()
-
-
-def unique_object(pairs: list[tuple[str, object]]) -> dict:
-    """Do not let JSON duplicate keys silently discard recorded facts."""
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValidationError(f"duplicate JSON field: {key}")
-        result[key] = value
-    return result
 
 
 class Encoder:

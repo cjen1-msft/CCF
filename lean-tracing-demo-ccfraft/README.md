@@ -20,6 +20,13 @@ SMT satisfiable <=> one Model execution satisfies all reduced actions
 This is a target, not a claim that the full encoder is complete. It does not
 prove that the reducer faithfully interprets the implementation.
 
+The delivery design keeps raw reduction in Python. Lean owns the Model-level
+encoder and SMT emission. Observation-driven specialization belongs in Lean:
+the encoder asserts the observation and proves the specialized encoding under
+that assertion. The reducer does not need to be implemented in Lean to provide
+that premise. Source records, reduction rules, and event boundaries cross the
+interface as provenance, not as proof of the reduction's correctness.
+
 UNSAT means the recorded facts, reduction, assumptions, and Model are
 inconsistent together. The cause may be an implementation bug, a Model bug,
 a reduction bug, or an invalid assumption. UNSAT is not automatically evidence
@@ -50,6 +57,37 @@ or restricting possible executions is not a performance optimization.
 
 ### Native-array prototype
 
+The Lean migration starts with `Sparse/NativeEncode.lean`.
+It accepts `checkQuorum` and the `allocated`, `role`, `newFollower`, `logLength`,
+`commit`, `currentTerm`, and `entry` observations. Other instructions are errors.
+`native_lean.py` handles JSON input and solver execution. It delegates all SMT
+construction to Lean, with no Python encoder fallback.
+
+```sh
+lake build Sparse Sparse.NativeEncodeMain Sparse.NativeSmtFixtureMain
+python3 native_lean.py reduced.json --output-dir /tmp/native-lean --cvc5 /path/to/cvc5
+CCF_NATIVE_ARRAY_TESTS=1 CVC5=/path/to/cvc5 python3 -m unittest discover -s tests -p test_native_lean_smt.py -v
+```
+
+The wrapper accepts ordinary JSON and rejects duplicate keys. The internal Lean
+stdin interface requires canonical JSON with sorted keys and no interior
+whitespace, which also prevents its parser from silently collapsing duplicates.
+The output directory retains SMT, solver stdout, and solver stderr.
+SAT, UNSAT, unknown, and encoding errors remain distinct outcomes.
+
+`Sparse/NativeSmt.lean` provides typed terms, scoped binders, native arrays,
+arbitrary-width bitvectors, and product and sum datatypes. Symbolic constant-array
+expressions are deliberately absent: cvc5 rejects that syntax. A fresh array
+can instead be constrained with `forall`.
+`NativeSmtFixtureMain` carries kernel-checked expected verdicts for emitted
+formulas. `NativeEncodeProofs` covers configuration selectors, bitset decoding,
+and allocation-guarded read specialization.
+
+This Lean encoder remains experimental. Neither complete Model-to-script
+equivalence nor text-renderer correctness is proved. The 150-case actual-Model
+comparison does not replace those proofs. Raw reducer integration is unfinished.
+
+The older Python reference has broader action coverage:
 `native_arrays.py` accepts `checkQuorum`, `requestVote`, `requestPreVote`, and
 `updateTerm`, plus `timeout` and `becomePreVoteCandidate`.
 Node observations cover allocation and every local `NodeState` field.

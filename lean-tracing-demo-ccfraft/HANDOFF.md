@@ -13,6 +13,46 @@ and the Model. It does not by itself identify an implementation bug.
 The reducer's interpretation of implementation events remains a hypothesis to
 test, not a proved implementation refinement.
 
+The delivery boundary is now explicit: keep raw reduction in Python and move
+the encoder, SMT construction, and observation-driven specialization into Lean.
+The Python native-array emitter is a reference prototype, not the delivery
+encoder. Moving string construction to Lean alone does not prove emission
+correctness.
+
+Python must emit an ordered Model-level input with source records, reduction
+rule IDs, and event boundaries. Lean validates that input, asserts observations,
+and only then uses those asserted facts to specialize encoding. This gives
+specialization a proof premise without trusting Python's interpretation of the
+raw trace. The requested stopping point includes reducer integration, not just
+additional action prototypes.
+
+The first Lean encoder slice is now implemented in `Sparse/NativeEncode.lean`
+and `Sparse/NativeEncodeMain.lean`, with `native_lean.py` as its JSON and solver
+wrapper. It supports only `checkQuorum` and seven scalar/log observation kinds.
+The Python reference still supports six actions and the broader observation
+schema. Do not confuse these coverage levels or fall back to Python SMT emission.
+
+`Sparse/NativeSmt.lean` now builds. Its denotation must remain reducible so that
+Lean can resolve the underlying integer, Boolean, and bitvector instances.
+The typed AST supports native arrays, scoped quantifiers, arbitrary-width bits,
+products, and sums. cvc5 rejected symbolic `as const` array values, so that
+constructor was removed. Use explicit quantified constraints for array resets.
+`NativeSmtFixtureMain` supplies kernel-proved formula verdicts to the solver
+suite. `NativeEncodeProofs` proves the bitset/configuration selectors and
+assertion-backed allocation specialization. Normal `lake build Sparse` includes
+the new core and encoding axiom audits.
+
+The first Lean action emitter matches 150 actual-Model `checkQuorum` cases.
+It also handles 21 identities and a trillion-entry symbolic log. The wrapper
+retains solver artifacts and distinguishes SAT, UNSAT, unknown, and input errors.
+The internal Lean input is canonical JSON to reject duplicate-key text before
+any encoding. The Python wrapper accepts ordinary JSON and canonicalizes it.
+
+The full Model-to-emitted-script theorem and renderer correctness are still
+missing. No observation specialization is applied by the current compiler.
+Reducer integration, remaining action coverage, and initial-state materialization
+remain unfinished. The new Lean encoder is experimental, not a proved validator.
+
 Follow [Representation design priorities](README.md#representation-design-priorities):
 start with the simplest representation to prove correct, using native SMT
 arrays and live lengths. Measure representative solver workloads before

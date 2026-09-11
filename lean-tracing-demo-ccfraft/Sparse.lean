@@ -30,6 +30,7 @@ import Sparse.MonotoneIntervals
 import Sparse.NativeArrayCheckQuorum
 import Sparse.NativeArrayQueue
 import Sparse.NativeArrayVote
+import Sparse.NativeEncodeProofs
 import Sparse.NativeConstructors
 import Sparse.NativeNodeOperations
 import Sparse.NativeNodeSets
