@@ -35,9 +35,7 @@ private def bitChar : Bool -> Char
   | false => '0'
   | true => '1'
 
-private def sortChar : Ty -> Char
-  | .bool => 'b'
-  | .int => 'i'
+private abbrev sortChar := Ty.code
 
 private def symbolChars : Symbol -> List Char
   | .constant ty id => ['c', sortChar ty, '_', '_'] ++ id.bits.map bitChar
@@ -113,8 +111,8 @@ def Safe (chars : List Char) : Prop :=
   forall c, c IN chars -> delimiter c = false
 
 instance (chars : List Char) : Decidable (Safe chars) := by
-  unfold Safe
-  infer_instance
+  exact decidable_of_iff (chars.all (fun c => !delimiter c) = true)
+    (by simp [Safe, List.all_eq_true])
 
 private theorem safe_append (left right : List Char) (hl : Safe left) (hr : Safe right) :
     Safe (left ++ right) := by
@@ -417,7 +415,9 @@ theorem parseOne_render (expression : SExpr) (rest : List Char) (hb : Boundary r
 theorem parse_render (expression : SExpr) : parse expression.render = some expression := by
   have complete := parseOne_render expression [] (by trivial)
   simp only [List.append_nil] at complete
-  simp [parse, complete]
+  unfold parse
+  rw [complete]
+  rfl
 
 def eval (assignment : Assignment) (text : String) : Option Value :=
   (parse text).bind (SExpr.eval assignment)

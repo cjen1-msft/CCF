@@ -16,8 +16,8 @@ private def NoLF (chars : List Char) : Prop :=
   forall c, c IN chars -> Not (c = '\n')
 
 private instance (chars : List Char) : Decidable (NoLF chars) := by
-  unfold NoLF
-  infer_instance
+  exact decidable_of_iff (chars.all (fun c => c != '\n') = true)
+    (by simp [NoLF, List.all_eq_true])
 
 private theorem noLF_append (left right : List Char) (hl : NoLF left) (hr : NoLF right) :
     NoLF (left ++ right) := by
@@ -105,6 +105,8 @@ private theorem name_noLF (sym : Symbol) : NoLF sym.name.toList := by
 private theorem command_noLF (command : Command) : NoLF command.render.toList := by
   cases command with
   | setLogic => decide +kernel
+  | setNativeLogic => decide +kernel
+  | declareSchema schema => cases schema <;> decide +kernel
   | checkSat => decide +kernel
   | assertion expression =>
     simp only [Command.render]
@@ -130,19 +132,40 @@ private def signatureChars (arguments : List Ty) (result : Ty) : List Char :=
   [' ', '('] ++ (String.intercalate " " (arguments.map Ty.render)).toList ++
     [')', ' '] ++ result.render.toList ++ [')']
 
+private def parseType : List Char -> Option (Prod Ty (List Char))
+  | 'B' :: 'o' :: 'o' :: 'l' :: rest => some (.bool, rest)
+  | 'I' :: 'n' :: 't' :: rest => some (.int, rest)
+  | '(' :: '_' :: ' ' :: 'B' :: 'i' :: 't' :: 'V' :: 'e' :: 'c' :: ' ' :: '1' :: '5' :: ')' :: rest =>
+    some (.nodes, rest)
+  | 'C' :: 'C' :: 'F' :: 'C' :: 'o' :: 'n' :: 't' :: 'e' :: 'n' :: 't' :: rest =>
+    some (.content, rest)
+  | 'C' :: 'C' :: 'F' :: 'E' :: 'n' :: 't' :: 'r' :: 'y' :: rest => some (.entry, rest)
+  | _ => none
+
+private def parseArguments : List Char -> Option (Prod (List Ty) (List Char))
+  | ')' :: rest => some ([], rest)
+  | input => do
+    let (ty, rest) <- parseType input
+    match rest with
+    | ')' :: tail => some ([ty], tail)
+    | _ => none
+
 private def parseSignature : List Char -> Option (Prod (List Ty) Ty)
-  | [' ', '(', ')', ' ', 'B', 'o', 'o', 'l', ')'] => some ([], .bool)
-  | [' ', '(', ')', ' ', 'I', 'n', 't', ')'] => some ([], .int)
-  | [' ', '(', 'B', 'o', 'o', 'l', ')', ' ', 'B', 'o', 'o', 'l', ')'] => some ([.bool], .bool)
-  | [' ', '(', 'B', 'o', 'o', 'l', ')', ' ', 'I', 'n', 't', ')'] => some ([.bool], .int)
-  | [' ', '(', 'I', 'n', 't', ')', ' ', 'B', 'o', 'o', 'l', ')'] => some ([.int], .bool)
-  | [' ', '(', 'I', 'n', 't', ')', ' ', 'I', 'n', 't', ')'] => some ([.int], .int)
+  | ' ' :: '(' :: input => do
+    let (arguments, tail) <- parseArguments input
+    match tail with
+    | ' ' :: resultText => do
+      let (result, rest) <- parseType resultText
+      if rest = [')'] then some (arguments, result) else none
+    | _ => none
   | _ => none
 
 -- Parse the signature as written, not inferred from the name. run checks agreement.
 def parseLine : List Char -> Option Command
   | ['(', 's', 'e', 't', '-', 'l', 'o', 'g', 'i', 'c', ' ', 'Q', 'F', '_', 'U', 'F', 'L', 'I', 'A', ')'] =>
     some .setLogic
+  | ['(', 's', 'e', 't', '-', 'l', 'o', 'g', 'i', 'c', ' ', 'A', 'L', 'L', ')'] =>
+    some .setNativeLogic
   | ['(', 'c', 'h', 'e', 'c', 'k', '-', 's', 'a', 't', ')'] => some .checkSat
   | '(' :: 'a' :: 's' :: 's' :: 'e' :: 'r' :: 't' :: ' ' :: body => do
     let (expression, rest) <- parseOne body
@@ -154,6 +177,11 @@ def parseLine : List Char -> Option Command
       let (arguments, result) <- parseSignature rest
       pure (.declare { symbol := sym, arguments, result })
     | _ => none
+  | '(' :: 'd' :: 'e' :: 'c' :: 'l' :: 'a' :: 'r' :: 'e' :: '-' :: 'd' :: 'a' :: 't' :: 'a' ::
+      't' :: 'y' :: 'p' :: 'e' :: ' ' :: body =>
+    if body = Schema.content.body.toList then some (.declareSchema .content)
+    else if body = Schema.entry.body.toList then some (.declareSchema .entry)
+    else none
   | _ => none
 
 private theorem declaration_chars (declaration : Declaration) :
@@ -192,6 +220,14 @@ theorem parseLine_render (command : Command) (generated : Generated command) :
     parseLine command.render.toList = some command := by
   cases command with
   | setLogic => rfl
+  | setNativeLogic => rfl
+  | declareSchema schema =>
+    have different : Not (Schema.entry.body.toList = Schema.content.body.toList) := by decide +kernel
+    cases schema <;>
+      simp only [Command.render, Schema.render, String.toList_append,
+        show "(declare-datatype ".toList =
+          ['(', 'd', 'e', 'c', 'l', 'a', 'r', 'e', '-', 'd', 'a', 't', 'a', 't', 'y', 'p', 'e', ' '] from rfl,
+        List.cons_append, List.nil_append, parseLine, ite_true, if_neg different]
   | checkSat => rfl
   | assertion expression =>
     have chars : (Command.assertion expression).render.toList =
@@ -278,11 +314,11 @@ private theorem renderCommands_chars (head : Command) (tail : List Command) :
 
 private def bodyShape : List Command -> Bool
   | [.checkSat] => true
-  | .declare _ :: rest | .assertion _ :: rest => bodyShape rest
+  | .declare _ :: rest | .assertion _ :: rest | .declareSchema _ :: rest => bodyShape rest
   | _ => false
 
 def scriptShape : List Command -> Bool
-  | .setLogic :: rest => bodyShape rest
+  | .setLogic :: rest | .setNativeLogic :: rest => bodyShape rest
   | _ => false
 
 -- All lines are parsed. Shape validation rejects second scripts and trailing commands.
@@ -337,15 +373,38 @@ private theorem bodyShape_assertions (formula : Formula) (rest : List Command) :
   | cons term tail ih => simpa [bodyShape] using ih
 
 theorem compiled_shape (formula : Formula) : scriptShape (compile formula) = true := by
-  simp [compile, scriptShape, List.append_assoc, bodyShape_declarations, bodyShape_assertions, bodyShape]
+  unfold compile prelude
+  split
+  next =>
+    simp [compiledBody, scriptShape, List.append_assoc, bodyShape_declarations,
+      bodyShape_assertions, bodyShape]
+  next =>
+    split
+    next =>
+      simp [compiledBody, scriptShape, List.append_assoc, bodyShape_declarations,
+        bodyShape_assertions, bodyShape]
+    next =>
+      split <;>
+        simp [compiledBody, scriptShape, List.append_assoc, bodyShape_declarations,
+          bodyShape_assertions, bodyShape]
+
+private theorem prelude_generated (formula : Formula) :
+    forall command, command IN prelude formula -> Generated command := by
+  unfold prelude
+  split
+  next => simp [Generated]
+  next =>
+    split
+    next => simp [Generated]
+    next => split <;> simp [Generated]
 
 theorem compiled_generated (formula : Formula) :
     forall command, command IN compile formula -> Generated command := by
   intro command hc
-  simp only [compile, List.mem_append, List.mem_cons,
+  simp only [compile, compiledBody, List.mem_append, List.mem_cons,
     List.not_mem_nil, or_false, or_assoc] at hc
   rcases hc with first | declaration | assertion | last
-  next => subst command; trivial
+  next => exact prelude_generated formula command first
   next =>
     cases List.mem_map.mp declaration with
     | intro d hd =>
@@ -436,7 +495,7 @@ theorem assertion_error_regression (assignment : Assignment) :
   constructor
   all_goals
     rw [runText_renderCommands _ _ (by simp [Generated]) (by rfl)]
-    simp [run, runBody, Covered, exprSymbols, SExpr.eval, applyHead]
+    simp [run, schemaCheck, runBody, Covered, exprSymbols, SExpr.eval, applyHead]
 
 theorem rejected_scripts_regression :
     (parse "").isNone = true /\

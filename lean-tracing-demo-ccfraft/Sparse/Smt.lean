@@ -1,8 +1,9 @@
 import Mathlib.Data.List.Basic
 import Mathlib.Data.Nat.Bits
 import Lean.Util.CollectAxioms
+import Sparse.EntryValue
 
--- Scalar queue terms only. Int packet tokens do not serialize completeMessage.
+-- Fixed value sorts only. Int packet tokens do not serialize completeMessage.
 -- The proved boundary is typed IR -> SExpr evaluation, not rendered-text parsing.
 
 set_option autoImplicit false
@@ -12,11 +13,17 @@ namespace CCFRaft.Sparse.Smt
 inductive Ty where
   | bool
   | int
+  | nodes
+  | content
+  | entry
   deriving DecidableEq, Repr
 
 abbrev Ty.denote : Ty -> Type
   | .bool => Bool
   | .int => Int
+  | .nodes => BitVec NODE_COUNT
+  | .content => EntryValue.Content
+  | .entry => EntryValue.Entry
 
 instance (ty : Ty) : DecidableEq ty.denote := by
   cases ty <;> exact inferInstance
@@ -76,18 +83,30 @@ inductive SExpr where
   | list (values : List SExpr)
   deriving Repr
 
+deriving instance Repr for EntryValue.Content
+deriving instance Repr for EntryValue.Entry
+
 inductive Value where
   | boolean (value : Bool)
   | integer (value : Int)
+  | nodes (value : BitVec NODE_COUNT)
+  | content (value : EntryValue.Content)
+  | entry (value : EntryValue.Entry)
   deriving DecidableEq, Repr
 
 def embed : (ty : Ty) -> ty.denote -> Value
   | .bool, value => .boolean value
   | .int, value => .integer value
+  | .nodes, value => .nodes value
+  | .content, value => .content value
+  | .entry, value => .entry value
 
 def Value.asType : (ty : Ty) -> Value -> Option ty.denote
   | .bool, .boolean value => some value
   | .int, .integer value => some value
+  | .nodes, .nodes value => some value
+  | .content, .content value => some value
+  | .entry, .entry value => some value
   | _, _ => none
 
 @[simp]
@@ -106,6 +125,9 @@ def applyHead (assignment : Assignment) : Atom -> List Value -> Option Value
   | .operator .le, [.integer left, .integer right] => some (.boolean (decide (left <= right)))
   | .operator .equal, [.integer left, .integer right] => some (.boolean (decide (left = right)))
   | .operator .equal, [.boolean left, .boolean right] => some (.boolean (decide (left = right)))
+  | .operator .equal, [.nodes left, .nodes right] => some (.boolean (decide (left = right)))
+  | .operator .equal, [.content left, .content right] => some (.boolean (decide (left = right)))
+  | .operator .equal, [.entry left, .entry right] => some (.boolean (decide (left = right)))
   | .operator .not, [.boolean value] => some (.boolean (!value))
   | .operator .and, [.boolean left, .boolean right] => some (.boolean (left && right))
   | .operator .implies, [.boolean left, .boolean right] => some (.boolean (!left || right))
@@ -113,6 +135,12 @@ def applyHead (assignment : Assignment) : Atom -> List Value -> Option Value
     some (.integer (if condition then yes else no))
   | .operator .ite, [.boolean condition, .boolean yes, .boolean no] =>
     some (.boolean (if condition then yes else no))
+  | .operator .ite, [.boolean condition, .nodes yes, .nodes no] =>
+    some (.nodes (if condition then yes else no))
+  | .operator .ite, [.boolean condition, .content yes, .content no] =>
+    some (.content (if condition then yes else no))
+  | .operator .ite, [.boolean condition, .entry yes, .entry no] =>
+    some (.entry (if condition then yes else no))
   | _, _ => none
 
 def SExpr.eval (assignment : Assignment) : SExpr -> Option Value
@@ -199,13 +227,29 @@ private theorem idChars_injective : Function.Injective idChars := by
   have valuesEqual := congrArg (fun bits => bits.foldr Nat.bit 0) bitsEqual
   simpa only [bits_value] using valuesEqual
 
-private def sortChar : Ty -> Char
+def Ty.code : Ty -> Char
   | .bool => 'b'
   | .int => 'i'
+  | .nodes => 'v'
+  | .content => 'd'
+  | .entry => 'e'
+
+def Ty.parseCode : Char -> Option Ty
+  | 'b' => some .bool
+  | 'i' => some .int
+  | 'v' => some .nodes
+  | 'd' => some .content
+  | 'e' => some .entry
+  | _ => none
+
+@[simp] theorem Ty.parseCode_code (ty : Ty) : Ty.parseCode ty.code = some ty := by
+  cases ty <;> rfl
+
+private abbrev sortChar := Ty.code
 
 private theorem sortChar_injective : Function.Injective sortChar := by
   intro a b h
-  cases a <;> cases b <;> simp_all [sortChar]
+  cases a <;> cases b <;> simp_all [sortChar, Ty.code]
 
 -- Binary ID suffixes are least-significant-bit first; zero has an empty suffix.
 -- Fixed-width tags separate constants, functions, domains, and results.
@@ -244,6 +288,11 @@ theorem symbol_name_injective : Function.Injective Symbol.name := by
 def Ty.render : Ty -> String
   | .bool => "Bool"
   | .int => "Int"
+  | .nodes => "(_ BitVec 15)"
+  | .content => "CCFContent"
+  | .entry => "CCFEntry"
+
+theorem node_width : NODE_COUNT = 15 := rfl
 
 def Atom.render : Atom -> String
   | .boolean true => "true"

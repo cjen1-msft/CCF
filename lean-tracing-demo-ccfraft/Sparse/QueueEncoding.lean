@@ -41,9 +41,7 @@ def installCounts {size : Nat} (original : Assignment) (base : Nat)
       if inside : base <= id /\ id < base + size + 1 then
         counts (Fin.mk (id - base) (by omega))
       else original.unary .int .int id
-    | .int, .bool => original.unary .int .bool id
-    | .bool, .int => original.unary .bool .int id
-    | .bool, .bool => original.unary .bool .bool id
+    | domain, result => original.unary domain result id
 
 @[simp] theorem install_at {size : Nat} (original : Assignment) (base : Nat)
     (counts : Fin (size + 1) -> Int -> Int) (version : Fin (size + 1)) :
@@ -746,8 +744,12 @@ theorem commands_correct (assignment : Assignment) (input : SmtScript.Formula)
     (encode_correct assignment input keys trace observations)
 
 def regressionInput : Assignment where
-  constant ty _ := match ty with | .bool => false | .int => 0
-  unary _ result _ _ := match result with | .bool => false | .int => 0
+  constant ty _ := match ty with
+    | .bool => false | .int => 0 | .nodes => 0
+    | .content => .signature | .entry => { term := 0, content := .signature }
+  unary _ result _ _ := match result with
+    | .bool => false | .int => 0 | .nodes => 0
+    | .content => .signature | .entry => { term := 0, content := .signature }
 
 def regressionTrace : List (Event InputInt) :=
   [.send (.literal (-2)), .send (.literal (-2)), .pop (.literal (-2))]

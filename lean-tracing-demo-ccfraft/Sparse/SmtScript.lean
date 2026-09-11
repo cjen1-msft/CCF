@@ -120,8 +120,27 @@ theorem declaration_coverage (formula : Formula) (sym : Symbol) :
     intro h
     exact Exists.intro sym (And.intro h rfl)
 
+inductive Schema where
+  | content
+  | entry
+  deriving DecidableEq, Repr
+
+def Schema.body : Schema -> String
+  | .content =>
+    "CCFContent ((ccf_tx (ccf_tx_id Int)) (ccf_sig) (ccf_cfg (ccf_cfg_nodes (_ BitVec 15))) (ccf_retired (ccf_retired_nodes (_ BitVec 15)))))"
+  | .entry =>
+    "CCFEntry ((ccf_entry (ccf_term Int) (ccf_content CCFContent))))"
+
+def Schema.render (schema : Schema) : String := "(declare-datatype " ++ schema.body
+
+def Schema.dependencies : Schema -> List Schema
+  | .content => []
+  | .entry => [.content]
+
 inductive Command where
   | setLogic
+  | setNativeLogic
+  | declareSchema (schema : Schema)
   | declare (declaration : Declaration)
   | assertion (expression : SExpr)
   | checkSat
@@ -134,10 +153,41 @@ instance (declared : List Symbol) (expression : SExpr) : Decidable (Covered decl
   unfold Covered
   infer_instance
 
+def symbolTypes (symbol : Symbol) : List Ty :=
+  symbolDomain symbol ++ [symbolResult symbol]
+
+-- Unit 1 has no native literals or constructors: native values enter through symbols.
+def requiredTypes (formula : Formula) : List Ty :=
+  (symbols formula).flatMap symbolTypes
+
+def available (native : Bool) (schemas : List Schema) : Ty -> Bool
+  | .bool | .int => true
+  | .nodes => native
+  | .content => native && schemas.contains .content
+  | .entry => native && schemas.contains .entry
+
+-- Independent preflight checks every command, even after a false assertion.
+def schemaCheck (native : Bool) (schemas : List Schema) : List Command -> Bool
+  | [] => true
+  | .declareSchema schema :: rest =>
+    native && !(schemas.contains schema) &&
+      schema.dependencies.all (fun dependency => schemas.contains dependency) &&
+      schemaCheck native (schema :: schemas) rest
+  | .declare declaration :: rest =>
+    (declaration.arguments ++ [declaration.result]).all (available native schemas) &&
+      schemaCheck native schemas rest
+  | .assertion expression :: rest =>
+    (exprSymbols expression).all (fun symbol =>
+      (symbolTypes symbol).all (available native schemas)) &&
+      schemaCheck native schemas rest
+  | .checkSat :: rest => schemaCheck native schemas rest
+  | _ => false
+
 -- Invalid declarations, undeclared references, and non-Boolean assertions fail.
 -- False assertions still evaluate the remaining commands, so later errors remain errors.
 def runBody (assignment : Assignment) (declared : List Symbol) : List Command -> Option Bool
   | [.checkSat] => some true
+  | .declareSchema _ :: rest => runBody assignment declared rest
   | .declare declaration :: rest =>
     if declaration.Valid /\ Not (declaration.symbol IN declared) then
       runBody assignment (declaration.symbol :: declared) rest
@@ -150,14 +200,47 @@ def runBody (assignment : Assignment) (declared : List Symbol) : List Command ->
     else none
   | _ => none
 
--- One QF_UFLIA query: set-logic first, exactly one terminal check-sat.
+-- runBody handles user declarations/values; run also validates fixed sort schemas.
 def run (assignment : Assignment) : List Command -> Option Bool
-  | .setLogic :: rest => runBody assignment [] rest
+  | .setLogic :: rest =>
+    if schemaCheck false [] rest then runBody assignment [] rest else none
+  | .setNativeLogic :: rest =>
+    if schemaCheck true [] rest then runBody assignment [] rest else none
   | _ => none
 
-def compile (formula : Formula) : List Command :=
-  [.setLogic] ++ (declarations formula).map Command.declare ++
+def prelude (formula : Formula) : List Command :=
+  if .entry IN requiredTypes formula then
+    [.setNativeLogic, .declareSchema .content, .declareSchema .entry]
+  else if .content IN requiredTypes formula then
+    [.setNativeLogic, .declareSchema .content]
+  else if .nodes IN requiredTypes formula then [.setNativeLogic]
+  else [.setLogic]
+
+def compiledBody (formula : Formula) : List Command :=
+  (declarations formula).map Command.declare ++
     (formula.map (fun term => Command.assertion term.lower)) ++ [.checkSat]
+
+def compile (formula : Formula) : List Command := prelude formula ++ compiledBody formula
+
+def ScalarOnly (formula : Formula) : Prop :=
+  forall ty, ty IN requiredTypes formula -> ty = .bool \/ ty = .int
+
+theorem prelude_scalar (formula : Formula) (scalar : ScalarOnly formula) :
+    prelude formula = [.setLogic] := by
+  have absent (ty : Ty) (notBool : Not (ty = .bool)) (notInt : Not (ty = .int)) :
+      Not (ty IN requiredTypes formula) := by
+    intro present
+    exact (scalar ty present).elim notBool notInt
+  simp only [prelude, if_neg (absent .entry (by decide) (by decide)),
+    if_neg (absent .content (by decide) (by decide)),
+    if_neg (absent .nodes (by decide) (by decide))]
+
+theorem scalar_compile_preserved (formula : Formula) (scalar : ScalarOnly formula) :
+    compile formula =
+      [.setLogic] ++ (declarations formula).map Command.declare ++
+        formula.map (fun term => Command.assertion term.lower) ++ [.checkSat] := by
+  rw [compile, prelude_scalar formula scalar]
+  simp only [compiledBody, List.append_assoc]
 
 theorem covered_lower (formula : Formula) {term : Term .bool} (ht : term IN formula) :
     Covered (symbols formula) term.lower := by
@@ -203,15 +286,90 @@ theorem run_assertions (assignment : Assignment) (formula : Formula) (declared :
       fun t ht => covered t (by simp [ht])
     simp [runBody, here, lower_correct, embed, Value.asType, ih later]
 
-theorem compile_eval (assignment : Assignment) (formula : Formula) :
-    run assignment (compile formula) = some (formula.all (fun term => term.eval assignment)) := by
-  simp only [compile, declarations, List.map_map, Function.comp_def,
-    List.cons_append, List.nil_append, List.append_assoc, run]
+theorem runBody_compiledBody (assignment : Assignment) (formula : Formula) :
+    runBody assignment [] (compiledBody formula) =
+      some (formula.all (fun term => term.eval assignment)) := by
+  simp only [compiledBody, declarations, List.map_map, Function.comp_def, List.append_assoc]
   rw [run_declarations assignment (symbols formula) [] _ (symbols_nodup formula)
     (by simp)]
   apply run_assertions
   intro term ht sym hs
   simpa using covered_lower formula ht sym hs
+
+theorem schemaCheck_declarations (native : Bool) (schemas : List Schema)
+    (decls : List Declaration) (rest : List Command)
+    (supported : forall declaration, declaration IN decls ->
+      forall ty, ty IN declaration.arguments ++ [declaration.result] ->
+        available native schemas ty = true) :
+    schemaCheck native schemas (decls.map Command.declare ++ rest) =
+      schemaCheck native schemas rest := by
+  induction decls with
+  | nil => simp
+  | cons declaration tail ih =>
+    have here := List.all_eq_true.mpr (supported declaration (by simp))
+    have later := ih (fun d hd => supported d (by simp [hd]))
+    simp only [List.map_cons, List.cons_append, schemaCheck, here, Bool.true_and, later]
+
+theorem schemaCheck_assertions (native : Bool) (schemas : List Schema) (formula : Formula)
+    (supported : forall term, term IN formula -> forall symbol,
+      symbol IN exprSymbols term.lower -> forall ty, ty IN symbolTypes symbol ->
+        available native schemas ty = true) :
+    schemaCheck native schemas
+      (formula.map (fun term => Command.assertion term.lower) ++ [.checkSat]) = true := by
+  induction formula with
+  | nil => rfl
+  | cons term tail ih =>
+    have here : (exprSymbols term.lower).all (fun symbol =>
+        (symbolTypes symbol).all (available native schemas)) = true :=
+      List.all_eq_true.mpr (fun symbol hs =>
+        List.all_eq_true.mpr (supported term (by simp) symbol hs))
+    have later := ih (fun t ht => supported t (by simp [ht]))
+    simp only [List.map_cons, List.cons_append, schemaCheck, here, Bool.true_and, later]
+
+theorem schemaCheck_compiledBody (native : Bool) (schemas : List Schema) (formula : Formula)
+    (supported : forall ty, ty IN requiredTypes formula -> available native schemas ty = true) :
+    schemaCheck native schemas (compiledBody formula) = true := by
+  have symbolSupported (symbol : Symbol) (hs : symbol IN symbols formula)
+      (ty : Ty) (ht : ty IN symbolTypes symbol) : available native schemas ty = true :=
+    supported ty (List.mem_flatMap.mpr (Exists.intro symbol (And.intro hs ht)))
+  unfold compiledBody
+  rw [List.append_assoc, schemaCheck_declarations]
+  next =>
+    apply schemaCheck_assertions
+    intro term ht symbol hs
+    exact symbolSupported symbol (covered_lower formula ht symbol hs)
+  next =>
+    intro declaration hd
+    cases List.mem_map.mp hd with
+    | intro symbol hs =>
+      rw [<- hs.2]
+      exact symbolSupported symbol hs.1
+
+theorem compile_eval (assignment : Assignment) (formula : Formula) :
+    run assignment (compile formula) = some (formula.all (fun term => term.eval assignment)) := by
+  by_cases entry : Ty.entry IN requiredTypes formula
+  next =>
+    have checked := schemaCheck_compiledBody true [.entry, .content] formula
+      (by intro ty _; cases ty <;> rfl)
+    simp [compile, prelude, entry, run, schemaCheck, Schema.dependencies,
+      checked, runBody, runBody_compiledBody]
+  next =>
+    by_cases content : Ty.content IN requiredTypes formula
+    next =>
+      have checked := schemaCheck_compiledBody true [.content] formula
+        (by intro ty ht; cases ty <;> simp_all [available])
+      simp [compile, prelude, entry, content, run, schemaCheck, Schema.dependencies,
+        checked, runBody, runBody_compiledBody]
+    next =>
+      by_cases nodes : Ty.nodes IN requiredTypes formula
+      next =>
+        have checked := schemaCheck_compiledBody true [] formula
+          (by intro ty ht; cases ty <;> simp_all [available])
+        simp [compile, prelude, entry, content, nodes, run, checked, runBody_compiledBody]
+      next =>
+        have checked := schemaCheck_compiledBody false [] formula
+          (by intro ty ht; cases ty <;> simp_all [available])
+        simp [compile, prelude, entry, content, nodes, run, checked, runBody_compiledBody]
 
 theorem formula_holds_iff (assignment : Assignment) (formula : Formula) :
     Holds assignment formula <-> run assignment (compile formula) = some true := by
@@ -225,6 +383,8 @@ def Declaration.render (declaration : Declaration) : String :=
 
 def Command.render : Command -> String
   | .setLogic => "(set-logic QF_UFLIA)"
+  | .setNativeLogic => "(set-logic ALL)"
+  | .declareSchema schema => schema.render
   | .declare declaration => declaration.render
   | .assertion expression => "(assert " ++ expression.render ++ ")"
   | .checkSat => "(check-sat)"
@@ -233,6 +393,12 @@ def renderCommands (commands : List Command) : String :=
   String.intercalate "\n" (commands.map Command.render) ++ "\n"
 
 def render (formula : Formula) : String := renderCommands (compile formula)
+
+theorem scalar_text_preserved (formula : Formula) (scalar : ScalarOnly formula) :
+    render formula = renderCommands
+      ([.setLogic] ++ (declarations formula).map Command.declare ++
+        formula.map (fun term => Command.assertion term.lower) ++ [.checkSat]) :=
+  congrArg renderCommands (scalar_compile_preserved formula scalar)
 
 def repeatedFormula : Formula :=
   [.equal (.unknown .int 3) (.unknown .int 3),
@@ -279,16 +445,18 @@ theorem signed_formula_regression (assignment : Assignment) :
 theorem signed_script_text_regression :
     render signedFormula =
       "(set-logic QF_UFLIA)\n(assert (= (- (- 2) 3) (- 5)))\n(check-sat)\n" := by
-  simp only [render, renderCommands, compile, declarations, symbols, signedFormula,
-    termSymbols, Command.render, Term.lower, signedLiteral, call, SExpr.render, Atom.render,
-    List.flatMap_cons, List.flatMap_nil, List.map_cons, List.map_nil,
-    List.nil_append, List.cons_append, List.dedup_nil]
+  simp only [render, renderCommands, compile, prelude, requiredTypes, compiledBody,
+    declarations, symbols, signedFormula, termSymbols, Command.render, Term.lower,
+    signedLiteral, call, SExpr.render, Atom.render, List.flatMap_cons, List.flatMap_nil,
+    List.map_cons, List.map_nil, List.nil_append, List.cons_append, List.dedup_nil,
+    List.not_mem_nil, if_false]
   decide +kernel
 
 theorem missing_declaration_regression (assignment : Assignment) :
     run assignment
       [.setLogic, .assertion (.atom (.symbol (.constant .bool 0))), .checkSat] = none := by
-  simp [run, runBody, Covered, exprSymbols]
+  simp [run, schemaCheck, symbolTypes, symbolDomain, symbolResult, available,
+    runBody, Covered, exprSymbols]
 
 theorem wrong_signature_regression (assignment : Assignment) :
     run assignment
@@ -299,13 +467,13 @@ theorem wrong_signature_regression (assignment : Assignment) :
       [.setLogic,
        .declare { symbol := .constant .int 0, arguments := [], result := .bool },
        .checkSat] = none := by
-  simp [run, runBody, Declaration.Valid, symbolDomain, symbolResult]
+  simp [run, schemaCheck, available, runBody, Declaration.Valid, symbolDomain, symbolResult]
 
 theorem duplicate_declaration_regression (assignment : Assignment) :
     run assignment
       [.setLogic, .declare (Declaration.ofSymbol (.constant .int 0)),
        .declare (Declaration.ofSymbol (.constant .int 0)), .checkSat] = none := by
-  simp [run, runBody]
+  simp [run, schemaCheck, available, Declaration.ofSymbol, symbolDomain, symbolResult, runBody]
 
 theorem assertion_error_regression (assignment : Assignment) :
     run assignment [.setLogic, .assertion (.atom (.numeral 1)), .checkSat] = none /\
@@ -314,7 +482,8 @@ theorem assertion_error_regression (assignment : Assignment) :
        .assertion (.atom (.symbol (.constant .bool 0))), .checkSat] = none /\
     run assignment (compile [.boolean false]) = some false := by
   simp [run, runBody, Covered, exprSymbols, SExpr.eval, Value.asType, compile,
-    declarations, symbols, termSymbols, Term.lower]
+    prelude, requiredTypes, compiledBody, schemaCheck, available, symbolTypes,
+    symbolDomain, symbolResult, declarations, symbols, termSymbols, Term.lower]
 
 end CCFRaft.Sparse.SmtScript
 

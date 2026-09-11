@@ -23,7 +23,9 @@ def termMax : {ty : Ty} -> Term ty -> Nat
 theorem termMax_correct {ty : Ty} (term : Term ty) :
     termMax term = (SmtScript.termSymbols term).toFinset.sup symbolId := by
   induction term <;>
-    simp_all [termMax, SmtScript.termSymbols, symbolId, Finset.sup_union]
+    simp_all only [termMax, SmtScript.termSymbols, symbolId, List.toFinset_nil,
+      List.toFinset_cons, List.toFinset_append, Finset.sup_empty, Finset.sup_insert,
+      Finset.sup_union, show (Bot.bot : Nat) = 0 from rfl, Nat.max_zero, Nat.max_assoc]
 
 def formulaMax : SmtScript.Formula -> Nat
   | [] => 0
@@ -39,7 +41,7 @@ theorem formulaMax_correct (formula : SmtScript.Formula) :
   induction formula with
   | nil => simp [formulaMax, SmtScript.symbols]
   | cons term rest ih =>
-    simp_all [formulaMax, SmtScript.symbols, termMax_correct, dedup, Finset.sup_union]
+    simp_all [formulaMax, SmtScript.symbols, termMax_correct, Finset.sup_union]
 
 theorem repeated_symbol_regression :
     formulaMax [

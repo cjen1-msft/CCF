@@ -7,10 +7,7 @@ namespace CCFRaft.Sparse.SmtText
 
 open Smt
 
-private def parseSort : Char -> Option Ty
-  | 'b' => some .bool
-  | 'i' => some .int
-  | _ => none
+private abbrev parseSort := Ty.parseCode
 
 private def parseBits : List Char -> Option Nat
   | [] => some 0
@@ -41,9 +38,7 @@ private def bitChar : Bool -> Char
   | false => '0'
   | true => '1'
 
-private def sortChar : Ty -> Char
-  | .bool => 'b'
-  | .int => 'i'
+private abbrev sortChar := Ty.code
 
 private def symbolChars : Symbol -> List Char
   | .constant ty id => ['c', sortChar ty, '_', '_'] ++ id.bits.map bitChar
@@ -69,10 +64,10 @@ private theorem parse_actual_name (sym : Symbol) :
   rw [actual_name_chars]
   cases sym with
   | constant ty id =>
-    cases ty <;> simp [symbolChars, sortChar, parseChars, parseSort, parseBits_render]
+    cases ty <;> simp [symbolChars, sortChar, Ty.code, parseChars, parseSort, Ty.parseCode, parseBits_render]
   | unary domain result id =>
     cases domain <;> cases result <;>
-      simp [symbolChars, sortChar, parseChars, parseSort, parseBits_render]
+      simp [symbolChars, sortChar, Ty.code, parseChars, parseSort, Ty.parseCode, parseBits_render]
 
 theorem parseSymbol_name (sym : Symbol) : parseSymbol sym.name = some sym := by
   simp [parseSymbol, parse_actual_name]

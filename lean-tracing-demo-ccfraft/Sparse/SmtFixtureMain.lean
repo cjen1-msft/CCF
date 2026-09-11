@@ -22,12 +22,19 @@ private def equalHeader : List (Term .bool) :=
   [.equal (header first) (.integer 0), .equal (header second) (.integer 0)]
 
 private def expressionAssignment : Assignment where
-  constant ty _ := match ty with | .bool => false | .int => 0
-  unary _ result _ _ := match result with | .bool => false | .int => 0
+  constant ty _ := match ty with
+    | .bool => false | .int => 0 | .nodes => 0
+    | .content => .signature | .entry => { term := 0, content := .signature }
+  unary _ result _ _ := match result with
+    | .bool => false | .int => 0 | .nodes => 0
+    | .content => .signature | .entry => { term := 0, content := .signature }
 
 private def valueJson : Value -> Json
   | .boolean value => Json.mkObj [("Bool", toJson value)]
   | .integer value => Json.mkObj [("Int", toJson value)]
+  | .nodes value => Json.mkObj [("Nodes", toJson value.toNat)]
+  | .content value => Json.mkObj [("Content", toJson (reprStr value))]
+  | .entry value => Json.mkObj [("Entry", toJson (reprStr value))]
 
 private def expressionCase (name text : String) (expected : Option SExpr) : Json :=
   let actual := SmtExpressionText.parse text
@@ -92,9 +99,7 @@ def fixtures : List Json :=
       (equalHeader ++ [.not (.equal first second)])
   ]
 
-private def sortJson : Ty -> Json
-  | .bool => toJson "Bool"
-  | .int => toJson "Int"
+private def sortJson (ty : Ty) : Json := toJson ty.render
 
 private def symbolJson : Symbol -> Json
   | .constant ty id =>
@@ -175,7 +180,7 @@ def scriptFixtures : List Json :=
   ] ++ ["", "(set-logic QF_UFLIA)\n(check-sat)", empty ++ empty,
     empty ++ "(check-sat)\n", "(set-logic QF_UFLIA)\n", "(check-sat)\n",
     scriptBody "(push 1)\n", empty ++ "\n", "; comment\n" ++ empty,
-    "(set-logic ALL)\n(check-sat)\n"].map (fun text => scriptCase "malformed" text false none)
+    "(set-logic QF_BV)\n(check-sat)\n"].map (fun text => scriptCase "malformed" text false none)
 
 end CCFRaft.Sparse.SmtFixtures
 

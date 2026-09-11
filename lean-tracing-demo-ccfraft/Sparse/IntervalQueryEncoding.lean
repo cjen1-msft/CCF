@@ -45,8 +45,8 @@ theorem reserved_below_zero (input : SmtScript.Formula) (graph : SymbolicGraph r
 def setZero (original : Assignment) (zeroID : Nat) : Assignment where
   constant ty id :=
     match ty with
-    | .bool => original.constant .bool id
     | .int => if id = zeroID then 0 else original.constant .int id
+    | ty => original.constant ty id
   unary := original.unary
 
 theorem setZero_other (original : Assignment) (zeroID id : Nat) (different : Not (id = zeroID)) :
@@ -668,7 +668,8 @@ private def regressionAssignment (lower upper : Nat) : Assignment where
     match ty with
     | .bool => false
     | .int => if id = 2 then (lower : Int) else if id = 3 then (upper : Int) else 0
-  unary _ result _ _ := match result with | .bool => false | .int => 0
+    | ty => QueueEncoding.regressionInput.constant ty id
+  unary := QueueEncoding.regressionInput.unary
 
 private def falseQuery : Query 0 :=
   { lower := 2, upper := 3, predicate := .eq (.input (.literal 0)) (.input (.literal 1)) }
