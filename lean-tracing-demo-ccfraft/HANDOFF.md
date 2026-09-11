@@ -178,6 +178,16 @@ String name resolution, parsing, scalar allocation, and emitted constraints
 remain separate. Arbitrary semantic ModelTrace functions need not have finite
 support and are not claimed to belong to this syntax.
 
+`scripts/generate_model_input_syntax.py` maintains the repetitive atom, record,
+and constructor definitions. Its default mode and `--check` are nonmutating.
+Explicit `--write` replaces a stale generated prefix atomically while preserving
+the unique `-- Trace boundary.` marker and manual suffix exactly.
+Both modes reject malformed markers and non-ASCII input. `--file` selects an
+existing copy, and default paths are relative to the script's project.
+The generator is not a runtime or build dependency.
+`tests/test_model_input_generator.py` covers regeneration, nonmutation,
+permissions, malformed input, and relocation.
+
 Use `IntervalDemandPlan.plan` for executable dependency closure. The reference
 constructor repeats shared ancestors exponentially. In one forced-clock run,
 14 demands dropped from 6.21 seconds to 0.106 milliseconds; 400 versions with

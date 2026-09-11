@@ -110,6 +110,9 @@ same Nat slots for zero without restricting their values to zero or one.
 Ground quoting preserves every trace exactly, including invalid actions.
 Its execution theorem retains one assignment and one arbitrary initial State.
 Parsing and SMT lowering remain separate work.
+`python3 scripts/generate_model_input_syntax.py --check` checks the generated prefix
+without writing. Use `--write` after changing its schemas. The generator
+preserves the manual trace-boundary definitions and proofs byte-for-byte.
 `StateFrame` stores typed scalar IDs and fixed-size tables, not expression
 histories. Its finite domain check corresponds to a unique non-network state
 for supplied shared log roots and a submitted set. Local domains apply only to
