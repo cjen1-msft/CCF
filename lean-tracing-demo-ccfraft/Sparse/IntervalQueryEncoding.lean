@@ -82,19 +82,16 @@ theorem term_setZero (original : Assignment) (zeroID : Nat) {ty : Smt.Ty} (term 
     have hn := ihn (fun symbol present => below symbol (by simp [SmtScript.termSymbols, present]))
     simp only [Term.eval, hc, hy, hn]
 
-theorem input_setZero (original : Assignment) (input : SmtScript.Formula)
-    (graph : SymbolicGraph roots size) (queries : List (Query size)) :
-    SmtScript.Holds (setZero original (zeroId input graph queries)) input <->
+theorem input_setZero_fresh (original : Assignment) (input : SmtScript.Formula) (zeroID : Nat)
+    (fresh : forall symbol, Membership.mem (SmtScript.symbols input) symbol ->
+      QueueEncoding.symbolId symbol < zeroID) :
+    SmtScript.Holds (setZero original zeroID) input <->
       SmtScript.Holds original input := by
   have term_eq (term : Term .bool) (present : Membership.mem input term) :
-      term.eval (setZero original (zeroId input graph queries)) = term.eval original := by
+      term.eval (setZero original zeroID) = term.eval original := by
     apply term_setZero
     intro symbol member
-    apply reserved_below_zero input graph queries
-    apply List.mem_append.mpr
-    apply Or.inl
-    apply List.mem_map.mpr
-    refine Exists.intro symbol (And.intro ?_ rfl)
+    apply fresh
     exact (SmtScript.symbol_coverage input symbol).mpr (Exists.intro term
       (And.intro present (by simpa only [SmtScript.lower_symbols] using member)))
   constructor
@@ -106,6 +103,15 @@ theorem input_setZero (original : Assignment) (input : SmtScript.Formula)
     intro holds term present
     rw [term_eq term present]
     exact holds term present
+
+theorem input_setZero (original : Assignment) (input : SmtScript.Formula)
+    (graph : SymbolicGraph roots size) (queries : List (Query size)) :
+    SmtScript.Holds (setZero original (zeroId input graph queries)) input <->
+      SmtScript.Holds original input := by
+  apply input_setZero_fresh
+  intro symbol present
+  exact reserved_below_zero input graph queries _ (List.mem_append.mpr (Or.inl
+    (List.mem_map.mpr (Exists.intro symbol (And.intro present rfl)))))
 
 theorem metadata_setZero (original : Assignment) (input : SmtScript.Formula)
     (graph : SymbolicGraph roots size) (queries : List (Query size))
@@ -321,34 +327,49 @@ theorem seed_position (zeroID : Nat) (graph : SymbolicGraph roots size) (queries
     cases spec.2
     exact List.mem_dedup.mp (List.mem_product.mp spec.1).1
 
-theorem planned_position (zeroID : Nat) (graph : SymbolicGraph roots size) (queries : List (Query size))
-    (demand : Demand roots size) (present : Membership.mem (planned zeroID graph queries) demand) :
-    Membership.mem (IntervalPredicate.cutIds zeroID graph queries) demand.2 := by
-  apply (IntervalDemandPlan.walk_spec (IntervalDemandPlan.table graph) [] (seeds zeroID graph queries)).minimal
-    (fun cell => Membership.mem (IntervalPredicate.cutIds zeroID graph queries) cell.2) ?_ ?_
-    (seed_position zeroID graph queries) demand present
+theorem plan_positions (graph : SymbolicGraph roots size) (requests : List (Demand roots size))
+    (positions : Nat -> Prop) (initial : forall cell, Membership.mem requests cell -> positions cell.2)
+    (demand : Demand roots size) (present : Membership.mem (IntervalDemandPlan.plan graph requests) demand) :
+    positions demand.2 := by
+  apply (IntervalDemandPlan.walk_spec (IntervalDemandPlan.table graph) [] requests).minimal
+    (fun cell => positions cell.2) ?_ ?_ initial demand present
   next =>
     intro cell member child dependency
     cases List.mem_map.mp dependency with
     | intro address spec => cases spec.2; exact member
   next => intro cell member; simp at member
 
+theorem planned_position (zeroID : Nat) (graph : SymbolicGraph roots size) (queries : List (Query size))
+    (demand : Demand roots size) (present : Membership.mem (planned zeroID graph queries) demand) :
+    Membership.mem (IntervalPredicate.cutIds zeroID graph queries) demand.2 :=
+  plan_positions graph (seeds zeroID graph queries) _ (seed_position zeroID graph queries) demand present
+
+def interpretedDemands (assignment : Assignment) (demands : List (Demand roots size)) :
+    Finset (Demand roots size) :=
+  demands.toFinset.image (fun cell => (cell.1, natValue assignment cell.2))
+
 def semanticDemands (assignment : Assignment) (zeroID : Nat) (graph : SymbolicGraph roots size)
     (queries : List (Query size)) : Finset (Demand roots size) :=
   (planned zeroID graph queries).toFinset.image (fun cell => (cell.1, natValue assignment cell.2))
 
-theorem semantic_closed (assignment : Assignment) (zeroID : Nat) (graph : SymbolicGraph roots size)
-    (queries : List (Query size)) :
+theorem plan_image_closed (assignment : Assignment) (graph : SymbolicGraph roots size)
+    (requests : List (Demand roots size)) :
     IntervalReadback.Closed (IntervalEncoding.interpret assignment graph)
-      (semanticDemands assignment zeroID graph queries) := by
+      (interpretedDemands assignment (IntervalDemandPlan.plan graph requests)) := by
   intro address position present child dependency
   cases Finset.mem_image.mp present with
   | intro demand spec =>
     cases spec.2
     apply Finset.mem_image.mpr
     refine Exists.intro (child, demand.2) (And.intro ?_ rfl)
-    exact IntervalDemandPlan.plan_closed graph (seeds zeroID graph queries) demand.1 demand.2 spec.1
+    exact IntervalDemandPlan.plan_closed graph requests demand.1 demand.2 spec.1
       child (by simpa only [IntervalEncoding.dependencies_interpret] using dependency)
+
+theorem semantic_closed (assignment : Assignment) (zeroID : Nat) (graph : SymbolicGraph roots size)
+    (queries : List (Query size)) :
+    IntervalReadback.Closed (IntervalEncoding.interpret assignment graph)
+      (semanticDemands assignment zeroID graph queries) :=
+  plan_image_closed assignment graph (seeds zeroID graph queries)
 
 theorem request_covered (assignment : Assignment) (zeroID : Nat) (graph : SymbolicGraph roots size)
     (queries : List (Query size)) (zero_value : assignment.constant .int zeroID = 0)
@@ -393,16 +414,16 @@ theorem equation_correct (assignment : Assignment) (base : Nat) (graph : Symboli
         IntervalEncoding.nodeTerm_eval assignment graph base version position nonnegative]
       rfl
 
-theorem read_correct (assignment : Assignment) (base zeroID : Nat) (graph : SymbolicGraph roots size)
-    (queries : List (Query size)) (zero_value : assignment.constant .int zeroID = 0)
-    (domains : Domains assignment graph queries) :
-    SmtScript.Holds assignment (readFormula base zeroID graph queries) <->
+theorem reads_at_demands_correct (assignment : Assignment) (base : Nat) (graph : SymbolicGraph roots size)
+    (demands : List (Demand roots size))
+    (nonnegative : forall demand, Membership.mem demands demand -> 0 <= assignment.constant .int demand.2) :
+    SmtScript.Holds assignment (demands.map
+      (IntervalEncoding.readEquation base (IntervalEncoding.templates base graph)
+        (IntervalEncoding.templates_size base graph))) <->
     IntervalReadback.Equations (IntervalEncoding.interpret assignment graph)
-      (semanticDemands assignment zeroID graph queries) (IntervalEncoding.reads assignment base) := by
-  have point (demand : Demand roots size) (present : Membership.mem (planned zeroID graph queries) demand) :=
-    equation_correct assignment base graph demand
-      (cut_nonnegative assignment zeroID graph queries zero_value domains demand.2
-        (planned_position zeroID graph queries demand present))
+      (interpretedDemands assignment demands) (IntervalEncoding.reads assignment base) := by
+  have point (demand : Demand roots size) (present : Membership.mem demands demand) :=
+    equation_correct assignment base graph demand (nonnegative demand present)
   constructor
   next =>
     intro holds address position present
@@ -419,6 +440,16 @@ theorem read_correct (assignment : Assignment) (base zeroID : Nat) (graph : Symb
       apply (point demand spec.1).mpr
       exact equations _ _ (Finset.mem_image.mpr
         (Exists.intro demand (And.intro (List.mem_toFinset.mpr spec.1) rfl)))
+
+theorem read_correct (assignment : Assignment) (base zeroID : Nat) (graph : SymbolicGraph roots size)
+    (queries : List (Query size)) (zero_value : assignment.constant .int zeroID = 0)
+    (domains : Domains assignment graph queries) :
+    SmtScript.Holds assignment (readFormula base zeroID graph queries) <->
+    IntervalReadback.Equations (IntervalEncoding.interpret assignment graph)
+      (semanticDemands assignment zeroID graph queries) (IntervalEncoding.reads assignment base) :=
+  reads_at_demands_correct assignment base graph (planned zeroID graph queries)
+    (fun demand present => cut_nonnegative assignment zeroID graph queries zero_value domains demand.2
+      (planned_position zeroID graph queries demand present))
 
 theorem guard_correct (assignment : Assignment) (base : Nat) (query : Query size) (id : Nat)
     (nonnegative : 0 <= assignment.constant .int id) :
