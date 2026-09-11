@@ -218,6 +218,15 @@ private theorem reference_initial_exact (input : SmtScript.Formula)
     (trace : List (Event InputInt)) (length : InputInt) :
     referenceInitialEncode input trace length = QueueInitialEncoding.encode input trace length := rfl
 
+@[noinline] private def referenceCount (keys : List InputInt) (trace : List (Event InputInt))
+    (observations : List (Observation trace)) (base : Nat) : SmtScript.Formula :=
+  (syntaxQueries keys trace observations).map (readEquation trace base) ++
+    observations.map (observationEquation base)
+
+private theorem reference_count_exact (keys : List InputInt) (trace : List (Event InputInt))
+    (observations : List (Observation trace)) (base : Nat) :
+    referenceCount keys trace observations base = countFormula keys trace observations base := rfl
+
 def cacheEquivalenceFixtures : IO (List Json) := do
   let traces : List (List (Event InputInt)) :=
     [[], [.peek (.symbolic 0)],
@@ -236,6 +245,26 @@ def cacheEquivalenceFixtures : IO (List Json) := do
         let script <- current.get
         if script != ( <- reference.get) then
           throw (IO.userError s!"cached queue script mismatch in case {results.length}")
+        results := Json.mkObj [("case", toJson results.length), ("bytes", toJson script.utf8ByteSize)] :: results
+  let countTraces : List (List (Event InputInt)) :=
+    [[], [.peek (.symbolic 0)], [.length 1000000],
+      [.send (.literal (-2)), .send (.symbolic 0), .pop (.literal (-2)), .peek (.symbolic 1)],
+      [.pop (.symbolic 0), .send (.symbolic 1), .length 2]]
+  for trace in countTraces do
+    let keys := [.symbolic 0, .literal (-2), .symbolic 0, .symbolic 1]
+    let observations : List (Observation trace) :=
+      [{ version := 0, key := .symbolic 0, expected := .symbolic 9999 },
+       { version := Fin.mk (QueueReadback.writeCount trace) (Nat.lt_succ_self _),
+         key := .literal (-2), expected := .literal (-7) },
+       { version := 0, key := .symbolic 0, expected := .literal 1 },
+       { version := 0, key := .symbolic 1, expected := .literal 0 }]
+    for base in [0, 1, 2002] do
+      for observations in [[], observations] do
+        let current <- IO.mkRef (SmtScript.render (countFormula keys trace observations base))
+        let reference <- IO.mkRef (SmtScript.render (referenceCount keys trace observations base))
+        let script <- current.get
+        if script != ( <- reference.get) then
+          throw (IO.userError s!"cached count script mismatch in case {results.length}")
         results := Json.mkObj [("case", toJson results.length), ("bytes", toJson script.utf8ByteSize)] :: results
   return results.reverse
 

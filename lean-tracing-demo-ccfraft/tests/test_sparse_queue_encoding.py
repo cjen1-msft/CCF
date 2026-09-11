@@ -127,7 +127,7 @@ class SparseQueueEncodingTests(unittest.TestCase):
 
     def test_cached_compiler_preserves_exact_scripts(self) -> None:
         cases = load_fixtures("--cache-equivalence")
-        self.assertEqual([case["case"] for case in cases], list(range(24)))
+        self.assertEqual([case["case"] for case in cases], list(range(54)))
         self.assertTrue(all(case["bytes"] > 0 for case in cases))
 
     def assert_exhaustive(self, cases: list[dict], scope: str) -> None:

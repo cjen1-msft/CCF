@@ -448,6 +448,62 @@ def countFormula (keys : List InputInt) (trace : List (Event InputInt))
   (syntaxQueries keys trace observations).map (readEquation trace base) ++
     observations.map (observationEquation base)
 
+def operationArray (trace : List (Event InputInt)) : Array (QueuePlan.StoreOp InputInt) :=
+  (QueuePlan.operations trace).toArray
+
+theorem operation_array_size (trace : List (Event InputInt)) :
+    (operationArray trace).size = writeCount trace := by
+  simp [operationArray, QueuePlan.operations_length]
+
+theorem operation_array_lookup (trace : List (Event InputInt)) (index : Fin (writeCount trace)) :
+    (operationArray trace)[index.val]'(by rw [operation_array_size]; exact index.isLt) =
+      QueuePlan.operation trace index := by
+  simp [operationArray, QueuePlan.operation]
+
+def writeValueFrom (base index : Nat) : QueuePlan.StoreOp InputInt -> Term .int
+  | .send key =>
+    .ite (.equal (readRef base index key) (.integer 0)) (.integer 1) (readRef base index key)
+  | .pop key => .sub (readRef base index key) (.integer 1)
+
+def readEquationFrom {size : Nat} (lookup : Fin size -> QueuePlan.StoreOp InputInt) (base : Nat) :
+    Prod (Fin (size + 1)) InputInt -> Term .bool
+  | (Fin.mk 0 _, _) => .boolean true
+  | (Fin.mk (index + 1) bound, key) =>
+    let operation := lookup (Fin.mk index (Nat.lt_of_succ_lt_succ bound))
+    .equal (readRef base (index + 1) key)
+      (.ite (.equal key.term operation.key.term)
+        (writeValueFrom base index operation) (readRef base index key))
+
+theorem read_equation_from_original (trace : List (Event InputInt)) (base : Nat) :
+    readEquationFrom (QueuePlan.operation trace) base = readEquation trace base := by
+  funext query
+  cases query with
+  | mk version key =>
+    cases version with
+    | mk index bound =>
+      cases index with
+      | zero => rfl
+      | succ index =>
+        simp only [readEquationFrom, readEquation]
+        cases operation : QueuePlan.operation trace (Fin.mk index (Nat.lt_of_succ_lt_succ bound)) <;>
+          simp [writeValueFrom, writeValue, operation]
+
+def countFormulaCached (keys : List InputInt) (trace : List (Event InputInt))
+    (observations : List (Observation trace)) (base : Nat) : SmtScript.Formula :=
+  let operations := operationArray trace
+  let lookup := fun index : Fin (writeCount trace) =>
+    operations[index.val]'(by simpa only [operations, operation_array_size] using index.isLt)
+  let seeds := keys.map (fun key => (0, key)) ++
+    List.ofFn (fun index : Fin (writeCount trace) => (index.castSucc, (lookup index).key)) ++
+    observations.map (fun observation => (observation.version, observation.key))
+  (prefixQueries seeds).map (readEquationFrom lookup base) ++
+    observations.map (observationEquation base)
+
+@[csimp] theorem countFormula_eq_cached : countFormula = countFormulaCached := by
+  funext keys trace observations base
+  simp only [countFormulaCached, operation_array_lookup, read_equation_from_original,
+    countFormula, syntaxQueries, demandSeeds]
+
 def encode (input : SmtScript.Formula) (keys : List InputInt)
     (trace : List (Event InputInt)) (observations : List (Observation trace)) : SmtScript.Formula :=
   input ++ countFormula keys trace observations (freshBase input)
