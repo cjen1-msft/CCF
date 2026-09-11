@@ -6,6 +6,7 @@ import Sparse.ConfigurationPublication
 import Sparse.ConditionalQueueAccounting
 import Sparse.ConditionalQueueEncoding
 import Sparse.ConditionalQueueTraceEncoding
+import Sparse.ConditionalQueueSpecialization
 import Sparse.EntryValue
 import Sparse.EntryPredicate
 import Sparse.EntrySelectorSemantics

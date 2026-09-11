@@ -98,6 +98,7 @@ New repository bridges extend that foundation:
 | `Sparse/ConditionalQueueAccounting.lean` | Fixed-Boolean guarded replay equals selected cursor replay. Active pops and a pending peek give the exact bounded read histogram under shared-order agreement. |
 | `Sparse/ConditionalQueueEncoding.lean` | Typed guard bindings preserve source terms/functions. Static annotation and a finite count grid yield one coherent guarded cursor replay with original guard/key interpretation. |
 | `Sparse/ConditionalQueueTraceEncoding.lean` | Formula and actual rendered-text satisfiability correspond to one initial Int queue executing the selected trace under one original assignment, with exact initial length. |
+| `Sparse/ConditionalQueueSpecialization.lean` | Input-proved Boolean guards select events for existing same-queue normalization. Unresolved guards retain the old formula exactly; formula/text existence and complete source preservation cover one arbitrary initial queue. |
 | `Sparse/QueueTraceEncoding.lean` | The actual emitted formula and rendered text are satisfiable iff one initial Int queue of the interpreted length executes the whole unconditional event trace under the original input. |
 | `Sparse/QueueSummaryEncoding.lean` | Proved presence normalization removes redundant sends before whole-queue emission, preserving the same initial queue and the original trace existence contract. |
 | `Sparse/ReadbackHints.lean` | Unequal observed projection values justify key disequality and skipping a store. |
@@ -600,14 +601,44 @@ alias checks add further products. These measurements fail the runtime target.
 Session-only array prototypes reduce the four-symbolic-key alternating SAT
 median to 1808.896 ms, but require `--arrays-exp` and have no encoding proof.
 They support only an empty initial queue and are not the production encoder.
-Known-guard selection followed by existing proved queue normalization is the
-next smaller optimization. Unknown guards must retain the exact fallback.
+`ConditionalQueueSpecialization` now proves known-guard selection followed by
+the existing queue normalization. Unknown guards retain the exact fallback.
 
 The portable runner's `cycleDistinct` argument retains that name in evidence
 paths. Native metadata calls the corresponding shape `cycle19` at 40 events
 and `cycle199` at 400. The offline benchmark tests cover all 54 names.
 The parent also ran fresh distinct-cycle SAT and UNSAT controls after fixing
 this naming check. Audit reports that separate run as 2/54, not complete.
+
+The specialization recognizes Bool literals, recursively negated guards, and
+flat input facts asserting, negating, or equating a Bool symbol to a literal.
+Both equality orientations work. It resolves every guard or falls back without
+changing the old formula. Contradictory input remains contradictory even when
+the resolver finds a first matching fact.
+Resolved guards contain no UFs, so the existing summary allocator needs no
+extra guard reservation. Unsupported terms, including inactive UF branches,
+use the general path. Completeness preserves every source constant, complete
+source UF functions, and the entire selector interpretation.
+
+Six native four-key symbolic alternating controls cover 40 and 400 events,
+with SAT, UNSAT, and alias-SAT demands at each size.
+Every send is active and every pop is inactive in these controls.
+At 400 events, 201 selected events normalize to five. All 400 original input
+assertions remain, and the script shrinks from 740293 to 31442 bytes.
+The worker measured 17.488 ms median SAT. A separate parent reproduction
+measured 18.117 ms SAT, 15.265 ms UNSAT, and 20.620 ms alias SAT.
+Complete warm emission was 1.328 ms for the parent SAT run, including selection
+and normalization. The separately timed resolver took 0.489 ms and is already
+included in that emission total.
+These are empty-initial queue fixtures on a shared host, not full Model
+performance results. The theorem itself requires no initial-emptiness premise.
+Unknown guards and high-key products remain open.
+The existing portable benchmark remains the frozen general-compiler baseline.
+Specialized native source, hashes, scripts, and both sets of measurements are
+in the session's `conditional-queue-specialization-probe/` directory.
+`tests/test_sparse_conditional_specialization.py` adds 384 finite queue-oracle
+cases and eleven edge cases covering exact fallback, source facts, duplicates,
+contradictions, and symbolic million-entry initial lengths.
 
 The initial-accounting fixtures include 20 focused cases and 486 two-event
 cases compared with a concrete queue interpreter. Those pairs use nine event

@@ -165,6 +165,12 @@ preserving the same initial queue and every pop, peek, and length observation.
 Possible aliases invalidate remembered presence after a pop unless literal
 inequality proves otherwise. This transforms queue events, not full Raft actions
 or external references to intermediate count versions.
+`ConditionalQueueSpecialization` selects guards established by literals or
+explicit Boolean input facts, then uses that same queue normalization.
+It retains the entire input. If any guard is unresolved, it returns the existing
+conditional compiler's formula unchanged. Its existence theorem still covers
+arbitrary initial queues. Existing runtime entry points do not select this
+new compiler automatically.
 `SymbolBounds` computes fresh IDs without constructing symbol sets. A proved
 compiler rewrite preserves the original allocation bound exactly.
 
@@ -189,7 +195,7 @@ CCF_SPARSE_SMT_TESTS=1 CVC5=/path/to/cvc5 \
 		tests.test_sparse_interval_queries tests.test_sparse_joint_encoding \
 		tests.test_sparse_native_sorts tests.test_sparse_typed_intervals \
 		tests.test_sparse_entry_predicate tests.test_sparse_typed_joint \
-		tests.test_sparse_model_input_scalars
+		tests.test_sparse_model_input_scalars tests.test_sparse_conditional_specialization
 ```
 
 These fixtures cover emitted component constraints, not full trace correctness.
@@ -261,6 +267,14 @@ The baseline misses the runtime target. At 400 events, four symbolic keys with
 alternating guards take 14.38 seconds median in cvc5. A 399-symbolic-key send
 case emits 61.9 MB. Of 54 emitted cases, 39 have three solver runs and 15 were
 not started. These are component measurements, not full Model traces.
+
+The proved known-guard specialization reduces that same four-key 400-event
+SAT control, with all pop guards false, to 18.12 ms in cvc5 and 1.33 ms for
+warm native emission in a separate reproduction.
+It selects 201 events and normalizes them to five,
+while retaining all 400 input assertions. Unknown guards and high-key cases
+remain outside this performance result. The native benchmark above measures
+the unchanged baseline, not the specialization.
 
 This is a proof library, not a complete sparse trace validator. Full Model
 composition, full-trace SMT correspondence, and end-to-end performance remain
