@@ -24,7 +24,7 @@ reuse its architecture in the revised encoder.
 The first delivered native-array slice is described in
 [Native-array prototype](README.md#native-array-prototype).
 `Sparse/NativeArrayCheckQuorum.lean` proves direct-array execution equivalence
-for the actual `checkQuorum` action and seven observation kinds. The standalone
+for the actual `checkQuorum` action and all local node-state observations. The standalone
 `native_arrays.py` emitter uses native arrays and trace-sized identity sets.
 Its printer is tested against actual Model guards, but is not covered by the
 Lean theorem. Normal `lake build Sparse` includes the new axiom audit.
@@ -63,8 +63,23 @@ A combined 400-record vote-send and term-update trace across 100 identities
 took about 3.7 ms to encode and 1.21 seconds to solve. See
 [Native term updates and packet observations](README.md#native-term-updates-and-packet-observations).
 
+All 14 local `NodeState` fields now have native representations and observations.
+`Local.Rep` is complete decoded-record equality. Term updates explicitly clear
+`votedFor` and `preVotesGranted`, while preserving `votesGranted`. Peer tables
+and optional retirement indices retain their natural domains without imposing
+reachability or log-length bounds.
+
+The first eager full-state run took 10.4 seconds on the 400-record combined
+benchmark. A retained constraint-removal experiment isolated unused peer-table
+domains as the main cost. Fields now declare their original array and domain
+on first read or write, retaining later references and earlier stores.
+The same benchmark then solved in 1.13 seconds, with about 3.9 ms spent encoding.
+The 360-case `NativeArrayNodeFixtureMain` compares complete Model records
+before and after the four supported actions. See
+[Native local node state](README.md#native-local-node-state).
+
 Next work is still substantial: the remaining actions, receive and log mutation
-integration, reducer integration, and full initial-state
+integration, global state observations, reducer integration, and full initial-state
 materialization. Do not resume the old worker fan-out or claim full encoder
 completion. Finish and measure one action or shared operation at a time.
 The independent duplicate-suppression utilities are not Model send semantics.

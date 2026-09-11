@@ -20,6 +20,32 @@ from native_queue_arrays import QueueArray
 from Shared.solver import ValidationError, find_cvc5, run_solver
 
 ROLES = ("none", "follower", "preVoteCandidate", "candidate", "leader")
+MEMBERSHIP_STATES = (
+    "active",
+    "retirementOrdered",
+    "retirementSigned",
+    "retirementCompleted",
+    "retiredCommitted",
+)
+PEER_INDICES = ("sentIndex", "matchIndex")
+NODE_FIELDS = {
+    "allocated": ("Bool", None),
+    "role": ("Role", "r_none"),
+    "newFollower": ("Bool", "true"),
+    "logLength": ("Int", "0"),
+    "commit": ("Int", "0"),
+    "currentTerm": ("Int", "0"),
+    "logs": ("(Array Int Entry)", None),
+    "sentIndex": ("(Array Node Int)", "((as const (Array Node Int)) 0)"),
+    "matchIndex": ("(Array Node Int)", "((as const (Array Node Int)) 0)"),
+    "votedFor": ("OptionalNode", "noNode"),
+    "votesGranted": ("Nodes", "(_ bv0 {width})"),
+    "preVotesGranted": ("Nodes", "(_ bv0 {width})"),
+    "membershipState": ("MembershipState", "m_active"),
+    "retirementIndex": ("OptionalNat", "noNat"),
+    "retirementCommittableIndex": ("OptionalNat", "noNat"),
+    "retiredCommittedIndex": ("OptionalNat", "noNat"),
+}
 SOLVER_ARGUMENTS = ("--arrays-exp", "--mbqi")
 
 
@@ -74,6 +100,9 @@ class Encoder:
             f"(declare-datatype Node ({' '.join(f'({node})' for node in self.nodes.values())}))",
             f"(define-sort Nodes () (_ BitVec {self.width}))",
             f"(declare-datatype Role ({' '.join(f'(r_{role})' for role in ROLES)}))",
+            f"(declare-datatype MembershipState ({' '.join(f'(m_{state})' for state in MEMBERSHIP_STATES)}))",
+            "(declare-datatype OptionalNode ((noNode) (someNode (nodeValue Node))))",
+            "(declare-datatype OptionalNat ((noNat) (someNat (natValue Int))))",
             "(declare-datatype Content ((transaction (tx Int)) (signature) "
             "(reconfiguration (members Nodes)) (retiredCommitted (retired Nodes))))",
             "(declare-datatype Entry ((entry (term Int) (content Content))))",
@@ -81,27 +110,37 @@ class Encoder:
             "(and (<= 0 (term e)) (=> ((_ is transaction) (content e)) (<= 0 (tx (content e))))))",
         ]
         self.lines.extend(packet_declarations())
-        self.refs = {}
-        for name, sort in (
-            ("allocated", "Bool"),
-            ("role", "Role"),
-            ("newFollower", "Bool"),
-            ("logLength", "Int"),
-            ("commit", "Int"),
-            ("currentTerm", "Int"),
-            ("logs", "(Array Int Entry)"),
-        ):
-            self.refs[name] = name + "_0"
-            self.lines.append(f"(declare-const {name}_0 (Array Node {sort}))")
+        self.refs = {name: name + "_0" for name in NODE_FIELDS}
+        self.declared_fields: set[str] = set()
         self.log_domains: set[str] = set()
         self.queues: dict[tuple[str, str], QueueArray] = {}
         self.configuration_indices: dict[tuple[str, ...], str] = {}
         self.election_snapshots: dict[tuple[str, ...], tuple[str, str]] = {}
         self.event = 0
         self.clause = 0
-        for node in self.nodes.values():
-            for name in ("logLength", "commit", "currentTerm"):
-                self.lines.append(f"(assert (<= 0 (select {self.refs[name]} {node})))")
+
+    def ensure_field(self, name: str) -> None:
+        """Introduce one initial column; later reads keep all intervening stores."""
+        if name in self.declared_fields:
+            return
+        self.declared_fields.add(name)
+        sort = NODE_FIELDS[name][0]
+        initial = name + "_0"
+        self.lines.append(f"(declare-const {initial} (Array Node {sort}))")
+        if sort == "Int":
+            for node in self.nodes.values():
+                self.lines.append(f"(assert (<= 0 (select {initial} {node})))")
+        elif name in PEER_INDICES:
+            self.lines.append(
+                f"(assert (forall ((node Node) (peer Node)) "
+                f"(<= 0 (select (select {initial} node) peer))))"
+            )
+        elif sort == "OptionalNat":
+            value = f"(select {initial} node)"
+            self.lines.append(
+                f"(assert (forall ((node Node)) "
+                f"(=> ((_ is someNat) {value}) (<= 0 (natValue {value})))))"
+            )
 
     def node(self, value: object, where: str) -> str:
         """Resolve all identities through the explicit exhaustive universe."""
@@ -128,20 +167,18 @@ class Encoder:
 
     def read(self, name: str, node: str) -> str:
         """Absent nodes have Model fresh-state values, not arbitrary fields."""
+        self.ensure_field(name)
         cell = f"(select {self.refs[name]} {node})"
         if name == "allocated":
             return cell
-        default = {
-            "role": "r_none",
-            "newFollower": "true",
-            "logLength": "0",
-            "commit": "0",
-            "currentTerm": "0",
-        }
-        return f"(ite {self.read('allocated', node)} {cell} {default[name]})"
+        default = NODE_FIELDS[name][1]
+        if default is None:
+            raise ValueError(f"{name} has no fresh-state scalar read")
+        return f"(ite {self.read('allocated', node)} {cell} {default.format(width=self.width)})"
 
     def log(self, node: str) -> str:
         """Constrain natural-valued payloads only within this node's live log."""
+        self.ensure_field("logs")
         log = f"(select {self.refs['logs']} {node})"
         if node not in self.log_domains:
             self.log_domains.add(node)
@@ -220,13 +257,15 @@ class Encoder:
         self.assertion(self.read("allocated", node))
         self.assertion(f"(= {self.read('role', node)} r_leader)")
         self.active_peer(node, f"(bvnot (_ bv{1 << int(node[1:])} {self.width}))")
-        for name, sort, value in (
-            ("role", "Role", "r_follower"),
-            ("newFollower", "Bool", "true"),
+        for name, value in (
+            ("role", "r_follower"),
+            ("newFollower", "true"),
         ):
-            self.store(name, sort, node, value)
+            self.store(name, node, value)
 
-    def store(self, name: str, sort: str, node: str, value: str) -> None:
+    def store(self, name: str, node: str, value: str) -> None:
+        self.ensure_field(name)
+        sort = NODE_FIELDS[name][0]
         old = self.refs[name]
         self.refs[name] = f"{name}_{self.event + 1}"
         self.lines.append(f"(declare-const {self.refs[name]} (Array Node {sort}))")
@@ -347,12 +386,37 @@ class Encoder:
         )
         term = f"(messageTerm {selected})"
         self.assertion(f"(< {self.read('currentTerm', destination)} {term})")
-        for name, sort, value in (
-            ("role", "Role", "r_follower"),
-            ("currentTerm", "Int", term),
-            ("newFollower", "Bool", "true"),
+        for name, value in (
+            ("role", "r_follower"),
+            ("currentTerm", term),
+            ("newFollower", "true"),
+            ("votedFor", "noNode"),
+            ("preVotesGranted", f"(_ bv0 {self.width})"),
         ):
-            self.store(name, sort, destination, value)
+            self.store(name, destination, value)
+
+    def observation_value(self, kind: str, value: object) -> str:
+        sort = NODE_FIELDS[kind][0]
+        if sort == "Bool":
+            if type(value) is not bool:
+                raise ValidationError(f"instruction {self.event}: expected a bool")
+            return str(value).lower()
+        if sort in {"Role", "MembershipState"}:
+            choices, prefix = (
+                (ROLES, "r") if sort == "Role" else (MEMBERSHIP_STATES, "m")
+            )
+            if not isinstance(value, str) or value not in choices:
+                raise ValidationError(
+                    f"instruction {self.event}: unknown {kind} {value!r}"
+                )
+            return f"{prefix}_{value}"
+        if sort == "Nodes":
+            return self.mask(value, kind)
+        if sort == "OptionalNode":
+            return "noNode" if value is None else f"(someNode {self.node(value, kind)})"
+        if sort == "OptionalNat":
+            return "noNat" if value is None else f"(someNat {natural(value, kind)})"
+        return str(natural(value, f"instruction {self.event}"))
 
     def render(self) -> str:
         """Reject unsupported input rather than silently weakening the trace."""
@@ -361,13 +425,7 @@ class Encoder:
             if not isinstance(instruction, dict):
                 raise ValidationError(f"instruction {self.event}: expected an object")
             kind = instruction.get("kind")
-            supported = {
-                "allocated",
-                "role",
-                "newFollower",
-                "logLength",
-                "commit",
-                "currentTerm",
+            supported = (NODE_FIELDS.keys() - {"logs"}) | {
                 "entry",
                 "checkQuorum",
                 "requestVote",
@@ -421,31 +479,25 @@ class Encoder:
                 expected.add("value")
             if kind == "entry":
                 expected.add("index")
+            if kind in PEER_INDICES:
+                expected.add("peer")
             fields(instruction, expected, f"instruction {self.event}")
             node = self.node(instruction["node"], f"instruction {self.event}")
             if kind == "checkQuorum":
                 self.check_quorum(node)
                 continue
             value = instruction["value"]
-            if kind in {"allocated", "newFollower"}:
-                if type(value) is not bool:
-                    raise ValidationError(f"instruction {self.event}: expected a bool")
-                value = str(value).lower()
-            elif kind == "role":
-                if not isinstance(value, str) or value not in ROLES:
-                    raise ValidationError(
-                        f"instruction {self.event}: unknown role {value!r}"
-                    )
-                value = "r_" + value
-            elif kind in {"logLength", "commit", "currentTerm"}:
-                value = str(natural(value, f"instruction {self.event}"))
-            else:
+            if kind == "entry":
                 index = natural(instruction["index"], f"instruction {self.event} index")
                 value = self.entry(value)
                 self.assertion(f"(< {index} {self.read('logLength', node)})")
                 self.assertion(f"(= (select {self.log(node)} {index}) {value})")
                 continue
-            self.assertion(f"(= {self.read(kind, node)} {value})")
+            observed = self.read(kind, node)
+            if kind in PEER_INDICES:
+                peer = self.node(instruction["peer"], f"instruction {self.event} peer")
+                observed = f"(select {observed} {peer})"
+            self.assertion(f"(= {observed} {self.observation_value(kind, value)})")
         return "\n".join(self.lines + ["(check-sat)", ""])
 
 

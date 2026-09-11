@@ -32,6 +32,37 @@ def contentJson : EntryContent (Fin 3) Nat -> Json
 def entryJson (entry : Entry (Fin 3) Nat) : Json :=
   Json.mkObj [("term", toJson entry.term), ("content", contentJson entry.content)]
 
+def membershipName : MembershipState -> String
+  | .active => "active"
+  | .retirementOrdered => "retirementOrdered"
+  | .retirementSigned => "retirementSigned"
+  | .retirementCompleted => "retirementCompleted"
+  | .retiredCommitted => "retiredCommitted"
+
+def nodeObservations (node : Fin 3) (state : NodeState (Fin 3) Nat) : List Json :=
+  let observation := fun kind value =>
+    Json.mkObj [("kind", toJson kind), ("node", toJson (nodeName node)), ("value", value)]
+  [observation "role" (toJson (roleName state.role)),
+    observation "currentTerm" (toJson state.currentTerm),
+    observation "newFollower" (toJson state.isNewFollower),
+    observation "commit" (toJson state.commitIndex),
+    observation "logLength" (toJson state.log.length),
+    observation "votedFor" (toJson (state.votedFor.map nodeName)),
+    observation "votesGranted" (toJson (nodeNames state.votesGranted)),
+    observation "preVotesGranted" (toJson (nodeNames state.preVotesGranted)),
+    observation "membershipState" (toJson (membershipName state.membershipState)),
+    observation "retirementIndex" (toJson state.retirementIndex),
+    observation "retirementCommittableIndex" (toJson state.retirementCommittableIndex),
+    observation "retiredCommittedIndex" (toJson state.retiredCommittedIndex)] ++
+    (List.finRange 3).flatMap (fun peer =>
+      [("sentIndex", state.sentIndex peer), ("matchIndex", state.matchIndex peer)].map
+        fun (kind, value) =>
+          Json.mkObj [("kind", toJson kind), ("node", toJson (nodeName node)),
+            ("peer", toJson (nodeName peer)), ("value", toJson value)]) ++
+    state.log.zipIdx.map (fun (entry, index) =>
+      Json.mkObj [("kind", toJson "entry"), ("node", toJson (nodeName node)),
+        ("index", toJson index), ("value", entryJson entry)])
+
 def messageJson (message : Message (Fin 3) Nat) : Json :=
   let fields := [("term", toJson message.term),
     ("source", toJson (nodeName message.source)), ("destination", toJson (nodeName message.destination))]

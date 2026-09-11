@@ -52,15 +52,15 @@ or restricting possible executions is not a performance optimization.
 
 `native_arrays.py` accepts `checkQuorum`, `requestVote`, `requestPreVote`, and
 `updateTerm`.
-Node observations cover allocation, role, new-follower status, current term,
-log length, commit index, and exact live entries. Source-local queues support
+Node observations cover allocation and every local `NodeState` field.
+Logs use length and exact live-entry observations. Source-local queues support
 length and exact packet observations. Other instructions are errors.
 It does not replace the full validator or consume raw CCF traces.
 
 `Sparse/NativeArrayVote.lean` proves that the combined direct-array trace semantics
 admit a state exactly when the same observations and actual Model actions admit
 a Model execution. The initial state is arbitrary. The proof covers any finite
-node type and leaves unobserved Model fields unrestricted. The JSON adapter and
+node type and leaves unobserved state unrestricted. The JSON adapter and
 SMT-LIB printer are outside this theorem.
 
 The input declares an exhaustive identity universe and a nonempty bootstrap
@@ -83,7 +83,7 @@ Entry observation indices are zero-based.
 An `entry` observation additionally has an `index` and a value such as
 `{"term": 1, "content": {"reconfiguration": ["a", "b"]}}`. Other contents are
 `"signature"`, `{"transaction": 7}`, and `{"retiredCommitted": ["a"]}`.
-The remaining node observation kinds are `allocated`, `newFollower`, `commit`,
+Other basic node observation kinds are `allocated`, `newFollower`, `commit`,
 and `currentTerm`.
 Role values use the Model names `none`, `follower`, `preVoteCandidate`,
 `candidate`, and `leader`.
@@ -119,6 +119,54 @@ Additional cases cover state framing, contradictory later observations, absent
 defaults, live-tail separation, 21 identities, symbolic logs, and explicit input
 rejection. `CCF_NATIVE_ARRAY_ARTIFACTS=/path/to/output` retains the emitted
 formulas, solver output, and `measurements.json` for comparison.
+
+### Native local node state
+
+The local representation covers all 14 fields of `Model.NodeState`.
+`Local.Rep` requires equality of the complete decoded record, rather than
+selected field equalities. The existing action proofs therefore preserve
+every local field or account for its update.
+
+Additional observations use the usual `kind`, `node`, and `value` fields:
+
+| Kind | Value |
+| --- | --- |
+| `sentIndex`, `matchIndex` | A natural number. Also requires a `peer` identity. |
+| `votedFor` | A declared identity or `null`. |
+| `votesGranted`, `preVotesGranted` | A list of declared identities, interpreted as a set. |
+| `membershipState` | `active`, `retirementOrdered`, `retirementSigned`, `retirementCompleted`, or `retiredCommitted`. |
+| `retirementIndex`, `retirementCommittableIndex`, `retiredCommittedIndex` | A natural number or `null`. Zero and `null` are distinct. |
+
+For example, `{"kind": "sentIndex", "node": "a", "peer": "b", "value": 99}`
+observes one cell in a peer-index table. Peer indices need not fit within the
+log. Votes may name unallocated identities. Retirement metadata need not
+describe a reachable state. The prototype does not assume those invariants.
+
+Absent nodes return the complete `freshNodeState`, including zero peer indices,
+empty vote sets, no chosen voter, active membership, and absent retirement indices.
+`updateTerm` clears `votedFor` and `preVotesGranted`, but preserves `votesGranted`.
+`checkQuorum` preserves all three election fields.
+
+Each field's initial array and domain constraints are declared on first read
+or write. Later observations use the same initial column and intervening
+stores. No observation creates a replacement initial state. This avoids
+constraining unused peer tables while retaining their full natural-number
+domains when used.
+
+```bash
+nice -n 10 lake build Sparse Sparse.NativeArrayNodeFixtureMain
+CCF_NATIVE_ARRAY_TESTS=1 CVC5=/path/to/cvc5 \
+  python3 -m unittest discover -s tests -p 'test_native*arrays.py' -v
+```
+
+The node fixture derives 360 cases from complete Model records before and
+after the four supported actions. It covers all membership states, absent
+nodes, optional values, nonempty vote sets, and peer indices beyond log length.
+Declaring unused peer-table domains raised the 400-record combined benchmark
+to 10.4 seconds. First-use declarations reduced it to 1.13 seconds, with about
+3.9 ms spent encoding.
+Global state observations, including submitted transaction IDs, join history,
+pre-vote status, and completed-retirement sets, are not yet supported.
 
 ### Native vote sends
 

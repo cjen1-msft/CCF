@@ -95,9 +95,8 @@ theorem request_correct (arrays : Arrays N T) (state : State N T) (rep : Rep arr
     request (get arrays source) source destination signature = makeRequestVoteRequest state source destination := by
   have fields := get_rep arrays state rep source
   have latest := (signature_index_correct _ _).mp latest
-  rw [fields.2.2.2.1] at latest
   simp [request, makeRequestVoteRequest, lastCommittableIndex, lastCommittableTerm,
-    term_at_correct, fields.2.2.1, fields.2.2.2.1, fields.2.2.2.2, latest]
+    term_at_correct, ← fields, Local.toModel, latest]
 
 def action (preVote : Bool) (source destination : N) : Action N T :=
   if preVote then .requestPreVote source destination else .requestVote source destination
@@ -113,11 +112,11 @@ theorem enabled_correct (arrays : Arrays N T) (state : State N T) (rep : Rep arr
     (preVote : Bool) (source destination : N) :
     enabled arrays preVote source destination <-> CCFRaft.Enabled state (action preVote source destination) := by
   have fields := get_rep arrays state rep source
-  have member := member_at_correct (get arrays source).log (state.nodes source) destination fields.2.2.2.1.symm
+  have member := member_at_correct (get arrays source).log (get arrays source).toModel destination rfl
   cases preVote <;>
     simp [enabled, action, CCFRaft.Enabled, allocated_rep arrays state rep source,
-      allocated_rep arrays state rep destination, fields.1, current_index_correct,
-      fields.2.2.2.1, fields.2.2.1, exists_eq_left', currentConfiguration] at member ⊢
+      allocated_rep arrays state rep destination, ← fields, Local.toModel, current_index_correct,
+      exists_eq_left', currentConfiguration] at member ⊢
   all_goals exact fun _ _ _ _ => member
 
 def packet (row : Local N T) (preVote : Bool) (source destination : N) (signature : Nat) :
@@ -221,7 +220,7 @@ theorem newer_correct (frame : Frame N T) (state : State N T) (rep : frame.Rep s
   | none => rfl
   | some pair =>
     simp [source_allowed_correct frame.nodes state rep.1,
-      (get_rep frame.nodes state rep.1 destination).2.2.2.2]
+      ← get_rep frame.nodes state rep.1 destination, Local.toModel]
 
 def Frame.updateTerm (frame : Frame N T) (source destination : N) : Frame N T :=
   match newerMessage? frame source destination with
@@ -230,7 +229,8 @@ def Frame.updateTerm (frame : Frame N T) (source destination : N) : Frame N T :=
     { frame with
       nodes := Function.update frame.nodes destination
         (some { get frame.nodes destination with
-          role := .follower, currentTerm := selected.term, isNewFollower := true }) }
+          role := .follower, currentTerm := selected.term, isNewFollower := true,
+          votedFor := none, preVotesGranted := ∅ }) }
 
 theorem update_term_rep (frame : Frame N T) (state : State N T) (rep : frame.Rep state)
     (source destination : N) :
@@ -244,7 +244,7 @@ theorem update_term_rep (frame : Frame N T) (state : State N T) (rep : frame.Rep
       by_cases same : peer = destination
       · subst peer
         have fields := get_rep frame.nodes state rep.1 destination
-        simp [State.node?, updateNode, Local.Rep, fields.2.2]
+        simp [State.node?, updateNode, Local.Rep, ← fields, Local.toModel]
       · simpa [State.node?, updateNode, same] using rep.1 peer
     · exact rep.2
 

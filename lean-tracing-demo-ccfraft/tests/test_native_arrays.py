@@ -12,7 +12,14 @@ import tempfile
 import time
 import unittest
 
-from native_arrays import ROLES, SOLVER_ARGUMENTS, Encoder, encode, unique_object
+from native_arrays import (
+    NODE_FIELDS,
+    ROLES,
+    SOLVER_ARGUMENTS,
+    Encoder,
+    encode,
+    unique_object,
+)
 from native_packets import PACKET_FIELDS
 from Shared.solver import ValidationError, find_cvc5, run_solver, solver_status
 
@@ -60,6 +67,10 @@ def queue_length(value, source="a", destination="b"):
 
 def update_term(source="a", destination="b"):
     return dict(vote(source=source, destination=destination), kind="updateTerm")
+
+
+def peer_index(kind, value, node="a", peer="b"):
+    return dict(observation(kind, value, node), peer=peer)
 
 
 def queue_point(index, pre_vote=False, **packet_fields):
@@ -131,6 +142,17 @@ class NativeArrayInputTests(unittest.TestCase):
             trace([queued_packet("appendEntriesRequest", entriesLength=0)]),
             trace([queued_packet("requestVoteResponse", voteGranted=1)]),
             trace([queued_packet("appendEntriesResponse", success="false")]),
+            trace([observation("votedFor", "missing")]),
+            trace([observation("votedFor", False)]),
+            trace([observation("votesGranted", ["missing"])]),
+            trace([observation("preVotesGranted", None)]),
+            trace([observation("membershipState", "unknown")]),
+            trace([observation("retirementIndex", -1)]),
+            trace([observation("retirementCommittableIndex", False)]),
+            trace([observation("retiredCommittedIndex", "1")]),
+            trace([observation("sentIndex", 0)]),
+            trace([peer_index("matchIndex", 0, peer="missing")]),
+            trace([peer_index("sentIndex", True)]),
             trace([dict(vote(), destination="missing")]),
             trace([dict(vote(), extra=True)]),
             trace([observation("allocated", 1)]),
@@ -198,6 +220,32 @@ class NativeArrayInputTests(unittest.TestCase):
         self.assertEqual(script.count("(declare-const current_n0_"), 1)
         self.assertIn("(store q_n1_n0_cells_1 ", script)
         self.assertNotIn("(store (store", script)
+
+    def test_initial_columns_are_declared_on_first_use(self):
+        script = encode(trace([vote(), update_term()]))
+        for field in (
+            "sentIndex",
+            "matchIndex",
+            "retirementIndex",
+            "retirementCommittableIndex",
+            "retiredCommittedIndex",
+        ):
+            self.assertNotIn(f"(declare-const {field}_0 ", script)
+        script = encode(
+            trace(
+                [
+                    update_term(),
+                    observation("votedFor", None, "b"),
+                    peer_index("sentIndex", 99),
+                    peer_index("sentIndex", 99),
+                ]
+            )
+        )
+        self.assertEqual(script.count("(declare-const sentIndex_0 "), 1)
+        self.assertEqual(script.count("(declare-const votedFor_0 "), 1)
+        self.assertIn("(store votedFor_0 n1 noNode)", script)
+        self.assertIn("(select votedFor_1 n1)", script)
+        self.assertNotIn("sentIndex_1", script)
 
 
 @unittest.skipUnless(
@@ -340,6 +388,99 @@ class NativeArraySolverTests(unittest.TestCase):
         for number, case in enumerate(cases):
             with self.subTest(number=number):
                 self.solve(f"term-model-{number}", case["trace"], case["expected"])
+
+    def test_full_node_model_oracle(self):
+        cases = self.model_fixtures("NativeArrayNodeFixtureMain")
+        self.assertEqual(len(cases), 360)
+        observations = {
+            instruction["kind"]
+            for case in cases
+            for instruction in case["trace"]["instructions"]
+            if "node" in instruction and "value" in instruction
+        }
+        self.assertEqual(observations, (NODE_FIELDS.keys() - {"logs"}) | {"entry"})
+        self.assertEqual({case["expected"] for case in cases}, {"sat", "unsat"})
+        for number, case in enumerate(cases):
+            with self.subTest(number=number):
+                self.solve(f"full-node-model-{number}", case["trace"], case["expected"])
+
+    def test_full_node_history(self):
+        values = {
+            "votedFor": ("b", None),
+            "votesGranted": (["a", "b"], ["a"]),
+            "preVotesGranted": (["b"], []),
+            "membershipState": ("retiredCommitted", "active"),
+            "retirementIndex": (None, 0),
+            "retirementCommittableIndex": (99, None),
+            "retiredCommittedIndex": (0, 1),
+        }
+        for kind, (before, wrong) in values.items():
+            initial = [observation(kind, before), action()]
+            self.solve(
+                f"full-node-frame-{kind}",
+                trace([*initial, observation(kind, before)]),
+                "sat",
+            )
+            self.solve(
+                f"full-node-conflict-{kind}",
+                trace([*initial, observation(kind, wrong)]),
+                "unsat",
+            )
+        for kind in ("sentIndex", "matchIndex"):
+            self.solve(
+                f"peer-table-{kind}",
+                trace(
+                    [
+                        peer_index(kind, 7, peer="a"),
+                        peer_index(kind, 99),
+                        action(),
+                        peer_index(kind, 7, peer="a"),
+                        peer_index(kind, 99),
+                        peer_index(kind, 3, node="b", peer="a"),
+                    ]
+                ),
+                "sat",
+            )
+            self.solve(
+                f"peer-table-conflict-{kind}",
+                trace([peer_index(kind, 99), action(), peer_index(kind, 100)]),
+                "unsat",
+            )
+            self.solve(
+                f"absent-peer-{kind}",
+                trace([observation("allocated", False), peer_index(kind, 1)]),
+                "unsat",
+            )
+        initial = [
+            observation("votedFor", "a", "b"),
+            observation("votesGranted", ["a", "b"], "b"),
+            observation("preVotesGranted", ["a"], "b"),
+            observation("currentTerm", 1, "b"),
+            queue_point(0),
+            update_term(),
+        ]
+        self.solve(
+            "term-clears-election-fields",
+            trace(
+                [
+                    *initial,
+                    observation("votedFor", None, "b"),
+                    observation("preVotesGranted", [], "b"),
+                    observation("votesGranted", ["a", "b"], "b"),
+                ]
+            ),
+            "sat",
+        )
+        for kind, wrong in (
+            ("votedFor", "a"),
+            ("preVotesGranted", ["a"]),
+            ("votesGranted", []),
+        ):
+            self.solve(
+                f"term-election-field-conflict-{kind}",
+                trace([*initial, observation(kind, wrong, "b")]),
+                "unsat",
+            )
 
     def test_term_history(self):
         initial = [
