@@ -15,6 +15,7 @@ import Sparse.IntervalQueries
 import Sparse.JointIntervalCompletion
 import Sparse.JointIntervalEncoding
 import Sparse.MonotoneIntervals
+import Sparse.NativeSorts
 import Sparse.PacketIdentity
 import Sparse.PacketRealization
 import Sparse.PacketQueueWitness

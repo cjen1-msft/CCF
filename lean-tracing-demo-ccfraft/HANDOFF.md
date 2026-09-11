@@ -75,7 +75,8 @@ New repository bridges extend that foundation:
 | `Sparse/QueueTraceEncoding.lean` | The actual emitted formula and rendered text are satisfiable iff one initial Int queue of the interpreted length executes the whole unconditional event trace under the original input. |
 | `Sparse/QueueSummaryEncoding.lean` | Proved presence normalization removes redundant sends before whole-queue emission, preserving the same initial queue and the original trace existence contract. |
 | `Sparse/ReadbackHints.lean` | Unequal observed projection values justify key disequality and skipping a store. |
-| `Sparse/Smt.lean` | Typed Bool/Int terms lower to a strict s-expression interpreter; symbol names are injective. |
+| `Sparse/Smt.lean` | Bool/Int terms and native node/content/entry unknowns, equality, conditionals, and unary functions lower to a strict interpreter. Symbol names are injective. |
+| `Sparse/NativeSorts.lean` | All five constant sorts and 25 unary signatures, fixed schema availability, canonical text, and strict error handling have kernel regressions and an axiom audit. |
 | `Sparse/SmtScript.lean` | Generates unique typed declarations and commands. Command evaluation preserves formula truth for the same assignment. |
 | `Sparse/SmtText.lean` | Decodes exactly the canonical generated symbol names, with symbol-atom evaluation roundtrip for the existing renderer. |
 | `Sparse/SmtNumerals.lean` | Decodes canonical decimal numerals for arbitrary Nat, with a roundtrip proof over the actual core renderer. |
@@ -166,7 +167,17 @@ The compiler and extracted universal helpers have an independent review.
 
 The chosen entry representation uses fixed native datatypes with signed
 integer term/transaction fields and 15-bit node sets. `EntryValue` supplies
-the exact value domain, not its SMT declarations or text correspondence.
+the exact value domain. Fixed native sorts and schema/text correspondence
+are now integrated with the current queue and joint interval compilers.
+`tests/test_sparse_native_sorts.py` supplies 73 real solver controls for unknowns,
+equality, conditionals, and all unary signatures. Scalar names and QF_UFLIA
+scripts remain unchanged. Native scripts use ALL and the fixed schemas.
+Missing, duplicate, dependency-invalid, and mismatched declarations remain
+errors, including after false assertions.
+
+Native Term literals, constructors, testers, and selectors are not integrated.
+Required-sort discovery currently follows symbol signatures; symbol-free
+native expressions must extend discovery and schema preflight before use.
 Wrong-variant payload views return `none`. SMT selectors are total and
 underspecified on wrong variants. `EntrySelectorSemantics` proves guarded
 results independent of every such interpretation. The tester and selector
@@ -281,6 +292,16 @@ The parent four-key 400-event cycle run now takes 0.450 seconds for emission
 and 2.520 seconds including cvc5, with the same 400,062-byte script.
 The two-second target remains unmet. Count-formula construction accounts for
 most remaining emitter time.
+
+`QueueEncoding.countFormulaCached` now shares one flat array of recorded
+operations across demand seeds and read equations. Array lookup and the
+complete formula are proved equal to the original definitions. The permanent
+cache fixture now checks 24 initial-compiler and 30 count-compiler cases.
+Before native-sort integration, four-key cycle emission fell to 0.235 seconds
+and emission plus cvc5 to 2.261 seconds. After integration, the same scalar
+script takes 0.329 seconds to emit and 2.352 seconds including cvc5.
+Schema discovery adds work but changes none of its 400,062 bytes.
+These remain component timings, not full-Raft performance.
 
 `QueueInitialEncoding` adds initial prefix histograms and alias-aware budgets.
 Its key list is syntactically unique. Distinct symbolic names remain separate

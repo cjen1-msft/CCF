@@ -50,8 +50,9 @@ on those same roots. `JointIntervalEncoding` emits both point observations and
 universal queries with one root family and an exact rendered-text existence
 theorem. Entry-valued cells remain separate work.
 `EntryValue` supplies a fixed entry domain with signed integer scalars and
-node-set bitvectors, bijective with Model entries. SMT support for those sorts
-is not yet implemented.
+node-set bitvectors, bijective with Model entries. `Smt` now supports native
+unknowns, equality, conditionals, and unary functions for nodes, content, and
+entries. Native literals, constructors, and field selectors remain separate work.
 `EntrySelectorSemantics` proves guarded payload reads independent of arbitrary
 wrong-constructor selector values, without hiding failures in unused branches.
 The actual SMT evaluator and text layer are not yet connected to those laws.
@@ -111,10 +112,14 @@ The opt-in solver fixtures cover both explicit declarations and generated script
 CCF_SPARSE_SMT_TESTS=1 CVC5=/path/to/cvc5 \
 	python3 -m unittest tests.test_sparse_smt tests.test_sparse_queue_encoding \
 		tests.test_sparse_interval_encoding tests.test_sparse_interval_predicate \
-		tests.test_sparse_interval_queries tests.test_sparse_joint_encoding
+		tests.test_sparse_interval_queries tests.test_sparse_joint_encoding \
+		tests.test_sparse_native_sorts
 ```
 
 These fixtures cover emitted component constraints, not full trace correctness.
+The native-sort cases cover all five constant sorts and all 25 unary signatures.
+Scalar scripts retain QF_UFLIA text. Native scripts use ALL and fixed datatype
+schemas, with dependency, declaration, and signature checks before evaluation.
 
 The planner's runtime cases use the same opt-in flag:
 
