@@ -105,6 +105,19 @@ It reports formula, declaration, and text construction times without running a
 solver. `tests.test_sparse_symbol_bounds` compares the optimized allocation
 with the original algorithm under the same opt-in flag.
 
+The explicit scaling suite runs SAT and UNSAT controls with exactly 400 events:
+
+```bash
+CCF_SPARSE_QUEUE_SCALING=1 CVC5=/path/to/cvc5 \
+	python3 -m unittest tests.test_sparse_queue_scaling
+```
+
+`CCF_SPARSE_QUEUE_EVENTS` overrides the event count, with a minimum of three.
+The suite reports one emission time plus the median of three cvc5 process
+times. Cases cover repeated sends, send/pop cycles, and unknown initial length
+constrained by million-element observations. These are queue-only measurements,
+not full-Raft timings or a runtime pass threshold.
+
 This is a proof library, not a complete sparse trace validator. Full Model
 composition, full-trace SMT correspondence, and end-to-end performance remain
 unfinished. The design and remaining work are in [HANDOFF.md](HANDOFF.md).

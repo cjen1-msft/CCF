@@ -214,6 +214,14 @@ construction separately. The session's `queue-initial-scale-baseline.jsonl`,
 record the before/after evidence. These are emission-only measurements.
 Syntactic-key deduplication is the next optimization of this proved queue unit.
 
+`tests/test_sparse_queue_scaling.py` is separately enabled by
+`CCF_SPARSE_QUEUE_SCALING=1`, with `CCF_SPARSE_QUEUE_EVENTS` defaulting to 400.
+It uses `QueueEncodingScaleMain.lean --fixtures N` to emit six exact-N-event
+SAT/UNSAT cases, including an unknown initial length fixed by million-element
+observations. Reports combine measured emission with three-run median cvc5
+process time. Lean startup and JSON transfer are outside the emission timer.
+Correct verdicts are required; the runtime target is evaluated separately.
+
 Generated scalar scripts now have text correspondence. Complete trace encoding
 and solver implementation correctness remain separate obligations.
 The real cvc5 fixtures in
