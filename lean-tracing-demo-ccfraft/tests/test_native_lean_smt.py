@@ -110,6 +110,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeRetirementIndexSound",
             "Sparse.NativeLogRangeEncoding",
             "Sparse.NativeRetirementRefreshTerms",
+            "Sparse.NativeAppendResponseTerm",
         ):
             visit(module)
         forbidden = {
@@ -157,6 +158,9 @@ class NativeLeanSmtTests(unittest.TestCase):
 
     def test_log_range_encoding(self):
         self.assert_script_fixtures("NativeLogRangeFixtureMain", 4800, 2400)
+
+    def test_append_response_encoding(self):
+        self.assert_script_fixtures("NativeAppendResponseFixtureMain", 756, 108)
 
     def test_retirement_index_encoding(self):
         self.assert_script_fixtures("NativeRetirementIndexFixtureMain", 1788, 72)

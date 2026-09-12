@@ -58,8 +58,12 @@ The independent proof check passes in `native-log-range-parent-check.log`.
 Its 4,800 actual-Model SMT cases pass in `native-log-range-tests.log`.
 They include mixed canonical and noncanonical cells, empty payloads,
 same-term content differences, ignored tails, and nested binders.
-That worker now owns only new `NativeAppendResponseTerm.lean`, the symbolic
-append-response packet constructor. It has no current-column dependency.
+`NativeAppendResponseTerm` now proves the symbolic append-response packet
+constructor with explicit response endpoints. Its 756 SMT cases pass in
+`native-append-response-tests.log`, including wrong tags, both directions,
+self responses, large scalars, and mixed Boolean and integer binders.
+The independent proof check passes in `native-append-response-parent-check.log`.
+That worker is idle.
 The main agent owns `NativeArrayVoteReceive` and subsequent receive semantics.
 Its handler and full-frame correspondence proofs build in
 `native-vote-receive-model-build.log`. Public `receiveRequestVote` is now wired.
@@ -242,11 +246,9 @@ It compares every emitted clause before and after relocating all columns,
 including mixed action histories. The initial failure is the four missing
 column fields, recorded in `native-relocated-columns-first-compile.log`.
 This test remains pending until the migration finishes.
-The range and retirement-scalar encoders and fixtures have been checked
-against compiled dependencies. Rebuild their Lake targets after the column
-migration. The response-packet worker also checks against compiled dependencies
-only, without competing dependency builds. Its new file is outside the
-migration scope.
+The range, retirement-scalar, and response-packet encoders and fixtures have
+been checked against compiled dependencies. Rebuild their Lake targets after
+the column migration. Both explicit-term workers are idle.
 
 `NativeArrayVoteState` now holds frame state and the existing action semantics.
 `NativeArrayVote` retains instruction traces and their correspondence proofs.
