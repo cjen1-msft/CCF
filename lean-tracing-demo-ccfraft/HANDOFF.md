@@ -282,8 +282,29 @@ Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` now owns only new
 `NativeNodeRowWritesEncoding.lean`. It is proving snapshot representation,
 allocation without a prior-presence premise, full-frame preservation,
 reference bounds, execution shape, and specific-assignment extension.
-The parent retains the runtime and forthcoming row-write fixtures.
+The parent retains the runtime and `NativeNodeRowWritesFixtureMain`.
+Its 1,584 Model-derived scripts and 60 invalid-symbol cases pass in
+`native-node-row-fixture-tests.log`. They cover direct replacement, absent-node
+allocation, snapshots over poisoned hidden rows, repeated writes, every local
+field, and preservation of other rows, globals, and duplicate queues.
+Snapshot cases also copy noncanonical cells at negative and huge tail indices.
 No public action or row-write proof is complete in this new slice yet.
+
+The next shared scan uses `LogMatchSummary.StorageSummary` for the greatest
+matching one-based index, with zero for no match. It supports bounded signatures,
+committed configurations, and NACK term matching without temporary node columns.
+`NativeMaxMatchEncoding.lean` proves the generic constraint and canonical witness
+extraction. `NativeArrayLogSummaries.lean` relates that summary to existing native
+signature and current-configuration predicates and their Model functions.
+Both modules are parent-owned and independently built in
+`native-log-summary-parent-build.log` and `native-array-log-summaries-parent-build.log`.
+The parent also owns `NativeLogSummaryTerms.lean` and `NativeLogSummaryFixtureMain.lean`.
+Their 4,160 scripts pass in `native-log-summary-fixture-tests.log`, including
+noncanonical cells, mixed nested binders, wrong witnesses, and wrong configuration
+members. The Python method is `test_explicit_log_summaries`.
+Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns only new
+`NativeLogSummaryEncoding.lean`, composing the concrete terms with these proofs.
+It uses GPT-5.6 Sol at medium effort. The concrete term proofs are not complete.
 
 `NativeArrayVoteState` now holds frame state and the existing action semantics.
 `NativeArrayVote` retains instruction traces and their correspondence proofs.
