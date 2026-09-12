@@ -70,6 +70,43 @@ def packet_observation(packet, *, source=None, destination=None, index=0):
     }
 
 
+class NativeImportBoundaryTests(unittest.TestCase):
+    def test_core_proofs_do_not_import_public_trace_compiler(self):
+        seen = set()
+
+        def visit(module):
+            if module in seen:
+                return
+            seen.add(module)
+            path = ROOT.joinpath(*module.split(".")).with_suffix(".lean")
+            if not path.exists():
+                self.assertFalse(
+                    module.startswith(("Sparse.", "MachineGenerated.")),
+                    f"Missing project module {module}",
+                )
+                return
+            for line in path.read_text().splitlines():
+                if line.startswith("import "):
+                    for dependency in line.partition("--")[0].split()[1:]:
+                        visit(dependency)
+
+        for module in (
+            "Sparse.NativeFrameColumns",
+            "Sparse.NativeCampaignWrites",
+            "Sparse.NativeVoteReceiveWritesEncoding",
+            "Sparse.NativeAppendGuardEncoding",
+        ):
+            visit(module)
+        forbidden = {
+            "Sparse.NativeArrayVote",
+            "Sparse.NativeFrameEncode",
+            "Sparse.NativeFrameStep",
+            "Sparse.NativeFrameTrace",
+            "Sparse.NativeFrameDecoded",
+        }
+        self.assertFalse(seen & forbidden, sorted(seen & forbidden))
+
+
 @unittest.skipUnless(
     os.environ.get("CCF_NATIVE_ARRAY_TESTS") == "1",
     "set CCF_NATIVE_ARRAY_TESTS=1 to run Lean/Z3 fixtures",

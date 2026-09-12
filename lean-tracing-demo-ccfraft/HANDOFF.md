@@ -91,6 +91,18 @@ proofs build in `native-vote-receive-trace-model-build.log`,
 `native-vote-receive-writes-integration-build.log`, and
 `native-campaign-reuse-public-build.log`. Shell `101` has completed.
 
+The import-boundary cleanup is complete. `NativeFrameInitial` contains
+the unchanged initial frame assertions. Core column/action proofs no longer
+import `NativeFrameEncode` or the instruction trace module. This avoids an
+import cycle during public action integration and repeated rebuilds of the
+725-second campaign write proof after decoder changes.
+`NativeImportBoundaryTests` enforces the transitive dependency boundary.
+The core targets pass in `native-core-import-boundary-build.log`.
+Affected public proofs and fixture modules pass in
+`native-core-import-public-build.log`. Guard regressions and the dependency
+boundary pass in `native-core-import-tests.log`. Shell `123` has completed.
+No solver or representation change is involved.
+
 `native-vote-receive-tests.log` records 1,728 passing response/guard cases.
 `native-append-packet-tests.log` records 2,538 passing packet/normalization cases.
 Both compare with actual Model results. Each new proof module builds with the

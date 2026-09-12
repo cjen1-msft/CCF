@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeFrameColumns
+import Sparse.NativeFrameEncode
 import Sparse.NativeVoteSendEncoding
 import Sparse.NativeTermUpdateEncoding
 import Sparse.NativeCampaignEncoding

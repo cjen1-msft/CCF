@@ -2,7 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeArrayLogWrite
-import Sparse.NativeArrayVote
+import Sparse.NativeArrayVoteState
 import Sparse.LogMatchSummary
 
 set_option autoImplicit false

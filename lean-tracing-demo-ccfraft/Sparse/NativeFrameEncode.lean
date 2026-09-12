@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeEncode
+import Sparse.NativeFrameInitial
 import Sparse.NativeArrayVote
 import Sparse.NativeNatSet
 import Sparse.NativeQueueColumns
@@ -102,12 +103,6 @@ def frameInstruction {width : PNat} (item : FrameInstruction width) : EncodeM wi
   | _ => do
     let state <- get
     assertAll (<- frameObservationClauses state.toColumns item)
-
-def initialFrameAssertions (width : PNat) : List (Expr .bool) :=
-  initialAssertions width ++ [natSetDomain 20]
-
-def initialFrameDomains (width : PNat) : EncodeM width Unit :=
-  assertAll (initialFrameAssertions width)
 
 def compileFrameDecoded (input : FrameDecoded) : Except String Compiled := do
   let (_, start) <- (initialFrameDomains input.width).run (initialEncoding input.width input.bootstrap)

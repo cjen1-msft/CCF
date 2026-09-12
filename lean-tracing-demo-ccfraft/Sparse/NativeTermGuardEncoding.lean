@@ -49,8 +49,8 @@ theorem term_update_guards_model_correct {width : PNat} [Bootstrap (Fin width)]
     Holds (termUpdateGuards columns source destination) assignment <->
       Enabled state (.updateTerm source destination) := by
   rw [term_update_guards_correct assignment columns frame rep source destination]
-  simpa [NativeArrayVote.follows, NativeArrayVote.modelFollows] using
-    NativeArrayVote.follows_correct [.updateTerm source destination] frame state model
+  simp only [Enabled, NativeArrayCheckQuorum.allocated_rep frame.nodes state model.nodes,
+    NativeArrayVote.newer_correct frame state model]
 
 end CCFRaft.NativeEncode
 

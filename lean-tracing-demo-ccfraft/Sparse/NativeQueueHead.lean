@@ -2,7 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeQueueColumns
-import Sparse.NativeArrayVote
+import Sparse.NativeArrayVoteState
 
 set_option autoImplicit false
 

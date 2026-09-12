@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeTermGuardEncoding
+import Sparse.NativeFrameEncode
 
 set_option autoImplicit false
 set_option warningAsError true

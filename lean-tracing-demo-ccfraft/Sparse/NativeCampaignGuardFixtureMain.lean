@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeCampaignGuardEncoding
+import Sparse.NativeFrameEncode
 import Sparse.NativeArrayFixtureJson
 
 set_option autoImplicit false
