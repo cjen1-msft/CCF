@@ -112,6 +112,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeLogRangeEncoding",
             "Sparse.NativeRetirementRefreshTerms",
             "Sparse.NativeAppendResponseTerm",
+            "Sparse.NativeRetirementCompletedTerm",
         ):
             visit(module)
         forbidden = {
@@ -183,6 +184,19 @@ class NativeLeanSmtTests(unittest.TestCase):
                 fixture["activeWithCommittedRetired"] and fixture["expected"] == "sat"
                 for fixture in fixtures
             )
+        )
+
+    def test_retirement_completed_prefix_encoding(self):
+        fixtures = self.assert_script_fixtures(
+            "NativeRetirementCompletedFixtureMain", 720, 360
+        )
+        self.assertEqual(
+            {
+                fixture["modelCompleted"]
+                for fixture in fixtures
+                if fixture["expected"] == "sat"
+            },
+            {False, True},
         )
 
     def assert_script_fixtures(self, module, count, satisfiable):

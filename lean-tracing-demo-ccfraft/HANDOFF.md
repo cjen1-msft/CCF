@@ -233,7 +233,8 @@ Those cases and existing public observation, append, campaign, receive,
 and explorer regressions now pass in `native-observation-normalize-tests.log`.
 
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` completed the four-column
-reference migration in 31 native core and proof files. They are parent-owned.
+reference migration in 31 native core and proof files. It is committed as
+`a86ee60b1`, including repaired fixtures and the relocation regression.
 The new fields are `allocated`, `logLength`, `commit`, and `logEntries`.
 Preserve initial IDs 0, 3, 4, and 6 and the next-symbol counter 24.
 Runtime readers must take current `Columns` explicitly, with no initial-column
@@ -261,15 +262,28 @@ call-site changes; the proof repairs remain in the source diff.
 The range, retirement-scalar, and response-packet encoders and fixtures have
 been rebuilt against the new column interfaces.
 
-Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns new
-`NativeArrayRetirementCompleted.lean` and `NativeRetirementCompletedTerm.lean`.
-It is proving the global completed-retirement predicate using committed-prefix
-first-inclusion, retirement, and retired-record witnesses. Keep all four Model
-conditions, especially the absence of committed retired records and presence
-of a retirement in the committed prefix.
-The parent owns `NativeRetirementCompletedFixtureMain` and its Python test.
-Its 720 Model-derived scripts pass in `native-retirement-completed-prefix-tests.log`.
-That new runtime module is not yet proved or committed.
+`NativeArrayRetirementCompleted` and `NativeRetirementCompletedTerm` now prove
+the global completed-retirement predicate using committed-prefix first-inclusion,
+retirement, and retired-record witnesses. All four Model conditions remain,
+including the absence of committed retired records and presence of a retirement
+in the committed prefix. The independent build passes in
+`native-retirement-completed-parent-build.log`. Its 720 Model-derived scripts
+pass after proof integration in `native-retirement-completed-final-tests.log`.
+These modules and their fixture are parent-owned.
+
+The parent built new `NativeNodeRowWrites.lean` in
+`native-node-row-writes-build.log`. It snapshots 15 local row terms, writes
+16 fresh columns including allocation, then publishes their references together.
+Whole-row writes favor one reusable proof for receive and allocation over
+minimum store count. Optimize only if that cost becomes measurable.
+The precheck requires every definition input symbol to precede the original
+counter, so an initially invalid payload cannot capture a newly created symbol.
+Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` now owns only new
+`NativeNodeRowWritesEncoding.lean`. It is proving snapshot representation,
+allocation without a prior-presence premise, full-frame preservation,
+reference bounds, execution shape, and specific-assignment extension.
+The parent retains the runtime and forthcoming row-write fixtures.
+No public action or row-write proof is complete in this new slice yet.
 
 `NativeArrayVoteState` now holds frame state and the existing action semantics.
 `NativeArrayVote` retains instruction traces and their correspondence proofs.
