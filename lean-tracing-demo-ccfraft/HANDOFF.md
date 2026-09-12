@@ -439,26 +439,27 @@ The parent inspected and rebuilt it in `native-candidate-shared-parent-build.log
 All 1,454 internal transitions and the import audit pass in
 `native-candidate-integration-tests.log`. The 110 focused scripts remain
 byte-identical after helper extraction.
+`NativeAppendReceiveHandlerEncoding.lean` is committed as `d5fc50617`.
+It composes the typed candidate and guarded NACK scan into the exact Model
+local handler and response. The parent build and import audit pass in
+`native-append-handler-parent-build.log` and `native-append-handler-import-tests.log`.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns only new
-`NativeAppendReceiveHandlerEncoding.lean`. It composes the typed candidate
-and guarded NACK scan into the exact Model local handler and response.
+`NativeAppendReceiveLocalEncoding.lean`. It composes the candidate, final row,
+and response from the actual guarded constraints, without execution bookkeeping.
 
-Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only new
 `NativeRetirementCompletedConstraints.lean` and
-`NativeRetirementCompletedConstraintsEncoding.lean`. It extracts the completed
-bitvector's fresh-symbol loop and proves execution, enabled constraints, and
-specific-assignment extension. Successful extraction must retain the original
-IDs and assertion order, with `1 + 3 * width` fresh symbols.
-Its execution shape, soundness, recursive witness assignment, fresh-ID lookups,
-and disabled extension independently build in `native-completed-loop-parent-build.log`.
-Enabled specific-assignment extension remains blocked. The parent instructed A
-to transport only the five bounded input expressions, then rebuild scan facts
-through their semantic iff lemmas instead of expanding generated `Term.eval`.
+`NativeRetirementCompletedConstraintsEncoding.lean` are committed as `7fb76723b`.
+The extracted loop preserves IDs and assertion order, with `1 + 3 * width`
+fresh symbols. Both enabled and disabled specific-assignment extension are proved.
+The enabled proof transports five bounded input expressions, then rebuilds
+scan facts through semantic iff lemmas instead of expanding generated `Term.eval`.
+The independent build passes in `native-completed-loop-complete-parent-build.log`.
 `NativeRetirementCompletedConstraintsFixtureMain` passes 240 scripts and 20
 future-reference rejections in `native-completed-loop-fixture-tests.log`.
 It checks exact allocation/assertion counts, all five original-counter checks,
 ignored tails, disabled constraints, and deliberately invalid active witnesses.
-The loop and fixture remain uncommitted pending enabled completeness.
+The fixture, all 1,454 private receive transitions, and the import audit pass
+in `native-completed-loop-integration-tests.log`. The loop files are parent-owned.
 
 `NativeRetirementCompletedEncoding.lean` now composes the actual current,
 prefix-retirement, and retired-record constraints into one Model completed-node
@@ -470,12 +471,18 @@ The existing 720-case fixture now also constrains
 the current configuration through the real emitted scan and member decoder.
 It and the import-boundary audit pass in
 `native-retirement-completed-full-parent-tests.log`. The proof and fixture
-are parent-owned. Worker A has the canonical witness API for loop composition.
+are parent-owned.
 
-Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns only new
-`NativeAppendReceiveFrameEncoding.lean`. It connects the existing write-effect
+`NativeAppendReceiveFrameEncoding.lean` is committed as `09a96838a`.
+It connects the existing write-effect
 proof to the Model receive step using the conditional stepdown/handler/refresh
 facts, with both soundness and specific-assignment extension.
+The parent build and import audit pass in `native-append-frame-parent-build.log`
+and `native-append-frame-import-tests.log`.
+Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns only new
+`NativeAppendReceiveExecution.lean`. It proves actual receive execution shape,
+constraint retrieval, and reference preservation. Keep `NativeAppendReceive.lean`
+unchanged until this worker completes.
 `NativeAppendReceiveFinalRowTerms.lean` and
 `NativeAppendReceiveFinalRowEncoding.lean` are committed as `158d506bb`.
 They prove candidate stepdown and conditional local retirement refresh,
@@ -483,6 +490,16 @@ preserving candidate log and commit. Inactive scan values remain arbitrary.
 The parent inspected the full proof and rebuilt it in
 `native-append-final-row-parent-build.log`. The private encoder now uses the
 helper; the 110 focused scripts remain byte-identical and the import audit passes.
+
+The private `NativeAllocation.lean` runtime now builds. It writes the existing
+row snapshot, then sets allocation to the original allocation bit OR the
+requested condition. Snapshot defaults reset hidden fields of newly allocated
+nodes. Existing rows survive, and disabled missing nodes remain missing.
+It uses 17 definitions per peer. No solver optimization is claimed.
+Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only new
+`NativeAllocationEncoding.lean`, proving single-node and set allocation against
+`NativeArrayAllocation.allocate`. The parent owns its runtime and fixtures.
+Allocation remains uncommitted and is not wired into membership change.
 
 `NativeArrayVoteState` now holds frame state and the existing action semantics.
 `NativeArrayVote` retains instruction traces and their correspondence proofs.
