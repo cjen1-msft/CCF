@@ -75,7 +75,7 @@ def frameInstruction {width : PNat} (item : FrameInstruction width) : EncodeM wi
     assertAll (<- frameObservationClauses state.toColumns item)
 
 def initialFrameAssertions (width : PNat) : List (Expr .bool) :=
-  initialAssertions width ++ [natSetDomain 19 20, queueLengthsDomain width 21]
+  initialAssertions width ++ [natSetDomain 19 20]
 
 def initialFrameDomains (width : PNat) : EncodeM width Unit :=
   assertAll (initialFrameAssertions width)

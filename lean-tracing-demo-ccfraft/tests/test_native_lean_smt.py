@@ -46,7 +46,7 @@ class NativeLeanSmtTests(unittest.TestCase):
             check=True,
         )
         fixtures = json.loads(result.stdout)
-        self.assertGreaterEqual(len(fixtures), 66)
+        self.assertGreaterEqual(len(fixtures), 73)
         self.assertEqual(len(fixtures), len({item["name"] for item in fixtures}))
         self.solve(fixtures)
 
@@ -67,6 +67,18 @@ class NativeLeanSmtTests(unittest.TestCase):
                         artifacts,
                         name,
                         extra_arguments=("--arrays-exp", "--mbqi"),
+                    )
+                    (artifacts / f"{name}.metrics.json").write_text(
+                        json.dumps(
+                            {
+                                "status": result.status,
+                                "wall_time_ms": result.wall_time_ms,
+                                "script_bytes": path.stat().st_size,
+                            },
+                            indent=2,
+                        )
+                        + "\n",
+                        encoding="ascii",
                     )
                     self.assertEqual(result.status, fixture["expected"])
 

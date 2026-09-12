@@ -154,9 +154,16 @@ exactly, including append-entry logs. `NativePacketDomain` proves the emitted
 payload and full-packet domains and the source selector. Live packet columns
 and packet JSON observations are not wired yet.
 `NativeQueueLengths` encodes a destination-first, source-second length array.
-Its domain requires nonnegative lengths for declared identity pairs.
+Each read computes `Int.toNat` from its raw integer cell, emitted as an `ite`.
+This removes the need for a universal length domain. Negative raw cells encode
+zero, but negative JSON length observations still fail input validation.
 The initial-state proof realizes arbitrary lengths with source-correct packets,
-without asserting those witness packets in SMT.
+without asserting those witness packets in SMT. Every Model frame has a
+completeness assignment that stores its natural lengths unchanged.
+The original finite-domain encoding took 50.6 seconds on a 21-node observation.
+The proved decoded-length encoder takes 9.7 seconds on the same case.
+Set `CCF_NATIVE_ARRAY_ARTIFACTS` when running `test_native_lean_smt.py` to retain
+scripts, solver output, and per-formula `.metrics.json` files.
 
 `NativeQuorumEncoding.current_configuration_model_correct` connects the exact
 `currentCandidate` and `noLaterConfiguration` clauses used by the compiler to

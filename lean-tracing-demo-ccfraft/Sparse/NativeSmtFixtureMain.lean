@@ -398,24 +398,29 @@ private def packetCases : List Case := [
     (by intro assignment; simp [NativeEncode.PacketPayloadValid, Term.eval]),
   appendPacketDomain, packetKindsDistinct, packetSource]
 
-private def queueNegativeLength (name : String) (width : PNat)
-    (destination source : Fin width) : Case :=
+private def queueNegativeLength (name : String) (destination source : Int) : Case :=
   { name
-    formula := .and (NativeEncode.queueLengthsDomain width 0)
-      (NativeEncode.lt
-        (NativeEncode.queueLengthTerm 0 (.integer destination.val) (.integer source.val))
-        (.integer 0))
+    formula := NativeEncode.lt
+      (NativeEncode.queueLengthTerm 0 (.integer destination) (.integer source))
+      (.integer 0)
     expected := false
     correct := by
       intro assignment
-      apply Bool.eq_false_iff.mpr
-      intro held
-      simp only [Term.eval, Bool.and_eq_true] at held
-      obtain ⟨domain, negative⟩ := held
-      have nonnegative :=
-        ((NativeEncode.queue_lengths_domain_correct width 0 assignment).mp domain) destination source
-      simp [NativeEncode.lt, NativeEncode.queueLengthTerm, Term.eval] at negative
-      exact (not_lt_of_ge nonnegative) negative }
+      simp [NativeEncode.lt, Term.eval, NativeEncode.queue_length_correct] }
+
+private def queueLengthLiteral (name : String) (value : Int) : Case :=
+  { name
+    formula := NativeEncode.implies
+      (.equal (.select (.select (.free (.array .int (.array .int .int)) 0) (.integer 0)) (.integer 0))
+        (.integer value))
+      (.equal (NativeEncode.queueLengthTerm 0 (.integer 0) (.integer 0)) (.integer value.toNat))
+    expected := true
+    correct := by
+      intro assignment
+      rw [NativeEncode.implies_eval]
+      intro cell
+      simp only [Term.eval, decide_eq_true_eq] at cell
+      simp [Term.eval, NativeEncode.queue_length_correct, cell] }
 
 def cases : List Case := [
   stored, wrongStore, nestedArray, constantArray, pair, sum, capture, nestedQuantifiers,
@@ -448,10 +453,17 @@ def cases : List Case := [
   packetHeader "packet-header-source-past-end" 21 0 21 0,
   packetHeader "packet-header-negative-destination" 21 0 0 (-1),
   packetHeader "packet-header-destination-past-end" 21 0 0 21,
-  queueNegativeLength "queue-negative-single-node" 1 0 0,
-  queueNegativeLength "queue-negative-last-source" 21 0 20,
-  queueNegativeLength "queue-negative-last-destination" 21 20 0,
-  queueNegativeLength "queue-negative-last-self" 21 20 20] ++ packetCases
+  queueNegativeLength "queue-negative-single-node" 0 0,
+  queueNegativeLength "queue-negative-last-source" 0 20,
+  queueNegativeLength "queue-negative-last-destination" 20 0,
+  queueNegativeLength "queue-negative-last-self" 20 20,
+  queueNegativeLength "queue-normalized-negative-source" 0 (-1),
+  queueNegativeLength "queue-normalized-negative-destination" (-1) 0,
+  queueLengthLiteral "queue-decode-negative" (-1),
+  queueLengthLiteral "queue-decode-large-negative" (-(10 ^ 30)),
+  queueLengthLiteral "queue-decode-zero" 0,
+  queueLengthLiteral "queue-decode-positive" 1,
+  queueLengthLiteral "queue-decode-large-positive" (10 ^ 30)] ++ packetCases
 
 end CCFRaft.NativeSmt
 

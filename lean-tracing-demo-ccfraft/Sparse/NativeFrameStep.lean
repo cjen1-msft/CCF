@@ -59,7 +59,7 @@ theorem frame_observation_correct {width : PNat} [Bootstrap (Fin width)]
     · exact rep.submittedTxIds txId
   case queueLength source destination expected =>
     cases Except.ok.inj emitted
-    simp [Holds, queueLengthTerm, Term.eval, rep.queueLength, NativeArrayVote.follows]
+    simp [Holds, Term.eval, queue_length_correct, rep.queueLength, NativeArrayVote.follows]
   all_goals cases emitted
 
 theorem frame_observation_cons {width : PNat} [Bootstrap (Fin width)]

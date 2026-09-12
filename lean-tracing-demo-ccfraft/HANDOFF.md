@@ -348,15 +348,18 @@ or destinations need not be allocated or differ from each other.
 All 62 kernel-backed formulas pass in `native-packet-fixture-tests.log`,
 including valid alternatives, invalid scalar fields, append-log domain
 composition, and tag/source behavior.
-`NativeQueueLengths` now supplies the source-local length domain, with full
+`NativeQueueLengths` now supplies source-local length decoding, with full
 public JSON-to-script correspondence. Column 21 is a destination-first,
 source-second integer matrix. Fresh allocation starts at 22.
-The domain constrains only declared identity pairs to nonnegative lengths.
+Each raw integer cell decodes with `Int.toNat`; the emitted `ite` implements
+that function. `FrameColumnsRep.queueLength` relates decoded values to the
+native queues. No universal queue-length domain remains.
 `initialFrame` constructs source-correct queue witnesses directly, replacing
 the empty-network template. Neither endpoint must be allocated.
 `initial_frame_assignment_rep` preserves arbitrary original frames in the
 completeness direction. Quorum steps preserve queue lengths.
-The normal Sparse proof build and all 66 kernel-backed formula fixtures pass.
+The normal Sparse proof build passes. There are now 73 kernel-backed formula
+fixtures, including positive and negative raw-cell decoding.
 The public queue regression includes one, two, and 21 identities, large lengths,
 strict input errors, independent pairs, and quorum framing.
 Its first run exposed an incorrect test expectation: `checkQuorum` requires a
@@ -369,7 +372,21 @@ The baseline is correct but slow: a 21-node, zero-length observation takes
 50.6 seconds to solve. The session's `native_queue_domain_probe.py` compares
 the same finite constraints as nested quantifiers, row-wise quantifiers,
 and ground assertions. Those variants took 50.6, 13.9, and 9.7 seconds.
-Keep the baseline proof intact while measuring a smaller exact representation.
+A total nonnegative-cell domain also took about 9.5 seconds, but returned
+`unknown` for independent-pair cases. That representation was rejected.
+Natural-number decoding took 9.4 seconds and solved those cases.
+`queue_length_correct` proves the emitted read equals the cell's `Int.toNat`.
+The complete initial-state, instruction, trace, and JSON-to-script proofs build
+without a queue-domain premise. Completeness still represents the original
+arbitrary frame, not a replacement with different queues.
+Six targeted methods pass in `native-queue-decoded-tests.log`, including all
+47 queue cases, strict queue input, all 73 formulas, submitted sets, all 150
+Model quorum cases, and actual wrapper/explorer outcomes. Total time was
+209.814 seconds. The actual encoder's 21-node zero-length case takes 9.7 seconds,
+down from the baseline's 50.6 seconds.
+Readback must expose the decoded natural count, not the raw integer cell.
+The test helper now retains status, wall time, and script size in per-formula
+`.metrics.json` files when `CCF_NATIVE_ARRAY_ARTIFACTS` is set.
 Next add live packet cells and observations. Packet observations remain unsupported.
 
 `NativeOptional` is the next value-codec unit for local-state coverage.
@@ -377,7 +394,7 @@ It uses the existing sum datatype for optional natural indices and identities.
 Decoding distinguishes a valid absent value, `some none`, from invalid payloads,
 `none`. It rejects negative indices and identities outside the declared width.
 The proofs cover round trips, exact literal equality, and actual domain terms.
-`NativeSmtFixtureMain` now has 66 kernel-backed solver cases, including nine
+`NativeSmtFixtureMain` now has 73 kernel-backed solver cases, including nine
 optional-value cases. The codecs are now wired for all three retirement-index
 fields and `votedFor`.
 

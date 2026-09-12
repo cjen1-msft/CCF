@@ -24,8 +24,8 @@ structure FrameColumnsRep {width : PNat} (assignment : Assignment) (columns : Co
     assignment (.array .int (.bits 1)) columns.submittedTxIds txId = 1 <->
       txId ∈ frame.globals.submittedTxIds
   queueLength : forall destination source : Fin width,
-    assignment (.array .int (.array .int .int)) columns.queueLength destination.val source.val =
-      ((frame.queues destination source).length : Int)
+    (assignment (.array .int (.array .int .int)) columns.queueLength destination.val source.val).toNat =
+      (frame.queues destination source).length
 
 noncomputable def initialFrame (width : PNat) (assignment : Assignment)
     (domains : forall node : Fin width, NodeDomain width assignment node.val)
@@ -44,8 +44,7 @@ noncomputable def initialFrame (width : PNat) (assignment : Assignment)
 
 theorem initial_frame_rep (width : PNat) (assignment : Assignment)
     (domains : forall node : Fin width, NodeDomain width assignment node.val)
-    (submitted : NatSetDomain assignment 19 20)
-    (queues : QueueLengthDomain width assignment 21) :
+    (submitted : NatSetDomain assignment 19 20) :
     FrameColumnsRep assignment {} (initialFrame width assignment domains submitted) := by
   refine ⟨initial_arrays_rep width assignment domains, ?_, ?_, ?_, ?_, ?_⟩
   · simp [initialFrame]
@@ -56,7 +55,7 @@ theorem initial_frame_rep (width : PNat) (assignment : Assignment)
   · intro txId
     exact (nat_set_member_correct assignment 19 20 submitted txId).symm
   · intro destination source
-    simp [initialFrame, Int.toNat_of_nonneg (queues destination source)]
+    rfl
 
 theorem initial_frame_valid (width : PNat) (assignment : Assignment)
     (domains : forall node : Fin width, NodeDomain width assignment node.val)
@@ -108,27 +107,18 @@ theorem initial_frame_assignment_submitted_domain (width : PNat) (seed : Assignm
   simpa [NatSetDomain, Assignment.set_other_index] using
     nat_set_assignment_domain seed 19 20 frame.globals.submittedTxIds
 
-theorem initial_frame_assignment_queue_domains (width : PNat) (seed : Assignment)
-    (frame : NativeArrayVote.Frame (Fin width) Nat) :
-    QueueLengthDomain width (initialFrameAssignment width seed frame) 21 := by
-  intro destination source
-  rw [(initial_frame_assignment_rep width seed frame).queueLength destination source]
-  exact Int.natCast_nonneg _
-
 theorem initial_frame_domains_success {width : PNat} (before after : Encoding width)
     (run : (initialFrameDomains width).run before = .ok ((), after)) (assignment : Assignment) :
     SameReferences before after /\
       (Holds after.assertions.toList assignment <-> Holds before.assertions.toList assignment /\
         (forall node : Fin width, NodeDomain width assignment node.val) /\
-        NatSetDomain assignment 19 20 /\ QueueLengthDomain width assignment 21) := by
+        NatSetDomain assignment 19 20) := by
   refine ⟨(assert_all_success (initialFrameAssertions width) before after run).1, ?_⟩
   rw [assert_all_holds (initialFrameAssertions width) before after run assignment]
   have domains : Holds (initialFrameAssertions width) assignment <->
-      Holds (initialAssertions width) assignment /\ NatSetDomain assignment 19 20 /\
-        QueueLengthDomain width assignment 21 := by
-    simp only [initialFrameAssertions, Holds, List.mem_append, List.mem_cons, List.not_mem_nil,
-      or_false, or_imp, forall_and, forall_eq]
-    rw [nat_set_domain_correct, queue_lengths_domain_correct]
+      Holds (initialAssertions width) assignment /\ NatSetDomain assignment 19 20 := by
+    simp [initialFrameAssertions, Holds, or_imp, forall_and]
+    exact fun _ => nat_set_domain_correct assignment 19 20
   rw [domains, initial_assertions_domains]
 
 theorem FrameColumnsRep.agrees_below {width : PNat} (state : Encoding width)

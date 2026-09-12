@@ -1,7 +1,7 @@
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-import Sparse.NativePeerEncoding
+import Sparse.NativeSmt
 
 set_option autoImplicit false
 
@@ -11,39 +11,19 @@ open NativeSmt
 
 def queueLengthTerm {context : List Ty} (column : Nat) (destination source : Term context .int) :
     Term context .int :=
-  .select (.select (.free (.array .int (.array .int .int)) column) destination) source
+  let cell := .select (.select (.free (.array .int (.array .int .int)) column) destination) source
+  .ite (.le (.integer 0) cell) cell (.integer 0)
 
-def queueLengthsDomain (width : PNat) (column : Nat) : Expr .bool :=
-  .forall_ .int (implies
-    (.and (.le (.integer 0) (.bound .here)) (lt (.bound .here) (.integer width.val)))
-    (.forall_ .int (implies
-      (.and (.le (.integer 0) (.bound .here)) (lt (.bound .here) (.integer width.val)))
-      (.le (.integer 0) (queueLengthTerm column (.bound (.there .here)) (.bound .here))))))
-
-def QueueLengthDomain (width : PNat) (assignment : Assignment) (column : Nat) : Prop :=
-  forall destination source : Fin width,
-    0 <= assignment (.array .int (.array .int .int)) column destination.val source.val
-
-theorem queue_lengths_domain_correct (width : PNat) (column : Nat) (assignment : Assignment) :
-    (queueLengthsDomain width column).eval assignment Locals.empty = true <->
-      QueueLengthDomain width assignment column := by
-  have integerDomain :
-      (queueLengthsDomain width column).eval assignment Locals.empty = true <->
-        forall destination : Int, 0 <= destination /\ destination < width.val ->
-          forall source : Int, 0 <= source /\ source < width.val ->
-            0 <= assignment (.array .int (.array .int .int)) column destination source := by
-    simp only [queueLengthsDomain, Term.eval, decide_eq_true_eq]
-    conv_lhs =>
-      intro destination
-      rw [implies_eval]
-      intro within
-      simp only [Term.eval, decide_eq_true_eq]
-      intro source
-      rw [implies_eval]
-    simp [lt, queueLengthTerm, Term.eval, Locals.cons]
-  rw [integerDomain, forall_identity_int]
-  simp_rw [forall_identity_int]
-  rfl
+theorem queue_length_correct {context : List Ty} (column : Nat)
+    (destination source : Term context .int) (assignment : Assignment) (locals : Locals context) :
+    (queueLengthTerm column destination source).eval assignment locals =
+      ((assignment (.array .int (.array .int .int)) column
+        (destination.eval assignment locals) (source.eval assignment locals)).toNat : Int) := by
+  by_cases nonnegative : 0 <= assignment (.array .int (.array .int .int)) column
+      (destination.eval assignment locals) (source.eval assignment locals)
+  · simp [queueLengthTerm, Term.eval, nonnegative, Int.toNat_of_nonneg nonnegative]
+  · simp [queueLengthTerm, Term.eval, nonnegative,
+      Int.toNat_of_nonpos (le_of_lt (lt_of_not_ge nonnegative))]
 
 end CCFRaft.NativeEncode
 
