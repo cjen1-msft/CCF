@@ -126,6 +126,70 @@ theorem membership_guards_correct {width : PNat}
     role_code_leader, membership_code_eq, Finset.nonempty_iff_ne_empty]
   simp only [and_assoc]
 
+theorem membership_guards_output_model_correct {width : PNat}
+    [Bootstrap (Fin width)] (assignment : Assignment) (columns : Columns)
+    (frame : NativeArrayVote.Frame (Fin width) Nat) (state : State (Fin width) Nat)
+    (columnsRep : FrameColumnsRep assignment columns frame)
+    (modelRep : frame.Rep state) (source : Fin width)
+    (configuration previousConfiguration : Finset (Fin width))
+    (previous : Expr (.bits width)) (refreshedMembership : Expr .int)
+    (output : NativeArrayCheckQuorum.Local (Fin width) Nat)
+    (samePrevious :
+      previous.eval assignment Locals.empty = encodeBits previousConfiguration)
+    (sameRefreshed :
+      refreshedMembership.eval assignment Locals.empty =
+        membershipCode output.membershipState)
+    (previousCorrect :
+      (latestConfiguration (state.nodes source)).nodes = previousConfiguration)
+    (rowCorrect :
+      output.toModel =
+        refreshRetirementState source
+          (NativeArrayChangeConfiguration.appendRow
+            (NativeArrayCheckQuorum.get frame.nodes source)
+            configuration previousConfiguration).toModel) :
+    Holds
+        (membershipGuards columns source configuration previous refreshedMembership)
+        assignment <->
+      CCFRaft.Enabled state (.changeConfiguration source configuration) := by
+  let row := NativeArrayCheckQuorum.get frame.nodes source
+  have fields : row.toModel = state.nodes source :=
+    NativeArrayCheckQuorum.get_rep frame.nodes state modelRep.nodes source
+  have appendedCorrect :=
+    NativeArrayChangeConfiguration.append_row_correct row configuration
+      previousConfiguration
+  have outputCorrect :
+      output.toModel =
+        refreshRetirementState source
+          { state.nodes source with
+            log := (state.nodes source).log ++
+              [{ term := (state.nodes source).currentTerm,
+                 content := .reconfiguration configuration }]
+            sentIndex := fun peer =>
+              if peer ∈ configuration \ previousConfiguration then
+                (state.nodes source).log.length
+              else
+                (state.nodes source).sentIndex peer } := by
+    rw [rowCorrect, appendedCorrect, fields]
+  have outputMembership := congrArg NodeState.membershipState outputCorrect
+  simp only [NativeArrayCheckQuorum.Local.toModel] at outputMembership
+  have sameAdded := membership_added_term_correct assignment
+    configuration previousConfiguration previous samePrevious
+  simp only [membershipGuards, Holds, leadingGuards, List.mem_append, List.mem_cons,
+    List.not_mem_nil, or_false, or_imp, forall_and, forall_eq]
+  simp only [leaderGuard, Term.eval, columnsRep.nodes.allocated, columnsRep.nodes.role,
+    columnsRep.nodes.membershipState, columnsRep.hasJoined, samePrevious, sameRefreshed,
+    sameAdded, Bool.not_eq_true', decide_eq_false_iff_not, decide_eq_true_eq]
+  rw [encode_bits_eq_zero_iff, encode_bits_eq, encode_bits_and_eq_zero_iff]
+  simp only [CCFRaft.Enabled, previousCorrect]
+  rw [<- NativeArrayCheckQuorum.allocated_rep frame.nodes state modelRep.nodes source,
+    <- fields, modelRep.globals]
+  simp only [NativeArrayVote.Globals.ofModel]
+  rw [outputMembership]
+  simp only [Finset.nonempty_iff_ne_empty, role_code_leader, membership_code_eq,
+    NativeArrayCheckQuorum.Local.toModel, and_assoc]
+  rw [<- fields]
+  simp [row, refreshRetirementState, NativeArrayCheckQuorum.Local.toModel]
+
 theorem membership_guards_model_correct {width : PNat} [Bootstrap (Fin width)]
     (assignment : Assignment) (columns : Columns)
     (frame : NativeArrayVote.Frame (Fin width) Nat) (state : State (Fin width) Nat)
