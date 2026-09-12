@@ -203,6 +203,11 @@ Indices can exceed the source log length.
 `instruction_has_encoding` proves that every typed local instruction is either
 `checkQuorum` or has an observation encoding. The solver suite includes a single
 trace that observes every local field before and after quorum.
+`NativeNatSet` prepares the submitted-transaction set for global-state encoding.
+Its Boolean array has an unknown finite limit, with false cells at negative
+indices and beyond the limit. The proofs establish exact membership and
+representation of every finite natural-number set. `submittedTxId` is not yet
+accepted by the JSON encoder.
 The remaining optional fields are not yet accepted by the Lean encoder.
 `Encoding` now inherits its mutable column references from `NodeColumns`.
 Compiler frame proofs preserve that whole record, and the quorum result

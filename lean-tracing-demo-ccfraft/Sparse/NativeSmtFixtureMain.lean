@@ -3,6 +3,7 @@
 
 import Sparse.NativeScript
 import Sparse.NativeOptional
+import Sparse.NativeNatSet
 import Lean.Data.Json
 
 set_option autoImplicit false
@@ -159,6 +160,60 @@ private def optionalIdentity (name : String) (width : PNat) (value : Option Int)
       cases value <;>
         simp [NativeEncode.optionalNodeDomain, NativeEncode.optionalTerm, Term.eval, Locals.cons] }
 
+private def natSetOutside (name : String) (index : Term [] .int) : Case :=
+  { name
+    formula := .and (NativeEncode.natSetDomain 0 1)
+      (.and (.or (NativeEncode.lt index (.integer 0)) (.le (.free .int 1) index))
+        (.select (.free (.array .int .bool) 0) index))
+    expected := false
+    correct := by
+      intro assignment
+      apply Bool.eq_false_iff.mpr
+      intro held
+      simp only [Term.eval, Bool.and_eq_true] at held
+      obtain ⟨domain, outside, present⟩ := held
+      have valid := (NativeEncode.nat_set_domain_correct assignment 0 1).mp domain
+      have outside' : index.eval assignment Locals.empty < 0 \/
+          assignment .int 1 <= index.eval assignment Locals.empty := by
+        simpa [NativeEncode.lt, Term.eval] using outside
+      rw [valid.2 _ outside'] at present
+      contradiction }
+
+private def natSetNegativeLimit : Case :=
+  { name := "nat-set-negative-limit"
+    formula := .and (NativeEncode.natSetDomain 0 1)
+      (NativeEncode.lt (.free .int 1) (.integer 0))
+    expected := false
+    correct := by
+      intro assignment
+      apply Bool.eq_false_iff.mpr
+      intro held
+      simp only [Term.eval, Bool.and_eq_true] at held
+      obtain ⟨domain, negative⟩ := held
+      have nonnegative := ((NativeEncode.nat_set_domain_correct assignment 0 1).mp domain).1
+      simp [NativeEncode.lt, Term.eval] at negative
+      exact (not_lt_of_ge nonnegative) negative }
+
+private def natSetEmpty : Case :=
+  { name := "nat-set-empty-prefix"
+    formula := NativeEncode.implies
+      (.and (NativeEncode.natSetDomain 0 1) (.equal (.free .int 1) (.integer 0)))
+      (.forall_ .int (.not (.select (.free (.array .int .bool) 0) (.bound .here))))
+    expected := true
+    correct := by
+      intro assignment
+      rw [NativeEncode.implies_eval]
+      intro held
+      simp only [Term.eval, Bool.and_eq_true, decide_eq_true_eq] at held
+      obtain ⟨domain, zero⟩ := held
+      have valid := (NativeEncode.nat_set_domain_correct assignment 0 1).mp domain
+      simp only [Term.eval, decide_eq_true_eq]
+      intro index
+      have outside : index < 0 \/ assignment .int 1 <= index := by
+        rw [zero]
+        exact lt_or_ge (index : Int) 0
+      simp [Locals.cons, valid.2 index outside] }
+
 def cases : List Case := [
   stored, wrongStore, nestedArray, constantArray, pair, sum, capture, nestedQuantifiers,
   wideBits, widerBits, bitsOperations, unitAndSecond, typedSymbols, overwrittenStore,
@@ -171,7 +226,12 @@ def cases : List Case := [
   optionalIdentity "optional-node-zero" ⟨21, by decide⟩ (some 0),
   optionalIdentity "optional-node-last" ⟨21, by decide⟩ (some 20),
   optionalIdentity "optional-node-past-end" ⟨21, by decide⟩ (some 21),
-  optionalIdentity "optional-node-negative" ⟨21, by decide⟩ (some (-1))]
+  optionalIdentity "optional-node-negative" ⟨21, by decide⟩ (some (-1)),
+  natSetOutside "nat-set-negative-cell" (.integer (-1)),
+  natSetOutside "nat-set-zero-cell" (.integer 0),
+  natSetOutside "nat-set-large-cell" (.integer (10 ^ 30)),
+  natSetOutside "nat-set-tail-cell" (.free .int 1),
+  natSetNegativeLimit, natSetEmpty]
 
 end CCFRaft.NativeSmt
 

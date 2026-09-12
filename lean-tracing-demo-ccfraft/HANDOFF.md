@@ -254,7 +254,7 @@ It uses the existing sum datatype for optional natural indices and identities.
 Decoding distinguishes a valid absent value, `some none`, from invalid payloads,
 `none`. It rejects negative indices and identities outside the declared width.
 The proofs cover round trips, exact literal equality, and actual domain terms.
-`NativeSmtFixtureMain` now has 25 kernel-backed solver cases, including nine
+`NativeSmtFixtureMain` now has 31 kernel-backed solver cases, including nine
 optional-value cases. The codecs are now wired for all three retirement-index
 fields and `votedFor`.
 
@@ -340,6 +340,17 @@ Next migrate global and queue state and the broader instruction type from
 `NativeArrayVote`, then the remaining actions, before raw Python reducer
 integration. Do not mark the full-model or raw-reducer assurance flags true.
 The current runtime action is still only `checkQuorum`.
+
+`NativeNatSet` is the first global-value unit. `natSetDomain` emits the actual
+finite-prefix Boolean-array constraint, including negative cells and the tail.
+`nat_set_domain_correct` characterizes that expression. `natSetArray` requires
+the domain proof before constructing a finite Model set, and the membership
+and observation theorems are exact. `natSetAssignment` realizes every finite
+natural-number set, preserving the seed's other symbols. Its chosen limit is a
+proof witness, not a runtime bound inferred from observed transaction IDs.
+Six new kernel-backed solver cases cover negative cells, the limit cell,
+large indices, negative limits, and an empty prefix. The normal Sparse audit
+includes this module. Global JSON observations remain unwired.
 
 Follow [Representation design priorities](README.md#representation-design-priorities):
 start with the simplest representation to prove correct, using native SMT
