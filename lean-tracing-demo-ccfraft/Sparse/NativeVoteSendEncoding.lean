@@ -23,7 +23,7 @@ theorem send_vote_prefix {width : PNat} (preVote : Bool) (source destination : F
     (run : (sendVote preVote source destination).run before = .ok ((), after)) :
     exists guarded : Encoding width, VoteSendPrefix before guarded preVote source destination /\
       (pushQueue destination source
-        (votePacketTerm preVote source destination (.free .int (before.next + 2)))).run guarded = .ok ((), after) := by
+        (votePacketTerm before.toColumns preVote source destination (.free .int (before.next + 2)))).run guarded = .ok ((), after) := by
   simp only [sendVote, get_bind_run] at run
   obtain ⟨base, first, firstRun, run⟩ := (bind_run _ _ _ _ _).mp run
   obtain ⟨unused, second, secondRun, run⟩ := (bind_run _ _ _ _ _).mp run

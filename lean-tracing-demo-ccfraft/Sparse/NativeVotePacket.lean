@@ -82,11 +82,11 @@ theorem last_committable_index_eval {context : List Ty} {width : PNat}
   · rw [max_eq_left (Nat.le_of_not_ge lower)]
     exact max_eq_left (Int.ofNat_le.mpr (Nat.le_of_not_ge lower))
 
-def votePacketTerm {context : List Ty} {width : PNat} (preVote : Bool)
+def votePacketTerm {context : List Ty} {width : PNat} (columns : Columns) (preVote : Bool)
     (source destination : Fin width) (signature : Term context .int) : Term context (packetTy width) :=
   let index := lastCommittableIndexTerm source.val signature
   let snapshot := .pair (logTermAt width source.val index) index
-  let header := .pair (read 5 source.val (.integer 0))
+  let header := .pair (read columns.currentTerm source.val (.integer 0))
     (.pair (.integer source.val) (.integer destination.val))
   .pair header
     (if preVote then .inr (.inr (.inr (.inr (.inl snapshot))))
@@ -98,14 +98,14 @@ theorem vote_packet_term_eval {context : List Ty} {width : PNat}
     (rep : NodeColumnsRep assignment columns arrays) (preVote : Bool) (source destination : Fin width)
     (position : Term context .int) (signature : Nat)
     (same : position.eval assignment locals = (signature : Int)) :
-    (votePacketTerm preVote source destination position).eval assignment locals =
+    (votePacketTerm columns preVote source destination position).eval assignment locals =
       packetValue (NativeArrayVote.packet (NativeArrayCheckQuorum.get arrays source)
         preVote source destination signature) := by
   have index := last_committable_index_eval assignment locals source.val _ _ signature
     (rep.configuration_log source) position same
   have term := log_term_at_correct assignment locals columns arrays rep source
     (lastCommittableIndexTerm source.val position) _ index
-  have current : (read 5 source.val (.integer 0) : Term context .int).eval assignment locals =
+  have current : (read columns.currentTerm source.val (.integer 0) : Term context .int).eval assignment locals =
       ((NativeArrayCheckQuorum.get arrays source).currentTerm : Int) := by
     simpa only [read, allocated, Term.eval] using rep.currentTerm source
   cases preVote <;>
@@ -119,7 +119,7 @@ theorem vote_packet_term_model_correct {width : PNat} [Bootstrap (Fin width)]
     (rep : NodeColumnsRep assignment columns arrays) (model : NativeArrayCheckQuorum.Rep arrays state)
     (preVote : Bool) (source destination : Fin width) (position : Expr .int)
     (latest : (signatureIndexTerm width source.val position).eval assignment Locals.empty = true) :
-    (votePacketTerm preVote source destination position).eval assignment Locals.empty =
+    (votePacketTerm columns preVote source destination position).eval assignment Locals.empty =
       packetValue (if preVote then .requestPreVote (makeRequestPreVote state source destination)
         else .requestVoteRequest (makeRequestVoteRequest state source destination)) := by
   obtain ⟨signature, same, latest⟩ := (signature_index_term_witness assignment Locals.empty

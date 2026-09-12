@@ -21,6 +21,7 @@ structure ReferencesValid {width : PNat} (state : Encoding width) : Prop where
   minimum : 24 <= state.next
   role : state.role < state.next
   newFollower : state.newFollower < state.next
+  currentTerm : state.currentTerm < state.next
   retirementIndex : state.retirementIndex < state.next
   retirementCommittableIndex : state.retirementCommittableIndex < state.next
   retiredCommittedIndex : state.retiredCommittedIndex < state.next
@@ -64,6 +65,9 @@ theorem instruction_references {width : PNat}
     · rw [shape.role, shape.next]
       omega
     · rw [shape.newFollower, shape.next]
+      omega
+    · have bound := valid.currentTerm
+      simp only [shape.columns, shape.next]
       omega
     · have bound := valid.retirementIndex
       simp only [shape.columns, shape.next]
@@ -162,7 +166,7 @@ theorem NodeColumnsRep.agrees_below {width : PNat} (state : Encoding width)
   have followers := same (.array .int .bool) state.newFollower valid.newFollower
   have lengths := same (.array .int .int) 3 (by omega)
   have commits := same (.array .int .int) 4 (by omega)
-  have terms := same (.array .int .int) 5 (by omega)
+  have terms := same (.array .int .int) state.currentTerm valid.currentTerm
   have logs := same (.array .int (.array .int (entryTy width))) 6 (by omega)
   have retirement := same (.array .int optionalIntTy) state.retirementIndex valid.retirementIndex
   have committable := same (.array .int optionalIntTy) state.retirementCommittableIndex valid.retirementCommittableIndex

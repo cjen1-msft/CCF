@@ -45,7 +45,7 @@ structure NodeColumnsRep {width : PNat} (assignment : Assignment) (columns : Col
     roleCode (NativeArrayCheckQuorum.get arrays node).role
   newFollower : forall (node : Fin width), (read columns.newFollower node.val (.boolean true)).eval assignment Locals.empty =
     (NativeArrayCheckQuorum.get arrays node).isNewFollower
-  currentTerm : forall (node : Fin width), (read 5 node.val (.integer 0)).eval assignment Locals.empty =
+  currentTerm : forall (node : Fin width), (read columns.currentTerm node.val (.integer 0)).eval assignment Locals.empty =
     ((NativeArrayCheckQuorum.get arrays node).currentTerm : Int)
   commit : forall (node : Fin width), (NativeEncode.commit node.val : Expr .int).eval assignment Locals.empty =
     ((NativeArrayCheckQuorum.get arrays node).commit : Int)

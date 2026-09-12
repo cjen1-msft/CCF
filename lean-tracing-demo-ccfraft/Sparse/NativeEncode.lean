@@ -39,6 +39,7 @@ def members {context : List Ty} {width : PNat}
 structure Columns where
   role : Nat := 1
   newFollower : Nat := 2
+  currentTerm : Nat := 5
   retirementIndex : Nat := 7
   retirementCommittableIndex : Nat := 8
   retiredCommittedIndex : Nat := 9
@@ -324,7 +325,7 @@ def observationClauses {width : PNat} (columns : Columns) :
   | .newFollower node expected => .ok [.equal (read columns.newFollower node.val (.boolean true)) (.boolean expected)]
   | .logLength node expected => .ok [.equal (length node.val) (.integer expected)]
   | .commit node expected => .ok [.equal (commit node.val) (.integer expected)]
-  | .currentTerm node expected => .ok [.equal (read 5 node.val (.integer 0)) (.integer expected)]
+  | .currentTerm node expected => .ok [.equal (read columns.currentTerm node.val (.integer 0)) (.integer expected)]
   | .entry node index expected => .ok [lt (.integer index) (length node.val),
       .equal (entryAt width node.val (.integer index)) (entryTerm expected)]
   | .retirementIndex node expected =>

@@ -141,9 +141,9 @@ class NativeLeanSmtTests(unittest.TestCase):
             check=True,
         )
         fixtures = json.loads(result.stdout)
-        self.assertEqual(len(fixtures), 2560)
+        self.assertEqual(len(fixtures), 5080)
         self.assertEqual(len(fixtures), len({item["name"] for item in fixtures}))
-        self.assertEqual(sum(item["expected"] == "sat" for item in fixtures), 1280)
+        self.assertEqual(sum(item["expected"] == "sat" for item in fixtures), 2540)
         self.solve(fixtures)
 
     def test_model_active_membership(self):

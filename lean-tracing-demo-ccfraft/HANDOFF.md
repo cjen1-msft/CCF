@@ -2,7 +2,7 @@
 
 ## Current direction: native-array exact encoding
 
-### Immediate continuation: mutable term state
+### Immediate continuation: term-update encoding
 
 The solver migration is committed as `29312d591`, following `137a4f3d6`,
 the versioned FIFO column slice.
@@ -41,11 +41,25 @@ synthetic duplicate-vote contradiction with actual explorer core ownership.
 That fixture is `Traces/native_vote_fifo_conflict.json`, not a captured trace.
 Both assurance flags remain false.
 
-Next move current-term reads from fixed column 5 to a mutable column reference.
+Public vote sends are committed as `7d815af66`.
+The term-column slice moves current-term reads from fixed column 5 to
+`Columns.currentTerm`, initially 5. `ReferencesValid` now tracks that reference,
+and observations and vote packets read it. Initial-state domain constraints
+remain on original column 5, as with the already-mutable role fields.
+The packet matrix now includes a second current-term column whose old column-5
+value deliberately disagrees, giving 5,080 cases.
+`native-term-column-full-build.log` records the full Sparse/public encoder build.
+All eight targeted methods pass in `native-term-column-tests.log`, including
+the 5,080 packet cases, 400 public vote sends, quorum, framing, and explorer cores.
+The 400 pre-change public vote scripts have a SHA-256 manifest at
+`files/native-vote-before-term-columns.sha256`. The rerun into
+`files/native-public-vote-fixtures` passes that manifest comparison.
+All 400 default-column scripts remain byte-identical.
+
 Then implement `updateTerm`, `timeout`, and `becomePreVoteCandidate`.
 `NativeArrayVote` already supplies their array-level Model correspondence.
-Packet construction and send guards must read the latest term column after
-that change. Log/commit columns remain fixed for now.
+Packet construction reads the latest term column. Log/commit columns remain
+fixed for now.
 
 cvc5 1.3.4 returns incorrect UNSAT on
 `membership-free-false-1-0-0`. The two-assertion reduction contains a canonical

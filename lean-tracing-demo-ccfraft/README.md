@@ -323,9 +323,12 @@ entry's term. Zero and out-of-range indices read zero. The term read follows
 the decoder's natural-number conversion, including negative raw cells.
 `vote_packet_term_model_correct` connects the emitted packet to the actual Model
 constructors under the asserted latest-signature condition.
-`NativeVotePacketFixtureMain` generates 2,560 solver cases, including absent
+`NativeVotePacketFixtureMain` generates 5,080 solver cases, including absent
 nodes with nonempty raw storage, self-addressed packets, huge indices, and
 negated packet equalities.
+Current-term observations and outgoing packets read `Columns.currentTerm`.
+It initially points to column 5. The matrix also tests a different term column
+while deliberately giving the old column a conflicting value.
 `NativeVoteGuards` proves enablement and fresh-witness completeness.
 `NativeVoteSendEncoding` composes those guards with packet construction and
 FIFO storage. Its proofs preserve all node fields, globals, and other queues.

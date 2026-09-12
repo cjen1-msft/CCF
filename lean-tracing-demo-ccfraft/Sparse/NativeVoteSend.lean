@@ -16,6 +16,6 @@ def sendVote {width : PNat} (preVote : Bool) (source destination : Fin width) : 
   let _ <- fresh
   let _ <- fresh
   assertAll (voteGuards before.toColumns before.bootstrap preVote source destination base)
-  pushQueue destination source (votePacketTerm preVote source destination (.free .int (base + 2)))
+  pushQueue destination source (votePacketTerm before.toColumns preVote source destination (.free .int (base + 2)))
 
 end CCFRaft.NativeEncode
