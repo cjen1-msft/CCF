@@ -168,6 +168,42 @@ class NativeLeanSmtTests(unittest.TestCase):
         self.assertEqual(len(fixtures), len({item["name"] for item in fixtures}))
         self.solve(fixtures)
 
+    def test_model_campaign_guards(self):
+        models = subprocess.run(
+            [
+                "lake",
+                "env",
+                "lean",
+                "--run",
+                "Sparse/NativeArrayVoteFixtureMain.lean",
+                "campaign",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(len(json.loads(models.stdout)), 400)
+        encoded = subprocess.run(
+            [
+                "lake",
+                "env",
+                "lean",
+                "--run",
+                "Sparse/NativeCampaignGuardFixtureMain.lean",
+            ],
+            cwd=ROOT,
+            input=models.stdout,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        fixtures = json.loads(encoded.stdout)
+        self.assertEqual(len(fixtures), 1200)
+        self.assertEqual(len(fixtures), len({item["name"] for item in fixtures}))
+        self.assertEqual({item["expected"] for item in fixtures}, {"sat", "unsat"})
+        self.solve(fixtures)
+
     def test_model_active_membership(self):
         result = subprocess.run(
             ["lake", "env", "lean", "--run", "Sparse/NativeMembershipFixtureMain.lean"],

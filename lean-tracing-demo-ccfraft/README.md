@@ -352,6 +352,12 @@ term updates. The 168 Model-derived term traces now run through the public
 encoder with post-state observations, including the three election fields.
 Mutation cases reject incorrect post-state values for every observed field,
 and consecutive-update cases distinguish newer, equal, and older terms.
+`NativeCampaignMember` bounds eligible configurations by the latest signature.
+`NativeCampaignGuardEncoding` proves campaign enablement and fresh-witness
+completeness, including the retirement-completed exception. Its 1,200
+Model-derived guard cases cover both campaign actions, all roles and membership
+states, allocation, pre-vote status, and configuration exclusion. Campaign state
+writes are not yet public.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.

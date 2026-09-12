@@ -90,8 +90,17 @@ state framing, and the explorer-core regression. The Model fixture starts with
 nonempty election fields and checks them after the update.
 Both assurance flags remain false.
 
-Next implement `timeout` and `becomePreVoteCandidate`, using `campaignEnabled`,
-`Frame.campaign`, and the existing Model campaign fixtures in `NativeArrayVote`.
+The public term-update slice is committed as `97cb812c0`.
+`NativeCampaignMember` now proves signature-bounded membership.
+`NativeCampaignGuardEncoding` proves enabled guards and extension of a specific
+assignment with three fresh integer witnesses. Its complete guard includes the
+retirement-completed exception. `native-campaign-guard-tests.log` records
+1,200 passing Model-derived cases in 31 seconds. These include the 400 existing
+campaign prefixes and an 800-case matrix of allocation, role, membership,
+pre-vote status, configuration exclusion, and retirement completion.
+`NativeCampaignGuardFixtureMain` tests guards only, not post-state writes.
+Next implement `timeout` and `becomePreVoteCandidate` state writes using
+`Frame.campaign`, then wire the public decoder and whole-frame trace proofs.
 Then continue the remaining Model actions and partial packet observations,
 followed by Python raw reduction and explorer raw/code provenance.
 
