@@ -19,6 +19,10 @@ def decodeFrameInstruction (width : PNat) (names : Array String) (value : Json) 
   if kind = "hasJoined" then
     fields value ["kind", "value"]
     return .hasJoined (<- decodeNodeSet width names (<- field value "value"))
+  else if kind = "retirementCompleted" then
+    fields value ["kind", "node", "value"]
+    return .retirementCompleted (<- resolve width names (<- field value "node"))
+      (<- decodeNodeSet width names (<- field value "value"))
   else if kind = "preVoteStatus" then
     fields value ["kind", "node", "value"]
     let node <- resolve width names (<- field value "node")
@@ -42,6 +46,9 @@ def frameObservationClauses {width : PNat} (columns : Columns) :
   | .preVoteStatus node expected =>
     .ok [.equal (.select (.free (.array .int .bool) columns.preVoteStatus) (.integer node.val))
       (.boolean (preVoteBit expected))]
+  | .retirementCompleted node expected =>
+    .ok [.equal (.select (.free (.array .int (.bits width)) columns.retirementCompleted) (.integer node.val))
+      (.bits (encodeBits expected))]
   | _ => .error "unsupported native Lean frame observation"
 
 def frameInstruction {width : PNat} (item : FrameInstruction width) : EncodeM width Unit :=

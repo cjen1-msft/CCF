@@ -710,10 +710,104 @@ class NativeLeanSmtTests(unittest.TestCase):
 
     def test_pre_vote_status_input_errors(self):
         valid = {"kind": "preVoteStatus", "node": "a", "value": "capable"}
+        self.assert_invalid_instructions(
+            [
+                dict(valid, value="unknown"),
+                dict(valid, value=True),
+                dict(valid, value=None),
+                dict(valid, value=0),
+                dict(valid, node="b"),
+                dict(valid, peer="a"),
+                {"kind": "preVoteStatus", "value": "capable"},
+            ]
+        )
+
+    def test_retirement_completed_observations(self):
+        names = ["a", "b"] + [f"node-{index}" for index in range(2, 21)]
+        cases = self.framed_observation_cases(
+            "retirementCompleted", [], [names[-1]], ["a"], allocation_guarded=False
+        )
+        mixed = [
+            {"kind": "retirementCompleted", "node": node, "value": names[: index + 1]}
+            for index, node in enumerate(names)
+        ]
+        cases.extend(
+            [
+                (
+                    "completed-order-and-duplicates",
+                    [
+                        {"kind": "retirementCompleted", "node": "a", "value": names},
+                        {
+                            "kind": "retirementCompleted",
+                            "node": "a",
+                            "value": list(reversed(names)) + names,
+                        },
+                    ],
+                    "sat",
+                ),
+                (
+                    "completed-independent-rows-and-local-state",
+                    mixed
+                    + [
+                        {"kind": kind, "node": "a", "value": None}
+                        for kind in RETIREMENT_FIELDS
+                    ]
+                    + [
+                        {"kind": "membershipState", "node": "a", "value": "active"},
+                        {"kind": "hasJoined", "value": []},
+                        {"kind": "preVoteStatus", "node": "a", "value": "enabled"},
+                        {"kind": "checkQuorum", "node": "a"},
+                    ]
+                    + mixed,
+                    "sat",
+                ),
+                (
+                    "completed-all-nodes-absent",
+                    [
+                        {"kind": "allocated", "node": node, "value": False}
+                        for node in names
+                    ]
+                    + mixed,
+                    "sat",
+                ),
+            ]
+        )
+        scripts = self.encode(
+            [
+                {
+                    "nodes": names,
+                    "bootstrap": ["a", "b"],
+                    "instructions": instructions,
+                }
+                for _, instructions, _ in cases
+            ]
+        )
+        self.solve(
+            [
+                {"name": name, "script": script, "expected": expected}
+                for (name, _, expected), script in zip(cases, scripts)
+            ]
+        )
+
+    def test_retirement_completed_input_errors(self):
+        valid = {"kind": "retirementCompleted", "node": "a", "value": []}
+        self.assert_invalid_instructions(
+            [
+                dict(valid, value=["b"]),
+                dict(valid, value=[0]),
+                dict(valid, value="a"),
+                dict(valid, value=None),
+                dict(valid, node="b"),
+                dict(valid, peer="a"),
+                {"kind": "retirementCompleted", "value": []},
+            ]
+        )
+
+    def assert_invalid_instructions(self, instructions):
         self.assert_input_errors(
             [
                 (
-                    f"preVoteStatus-{index}",
+                    f"instruction-{index}",
                     json.dumps(
                         {
                             "nodes": ["a"],
@@ -724,17 +818,7 @@ class NativeLeanSmtTests(unittest.TestCase):
                         sort_keys=True,
                     ),
                 )
-                for index, instruction in enumerate(
-                    [
-                        dict(valid, value="unknown"),
-                        dict(valid, value=True),
-                        dict(valid, value=None),
-                        dict(valid, value=0),
-                        dict(valid, node="b"),
-                        dict(valid, peer="a"),
-                        {"kind": "preVoteStatus", "value": "capable"},
-                    ]
-                )
+                for index, instruction in enumerate(instructions)
             ]
         )
 

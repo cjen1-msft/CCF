@@ -72,6 +72,8 @@ membership-state names. Both peer-index fields require a declared `peer` and a n
 identities, interpreted as a set. It does not require a `node` field or imply
 that any node is allocated. Global `preVoteStatus` requires a declared `node`
 and a `value` of `capable` or `enabled`, independently of allocation.
+Global `retirementCompleted` requires a declared `node` and a `value` list of
+declared identities. Neither the node nor the listed identities must be allocated.
 Other instructions are errors.
 `native_lean.py` handles JSON input and solver execution. It delegates all SMT
 construction to Lean, with no Python encoder fallback.
@@ -181,7 +183,7 @@ decoder. This does not prove that a raw-event reducer interpreted the
 implementation correctly, or verify Lean's JSON parser and IO runtime.
 
 [`NativeFrameDecoded`](Sparse/NativeFrameDecoded.lean) extends this correspondence
-to the public encoder, including `hasJoined` and `preVoteStatus`.
+to the public encoder, including `hasJoined`, `preVoteStatus`, and `retirementCompleted`.
 `encodeFrame_document_iff` and `encodeFrameDetails_document_iff` cover the
 actual plain and details outputs. `FrameDocumentConsistent` uses the broader
 decoder and Model trace semantics. `NativeFrameColumns` realizes arbitrary
@@ -192,7 +194,7 @@ steps without restricting unobserved global state or queues.
 This Lean encoder remains experimental. Remaining Model actions, observations,
 and raw reducer integration are unfinished. The API's full-model assurance
 flag remains false; current coverage is one action, sixteen local observation
-kinds, and global `hasJoined` and `preVoteStatus`.
+kinds, and global `hasJoined`, `preVoteStatus`, and `retirementCompleted`.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.
@@ -236,6 +238,9 @@ proves exact equality for its two Model values. Initial representation permits
 both values for every identity, including absent nodes and identities outside
 the bootstrap set. The global field and its distinct rows remain independent
 of local fields and `hasJoined` through quorum steps.
+`retirementCompleted` uses a node-indexed bitvector array with the same set
+semantics as `hasJoined`. Each row can differ. These global sets do not imply
+local retirement indices, membership states, or a joined-node history.
 
 The older Python reference has broader action coverage:
 `native_arrays.py` accepts `checkQuorum`, `requestVote`, `requestPreVote`, and

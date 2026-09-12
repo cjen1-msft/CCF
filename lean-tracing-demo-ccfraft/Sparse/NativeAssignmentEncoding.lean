@@ -10,7 +10,7 @@ namespace CCFRaft.NativeEncode
 open NativeSmt
 
 structure ReferencesValid {width : PNat} (state : Encoding width) : Prop where
-  minimum : 18 <= state.next
+  minimum : 19 <= state.next
   role : state.role < state.next
   newFollower : state.newFollower < state.next
   retirementIndex : state.retirementIndex < state.next
@@ -24,6 +24,7 @@ structure ReferencesValid {width : PNat} (state : Encoding width) : Prop where
   matchIndex : state.matchIndex < state.next
   hasJoined : state.hasJoined < state.next
   preVoteStatus : state.preVoteStatus < state.next
+  retirementCompleted : state.retirementCompleted < state.next
 
 theorem ReferencesValid.same_references {width : PNat} {before after : Encoding width}
     (valid : ReferencesValid before) (same : SameReferences before after) :
@@ -82,6 +83,9 @@ theorem instruction_references {width : PNat}
       simp only [shape.columns, shape.next]
       omega
     · have bound := valid.preVoteStatus
+      simp only [shape.columns, shape.next]
+      omega
+    · have bound := valid.retirementCompleted
       simp only [shape.columns, shape.next]
       omega
   · have frame := (assert_all_success clauses before after asserted).1
@@ -150,7 +154,7 @@ theorem NodeColumnsRep.agrees_below {width : PNat} (state : Encoding width)
     simpa only [peerIndex, NativeEncode.allocated, Term.eval, <- allocation, <- matched] using rep.matchIndex node peer
 
 theorem NodeDomain.agrees_below {width : PNat} (limit : Nat) (left right : Assignment)
-    (node : Nat) (domain : NodeDomain width left node) (minimum : 18 <= limit)
+    (node : Nat) (domain : NodeDomain width left node) (minimum : 19 <= limit)
     (same : left.AgreesBelow limit right) : NodeDomain width right node := by
   have allocation := same (.array .int .bool) 0 (by omega)
   have roles := same (.array .int .int) 1 (by omega)

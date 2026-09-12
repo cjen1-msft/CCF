@@ -50,10 +50,11 @@ structure Columns where
   matchIndex : Nat := 15
   hasJoined : Nat := 16
   preVoteStatus : Nat := 17
+  retirementCompleted : Nat := 18
 
 structure Encoding (width : PNat) extends Columns where
   bootstrap : BitVec width
-  next : Nat := 18
+  next : Nat := 19
   assertions : Array (Expr .bool) := #[]
   symbolsBounded : forall formula, formula ∈ assertions ->
     forall symbol, symbol ∈ formula.symbols -> symbol.2 < next
