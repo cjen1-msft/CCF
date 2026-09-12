@@ -6,6 +6,7 @@ import Sparse.NativeOptional
 import Sparse.NativeNatSet
 import Sparse.NativeRenaming
 import Sparse.NativeLogValue
+import Sparse.NativePacketHeader
 import Lean.Data.Json
 
 set_option autoImplicit false
@@ -305,6 +306,19 @@ private def logEmpty : Case :=
         exact lt_or_ge (index : Int) 0
       simpa only [Term.weaken_eval, Locals.cons, NativeEncode.entry_term_eval] using valid.tail index outside }
 
+private def packetHeader (name : String) (width : PNat) (term source destination : Int) : Case :=
+  let value : Term [] NativeEncode.packetHeaderTy :=
+    .pair (.integer term) (.pair (.integer source) (.integer destination))
+  { name
+    formula := NativeEncode.packetHeaderDomain width value
+    expected := decide (0 <= term /\ 0 <= source /\ source < width.val /\
+      0 <= destination /\ destination < width.val)
+    correct := by
+      intro assignment
+      apply Bool.eq_iff_iff.mpr
+      simpa [NativeEncode.PacketHeaderValid, NativeEncode.nodeValue?, value, Term.eval, and_assoc] using
+        NativeEncode.packet_header_domain_correct width value assignment Locals.empty }
+
 def cases : List Case := [
   stored, wrongStore, nestedArray, constantArray, pair, sum, capture, nestedQuantifiers,
   wideBits, widerBits, bitsOperations, unitAndSecond, typedSymbols, overwrittenStore,
@@ -327,7 +341,15 @@ def cases : List Case := [
   logOutside "log-value-zero-cell" (.integer 0),
   logOutside "log-value-large-cell" (.integer (10 ^ 30)),
   logOutside "log-value-tail-cell" (.fst (.free (NativeEncode.logTy 2) 0)),
-  logNegativeLength, logEmpty]
+  logNegativeLength, logEmpty,
+  packetHeader "packet-header-first" 21 0 0 0,
+  packetHeader "packet-header-last-large-term" 21 (10 ^ 30) 20 20,
+  packetHeader "packet-header-single-node" 1 0 0 0,
+  packetHeader "packet-header-negative-term" 21 (-1) 0 0,
+  packetHeader "packet-header-negative-source" 21 0 (-1) 0,
+  packetHeader "packet-header-source-past-end" 21 0 21 0,
+  packetHeader "packet-header-negative-destination" 21 0 0 (-1),
+  packetHeader "packet-header-destination-past-end" 21 0 0 21]
 
 end CCFRaft.NativeSmt
 

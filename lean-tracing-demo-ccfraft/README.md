@@ -141,6 +141,10 @@ Negative indices and tail cells contain the zero-term signature entry.
 Both value round trips are proved, so equality of valid array values is
 exactly equality of finite Model lists. This does not change node-log encoding
 or add packet instructions to the public compiler yet.
+`NativePacketHeader` supplies the shared term, source, and destination codec.
+Terms are natural numbers and identities belong to the declared universe.
+Header decoding requires the domain proof; it does not wrap or default invalid
+identities. Value round trips and literal equality are proved.
 
 `NativeQuorumEncoding.current_configuration_model_correct` connects the exact
 `currentCandidate` and `noLaterConfiguration` clauses used by the compiler to

@@ -327,12 +327,22 @@ The fixture main now sets `warningAsError` so linter warnings fail its build
 instead of preceding and corrupting its JSON output.
 Next build packet headers and payload sums on this codec, then queue columns.
 
+`NativePacketHeader` now proves the shared header codec and actual domain
+expression. It reuses `nodeValue?` and `optionalNodeDomain` rather than adding
+another identity decoder. `modelPacketHeader` requires valid identity domains,
+and the full value round trips and emitted literal equality are proved.
+All 48 kernel-backed fixtures pass in `native-packet-header-fixture-tests.log`,
+including first/last identities, a single-node universe, huge terms, and
+invalid terms or identities. No allocation or source/destination inequality
+constraint was added. Next compose the seven payload alternatives with this
+header and `NativeLogValue`; packet JSON and queue columns are still pending.
+
 `NativeOptional` is the next value-codec unit for local-state coverage.
 It uses the existing sum datatype for optional natural indices and identities.
 Decoding distinguishes a valid absent value, `some none`, from invalid payloads,
 `none`. It rejects negative indices and identities outside the declared width.
 The proofs cover round trips, exact literal equality, and actual domain terms.
-`NativeSmtFixtureMain` now has 40 kernel-backed solver cases, including nine
+`NativeSmtFixtureMain` now has 48 kernel-backed solver cases, including nine
 optional-value cases. The codecs are now wired for all three retirement-index
 fields and `votedFor`.
 
