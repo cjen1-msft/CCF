@@ -61,6 +61,12 @@ Mechanical worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns only
 It composes the conditional vote store with FIFO pop/reply, using GPT-5.6 Sol
 at medium effort. Do not edit those two files until it completes.
 
+`NativeArrayVoteState` now holds frame state and the existing action semantics.
+`NativeArrayVote` retains instruction traces and their correspondence proofs.
+The declaration names are unchanged. Receive and append semantic modules import
+the state module, so the trace module can later import them without a cycle.
+`native-frame-state-split-build.log` records the targeted build.
+
 `native-vote-receive-tests.log` records 1,728 passing response/guard cases.
 `native-append-packet-tests.log` records 2,538 passing packet/normalization cases.
 Both compare with actual Model results. Each new proof module builds with the
