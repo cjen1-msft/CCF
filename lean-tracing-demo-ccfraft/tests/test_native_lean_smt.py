@@ -361,6 +361,46 @@ class NativeLeanSmtTests(unittest.TestCase):
             )
         self.solve(fixtures)
 
+    def test_internal_append_receive(self):
+        models = self.model_traces("NativeArrayAppendReceiveFixtureMain", 1344)
+        self.assert_internal_append_receive(models, 334, "base")
+
+    def test_internal_append_receive_hints(self):
+        models = self.model_traces("NativeArrayAppendReceiveHintFixtureMain", 110)
+        self.assertEqual(len({item["scenario"] for item in models}), 11)
+        self.assertEqual(
+            {item["branch"] for item in models}, {"reject", "alreadyDone", "extension"}
+        )
+        self.assertTrue(all(item["modelEnabled"] for item in models))
+        self.assert_internal_append_receive(models, 55, "hint")
+
+    def assert_internal_append_receive(self, models, satisfiable, prefix):
+        result = subprocess.run(
+            [
+                "lake",
+                "env",
+                "lean",
+                "--run",
+                "Sparse/NativeAppendReceiveFixtureMain.lean",
+            ],
+            cwd=ROOT,
+            input=json.dumps(models),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        fixtures = json.loads(result.stdout)
+        self.assertEqual(len(fixtures), len(models))
+        self.assertEqual(len({item["name"] for item in fixtures}), len(fixtures))
+        self.assertEqual(
+            sum(item["expected"] == "sat" for item in fixtures), satisfiable
+        )
+        self.assertEqual(
+            [item["expected"] for item in fixtures],
+            [item["expected"] for item in models],
+        )
+        self.solve([{**item, "name": f"{prefix}-{item['name']}"} for item in fixtures])
+
     def assert_script_fixtures(self, module, count, satisfiable):
         result = subprocess.run(
             ["lake", "env", "lean", "--run", f"Sparse/{module}.lean"],
