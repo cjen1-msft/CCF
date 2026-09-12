@@ -444,9 +444,11 @@ byte-identical after helper extraction.
 It composes the typed candidate and guarded NACK scan into the exact Model
 local handler and response. The parent build and import audit pass in
 `native-append-handler-parent-build.log` and `native-append-handler-import-tests.log`.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns only new
-`NativeAppendReceiveLocalEncoding.lean`. It composes the candidate, final row,
-and response from the actual guarded constraints, without execution bookkeeping.
+`NativeAppendReceiveLocalEncoding.lean` is committed as `24bf70d04`.
+It composes the candidate, final row, and response from actual guarded constraints,
+without execution bookkeeping. The parent inspected the complete module.
+Its independent build and import audit pass in `native-append-local-parent-build.log`
+and `native-append-local-import-tests.log`.
 
 `NativeRetirementCompletedConstraints.lean` and
 `NativeRetirementCompletedConstraintsEncoding.lean` are committed as `7fb76723b`.
@@ -506,6 +508,11 @@ mutations. Shared row scenarios remain byte-identical after extraction.
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only new
 `NativeAllocationEncoding.lean`, proving single-node and set allocation against
 `NativeArrayAllocation.allocate`. The parent owns its runtime and fixtures.
+Its first result proves single-node execution, prior assertions, and references.
+Soundness and assignment extension remain unfinished. The parent supplied a
+masking-lemma approach: after row replacement, hiding a row changes only the
+allocation bit; guarded reads return fresh defaults and live-entry obligations
+become vacuous. Reuse that result rather than re-proving the row stores.
 `NativeMembershipChange.lean`, `NativeMembershipRowTerms.lean`, and
 `NativeMembershipChangeFixtureMain.lean` are committed as `a006368c5`.
 The private action composes the proved guards, new log entry, local and global
@@ -515,6 +522,9 @@ All 1,572 full Model transitions pass, including 147 SAT cases, in
 `native-membership-change-tests.log`. The parent build passes in
 `native-membership-change-build.log`. Public membership remains unsupported.
 The row terms and whole-action correspondence still need proofs.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns only new
+`NativeMembershipRowEncoding.lean`, proving the old-length sent-index update
+and the source row's actual guarded refresh. The runtime remains parent-owned.
 
 `NativeArrayCoreActionsFixtureMain` and `NativeCoreActionsFixtureMain` are
 committed as `05b512bdc`. They exercise all five prioritized actions in one
