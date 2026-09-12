@@ -59,11 +59,16 @@ or restricting possible executions is not a performance optimization.
 
 The public Lean encoder uses `Sparse/NativeFrameEncode.lean` and shares
 local-state compilation with `Sparse/NativeEncode.lean`.
-It accepts `checkQuorum` and the `allocated`, `role`, `newFollower`, `logLength`,
+It accepts `checkQuorum`, `requestVote`, and `requestPreVote`, plus the
+`allocated`, `role`, `newFollower`, `logLength`,
 `commit`, `currentTerm`, `entry`, `retirementIndex`,
 `retirementCommittableIndex`, `retiredCommittedIndex`, `votedFor`, and
 `votesGranted`, `preVotesGranted`, `membershipState`, `sentIndex`, and `matchIndex`
 observations. This covers all local observation kinds.
+Both vote-send actions require declared `source` and `destination` identities.
+They assert the Model's allocation, role, distinct-peer, and active-membership
+guards, then append one packet to the directed FIFO. Sending the same packet
+twice appends two copies. A disabled action is UNSAT, not an input error.
 All retirement fields accept a natural number or `null`. `votedFor` accepts
 a declared identity or `null`. Both vote-set fields accept a list of declared
 identities, interpreted as a set. `membershipState` accepts the five Model
@@ -273,11 +278,11 @@ actual plain and details outputs. `FrameDocumentConsistent` uses the broader
 decoder and Model trace semantics. `NativeFrameColumns` realizes arbitrary
 joined sets independently of allocation and bootstrap membership.
 `NativeFrameTrace` composes local, global, and queue observations with
-quorum steps without restricting unobserved global state or queues.
+quorum and vote-send steps without restricting unobserved global state or queues.
 
 This Lean encoder remains experimental. Remaining Model actions, observations,
 and raw reducer integration are unfinished. The API's full-model assurance
-flag remains false; current coverage is one action, sixteen local observation
+flag remains false; current coverage is three actions, sixteen local observation
 kinds, all four global observation kinds, queue lengths, and exact packet points.
 Partial packet observations remain unsupported.
 
@@ -290,11 +295,11 @@ total queue decoder maps to that packet. Both cases have correspondence proofs.
 The public two-node append/quorum case solves in 58 ms; the 21-node case with
 an index near `10^30` solves in 9.8 seconds. Both previously returned `unknown`.
 
-`NativeSignatureEncoding` supplies the next action-encoding component.
+`NativeSignatureEncoding` encodes the latest-signature scan.
 Its scoped integer scan has correspondence with `maxCommittableIndex`,
 including the zero sentinel, live-index guards, and exclusion of later signatures.
 `NativeSignatureFixtureMain` generates 483 cases from actual Model results.
-Vote sends and campaigns are not yet accepted by the public Lean encoder.
+Campaigns are not yet accepted by the public Lean encoder.
 `NativeQueuePush` proves that a store at head plus length appends exactly one
 decoded packet, preserving duplicates and every other raw cell. This covers
 the row update. `NativeQueueStoreEncoding` proves that actual `pushQueue`
@@ -320,8 +325,12 @@ the decoder's natural-number conversion, including negative raw cells.
 constructors under the asserted latest-signature condition.
 `NativeVotePacketFixtureMain` generates 2,560 solver cases, including absent
 nodes with nonempty raw storage, self-addressed packets, huge indices, and
-negated packet equalities. These are construction proofs, not public send
-actions. The public encoder still accepts only `checkQuorum` as an action.
+negated packet equalities.
+`NativeVoteGuards` proves enablement and fresh-witness completeness.
+`NativeVoteSendEncoding` composes those guards with packet construction and
+FIFO storage. Its proofs preserve all node fields, globals, and other queues.
+The public compiler accepts both vote-send actions through the same
+decoded-document correspondence theorem.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.
@@ -467,6 +476,9 @@ python3 explorer_api.py /tmp/native-explorer --port 8091
 The example is synthetic reduced input, not a captured implementation trace.
 It deliberately observes a leader after `checkQuorum` steps that node down, so
 the result is UNSAT.
+`Traces/native_vote_fifo_conflict.json` is another synthetic UNSAT example.
+It sends the same vote packet twice into an empty queue, then claims length one.
+The explorer core links the contradiction to both sends and the final observation.
 
 The server binds only to `127.0.0.1`. For remote access, forward the port through
 SSH. It reads a fixed snapshot at startup; restart it to inspect a newer run.
@@ -568,7 +580,7 @@ need an exhaustive declared universe.
 Global fields do not use absent-node defaults. An unallocated identity can
 have enabled pre-votes, appear in join history, or have recorded completed
 retirements. All six actions in the Python reference preserve global fields.
-The public Lean encoder currently supports only `checkQuorum`.
+The public Lean encoder supports `checkQuorum`, `requestVote`, and `requestPreVote`.
 
 The Python reference uses Boolean cells for submitted transactions. The public
 Lean encoder uses one-bit cells. Both have a symbolic natural upper bound.

@@ -31,7 +31,7 @@ theorem compile_frame_sound {width : PNat} [Bootstrap (Fin width)]
       have middleHolds := compile_with_holds_before frameInstruction frame_instruction_holds_before
         rest middle after _ _ result run assignment holds
       rcases frame_instruction_cases item before middle step with ⟨node, same, action⟩ |
-          ⟨clauses, emitted, asserted⟩
+          ⟨preVote, source, destination, same, action⟩ | ⟨clauses, emitted, asserted⟩
       · subst item
         obtain ⟨_, enabled, afterColumns⟩ :=
           frame_quorum_success node before middle action assignment middleHolds frame rep sameBootstrap
@@ -40,6 +40,12 @@ theorem compile_frame_sound {width : PNat} [Bootstrap (Fin width)]
         have restFollows := ih middle _ _ run _ afterColumns bootstrap
         simpa only [NativeArrayVote.follows, NativeArrayCheckQuorum.follows, and_true] using
           And.intro enabled restFollows
+      · subst item
+        obtain ⟨enabled, signature, latest, afterColumns⟩ :=
+          send_vote_frame_success preVote source destination before middle action assignment middleHolds frame rep sameBootstrap
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [send_vote_bootstrap preVote source destination before middle action, sameBootstrap]
+        exact ⟨enabled, signature, latest, ih middle _ _ run _ afterColumns bootstrap⟩
       · have references := (assert_all_success clauses before middle asserted).1
         have observed := (frame_observation_correct assignment before.toColumns frame rep
           domains item clauses emitted).mp
@@ -75,7 +81,7 @@ theorem compile_frame_complete {width : PNat} [Bootstrap (Fin width)]
       simp only [compileInstructionsWith, StateT.run, step] at run
       have afterValid := frame_instruction_references item before middle step valid
       rcases frame_instruction_cases item before middle step with ⟨node, same, action⟩ |
-          ⟨clauses, emitted, asserted⟩
+          ⟨preVote, source, destination, same, action⟩ | ⟨clauses, emitted, asserted⟩
       · subst item
         have stepFollows : NativeArrayCheckQuorum.enabled frame.nodes node /\
             NativeArrayVote.follows (frame.nodeStep (.checkQuorum node)) rest := by
@@ -87,6 +93,16 @@ theorem compile_frame_complete {width : PNat} [Bootstrap (Fin width)]
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [(quorum_success node.val before middle action).bootstrap, sameBootstrap]
         exact ih middle _ _ run extended middleHolds _ afterColumns afterValid afterDomains bootstrap stepFollows.2
+      · subst item
+        obtain ⟨enabled, signature, latest, restFollows⟩ := follows
+        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+          send_vote_complete preVote source destination before middle action assignment holds frame rep valid
+            sameBootstrap enabled signature latest
+        have afterDomains : forall peer : Fin width, NodeDomain width extended peer.val :=
+          fun peer => (domains peer).agrees_below before.next assignment extended peer.val valid.minimum agreement
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [send_vote_bootstrap preVote source destination before middle action, sameBootstrap]
+        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid afterDomains bootstrap restFollows
       · obtain ⟨observed, restFollows⟩ := (frame_observation_cons frame _ item rest clauses emitted).mp follows
         have references := (assert_all_success clauses before middle asserted).1
         have middleHolds := (assert_all_holds clauses before middle asserted assignment).mpr

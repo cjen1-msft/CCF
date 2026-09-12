@@ -236,6 +236,259 @@ class NativeLeanSmtTests(unittest.TestCase):
             ]
         )
 
+    def test_actual_model_vote_sends(self):
+        result = subprocess.run(
+            ["lake", "env", "lean", "--run", "Sparse/NativeArrayVoteFixtureMain.lean"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        fixtures = json.loads(result.stdout)
+        self.assertEqual(len(fixtures), 400)
+        self.assertEqual({item["expected"] for item in fixtures}, {"sat", "unsat"})
+        scripts = self.encode([fixture["trace"] for fixture in fixtures])
+        self.solve(
+            [
+                {
+                    "name": f"model-vote-send-{index}",
+                    "script": script,
+                    "expected": fixture["expected"],
+                }
+                for index, (fixture, script) in enumerate(zip(fixtures, scripts))
+            ]
+        )
+
+    def test_vote_send_guards(self):
+        cases = []
+        for kind, required_role in (
+            ("requestVote", "candidate"),
+            ("requestPreVote", "preVoteCandidate"),
+        ):
+            for role in ("none", "follower", "preVoteCandidate", "candidate", "leader"):
+                for source_present in (False, True):
+                    for destination_present in (False, True):
+                        for destination in ("a", "b"):
+                            for bootstrap in (["a"], ["a", "b"]):
+                                allowed = (
+                                    source_present
+                                    and destination_present
+                                    and role == required_role
+                                    and destination != "a"
+                                    and destination in bootstrap
+                                )
+                                cases.append(
+                                    (
+                                        {
+                                            "nodes": ["a", "b"],
+                                            "bootstrap": bootstrap,
+                                            "instructions": [
+                                                {
+                                                    "kind": "allocated",
+                                                    "node": "a",
+                                                    "value": source_present,
+                                                },
+                                                {
+                                                    "kind": "allocated",
+                                                    "node": destination,
+                                                    "value": destination_present,
+                                                },
+                                                {
+                                                    "kind": "role",
+                                                    "node": "a",
+                                                    "value": role,
+                                                },
+                                                {
+                                                    "kind": "logLength",
+                                                    "node": "a",
+                                                    "value": 0,
+                                                },
+                                                {
+                                                    "kind": kind,
+                                                    "source": "a",
+                                                    "destination": destination,
+                                                },
+                                            ],
+                                        },
+                                        "sat" if allowed else "unsat",
+                                    )
+                                )
+        self.assertEqual(len(cases), 160)
+        scripts = self.encode([document for document, _ in cases])
+        self.solve(
+            [
+                {"name": f"vote-guards-{index}", "script": script, "expected": expected}
+                for index, ((_, expected), script) in enumerate(zip(cases, scripts))
+            ]
+        )
+
+    def test_vote_send_fifo_and_frame(self):
+        cases = []
+        vote = {
+            "kind": "requestVoteRequest",
+            "source": "a",
+            "destination": "b",
+            "term": 3,
+            "lastCommittableIndex": 10**30,
+            "lastCommittableTerm": 0,
+        }
+        pre_vote = {
+            "kind": "requestPreVote",
+            "source": "b",
+            "destination": "a",
+            "term": 7,
+            "lastCommittableIndex": 0,
+            "lastCommittableTerm": 0,
+        }
+        other = {
+            "kind": "proposeVoteRequest",
+            "source": "b",
+            "destination": "b",
+            "term": 99,
+        }
+        for size in (2, 21):
+            names = ["a", "b"] + [f"node-{index}" for index in range(2, size)]
+            observed = [
+                {"kind": "allocated", "node": "a", "value": True},
+                {"kind": "allocated", "node": "b", "value": True},
+                {"kind": "role", "node": "a", "value": "candidate"},
+                {"kind": "role", "node": "b", "value": "preVoteCandidate"},
+                {"kind": "logLength", "node": "a", "value": 0},
+                {"kind": "logLength", "node": "b", "value": 0},
+                {"kind": "commit", "node": "a", "value": 10**30},
+                {"kind": "commit", "node": "b", "value": 0},
+                {"kind": "currentTerm", "node": "a", "value": 3},
+                {"kind": "currentTerm", "node": "b", "value": 7},
+                {"kind": "votedFor", "node": "a", "value": "b"},
+                {"kind": "newFollower", "node": "a", "value": False},
+                {"kind": "membershipState", "node": "a", "value": "retirementSigned"},
+                {"kind": "sentIndex", "node": "a", "peer": "b", "value": 10**30},
+                {"kind": "hasJoined", "value": ["a"]},
+                {"kind": "preVoteStatus", "node": "b", "value": "capable"},
+                {"kind": "retirementCompleted", "node": "a", "value": ["b"]},
+                {"kind": "submittedTxId", "txId": 10**30, "value": True},
+                {"kind": "submittedTxId", "txId": 10**30 + 1, "value": False},
+            ]
+            initial_queues = [
+                {"kind": "queueLength", "source": "a", "destination": "b", "value": 1},
+                {"kind": "queueLength", "source": "b", "destination": "a", "value": 0},
+                {"kind": "queueLength", "source": "b", "destination": "b", "value": 1},
+                packet_observation(vote),
+                packet_observation(other),
+            ]
+            action = {"kind": "requestVote", "source": "a", "destination": "b"}
+            actions = [
+                action,
+                {"kind": "requestPreVote", "source": "b", "destination": "a"},
+            ]
+            if size > 2:
+                actions += [
+                    {"kind": "role", "node": names[-1], "value": "leader"},
+                    {"kind": "logLength", "node": names[-1], "value": 0},
+                    {"kind": "checkQuorum", "node": names[-1]},
+                    {"kind": "role", "node": names[-1], "value": "follower"},
+                ]
+            for count in (2, 3):
+                final_queues = [
+                    {
+                        "kind": "queueLength",
+                        "source": "a",
+                        "destination": "b",
+                        "value": count,
+                    },
+                    {
+                        "kind": "queueLength",
+                        "source": "b",
+                        "destination": "a",
+                        "value": 1,
+                    },
+                    {
+                        "kind": "queueLength",
+                        "source": "b",
+                        "destination": "b",
+                        "value": 1,
+                    },
+                    *[packet_observation(vote, index=index) for index in range(3)],
+                    packet_observation(pre_vote),
+                    packet_observation(other),
+                ]
+                cases.append(
+                    (
+                        f"vote-fifo-{size}-{count}",
+                        {
+                            "nodes": names,
+                            "bootstrap": names,
+                            "instructions": observed
+                            + initial_queues
+                            + actions
+                            + [action]
+                            + observed
+                            + final_queues,
+                        },
+                        "sat" if count == 3 else "unsat",
+                    )
+                )
+        scripts = self.encode([document for _, document, _ in cases])
+        self.solve(
+            [
+                {"name": name, "script": script, "expected": expected}
+                for (name, _, expected), script in zip(cases, scripts)
+            ]
+        )
+
+    def test_vote_send_input_errors(self):
+        invalid = []
+        for kind in ("requestVote", "requestPreVote"):
+            valid = {"kind": kind, "source": "a", "destination": "b"}
+            invalid.extend(
+                [
+                    {key: value for key, value in valid.items() if key != "source"},
+                    {
+                        key: value
+                        for key, value in valid.items()
+                        if key != "destination"
+                    },
+                    dict(valid, source="missing"),
+                    dict(valid, destination="missing"),
+                    dict(valid, source=0),
+                    dict(valid, destination=False),
+                    dict(valid, value=True),
+                ]
+            )
+        self.assert_invalid_instructions(invalid)
+
+    def test_vote_send_explorer_core(self):
+        requested = os.environ.get("Z3")
+        solver = find_z3(Path(requested) if requested else None)
+        with tempfile.TemporaryDirectory(prefix="native-vote-core-") as temporary:
+            output = Path(temporary)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "native_lean.py",
+                    "Traces/native_vote_fifo_conflict.json",
+                    "--output-dir",
+                    str(output),
+                    "--z3",
+                    str(solver),
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertEqual(json.loads(result.stdout)["status"], "unsat")
+            api = ExplorerApi(NativeRun.load(output))
+            run = api.get("/api/run")
+            self.assertEqual(run["instruction_count"], 10)
+            self.assertEqual(
+                run["result"]["assurance"],
+                {"full_model_to_script_proved": False, "raw_reducer_integrated": False},
+            )
+            core = api.get("/api/core")
+            self.assertTrue({7, 8, 9}.issubset(core["instructions"]))
+            self.assertFalse(core["minimal"])
+
     def test_history_and_arbitrary_size(self):
         names = [f"node-{index}" for index in range(21)]
         initial = [

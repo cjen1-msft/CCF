@@ -62,6 +62,7 @@ import Sparse.NativeQuorumEncoding
 import Sparse.NativeSignatureEncoding
 import Sparse.NativeMembershipEncoding
 import Sparse.NativeVotePacket
+import Sparse.NativeVoteSendEncoding
 import Sparse.NativeConstructors
 import Sparse.NativeNodeOperations
 import Sparse.NativeNodeSets

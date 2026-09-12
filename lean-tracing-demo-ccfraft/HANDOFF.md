@@ -2,7 +2,7 @@
 
 ## Current direction: native-array exact encoding
 
-### Immediate continuation: vote-send encoding
+### Immediate continuation: mutable term state
 
 The solver migration is committed as `29312d591`, following `137a4f3d6`,
 the versioned FIFO column slice.
@@ -24,10 +24,28 @@ five commit values including `10^30`, allocated/absent nodes, three identity
 pairs including self, and equality/inequality against Model packets.
 Forty additional cases within that total exercise raw negative terms and
 negative, zero, live, and outside indices.
-Next compose vote guards and FIFO writes, then wire requestVote/requestPreVote
-through the public compiler and frame proofs. `NativeArrayVote.Instruction.vote`
-already represents both actions. `frameInstruction` still rejects it.
-No public action or assurance flag changed in the packet-construction slice.
+Packet construction is committed as `357b438dd`.
+The next slice now accepts `requestVote` and `requestPreVote` publicly.
+`NativeVoteGuards` proves enabled guards and extends any existing assignment
+with current-configuration, membership, and signature witnesses.
+`NativeVoteSendEncoding` composes actual compiler execution with FIFO writes,
+proving whole-frame soundness and assignment-extension completeness.
+`NativeFrameStep` and `NativeFrameTrace` include vote sends; the existing
+decoded-document/script theorem now covers all three public actions.
+`native-public-vote-build.log` records the full Sparse and public encoder build.
+`native-public-vote-tests.log` records 24 passing methods in 152 seconds:
+400 Model vote-send cases, 160 guard cases, repeated/interleaved FIFO sends
+with 2 and 21 identities, strict input errors, existing quorum/framing cases,
+and solver/explorer compatibility. `native-vote-core-tests.log` adds the
+synthetic duplicate-vote contradiction with actual explorer core ownership.
+That fixture is `Traces/native_vote_fifo_conflict.json`, not a captured trace.
+Both assurance flags remain false.
+
+Next move current-term reads from fixed column 5 to a mutable column reference.
+Then implement `updateTerm`, `timeout`, and `becomePreVoteCandidate`.
+`NativeArrayVote` already supplies their array-level Model correspondence.
+Packet construction and send guards must read the latest term column after
+that change. Log/commit columns remain fixed for now.
 
 cvc5 1.3.4 returns incorrect UNSAT on
 `membership-free-false-1-0-0`. The two-assertion reduction contains a canonical
@@ -158,7 +176,7 @@ reducer integration. See README's "Native explorer API" section.
 The public Lean encoder uses `Sparse/NativeFrameEncode.lean`
 and `Sparse/NativeEncodeMain.lean`, with `native_lean.py` as its JSON and solver
 wrapper. It shares local-state compilation with `Sparse/NativeEncode.lean`.
-It supports `checkQuorum` and all sixteen local observation kinds, including
+It supports `checkQuorum`, `requestVote`, `requestPreVote`, and all sixteen local observation kinds, including
 the nullable `retirementIndex`, `retirementCommittableIndex`, and
 `retiredCommittedIndex` fields, nullable `votedFor`, both vote sets, and
 `membershipState`, `sentIndex`, and `matchIndex`, plus global `hasJoined` and

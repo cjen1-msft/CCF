@@ -6,6 +6,7 @@ import Sparse.NativeArrayVote
 import Sparse.NativeNatSet
 import Sparse.NativeQueueColumns
 import Sparse.NativePacketJson
+import Sparse.NativeVoteSend
 
 set_option autoImplicit false
 
@@ -19,7 +20,12 @@ abbrev FrameDecoded := TypedDocument FrameInstruction
 def decodeFrameInstruction (width : PNat) (names : Array String) (value : Json) :
     Except String (FrameInstruction width) := do
   let kind <- (<- field value "kind").getStr?
-  if kind = "hasJoined" then
+  if kind = "requestVote" || kind = "requestPreVote" then
+    fields value ["kind", "source", "destination"]
+    return .vote (kind = "requestPreVote")
+      (<- resolve width names (<- field value "source"))
+      (<- resolve width names (<- field value "destination"))
+  else if kind = "hasJoined" then
     fields value ["kind", "value"]
     return .hasJoined (<- decodeNodeSet width names (<- field value "value"))
   else if kind = "queueLength" then
@@ -81,6 +87,7 @@ def frameObservationClauses {width : PNat} (columns : Columns) :
 def frameInstruction {width : PNat} (item : FrameInstruction width) : EncodeM width Unit :=
   match item with
   | .node nodeInstruction => instruction nodeInstruction
+  | .vote preVote source destination => sendVote preVote source destination
   | _ => do
     let state <- get
     assertAll (<- frameObservationClauses state.toColumns item)
