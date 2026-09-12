@@ -493,12 +493,14 @@ transition scripts, including 147 SAT cases. It appends the configuration,
 refreshes retirement, allocates newly added identities, and sets their sent
 cursors to the old log length. `NativeMembershipTermsEncoding` proves the
 guards, and `NativeMembershipRowEncoding` proves the source-row terms.
-Allocation and whole-action correspondence remain unfinished, so
+Whole-action correspondence remains unfinished, so
 public `changeConfiguration` remains unsupported.
 `NativeAllocation` reuses row snapshots to reset hidden fields before exposing
 missing nodes. Existing rows survive. The baseline uses 17 definitions per
 declared identity and passes 4,416 Model-derived scripts, including repeated
 allocation, disabled conditions, and full-frame mutations.
+`NativeAllocationEncoding` proves single-node and whole-set soundness,
+reference preservation, and extension of each starting assignment.
 The private combined pipeline also covers all five prioritized actions in
 184 sequence scripts. These include successive configurations, append ACKs and
 NACKs, term updates, and vote send/receive, with full observations after each step.

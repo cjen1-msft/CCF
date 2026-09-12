@@ -505,14 +505,18 @@ It uses 17 definitions per peer. No solver optimization is claimed.
 The cases cover all old and added masks, poisoned hidden fields, disabled nodes,
 repeated allocation, arbitrary log tails, and every local field plus global and FIFO
 mutations. Shared row scenarios remain byte-identical after extraction.
-Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only new
-`NativeAllocationEncoding.lean`, proving single-node and set allocation against
-`NativeArrayAllocation.allocate`. The parent owns its runtime and fixtures.
-Its first result proves single-node execution, prior assertions, and references.
-Soundness and assignment extension remain unfinished. The parent supplied a
-masking-lemma approach: after row replacement, hiding a row changes only the
-allocation bit; guarded reads return fresh defaults and live-entry obligations
-become vacuous. Reuse that result rather than re-proving the row stores.
+`NativeAllocationEncoding.lean` is committed as `e1afda2f4`.
+Single-node and whole-set execution, reference preservation, soundness, and
+specific-assignment extension are proved against `NativeArrayAllocation.allocate`.
+The reusable masking lemma changes only allocation: hidden rows read fresh
+defaults and have no live-entry obligations. It avoids re-proving row stores.
+The parent inspected the complete module. Its independent build and import audit
+pass in `native-allocation-parent-build.log` and `native-allocation-import-tests.log`.
+The runtime, proof, and fixtures are parent-owned.
+Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` now owns only
+`NativeArrayChangeConfiguration.lean`, extracting a generic Model frame bridge
+from `change_configuration_rep`. It accepts a source row through its Model
+equality rather than requiring the exact retirement witness tuple.
 `NativeMembershipChange.lean`, `NativeMembershipRowTerms.lean`, and
 `NativeMembershipChangeFixtureMain.lean` are committed as `a006368c5`.
 The private action composes the proved guards, new log entry, local and global
