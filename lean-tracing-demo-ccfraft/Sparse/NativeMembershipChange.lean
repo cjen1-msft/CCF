@@ -1,7 +1,7 @@
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-import Sparse.NativeAllocation
+import Sparse.NativeMembershipWrites
 import Sparse.NativeMembershipRowTerms
 import Sparse.NativeRetirementCompletedConstraints
 
@@ -42,13 +42,7 @@ def membershipChange {width : PNat} (source : Fin width)
     (.free .int committedCurrent))
   let completed <- retirementCompletedConstraints before.bootstrap (.boolean true)
     count entries old.commit (.free .int committedCurrent)
-  allocateNodes added
-  writeNodeRow source values
-  let joined <- define (.bitsOr (.free (.bits width) columns.hasJoined) added)
-  let retiredNodes <- define
-    (.store (.free (.array .int (.bits width)) columns.retirementCompleted)
-      (.integer source.val) (.free (.bits width) completed))
-  modify fun after => { after with hasJoined := joined, retirementCompleted := retiredNodes }
+  membershipWrites source added values (.free (.bits width) completed)
 
 end CCFRaft.NativeEncode
 

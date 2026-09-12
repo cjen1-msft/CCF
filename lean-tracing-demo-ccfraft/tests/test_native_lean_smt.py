@@ -445,6 +445,37 @@ class NativeLeanSmtTests(unittest.TestCase):
             "NativeMembershipChangeFixtureMain", models, 147, "membership"
         )
 
+    def test_membership_write_reference_checks(self):
+        result = subprocess.run(
+            [
+                "lake",
+                "env",
+                "lean",
+                "--run",
+                "Sparse/NativeMembershipWritesFixtureMain.lean",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        rejected = json.loads(result.stdout)
+        self.assertEqual(len(rejected), 15)
+        self.assertEqual(
+            {(item["kind"], item["symbol"]) for item in rejected},
+            {
+                (kind, symbol)
+                for kind in ("added", "completed", "row")
+                for symbol in (24, 25, 74, 92, 1024)
+            },
+        )
+        self.assertEqual(
+            {item["error"] for item in rejected},
+            {
+                "internal encoder error: membership writes reference an unallocated SMT symbol"
+            },
+        )
+
     def test_internal_core_action_sequences(self):
         models = self.model_traces("NativeArrayCoreActionsFixtureMain", 184)
         baseline = [item for item in models if item["mutation"] == 0]
