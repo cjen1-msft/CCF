@@ -78,7 +78,6 @@ theorem compile_instructions_sound {width : PNat} [Bootstrap (Fin width)]
     (assignment : Assignment) (holds : Holds after.assertions.toList assignment)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
     (columns : NodeColumnsRep assignment before.toColumns arrays)
-    (domains : forall node : Fin width, NodeDomain width assignment node.val)
     (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION) :
     NativeArrayCheckQuorum.follows arrays items := by
   induction items generalizing before index groups arrays with
@@ -101,7 +100,7 @@ theorem compile_instructions_sound {width : PNat} [Bootstrap (Fin width)]
         exact ⟨enabled, ih middle _ _ run _ afterColumns bootstrap⟩
       · have frame := (assert_all_success clauses before middle asserted).1
         have observed := (observation_correct assignment before.toColumns arrays columns
-          domains item clauses emitted).mp
+          item clauses emitted).mp
             ((assert_all_holds clauses before middle asserted assignment).mp middleHolds).2
         have afterColumns : NodeColumnsRep assignment middle.toColumns arrays := by
           simpa only [frame.columns] using columns
@@ -130,7 +129,7 @@ theorem compiled_trace_model {width : PNat} [Bootstrap (Fin width)]
     rw [frame.bootstrap, sameBootstrap]
   exact ⟨model, (NativeArrayCheckQuorum.follows_correct items arrays model represented).mp
     (compile_instructions_sound items started final index groups result run assignment holds arrays
-      startedColumns domains bootstrap)⟩
+      startedColumns bootstrap)⟩
 
 end CCFRaft.NativeEncode
 

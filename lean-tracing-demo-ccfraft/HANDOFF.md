@@ -186,7 +186,7 @@ tags, ignored tails, invalid sentinels, and nested log-row and first-index
 bindings. The independent proof build passes in
 `native-retirement-index-encoding-parent-build.log`.
 
-Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only
+Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` completed
 the entry-observation normalization cleanup. Its completed
 `NativeArrayAppendHandlerCases.handles_iff` proves exact local handler
 enablement from the four native branch guards. The parent build passes in
@@ -194,21 +194,18 @@ enablement from the four native branch guards. The parent build passes in
 
 The next structural prerequisite is mutable allocation and log columns.
 Allocation, log length, commit, and log cells still use fixed symbols 0, 3,
-4, and 6. Entry observation proofs currently depend on the initial
-`NodeDomain`, which cannot describe later log writes. Normalize observed
-entries to their Model values and remove that obsolete recursive domain
-premise before adding mutable references. Initial domain assertions stay.
-The worker owns only `NativeIntegerTerms`, `NativeVotePacket`,
-`NativeEntryNormalize`, `NativeAppendPacket`, `NativeEncode`,
-`NativeObservationEncoding`, `NativeCompilerEncoding`, `NativeTraceEncoding`,
-`NativeTraceCompleteness`, `NativeFrameStep`, and `NativeFrameTrace`.
-Do not edit these files until it completes. It is lowering normalization
-helpers to avoid an import cycle. The public proof rebuild may revisit the
-expensive campaign proofs; do not duplicate that build.
-Parent-owned `NativeObservationNormalizeFixtureMain` supplies 576 direct
-raw-cell cases. `native-normalized-observation-failing-first.log` records
-the expected pre-change failure for raw term -5 decoding to Model term 0.
-Those tests remain pending until the cleanup finishes.
+4, and 6. Entry observations now normalize raw entries to their Model values.
+Their proofs no longer carry the initial `NodeDomain` through later states.
+Initial domain assertions and realization remain intact.
+`NativeIntegerTerms` holds the unchanged integer helpers below normalization,
+removing the previous import cycle. The eleven cleanup files are parent-owned.
+The independent public proof build passes in
+`native-observation-normalize-parent-build.log`.
+`NativeObservationNormalizeFixtureMain` supplies 576 direct raw-cell cases.
+`native-normalized-observation-failing-first.log` records the pre-change
+failure for raw term -5 decoding to Model term 0.
+Those cases and existing public observation, append, campaign, receive,
+and explorer regressions now pass in `native-observation-normalize-tests.log`.
 
 `NativeArrayVoteState` now holds frame state and the existing action semantics.
 `NativeArrayVote` retains instruction traces and their correspondence proofs.

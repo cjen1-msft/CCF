@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeValues
+import Sparse.NativeEntryNormalize
 import Sparse.NativeOptional
 import Sparse.NativeScript
 import Sparse.NativeArrayCheckQuorum
@@ -327,7 +328,7 @@ def observationClauses {width : PNat} (columns : Columns) :
   | .commit node expected => .ok [.equal (commit node.val) (.integer expected)]
   | .currentTerm node expected => .ok [.equal (read columns.currentTerm node.val (.integer 0)) (.integer expected)]
   | .entry node index expected => .ok [lt (.integer index) (length node.val),
-      .equal (entryAt width node.val (.integer index)) (entryTerm expected)]
+      .equal (normalizedEntryTerm (entryAt width node.val (.integer index))) (entryTerm expected)]
   | .retirementIndex node expected =>
     .ok [.equal (read columns.retirementIndex node.val (.inl .unit)) (optionalTerm Nat.cast expected)]
   | .retirementCommittableIndex node expected =>

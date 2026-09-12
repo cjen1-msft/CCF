@@ -17,7 +17,6 @@ theorem compile_instructions_complete {width : PNat} [Bootstrap (Fin width)]
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
     (columns : NodeColumnsRep assignment before.toColumns arrays)
     (valid : ReferencesValid before)
-    (domains : forall node : Fin width, NodeDomain width assignment node.val)
     (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION)
     (follows : NativeArrayCheckQuorum.follows arrays items) :
     exists extended : Assignment, Holds after.assertions.toList extended := by
@@ -37,23 +36,21 @@ theorem compile_instructions_complete {width : PNat} [Bootstrap (Fin width)]
       rcases instruction_cases item before middle step with ⟨node, same, action⟩ | ⟨clauses, emitted, asserted⟩
       · subst item
         obtain ⟨enabled, restFollows⟩ := follows
-        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
           quorum_complete node before middle action assignment holds arrays columns valid sameBootstrap enabled
-        have afterDomains : forall peer : Fin width, NodeDomain width extended peer.val :=
-          fun peer => (domains peer).agrees_below before.next assignment extended peer.val valid.minimum agreement
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [(quorum_success node.val before middle action).bootstrap, sameBootstrap]
-        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid afterDomains bootstrap restFollows
+        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid bootstrap restFollows
       · obtain ⟨observed, restFollows⟩ := (observation_cons arrays item rest _ clauses emitted).mp follows
         have frame := (assert_all_success clauses before middle asserted).1
         have middleHolds := (assert_all_holds clauses before middle asserted assignment).mpr
-          ⟨holds, (observation_correct assignment before.toColumns arrays columns domains
+          ⟨holds, (observation_correct assignment before.toColumns arrays columns
             item clauses emitted).mpr observed⟩
         have afterColumns : NodeColumnsRep assignment middle.toColumns arrays := by
           simpa only [frame.columns] using columns
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [frame.bootstrap, sameBootstrap]
-        exact ih middle _ _ run assignment middleHolds arrays afterColumns afterValid domains bootstrap restFollows
+        exact ih middle _ _ run assignment middleHolds arrays afterColumns afterValid bootstrap restFollows
 
 theorem model_compiled_trace {width : PNat} [Bootstrap (Fin width)]
     (items : List (NativeArrayCheckQuorum.Instruction (Fin width) Nat))
@@ -77,7 +74,7 @@ theorem model_compiled_trace {width : PNat} [Bootstrap (Fin width)]
   have bootstrap : decodeBits started.bootstrap = INITIAL_CONFIGURATION := by
     rw [frame.bootstrap, sameBootstrap]
   exact compile_instructions_complete items started final index groups result run assignment startedHolds arrays
-    startedColumns startedValid domains bootstrap
+    startedColumns startedValid bootstrap
       ((NativeArrayCheckQuorum.follows_correct items arrays model represented).mpr follows)
 
 theorem compiled_trace_iff {width : PNat} [Bootstrap (Fin width)]

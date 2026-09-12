@@ -3,6 +3,7 @@
 
 import Sparse.NativeEntryNormalize
 import Sparse.NativeArrayAppend
+import Sparse.NativeVotePacket
 
 set_option autoImplicit false
 

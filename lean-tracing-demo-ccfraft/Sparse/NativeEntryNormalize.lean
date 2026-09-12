@@ -1,7 +1,8 @@
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-import Sparse.NativeVotePacket
+import Sparse.NativeIntegerTerms
+import Sparse.NativeValues
 
 set_option autoImplicit false
 

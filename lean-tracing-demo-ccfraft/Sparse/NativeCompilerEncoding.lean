@@ -151,8 +151,7 @@ theorem observation_instruction_success {width : PNat} [Bootstrap (Fin width)]
     (assignment : Assignment) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
     (model : State (Fin width) Nat)
     (columns : NodeColumnsRep assignment before.toColumns arrays)
-    (represented : NativeArrayCheckQuorum.Rep arrays model)
-    (domains : forall node : Fin width, NodeDomain width assignment node.val) :
+    (represented : NativeArrayCheckQuorum.Rep arrays model) :
     SameReferences before after /\
       (Holds after.assertions.toList assignment <->
         Holds before.assertions.toList assignment /\ NativeArrayCheckQuorum.modelFollows model [item]) := by
@@ -160,7 +159,7 @@ theorem observation_instruction_success {width : PNat} [Bootstrap (Fin width)]
   refine ⟨(assert_all_success clauses before after run).1, ?_⟩
   rw [assert_all_holds clauses before after run assignment,
     observation_model_correct assignment before.toColumns arrays model columns
-      represented domains item clauses emitted]
+      represented item clauses emitted]
 
 theorem initial_domains_success {width : PNat} (before after : Encoding width)
     (run : (initialDomains width).run before = .ok ((), after)) (assignment : Assignment) :

@@ -44,14 +44,13 @@ theorem frame_observation_run {width : PNat} (item : FrameInstruction width)
 theorem frame_observation_correct {width : PNat} [Bootstrap (Fin width)]
     (assignment : Assignment) (columns : Columns) (frame : NativeArrayVote.Frame (Fin width) Nat)
     (rep : FrameColumnsRep assignment columns frame)
-    (domains : forall node : Fin width, NodeDomain width assignment node.val)
     (item : FrameInstruction width) (clauses : List (Expr .bool))
     (emitted : frameObservationClauses columns item = .ok clauses) :
     Holds clauses assignment <-> NativeArrayVote.follows frame [item] := by
   cases item <;> simp only [frameObservationClauses] at emitted
   case node item =>
     simpa only [NativeArrayVote.follows, and_true] using
-      observation_correct assignment columns frame.nodes rep.nodes domains item clauses emitted
+      observation_correct assignment columns frame.nodes rep.nodes item clauses emitted
   case hasJoined expected =>
     cases Except.ok.inj emitted
     simp [Holds, Term.eval, rep.hasJoined, encode_bits_eq, NativeArrayVote.follows]

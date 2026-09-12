@@ -16,7 +16,6 @@ theorem compile_frame_sound {width : PNat} [Bootstrap (Fin width)]
     (assignment : Assignment) (holds : Holds after.assertions.toList assignment)
     (frame : NativeArrayVote.Frame (Fin width) Nat)
     (rep : FrameColumnsRep assignment before.toColumns frame)
-    (domains : forall node : Fin width, NodeDomain width assignment node.val)
     (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION) :
     NativeArrayVote.follows frame items := by
   induction items generalizing before index groups frame with
@@ -79,7 +78,7 @@ theorem compile_frame_sound {width : PNat} [Bootstrap (Fin width)]
         exact ⟨enabled, ih middle _ _ run _ afterColumns bootstrap⟩
       · have references := (assert_all_success clauses before middle asserted).1
         have observed := (frame_observation_correct assignment before.toColumns frame rep
-          domains item clauses emitted).mp
+          item clauses emitted).mp
             ((assert_all_holds clauses before middle asserted assignment).mp middleHolds).2
         have afterColumns : FrameColumnsRep assignment middle.toColumns frame := by
           simpa only [references.columns] using rep
@@ -95,7 +94,6 @@ theorem compile_frame_complete {width : PNat} [Bootstrap (Fin width)]
     (assignment : Assignment) (holds : Holds before.assertions.toList assignment)
     (frame : NativeArrayVote.Frame (Fin width) Nat)
     (rep : FrameColumnsRep assignment before.toColumns frame) (valid : ReferencesValid before)
-    (domains : forall node : Fin width, NodeDomain width assignment node.val)
     (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION)
     (follows : NativeArrayVote.follows frame items) :
     exists extended : Assignment, Holds after.assertions.toList extended := by
@@ -120,73 +118,59 @@ theorem compile_frame_complete {width : PNat} [Bootstrap (Fin width)]
         have stepFollows : NativeArrayCheckQuorum.enabled frame.nodes node /\
             NativeArrayVote.follows (frame.nodeStep (.checkQuorum node)) rest := by
           simpa only [NativeArrayVote.follows, NativeArrayCheckQuorum.follows, and_true] using follows
-        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
           frame_quorum_complete node before middle action assignment holds frame rep valid sameBootstrap stepFollows.1
-        have afterDomains : forall peer : Fin width, NodeDomain width extended peer.val :=
-          fun peer => (domains peer).agrees_below before.next assignment extended peer.val valid.minimum agreement
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [(quorum_success node.val before middle action).bootstrap, sameBootstrap]
-        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid afterDomains bootstrap stepFollows.2
+        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid bootstrap stepFollows.2
       · subst item
         obtain ⟨enabled, signature, latest, restFollows⟩ := follows
-        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
           send_vote_complete preVote source destination before middle action assignment holds frame rep valid
             sameBootstrap enabled signature latest
-        have afterDomains : forall peer : Fin width, NodeDomain width extended peer.val :=
-          fun peer => (domains peer).agrees_below before.next assignment extended peer.val valid.minimum agreement
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [send_vote_bootstrap preVote source destination before middle action, sameBootstrap]
-        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid afterDomains bootstrap restFollows
+        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid bootstrap restFollows
       · subst item
         obtain ⟨present, available, restFollows⟩ := follows
-        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
           term_update_complete source destination before middle action assignment holds frame rep valid present available
-        have afterDomains : forall peer : Fin width, NodeDomain width extended peer.val :=
-          fun peer => (domains peer).agrees_below before.next assignment extended peer.val valid.minimum agreement
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [(term_update_success source destination before middle action).bootstrap, sameBootstrap]
-        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid afterDomains bootstrap restFollows
+        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid bootstrap restFollows
       · subst item
         obtain ⟨enabled, restFollows⟩ := follows
-        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
           campaign_complete preVote node before middle action assignment holds frame rep valid sameBootstrap enabled
-        have afterDomains : forall peer : Fin width, NodeDomain width extended peer.val :=
-          fun peer => (domains peer).agrees_below before.next assignment extended peer.val valid.minimum agreement
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [campaign_bootstrap preVote node before middle action, sameBootstrap]
-        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid afterDomains bootstrap restFollows
+        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid bootstrap restFollows
       · subst item
         obtain ⟨present, request, signature, selected, sameSource, recipient, term, latest,
             restFollows⟩ := follows
-        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
           receive_vote_complete source destination request signature before middle action assignment
             holds frame rep valid present selected sameSource recipient term latest
-        have afterDomains : forall peer : Fin width, NodeDomain width extended peer.val :=
-          fun peer => (domains peer).agrees_below before.next assignment extended peer.val
-            valid.minimum agreement
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [receive_vote_bootstrap source destination before middle action, sameBootstrap]
-        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid afterDomains bootstrap restFollows
+        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid bootstrap restFollows
       · subst item
         obtain ⟨enabled, restFollows⟩ := follows
-        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
           send_append_complete source destination batchEnd before middle action assignment holds frame rep
             valid sameBootstrap enabled
-        have afterDomains : forall peer : Fin width, NodeDomain width extended peer.val :=
-          fun peer => (domains peer).agrees_below before.next assignment extended peer.val
-            valid.minimum agreement
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [send_append_bootstrap source destination batchEnd before middle action, sameBootstrap]
-        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid afterDomains bootstrap restFollows
+        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid bootstrap restFollows
       · obtain ⟨observed, restFollows⟩ := (frame_observation_cons frame _ item rest clauses emitted).mp follows
         have references := (assert_all_success clauses before middle asserted).1
         have middleHolds := (assert_all_holds clauses before middle asserted assignment).mpr
-          ⟨holds, (frame_observation_correct assignment before.toColumns frame rep domains item clauses emitted).mpr observed⟩
+          ⟨holds, (frame_observation_correct assignment before.toColumns frame rep item clauses emitted).mpr observed⟩
         have afterColumns : FrameColumnsRep assignment middle.toColumns frame := by
           simpa only [references.columns] using rep
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [references.bootstrap, sameBootstrap]
-        exact ih middle _ _ run assignment middleHolds frame afterColumns afterValid domains bootstrap restFollows
+        exact ih middle _ _ run assignment middleHolds frame afterColumns afterValid bootstrap restFollows
 
 theorem compiled_frame_trace_iff {width : PNat} [Bootstrap (Fin width)]
     (items : List (FrameInstruction width))
@@ -210,7 +194,7 @@ theorem compiled_frame_trace_iff {width : PNat} [Bootstrap (Fin width)]
       rw [references.bootstrap, sameBootstrap]
     exact (NativeArrayVote.exists_iff items).mp
       ⟨frame, initial_frame_valid width assignment domains submitted,
-        compile_frame_sound items started final index groups result run assignment holds frame rep domains bootstrap⟩
+        compile_frame_sound items started final index groups result run assignment holds frame rep bootstrap⟩
   · rintro ⟨model, follows⟩
     let frame := NativeArrayVote.Frame.ofModel model
     let assignment := initialFrameAssignment width Assignment.default frame
@@ -224,7 +208,7 @@ theorem compiled_frame_trace_iff {width : PNat} [Bootstrap (Fin width)]
     have bootstrap : decodeBits started.bootstrap = INITIAL_CONFIGURATION := by
       rw [references.bootstrap, sameBootstrap]
     exact compile_frame_complete items started final index groups result run assignment startedHolds frame
-      rep (valid.same_references references) domains bootstrap
+      rep (valid.same_references references) bootstrap
       ((NativeArrayVote.follows_correct items frame model (NativeArrayVote.of_model_rep model)).mpr follows)
 
 end CCFRaft.NativeEncode

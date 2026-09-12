@@ -141,6 +141,9 @@ class NativeLeanSmtTests(unittest.TestCase):
     def test_first_match_encoding(self):
         self.assert_script_fixtures("NativeFirstMatchFixtureMain", 530, 66)
 
+    def test_normalized_entry_observations(self):
+        self.assert_script_fixtures("NativeObservationNormalizeFixtureMain", 576, 24)
+
     def test_retirement_scan_encoding(self):
         self.assert_script_fixtures("NativeRetirementFixtureMain", 1410, 210)
 
