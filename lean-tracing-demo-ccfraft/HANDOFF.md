@@ -51,7 +51,15 @@ nested binders, noncanonical cells, truncated prefixes, and oversized cursors.
 allocation and destination validity as guard conditions rather than premises.
 It derives the source header from the selected FIFO.
 The parent build passes in `native-array-append-receive-guard-parent-build.log`.
-That worker is idle.
+`NativeLogRangeEncoding` now proves the already-done, term-conflict, and
+no-conflict-extension predicates over explicit arrays. It uses normalized
+entries, saturated subtraction, and a reusable bounded-forall proof.
+The independent proof check passes in `native-log-range-parent-check.log`.
+Its 4,800 actual-Model SMT cases pass in `native-log-range-tests.log`.
+They include mixed canonical and noncanonical cells, empty payloads,
+same-term content differences, ignored tails, and nested binders.
+That worker now owns only new `NativeAppendResponseTerm.lean`, the symbolic
+append-response packet constructor. It has no current-column dependency.
 The main agent owns `NativeArrayVoteReceive` and subsequent receive semantics.
 Its handler and full-frame correspondence proofs build in
 `native-vote-receive-model-build.log`. Public `receiveRequestVote` is now wired.
@@ -183,6 +191,13 @@ both sentinels, rather than assuming valid optional indices.
 Parent proof checks against the compiled dependencies pass in
 `native-first-match-witness-parent-check.log` and
 `native-retirement-index-sound-parent-check.log`.
+`NativeRetirementRefreshTerms` now proves the four retirement scalar results
+from canonical scan witnesses, including zero-to-one-based index conversion.
+Its 1,440 actual-Model SMT cases pass in `native-retirement-refresh-tests.log`.
+They cover all five membership states, inclusive commit boundaries, and
+active nodes with a present committed retired-record index.
+The independent proof check passes in
+`native-retirement-refresh-terms-parent-check.log`.
 Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` is idle.
 `NativeRetirementIndexEncoding` is complete. It composes first inclusion and
 first later exclusion without materializing a shifted array. Its 1,788
@@ -227,6 +242,11 @@ It compares every emitted clause before and after relocating all columns,
 including mixed action histories. The initial failure is the four missing
 column fields, recorded in `native-relocated-columns-first-compile.log`.
 This test remains pending until the migration finishes.
+The range and retirement-scalar encoders and fixtures have been checked
+against compiled dependencies. Rebuild their Lake targets after the column
+migration. The response-packet worker also checks against compiled dependencies
+only, without competing dependency builds. Its new file is outside the
+migration scope.
 
 `NativeArrayVoteState` now holds frame state and the existing action semantics.
 `NativeArrayVote` retains instruction traces and their correspondence proofs.

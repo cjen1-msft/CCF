@@ -108,6 +108,8 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeArrayAppendReceiveGuard",
             "Sparse.NativeFirstMatchWitness",
             "Sparse.NativeRetirementIndexSound",
+            "Sparse.NativeLogRangeEncoding",
+            "Sparse.NativeRetirementRefreshTerms",
         ):
             visit(module)
         forbidden = {
@@ -153,8 +155,30 @@ class NativeLeanSmtTests(unittest.TestCase):
     def test_log_splice_encoding(self):
         self.assert_script_fixtures("NativeLogSpliceFixtureMain", 1280, 796)
 
+    def test_log_range_encoding(self):
+        self.assert_script_fixtures("NativeLogRangeFixtureMain", 4800, 2400)
+
     def test_retirement_index_encoding(self):
         self.assert_script_fixtures("NativeRetirementIndexFixtureMain", 1788, 72)
+
+    def test_retirement_refresh_encoding(self):
+        fixtures = self.assert_script_fixtures(
+            "NativeRetirementRefreshFixtureMain", 1440, 288
+        )
+        self.assertEqual(
+            {
+                fixture["membership"]
+                for fixture in fixtures
+                if fixture["expected"] == "sat"
+            },
+            set(range(5)),
+        )
+        self.assertTrue(
+            any(
+                fixture["activeWithCommittedRetired"] and fixture["expected"] == "sat"
+                for fixture in fixtures
+            )
+        )
 
     def assert_script_fixtures(self, module, count, satisfiable):
         result = subprocess.run(
@@ -171,6 +195,7 @@ class NativeLeanSmtTests(unittest.TestCase):
             sum(item["expected"] == "sat" for item in fixtures), satisfiable
         )
         self.solve(fixtures)
+        return fixtures
 
     def test_queue_store_execution(self):
         pairs = [("a", "b"), ("b", "a"), ("a", "a"), ("c", "b"), ("a", "c"), ("a", "b")]
