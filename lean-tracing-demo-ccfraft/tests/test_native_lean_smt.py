@@ -166,6 +166,26 @@ class NativeLeanSmtTests(unittest.TestCase):
         self.assertEqual({item["expected"] for item in fixtures}, {"sat", "unsat"})
         self.solve(fixtures)
 
+    def test_model_append_guards(self):
+        result = subprocess.run(
+            [
+                "lake",
+                "env",
+                "lean",
+                "--run",
+                "Sparse/NativeAppendGuardFixtureMain.lean",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        fixtures = json.loads(result.stdout)
+        self.assertEqual(len(fixtures), 1216)
+        self.assertEqual(len(fixtures), len({item["name"] for item in fixtures}))
+        self.assertEqual({item["expected"] for item in fixtures}, {"sat", "unsat"})
+        self.solve(fixtures)
+
     def test_model_vote_receive_responses(self):
         result = subprocess.run(
             [

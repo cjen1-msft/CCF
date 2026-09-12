@@ -389,6 +389,17 @@ packet logs without a quantified copy. `NativeEntryNormalize` re-encodes raw
 node-log entries as their decoded Model values. The 2,538 solver cases cover
 all entry kinds, arbitrary sent indices, absent nodes, moved term/cursor
 columns, and negative raw terms and transaction IDs.
+`NativeAppendGuardEncoding` proves exact send enablement and extends an
+existing assignment with two membership witnesses. Its 1,216 Model-derived
+solver cases include pending configurations, the retirement-completed
+exception, invalid frontiers, absent nodes, and self sends.
+
+`NativeArrayLogRanges` proves live-range comparisons for arbitrary incoming
+payload lengths. The Model's already-done and conflict branches compare terms.
+The no-conflict extension branch compares complete entries.
+`NativeArrayLogWrite` proves truncation and splice against Model list operations,
+without constraining discarded tails. These receive lemmas do not yet encode
+an append receive action.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.

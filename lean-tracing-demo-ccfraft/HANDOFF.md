@@ -36,13 +36,26 @@ The main-agent semantic prerequisites now include:
   entry. The send updates the source's sentIndex and appends a packet.
 - `NativeEntryNormalize` and `NativeAppendPacket`: canonical symbolic entries
   and exact AppendEntries packet construction without a quantified log copy.
+- `NativeAppendGuardEncoding`: exact send guards, including the
+  retirement-completed exception and exact frontier, with two-witness
+  assignment-extension completeness. `native-append-guard-tests.log` records
+  1,216 passing actual-Model cases.
+- `NativeArrayLogRanges`: arbitrary-length receive overlap comparisons.
+  Already-done and conflict compare terms; extension compares complete entries.
+  `NativeArrayLogWrite` proves truncation, append, splice, and the Model
+  conflict-truncation branch. Both modules build with their axiom gates in
+  `native-log-ranges-build.log` and `native-log-write-build.log`.
+
+Mechanical FIFO-pop worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns only
+`NativeQueuePop.lean` and `NativeQueuePopEncoding.lean`. It uses GPT-5.6 Sol
+at medium effort. Do not edit those files until it completes.
 
 `native-vote-receive-tests.log` records 1,728 passing response/guard cases.
 `native-append-packet-tests.log` records 2,538 passing packet/normalization cases.
 Both compare with actual Model results. Each new proof module builds with the
 allowed-axiom gate. They are prerequisites, not public receive/append support.
 Next compose vote-receive writes with reusable FIFO pop/reply proofs, then
-append-send guards/cursor writes. Keep append receive and membership change
+append-send cursor writes. Keep append receive and membership change
 next in priority. Do not replace generic receive with a silently restricted
 vote-only action: retain the packet-kind fact in the correspondence statement.
 
