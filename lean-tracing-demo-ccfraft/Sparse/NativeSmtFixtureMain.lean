@@ -4,6 +4,7 @@
 import Sparse.NativeScript
 import Sparse.NativeOptional
 import Sparse.NativeNatSet
+import Sparse.NativeRenaming
 import Lean.Data.Json
 
 set_option autoImplicit false
@@ -83,6 +84,39 @@ private def nestedQuantifiers : Case :=
       (.not (.equal (.bound .here) (.add (.bound (.there .here)) (.integer 1))))))
     expected := true
     correct := by intro assignment; simp [Term.eval, Locals.cons] }
+
+private def weakenedQuantifier : Case :=
+  let body : Term [.int] .bool :=
+    .forall_ .int (.not (.equal (.bound .here)
+      (.add (.bound (.there .here)) (.integer 1))))
+  { name := "weakened-quantifier"
+    formula := .forall_ .int (.forall_ .bool (.not (body.weaken .bool)))
+    expected := true
+    correct := by
+      intro assignment
+      simp [body, Term.weaken, Term.rename, Renaming.underBinder, Term.eval, Locals.cons] }
+
+private def weakenedMatch : Case :=
+  let value : Term [.int] .int :=
+    .cases (.inl (.integer 7) : Term [.int] (.sum .int .bool))
+      (.add (.bound .here) (.bound (.there .here))) (.integer 0)
+  { name := "weakened-match"
+    formula := .forall_ .int (.forall_ .bool
+      (.equal (value.weaken .bool) (.add (.integer 7) (.bound (.there .here)))))
+    expected := true
+    correct := by
+      intro assignment
+      simp [value, Term.weaken, Term.rename, Renaming.underBinder, Term.eval, Locals.cons] }
+
+private def weakenedFree : Case :=
+  let value : Term [] .int := .select (.free (.array .int .int) 42) (.integer 7)
+  { name := "weakened-free-symbol"
+    formula := .forall_ .bool (.equal (value.weaken .bool)
+      (.select (.free (.array .int .int) 42) (.integer 7)))
+    expected := true
+    correct := by
+      intro assignment
+      simp [value, Term.weaken, Term.rename, Term.eval] }
 
 private def wideBits : Case :=
   { name := "twenty-one-bits"
@@ -216,7 +250,7 @@ private def natSetEmpty : Case :=
 def cases : List Case := [
   stored, wrongStore, nestedArray, constantArray, pair, sum, capture, nestedQuantifiers,
   wideBits, widerBits, bitsOperations, unitAndSecond, typedSymbols, overwrittenStore,
-  assertedCondition, arithmetic,
+  assertedCondition, arithmetic, weakenedQuantifier, weakenedMatch, weakenedFree,
   optionalNatural "optional-index-none" none,
   optionalNatural "optional-index-zero" (some 0),
   optionalNatural "optional-index-large" (some (10 ^ 30)),

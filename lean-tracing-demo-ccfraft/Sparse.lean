@@ -31,6 +31,7 @@ import Sparse.NativeArrayCheckQuorum
 import Sparse.NativeArrayQueue
 import Sparse.NativeArrayVote
 import Sparse.NativeEncodeProofs
+import Sparse.NativeRenaming
 import Sparse.NativeSyntaxProofs
 import Sparse.NativeNames
 import Sparse.NativeLowering

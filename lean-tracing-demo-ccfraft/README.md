@@ -132,6 +132,10 @@ index advances, preventing self-referential definitions. `fresh_binding_exists`
 proves that a fresh equality binding preserves satisfiability of the existing
 typed assertions. This covers naming intermediate arrays without expanding
 their predecessors into later expressions.
+`NativeRenaming` provides capture-free binder insertion for nested array
+domains. `Term.weaken_eval` preserves the original value under an added local
+variable, including quantifiers and sum-match branches. Free symbols remain
+unchanged, so the existing freshness invariant still applies.
 
 `NativeQuorumEncoding.current_configuration_model_correct` connects the exact
 `currentCandidate` and `noLaterConfiguration` clauses used by the compiler to

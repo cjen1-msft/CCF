@@ -46,7 +46,7 @@ class NativeLeanSmtTests(unittest.TestCase):
             check=True,
         )
         fixtures = json.loads(result.stdout)
-        self.assertGreaterEqual(len(fixtures), 31)
+        self.assertGreaterEqual(len(fixtures), 34)
         self.assertEqual(len(fixtures), len({item["name"] for item in fixtures}))
         self.solve(fixtures)
 

@@ -307,6 +307,14 @@ Next implement packet value/domain encoding and source-local queue observations,
 then the already-proved native vote and campaign actions. Do not stop at
 observation coverage; reducer integration is still the requested delivery boundary.
 
+`NativeRenaming` now supplies typed renaming and `Term.weaken` for packet logs
+under nested index binders. `rename_eval` and `weaken_eval` prove capture-free
+value preservation, and the corresponding symbol theorems preserve free
+references. The normal Sparse target audits the module. Three new fixtures
+cover nested quantifiers, sum-match branches, and free array reads.
+All 34 kernel-backed formulas pass in `native-renaming-fixture-tests.log`.
+No public instruction coverage changed in this supporting slice.
+
 `NativeOptional` is the next value-codec unit for local-state coverage.
 It uses the existing sum datatype for optional natural indices and identities.
 Decoding distinguishes a valid absent value, `some none`, from invalid payloads,
