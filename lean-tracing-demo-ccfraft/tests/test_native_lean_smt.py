@@ -120,6 +120,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeAppendReceiveTermsEncoding",
             "Sparse.NativeRetirementRefreshEncoding",
             "Sparse.NativeAppendReceiveWritesEncoding",
+            "Sparse.NativeAppendReceiveResponseEncoding",
         ):
             visit(module)
         forbidden = {
@@ -286,6 +287,33 @@ class NativeLeanSmtTests(unittest.TestCase):
                 model["modelEnabled"] and model["selectedAppendRequest"],
             )
         self.solve(fixtures)
+
+    def test_model_append_receive_responses(self):
+        fixtures = self.assert_script_fixtures(
+            "NativeAppendReceiveResponseFixtureMain", 396, 69
+        )
+        successful = [item for item in fixtures if item["expected"] == "sat"]
+        self.assertEqual(len({item["scenario"] for item in successful}), 11)
+        for field in ("hinted", "ack", "self"):
+            self.assertEqual({item[field] for item in successful}, {False, True})
+        self.assertEqual(
+            {item["selected"] for item in successful if not item["hinted"]},
+            {-11, 0, 10**30},
+        )
+        self.assertEqual(
+            {item["selected"] for item in successful if item["hinted"]}, {0, 1, 2}
+        )
+        by_scenario = {item["scenario"]: item for item in successful}
+        for scenario, expected in {
+            "zero-last-term": (5, 2),
+            "zero-previous-term": (0, 1),
+            "no-match": (1, 0),
+            "positive-match": (5, 1),
+            "unordered": (1, 2),
+            "match-beyond-cap": (1, 0),
+        }.items():
+            item = by_scenario[scenario]
+            self.assertEqual((item["responseTerm"], item["responseIndex"]), expected)
 
     def test_model_append_receive_writes(self):
         result = subprocess.run(
