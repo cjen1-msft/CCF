@@ -570,9 +570,15 @@ consecutive local retirement witnesses while preserving the supplied assignment
 and prior assertions. Only the atomic length and entries expressions are transported.
 The parent inspected and rebuilt it in `native-retirement-assignment-parent-build.log`;
 the import audit passes. Both action prefixes use that witness layout.
+`NativeLogSummaryAssignment.lean` is committed as `386a78cc3`.
+It supplies canonical single-integer witnesses for configuration, signature,
+and NACK scans while preserving the supplied assignment and prior assertions.
+The parent inspected the helpers and their semantic equivalences, then rebuilt
+the module in `native-log-summary-assignment-parent-build.log`. The import audit passes.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns only new
-`NativeLogSummaryAssignment.lean`, supplying the analogous single-integer
-extension for configuration, signature, and NACK scans. Runtime files remain unchanged.
+`NativeLogSpliceAssignment.lean`, extending an assignment with the fresh splice array.
+That helper reuses `spliceRawOutput`, preserves raw live cells, and allows arbitrary tails.
+Runtime files remain unchanged.
 
 `NativeArrayCoreActionsFixtureMain` and `NativeCoreActionsFixtureMain` are
 committed as `05b512bdc`. They exercise all five prioritized actions in one
