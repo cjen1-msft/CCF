@@ -433,8 +433,8 @@ request and term update, preserving the original append packets.
 payload lengths. The Model's already-done and conflict branches compare terms.
 The no-conflict extension branch compares complete entries.
 `NativeArrayLogWrite` proves truncation and splice against Model list operations,
-without constraining discarded tails. These receive lemmas do not yet encode
-an append receive action.
+without constraining discarded tails. These lemmas supply the log semantics
+for the private append receive encoder.
 `NativeArrayAppendReceive` adds bounded commit, ACK and NACK correspondence,
 and the nonconsuming candidate-stepdown branch. NACK matching reuses
 `LogMatchSummary.StorageSummary` and does not assume ordered log terms.
@@ -454,6 +454,15 @@ Snapshots use fresh defaults for absent nodes and preserve arbitrary log tails.
 The writer checks all input references before allocating its 16 fresh columns.
 `test_node_row_writes` exercises 1,584 Model-derived scripts and 60 invalid-reference
 cases, including repeated writes through current column references.
+`NativeAppendReceiveWritesEncoding` composes row replacement, FIFO pop and
+reply, and the completed-retirement update. Its 24 fresh symbols preserve the
+original queues and globals on candidate stepdown.
+`NativeAppendReceiveResponseEncoding` proves ACK and NACK metadata.
+Inactive best-index witnesses remain unconstrained. The NACK hint uses the
+last local log term, not the term at the requested previous index.
+The private `NativeAppendReceive` encoder passes 1,454 Model-derived transition
+scripts, including the focused hinted-NACK cases. Its whole-action encoding
+proof is unfinished, so public `receiveAppendEntries` remains unsupported.
 `NativeLogSummaryEncoding` proves bounded signatures, committed configuration
 indices and members, and NACK matches for explicit candidate logs.
 All three scans reuse `NativeMaxMatchEncoding`, with zero for no match.

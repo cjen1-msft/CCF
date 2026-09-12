@@ -159,9 +159,10 @@ NACKs, duplicate and self queues, and wrong packet kinds.
 147 expected SAT cases. Its allocation counterexamples corrupt newly
 allocated rows and already allocated rows separately.
 Both generators build. Their Model-only coverage checks pass in
-`native-core-model-fixture-coverage.log`. Neither action is public yet:
-these are prepared integration inputs, not passing encoder coverage.
-Wire them through `assert_model_traces` when their public actions land.
+`native-core-model-fixture-coverage.log`. Neither action is public yet.
+All append receive cases now pass against the private encoder. Membership
+cases remain prepared inputs without encoder coverage.
+Wire both through `assert_model_traces` when their public actions land.
 
 `NativeQueuePop` and `NativeQueuePopEncoding` now prove total directed FIFO
 pop, including empty queues and negative raw scalars, full-frame preservation,
@@ -324,10 +325,11 @@ Public append receive remains unwired.
 The parent built `NativeAppendReceiveWrites.lean`. It reuses the row, queue-pop,
 and queue-push writers, then selects original queues for candidate stepdown.
 Only consuming cases update the destination's completed-retirement set.
-Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only new
-`NativeAppendReceiveWritesEncoding.lean`, proving full-frame soundness and
-specific-assignment extension. The parent retains the runtime and Model-derived
-write fixtures. `NativeAppendReceiveWritesFixtureMain` now passes
+`NativeAppendReceiveWritesEncoding.lean` proves full-frame soundness,
+specific-assignment extension, exact 24-symbol execution, and reference bounds.
+The parent inspected the complete proof and rebuilt it in
+`native-append-receive-writes-parent-build.log`. The runtime, proof, and fixtures
+are committed as `32d7f3c91`. `NativeAppendReceiveWritesFixtureMain` passes
 2,436 scripts and 16 invalid-reference cases in `native-append-receive-writes-tests.log`.
 The five enabled receive branches, self queues, duplicate replies, absent senders,
 and preservation during stepdown are covered. Supplied rows still come from the
@@ -370,14 +372,63 @@ actual uses: grow, accepted commit update, consuming retirement refresh, and
 hinted NACK. Case 508 now takes 0.059 seconds and case 624 takes 0.071 seconds.
 Both remain SAT. Shell `605` was stopped; its baseline metrics remain under
 `native-internal-receive-fixtures`.
-The full 1,344-case guarded retry is shell `641`, with output in
-`native-append-receive-internal-guarded-tests.log` and per-case artifacts under
-`native-internal-receive-guarded-fixtures`. Its result is not yet known.
+The guarded retry reached case 294, a self-receive extension, and became slow
+again. Pinning its initial FIFO head to zero did not resolve it within two
+minutes. That diagnostic was stopped without changing the representation.
+Disabling Z3 E-matching solved the unchanged case in 0.132 seconds.
+Shell `641` was stopped; its artifacts remain under
+`native-internal-receive-guarded-fixtures`.
+With `smt.ematching=false`, all 1,344 internal receive cases pass, including
+334 SAT cases, in `native-mbqi-regressions.log`. That run then exposed `unknown`
+on the existing `queue-push-preserves-other-cells` case.
+`native_solver.py` now retries the unchanged script with E-matching enabled
+only after `unknown`. It preserves first-attempt diagnostics as `.mbqi.stdout`
+and `.mbqi.stderr`, records the retry, and measures total elapsed time.
+Solver errors still fail immediately. A second `unknown` stays inconclusive.
+The retry protocol failed first in `native-mbqi-retry-before.log` and passes
+in `native-mbqi-retry-protocol-tests.log`.
+All 17 resumed methods pass in 667 seconds in
+`native-quantifier-retry-regressions.log`, covering quantified-array components,
+all eight public action kinds, explorer cores, and all 2,436 receive-write cases.
 
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns only new
-`NativeAppendReceiveResponse.lean` and `NativeAppendReceiveResponseEncoding.lean`.
-It is extracting and proving the draft's response terms, including arbitrary
-unused best-index witnesses. The parent retains the draft receive encoder.
+`NativeAppendReceiveResponse` and `NativeAppendReceiveResponseEncoding` are
+committed as `1131bcb07`. They prove ACK and NACK construction, including
+arbitrary unused best-index witnesses. The NACK hint checks the last local term,
+not the term at the requested previous index. The parent inspected the proof
+and rebuilt it in `native-append-receive-response-parent-build.log`.
+All 396 response scripts pass in `native-append-receive-response-tests.log`.
+They include zero and positive matches, unordered terms, bounded matches,
+ordinary NACKs, and negative or huge unused witnesses.
+The private encoder now calls these helpers. All 1,344 Model traces pass again
+in `native-internal-receive-response-integrated.log`.
+`NativeArrayAppendReceiveHintFixtureMain` adds 110 full transitions using the
+same response scenarios, with 55 SAT cases. They pass in
+`native-internal-hinted-receive.log`, including absent senders and self queues.
+The shared scenario extraction leaves all response scripts byte-identical.
+The private encoder and both trace methods are committed as `8695f7c49`.
+Whole-action soundness and completeness remain unfinished; do not expose the
+action publicly or change either assurance flag.
+
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns only new
+`NativeArrayAppendCandidate.lean`. It composes the existing handler lemmas for
+the selected log, commit, and new-follower fields. Inactive signature witnesses
+must remain unconstrained. The parent owns all accepted response files.
+
+Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only new
+`NativeRetirementCompletedConstraints.lean` and
+`NativeRetirementCompletedConstraintsEncoding.lean`. It extracts the completed
+bitvector's fresh-symbol loop and proves execution, enabled constraints, and
+specific-assignment extension. Successful extraction must retain the original
+IDs and assertion order, with `1 + 3 * width` fresh symbols.
+
+Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns only new
+`NativeRetirementCompletedEncoding.lean`. It composes the actual current,
+prefix-retirement, and retired-record constraints into one Model completed-node
+bit, then a whole bitvector. The parent inspected its submitted soundness proof.
+Canonical-witness completeness is still being added; acceptance is pending.
+The existing 720-case fixture now also constrains
+the current configuration through the real emitted scan and member decoder.
+It passes in `native-retirement-completed-composed-fixture-tests.log`.
 
 `NativeArrayVoteState` now holds frame state and the existing action semantics.
 `NativeArrayVote` retains instruction traces and their correspondence proofs.
