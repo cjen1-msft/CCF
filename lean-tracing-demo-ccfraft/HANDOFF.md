@@ -564,10 +564,15 @@ It composes write soundness and specific-assignment extension with actual Model
 `changeConfiguration`, given the source-row and scan facts.
 The parent inspected and rebuilt it in `native-membership-frame-encoding-parent-build.log`;
 the import audit passes. Whole-action prefix composition remains unfinished.
+`NativeRetirementRefreshAssignment.lean` is committed as `4a7060af2`.
+It derives canonical choices from the represented log and assigns the four
+consecutive local retirement witnesses while preserving the supplied assignment
+and prior assertions. Only the atomic length and entries expressions are transported.
+The parent inspected and rebuilt it in `native-retirement-assignment-parent-build.log`;
+the import audit passes. Both action prefixes use that witness layout.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns only new
-`NativeRetirementRefreshAssignment.lean`. It constructs four consecutive local
-retirement witnesses while preserving the supplied assignment and prior assertions.
-Both action prefixes use that witness layout. The runtime remains unchanged.
+`NativeLogSummaryAssignment.lean`, supplying the analogous single-integer
+extension for configuration, signature, and NACK scans. Runtime files remain unchanged.
 
 `NativeArrayCoreActionsFixtureMain` and `NativeCoreActionsFixtureMain` are
 committed as `05b512bdc`. They exercise all five prioritized actions in one
