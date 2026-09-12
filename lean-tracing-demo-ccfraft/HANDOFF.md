@@ -416,8 +416,13 @@ old and refreshed retirement state, a nonempty changed configuration, and
 whether any newly added identity has already joined.
 `NativeMembershipGuardFixtureMain` stops before post-state observations.
 All 1,572 guard scripts pass, including 314 SAT cases, in
-`native-membership-guard-tests.log`. Guard correspondence, allocation writes,
-and the full membership encoder still need implementation or proof.
+`native-membership-guard-tests.log`. `NativeMembershipTermsEncoding` now proves
+the added set, appended log entry, and exact Model guard equivalence from
+arbitrary current and retirement scan witnesses. It is committed as `52a8bd34d`.
+The parent removed a duplicate bitset-equality lemma, inspected the full module,
+and rebuilt it in `native-membership-terms-parent-build.log`.
+The guard cases and import audit pass in `native-membership-terms-parent-tests.log`.
+Allocation writes and the full membership encoder remain unfinished.
 
 `NativeArrayAppendCandidate.lean` is committed as `2fa2a9ed2`.
 It composes all consuming handler results for the selected log, commit, and
@@ -430,6 +435,11 @@ Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns only new
 `NativeAppendReceiveCandidateEncoding.lean`. It connects the actual guarded
 splice, selected-array definitions, and conditional signature scan to that
 native candidate row. Inactive SMT signature integers may be negative.
+The submitted candidate proof independently builds and has been inspected.
+Worker B is factoring its duplicated 15-field row constructor before acceptance.
+The parent has integrated the candidate helper into `receiveAppend`; all 110
+focused transition scripts remain byte-identical before and after extraction.
+Those runtime changes and the new candidate proof are not yet committed.
 
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only new
 `NativeRetirementCompletedConstraints.lean` and
@@ -451,10 +461,11 @@ It and the import-boundary audit pass in
 are parent-owned. Worker A has the canonical witness API for loop composition.
 
 Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns only new
-`NativeMembershipTermsEncoding.lean`. It proves added-set decoding,
-the appended configuration entry, and membership-guard correspondence.
-The final composition must use the old full log length for the latest
-configuration and the old commit for refreshed retirement state.
+`NativeAppendReceiveFinalRowTerms.lean` and
+`NativeAppendReceiveFinalRowEncoding.lean`. It composes candidate stepdown
+and conditional local retirement refresh into the final row.
+The helper needs only the candidate row because it preserves the original
+role and retirement fields. Inactive scan values must remain arbitrary.
 
 `NativeArrayVoteState` now holds frame state and the existing action semantics.
 `NativeArrayVote` retains instruction traces and their correspondence proofs.
