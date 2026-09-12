@@ -161,6 +161,74 @@ theorem enabled_correct (frame : NativeArrayVote.Frame N T) (state : State N T)
   rw [changedMembership]
   rfl
 
+theorem change_configuration_output_rep
+    (frame : NativeArrayVote.Frame N T) (state : State N T)
+    (rep : frame.Rep state) (source : N)
+    (newConfiguration previousConfiguration : Finset N)
+    (output : Local N T) (completed : Finset N)
+    (previousCorrect :
+      (latestConfiguration (state.nodes source)).nodes = previousConfiguration)
+    (rowCorrect :
+      output.toModel =
+        refreshRetirementState source
+          (appendRow (get frame.nodes source) newConfiguration previousConfiguration).toModel)
+    (completedCorrect :
+      completed = retirementCompletedNodes
+        (appendRow (get frame.nodes source) newConfiguration previousConfiguration).log.decode
+        (get frame.nodes source).commit) :
+    ({ frame with
+      nodes := Function.update
+        (NativeArrayAllocation.allocate frame.nodes
+          (newConfiguration \ previousConfiguration))
+        source (some output)
+      globals :=
+        { frame.globals with
+          hasJoined := frame.globals.hasJoined ∪
+            (newConfiguration \ previousConfiguration)
+          retirementCompleted :=
+            Function.update frame.globals.retirementCompleted source completed } }).Rep
+      (CCFRaft.next state (.changeConfiguration source newConfiguration)) := by
+  let oldRow := get frame.nodes source
+  let added := addedNodes newConfiguration previousConfiguration
+  have fields : oldRow.toModel = state.nodes source :=
+    get_rep frame.nodes state rep.nodes source
+  have appendedCorrect := append_row_correct oldRow newConfiguration previousConfiguration
+  have outputCorrect :
+      output.toModel =
+        refreshRetirementState source
+          { (state.nodes source) with
+            log := (state.nodes source).log ++
+              [{ term := (state.nodes source).currentTerm,
+                 content := .reconfiguration newConfiguration }]
+            sentIndex := fun peer =>
+              if peer ∈ newConfiguration \ previousConfiguration then
+                (state.nodes source).log.length
+              else
+                (state.nodes source).sentIndex peer } := by
+    rw [rowCorrect, appendedCorrect, fields]
+  have completedState : retirementCompletedNodes
+      ((state.nodes source).log ++
+        [{ term := (state.nodes source).currentTerm,
+           content := .reconfiguration newConfiguration }])
+      (state.nodes source).commitIndex = completed := by
+    rw [completedCorrect, <- fields]
+    have sameLog := congrArg NodeState.log appendedCorrect
+    exact congrArg
+      (fun entries => retirementCompletedNodes entries oldRow.toModel.commitIndex)
+      sameLog.symm
+  have allocatedRep := NativeArrayAllocation.allocate_rep frame.nodes state rep.nodes added
+  constructor
+  · intro peer
+    by_cases same : peer = source
+    · subst peer
+      simp [CCFRaft.next, previousCorrect, State.node?, updateNode, Local.Rep, outputCorrect]
+    · simpa [oldRow, added, CCFRaft.next, previousCorrect, State.node?, updateNode, same]
+        using allocatedRep peer
+  · simpa [CCFRaft.next, previousCorrect] using rep.queues
+  · rw [rep.globals]
+    simp [CCFRaft.next, previousCorrect, NativeArrayVote.Globals.ofModel,
+      refreshRetirementCompleted, completedState]
+
 theorem change_configuration_rep (frame : NativeArrayVote.Frame N T) (state : State N T)
     (rep : frame.Rep state) (source : N)
     (newConfiguration previousConfiguration : Finset N) (previousIndex : Nat)
@@ -184,7 +252,6 @@ theorem change_configuration_rep (frame : NativeArrayVote.Frame N T) (state : St
       retirement signature retired completed).Rep
       (CCFRaft.next state (.changeConfiguration source newConfiguration)) := by
   let oldRow := get frame.nodes source
-  let added := addedNodes newConfiguration previousConfiguration
   let changed := changeRow oldRow newConfiguration previousConfiguration retirement signature retired
   have fields : oldRow.toModel = state.nodes source :=
     get_rep frame.nodes state rep.nodes source
@@ -194,42 +261,18 @@ theorem change_configuration_rep (frame : NativeArrayVote.Frame N T) (state : St
     exact congrArg Configuration.nodes
       ((NativeArrayConfiguration.current_configuration_correct oldRow.log oldRow.log.length
         previousIndex previousConfiguration).mp ⟨current, atPrevious⟩)
-  have changedCorrect :
-      changed.toModel =
-        refreshRetirementState source
-          { (state.nodes source) with
-            log := (state.nodes source).log ++
-              [{ term := (state.nodes source).currentTerm,
-                 content := .reconfiguration newConfiguration }]
-            sentIndex := fun peer =>
-              if peer ∈ newConfiguration \ previousConfiguration then
-                (state.nodes source).log.length
-              else
-                (state.nodes source).sentIndex peer } := by
-    rw [<- fields]
-    exact change_row_correct oldRow source newConfiguration previousConfiguration
-      retirement signature retired retirementCorrect signatureCorrect retiredCorrect
-  have completedState : retirementCompletedNodes
-      ((state.nodes source).log ++
-        [{ term := (state.nodes source).currentTerm,
-           content := .reconfiguration newConfiguration }])
-      (state.nodes source).commitIndex = completed := by
-    rw [<- fields]
-    exact completedCorrect
-  have allocatedRep := NativeArrayAllocation.allocate_rep frame.nodes state rep.nodes added
-  constructor
-  · intro peer
-    by_cases same : peer = source
-    · subst peer
-      simp [changeConfiguration, changed, oldRow, CCFRaft.next, previous,
-        State.node?, updateNode, Local.Rep, changedCorrect]
-    · simpa [changeConfiguration, changed, oldRow, added, CCFRaft.next, previous,
-        State.node?, updateNode, same] using allocatedRep peer
-  · simpa [changeConfiguration, CCFRaft.next, previous] using rep.queues
-  · simp only [changeConfiguration]
-    rw [rep.globals]
-    simp [CCFRaft.next, previous, NativeArrayVote.Globals.ofModel, addedNodes,
-      refreshRetirementCompleted, completedState]
+  apply change_configuration_output_rep frame state rep source newConfiguration
+    previousConfiguration changed completed previous
+  · simpa [changed, changeRow] using
+      (NativeArrayRetirement.refresh_correct
+        (appendRow oldRow newConfiguration previousConfiguration) source
+        retirement signature retired retirementCorrect signatureCorrect retiredCorrect)
+  · rw [<- completedCorrect]
+    have appendedCorrect := append_row_correct oldRow newConfiguration previousConfiguration
+    have sameLog := congrArg NodeState.log appendedCorrect
+    exact congrArg
+      (fun entries => retirementCompletedNodes entries oldRow.toModel.commitIndex)
+      sameLog.symm
 
 end CCFRaft.NativeArrayChangeConfiguration
 
