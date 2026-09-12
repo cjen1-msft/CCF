@@ -34,15 +34,21 @@ Those cases and signature regressions pass in `native-first-match-tests.log`.
 and first-retired-record predicates with that generic proof. Its 1,410
 Model-derived SMT cases pass in `native-retirement-scan-tests.log`, including
 noncanonical cells, tag discrimination, ignored tails, and nested binders.
-The parent checked the proof against compiled dependencies in
-`native-retirement-encoding-parent-check.log`; rebuild it after the shared
-normalization cleanup finishes.
+The refreshed proof build and fixtures pass in
+`native-retirement-refreshed-build.log` and
+`native-retirement-refreshed-tests.log`.
 `NativeArrayAppendNetwork` now proves full-frame stepdown and consuming
 append-receive correspondence, including metadata refresh after NACKs.
 The parent inspected it and rebuilt it in
 `native-array-append-network-parent-build.log`.
-That worker now owns only `NativeLogSpliceEncoding.lean`, encoding live-range
-log copies with explicit source arrays and unconstrained output tails.
+`NativeLogSpliceEncoding` now proves quantified live-range log copies from
+explicit source arrays, with unconstrained output tails. Its constructive
+completeness witness copies the raw cells, not merely their decoded values.
+The parent build passes in `native-log-splice-parent-build.log`.
+Its 1,280 emitted-SMT cases pass in `native-log-splice-tests.log`, including
+nested binders, noncanonical cells, truncated prefixes, and oversized cursors.
+That worker now owns only `NativeArrayAppendReceiveGuard.lean`, composing
+exact receive enablement without assuming allocation or destination validity.
 The main agent owns `NativeArrayVoteReceive` and subsequent receive semantics.
 Its handler and full-frame correspondence proofs build in
 `native-vote-receive-model-build.log`. Public `receiveRequestVote` is now wired.
@@ -169,8 +175,16 @@ decomposition to bounded first-match summaries over a bootstrap-prefixed
 virtual log. The parent inspected it and rebuilt it in
 `native-array-retirement-index-parent-build.log`.
 Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns only
-`NativeRetirementIndexEncoding.lean`, composing those searches in SMT.
+`NativeFirstMatchWitness.lean` and `NativeRetirementIndexSound.lean`,
+extracting canonical witnesses from successful arbitrary SMT assignments.
 It does not own any public compiler files.
+`NativeRetirementIndexEncoding` is complete. It composes first inclusion and
+first later exclusion without materializing a shifted array. Its 1,788
+Model-derived SMT cases pass in `native-retirement-index-tests.log`.
+They include never-included nodes, bootstrap members, re-additions, wrong
+tags, ignored tails, invalid sentinels, and nested log-row and first-index
+bindings. The independent proof build passes in
+`native-retirement-index-encoding-parent-build.log`.
 
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only
 the entry-observation normalization cleanup. Its completed

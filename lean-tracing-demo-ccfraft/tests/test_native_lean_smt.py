@@ -103,6 +103,8 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeArrayRetirementIndex",
             "Sparse.NativeArrayAppendNetwork",
             "Sparse.NativeArrayChangeConfiguration",
+            "Sparse.NativeLogSpliceEncoding",
+            "Sparse.NativeRetirementIndexEncoding",
         ):
             visit(module)
         forbidden = {
@@ -138,6 +140,15 @@ class NativeLeanSmtTests(unittest.TestCase):
 
     def test_first_match_encoding(self):
         self.assert_script_fixtures("NativeFirstMatchFixtureMain", 530, 66)
+
+    def test_retirement_scan_encoding(self):
+        self.assert_script_fixtures("NativeRetirementFixtureMain", 1410, 210)
+
+    def test_log_splice_encoding(self):
+        self.assert_script_fixtures("NativeLogSpliceFixtureMain", 1280, 796)
+
+    def test_retirement_index_encoding(self):
+        self.assert_script_fixtures("NativeRetirementIndexFixtureMain", 1788, 72)
 
     def assert_script_fixtures(self, module, count, satisfiable):
         result = subprocess.run(
