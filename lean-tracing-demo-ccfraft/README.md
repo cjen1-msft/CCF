@@ -467,6 +467,9 @@ proof is unfinished, so public `receiveAppendEntries` remains unsupported.
 indices and members, and NACK matches for explicit candidate logs.
 All three scans reuse `NativeMaxMatchEncoding`, with zero for no match.
 Their proofs extract valid natural indices from arbitrary satisfying SMT integers.
+`NativeRetirementCompletedEncoding` composes current-configuration and
+committed-prefix scans into the exact Model completed-retirement bitvector.
+It also constructs canonical witnesses satisfying all scan and bit constraints.
 `NativeQueuePopEncoding` proves directed FIFO removal and full-frame
 assignment extension. Empty removal is total internally; receive guards
 separately require a packet. The queue fixtures cover repeated pop/push,

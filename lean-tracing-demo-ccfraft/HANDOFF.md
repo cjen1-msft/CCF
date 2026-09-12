@@ -431,14 +431,23 @@ bitvector's fresh-symbol loop and proves execution, enabled constraints, and
 specific-assignment extension. Successful extraction must retain the original
 IDs and assertion order, with `1 + 3 * width` fresh symbols.
 
-Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns only new
-`NativeRetirementCompletedEncoding.lean`. It composes the actual current,
+`NativeRetirementCompletedEncoding.lean` now composes the actual current,
 prefix-retirement, and retired-record constraints into one Model completed-node
-bit, then a whole bitvector. The parent inspected its submitted soundness proof.
-Canonical-witness completeness is still being added; acceptance is pending.
+bit, then a whole bitvector. Its `retirement_completed_constraints_complete`
+constructs all three canonical witness families and proves every bit equation.
+The parent inspected the whole module and independently built it in
+`native-retirement-completed-full-parent-build.log`.
 The existing 720-case fixture now also constrains
 the current configuration through the real emitted scan and member decoder.
-It passes in `native-retirement-completed-composed-fixture-tests.log`.
+It and the import-boundary audit pass in
+`native-retirement-completed-full-parent-tests.log`. The proof and fixture
+are parent-owned. Worker A has the canonical witness API for loop composition.
+
+Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns only new
+`NativeMembershipTermsEncoding.lean`. It proves added-set decoding,
+the appended configuration entry, and membership-guard correspondence.
+The final composition must use the old full log length for the latest
+configuration and the old commit for refreshed retirement state.
 
 `NativeArrayVoteState` now holds frame state and the existing action semantics.
 `NativeArrayVote` retains instruction traces and their correspondence proofs.

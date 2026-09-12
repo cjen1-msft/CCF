@@ -3,6 +3,7 @@
 
 import Sparse.NativeRetirementCompletedTerm
 import Sparse.NativeRetirementEncoding
+import Sparse.NativeLogSummaryTerms
 import Sparse.NativeLogTerm
 import Sparse.NativeScript
 import Lean.Data.Json
@@ -43,6 +44,9 @@ def fixture (name : String) (log : List (Entry (Fin 3) Nat))
     .equal (.free .int 3) (.integer (firstMatchValue retirement)),
     .equal (.free .int 4) (.integer (firstMatchValue retired)),
     .equal entries (.snd (logTerm log)),
+    currentConfigurationIndexTerm 3 (.integer log.length) entries (.integer commit) (.free .int 0),
+    .equal (.free (.bits 3) 1)
+      (currentConfigurationMembersTerm 3 (encodeBits ({0, 1} : Finset (Fin 3))) entries (.free .int 0)),
     retirementIndexTerm 3 (encodeBits ({0, 1} : Finset (Fin 3)))
       (.integer committedLog.length) entries node (.free .int 2) (.free .int 3),
     retiredRecordTerm 3 (.integer committedLog.length) entries node (.free .int 4),
