@@ -157,6 +157,10 @@ Every Model message has a valid value, and every valid value decodes back
 exactly, including append-entry logs. `NativePacketDomain` proves the emitted
 payload and full-packet domains and the source selector. Live packet columns
 and packet JSON observations are not wired yet.
+`NativePacketMatch.packet_matches_correct` proves full packet equality from
+the header and tagged payload. AppendEntries uses the finite log matcher.
+The solver fixtures include a proved satisfying assignment for every packet
+constructor, plus contradictions for changed headers, tags, payloads, and logs.
 `NativeQueueLengths` encodes a destination-first, source-second length array.
 Each read computes `Int.toNat` from its raw integer cell, emitted as an `ite`.
 This removes the need for a universal length domain. Negative raw cells encode

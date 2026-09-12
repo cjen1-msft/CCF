@@ -9,6 +9,7 @@ import Sparse.NativeLogValue
 import Sparse.NativeLogMatch
 import Sparse.NativePacketHeader
 import Sparse.NativePacketDomain
+import Sparse.NativePacketMatch
 import Sparse.NativeQueueLengths
 import Lean.Data.Json
 
@@ -22,6 +23,11 @@ structure Case where
   formula : Term [] .bool
   expected : Bool
   correct : forall assignment, formula.eval assignment Locals.empty = expected
+
+structure SatCase where
+  name : String
+  formula : Term [] .bool
+  correct : exists assignment, formula.eval assignment Locals.empty = true
 
 private def stored : Case :=
   { name := "array-store"
@@ -461,6 +467,88 @@ private def logMatchCases : List Case :=
         omega)
   ]
 
+private def packetMatchSat (name : String) (expected : Message (Fin 2) Nat) : SatCase :=
+  let value : Term [] (NativeEncode.packetTy 2) := .free (NativeEncode.packetTy 2) 0
+  { name
+    formula := .and (NativeEncode.packetDomain value) (NativeEncode.packetMatches value expected)
+    correct := by
+      let assignment := Assignment.default.set (NativeEncode.packetTy 2) 0
+        (NativeEncode.packetValue (width := 2) expected)
+      refine ⟨assignment, ?_⟩
+      have actual : value.eval assignment Locals.empty = NativeEncode.packetValue (width := 2) expected := by
+        simp [value, assignment, Term.eval, Assignment.set]
+      have valid : NativeEncode.PacketValueValid (value.eval assignment Locals.empty) := by
+        rw [actual]
+        exact NativeEncode.packet_value_valid (width := 2) expected
+      simp only [Term.eval, Bool.and_eq_true]
+      refine ⟨(NativeEncode.packet_domain_correct value assignment Locals.empty).mpr valid, ?_⟩
+      apply (NativeEncode.packet_matches_correct value expected assignment Locals.empty valid).mpr
+      simp [actual] }
+
+private def packetMatchConflict (name : String) (first second : Message (Fin 2) Nat)
+    (different : first ≠ second) : Case :=
+  let value : Term [] (NativeEncode.packetTy 2) := .free (NativeEncode.packetTy 2) 0
+  { name
+    formula := .and (NativeEncode.packetDomain value)
+      (.and (NativeEncode.packetMatches value first) (NativeEncode.packetMatches value second))
+    expected := false
+    correct := by
+      intro assignment
+      apply Bool.eq_false_iff.mpr
+      intro held
+      simp only [Term.eval, Bool.and_eq_true] at held
+      obtain ⟨domain, left, right⟩ := held
+      have valid := (NativeEncode.packet_domain_correct value assignment Locals.empty).mp domain
+      have firstMatch := (NativeEncode.packet_matches_correct value first assignment Locals.empty valid).mp left
+      have secondMatch := (NativeEncode.packet_matches_correct value second assignment Locals.empty valid).mp right
+      exact different (firstMatch.symm.trans secondMatch) }
+
+private def sampleAppend : AppendEntriesRequest (Fin 2) Nat :=
+  { term := 9, source := 0, destination := 1, prevLogIndex := 0, prevLogTerm := 3, leaderCommit := 7
+    entries := [{ term := 4, content := .signature }, { term := 4, content := .transaction (10 ^ 30) }] }
+
+private def samplePackets : List (Message (Fin 2) Nat) := [
+  .appendEntriesRequest sampleAppend,
+  .appendEntriesResponse { term := 9, source := 0, destination := 1, success := false, lastLogIndex := 7 },
+  .requestVoteRequest { term := 9, source := 0, destination := 1, lastCommittableTerm := 3, lastCommittableIndex := 7 },
+  .requestVoteResponse { term := 9, source := 0, destination := 1, voteGranted := true },
+  .requestPreVote { term := 9, source := 0, destination := 1, lastCommittableTerm := 3, lastCommittableIndex := 7 },
+  .requestPreVoteResponse { term := 9, source := 0, destination := 1, voteGranted := false },
+  .proposeVoteRequest { term := 9, source := 0, destination := 1 }]
+
+def packetSatCases : List SatCase :=
+  samplePackets.zipIdx.map fun (packet, index) => packetMatchSat s!"packet-match-{index}" packet
+
+private def packetMatchConflicts : List Case :=
+  let original : Message (Fin 2) Nat := .appendEntriesRequest sampleAppend
+  [
+    packetMatchConflict "packet-match-term" original
+      (.appendEntriesRequest { sampleAppend with term := 10 }) (by decide),
+    packetMatchConflict "packet-match-source" original
+      (.appendEntriesRequest { sampleAppend with source := 1 }) (by decide),
+    packetMatchConflict "packet-match-destination" original
+      (.appendEntriesRequest { sampleAppend with destination := 0 }) (by decide),
+    packetMatchConflict "packet-match-previous-index" original
+      (.appendEntriesRequest { sampleAppend with prevLogIndex := 1 }) (by decide),
+    packetMatchConflict "packet-match-previous-term" original
+      (.appendEntriesRequest { sampleAppend with prevLogTerm := 4 }) (by decide),
+    packetMatchConflict "packet-match-commit" original
+      (.appendEntriesRequest { sampleAppend with leaderCommit := 8 }) (by decide),
+    packetMatchConflict "packet-match-entries-length" original
+      (.appendEntriesRequest { sampleAppend with entries := [] }) (by decide),
+    packetMatchConflict "packet-match-entries-order" original
+      (.appendEntriesRequest { sampleAppend with entries := sampleAppend.entries.reverse }) (by decide),
+    packetMatchConflict "packet-match-entries-duplicates" original
+      (.appendEntriesRequest { sampleAppend with entries := sampleAppend.entries ++ sampleAppend.entries }) (by decide),
+    packetMatchConflict "packet-match-entries-value" original
+      (.appendEntriesRequest { sampleAppend with entries :=
+        [{ term := 4, content := .signature }, { term := 4, content := .transaction 0 }] }) (by decide)
+  ] ++ (List.ofFn fun index : Fin 7 =>
+    packetMatchConflict s!"packet-match-tag-{index.val}"
+      (samplePackets[index.val]'(by simp [samplePackets]))
+      (samplePackets[(index.val + 1) % 7]'(by simp [samplePackets]; omega))
+      (by fin_cases index <;> decide))
+
 def cases : List Case := [
   stored, wrongStore, nestedArray, constantArray, pair, sum, capture, nestedQuantifiers,
   wideBits, widerBits, bitsOperations, unitAndSecond, typedSymbols, overwrittenStore,
@@ -502,19 +590,22 @@ def cases : List Case := [
   queueLengthLiteral "queue-decode-large-negative" (-(10 ^ 30)),
   queueLengthLiteral "queue-decode-zero" 0,
   queueLengthLiteral "queue-decode-positive" 1,
-  queueLengthLiteral "queue-decode-large-positive" (10 ^ 30)] ++ packetCases ++ logMatchCases
+  queueLengthLiteral "queue-decode-large-positive" (10 ^ 30)] ++ packetCases ++ logMatchCases ++ packetMatchConflicts
 
 end CCFRaft.NativeSmt
 
 run_cmd do
-  for axiomName in (<- Lean.collectAxioms ``CCFRaft.NativeSmt.cases) do
-    unless axiomName == ``propext || axiomName == ``Classical.choice ||
-        axiomName == ``Quot.sound do
-      throwError "unexpected fixture axiom: {axiomName}"
+  for name in [``CCFRaft.NativeSmt.cases, ``CCFRaft.NativeSmt.packetSatCases] do
+    for axiomName in (<- Lean.collectAxioms name) do
+      unless axiomName == ``propext || axiomName == ``Classical.choice ||
+          axiomName == ``Quot.sound do
+        throwError "unexpected fixture axiom: {axiomName}"
 
 def main : IO Unit := do
-  let fixtures := CCFRaft.NativeSmt.cases.map fun fixture =>
-    Lean.Json.mkObj [("name", Lean.toJson fixture.name),
-      ("expected", Lean.toJson (if fixture.expected then "sat" else "unsat")),
-      ("script", Lean.toJson (CCFRaft.NativeSmt.renderScript [fixture.formula]))]
+  let fixture (name : String) (formula : CCFRaft.NativeSmt.Term [] .bool) (expected : String) :=
+    Lean.Json.mkObj [("name", Lean.toJson name), ("expected", Lean.toJson expected),
+      ("script", Lean.toJson (CCFRaft.NativeSmt.renderScript [formula]))]
+  let fixtures := CCFRaft.NativeSmt.cases.map (fun item =>
+    fixture item.name item.formula (if item.expected then "sat" else "unsat")) ++
+    CCFRaft.NativeSmt.packetSatCases.map (fun item => fixture item.name item.formula "sat")
   IO.println (Lean.toJson fixtures).compress

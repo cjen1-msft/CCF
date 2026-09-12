@@ -358,7 +358,7 @@ native queues. No universal queue-length domain remains.
 the empty-network template. Neither endpoint must be allocated.
 `initial_frame_assignment_rep` preserves arbitrary original frames in the
 completeness direction. Quorum steps preserve queue lengths.
-The normal Sparse proof build passes. There are now 79 kernel-backed formula
+The normal Sparse proof build passes. There are now 103 kernel-backed formula
 fixtures, including positive and negative raw-cell decoding.
 The public queue regression includes one, two, and 21 identities, large lengths,
 strict input errors, independent pairs, and quorum framing.
@@ -402,12 +402,27 @@ pass in `native-log-match-fixture-tests.log`.
 Next compose packet literal matching from the header, payload tags/scalars,
 and this log matcher, before wiring live queue cells.
 
+`NativePacketMatch` now proves full literal matching for all seven constructors.
+`appendPayloadMatches` combines scalar equality and `logMatches`.
+`packetPayloadMatches` preserves each protocol tag, and `packetMatches`
+checks the header too. The proofs connect actual emitted expressions to
+`modelPacket` equality under the existing packet domain.
+The normal Sparse target includes the module. All 103 formula fixtures pass
+in `native-packet-match-fixture-tests.log`.
+`SatCase` adds genuine SAT witnesses to the fixture suite, rather than requiring
+every satisfying formula to be true for every assignment. Seven packet fixtures
+use `packetValue` as the witness. Seventeen conflict fixtures cover every tag,
+all header fields, append scalars, and log length, order, duplication, and values.
+Both fixture collections have the allowed-axiom audit.
+No public packet observation is accepted yet. Next wire queue head/live cells
+with source-partition validity, then strict packet decoding and observations.
+
 `NativeOptional` is the next value-codec unit for local-state coverage.
 It uses the existing sum datatype for optional natural indices and identities.
 Decoding distinguishes a valid absent value, `some none`, from invalid payloads,
 `none`. It rejects negative indices and identities outside the declared width.
 The proofs cover round trips, exact literal equality, and actual domain terms.
-`NativeSmtFixtureMain` now has 79 kernel-backed solver cases, including nine
+`NativeSmtFixtureMain` now has 103 kernel-backed solver cases, including nine
 optional-value cases. The codecs are now wired for all three retirement-index
 fields and `votedFor`.
 
