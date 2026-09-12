@@ -1,7 +1,7 @@
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-import Sparse.NativeAppendReceiveTerms
+import Sparse.NativeAppendReceiveCandidateTerms
 import Sparse.NativeAppendReceiveWrites
 import Sparse.NativeAppendReceiveResponse
 import Sparse.NativeLogSpliceEncoding
@@ -77,12 +77,12 @@ def receiveAppend {width : PNat} (source destination : Fin width) : EncodeM widt
   let hint := appendReceiveNackHint columns destination packet
   assertion (implies (.and branches.rejects hint)
     (nackMatchTerm width old.logLength old.logEntries previous previousTerm (.free .int best)))
+  let candidate := appendReceiveCandidateRowTerms columns destination packet grows
+    logLength logEntries commit
   let values : NodeRowTerms width :=
-    { old with
+    { candidate with
       role := .ite branches.stepDown (.integer (roleCode .follower)) old.role
-      newFollower := .ite branches.stepDown (.boolean true)
-        (.ite (.and grows branches.conflict) (.boolean false) old.newFollower)
-      logLength, logEntries, commit
+      newFollower := .ite branches.stepDown (.boolean true) candidate.newFollower
       retirementIndex := .ite branches.stepDown old.retirementIndex refreshed.retirementIndex
       retirementCommittableIndex := .ite branches.stepDown
         old.retirementCommittableIndex refreshed.retirementCommittableIndex
