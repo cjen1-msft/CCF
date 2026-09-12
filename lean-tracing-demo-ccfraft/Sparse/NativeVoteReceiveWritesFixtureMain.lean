@@ -17,19 +17,13 @@ private instance : Bootstrap (Fin 3) :=
   { configuration := {0, 1}, leader := 0, leader_mem := by simp }
 
 def observations (state : State (Fin 3) Nat) (source destination : Fin 3) (conflict : Bool) : List Json :=
-  (List.finRange 3).flatMap (fun node =>
-    Json.mkObj [("kind", toJson "allocated"), ("node", toJson (nodeName node)),
-      ("value", toJson (decide (state.allocated node)))] :: nodeObservations node (state.nodes node)) ++
-  globalObservations state [] ++
-  (List.finRange 3).flatMap fun receiver =>
-    (List.finRange 3).flatMap fun sender =>
-      let packets := Sparse.Queue.partition sender (state.network receiver)
-      let length := packets.length + if conflict && receiver == source && sender == destination then 1 else 0
-      Json.mkObj [("kind", toJson "queueLength"), ("source", toJson (nodeName sender)),
-        ("destination", toJson (nodeName receiver)), ("value", toJson length)] ::
-      packets.zipIdx.map fun (packet, index) =>
-        Json.mkObj [("kind", toJson "queuePoint"), ("source", toJson (nodeName sender)),
-          ("destination", toJson (nodeName receiver)), ("index", toJson index), ("value", messageJson packet)]
+  let observed := if conflict then
+      { state with network := fun node =>
+        if node = source then state.network node ++ [.proposeVoteRequest
+          { term := 0, source := destination, destination := source }]
+        else state.network node }
+    else state
+  frameObservations observed
 
 def decodeObservations (items : List Json) : Except String (Array (FrameInstruction 3)) := do
   items.toArray.mapM (decodeFrameInstruction 3 #["a", "b", "c"])

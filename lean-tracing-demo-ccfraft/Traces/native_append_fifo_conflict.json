@@ -1,0 +1,23 @@
+{
+  "nodes": ["a", "b"],
+  "bootstrap": ["a", "b"],
+  "instructions": [
+    {"kind": "allocated", "node": "a", "value": true},
+    {"kind": "allocated", "node": "b", "value": true},
+    {"kind": "role", "node": "a", "value": "leader"},
+    {"kind": "membershipState", "node": "a", "value": "active"},
+    {"kind": "logLength", "node": "a", "value": 2},
+    {"kind": "entry", "node": "a", "index": 0, "value": {"term": 8, "content": "signature"}},
+    {"kind": "entry", "node": "a", "index": 1, "value": {"term": 2, "content": {"transaction": 99}}},
+    {"kind": "commit", "node": "a", "value": 0},
+    {"kind": "currentTerm", "node": "a", "value": 4},
+    {"kind": "sentIndex", "node": "a", "peer": "b", "value": 0},
+    {"kind": "queueLength", "source": "a", "destination": "b", "value": 0},
+    {"kind": "appendEntries", "source": "a", "destination": "b", "batchEnd": 1},
+    {"kind": "appendEntries", "source": "a", "destination": "b", "batchEnd": 2},
+    {"kind": "appendEntries", "source": "a", "destination": "b", "batchEnd": 2},
+    {"kind": "appendEntries", "source": "a", "destination": "b", "batchEnd": 2},
+    {"kind": "sentIndex", "node": "a", "peer": "b", "value": 2},
+    {"kind": "queueLength", "source": "a", "destination": "b", "value": 3}
+  ]
+}

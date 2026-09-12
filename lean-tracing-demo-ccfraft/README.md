@@ -60,7 +60,7 @@ or restricting possible executions is not a performance optimization.
 The public Lean encoder uses `Sparse/NativeFrameEncode.lean` and shares
 local-state compilation with `Sparse/NativeEncode.lean`.
 It accepts `checkQuorum`, `requestVote`, `requestPreVote`, `updateTerm`, `timeout`,
-and `becomePreVoteCandidate`, plus the
+`becomePreVoteCandidate`, and `appendEntries`, plus the
 `allocated`, `role`, `newFollower`, `logLength`,
 `commit`, `currentTerm`, `entry`, `retirementIndex`,
 `retirementCommittableIndex`, `retiredCommittedIndex`, `votedFor`, and
@@ -70,6 +70,12 @@ Both vote-send actions require declared `source` and `destination` identities.
 They assert the Model's allocation, role, distinct-peer, and active-membership
 guards, then append one packet to the directed FIFO. Sending the same packet
 twice appends two copies. A disabled action is UNSAT, not an input error.
+`appendEntries` requires declared `source` and `destination` identities and a
+natural `batchEnd`. The Model requires
+`batchEnd = min(sentIndex[destination] + 1, logLength)`.
+The action asserts the Model's send guards, updates the cursor, and enqueues
+the packet constructed from the original cursor. Repeated heartbeats remain
+separate queue entries. This send frontier does not limit incoming packet size.
 `updateTerm` reads the directed queue head without consuming it. It requires an
 allocated destination and a strictly newer packet term. Responses also require
 an allocated source. It sets follower role, current term, and the new-follower
@@ -295,12 +301,12 @@ actual plain and details outputs. `FrameDocumentConsistent` uses the broader
 decoder and Model trace semantics. `NativeFrameColumns` realizes arbitrary
 joined sets independently of allocation and bootstrap membership.
 `NativeFrameTrace` composes local, global, and queue observations with
-quorum, vote-send, term-update, and campaign steps without restricting
+quorum, vote-send, append-send, term-update, and campaign steps without restricting
 unobserved global state or queues.
 
 This Lean encoder remains experimental. Remaining Model actions, observations,
 and raw reducer integration are unfinished. The API's full-model assurance
-flag remains false; current coverage is six actions, sixteen local observation
+flag remains false; current coverage is seven actions, sixteen local observation
 kinds, all four global observation kinds, queue lengths, and exact packet points.
 Partial packet observations remain unsupported.
 
@@ -379,7 +385,7 @@ theorem. The public matrix includes 400 complete Model campaign traces and
 Both actions currently emit five stores. Pre-vote writes back three unchanged
 values to keep one proof path. This is a baseline, not a solver optimization.
 
-The next core covers vote-request receive, AppendEntries send and receive, and
+The remaining core covers vote-request receive, AppendEntries receive, and
 membership change. These actions are not public yet.
 `NativeArrayVoteReceive` proves vote-handler and full-frame receive semantics.
 `NativeVoteReceiveGuardEncoding` equates the request-specific guard with Model
@@ -399,6 +405,13 @@ columns, and negative raw terms and transaction IDs.
 existing assignment with two membership witnesses. Its 1,216 Model-derived
 solver cases include pending configurations, the retirement-completed
 exception, invalid frontiers, absent nodes, and self sends.
+`NativeAppendSendEncoding` composes these guards with the cursor store and
+FIFO enqueue, including full-frame soundness and assignment extension.
+Public decoding and both whole-trace proof directions support `appendEntries`.
+The public regressions cover 1,200 Model-derived transitions, successive
+cursor updates, duplicate heartbeats, input errors, and explorer core attribution.
+Sequence cases include 21 declared nodes and append sends followed by a vote
+request and term update, preserving the original append packets.
 
 `NativeArrayLogRanges` proves live-range comparisons for arbitrary incoming
 payload lengths. The Model's already-done and conflict branches compare terms.

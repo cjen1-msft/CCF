@@ -95,6 +95,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeCampaignWrites",
             "Sparse.NativeVoteReceiveWritesEncoding",
             "Sparse.NativeAppendGuardEncoding",
+            "Sparse.NativeAppendSendEncoding",
         ):
             visit(module)
         forbidden = {
@@ -922,6 +923,158 @@ class NativeLeanSmtTests(unittest.TestCase):
             ]
         )
 
+    def test_public_model_append_sends(self):
+        result = subprocess.run(
+            [
+                "lake",
+                "env",
+                "lean",
+                "--run",
+                "Sparse/NativeArrayAppendFixtureMain.lean",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        fixtures = json.loads(result.stdout)
+        self.assertEqual(len(fixtures), 1200)
+        self.assertEqual(
+            {fixture["expected"] for fixture in fixtures}, {"sat", "unsat"}
+        )
+        scripts = self.encode([fixture["trace"] for fixture in fixtures])
+        self.solve(
+            [
+                {
+                    "name": f"public-model-append-{index}",
+                    "script": script,
+                    "expected": fixture["expected"],
+                }
+                for index, (fixture, script) in enumerate(zip(fixtures, scripts))
+            ]
+        )
+
+    def test_append_send_input_errors(self):
+        valid = {
+            "kind": "appendEntries",
+            "source": "a",
+            "destination": "b",
+            "batchEnd": 1,
+        }
+        invalid = [
+            {key: value for key, value in valid.items() if key != missing}
+            for missing in ("source", "destination", "batchEnd")
+        ]
+        invalid.extend(
+            dict(valid, batchEnd=value) for value in (-1, True, 1.5, "1", None, [])
+        )
+        invalid.extend(
+            [
+                dict(valid, source="missing"),
+                dict(valid, destination="missing"),
+                dict(valid, source=0),
+                dict(valid, destination=False),
+                dict(valid, value=True),
+                {"kind": "receive", "source": "a", "destination": "b"},
+            ]
+        )
+        self.assert_invalid_instructions(invalid)
+
+    def test_append_cursor_and_duplicate_heartbeats(self):
+        document = json.loads(
+            (ROOT / "Traces/native_append_fifo_conflict.json").read_text()
+        )
+        document["instructions"][-1]["value"] = 4
+        packet = {
+            "kind": "appendEntriesRequest",
+            "source": "a",
+            "destination": "b",
+            "term": 4,
+            "leaderCommit": 0,
+        }
+        packets = [
+            dict(
+                packet,
+                prevLogIndex=0,
+                prevLogTerm=0,
+                entries=[{"term": 8, "content": "signature"}],
+            ),
+            dict(
+                packet,
+                prevLogIndex=1,
+                prevLogTerm=8,
+                entries=[{"term": 2, "content": {"transaction": 99}}],
+            ),
+            dict(packet, prevLogIndex=2, prevLogTerm=2, entries=[]),
+            dict(packet, prevLogIndex=2, prevLogTerm=2, entries=[]),
+        ]
+        document["instructions"].extend(
+            {
+                "kind": "queuePoint",
+                "source": "a",
+                "destination": "b",
+                "index": index,
+                "value": value,
+            }
+            for index, value in enumerate(packets)
+        )
+        variants = [("append-cursor-and-heartbeats", document, "sat")]
+        larger = deepcopy(document)
+        larger["nodes"] += [f"node-{index}" for index in range(2, 21)]
+        variants.append(("twenty-one-node-append", larger, "sat"))
+        mixed = deepcopy(document)
+        mixed["instructions"].extend(
+            [
+                {"kind": "role", "node": "b", "value": "candidate"},
+                {"kind": "logLength", "node": "b", "value": 0},
+                {"kind": "commit", "node": "b", "value": 0},
+                {"kind": "currentTerm", "node": "b", "value": 9},
+                {
+                    "kind": "queueLength",
+                    "source": "b",
+                    "destination": "a",
+                    "value": 0,
+                },
+                {"kind": "requestVote", "source": "b", "destination": "a"},
+                {"kind": "updateTerm", "source": "b", "destination": "a"},
+                {"kind": "role", "node": "a", "value": "follower"},
+                {"kind": "currentTerm", "node": "a", "value": 9},
+                {"kind": "sentIndex", "node": "a", "peer": "b", "value": 2},
+            ]
+        )
+        mixed["instructions"].extend(
+            deepcopy(instruction)
+            for instruction in document["instructions"]
+            if instruction["kind"] == "queuePoint"
+        )
+        variants.append(("append-vote-and-term-update", mixed, "sat"))
+        disabled = deepcopy(mixed)
+        disabled["instructions"].append(
+            {
+                "kind": "appendEntries",
+                "source": "a",
+                "destination": "b",
+                "batchEnd": 2,
+            }
+        )
+        variants.append(("append-disabled-after-term-update", disabled, "unsat"))
+        for index, instruction in enumerate(document["instructions"]):
+            if instruction["kind"] == "appendEntries":
+                bad = deepcopy(document)
+                bad["instructions"][index]["batchEnd"] += 1
+                variants.append((f"append-bad-frontier-{index}", bad, "unsat"))
+            elif instruction["kind"] == "queuePoint":
+                bad = deepcopy(document)
+                bad["instructions"][index]["value"]["prevLogIndex"] += 1
+                variants.append((f"append-bad-packet-{index}", bad, "unsat"))
+        scripts = self.encode([trace for _, trace, _ in variants])
+        self.solve(
+            [
+                {"name": name, "script": script, "expected": expected}
+                for (name, _, expected), script in zip(variants, scripts)
+            ]
+        )
+
     def test_peer_action_input_errors(self):
         invalid = []
         for kind in ("requestVote", "requestPreVote", "updateTerm"):
@@ -944,6 +1097,14 @@ class NativeLeanSmtTests(unittest.TestCase):
         self.assert_invalid_instructions(invalid)
 
     def test_vote_send_explorer_core(self):
+        self.assert_explorer_core("Traces/native_vote_fifo_conflict.json", {7, 8, 9})
+
+    def test_append_send_explorer_core(self):
+        self.assert_explorer_core(
+            "Traces/native_append_fifo_conflict.json", {11, 12, 13, 14, 16}
+        )
+
+    def assert_explorer_core(self, trace, required):
         requested = os.environ.get("Z3")
         solver = find_z3(Path(requested) if requested else None)
         with tempfile.TemporaryDirectory(prefix="native-vote-core-") as temporary:
@@ -952,7 +1113,7 @@ class NativeLeanSmtTests(unittest.TestCase):
                 [
                     sys.executable,
                     "native_lean.py",
-                    "Traces/native_vote_fifo_conflict.json",
+                    trace,
                     "--output-dir",
                     str(output),
                     "--z3",
@@ -966,13 +1127,16 @@ class NativeLeanSmtTests(unittest.TestCase):
             self.assertEqual(json.loads(result.stdout)["status"], "unsat")
             api = ExplorerApi(NativeRun.load(output))
             run = api.get("/api/run")
-            self.assertEqual(run["instruction_count"], 10)
+            self.assertEqual(
+                run["instruction_count"],
+                len(json.loads((ROOT / trace).read_text())["instructions"]),
+            )
             self.assertEqual(
                 run["result"]["assurance"],
                 {"full_model_to_script_proved": False, "raw_reducer_integrated": False},
             )
             core = api.get("/api/core")
-            self.assertTrue({7, 8, 9}.issubset(core["instructions"]))
+            self.assertTrue(required.issubset(core["instructions"]))
             self.assertFalse(core["minimal"])
 
     def test_history_and_arbitrary_size(self):

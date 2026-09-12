@@ -10,6 +10,7 @@ import Sparse.NativePacketJson
 import Sparse.NativeVoteSend
 import Sparse.NativeTermUpdate
 import Sparse.NativeCampaign
+import Sparse.NativeAppendSend
 
 set_option autoImplicit false
 
@@ -35,6 +36,11 @@ def decodeFrameInstruction (width : PNat) (names : Array String) (value : Json) 
     fields value ["kind", "source", "destination"]
     return .updateTerm (<- resolve width names (<- field value "source"))
       (<- resolve width names (<- field value "destination"))
+  else if kind = "appendEntries" then
+    fields value ["kind", "source", "destination", "batchEnd"]
+    return .appendEntries (<- resolve width names (<- field value "source"))
+      (<- resolve width names (<- field value "destination"))
+      (<- natural (<- field value "batchEnd"))
   else if kind = "hasJoined" then
     fields value ["kind", "value"]
     return .hasJoined (<- decodeNodeSet width names (<- field value "value"))
@@ -100,6 +106,7 @@ def frameInstruction {width : PNat} (item : FrameInstruction width) : EncodeM wi
   | .vote preVote source destination => sendVote preVote source destination
   | .updateTerm source destination => updateTerm source destination
   | .campaign preVote node => campaign preVote node
+  | .appendEntries source destination batchEnd => sendAppend source destination batchEnd
   | _ => do
     let state <- get
     assertAll (<- frameObservationClauses state.toColumns item)

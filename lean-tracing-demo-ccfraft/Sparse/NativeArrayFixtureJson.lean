@@ -3,6 +3,7 @@
 
 import Model
 import Lean.Data.Json
+import Sparse.Queue
 
 set_option autoImplicit false
 
@@ -94,5 +95,19 @@ def messageJson (message : Message (Fin 3) Nat) : Json :=
       ("requestPreVoteResponse", [("voteGranted", toJson response.voteGranted)])
     | .proposeVoteRequest _ => ("proposeVoteRequest", [])
   Json.mkObj ([("kind", toJson kind)] ++ fields ++ extra)
+
+def frameObservations (state : State (Fin 3) Nat) (txIds : List Nat := []) : List Json :=
+  (List.finRange 3).flatMap (fun node =>
+    Json.mkObj [("kind", toJson "allocated"), ("node", toJson (nodeName node)),
+      ("value", toJson (decide (state.allocated node)))] :: nodeObservations node (state.nodes node)) ++
+  globalObservations state txIds ++
+  (List.finRange 3).flatMap fun destination =>
+    (List.finRange 3).flatMap fun source =>
+      let packets := Sparse.Queue.partition source (state.network destination)
+      Json.mkObj [("kind", toJson "queueLength"), ("source", toJson (nodeName source)),
+        ("destination", toJson (nodeName destination)), ("value", toJson packets.length)] ::
+      packets.zipIdx.map fun (packet, index) =>
+        Json.mkObj [("kind", toJson "queuePoint"), ("source", toJson (nodeName source)),
+          ("destination", toJson (nodeName destination)), ("index", toJson index), ("value", messageJson packet)]
 
 end CCFRaft.NativeArrayFixtures
