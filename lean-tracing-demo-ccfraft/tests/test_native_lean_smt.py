@@ -121,6 +121,12 @@ class NativeLeanSmtTests(unittest.TestCase):
         self.assertEqual(len(fixtures), 56)
         self.assertEqual(len(fixtures), len({item["name"] for item in fixtures}))
         self.assertEqual(sum(item["expected"] == "sat" for item in fixtures), 28)
+        pop_fixtures = output["popFixtures"]
+        self.assertEqual(len(pop_fixtures), 56)
+        self.assertEqual(
+            len(pop_fixtures), len({item["name"] for item in pop_fixtures})
+        )
+        self.assertEqual(sum(item["expected"] == "sat" for item in pop_fixtures), 28)
         self.assertEqual(
             [(item["next"], item["id"]) for item in output["rejected"]],
             [(24, 24), (24, 25), (24, 1024), (26, 26), (26, 27)],
@@ -130,7 +136,7 @@ class NativeLeanSmtTests(unittest.TestCase):
                 item["error"],
                 "internal encoder error: packet references an unallocated SMT symbol",
             )
-        self.solve(fixtures)
+        self.solve(fixtures + pop_fixtures)
 
     def test_model_vote_packets(self):
         result = subprocess.run(

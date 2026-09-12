@@ -404,6 +404,10 @@ an append receive action.
 and the nonconsuming candidate-stepdown branch. NACK matching reuses
 `LogMatchSummary.StorageSummary` and does not assume ordered log terms.
 Retirement refresh and receive branch composition remain unfinished.
+`NativeQueuePopEncoding` proves directed FIFO removal and full-frame
+assignment extension. Empty removal is total internally; receive guards
+separately require a packet. The queue fixtures cover repeated pop/push,
+duplicates, self queues, negative raw scalars, and large head offsets.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.

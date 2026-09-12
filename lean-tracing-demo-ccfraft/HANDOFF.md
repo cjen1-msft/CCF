@@ -52,9 +52,14 @@ The main-agent semantic prerequisites now include:
   definition. `native-append-receive-branches-build.log` records the clean build.
   Retirement refresh, branch composition, and public receive remain unwired.
 
-Mechanical FIFO-pop worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns only
-`NativeQueuePop.lean` and `NativeQueuePopEncoding.lean`. It uses GPT-5.6 Sol
-at medium effort. Do not edit those files until it completes.
+`NativeQueuePop` and `NativeQueuePopEncoding` now prove total directed FIFO
+pop, including empty queues and negative raw scalars, full-frame preservation,
+and extension of a specific satisfying assignment. `native-queue-pop-tests.log`
+records 112 passing push/pop fixtures, including duplicate and self queues.
+Mechanical worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns only
+`NativeVoteReceiveWrites.lean` and `NativeVoteReceiveWritesEncoding.lean`.
+It composes the conditional vote store with FIFO pop/reply, using GPT-5.6 Sol
+at medium effort. Do not edit those two files until it completes.
 
 `native-vote-receive-tests.log` records 1,728 passing response/guard cases.
 `native-append-packet-tests.log` records 2,538 passing packet/normalization cases.
