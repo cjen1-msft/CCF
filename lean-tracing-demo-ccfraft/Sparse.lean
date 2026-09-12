@@ -34,6 +34,7 @@ import Sparse.NativeEncodeProofs
 import Sparse.NativeRenaming
 import Sparse.NativeLogValue
 import Sparse.NativePacketHeader
+import Sparse.NativePacketDomain
 import Sparse.NativeSyntaxProofs
 import Sparse.NativeNames
 import Sparse.NativeLowering

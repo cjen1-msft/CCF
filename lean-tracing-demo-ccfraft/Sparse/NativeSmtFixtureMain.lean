@@ -7,6 +7,7 @@ import Sparse.NativeNatSet
 import Sparse.NativeRenaming
 import Sparse.NativeLogValue
 import Sparse.NativePacketHeader
+import Sparse.NativePacketDomain
 import Lean.Data.Json
 
 set_option autoImplicit false
@@ -319,6 +320,83 @@ private def packetHeader (name : String) (width : PNat) (term source destination
       simpa [NativeEncode.PacketHeaderValid, NativeEncode.nodeValue?, value, Term.eval, and_assoc] using
         NativeEncode.packet_header_domain_correct width value assignment Locals.empty }
 
+private def packetPayloadCase (name : String) (value : Term [] (NativeEncode.packetPayloadTy 2))
+    (expected : Bool)
+    (correct : forall assignment, NativeEncode.PacketPayloadValid (value.eval assignment Locals.empty) <->
+      expected = true) : Case :=
+  { name
+    formula := NativeEncode.packetPayloadDomain value
+    expected
+    correct := by
+      intro assignment
+      apply Bool.eq_iff_iff.mpr
+      exact (NativeEncode.packet_payload_domain_correct value assignment Locals.empty).trans (correct assignment) }
+
+private def appendPacketDomain : Case :=
+  let entries : Term [] (NativeEncode.logTy 2) := .free (NativeEncode.logTy 2) 0
+  { name := "append-packet-log-domain"
+    formula := .equal
+      (NativeEncode.packetPayloadDomain (width := 2)
+        (.inl (.pair (.integer 1000000) (.pair (.integer 7) (.pair (.integer 0) entries)))))
+      (NativeEncode.logDomain entries)
+    expected := true
+    correct := by
+      intro assignment
+      simp only [Term.eval, decide_eq_true_eq]
+      apply Bool.eq_iff_iff.mpr
+      rw [NativeEncode.packet_payload_domain_correct, NativeEncode.log_domain_correct]
+      simp [NativeEncode.PacketPayloadValid, Term.eval] }
+
+private def packetKindsDistinct : Case :=
+  let vote : Term [] (NativeEncode.packetPayloadTy 2) := .inr (.inr (.inl (.pair (.integer 0) (.integer 0))))
+  let preVote : Term [] (NativeEncode.packetPayloadTy 2) :=
+    .inr (.inr (.inr (.inr (.inl (.pair (.integer 0) (.integer 0))))))
+  { name := "vote-and-pre-vote-packet-tags"
+    formula := .not (.equal vote preVote)
+    expected := true
+    correct := by
+      intro assignment
+      simp [vote, preVote, Term.eval]
+      intro same
+      cases Sum.inr.inj (Sum.inr.inj same) }
+
+private def packetSource : Case :=
+  { name := "packet-source-header"
+    formula := .equal (NativeEncode.packetSource (width := 2)
+      (.pair (.pair (.integer 9) (.pair (.integer 1) (.integer 0)))
+        (.free (NativeEncode.packetPayloadTy 2) 0))) (.integer 1)
+    expected := true
+    correct := by intro assignment; simp [NativeEncode.packetSource, Term.eval] }
+
+private def packetCases : List Case := [
+  packetPayloadCase "append-response-payload" (.inr (.inl (.pair (.boolean false) (.integer 0)))) true
+    (by intro assignment; simp [NativeEncode.PacketPayloadValid, Term.eval]),
+  packetPayloadCase "vote-request-payload" (.inr (.inr (.inl (.pair (.integer (10 ^ 30)) (.integer 0))))) true
+    (by intro assignment; simp [NativeEncode.PacketPayloadValid, Term.eval]),
+  packetPayloadCase "vote-response-payload" (.inr (.inr (.inr (.inl (.boolean false))))) true
+    (by intro assignment; simp [NativeEncode.PacketPayloadValid, Term.eval]),
+  packetPayloadCase "pre-vote-request-payload"
+    (.inr (.inr (.inr (.inr (.inl (.pair (.integer 0) (.integer (10 ^ 30)))))))) true
+    (by intro assignment; simp [NativeEncode.PacketPayloadValid, Term.eval]),
+  packetPayloadCase "pre-vote-response-payload" (.inr (.inr (.inr (.inr (.inr (.inl (.boolean true))))))) true
+    (by intro assignment; simp [NativeEncode.PacketPayloadValid, Term.eval]),
+  packetPayloadCase "propose-vote-payload" (.inr (.inr (.inr (.inr (.inr (.inr .unit)))))) true
+    (by intro assignment; simp [NativeEncode.PacketPayloadValid, Term.eval]),
+  packetPayloadCase "append-response-negative-index" (.inr (.inl (.pair (.boolean true) (.integer (-1))))) false
+    (by intro assignment; simp [NativeEncode.PacketPayloadValid, Term.eval]),
+  packetPayloadCase "vote-request-negative-index" (.inr (.inr (.inl (.pair (.integer 0) (.integer (-1)))))) false
+    (by intro assignment; simp [NativeEncode.PacketPayloadValid, Term.eval]),
+  packetPayloadCase "pre-vote-request-negative-term"
+    (.inr (.inr (.inr (.inr (.inl (.pair (.integer (-1)) (.integer 0))))))) false
+    (by intro assignment; simp [NativeEncode.PacketPayloadValid, Term.eval]),
+  packetPayloadCase "append-request-negative-index"
+    (.inl (.pair (.integer (-1)) (.pair (.integer 0) (.pair (.integer 0) (.free (NativeEncode.logTy 2) 0))))) false
+    (by intro assignment; simp [NativeEncode.PacketPayloadValid, Term.eval]),
+  packetPayloadCase "append-request-negative-commit"
+    (.inl (.pair (.integer 0) (.pair (.integer 0) (.pair (.integer (-1)) (.free (NativeEncode.logTy 2) 0))))) false
+    (by intro assignment; simp [NativeEncode.PacketPayloadValid, Term.eval]),
+  appendPacketDomain, packetKindsDistinct, packetSource]
+
 def cases : List Case := [
   stored, wrongStore, nestedArray, constantArray, pair, sum, capture, nestedQuantifiers,
   wideBits, widerBits, bitsOperations, unitAndSecond, typedSymbols, overwrittenStore,
@@ -349,7 +427,7 @@ def cases : List Case := [
   packetHeader "packet-header-negative-source" 21 0 (-1) 0,
   packetHeader "packet-header-source-past-end" 21 0 21 0,
   packetHeader "packet-header-negative-destination" 21 0 0 (-1),
-  packetHeader "packet-header-destination-past-end" 21 0 0 21]
+  packetHeader "packet-header-destination-past-end" 21 0 0 21] ++ packetCases
 
 end CCFRaft.NativeSmt
 

@@ -145,6 +145,11 @@ or add packet instructions to the public compiler yet.
 Terms are natural numbers and identities belong to the declared universe.
 Header decoding requires the domain proof; it does not wrap or default invalid
 identities. Value round trips and literal equality are proved.
+`NativePacketValue` composes that header with seven distinct payload alternatives.
+Every Model message has a valid value, and every valid value decodes back
+exactly, including append-entry logs. `NativePacketDomain` proves the emitted
+payload and full-packet domains and the source selector. Queue columns and
+packet JSON observations are not wired yet.
 
 `NativeQuorumEncoding.current_configuration_model_correct` connects the exact
 `currentCandidate` and `noLaterConfiguration` clauses used by the compiler to

@@ -337,12 +337,26 @@ invalid terms or identities. No allocation or source/destination inequality
 constraint was added. Next compose the seven payload alternatives with this
 header and `NativeLogValue`; packet JSON and queue columns are still pending.
 
+`NativePacketValue` and `NativePacketDomain` now cover all seven Model message
+constructors. A shared header is paired with a tagged payload sum; append
+payloads contain the canonical `NativeLogValue` array. Both complete packet
+round trips and exact equality are proved. The actual emitted payload/full
+domains and source selector also have correspondence proofs.
+No relationships among term/index fields were added beyond natural-number
+domains. Distinct vote and pre-vote tags remain distinct, and packet sources
+or destinations need not be allocated or differ from each other.
+All 62 kernel-backed formulas pass in `native-packet-fixture-tests.log`,
+including valid alternatives, invalid scalar fields, append-log domain
+composition, and tag/source behavior.
+Next wire source-local queue lengths, then live packet cells and observations.
+The public encoder still accepts no queue or packet observations.
+
 `NativeOptional` is the next value-codec unit for local-state coverage.
 It uses the existing sum datatype for optional natural indices and identities.
 Decoding distinguishes a valid absent value, `some none`, from invalid payloads,
 `none`. It rejects negative indices and identities outside the declared width.
 The proofs cover round trips, exact literal equality, and actual domain terms.
-`NativeSmtFixtureMain` now has 48 kernel-backed solver cases, including nine
+`NativeSmtFixtureMain` now has 62 kernel-backed solver cases, including nine
 optional-value cases. The codecs are now wired for all three retirement-index
 fields and `votedFor`.
 
