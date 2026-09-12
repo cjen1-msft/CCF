@@ -13,7 +13,7 @@ open NativeSmt
 theorem compiled_script_iff {width : PNat} [Bootstrap (Fin width)]
     (items : List (NativeArrayCheckQuorum.Instruction (Fin width) Nat))
     (initial started final : Encoding width) (index : Nat) (groups result : Array Group) (named : Bool)
-    (initialColumns : initial.toNodeColumns = {})
+    (initialColumns : initial.toColumns = {})
     (empty : initial.assertions = #[]) (valid : ReferencesValid initial)
     (start : (initialDomains width).run initial = .ok ((), started))
     (run : (compileInstructions index groups items).run started = .ok (result, final))

@@ -11,16 +11,16 @@ open NativeSmt
 
 structure SameReferences {width : PNat} (before after : Encoding width) : Prop where
   bootstrap : after.bootstrap = before.bootstrap
-  columns : after.toNodeColumns = before.toNodeColumns
+  columns : after.toColumns = before.toColumns
   next : after.next = before.next
 
 theorem SameReferences.role {width : PNat} {before after : Encoding width} (same : SameReferences before after) :
     after.role = before.role :=
-  congrArg NodeColumns.role same.columns
+  congrArg Columns.role same.columns
 
 theorem SameReferences.newFollower {width : PNat} {before after : Encoding width}
     (same : SameReferences before after) : after.newFollower = before.newFollower :=
-  congrArg NodeColumns.newFollower same.columns
+  congrArg Columns.newFollower same.columns
 
 theorem SameReferences.trans {width : PNat} {first middle last : Encoding width}
     (left : SameReferences first middle) (right : SameReferences middle last) :
@@ -57,7 +57,7 @@ theorem assertion_success {width : PNat} (formula : Expr .bool) (before after : 
 theorem fresh_success {width : PNat} (before after : Encoding width) (id : Nat)
     (run : fresh.run before = .ok (id, after)) :
     id = before.next /\ after.next = before.next + 1 /\ after.bootstrap = before.bootstrap /\
-      after.toNodeColumns = before.toNodeColumns /\
+      after.toColumns = before.toColumns /\
       after.assertions = before.assertions := by
   simp only [fresh, StateT.run, Except.ok.injEq, Prod.mk.injEq] at run
   rcases run with ⟨rfl, rfl⟩
@@ -67,7 +67,7 @@ theorem define_success {width : PNat} {sort : Ty} (value : Expr sort)
     (before after : Encoding width) (id : Nat)
     (run : (define value).run before = .ok (id, after)) :
     id = before.next /\ after.next = before.next + 1 /\ after.bootstrap = before.bootstrap /\
-      after.toNodeColumns = before.toNodeColumns /\
+      after.toColumns = before.toColumns /\
       after.assertions = before.assertions.push (.equal (.free sort id) value) := by
   simp only [define, StateT.run] at run
   split at run
@@ -138,7 +138,7 @@ theorem assert_all_holds {width : PNat} (formulas : List (Expr .bool))
 theorem observation_instruction_run {width : PNat}
     (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) (before : Encoding width)
     (clauses : List (Expr .bool))
-    (emitted : observationClauses before.toNodeColumns item = .ok clauses) :
+    (emitted : observationClauses before.toColumns item = .ok clauses) :
     (instruction item).run before = (assertAll clauses).run before := by
   cases item <;> simp [observationClauses] at emitted
   all_goals subst clauses; rfl
@@ -146,11 +146,11 @@ theorem observation_instruction_run {width : PNat}
 theorem observation_instruction_success {width : PNat} [Bootstrap (Fin width)]
     (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) (before after : Encoding width)
     (clauses : List (Expr .bool))
-    (emitted : observationClauses before.toNodeColumns item = .ok clauses)
+    (emitted : observationClauses before.toColumns item = .ok clauses)
     (run : (instruction item).run before = .ok ((), after))
     (assignment : Assignment) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
     (model : State (Fin width) Nat)
-    (columns : NodeColumnsRep assignment before.toNodeColumns arrays)
+    (columns : NodeColumnsRep assignment before.toColumns arrays)
     (represented : NativeArrayCheckQuorum.Rep arrays model)
     (domains : forall node : Fin width, NodeDomain width assignment node.val) :
     SameReferences before after /\
@@ -159,7 +159,7 @@ theorem observation_instruction_success {width : PNat} [Bootstrap (Fin width)]
   rw [observation_instruction_run item before clauses emitted] at run
   refine ⟨(assert_all_success clauses before after run).1, ?_⟩
   rw [assert_all_holds clauses before after run assignment,
-    observation_model_correct assignment before.toNodeColumns arrays model columns
+    observation_model_correct assignment before.toColumns arrays model columns
       represented domains item clauses emitted]
 
 theorem initial_domains_success {width : PNat} (before after : Encoding width)
@@ -179,8 +179,8 @@ def quorumClauses {width : PNat} (before : Encoding width) (node : Nat) : List (
 
 structure QuorumResult {width : PNat} (before after : Encoding width) (node : Nat) : Prop where
   bootstrap : after.bootstrap = before.bootstrap
-  columns : after.toNodeColumns =
-    { before.toNodeColumns with role := before.next + 2, newFollower := before.next + 3 }
+  columns : after.toColumns =
+    { before.toColumns with role := before.next + 2, newFollower := before.next + 3 }
   next : after.next = before.next + 4
   clauses : after.assertions.toList = before.assertions.toList ++ quorumClauses before node
   guardSymbols : forall formula, formula ∈ (leadingGuards before.role node ++
@@ -189,11 +189,11 @@ structure QuorumResult {width : PNat} (before after : Encoding width) (node : Na
 
 theorem QuorumResult.role {width : PNat} {before after : Encoding width} {node : Nat}
     (result : QuorumResult before after node) : after.role = before.next + 2 :=
-  congrArg NodeColumns.role result.columns
+  congrArg Columns.role result.columns
 
 theorem QuorumResult.newFollower {width : PNat} {before after : Encoding width} {node : Nat}
     (result : QuorumResult before after node) : after.newFollower = before.next + 3 :=
-  congrArg NodeColumns.newFollower result.columns
+  congrArg Columns.newFollower result.columns
 
 theorem quorum_success {width : PNat} (node : Nat) (before after : Encoding width)
     (run : (checkQuorum node).run before = .ok ((), after)) :
@@ -266,19 +266,19 @@ theorem quorum_native_success {width : PNat} [Bootstrap (Fin width)]
     (run : (checkQuorum node.val).run before = .ok ((), after))
     (assignment : Assignment) (holds : Holds after.assertions.toList assignment)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
-    (columns : NodeColumnsRep assignment before.toNodeColumns arrays)
+    (columns : NodeColumnsRep assignment before.toColumns arrays)
     (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION) :
     Holds before.assertions.toList assignment /\ NativeArrayCheckQuorum.enabled arrays node /\
-      NodeColumnsRep assignment after.toNodeColumns (NativeArrayCheckQuorum.step arrays node) := by
+      NodeColumnsRep assignment after.toColumns (NativeArrayCheckQuorum.step arrays node) := by
   obtain ⟨previous, guards, roleBinding, followerBinding⟩ :=
     (quorum_holds node.val before after run assignment).mp holds
-  have enabled := (node_columns_enabled assignment before.bootstrap before.toNodeColumns
+  have enabled := (node_columns_enabled assignment before.bootstrap before.toColumns
     arrays node before.next (before.next + 1) (by omega) columns sameBootstrap).mp
       ⟨assignment .int before.next, assignment .int (before.next + 1), by
         simpa [Assignment.set] using guards⟩
   have present : (arrays node).isSome = true :=
     (columns.allocated node).symm.trans (guards (allocated node.val) (by simp [leadingGuards]))
-  have effect := node_columns_step assignment before.toNodeColumns
+  have effect := node_columns_step assignment before.toColumns
     (before.next + 2) (before.next + 3) arrays node columns present roleBinding followerBinding
   have shape := quorum_success node.val before after run
   exact ⟨previous, enabled, by simpa only [shape.columns] using effect⟩
@@ -288,11 +288,11 @@ theorem quorum_model_success {width : PNat} [Bootstrap (Fin width)]
     (run : (checkQuorum node.val).run before = .ok ((), after))
     (assignment : Assignment) (holds : Holds after.assertions.toList assignment)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) (model : State (Fin width) Nat)
-    (columns : NodeColumnsRep assignment before.toNodeColumns arrays)
+    (columns : NodeColumnsRep assignment before.toColumns arrays)
     (represented : NativeArrayCheckQuorum.Rep arrays model)
     (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION) :
     Holds before.assertions.toList assignment /\ CCFRaft.Enabled model (.checkQuorum node) /\
-      NodeColumnsRep assignment after.toNodeColumns (NativeArrayCheckQuorum.step arrays node) /\
+      NodeColumnsRep assignment after.toColumns (NativeArrayCheckQuorum.step arrays node) /\
       NativeArrayCheckQuorum.Rep (NativeArrayCheckQuorum.step arrays node)
         (CCFRaft.next model (.checkQuorum node)) := by
   obtain ⟨previous, enabled, afterColumns⟩ :=

@@ -9,14 +9,14 @@ namespace CCFRaft.NativeEncode
 
 open NativeSmt
 
-theorem instruction_has_encoding {width : PNat} (columns : NodeColumns)
+theorem instruction_has_encoding {width : PNat} (columns : Columns)
     (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) :
     (exists node, item = .checkQuorum node) \/
       (exists clauses, observationClauses columns item = .ok clauses) := by
   cases item <;> simp [observationClauses]
 
 theorem entry_observation_correct {width : PNat} (assignment : Assignment)
-    (columns : NodeColumns) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
+    (columns : Columns) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
     (rep : NodeColumnsRep assignment columns arrays)
     (domains : forall node : Fin width, NodeDomain width assignment node.val)
     (node : Fin width) (index : Nat) (expected : Entry (Fin width) Nat) :
@@ -41,7 +41,7 @@ theorem entry_observation_correct {width : PNat} (assignment : Assignment)
   rw [rep.entries node index within]
 
 theorem observation_correct {width : PNat} [Bootstrap (Fin width)] (assignment : Assignment)
-    (columns : NodeColumns) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
+    (columns : Columns) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
     (rep : NodeColumnsRep assignment columns arrays)
     (domains : forall node : Fin width, NodeDomain width assignment node.val)
     (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) (clauses : List (Expr .bool))
@@ -93,7 +93,7 @@ theorem observation_correct {width : PNat} [Bootstrap (Fin width)] (assignment :
       role_code_eq, membership_code_eq]
 
 theorem observation_model_correct {width : PNat} [Bootstrap (Fin width)]
-    (assignment : Assignment) (columns : NodeColumns)
+    (assignment : Assignment) (columns : Columns)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) (model : State (Fin width) Nat)
     (columnRep : NodeColumnsRep assignment columns arrays)
     (represented : NativeArrayCheckQuorum.Rep arrays model)

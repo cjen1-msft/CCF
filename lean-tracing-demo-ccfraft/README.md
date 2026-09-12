@@ -209,7 +209,7 @@ indices and beyond the limit. The proofs establish exact membership and
 representation of every finite natural-number set. `submittedTxId` is not yet
 accepted by the JSON encoder.
 The remaining optional fields are not yet accepted by the Lean encoder.
-`Encoding` now inherits its mutable column references from `NodeColumns`.
+`Encoding` now inherits its mutable column references from `Columns`.
 Compiler frame proofs preserve that whole record, and the quorum result
 specifies a record update for the two changed fields.
 `NodeColumnsRep` and `observationClauses` take the same record. Trace proofs

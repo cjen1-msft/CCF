@@ -86,9 +86,9 @@ theorem Encoding.holds_agrees_below {width : PNat} (state : Encoding width)
 
 theorem NodeColumnsRep.agrees_below {width : PNat} (state : Encoding width)
     (left right : Assignment) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
-    (rep : NodeColumnsRep left state.toNodeColumns arrays) (valid : ReferencesValid state)
+    (rep : NodeColumnsRep left state.toColumns arrays) (valid : ReferencesValid state)
     (same : left.AgreesBelow state.next right) :
-    NodeColumnsRep right state.toNodeColumns arrays := by
+    NodeColumnsRep right state.toColumns arrays := by
   have minimum := valid.minimum
   have allocation := same (.array .int .bool) 0 (by omega)
   have roles := same (.array .int .int) state.role valid.role
@@ -188,15 +188,15 @@ theorem quorum_complete {width : PNat} [Bootstrap (Fin width)]
     (run : (checkQuorum node.val).run before = .ok ((), after))
     (assignment : Assignment) (holds : Holds before.assertions.toList assignment)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
-    (columns : NodeColumnsRep assignment before.toNodeColumns arrays)
+    (columns : NodeColumnsRep assignment before.toColumns arrays)
     (valid : ReferencesValid before)
     (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION)
     (enabled : NativeArrayCheckQuorum.enabled arrays node) :
     exists extended : Assignment, assignment.AgreesBelow before.next extended /\
       Holds after.assertions.toList extended /\
-      NodeColumnsRep extended after.toNodeColumns (NativeArrayCheckQuorum.step arrays node) := by
+      NodeColumnsRep extended after.toColumns (NativeArrayCheckQuorum.step arrays node) := by
   obtain ⟨currentValue, witnessValue, guards⟩ :=
-    (node_columns_enabled assignment before.bootstrap before.toNodeColumns arrays node
+    (node_columns_enabled assignment before.bootstrap before.toColumns arrays node
       before.next (before.next + 1) (by omega) columns sameBootstrap).mpr enabled
   let witnesses := (assignment.set .int before.next currentValue).set .int (before.next + 1) witnessValue
   have witnessAgreement : assignment.AgreesBelow before.next witnesses :=

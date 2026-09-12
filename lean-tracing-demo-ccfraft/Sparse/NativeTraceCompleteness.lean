@@ -15,7 +15,7 @@ theorem compile_instructions_complete {width : PNat} [Bootstrap (Fin width)]
     (run : (compileInstructions index groups items).run before = .ok (result, after))
     (assignment : Assignment) (holds : Holds before.assertions.toList assignment)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
-    (columns : NodeColumnsRep assignment before.toNodeColumns arrays)
+    (columns : NodeColumnsRep assignment before.toColumns arrays)
     (valid : ReferencesValid before)
     (domains : forall node : Fin width, NodeDomain width assignment node.val)
     (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION)
@@ -47,9 +47,9 @@ theorem compile_instructions_complete {width : PNat} [Bootstrap (Fin width)]
       · obtain ⟨observed, restFollows⟩ := (observation_cons arrays item rest _ clauses emitted).mp follows
         have frame := (assert_all_success clauses before middle asserted).1
         have middleHolds := (assert_all_holds clauses before middle asserted assignment).mpr
-          ⟨holds, (observation_correct assignment before.toNodeColumns arrays columns domains
+          ⟨holds, (observation_correct assignment before.toColumns arrays columns domains
             item clauses emitted).mpr observed⟩
-        have afterColumns : NodeColumnsRep assignment middle.toNodeColumns arrays := by
+        have afterColumns : NodeColumnsRep assignment middle.toColumns arrays := by
           simpa only [frame.columns] using columns
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [frame.bootstrap, sameBootstrap]
@@ -58,7 +58,7 @@ theorem compile_instructions_complete {width : PNat} [Bootstrap (Fin width)]
 theorem model_compiled_trace {width : PNat} [Bootstrap (Fin width)]
     (items : List (NativeArrayCheckQuorum.Instruction (Fin width) Nat))
     (initial started final : Encoding width) (index : Nat) (groups result : Array Group)
-    (initialColumns : initial.toNodeColumns = {})
+    (initialColumns : initial.toColumns = {})
     (empty : initial.assertions = #[]) (valid : ReferencesValid initial)
     (start : (initialDomains width).run initial = .ok ((), started))
     (run : (compileInstructions index groups items).run started = .ok (result, final))
@@ -70,7 +70,7 @@ theorem model_compiled_trace {width : PNat} [Bootstrap (Fin width)]
   have domains := (initial_assertions_domains width assignment).mp domainsHold
   obtain ⟨frame, initialHolds⟩ := initial_domains_success initial started start assignment
   have startedHolds := initialHolds.mpr ⟨by simp [empty, Holds], domains⟩
-  have startedColumns : NodeColumnsRep assignment started.toNodeColumns arrays := by
+  have startedColumns : NodeColumnsRep assignment started.toColumns arrays := by
     simpa only [frame.columns, initialColumns] using columns
   have startedValid : ReferencesValid started :=
     ⟨by simpa only [frame.next] using valid.minimum,
@@ -94,7 +94,7 @@ theorem model_compiled_trace {width : PNat} [Bootstrap (Fin width)]
 theorem compiled_trace_iff {width : PNat} [Bootstrap (Fin width)]
     (items : List (NativeArrayCheckQuorum.Instruction (Fin width) Nat))
     (initial started final : Encoding width) (index : Nat) (groups result : Array Group)
-    (initialColumns : initial.toNodeColumns = {})
+    (initialColumns : initial.toColumns = {})
     (empty : initial.assertions = #[]) (valid : ReferencesValid initial)
     (start : (initialDomains width).run initial = .ok ((), started))
     (run : (compileInstructions index groups items).run started = .ok (result, final))

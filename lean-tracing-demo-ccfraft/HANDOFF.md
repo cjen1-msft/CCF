@@ -258,7 +258,7 @@ The proofs cover round trips, exact literal equality, and actual domain terms.
 optional-value cases. The codecs are now wired for all three retirement-index
 fields and `votedFor`.
 
-`Encoding` now inherits `NodeColumns`, the record of column references.
+`Encoding` now inherits `Columns`, the record of column references.
 `SameReferences`, `fresh_success`, and `define_success` preserve the complete
 column record. `QuorumResult.columns` specifies the record update, with
 derived role and follower equalities for callers. All prior scripts remain
@@ -351,6 +351,11 @@ proof witness, not a runtime bound inferred from observed transaction IDs.
 Six new kernel-backed solver cases cover negative cells, the limit cell,
 large indices, negative limits, and an empty prefix. The normal Sparse audit
 includes this module. Global JSON observations remain unwired.
+
+The reference record is now named `Columns`, with projection `toColumns`.
+Global references will share this record and the existing symbol allocator.
+`NodeColumnsRep` remains the node-specific representation relation.
+The rename preserves all 150 Model-case scripts byte for byte.
 
 Follow [Representation design priorities](README.md#representation-design-priorities):
 start with the simplest representation to prove correct, using native SMT

@@ -36,7 +36,7 @@ def members {context : List Ty} {width : PNat}
     (.cases (.bound .here) (.bits 0)
       (.cases (.bound .here) (.bound .here) (.bits 0)))
 
-structure NodeColumns where
+structure Columns where
   role : Nat := 1
   newFollower : Nat := 2
   retirementIndex : Nat := 7
@@ -49,7 +49,7 @@ structure NodeColumns where
   sentIndex : Nat := 14
   matchIndex : Nat := 15
 
-structure Encoding (width : PNat) extends NodeColumns where
+structure Encoding (width : PNat) extends Columns where
   bootstrap : BitVec width
   next : Nat := 16
   assertions : Array (Expr .bool) := #[]
@@ -309,7 +309,7 @@ def decodeInstruction (width : PNat) (names : Array String) (value : Json) :
     return if kind = "sentIndex" then .sentIndex node peer expected else .matchIndex node peer expected
   | _ => throw s!"unsupported native Lean instruction {kind}"
 
-def observationClauses {width : PNat} (columns : NodeColumns) :
+def observationClauses {width : PNat} (columns : Columns) :
     NativeArrayCheckQuorum.Instruction (Fin width) Nat -> Except String (List (Expr .bool))
   | .allocated node expected => .ok [.equal (allocated node.val) (.boolean expected)]
   | .role node expected => .ok [.equal (read columns.role node.val (.integer 0)) (.integer (roleCode expected))]
@@ -346,7 +346,7 @@ def instruction {width : PNat} (item : NativeArrayCheckQuorum.Instruction (Fin w
   | .checkQuorum node => checkQuorum node.val
   | _ =>
     let state <- get
-    assertAll (<- observationClauses state.toNodeColumns item)
+    assertAll (<- observationClauses state.toColumns item)
 
 structure Group where
   instruction : Option Nat

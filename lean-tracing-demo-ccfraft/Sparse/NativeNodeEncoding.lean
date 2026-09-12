@@ -37,7 +37,7 @@ theorem get_step {width : PNat} (arrays : NativeArrayCheckQuorum.Arrays (Fin wid
     simp [NativeArrayCheckQuorum.get, NativeArrayCheckQuorum.step]
   · simp [NativeArrayCheckQuorum.get, NativeArrayCheckQuorum.step, same]
 
-structure NodeColumnsRep {width : PNat} (assignment : Assignment) (columns : NodeColumns)
+structure NodeColumnsRep {width : PNat} (assignment : Assignment) (columns : Columns)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) : Prop where
   allocated : forall (node : Fin width), (NativeEncode.allocated node.val : Expr .bool).eval assignment Locals.empty =
     (arrays node).isSome
@@ -83,7 +83,7 @@ structure NodeColumnsRep {width : PNat} (assignment : Assignment) (columns : Nod
       ((NativeArrayCheckQuorum.get arrays node).matchIndex peer : Int)
 
 theorem NodeColumnsRep.configuration_log {width : PNat} {assignment : Assignment}
-    {columns : NodeColumns} {arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat}
+    {columns : Columns} {arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat}
     (rep : NodeColumnsRep assignment columns arrays) (node : Fin width) :
     ConfigurationLogRep assignment node.val (NativeArrayCheckQuorum.get arrays node).log
       (NativeArrayCheckQuorum.get arrays node).commit := by
@@ -93,7 +93,7 @@ theorem NodeColumnsRep.configuration_log {width : PNat} {assignment : Assignment
   simpa [modelEntry, entryAt, Term.eval] using entry
 
 theorem NodeColumnsRep.set_integer {width : PNat} {assignment : Assignment}
-    {columns : NodeColumns} {arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat}
+    {columns : Columns} {arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat}
     (rep : NodeColumnsRep assignment columns arrays) (id : Nat) (value : Int) :
     NodeColumnsRep (assignment.set .int id value) columns arrays := by
   constructor
@@ -131,7 +131,7 @@ theorem NodeColumnsRep.set_integer {width : PNat} {assignment : Assignment}
     simpa [peerIndex, NativeEncode.allocated, Term.eval, Assignment.set] using rep.matchIndex node peer
 
 theorem node_columns_enabled {width : PNat} [Bootstrap (Fin width)]
-    (assignment : Assignment) (bootstrap : BitVec width) (columns : NodeColumns)
+    (assignment : Assignment) (bootstrap : BitVec width) (columns : Columns)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) (node : Fin width)
     (currentId witnessId : Nat) (different : currentId ≠ witnessId)
     (rep : NodeColumnsRep assignment columns arrays)
@@ -165,7 +165,7 @@ theorem node_columns_enabled {width : PNat} [Bootstrap (Fin width)]
     simp only [leaderGuard, Term.eval, decide_eq_true_eq, extended.role, leaderModel, roleCode]
 
 theorem node_columns_model_enabled {width : PNat} [Bootstrap (Fin width)]
-    (assignment : Assignment) (bootstrap : BitVec width) (columns : NodeColumns)
+    (assignment : Assignment) (bootstrap : BitVec width) (columns : Columns)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) (model : State (Fin width) Nat)
     (node : Fin width) (currentId witnessId : Nat) (different : currentId ≠ witnessId)
     (rep : NodeColumnsRep assignment columns arrays)
@@ -180,7 +180,7 @@ theorem node_columns_model_enabled {width : PNat} [Bootstrap (Fin width)]
     different rep sameBootstrap).trans (NativeArrayCheckQuorum.enabled_correct arrays model modelRep node)
 
 theorem node_columns_step {width : PNat} (assignment : Assignment)
-    (before : NodeColumns) (afterRole afterFollower : Nat)
+    (before : Columns) (afterRole afterFollower : Nat)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) (node : Fin width)
     (rep : NodeColumnsRep assignment before arrays)
     (present : (arrays node).isSome = true)
@@ -274,7 +274,7 @@ theorem node_columns_step {width : PNat} (assignment : Assignment)
     by_cases same : peer = node <;> simp_all
 
 theorem node_columns_model_step {width : PNat} [Bootstrap (Fin width)]
-    (assignment : Assignment) (before : NodeColumns) (afterRole afterFollower : Nat)
+    (assignment : Assignment) (before : Columns) (afterRole afterFollower : Nat)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) (model : State (Fin width) Nat)
     (node : Fin width) (rep : NodeColumnsRep assignment before arrays)
     (modelRep : NativeArrayCheckQuorum.Rep arrays model) (present : (arrays node).isSome = true)
