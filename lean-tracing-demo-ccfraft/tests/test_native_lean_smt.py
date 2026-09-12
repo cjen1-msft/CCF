@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from collections import Counter
 from copy import deepcopy
 from pathlib import Path
 
@@ -98,6 +99,10 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeAppendGuardEncoding",
             "Sparse.NativeAppendSendEncoding",
             "Sparse.NativeFirstMatchEncoding",
+            "Sparse.NativeRetirementEncoding",
+            "Sparse.NativeArrayRetirementIndex",
+            "Sparse.NativeArrayAppendNetwork",
+            "Sparse.NativeArrayChangeConfiguration",
         ):
             visit(module)
         forbidden = {
@@ -949,7 +954,45 @@ class NativeLeanSmtTests(unittest.TestCase):
             )
         )
 
-    def assert_model_traces(self, module, count, prefix):
+    def test_append_receive_model_fixture_coverage(self):
+        fixtures = self.model_traces("NativeArrayAppendReceiveFixtureMain", 1344)
+        self.assertEqual(
+            Counter(fixture["branch"] for fixture in fixtures),
+            {
+                "alreadyDone": 48,
+                "blocked": 514,
+                "conflict": 8,
+                "empty": 30,
+                "extension": 8,
+                "reject": 402,
+                "stepdown": 202,
+                "unallocated": 72,
+                "wrongDestination": 30,
+                "wrongKind": 30,
+            },
+        )
+        self.assertEqual(
+            Counter(
+                fixture["branch"]
+                for fixture in fixtures
+                if fixture["expected"] == "sat"
+            ),
+            {
+                "alreadyDone": 24,
+                "conflict": 4,
+                "extension": 4,
+                "reject": 201,
+                "stepdown": 101,
+            },
+        )
+        self.assertTrue(
+            any(
+                fixture["modelEnabled"] and not fixture["selectedAppendRequest"]
+                for fixture in fixtures
+            )
+        )
+
+    def model_traces(self, module, count):
         result = subprocess.run(
             [
                 "lake",
@@ -968,6 +1011,41 @@ class NativeLeanSmtTests(unittest.TestCase):
         self.assertEqual(
             {fixture["expected"] for fixture in fixtures}, {"sat", "unsat"}
         )
+        return fixtures
+
+    def test_membership_model_fixture_coverage(self):
+        fixtures = self.model_traces("NativeArrayMembershipFixtureMain", 1572)
+        self.assertEqual(sum(fixture["expected"] == "sat" for fixture in fixtures), 147)
+        for mutation in (
+            "peerTerm",
+            "peerRole",
+            "peerLog",
+            "peerCommit",
+            "peerVote",
+            "peerCursor",
+            "peerRetirement",
+            "hasJoined",
+            "completed",
+            "queue",
+        ):
+            with self.subTest(mutation=mutation):
+                cases = [
+                    fixture
+                    for fixture in fixtures
+                    if fixture["mutation"].endswith(f".{mutation}")
+                ]
+                self.assertEqual(len(cases), 2)
+                self.assertEqual(
+                    {fixture["peerInitiallyAllocated"] for fixture in cases},
+                    {False, True},
+                )
+                self.assertTrue(all(fixture["modelEnabled"] for fixture in cases))
+                self.assertTrue(
+                    all(fixture["expected"] == "unsat" for fixture in cases)
+                )
+
+    def assert_model_traces(self, module, count, prefix):
+        fixtures = self.model_traces(module, count)
         scripts = self.encode([fixture["trace"] for fixture in fixtures])
         self.solve(
             [

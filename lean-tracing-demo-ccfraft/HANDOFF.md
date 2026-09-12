@@ -130,6 +130,18 @@ followed by a vote request and term update. They pass in
 queue observations with the receive-write fixture. The 192 receive-write cases
 and import-boundary check pass in `native-shared-frame-tests.log`.
 
+`NativeArrayAppendReceiveFixtureMain` now generates 1,344 actual-Model receive
+traces, with 334 expected SAT cases. They cover all four consuming handlers,
+nonconsuming stepdown, multi-entry payloads, retirement refresh after
+NACKs, duplicate and self queues, and wrong packet kinds.
+`NativeArrayMembershipFixtureMain` generates 1,572 membership traces, with
+147 expected SAT cases. Its allocation counterexamples corrupt newly
+allocated rows and already allocated rows separately.
+Both generators build. Their Model-only coverage checks pass in
+`native-core-model-fixture-coverage.log`. Neither action is public yet:
+these are prepared integration inputs, not passing encoder coverage.
+Wire them through `assert_model_traces` when their public actions land.
+
 `NativeQueuePop` and `NativeQueuePopEncoding` now prove total directed FIFO
 pop, including empty queues and negative raw scalars, full-frame preservation,
 and extension of a specific satisfying assignment. `native-queue-pop-tests.log`
