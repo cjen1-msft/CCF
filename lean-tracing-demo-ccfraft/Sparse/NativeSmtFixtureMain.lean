@@ -8,6 +8,7 @@ import Sparse.NativeRenaming
 import Sparse.NativeLogValue
 import Sparse.NativePacketHeader
 import Sparse.NativePacketDomain
+import Sparse.NativeQueueLengths
 import Lean.Data.Json
 
 set_option autoImplicit false
@@ -397,6 +398,25 @@ private def packetCases : List Case := [
     (by intro assignment; simp [NativeEncode.PacketPayloadValid, Term.eval]),
   appendPacketDomain, packetKindsDistinct, packetSource]
 
+private def queueNegativeLength (name : String) (width : PNat)
+    (destination source : Fin width) : Case :=
+  { name
+    formula := .and (NativeEncode.queueLengthsDomain width 0)
+      (NativeEncode.lt
+        (NativeEncode.queueLengthTerm 0 (.integer destination.val) (.integer source.val))
+        (.integer 0))
+    expected := false
+    correct := by
+      intro assignment
+      apply Bool.eq_false_iff.mpr
+      intro held
+      simp only [Term.eval, Bool.and_eq_true] at held
+      obtain ⟨domain, negative⟩ := held
+      have nonnegative :=
+        ((NativeEncode.queue_lengths_domain_correct width 0 assignment).mp domain) destination source
+      simp [NativeEncode.lt, NativeEncode.queueLengthTerm, Term.eval] at negative
+      exact (not_lt_of_ge nonnegative) negative }
+
 def cases : List Case := [
   stored, wrongStore, nestedArray, constantArray, pair, sum, capture, nestedQuantifiers,
   wideBits, widerBits, bitsOperations, unitAndSecond, typedSymbols, overwrittenStore,
@@ -427,7 +447,11 @@ def cases : List Case := [
   packetHeader "packet-header-negative-source" 21 0 (-1) 0,
   packetHeader "packet-header-source-past-end" 21 0 21 0,
   packetHeader "packet-header-negative-destination" 21 0 0 (-1),
-  packetHeader "packet-header-destination-past-end" 21 0 0 21] ++ packetCases
+  packetHeader "packet-header-destination-past-end" 21 0 0 21,
+  queueNegativeLength "queue-negative-single-node" 1 0 0,
+  queueNegativeLength "queue-negative-last-source" 21 0 20,
+  queueNegativeLength "queue-negative-last-destination" 21 20 0,
+  queueNegativeLength "queue-negative-last-self" 21 20 20] ++ packetCases
 
 end CCFRaft.NativeSmt
 

@@ -46,7 +46,7 @@ class NativeLeanSmtTests(unittest.TestCase):
             check=True,
         )
         fixtures = json.loads(result.stdout)
-        self.assertGreaterEqual(len(fixtures), 62)
+        self.assertGreaterEqual(len(fixtures), 66)
         self.assertEqual(len(fixtures), len({item["name"] for item in fixtures}))
         self.solve(fixtures)
 
@@ -902,6 +902,119 @@ class NativeLeanSmtTests(unittest.TestCase):
                 dict(valid, value="true"),
                 dict(valid, node="a"),
                 {"kind": "submittedTxId", "value": True},
+            ]
+        )
+
+    def test_queue_length_observations(self):
+        def observed(source, destination, value):
+            return {
+                "kind": "queueLength",
+                "source": source,
+                "destination": destination,
+                "value": value,
+            }
+
+        cases = []
+        documents = []
+        for width in (1, 2, 21):
+            names = [f"node-{index}" for index in range(width)]
+            source, destination = names[0], names[-1]
+            quorum = {"kind": "checkQuorum", "node": source}
+            for length in (0, 1, 10**30):
+                observation = observed(source, destination, length)
+                for suffix, instructions, expected in (
+                    ("value", [observation], "sat"),
+                    (
+                        "unallocated-endpoints",
+                        [
+                            {"kind": "allocated", "node": node, "value": False}
+                            for node in names
+                        ]
+                        + [observation],
+                        "sat",
+                    ),
+                    (
+                        "quorum-frame",
+                        [observation, quorum, observation],
+                        # checkQuorum requires a distinct configuration peer.
+                        "sat" if width > 1 else "unsat",
+                    ),
+                    (
+                        "value-conflict",
+                        [observation, observed(source, destination, length + 1)],
+                        "unsat",
+                    ),
+                    (
+                        "quorum-conflict",
+                        [
+                            observation,
+                            quorum,
+                            observed(source, destination, length + 1),
+                        ],
+                        "unsat",
+                    ),
+                ):
+                    cases.append((f"queue-length-{width}-{length}-{suffix}", expected))
+                    documents.append(
+                        {
+                            "nodes": names,
+                            "bootstrap": [source],
+                            "instructions": instructions,
+                        }
+                    )
+            if width > 1:
+                pairs = [
+                    (source, source),
+                    (source, destination),
+                    (destination, source),
+                    (destination, destination),
+                ]
+                observations = [
+                    observed(sender, receiver, index)
+                    for index, (sender, receiver) in enumerate(pairs)
+                ]
+                cases.append((f"queue-length-{width}-independent-pairs", "sat"))
+                documents.append(
+                    {
+                        "nodes": names,
+                        "bootstrap": [source],
+                        "instructions": observations + [quorum] + observations,
+                    }
+                )
+        scripts = self.encode(documents)
+        self.solve(
+            [
+                {"name": name, "script": script, "expected": expected}
+                for (name, expected), script in zip(cases, scripts)
+            ]
+        )
+        sizes = {name: len(script) for (name, _), script in zip(cases, scripts)}
+        for width in (1, 2, 21):
+            self.assertEqual(
+                sizes[f"queue-length-{width}-{10**30}-value"]
+                - sizes[f"queue-length-{width}-0-value"],
+                30,
+            )
+
+    def test_queue_length_input_errors(self):
+        valid = {
+            "kind": "queueLength",
+            "source": "a",
+            "destination": "a",
+            "value": 0,
+        }
+        self.assert_invalid_instructions(
+            [dict(valid, value=value) for value in (-1, True, "0", None, 1.5)]
+            + [
+                dict(valid, source="b"),
+                dict(valid, destination="b"),
+                dict(valid, source=0),
+                dict(valid, destination=None),
+                dict(valid, node="a"),
+            ]
+            + [
+                {key: value for key, value in valid.items() if key != missing}
+                for missing in ("source", "destination", "value")
             ]
         )
 

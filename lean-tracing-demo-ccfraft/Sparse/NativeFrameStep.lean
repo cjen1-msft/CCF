@@ -27,6 +27,9 @@ theorem frame_observation_run {width : PNat} (item : FrameInstruction width)
   case submittedTxId txId expected =>
     cases Except.ok.inj emitted
     rfl
+  case queueLength source destination expected =>
+    cases Except.ok.inj emitted
+    rfl
   all_goals cases emitted
 
 theorem frame_observation_correct {width : PNat} [Bootstrap (Fin width)]
@@ -54,6 +57,9 @@ theorem frame_observation_correct {width : PNat} [Bootstrap (Fin width)]
     cases expected <;> simp [Holds, natSetMember, Term.eval, NativeArrayVote.follows]
     · exact not_congr (rep.submittedTxIds txId)
     · exact rep.submittedTxIds txId
+  case queueLength source destination expected =>
+    cases Except.ok.inj emitted
+    simp [Holds, queueLengthTerm, Term.eval, rep.queueLength, NativeArrayVote.follows]
   all_goals cases emitted
 
 theorem frame_observation_cons {width : PNat} [Bootstrap (Fin width)]
@@ -69,6 +75,7 @@ theorem frame_observation_cons {width : PNat} [Bootstrap (Fin width)]
   case preVoteStatus => simp [NativeArrayVote.follows]
   case retirementCompleted => simp [NativeArrayVote.follows]
   case submittedTxId => simp [NativeArrayVote.follows]
+  case queueLength => simp [NativeArrayVote.follows]
   all_goals cases emitted
 
 theorem frame_instruction_cases {width : PNat} (item : FrameInstruction width)
@@ -85,6 +92,7 @@ theorem frame_instruction_cases {width : PNat} (item : FrameInstruction width)
   case preVoteStatus node expected => exact Or.inr ⟨_, rfl, run⟩
   case retirementCompleted node expected => exact Or.inr ⟨_, rfl, run⟩
   case submittedTxId txId expected => exact Or.inr ⟨_, rfl, run⟩
+  case queueLength source destination expected => exact Or.inr ⟨_, rfl, run⟩
   all_goals cases run
 
 theorem frame_instruction_references {width : PNat} (item : FrameInstruction width)
@@ -117,8 +125,9 @@ theorem frame_quorum_success {width : PNat} [Bootstrap (Fin width)]
   have status := congrArg Columns.preVoteStatus (quorum_success node.val before after run).columns
   have completed := congrArg Columns.retirementCompleted (quorum_success node.val before after run).columns
   have submitted := congrArg Columns.submittedTxIds (quorum_success node.val before after run).columns
+  have queue := congrArg Columns.queueLength (quorum_success node.val before after run).columns
   exact ⟨previous, enabled, rep.node_step assignment before.toColumns after.toColumns frame
-    (.checkQuorum node) nodes joined status completed submitted⟩
+    (.checkQuorum node) nodes joined status completed submitted queue⟩
 
 theorem frame_quorum_complete {width : PNat} [Bootstrap (Fin width)]
     (node : Fin width) (before after : Encoding width)
@@ -138,9 +147,10 @@ theorem frame_quorum_complete {width : PNat} [Bootstrap (Fin width)]
   have status := congrArg Columns.preVoteStatus (quorum_success node.val before after run).columns
   have completed := congrArg Columns.retirementCompleted (quorum_success node.val before after run).columns
   have submitted := congrArg Columns.submittedTxIds (quorum_success node.val before after run).columns
+  have queue := congrArg Columns.queueLength (quorum_success node.val before after run).columns
   exact ⟨extended, agreement, held,
     extendedRep.node_step extended before.toColumns after.toColumns frame (.checkQuorum node) nodes
-      joined status completed submitted⟩
+      joined status completed submitted queue⟩
 
 end CCFRaft.NativeEncode
 

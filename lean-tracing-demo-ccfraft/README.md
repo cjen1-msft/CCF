@@ -76,6 +76,9 @@ Global `retirementCompleted` requires a declared `node` and a `value` list of
 declared identities. Neither the node nor the listed identities must be allocated.
 Global `submittedTxId` requires a natural `txId` and Boolean `value`, indicating
 whether that transaction belongs to the submitted set.
+`queueLength` requires declared `source` and `destination` identities and a
+natural `value`. Each directed pair has an independent length, including self
+queues and queues between unallocated nodes. Unobserved queues remain arbitrary.
 Other instructions are errors.
 `native_lean.py` handles JSON input and solver execution. It delegates all SMT
 construction to Lean, with no Python encoder fallback.
@@ -148,8 +151,12 @@ identities. Value round trips and literal equality are proved.
 `NativePacketValue` composes that header with seven distinct payload alternatives.
 Every Model message has a valid value, and every valid value decodes back
 exactly, including append-entry logs. `NativePacketDomain` proves the emitted
-payload and full-packet domains and the source selector. Queue columns and
-packet JSON observations are not wired yet.
+payload and full-packet domains and the source selector. Live packet columns
+and packet JSON observations are not wired yet.
+`NativeQueueLengths` encodes a destination-first, source-second length array.
+Its domain requires nonnegative lengths for declared identity pairs.
+The initial-state proof realizes arbitrary lengths with source-correct packets,
+without asserting those witness packets in SMT.
 
 `NativeQuorumEncoding.current_configuration_model_correct` connects the exact
 `currentCandidate` and `noLaterConfiguration` clauses used by the compiler to
@@ -204,18 +211,19 @@ implementation correctly, or verify Lean's JSON parser and IO runtime.
 
 [`NativeFrameDecoded`](Sparse/NativeFrameDecoded.lean) extends this correspondence
 to the public encoder, including `hasJoined`, `preVoteStatus`, `retirementCompleted`,
-and `submittedTxId`.
+`submittedTxId`, and `queueLength`.
 `encodeFrame_document_iff` and `encodeFrameDetails_document_iff` cover the
 actual plain and details outputs. `FrameDocumentConsistent` uses the broader
 decoder and Model trace semantics. `NativeFrameColumns` realizes arbitrary
 joined sets independently of allocation and bootstrap membership.
-`NativeFrameTrace` composes local observations, global observations, and quorum
-steps without restricting unobserved global state or queues.
+`NativeFrameTrace` composes local, global, and queue-length observations with
+quorum steps without restricting unobserved global state or queues.
 
 This Lean encoder remains experimental. Remaining Model actions, observations,
 and raw reducer integration are unfinished. The API's full-model assurance
 flag remains false; current coverage is one action, sixteen local observation
-kinds, and all four global observation kinds. Queue observations remain unsupported.
+kinds, all four global observation kinds, and queue lengths.
+Packet observations remain unsupported.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.

@@ -53,7 +53,7 @@ It supports `checkQuorum` and all sixteen local observation kinds, including
 the nullable `retirementIndex`, `retirementCommittableIndex`, and
 `retiredCommittedIndex` fields, nullable `votedFor`, both vote sets, and
 `membershipState`, `sentIndex`, and `matchIndex`, plus global `hasJoined` and
-`preVoteStatus`, `retirementCompleted`, and `submittedTxId`.
+`preVoteStatus`, `retirementCompleted`, and `submittedTxId`, plus `queueLength`.
 The Python reference still supports six actions and the broader observation
 schema. Do not confuse these coverage levels or fall back to Python SMT emission.
 
@@ -248,8 +248,8 @@ Lean's JSON parser, IO runtime, and cvc5 are not verified by these theorems.
 
 Next, expand Model actions and observations before raw reducer integration.
 Keep the full-model assurance flag false: current coverage is still one
-action, sixteen local observation kinds, and all four global observation kinds.
-Queue observations remain unsupported.
+action, sixteen local observation kinds, all four global observation kinds,
+and queue lengths. Packet observations remain unsupported.
 No change to the reducer's untrusted
 interpretation boundary follows from proving the JSON encoder.
 
@@ -301,10 +301,10 @@ The sparse-ID case grows by exactly 30 characters when replacing zero with
 `10^30`, rather than allocating or enumerating intervening cells.
 `Assignment.set_other_index` avoids assuming distinct sorts when writing
 other symbol IDs. This matters when the node universe also has width one.
-Queue observations, remaining actions, and raw reducer integration are still
+Packet observations, remaining actions, and raw reducer integration are still
 unsupported by the public encoder.
-Next implement packet value/domain encoding and source-local queue observations,
-then the already-proved native vote and campaign actions. Do not stop at
+Continue source-local packet observations, then the already-proved native vote
+and campaign actions. Do not stop at
 observation coverage; reducer integration is still the requested delivery boundary.
 
 `NativeRenaming` now supplies typed renaming and `Term.weaken` for packet logs
@@ -348,15 +348,36 @@ or destinations need not be allocated or differ from each other.
 All 62 kernel-backed formulas pass in `native-packet-fixture-tests.log`,
 including valid alternatives, invalid scalar fields, append-log domain
 composition, and tag/source behavior.
-Next wire source-local queue lengths, then live packet cells and observations.
-The public encoder still accepts no queue or packet observations.
+`NativeQueueLengths` now supplies the source-local length domain, with full
+public JSON-to-script correspondence. Column 21 is a destination-first,
+source-second integer matrix. Fresh allocation starts at 22.
+The domain constrains only declared identity pairs to nonnegative lengths.
+`initialFrame` constructs source-correct queue witnesses directly, replacing
+the empty-network template. Neither endpoint must be allocated.
+`initial_frame_assignment_rep` preserves arbitrary original frames in the
+completeness direction. Quorum steps preserve queue lengths.
+The normal Sparse proof build and all 66 kernel-backed formula fixtures pass.
+The public queue regression includes one, two, and 21 identities, large lengths,
+strict input errors, independent pairs, and quorum framing.
+Its first run exposed an incorrect test expectation: `checkQuorum` requires a
+distinct configuration peer and is therefore disabled in a one-identity universe.
+That expectation is corrected. All 47 queue cases pass in
+`native-queue-length-corrected-tests.log`. Four other targeted methods passed
+in `native-queue-length-tests.log`, covering strict queue input, submitted sets,
+all 150 Model quorum cases, and actual wrapper/explorer outcomes.
+The baseline is correct but slow: a 21-node, zero-length observation takes
+50.6 seconds to solve. The session's `native_queue_domain_probe.py` compares
+the same finite constraints as nested quantifiers, row-wise quantifiers,
+and ground assertions. Those variants took 50.6, 13.9, and 9.7 seconds.
+Keep the baseline proof intact while measuring a smaller exact representation.
+Next add live packet cells and observations. Packet observations remain unsupported.
 
 `NativeOptional` is the next value-codec unit for local-state coverage.
 It uses the existing sum datatype for optional natural indices and identities.
 Decoding distinguishes a valid absent value, `some none`, from invalid payloads,
 `none`. It rejects negative indices and identities outside the declared width.
 The proofs cover round trips, exact literal equality, and actual domain terms.
-`NativeSmtFixtureMain` now has 62 kernel-backed solver cases, including nine
+`NativeSmtFixtureMain` now has 66 kernel-backed solver cases, including nine
 optional-value cases. The codecs are now wired for all three retirement-index
 fields and `votedFor`.
 

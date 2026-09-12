@@ -4,6 +4,7 @@
 import Sparse.NativeEncode
 import Sparse.NativeArrayVote
 import Sparse.NativeNatSet
+import Sparse.NativeQueueLengths
 
 set_option autoImplicit false
 
@@ -20,6 +21,11 @@ def decodeFrameInstruction (width : PNat) (names : Array String) (value : Json) 
   if kind = "hasJoined" then
     fields value ["kind", "value"]
     return .hasJoined (<- decodeNodeSet width names (<- field value "value"))
+  else if kind = "queueLength" then
+    fields value ["kind", "source", "destination", "value"]
+    return .queueLength (<- resolve width names (<- field value "source"))
+      (<- resolve width names (<- field value "destination"))
+      (<- natural (<- field value "value"))
   else if kind = "submittedTxId" then
     fields value ["kind", "txId", "value"]
     return .submittedTxId (<- natural (<- field value "txId"))
@@ -56,6 +62,9 @@ def frameObservationClauses {width : PNat} (columns : Columns) :
       (.bits (encodeBits expected))]
   | .submittedTxId txId expected =>
     .ok [.equal (natSetMember columns.submittedTxIds (.integer txId)) (.boolean expected)]
+  | .queueLength source destination expected =>
+    .ok [.equal (queueLengthTerm columns.queueLength (.integer destination.val) (.integer source.val))
+      (.integer expected)]
   | _ => .error "unsupported native Lean frame observation"
 
 def frameInstruction {width : PNat} (item : FrameInstruction width) : EncodeM width Unit :=
@@ -66,7 +75,7 @@ def frameInstruction {width : PNat} (item : FrameInstruction width) : EncodeM wi
     assertAll (<- frameObservationClauses state.toColumns item)
 
 def initialFrameAssertions (width : PNat) : List (Expr .bool) :=
-  initialAssertions width ++ [natSetDomain 19 20]
+  initialAssertions width ++ [natSetDomain 19 20, queueLengthsDomain width 21]
 
 def initialFrameDomains (width : PNat) : EncodeM width Unit :=
   assertAll (initialFrameAssertions width)

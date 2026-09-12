@@ -53,10 +53,11 @@ structure Columns where
   retirementCompleted : Nat := 18
   submittedTxIds : Nat := 19
   submittedTxLimit : Nat := 20
+  queueLength : Nat := 21
 
 structure Encoding (width : PNat) extends Columns where
   bootstrap : BitVec width
-  next : Nat := 21
+  next : Nat := 22
   assertions : Array (Expr .bool) := #[]
   symbolsBounded : forall formula, formula ∈ assertions ->
     forall symbol, symbol ∈ formula.symbols -> symbol.2 < next
