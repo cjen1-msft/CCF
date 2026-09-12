@@ -580,9 +580,15 @@ It extends the supplied assignment with a fresh array built by `spliceRawOutput`
 preserving raw live cells and allowing arbitrary tails. It also preserves prior assertions.
 The parent inspected and rebuilt it in `native-log-splice-assignment-parent-build.log`;
 the import audit passes.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns only
-`NativeMembershipTermsEncoding.lean`, adding a guard-to-Model equivalence that
-accepts the already-proved output row instead of repeating the retirement witnesses.
+`membership_guards_output_model_correct` in `NativeMembershipTermsEncoding.lean`
+is committed as `a9ff095d0`. It accepts SSA-bound previous-configuration and
+refreshed-membership expressions, using the established Model output row
+instead of repeating the retirement witnesses.
+The parent inspected and rebuilt the proof and guard fixture in
+`native-membership-output-guard-parent-build.log`; the import audit passes.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` is idle with no owned files.
+The next dependency is the actual execution decomposition from A and AF,
+followed by whole-action soundness and specific-assignment completeness.
 Existing API statements and runtime files remain unchanged.
 
 `NativeArrayCoreActionsFixtureMain` and `NativeCoreActionsFixtureMain` are
