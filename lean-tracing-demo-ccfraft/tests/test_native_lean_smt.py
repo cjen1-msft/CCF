@@ -125,6 +125,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeArrayAppendCandidate",
             "Sparse.NativeMembershipTermsEncoding",
             "Sparse.NativeAppendReceiveCandidateEncoding",
+            "Sparse.NativeAppendReceiveFinalRowEncoding",
         ):
             visit(module)
         forbidden = {

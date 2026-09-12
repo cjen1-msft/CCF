@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeAppendReceiveCandidateTerms
+import Sparse.NativeAppendReceiveFinalRowTerms
 import Sparse.NativeAppendReceiveWrites
 import Sparse.NativeAppendReceiveResponse
 import Sparse.NativeLogSpliceEncoding
@@ -53,7 +54,6 @@ def receiveAppend {width : PNat} (source destination : Fin width) : EncodeM widt
   assertion (implies consumes
     (retirementRefreshConstraints width before.bootstrap logLength logEntries destination
       (.free .int first) (.free .int retirement) (.free .int signature) (.free .int retired)))
-  let refreshed := retirementRefreshTerms commit (.free .int retirement) (.free .int signature) (.free .int retired)
   let current <- fresh
   assertion (implies consumes
     (currentConfigurationIndexTerm width logLength logEntries commit (.free .int current)))
@@ -79,15 +79,8 @@ def receiveAppend {width : PNat} (source destination : Fin width) : EncodeM widt
     (nackMatchTerm width old.logLength old.logEntries previous previousTerm (.free .int best)))
   let candidate := appendReceiveCandidateRowTerms columns destination packet grows
     logLength logEntries commit
-  let values : NodeRowTerms width :=
-    { candidate with
-      role := .ite branches.stepDown (.integer (roleCode .follower)) old.role
-      newFollower := .ite branches.stepDown (.boolean true) candidate.newFollower
-      retirementIndex := .ite branches.stepDown old.retirementIndex refreshed.retirementIndex
-      retirementCommittableIndex := .ite branches.stepDown
-        old.retirementCommittableIndex refreshed.retirementCommittableIndex
-      retiredCommittedIndex := .ite branches.stepDown old.retiredCommittedIndex refreshed.retiredCommittedIndex
-      membershipState := .ite branches.stepDown old.membershipState refreshed.membershipState }
+  let values := appendReceiveFinalRowTerms candidate branches.stepDown
+    (.free .int retirement) (.free .int signature) (.free .int retired)
   appendReceiveWrites source destination branches.stepDown values
     (appendReceiveResponseTerm columns source destination packet (.free .int best))
     (.free (.bits width) completed)
