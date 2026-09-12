@@ -35,6 +35,8 @@ structure NodeDomain (width : PNat) (assignment : Assignment) (node : Nat) : Pro
   membershipState : 0 <= scalarValue assignment 13 node /\ scalarValue assignment 13 node <= 4
   sentIndex : forall peer : Fin width,
     0 <= (peerIndex 14 node (.integer peer.val) : Expr .int).eval assignment Locals.empty
+  matchIndex : forall peer : Fin width,
+    0 <= (peerIndex 15 node (.integer peer.val) : Expr .int).eval assignment Locals.empty
 
 theorem initial_node_domains_correct (width : PNat) (assignment : Assignment) (node : Nat) :
     Holds (initialNodeDomains width node) assignment <-> NodeDomain width assignment node := by
@@ -52,12 +54,21 @@ theorem initial_node_domains_correct (width : PNat) (assignment : Assignment) (n
   simp only [initialNodeDomains, Holds, List.mem_cons, List.not_mem_nil, or_false,
     or_imp, forall_and, forall_eq]
   rw [logDomain]
+  clear logDomain
   repeat rw [optional_nat_domain_correct]
   rw [optional_node_domain_correct]
-  rw [peer_domain_correct]
+  repeat rw [peer_domain_correct]
   simp only [all, List.foldr_cons, List.foldr_nil,
     Term.eval, Bool.and_eq_true, decide_eq_true_eq, and_true]
-  constructor <;> aesop (add safe constructors NodeDomain) (add safe cases NodeDomain)
+  constructor
+  · rintro ⟨role, len, commit, term, entries, retirement, committable, committed,
+      voted, membership, sent, matched⟩
+    exact ⟨role, len, commit, term, entries, retirement, committable, committed,
+      voted, membership, sent, matched⟩
+  · intro domain
+    exact ⟨domain.role, domain.length, domain.commit, domain.term, domain.entries,
+      domain.retirementIndex, domain.retirementCommittableIndex, domain.retiredCommittedIndex,
+      domain.votedFor, domain.membershipState, domain.sentIndex, domain.matchIndex⟩
 
 noncomputable def initialRow (width : PNat) (assignment : Assignment) (node : Fin width)
     (domain : NodeDomain width assignment node.val) : NativeArrayCheckQuorum.Local (Fin width) Nat :=
@@ -87,6 +98,8 @@ noncomputable def initialRow (width : PNat) (assignment : Assignment) (node : Fi
       omega⟩
     sentIndex := fun peer =>
       ((peerIndex 14 node.val (.integer peer.val) : Expr .int).eval assignment Locals.empty).toNat
+    matchIndex := fun peer =>
+      ((peerIndex 15 node.val (.integer peer.val) : Expr .int).eval assignment Locals.empty).toNat
     log := {
       length := (scalarValue assignment 3 node.val).toNat
       entries := fun index => modelEntry
@@ -206,6 +219,13 @@ theorem initial_arrays_rep (width : PNat) (assignment : Assignment)
     · simp [initialArrays, NativeArrayCheckQuorum.get, present, peerIndex, allocated, Term.eval,
         NativeArrayCheckQuorum.Local.fresh, NativeArrayCheckQuorum.Local.ofModel, freshNodeState]
 
+  · intro node peer
+    by_cases present : assignment (.array .int .bool) 0 node.val = true
+    · simpa [initialArrays, NativeArrayCheckQuorum.get, present, initialRow] using
+        (Int.toNat_of_nonneg ((domains node).matchIndex peer)).symm
+    · simp [initialArrays, NativeArrayCheckQuorum.get, present, peerIndex, allocated, Term.eval,
+        NativeArrayCheckQuorum.Local.fresh, NativeArrayCheckQuorum.Local.ofModel, freshNodeState]
+
 theorem initial_assertions_domains (width : PNat) (assignment : Assignment) :
     Holds (initialAssertions width) assignment <->
       (forall node : Fin width, NodeDomain width assignment node.val) := by
@@ -275,9 +295,12 @@ noncomputable def initialAssignment (width : PNat) (seed : Assignment)
     (nodeArray 0 fun node => encodeBits (NativeArrayCheckQuorum.get arrays node).preVotesGranted)
   let assignment := assignment.set (.array .int .int) 13
     (nodeArray 0 fun node => membershipCode (NativeArrayCheckQuorum.get arrays node).membershipState)
-  assignment.set (.array .int (.array .int .int)) 14
+  let assignment := assignment.set (.array .int (.array .int .int)) 14
     (nodeArray (fun _ => 0) fun node =>
       nodeArray 0 fun peer => ((NativeArrayCheckQuorum.get arrays node).sentIndex peer : Int))
+  assignment.set (.array .int (.array .int .int)) 15
+    (nodeArray (fun _ => 0) fun node =>
+      nodeArray 0 fun peer => ((NativeArrayCheckQuorum.get arrays node).matchIndex peer : Int))
 
 theorem initial_assignment_rep (width : PNat) (seed : Assignment)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) :
@@ -338,6 +361,9 @@ theorem initial_assignment_domains (width : PNat) (seed : Assignment)
 
   · intro peer
     rw [rep.sentIndex node peer]
+    exact Int.natCast_nonneg _
+  · intro peer
+    rw [rep.matchIndex node peer]
     exact Int.natCast_nonneg _
 
 theorem model_initial_assertions (width : PNat) [Bootstrap (Fin width)] (seed : Assignment)

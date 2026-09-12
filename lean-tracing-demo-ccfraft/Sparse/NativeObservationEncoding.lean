@@ -9,6 +9,12 @@ namespace CCFRaft.NativeEncode
 
 open NativeSmt
 
+theorem instruction_has_encoding {width : PNat} (columns : NodeColumns)
+    (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) :
+    (exists node, item = .checkQuorum node) \/
+      (exists clauses, observationClauses columns item = .ok clauses) := by
+  cases item <;> simp [observationClauses]
+
 theorem entry_observation_correct {width : PNat} (assignment : Assignment)
     (columns : NodeColumns) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
     (rep : NodeColumnsRep assignment columns arrays)
@@ -83,7 +89,7 @@ theorem observation_correct {width : PNat} [Bootstrap (Fin width)] (assignment :
     simp [NativeArrayCheckQuorum.follows]
   all_goals
     simp [Holds, NativeArrayCheckQuorum.follows, Term.eval, rep.allocated, rep.role,
-      rep.newFollower, rep.currentTerm, rep.commit, rep.length, rep.membershipState, rep.sentIndex,
+      rep.newFollower, rep.currentTerm, rep.commit, rep.length, rep.membershipState, rep.sentIndex, rep.matchIndex,
       role_code_eq, membership_code_eq]
 
 theorem observation_model_correct {width : PNat} [Bootstrap (Fin width)]

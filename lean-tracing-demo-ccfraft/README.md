@@ -61,11 +61,12 @@ The Lean migration starts with `Sparse/NativeEncode.lean`.
 It accepts `checkQuorum` and the `allocated`, `role`, `newFollower`, `logLength`,
 `commit`, `currentTerm`, `entry`, `retirementIndex`,
 `retirementCommittableIndex`, `retiredCommittedIndex`, `votedFor`, and
-`votesGranted`, `preVotesGranted`, `membershipState`, and `sentIndex` observations.
+`votesGranted`, `preVotesGranted`, `membershipState`, `sentIndex`, and `matchIndex`
+observations. This covers all local observation kinds.
 All retirement fields accept a natural number or `null`. `votedFor` accepts
 a declared identity or `null`. Both vote-set fields accept a list of declared
 identities, interpreted as a set. `membershipState` accepts the five Model
-membership-state names. `sentIndex` requires a declared `peer` and a natural
+membership-state names. Both peer-index fields require a declared `peer` and a natural
 `value`. Other instructions are errors.
 `native_lean.py` handles JSON input and solver execution. It delegates all SMT
 construction to Lean, with no Python encoder fallback.
@@ -176,7 +177,7 @@ implementation correctly, or verify Lean's JSON parser and IO runtime.
 
 This Lean encoder remains experimental. Remaining Model actions, observations,
 and raw reducer integration are unfinished. The API's full-model assurance
-flag remains false; current coverage is one action and fifteen observation kinds.
+flag remains false; current coverage is one action and sixteen local observation kinds.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.
@@ -195,10 +196,13 @@ The two sets remain independent through `checkQuorum`.
 Membership states share the existing finite enum mapping in `Shared/Membership.lean`.
 An absent node reads `active`. Membership observations do not infer retirement
 indices or bootstrap reachability.
-`sentIndex` uses a nested array indexed by node and peer. Its natural-number
-domain covers only declared peers. Other cells are ignored, not forced to zero.
+Both peer-index fields use nested arrays indexed by node and peer. Their
+natural-number domains cover only declared peers. Other cells are ignored, not forced to zero.
 An absent source node reads zero, but the peer need not be allocated.
 Indices can exceed the source log length.
+`instruction_has_encoding` proves that every typed local instruction is either
+`checkQuorum` or has an observation encoding. The solver suite includes a single
+trace that observes every local field before and after quorum.
 The remaining optional fields are not yet accepted by the Lean encoder.
 `Encoding` now inherits its mutable column references from `NodeColumns`.
 Compiler frame proofs preserve that whole record, and the quorum result

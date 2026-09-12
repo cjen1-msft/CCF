@@ -10,7 +10,7 @@ namespace CCFRaft.NativeEncode
 open NativeSmt
 
 structure ReferencesValid {width : PNat} (state : Encoding width) : Prop where
-  minimum : 15 <= state.next
+  minimum : 16 <= state.next
   role : state.role < state.next
   newFollower : state.newFollower < state.next
   retirementIndex : state.retirementIndex < state.next
@@ -21,6 +21,7 @@ structure ReferencesValid {width : PNat} (state : Encoding width) : Prop where
   preVotesGranted : state.preVotesGranted < state.next
   membershipState : state.membershipState < state.next
   sentIndex : state.sentIndex < state.next
+  matchIndex : state.matchIndex < state.next
 
 theorem instruction_references {width : PNat}
     (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) (before after : Encoding width)
@@ -60,6 +61,9 @@ theorem instruction_references {width : PNat}
     · have bound := valid.sentIndex
       simp only [shape.columns, shape.next]
       omega
+    · have bound := valid.matchIndex
+      simp only [shape.columns, shape.next]
+      omega
   · have frame := (assert_all_success clauses before after asserted).1
     exact ⟨by simpa only [frame.next] using valid.minimum,
       by simpa only [frame.next, frame.role] using valid.role,
@@ -71,7 +75,8 @@ theorem instruction_references {width : PNat}
       by simpa only [frame.next, frame.columns] using valid.votesGranted,
       by simpa only [frame.next, frame.columns] using valid.preVotesGranted,
       by simpa only [frame.next, frame.columns] using valid.membershipState,
-      by simpa only [frame.next, frame.columns] using valid.sentIndex⟩
+      by simpa only [frame.next, frame.columns] using valid.sentIndex,
+      by simpa only [frame.next, frame.columns] using valid.matchIndex⟩
 
 theorem Encoding.holds_agrees_below {width : PNat} (state : Encoding width)
     (left right : Assignment) (holds : Holds state.assertions.toList left)
@@ -100,6 +105,7 @@ theorem NodeColumnsRep.agrees_below {width : PNat} (state : Encoding width)
   have preVotes := same (.array .int (.bits width)) state.preVotesGranted valid.preVotesGranted
   have membership := same (.array .int .int) state.membershipState valid.membershipState
   have sent := same (.array .int (.array .int .int)) state.sentIndex valid.sentIndex
+  have matched := same (.array .int (.array .int .int)) state.matchIndex valid.matchIndex
   constructor
   · intro node
     simpa only [NativeEncode.allocated, Term.eval, <- allocation] using rep.allocated node
@@ -131,9 +137,11 @@ theorem NodeColumnsRep.agrees_below {width : PNat} (state : Encoding width)
     simpa only [read, NativeEncode.allocated, Term.eval, <- allocation, <- membership] using rep.membershipState node
   · intro node peer
     simpa only [peerIndex, NativeEncode.allocated, Term.eval, <- allocation, <- sent] using rep.sentIndex node peer
+  · intro node peer
+    simpa only [peerIndex, NativeEncode.allocated, Term.eval, <- allocation, <- matched] using rep.matchIndex node peer
 
 theorem NodeDomain.agrees_below {width : PNat} (limit : Nat) (left right : Assignment)
-    (node : Nat) (domain : NodeDomain width left node) (minimum : 15 <= limit)
+    (node : Nat) (domain : NodeDomain width left node) (minimum : 16 <= limit)
     (same : left.AgreesBelow limit right) : NodeDomain width right node := by
   have allocation := same (.array .int .bool) 0 (by omega)
   have roles := same (.array .int .int) 1 (by omega)
@@ -147,6 +155,7 @@ theorem NodeDomain.agrees_below {width : PNat} (limit : Nat) (left right : Assig
   have voted := same (.array .int optionalIntTy) 10 (by omega)
   have membership := same (.array .int .int) 13 (by omega)
   have sent := same (.array .int (.array .int .int)) 14 (by omega)
+  have matched := same (.array .int (.array .int .int)) 15 (by omega)
   constructor
   · simpa only [scalarValue, <- allocation, <- roles] using domain.role
   · simpa only [scalarValue, <- allocation, <- lengths] using domain.length
@@ -163,6 +172,8 @@ theorem NodeDomain.agrees_below {width : PNat} (limit : Nat) (left right : Assig
   · simpa only [scalarValue, <- allocation, <- membership] using domain.membershipState
   · intro peer
     simpa only [peerIndex, NativeEncode.allocated, Term.eval, <- allocation, <- sent] using domain.sentIndex peer
+  · intro peer
+    simpa only [peerIndex, NativeEncode.allocated, Term.eval, <- allocation, <- matched] using domain.matchIndex peer
 
 theorem assigned_definition {sort : Ty} (value : Expr sort) (assignment : Assignment)
     (id : Nat) (fresh : (sort, id) ∉ value.symbols) :

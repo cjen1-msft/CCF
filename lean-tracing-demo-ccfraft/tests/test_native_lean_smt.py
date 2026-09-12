@@ -22,7 +22,7 @@ RETIREMENT_FIELDS = (
     "retiredCommittedIndex",
 )
 VOTE_SET_FIELDS = ("votesGranted", "preVotesGranted")
-PEER_INDEX_FIELDS = ("sentIndex",)
+PEER_INDEX_FIELDS = ("sentIndex", "matchIndex")
 MEMBERSHIP_STATES = (
     "active",
     "retirementOrdered",
@@ -540,6 +540,64 @@ class NativeLeanSmtTests(unittest.TestCase):
             [
                 {"name": name, "script": script, "expected": expected}
                 for (name, _, expected), script in zip(cases, scripts)
+            ]
+        )
+
+    def test_complete_local_state_frame(self):
+        values = {
+            "allocated": True,
+            "role": "leader",
+            "newFollower": False,
+            "logLength": 1,
+            "commit": 9,
+            "currentTerm": 3,
+            "retirementIndex": None,
+            "retirementCommittableIndex": 0,
+            "retiredCommittedIndex": 10**30,
+            "votedFor": "b",
+            "votesGranted": ["a"],
+            "preVotesGranted": ["b"],
+            "membershipState": "retirementSigned",
+        }
+        observed = [
+            {"kind": kind, "node": "a", "value": value}
+            for kind, value in values.items()
+        ] + [
+            {
+                "kind": "entry",
+                "node": "a",
+                "index": 0,
+                "value": {"term": 10**30, "content": {"transaction": 42}},
+            },
+            {"kind": "sentIndex", "node": "a", "peer": "b", "value": 10**30},
+            {"kind": "matchIndex", "node": "a", "peer": "b", "value": 3},
+        ]
+        after = [
+            (
+                dict(item, value="follower")
+                if item["kind"] == "role"
+                else dict(item, value=True) if item["kind"] == "newFollower" else item
+            )
+            for item in observed
+        ]
+        script = self.encode(
+            [
+                {
+                    "nodes": ["a", "b"],
+                    "bootstrap": ["a", "b"],
+                    "instructions": observed
+                    + [{"kind": "checkQuorum", "node": "a"}]
+                    + after,
+                }
+            ]
+        )[0]
+        self.solve(
+            [
+                {
+                    "name": "complete-local-state-frame",
+                    "script": script,
+                    "expected": "sat",
+                }
             ]
         )
 

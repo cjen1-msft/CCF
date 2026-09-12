@@ -15,12 +15,10 @@ theorem instruction_cases {width : PNat}
     (exists node, item = .checkQuorum node /\ (checkQuorum node.val).run before = .ok ((), after)) \/
     (exists clauses, observationClauses before.toNodeColumns item = .ok clauses /\
       (assertAll clauses).run before = .ok ((), after)) := by
-  cases item
-  case checkQuorum node => exact Or.inl ⟨node, rfl, run⟩
-  all_goals
-    first
-    | exact Or.inr ⟨_, rfl, run⟩
-    | contradiction
+  rcases instruction_has_encoding before.toNodeColumns item with ⟨node, rfl⟩ | ⟨clauses, emitted⟩
+  · exact Or.inl ⟨node, rfl, run⟩
+  · exact Or.inr ⟨clauses, emitted,
+      (observation_instruction_run item before clauses emitted).symm.trans run⟩
 
 theorem instruction_holds_before {width : PNat}
     (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) (before after : Encoding width)

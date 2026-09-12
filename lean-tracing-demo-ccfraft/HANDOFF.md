@@ -48,10 +48,10 @@ reducer integration. See README's "Native explorer API" section.
 
 The first Lean encoder slice is now implemented in `Sparse/NativeEncode.lean`
 and `Sparse/NativeEncodeMain.lean`, with `native_lean.py` as its JSON and solver
-wrapper. It supports `checkQuorum` and fifteen observation kinds, including
+wrapper. It supports `checkQuorum` and all sixteen local observation kinds, including
 the nullable `retirementIndex`, `retirementCommittableIndex`, and
 `retiredCommittedIndex` fields, nullable `votedFor`, both vote sets, and
-`membershipState` and `sentIndex`.
+`membershipState`, `sentIndex`, and `matchIndex`.
 The Python reference still supports six actions and the broader observation
 schema. Do not confuse these coverage levels or fall back to Python SMT emission.
 
@@ -246,7 +246,7 @@ Lean's JSON parser, IO runtime, and cvc5 are not verified by these theorems.
 
 Next, expand Model actions and observations before raw reducer integration.
 Keep the full-model assurance flag false: current coverage is still one
-action and fifteen observation kinds. No change to the reducer's untrusted
+action and sixteen local observation kinds. No change to the reducer's untrusted
 interpretation boundary follows from proving the JSON encoder.
 
 `NativeOptional` is the next value-codec unit for local-state coverage.
@@ -325,7 +325,21 @@ ignored, not zeroed. The initial-state and full JSON-to-script proofs now cover
 the table. Generated cases include independent rows and peers, self cells,
 21 identities, absent peers, and indices of `10^30` with an empty source log.
 `initialAssignment` proofs unfold `entryTy` to distinguish nested integer arrays
-from nested entry arrays. Next add `matchIndex` to complete local observations.
+from nested entry arrays.
+`matchIndex` adds nested array column 15, with fresh allocation starting at 16.
+All local observations now have initial-state, frame, observation, and full
+JSON-to-script correspondence. `instruction_has_encoding` proves total
+classification of the local instruction type. `instruction_cases` reuses this
+classification and the existing execution theorem instead of repeatedly
+unfolding the compiler. Domain correspondence uses direct record construction:
+general proof search exceeded the default heartbeat budget at this field count.
+No proof budget was increased. The combined native suite has 30 passing tests,
+including a trace observing every local field before and after quorum.
+
+Next migrate global and queue state and the broader instruction type from
+`NativeArrayVote`, then the remaining actions, before raw Python reducer
+integration. Do not mark the full-model or raw-reducer assurance flags true.
+The current runtime action is still only `checkQuorum`.
 
 Follow [Representation design priorities](README.md#representation-design-priorities):
 start with the simplest representation to prove correct, using native SMT

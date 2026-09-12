@@ -83,7 +83,8 @@ theorem model_compiled_trace {width : PNat} [Bootstrap (Fin width)]
       by simpa only [frame.next, frame.columns] using valid.votesGranted,
       by simpa only [frame.next, frame.columns] using valid.preVotesGranted,
       by simpa only [frame.next, frame.columns] using valid.membershipState,
-      by simpa only [frame.next, frame.columns] using valid.sentIndex⟩
+      by simpa only [frame.next, frame.columns] using valid.sentIndex,
+      by simpa only [frame.next, frame.columns] using valid.matchIndex⟩
   have bootstrap : decodeBits started.bootstrap = INITIAL_CONFIGURATION := by
     rw [frame.bootstrap, sameBootstrap]
   exact compile_instructions_complete items started final index groups result run assignment startedHolds arrays

@@ -47,10 +47,11 @@ structure NodeColumns where
   preVotesGranted : Nat := 12
   membershipState : Nat := 13
   sentIndex : Nat := 14
+  matchIndex : Nat := 15
 
 structure Encoding (width : PNat) extends NodeColumns where
   bootstrap : BitVec width
-  next : Nat := 15
+  next : Nat := 16
   assertions : Array (Expr .bool) := #[]
   symbolsBounded : forall formula, formula ∈ assertions ->
     forall symbol, symbol ∈ formula.symbols -> symbol.2 < next
@@ -138,7 +139,8 @@ def initialNodeDomains (width : PNat) (node : Nat) : List (Expr .bool) :=
     optionalNodeDomain width (read 10 node (.inl .unit)),
     all [.le (.integer 0) (read 13 node (.integer 0)),
       .le (read 13 node (.integer 0)) (.integer 4)],
-    peerDomain width 14 node]
+    peerDomain width 14 node,
+    peerDomain width 15 node]
 
 def initialAssertions (width : PNat) : List (Expr .bool) :=
   (List.range width.val).flatMap (initialNodeDomains width)
@@ -300,10 +302,11 @@ def decodeInstruction (width : PNat) (names : Array String) (value : Json) :
       | "retiredCommitted" => pure .retiredCommitted
       | _ => throw s!"unknown membership state {expected}"
     return .membershipState node membership
-  | "sentIndex" =>
+  | "sentIndex" | "matchIndex" =>
     fields value ["kind", "node", "peer", "value"]
     let peer <- resolve width names (<- field value "peer")
-    return .sentIndex node peer (<- natural (<- field value "value"))
+    let expected <- natural (<- field value "value")
+    return if kind = "sentIndex" then .sentIndex node peer expected else .matchIndex node peer expected
   | _ => throw s!"unsupported native Lean instruction {kind}"
 
 def observationClauses {width : PNat} (columns : NodeColumns) :
@@ -333,6 +336,8 @@ def observationClauses {width : PNat} (columns : NodeColumns) :
     .ok [.equal (read columns.membershipState node.val (.integer 0)) (.integer (membershipCode expected))]
   | .sentIndex node peer expected =>
     .ok [.equal (peerIndex columns.sentIndex node.val (.integer peer.val)) (.integer expected)]
+  | .matchIndex node peer expected =>
+    .ok [.equal (peerIndex columns.matchIndex node.val (.integer peer.val)) (.integer expected)]
   | _ => .error "unsupported native Lean observation"
 
 def instruction {width : PNat} (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) :
