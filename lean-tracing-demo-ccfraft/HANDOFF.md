@@ -18,10 +18,15 @@ sequences, execution shape, and specific-assignment extension. Campaign writes
 use them without changing generated scripts or exported theorem statements.
 The parent rebuild and campaign regressions pass in
 `native-campaign-reuse-public-build.log` and `native-campaign-reuse-tests.log`.
+`NativeAppendSend` now composes append guards, the sentIndex store, and FIFO
+enqueue. Its packet reads the original cursor. `NativeAppendSendEncoding`
+proves full-frame soundness and specific-assignment extension. The parent
+build passes in `native-append-send-parent-build.log`.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns only
-`NativeAppendSend.lean` and `NativeAppendSendEncoding.lean`, composing the
-append guards, cursor store, and packet enqueue. Do not edit those files
-while that agent works.
+`NativeFrameEncode.lean`, `NativeFrameStep.lean`, and `NativeFrameTrace.lean`,
+wiring public `appendEntries` and its whole-trace proofs. Do not edit those
+files while that agent works. Parent-owned public fixtures cover complete
+Model transitions, cursor progression, duplicate heartbeats, and input errors.
 The main agent owns `NativeArrayVoteReceive` and subsequent receive semantics.
 Its handler and full-frame correspondence proofs build in
 `native-vote-receive-model-build.log`. No public receive action is wired yet.
@@ -66,6 +71,10 @@ The main-agent semantic prerequisites now include:
   the implicit bootstrap configuration. Once found, that retirement index
   survives later appended entries, even configurations that re-add the node.
   `native-retirement-scan-build.log` records the clean proof build.
+  It also characterizes the first signature strictly after retirement, the
+  first retired-committed entry naming a node, and membership in committed
+  retired records. These use list searches without ordered-term assumptions.
+  `native-retirement-secondary-scans-build.log` records the proof build.
 
 `NativeQueuePop` and `NativeQueuePopEncoding` now prove total directed FIFO
 pop, including empty queues and negative raw scalars, full-frame preservation,
