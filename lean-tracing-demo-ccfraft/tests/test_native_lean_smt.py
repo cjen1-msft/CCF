@@ -439,29 +439,30 @@ class NativeLeanSmtTests(unittest.TestCase):
 
     def test_internal_membership_change(self):
         models = self.model_traces("NativeArrayMembershipFixtureMain", 1572)
-        result = subprocess.run(
-            [
-                "lake",
-                "env",
-                "lean",
-                "--run",
-                "Sparse/NativeMembershipChangeFixtureMain.lean",
-            ],
-            cwd=ROOT,
-            input=json.dumps(models),
-            capture_output=True,
-            text=True,
-            check=True,
+        self.assert_internal_model_traces(
+            "NativeMembershipChangeFixtureMain", models, 147, "membership"
         )
-        fixtures = json.loads(result.stdout)
-        self.assertEqual(len(fixtures), len(models))
-        self.assertEqual(len({item["name"] for item in fixtures}), len(fixtures))
-        self.assertEqual(sum(item["expected"] == "sat" for item in fixtures), 147)
+
+    def test_internal_core_action_sequences(self):
+        models = self.model_traces("NativeArrayCoreActionsFixtureMain", 184)
+        baseline = [item for item in models if item["mutation"] == 0]
+        successful = [item for item in baseline if item["modelEnabled"]]
         self.assertEqual(
-            [item["expected"] for item in fixtures],
-            [item["expected"] for item in models],
+            {(item["present"], item["mode"]) for item in successful},
+            {(False, 0), (True, 0), (False, 3), (True, 3)},
+            {
+                (item["present"], item["mode"]): item["disabledSteps"]
+                for item in baseline
+            },
         )
-        self.solve(fixtures)
+        for item in baseline:
+            self.assertEqual(
+                item["disabledSteps"],
+                [] if item["mode"] in (0, 3) else [1 if item["mode"] == 1 else 7],
+            )
+        self.assert_internal_model_traces(
+            "NativeCoreActionsFixtureMain", models, 4, "core"
+        )
 
     def test_model_append_receive_writes(self):
         result = subprocess.run(
@@ -523,14 +524,13 @@ class NativeLeanSmtTests(unittest.TestCase):
         self.assert_internal_append_receive(models, 55, "hint")
 
     def assert_internal_append_receive(self, models, satisfiable, prefix):
+        self.assert_internal_model_traces(
+            "NativeAppendReceiveFixtureMain", models, satisfiable, prefix
+        )
+
+    def assert_internal_model_traces(self, module, models, satisfiable, prefix):
         result = subprocess.run(
-            [
-                "lake",
-                "env",
-                "lean",
-                "--run",
-                "Sparse/NativeAppendReceiveFixtureMain.lean",
-            ],
+            ["lake", "env", "lean", "--run", f"Sparse/{module}.lean"],
             cwd=ROOT,
             input=json.dumps(models),
             capture_output=True,
