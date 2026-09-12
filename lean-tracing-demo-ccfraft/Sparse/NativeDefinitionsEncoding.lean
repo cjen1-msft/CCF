@@ -51,6 +51,22 @@ theorem definitions_success {width : PNat} (items : List TypedDefinition)
     · rw [result.clauses, middleClauses, Array.toList_push]
       simp [definitionClauses, idEq, middleNext, List.append_assoc]
 
+theorem define_prior_holds {width : PNat} {sort : Ty} (value : Expr sort)
+    (before after : Encoding width) (id : Nat)
+    (run : (define value).run before = .ok (id, after))
+    (assignment : Assignment) (holds : Holds after.assertions.toList assignment) :
+    Holds before.assertions.toList assignment := by
+  rw [(define_success value before after id run).2.2.2.2] at holds
+  exact fun formula member => holds formula (by simp [member])
+
+theorem define_references {width : PNat} {sort : Ty} (value : Expr sort)
+    (before after : Encoding width) (id : Nat)
+    (run : (define value).run before = .ok (id, after))
+    (valid : ReferencesValid before) : ReferencesValid after := by
+  obtain ⟨_, next, _, columns, _⟩ := define_success value before after id run
+  cases valid
+  constructor <;> simp only [columns, next] <;> omega
+
 theorem definitions_extension {width : PNat} (items : List TypedDefinition)
     (before after : Encoding width) (ids : List Nat)
     (run : (definitions items).run before = .ok (ids, after))

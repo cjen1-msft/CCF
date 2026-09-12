@@ -480,50 +480,57 @@ theorem write_node_row_references {width : PNat} (node : Fin width)
   cases valid
   constructor <;> simp only [shape.columns, nodeRowWriteColumns, shape.next] <;> omega
 
-theorem write_node_row_values_bounded {width : PNat} (node : Fin width)
-    (values : NodeRowTerms width) (before after : Encoding width)
-    (run : (writeNodeRow node values).run before = .ok ((), after)) :
-    values.Bounded before.next := by
-  have symbols := (write_node_row_success node values before after run).symbols
+theorem node_row_definition_values_bounded {width : PNat} (columns : Columns)
+    (node : Fin width) (values : NodeRowTerms width) (limit : Nat)
+    (symbols : (nodeRowWriteDefinitions columns node values).all
+      (fun item => item.2.symbols.all (fun symbol => symbol.2 < limit)) = true) :
+    values.Bounded limit := by
   have itemBound {sort : Ty} (value : Expr sort)
       (member : (⟨sort, value⟩ : TypedDefinition) ∈
-        nodeRowWriteDefinitions before.toColumns node values) :
-      value.symbols.all (fun symbol => symbol.2 < before.next) = true :=
+        nodeRowWriteDefinitions columns node values) :
+      value.symbols.all (fun symbol => symbol.2 < limit) = true :=
     List.all_eq_true.mp symbols _ member
   have storeBound {sort : Ty} (column : Nat) (value : Expr sort)
       (member : (⟨.array .int sort,
         Term.store (.free (.array .int sort) column) (.integer node.val) value⟩ :
-        TypedDefinition) ∈ nodeRowWriteDefinitions before.toColumns node values) :
-      value.symbols.all (fun symbol => symbol.2 < before.next) = true := by
+        TypedDefinition) ∈ nodeRowWriteDefinitions columns node values) :
+      value.symbols.all (fun symbol => symbol.2 < limit) = true := by
     have full := itemBound
       (Term.store (.free (.array .int sort) column) (.integer node.val) value) member
-    have extracted : column < before.next /\
-        forall (symbol : Ty × Nat), symbol ∈ value.symbols -> symbol.2 < before.next := by
+    have extracted : column < limit /\
+        forall (symbol : Ty × Nat), symbol ∈ value.symbols -> symbol.2 < limit := by
       simpa [Term.symbols] using full
     exact List.all_eq_true.mpr fun symbol member => by
       simpa using extracted.2 symbol member
   constructor
-  · exact storeBound before.role values.role (by simp [nodeRowWriteDefinitions])
-  · exact storeBound before.newFollower values.newFollower (by simp [nodeRowWriteDefinitions])
-  · exact storeBound before.logLength values.logLength (by simp [nodeRowWriteDefinitions])
-  · exact storeBound before.commit values.commit (by simp [nodeRowWriteDefinitions])
-  · exact storeBound before.currentTerm values.currentTerm (by simp [nodeRowWriteDefinitions])
-  · exact storeBound before.logEntries values.logEntries (by simp [nodeRowWriteDefinitions])
-  · exact storeBound before.retirementIndex values.retirementIndex
+  · exact storeBound columns.role values.role (by simp [nodeRowWriteDefinitions])
+  · exact storeBound columns.newFollower values.newFollower (by simp [nodeRowWriteDefinitions])
+  · exact storeBound columns.logLength values.logLength (by simp [nodeRowWriteDefinitions])
+  · exact storeBound columns.commit values.commit (by simp [nodeRowWriteDefinitions])
+  · exact storeBound columns.currentTerm values.currentTerm (by simp [nodeRowWriteDefinitions])
+  · exact storeBound columns.logEntries values.logEntries (by simp [nodeRowWriteDefinitions])
+  · exact storeBound columns.retirementIndex values.retirementIndex
       (by simp [nodeRowWriteDefinitions])
-  · exact storeBound before.retirementCommittableIndex values.retirementCommittableIndex
+  · exact storeBound columns.retirementCommittableIndex values.retirementCommittableIndex
       (by simp [nodeRowWriteDefinitions])
-  · exact storeBound before.retiredCommittedIndex values.retiredCommittedIndex
+  · exact storeBound columns.retiredCommittedIndex values.retiredCommittedIndex
       (by simp [nodeRowWriteDefinitions])
-  · exact storeBound before.votedFor values.votedFor (by simp [nodeRowWriteDefinitions])
-  · exact storeBound before.votesGranted values.votesGranted
+  · exact storeBound columns.votedFor values.votedFor (by simp [nodeRowWriteDefinitions])
+  · exact storeBound columns.votesGranted values.votesGranted
       (by simp [nodeRowWriteDefinitions])
-  · exact storeBound before.preVotesGranted values.preVotesGranted
+  · exact storeBound columns.preVotesGranted values.preVotesGranted
       (by simp [nodeRowWriteDefinitions])
-  · exact storeBound before.membershipState values.membershipState
+  · exact storeBound columns.membershipState values.membershipState
       (by simp [nodeRowWriteDefinitions])
-  · exact storeBound before.sentIndex values.sentIndex (by simp [nodeRowWriteDefinitions])
-  · exact storeBound before.matchIndex values.matchIndex (by simp [nodeRowWriteDefinitions])
+  · exact storeBound columns.sentIndex values.sentIndex (by simp [nodeRowWriteDefinitions])
+  · exact storeBound columns.matchIndex values.matchIndex (by simp [nodeRowWriteDefinitions])
+
+theorem write_node_row_values_bounded {width : PNat} (node : Fin width)
+    (values : NodeRowTerms width) (before after : Encoding width)
+    (run : (writeNodeRow node values).run before = .ok ((), after)) :
+    values.Bounded before.next :=
+  node_row_definition_values_bounded before.toColumns node values before.next
+    (write_node_row_success node values before after run).symbols
 
 theorem write_node_row_prior_holds {width : PNat} (node : Fin width)
     (values : NodeRowTerms width) (before after : Encoding width)
