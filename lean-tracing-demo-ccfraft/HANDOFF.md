@@ -30,9 +30,15 @@ in `native-public-append-parent-build.log`. Those files are parent-owned again.
 `NativeFirstMatchEncoding` is complete and independently builds. Its 530
 emitted-SMT cases include ignored tails, nested binders, and huge live bounds.
 Those cases and signature regressions pass in `native-first-match-tests.log`.
-That worker now owns only `NativeRetirementEncoding.lean`, composing concrete
-signature-after-retirement and first-retired-record SMT predicates with that
-generic first-match proof. Log terms remain explicit rather than fixed columns.
+`NativeRetirementEncoding` now composes concrete signature-after-retirement
+and first-retired-record predicates with that generic proof. Its 1,410
+Model-derived SMT cases pass in `native-retirement-scan-tests.log`, including
+noncanonical cells, tag discrimination, ignored tails, and nested binders.
+The parent checked the proof against compiled dependencies in
+`native-retirement-encoding-parent-check.log`; rebuild it after the shared
+normalization cleanup finishes.
+That worker now owns only `NativeArrayAppendNetwork.lean`, proving full-frame
+stepdown and consuming append-receive bridges, including retirement refresh.
 The main agent owns `NativeArrayVoteReceive` and subsequent receive semantics.
 Its handler and full-frame correspondence proofs build in
 `native-vote-receive-model-build.log`. Public `receiveRequestVote` is now wired.
@@ -73,6 +79,11 @@ The main-agent semantic prerequisites now include:
   stay unchanged because missing rows already read as fresh. The eventual
   encoder must still reset hidden raw cells before exposing a new allocation.
   `native-array-allocation-build.log` records the clean proof build.
+- `NativeArrayChangeConfiguration` now proves membership-change guards,
+  source-row updates, and full-frame Model correspondence given the exact
+  configuration and retirement witnesses. Existing allocated rows survive.
+  Added-peer cursors use the old log length. The public action is not wired.
+  `native-array-change-configuration-parent-build.log` records the parent build.
 - `RetirementScan` proves the first exclusion after first inclusion, including
   the implicit bootstrap configuration. Once found, that retirement index
   survives later appended entries, even configurations that re-add the node.
@@ -96,6 +107,10 @@ The main-agent semantic prerequisites now include:
   native index and node-set witnesses. `completed_nodes_from_scans_correct`
   combines this with bounded previous-membership and retired-record scans.
   `native-retirement-completed-scans-build.log` records the proof build.
+  `log_first_removal_from_first_inclusion` now decomposes retirement into
+  the first inclusion and the first later exclusion. It uses proven ordering
+  of configuration indices, not ordering of entry terms.
+  `native-retirement-first-inclusion-build.log` records its build.
 
 Public append integration coverage is in
 `NativeArrayAppendFixtureMain`, `Traces/native_append_fifo_conflict.json`,
@@ -133,15 +148,33 @@ in `native-public-vote-receive-tests.log`.
 The shared Model fixture runner also passes the existing 1,200 append cases
 in `native-model-runner-tests.log`.
 Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns only
-`NativeArrayChangeConfiguration.lean`, proving native membership-change
-guards and row/frame updates. It does not own any public compiler files.
+`NativeArrayRetirementIndex.lean`, connecting that two-search decomposition
+to bounded first-match summaries over a bootstrap-prefixed virtual log.
+It does not own any public compiler files.
 
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only
-`NativeArrayAppendHandlerCases.lean`, proving exact local handler enablement
-from the four native branch guards. Its completed `NativeArrayAppendHandler`
-already composes all four soundness branches, including conflict truncation
-and retry, and passes `native-append-handler-parent-build.log`.
-It does not own retirement refresh, network transitions, or public receive.
+the entry-observation normalization cleanup. Its completed
+`NativeArrayAppendHandlerCases.handles_iff` proves exact local handler
+enablement from the four native branch guards. The parent build passes in
+`native-append-handler-cases-parent-build.log`.
+
+The next structural prerequisite is mutable allocation and log columns.
+Allocation, log length, commit, and log cells still use fixed symbols 0, 3,
+4, and 6. Entry observation proofs currently depend on the initial
+`NodeDomain`, which cannot describe later log writes. Normalize observed
+entries to their Model values and remove that obsolete recursive domain
+premise before adding mutable references. Initial domain assertions stay.
+The worker owns only `NativeIntegerTerms`, `NativeVotePacket`,
+`NativeEntryNormalize`, `NativeAppendPacket`, `NativeEncode`,
+`NativeObservationEncoding`, `NativeCompilerEncoding`, `NativeTraceEncoding`,
+`NativeTraceCompleteness`, `NativeFrameStep`, and `NativeFrameTrace`.
+Do not edit these files until it completes. It is lowering normalization
+helpers to avoid an import cycle. The public proof rebuild may revisit the
+expensive campaign proofs; do not duplicate that build.
+Parent-owned `NativeObservationNormalizeFixtureMain` supplies 576 direct
+raw-cell cases. `native-normalized-observation-failing-first.log` records
+the expected pre-change failure for raw term -5 decoding to Model term 0.
+Those tests remain pending until the cleanup finishes.
 
 `NativeArrayVoteState` now holds frame state and the existing action semantics.
 `NativeArrayVote` retains instruction traces and their correspondence proofs.

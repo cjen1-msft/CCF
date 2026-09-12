@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.Configuration
+import MachineGenerated.HandlerProofs
 
 set_option autoImplicit false
 
@@ -152,6 +153,54 @@ theorem completed_nodes_correct [Bootstrap N] (node : N) (log : List (Entry N T)
       node ∉ retiredCommittedNodesUpTo log commit /\
       (retirementIndexInLog node (log.take commit)).isSome = true := by
   simp [retirementCompletedNodes, Finset.mem_filter, Finset.mem_sdiff, previous_nodes_correct, and_assoc]
+
+theorem first_removal_from_first_inclusion (node : N) (configurations : List (Configuration N))
+    (ordered : configurations.Pairwise (fun left right => left.index < right.index)) :
+    retirementIndexFromConfigurations node false configurations =
+      (configurations.find? (fun configuration => decide (node ∈ configuration.nodes))).bind
+        (fun first =>
+          (configurations.find? (fun configuration =>
+            decide (first.index < configuration.index /\ node ∉ configuration.nodes))).map Configuration.index) := by
+  induction configurations with
+  | nil => rfl
+  | cons configuration rest ih =>
+    obtain ⟨later, ordered⟩ := List.pairwise_cons.mp ordered
+    by_cases included : node ∈ configuration.nodes
+    · have removeBound (values : List (Configuration N))
+          (above : forall value, value ∈ values -> configuration.index < value.index) :
+          values.find? (fun value => decide (configuration.index < value.index /\ node ∉ value.nodes)) =
+            values.find? (fun value => decide (node ∉ value.nodes)) := by
+        induction values with
+        | nil => rfl
+        | cons value values inner =>
+          have afterHead := above value (by simp)
+          have afterTail := fun item member => above item (List.mem_cons_of_mem _ member)
+          simp only [List.find?_cons]
+          rw [inner afterTail]
+          simp [afterHead]
+      have scan := first_exclusion_correct node true rest
+      have sameFind := removeBound rest later
+      simp at sameFind
+      simpa [retirementIndexFromConfigurations, included, List.find?_cons, afterInclusion,
+        sameFind] using scan
+    · cases found : rest.find? (fun value => decide (node ∈ value.nodes)) with
+      | none =>
+        simp [retirementIndexFromConfigurations, included, List.find?_cons, ih ordered, found]
+      | some first =>
+        have member : first ∈ rest := List.mem_of_find?_eq_some found
+        have afterHead := later first member
+        have notBefore : Not (first.index < configuration.index) := by omega
+        simp [retirementIndexFromConfigurations, included, List.find?_cons, ih ordered, found, notBefore]
+
+theorem log_first_removal_from_first_inclusion [DecidableEq T] [Bootstrap N]
+    (node : N) (log : List (Entry N T)) :
+    retirementIndexInLog node log =
+      ((allConfigurations log).find? (fun configuration => decide (node ∈ configuration.nodes))).bind
+        (fun first =>
+          ((allConfigurations log).find? (fun configuration =>
+            decide (first.index < configuration.index /\ node ∉ configuration.nodes))).map Configuration.index) := by
+  exact first_removal_from_first_inclusion node (allConfigurations log)
+    (allConfigurations_pairwise_index_lt log)
 
 end CCFRaft.Sparse.RetirementScan
 
