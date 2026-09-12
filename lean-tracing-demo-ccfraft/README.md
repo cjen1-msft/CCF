@@ -125,6 +125,12 @@ input errors. Partial packets are not accepted.
 Other instructions are errors.
 `native_lean.py` handles JSON input and solver execution. It delegates all SMT
 construction to Lean, with no Python encoder fallback.
+`native_solver.py` first runs Z3 with E-matching disabled. If Z3 returns
+`unknown`, it retries the same script with E-matching enabled.
+The retry preserves the first attempt's output in `.mbqi.stdout` and
+`.mbqi.stderr` files and records the retry in the final diagnostics.
+SAT and UNSAT are accepted only as solver verdicts. A second `unknown` remains
+inconclusive, and solver errors are not retried.
 
 ```sh
 lake build Sparse Sparse.NativeEncodeMain Sparse.NativeSmtFixtureMain

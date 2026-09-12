@@ -20,17 +20,22 @@ class NativeSolverTests(unittest.TestCase):
         self.executable = self.root / "fake-z3"
         self.query = "(get-unsat-core)\n"
 
-    def solver(self, verdict, *, code=0, output=""):
+    def solver(self, verdict, *, code=0, output="", fallback_verdict=None):
         self.executable.write_text(
             f"#!{sys.executable}\n"
-            "import pathlib, sys\n"
+            "import json, pathlib, sys\n"
+            f"pathlib.Path({str(self.root / 'received-arguments')!r}).write_text(json.dumps(sys.argv[1:]))\n"
             "for line in sys.stdin:\n"
             "    if line.strip() == '(check-sat)':\n"
             "        break\n"
-            f"print({verdict!r}, flush=True)\n"
+            f"verdict = {verdict!r}\n"
+            f"fallback = {fallback_verdict!r}\n"
+            "if 'smt.ematching=true' in sys.argv and fallback is not None:\n"
+            "    verdict = fallback\n"
+            "print(verdict, flush=True)\n"
             "query = sys.stdin.read()\n"
             f"pathlib.Path({str(self.root / 'received-query')!r}).write_text(query)\n"
-            f"print({output!r}, end='', flush=True)\n"
+            f"print({output!r} if query else '', end='', flush=True)\n"
             "print('solver diagnostic', file=sys.stderr)\n"
             f"sys.exit({code})\n",
             encoding="ascii",
@@ -58,7 +63,13 @@ class NativeSolverTests(unittest.TestCase):
                     self.query if verdict == "unsat" else "",
                 )
                 self.assertEqual(result.stdout, verdict + "\n" + core)
-                self.assertEqual(result.stderr, "solver diagnostic\n")
+                if verdict == "unknown":
+                    self.assertIn("retrying with E-matching", result.stderr)
+                    self.assertEqual(
+                        (self.root / "trace.mbqi.stdout").read_text(), "unknown\n"
+                    )
+                else:
+                    self.assertEqual(result.stderr, "solver diagnostic\n")
                 self.assertEqual(
                     (self.root / "trace.stdout").read_text(), result.stdout
                 )
@@ -73,6 +84,32 @@ class NativeSolverTests(unittest.TestCase):
                 ValidationError, "Z3 rejected"
             ):
                 self.run_solver(verdict, output=output)
+
+    def test_model_based_quantifier_options(self):
+        self.run_solver("sat")
+        self.assertEqual(
+            (self.root / "received-arguments").read_text(),
+            '["-in", "unsat_core=true", "smt.ematching=false"]',
+        )
+
+    def test_unknown_retries_with_ematching_and_preserves_first_attempt(self):
+        result = self.run_solver(
+            "unknown", fallback_verdict="unsat", output="(assertion_1)\n"
+        )
+        self.assertEqual(result.status, "unsat")
+        self.assertEqual(
+            (self.root / "received-arguments").read_text(),
+            '["-in", "unsat_core=true", "smt.ematching=true"]',
+        )
+        self.assertEqual((self.root / "received-query").read_text(), self.query)
+        self.assertEqual((self.root / "trace.mbqi.stdout").read_text(), "unknown\n")
+        self.assertEqual(
+            (self.root / "trace.mbqi.stderr").read_text(), "solver diagnostic\n"
+        )
+        self.assertEqual(result.stdout, "unsat\n(assertion_1)\n")
+        self.assertEqual((self.root / "trace.stdout").read_text(), result.stdout)
+        self.assertEqual((self.root / "trace.stderr").read_text(), result.stderr)
+        self.assertIn("retrying with E-matching", result.stderr)
 
     def test_nonzero_exit_preserves_diagnostics(self):
         with self.assertRaisesRegex(ValidationError, "exit code 7"):
