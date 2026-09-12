@@ -51,6 +51,11 @@ The main-agent semantic prerequisites now include:
   request. Reuses `LogMatchSummary.StorageSummary` rather than a new scan
   definition. `native-append-receive-branches-build.log` records the clean build.
   Retirement refresh, branch composition, and public receive remain unwired.
+- `NativeArrayAllocation` proves exact Model allocation for membership change.
+  Existing rows survive; missing members become fresh nodes. Abstract reads
+  stay unchanged because missing rows already read as fresh. The eventual
+  encoder must still reset hidden raw cells before exposing a new allocation.
+  `native-array-allocation-build.log` records the clean proof build.
 
 `NativeQueuePop` and `NativeQueuePopEncoding` now prove total directed FIFO
 pop, including empty queues and negative raw scalars, full-frame preservation,
