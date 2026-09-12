@@ -82,6 +82,12 @@ The main-agent semantic prerequisites now include:
   `NativeArrayRetirement` uses it for exact Model signature and retired-record
   indices. It also proves bounded array membership for committed and all
   retired records. `native-array-retirement-build.log` records the proof build.
+  It now also proves local retirement refresh from scan summaries and bounded
+  previous-configuration membership. `RetirementScan.completed_nodes_correct`
+  characterizes the global completed-retirement set without dropping the
+  committed-prefix retirement condition. The combined build passes in
+  `native-retirement-refresh-build.log`. Consuming append NACKs refresh this
+  metadata too; only the nonconsuming candidate-stepdown branch skips refresh.
 
 Public append integration coverage is in
 `NativeArrayAppendFixtureMain`, `Traces/native_append_fifo_conflict.json`,
@@ -107,9 +113,23 @@ cases and four invalid-symbol errors. Cases include stale requests,
 unallocated senders, self receives, existing duplicate replies, and full
 post-state observations.
 Mechanical worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns only
-`NativeVoteReceive.lean` and `NativeVoteReceiveEncoding.lean`. It composes the
-request-specific guard and signature witness with those writes, using
-GPT-5.6 Sol at medium effort. Do not edit those files until it completes.
+`NativeVoteReceive.lean`, `NativeVoteReceiveEncoding.lean`,
+`NativeFrameEncode.lean`, `NativeFrameStep.lean`, and `NativeFrameTrace.lean`.
+It composes the request-specific guard and signature witness, then wires
+public `receiveRequestVote`, using GPT-5.6 Sol at medium effort.
+Do not edit those files until it completes.
+Parent-owned `NativeArrayVoteReceiveFixtureMain` builds and generates 480
+Model-derived traces, including enabled generic receives of the wrong packet
+kind that must be rejected by the vote-specific action.
+`native-public-vote-receive-failing-first.log` records rejection before wiring.
+The new public receive, send/update/receive sequence, and explorer-core tests
+are pending. The shared Model fixture runner passes the existing 1,200 append
+cases in `native-model-runner-tests.log`.
+
+Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only
+`NativeArrayAppendHandler.lean`. It composes four local append handler branches
+against the complete Model handler, including conflict truncation and retry.
+It does not own retirement refresh, network transitions, or public receive.
 
 `NativeArrayVoteState` now holds frame state and the existing action semantics.
 `NativeArrayVote` retains instruction traces and their correspondence proofs.

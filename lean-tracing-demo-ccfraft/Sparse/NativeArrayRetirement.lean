@@ -50,6 +50,73 @@ theorem all_retired_nodes_correct (log : Log N T) (node : N) :
   · rintro ⟨position, live, named⟩
     exact ⟨position, live, by omega, named⟩
 
+def PreviouslyIncluded [Bootstrap N] (log : Log N T) (frontier : Nat) (node : N) : Prop :=
+  (0 < frontier /\ node ∈ INITIAL_CONFIGURATION) \/
+    exists index nodes, index < frontier /\ Reconfiguration log index nodes /\ node ∈ nodes
+
+theorem previously_included_correct [DecidableEq T] [Bootstrap N]
+    (log : Log N T) (frontier : Nat) (node : N) :
+    PreviouslyIncluded log frontier node <->
+      exists configuration, configuration ∈ allConfigurations log.decode /\
+        configuration.index < frontier /\ node ∈ configuration.nodes := by
+  constructor
+  · rintro (⟨before, member⟩ | ⟨index, nodes, before, physical, member⟩)
+    · exact ⟨implicitConfiguration, by simp [allConfigurations], before, member⟩
+    · refine ⟨{ index, nodes }, ?_, before, member⟩
+      apply List.mem_cons_of_mem
+      rw [Sparse.ConfigurationSnapshot.mem_configurations_iff]
+      exact (reconfiguration_correct log index nodes).mp physical
+  · rintro ⟨configuration, member, before, included⟩
+    simp only [allConfigurations, List.mem_cons] at member
+    rcases member with implicit | physical
+    · subst configuration
+      exact Or.inl ⟨before, included⟩
+    · refine Or.inr ⟨configuration.index, configuration.nodes, before, ?_, included⟩
+      apply (reconfiguration_correct log _ _).mpr
+      rw [Sparse.ConfigurationSnapshot.mem_configurations_iff] at physical
+      exact physical
+
+def refresh (row : Local N T) (retirement signature retired : Option Nat) : Local N T :=
+  let committedRetired := retired.filter fun index => index <= row.commit
+  let membershipState := match retirement with
+    | none => MembershipState.active
+    | some index =>
+      if committedRetired.isSome then .retiredCommitted
+      else if index <= row.commit then .retirementCompleted
+      else if signature.isSome then .retirementSigned
+      else .retirementOrdered
+  { row with
+    membershipState
+    retirementIndex := retirement
+    retirementCommittableIndex := signature
+    retiredCommittedIndex := committedRetired }
+
+theorem refresh_correct [DecidableEq T] [Bootstrap N] (row : Local N T) (node : N)
+    (retirement signature retired : Option Nat)
+    (retirementCorrect : retirementIndexInLog node row.log.decode = retirement)
+    (signatureCorrect : retirement.bind (retirementCommittableIndexInLog row.log.decode) = signature)
+    (retiredCorrect : retiredCommittedIndexInLog node row.log.decode = retired) :
+    (refresh row retirement signature retired).toModel = refreshRetirementState node row.toModel := by
+  simp [refresh, refreshRetirementState, Local.toModel, retirementCorrect, signatureCorrect, retiredCorrect]
+  cases retirement <;> rfl
+
+theorem refresh_from_scans_correct [DecidableEq T] [Bootstrap N] (row : Local N T) (node : N)
+    (retirement signaturePosition retiredPosition : Option Nat)
+    (retirementCorrect : retirementIndexInLog node row.log.decode = retirement)
+    (signatureCorrect : match retirement with
+      | none => signaturePosition = none
+      | some index => FirstMatch row.log
+          (fun position entry => decide (index < 1 + position /\ entry.content = .signature)) signaturePosition)
+    (retiredCorrect : FirstMatch row.log (fun _ entry => namesRetiredNode node entry) retiredPosition) :
+    (refresh row retirement (signaturePosition.map (1 + ·)) (retiredPosition.map (1 + ·))).toModel =
+      refreshRetirementState node row.toModel := by
+  apply refresh_correct row node retirement _ _ retirementCorrect
+  · cases retirement with
+    | none => simp_all
+    | some index =>
+      exact (signature_scan_correct row.log index signaturePosition).mp signatureCorrect
+  · exact (retired_index_scan_correct row.log node retiredPosition).mp retiredCorrect
+
 end CCFRaft.NativeArrayRetirement
 
 run_cmd do

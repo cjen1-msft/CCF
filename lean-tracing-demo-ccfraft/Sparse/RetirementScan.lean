@@ -121,6 +121,38 @@ theorem committed_nodes_correct (node : N) (commit start : Nat) (log : List (Ent
         simp [retiredCommittedNodesUpToFrom, List.zipIdx_cons, within, namesRetiredNode, content, ih]
     · simp [retiredCommittedNodesUpToFrom, List.zipIdx_cons, within, ih]
 
+theorem previous_nodes_correct (node : N) (frontier : Nat) (configurations : List (Configuration N))
+    (initial : Finset N) :
+    node ∈ configurations.foldl
+      (fun nodes configuration => if configuration.index < frontier then nodes ∪ configuration.nodes else nodes)
+      initial <->
+      node ∈ initial \/ exists configuration, configuration ∈ configurations /\
+        configuration.index < frontier /\ node ∈ configuration.nodes := by
+  induction configurations generalizing initial with
+  | nil => simp
+  | cons configuration rest ih =>
+    by_cases before : configuration.index < frontier
+    · simp only [List.foldl_cons, if_pos before, ih, Finset.mem_union, List.mem_cons]
+      aesop
+    · simp only [List.foldl_cons, if_neg before, ih, List.mem_cons]
+      constructor
+      · rintro (member | ⟨candidate, member, lower, included⟩)
+        · exact Or.inl member
+        · exact Or.inr ⟨candidate, Or.inr member, lower, included⟩
+      · rintro (member | ⟨candidate, rfl | member, lower, included⟩)
+        · exact Or.inl member
+        · exact False.elim (before lower)
+        · exact Or.inr ⟨candidate, member, lower, included⟩
+
+theorem completed_nodes_correct [Bootstrap N] (node : N) (log : List (Entry N T)) (commit : Nat) :
+    node ∈ retirementCompletedNodes log commit <->
+      (exists configuration, configuration ∈ allConfigurations log /\
+        configuration.index < (currentConfigurationAt log commit).index /\ node ∈ configuration.nodes) /\
+      node ∉ (currentConfigurationAt log commit).nodes /\
+      node ∉ retiredCommittedNodesUpTo log commit /\
+      (retirementIndexInLog node (log.take commit)).isSome = true := by
+  simp [retirementCompletedNodes, Finset.mem_filter, Finset.mem_sdiff, previous_nodes_correct, and_assoc]
+
 end CCFRaft.Sparse.RetirementScan
 
 run_cmd do
