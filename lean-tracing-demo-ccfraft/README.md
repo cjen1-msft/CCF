@@ -438,6 +438,12 @@ retirement refresh after consuming NACKs. `NativeLogRangeEncoding` and
 `NativeLogSpliceEncoding` emit the live-range comparisons and copies.
 `NativeRetirementRefreshTerms` emits the scalar retirement results from
 canonical scan witnesses. Public append receive remains unwired.
+`NativeNodeRowWritesEncoding` proves whole-row replacement and allocation,
+including full-frame preservation and extension of a particular prior assignment.
+Snapshots use fresh defaults for absent nodes and preserve arbitrary log tails.
+The writer checks all input references before allocating its 16 fresh columns.
+`test_node_row_writes` exercises 1,584 Model-derived scripts and 60 invalid-reference
+cases, including repeated writes through current column references.
 `NativeQueuePopEncoding` proves directed FIFO removal and full-frame
 assignment extension. Empty removal is total internally; receive guards
 separately require a packet. The queue fixtures cover repeated pop/push,
