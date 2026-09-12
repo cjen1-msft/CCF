@@ -430,16 +430,18 @@ new-follower fields, using reusable branch-disjointness lemmas.
 It also proves that candidate stepdown leaves this candidate row unchanged.
 Inactive signature witnesses need no scan premise. The parent inspected the
 full proof and rebuilt it in `native-array-append-candidate-parent-build.log`.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns only new
 `NativeAppendReceiveCandidateTerms.lean` and
-`NativeAppendReceiveCandidateEncoding.lean`. It connects the actual guarded
-splice, selected-array definitions, and conditional signature scan to that
-native candidate row. Inactive SMT signature integers may be negative.
-The submitted candidate proof independently builds and has been inspected.
-Worker B is factoring its duplicated 15-field row constructor before acceptance.
-The parent has integrated the candidate helper into `receiveAppend`; all 110
-focused transition scripts remain byte-identical before and after extraction.
-Those runtime changes and the new candidate proof are not yet committed.
+`NativeAppendReceiveCandidateEncoding.lean` are committed as `11f4f832e`.
+They connect the guarded splice, selected-array definitions, and conditional
+signature scan to the native candidate row. Inactive SMT signature integers
+may be negative. The proof now constructs the 15-field row representation once.
+The parent inspected and rebuilt it in `native-candidate-shared-parent-build.log`.
+All 1,454 internal transitions and the import audit pass in
+`native-candidate-integration-tests.log`. The 110 focused scripts remain
+byte-identical after helper extraction.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns only new
+`NativeAppendReceiveHandlerEncoding.lean`. It composes the typed candidate
+and guarded NACK scan into the exact Model local handler and response.
 
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only new
 `NativeRetirementCompletedConstraints.lean` and
@@ -447,6 +449,16 @@ Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only new
 bitvector's fresh-symbol loop and proves execution, enabled constraints, and
 specific-assignment extension. Successful extraction must retain the original
 IDs and assertion order, with `1 + 3 * width` fresh symbols.
+Its execution shape, soundness, recursive witness assignment, fresh-ID lookups,
+and disabled extension independently build in `native-completed-loop-parent-build.log`.
+Enabled specific-assignment extension remains blocked. The parent instructed A
+to transport only the five bounded input expressions, then rebuild scan facts
+through their semantic iff lemmas instead of expanding generated `Term.eval`.
+`NativeRetirementCompletedConstraintsFixtureMain` passes 240 scripts and 20
+future-reference rejections in `native-completed-loop-fixture-tests.log`.
+It checks exact allocation/assertion counts, all five original-counter checks,
+ignored tails, disabled constraints, and deliberately invalid active witnesses.
+The loop and fixture remain uncommitted pending enabled completeness.
 
 `NativeRetirementCompletedEncoding.lean` now composes the actual current,
 prefix-retirement, and retired-record constraints into one Model completed-node
@@ -461,11 +473,16 @@ It and the import-boundary audit pass in
 are parent-owned. Worker A has the canonical witness API for loop composition.
 
 Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns only new
+`NativeAppendReceiveFrameEncoding.lean`. It connects the existing write-effect
+proof to the Model receive step using the conditional stepdown/handler/refresh
+facts, with both soundness and specific-assignment extension.
 `NativeAppendReceiveFinalRowTerms.lean` and
-`NativeAppendReceiveFinalRowEncoding.lean`. It composes candidate stepdown
-and conditional local retirement refresh into the final row.
-The helper needs only the candidate row because it preserves the original
-role and retirement fields. Inactive scan values must remain arbitrary.
+`NativeAppendReceiveFinalRowEncoding.lean` are committed as `158d506bb`.
+They prove candidate stepdown and conditional local retirement refresh,
+preserving candidate log and commit. Inactive scan values remain arbitrary.
+The parent inspected the full proof and rebuilt it in
+`native-append-final-row-parent-build.log`. The private encoder now uses the
+helper; the 110 focused scripts remain byte-identical and the import audit passes.
 
 `NativeArrayVoteState` now holds frame state and the existing action semantics.
 `NativeArrayVote` retains instruction traces and their correspondence proofs.
