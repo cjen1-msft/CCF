@@ -113,6 +113,9 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeRetirementRefreshTerms",
             "Sparse.NativeAppendResponseTerm",
             "Sparse.NativeRetirementCompletedTerm",
+            "Sparse.NativeMaxMatchEncoding",
+            "Sparse.NativeArrayLogSummaries",
+            "Sparse.NativeNodeRowWritesEncoding",
         ):
             visit(module)
         forbidden = {
@@ -198,6 +201,44 @@ class NativeLeanSmtTests(unittest.TestCase):
             },
             {False, True},
         )
+
+    def test_node_row_writes(self):
+        result = subprocess.run(
+            [
+                "lake",
+                "env",
+                "lean",
+                "--run",
+                "Sparse/NativeNodeRowWritesFixtureMain.lean",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        output = json.loads(result.stdout)
+        fixtures = output["fixtures"]
+        self.assertEqual(len(fixtures), 1584)
+        self.assertEqual(len({item["name"] for item in fixtures}), len(fixtures))
+        successful = [item for item in fixtures if item["expected"] == "sat"]
+        self.assertEqual(len(successful), 72)
+        self.assertEqual({item["mode"] for item in successful}, {0, 1, 2})
+        for field in ("sourcePresent", "destinationPresent", "self"):
+            self.assertEqual({item[field] for item in successful}, {False, True})
+        self.assertEqual(len(output["rejected"]), 60)
+        self.assertEqual(
+            {(item["column"], item["symbol"]) for item in output["rejected"]},
+            {
+                (column, symbol)
+                for column in range(1, 16)
+                for symbol in (24, 25, 39, 1024)
+            },
+        )
+        self.assertEqual(
+            {item["error"] for item in output["rejected"]},
+            {"internal encoder error: row write references an unallocated SMT symbol"},
+        )
+        self.solve(fixtures)
 
     def assert_script_fixtures(self, module, count, satisfiable):
         result = subprocess.run(
