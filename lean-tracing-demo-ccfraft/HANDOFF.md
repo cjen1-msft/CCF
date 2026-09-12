@@ -56,10 +56,16 @@ The main-agent semantic prerequisites now include:
 pop, including empty queues and negative raw scalars, full-frame preservation,
 and extension of a specific satisfying assignment. `native-queue-pop-tests.log`
 records 112 passing push/pop fixtures, including duplicate and self queues.
+`NativeVoteReceiveWrites` and its encoding proof now compose the conditional
+vote store, FIFO pop, and reply. Replies read the original columns.
+`native-vote-receive-write-tests.log` records 192 complete Model transition
+cases and four invalid-symbol errors. Cases include stale requests,
+unallocated senders, self receives, existing duplicate replies, and full
+post-state observations.
 Mechanical worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns only
-`NativeVoteReceiveWrites.lean` and `NativeVoteReceiveWritesEncoding.lean`.
-It composes the conditional vote store with FIFO pop/reply, using GPT-5.6 Sol
-at medium effort. Do not edit those two files until it completes.
+`NativeVoteReceive.lean` and `NativeVoteReceiveEncoding.lean`. It composes the
+request-specific guard and signature witness with those writes, using
+GPT-5.6 Sol at medium effort. Do not edit those files until it completes.
 
 `NativeArrayVoteState` now holds frame state and the existing action semantics.
 `NativeArrayVote` retains instruction traces and their correspondence proofs.

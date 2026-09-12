@@ -192,6 +192,36 @@ class NativeLeanSmtTests(unittest.TestCase):
         self.assertEqual({item["expected"] for item in fixtures}, {"sat", "unsat"})
         self.solve(fixtures)
 
+    def test_model_vote_receive_writes(self):
+        result = subprocess.run(
+            [
+                "lake",
+                "env",
+                "lean",
+                "--run",
+                "Sparse/NativeVoteReceiveWritesFixtureMain.lean",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        output = json.loads(result.stdout)
+        fixtures = output["fixtures"]
+        self.assertEqual(len(fixtures), 192)
+        self.assertEqual(len(fixtures), len({item["name"] for item in fixtures}))
+        self.assertEqual(sum(item["expected"] == "sat" for item in fixtures), 96)
+        self.assertEqual(
+            [(item["packet"], item["signature"]) for item in output["rejected"]],
+            [(24, 23), (23, 24), (24, 24), (1024, 23)],
+        )
+        for item in output["rejected"]:
+            self.assertEqual(
+                item["error"],
+                "internal encoder error: vote receive inputs reference an unallocated SMT symbol",
+            )
+        self.solve(fixtures)
+
     def test_model_vote_receive_responses(self):
         result = subprocess.run(
             [

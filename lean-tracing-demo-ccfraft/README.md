@@ -408,6 +408,11 @@ Retirement refresh and receive branch composition remain unfinished.
 assignment extension. Empty removal is total internally; receive guards
 separately require a packet. The queue fixtures cover repeated pop/push,
 duplicates, self queues, negative raw scalars, and large head offsets.
+`NativeVoteReceiveWritesEncoding` composes the conditional vote update, FIFO
+pop, and reply with full-frame correspondence and assignment extension.
+Its 192 Model-derived transition cases include existing duplicate replies,
+stale requests, unallocated senders, and self receives. Public receive
+dispatch and guard composition remain unfinished.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.
