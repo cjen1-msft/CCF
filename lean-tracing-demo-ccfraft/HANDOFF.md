@@ -62,6 +62,10 @@ The main-agent semantic prerequisites now include:
   stay unchanged because missing rows already read as fresh. The eventual
   encoder must still reset hidden raw cells before exposing a new allocation.
   `native-array-allocation-build.log` records the clean proof build.
+- `RetirementScan` proves the first exclusion after first inclusion, including
+  the implicit bootstrap configuration. Once found, that retirement index
+  survives later appended entries, even configurations that re-add the node.
+  `native-retirement-scan-build.log` records the clean proof build.
 
 `NativeQueuePop` and `NativeQueuePopEncoding` now prove total directed FIFO
 pop, including empty queues and negative raw scalars, full-frame preservation,
