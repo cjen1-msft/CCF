@@ -146,6 +146,28 @@ class NativeLeanSmtTests(unittest.TestCase):
         self.assertEqual(sum(item["expected"] == "sat" for item in fixtures), 2540)
         self.solve(fixtures)
 
+    def test_model_term_guards(self):
+        models = subprocess.run(
+            ["lake", "env", "lean", "--run", "Sparse/NativeArrayTermFixtureMain.lean"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(len(json.loads(models.stdout)), 168)
+        encoded = subprocess.run(
+            ["lake", "env", "lean", "--run", "Sparse/NativeTermGuardFixtureMain.lean"],
+            cwd=ROOT,
+            input=models.stdout,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        fixtures = json.loads(encoded.stdout)
+        self.assertEqual(len(fixtures), 216)
+        self.assertEqual(len(fixtures), len({item["name"] for item in fixtures}))
+        self.solve(fixtures)
+
     def test_model_active_membership(self):
         result = subprocess.run(
             ["lake", "env", "lean", "--run", "Sparse/NativeMembershipFixtureMain.lean"],

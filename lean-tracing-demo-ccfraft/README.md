@@ -335,6 +335,15 @@ FIFO storage. Its proofs preserve all node fields, globals, and other queues.
 The public compiler accepts both vote-send actions through the same
 decoded-document correspondence theorem.
 
+`NativeQueueHeadEncoding` proves reads of the decoded FIFO head, including
+clamped raw offsets and invalid packet cells that decode to the default packet.
+`NativeTermGuardEncoding` proves the `updateTerm` enabled guard against the Model.
+Responses require an allocated source; requests do not. The destination must
+be allocated, the queue nonempty, and the selected term strictly newer.
+Its 216 solver cases include all packet kinds, stale terms, mismatched packet
+destinations, empty queues, and invalid raw storage. The state update is not
+yet public.
+
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.
 Invalid payloads fail decoding rather than becoming `none` or wrapping to

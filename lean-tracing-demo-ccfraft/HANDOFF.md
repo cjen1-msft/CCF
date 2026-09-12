@@ -61,6 +61,26 @@ Then implement `updateTerm`, `timeout`, and `becomePreVoteCandidate`.
 Packet construction reads the latest term column. Log/commit columns remain
 fixed for now.
 
+The term-column slice is committed as `0876682fa`.
+`NativeQueueHead` and `NativeQueueHeadEncoding` now prove normalized head reads
+against any represented FIFO, including different physical offsets.
+`NativeTermGuardEncoding.term_update_guards_model_correct` reaches actual
+`Enabled state (.updateTerm source destination)`. It covers source allocation
+only for response packets, destination allocation, nonempty queues, and strict
+term increase. It deliberately does not require packet destination to equal
+the containing queue destination, matching the Model.
+`native-term-guard-full-build.log` and `native-term-guard-tests.log` record
+the full Sparse build and 216 passing cases in 14 seconds.
+The fixture consumes 168 existing actual-Model term cases but checks only
+their prefix and guard, not the later state observations. Another 48 cases
+cover negative/huge raw heads and lengths, invalid payloads, wrong sources,
+and a higher-term trap at a negative raw offset.
+Next implement the five term-update writes: follower role, selected term,
+new-follower flag, null votedFor, and empty preVotesGranted. Preserve the
+queue, votesGranted, and every unrelated field. Then wire the public decoder
+and frame trace proofs and run the complete 168 Model cases with post-state
+observations. `updateTerm` is still unsupported publicly.
+
 cvc5 1.3.4 returns incorrect UNSAT on
 `membership-free-false-1-0-0`. The two-assertion reduction contains a canonical
 one-entry signature log and `currentCandidate`. Setting the current index to
