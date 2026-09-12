@@ -559,9 +559,15 @@ The parent removed duplicated row-bound reasoning through
 The parent inspected the result and rebuilt affected append, allocation, and row
 proofs in `native-membership-writes-parent-build.log`; the import audit passes.
 Those three proof files and the runtime are parent-owned.
+`NativeMembershipFrameEncoding.lean` is committed as `231d237e6`.
+It composes write soundness and specific-assignment extension with actual Model
+`changeConfiguration`, given the source-row and scan facts.
+The parent inspected and rebuilt it in `native-membership-frame-encoding-parent-build.log`;
+the import audit passes. Whole-action prefix composition remains unfinished.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns only new
-`NativeMembershipFrameEncoding.lean`, composing writes with the accepted generic
-Model frame bridge.
+`NativeRetirementRefreshAssignment.lean`. It constructs four consecutive local
+retirement witnesses while preserving the supplied assignment and prior assertions.
+Both action prefixes use that witness layout. The runtime remains unchanged.
 
 `NativeArrayCoreActionsFixtureMain` and `NativeCoreActionsFixtureMain` are
 committed as `05b512bdc`. They exercise all five prioritized actions in one
