@@ -14,16 +14,8 @@ open Lean NativeSmt NativeEncode NativeArrayFixtures
 private instance : Bootstrap (Fin 3) :=
   { configuration := {0, 1}, leader := 0, leader_mem := by simp }
 
-def decodeGuardInstruction (width : PNat) (names : Array String) (value : Json) :
-    Except String (FrameInstruction width) := do
-  let kind <- (<- field value "kind").getStr?
-  if kind = "timeout" || kind = "becomePreVoteCandidate" then
-    fields value ["kind", "node"]
-    return .campaign (kind = "becomePreVoteCandidate") (<- resolve width names (<- field value "node"))
-  decodeFrameInstruction width names value
-
 def modelFixture (index : Nat) (item : Json) : Except String Json := do
-  let input <- decodeDocumentWith decodeGuardInstruction (<- field item "trace")
+  let input <- decodeFrameDocument (<- field item "trace")
   let program : EncodeM input.width Unit := do
     initialFrameDomains input.width
     for instruction in input.instructions do

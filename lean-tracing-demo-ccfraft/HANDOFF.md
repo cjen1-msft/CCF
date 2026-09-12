@@ -99,8 +99,25 @@ retirement-completed exception. `native-campaign-guard-tests.log` records
 campaign prefixes and an 800-case matrix of allocation, role, membership,
 pre-vote status, configuration exclusion, and retirement completion.
 `NativeCampaignGuardFixtureMain` tests guards only, not post-state writes.
-Next implement `timeout` and `becomePreVoteCandidate` state writes using
-`Frame.campaign`, then wire the public decoder and whole-frame trace proofs.
+The guard slice is committed as `d083c6f37`.
+`NativeCampaign` now defines runtime writes for both campaign actions.
+`NativeCampaignWrites` proves node preservation, five-write execution shape,
+whole-frame preservation, and assignment-extension completeness.
+`native-campaign-writes-build.log` records the passing build.
+Both actions use five stores for now. Pre-vote writes back the same term,
+votedFor, and granted votes to keep the proof uniform.
+`NativeCampaignEncoding` composes the guards and writes. Its build passes in
+`native-campaign-complete-build.log`, taking 367 seconds.
+The decoder and both whole-frame trace directions now include campaigns.
+The full Sparse/public build passes in `native-public-campaign-build.log`.
+Runtime tests pass: nine methods in
+160 seconds in `native-public-campaign-tests.log`, including 400 complete Model
+campaign traces, 18 state/sequence cases, strict campaign input errors, the
+1,200 guard cases, and vote/term/quorum/explorer regressions.
+`native-public-campaign-failing-first.log` records the test failure before
+public action wiring. The guard fixture now reuses the public decoder.
+The public encoder now covers six actions. The full-model and raw-reducer
+assurance flags remain false.
 Then continue the remaining Model actions and partial packet observations,
 followed by Python raw reduction and explorer raw/code provenance.
 

@@ -340,6 +340,160 @@ class NativeLeanSmtTests(unittest.TestCase):
             ]
         )
 
+    def test_actual_model_campaigns(self):
+        result = subprocess.run(
+            [
+                "lake",
+                "env",
+                "lean",
+                "--run",
+                "Sparse/NativeArrayVoteFixtureMain.lean",
+                "campaign",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        fixtures = json.loads(result.stdout)
+        self.assertEqual(len(fixtures), 400)
+        scripts = self.encode([fixture["trace"] for fixture in fixtures])
+        self.solve(
+            [
+                {
+                    "name": f"model-campaign-{index}",
+                    "script": script,
+                    "expected": fixture["expected"],
+                }
+                for index, (fixture, script) in enumerate(zip(fixtures, scripts))
+            ]
+        )
+
+    def test_campaign_state_and_vote_sequence(self):
+        def local(kind, value, node="a"):
+            return {"kind": kind, "node": node, "value": value}
+
+        cases = []
+        for pre_vote in (False, True):
+            kind = "becomePreVoteCandidate" if pre_vote else "timeout"
+            term = 10**30 if pre_vote else 10**30 + 1
+            start = [
+                local("allocated", True),
+                local("allocated", True, "b"),
+                local("role", "follower"),
+                local("currentTerm", 10**30),
+                local("newFollower", False),
+                local("votedFor", "b"),
+                local("votesGranted", ["b"]),
+                local("preVotesGranted", ["b"]),
+                local("logLength", 0),
+                local("commit", 0),
+                local("membershipState", "active"),
+                local("preVoteStatus", "enabled" if pre_vote else "capable"),
+                local("retirementCompleted", []),
+                local("currentTerm", 0, "b"),
+                {
+                    "kind": "queueLength",
+                    "source": "a",
+                    "destination": "b",
+                    "value": 0,
+                },
+            ]
+            action = {"kind": kind, "node": "a"}
+            post = [
+                local("role", "preVoteCandidate" if pre_vote else "candidate"),
+                local("currentTerm", term),
+                local("newFollower", False),
+                local("votedFor", "b" if pre_vote else "a"),
+                local("votesGranted", ["b"] if pre_vote else ["a"]),
+                local("preVotesGranted", ["a"] if pre_vote else []),
+            ]
+            cases.append((f"{kind}-state", start + [action] + post, "sat"))
+            wrong_values = ["leader", term + 1, True, None, [], ["b"]]
+            for index, wrong in enumerate(wrong_values):
+                mutated = [dict(item) for item in post]
+                mutated[index]["value"] = wrong
+                cases.append(
+                    (f"{kind}-mutated-{index}", start + [action] + mutated, "unsat")
+                )
+            send = {
+                "kind": "requestPreVote" if pre_vote else "requestVote",
+                "source": "a",
+                "destination": "b",
+            }
+            packet = {
+                "kind": "requestPreVote" if pre_vote else "requestVoteRequest",
+                "source": "a",
+                "destination": "b",
+                "term": term,
+                "lastCommittableTerm": 0,
+                "lastCommittableIndex": 0,
+            }
+            point = {
+                "kind": "queuePoint",
+                "source": "a",
+                "destination": "b",
+                "index": 0,
+                "value": packet,
+            }
+            update = {"kind": "updateTerm", "source": "a", "destination": "b"}
+            sequence = (
+                start
+                + [action]
+                + post
+                + [
+                    send,
+                    point,
+                    update,
+                    local("currentTerm", term, "b"),
+                    local("role", "follower", "b"),
+                    local("newFollower", True, "b"),
+                    action,
+                    local("currentTerm", term if pre_vote else term + 1),
+                    send,
+                    {
+                        "kind": "queueLength",
+                        "source": "a",
+                        "destination": "b",
+                        "value": 2,
+                    },
+                    point,
+                    dict(
+                        point,
+                        index=1,
+                        value=dict(packet, term=term if pre_vote else term + 1),
+                    ),
+                ]
+            )
+            cases.append((f"{kind}-vote-sequence", sequence, "sat"))
+            # updateTerm does not consume the old head, even after a newer send.
+            cases.append((f"{kind}-head-not-consumed", sequence + [update], "unsat"))
+        scripts = self.encode(
+            [
+                {"nodes": ["a", "b"], "bootstrap": ["a", "b"], "instructions": items}
+                for _, items, _ in cases
+            ]
+        )
+        self.solve(
+            [
+                {"name": name, "script": script, "expected": expected}
+                for (name, _, expected), script in zip(cases, scripts)
+            ]
+        )
+
+    def test_campaign_input_errors(self):
+        invalid = []
+        for kind in ("timeout", "becomePreVoteCandidate"):
+            invalid.extend(
+                [
+                    {"kind": kind},
+                    {"kind": kind, "node": "missing"},
+                    {"kind": kind, "node": 0},
+                    {"kind": kind, "node": "a", "term": 7},
+                ]
+            )
+        self.assert_invalid_instructions(invalid)
+
     def test_term_update_frame_and_sequence(self):
         def local(kind, value, **extra):
             return {"kind": kind, "node": "b", "value": value, **extra}

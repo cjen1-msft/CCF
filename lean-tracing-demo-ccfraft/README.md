@@ -59,7 +59,8 @@ or restricting possible executions is not a performance optimization.
 
 The public Lean encoder uses `Sparse/NativeFrameEncode.lean` and shares
 local-state compilation with `Sparse/NativeEncode.lean`.
-It accepts `checkQuorum`, `requestVote`, `requestPreVote`, and `updateTerm`, plus the
+It accepts `checkQuorum`, `requestVote`, `requestPreVote`, `updateTerm`, `timeout`,
+and `becomePreVoteCandidate`, plus the
 `allocated`, `role`, `newFollower`, `logLength`,
 `commit`, `currentTerm`, `entry`, `retirementIndex`,
 `retirementCommittableIndex`, `retiredCommittedIndex`, `votedFor`, and
@@ -73,6 +74,12 @@ twice appends two copies. A disabled action is UNSAT, not an input error.
 allocated destination and a strictly newer packet term. Responses also require
 an allocated source. It sets follower role, current term, and the new-follower
 flag, clears `votedFor` and `preVotesGranted`, and preserves everything else.
+Both campaign actions require a declared `node`. `timeout` increments its term,
+sets candidate role, records its self-vote, and clears pre-votes.
+`becomePreVoteCandidate` sets pre-vote-candidate role and its self pre-vote,
+preserving its term, `votedFor`, and granted votes. Both preserve the
+new-follower flag, logs, globals, and queues. Their guards enforce the Model's
+role, membership, pre-vote status, and campaign-eligibility requirements.
 All retirement fields accept a natural number or `null`. `votedFor` accepts
 a declared identity or `null`. Both vote-set fields accept a list of declared
 identities, interpreted as a set. `membershipState` accepts the five Model
@@ -282,11 +289,12 @@ actual plain and details outputs. `FrameDocumentConsistent` uses the broader
 decoder and Model trace semantics. `NativeFrameColumns` realizes arbitrary
 joined sets independently of allocation and bootstrap membership.
 `NativeFrameTrace` composes local, global, and queue observations with
-quorum and vote-send steps without restricting unobserved global state or queues.
+quorum, vote-send, term-update, and campaign steps without restricting
+unobserved global state or queues.
 
 This Lean encoder remains experimental. Remaining Model actions, observations,
 and raw reducer integration are unfinished. The API's full-model assurance
-flag remains false; current coverage is four actions, sixteen local observation
+flag remains false; current coverage is six actions, sixteen local observation
 kinds, all four global observation kinds, queue lengths, and exact packet points.
 Partial packet observations remain unsupported.
 
@@ -356,8 +364,14 @@ and consecutive-update cases distinguish newer, equal, and older terms.
 `NativeCampaignGuardEncoding` proves campaign enablement and fresh-witness
 completeness, including the retirement-completed exception. Its 1,200
 Model-derived guard cases cover both campaign actions, all roles and membership
-states, allocation, pre-vote status, and configuration exclusion. Campaign state
-writes are not yet public.
+states, allocation, pre-vote status, and configuration exclusion.
+`NativeCampaignWrites` proves whole-frame write preservation and assignment
+extension. `NativeCampaignEncoding` composes those writes with the guards.
+Both public campaign actions participate in the decoded-document correspondence
+theorem. The public matrix includes 400 complete Model campaign traces and
+18 state-mutation and mixed campaign/vote/term-update cases.
+Both actions currently emit five stores. Pre-vote writes back three unchanged
+values to keep one proof path. This is a baseline, not a solver optimization.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.
@@ -608,7 +622,7 @@ Global fields do not use absent-node defaults. An unallocated identity can
 have enabled pre-votes, appear in join history, or have recorded completed
 retirements. All six actions in the Python reference preserve global fields.
 The public Lean encoder supports `checkQuorum`, `requestVote`, `requestPreVote`,
-and `updateTerm`.
+`updateTerm`, `timeout`, and `becomePreVoteCandidate`.
 
 The Python reference uses Boolean cells for submitted transactions. The public
 Lean encoder uses one-bit cells. Both have a symbolic natural upper bound.

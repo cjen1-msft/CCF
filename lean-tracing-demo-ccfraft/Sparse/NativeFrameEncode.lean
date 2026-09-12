@@ -8,6 +8,7 @@ import Sparse.NativeQueueColumns
 import Sparse.NativePacketJson
 import Sparse.NativeVoteSend
 import Sparse.NativeTermUpdate
+import Sparse.NativeCampaign
 
 set_option autoImplicit false
 
@@ -26,6 +27,9 @@ def decodeFrameInstruction (width : PNat) (names : Array String) (value : Json) 
     return .vote (kind = "requestPreVote")
       (<- resolve width names (<- field value "source"))
       (<- resolve width names (<- field value "destination"))
+  else if kind = "timeout" || kind = "becomePreVoteCandidate" then
+    fields value ["kind", "node"]
+    return .campaign (kind = "becomePreVoteCandidate") (<- resolve width names (<- field value "node"))
   else if kind = "updateTerm" then
     fields value ["kind", "source", "destination"]
     return .updateTerm (<- resolve width names (<- field value "source"))
@@ -94,6 +98,7 @@ def frameInstruction {width : PNat} (item : FrameInstruction width) : EncodeM wi
   | .node nodeInstruction => instruction nodeInstruction
   | .vote preVote source destination => sendVote preVote source destination
   | .updateTerm source destination => updateTerm source destination
+  | .campaign preVote node => campaign preVote node
   | _ => do
     let state <- get
     assertAll (<- frameObservationClauses state.toColumns item)
