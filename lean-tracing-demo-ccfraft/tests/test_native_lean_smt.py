@@ -116,6 +116,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeMaxMatchEncoding",
             "Sparse.NativeArrayLogSummaries",
             "Sparse.NativeNodeRowWritesEncoding",
+            "Sparse.NativeLogSummaryEncoding",
         ):
             visit(module)
         forbidden = {
@@ -239,6 +240,14 @@ class NativeLeanSmtTests(unittest.TestCase):
             {"internal encoder error: row write references an unallocated SMT symbol"},
         )
         self.solve(fixtures)
+
+    def test_explicit_log_summaries(self):
+        fixtures = self.assert_script_fixtures("NativeLogSummaryFixtureMain", 4160, 800)
+        successful = [item for item in fixtures if item["expected"] == "sat"]
+        self.assertEqual({item["kind"] for item in successful}, set(range(5)))
+        self.assertEqual({item["modelIndex"] for item in successful}, set(range(6)))
+        for field in ("noncanonical", "nested"):
+            self.assertEqual({item[field] for item in successful}, {False, True})
 
     def assert_script_fixtures(self, module, count, satisfiable):
         result = subprocess.run(

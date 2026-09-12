@@ -444,6 +444,10 @@ Snapshots use fresh defaults for absent nodes and preserve arbitrary log tails.
 The writer checks all input references before allocating its 16 fresh columns.
 `test_node_row_writes` exercises 1,584 Model-derived scripts and 60 invalid-reference
 cases, including repeated writes through current column references.
+`NativeLogSummaryEncoding` proves bounded signatures, committed configuration
+indices and members, and NACK matches for explicit candidate logs.
+All three scans reuse `NativeMaxMatchEncoding`, with zero for no match.
+Their proofs extract valid natural indices from arbitrary satisfying SMT integers.
 `NativeQueuePopEncoding` proves directed FIFO removal and full-frame
 assignment extension. Empty removal is total internally; receive guards
 separately require a packet. The queue fixtures cover repeated pop/push,

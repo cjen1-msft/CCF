@@ -304,9 +304,10 @@ The parent also owns `NativeLogSummaryTerms.lean` and `NativeLogSummaryFixtureMa
 Their 4,160 scripts pass in `native-log-summary-fixture-tests.log`, including
 noncanonical cells, mixed nested binders, wrong witnesses, and wrong configuration
 members. The Python method is `test_explicit_log_summaries`.
-Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns only new
-`NativeLogSummaryEncoding.lean`, composing the concrete terms with these proofs.
-It uses GPT-5.6 Sol at medium effort. The concrete term proofs are not complete.
+`NativeLogSummaryEncoding.lean` now composes the concrete terms with these proofs,
+including arbitrary-witness extraction and exact current-configuration members.
+The parent inspected it and independently built it in
+`native-log-summary-proof-parent-build.log`. All log-summary modules are parent-owned.
 
 The parent built `NativeAppendReceiveTerms.lean`, which encodes packet selection,
 the local handler branches, and exact receive guards. Its fixture reuses the
@@ -317,6 +318,14 @@ Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns only new
 `NativeAppendReceiveTermsEncoding.lean`, proving correspondence for those terms.
 The parent retains the runtime, fixture, and Python registration.
 Public append receive remains unwired.
+
+The parent built `NativeAppendReceiveWrites.lean`. It reuses the row, queue-pop,
+and queue-push writers, then selects original queues for candidate stepdown.
+Only consuming cases update the destination's completed-retirement set.
+Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only new
+`NativeAppendReceiveWritesEncoding.lean`, proving full-frame soundness and
+specific-assignment extension. The parent retains the runtime and forthcoming
+Model-derived write fixtures.
 
 `NativeArrayVoteState` now holds frame state and the existing action semantics.
 `NativeArrayVote` retains instruction traces and their correspondence proofs.
