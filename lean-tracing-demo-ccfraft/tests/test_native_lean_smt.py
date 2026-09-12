@@ -134,6 +134,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeAllocationEncoding",
             "Sparse.NativeNodeRowModelEncoding",
             "Sparse.NativeMembershipWritesEncoding",
+            "Sparse.NativeMembershipFrameEncoding",
         ):
             visit(module)
         forbidden = {
