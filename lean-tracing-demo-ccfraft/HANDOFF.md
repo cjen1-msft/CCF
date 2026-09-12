@@ -37,8 +37,12 @@ noncanonical cells, tag discrimination, ignored tails, and nested binders.
 The parent checked the proof against compiled dependencies in
 `native-retirement-encoding-parent-check.log`; rebuild it after the shared
 normalization cleanup finishes.
-That worker now owns only `NativeArrayAppendNetwork.lean`, proving full-frame
-stepdown and consuming append-receive bridges, including retirement refresh.
+`NativeArrayAppendNetwork` now proves full-frame stepdown and consuming
+append-receive correspondence, including metadata refresh after NACKs.
+The parent inspected it and rebuilt it in
+`native-array-append-network-parent-build.log`.
+That worker now owns only `NativeLogSpliceEncoding.lean`, encoding live-range
+log copies with explicit source arrays and unconstrained output tails.
 The main agent owns `NativeArrayVoteReceive` and subsequent receive semantics.
 Its handler and full-frame correspondence proofs build in
 `native-vote-receive-model-build.log`. Public `receiveRequestVote` is now wired.
@@ -73,7 +77,8 @@ The main-agent semantic prerequisites now include:
   rejection guards, and same-term candidate stepdown without consuming the
   request. Reuses `LogMatchSummary.StorageSummary` rather than a new scan
   definition. `native-append-receive-branches-build.log` records the clean build.
-  Retirement refresh, branch composition, and public receive remain unwired.
+  Local branch composition and full-frame retirement refresh are proved.
+  Public append receive remains unwired.
 - `NativeArrayAllocation` proves exact Model allocation for membership change.
   Existing rows survive; missing members become fresh nodes. Abstract reads
   stay unchanged because missing rows already read as fresh. The eventual
@@ -147,9 +152,12 @@ core attribution, input errors, and append regressions, pass in 197 seconds
 in `native-public-vote-receive-tests.log`.
 The shared Model fixture runner also passes the existing 1,200 append cases
 in `native-model-runner-tests.log`.
+`NativeArrayRetirementIndex` now connects the two-search retirement
+decomposition to bounded first-match summaries over a bootstrap-prefixed
+virtual log. The parent inspected it and rebuilt it in
+`native-array-retirement-index-parent-build.log`.
 Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns only
-`NativeArrayRetirementIndex.lean`, connecting that two-search decomposition
-to bounded first-match summaries over a bootstrap-prefixed virtual log.
+`NativeRetirementIndexEncoding.lean`, composing those searches in SMT.
 It does not own any public compiler files.
 
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only
