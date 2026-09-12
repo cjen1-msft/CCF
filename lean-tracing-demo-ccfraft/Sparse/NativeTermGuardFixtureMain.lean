@@ -10,16 +10,8 @@ namespace CCFRaft.NativeTermGuardFixtures
 
 open Lean NativeSmt NativeEncode
 
-def decodeGuardInstruction (width : PNat) (names : Array String) (value : Json) :
-    Except String (FrameInstruction width) := do
-  if (<- (<- field value "kind").getStr?) = "updateTerm" then
-    fields value ["kind", "source", "destination"]
-    return .updateTerm (<- resolve width names (<- field value "source"))
-      (<- resolve width names (<- field value "destination"))
-  decodeFrameInstruction width names value
-
 def modelFixture (index : Nat) (item : Json) : Except String Json := do
-  let input <- decodeDocumentWith decodeGuardInstruction (<- field item "trace")
+  let input <- decodeFrameDocument (<- field item "trace")
   let program : EncodeM input.width Unit := do
     initialFrameDomains input.width
     for instruction in input.instructions do

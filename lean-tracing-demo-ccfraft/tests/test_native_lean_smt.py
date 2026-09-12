@@ -281,6 +281,147 @@ class NativeLeanSmtTests(unittest.TestCase):
             ]
         )
 
+    def test_actual_model_term_updates(self):
+        result = subprocess.run(
+            ["lake", "env", "lean", "--run", "Sparse/NativeArrayTermFixtureMain.lean"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        fixtures = json.loads(result.stdout)
+        self.assertEqual(len(fixtures), 168)
+        self.assertEqual({item["expected"] for item in fixtures}, {"sat", "unsat"})
+        scripts = self.encode([fixture["trace"] for fixture in fixtures])
+        self.solve(
+            [
+                {
+                    "name": f"model-term-update-{index}",
+                    "script": script,
+                    "expected": fixture["expected"],
+                }
+                for index, (fixture, script) in enumerate(zip(fixtures, scripts))
+            ]
+        )
+
+    def test_term_update_frame_and_sequence(self):
+        def local(kind, value, **extra):
+            return {"kind": kind, "node": "b", "value": value, **extra}
+
+        def point(source, term):
+            return {
+                "kind": "queuePoint",
+                "source": source,
+                "destination": "b",
+                "index": 0,
+                "value": {
+                    "kind": "proposeVoteRequest",
+                    "source": source,
+                    "destination": "a",
+                    "term": term,
+                },
+            }
+
+        preserved = [
+            local("allocated", True),
+            local("commit", 10**30),
+            local("logLength", 1),
+            local("entry", {"term": 7, "content": "signature"}, index=0),
+            local("votesGranted", ["a", "c"]),
+            local("membershipState", "retirementSigned"),
+            local("retirementIndex", 10**30),
+            local("retirementCommittableIndex", None),
+            local("retiredCommittedIndex", 9),
+            local("sentIndex", 10**30, peer="a"),
+            local("matchIndex", 5, peer="c"),
+            {"kind": "currentTerm", "node": "a", "value": 17},
+            {"kind": "role", "node": "a", "value": "candidate"},
+            {"kind": "hasJoined", "value": ["b"]},
+            {"kind": "preVoteStatus", "node": "b", "value": "enabled"},
+            {"kind": "retirementCompleted", "node": "b", "value": ["c"]},
+            {"kind": "submittedTxId", "txId": 10**30, "value": True},
+            {"kind": "queueLength", "source": "a", "destination": "b", "value": 1},
+            {"kind": "queueLength", "source": "c", "destination": "b", "value": 1},
+            point("a", 3),
+            point("c", 10**30),
+        ]
+        start = preserved + [
+            local("currentTerm", 2),
+            local("role", "leader"),
+            local("newFollower", False),
+            local("votedFor", "c"),
+            local("preVotesGranted", ["a", "c"]),
+        ]
+        action = {"kind": "updateTerm", "source": "a", "destination": "b"}
+        changed = [
+            local("currentTerm", 3),
+            local("role", "follower"),
+            local("newFollower", True),
+            local("votedFor", None),
+            local("preVotesGranted", []),
+        ]
+        after = start + [action] + preserved + changed
+        cases = [("frame", after, "sat")]
+        for index, observation in enumerate(preserved + changed):
+            value = observation["value"]
+            if isinstance(value, dict):
+                wrong = dict(value, term=value["term"] + 1)
+            elif isinstance(value, bool):
+                wrong = not value
+            elif isinstance(value, int):
+                wrong = value + 1
+            elif isinstance(value, list):
+                wrong = [] if value else ["a"]
+            elif value is None:
+                wrong = "a" if observation["kind"] == "votedFor" else 0
+            else:
+                wrong = {
+                    "role": "none",
+                    "membershipState": "active",
+                    "preVoteStatus": "capable",
+                }[observation["kind"]]
+            # Replace the matching post-state fact, rather than contradicting it directly.
+            post = [dict(item) for item in preserved + changed]
+            post[index]["value"] = wrong
+            cases.append((f"mutated-{index}", start + [action] + post, "unsat"))
+        cases.extend(
+            [
+                ("equal-repeat", after + [action], "unsat"),
+                (
+                    "higher-next",
+                    after
+                    + [
+                        dict(action, source="c"),
+                        local("currentTerm", 10**30),
+                        *preserved,
+                        *changed[1:],
+                    ],
+                    "sat",
+                ),
+                (
+                    "older-after-higher",
+                    after + [dict(action, source="c"), action],
+                    "unsat",
+                ),
+            ]
+        )
+        scripts = self.encode(
+            [
+                {
+                    "nodes": ["a", "b", "c"],
+                    "bootstrap": ["a", "b"],
+                    "instructions": items,
+                }
+                for _, items, _ in cases
+            ]
+        )
+        self.solve(
+            [
+                {"name": f"term-update-{name}", "script": script, "expected": expected}
+                for (name, _, expected), script in zip(cases, scripts)
+            ]
+        )
+
     def test_vote_send_guards(self):
         cases = []
         for kind, required_role in (
@@ -458,9 +599,9 @@ class NativeLeanSmtTests(unittest.TestCase):
             ]
         )
 
-    def test_vote_send_input_errors(self):
+    def test_peer_action_input_errors(self):
         invalid = []
-        for kind in ("requestVote", "requestPreVote"):
+        for kind in ("requestVote", "requestPreVote", "updateTerm"):
             valid = {"kind": kind, "source": "a", "destination": "b"}
             invalid.extend(
                 [

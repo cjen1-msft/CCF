@@ -42,6 +42,7 @@ private def fixture (sourceKnown destinationKnown : Bool) (message : Message (Fi
         (fun node => if node = 1 then
           { (freshNodeState : NodeState (Fin 3) Nat) with
             role := .leader, currentTerm := 2, isNewFollower := false,
+            votedFor := some 2, votesGranted := {0, 2}, preVotesGranted := {1, 2},
             commitIndex := 9, log := [{ term := 8, content := .transaction 3 }] }
           else freshNodeState)
       network := fun node => if node = 1 then [unrelated, message, message] else []
@@ -59,6 +60,9 @@ private def fixture (sourceKnown destinationKnown : Bool) (message : Message (Fi
     observation "newFollower" 1 (toJson before.isNewFollower),
     observation "commit" 1 (toJson before.commitIndex),
     observation "logLength" 1 (toJson before.log.length),
+    observation "votedFor" 1 (toJson (before.votedFor.map nodeName)),
+    observation "votesGranted" 1 (toJson (nodeNames before.votesGranted)),
+    observation "preVotesGranted" 1 (toJson (nodeNames before.preVotesGranted)),
     queueObservation "queueLength" 0 (toJson (sourceQueue state).length),
     queueObservation "queuePoint" 0 (messageJson message) [("index", toJson 0)],
     queueObservation "queuePoint" 2 (messageJson unrelated) [("index", toJson 0)],
@@ -68,6 +72,9 @@ private def fixture (sourceKnown destinationKnown : Bool) (message : Message (Fi
     observation "newFollower" 1 (toJson after.isNewFollower),
     observation "commit" 1 (toJson after.commitIndex),
     observation "logLength" 1 (toJson after.log.length),
+    observation "votedFor" 1 (toJson (after.votedFor.map nodeName)),
+    observation "votesGranted" 1 (toJson (nodeNames after.votesGranted)),
+    observation "preVotesGranted" 1 (toJson (nodeNames after.preVotesGranted)),
     queueObservation "queueLength" 0 (toJson (sourceQueue updated).length),
     queueObservation "queuePoint" 0 (messageJson message) [("index", toJson 0)],
     queueObservation "queuePoint" 0 (messageJson message) [("index", toJson 1)],

@@ -59,7 +59,7 @@ or restricting possible executions is not a performance optimization.
 
 The public Lean encoder uses `Sparse/NativeFrameEncode.lean` and shares
 local-state compilation with `Sparse/NativeEncode.lean`.
-It accepts `checkQuorum`, `requestVote`, and `requestPreVote`, plus the
+It accepts `checkQuorum`, `requestVote`, `requestPreVote`, and `updateTerm`, plus the
 `allocated`, `role`, `newFollower`, `logLength`,
 `commit`, `currentTerm`, `entry`, `retirementIndex`,
 `retirementCommittableIndex`, `retiredCommittedIndex`, `votedFor`, and
@@ -69,6 +69,10 @@ Both vote-send actions require declared `source` and `destination` identities.
 They assert the Model's allocation, role, distinct-peer, and active-membership
 guards, then append one packet to the directed FIFO. Sending the same packet
 twice appends two copies. A disabled action is UNSAT, not an input error.
+`updateTerm` reads the directed queue head without consuming it. It requires an
+allocated destination and a strictly newer packet term. Responses also require
+an allocated source. It sets follower role, current term, and the new-follower
+flag, clears `votedFor` and `preVotesGranted`, and preserves everything else.
 All retirement fields accept a natural number or `null`. `votedFor` accepts
 a declared identity or `null`. Both vote-set fields accept a list of declared
 identities, interpreted as a set. `membershipState` accepts the five Model
@@ -282,7 +286,7 @@ quorum and vote-send steps without restricting unobserved global state or queues
 
 This Lean encoder remains experimental. Remaining Model actions, observations,
 and raw reducer integration are unfinished. The API's full-model assurance
-flag remains false; current coverage is three actions, sixteen local observation
+flag remains false; current coverage is four actions, sixteen local observation
 kinds, all four global observation kinds, queue lengths, and exact packet points.
 Partial packet observations remain unsupported.
 
@@ -341,8 +345,13 @@ clamped raw offsets and invalid packet cells that decode to the default packet.
 Responses require an allocated source; requests do not. The destination must
 be allocated, the queue nonempty, and the selected term strictly newer.
 Its 216 solver cases include all packet kinds, stale terms, mismatched packet
-destinations, empty queues, and invalid raw storage. The state update is not
-yet public.
+destinations, empty queues, and invalid raw storage.
+`NativeTermUpdateEncoding` proves all five writes, whole-frame soundness, and
+assignment-extension completeness. The public decoded-document theorem includes
+term updates. The 168 Model-derived term traces now run through the public
+encoder with post-state observations, including the three election fields.
+Mutation cases reject incorrect post-state values for every observed field,
+and consecutive-update cases distinguish newer, equal, and older terms.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.
@@ -592,7 +601,8 @@ need an exhaustive declared universe.
 Global fields do not use absent-node defaults. An unallocated identity can
 have enabled pre-votes, appear in join history, or have recorded completed
 retirements. All six actions in the Python reference preserve global fields.
-The public Lean encoder supports `checkQuorum`, `requestVote`, and `requestPreVote`.
+The public Lean encoder supports `checkQuorum`, `requestVote`, `requestPreVote`,
+and `updateTerm`.
 
 The Python reference uses Boolean cells for submitted transactions. The public
 Lean encoder uses one-bit cells. Both have a symbolic natural upper bound.

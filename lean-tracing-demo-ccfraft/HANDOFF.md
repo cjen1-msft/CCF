@@ -2,7 +2,7 @@
 
 ## Current direction: native-array exact encoding
 
-### Immediate continuation: term-update encoding
+### Immediate continuation: campaign encoding
 
 The solver migration is committed as `29312d591`, following `137a4f3d6`,
 the versioned FIFO column slice.
@@ -75,11 +75,25 @@ The fixture consumes 168 existing actual-Model term cases but checks only
 their prefix and guard, not the later state observations. Another 48 cases
 cover negative/huge raw heads and lengths, invalid payloads, wrong sources,
 and a higher-term trap at a negative raw offset.
-Next implement the five term-update writes: follower role, selected term,
-new-follower flag, null votedFor, and empty preVotesGranted. Preserve the
-queue, votesGranted, and every unrelated field. Then wire the public decoder
-and frame trace proofs and run the complete 168 Model cases with post-state
-observations. `updateTerm` is still unsupported publicly.
+The guard prerequisites are committed as `3ad294966`.
+`NativeTermUpdate` now emits all five writes. `NativeTermUpdateEncoding` proves
+node preservation, actual execution shape, whole-frame soundness, and
+assignment-extension completeness using five `define_extension` applications.
+The public decoder and both frame-trace directions now include `updateTerm`.
+The queue is not consumed. `votesGranted` and all unrelated state are preserved.
+The guard fixture now reuses the public decoder.
+`native-public-term-full-build.log` records the complete Sparse/public build.
+`native-public-term-tests.log` records nine passing methods in 194 seconds:
+168 complete Model term traces, 30 frame/sequence cases, strict input errors,
+216 guard cases, 400 public votes, FIFO framing, 150 Model quorum cases, local
+state framing, and the explorer-core regression. The Model fixture starts with
+nonempty election fields and checks them after the update.
+Both assurance flags remain false.
+
+Next implement `timeout` and `becomePreVoteCandidate`, using `campaignEnabled`,
+`Frame.campaign`, and the existing Model campaign fixtures in `NativeArrayVote`.
+Then continue the remaining Model actions and partial packet observations,
+followed by Python raw reduction and explorer raw/code provenance.
 
 cvc5 1.3.4 returns incorrect UNSAT on
 `membership-free-false-1-0-0`. The two-assertion reduction contains a canonical
