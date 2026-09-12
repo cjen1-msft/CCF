@@ -47,8 +47,11 @@ completeness witness copies the raw cells, not merely their decoded values.
 The parent build passes in `native-log-splice-parent-build.log`.
 Its 1,280 emitted-SMT cases pass in `native-log-splice-tests.log`, including
 nested binders, noncanonical cells, truncated prefixes, and oversized cursors.
-That worker now owns only `NativeArrayAppendReceiveGuard.lean`, composing
-exact receive enablement without assuming allocation or destination validity.
+`NativeArrayAppendReceiveGuard` now proves exact receive enablement, including
+allocation and destination validity as guard conditions rather than premises.
+It derives the source header from the selected FIFO.
+The parent build passes in `native-array-append-receive-guard-parent-build.log`.
+That worker is idle.
 The main agent owns `NativeArrayVoteReceive` and subsequent receive semantics.
 Its handler and full-frame correspondence proofs build in
 `native-vote-receive-model-build.log`. Public `receiveRequestVote` is now wired.
@@ -174,10 +177,13 @@ in `native-model-runner-tests.log`.
 decomposition to bounded first-match summaries over a bootstrap-prefixed
 virtual log. The parent inspected it and rebuilt it in
 `native-array-retirement-index-parent-build.log`.
-Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns only
-`NativeFirstMatchWitness.lean` and `NativeRetirementIndexSound.lean`,
-extracting canonical witnesses from successful arbitrary SMT assignments.
-It does not own any public compiler files.
+`NativeFirstMatchWitness` and `NativeRetirementIndexSound` now extract
+canonical witnesses from successful arbitrary SMT assignments. They derive
+both sentinels, rather than assuming valid optional indices.
+Parent proof checks against the compiled dependencies pass in
+`native-first-match-witness-parent-check.log` and
+`native-retirement-index-sound-parent-check.log`.
+Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` is idle.
 `NativeRetirementIndexEncoding` is complete. It composes first inclusion and
 first later exclusion without materializing a shifted array. Its 1,788
 Model-derived SMT cases pass in `native-retirement-index-tests.log`.
@@ -206,6 +212,21 @@ The independent public proof build passes in
 failure for raw term -5 decoding to Model term 0.
 Those cases and existing public observation, append, campaign, receive,
 and explorer regressions now pass in `native-observation-normalize-tests.log`.
+
+Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` now owns the four-column
+reference migration in existing native core and proof files. It excludes
+fixture modules, pure `NativeArray*` semantics, and the two new witness modules.
+The new fields are `allocated`, `logLength`, `commit`, and `logEntries`.
+Preserve initial IDs 0, 3, 4, and 6 and the next-symbol counter 24.
+Runtime readers must take current `Columns` explicitly, with no initial-column
+default. The migration includes representation, reference bounds, assignment
+transport, guards, packets, observations, and trace proofs. Initial domains
+still use initial references. No new action is part of this migration.
+The parent owns the new `NativeRelocatedColumnsFixtureMain` and Python test.
+It compares every emitted clause before and after relocating all columns,
+including mixed action histories. The initial failure is the four missing
+column fields, recorded in `native-relocated-columns-first-compile.log`.
+This test remains pending until the migration finishes.
 
 `NativeArrayVoteState` now holds frame state and the existing action semantics.
 `NativeArrayVote` retains instruction traces and their correspondence proofs.
