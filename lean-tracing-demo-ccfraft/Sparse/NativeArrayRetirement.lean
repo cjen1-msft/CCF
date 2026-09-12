@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeArrayFirstMatch
+import Sparse.NativeArrayConfiguration
 import Sparse.RetirementScan
 
 set_option autoImplicit false
@@ -75,6 +76,20 @@ theorem previously_included_correct [DecidableEq T] [Bootstrap N]
       apply (reconfiguration_correct log _ _).mpr
       rw [Sparse.ConfigurationSnapshot.mem_configurations_iff] at physical
       exact physical
+
+theorem completed_nodes_from_scans_correct [DecidableEq T] [Bootstrap N]
+    (log : Log N T) (commit current : Nat) (members : Finset N) (node : N)
+    (currentIndex : CurrentIndex log commit current)
+    (configuration : NativeArrayConfiguration.At log current members) :
+    node ∈ retirementCompletedNodes log.decode commit <->
+      PreviouslyIncluded log current node /\ node ∉ members /\
+      (forall position, position < log.length -> 1 + position <= commit ->
+        namesRetiredNode node (log.entries position) = false) /\
+      (retirementIndexInLog node (log.decode.take commit)).isSome = true := by
+  have selected := (NativeArrayConfiguration.current_configuration_correct log commit current members).mp
+    ⟨currentIndex, configuration⟩
+  rw [completed_nodes_correct, selected, <- previously_included_correct, retired_nodes_correct]
+  simp only [not_exists, not_and, Bool.not_eq_true]
 
 def refresh (row : Local N T) (retirement signature retired : Option Nat) : Local N T :=
   let committedRetired := retired.filter fun index => index <= row.commit
