@@ -35,7 +35,7 @@ def fixture (name : String) (log : List (Entry (Fin 3) Nat)) (committed : Nat)
   let equality : Expr .bool := .equal
     (votePacketTerm (width := 3) columns preVote source destination (.free .int 24)) (packetTerm (width := 3) expected)
   let assertions : List (Expr .bool) := [
-    .equal (allocated source.val) (.boolean present),
+    .equal (allocated columns source.val) (.boolean present),
     .equal (.select (.free (.array .int .int) 3) (.integer source.val)) (.integer log.length),
     .equal (.select (.free (.array .int .int) 4) (.integer source.val)) (.integer committed),
     .equal (.select (.free (.array .int .int) 5) (.integer source.val))
@@ -43,19 +43,19 @@ def fixture (name : String) (log : List (Entry (Fin 3) Nat)) (committed : Nat)
     .equal (.select (.free (.array .int .int) termColumn) (.integer source.val)) (.integer current),
     .equal (.select (.free (.array .int (.array .int (entryTy 3))) 6) (.integer source.val))
       (.snd (logTerm log)),
-    signatureIndexTerm 3 source.val (.free .int 24),
+    signatureIndexTerm 3 columns source.val (.free .int 24),
     if agrees then equality else .not equality]
   Json.mkObj [("name", toJson name), ("script", toJson (renderScript assertions)),
     ("expected", toJson (if agrees then "sat" else "unsat"))]
 
 def rawTermFixture (raw index : Int) (agrees : Bool) : Json :=
   let log : List (Entry (Fin 3) Nat) := [{ term := raw.toNat, content := .signature }]
-  let equality : Expr .bool := .equal (logTermAt 3 0 (.integer index))
+  let equality : Expr .bool := .equal (logTermAt 3 {} 0 (.integer index))
     (.integer (CCFRaft.termAt log index.toNat))
   let assertions : List (Expr .bool) := [
-    .equal (allocated 0) (.boolean true),
-    .equal (length 0) (.integer 1),
-    .equal (entryAt 3 0 (.integer 0)) (.pair (.integer raw) (.inl .unit)),
+    .equal (allocated {} 0) (.boolean true),
+    .equal (length {} 0) (.integer 1),
+    .equal (entryAt 3 {} 0 (.integer 0)) (.pair (.integer raw) (.inl .unit)),
     if agrees then equality else .not equality]
   Json.mkObj [("name", toJson s!"vote-raw-term-{raw}-{index}-{agrees}"),
     ("script", toJson (renderScript assertions)),

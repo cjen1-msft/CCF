@@ -140,8 +140,10 @@ theorem observation_instruction_run {width : PNat}
     (clauses : List (Expr .bool))
     (emitted : observationClauses before.toColumns item = .ok clauses) :
     (instruction item).run before = (assertAll clauses).run before := by
-  cases item <;> simp [observationClauses] at emitted
-  all_goals subst clauses; rfl
+  cases item <;>
+    simp only [instruction, get_bind_run, observationClauses, Except.ok.injEq] at emitted ⊢
+  case checkQuorum => contradiction
+  all_goals rw [emitted]; rfl
 
 theorem observation_instruction_success {width : PNat} [Bootstrap (Fin width)]
     (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) (before after : Encoding width)
@@ -171,8 +173,8 @@ theorem initial_domains_success {width : PNat} (before after : Encoding width)
     initial_assertions_domains]
 
 def quorumClauses {width : PNat} (before : Encoding width) (node : Nat) : List (Expr .bool) :=
-  leadingGuards before.role node ++
-    configurationGuards width before.bootstrap node before.next (before.next + 1) ++
+  leadingGuards before.toColumns before.role node ++
+    configurationGuards width before.bootstrap before.toColumns node before.next (before.next + 1) ++
     [.equal (.free (.array .int .int) (before.next + 2)) (stepDownRole before.role node),
       .equal (.free (.array .int .bool) (before.next + 3)) (stepDownFollower before.newFollower node)]
 
@@ -182,8 +184,8 @@ structure QuorumResult {width : PNat} (before after : Encoding width) (node : Na
     { before.toColumns with role := before.next + 2, newFollower := before.next + 3 }
   next : after.next = before.next + 4
   clauses : after.assertions.toList = before.assertions.toList ++ quorumClauses before node
-  guardSymbols : forall formula, formula ∈ (leadingGuards before.role node ++
-      configurationGuards width before.bootstrap node before.next (before.next + 1)) ->
+  guardSymbols : forall formula, formula ∈ (leadingGuards before.toColumns before.role node ++
+      configurationGuards width before.bootstrap before.toColumns node before.next (before.next + 1)) ->
     forall symbol, symbol ∈ formula.symbols -> symbol.2 < before.next + 2
 
 theorem QuorumResult.role {width : PNat} {before after : Encoding width} {node : Nat}
@@ -251,8 +253,8 @@ theorem quorum_holds {width : PNat} (node : Nat) (before after : Encoding width)
     (run : (checkQuorum node).run before = .ok ((), after)) (assignment : Assignment) :
     Holds after.assertions.toList assignment <->
       Holds before.assertions.toList assignment /\
-      Holds (leadingGuards before.role node ++
-        configurationGuards width before.bootstrap node before.next (before.next + 1)) assignment /\
+      Holds (leadingGuards before.toColumns before.role node ++
+        configurationGuards width before.bootstrap before.toColumns node before.next (before.next + 1)) assignment /\
       (Term.equal (.free (.array .int .int) (before.next + 2))
         (stepDownRole before.role node)).eval assignment Locals.empty = true /\
       (Term.equal (.free (.array .int .bool) (before.next + 3))
@@ -276,7 +278,8 @@ theorem quorum_native_success {width : PNat} [Bootstrap (Fin width)]
       ⟨assignment .int before.next, assignment .int (before.next + 1), by
         simpa [Assignment.set] using guards⟩
   have present : (arrays node).isSome = true :=
-    (columns.allocated node).symm.trans (guards (allocated node.val) (by simp [leadingGuards]))
+    (columns.allocated node).symm.trans
+      (guards (allocated before.toColumns node.val) (by simp [leadingGuards]))
   have effect := node_columns_step assignment before.toColumns
     (before.next + 2) (before.next + 3) arrays node columns present roleBinding followerBinding
   have shape := quorum_success node.val before after run

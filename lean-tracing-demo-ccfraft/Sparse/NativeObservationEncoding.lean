@@ -19,12 +19,12 @@ theorem entry_observation_correct {width : PNat} (assignment : Assignment)
     (columns : Columns) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
     (rep : NodeColumnsRep assignment columns arrays)
     (node : Fin width) (index : Nat) (expected : Entry (Fin width) Nat) :
-    Holds [lt (.integer index) (length node.val),
-      .equal (normalizedEntryTerm (entryAt width node.val (.integer index)))
+    Holds [lt (.integer index) (length columns node.val),
+      .equal (normalizedEntryTerm (entryAt width columns node.val (.integer index)))
         (entryTerm expected)] assignment <->
       (index < (NativeArrayCheckQuorum.get arrays node).log.length /\
         (NativeArrayCheckQuorum.get arrays node).log.entries index = expected) := by
-  have live : (lt (.integer index) (length node.val) : Expr .bool).eval assignment Locals.empty = true <->
+  have live : (lt (.integer index) (length columns node.val) : Expr .bool).eval assignment Locals.empty = true <->
       index < (NativeArrayCheckQuorum.get arrays node).log.length := by
     simp [lt, Term.eval, rep.length node]
   simp only [Holds, List.mem_cons, List.not_mem_nil, or_false, or_imp, forall_and, forall_eq]

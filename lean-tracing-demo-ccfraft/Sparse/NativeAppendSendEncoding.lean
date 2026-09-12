@@ -56,69 +56,87 @@ theorem node_columns_append_sent {width : PNat}
   · intro peer
     have previous := rep.role peer
     rw [get_append_sent]
-    by_cases same : peer = source <;> simp_all [appendSentColumns]
+    by_cases same : peer = source <;>
+      simp_all [appendSentColumns, read, NativeEncode.allocated]
   · intro peer
     have previous := rep.newFollower peer
     rw [get_append_sent]
-    by_cases same : peer = source <;> simp_all [appendSentColumns]
+    by_cases same : peer = source <;>
+      simp_all [appendSentColumns, read, NativeEncode.allocated]
   · intro peer
     have previous := rep.currentTerm peer
     rw [get_append_sent]
-    by_cases same : peer = source <;> simp_all [appendSentColumns]
+    by_cases same : peer = source <;>
+      simp_all [appendSentColumns, read, NativeEncode.allocated]
   · intro peer
     have previous := rep.commit peer
     rw [get_append_sent]
-    by_cases same : peer = source <;> simp_all
+    by_cases same : peer = source <;>
+      simp_all [appendSentColumns, NativeEncode.commit, read, NativeEncode.allocated]
   · intro peer
     have previous := rep.length peer
     rw [get_append_sent]
-    by_cases same : peer = source <;> simp_all
+    by_cases same : peer = source <;>
+      simp_all [appendSentColumns, NativeEncode.length, read, NativeEncode.allocated]
   · intro peer index within
     rw [get_append_sent] at within ⊢
     by_cases same : peer = source
     · subst peer
-      simpa [appendSentColumns] using rep.entries source index (by simpa using within)
-    · simpa [appendSentColumns, same] using rep.entries peer index (by simpa [same] using within)
+      simpa [appendSentColumns, entryAt] using rep.entries source index (by simpa using within)
+    · simpa [appendSentColumns, entryAt, same] using
+        rep.entries peer index (by simpa [same] using within)
   · intro peer
     have previous := rep.retirementIndex peer
     rw [get_append_sent]
-    by_cases same : peer = source <;> simp_all [appendSentColumns]
+    by_cases same : peer = source <;>
+      simp_all [appendSentColumns, read, NativeEncode.allocated]
   · intro peer
     have previous := rep.retirementCommittableIndex peer
     rw [get_append_sent]
-    by_cases same : peer = source <;> simp_all [appendSentColumns]
+    by_cases same : peer = source <;>
+      simp_all [appendSentColumns, read, NativeEncode.allocated]
   · intro peer
     have previous := rep.retiredCommittedIndex peer
     rw [get_append_sent]
-    by_cases same : peer = source <;> simp_all [appendSentColumns]
+    by_cases same : peer = source <;>
+      simp_all [appendSentColumns, read, NativeEncode.allocated]
   · intro peer
     have previous := rep.votedFor peer
     rw [get_append_sent]
-    by_cases same : peer = source <;> simp_all [appendSentColumns]
+    by_cases same : peer = source <;>
+      simp_all [appendSentColumns, read, NativeEncode.allocated]
   · intro peer
     have previous := rep.votesGranted peer
     rw [get_append_sent]
-    by_cases same : peer = source <;> simp_all [appendSentColumns]
+    by_cases same : peer = source <;>
+      simp_all [appendSentColumns, read, NativeEncode.allocated]
   · intro peer
     have previous := rep.preVotesGranted peer
     rw [get_append_sent]
-    by_cases same : peer = source <;> simp_all [appendSentColumns]
+    by_cases same : peer = source <;>
+      simp_all [appendSentColumns, read, NativeEncode.allocated]
   · intro peer
     have previous := rep.membershipState peer
     rw [get_append_sent]
-    by_cases same : peer = source <;> simp_all [appendSentColumns]
+    by_cases same : peer = source <;>
+      simp_all [appendSentColumns, read, NativeEncode.allocated]
   · intro peer target
     rw [get_append_sent]
-    change (peerIndex sentIndex peer.val (.integer target.val)).eval assignment Locals.empty = _
+    change (peerIndex (appendSentColumns before sentIndex) sentIndex peer.val
+      (.integer target.val)).eval assignment Locals.empty = _
     simp only [peerIndex, Term.eval]
     rw [binding]
     simp only [appendSentIndex, Term.eval, store_pair_eval]
     by_cases samePeer : peer = source
     · subst peer
       have allocatedSource :
-          (allocated source.val : Expr .bool).eval assignment Locals.empty = true :=
+          (allocated before source.val : Expr .bool).eval assignment Locals.empty = true :=
         (rep.allocated source).trans present
-      rw [allocatedSource]
+      have allocatedAfter :
+          (allocated (appendSentColumns before sentIndex) source.val : Expr .bool).eval
+            assignment Locals.empty = true := by
+        simpa [appendSentColumns] using allocatedSource
+      rw [allocatedAfter]
       simp only [if_true]
       by_cases sameTarget : target = destination
       · subst target
@@ -126,7 +144,8 @@ theorem node_columns_append_sent {width : PNat}
       · have different : (target.val : Int) ≠ destination.val := by
           exact_mod_cast fun equal => sameTarget (Fin.ext equal)
         have previous := rep.sentIndex source target
-        simp only [peerIndex, Term.eval, allocatedSource, if_true] at previous
+        simp only [peerIndex, Term.eval] at previous
+        rw [allocatedSource] at previous
         simpa [CCFRaft.updateIndex, sameTarget, different] using previous
     · have different : (peer.val : Int) ≠ source.val := by
         exact_mod_cast fun equal => samePeer (Fin.ext equal)
@@ -136,7 +155,8 @@ theorem node_columns_append_sent {width : PNat}
   · intro peer target
     have previous := rep.matchIndex peer target
     rw [get_append_sent]
-    by_cases same : peer = source <;> simp_all [appendSentColumns]
+    by_cases same : peer = source <;>
+      simp_all [appendSentColumns, peerIndex, NativeEncode.allocated]
 
 structure AppendSendGuardPrefix {width : PNat} (before guarded : Encoding width)
     (source destination : Fin width) (batchEnd : Nat) : Prop where

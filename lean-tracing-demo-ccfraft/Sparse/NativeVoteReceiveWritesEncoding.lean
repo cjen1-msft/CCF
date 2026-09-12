@@ -61,8 +61,11 @@ theorem node_columns_vote_received {width : PNat} (assignment : Assignment)
   have granted := vote_grant_term_correct assignment before arrays rep destination packet request
     samePacket signatureTerm signature sameSignature
   have allocatedDestination :
-      (allocated destination.val : Expr .bool).eval assignment Locals.empty = true :=
+      (allocated before destination.val : Expr .bool).eval assignment Locals.empty = true :=
     (rep.allocated destination).trans present
+  have allocatedValue :
+      assignment (.array .int .bool) before.allocated destination.val = true := by
+    simpa [NativeEncode.allocated, Term.eval] using allocatedDestination
   constructor
   · intro peer
     by_cases same : peer = destination
@@ -148,7 +151,8 @@ theorem node_columns_vote_received {width : PNat} (assignment : Assignment)
     rw [get_vote_receive_nodes]
     by_cases same : peer = destination
     · subst peer
-      simp only [voteReceiveColumns, read, Term.eval, allocatedDestination, if_true, binding,
+      simp only [voteReceiveColumns, read, NativeEncode.allocated, Term.eval,
+        allocatedValue, if_true, binding,
         voteReceiveVotedFor, granted]
       have oldValue :
           assignment (.array .int optionalIntTy) before.votedFor destination.val =
@@ -170,7 +174,8 @@ theorem node_columns_vote_received {width : PNat} (assignment : Assignment)
         cases grant : NativeArrayVoteReceive.grant
             (NativeArrayCheckQuorum.get arrays destination) request signature <;>
           simp [different]
-      simpa only [voteReceiveColumns, read, Term.eval, sameValue, same] using rep.votedFor peer
+      simpa only [voteReceiveColumns, read, NativeEncode.allocated, Term.eval, sameValue, same]
+        using rep.votedFor peer
   · intro peer
     rw [get_vote_receive_nodes]
     by_cases same : peer = destination

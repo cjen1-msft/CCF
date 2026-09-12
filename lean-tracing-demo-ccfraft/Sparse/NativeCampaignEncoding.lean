@@ -17,30 +17,49 @@ structure CampaignPrefix {width : PNat} (before guarded : Encoding width)
   clauses : guarded.assertions.toList = before.assertions.toList ++
     campaignGuards before.toColumns before.bootstrap preVote node before.next
 
-theorem campaign_prefix {width : PNat} (preVote : Bool) (node : Fin width)
-    (before after : Encoding width)
-    (run : (campaign preVote node).run before = .ok ((), after)) :
-    exists guarded : Encoding width, CampaignPrefix before guarded preVote node /\
-      (campaignWrites preVote node).run guarded = .ok ((), after) := by
-  simp only [campaign, get_bind_run] at run
+theorem campaign_guard_success {width : PNat} (columns : Columns) (bootstrap : BitVec width)
+    (preVote : Bool) (node : Fin width) (before guarded : Encoding width)
+    (run : (campaignGuard columns bootstrap preVote node).run before = .ok ((), guarded)) :
+    guarded.bootstrap = before.bootstrap /\
+      guarded.toColumns = before.toColumns /\
+      guarded.next = before.next + 3 /\
+      guarded.assertions.toList = before.assertions.toList ++
+        campaignGuards columns bootstrap preVote node before.next := by
+  simp only [campaignGuard] at run
   obtain ⟨base, first, firstRun, run⟩ := (bind_run _ _ _ _ _).mp run
   obtain ⟨unused, second, secondRun, run⟩ := (bind_run _ _ _ _ _).mp run
   obtain ⟨unused, third, thirdRun, run⟩ := (bind_run _ _ _ _ _).mp run
-  obtain ⟨value, guarded, guardRun, run⟩ := (bind_run _ _ _ _ _).mp run
-  cases value
   obtain ⟨baseEq, firstNext, firstBootstrap, firstColumns, firstClauses⟩ :=
     fresh_success before first base firstRun
   obtain ⟨_, secondNext, secondBootstrap, secondColumns, secondClauses⟩ :=
     fresh_success first second _ secondRun
   obtain ⟨_, thirdNext, thirdBootstrap, thirdColumns, thirdClauses⟩ :=
     fresh_success second third _ thirdRun
-  obtain ⟨guardFrame, guardClauses⟩ := assert_all_success _ third guarded guardRun
-  refine ⟨guarded, ?_, run⟩
-  constructor
-  · exact guardFrame.bootstrap.trans (thirdBootstrap.trans (secondBootstrap.trans firstBootstrap))
-  · exact guardFrame.columns.trans (thirdColumns.trans (secondColumns.trans firstColumns))
+  obtain ⟨guardFrame, guardClauses⟩ := assert_all_success _ third guarded run
+  refine ⟨guardFrame.bootstrap.trans (thirdBootstrap.trans (secondBootstrap.trans firstBootstrap)),
+    guardFrame.columns.trans (thirdColumns.trans (secondColumns.trans firstColumns)), ?_, ?_⟩
   · rw [guardFrame.next, thirdNext, secondNext, firstNext]
   · rw [guardClauses, thirdClauses, secondClauses, firstClauses, baseEq]
+
+theorem campaign_prefix {width : PNat} (preVote : Bool) (node : Fin width)
+    (before after : Encoding width)
+    (run : (campaign preVote node).run before = .ok ((), after)) :
+    exists guarded : Encoding width, CampaignPrefix before guarded preVote node /\
+      (campaignWrites preVote node).run guarded = .ok ((), after) := by
+  simp only [campaign, StateT.run, Bind.bind, StateT.bind, Except.bind] at run
+  cases guardRun :
+      campaignGuard before.toColumns before.bootstrap preVote node before with
+  | error message =>
+    rw [guardRun] at run
+    exact nomatch run
+  | ok pair =>
+    rcases pair with ⟨value, guarded⟩
+    cases value
+    have writesRun : (campaignWrites preVote node).run guarded = .ok ((), after) := by
+      simpa only [guardRun] using run
+    obtain ⟨bootstrap, columns, next, clauses⟩ :=
+      campaign_guard_success before.toColumns before.bootstrap preVote node before guarded guardRun
+    exact ⟨guarded, ⟨bootstrap, columns, next, clauses⟩, writesRun⟩
 
 theorem CampaignPrefix.references {width : PNat} {before guarded : Encoding width}
     {preVote : Bool} {node : Fin width} (shape : CampaignPrefix before guarded preVote node)

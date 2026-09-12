@@ -19,9 +19,13 @@ theorem Assignment.set_other_index (assignment : Assignment) (updated sort : Ty)
 
 structure ReferencesValid {width : PNat} (state : Encoding width) : Prop where
   minimum : 24 <= state.next
+  allocated : state.allocated < state.next
   role : state.role < state.next
   newFollower : state.newFollower < state.next
+  logLength : state.logLength < state.next
+  commit : state.commit < state.next
   currentTerm : state.currentTerm < state.next
+  logEntries : state.logEntries < state.next
   retirementIndex : state.retirementIndex < state.next
   retirementCommittableIndex : state.retirementCommittableIndex < state.next
   retiredCommittedIndex : state.retiredCommittedIndex < state.next
@@ -62,11 +66,23 @@ theorem instruction_references {width : PNat}
     · rw [shape.next]
       have minimum := valid.minimum
       omega
+    · have bound := valid.allocated
+      simp only [shape.columns, shape.next]
+      omega
     · rw [shape.role, shape.next]
       omega
     · rw [shape.newFollower, shape.next]
       omega
+    · have bound := valid.logLength
+      simp only [shape.columns, shape.next]
+      omega
+    · have bound := valid.commit
+      simp only [shape.columns, shape.next]
+      omega
     · have bound := valid.currentTerm
+      simp only [shape.columns, shape.next]
+      omega
+    · have bound := valid.logEntries
       simp only [shape.columns, shape.next]
       omega
     · have bound := valid.retirementIndex
@@ -161,13 +177,13 @@ theorem NodeColumnsRep.agrees_below {width : PNat} (state : Encoding width)
     (same : left.AgreesBelow state.next right) :
     NodeColumnsRep right state.toColumns arrays := by
   have minimum := valid.minimum
-  have allocation := same (.array .int .bool) 0 (by omega)
+  have allocation := same (.array .int .bool) state.allocated valid.allocated
   have roles := same (.array .int .int) state.role valid.role
   have followers := same (.array .int .bool) state.newFollower valid.newFollower
-  have lengths := same (.array .int .int) 3 (by omega)
-  have commits := same (.array .int .int) 4 (by omega)
+  have lengths := same (.array .int .int) state.logLength valid.logLength
+  have commits := same (.array .int .int) state.commit valid.commit
   have terms := same (.array .int .int) state.currentTerm valid.currentTerm
-  have logs := same (.array .int (.array .int (entryTy width))) 6 (by omega)
+  have logs := same (.array .int (.array .int (entryTy width))) state.logEntries valid.logEntries
   have retirement := same (.array .int optionalIntTy) state.retirementIndex valid.retirementIndex
   have committable := same (.array .int optionalIntTy) state.retirementCommittableIndex valid.retirementCommittableIndex
   have committed := same (.array .int optionalIntTy) state.retiredCommittedIndex valid.retiredCommittedIndex

@@ -202,7 +202,7 @@ They cover all five membership states, inclusive commit boundaries, and
 active nodes with a present committed retired-record index.
 The independent proof check passes in
 `native-retirement-refresh-terms-parent-check.log`.
-Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` is idle.
+These completed modules are parent-owned.
 `NativeRetirementIndexEncoding` is complete. It composes first inclusion and
 first later exclusion without materializing a shifted array. Its 1,788
 Model-derived SMT cases pass in `native-retirement-index-tests.log`.
@@ -217,9 +217,9 @@ the entry-observation normalization cleanup. Its completed
 enablement from the four native branch guards. The parent build passes in
 `native-append-handler-cases-parent-build.log`.
 
-The next structural prerequisite is mutable allocation and log columns.
-Allocation, log length, commit, and log cells still use fixed symbols 0, 3,
-4, and 6. Entry observations now normalize raw entries to their Model values.
+Allocation, log length, commit, and log cells now use current column references.
+Their initial symbols remain 0, 3, 4, and 6.
+Entry observations normalize raw entries to their Model values.
 Their proofs no longer carry the initial `NodeDomain` through later states.
 Initial domain assertions and realization remain intact.
 `NativeIntegerTerms` holds the unchanged integer helpers below normalization,
@@ -232,23 +232,44 @@ failure for raw term -5 decoding to Model term 0.
 Those cases and existing public observation, append, campaign, receive,
 and explorer regressions now pass in `native-observation-normalize-tests.log`.
 
-Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` now owns the four-column
-reference migration in existing native core and proof files. It excludes
-fixture modules, pure `NativeArray*` semantics, and the two new witness modules.
+Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` completed the four-column
+reference migration in 31 native core and proof files. They are parent-owned.
 The new fields are `allocated`, `logLength`, `commit`, and `logEntries`.
 Preserve initial IDs 0, 3, 4, and 6 and the next-symbol counter 24.
 Runtime readers must take current `Columns` explicitly, with no initial-column
 default. The migration includes representation, reference bounds, assignment
 transport, guards, packets, observations, and trace proofs. Initial domains
 still use initial references. No new action is part of this migration.
-The parent owns the new `NativeRelocatedColumnsFixtureMain` and Python test.
-It compares every emitted clause before and after relocating all columns,
-including mixed action histories. The initial failure is the four missing
-column fields, recorded in `native-relocated-columns-first-compile.log`.
-This test remains pending until the migration finishes.
+The parent repaired the eight fixture callers with the guarded, idempotent
+`files/migrate_native_fixture_columns.py`, after checking one hand migration.
+`NativeRelocatedColumnsFixtureMain` compares every emitted clause before and
+after relocating all columns, including live entries and mixed action histories.
+The initial missing-field failure is in `native-relocated-columns-first-compile.log`.
+Relocation now passes in `native-relocated-columns-tests.log`.
+The independent public build and fixture rebuild pass in
+`native-mutable-columns-parent-build.log` and
+`native-mutable-columns-fixtures-build.log`. All 15 targeted methods pass in
+337 seconds in `native-mutable-columns-regressions.log`.
+Independent reviewer `8da02dde-1a84-4a0c-b100-47f49305f2fd` completed the
+31-module core-diff review with no significant issues. The parent inspected
+the result. All four new references also reject unallocated symbol IDs in
+`native-relocated-columns-reference-tests.log`.
+The worker's guarded core migration and initial inventory are in
+`files/migrate_native_mutable_columns.py` and
+`files/native-mutable-columns-inventory.txt`. The script covers mechanical
+call-site changes; the proof repairs remain in the source diff.
 The range, retirement-scalar, and response-packet encoders and fixtures have
-been checked against compiled dependencies. Rebuild their Lake targets after
-the column migration. Both explicit-term workers are idle.
+been rebuilt against the new column interfaces.
+
+Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns new
+`NativeArrayRetirementCompleted.lean` and `NativeRetirementCompletedTerm.lean`.
+It is proving the global completed-retirement predicate using committed-prefix
+first-inclusion, retirement, and retired-record witnesses. Keep all four Model
+conditions, especially the absence of committed retired records and presence
+of a retirement in the committed prefix.
+The parent owns `NativeRetirementCompletedFixtureMain` and its Python test.
+Its 720 Model-derived scripts pass in `native-retirement-completed-prefix-tests.log`.
+That new runtime module is not yet proved or committed.
 
 `NativeArrayVoteState` now holds frame state and the existing action semantics.
 `NativeArrayVote` retains instruction traces and their correspondence proofs.

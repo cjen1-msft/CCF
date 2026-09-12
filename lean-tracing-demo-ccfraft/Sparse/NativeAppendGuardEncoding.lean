@@ -60,14 +60,16 @@ theorem append_guards_sound {width : PNat} [Bootstrap (Fin width)]
   simp only [Holds, appendScanGuards, List.mem_cons, List.not_mem_nil,
     forall_eq_or_imp, false_implies, implies_true, and_true] at scans
   obtain ⟨current, sameCurrent, currentValid⟩ :=
-    (current_index_witness_correct assignment source.val base _ _ (rep.nodes.configuration_log source)).mp
+    (current_index_witness_correct assignment columns source.val base _ _
+      (rep.nodes.configuration_log source)).mp
       ⟨scans.1, scans.2.1⟩
   refine ⟨sourcePresent, destinationPresent, role, different, ?_, frontier, retirement⟩
   have eligible := scans.2.2
   simp only [Term.eval, Bool.or_eq_true] at eligible
   rcases eligible with active | completed
-  · have membership := (active_member_term_exact assignment Locals.empty bootstrap source.val destination _ _ current
-      (rep.nodes.configuration_log source) (.free .int base) (.free .int (base + 1)) sameCurrent).mp active
+  · have membership := (active_member_term_exact assignment Locals.empty bootstrap columns
+      source.val destination _ _ current (rep.nodes.configuration_log source)
+      (.free .int base) (.free .int (base + 1)) sameCurrent).mp active
     refine Or.inl ⟨current, currentValid, ?_⟩
     rcases membership with initial | ⟨index, nodes, _, lower, physical, included⟩
     · exact Or.inl ⟨initial.1, by simpa only [sameBootstrap] using initial.2⟩
@@ -96,12 +98,14 @@ theorem append_guards_complete {width : PNat} [Bootstrap (Fin width)]
   have currentRep := rep.nodes.set_integer before.next (current : Int)
   have sameCurrent : withCurrent .int before.next = (current : Int) := by simp [withCurrent, Assignment.set]
   have witnessExists : exists witness : Int,
-      (activeMemberTerm width before.bootstrap source.val destination (.free .int before.next)
+      (activeMemberTerm width before.bootstrap before.toColumns source.val destination
+        (.free .int before.next)
         (.free .int (before.next + 1))).eval (withCurrent.set .int (before.next + 1) witness) Locals.empty = true \/
       destination ∈ frame.globals.retirementCompleted source := by
     rcases eligible with active | completed
-    · obtain ⟨witness, accepted⟩ := (active_member_exists_correct withCurrent before.bootstrap source.val destination
-        before.next (before.next + 1) (by omega) _ _ current (currentRep.configuration_log source)
+    · obtain ⟨witness, accepted⟩ := (active_member_exists_correct withCurrent before.bootstrap
+        before.toColumns source.val destination before.next (before.next + 1) (by omega)
+        _ _ current (currentRep.configuration_log source)
         sameCurrent sameBootstrap).mpr active
       exact ⟨witness, Or.inl accepted⟩
     · exact ⟨0, Or.inr completed⟩
@@ -115,10 +119,12 @@ theorem append_guards_complete {width : PNat} [Bootstrap (Fin width)]
     simp [extended, withCurrent, Assignment.set]
   have leading := (append_leading_guards_correct extended before.toColumns frame.nodes extendedRep.nodes
     source destination batchEnd).mpr ⟨sourcePresent, destinationPresent, role, different, frontier, retirement⟩
-  have currentScans := (current_index_constraints_correct extended source.val before.next _ _ current
+  have currentScans := (current_index_constraints_correct extended before.toColumns source.val
+    before.next _ _ current
     (extendedRep.nodes.configuration_log source) preservesCurrent).mpr currentValid
   have lastGuard :
-      (Term.or (activeMemberTerm width before.bootstrap source.val destination (.free .int before.next)
+      (Term.or (activeMemberTerm width before.bootstrap before.toColumns source.val destination
+        (.free .int before.next)
         (.free .int (before.next + 1)))
         (.bit (.select (.free (.array .int (.bits width)) before.retirementCompleted)
           (.integer source.val)) destination)).eval extended Locals.empty = true := by

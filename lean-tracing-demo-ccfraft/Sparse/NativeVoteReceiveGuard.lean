@@ -13,10 +13,10 @@ open NativeSmt
 def voteReceiveGuards {width : PNat} (columns : Columns) (source destination : Fin width) :
     List (Expr .bool) :=
   let packet := queueHeadPacketTerm columns source destination
-  [allocated destination.val,
+  [allocated columns destination.val,
     lt (.integer 0) (queueScalarTerm columns.queueLength (.integer destination.val) (.integer source.val)),
     isVoteRequestTerm packet,
     .equal (.snd (.snd (.fst packet))) (.integer destination.val),
-    .le (.fst (.fst packet)) (read columns.currentTerm destination.val (.integer 0))]
+    .le (.fst (.fst packet)) (read columns columns.currentTerm destination.val (.integer 0))]
 
 end CCFRaft.NativeEncode

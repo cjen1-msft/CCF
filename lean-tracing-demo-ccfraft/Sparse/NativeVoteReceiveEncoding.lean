@@ -14,7 +14,7 @@ open NativeSmt
 def receiveVotePrefixClauses {width : PNat} (before : Encoding width)
     (source destination : Fin width) : List (Expr .bool) :=
   voteReceiveGuards before.toColumns source destination ++
-    [signatureIndexTerm width destination.val (.free .int before.next)]
+    [signatureIndexTerm width before.toColumns destination.val (.free .int before.next)]
 
 structure ReceiveVotePrefixResult {width : PNat} (before guarded : Encoding width)
     (source destination : Fin width) : Prop where
@@ -87,7 +87,7 @@ theorem ReceiveVotePrefixResult.holds {width : PNat}
     Holds guarded.assertions.toList assignment <->
       Holds before.assertions.toList assignment /\
         Holds (voteReceiveGuards before.toColumns source destination) assignment /\
-        (signatureIndexTerm width destination.val (.free .int before.next)).eval
+        (signatureIndexTerm width before.toColumns destination.val (.free .int before.next)).eval
           assignment Locals.empty = true := by
   rw [shape.clauses]
   simp [receiveVotePrefixClauses, Holds, or_imp, forall_and]
@@ -167,7 +167,7 @@ theorem receive_vote_frame_success {width : PNat} (source destination : Fin widt
   have guardedRep : FrameColumnsRep assignment guarded.toColumns frame := by
     simpa only [sameColumns] using rep
   obtain ⟨signature, sameSignature, latest⟩ :=
-    (signature_index_term_witness assignment Locals.empty destination.val
+    (signature_index_term_witness assignment Locals.empty before.toColumns destination.val
       (NativeArrayCheckQuorum.get frame.nodes destination).log
       (NativeArrayCheckQuorum.get frame.nodes destination).commit
       (rep.nodes.configuration_log destination) (.free .int before.next)).mp signatureConstraint
@@ -223,9 +223,9 @@ theorem receive_vote_complete {width : PNat} (source destination : Fin width)
       (.free .int before.next : Expr .int).eval witnessAssignment Locals.empty = (signature : Int) := by
     simp [Term.eval, witnessAssignment, Assignment.set]
   have signatureConstraint :
-      (signatureIndexTerm width destination.val (.free .int before.next)).eval
+      (signatureIndexTerm width before.toColumns destination.val (.free .int before.next)).eval
         witnessAssignment Locals.empty = true :=
-    (signature_index_term_correct witnessAssignment Locals.empty destination.val
+    (signature_index_term_correct witnessAssignment Locals.empty before.toColumns destination.val
       (NativeArrayCheckQuorum.get frame.nodes destination).log
       (NativeArrayCheckQuorum.get frame.nodes destination).commit signature
       (witnessRep.nodes.configuration_log destination) (.free .int before.next)

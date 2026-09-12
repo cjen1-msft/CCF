@@ -57,9 +57,8 @@ theorem node_columns_term_updated {width : PNat} (assignment : Assignment)
   simp only [Holds, termWriteClauses, List.mem_cons, List.not_mem_nil,
     forall_eq_or_imp, false_implies, implies_true, and_true] at bindings
   obtain ⟨roleBinding, termBinding, followerBinding, votedBinding, preVotesBinding⟩ := bindings
-  have allocatedNode : (allocated node.val : Expr .bool).eval assignment Locals.empty = true :=
+  have allocatedNode : (allocated before node.val : Expr .bool).eval assignment Locals.empty = true :=
     (rep.allocated node).trans present
-  dsimp only [termUpdatedColumns]
   constructor
   · intro peer
     by_cases same : peer = node
@@ -67,7 +66,10 @@ theorem node_columns_term_updated {width : PNat} (assignment : Assignment)
       simpa [termUpdatedNodes] using allocatedNode
     · simpa [termUpdatedNodes, same] using rep.allocated peer
   · intro peer
-    rw [stored_read_correct assignment before.role base node.val peer.val
+    change (read (termUpdatedColumns before base) base peer.val (.integer 0)).eval
+      assignment Locals.empty = _
+    rw [stored_read_correct assignment (termUpdatedColumns before base)
+      before.role base node.val peer.val
       (.integer 0) (.integer 1) allocatedNode roleBinding, get_term_updated]
     by_cases same : peer = node
     · subst peer
@@ -75,7 +77,10 @@ theorem node_columns_term_updated {width : PNat} (assignment : Assignment)
     · have different : peer.val ≠ node.val := fun equal => same (Fin.ext equal)
       simpa [same, different] using rep.role peer
   · intro peer
-    rw [stored_read_correct assignment before.newFollower (base + 2) node.val peer.val
+    change (read (termUpdatedColumns before base) (base + 2) peer.val (.boolean true)).eval
+      assignment Locals.empty = _
+    rw [stored_read_correct assignment (termUpdatedColumns before base)
+      before.newFollower (base + 2) node.val peer.val
       (.boolean true) (.boolean true) allocatedNode followerBinding, get_term_updated]
     by_cases same : peer = node
     · subst peer
@@ -83,7 +88,10 @@ theorem node_columns_term_updated {width : PNat} (assignment : Assignment)
     · have different : peer.val ≠ node.val := fun equal => same (Fin.ext equal)
       simpa [same, different] using rep.newFollower peer
   · intro peer
-    rw [stored_read_correct assignment before.currentTerm (base + 1) node.val peer.val
+    change (read (termUpdatedColumns before base) (base + 1) peer.val (.integer 0)).eval
+      assignment Locals.empty = _
+    rw [stored_read_correct assignment (termUpdatedColumns before base)
+      before.currentTerm (base + 1) node.val peer.val
       (.integer 0) term allocatedNode termBinding, get_term_updated]
     by_cases same : peer = node
     · subst peer
@@ -93,31 +101,40 @@ theorem node_columns_term_updated {width : PNat} (assignment : Assignment)
   · intro peer
     have previous := rep.commit peer
     rw [get_term_updated]
-    by_cases same : peer = node <;> simp_all
+    by_cases same : peer = node <;>
+      simp_all [termUpdatedColumns, NativeEncode.commit, read, NativeEncode.allocated]
   · intro peer
     have previous := rep.length peer
     rw [get_term_updated]
-    by_cases same : peer = node <;> simp_all
+    by_cases same : peer = node <;>
+      simp_all [termUpdatedColumns, NativeEncode.length, read, NativeEncode.allocated]
   · intro peer index within
     rw [get_term_updated] at within ⊢
     by_cases same : peer = node
     · subst peer
-      simpa using rep.entries node index (by simpa using within)
-    · simpa [same] using rep.entries peer index (by simpa [same] using within)
+      simpa [termUpdatedColumns, entryAt] using rep.entries node index (by simpa using within)
+    · simpa [termUpdatedColumns, entryAt, same] using
+        rep.entries peer index (by simpa [same] using within)
   · intro peer
     have previous := rep.retirementIndex peer
     rw [get_term_updated]
-    by_cases same : peer = node <;> simp_all
+    by_cases same : peer = node <;>
+      simp_all [termUpdatedColumns, read, NativeEncode.allocated]
   · intro peer
     have previous := rep.retirementCommittableIndex peer
     rw [get_term_updated]
-    by_cases same : peer = node <;> simp_all
+    by_cases same : peer = node <;>
+      simp_all [termUpdatedColumns, read, NativeEncode.allocated]
   · intro peer
     have previous := rep.retiredCommittedIndex peer
     rw [get_term_updated]
-    by_cases same : peer = node <;> simp_all
+    by_cases same : peer = node <;>
+      simp_all [termUpdatedColumns, read, NativeEncode.allocated]
   · intro peer
-    rw [stored_read_correct assignment before.votedFor (base + 3) node.val peer.val
+    change (read (termUpdatedColumns before base) (base + 3) peer.val (.inl .unit)).eval
+      assignment Locals.empty = _
+    rw [stored_read_correct assignment (termUpdatedColumns before base)
+      before.votedFor (base + 3) node.val peer.val
       (.inl .unit) (.inl .unit) allocatedNode votedBinding, get_term_updated]
     by_cases same : peer = node
     · subst peer
@@ -127,9 +144,13 @@ theorem node_columns_term_updated {width : PNat} (assignment : Assignment)
   · intro peer
     have previous := rep.votesGranted peer
     rw [get_term_updated]
-    by_cases same : peer = node <;> simp_all
+    by_cases same : peer = node <;>
+      simp_all [termUpdatedColumns, read, NativeEncode.allocated]
   · intro peer
-    rw [stored_read_correct assignment before.preVotesGranted (base + 4) node.val peer.val
+    change (read (termUpdatedColumns before base) (base + 4) peer.val (.bits 0)).eval
+      assignment Locals.empty = _
+    rw [stored_read_correct assignment (termUpdatedColumns before base)
+      before.preVotesGranted (base + 4) node.val peer.val
       (.bits 0) (.bits 0) allocatedNode preVotesBinding, get_term_updated]
     by_cases same : peer = node
     · subst peer
@@ -139,15 +160,18 @@ theorem node_columns_term_updated {width : PNat} (assignment : Assignment)
   · intro peer
     have previous := rep.membershipState peer
     rw [get_term_updated]
-    by_cases same : peer = node <;> simp_all
+    by_cases same : peer = node <;>
+      simp_all [termUpdatedColumns, read, NativeEncode.allocated]
   · intro peer target
     have previous := rep.sentIndex peer target
     rw [get_term_updated]
-    by_cases same : peer = node <;> simp_all
+    by_cases same : peer = node <;>
+      simp_all [termUpdatedColumns, peerIndex, NativeEncode.allocated]
   · intro peer target
     have previous := rep.matchIndex peer target
     rw [get_term_updated]
-    by_cases same : peer = node <;> simp_all
+    by_cases same : peer = node <;>
+      simp_all [termUpdatedColumns, peerIndex, NativeEncode.allocated]
 
 structure TermUpdateResult {width : PNat} (before after : Encoding width)
     (source destination : Fin width) : Prop where

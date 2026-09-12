@@ -12,21 +12,23 @@ open NativeSmt
 
 def voteLeadingGuards {width : PNat} (columns : Columns) (preVote : Bool)
     (source destination : Fin width) : List (Expr .bool) :=
-  [allocated source.val, allocated destination.val,
-    .equal (read columns.role source.val (.integer 0))
+  [allocated columns source.val, allocated columns destination.val,
+    .equal (read columns columns.role source.val (.integer 0))
       (.integer (roleCode (if preVote then .preVoteCandidate else .candidate))),
     .boolean (decide (source ≠ destination))]
 
-def voteScanGuards {width : PNat} (bootstrap : BitVec width)
+def voteScanGuards {width : PNat} (columns : Columns) (bootstrap : BitVec width)
     (source destination : Fin width) (base : Nat) : List (Expr .bool) :=
-  [currentCandidate width source.val base,
-    noLaterConfiguration width source.val base,
-    activeMemberTerm width bootstrap source.val destination (.free .int base) (.free .int (base + 1)),
-    signatureIndexTerm width source.val (.free .int (base + 2))]
+  [currentCandidate width columns source.val base,
+    noLaterConfiguration width columns source.val base,
+    activeMemberTerm width bootstrap columns source.val destination
+      (.free .int base) (.free .int (base + 1)),
+    signatureIndexTerm width columns source.val (.free .int (base + 2))]
 
 def voteGuards {width : PNat} (columns : Columns) (bootstrap : BitVec width) (preVote : Bool)
     (source destination : Fin width) (base : Nat) : List (Expr .bool) :=
-  voteLeadingGuards columns preVote source destination ++ voteScanGuards bootstrap source destination base
+  voteLeadingGuards columns preVote source destination ++
+    voteScanGuards columns bootstrap source destination base
 
 theorem vote_leading_guards_correct {width : PNat}
     (assignment : Assignment) (columns : Columns)
@@ -49,7 +51,7 @@ theorem vote_guards_sound {width : PNat} [Bootstrap (Fin width)]
       exists signature : Nat, assignment .int (base + 2) = (signature : Int) /\
         NativeArrayVote.SignatureIndex (NativeArrayCheckQuorum.get arrays source).log signature := by
   have separated : Holds (voteLeadingGuards columns preVote source destination) assignment /\
-      Holds (voteScanGuards bootstrap source destination base) assignment := by
+      Holds (voteScanGuards columns bootstrap source destination base) assignment := by
     simpa [voteGuards, Holds, or_imp, forall_and] using holds
   obtain ⟨sourcePresent, destinationPresent, role, different⟩ :=
     (vote_leading_guards_correct assignment columns arrays rep preVote source destination).mp separated.1
@@ -57,16 +59,18 @@ theorem vote_guards_sound {width : PNat} [Bootstrap (Fin width)]
   simp only [Holds, voteScanGuards, List.mem_cons, List.not_mem_nil,
     forall_eq_or_imp, false_implies, implies_true, and_true] at scans
   obtain ⟨current, sameCurrent, currentValid⟩ :=
-    (current_index_witness_correct assignment source.val base _ _ (rep.configuration_log source)).mp
+    (current_index_witness_correct assignment columns source.val base _ _
+      (rep.configuration_log source)).mp
       ⟨scans.1, scans.2.1⟩
-  have membership := (active_member_term_exact assignment Locals.empty bootstrap source.val destination _ _ current
-    (rep.configuration_log source) (.free .int base) (.free .int (base + 1)) sameCurrent).mp scans.2.2.1
+  have membership := (active_member_term_exact assignment Locals.empty bootstrap columns
+    source.val destination _ _ current (rep.configuration_log source)
+    (.free .int base) (.free .int (base + 1)) sameCurrent).mp scans.2.2.1
   have member : NativeArrayVote.MemberAt (NativeArrayCheckQuorum.get arrays source).log current destination := by
     rcases membership with initial | ⟨index, nodes, _, lower, physical, included⟩
     · exact Or.inl ⟨initial.1, by simpa only [sameBootstrap] using initial.2⟩
     · exact Or.inr ⟨index, nodes, lower, physical, included⟩
   refine ⟨⟨sourcePresent, destinationPresent, role, different, current, currentValid, member⟩, ?_⟩
-  exact (signature_index_term_witness assignment Locals.empty source.val _ _
+  exact (signature_index_term_witness assignment Locals.empty columns source.val _ _
     (rep.configuration_log source) (.free .int (base + 2))).mp scans.2.2.2
 
 theorem vote_guards_complete {width : PNat} [Bootstrap (Fin width)]
@@ -84,7 +88,8 @@ theorem vote_guards_complete {width : PNat} [Bootstrap (Fin width)]
   let withCurrent := assignment.set .int base (current : Int)
   have currentRep := rep.set_integer base (current : Int)
   have sameCurrent : withCurrent .int base = (current : Int) := by simp [withCurrent, Assignment.set]
-  obtain ⟨witness, active⟩ := (active_member_exists_correct withCurrent bootstrap source.val destination base (base + 1)
+  obtain ⟨witness, active⟩ := (active_member_exists_correct withCurrent bootstrap columns
+    source.val destination base (base + 1)
     (by omega) _ _ current (currentRep.configuration_log source) sameCurrent sameBootstrap).mpr member
   let withWitness := withCurrent.set .int (base + 1) witness
   let extended := withWitness.set .int (base + 2) (signature : Int)
@@ -99,19 +104,20 @@ theorem vote_guards_complete {width : PNat} [Bootstrap (Fin width)]
       ((withCurrent.agrees_below_set base .int (base + 1) witness (by omega)).trans
         (withWitness.agrees_below_set base .int (base + 2) (signature : Int) (by omega)))
   have activeExtended :
-      (activeMemberTerm width bootstrap source.val destination (.free .int base) (.free .int (base + 1))).eval
+      (activeMemberTerm width bootstrap columns source.val destination
+        (.free .int base) (.free .int (base + 1))).eval
         extended Locals.empty = true := by
     simpa [activeMemberTerm, all, length, read, allocated, entryAt, isConfiguration, members,
       Term.eval, extended, withWitness, withCurrent, Assignment.set] using active
-  have currentScans := (current_index_constraints_correct extended source.val base _ _ current
+  have currentScans := (current_index_constraints_correct extended columns source.val base _ _ current
     (extendedRep.configuration_log source) preservesCurrent).mpr currentValid
-  have signatureScan := (signature_index_term_correct extended Locals.empty source.val _ _ signature
+  have signatureScan := (signature_index_term_correct extended Locals.empty columns source.val _ _ signature
     (extendedRep.configuration_log source) (.free .int (base + 2))
       (by simpa only [Term.eval] using setsSignature)).mpr latest
   refine ⟨extended, agreement, ?_, setsSignature⟩
   have leading := (vote_leading_guards_correct extended columns arrays extendedRep preVote source destination).mpr
     ⟨sourcePresent, destinationPresent, role, different⟩
-  have scans : Holds (voteScanGuards bootstrap source destination base) extended := by
+  have scans : Holds (voteScanGuards columns bootstrap source destination base) extended := by
     simpa only [Holds, voteScanGuards, List.mem_cons, List.not_mem_nil,
       forall_eq_or_imp, false_implies, implies_true, and_true] using
       And.intro currentScans.1 (And.intro currentScans.2 (And.intro activeExtended signatureScan))

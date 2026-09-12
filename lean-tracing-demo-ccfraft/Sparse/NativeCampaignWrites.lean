@@ -53,9 +53,8 @@ theorem node_columns_campaign {width : PNat} (assignment : Assignment)
     List.mem_cons, List.not_mem_nil,
     forall_eq_or_imp, false_implies, implies_true, and_true] at bindings
   obtain ⟨roleBinding, termBinding, votedBinding, votesBinding, preVotesBinding⟩ := bindings
-  have allocatedNode : (allocated node.val : Expr .bool).eval assignment Locals.empty = true :=
+  have allocatedNode : (allocated before node.val : Expr .bool).eval assignment Locals.empty = true :=
     (rep.allocated node).trans present
-  dsimp only [campaignColumns]
   constructor
   · intro peer
     by_cases same : peer = node
@@ -63,7 +62,9 @@ theorem node_columns_campaign {width : PNat} (assignment : Assignment)
       simpa [campaignNodes] using allocatedNode
     · simpa [campaignNodes, same] using rep.allocated peer
   · intro peer
-    rw [stored_read_correct assignment before.role base node.val peer.val
+    change (read (campaignColumns before base) base peer.val (.integer 0)).eval
+      assignment Locals.empty = _
+    rw [stored_read_correct assignment (campaignColumns before base) before.role base node.val peer.val
       (.integer 0) (.integer (roleCode (if preVote then .preVoteCandidate else .candidate)))
       allocatedNode roleBinding, get_campaign]
     by_cases same : peer = node
@@ -74,9 +75,13 @@ theorem node_columns_campaign {width : PNat} (assignment : Assignment)
   · intro peer
     have previous := rep.newFollower peer
     rw [get_campaign]
-    by_cases same : peer = node <;> cases preVote <;> simp_all
+    by_cases same : peer = node <;> cases preVote <;>
+      simp_all [campaignColumns, read, NativeEncode.allocated]
   · intro peer
-    rw [stored_read_correct assignment before.currentTerm (base + 1) node.val peer.val
+    change (read (campaignColumns before base) (base + 1) peer.val (.integer 0)).eval
+      assignment Locals.empty = _
+    rw [stored_read_correct assignment (campaignColumns before base)
+      before.currentTerm (base + 1) node.val peer.val
       (.integer 0) (campaignTerm before preVote node.val) allocatedNode termBinding, get_campaign]
     by_cases same : peer = node
     · subst peer
@@ -86,31 +91,41 @@ theorem node_columns_campaign {width : PNat} (assignment : Assignment)
   · intro peer
     have previous := rep.commit peer
     rw [get_campaign]
-    by_cases same : peer = node <;> cases preVote <;> simp_all
+    by_cases same : peer = node <;> cases preVote <;>
+      simp_all [campaignColumns, NativeEncode.commit, read, NativeEncode.allocated]
   · intro peer
     have previous := rep.length peer
     rw [get_campaign]
-    by_cases same : peer = node <;> cases preVote <;> simp_all
+    by_cases same : peer = node <;> cases preVote <;>
+      simp_all [campaignColumns, NativeEncode.length, read, NativeEncode.allocated]
   · intro peer index within
     rw [get_campaign] at within ⊢
     by_cases same : peer = node
     · subst peer
-      cases preVote <;> simpa using rep.entries node index (by simpa using within)
-    · simpa [same] using rep.entries peer index (by simpa [same] using within)
+      cases preVote <;>
+        simpa [campaignColumns, entryAt] using rep.entries node index (by simpa using within)
+    · simpa [campaignColumns, entryAt, same] using
+        rep.entries peer index (by simpa [same] using within)
   · intro peer
     have previous := rep.retirementIndex peer
     rw [get_campaign]
-    by_cases same : peer = node <;> cases preVote <;> simp_all
+    by_cases same : peer = node <;> cases preVote <;>
+      simp_all [campaignColumns, read, NativeEncode.allocated]
   · intro peer
     have previous := rep.retirementCommittableIndex peer
     rw [get_campaign]
-    by_cases same : peer = node <;> cases preVote <;> simp_all
+    by_cases same : peer = node <;> cases preVote <;>
+      simp_all [campaignColumns, read, NativeEncode.allocated]
   · intro peer
     have previous := rep.retiredCommittedIndex peer
     rw [get_campaign]
-    by_cases same : peer = node <;> cases preVote <;> simp_all
+    by_cases same : peer = node <;> cases preVote <;>
+      simp_all [campaignColumns, read, NativeEncode.allocated]
   · intro peer
-    rw [stored_read_correct assignment before.votedFor (base + 2) node.val peer.val
+    change (read (campaignColumns before base) (base + 2) peer.val (.inl .unit)).eval
+      assignment Locals.empty = _
+    rw [stored_read_correct assignment (campaignColumns before base)
+      before.votedFor (base + 2) node.val peer.val
       (.inl .unit) (campaignVotedFor before preVote node.val) allocatedNode votedBinding, get_campaign]
     by_cases same : peer = node
     · subst peer
@@ -118,7 +133,10 @@ theorem node_columns_campaign {width : PNat} (assignment : Assignment)
     · have different : peer.val ≠ node.val := fun equal => same (Fin.ext equal)
       simpa [same, different] using rep.votedFor peer
   · intro peer
-    rw [stored_read_correct assignment before.votesGranted (base + 3) node.val peer.val
+    change (read (campaignColumns before base) (base + 3) peer.val (.bits 0)).eval
+      assignment Locals.empty = _
+    rw [stored_read_correct assignment (campaignColumns before base)
+      before.votesGranted (base + 3) node.val peer.val
       (.bits 0) (campaignVotesGranted before preVote node) allocatedNode votesBinding, get_campaign]
     by_cases same : peer = node
     · subst peer
@@ -128,7 +146,10 @@ theorem node_columns_campaign {width : PNat} (assignment : Assignment)
     · have different : peer.val ≠ node.val := fun equal => same (Fin.ext equal)
       simpa [same, different] using rep.votesGranted peer
   · intro peer
-    rw [stored_read_correct assignment before.preVotesGranted (base + 4) node.val peer.val
+    change (read (campaignColumns before base) (base + 4) peer.val (.bits 0)).eval
+      assignment Locals.empty = _
+    rw [stored_read_correct assignment (campaignColumns before base)
+      before.preVotesGranted (base + 4) node.val peer.val
       (.bits 0) (campaignPreVotesGranted preVote node) allocatedNode preVotesBinding, get_campaign]
     by_cases same : peer = node
     · subst peer
@@ -138,15 +159,18 @@ theorem node_columns_campaign {width : PNat} (assignment : Assignment)
   · intro peer
     have previous := rep.membershipState peer
     rw [get_campaign]
-    by_cases same : peer = node <;> cases preVote <;> simp_all
+    by_cases same : peer = node <;> cases preVote <;>
+      simp_all [campaignColumns, read, NativeEncode.allocated]
   · intro peer target
     have previous := rep.sentIndex peer target
     rw [get_campaign]
-    by_cases same : peer = node <;> cases preVote <;> simp_all
+    by_cases same : peer = node <;> cases preVote <;>
+      simp_all [campaignColumns, peerIndex, NativeEncode.allocated]
   · intro peer target
     have previous := rep.matchIndex peer target
     rw [get_campaign]
-    by_cases same : peer = node <;> cases preVote <;> simp_all
+    by_cases same : peer = node <;> cases preVote <;>
+      simp_all [campaignColumns, peerIndex, NativeEncode.allocated]
 
 structure CampaignWriteResult {width : PNat} (before after : Encoding width)
     (preVote : Bool) (node : Fin width) : Prop where

@@ -269,7 +269,9 @@ states, including states with non-fresh unobserved fields.
 The JSON decoder now produces typed Model-level instructions and entries.
 `NativeObservationEncoding.observation_model_correct` proves that the actual
 clauses for the supported observations match the Model, under the
-represented columns and initial domains.
+represented columns. Entry observations normalize raw cells to their Model
+values, so later observations do not require the initial log-domain premises.
+Initial domain assertions remain enforced at trace initialization.
 `NativeCompilerEncoding` connects initial domains and observation clauses to
 actual state-transformer execution, preserving prior assertions and column
 references. It also proves the exact `checkQuorum` witness indices, bindings,
@@ -430,7 +432,12 @@ an append receive action.
 `NativeArrayAppendReceive` adds bounded commit, ACK and NACK correspondence,
 and the nonconsuming candidate-stepdown branch. NACK matching reuses
 `LogMatchSummary.StorageSummary` and does not assume ordered log terms.
-Retirement refresh and receive branch composition remain unfinished.
+`NativeArrayAppendHandlerCases` proves the complete local handler guards.
+`NativeArrayAppendNetwork` composes the state and FIFO effects, including
+retirement refresh after consuming NACKs. `NativeLogRangeEncoding` and
+`NativeLogSpliceEncoding` emit the live-range comparisons and copies.
+`NativeRetirementRefreshTerms` emits the scalar retirement results from
+canonical scan witnesses. Public append receive remains unwired.
 `NativeQueuePopEncoding` proves directed FIFO removal and full-frame
 assignment extension. Empty removal is total internally; receive guards
 separately require a packet. The queue fixtures cover repeated pop/push,
@@ -445,7 +452,7 @@ Its 480 Model-derived cases include generic receives enabled for the wrong
 packet kind, which the vote-specific action rejects. Sequence cases cover
 duplicate replies and stale requests after `updateTerm`.
 
-`NativeOptional` supplies codecs for the next local-state observations.
+`NativeOptional` supplies codecs for optional local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.
 Invalid payloads fail decoding rather than becoming `none` or wrapping to
 another identity. The module proves round trips, exact literal equality,
@@ -487,7 +494,12 @@ cells to one while proving that membership remains false.
 Compiler frame proofs preserve that whole record, and the quorum result
 specifies a record update for the two changed fields.
 `NodeColumnsRep` and `observationClauses` take the same record. Trace proofs
-refer to the default initial column record rather than separate field premises.
+carry the current record; initial realization uses the default record.
+Allocation, log length, commit, and log entries now have current references too.
+Their initial IDs remain 0, 3, 4, and 6, with the next-symbol counter at 24.
+Existing public actions preserve those four references. The relocation
+regression moves every column and fresh symbol together, then compares the
+emitted clauses for each public action, observations, and a mixed history.
 `TypedDocument`, `decodeDocumentWith`, and `compileInstructionsWith` share
 identity validation, bootstrap decoding, indexed errors, and clause groups
 between instruction families. The local encoder uses these same functions.
@@ -500,7 +512,7 @@ of local fields and `hasJoined` through quorum steps.
 semantics as `hasJoined`. Each row can differ. These global sets do not imply
 local retirement indices, membership states, or a joined-node history.
 
-The older Python reference has broader action coverage:
+The older Python reference remains separate:
 `native_arrays.py` accepts `checkQuorum`, `requestVote`, `requestPreVote`, and
 `updateTerm`, plus `timeout` and `becomePreVoteCandidate`.
 Node observations cover allocation and every local `NodeState` field.

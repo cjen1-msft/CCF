@@ -39,17 +39,18 @@ theorem campaign_guards_sound {width : PNat} [Bootstrap (Fin width)]
   simp only [Holds, campaignScanGuards, List.mem_cons, List.not_mem_nil,
     forall_eq_or_imp, false_implies, implies_true, and_true] at scans
   obtain ⟨current, sameCurrent, currentValid⟩ :=
-    (current_index_witness_correct assignment node.val base _ _ (rep.nodes.configuration_log node)).mp
+    (current_index_witness_correct assignment columns node.val base _ _
+      (rep.nodes.configuration_log node)).mp
       ⟨scans.1, scans.2.1⟩
   obtain ⟨signature, sameSignature, latest⟩ :=
-    (signature_index_term_witness assignment Locals.empty node.val _ _
+    (signature_index_term_witness assignment Locals.empty columns node.val _ _
       (rep.nodes.configuration_log node) (.free .int (base + 1))).mp scans.2.2.1
   refine ⟨present, role, membership, status, current, currentValid, signature, latest, ?_⟩
   have eligible := scans.2.2.2
   simp only [Term.eval, Bool.or_eq_true] at eligible
   rcases eligible with active | completed
   · exact Or.inl (campaign_member_term_sound assignment Locals.empty bootstrap sameBootstrap
-      node _ _ current signature (rep.nodes.configuration_log node)
+      columns node _ _ current signature (rep.nodes.configuration_log node)
       (.free .int base) (.free .int (base + 1)) (.free .int (base + 2)) sameCurrent sameSignature active)
   · exact Or.inr (by simpa only [rep.retirementCompleted, <- decode_bits_member, decode_encode_bits] using completed)
 
@@ -71,13 +72,14 @@ theorem campaign_guards_complete {width : PNat} [Bootstrap (Fin width)]
   have signatureValue : withSignature .int (before.next + 1) = (signature : Int) := by
     simp [withSignature, Assignment.set]
   have witnessExists : exists witness : Int,
-      (campaignMemberTerm width before.bootstrap node (.free .int before.next)
+      (campaignMemberTerm width before.bootstrap before.toColumns node (.free .int before.next)
         (.free .int (before.next + 1)) (.free .int (before.next + 2))).eval
           (withSignature.set .int (before.next + 2) witness) Locals.empty = true \/
         node ∈ frame.globals.retirementCompleted node := by
     rcases eligible with active | completed
     · obtain ⟨witness, accepted⟩ := campaign_member_term_complete withSignature before.bootstrap
-        sameBootstrap node _ _ current signature (signatureRep.configuration_log node)
+        before.toColumns sameBootstrap node _ _ current signature
+        (signatureRep.configuration_log node)
         before.next currentValue signatureValue active
       exact ⟨witness, Or.inl accepted⟩
     · exact ⟨0, Or.inr completed⟩
@@ -94,13 +96,16 @@ theorem campaign_guards_complete {width : PNat} [Bootstrap (Fin width)]
     simp [extended, withSignature, Assignment.set]
   have leading := (campaign_leading_guards_correct extended before.toColumns frame extendedRep preVote node).mpr
     ⟨present, role, membership, status⟩
-  have currentScans := (current_index_constraints_correct extended node.val before.next _ _ current
+  have currentScans := (current_index_constraints_correct extended before.toColumns node.val
+    before.next _ _ current
     (extendedRep.nodes.configuration_log node) preservesCurrent).mpr currentValid
-  have signatureScan := (signature_index_term_correct extended Locals.empty node.val _ _ signature
+  have signatureScan := (signature_index_term_correct extended Locals.empty before.toColumns
+    node.val _ _ signature
     (extendedRep.nodes.configuration_log node) (.free .int (before.next + 1))
       (by simpa only [Term.eval] using preservesSignature)).mpr latest
   have lastGuard :
-      (Term.or (campaignMemberTerm width before.bootstrap node (.free .int before.next)
+      (Term.or (campaignMemberTerm width before.bootstrap before.toColumns node
+        (.free .int before.next)
         (.free .int (before.next + 1)) (.free .int (before.next + 2)))
         (.bit (.select (.free (.array .int (.bits width)) before.retirementCompleted)
           (.integer node.val)) node)).eval extended Locals.empty = true := by

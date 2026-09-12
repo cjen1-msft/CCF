@@ -19,17 +19,19 @@ theorem forall_identity_int (width : PNat) (predicate : Int -> Prop) :
     let peer : Fin width := ⟨index.toNat, by omega⟩
     simpa [peer, Int.toNat_of_nonneg valid.1] using holds peer
 
-theorem peer_domain_correct (width : PNat) (column node : Nat) (assignment : Assignment) :
-    (peerDomain width column node).eval assignment Locals.empty = true <->
+theorem peer_domain_correct (width : PNat) (columns : Columns) (column node : Nat)
+    (assignment : Assignment) :
+    (peerDomain width columns column node).eval assignment Locals.empty = true <->
       forall peer : Fin width,
-        0 <= (peerIndex column node (.integer peer.val) : Expr .int).eval assignment Locals.empty := by
+        0 <= (peerIndex columns column node (.integer peer.val) : Expr .int).eval
+          assignment Locals.empty := by
   simp only [peerDomain, Term.eval, decide_eq_true_eq]
   conv_lhs =>
     intro peer
     rw [implies_eval]
   simpa [peerIndex, allocated, lt, Term.eval, Locals.cons] using
     forall_identity_int width (fun peer =>
-      0 <= if assignment (.array .int .bool) 0 node then
+      0 <= if assignment (.array .int .bool) columns.allocated node then
         assignment (.array .int (.array .int .int)) column node peer else 0)
 
 end CCFRaft.NativeEncode

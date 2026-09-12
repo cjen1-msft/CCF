@@ -25,12 +25,12 @@ def logs : Nat -> List (List (Entry (Fin 3) Nat))
 
 def fixture (name : String) (log : List (Entry (Fin 3) Nat)) (candidate : Int) : Json :=
   let assertions : List (Term [] .bool) := [
-    .equal (allocated 0) (.boolean true),
-    .equal (length 0) (.integer log.length),
+    .equal (allocated {} 0) (.boolean true),
+    .equal (length {} 0) (.integer log.length),
     .equal
       (.select (.free (.array .int (.array .int (entryTy 3))) 6) (.integer 0))
       (.snd (logTerm log)),
-    signatureIndexTerm 3 0 (.integer candidate)]
+    signatureIndexTerm 3 {} 0 (.integer candidate)]
   Json.mkObj [
     ("name", toJson name), ("script", toJson (renderScript assertions)),
     ("expected", toJson (if candidate = (maxCommittableIndex log : Int) then "sat" else "unsat"))]

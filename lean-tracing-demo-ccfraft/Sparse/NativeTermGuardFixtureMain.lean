@@ -40,9 +40,9 @@ def rawFixture (index : Nat) (packet : Expr (packetTy 3)) (newer : Bool) (head c
   let cell := fun (position : Expr .int) => .select
     (queueCellsTerm (width := 3) 23 (.integer 1) (.integer 0)) position
   let assertions : List (Expr .bool) := [
-    .equal (allocated 0) (.boolean true),
-    .equal (allocated 1) (.boolean true),
-    .equal (read 5 1 (.integer 0)) (.integer 2),
+    .equal (allocated {} 0) (.boolean true),
+    .equal (allocated {} 1) (.boolean true),
+    .equal (read {} 5 1 (.integer 0)) (.integer 2),
     .equal (.select (.select (.free (.array .int (.array .int .int)) 21) (.integer 1)) (.integer 0))
       (.integer count),
     .equal (.select (.select (.free (.array .int (.array .int .int)) 22) (.integer 1)) (.integer 0))

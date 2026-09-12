@@ -86,14 +86,14 @@ theorem configuration_exists {context : List Ty} {width : PNat}
       exists nodes, decodeContent (content.eval assignment locals) = .reconfiguration nodes := by
   simp only [configuration_decoding, exists_and_left, exists_eq', and_true]
 
-theorem asserted_read_specialization {context : List Ty} {sort : Ty} (column node : Nat)
+theorem asserted_read_specialization {context : List Ty} {sort : Ty} (columns : Columns) (column node : Nat)
     (default : Term context sort) (assignment : Assignment) (locals : Locals context)
     (continuation : sort.denote -> Prop) :
-    ((allocated node).eval assignment locals = true /\
-      continuation ((read column node default).eval assignment locals)) <->
-    ((allocated node).eval assignment locals = true /\
+    ((allocated columns node).eval assignment locals = true /\
+      continuation ((read columns column node default).eval assignment locals)) <->
+    ((allocated columns node).eval assignment locals = true /\
       continuation (assignment (.array .int sort) column node)) := by
-  cases observed : (allocated node : Term context .bool).eval assignment locals <;>
+  cases observed : (allocated columns node : Term context .bool).eval assignment locals <;>
     simp [read, Term.eval, <- observed]
 
 theorem definition_preserves_satisfiability {width : PNat} {sort : Ty}

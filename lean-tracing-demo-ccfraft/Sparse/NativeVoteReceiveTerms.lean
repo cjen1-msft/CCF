@@ -22,23 +22,24 @@ def voteRequestSnapshotTerm {context : List Ty} {width : PNat}
     (.cases (.bound .here) (.pair (.integer 0) (.integer 0))
       (.cases (.bound .here) (.bound .here) (.pair (.integer 0) (.integer 0))))
 
-def voteFreshTerm {context : List Ty} {width : PNat}
-    (node : Fin width) (packet : Term context (packetTy width)) (signature : Term context .int) : Term context .bool :=
+def voteFreshTerm {context : List Ty} {width : PNat} (columns : Columns)
+    (node : Fin width) (packet : Term context (packetTy width))
+    (signature : Term context .int) : Term context .bool :=
   let snapshot := voteRequestSnapshotTerm packet
-  let localTerm := logTermAt width node.val signature
+  let localTerm := logTermAt width columns node.val signature
   .or (lt localTerm (.fst snapshot))
     (.and (.equal (.fst snapshot) localTerm) (.le signature (.snd snapshot)))
 
 def voteGrantTerm {width : PNat} (columns : Columns) (node : Fin width)
     (packet : Expr (packetTy width)) (signature : Expr .int) : Expr .bool :=
-  let voted : Expr optionalIntTy := read columns.votedFor node.val (.inl .unit)
-  all [.equal (.fst (.fst packet)) (read columns.currentTerm node.val (.integer 0)),
-    voteFreshTerm node packet signature,
+  let voted : Expr optionalIntTy := read columns columns.votedFor node.val (.inl .unit)
+  all [.equal (.fst (.fst packet)) (read columns columns.currentTerm node.val (.integer 0)),
+    voteFreshTerm columns node packet signature,
     .or (.equal voted (.inl .unit)) (.equal voted (.inr (.fst (.snd (.fst packet)))))]
 
 def voteResponseTerm {width : PNat} (columns : Columns) (node : Fin width)
     (packet : Expr (packetTy width)) (signature : Expr .int) : Expr (packetTy width) :=
-  .pair (.pair (read columns.currentTerm node.val (.integer 0))
+  .pair (.pair (read columns columns.currentTerm node.val (.integer 0))
     (.pair (.snd (.snd (.fst packet))) (.fst (.snd (.fst packet)))))
     (.inr (.inr (.inr (.inl (voteGrantTerm columns node packet signature)))))
 
@@ -64,7 +65,7 @@ theorem vote_fresh_term_correct {width : PNat}
     (samePacket : packet.eval assignment Locals.empty = packetValue (.requestVoteRequest request))
     (position : Expr .int) (signature : Nat)
     (sameSignature : position.eval assignment Locals.empty = (signature : Int)) :
-    (voteFreshTerm node packet position).eval assignment Locals.empty = true <->
+    (voteFreshTerm columns node packet position).eval assignment Locals.empty = true <->
       NativeArrayVoteReceive.logUpToDate (NativeArrayCheckQuorum.get arrays node) request signature := by
   have snapshot := vote_request_snapshot_correct packet assignment Locals.empty request samePacket
   have term := log_term_at_correct assignment Locals.empty columns arrays rep node position signature sameSignature

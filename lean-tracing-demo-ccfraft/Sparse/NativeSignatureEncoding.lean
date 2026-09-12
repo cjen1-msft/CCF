@@ -15,17 +15,17 @@ def isSignature {context : List Ty} {width : PNat}
     (content : Term context (contentTy width)) : Term context .bool :=
   .cases content (.boolean true) (.boolean false)
 
-def signatureAtTerm {context : List Ty} (width : PNat) (node : Nat)
+def signatureAtTerm {context : List Ty} (width : PNat) (columns : Columns) (node : Nat)
     (index : Term context .int) : Term context .bool :=
-  all [.le (.integer 1) index, .le index (length node),
-    isSignature (.snd (entryAt width node (.sub index (.integer 1))))]
+  all [.le (.integer 1) index, .le index (length columns node),
+    isSignature (.snd (entryAt width columns node (.sub index (.integer 1))))]
 
-def signatureIndexTerm {context : List Ty} (width : PNat) (node : Nat)
+def signatureIndexTerm {context : List Ty} (width : PNat) (columns : Columns) (node : Nat)
     (index : Term context .int) : Term context .bool :=
-  all [.le (.integer 0) index, .le index (length node),
-    .or (.equal index (.integer 0)) (signatureAtTerm width node index),
+  all [.le (.integer 0) index, .le index (length columns node),
+    .or (.equal index (.integer 0)) (signatureAtTerm width columns node index),
     .forall_ .int (implies (lt (index.weaken .int) (.bound .here))
-      (.not (signatureAtTerm width node (.bound .here))))]
+      (.not (signatureAtTerm width columns node (.bound .here))))]
 
 theorem signature_content_correct {context : List Ty} {width : PNat}
     (content : Term context (contentTy width)) (assignment : Assignment) (locals : Locals context) :
@@ -38,11 +38,11 @@ theorem signature_content_correct {context : List Ty} {width : PNat}
       simp [isSignature, Term.eval, decoded, decodeContent]
 
 theorem signature_at_term_correct {context : List Ty} {width : PNat}
-    (assignment : Assignment) (locals : Locals context) (node : Nat)
+    (assignment : Assignment) (locals : Locals context) (columns : Columns) (node : Nat)
     (log : NativeArrayCheckQuorum.Log (Fin width) Nat) (committed index : Nat)
-    (rep : ConfigurationLogRep assignment node log committed) (position : Term context .int)
+    (rep : ConfigurationLogRep assignment columns node log committed) (position : Term context .int)
     (same : position.eval assignment locals = (index : Int)) :
-    (signatureAtTerm width node position).eval assignment locals = true <->
+    (signatureAtTerm width columns node position).eval assignment locals = true <->
       NativeArrayVote.SignatureAt log index := by
   simp only [signatureAtTerm, all, List.foldr_cons, List.foldr_nil, Term.eval,
     Bool.and_eq_true, decide_eq_true_eq, and_true, same, rep.length_at]
@@ -60,10 +60,10 @@ theorem signature_at_term_correct {context : List Ty} {width : PNat}
     simp [NativeArrayVote.SignatureAt, zero]
 
 theorem signature_at_term_witness {context : List Ty} {width : PNat}
-    (assignment : Assignment) (locals : Locals context) (node : Nat)
+    (assignment : Assignment) (locals : Locals context) (columns : Columns) (node : Nat)
     (log : NativeArrayCheckQuorum.Log (Fin width) Nat) (committed : Nat)
-    (rep : ConfigurationLogRep assignment node log committed) (position : Term context .int) :
-    (signatureAtTerm width node position).eval assignment locals = true <->
+    (rep : ConfigurationLogRep assignment columns node log committed) (position : Term context .int) :
+    (signatureAtTerm width columns node position).eval assignment locals = true <->
       exists index : Nat, position.eval assignment locals = (index : Int) /\
         NativeArrayVote.SignatureAt log index := by
   constructor
@@ -73,20 +73,22 @@ theorem signature_at_term_witness {context : List Ty} {width : PNat}
       Bool.and_eq_true, decide_eq_true_eq] at bounds
     have nonnegative : 0 <= position.eval assignment locals := le_trans (by decide) bounds.1
     have same := (Int.toNat_of_nonneg nonnegative).symm
-    exact ⟨_, same, (signature_at_term_correct assignment locals node log committed _ rep position same).mp accepted⟩
+    exact ⟨_, same, (signature_at_term_correct assignment locals columns node log committed _
+      rep position same).mp accepted⟩
   · rintro ⟨index, same, accepted⟩
-    exact (signature_at_term_correct assignment locals node log committed index rep position same).mpr accepted
+    exact (signature_at_term_correct assignment locals columns node log committed index
+      rep position same).mpr accepted
 
 theorem signature_index_term_correct {context : List Ty} {width : PNat}
-    (assignment : Assignment) (locals : Locals context) (node : Nat)
+    (assignment : Assignment) (locals : Locals context) (columns : Columns) (node : Nat)
     (log : NativeArrayCheckQuorum.Log (Fin width) Nat) (committed index : Nat)
-    (rep : ConfigurationLogRep assignment node log committed) (position : Term context .int)
+    (rep : ConfigurationLogRep assignment columns node log committed) (position : Term context .int)
     (same : position.eval assignment locals = (index : Int)) :
-    (signatureIndexTerm width node position).eval assignment locals = true <->
+    (signatureIndexTerm width columns node position).eval assignment locals = true <->
       NativeArrayVote.SignatureIndex log index := by
   simp only [signatureIndexTerm, all, List.foldr_cons, List.foldr_nil, Term.eval,
     Bool.and_eq_true, Bool.or_eq_true, decide_eq_true_eq, and_true, same, rep.length_at]
-  rw [signature_at_term_correct assignment locals node log committed index rep position same]
+  rw [signature_at_term_correct assignment locals columns node log committed index rep position same]
   simp only [Int.natCast_nonneg, true_and, Int.ofNat_le, Int.natCast_eq_zero]
   apply and_congr_right'
   apply and_congr_right'
@@ -94,7 +96,7 @@ theorem signature_index_term_correct {context : List Ty} {width : PNat}
   constructor
   · intro excludes candidate lower _within signature
     have encoded := (signature_at_term_correct assignment (locals.cons (candidate : Int))
-      node log committed candidate rep (.bound .here) rfl).mpr signature
+      columns node log committed candidate rep (.bound .here) rfl).mpr signature
     have rejected := (implies_eval _ _ assignment
       (locals.cons (sort := .int) (candidate : Int))).mp (excludes candidate)
     have before : (lt (position.weaken .int) (.bound .here)).eval assignment
@@ -106,13 +108,14 @@ theorem signature_index_term_correct {context : List Ty} {width : PNat}
     intro lower
     simp only [lt, Term.eval, Term.weaken_eval, same, Locals.cons,
       Bool.not_eq_true', decide_eq_false_iff_not, not_le] at lower
-    change Bool.not ((signatureAtTerm width node (.bound .here)).eval assignment
+    change Bool.not ((signatureAtTerm width columns node (.bound .here)).eval assignment
       (locals.cons (sort := .int) candidate)) = true
     rw [Bool.not_eq_true']
     apply Bool.eq_false_iff.mpr
     intro accepted
     obtain ⟨natural, sameCandidate, signature⟩ :=
-      (signature_at_term_witness assignment (locals.cons candidate) node log committed rep (.bound .here)).mp accepted
+      (signature_at_term_witness assignment (locals.cons candidate) columns node log committed
+        rep (.bound .here)).mp accepted
     have less : index < natural := by
       change candidate = (natural : Int) at sameCandidate
       rw [sameCandidate] at lower
@@ -120,10 +123,10 @@ theorem signature_index_term_correct {context : List Ty} {width : PNat}
     exact excludes natural less signature.2.1 signature
 
 theorem signature_index_term_witness {context : List Ty} {width : PNat}
-    (assignment : Assignment) (locals : Locals context) (node : Nat)
+    (assignment : Assignment) (locals : Locals context) (columns : Columns) (node : Nat)
     (log : NativeArrayCheckQuorum.Log (Fin width) Nat) (committed : Nat)
-    (rep : ConfigurationLogRep assignment node log committed) (position : Term context .int) :
-    (signatureIndexTerm width node position).eval assignment locals = true <->
+    (rep : ConfigurationLogRep assignment columns node log committed) (position : Term context .int) :
+    (signatureIndexTerm width columns node position).eval assignment locals = true <->
       exists index : Nat, position.eval assignment locals = (index : Int) /\
         NativeArrayVote.SignatureIndex log index := by
   constructor
@@ -132,18 +135,20 @@ theorem signature_index_term_witness {context : List Ty} {width : PNat}
     simp only [signatureIndexTerm, all, List.foldr_cons, List.foldr_nil, Term.eval,
       Bool.and_eq_true, decide_eq_true_eq] at bounds
     have same := (Int.toNat_of_nonneg bounds.1).symm
-    exact ⟨_, same, (signature_index_term_correct assignment locals node log committed _ rep position same).mp accepted⟩
+    exact ⟨_, same, (signature_index_term_correct assignment locals columns node log committed _
+      rep position same).mp accepted⟩
   · rintro ⟨index, same, accepted⟩
-    exact (signature_index_term_correct assignment locals node log committed index rep position same).mpr accepted
+    exact (signature_index_term_correct assignment locals columns node log committed index
+      rep position same).mpr accepted
 
 theorem signature_index_model_correct {context : List Ty} {width : PNat} [Bootstrap (Fin width)]
-    (assignment : Assignment) (locals : Locals context) (node : Nat)
+    (assignment : Assignment) (locals : Locals context) (columns : Columns) (node : Nat)
     (log : NativeArrayCheckQuorum.Log (Fin width) Nat) (committed index : Nat)
-    (rep : ConfigurationLogRep assignment node log committed) (position : Term context .int)
+    (rep : ConfigurationLogRep assignment columns node log committed) (position : Term context .int)
     (same : position.eval assignment locals = (index : Int)) :
-    (signatureIndexTerm width node position).eval assignment locals = true <->
+    (signatureIndexTerm width columns node position).eval assignment locals = true <->
       maxCommittableIndex log.decode = index :=
-  (signature_index_term_correct assignment locals node log committed index rep position same).trans
+  (signature_index_term_correct assignment locals columns node log committed index rep position same).trans
     (NativeArrayVote.signature_index_correct log index)
 
 end CCFRaft.NativeEncode

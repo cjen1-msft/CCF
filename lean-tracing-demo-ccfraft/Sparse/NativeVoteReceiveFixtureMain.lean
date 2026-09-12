@@ -33,17 +33,17 @@ def fixture (index : Nat) (log : List (Entry (Fin 3) Nat))
         { term := 5, voteGranted := false, source := destination, destination := source })
   let equality : Expr .bool := .equal (voteResponseTerm (width := 3) columns destination packet signature) expected
   let assertions : List (Expr .bool) := [
-    .equal (allocated destination.val) (.boolean true),
-    .equal (read 5 destination.val (.integer 0)) (.integer 99),
-    .equal (read 25 destination.val (.integer 0)) (.integer 5),
-    .equal (read 26 destination.val (.inl .unit)) (optionalTerm (fun node : Fin 3 => (node.val : Int)) chosen),
-    .equal (length destination.val) (.integer log.length),
-    .equal (commit destination.val) (.integer row.commitIndex),
+    .equal (allocated columns destination.val) (.boolean true),
+    .equal (read columns 5 destination.val (.integer 0)) (.integer 99),
+    .equal (read columns 25 destination.val (.integer 0)) (.integer 5),
+    .equal (read columns 26 destination.val (.inl .unit)) (optionalTerm (fun node : Fin 3 => (node.val : Int)) chosen),
+    .equal (length columns destination.val) (.integer log.length),
+    .equal (commit columns destination.val) (.integer row.commitIndex),
     .equal (.select (.free (.array .int (.array .int (entryTy 3))) 6) (.integer destination.val)) (.snd (logTerm log)),
     .equal packet (packetTerm (width := 3) (.requestVoteRequest request)),
-    signatureIndexTerm 3 destination.val signature,
+    signatureIndexTerm 3 columns destination.val signature,
     isVoteRequestTerm packet,
-    .le (.fst (.fst packet)) (read columns.currentTerm destination.val (.integer 0)),
+    .le (.fst (.fst packet)) (read columns columns.currentTerm destination.val (.integer 0)),
     if agrees then equality else .not equality]
   Json.mkObj [("name", toJson s!"vote-receive-{index}-{requestTerm}-{summaryTerm}-{summaryIndex}-{chosen.map Fin.val}-{source.val}-{destination.val}-{agrees}"),
     ("script", toJson (renderScript assertions)),
@@ -76,8 +76,8 @@ def guardFixture (sourcePresent destinationPresent preVote : Bool)
       network := fun node => if node = 1 then List.replicate count message else []
       hasJoined := {}, submittedTxIds := {} }
   let assertions : List (Expr .bool) := [
-    .equal (allocated 0) (.boolean sourcePresent),
-    .equal (allocated 1) (.boolean destinationPresent),
+    .equal (allocated {} 0) (.boolean sourcePresent),
+    .equal (allocated {} 1) (.boolean destinationPresent),
     .equal (.select (.free (.array .int .int) 5) (.integer 1)) (.integer 5),
     .equal (.select (.select (.free (.array .int (.array .int .int)) 21) (.integer 1)) (.integer 0)) (.integer count),
     .equal (.select (.select (.free (.array .int (.array .int .int)) 22) (.integer 1)) (.integer 0)) (.integer head),

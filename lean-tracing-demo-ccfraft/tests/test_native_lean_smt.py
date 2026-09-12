@@ -5,6 +5,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -1038,7 +1039,7 @@ class NativeLeanSmtTests(unittest.TestCase):
             )
         )
 
-    def model_traces(self, module, count):
+    def model_traces(self, module, count, *arguments):
         result = subprocess.run(
             [
                 "lake",
@@ -1046,6 +1047,7 @@ class NativeLeanSmtTests(unittest.TestCase):
                 "lean",
                 "--run",
                 f"Sparse/{module}.lean",
+                *arguments,
             ],
             cwd=ROOT,
             capture_output=True,
@@ -1058,6 +1060,94 @@ class NativeLeanSmtTests(unittest.TestCase):
             {fixture["expected"] for fixture in fixtures}, {"sat", "unsat"}
         )
         return fixtures
+
+    def test_relocated_columns(self):
+        wanted = {
+            "checkQuorum",
+            "requestVote",
+            "requestPreVote",
+            "updateTerm",
+            "timeout",
+            "becomePreVoteCandidate",
+            "appendEntries",
+            "receiveRequestVote",
+        }
+        selected = {}
+        entry_trace = None
+        for module, count, arguments in (
+            ("NativeArrayCheckQuorumFixtureMain", 150, []),
+            ("NativeArrayVoteFixtureMain", 400, []),
+            ("NativeArrayVoteFixtureMain", 400, ["campaign"]),
+            ("NativeArrayTermFixtureMain", 168, []),
+            ("NativeArrayAppendFixtureMain", 1200, []),
+            ("NativeArrayVoteReceiveFixtureMain", 480, []),
+        ):
+            for fixture in self.model_traces(module, count, *arguments):
+                if fixture["expected"] != "sat":
+                    continue
+                trace = fixture["trace"]
+                for instruction in trace["instructions"]:
+                    if instruction["kind"] in wanted:
+                        selected.setdefault(instruction["kind"], trace)
+                    if instruction["kind"] == "entry" and entry_trace is None:
+                        entry_trace = trace
+        self.assertEqual(set(selected), wanted)
+        documents = list(selected.values())
+        self.assertIsNotNone(entry_trace)
+        if entry_trace not in documents:
+            documents.append(entry_trace)
+        combined = deepcopy(selected["appendEntries"])
+        combined["instructions"] = []
+        for document in documents:
+            self.assertEqual(document["nodes"], combined["nodes"])
+            combined["instructions"].extend(document["instructions"])
+        documents.append(combined)
+        result = subprocess.run(
+            [
+                "lake",
+                "env",
+                "lean",
+                "--run",
+                "Sparse/NativeRelocatedColumnsFixtureMain.lean",
+            ],
+            cwd=ROOT,
+            input=json.dumps(documents),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        report = json.loads(result.stdout)
+        self.assertEqual(
+            {item["field"] for item in report["rejectedReferences"]},
+            {"allocated", "logLength", "commit", "logEntries"},
+        )
+        self.assertEqual(len(report["rejectedReferences"]), 4)
+        for item in report["rejectedReferences"]:
+            self.assertEqual(
+                item["error"],
+                "internal encoder error: assertion references an unallocated SMT symbol",
+            )
+        results = report["fixtures"]
+        self.assertEqual(len(results), len(documents))
+        for index, fixture in enumerate(results):
+            self.assertEqual(
+                [item["offset"] for item in fixture["relocated"]], [24, 1000]
+            )
+            for relocated in fixture["relocated"]:
+                with self.subTest(trace=index, offset=relocated["offset"]):
+                    renames = dict(relocated["renames"])
+                    expected = [
+                        re.sub(
+                            r"\b[A-Za-z_][A-Za-z0-9_]*\b",
+                            lambda match, names=renames: names.get(match[0], match[0]),
+                            clause,
+                        )
+                        for clause in fixture["clauses"]
+                    ]
+                    self.assertEqual(relocated["clauses"], expected)
+                    self.assertEqual(
+                        relocated["next"], fixture["next"] + relocated["offset"]
+                    )
 
     def test_membership_model_fixture_coverage(self):
         fixtures = self.model_traces("NativeArrayMembershipFixtureMain", 1572)

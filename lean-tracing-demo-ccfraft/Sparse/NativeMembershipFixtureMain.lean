@@ -37,14 +37,14 @@ def fixture (name : String) (twoPeers : Bool) (contents : List (EntryContent (Fi
         decide (peer ∈ configuration.nodes) &&
           (configuration.index == 0 || (configuration.index : Int) == index)
   let assertions : List (Expr .bool) := [
-    .equal (allocated 0) (.boolean true),
-    .equal (length 0) (.integer log.length),
-    .equal (commit 0) (.integer committed),
+    .equal (allocated {} 0) (.boolean true),
+    .equal (length {} 0) (.integer log.length),
+    .equal (commit {} 0) (.integer committed),
     .equal (.select (.free (.array .int (.array .int (entryTy 3))) 6) (.integer 0)) (.snd (logTerm log)),
-    currentCandidate 3 0 24,
-    noLaterConfiguration 3 0 24,
+    currentCandidate 3 {} 0 24,
+    noLaterConfiguration 3 {} 0 24,
     activeMemberTerm 3 (encodeBits (width := 3) (INITIAL_CONFIGURATION (Node := Fin 3)))
-      0 peer (.free .int 24) (.free .int 25)]
+      {} 0 peer (.free .int 24) (.free .int 25)]
   let assertions := assertions ++ witness.toList.map (fun value => .equal (.free .int 25) (.integer value))
   Json.mkObj [("name", toJson name), ("script", toJson (renderScript assertions)),
     ("expected", toJson (if allowed then "sat" else "unsat"))]

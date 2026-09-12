@@ -15,7 +15,7 @@ def receiveVotePrefix {width : PNat} (columns : Columns) (source destination : F
     EncodeM width Nat := do
   assertAll (voteReceiveGuards columns source destination)
   let signature <- fresh
-  assertAll [signatureIndexTerm width destination.val (.free .int signature)]
+  assertAll [signatureIndexTerm width columns destination.val (.free .int signature)]
   return signature
 
 def receiveVoteTail {width : PNat} (columns : Columns) (source destination : Fin width)

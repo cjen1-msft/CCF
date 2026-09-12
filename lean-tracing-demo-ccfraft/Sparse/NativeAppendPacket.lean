@@ -24,25 +24,26 @@ theorem singleton_log_term_correct {context : List Ty} {width : PNat}
   simpa only [singletonLogTerm, logTerm, logCellsTerm, List.length_cons, List.length_nil,
     List.getElem?_cons_zero, Option.getD_some, Term.eval, entry_term_eval, same] using ground
 
-def appendLogTerm {context : List Ty} (width : PNat) (node : Nat) (previous : Term context .int) :
+def appendLogTerm {context : List Ty} (width : PNat) (columns : Columns)
+    (node : Nat) (previous : Term context .int) :
     Term context (logTy width) :=
-  .ite (lt previous (length node))
-    (singletonLogTerm (normalizedEntryTerm (entryAt width node previous)))
+  .ite (lt previous (length columns node))
+    (singletonLogTerm (normalizedEntryTerm (entryAt width columns node previous)))
     (logTerm [])
 
 theorem append_log_term_correct {width : PNat}
     (assignment : Assignment) (columns : Columns) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
     (rep : NodeColumnsRep assignment columns arrays) (node : Fin width)
     (previous : Expr .int) (index : Nat) (same : previous.eval assignment Locals.empty = (index : Int)) :
-    (appendLogTerm width node.val previous).eval assignment Locals.empty =
+    (appendLogTerm width columns node.val previous).eval assignment Locals.empty =
       logValue (NativeArrayAppend.batchEntries (NativeArrayCheckQuorum.get arrays node).log index) := by
   have lengthAt := (rep.configuration_log node).length
   by_cases live : index < (NativeArrayCheckQuorum.get arrays node).log.length
   · have entry := rep.entries node index live
-    have normalized := normalized_entry_term_correct (entryAt width node.val previous) assignment Locals.empty
+    have normalized := normalized_entry_term_correct (entryAt width columns node.val previous) assignment Locals.empty
     simp only [entryAt, Term.eval, same] at normalized entry
     rw [entry] at normalized
-    have singleton := singleton_log_term_correct (normalizedEntryTerm (entryAt width node.val previous))
+    have singleton := singleton_log_term_correct (normalizedEntryTerm (entryAt width columns node.val previous))
       ((NativeArrayCheckQuorum.get arrays node).log.entries index) assignment Locals.empty normalized
     simpa only [appendLogTerm, lt, Term.eval, same, lengthAt, Int.ofNat_le,
       decide_eq_false (Nat.not_le.mpr live), Bool.not_false, if_true,
@@ -52,11 +53,11 @@ theorem append_log_term_correct {width : PNat}
 
 def appendPacketTerm {width : PNat} (columns : Columns) (source destination : Fin width) :
     Expr (packetTy width) :=
-  let previous := peerIndex columns.sentIndex source.val (.integer destination.val)
-  .pair (.pair (read columns.currentTerm source.val (.integer 0))
+  let previous := peerIndex columns columns.sentIndex source.val (.integer destination.val)
+  .pair (.pair (read columns columns.currentTerm source.val (.integer 0))
     (.pair (.integer source.val) (.integer destination.val)))
-    (.inl (.pair previous (.pair (logTermAt width source.val previous)
-      (.pair (commit source.val) (appendLogTerm width source.val previous)))))
+    (.inl (.pair previous (.pair (logTermAt width columns source.val previous)
+      (.pair (commit columns source.val) (appendLogTerm width columns source.val previous)))))
 
 theorem append_packet_term_correct {width : PNat}
     (assignment : Assignment) (columns : Columns) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
@@ -66,9 +67,9 @@ theorem append_packet_term_correct {width : PNat}
         (NativeArrayCheckQuorum.get arrays source) source destination)) := by
   have previous := rep.sentIndex source destination
   have term := log_term_at_correct assignment Locals.empty columns arrays rep source
-    (peerIndex columns.sentIndex source.val (.integer destination.val)) _ previous
+    (peerIndex columns columns.sentIndex source.val (.integer destination.val)) _ previous
   have entries := append_log_term_correct assignment columns arrays rep source
-    (peerIndex columns.sentIndex source.val (.integer destination.val)) _ previous
+    (peerIndex columns columns.sentIndex source.val (.integer destination.val)) _ previous
   simp only [appendPacketTerm, Term.eval, previous, term, entries, rep.currentTerm, rep.commit,
     packetValue, packetHeaderValue, packetPayloadValue, NativeArrayAppend.request,
     Message.term, Message.source, Message.destination]

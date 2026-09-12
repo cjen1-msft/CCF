@@ -10,14 +10,14 @@ namespace CCFRaft.NativeEncode
 open NativeSmt
 
 theorem stored_read_correct {sort : Ty} (assignment : Assignment)
-    (before after node peer : Nat) (default value : Expr sort)
-    (present : (allocated node : Expr .bool).eval assignment Locals.empty = true)
+    (columns : Columns) (before after node peer : Nat) (default value : Expr sort)
+    (present : (allocated columns node : Expr .bool).eval assignment Locals.empty = true)
     (binding : (Term.equal (.free (.array .int sort) after)
       (.store (.free (.array .int sort) before) (.integer node) value)).eval
         assignment Locals.empty = true) :
-    (read after peer default).eval assignment Locals.empty =
+    (read columns after peer default).eval assignment Locals.empty =
       if peer = node then value.eval assignment Locals.empty
-      else (read before peer default).eval assignment Locals.empty := by
+      else (read columns before peer default).eval assignment Locals.empty := by
   simp only [Term.eval, decide_eq_true_eq] at binding
   simp only [allocated, Term.eval] at present
   by_cases same : peer = node
@@ -39,53 +39,61 @@ theorem get_step {width : PNat} (arrays : NativeArrayCheckQuorum.Arrays (Fin wid
 
 structure NodeColumnsRep {width : PNat} (assignment : Assignment) (columns : Columns)
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat) : Prop where
-  allocated : forall (node : Fin width), (NativeEncode.allocated node.val : Expr .bool).eval assignment Locals.empty =
-    (arrays node).isSome
-  role : forall (node : Fin width), (read columns.role node.val (.integer 0)).eval assignment Locals.empty =
+  allocated : forall (node : Fin width),
+    (NativeEncode.allocated columns node.val : Expr .bool).eval assignment Locals.empty = (arrays node).isSome
+  role : forall (node : Fin width),
+    (read columns columns.role node.val (.integer 0)).eval assignment Locals.empty =
     roleCode (NativeArrayCheckQuorum.get arrays node).role
-  newFollower : forall (node : Fin width), (read columns.newFollower node.val (.boolean true)).eval assignment Locals.empty =
+  newFollower : forall (node : Fin width),
+    (read columns columns.newFollower node.val (.boolean true)).eval assignment Locals.empty =
     (NativeArrayCheckQuorum.get arrays node).isNewFollower
-  currentTerm : forall (node : Fin width), (read columns.currentTerm node.val (.integer 0)).eval assignment Locals.empty =
+  currentTerm : forall (node : Fin width),
+    (read columns columns.currentTerm node.val (.integer 0)).eval assignment Locals.empty =
     ((NativeArrayCheckQuorum.get arrays node).currentTerm : Int)
-  commit : forall (node : Fin width), (NativeEncode.commit node.val : Expr .int).eval assignment Locals.empty =
+  commit : forall (node : Fin width), (NativeEncode.commit columns node.val : Expr .int).eval assignment Locals.empty =
     ((NativeArrayCheckQuorum.get arrays node).commit : Int)
-  length : forall (node : Fin width), (NativeEncode.length node.val : Expr .int).eval assignment Locals.empty =
+  length : forall (node : Fin width), (NativeEncode.length columns node.val : Expr .int).eval assignment Locals.empty =
     ((NativeArrayCheckQuorum.get arrays node).log.length : Int)
   entries : forall (node : Fin width) (index : Nat), index < (NativeArrayCheckQuorum.get arrays node).log.length ->
-    modelEntry ((entryAt width node.val (.integer index) : Expr (entryTy width)).eval assignment Locals.empty) =
+    modelEntry ((entryAt width columns node.val (.integer index) : Expr (entryTy width)).eval
+      assignment Locals.empty) =
       (NativeArrayCheckQuorum.get arrays node).log.entries index
   retirementIndex : forall (node : Fin width),
-    (read columns.retirementIndex node.val (.inl .unit) : Expr optionalIntTy).eval assignment Locals.empty =
+    (read columns columns.retirementIndex node.val (.inl .unit) : Expr optionalIntTy).eval
+      assignment Locals.empty =
       optionalValue Nat.cast (NativeArrayCheckQuorum.get arrays node).retirementIndex
   retirementCommittableIndex : forall (node : Fin width),
-    (read columns.retirementCommittableIndex node.val (.inl .unit) : Expr optionalIntTy).eval assignment Locals.empty =
+    (read columns columns.retirementCommittableIndex node.val (.inl .unit) : Expr optionalIntTy).eval
+      assignment Locals.empty =
       optionalValue Nat.cast (NativeArrayCheckQuorum.get arrays node).retirementCommittableIndex
   retiredCommittedIndex : forall (node : Fin width),
-    (read columns.retiredCommittedIndex node.val (.inl .unit) : Expr optionalIntTy).eval assignment Locals.empty =
+    (read columns columns.retiredCommittedIndex node.val (.inl .unit) : Expr optionalIntTy).eval
+      assignment Locals.empty =
       optionalValue Nat.cast (NativeArrayCheckQuorum.get arrays node).retiredCommittedIndex
   votedFor : forall (node : Fin width),
-    (read columns.votedFor node.val (.inl .unit) : Expr optionalIntTy).eval assignment Locals.empty =
+    (read columns columns.votedFor node.val (.inl .unit) : Expr optionalIntTy).eval assignment Locals.empty =
       optionalValue (fun peer : Fin width => (peer.val : Int)) (NativeArrayCheckQuorum.get arrays node).votedFor
   votesGranted : forall (node : Fin width),
-    (read columns.votesGranted node.val (.bits 0) : Expr (.bits width)).eval assignment Locals.empty =
+    (read columns columns.votesGranted node.val (.bits 0) : Expr (.bits width)).eval assignment Locals.empty =
       encodeBits (NativeArrayCheckQuorum.get arrays node).votesGranted
   preVotesGranted : forall (node : Fin width),
-    (read columns.preVotesGranted node.val (.bits 0) : Expr (.bits width)).eval assignment Locals.empty =
+    (read columns columns.preVotesGranted node.val (.bits 0) : Expr (.bits width)).eval
+      assignment Locals.empty =
       encodeBits (NativeArrayCheckQuorum.get arrays node).preVotesGranted
   membershipState : forall (node : Fin width),
-    (read columns.membershipState node.val (.integer 0)).eval assignment Locals.empty =
+    (read columns columns.membershipState node.val (.integer 0)).eval assignment Locals.empty =
       membershipCode (NativeArrayCheckQuorum.get arrays node).membershipState
   sentIndex : forall (node peer : Fin width),
-    (peerIndex columns.sentIndex node.val (.integer peer.val)).eval assignment Locals.empty =
+    (peerIndex columns columns.sentIndex node.val (.integer peer.val)).eval assignment Locals.empty =
       ((NativeArrayCheckQuorum.get arrays node).sentIndex peer : Int)
   matchIndex : forall (node peer : Fin width),
-    (peerIndex columns.matchIndex node.val (.integer peer.val)).eval assignment Locals.empty =
+    (peerIndex columns columns.matchIndex node.val (.integer peer.val)).eval assignment Locals.empty =
       ((NativeArrayCheckQuorum.get arrays node).matchIndex peer : Int)
 
 theorem NodeColumnsRep.configuration_log {width : PNat} {assignment : Assignment}
     {columns : Columns} {arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat}
     (rep : NodeColumnsRep assignment columns arrays) (node : Fin width) :
-    ConfigurationLogRep assignment node.val (NativeArrayCheckQuorum.get arrays node).log
+    ConfigurationLogRep assignment columns node.val (NativeArrayCheckQuorum.get arrays node).log
       (NativeArrayCheckQuorum.get arrays node).commit := by
   refine ⟨rep.length node, rep.commit node, ?_⟩
   intro index within
@@ -137,8 +145,8 @@ theorem node_columns_enabled {width : PNat} [Bootstrap (Fin width)]
     (rep : NodeColumnsRep assignment columns arrays)
     (sameBootstrap : decodeBits bootstrap = INITIAL_CONFIGURATION) :
     (exists (currentValue : Int) (witnessValue : Int),
-      Holds (leadingGuards columns.role node.val ++
-        configurationGuards width bootstrap node.val currentId witnessId)
+      Holds (leadingGuards columns columns.role node.val ++
+        configurationGuards width bootstrap columns node.val currentId witnessId)
         ((assignment.set .int currentId currentValue).set .int witnessId witnessValue)) <->
       NativeArrayCheckQuorum.enabled arrays node := by
   simp only [Holds, leadingGuards, configurationGuards, List.mem_append, List.mem_cons,
@@ -151,18 +159,18 @@ theorem node_columns_enabled {width : PNat} [Bootstrap (Fin width)]
       apply (role_code_leader _).mp
       simpa only [leaderGuard, Term.eval, decide_eq_true_eq, extended.role] using leader
     refine ⟨allocatedModel, leaderModel, ?_⟩
-    exact (configuration_guards_exists_correct assignment bootstrap node currentId witnessId different
+    exact (configuration_guards_exists_correct assignment columns bootstrap node currentId witnessId different
       (NativeArrayCheckQuorum.get arrays node).log (NativeArrayCheckQuorum.get arrays node).commit
       (rep.configuration_log node) sameBootstrap).mp ⟨currentValue, witnessValue, candidate, latest, other⟩
   · rintro ⟨allocatedModel, leaderModel, configuration⟩
     obtain ⟨currentValue, witnessValue, candidate, latest, other⟩ :=
-      (configuration_guards_exists_correct assignment bootstrap node currentId witnessId different
+      (configuration_guards_exists_correct assignment columns bootstrap node currentId witnessId different
         (NativeArrayCheckQuorum.get arrays node).log (NativeArrayCheckQuorum.get arrays node).commit
         (rep.configuration_log node) sameBootstrap).mpr configuration
     have extended := (rep.set_integer currentId currentValue).set_integer witnessId witnessValue
     refine ⟨currentValue, witnessValue, (extended.allocated node).trans allocatedModel, ?_,
       candidate, latest, other⟩
-    simp only [leaderGuard, Term.eval, decide_eq_true_eq, extended.role, leaderModel, roleCode]
+    simpa only [leaderGuard, Term.eval, decide_eq_true_eq, extended.role, leaderModel, roleCode]
 
 theorem node_columns_model_enabled {width : PNat} [Bootstrap (Fin width)]
     (assignment : Assignment) (bootstrap : BitVec width) (columns : Columns)
@@ -172,8 +180,8 @@ theorem node_columns_model_enabled {width : PNat} [Bootstrap (Fin width)]
     (modelRep : NativeArrayCheckQuorum.Rep arrays model)
     (sameBootstrap : decodeBits bootstrap = INITIAL_CONFIGURATION) :
     (exists (currentValue : Int) (witnessValue : Int),
-      Holds (leadingGuards columns.role node.val ++
-        configurationGuards width bootstrap node.val currentId witnessId)
+      Holds (leadingGuards columns columns.role node.val ++
+        configurationGuards width bootstrap columns node.val currentId witnessId)
         ((assignment.set .int currentId currentValue).set .int witnessId witnessValue)) <->
       CCFRaft.Enabled model (.checkQuorum node) :=
   (node_columns_enabled assignment bootstrap columns arrays node currentId witnessId
@@ -194,7 +202,7 @@ theorem node_columns_step {width : PNat} (assignment : Assignment)
       (NativeArrayCheckQuorum.step arrays node) := by
   simp only [stepDownRole] at roleBinding
   simp only [stepDownFollower] at followerBinding
-  have allocatedNode : (allocated node.val : Expr .bool).eval assignment Locals.empty = true :=
+  have allocatedNode : (allocated before node.val : Expr .bool).eval assignment Locals.empty = true :=
     (rep.allocated node).trans present
   constructor
   · intro peer
@@ -203,7 +211,9 @@ theorem node_columns_step {width : PNat} (assignment : Assignment)
       simpa [NativeArrayCheckQuorum.step] using allocatedNode
     · simpa [NativeArrayCheckQuorum.step, same] using rep.allocated peer
   · intro peer
-    rw [stored_read_correct assignment before.role afterRole node.val peer.val
+    rw [stored_read_correct assignment
+      { before with role := afterRole, newFollower := afterFollower }
+      before.role afterRole node.val peer.val
       (.integer 0) (.integer 1) allocatedNode roleBinding, get_step]
     by_cases same : peer = node
     · subst peer
@@ -211,7 +221,9 @@ theorem node_columns_step {width : PNat} (assignment : Assignment)
     · have different : peer.val ≠ node.val := fun equal => same (Fin.ext equal)
       simpa [same, different] using rep.role peer
   · intro peer
-    rw [stored_read_correct assignment before.newFollower afterFollower node.val peer.val
+    rw [stored_read_correct assignment
+      { before with role := afterRole, newFollower := afterFollower }
+      before.newFollower afterFollower node.val peer.val
       (.boolean true) (.boolean true) allocatedNode followerBinding, get_step]
     by_cases same : peer = node
     · subst peer
@@ -221,57 +233,69 @@ theorem node_columns_step {width : PNat} (assignment : Assignment)
   · intro peer
     have previous := rep.currentTerm peer
     rw [get_step]
-    by_cases same : peer = node <;> simp_all
+    by_cases same : peer = node <;>
+      simp_all [read, NativeEncode.allocated]
   · intro peer
     have previous := rep.commit peer
     rw [get_step]
-    by_cases same : peer = node <;> simp_all
+    by_cases same : peer = node <;>
+      simp_all [NativeEncode.commit, read, NativeEncode.allocated]
   · intro peer
     have previous := rep.length peer
     rw [get_step]
-    by_cases same : peer = node <;> simp_all
+    by_cases same : peer = node <;>
+      simp_all [NativeEncode.length, read, NativeEncode.allocated]
   · intro peer index within
     rw [get_step] at within ⊢
     by_cases same : peer = node
     · subst peer
-      simpa using rep.entries node index (by simpa using within)
-    · simpa [same] using rep.entries peer index (by simpa [same] using within)
+      simpa [entryAt] using rep.entries node index (by simpa using within)
+    · simpa [entryAt, same] using rep.entries peer index (by simpa [same] using within)
   · intro peer
     have previous := rep.retirementIndex peer
     rw [get_step]
-    by_cases same : peer = node <;> simp_all
+    by_cases same : peer = node <;>
+      simp_all [read, NativeEncode.allocated]
   · intro peer
     have previous := rep.retirementCommittableIndex peer
     rw [get_step]
-    by_cases same : peer = node <;> simp_all
+    by_cases same : peer = node <;>
+      simp_all [read, NativeEncode.allocated]
   · intro peer
     have previous := rep.retiredCommittedIndex peer
     rw [get_step]
-    by_cases same : peer = node <;> simp_all
+    by_cases same : peer = node <;>
+      simp_all [read, NativeEncode.allocated]
   · intro peer
     have previous := rep.votedFor peer
     rw [get_step]
-    by_cases same : peer = node <;> simp_all
+    by_cases same : peer = node <;>
+      simp_all [read, NativeEncode.allocated]
   · intro peer
     have previous := rep.votesGranted peer
     rw [get_step]
-    by_cases same : peer = node <;> simp_all
+    by_cases same : peer = node <;>
+      simp_all [read, NativeEncode.allocated]
   · intro peer
     have previous := rep.preVotesGranted peer
     rw [get_step]
-    by_cases same : peer = node <;> simp_all
+    by_cases same : peer = node <;>
+      simp_all [read, NativeEncode.allocated]
   · intro peer
     have previous := rep.membershipState peer
     rw [get_step]
-    by_cases same : peer = node <;> simp_all
+    by_cases same : peer = node <;>
+      simp_all [read, NativeEncode.allocated]
   · intro peer target
     have previous := rep.sentIndex peer target
     rw [get_step]
-    by_cases same : peer = node <;> simp_all
+    by_cases same : peer = node <;>
+      simp_all [peerIndex, read, NativeEncode.allocated]
   · intro peer target
     have previous := rep.matchIndex peer target
     rw [get_step]
-    by_cases same : peer = node <;> simp_all
+    by_cases same : peer = node <;>
+      simp_all [peerIndex, read, NativeEncode.allocated]
 
 theorem node_columns_model_step {width : PNat} [Bootstrap (Fin width)]
     (assignment : Assignment) (before : Columns) (afterRole afterFollower : Nat)

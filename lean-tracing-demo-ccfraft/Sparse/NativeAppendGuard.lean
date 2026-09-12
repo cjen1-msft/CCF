@@ -11,23 +11,24 @@ open NativeSmt
 
 def appendFrontierTerm {width : PNat} (columns : Columns)
     (source destination : Fin width) : Expr .int :=
-  let successor := Term.add (peerIndex columns.sentIndex source.val (.integer destination.val)) (.integer 1)
-  .ite (.le successor (length source.val)) successor (length source.val)
+  let successor := Term.add (peerIndex columns columns.sentIndex source.val (.integer destination.val)) (.integer 1)
+  .ite (.le successor (length columns source.val)) successor (length columns source.val)
 
 def appendLeadingGuards {width : PNat} (columns : Columns)
     (source destination : Fin width) (batchEnd : Nat) : List (Expr .bool) :=
-  [allocated source.val, allocated destination.val,
-    .equal (read columns.role source.val (.integer 0)) (.integer (roleCode .leader)),
+  [allocated columns source.val, allocated columns destination.val,
+    .equal (read columns columns.role source.val (.integer 0)) (.integer (roleCode .leader)),
     .boolean (decide (source ≠ destination)),
     .equal (.integer batchEnd) (appendFrontierTerm columns source destination),
-    .or (.not (.equal (read columns.membershipState source.val (.integer 0))
+    .or (.not (.equal (read columns columns.membershipState source.val (.integer 0))
       (.integer (membershipCode .retiredCommitted))))
-      (lt (peerIndex columns.sentIndex source.val (.integer destination.val)) (.integer batchEnd))]
+      (lt (peerIndex columns columns.sentIndex source.val (.integer destination.val)) (.integer batchEnd))]
 
 def appendScanGuards {width : PNat} (columns : Columns) (bootstrap : BitVec width)
     (source destination : Fin width) (base : Nat) : List (Expr .bool) :=
-  [currentCandidate width source.val base, noLaterConfiguration width source.val base,
-    .or (activeMemberTerm width bootstrap source.val destination (.free .int base) (.free .int (base + 1)))
+  [currentCandidate width columns source.val base, noLaterConfiguration width columns source.val base,
+    .or (activeMemberTerm width bootstrap columns source.val destination
+      (.free .int base) (.free .int (base + 1)))
       (.bit (.select (.free (.array .int (.bits width)) columns.retirementCompleted)
         (.integer source.val)) destination)]
 

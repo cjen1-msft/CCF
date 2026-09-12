@@ -20,9 +20,9 @@ def fixture (name : String) (term : Int) (content : Expr (contentTy 3))
     | _ => { decoded with content := if decoded.content = .signature then .transaction 7 else .signature }
   let observed <- observationClauses (width := 3) {} (.entry 0 index expected)
   let assertions : List (Expr .bool) := [
-    .equal (allocated 0) (.boolean present),
-    .equal (read 3 0 (.integer 0)) (.integer (if present then liveLength else 0)),
-    .equal (entryAt 3 0 (.integer index)) (.pair (.integer term) content)] ++ observed
+    .equal (allocated {} 0) (.boolean present),
+    .equal (read {} 3 0 (.integer 0)) (.integer (if present then liveLength else 0)),
+    .equal (entryAt 3 {} 0 (.integer index)) (.pair (.integer term) content)] ++ observed
   return Json.mkObj [("name", toJson name), ("script", toJson (renderScript assertions)),
     ("expected", toJson (if present && index < liveLength && mutation == 0 then "sat" else "unsat"))]
 

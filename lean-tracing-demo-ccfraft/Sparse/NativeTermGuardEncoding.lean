@@ -21,7 +21,7 @@ theorem term_update_guards_correct {width : PNat}
     have samePacket := queue_head_packet_term_correct assignment columns frame rep source destination nonempty
     have sameSource : packet.source = source := rep.queue_head_source source destination nonempty
     have allowed := packet_source_allowed_term_correct
-      (queueHeadPacketTerm columns source destination) (allocated source.val)
+      (queueHeadPacketTerm columns source destination) (allocated columns source.val)
       assignment Locals.empty frame.nodes packet samePacket
       (by simpa only [sameSource] using rep.nodes.allocated source)
     have lengthValue :

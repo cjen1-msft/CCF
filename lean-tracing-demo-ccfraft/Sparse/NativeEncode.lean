@@ -38,9 +38,13 @@ def members {context : List Ty} {width : PNat}
       (.cases (.bound .here) (.bound .here) (.bits 0)))
 
 structure Columns where
+  allocated : Nat := 0
   role : Nat := 1
   newFollower : Nat := 2
+  logLength : Nat := 3
+  commit : Nat := 4
   currentTerm : Nat := 5
+  logEntries : Nat := 6
   retirementIndex : Nat := 7
   retirementCommittableIndex : Nat := 8
   retiredCommittedIndex : Nat := 9
@@ -100,33 +104,37 @@ def define {width : PNat} {sort : Ty} (value : Expr sort) : EncodeM width Nat :=
       return id) : EncodeM width Nat).run state
   else .error "internal encoder error: definition references an unallocated SMT symbol"
 
-def allocated {context : List Ty} (node : Nat) : Term context .bool :=
-  .select (.free (.array .int .bool) 0) (.integer node)
+def allocated {context : List Ty} (columns : Columns) (node : Nat) : Term context .bool :=
+  .select (.free (.array .int .bool) columns.allocated) (.integer node)
 
-def read {context : List Ty} {sort : Ty} (column node : Nat)
+def read {context : List Ty} {sort : Ty} (columns : Columns) (column node : Nat)
     (default : Term context sort) : Term context sort :=
-  .ite (allocated node) (.select (.free (.array .int sort) column) (.integer node)) default
+  .ite (allocated columns node) (.select (.free (.array .int sort) column) (.integer node)) default
 
-def length {context : List Ty} (node : Nat) : Term context .int := read 3 node (.integer 0)
-def commit {context : List Ty} (node : Nat) : Term context .int := read 4 node (.integer 0)
+def length {context : List Ty} (columns : Columns) (node : Nat) : Term context .int :=
+  read columns columns.logLength node (.integer 0)
 
-def peerIndex {context : List Ty} (column node : Nat) (peer : Term context .int) :
+def commit {context : List Ty} (columns : Columns) (node : Nat) : Term context .int :=
+  read columns columns.commit node (.integer 0)
+
+def peerIndex {context : List Ty} (columns : Columns) (column node : Nat) (peer : Term context .int) :
     Term context .int :=
-  .ite (allocated node)
+  .ite (allocated columns node)
     (.select (.select (.free (.array .int (.array .int .int)) column) (.integer node)) peer)
     (.integer 0)
 
-def peerDomain (width : PNat) (column node : Nat) : Expr .bool :=
+def peerDomain (width : PNat) (columns : Columns) (column node : Nat) : Expr .bool :=
   .forall_ .int (implies
     (.and (.le (.integer 0) (.bound .here)) (lt (.bound .here) (.integer width.val)))
-    (.le (.integer 0) (peerIndex column node (.bound .here))))
+    (.le (.integer 0) (peerIndex columns column node (.bound .here))))
 
-def entryAt {context : List Ty} (width : PNat) (node : Nat)
+def entryAt {context : List Ty} (width : PNat) (columns : Columns) (node : Nat)
     (index : Term context .int) : Term context (entryTy width) :=
-  .select (.select (.free (.array .int (.array .int (entryTy width))) 6) (.integer node)) index
+  .select (.select (.free (.array .int (.array .int (entryTy width))) columns.logEntries)
+    (.integer node)) index
 
-def leaderGuard (column node : Nat) : Expr .bool :=
-  .equal (read column node (.integer 0)) (.integer 4)
+def leaderGuard (columns : Columns) (column node : Nat) : Expr .bool :=
+  .equal (read columns column node (.integer 0)) (.integer 4)
 
 def stepDownRole (column node : Nat) : Expr (.array .int .int) :=
   .store (.free (.array .int .int) column) (.integer node) (.integer 1)
@@ -135,22 +143,22 @@ def stepDownFollower (column node : Nat) : Expr (.array .int .bool) :=
   .store (.free (.array .int .bool) column) (.integer node) (.boolean true)
 
 def initialNodeDomains (width : PNat) (node : Nat) : List (Expr .bool) :=
-  [all [.le (.integer 0) (read 1 node (.integer 0)),
-      .le (read 1 node (.integer 0)) (.integer 4)],
-    .le (.integer 0) (read 3 node (.integer 0)),
-    .le (.integer 0) (read 4 node (.integer 0)),
-    .le (.integer 0) (read 5 node (.integer 0)),
+  [all [.le (.integer 0) (read {} 1 node (.integer 0)),
+      .le (read {} 1 node (.integer 0)) (.integer 4)],
+    .le (.integer 0) (read {} 3 node (.integer 0)),
+    .le (.integer 0) (read {} 4 node (.integer 0)),
+    .le (.integer 0) (read {} 5 node (.integer 0)),
     .forall_ .int (implies
-      (.and (.le (.integer 0) (.bound .here)) (lt (.bound .here) (length node)))
-      (entryDomain (entryAt width node (.bound .here)))),
-    optionalNatDomain (read 7 node (.inl .unit)),
-    optionalNatDomain (read 8 node (.inl .unit)),
-    optionalNatDomain (read 9 node (.inl .unit)),
-    optionalNodeDomain width (read 10 node (.inl .unit)),
-    all [.le (.integer 0) (read 13 node (.integer 0)),
-      .le (read 13 node (.integer 0)) (.integer 4)],
-    peerDomain width 14 node,
-    peerDomain width 15 node]
+      (.and (.le (.integer 0) (.bound .here)) (lt (.bound .here) (length {} node)))
+      (entryDomain (entryAt width {} node (.bound .here)))),
+    optionalNatDomain (read {} 7 node (.inl .unit)),
+    optionalNatDomain (read {} 8 node (.inl .unit)),
+    optionalNatDomain (read {} 9 node (.inl .unit)),
+    optionalNodeDomain width (read {} 10 node (.inl .unit)),
+    all [.le (.integer 0) (read {} 13 node (.integer 0)),
+      .le (read {} 13 node (.integer 0)) (.integer 4)],
+    peerDomain width {} 14 node,
+    peerDomain width {} 15 node]
 
 def initialAssertions (width : PNat) : List (Expr .bool) :=
   (List.range width.val).flatMap (initialNodeDomains width)
@@ -158,44 +166,45 @@ def initialAssertions (width : PNat) : List (Expr .bool) :=
 def initialDomains (width : PNat) : EncodeM width Unit :=
   assertAll (initialAssertions width)
 
-def currentCandidate (width : PNat) (node currentId : Nat) : Expr .bool :=
+def currentCandidate (width : PNat) (columns : Columns) (node currentId : Nat) : Expr .bool :=
   let current : Expr .int := .free .int currentId
-  all [.le (.integer 0) current, .le current (length node), .le current (commit node),
+  all [.le (.integer 0) current, .le current (length columns node), .le current (commit columns node),
     .or (.equal current (.integer 0))
-      (isConfiguration (.snd (entryAt width node (.sub current (.integer 1)))))]
+      (isConfiguration (.snd (entryAt width columns node (.sub current (.integer 1)))))]
 
-def noLaterConfiguration (width : PNat) (node currentId : Nat) : Expr .bool :=
+def noLaterConfiguration (width : PNat) (columns : Columns) (node currentId : Nat) : Expr .bool :=
   .forall_ .int (implies
     (all [lt (.free .int currentId) (.bound .here),
-      .le (.bound .here) (length node), .le (.bound .here) (commit node)])
-    (.not (isConfiguration (.snd (entryAt width node (.sub (.bound .here) (.integer 1)))))))
+      .le (.bound .here) (length columns node), .le (.bound .here) (commit columns node)])
+    (.not (isConfiguration
+      (.snd (entryAt width columns node (.sub (.bound .here) (.integer 1)))))))
 
 def otherConfiguration (width : PNat) (bootstrap : BitVec width)
-    (node currentId witnessId : Nat) : Expr .bool :=
+    (columns : Columns) (node currentId witnessId : Nat) : Expr .bool :=
   let current : Expr .int := .free .int currentId
   let witness : Expr .int := .free .int witnessId
   let others : Expr (.bits width) := .bitsNot (.bits (BitVec.ofNat width (2 ^ node)))
   let hasOther := fun (nodes : Expr (.bits width)) =>
     Term.not (.equal (.bitsAnd nodes others) (.bits 0))
   .or (.and (.equal current (.integer 0)) (hasOther (.bits bootstrap)))
-    (all [.le (.integer 1) witness, .le current witness, .le witness (length node),
-      isConfiguration (.snd (entryAt width node (.sub witness (.integer 1)))),
-      hasOther (members (.snd (entryAt width node (.sub witness (.integer 1)))))])
+    (all [.le (.integer 1) witness, .le current witness, .le witness (length columns node),
+      isConfiguration (.snd (entryAt width columns node (.sub witness (.integer 1)))),
+      hasOther (members (.snd (entryAt width columns node (.sub witness (.integer 1)))))])
 
-def leadingGuards (roleColumn node : Nat) : List (Expr .bool) :=
-  [allocated node, leaderGuard roleColumn node]
+def leadingGuards (columns : Columns) (roleColumn node : Nat) : List (Expr .bool) :=
+  [allocated columns node, leaderGuard columns roleColumn node]
 
 def configurationGuards (width : PNat) (bootstrap : BitVec width)
-    (node currentId witnessId : Nat) : List (Expr .bool) :=
-  [currentCandidate width node currentId, noLaterConfiguration width node currentId,
-    otherConfiguration width bootstrap node currentId witnessId]
+    (columns : Columns) (node currentId witnessId : Nat) : List (Expr .bool) :=
+  [currentCandidate width columns node currentId, noLaterConfiguration width columns node currentId,
+    otherConfiguration width bootstrap columns node currentId witnessId]
 
 def checkQuorum {width : PNat} (node : Nat) : EncodeM width Unit := do
   let before <- get
-  assertAll (leadingGuards before.role node)
+  assertAll (leadingGuards before.toColumns before.role node)
   let currentId <- fresh
   let witnessId <- fresh
-  assertAll (configurationGuards width before.bootstrap node currentId witnessId)
+  assertAll (configurationGuards width before.bootstrap before.toColumns node currentId witnessId)
   let roleId <- define (stepDownRole before.role node)
   let followerId <- define (stepDownFollower before.newFollower node)
   modify fun state => { state with role := roleId, newFollower := followerId }
@@ -321,33 +330,41 @@ def decodeInstruction (width : PNat) (names : Array String) (value : Json) :
 
 def observationClauses {width : PNat} (columns : Columns) :
     NativeArrayCheckQuorum.Instruction (Fin width) Nat -> Except String (List (Expr .bool))
-  | .allocated node expected => .ok [.equal (allocated node.val) (.boolean expected)]
-  | .role node expected => .ok [.equal (read columns.role node.val (.integer 0)) (.integer (roleCode expected))]
-  | .newFollower node expected => .ok [.equal (read columns.newFollower node.val (.boolean true)) (.boolean expected)]
-  | .logLength node expected => .ok [.equal (length node.val) (.integer expected)]
-  | .commit node expected => .ok [.equal (commit node.val) (.integer expected)]
-  | .currentTerm node expected => .ok [.equal (read columns.currentTerm node.val (.integer 0)) (.integer expected)]
-  | .entry node index expected => .ok [lt (.integer index) (length node.val),
-      .equal (normalizedEntryTerm (entryAt width node.val (.integer index))) (entryTerm expected)]
+  | .allocated node expected => .ok [.equal (allocated columns node.val) (.boolean expected)]
+  | .role node expected =>
+    .ok [.equal (read columns columns.role node.val (.integer 0)) (.integer (roleCode expected))]
+  | .newFollower node expected =>
+    .ok [.equal (read columns columns.newFollower node.val (.boolean true)) (.boolean expected)]
+  | .logLength node expected => .ok [.equal (length columns node.val) (.integer expected)]
+  | .commit node expected => .ok [.equal (commit columns node.val) (.integer expected)]
+  | .currentTerm node expected =>
+    .ok [.equal (read columns columns.currentTerm node.val (.integer 0)) (.integer expected)]
+  | .entry node index expected => .ok [lt (.integer index) (length columns node.val),
+      .equal (normalizedEntryTerm (entryAt width columns node.val (.integer index)))
+        (entryTerm expected)]
   | .retirementIndex node expected =>
-    .ok [.equal (read columns.retirementIndex node.val (.inl .unit)) (optionalTerm Nat.cast expected)]
+    .ok [.equal (read columns columns.retirementIndex node.val (.inl .unit))
+      (optionalTerm Nat.cast expected)]
   | .retirementCommittableIndex node expected =>
-    .ok [.equal (read columns.retirementCommittableIndex node.val (.inl .unit)) (optionalTerm Nat.cast expected)]
+    .ok [.equal (read columns columns.retirementCommittableIndex node.val (.inl .unit))
+      (optionalTerm Nat.cast expected)]
   | .retiredCommittedIndex node expected =>
-    .ok [.equal (read columns.retiredCommittedIndex node.val (.inl .unit)) (optionalTerm Nat.cast expected)]
+    .ok [.equal (read columns columns.retiredCommittedIndex node.val (.inl .unit))
+      (optionalTerm Nat.cast expected)]
   | .votedFor node expected =>
-    .ok [.equal (read columns.votedFor node.val (.inl .unit))
+    .ok [.equal (read columns columns.votedFor node.val (.inl .unit))
       (optionalTerm (fun peer : Fin width => (peer.val : Int)) expected)]
   | .votesGranted node expected =>
-    .ok [.equal (read columns.votesGranted node.val (.bits 0)) (.bits (encodeBits expected))]
+    .ok [.equal (read columns columns.votesGranted node.val (.bits 0)) (.bits (encodeBits expected))]
   | .preVotesGranted node expected =>
-    .ok [.equal (read columns.preVotesGranted node.val (.bits 0)) (.bits (encodeBits expected))]
+    .ok [.equal (read columns columns.preVotesGranted node.val (.bits 0)) (.bits (encodeBits expected))]
   | .membershipState node expected =>
-    .ok [.equal (read columns.membershipState node.val (.integer 0)) (.integer (membershipCode expected))]
+    .ok [.equal (read columns columns.membershipState node.val (.integer 0))
+      (.integer (membershipCode expected))]
   | .sentIndex node peer expected =>
-    .ok [.equal (peerIndex columns.sentIndex node.val (.integer peer.val)) (.integer expected)]
+    .ok [.equal (peerIndex columns columns.sentIndex node.val (.integer peer.val)) (.integer expected)]
   | .matchIndex node peer expected =>
-    .ok [.equal (peerIndex columns.matchIndex node.val (.integer peer.val)) (.integer expected)]
+    .ok [.equal (peerIndex columns columns.matchIndex node.val (.integer peer.val)) (.integer expected)]
   | _ => .error "unsupported native Lean observation"
 
 def instruction {width : PNat} (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat) :

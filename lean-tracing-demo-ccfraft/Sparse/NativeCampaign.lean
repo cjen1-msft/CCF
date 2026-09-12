@@ -11,14 +11,14 @@ namespace CCFRaft.NativeEncode
 open NativeSmt
 
 def campaignTerm (columns : Columns) (preVote : Bool) (node : Nat) : Expr .int :=
-  .add (read columns.currentTerm node (.integer 0)) (.integer (if preVote then 0 else 1))
+  .add (read columns columns.currentTerm node (.integer 0)) (.integer (if preVote then 0 else 1))
 
 def campaignVotedFor (columns : Columns) (preVote : Bool) (node : Nat) : Expr optionalIntTy :=
-  if preVote then read columns.votedFor node (.inl .unit) else .inr (.integer node)
+  if preVote then read columns columns.votedFor node (.inl .unit) else .inr (.integer node)
 
 def campaignVotesGranted {width : PNat} (columns : Columns) (preVote : Bool)
     (node : Fin width) : Expr (.bits width) :=
-  if preVote then read columns.votesGranted node.val (.bits 0) else .bits (encodeBits {node})
+  if preVote then read columns columns.votesGranted node.val (.bits 0) else .bits (encodeBits {node})
 
 def campaignPreVotesGranted {width : PNat} (preVote : Bool) (node : Fin width) : Expr (.bits width) :=
   .bits (if preVote then encodeBits {node} else 0)
@@ -48,12 +48,16 @@ def campaignWrites {width : PNat} (preVote : Bool) (node : Fin width) : EncodeM 
       votesGranted := votesId, preVotesGranted := preVotesId }
   | _ => throw "internal encoder error: campaign definition count changed"
 
-def campaign {width : PNat} (preVote : Bool) (node : Fin width) : EncodeM width Unit := do
-  let before <- get
+def campaignGuard {width : PNat} (columns : Columns) (bootstrap : BitVec width)
+    (preVote : Bool) (node : Fin width) : EncodeM width Unit := do
   let base <- fresh
   let _ <- fresh
   let _ <- fresh
-  assertAll (campaignGuards before.toColumns before.bootstrap preVote node base)
-  campaignWrites preVote node
+  assertAll (campaignGuards columns bootstrap preVote node base)
+
+def campaign {width : PNat} (preVote : Bool) (node : Fin width) : EncodeM width Unit :=
+  fun before =>
+    (campaignGuard before.toColumns before.bootstrap preVote node >>= fun _ =>
+      campaignWrites preVote node).run before
 
 end CCFRaft.NativeEncode

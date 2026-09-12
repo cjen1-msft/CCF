@@ -62,7 +62,7 @@ def fixture (index : Nat) (log : List (Entry (Fin 3) Nat)) (term : Nat)
     for item in before do frameInstruction item
     let columns := (<- get).toColumns
     let signature <- fresh
-    assertion (signatureIndexTerm 3 destination.val (.free .int signature))
+    assertion (signatureIndexTerm 3 columns destination.val (.free .int signature))
     voteReceiveWrites source destination (queueHeadPacketTerm columns source destination) (.free .int signature)
     for item in after do frameInstruction item
   let (_, final) <- program.run (initialEncoding 3 {0, 1})
