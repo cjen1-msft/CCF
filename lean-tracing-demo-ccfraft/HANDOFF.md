@@ -575,10 +575,15 @@ It supplies canonical single-integer witnesses for configuration, signature,
 and NACK scans while preserving the supplied assignment and prior assertions.
 The parent inspected the helpers and their semantic equivalences, then rebuilt
 the module in `native-log-summary-assignment-parent-build.log`. The import audit passes.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns only new
-`NativeLogSpliceAssignment.lean`, extending an assignment with the fresh splice array.
-That helper reuses `spliceRawOutput`, preserves raw live cells, and allows arbitrary tails.
-Runtime files remain unchanged.
+`NativeLogSpliceAssignment.lean` is committed as `28465db0c`.
+It extends the supplied assignment with a fresh array built by `spliceRawOutput`,
+preserving raw live cells and allowing arbitrary tails. It also preserves prior assertions.
+The parent inspected and rebuilt it in `native-log-splice-assignment-parent-build.log`;
+the import audit passes.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns only
+`NativeMembershipTermsEncoding.lean`, adding a guard-to-Model equivalence that
+accepts the already-proved output row instead of repeating the retirement witnesses.
+Existing API statements and runtime files remain unchanged.
 
 `NativeArrayCoreActionsFixtureMain` and `NativeCoreActionsFixtureMain` are
 committed as `05b512bdc`. They exercise all five prioritized actions in one
