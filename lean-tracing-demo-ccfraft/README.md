@@ -492,7 +492,8 @@ The private `NativeMembershipChange` encoder passes 1,572 Model-derived
 transition scripts, including 147 SAT cases. It appends the configuration,
 refreshes retirement, allocates newly added identities, and sets their sent
 cursors to the old log length. `NativeMembershipTermsEncoding` proves the
-guards. Allocation and whole-action correspondence remain unfinished, so
+guards, and `NativeMembershipRowEncoding` proves the source-row terms.
+Allocation and whole-action correspondence remain unfinished, so
 public `changeConfiguration` remains unsupported.
 `NativeAllocation` reuses row snapshots to reset hidden fields before exposing
 missing nodes. Existing rows survive. The baseline uses 17 definitions per

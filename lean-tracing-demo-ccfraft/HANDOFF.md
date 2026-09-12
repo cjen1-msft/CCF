@@ -521,10 +521,23 @@ Added-peer sent cursors use the old log length.
 All 1,572 full Model transitions pass, including 147 SAT cases, in
 `native-membership-change-tests.log`. The parent build passes in
 `native-membership-change-build.log`. Public membership remains unsupported.
-The row terms and whole-action correspondence still need proofs.
+`NativeMembershipRowEncoding.lean` is committed as `b87a7d314`.
+It proves the old-length sent-index update and the source row's actual guarded
+refresh, reusing row representation record updates rather than repeating fields.
+The parent inspected the complete module. Its independent build and import audit
+pass in `native-membership-row-parent-build.log` and
+`native-membership-row-import-tests.log`. Whole-action correspondence remains pending.
+
+`NativeMembershipWrites.lean` is committed as `d1ae8ef15`.
+It extracts allocation, source-row replacement, and both global stores.
+All row and bitvector inputs are checked against the original counter before
+allocation starts. Its 15 future-ID rejections pass in
+`native-membership-write-reference-tests.log`. All 1,572 membership scripts
+and 184 combined sequences remain byte-identical after extraction.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns only new
-`NativeMembershipRowEncoding.lean`, proving the old-length sent-index update
-and the source row's actual guarded refresh. The runtime remains parent-owned.
+`NativeMembershipWritesEncoding.lean`. It proves execution and the post-allocation
+writes, then composes full correspondence when A's allocation proof is available.
+The runtime remains parent-owned.
 
 `NativeArrayCoreActionsFixtureMain` and `NativeCoreActionsFixtureMain` are
 committed as `05b512bdc`. They exercise all five prioritized actions in one
