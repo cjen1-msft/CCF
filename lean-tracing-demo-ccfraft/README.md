@@ -172,6 +172,17 @@ The original finite-domain encoding took 50.6 seconds on a 21-node observation.
 The proved decoded-length encoder takes 9.7 seconds on the same case.
 Set `CCF_NATIVE_ARRAY_ARTIFACTS` when running `test_native_lean_smt.py` to retain
 scripts, solver output, and per-formula `.metrics.json` files.
+`NativeQueuePacket` gives raw packet cells a total internal interpretation.
+Valid, source-correct cells retain their packets. Other raw cells represent a
+zero-term, self-addressed ProposeVote packet. This is storage interpretation,
+not recovery from malformed JSON input.
+`NativeQueuePoint.model_queue_complete` proves that encoding and decoding
+preserves every source-correct native FIFO, including duplicate packets.
+Unobserved packets need not be default packets, and unused cells need no constraints.
+`queuePoint` checks the live index and complete packet observation.
+Its Boolean matching clauses avoid a datatype-valued conditional when the
+observation excludes the default packet. The observation remains asserted.
+These queue-point proofs are not yet connected to the public JSON compiler.
 
 `NativeQuorumEncoding.current_configuration_model_correct` connects the exact
 `currentCandidate` and `noLaterConfiguration` clauses used by the compiler to

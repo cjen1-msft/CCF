@@ -358,7 +358,7 @@ native queues. No universal queue-length domain remains.
 the empty-network template. Neither endpoint must be allocated.
 `initial_frame_assignment_rep` preserves arbitrary original frames in the
 completeness direction. Quorum steps preserve queue lengths.
-The normal Sparse proof build passes. There are now 103 kernel-backed formula
+The normal Sparse proof build passes. There are now 115 kernel-backed formula
 fixtures, including positive and negative raw-cell decoding.
 The public queue regression includes one, two, and 21 identities, large lengths,
 strict input errors, independent pairs, and quorum framing.
@@ -417,12 +417,50 @@ Both fixture collections have the allowed-axiom audit.
 No public packet observation is accepted yet. Next wire queue head/live cells
 with source-partition validity, then strict packet decoding and observations.
 
+The universal live-queue packet domain was measured and rejected. A row with
+head and length `10^30` returned `unknown` after 34.3 seconds. Its script and
+metrics are retained as `native-universal-queue-row-baseline.*` in session files.
+The uncommitted universal row/cell emitters were removed rather than weakening
+the expected SAT verdict or imposing a queue-size bound.
+
+`NativeQueueDomain.queuePacketDomain` checks one raw packet's validity and source.
+`NativeQueuePacket.modelQueuePacket` gives every raw cell a source-correct Model
+interpretation. Valid source-correct cells decode normally; others represent
+`defaultQueuePacket source`, a zero-term self-addressed ProposeVote.
+This is an internal storage codec, not permissive JSON decoding.
+`model_queue_packet_value` preserves every valid Model packet from its source.
+`queue_packet_term_correct` proves the corresponding datatype-valued `ite`.
+That direct `ite` still caused cvc5 `unknown` in two point-observation fixtures.
+`queuePacketMatches` now specializes its Boolean clauses using the expected
+packet, retaining the full observation. If it is not the default, the clauses
+assert both raw validity/source and the raw packet match. Otherwise they permit
+either an invalid raw cell or a matching raw packet. Both branches are proved
+equivalent to the total decoder.
+
+`NativeQueuePoint.modelQueue` constructs a well-formed native FIFO from arbitrary
+raw cells. `model_queue_complete` preserves every original source-correct
+FIFO's decoded sequence, including duplicate packets and nonzero heads.
+`queue_point_correct` proves actual emitted live-index and packet matching
+against the native queue's list lookup. There is no universal live-cell premise.
+All 115 formulas pass in `native-queue-observed-packet-tests.log`.
+The huge-row fixture now observes its first and last packets and solves in
+11.4 ms. The append-packet row solves in 32.1 ms. Solver metrics are retained.
+
+Next integrate these queue proofs into the public frame compiler:
+add head and packet-array references alongside length column 21, and use the
+total queue decoder for initial realization. A decoded-list equality is enough
+to represent queues; raw cells before the head or beyond the length need not
+match native unused cells. `initial_frame_assignment_rep` will require
+`frame.Valid` for queue source correspondence, already available in trace
+completeness. Preserve arbitrary valid initial Model states.
+Then add strict packet JSON decoding and `queuePoint`, followed by actions.
+
 `NativeOptional` is the next value-codec unit for local-state coverage.
 It uses the existing sum datatype for optional natural indices and identities.
 Decoding distinguishes a valid absent value, `some none`, from invalid payloads,
 `none`. It rejects negative indices and identities outside the declared width.
 The proofs cover round trips, exact literal equality, and actual domain terms.
-`NativeSmtFixtureMain` now has 103 kernel-backed solver cases, including nine
+`NativeSmtFixtureMain` now has 115 kernel-backed solver cases, including nine
 optional-value cases. The codecs are now wired for all three retirement-index
 fields and `votedFor`.
 

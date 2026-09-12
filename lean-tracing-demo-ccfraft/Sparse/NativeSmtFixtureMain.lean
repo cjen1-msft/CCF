@@ -11,6 +11,7 @@ import Sparse.NativePacketHeader
 import Sparse.NativePacketDomain
 import Sparse.NativePacketMatch
 import Sparse.NativeQueueLengths
+import Sparse.NativeQueuePoint
 import Lean.Data.Json
 
 set_option autoImplicit false
@@ -549,6 +550,104 @@ private def packetMatchConflicts : List Case :=
       (samplePackets[(index.val + 1) % 7]'(by simp [samplePackets]; omega))
       (by fin_cases index <;> decide))
 
+private def queueDecodedPacketValid : Case :=
+  let packet : Term [] (NativeEncode.packetTy 2) := .free (NativeEncode.packetTy 2) 0
+  { name := "queue-decoded-packet-valid"
+    formula := NativeEncode.packetDomain (NativeEncode.queuePacketTerm 1 packet)
+    expected := true
+    correct := by
+      intro assignment
+      rw [NativeEncode.packet_domain_correct, NativeEncode.queue_packet_term_correct]
+      exact NativeEncode.packet_value_valid _ }
+
+private def queueDecodedPacketSource : Case :=
+  let packet : Term [] (NativeEncode.packetTy 2) := .free (NativeEncode.packetTy 2) 0
+  { name := "queue-decoded-packet-source"
+    formula := .equal (NativeEncode.packetSource (NativeEncode.queuePacketTerm 1 packet)) (.integer 1)
+    expected := true
+    correct := by
+      intro assignment
+      simp only [Term.eval, decide_eq_true_eq, NativeEncode.packetSource]
+      rw [NativeEncode.queue_packet_term_correct]
+      change ((NativeEncode.modelQueuePacket 1 (packet.eval assignment Locals.empty)).source.val : Int) = 1
+      rw [NativeEncode.model_queue_packet_source]
+      rfl }
+
+private def queuePointOutOfRange (name : String) (length index : Nat) (outside : length <= index) : Case :=
+  { name
+    formula := NativeEncode.queuePoint (width := 2) 0 (.integer 3) (.integer length)
+      (.free (.array .int (NativeEncode.packetTy 2)) 0) index (NativeEncode.defaultQueuePacket 0)
+    expected := false
+    correct := by
+      intro assignment
+      simp [NativeEncode.queuePoint, NativeEncode.lt, Term.eval, outside] }
+
+private def queueWrongSource : Case :=
+  let expected : Message (Fin 2) Nat := .proposeVoteRequest { term := 0, source := 1, destination := 0 }
+  let cells : Term [] (.array .int (NativeEncode.packetTy 2)) :=
+    .free (.array .int (NativeEncode.packetTy 2)) 0
+  { name := "queue-point-source-conflict"
+    formula := NativeEncode.queuePoint 0 (.integer 3) (.integer 2) cells 0 expected
+    expected := false
+    correct := by
+      intro assignment
+      apply Bool.eq_false_iff.mpr
+      intro held
+      have observed := (NativeEncode.queue_point_correct 0 (.integer 3) (.integer 2) cells 0 expected
+        assignment Locals.empty (by simp [Term.eval]) (by simp [Term.eval])).mp held
+      rw [<- NativeArrayQueue.Queue.point_correct] at observed
+      have same := congrArg Message.source observed.2
+      simp only [NativeEncode.modelQueue] at same
+      rw [NativeEncode.model_queue_packet_source] at same
+      simp [expected, Message.source] at same }
+
+private def queueInvalidRaw (name : String) (term source : Int) (invalid : term < 0 \/ source ≠ 0) : Case :=
+  let packet : Term [] (NativeEncode.packetTy 2) :=
+    .pair (.pair (.integer term) (.pair (.integer source) (.integer 1)))
+      (.inr (.inr (.inr (.inr (.inr (.inr .unit))))))
+  { name
+    formula := .equal (NativeEncode.queuePacketTerm 0 packet) (NativeEncode.defaultQueuePacketTerm 0)
+    expected := true
+    correct := by
+      intro assignment
+      rcases invalid with negative | wrongSource
+      · simp [NativeEncode.queuePacketTerm, NativeEncode.queuePacketDomain, NativeEncode.packetDomain,
+          NativeEncode.packetHeaderDomain, packet, Term.eval, not_le.mpr negative]
+      · simp [NativeEncode.queuePacketTerm, NativeEncode.queuePacketDomain, NativeEncode.packetSource,
+          packet, Term.eval, wrongSource] }
+
+private def queueRowSat (name : String) (head length : Nat) (packet : Message (Fin 2) Nat)
+    (nonempty : 2 <= length) : SatCase :=
+  let cells : Term [] (.array .int (NativeEncode.packetTy 2)) :=
+    .free (.array .int (NativeEncode.packetTy 2)) 0
+  { name
+    formula := .and (NativeEncode.queuePoint (width := 2) packet.source (.integer head) (.integer length) cells 0 packet)
+      (NativeEncode.queuePoint (width := 2) packet.source (.integer head) (.integer length) cells (length - 1) packet)
+    correct := by
+      let assignment := Assignment.default.set (.array .int (NativeEncode.packetTy 2)) 0
+        (fun _ => NativeEncode.packetValue (width := 2) packet)
+      refine ⟨assignment, ?_⟩
+      have point (index : Nat) (within : index < length) :
+          (NativeEncode.queuePoint (width := 2) packet.source (.integer head) (.integer length) cells index packet).eval
+            assignment Locals.empty = true := by
+        rw [NativeEncode.queue_point_correct _ _ _ _ _ _ assignment Locals.empty
+          (by simp [Term.eval]) (by simp [Term.eval]), <- NativeArrayQueue.Queue.point_correct]
+        simp only [NativeEncode.modelQueue, Term.eval]
+        refine ⟨within, ?_⟩
+        simp only [cells, assignment, Term.eval]
+        simp [Assignment.set]
+        exact NativeEncode.model_queue_packet_value (width := 2) packet.source packet rfl
+      simp only [Term.eval, Bool.and_eq_true]
+      exact ⟨point 0 (by omega), point (length - 1) (by omega)⟩ }
+
+def queueSatCases : List SatCase := [
+  queueRowSat "queue-row-duplicate-packets" 3 2
+    (.proposeVoteRequest { term := 0, source := 0, destination := 1 }) (by decide),
+  queueRowSat "queue-row-large-live-range" (10 ^ 30) (10 ^ 30)
+    (.proposeVoteRequest { term := 0, source := 1, destination := 0 }) (by decide),
+  queueRowSat "queue-row-append-packets" 3 2 (.appendEntriesRequest sampleAppend) (by decide),
+  queueRowSat "queue-row-default-packets" 3 2 (NativeEncode.defaultQueuePacket (width := 2) 0) (by decide)]
+
 def cases : List Case := [
   stored, wrongStore, nestedArray, constantArray, pair, sum, capture, nestedQuantifiers,
   wideBits, widerBits, bitsOperations, unitAndSecond, typedSymbols, overwrittenStore,
@@ -590,12 +689,19 @@ def cases : List Case := [
   queueLengthLiteral "queue-decode-large-negative" (-(10 ^ 30)),
   queueLengthLiteral "queue-decode-zero" 0,
   queueLengthLiteral "queue-decode-positive" 1,
-  queueLengthLiteral "queue-decode-large-positive" (10 ^ 30)] ++ packetCases ++ logMatchCases ++ packetMatchConflicts
+  queueLengthLiteral "queue-decode-large-positive" (10 ^ 30),
+  queueDecodedPacketValid, queueDecodedPacketSource, queueWrongSource,
+  queuePointOutOfRange "queue-empty-point" 0 0 (by decide),
+  queuePointOutOfRange "queue-tail-point" 2 2 (by decide),
+  queuePointOutOfRange "queue-distant-point" 2 (10 ^ 30) (by decide),
+  queueInvalidRaw "queue-decode-invalid-term" (-1) 0 (by decide),
+  queueInvalidRaw "queue-decode-wrong-raw-source" 9 1 (by decide)] ++
+  packetCases ++ logMatchCases ++ packetMatchConflicts
 
 end CCFRaft.NativeSmt
 
 run_cmd do
-  for name in [``CCFRaft.NativeSmt.cases, ``CCFRaft.NativeSmt.packetSatCases] do
+  for name in [``CCFRaft.NativeSmt.cases, ``CCFRaft.NativeSmt.packetSatCases, ``CCFRaft.NativeSmt.queueSatCases] do
     for axiomName in (<- Lean.collectAxioms name) do
       unless axiomName == ``propext || axiomName == ``Classical.choice ||
           axiomName == ``Quot.sound do
@@ -607,5 +713,6 @@ def main : IO Unit := do
       ("script", Lean.toJson (CCFRaft.NativeSmt.renderScript [formula]))]
   let fixtures := CCFRaft.NativeSmt.cases.map (fun item =>
     fixture item.name item.formula (if item.expected then "sat" else "unsat")) ++
-    CCFRaft.NativeSmt.packetSatCases.map (fun item => fixture item.name item.formula "sat")
+    (CCFRaft.NativeSmt.packetSatCases ++ CCFRaft.NativeSmt.queueSatCases).map
+      (fun item => fixture item.name item.formula "sat")
   IO.println (Lean.toJson fixtures).compress
