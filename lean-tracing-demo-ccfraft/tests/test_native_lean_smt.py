@@ -315,6 +315,32 @@ class NativeLeanSmtTests(unittest.TestCase):
             item = by_scenario[scenario]
             self.assertEqual((item["responseTerm"], item["responseIndex"]), expected)
 
+    def test_model_membership_guards(self):
+        models = self.model_traces("NativeArrayMembershipFixtureMain", 1572)
+        result = subprocess.run(
+            [
+                "lake",
+                "env",
+                "lean",
+                "--run",
+                "Sparse/NativeMembershipGuardFixtureMain.lean",
+            ],
+            cwd=ROOT,
+            input=json.dumps(models),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        fixtures = json.loads(result.stdout)
+        self.assertEqual(len(fixtures), len(models))
+        self.assertEqual(len({item["name"] for item in fixtures}), len(fixtures))
+        self.assertEqual(sum(item["expected"] == "sat" for item in fixtures), 314)
+        self.assertEqual(
+            [item["expected"] == "sat" for item in fixtures],
+            [item["modelEnabled"] for item in models],
+        )
+        self.solve(fixtures)
+
     def test_model_append_receive_writes(self):
         result = subprocess.run(
             [
