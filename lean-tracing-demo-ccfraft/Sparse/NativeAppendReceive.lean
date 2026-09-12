@@ -8,7 +8,7 @@ import Sparse.NativeAppendReceiveResponse
 import Sparse.NativeLogSpliceEncoding
 import Sparse.NativeLogSummaryTerms
 import Sparse.NativeRetirementRefreshConstraints
-import Sparse.NativeRetirementCompletedTerm
+import Sparse.NativeRetirementCompletedConstraints
 
 set_option autoImplicit false
 
@@ -57,22 +57,8 @@ def receiveAppend {width : PNat} (source destination : Fin width) : EncodeM widt
   let current <- fresh
   assertion (implies consumes
     (currentConfigurationIndexTerm width logLength logEntries commit (.free .int current)))
-  let members := currentConfigurationMembersTerm width before.bootstrap logEntries (.free .int current)
-  let completed <- fresh
-  let committedLength := logRangeMinTerm commit logLength
-  for peer in List.finRange width do
-    let first <- fresh
-    let retirement <- fresh
-    let retired <- fresh
-    assertion (implies consumes
-      (retirementIndexTerm width before.bootstrap committedLength logEntries peer
-        (.free .int first) (.free .int retirement)))
-    assertion (implies consumes
-      (retiredRecordTerm width committedLength logEntries peer (.free .int retired)))
-    assertion (implies consumes
-      (.equal (.bit (.free (.bits width) completed) peer)
-        (retirementCompletedMemberTerm peer (.free .int current) members
-          (.free .int first) (.free .int retirement) (.free .int retired))))
+  let completed <- retirementCompletedConstraints before.bootstrap consumes
+    logLength logEntries commit (.free .int current)
   let best <- fresh
   let hint := appendReceiveNackHint columns destination packet
   assertion (implies (.and branches.rejects hint)

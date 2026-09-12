@@ -128,6 +128,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeAppendReceiveFinalRowEncoding",
             "Sparse.NativeAppendReceiveFrameEncoding",
             "Sparse.NativeAppendReceiveHandlerEncoding",
+            "Sparse.NativeRetirementCompletedConstraintsEncoding",
         ):
             visit(module)
         forbidden = {
@@ -213,6 +214,49 @@ class NativeLeanSmtTests(unittest.TestCase):
             },
             {False, True},
         )
+
+    def test_retirement_completed_constraints(self):
+        result = subprocess.run(
+            [
+                "lake",
+                "env",
+                "lean",
+                "--run",
+                "Sparse/NativeRetirementCompletedConstraintsFixtureMain.lean",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        output = json.loads(result.stdout)
+        fixtures = output["fixtures"]
+        self.assertEqual(len(fixtures), 240)
+        self.assertEqual(len({item["name"] for item in fixtures}), len(fixtures))
+        successful = [item for item in fixtures if item["expected"] == "sat"]
+        self.assertEqual(len(successful), 160)
+        self.assertEqual(
+            {item["modelBits"] for item in successful if item["enabled"]},
+            {0, 1, 2, 3, 4, 6},
+        )
+        self.assertTrue(
+            all(item["expected"] == "sat" for item in fixtures if not item["enabled"])
+        )
+        self.assertEqual(len(output["rejected"]), 20)
+        self.assertEqual(
+            {(item["kind"], item["symbol"]) for item in output["rejected"]},
+            {
+                (kind, symbol)
+                for kind in ("enabled", "length", "entries", "commit", "current")
+                for symbol in (24, 25, 33, 1024)
+            },
+        )
+        for item in output["rejected"]:
+            self.assertEqual(
+                item["error"],
+                "internal encoder error: retirement completed constraints reference an unallocated SMT symbol",
+            )
+        self.solve(fixtures)
 
     def test_retirement_refresh_constraints(self):
         fixtures = self.assert_script_fixtures(
