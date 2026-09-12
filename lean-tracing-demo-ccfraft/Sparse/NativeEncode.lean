@@ -358,26 +358,32 @@ structure Compiled where
   assertions : Array (Expr .bool)
   groups : Array Group
 
-structure Decoded where
+structure TypedDocument (Item : PNat -> Type) where
   width : PNat
   bootstrap : Finset (Fin width)
   bootstrapNonempty : bootstrap.Nonempty
-  instructions : Array (NativeArrayCheckQuorum.Instruction (Fin width) Nat)
+  instructions : Array (Item width)
+
+abbrev Decoded := TypedDocument (fun width => NativeArrayCheckQuorum.Instruction (Fin width) Nat)
 
 def initialEncoding (width : PNat) (bootstrap : Finset (Fin width)) : Encoding width :=
   { bootstrap := encodeBits bootstrap
     symbolsBounded := by simp }
 
-def compileInstructions {width : PNat} (index : Nat) (groups : Array Group) :
-    List (NativeArrayCheckQuorum.Instruction (Fin width) Nat) -> EncodeM width (Array Group)
+def compileInstructionsWith {width : PNat} {Item : Type} (emit : Item -> EncodeM width Unit)
+    (index : Nat) (groups : Array Group) : List Item -> EncodeM width (Array Group)
   | [] => fun state => .ok (groups, state)
   | item :: rest => fun state =>
-    match (instruction item).run state with
+    match (emit item).run state with
     | .error error => .error s!"instruction {index}: {error}"
     | .ok (_, after) =>
-      compileInstructions (index + 1)
+      compileInstructionsWith emit (index + 1)
         (groups.push { instruction := some index, start := state.assertions.size, stop := after.assertions.size })
         rest after
+
+def compileInstructions {width : PNat} (index : Nat) (groups : Array Group)
+    (items : List (NativeArrayCheckQuorum.Instruction (Fin width) Nat)) : EncodeM width (Array Group) :=
+  compileInstructionsWith instruction index groups items
 
 def compileDecoded (input : Decoded) : Except String Compiled := do
   let (_, start) <- (initialDomains input.width).run (initialEncoding input.width input.bootstrap)
@@ -385,7 +391,9 @@ def compileDecoded (input : Decoded) : Except String Compiled := do
   let (groups, final) <- (compileInstructions 0 groups input.instructions.toList).run start
   return { assertions := final.assertions, groups }
 
-def decodeDocument (document : Json) : Except String Decoded := do
+def decodeDocumentWith {Item : PNat -> Type}
+    (decode : (width : PNat) -> Array String -> Json -> Except String (Item width))
+    (document : Json) : Except String (TypedDocument Item) := do
   fields document ["nodes", "bootstrap", "instructions"]
   let names <- (<- (<- field document "nodes").getArr?).mapM Json.getStr?
   unless names.toList.Nodup && names.all (fun name => !name.isEmpty) do
@@ -396,12 +404,15 @@ def decodeDocument (document : Json) : Except String Decoded := do
     if nonempty : bootstrap.Nonempty then
       let records <- (<- field document "instructions").getArr?
       let instructions <- records.mapIdxM fun index record =>
-        match decodeInstruction width names record with
+        match decode width names record with
         | .error error => .error s!"instruction {index}: {error}"
         | .ok item => .ok item
       return { width, bootstrap, bootstrapNonempty := nonempty, instructions }
     else throw "bootstrap must be nonempty"
   else throw "nodes must be nonempty"
+
+def decodeDocument (document : Json) : Except String Decoded :=
+  decodeDocumentWith decodeInstruction document
 
 def compile (document : Json) : Except String Compiled := do
   compileDecoded (<- decodeDocument document)

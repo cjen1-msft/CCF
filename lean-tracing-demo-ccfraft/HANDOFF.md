@@ -357,6 +357,14 @@ Global references will share this record and the existing symbol allocator.
 `NodeColumnsRep` remains the node-specific representation relation.
 The rename preserves all 150 Model-case scripts byte for byte.
 
+`TypedDocument` now parameterizes the instruction family. `Decoded` is its
+local-instruction specialization. `decodeDocumentWith` shares identity and
+bootstrap validation, and `compileInstructionsWith` shares ordered emission,
+indexed errors, and clause grouping. The existing decoder and driver specialize
+these functions, retaining the JSON-to-script theorem and all 150 script hashes.
+Use these functions for the broader `NativeArrayVote.Instruction` compiler
+rather than copying either path.
+
 Follow [Representation design priorities](README.md#representation-design-priorities):
 start with the simplest representation to prove correct, using native SMT
 arrays and live lengths. Measure representative solver workloads before

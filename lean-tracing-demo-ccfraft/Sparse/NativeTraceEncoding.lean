@@ -41,11 +41,11 @@ theorem compile_instructions_holds_before {width : PNat}
   | cons item rest ih =>
     cases step : instruction item before with
     | error error =>
-      simp [compileInstructions, StateT.run, step] at run
+      simp [compileInstructions, compileInstructionsWith, StateT.run, step] at run
     | ok pair =>
       rcases pair with ⟨value, middle⟩
       cases value
-      simp only [compileInstructions, StateT.run, step] at run
+      simp only [compileInstructions, compileInstructionsWith, StateT.run, step] at run
       exact instruction_holds_before item before middle step assignment (ih middle _ _ run)
 
 theorem observation_cons {width : PNat} [Bootstrap (Fin width)]
@@ -74,11 +74,11 @@ theorem compile_instructions_sound {width : PNat} [Bootstrap (Fin width)]
   | cons item rest ih =>
     cases step : instruction item before with
     | error error =>
-      simp [compileInstructions, StateT.run, step] at run
+      simp [compileInstructions, compileInstructionsWith, StateT.run, step] at run
     | ok pair =>
       rcases pair with ⟨value, middle⟩
       cases value
-      simp only [compileInstructions, StateT.run, step] at run
+      simp only [compileInstructions, compileInstructionsWith, StateT.run, step] at run
       have middleHolds := compile_instructions_holds_before rest middle after _ _ result run assignment holds
       rcases instruction_cases item before middle step with ⟨node, same, action⟩ | ⟨clauses, emitted, asserted⟩
       · subst item

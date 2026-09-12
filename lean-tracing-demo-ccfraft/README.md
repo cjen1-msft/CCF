@@ -208,12 +208,14 @@ Its Boolean array has an unknown finite limit, with false cells at negative
 indices and beyond the limit. The proofs establish exact membership and
 representation of every finite natural-number set. `submittedTxId` is not yet
 accepted by the JSON encoder.
-The remaining optional fields are not yet accepted by the Lean encoder.
 `Encoding` now inherits its mutable column references from `Columns`.
 Compiler frame proofs preserve that whole record, and the quorum result
 specifies a record update for the two changed fields.
 `NodeColumnsRep` and `observationClauses` take the same record. Trace proofs
 refer to the default initial column record rather than separate field premises.
+`TypedDocument`, `decodeDocumentWith`, and `compileInstructionsWith` share
+identity validation, bootstrap decoding, indexed errors, and clause groups
+between instruction families. The local encoder uses these same functions.
 
 The older Python reference has broader action coverage:
 `native_arrays.py` accepts `checkQuorum`, `requestVote`, `requestPreVote`, and

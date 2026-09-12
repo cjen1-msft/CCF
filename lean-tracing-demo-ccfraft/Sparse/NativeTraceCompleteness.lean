@@ -28,11 +28,11 @@ theorem compile_instructions_complete {width : PNat} [Bootstrap (Fin width)]
   | cons item rest ih =>
     cases step : instruction item before with
     | error error =>
-      simp [compileInstructions, StateT.run, step] at run
+      simp [compileInstructions, compileInstructionsWith, StateT.run, step] at run
     | ok pair =>
       rcases pair with ⟨value, middle⟩
       cases value
-      simp only [compileInstructions, StateT.run, step] at run
+      simp only [compileInstructions, compileInstructionsWith, StateT.run, step] at run
       have afterValid := instruction_references item before middle step valid
       rcases instruction_cases item before middle step with ⟨node, same, action⟩ | ⟨clauses, emitted, asserted⟩
       · subst item
