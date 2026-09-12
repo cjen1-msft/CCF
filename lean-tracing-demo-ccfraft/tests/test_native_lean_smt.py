@@ -146,6 +146,46 @@ class NativeLeanSmtTests(unittest.TestCase):
         self.assertEqual(sum(item["expected"] == "sat" for item in fixtures), 2540)
         self.solve(fixtures)
 
+    def test_model_append_packets(self):
+        result = subprocess.run(
+            [
+                "lake",
+                "env",
+                "lean",
+                "--run",
+                "Sparse/NativeAppendPacketFixtureMain.lean",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        fixtures = json.loads(result.stdout)
+        self.assertEqual(len(fixtures), 2538)
+        self.assertEqual(len(fixtures), len({item["name"] for item in fixtures}))
+        self.assertEqual({item["expected"] for item in fixtures}, {"sat", "unsat"})
+        self.solve(fixtures)
+
+    def test_model_vote_receive_responses(self):
+        result = subprocess.run(
+            [
+                "lake",
+                "env",
+                "lean",
+                "--run",
+                "Sparse/NativeVoteReceiveFixtureMain.lean",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        fixtures = json.loads(result.stdout)
+        self.assertEqual(len(fixtures), 1728)
+        self.assertEqual(len(fixtures), len({item["name"] for item in fixtures}))
+        self.assertEqual({item["expected"] for item in fixtures}, {"sat", "unsat"})
+        self.solve(fixtures)
+
     def test_model_term_guards(self):
         models = subprocess.run(
             ["lake", "env", "lean", "--run", "Sparse/NativeArrayTermFixtureMain.lean"],

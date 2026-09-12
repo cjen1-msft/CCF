@@ -373,6 +373,23 @@ theorem. The public matrix includes 400 complete Model campaign traces and
 Both actions currently emit five stores. Pre-vote writes back three unchanged
 values to keep one proof path. This is a baseline, not a solver optimization.
 
+The next core covers vote-request receive, AppendEntries send and receive, and
+membership change. These actions are not public yet.
+`NativeArrayVoteReceive` proves vote-handler and full-frame receive semantics.
+`NativeVoteReceiveGuardEncoding` equates the request-specific guard with Model
+receive enablement and the fact that the selected packet is a vote request.
+It does not claim that every enabled receive is a vote request.
+The symbolic reply uses the latest signature for freshness, not the commit
+frontier. Its 1,728 solver cases cover grants, refusals, stale and newer terms,
+allocation, mismatched recipients, duplicate queues, and raw head offsets.
+
+`NativeArrayAppend` proves that the Model's enabled send frontier produces
+zero or one entry. `NativeAppendPacket` uses that fact to construct canonical
+packet logs without a quantified copy. `NativeEntryNormalize` re-encodes raw
+node-log entries as their decoded Model values. The 2,538 solver cases cover
+all entry kinds, arbitrary sent indices, absent nodes, moved term/cursor
+columns, and negative raw terms and transaction IDs.
+
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.
 Invalid payloads fail decoding rather than becoming `none` or wrapping to

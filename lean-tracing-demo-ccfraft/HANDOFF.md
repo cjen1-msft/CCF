@@ -2,7 +2,49 @@
 
 ## Current direction: native-array exact encoding
 
-### Immediate continuation: campaign encoding
+### Immediate continuation: core receive and membership actions
+
+The user now prioritizes `requestVote`, receive requestVote, `appendEntries`,
+receive appendEntries, and membership change. Vote sends are already public.
+Finish this core before unrelated remaining actions.
+Delegate mechanical proofs to `gpt-5.6-sol` with medium reasoning effort.
+The main agent owns semantic lemmas. Build reusable proof components where
+they remove repeated execution decomposition and assignment-extension repair.
+This supersedes the earlier serial-only worker instruction.
+
+Factory tools are unavailable in this session. A direct bounded subagent,
+`b53cfbd8-539b-4835-b9bf-32d4fb1d4892`, owns reusable definition-sequence proofs
+and their adoption in `NativeCampaign` and `NativeCampaignWrites`.
+Do not edit those files while that agent works.
+The main agent owns `NativeArrayVoteReceive` and subsequent receive semantics.
+Its handler and full-frame correspondence proofs build in
+`native-vote-receive-model-build.log`. No public receive action is wired yet.
+Campaign integration is committed as `bf0c05a55`.
+
+The main-agent semantic prerequisites now include:
+- `NativeArrayVoteReceive`: log freshness, exact Model handler, receive
+  enablement, selected-head bridge, and full-frame receive correspondence.
+- `NativeVoteReceiveTerms`: request-kind test, snapshot reads, symbolic grant,
+  and reply construction. Freshness compares against the latest signature,
+  not the commit frontier. Stale requests reply negatively. Newer terms block
+  receive until a separate term update.
+- `NativeVoteReceiveGuardEncoding`: the guard is equivalent to actual Model
+  receive enablement plus the fact that the selected packet is a vote request.
+  It allows unallocated senders and self-addressed requests. Unlike `updateTerm`,
+  receive requires the packet destination to match its containing queue.
+- `NativeArrayAppend`: the Model's enabled send frontier yields zero or one
+  entry. The send updates the source's sentIndex and appends a packet.
+- `NativeEntryNormalize` and `NativeAppendPacket`: canonical symbolic entries
+  and exact AppendEntries packet construction without a quantified log copy.
+
+`native-vote-receive-tests.log` records 1,728 passing response/guard cases.
+`native-append-packet-tests.log` records 2,538 passing packet/normalization cases.
+Both compare with actual Model results. Each new proof module builds with the
+allowed-axiom gate. They are prerequisites, not public receive/append support.
+Next compose vote-receive writes with reusable FIFO pop/reply proofs, then
+append-send guards/cursor writes. Keep append receive and membership change
+next in priority. Do not replace generic receive with a silently restricted
+vote-only action: retain the packet-kind fact in the correspondence statement.
 
 The solver migration is committed as `29312d591`, following `137a4f3d6`,
 the versioned FIFO column slice.
