@@ -117,6 +117,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeArrayLogSummaries",
             "Sparse.NativeNodeRowWritesEncoding",
             "Sparse.NativeLogSummaryEncoding",
+            "Sparse.NativeAppendReceiveTermsEncoding",
         ):
             visit(module)
         forbidden = {
@@ -248,6 +249,33 @@ class NativeLeanSmtTests(unittest.TestCase):
         self.assertEqual({item["modelIndex"] for item in successful}, set(range(6)))
         for field in ("noncanonical", "nested"):
             self.assertEqual({item[field] for item in successful}, {False, True})
+
+    def test_model_append_receive_guards(self):
+        models = self.model_traces("NativeArrayAppendReceiveFixtureMain", 1344)
+        result = subprocess.run(
+            [
+                "lake",
+                "env",
+                "lean",
+                "--run",
+                "Sparse/NativeAppendReceiveGuardFixtureMain.lean",
+            ],
+            cwd=ROOT,
+            input=json.dumps(models),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        fixtures = json.loads(result.stdout)
+        self.assertEqual(len(fixtures), 1416)
+        self.assertEqual(len({item["name"] for item in fixtures}), len(fixtures))
+        self.assertEqual(sum(item["expected"] == "sat" for item in fixtures), 680)
+        for model, fixture in zip(models, fixtures):
+            self.assertEqual(
+                fixture["expected"] == "sat",
+                model["modelEnabled"] and model["selectedAppendRequest"],
+            )
+        self.solve(fixtures)
 
     def assert_script_fixtures(self, module, count, satisfiable):
         result = subprocess.run(

@@ -314,9 +314,11 @@ the local handler branches, and exact receive guards. Its fixture reuses the
 1,344 prepared Model traces and adds 72 raw queue cases. All 1,416 scripts pass
 in `native-append-receive-guard-tests.log`. The fixture stops at the receive
 boundary, so it establishes guard behavior, not poststate behavior.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns only new
-`NativeAppendReceiveTermsEncoding.lean`, proving correspondence for those terms.
-The parent retains the runtime, fixture, and Python registration.
+`NativeAppendReceiveTermsEncoding.lean` proves correspondence for those terms,
+including exact Model enablement under the selected-append restriction.
+The parent inspected the full proof, added its missing module-level axiom gate,
+and exposed the request-log representation lemma for later composition.
+The runtime, proof, fixture, and Python registration are parent-owned.
 Public append receive remains unwired.
 
 The parent built `NativeAppendReceiveWrites.lean`. It reuses the row, queue-pop,
@@ -324,8 +326,45 @@ and queue-push writers, then selects original queues for candidate stepdown.
 Only consuming cases update the destination's completed-retirement set.
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only new
 `NativeAppendReceiveWritesEncoding.lean`, proving full-frame soundness and
-specific-assignment extension. The parent retains the runtime and forthcoming
-Model-derived write fixtures.
+specific-assignment extension. The parent retains the runtime and Model-derived
+write fixtures. `NativeAppendReceiveWritesFixtureMain` now passes
+2,436 scripts and 16 invalid-reference cases in `native-append-receive-writes-tests.log`.
+The five enabled receive branches, self queues, duplicate replies, absent senders,
+and preservation during stepdown are covered. Supplied rows still come from the
+Model, so these cases do not yet cover the encoder's calculation of the new row.
+
+`NativeArrayAppendReceiveFixtures` and `NativeNodeRowFixtureTerms` share existing
+fixture data without importing executable entry points. The extraction is
+committed as `cf54eba22`. The 1,344 generated receive traces are byte-identical
+before and after extraction.
+
+The parent built `NativeRetirementRefreshConstraints.lean`, composing the local
+retirement, signature, and retired-record scans. No retirement forces no signature.
+Retired records remain independent of retirement status.
+Its fixture combines the scan assertions with the scalar refresh terms.
+All 2,592 scripts pass in `native-retirement-refresh-constraints-tests.log`.
+Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns only new
+`NativeRetirementRefreshEncoding.lean`, proving local refresh correspondence
+and arbitrary-witness soundness. The parent owns the constraints and fixture.
+
+The parent built draft `NativeAppendReceive.lean`, composing guard, candidate-log
+splice, commit signature, retirement scans, completed-node membership, response,
+and writes. It is not public and has no complete action-encoding proof yet.
+`NativeAppendReceiveFixtureMain` exercises it against the prepared Model traces.
+`NativeAppendReceiveFixtureInstructions` shares the fixture-only decoder with
+the guard fixture; it does not change the public instruction type.
+
+The first full matrix spent over four minutes generating scripts before starting
+Z3 and was stopped. A single extension case emitted 14,225,799 bytes in 8.31 seconds including
+Lean startup. Five existing `define` operations now share the packet, grow flag,
+candidate length, candidate entries, and candidate commit. The same case emits
+531,854 bytes in 5.50 seconds and solves SAT. No array representation changed.
+The baseline and shared profiles are `native-append-receive-baseline-profile.json`
+and `native-append-receive-shared-profile.json`; the rerunnable profiling script is
+`profile_native_append_receive.py` in the session files directory.
+The full 1,344-case retry is shell `605`, with output in
+`native-append-receive-internal-shared-tests.log` and per-case artifacts under
+`native-internal-receive-fixtures`. Its result is not yet known.
 
 `NativeArrayVoteState` now holds frame state and the existing action semantics.
 `NativeArrayVote` retains instruction traces and their correspondence proofs.

@@ -433,6 +433,8 @@ an append receive action.
 and the nonconsuming candidate-stepdown branch. NACK matching reuses
 `LogMatchSummary.StorageSummary` and does not assume ordered log terms.
 `NativeArrayAppendHandlerCases` proves the complete local handler guards.
+`NativeAppendReceiveTermsEncoding` proves their SMT encoding and exact receive
+enablement, including packet kind, recipient, allocation, and nonempty FIFO checks.
 `NativeArrayAppendNetwork` composes the state and FIFO effects, including
 retirement refresh after consuming NACKs. `NativeLogRangeEncoding` and
 `NativeLogSpliceEncoding` emit the live-range comparisons and copies.
