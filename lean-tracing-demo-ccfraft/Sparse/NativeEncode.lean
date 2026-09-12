@@ -48,10 +48,11 @@ structure Columns where
   membershipState : Nat := 13
   sentIndex : Nat := 14
   matchIndex : Nat := 15
+  hasJoined : Nat := 16
 
 structure Encoding (width : PNat) extends Columns where
   bootstrap : BitVec width
-  next : Nat := 16
+  next : Nat := 17
   assertions : Array (Expr .bool) := #[]
   symbolsBounded : forall formula, formula ∈ assertions ->
     forall symbol, symbol ∈ formula.symbols -> symbol.2 < next
@@ -420,15 +421,17 @@ def compile (document : Json) : Except String Compiled := do
 def encode (document : Json) : Except String String := do
   return renderScript (← compile document).assertions.toList
 
-def encodeDetails (document : Json) : Except String Json := do
-  let compiled <- compile document
+def compiledDetails (document : Json) (compiled : Compiled) : Json :=
   let clauses := compiled.assertions.mapIdx fun index expression =>
     Json.mkObj [("name", toJson (assertionName index)), ("expression", toJson expression.render)]
-  return Json.mkObj [
+  Json.mkObj [
     ("schema", toJson "ccfraft-native-encoding/v1"),
     ("input", document),
     ("script", toJson (renderScript compiled.assertions.toList true)),
     ("groups", toJson compiled.groups),
     ("clauses", toJson clauses)]
+
+def encodeDetails (document : Json) : Except String Json := do
+  return compiledDetails document (<- compile document)
 
 end CCFRaft.NativeEncode

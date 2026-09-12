@@ -601,6 +601,54 @@ class NativeLeanSmtTests(unittest.TestCase):
             ]
         )
 
+    def test_joined_set_observations(self):
+        names = ["a", "b"] + [f"node-{index}" for index in range(2, 21)]
+
+        def observed(value):
+            return {"kind": "hasJoined", "value": value}
+
+        quorum = {"kind": "checkQuorum", "node": "a"}
+        cases = [
+            ("joined-empty", [observed([])], "sat"),
+            ("joined-all-identities", [observed(names)], "sat"),
+            (
+                "joined-order-and-duplicates",
+                [observed(["a", names[-1]]), observed([names[-1], "a", "a"])],
+                "sat",
+            ),
+            ("joined-empty-conflict", [observed([]), observed(["a"])], "unsat"),
+            ("joined-value-conflict", [observed(["a"]), observed(["b"])], "unsat"),
+            (
+                "joined-independent-of-allocation",
+                [{"kind": "allocated", "node": name, "value": False} for name in names]
+                + [observed(names)],
+                "sat",
+            ),
+            ("joined-empty-quorum-frame", [observed([]), quorum, observed([])], "sat"),
+            ("joined-quorum-frame", [observed(["a"]), quorum, observed(["a"])], "sat"),
+            (
+                "joined-quorum-conflict",
+                [observed(["a"]), quorum, observed(["b"])],
+                "unsat",
+            ),
+        ]
+        scripts = self.encode(
+            [
+                {
+                    "nodes": names,
+                    "bootstrap": ["a", "b"],
+                    "instructions": instructions,
+                }
+                for _, instructions, _ in cases
+            ]
+        )
+        self.solve(
+            [
+                {"name": name, "script": script, "expected": expected}
+                for (name, _, expected), script in zip(cases, scripts)
+            ]
+        )
+
     def test_decoded_bootstrap_sets(self):
         variants = [["a", "b"], ["b", "a"], ["b", "a", "a"], ["a"]]
         scripts = self.encode(
@@ -771,6 +819,23 @@ class NativeLeanSmtTests(unittest.TestCase):
                 ("null-index", "a", None),
             ]
         )
+        invalid.extend(
+            (
+                f"hasJoined-{name}",
+                json.dumps(
+                    dict(valid, instructions=[instruction]),
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            )
+            for name, instruction in [
+                ("undeclared", {"kind": "hasJoined", "value": ["b"]}),
+                ("numeric-member", {"kind": "hasJoined", "value": [0]}),
+                ("non-array", {"kind": "hasJoined", "value": "a"}),
+                ("null", {"kind": "hasJoined", "value": None}),
+                ("extra-node", {"kind": "hasJoined", "node": "a", "value": []}),
+            ]
+        )
         for name, document in invalid:
             with self.subTest(name=name):
                 result = subprocess.run(
@@ -799,8 +864,8 @@ class NativeLeanSmtTests(unittest.TestCase):
                 (
                     "unsat",
                     [
-                        {"kind": "allocated", "node": name, "value": False},
-                        {"kind": "role", "node": name, "value": "leader"},
+                        {"kind": "hasJoined", "value": [name]},
+                        {"kind": "hasJoined", "value": []},
                     ],
                     solver,
                 ),
@@ -849,6 +914,13 @@ class NativeLeanSmtTests(unittest.TestCase):
                     self.assertEqual(
                         bool(api.get("/api/core")["clauses"]), status == "unsat"
                     )
+                    if status == "unsat":
+                        self.assertEqual(api.get("/api/core")["instructions"], [0, 1])
+                        for index, item in enumerate(instructions):
+                            self.assertEqual(
+                                api.get(f"/api/instructions/{index}")["instruction"],
+                                item,
+                            )
 
 
 if __name__ == "__main__":

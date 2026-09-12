@@ -34,7 +34,7 @@ provenance, and distinct solver outcomes without inheriting old proof claims.
 Do not restart worker fan-out.
 
 The first native explorer API is implemented in `explorer_api.py` and
-`native_run.py`. Lean `encodeDetails` emits named SMT clauses and instruction
+`native_run.py`. Lean `encodeFrameDetails` emits named SMT clauses and instruction
 ranges from the actual compiled assertion array. `native_lean.py` retains the
 exact input, encoding metadata, solver outputs, and a hash manifest written only
 after a successful solver invocation. cvc5 supplies the core through
@@ -46,12 +46,13 @@ proof claims. `Traces/native_quorum_conflict.json` is a deliberate synthetic
 UNSAT example, not a captured trace. Raw-event/code provenance still depends on
 reducer integration. See README's "Native explorer API" section.
 
-The first Lean encoder slice is now implemented in `Sparse/NativeEncode.lean`
+The public Lean encoder uses `Sparse/NativeFrameEncode.lean`
 and `Sparse/NativeEncodeMain.lean`, with `native_lean.py` as its JSON and solver
-wrapper. It supports `checkQuorum` and all sixteen local observation kinds, including
+wrapper. It shares local-state compilation with `Sparse/NativeEncode.lean`.
+It supports `checkQuorum` and all sixteen local observation kinds, including
 the nullable `retirementIndex`, `retirementCommittableIndex`, and
 `retiredCommittedIndex` fields, nullable `votedFor`, both vote sets, and
-`membershipState`, `sentIndex`, and `matchIndex`.
+`membershipState`, `sentIndex`, and `matchIndex`, plus global `hasJoined`.
 The Python reference still supports six actions and the broader observation
 schema. Do not confuse these coverage levels or fall back to Python SMT emission.
 
@@ -246,8 +247,26 @@ Lean's JSON parser, IO runtime, and cvc5 are not verified by these theorems.
 
 Next, expand Model actions and observations before raw reducer integration.
 Keep the full-model assurance flag false: current coverage is still one
-action and sixteen local observation kinds. No change to the reducer's untrusted
+action, sixteen local observation kinds, and global `hasJoined`.
+No change to the reducer's untrusted
 interpretation boundary follows from proving the JSON encoder.
+
+`NativeFrameEncode` wraps the local compiler in the broader
+`NativeArrayVote.Instruction` family. `hasJoined` uses scalar bitvector column
+16, and fresh allocation starts at 17. The local-column script hash baseline
+is therefore obsolete. The field is independent of node allocation and
+bootstrap membership, and accepts duplicate or reordered declared identities.
+`NativeFrameColumns` proves initial representation and completeness for
+arbitrary frames. It seeds global values before reusing node initialization.
+`NativeFrameStep` reuses the existing quorum proofs and preserves global state.
+`NativeFrameTrace.compiled_frame_trace_iff` proves whole-trace correspondence.
+`NativeFrameDecoded.encodeFrame_document_iff` and
+`encodeFrameDetails_document_iff` cover the public JSON-to-script path.
+The normal Sparse build audits the entire proof chain. The 31-test combined
+native suite passes, including joined-set conflicts, 21 identities, quorum
+framing, malformed inputs, and actual wrapper/explorer core ownership.
+Other globals, queues, and actions remain unsupported by the public encoder.
+Next add `preVoteStatus`, then `retirementCompleted` and `submittedTxId`.
 
 `NativeOptional` is the next value-codec unit for local-state coverage.
 It uses the existing sum datatype for optional natural indices and identities.

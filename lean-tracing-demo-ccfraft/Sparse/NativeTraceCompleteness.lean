@@ -73,18 +73,7 @@ theorem model_compiled_trace {width : PNat} [Bootstrap (Fin width)]
   have startedColumns : NodeColumnsRep assignment started.toColumns arrays := by
     simpa only [frame.columns, initialColumns] using columns
   have startedValid : ReferencesValid started :=
-    ⟨by simpa only [frame.next] using valid.minimum,
-      by simpa only [frame.next, frame.role] using valid.role,
-      by simpa only [frame.next, frame.newFollower] using valid.newFollower,
-      by simpa only [frame.next, frame.columns] using valid.retirementIndex,
-      by simpa only [frame.next, frame.columns] using valid.retirementCommittableIndex,
-      by simpa only [frame.next, frame.columns] using valid.retiredCommittedIndex,
-      by simpa only [frame.next, frame.columns] using valid.votedFor,
-      by simpa only [frame.next, frame.columns] using valid.votesGranted,
-      by simpa only [frame.next, frame.columns] using valid.preVotesGranted,
-      by simpa only [frame.next, frame.columns] using valid.membershipState,
-      by simpa only [frame.next, frame.columns] using valid.sentIndex,
-      by simpa only [frame.next, frame.columns] using valid.matchIndex⟩
+    valid.same_references frame
   have bootstrap : decodeBits started.bootstrap = INITIAL_CONFIGURATION := by
     rw [frame.bootstrap, sameBootstrap]
   exact compile_instructions_complete items started final index groups result run assignment startedHolds arrays

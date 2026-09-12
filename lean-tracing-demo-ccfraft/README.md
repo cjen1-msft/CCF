@@ -57,7 +57,8 @@ or restricting possible executions is not a performance optimization.
 
 ### Native-array prototype
 
-The Lean migration starts with `Sparse/NativeEncode.lean`.
+The public Lean encoder uses `Sparse/NativeFrameEncode.lean` and shares
+local-state compilation with `Sparse/NativeEncode.lean`.
 It accepts `checkQuorum` and the `allocated`, `role`, `newFollower`, `logLength`,
 `commit`, `currentTerm`, `entry`, `retirementIndex`,
 `retirementCommittableIndex`, `retiredCommittedIndex`, `votedFor`, and
@@ -67,7 +68,9 @@ All retirement fields accept a natural number or `null`. `votedFor` accepts
 a declared identity or `null`. Both vote-set fields accept a list of declared
 identities, interpreted as a set. `membershipState` accepts the five Model
 membership-state names. Both peer-index fields require a declared `peer` and a natural
-`value`. Other instructions are errors.
+`value`. The global `hasJoined` observation accepts a `value` list of declared
+identities, interpreted as a set. It does not require a `node` field or imply
+that any node is allocated. Other instructions are errors.
 `native_lean.py` handles JSON input and solver execution. It delegates all SMT
 construction to Lean, with no Python encoder fallback.
 
@@ -175,9 +178,19 @@ satisfiability with `DocumentConsistent`, whose meaning uses the actual
 decoder. This does not prove that a raw-event reducer interpreted the
 implementation correctly, or verify Lean's JSON parser and IO runtime.
 
+[`NativeFrameDecoded`](Sparse/NativeFrameDecoded.lean) extends this correspondence
+to the public encoder, including `hasJoined`.
+`encodeFrame_document_iff` and `encodeFrameDetails_document_iff` cover the
+actual plain and details outputs. `FrameDocumentConsistent` uses the broader
+decoder and Model trace semantics. `NativeFrameColumns` realizes arbitrary
+joined sets independently of allocation and bootstrap membership.
+`NativeFrameTrace` composes local observations, global observations, and quorum
+steps without restricting unobserved global state or queues.
+
 This Lean encoder remains experimental. Remaining Model actions, observations,
 and raw reducer integration are unfinished. The API's full-model assurance
-flag remains false; current coverage is one action and sixteen local observation kinds.
+flag remains false; current coverage is one action, sixteen local observation
+kinds, and global `hasJoined`.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.

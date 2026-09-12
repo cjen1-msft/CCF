@@ -39,6 +39,7 @@ import Sparse.NativeScriptText
 import Sparse.NativeReferences
 import Sparse.NativeScriptTrace
 import Sparse.NativeDecoded
+import Sparse.NativeFrameDecoded
 import Sparse.NativeOptional
 import Sparse.NativeNatSet
 import Sparse.NativeInitialEncoding

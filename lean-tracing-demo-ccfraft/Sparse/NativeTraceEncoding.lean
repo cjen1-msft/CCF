@@ -28,10 +28,13 @@ theorem instruction_holds_before {width : PNat}
   · exact ((quorum_holds node.val before after action assignment).mp holds).1
   · exact ((assert_all_holds clauses before after asserted assignment).mp holds).1
 
-theorem compile_instructions_holds_before {width : PNat}
-    (items : List (NativeArrayCheckQuorum.Instruction (Fin width) Nat))
+theorem compile_with_holds_before {width : PNat} {Item : Type}
+    (emit : Item -> EncodeM width Unit)
+    (preserves : forall item before after, (emit item).run before = .ok ((), after) ->
+      forall assignment, Holds after.assertions.toList assignment -> Holds before.assertions.toList assignment)
+    (items : List Item)
     (before after : Encoding width) (index : Nat) (groups result : Array Group)
-    (run : (compileInstructions index groups items).run before = .ok (result, after))
+    (run : (compileInstructionsWith emit index groups items).run before = .ok (result, after))
     (assignment : Assignment) (holds : Holds after.assertions.toList assignment) :
     Holds before.assertions.toList assignment := by
   induction items generalizing before index groups with
@@ -39,14 +42,23 @@ theorem compile_instructions_holds_before {width : PNat}
     have same : before = after := congrArg Prod.snd (Except.ok.inj run)
     simpa only [same] using holds
   | cons item rest ih =>
-    cases step : instruction item before with
+    cases step : emit item before with
     | error error =>
-      simp [compileInstructions, compileInstructionsWith, StateT.run, step] at run
+      simp [compileInstructionsWith, StateT.run, step] at run
     | ok pair =>
       rcases pair with ⟨value, middle⟩
       cases value
-      simp only [compileInstructions, compileInstructionsWith, StateT.run, step] at run
-      exact instruction_holds_before item before middle step assignment (ih middle _ _ run)
+      simp only [compileInstructionsWith, StateT.run, step] at run
+      exact preserves item before middle step assignment (ih middle _ _ run)
+
+theorem compile_instructions_holds_before {width : PNat}
+    (items : List (NativeArrayCheckQuorum.Instruction (Fin width) Nat))
+    (before after : Encoding width) (index : Nat) (groups result : Array Group)
+    (run : (compileInstructions index groups items).run before = .ok (result, after))
+    (assignment : Assignment) (holds : Holds after.assertions.toList assignment) :
+    Holds before.assertions.toList assignment :=
+  compile_with_holds_before instruction instruction_holds_before items before after index groups result
+    run assignment holds
 
 theorem observation_cons {width : PNat} [Bootstrap (Fin width)]
     (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
