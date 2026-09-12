@@ -80,6 +80,9 @@ sets candidate role, records its self-vote, and clears pre-votes.
 preserving its term, `votedFor`, and granted votes. Both preserve the
 new-follower flag, logs, globals, and queues. Their guards enforce the Model's
 role, membership, pre-vote status, and campaign-eligibility requirements.
+Campaign writes reuse `NativeDefinitionsEncoding` for definition sequences,
+fresh identifiers, assertion accumulation, and assignment extension.
+This removes per-write execution bookkeeping without changing emitted scripts.
 All retirement fields accept a natural number or `null`. `votedFor` accepts
 a declared identity or `null`. Both vote-set fields accept a list of declared
 identities, interpreted as a set. `membershipState` accepts the five Model

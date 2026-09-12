@@ -3,6 +3,7 @@
 
 import Sparse.NativeCampaign
 import Sparse.NativeCampaignGuardEncoding
+import Sparse.NativeDefinitionsEncoding
 
 set_option autoImplicit false
 
@@ -40,17 +41,7 @@ def campaignColumns (before : Columns) (base : Nat) : Columns :=
 
 def campaignWriteClauses {width : PNat} (before : Columns) (preVote : Bool)
     (node : Fin width) (base : Nat) : List (Expr .bool) :=
-  [.equal (.free (.array .int .int) base)
-      (.store (.free (.array .int .int) before.role) (.integer node.val)
-        (.integer (roleCode (if preVote then .preVoteCandidate else .candidate)))),
-    .equal (.free (.array .int .int) (base + 1))
-      (.store (.free (.array .int .int) before.currentTerm) (.integer node.val) (campaignTerm before preVote node.val)),
-    .equal (.free (.array .int optionalIntTy) (base + 2))
-      (.store (.free (.array .int optionalIntTy) before.votedFor) (.integer node.val) (campaignVotedFor before preVote node.val)),
-    .equal (.free (.array .int (.bits width)) (base + 3))
-      (.store (.free (.array .int (.bits width)) before.votesGranted) (.integer node.val) (campaignVotesGranted before preVote node)),
-    .equal (.free (.array .int (.bits width)) (base + 4))
-      (.store (.free (.array .int (.bits width)) before.preVotesGranted) (.integer node.val) (campaignPreVotesGranted preVote node))]
+  definitionClauses (campaignWriteDefinitions before preVote node) base
 
 theorem node_columns_campaign {width : PNat} (assignment : Assignment)
     (before : Columns) (base : Nat) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
@@ -58,7 +49,8 @@ theorem node_columns_campaign {width : PNat} (assignment : Assignment)
     (rep : NodeColumnsRep assignment before arrays) (present : (arrays node).isSome = true)
     (bindings : Holds (campaignWriteClauses before preVote node base) assignment) :
     NodeColumnsRep assignment (campaignColumns before base) (campaignNodes arrays preVote node) := by
-  simp only [Holds, campaignWriteClauses, List.mem_cons, List.not_mem_nil,
+  simp only [Holds, campaignWriteClauses, campaignWriteDefinitions, definitionClauses,
+    List.mem_cons, List.not_mem_nil,
     forall_eq_or_imp, false_implies, implies_true, and_true] at bindings
   obtain ⟨roleBinding, termBinding, votedBinding, votesBinding, preVotesBinding⟩ := bindings
   have allocatedNode : (allocated node.val : Expr .bool).eval assignment Locals.empty = true :=
@@ -169,44 +161,24 @@ theorem campaign_writes_success {width : PNat} (preVote : Bool) (node : Fin widt
     (run : (campaignWrites preVote node).run before = .ok ((), after)) :
     CampaignWriteResult before after preVote node := by
   simp only [campaignWrites, get_bind_run] at run
-  obtain ⟨roleId, first, role, run⟩ := (bind_run _ _ _ _ _).mp run
-  obtain ⟨termId, second, term, run⟩ := (bind_run _ _ _ _ _).mp run
-  obtain ⟨votedId, third, voted, run⟩ := (bind_run _ _ _ _ _).mp run
-  obtain ⟨votesId, fourth, votes, run⟩ := (bind_run _ _ _ _ _).mp run
-  obtain ⟨preVotesId, fifth, preVotes, run⟩ := (bind_run _ _ _ _ _).mp run
-  change Except.ok ((), { fifth with
-    role := roleId, currentTerm := termId, votedFor := votedId,
-    votesGranted := votesId, preVotesGranted := preVotesId }) = .ok ((), after) at run
+  obtain ⟨ids, written, definitionsRun, run⟩ := (bind_run _ _ _ _ _).mp run
+  have shape := definitions_success _ before written ids definitionsRun
+  have idsEq : ids =
+      [before.next, before.next + 1, before.next + 2, before.next + 3, before.next + 4] := by
+    simpa [campaignWriteDefinitions, definitionIds] using shape.ids
+  subst ids
+  change Except.ok ((), { written with
+    role := before.next, currentTerm := before.next + 1, votedFor := before.next + 2,
+    votesGranted := before.next + 3, preVotesGranted := before.next + 4 }) =
+      .ok ((), after) at run
   have final := congrArg Prod.snd (Except.ok.inj run)
   dsimp only at final
   rw [<- final]
-  obtain ⟨roleIdEq, firstNext, firstBootstrap, firstColumns, firstClauses⟩ :=
-    define_success _ before first roleId role
-  obtain ⟨termIdEq, secondNext, secondBootstrap, secondColumns, secondClauses⟩ :=
-    define_success _ first second termId term
-  obtain ⟨votedIdEq, thirdNext, thirdBootstrap, thirdColumns, thirdClauses⟩ :=
-    define_success _ second third votedId voted
-  obtain ⟨votesIdEq, fourthNext, fourthBootstrap, fourthColumns, fourthClauses⟩ :=
-    define_success _ third fourth votesId votes
-  obtain ⟨preVotesIdEq, fifthNext, fifthBootstrap, fifthColumns, fifthClauses⟩ :=
-    define_success _ fourth fifth preVotesId preVotes
-  have termIndex : termId = before.next + 1 := by rw [termIdEq, firstNext]
-  have votedIndex : votedId = before.next + 2 := by rw [votedIdEq, secondNext, firstNext]
-  have votesIndex : votesId = before.next + 3 := by rw [votesIdEq, thirdNext, secondNext, firstNext]
-  have preVotesIndex : preVotesId = before.next + 4 := by
-    rw [preVotesIdEq, fourthNext, thirdNext, secondNext, firstNext]
   constructor
-  · exact fifthBootstrap.trans (fourthBootstrap.trans (thirdBootstrap.trans
-      (secondBootstrap.trans firstBootstrap)))
-  · simp only [fifthColumns, fourthColumns, thirdColumns, secondColumns, firstColumns,
-      campaignColumns, roleIdEq, termIndex, votedIndex, votesIndex, preVotesIndex]
-  · dsimp only
-    rw [fifthNext, fourthNext, thirdNext, secondNext, firstNext]
-  · dsimp only
-    rw [fifthClauses, Array.toList_push, fourthClauses, Array.toList_push, thirdClauses,
-      Array.toList_push, secondClauses, Array.toList_push, firstClauses, Array.toList_push,
-      roleIdEq, termIndex, votedIndex, votesIndex, preVotesIndex]
-    simp [campaignWriteClauses, List.append_assoc]
+  · exact shape.bootstrap
+  · simp only [shape.columns, campaignColumns]
+  · simpa [campaignWriteDefinitions] using shape.next
+  · simpa only [campaignWriteClauses] using shape.clauses
 
 theorem campaign_writes_holds {width : PNat} (preVote : Bool) (node : Fin width)
     (before after : Encoding width)
@@ -260,37 +232,23 @@ theorem campaign_writes_complete {width : PNat} (preVote : Bool) (node : Fin wid
       FrameColumnsRep extended after.toColumns (frame.campaign preVote node) := by
   have originalRun := run
   simp only [campaignWrites, get_bind_run] at run
-  obtain ⟨roleId, first, role, run⟩ := (bind_run _ _ _ _ _).mp run
-  obtain ⟨termId, second, term, run⟩ := (bind_run _ _ _ _ _).mp run
-  obtain ⟨votedId, third, voted, run⟩ := (bind_run _ _ _ _ _).mp run
-  obtain ⟨votesId, fourth, votes, run⟩ := (bind_run _ _ _ _ _).mp run
-  obtain ⟨preVotesId, fifth, preVotes, run⟩ := (bind_run _ _ _ _ _).mp run
-  change Except.ok ((), { fifth with
-    role := roleId, currentTerm := termId, votedFor := votedId,
-    votesGranted := votesId, preVotesGranted := preVotesId }) = .ok ((), after) at run
+  obtain ⟨ids, written, definitionsRun, run⟩ := (bind_run _ _ _ _ _).mp run
+  have shape := definitions_success _ before written ids definitionsRun
+  have idsEq : ids =
+      [before.next, before.next + 1, before.next + 2, before.next + 3, before.next + 4] := by
+    simpa [campaignWriteDefinitions, definitionIds] using shape.ids
+  subst ids
+  change Except.ok ((), { written with
+    role := before.next, currentTerm := before.next + 1, votedFor := before.next + 2,
+    votesGranted := before.next + 3, preVotesGranted := before.next + 4 }) =
+      .ok ((), after) at run
   have final := congrArg Prod.snd (Except.ok.inj run)
   dsimp only at final
-  obtain ⟨firstAssignment, firstAgreement, firstHolds⟩ :=
-    define_extension _ before first roleId role assignment holds
-  obtain ⟨secondAssignment, secondAgreement, secondHolds⟩ :=
-    define_extension _ first second termId term firstAssignment firstHolds
-  obtain ⟨thirdAssignment, thirdAgreement, thirdHolds⟩ :=
-    define_extension _ second third votedId voted secondAssignment secondHolds
-  obtain ⟨fourthAssignment, fourthAgreement, fourthHolds⟩ :=
-    define_extension _ third fourth votesId votes thirdAssignment thirdHolds
-  obtain ⟨extended, fifthAgreement, fifthHolds⟩ :=
-    define_extension _ fourth fifth preVotesId preVotes fourthAssignment fourthHolds
-  have firstNext := (define_success _ before first roleId role).2.1
-  have secondNext := (define_success _ first second termId term).2.1
-  have thirdNext := (define_success _ second third votedId voted).2.1
-  have fourthNext := (define_success _ third fourth votesId votes).2.1
-  have agreement : assignment.AgreesBelow before.next extended :=
-    firstAgreement.trans ((secondAgreement.restrict (by omega)).trans
-      ((thirdAgreement.restrict (by omega)).trans
-        ((fourthAgreement.restrict (by omega)).trans (fifthAgreement.restrict (by omega)))))
+  obtain ⟨extended, agreement, writtenHolds⟩ :=
+    definitions_extension _ before written _ definitionsRun assignment holds
   have finalHolds : Holds after.assertions.toList extended := by
     rw [<- final]
-    exact fifthHolds
+    exact writtenHolds
   exact ⟨extended, agreement, finalHolds, campaign_writes_frame preVote node before after originalRun
     extended finalHolds frame (rep.agrees_below before assignment extended frame valid agreement) present⟩
 

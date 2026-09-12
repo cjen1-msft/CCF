@@ -12,10 +12,16 @@ The main agent owns semantic lemmas. Build reusable proof components where
 they remove repeated execution decomposition and assignment-extension repair.
 This supersedes the earlier serial-only worker instruction.
 
-Factory tools are unavailable in this session. A direct bounded subagent,
-`b53cfbd8-539b-4835-b9bf-32d4fb1d4892`, owns reusable definition-sequence proofs
-and their adoption in `NativeCampaign` and `NativeCampaignWrites`.
-Do not edit those files while that agent works.
+Factory tools are unavailable in this session. `NativeDefinitions` and
+`NativeDefinitionsEncoding` now provide reusable heterogeneous definition
+sequences, execution shape, and specific-assignment extension. Campaign writes
+use them without changing generated scripts or exported theorem statements.
+The parent rebuild and campaign regressions pass in
+`native-campaign-reuse-public-build.log` and `native-campaign-reuse-tests.log`.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns only
+`NativeAppendSend.lean` and `NativeAppendSendEncoding.lean`, composing the
+append guards, cursor store, and packet enqueue. Do not edit those files
+while that agent works.
 The main agent owns `NativeArrayVoteReceive` and subsequent receive semantics.
 Its handler and full-frame correspondence proofs build in
 `native-vote-receive-model-build.log`. No public receive action is wired yet.
@@ -77,6 +83,13 @@ GPT-5.6 Sol at medium effort. Do not edit those files until it completes.
 The declaration names are unchanged. Receive and append semantic modules import
 the state module, so the trace module can later import them without a cycle.
 `native-frame-state-split-build.log` records the targeted build.
+
+The next parent integration adds internal `.receiveVote` trace semantics with
+an explicit selected-vote-request premise. The public decoder still rejects
+this action. `NativeArrayVote`, `NativeFrameStep`, and the public decoded-trace
+proofs build in `native-vote-receive-trace-model-build.log`,
+`native-vote-receive-writes-integration-build.log`, and
+`native-campaign-reuse-public-build.log`. Shell `101` has completed.
 
 `native-vote-receive-tests.log` records 1,728 passing response/guard cases.
 `native-append-packet-tests.log` records 2,538 passing packet/normalization cases.

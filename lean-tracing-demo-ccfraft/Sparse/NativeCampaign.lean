@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeCampaignGuard
+import Sparse.NativeDefinitions
 
 set_option autoImplicit false
 
@@ -22,21 +23,30 @@ def campaignVotesGranted {width : PNat} (columns : Columns) (preVote : Bool)
 def campaignPreVotesGranted {width : PNat} (preVote : Bool) (node : Fin width) : Expr (.bits width) :=
   .bits (if preVote then encodeBits {node} else 0)
 
+def campaignWriteDefinitions {width : PNat} (before : Columns) (preVote : Bool)
+    (node : Fin width) : List TypedDefinition :=
+  [⟨.array .int .int, .store (.free (.array .int .int) before.role) (.integer node.val)
+      (.integer (roleCode (if preVote then .preVoteCandidate else .candidate)))⟩,
+    ⟨.array .int .int, .store (.free (.array .int .int) before.currentTerm) (.integer node.val)
+      (campaignTerm before preVote node.val)⟩,
+    ⟨.array .int optionalIntTy,
+      .store (.free (.array .int optionalIntTy) before.votedFor) (.integer node.val)
+        (campaignVotedFor before preVote node.val)⟩,
+    ⟨.array .int (.bits width),
+      .store (.free (.array .int (.bits width)) before.votesGranted) (.integer node.val)
+        (campaignVotesGranted before preVote node)⟩,
+    ⟨.array .int (.bits width),
+      .store (.free (.array .int (.bits width)) before.preVotesGranted) (.integer node.val)
+        (campaignPreVotesGranted preVote node)⟩]
+
 def campaignWrites {width : PNat} (preVote : Bool) (node : Fin width) : EncodeM width Unit := do
   let before <- get
-  let roleId <- define (.store (.free (.array .int .int) before.role) (.integer node.val)
-    (.integer (roleCode (if preVote then .preVoteCandidate else .candidate))))
-  let termId <- define (.store (.free (.array .int .int) before.currentTerm) (.integer node.val)
-    (campaignTerm before.toColumns preVote node.val))
-  let votedId <- define (.store (.free (.array .int optionalIntTy) before.votedFor) (.integer node.val)
-    (campaignVotedFor before.toColumns preVote node.val))
-  let votesId <- define (.store (.free (.array .int (.bits width)) before.votesGranted) (.integer node.val)
-    (campaignVotesGranted before.toColumns preVote node))
-  let preVotesId <- define (.store (.free (.array .int (.bits width)) before.preVotesGranted) (.integer node.val)
-    (campaignPreVotesGranted preVote node))
-  modify fun state => { state with
-    role := roleId, currentTerm := termId, votedFor := votedId,
-    votesGranted := votesId, preVotesGranted := preVotesId }
+  match <- definitions (campaignWriteDefinitions before.toColumns preVote node) with
+  | [roleId, termId, votedId, votesId, preVotesId] =>
+    modify fun state => { state with
+      role := roleId, currentTerm := termId, votedFor := votedId,
+      votesGranted := votesId, preVotesGranted := preVotesId }
+  | _ => throw "internal encoder error: campaign definition count changed"
 
 def campaign {width : PNat} (preVote : Bool) (node : Fin width) : EncodeM width Unit := do
   let before <- get
