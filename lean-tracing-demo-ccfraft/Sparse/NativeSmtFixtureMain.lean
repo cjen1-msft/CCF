@@ -5,9 +5,11 @@ import Sparse.NativeScript
 import Sparse.NativeOptional
 import Sparse.NativeNatSet
 import Sparse.NativeRenaming
+import Sparse.NativeLogValue
 import Lean.Data.Json
 
 set_option autoImplicit false
+set_option warningAsError true
 
 namespace CCFRaft.NativeSmt
 
@@ -247,6 +249,62 @@ private def natSetEmpty : Case :=
         exact lt_or_ge (index : Int) 0
       simp [NativeEncode.natSetMember, Term.eval, Locals.cons, valid.2 index outside] }
 
+private def logOutside (name : String) (index : Term [] .int) : Case :=
+  let value : Term [] (NativeEncode.logTy 2) := .free (NativeEncode.logTy 2) 0
+  { name
+    formula := .and (NativeEncode.logDomain value)
+      (.and (.or (NativeEncode.lt index (.integer 0)) (.le (.fst value) index))
+        (.not (.equal (.select (.snd value) index) (NativeEncode.entryTerm (NativeEncode.defaultLogEntry 2)))))
+    expected := false
+    correct := by
+      intro assignment
+      apply Bool.eq_false_iff.mpr
+      intro held
+      simp only [Term.eval, Bool.and_eq_true] at held
+      obtain ⟨domain, outside, different⟩ := held
+      have valid := (NativeEncode.log_domain_correct value assignment Locals.empty).mp domain
+      have outside' : index.eval assignment Locals.empty < 0 \/
+          (value.eval assignment Locals.empty).1 <= index.eval assignment Locals.empty := by
+        simpa [NativeEncode.lt, Term.eval] using outside
+      simp [NativeEncode.entry_term_eval, valid.tail _ outside'] at different }
+
+private def logNegativeLength : Case :=
+  let value : Term [] (NativeEncode.logTy 2) := .free (NativeEncode.logTy 2) 0
+  { name := "log-value-negative-length"
+    formula := .and (NativeEncode.logDomain value) (NativeEncode.lt (.fst value) (.integer 0))
+    expected := false
+    correct := by
+      intro assignment
+      apply Bool.eq_false_iff.mpr
+      intro held
+      simp only [Term.eval, Bool.and_eq_true] at held
+      obtain ⟨domain, negative⟩ := held
+      have valid := (NativeEncode.log_domain_correct value assignment Locals.empty).mp domain
+      simp [NativeEncode.lt, Term.eval] at negative
+      exact (not_lt_of_ge valid.length) negative }
+
+private def logEmpty : Case :=
+  let value : Term [] (NativeEncode.logTy 2) := .free (NativeEncode.logTy 2) 0
+  { name := "log-value-empty-tail"
+    formula := NativeEncode.implies
+      (.and (NativeEncode.logDomain value) (.equal (.fst value) (.integer 0)))
+      (.forall_ .int (.equal (.select (.snd (value.weaken .int)) (.bound .here))
+        (NativeEncode.entryTerm (NativeEncode.defaultLogEntry 2))))
+    expected := true
+    correct := by
+      intro assignment
+      rw [NativeEncode.implies_eval]
+      intro held
+      simp only [Term.eval, Bool.and_eq_true, decide_eq_true_eq] at held
+      obtain ⟨domain, zero⟩ := held
+      have valid := (NativeEncode.log_domain_correct value assignment Locals.empty).mp domain
+      simp only [Term.eval, decide_eq_true_eq]
+      intro index
+      have outside : index < 0 \/ (value.eval assignment Locals.empty).1 <= index := by
+        rw [zero]
+        exact lt_or_ge (index : Int) 0
+      simpa only [Term.weaken_eval, Locals.cons, NativeEncode.entry_term_eval] using valid.tail index outside }
+
 def cases : List Case := [
   stored, wrongStore, nestedArray, constantArray, pair, sum, capture, nestedQuantifiers,
   wideBits, widerBits, bitsOperations, unitAndSecond, typedSymbols, overwrittenStore,
@@ -264,7 +322,12 @@ def cases : List Case := [
   natSetOutside "nat-set-zero-cell" (.integer 0),
   natSetOutside "nat-set-large-cell" (.integer (10 ^ 30)),
   natSetOutside "nat-set-tail-cell" (.free .int 1),
-  natSetNegativeLimit, natSetEmpty]
+  natSetNegativeLimit, natSetEmpty,
+  logOutside "log-value-negative-cell" (.integer (-1)),
+  logOutside "log-value-zero-cell" (.integer 0),
+  logOutside "log-value-large-cell" (.integer (10 ^ 30)),
+  logOutside "log-value-tail-cell" (.fst (.free (NativeEncode.logTy 2) 0)),
+  logNegativeLength, logEmpty]
 
 end CCFRaft.NativeSmt
 

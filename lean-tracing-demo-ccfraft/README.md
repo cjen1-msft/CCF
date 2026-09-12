@@ -136,6 +136,11 @@ their predecessors into later expressions.
 domains. `Term.weaken_eval` preserves the original value under an added local
 variable, including quantifiers and sum-match branches. Free symbols remain
 unchanged, so the existing freshness invariant still applies.
+`NativeLogValue` prepares finite packet payloads as a length and entry array.
+Negative indices and tail cells contain the zero-term signature entry.
+Both value round trips are proved, so equality of valid array values is
+exactly equality of finite Model lists. This does not change node-log encoding
+or add packet instructions to the public compiler yet.
 
 `NativeQuorumEncoding.current_configuration_model_correct` connects the exact
 `currentCandidate` and `noLaterConfiguration` clauses used by the compiler to

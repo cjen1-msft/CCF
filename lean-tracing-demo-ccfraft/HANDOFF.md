@@ -315,12 +315,24 @@ cover nested quantifiers, sum-match branches, and free array reads.
 All 34 kernel-backed formulas pass in `native-renaming-fixture-tests.log`.
 No public instruction coverage changed in this supporting slice.
 
+`NativeLogValue` now proves a canonical length/array codec for packet payloads.
+`logDomain` constrains live entry values and fixes negative and tail cells to
+the zero-term signature entry. `log_value_model`, `model_log_value`, and
+`model_log_eq_iff` make whole-array equality exact for finite Model lists.
+The domain uses the proved `Term.weaken` when adding its integer index binder.
+The node-log representation remains unchanged. Packet instructions are not
+yet accepted by the public encoder.
+All 40 kernel-backed fixtures pass in `native-log-fixture-tests.log`.
+The fixture main now sets `warningAsError` so linter warnings fail its build
+instead of preceding and corrupting its JSON output.
+Next build packet headers and payload sums on this codec, then queue columns.
+
 `NativeOptional` is the next value-codec unit for local-state coverage.
 It uses the existing sum datatype for optional natural indices and identities.
 Decoding distinguishes a valid absent value, `some none`, from invalid payloads,
 `none`. It rejects negative indices and identities outside the declared width.
 The proofs cover round trips, exact literal equality, and actual domain terms.
-`NativeSmtFixtureMain` now has 31 kernel-backed solver cases, including nine
+`NativeSmtFixtureMain` now has 40 kernel-backed solver cases, including nine
 optional-value cases. The codecs are now wired for all three retirement-index
 fields and `votedFor`.
 

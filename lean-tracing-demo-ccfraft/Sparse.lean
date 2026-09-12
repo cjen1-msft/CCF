@@ -32,6 +32,7 @@ import Sparse.NativeArrayQueue
 import Sparse.NativeArrayVote
 import Sparse.NativeEncodeProofs
 import Sparse.NativeRenaming
+import Sparse.NativeLogValue
 import Sparse.NativeSyntaxProofs
 import Sparse.NativeNames
 import Sparse.NativeLowering
