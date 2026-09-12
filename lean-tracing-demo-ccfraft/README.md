@@ -439,7 +439,9 @@ enablement, including packet kind, recipient, allocation, and nonempty FIFO chec
 retirement refresh after consuming NACKs. `NativeLogRangeEncoding` and
 `NativeLogSpliceEncoding` emit the live-range comparisons and copies.
 `NativeRetirementRefreshTerms` emits the scalar retirement results from
-canonical scan witnesses. Public append receive remains unwired.
+canonical scan witnesses. `NativeRetirementRefreshEncoding` connects the combined
+scan constraints to Model refresh outputs and extracts canonical witnesses from
+arbitrary satisfying integers. Public append receive remains unwired.
 `NativeNodeRowWritesEncoding` proves whole-row replacement and allocation,
 including full-frame preservation and extension of a particular prior assignment.
 Snapshots use fresh defaults for absent nodes and preserve arbitrary log tails.

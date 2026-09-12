@@ -343,9 +343,10 @@ retirement, signature, and retired-record scans. No retirement forces no signatu
 Retired records remain independent of retirement status.
 Its fixture combines the scan assertions with the scalar refresh terms.
 All 2,592 scripts pass in `native-retirement-refresh-constraints-tests.log`.
-Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns only new
-`NativeRetirementRefreshEncoding.lean`, proving local refresh correspondence
-and arbitrary-witness soundness. The parent owns the constraints and fixture.
+`NativeRetirementRefreshEncoding.lean` proves local refresh correspondence
+and arbitrary-witness soundness. The parent inspected it and independently built
+it in `native-retirement-refresh-parent-build.log`. The proof, constraints,
+and fixture are parent-owned.
 
 The parent built draft `NativeAppendReceive.lean`, composing guard, candidate-log
 splice, commit signature, retirement scans, completed-node membership, response,
@@ -362,9 +363,21 @@ candidate length, candidate entries, and candidate commit. The same case emits
 The baseline and shared profiles are `native-append-receive-baseline-profile.json`
 and `native-append-receive-shared-profile.json`; the rerunnable profiling script is
 `profile_native_append_receive.py` in the session files directory.
-The full 1,344-case retry is shell `605`, with output in
-`native-append-receive-internal-shared-tests.log` and per-case artifacts under
-`native-internal-receive-fixtures`. Its result is not yet known.
+The shared-expression retry reached at least 624 solved cases. Case 508,
+a candidate stepdown, took 149.65 seconds. It unnecessarily constrained unused
+splice and scan witnesses. The draft now guards those constraints by their
+actual uses: grow, accepted commit update, consuming retirement refresh, and
+hinted NACK. Case 508 now takes 0.059 seconds and case 624 takes 0.071 seconds.
+Both remain SAT. Shell `605` was stopped; its baseline metrics remain under
+`native-internal-receive-fixtures`.
+The full 1,344-case guarded retry is shell `641`, with output in
+`native-append-receive-internal-guarded-tests.log` and per-case artifacts under
+`native-internal-receive-guarded-fixtures`. Its result is not yet known.
+
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns only new
+`NativeAppendReceiveResponse.lean` and `NativeAppendReceiveResponseEncoding.lean`.
+It is extracting and proving the draft's response terms, including arbitrary
+unused best-index witnesses. The parent retains the draft receive encoder.
 
 `NativeArrayVoteState` now holds frame state and the existing action semantics.
 `NativeArrayVote` retains instruction traces and their correspondence proofs.

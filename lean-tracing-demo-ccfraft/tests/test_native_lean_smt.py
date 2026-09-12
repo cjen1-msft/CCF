@@ -118,6 +118,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeNodeRowWritesEncoding",
             "Sparse.NativeLogSummaryEncoding",
             "Sparse.NativeAppendReceiveTermsEncoding",
+            "Sparse.NativeRetirementRefreshEncoding",
         ):
             visit(module)
         forbidden = {
@@ -203,6 +204,14 @@ class NativeLeanSmtTests(unittest.TestCase):
             },
             {False, True},
         )
+
+    def test_retirement_refresh_constraints(self):
+        fixtures = self.assert_script_fixtures(
+            "NativeRetirementRefreshConstraintsFixtureMain", 2592, 288
+        )
+        successful = [item for item in fixtures if item["expected"] == "sat"]
+        self.assertEqual({item["membership"] for item in successful}, set(range(5)))
+        self.assertTrue(any(item["activeWithCommittedRetired"] for item in successful))
 
     def test_node_row_writes(self):
         result = subprocess.run(
