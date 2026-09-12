@@ -304,6 +304,51 @@ class NativeLeanSmtTests(unittest.TestCase):
         )
         self.solve(fixtures)
 
+    def test_native_allocation(self):
+        result = subprocess.run(
+            ["lake", "env", "lean", "--run", "Sparse/NativeAllocationFixtureMain.lean"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        output = json.loads(result.stdout)
+        fixtures = output["fixtures"]
+        self.assertEqual(len(fixtures), 4416)
+        self.assertEqual(len({item["name"] for item in fixtures}), len(fixtures))
+        successful = [item for item in fixtures if item["expected"] == "sat"]
+        self.assertEqual(len(successful), 192)
+        self.assertEqual(
+            {(item["present"], item["added"], item["mode"]) for item in successful},
+            {
+                (present, added, mode)
+                for present in range(8)
+                for added in range(8)
+                for mode in range(3)
+            },
+        )
+        self.assertEqual(
+            {(item["targetPresent"], item["targetAdded"]) for item in successful},
+            {(False, False), (False, True), (True, False), (True, True)},
+        )
+        self.assertEqual({item["mutation"] for item in fixtures}, set(range(23)))
+        self.assertEqual(len(output["rejected"]), 10)
+        self.assertEqual(
+            {(item["kind"], item["symbol"]) for item in output["rejected"]},
+            {
+                (kind, symbol)
+                for kind in ("node", "set")
+                for symbol in (24, 25, 40, 74, 1024)
+            },
+        )
+        for item in output["rejected"]:
+            subject = "condition" if item["kind"] == "node" else "set"
+            self.assertEqual(
+                item["error"],
+                f"internal encoder error: allocation {subject} references an unallocated SMT symbol",
+            )
+        self.solve(fixtures)
+
     def test_explicit_log_summaries(self):
         fixtures = self.assert_script_fixtures("NativeLogSummaryFixtureMain", 4160, 800)
         successful = [item for item in fixtures if item["expected"] == "sat"]

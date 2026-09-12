@@ -61,6 +61,28 @@ def mutateRow (value : NodeState (Fin 3) Nat) (mutation : Nat) : NodeState (Fin 
       | entry :: rest => { entry with term := entry.term + 1 } :: rest }
   | _ => value
 
+def mutate [Bootstrap (Fin 3)] (state : State (Fin 3) Nat) (destination : Fin 3)
+    (mutation : Nat) : State (Fin 3) Nat :=
+  if mutation <= 15 then
+    { state with nodes := updateNode state.nodes destination (mutateRow (state.nodes destination) mutation) }
+  else
+    match mutation with
+    | 16 =>
+      let other : Fin 3 := if destination = 0 then 1 else 0
+      let changed := { state.nodes other with currentTerm := (state.nodes other).currentTerm + 1 }
+      { state with nodes := updateNode state.nodes other changed }
+    | 17 => { state with
+        network := updateQueue state.network 0
+          (state.network 0 ++ [.proposeVoteRequest { term := 2, source := 1, destination := 0 }]) }
+    | 18 => { state with hasJoined := toggle 2 state.hasJoined }
+    | 19 => { state with preVoteStatus := fun node =>
+        if node = destination then
+          if state.preVoteStatus node = .enabled then .capable else .enabled
+        else state.preVoteStatus node }
+    | 20 => { state with retirementCompleted := fun node =>
+        if node = destination then toggle 0 (state.retirementCompleted node) else state.retirementCompleted node }
+    | _ => { state with submittedTxIds := toggle 9 state.submittedTxIds }
+
 def rowTerms (value : NodeState (Fin 3) Nat) : NodeRowTerms 3 :=
   let peers := fun (values : Fin 3 -> Nat) =>
     (List.finRange 3).foldl

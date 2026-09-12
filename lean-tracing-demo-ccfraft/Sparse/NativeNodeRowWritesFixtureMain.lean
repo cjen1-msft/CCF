@@ -15,28 +15,6 @@ open Lean NativeSmt NativeEncode NativeArrayFixtures
 private instance : Bootstrap (Fin 3) :=
   { configuration := {0, 1}, leader := 0, leader_mem := by simp }
 
-def mutate (state : State (Fin 3) Nat) (destination : Fin 3) (mutation : Nat) :
-    State (Fin 3) Nat :=
-  if mutation <= 15 then
-    { state with nodes := updateNode state.nodes destination (mutateRow (state.nodes destination) mutation) }
-  else
-    match mutation with
-    | 16 =>
-      let other : Fin 3 := if destination = 0 then 1 else 0
-      let changed := { state.nodes other with currentTerm := (state.nodes other).currentTerm + 1 }
-      { state with nodes := updateNode state.nodes other changed }
-    | 17 => { state with
-        network := updateQueue state.network 0
-          (state.network 0 ++ [.proposeVoteRequest { term := 2, source := 1, destination := 0 }]) }
-    | 18 => { state with hasJoined := toggle 2 state.hasJoined }
-    | 19 => { state with preVoteStatus := fun node =>
-        if node = destination then
-          if state.preVoteStatus node = .enabled then .capable else .enabled
-        else state.preVoteStatus node }
-    | 20 => { state with retirementCompleted := fun node =>
-        if node = destination then toggle 0 (state.retirementCompleted node) else state.retirementCompleted node }
-    | _ => { state with submittedTxIds := toggle 9 state.submittedTxIds }
-
 def fixture (seed mode mutation : Nat) : Except String Json := do
   let source : Fin 3 := ⟨seed % 3, Nat.mod_lt _ (by decide)⟩
   let destination : Fin 3 := if source = 2 then 0 else 1
