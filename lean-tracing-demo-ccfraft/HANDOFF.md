@@ -84,12 +84,16 @@ The declaration names are unchanged. Receive and append semantic modules import
 the state module, so the trace module can later import them without a cycle.
 `native-frame-state-split-build.log` records the targeted build.
 
-The next parent integration adds internal `.receiveVote` trace semantics with
-an explicit selected-vote-request premise. The public decoder still rejects
-this action. `NativeArrayVote`, `NativeFrameStep`, and the public decoded-trace
+Internal `.receiveVote` trace semantics now retain an explicit
+selected-vote-request premise. Internal `.appendEntries` traces also have
+actual Model correspondence, including the exact batch frontier.
+The public decoder still rejects both actions.
+`NativeArrayVote`, `NativeFrameStep`, and the public decoded-trace
 proofs build in `native-vote-receive-trace-model-build.log`,
 `native-vote-receive-writes-integration-build.log`, and
 `native-campaign-reuse-public-build.log`. Shell `101` has completed.
+`native-append-trace-model-build.log` records the append trace build.
+It rebuilt only the five trace/compiler modules, not the core campaign proofs.
 
 The import-boundary cleanup is complete. `NativeFrameInitial` contains
 the unchanged initial frame assertions. Core column/action proofs no longer

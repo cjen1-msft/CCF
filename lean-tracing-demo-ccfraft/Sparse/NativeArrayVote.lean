@@ -3,6 +3,7 @@
 
 import Sparse.NativeArrayVoteState
 import Sparse.NativeArrayVoteReceive
+import Sparse.NativeArrayAppend
 
 set_option autoImplicit false
 
@@ -18,6 +19,7 @@ inductive Instruction (N T : Type) where
   | updateTerm (source destination : N)
   | campaign (preVote : Bool) (node : N)
   | receiveVote (source destination : N)
+  | appendEntries (source destination : N) (batchEnd : Nat)
   | submittedTxId (txId : T) (expected : Bool)
   | hasJoined (expected : Finset N)
   | preVoteStatus (node : N) (expected : PreVoteStatus)
@@ -48,6 +50,9 @@ def follows (frame : Frame N T) : List (Instruction N T) -> Prop
           request.term <= (get frame.nodes destination).currentTerm /\
           SignatureIndex (get frame.nodes destination).log signature /\
           follows (NativeArrayVoteReceive.receive frame destination request signature) rest
+  | .appendEntries source destination batchEnd :: rest =>
+      NativeArrayAppend.enabled frame source destination batchEnd /\
+        follows (NativeArrayAppend.send frame source destination batchEnd) rest
   | .submittedTxId txId expected :: rest =>
       decide (txId ∈ frame.globals.submittedTxIds) = expected /\ follows frame rest
   | .hasJoined expected :: rest => frame.globals.hasJoined = expected /\ follows frame rest
@@ -80,6 +85,9 @@ def modelFollows (state : State N T) : List (Instruction N T) -> Prop
         (exists request remaining, takeFirstFrom source (state.network destination) =
           some (.requestVoteRequest request, remaining)) /\
         modelFollows (CCFRaft.next state (.receive source destination)) rest
+  | .appendEntries source destination batchEnd :: rest =>
+      CCFRaft.Enabled state (.appendEntries source destination batchEnd) /\
+        modelFollows (CCFRaft.next state (.appendEntries source destination batchEnd)) rest
   | .submittedTxId txId expected :: rest =>
       decide (txId ∈ state.submittedTxIds) = expected /\ modelFollows state rest
   | .hasJoined expected :: rest => state.hasJoined = expected /\ modelFollows state rest
@@ -154,6 +162,16 @@ theorem follows_correct (trace : List (Instruction N T)) (frame : Frame N T) (st
         refine ⟨present, request, signature, ?_, sameSource, recipient, term, latest, (ih _ _ nextRep).mpr held⟩
         rw [NativeArrayQueue.model_peek_correct frame.queues state.network rep.queues source destination, taken]
         rfl
+    | appendEntries source destination batchEnd =>
+      constructor
+      · rintro ⟨enabled, held⟩
+        have nextRep := NativeArrayAppend.send_rep frame state rep source destination batchEnd enabled.2.2.2.2.2.1
+        exact ⟨(NativeArrayAppend.enabled_correct frame state rep source destination batchEnd).mp enabled,
+          (ih _ _ nextRep).mp held⟩
+      · rintro ⟨enabled, held⟩
+        have native := (NativeArrayAppend.enabled_correct frame state rep source destination batchEnd).mpr enabled
+        have nextRep := NativeArrayAppend.send_rep frame state rep source destination batchEnd native.2.2.2.2.2.1
+        exact ⟨native, (ih _ _ nextRep).mpr held⟩
     | queueLength source destination expected =>
       have same := congrArg List.length (congrFun (congrFun rep.queues destination) source)
       simp only [NativeArrayQueue.decodeNetwork, NativeArrayQueue.Queue.decode_length,
