@@ -516,6 +516,19 @@ All 1,572 full Model transitions pass, including 147 SAT cases, in
 `native-membership-change-build.log`. Public membership remains unsupported.
 The row terms and whole-action correspondence still need proofs.
 
+`NativeArrayCoreActionsFixtureMain` and `NativeCoreActionsFixtureMain` are
+committed as `05b512bdc`. They exercise all five prioritized actions in one
+private pipeline, with full observations after each step.
+The 184 scripts include fresh and existing added nodes, successive configuration
+changes, append ACKs and NACKs, term updates, and vote send/receive.
+Four complete sequences are SAT. Repeating a configuration and re-adding an
+already joined identity fail at the intended membership step.
+The final-state mutations cover every local field, allocation, globals, and FIFOs.
+`assert_internal_model_traces` shares the comparison runner across private
+append, membership, and combined sequences. All four targeted methods pass in
+490 seconds in `native-core-sequence-tests.log`.
+No public decoder or assurance flag changed.
+
 `NativeArrayVoteState` now holds frame state and the existing action semantics.
 `NativeArrayVote` retains instruction traces and their correspondence proofs.
 The declaration names are unchanged. Receive and append semantic modules import

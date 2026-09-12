@@ -498,6 +498,9 @@ public `changeConfiguration` remains unsupported.
 missing nodes. Existing rows survive. The baseline uses 17 definitions per
 declared identity and passes 4,416 Model-derived scripts, including repeated
 allocation, disabled conditions, and full-frame mutations.
+The private combined pipeline also covers all five prioritized actions in
+184 sequence scripts. These include successive configurations, append ACKs and
+NACKs, term updates, and vote send/receive, with full observations after each step.
 
 `NativeOptional` supplies codecs for optional local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.
