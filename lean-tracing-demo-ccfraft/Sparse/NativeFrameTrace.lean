@@ -128,7 +128,8 @@ theorem compiled_frame_trace_iff {width : PNat} [Bootstrap (Fin width)]
     obtain ⟨references, initialHolds⟩ := initial_frame_domains_success initial started start assignment
     have startedHolds := initialHolds.mpr ⟨by simp [empty, Holds], domains, submitted⟩
     have rep : FrameColumnsRep assignment started.toColumns frame := by
-      simpa only [references.columns, initialColumns] using initial_frame_assignment_rep width Assignment.default frame
+      simpa only [references.columns, initialColumns] using
+        initial_frame_assignment_rep width Assignment.default frame (NativeArrayVote.of_model_valid model)
     have bootstrap : decodeBits started.bootstrap = INITIAL_CONFIGURATION := by
       rw [references.bootstrap, sameBootstrap]
     exact compile_frame_complete items started final index groups result run assignment startedHolds frame

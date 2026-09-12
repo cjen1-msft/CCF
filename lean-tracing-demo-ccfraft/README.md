@@ -155,13 +155,13 @@ identities. Value round trips and literal equality are proved.
 `NativePacketValue` composes that header with seven distinct payload alternatives.
 Every Model message has a valid value, and every valid value decodes back
 exactly, including append-entry logs. `NativePacketDomain` proves the emitted
-payload and full-packet domains and the source selector. Live packet columns
-and packet JSON observations are not wired yet.
+payload and full-packet domains and the source selector.
+Packet JSON observations are not wired yet.
 `NativePacketMatch.packet_matches_correct` proves full packet equality from
 the header and tagged payload. AppendEntries uses the finite log matcher.
 The solver fixtures include a proved satisfying assignment for every packet
 constructor, plus contradictions for changed headers, tags, payloads, and logs.
-`NativeQueueLengths` encodes a destination-first, source-second length array.
+`NativeQueueScalars` encodes destination-first, source-second head and length arrays.
 Each read computes `Int.toNat` from its raw integer cell, emitted as an `ite`.
 This removes the need for a universal length domain. Negative raw cells encode
 zero, but negative JSON length observations still fail input validation.
@@ -183,6 +183,9 @@ Unobserved packets need not be default packets, and unused cells need no constra
 Its Boolean matching clauses avoid a datatype-valued conditional when the
 observation excludes the default packet. The observation remains asserted.
 These queue-point proofs are not yet connected to the public JSON compiler.
+`NativeQueueColumns` now connects the complete queue storage to frame
+realization and correspondence. `FrameColumnsRep` equates decoded live sequences,
+without requiring equality of unused raw cells.
 
 `NativeQuorumEncoding.current_configuration_model_correct` connects the exact
 `currentCandidate` and `noLaterConfiguration` clauses used by the compiler to

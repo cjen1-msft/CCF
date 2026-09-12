@@ -348,7 +348,7 @@ or destinations need not be allocated or differ from each other.
 All 62 kernel-backed formulas pass in `native-packet-fixture-tests.log`,
 including valid alternatives, invalid scalar fields, append-log domain
 composition, and tag/source behavior.
-`NativeQueueLengths` now supplies source-local length decoding, with full
+`NativeQueueScalars` now supplies source-local scalar decoding, with full
 public JSON-to-script correspondence. Column 21 is a destination-first,
 source-second integer matrix. Fresh allocation starts at 22.
 Each raw integer cell decodes with `Int.toNat`; the emitted `ite` implements
@@ -375,7 +375,7 @@ and ground assertions. Those variants took 50.6, 13.9, and 9.7 seconds.
 A total nonnegative-cell domain also took about 9.5 seconds, but returned
 `unknown` for independent-pair cases. That representation was rejected.
 Natural-number decoding took 9.4 seconds and solved those cases.
-`queue_length_correct` proves the emitted read equals the cell's `Int.toNat`.
+`queue_scalar_correct` proves the emitted read equals the cell's `Int.toNat`.
 The complete initial-state, instruction, trace, and JSON-to-script proofs build
 without a queue-domain premise. Completeness still represents the original
 arbitrary frame, not a replacement with different queues.
@@ -446,14 +446,22 @@ All 115 formulas pass in `native-queue-observed-packet-tests.log`.
 The huge-row fixture now observes its first and last packets and solves in
 11.4 ms. The append-packet row solves in 32.1 ms. Solver metrics are retained.
 
-Next integrate these queue proofs into the public frame compiler:
-add head and packet-array references alongside length column 21, and use the
-total queue decoder for initial realization. A decoded-list equality is enough
-to represent queues; raw cells before the head or beyond the length need not
-match native unused cells. `initial_frame_assignment_rep` will require
-`frame.Valid` for queue source correspondence, already available in trace
-completeness. Preserve arbitrary valid initial Model states.
-Then add strict packet JSON decoding and `queuePoint`, followed by actions.
+`NativeQueueColumns` now integrates complete queue storage into the public
+frame representation. Length remains column 21, head is column 22, and
+packet cells are column 23. Fresh allocation starts at 24.
+`NativeQueueLengths` was renamed to `NativeQueueScalars`; the same natural
+decoder now serves both head and length.
+`queueRow` uses the total packet decoder for initial realization.
+`FrameColumnsRep.queues` equates decoded live lists. Queue-length correspondence
+is derived from that equality. Unused raw cells need not match unused native cells.
+`initial_frame_assignment_rep` takes `frame.Valid` for source correspondence,
+already available from `of_model_valid` in trace completeness. It still
+preserves arbitrary valid original Model states.
+The full public proof and normal Sparse build pass. Seven runtime regression
+methods pass in `native-queue-columns-tests.log`, including queue lengths,
+all 115 formulas, all 150 Model quorum cases, global/local framing, and actual
+wrapper/explorer outcomes. Total time was 220.271 seconds.
+Next add strict packet JSON decoding and public `queuePoint`, then actions.
 
 `NativeOptional` is the next value-codec unit for local-state coverage.
 It uses the existing sum datatype for optional natural indices and identities.

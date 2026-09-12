@@ -4,7 +4,7 @@
 import Sparse.NativeEncode
 import Sparse.NativeArrayVote
 import Sparse.NativeNatSet
-import Sparse.NativeQueueLengths
+import Sparse.NativeQueueColumns
 
 set_option autoImplicit false
 
@@ -63,7 +63,7 @@ def frameObservationClauses {width : PNat} (columns : Columns) :
   | .submittedTxId txId expected =>
     .ok [.equal (natSetMember columns.submittedTxIds (.integer txId)) (.boolean expected)]
   | .queueLength source destination expected =>
-    .ok [.equal (queueLengthTerm columns.queueLength (.integer destination.val) (.integer source.val))
+    .ok [.equal (queueScalarTerm columns.queueLength (.integer destination.val) (.integer source.val))
       (.integer expected)]
   | _ => .error "unsupported native Lean frame observation"
 

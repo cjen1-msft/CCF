@@ -9,20 +9,20 @@ namespace CCFRaft.NativeEncode
 
 open NativeSmt
 
-def queueLengthTerm {context : List Ty} (column : Nat) (destination source : Term context .int) :
+def queueScalarTerm {context : List Ty} (column : Nat) (destination source : Term context .int) :
     Term context .int :=
   let cell := .select (.select (.free (.array .int (.array .int .int)) column) destination) source
   .ite (.le (.integer 0) cell) cell (.integer 0)
 
-theorem queue_length_correct {context : List Ty} (column : Nat)
+theorem queue_scalar_correct {context : List Ty} (column : Nat)
     (destination source : Term context .int) (assignment : Assignment) (locals : Locals context) :
-    (queueLengthTerm column destination source).eval assignment locals =
+    (queueScalarTerm column destination source).eval assignment locals =
       ((assignment (.array .int (.array .int .int)) column
         (destination.eval assignment locals) (source.eval assignment locals)).toNat : Int) := by
   by_cases nonnegative : 0 <= assignment (.array .int (.array .int .int)) column
       (destination.eval assignment locals) (source.eval assignment locals)
-  · simp [queueLengthTerm, Term.eval, nonnegative, Int.toNat_of_nonneg nonnegative]
-  · simp [queueLengthTerm, Term.eval, nonnegative,
+  · simp [queueScalarTerm, Term.eval, nonnegative, Int.toNat_of_nonneg nonnegative]
+  · simp [queueScalarTerm, Term.eval, nonnegative,
       Int.toNat_of_nonpos (le_of_lt (lt_of_not_ge nonnegative))]
 
 end CCFRaft.NativeEncode

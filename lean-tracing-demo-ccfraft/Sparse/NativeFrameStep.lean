@@ -59,7 +59,7 @@ theorem frame_observation_correct {width : PNat} [Bootstrap (Fin width)]
     · exact rep.submittedTxIds txId
   case queueLength source destination expected =>
     cases Except.ok.inj emitted
-    simp [Holds, Term.eval, queue_length_correct, rep.queueLength, NativeArrayVote.follows]
+    simp [Holds, Term.eval, queue_scalar_correct, rep.queue_length, NativeArrayVote.follows]
   all_goals cases emitted
 
 theorem frame_observation_cons {width : PNat} [Bootstrap (Fin width)]
@@ -125,7 +125,9 @@ theorem frame_quorum_success {width : PNat} [Bootstrap (Fin width)]
   have status := congrArg Columns.preVoteStatus (quorum_success node.val before after run).columns
   have completed := congrArg Columns.retirementCompleted (quorum_success node.val before after run).columns
   have submitted := congrArg Columns.submittedTxIds (quorum_success node.val before after run).columns
-  have queue := congrArg Columns.queueLength (quorum_success node.val before after run).columns
+  have columns := (quorum_success node.val before after run).columns
+  have queue := And.intro (congrArg Columns.queueLength columns)
+    (And.intro (congrArg Columns.queueHead columns) (congrArg Columns.queueCells columns))
   exact ⟨previous, enabled, rep.node_step assignment before.toColumns after.toColumns frame
     (.checkQuorum node) nodes joined status completed submitted queue⟩
 
@@ -147,7 +149,9 @@ theorem frame_quorum_complete {width : PNat} [Bootstrap (Fin width)]
   have status := congrArg Columns.preVoteStatus (quorum_success node.val before after run).columns
   have completed := congrArg Columns.retirementCompleted (quorum_success node.val before after run).columns
   have submitted := congrArg Columns.submittedTxIds (quorum_success node.val before after run).columns
-  have queue := congrArg Columns.queueLength (quorum_success node.val before after run).columns
+  have columns := (quorum_success node.val before after run).columns
+  have queue := And.intro (congrArg Columns.queueLength columns)
+    (And.intro (congrArg Columns.queueHead columns) (congrArg Columns.queueCells columns))
   exact ⟨extended, agreement, held,
     extendedRep.node_step extended before.toColumns after.toColumns frame (.checkQuorum node) nodes
       joined status completed submitted queue⟩

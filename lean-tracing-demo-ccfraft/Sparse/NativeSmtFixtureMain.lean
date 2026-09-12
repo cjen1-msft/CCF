@@ -10,7 +10,7 @@ import Sparse.NativeLogMatch
 import Sparse.NativePacketHeader
 import Sparse.NativePacketDomain
 import Sparse.NativePacketMatch
-import Sparse.NativeQueueLengths
+import Sparse.NativeQueueScalars
 import Sparse.NativeQueuePoint
 import Lean.Data.Json
 
@@ -409,26 +409,26 @@ private def packetCases : List Case := [
 private def queueNegativeLength (name : String) (destination source : Int) : Case :=
   { name
     formula := NativeEncode.lt
-      (NativeEncode.queueLengthTerm 0 (.integer destination) (.integer source))
+      (NativeEncode.queueScalarTerm 0 (.integer destination) (.integer source))
       (.integer 0)
     expected := false
     correct := by
       intro assignment
-      simp [NativeEncode.lt, Term.eval, NativeEncode.queue_length_correct] }
+      simp [NativeEncode.lt, Term.eval, NativeEncode.queue_scalar_correct] }
 
 private def queueLengthLiteral (name : String) (value : Int) : Case :=
   { name
     formula := NativeEncode.implies
       (.equal (.select (.select (.free (.array .int (.array .int .int)) 0) (.integer 0)) (.integer 0))
         (.integer value))
-      (.equal (NativeEncode.queueLengthTerm 0 (.integer 0) (.integer 0)) (.integer value.toNat))
+      (.equal (NativeEncode.queueScalarTerm 0 (.integer 0) (.integer 0)) (.integer value.toNat))
     expected := true
     correct := by
       intro assignment
       rw [NativeEncode.implies_eval]
       intro cell
       simp only [Term.eval, decide_eq_true_eq] at cell
-      simp [Term.eval, NativeEncode.queue_length_correct, cell] }
+      simp [Term.eval, NativeEncode.queue_scalar_correct, cell] }
 
 private def storedLog (entries : List (Entry (Fin 2) Nat)) : Term [] (NativeEncode.logTy 2) :=
   .pair (.integer entries.length)
