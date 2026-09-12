@@ -125,6 +125,7 @@ theorem frame_instruction_cases {width : PNat} (item : FrameInstruction width)
   case vote preVote source destination => exact Or.inr (Or.inl ⟨preVote, source, destination, rfl, run⟩)
   case updateTerm source destination => exact Or.inr (Or.inr (Or.inl ⟨source, destination, rfl, run⟩))
   case campaign preVote node => exact Or.inr (Or.inr (Or.inr (Or.inl ⟨preVote, node, rfl, run⟩)))
+  case receiveVote source destination => cases run
   case hasJoined expected => exact Or.inr (Or.inr (Or.inr (Or.inr ⟨_, rfl, run⟩)))
   case preVoteStatus node expected => exact Or.inr (Or.inr (Or.inr (Or.inr ⟨_, rfl, run⟩)))
   case retirementCompleted node expected => exact Or.inr (Or.inr (Or.inr (Or.inr ⟨_, rfl, run⟩)))

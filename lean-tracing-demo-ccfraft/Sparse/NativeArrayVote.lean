@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeArrayVoteState
+import Sparse.NativeArrayVoteReceive
 
 set_option autoImplicit false
 
@@ -16,6 +17,7 @@ inductive Instruction (N T : Type) where
   | vote (preVote : Bool) (source destination : N)
   | updateTerm (source destination : N)
   | campaign (preVote : Bool) (node : N)
+  | receiveVote (source destination : N)
   | submittedTxId (txId : T) (expected : Bool)
   | hasJoined (expected : Finset N)
   | preVoteStatus (node : N) (expected : PreVoteStatus)
@@ -38,6 +40,14 @@ def follows (frame : Frame N T) : List (Instruction N T) -> Prop
           follows (frame.updateTerm source destination) rest
   | .campaign preVote node :: rest =>
       campaignEnabled frame preVote node /\ follows (frame.campaign preVote node) rest
+  | .receiveVote source destination :: rest =>
+      (frame.nodes destination).isSome = true /\
+        exists request signature,
+          (frame.queues destination source).peek = some (.requestVoteRequest request) /\
+          request.source = source /\ request.destination = destination /\
+          request.term <= (get frame.nodes destination).currentTerm /\
+          SignatureIndex (get frame.nodes destination).log signature /\
+          follows (NativeArrayVoteReceive.receive frame destination request signature) rest
   | .submittedTxId txId expected :: rest =>
       decide (txId ∈ frame.globals.submittedTxIds) = expected /\ follows frame rest
   | .hasJoined expected :: rest => frame.globals.hasJoined = expected /\ follows frame rest
@@ -65,6 +75,11 @@ def modelFollows (state : State N T) : List (Instruction N T) -> Prop
   | .campaign preVote node :: rest =>
       CCFRaft.Enabled state (campaignAction preVote node) /\
         modelFollows (CCFRaft.next state (campaignAction preVote node)) rest
+  | .receiveVote source destination :: rest =>
+      CCFRaft.Enabled state (.receive source destination) /\
+        (exists request remaining, takeFirstFrom source (state.network destination) =
+          some (.requestVoteRequest request, remaining)) /\
+        modelFollows (CCFRaft.next state (.receive source destination)) rest
   | .submittedTxId txId expected :: rest =>
       decide (txId ∈ state.submittedTxIds) = expected /\ modelFollows state rest
   | .hasJoined expected :: rest => state.hasJoined = expected /\ modelFollows state rest
@@ -105,6 +120,40 @@ theorem follows_correct (trace : List (Instruction N T)) (frame : Frame N T) (st
     | campaign preVote node =>
       exact and_congr (campaign_enabled_correct frame state rep preVote node)
         (ih _ _ (campaign_rep frame state rep preVote node))
+    | receiveVote source destination =>
+      constructor
+      · rintro ⟨present, request, signature, selected, sameSource, recipient, term, latest, held⟩
+        obtain ⟨remaining, taken⟩ :=
+          NativeArrayVoteReceive.selected_model_take frame state rep source destination _ selected
+        have takenFromRequest :
+            takeFirstFrom request.source (state.network destination) =
+              some (.requestVoteRequest request, remaining) := by
+          simpa only [sameSource] using taken
+        have enabled := (NativeArrayVoteReceive.enabled_correct frame state rep destination request remaining
+          takenFromRequest).mpr ⟨present, recipient, term⟩
+        have nextRep := NativeArrayVoteReceive.receive_rep frame state rep destination request signature latest
+          term recipient remaining takenFromRequest
+        rw [sameSource] at enabled nextRep
+        exact ⟨enabled, ⟨request, remaining, taken⟩, (ih _ _ nextRep).mp held⟩
+      · rintro ⟨enabled, ⟨request, remaining, taken⟩, held⟩
+        have sameSource : request.source = source :=
+          (Sparse.Queue.take_some_spec source (state.network destination) _ remaining taken).1
+        have takenFromRequest :
+            takeFirstFrom request.source (state.network destination) =
+              some (.requestVoteRequest request, remaining) := by
+          simpa only [sameSource] using taken
+        obtain ⟨present, recipient, term⟩ :=
+          (NativeArrayVoteReceive.enabled_correct frame state rep destination request remaining takenFromRequest).mp
+            (by simpa only [sameSource] using enabled)
+        let signature := maxCommittableIndex (get frame.nodes destination).log.decode
+        have latest : SignatureIndex (get frame.nodes destination).log signature :=
+          (signature_index_correct _ _).mpr rfl
+        have nextRep := NativeArrayVoteReceive.receive_rep frame state rep destination request signature latest
+          term recipient remaining takenFromRequest
+        rw [sameSource] at nextRep
+        refine ⟨present, request, signature, ?_, sameSource, recipient, term, latest, (ih _ _ nextRep).mpr held⟩
+        rw [NativeArrayQueue.model_peek_correct frame.queues state.network rep.queues source destination, taken]
+        rfl
     | queueLength source destination expected =>
       have same := congrArg List.length (congrFun (congrFun rep.queues destination) source)
       simp only [NativeArrayQueue.decodeNetwork, NativeArrayQueue.Queue.decode_length,
