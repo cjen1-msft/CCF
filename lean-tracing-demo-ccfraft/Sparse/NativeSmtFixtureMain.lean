@@ -6,6 +6,7 @@ import Sparse.NativeOptional
 import Sparse.NativeNatSet
 import Sparse.NativeRenaming
 import Sparse.NativeLogValue
+import Sparse.NativeLogMatch
 import Sparse.NativePacketHeader
 import Sparse.NativePacketDomain
 import Sparse.NativeQueueLengths
@@ -422,6 +423,44 @@ private def queueLengthLiteral (name : String) (value : Int) : Case :=
       simp only [Term.eval, decide_eq_true_eq] at cell
       simp [Term.eval, NativeEncode.queue_length_correct, cell] }
 
+private def storedLog (entries : List (Entry (Fin 2) Nat)) : Term [] (NativeEncode.logTy 2) :=
+  .pair (.integer entries.length)
+    (entries.zipIdx.foldl (fun cells item =>
+      .store cells (.integer item.2) (NativeEncode.entryTerm item.1))
+      (.free (.array .int (NativeEncode.entryTy 2)) 0))
+
+private def logMatchCase (name : String) (actual expected : List (Entry (Fin 2) Nat))
+    (result : Bool)
+    (correct : forall assignment,
+      (NativeEncode.logMatches (storedLog actual) expected).eval assignment Locals.empty = result) : Case :=
+  { name, formula := NativeEncode.logMatches (storedLog actual) expected, expected := result, correct }
+
+private def logMatchCases : List Case :=
+  let signature : Entry (Fin 2) Nat := { term := 7, content := .signature }
+  let transaction : Entry (Fin 2) Nat := { term := 8, content := .transaction (10 ^ 30) }
+  [
+    logMatchCase "log-match-empty" [] [] true
+      (by intro assignment; simp [NativeEncode.logMatches, NativeEncode.all, storedLog, Term.eval]),
+    logMatchCase "log-match-missing-entry" [] [signature] false
+      (by intro assignment; simp [NativeEncode.logMatches, NativeEncode.all, storedLog, Term.eval]),
+    logMatchCase "log-match-duplicates" [signature, signature] [signature, signature] true
+      (by intro assignment; simp [NativeEncode.logMatches, NativeEncode.all, storedLog, Term.eval,
+        List.ofFn_succ, NativeEncode.entry_term_eval]),
+    logMatchCase "log-match-prefix-is-not-whole-log" [signature, signature] [signature] false
+      (by intro assignment; simp [NativeEncode.logMatches, NativeEncode.all, storedLog, Term.eval]),
+    logMatchCase "log-match-payload" [signature, transaction] [signature, transaction] true
+      (by intro assignment; simp [NativeEncode.logMatches, NativeEncode.all, storedLog, Term.eval,
+        List.ofFn_succ, NativeEncode.entry_term_eval]),
+    logMatchCase "log-match-order" [signature, transaction] [transaction, signature] false
+      (by
+        intro assignment
+        simp [NativeEncode.logMatches, NativeEncode.all, storedLog, Term.eval,
+          List.ofFn_succ, NativeEncode.entry_term_eval, signature, transaction, NativeEncode.entryValue]
+        intro same
+        have impossible : (7 : Int) = 8 := congrArg Prod.fst same
+        omega)
+  ]
+
 def cases : List Case := [
   stored, wrongStore, nestedArray, constantArray, pair, sum, capture, nestedQuantifiers,
   wideBits, widerBits, bitsOperations, unitAndSecond, typedSymbols, overwrittenStore,
@@ -463,7 +502,7 @@ def cases : List Case := [
   queueLengthLiteral "queue-decode-large-negative" (-(10 ^ 30)),
   queueLengthLiteral "queue-decode-zero" 0,
   queueLengthLiteral "queue-decode-positive" 1,
-  queueLengthLiteral "queue-decode-large-positive" (10 ^ 30)] ++ packetCases
+  queueLengthLiteral "queue-decode-large-positive" (10 ^ 30)] ++ packetCases ++ logMatchCases
 
 end CCFRaft.NativeSmt
 

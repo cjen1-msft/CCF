@@ -358,7 +358,7 @@ native queues. No universal queue-length domain remains.
 the empty-network template. Neither endpoint must be allocated.
 `initial_frame_assignment_rep` preserves arbitrary original frames in the
 completeness direction. Quorum steps preserve queue lengths.
-The normal Sparse proof build passes. There are now 73 kernel-backed formula
+The normal Sparse proof build passes. There are now 79 kernel-backed formula
 fixtures, including positive and negative raw-cell decoding.
 The public queue regression includes one, two, and 21 identities, large lengths,
 strict input errors, independent pairs, and quorum framing.
@@ -389,12 +389,25 @@ The test helper now retains status, wall time, and script size in per-formula
 `.metrics.json` files when `CCF_NATIVE_ARRAY_ARTIFACTS` is set.
 Next add live packet cells and observations. Packet observations remain unsupported.
 
+`NativeLogMatch` supplies finite literal matching for append-packet logs.
+`logMatches` compares the length and each supplied entry. `log_value_eq_iff`
+uses the canonical tails to connect those checks to whole-array value equality.
+`log_matches_correct` connects the actual emitted expression to Model list
+equality. No constant-array constructor or packet-log size bound was added.
+`NativeEncodeProofs.all_eval` supplies shared conjunction correspondence.
+The standalone proof passes. Six new fixtures cover empty logs, missing entries,
+duplicates, proper-prefix rejection, large transaction payloads, and order.
+The full build passes in `native-log-match-final-build.log`, and all 79 formulas
+pass in `native-log-match-fixture-tests.log`.
+Next compose packet literal matching from the header, payload tags/scalars,
+and this log matcher, before wiring live queue cells.
+
 `NativeOptional` is the next value-codec unit for local-state coverage.
 It uses the existing sum datatype for optional natural indices and identities.
 Decoding distinguishes a valid absent value, `some none`, from invalid payloads,
 `none`. It rejects negative indices and identities outside the declared width.
 The proofs cover round trips, exact literal equality, and actual domain terms.
-`NativeSmtFixtureMain` now has 73 kernel-backed solver cases, including nine
+`NativeSmtFixtureMain` now has 79 kernel-backed solver cases, including nine
 optional-value cases. The codecs are now wired for all three retirement-index
 fields and `votedFor`.
 

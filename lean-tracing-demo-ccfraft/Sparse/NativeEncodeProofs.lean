@@ -10,6 +10,17 @@ namespace CCFRaft.NativeEncode
 
 open NativeSmt
 
+theorem all_eval {context : List Ty} (values : List (Term context .bool))
+    (assignment : Assignment) (locals : Locals context) :
+    (all values).eval assignment locals = true <->
+      forall value, value ∈ values -> value.eval assignment locals = true := by
+  induction values with
+  | nil => simp [all, Term.eval]
+  | cons first rest ih =>
+    change (first.eval assignment locals && (all rest).eval assignment locals) = true <->
+      forall value, value ∈ first :: rest -> value.eval assignment locals = true
+    simp only [Bool.and_eq_true, List.mem_cons, or_imp, forall_and, forall_eq, ih]
+
 theorem implies_eval {context : List Ty} (premise conclusion : Term context .bool)
     (assignment : Assignment) (locals : Locals context) :
     (implies premise conclusion).eval assignment locals = true <->

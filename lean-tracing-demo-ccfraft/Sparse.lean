@@ -33,6 +33,7 @@ import Sparse.NativeArrayVote
 import Sparse.NativeEncodeProofs
 import Sparse.NativeRenaming
 import Sparse.NativeLogValue
+import Sparse.NativeLogMatch
 import Sparse.NativePacketHeader
 import Sparse.NativePacketDomain
 import Sparse.NativeSyntaxProofs

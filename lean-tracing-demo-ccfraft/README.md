@@ -144,6 +144,10 @@ Negative indices and tail cells contain the zero-term signature entry.
 Both value round trips are proved, so equality of valid array values is
 exactly equality of finite Model lists. This does not change node-log encoding
 or add packet instructions to the public compiler yet.
+`NativeLogMatch.log_matches_correct` proves exact packet-log observations from
+the list length and one equality per supplied entry. The canonical tail domain
+connects those finite checks to whole-value equality. This avoids constructing
+an SMT constant array for each observed packet. Order and duplicate entries matter.
 `NativePacketHeader` supplies the shared term, source, and destination codec.
 Terms are natural numbers and identities belong to the declared universe.
 Header decoding requires the domain proof; it does not wrap or default invalid
