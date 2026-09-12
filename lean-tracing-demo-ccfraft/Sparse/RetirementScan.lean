@@ -84,6 +84,43 @@ theorem log_found_survives_append [Bootstrap N] (node : N) (log rest : List (Ent
   rw [configurations]
   exact found_survives_append node false (allConfigurations log) _ index found
 
+theorem signature_after_correct [DecidableEq T] (retirement start : Nat) (log : List (Entry N T)) :
+    signatureIndexAfterFrom retirement start log =
+      ((log.zipIdx start).find? fun indexed =>
+        decide (retirement < indexed.2 /\ indexed.1.content = .signature)).map Prod.snd := by
+  induction log generalizing start with
+  | nil => rfl
+  | cons entry rest ih =>
+    by_cases hit : retirement < start /\ entry.content = .signature
+    · simp [signatureIndexAfterFrom, List.zipIdx_cons, hit]
+    · simp [signatureIndexAfterFrom, List.zipIdx_cons, hit, ih]
+
+def namesRetiredNode (node : N) (entry : Entry N T) : Bool :=
+  match entry.content with
+  | .retiredCommitted nodes => decide (node ∈ nodes)
+  | _ => false
+
+theorem retired_committed_index_correct (node : N) (start : Nat) (log : List (Entry N T)) :
+    retiredCommittedIndexFrom node start log =
+      ((log.zipIdx start).find? fun indexed => namesRetiredNode node indexed.1).map Prod.snd := by
+  induction log generalizing start with
+  | nil => rfl
+  | cons entry rest ih =>
+    cases content : entry.content <;>
+      simp [retiredCommittedIndexFrom, List.zipIdx_cons, namesRetiredNode, content, ih]
+    split <;> simp_all
+
+theorem committed_nodes_correct (node : N) (commit start : Nat) (log : List (Entry N T)) :
+    node ∈ retiredCommittedNodesUpToFrom commit start log <->
+      exists indexed, indexed ∈ log.zipIdx start /\ indexed.2 <= commit /\ namesRetiredNode node indexed.1 = true := by
+  induction log generalizing start with
+  | nil => simp [retiredCommittedNodesUpToFrom]
+  | cons entry rest ih =>
+    by_cases within : start <= commit
+    · cases content : entry.content <;>
+        simp [retiredCommittedNodesUpToFrom, List.zipIdx_cons, within, namesRetiredNode, content, ih]
+    · simp [retiredCommittedNodesUpToFrom, List.zipIdx_cons, within, ih]
+
 end CCFRaft.Sparse.RetirementScan
 
 run_cmd do
