@@ -518,9 +518,17 @@ as `b7b231fd4`. It accepts a source row through its Model equality rather than
 requiring the exact retirement witness tuple. `change_configuration_rep`
 reuses that frame proof. The parent build, including dependent membership
 guard and row proofs, passes in `native-membership-frame-parent-build.log`.
+`NativeNodeRowModelEncoding.lean` is committed as `b04c654dc`.
+`NodeRowTerms.Rep.of_model_eq` transports row representations across equal
+Model states without equating inactive log tails. The parent inspected and
+rebuilt it in `native-node-row-model-parent-build.log`; the import audit passes.
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` now owns only new
-`NativeNodeRowModelEncoding.lean`. It transports row representations across
-equal Model states without equating inactive log tails.
+`NativeMembershipExecution.lean`, proving actual run decomposition and prefix
+constraints. Keep `NativeMembershipChange.lean` unchanged while it works.
+Expected offsets are current/previous/added/entries/length at `+0` through `+4`,
+local witnesses at `+5` through `+8`, committed current at `+9`,
+completed bits at `+10`, and the writer at `+11 + 3 * width`.
+The final counter is `before.next + 29 + 20 * width`.
 `NativeMembershipChange.lean`, `NativeMembershipRowTerms.lean`, and
 `NativeMembershipChangeFixtureMain.lean` are committed as `a006368c5`.
 The private action composes the proved guards, new log entry, local and global
@@ -542,9 +550,12 @@ All row and bitvector inputs are checked against the original counter before
 allocation starts. Its 15 future-ID rejections pass in
 `native-membership-write-reference-tests.log`. All 1,572 membership scripts
 and 184 combined sequences remain byte-identical after extraction.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns only new
-`NativeMembershipWritesEncoding.lean`. It proves execution and composes allocation,
-source-row replacement, and global stores. The allocation API is now available.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns new
+`NativeMembershipWritesEncoding.lean` plus existing `NativeNodeRowWritesEncoding.lean`
+and `NativeDefinitionsEncoding.lean`.
+Its full writer proof is complete but not yet accepted. The parent requested one
+shared row-definition bounds proof, shared SSA preservation lemmas, and removal
+of the two completeness-only helper layers now that allocation is available.
 The runtime remains parent-owned.
 
 `NativeArrayCoreActionsFixtureMain` and `NativeCoreActionsFixtureMain` are
