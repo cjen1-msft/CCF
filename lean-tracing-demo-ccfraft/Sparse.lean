@@ -39,6 +39,7 @@ import Sparse.NativePacketDomain
 import Sparse.NativePacketMatch
 import Sparse.NativeQueuePoint
 import Sparse.NativeQueuePush
+import Sparse.NativeQueueStoreEncoding
 import Sparse.NativeSyntaxProofs
 import Sparse.NativeNames
 import Sparse.NativeLowering

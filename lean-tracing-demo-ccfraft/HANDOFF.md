@@ -533,8 +533,32 @@ pass in `native-queue-push-fixture-tests.log`.
 The 29 new cases cover each packet kind at empty, nonzero, and `10^30`
 head/length positions, two identical pushes per packet kind, and preservation
 of every other raw cell. Build log: `native-queue-push-fixture-build.log`.
-This does not yet update the outer destination/source columns or allocate
-fresh column versions. Those are the next send-storage step.
+`NativeQueueStore` now updates the outer destination/source columns and
+allocates fresh length and packet versions. Both definitions capture the old
+columns, so the append position uses the old length. Packet symbols are checked
+before either allocation. A reference at the original fresh counter is rejected
+even though it would become allocated by the first definition.
+`NativeQueueStoreEncoding` proves the actual execution shape, assertion
+semantics, valid references, complete frame soundness, and completeness.
+`define_extension` in `NativeAssignmentEncoding` extends a specific satisfying
+assignment and preserves all earlier symbols. Queue completeness composes that
+helper across the two executed definitions.
+The normal Sparse target imports these proofs.
+`NativeQueueStoreFixtureMain` supplies 56 actual-execution solver cases,
+using `NativeArrayQueue.send` to compute expected observations after each send.
+Each case interleaves six sends across directed and self queues, preserving
+duplicates and earlier packets. All seven kinds run with empty, nonzero,
+`10^30`, and negative raw head/length values. The latter use the proved `toNat`
+interpretation. Five cases reject unallocated packet symbols before and after
+a send, including the original fresh counter. A permitted old packet symbol
+also runs through the allocator.
+All 56 cases and the 152 kernel-backed formulas pass in
+`native-queue-store-tests.log`. The proof build is
+`native-queue-store-final-build.log`.
+This completes internal send storage, not public action integration.
+Next prove active-peer membership and last-committable packet construction,
+then wire requestVote/requestPreVote through the compiler and trace theorem.
+Reducer integration, readback, and raw/code explorer provenance remain pending.
 
 `NativeOptional` is the next value-codec unit for local-state coverage.
 It uses the existing sum datatype for optional natural indices and identities.

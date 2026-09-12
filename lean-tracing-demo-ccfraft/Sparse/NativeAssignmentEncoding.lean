@@ -125,6 +125,32 @@ theorem Encoding.holds_agrees_below {width : PNat} (state : Encoding width)
   holds.agrees_below state.next
     (fun formula member => state.symbolsBounded formula (by simpa using member)) same
 
+theorem define_extension {width : PNat} {sort : Ty} (value : Expr sort)
+    (before after : Encoding width) (id : Nat)
+    (run : (define value).run before = .ok (id, after))
+    (assignment : Assignment) (holds : Holds before.assertions.toList assignment) :
+    exists extended : Assignment, assignment.AgreesBelow before.next extended /\
+      Holds after.assertions.toList extended := by
+  obtain ⟨rfl, _, _, _, appended⟩ := define_success value before after id run
+  let extended := assignment.set sort before.next (value.eval assignment Locals.empty)
+  have agreement : assignment.AgreesBelow before.next extended :=
+    assignment.agrees_below_set before.next sort before.next _ (le_refl _)
+  have bounded : forall symbol, symbol ∈ value.symbols -> symbol.2 < before.next := by
+    intro symbol member
+    simpa only [decide_eq_true_eq] using
+      List.all_eq_true.mp (define_known value before after before.next run) symbol member
+  have sameValue := value.eval_agrees_below assignment extended Locals.empty before.next bounded agreement
+  refine ⟨extended, agreement, ?_⟩
+  rw [appended, Array.toList_push]
+  intro formula member
+  rcases List.mem_append.mp member with previous | current
+  · exact before.holds_agrees_below assignment extended holds agreement formula previous
+  · have same : formula = .equal (.free sort before.next) value := List.mem_singleton.mp current
+    subst formula
+    simp only [Term.eval, decide_eq_true_eq]
+    rw [<- sameValue]
+    simp [extended, Assignment.set]
+
 theorem NodeColumnsRep.agrees_below {width : PNat} (state : Encoding width)
     (left right : Assignment) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
     (rep : NodeColumnsRep left state.toColumns arrays) (valid : ReferencesValid state)

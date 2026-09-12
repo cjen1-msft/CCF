@@ -280,7 +280,14 @@ including the zero sentinel, live-index guards, and exclusion of later signature
 Vote sends and campaigns are not yet accepted by the public Lean encoder.
 `NativeQueuePush` proves that a store at head plus length appends exactly one
 decoded packet, preserving duplicates and every other raw cell. This covers
-the row update, not fresh column allocation or a complete send action.
+the row update. `NativeQueueStoreEncoding` proves that actual `pushQueue`
+execution allocates both column versions and realizes the complete native
+network send, while preserving node state, globals, and other directed queues.
+Its completeness proof extends any satisfying input assignment without changing
+earlier symbols. This internal storage operation is not a public Model action.
+`NativeQueueStoreFixtureMain` exercises six interleaved sends in each of 56
+solver cases, including duplicates, self queues, huge offsets, and negative
+raw head and length values. Five rejection cases cover fresh packet references.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.

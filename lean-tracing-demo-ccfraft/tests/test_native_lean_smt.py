@@ -102,6 +102,36 @@ class NativeLeanSmtTests(unittest.TestCase):
         self.assertEqual(sum(item["expected"] == "sat" for item in fixtures), 85)
         self.solve(fixtures)
 
+    def test_queue_store_execution(self):
+        pairs = [("a", "b"), ("b", "a"), ("a", "a"), ("c", "b"), ("a", "c"), ("a", "b")]
+        packets = [
+            [packet_samples(source, destination)[kind] for source, destination in pairs]
+            for kind in range(7)
+        ]
+        result = subprocess.run(
+            ["lake", "env", "lean", "--run", "Sparse/NativeQueueStoreFixtureMain.lean"],
+            cwd=ROOT,
+            input=json.dumps(packets),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        output = json.loads(result.stdout)
+        fixtures = output["fixtures"]
+        self.assertEqual(len(fixtures), 56)
+        self.assertEqual(len(fixtures), len({item["name"] for item in fixtures}))
+        self.assertEqual(sum(item["expected"] == "sat" for item in fixtures), 28)
+        self.assertEqual(
+            [(item["next"], item["id"]) for item in output["rejected"]],
+            [(24, 24), (24, 25), (24, 1024), (26, 26), (26, 27)],
+        )
+        for item in output["rejected"]:
+            self.assertEqual(
+                item["error"],
+                "internal encoder error: packet references an unallocated SMT symbol",
+            )
+        self.solve(fixtures)
+
     def solve(self, fixtures):
         requested = os.environ.get("CVC5")
         solver = find_cvc5(Path(requested) if requested else None)
