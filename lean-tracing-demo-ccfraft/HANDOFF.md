@@ -2,9 +2,10 @@
 
 ## Current direction: native-array exact encoding
 
-### Immediate continuation: vote-packet construction
+### Immediate continuation: vote-send encoding
 
-The completed migration builds on `137a4f3d6`, the versioned FIFO column slice.
+The solver migration is committed as `29312d591`, following `137a4f3d6`,
+the versioned FIFO column slice.
 `NativeMembershipEncoding.lean` proves scoped active membership,
 existential witnesses, and correspondence with `activeNodeUnion`.
 It is imported by `Sparse.lean` and builds with the normal axiom gate.
@@ -12,8 +13,21 @@ It is imported by `Sparse.lean` and builds with the normal axiom gate.
 1,140 Model-derived cases. The old cvc5 runner failed these cases.
 The explicit Z3 migration is complete. All 48 native solver and explorer test
 methods pass, including 156 kernel-backed formulas and 1,140 membership cases.
-Next prove last-committable index/term reads and symbolic vote-packet construction,
-then wire requestVote/requestPreVote through the public compiler and frame proofs.
+`NativeVotePacket.lean` now proves last-committable index/term reads and symbolic
+vote-packet construction. `vote_packet_term_model_correct` uses the asserted
+latest-signature condition and reaches the actual Model packet constructors.
+The term read clips negative raw values and ignores zero/out-of-range indices.
+The full Sparse audit passes. `native-vote-packet-fixture-build.log` and
+`native-vote-packet-tests.log` record 2,560 passing solver cases in 33 seconds.
+The matrix covers both packet kinds, all logs of length 0-2 over four contents,
+five commit values including `10^30`, allocated/absent nodes, three identity
+pairs including self, and equality/inequality against Model packets.
+Forty additional cases within that total exercise raw negative terms and
+negative, zero, live, and outside indices.
+Next compose vote guards and FIFO writes, then wire requestVote/requestPreVote
+through the public compiler and frame proofs. `NativeArrayVote.Instruction.vote`
+already represents both actions. `frameInstruction` still rejects it.
+No public action or assurance flag changed in the packet-construction slice.
 
 cvc5 1.3.4 returns incorrect UNSAT on
 `membership-free-false-1-0-0`. The two-assertion reduction contains a canonical

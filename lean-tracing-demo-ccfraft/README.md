@@ -312,6 +312,17 @@ bootstrap branch succeeds. `NativeMembershipFixtureMain` checks 1,140 cases
 against actual Model membership, including fixed invalid witnesses and
 commit indices beyond the log.
 
+`NativeVotePacket` constructs symbolic request-vote and pre-vote packets.
+It takes the maximum of commit and the latest signature index, then reads that
+entry's term. Zero and out-of-range indices read zero. The term read follows
+the decoder's natural-number conversion, including negative raw cells.
+`vote_packet_term_model_correct` connects the emitted packet to the actual Model
+constructors under the asserted latest-signature condition.
+`NativeVotePacketFixtureMain` generates 2,560 solver cases, including absent
+nodes with nonempty raw storage, self-addressed packets, huge indices, and
+negated packet equalities. These are construction proofs, not public send
+actions. The public encoder still accepts only `checkQuorum` as an action.
+
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.
 Invalid payloads fail decoding rather than becoming `none` or wrapping to
