@@ -45,6 +45,12 @@ The main-agent semantic prerequisites now include:
   `NativeArrayLogWrite` proves truncation, append, splice, and the Model
   conflict-truncation branch. Both modules build with their axiom gates in
   `native-log-ranges-build.log` and `native-log-write-build.log`.
+- `NativeArrayAppendReceive`: bounded signature/commit correspondence,
+  already-done and extension ACK branches, exact NACK matching and response,
+  rejection guards, and same-term candidate stepdown without consuming the
+  request. Reuses `LogMatchSummary.StorageSummary` rather than a new scan
+  definition. `native-append-receive-branches-build.log` records the clean build.
+  Retirement refresh, branch composition, and public receive remain unwired.
 
 Mechanical FIFO-pop worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns only
 `NativeQueuePop.lean` and `NativeQueuePopEncoding.lean`. It uses GPT-5.6 Sol

@@ -400,6 +400,10 @@ The no-conflict extension branch compares complete entries.
 `NativeArrayLogWrite` proves truncation and splice against Model list operations,
 without constraining discarded tails. These receive lemmas do not yet encode
 an append receive action.
+`NativeArrayAppendReceive` adds bounded commit, ACK and NACK correspondence,
+and the nonconsuming candidate-stepdown branch. NACK matching reuses
+`LogMatchSummary.StorageSummary` and does not assume ordered log terms.
+Retirement refresh and receive branch composition remain unfinished.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.
