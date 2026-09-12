@@ -10,59 +10,51 @@ namespace CCFRaft.NativeEncode
 
 open NativeSmt
 
-def natSetMember {context : List Ty} (cells : Nat) (index : Term context .int) : Term context .bool :=
-  .equal (.select (.free (.array .int (.bits 1)) cells) index) (.bits 1)
+def natSetMember {context : List Ty} (cells limit : Nat) (index : Term context .int) : Term context .bool :=
+  all [.le (.integer 0) index, lt index (.free .int limit),
+    .equal (.select (.free (.array .int (.bits 1)) cells) index) (.bits 1)]
 
-def natSetDomain (cells limit : Nat) : Expr .bool :=
-  .and (.le (.integer 0) (.free .int limit))
-    (.forall_ .int (implies
-      (.or (lt (.bound .here) (.integer 0)) (.le (.free .int limit) (.bound .here)))
-      (.equal (.select (.free (.array .int (.bits 1)) cells) (.bound .here)) (.bits 0))))
+def natSetDomain (limit : Nat) : Expr .bool :=
+  .le (.integer 0) (.free .int limit)
 
-def NatSetDomain (assignment : Assignment) (cells limit : Nat) : Prop :=
-  0 <= assignment .int limit /\
-    forall index : Int, index < 0 \/ assignment .int limit <= index ->
-      assignment (.array .int (.bits 1)) cells index = 0
+def NatSetDomain (assignment : Assignment) (limit : Nat) : Prop :=
+  0 <= assignment .int limit
 
-theorem nat_set_domain_correct (assignment : Assignment) (cells limit : Nat) :
-    (natSetDomain cells limit).eval assignment Locals.empty = true <->
-      NatSetDomain assignment cells limit := by
-  simp only [natSetDomain, NatSetDomain, Term.eval, Bool.and_eq_true, decide_eq_true_eq]
-  apply and_congr_right
-  intro _
-  apply forall_congr'
-  intro index
-  rw [implies_eval]
-  simp [lt, Term.eval, Locals.cons]
+theorem nat_set_domain_correct (assignment : Assignment) (limit : Nat) :
+    (natSetDomain limit).eval assignment Locals.empty = true <->
+      NatSetDomain assignment limit := by
+  simp [natSetDomain, NatSetDomain, Term.eval]
 
 def natSetArray (assignment : Assignment) (cells limit : Nat)
-    (_domain : NatSetDomain assignment cells limit) : NativeArrayNatSet.Array :=
+    (_domain : NatSetDomain assignment limit) : NativeArrayNatSet.Array :=
   { limit := (assignment .int limit).toNat
-    cells := fun index => decide (assignment (.array .int (.bits 1)) cells index = 1) }
+    cells := fun index => decide (index < (assignment .int limit).toNat /\
+      assignment (.array .int (.bits 1)) cells index = 1) }
 
 theorem nat_set_array_valid (assignment : Assignment) (cells limit : Nat)
-    (domain : NatSetDomain assignment cells limit) :
+    (domain : NatSetDomain assignment limit) :
     (natSetArray assignment cells limit domain).Valid := by
   intro index outside
-  have zero := domain.2 index (Or.inr (by
-    change (assignment .int limit).toNat <= index at outside
-    simpa only [Int.toNat_of_nonneg domain.1] using Int.ofNat_le.mpr outside))
-  simp [natSetArray, zero]
+  change (assignment .int limit).toNat <= index at outside
+  simp only [natSetArray, Nat.not_lt.mpr outside, false_and, decide_false]
 
 theorem nat_set_member_correct (assignment : Assignment) (cells limit : Nat)
-    (domain : NatSetDomain assignment cells limit) (index : Nat) :
+    (domain : NatSetDomain assignment limit) (index : Nat) :
     index ∈ (natSetArray assignment cells limit domain).decode <->
-      assignment (.array .int (.bits 1)) cells index = 1 := by
-  simpa only [natSetArray, decide_eq_true_eq] using
+      (index : Int) < assignment .int limit /\ assignment (.array .int (.bits 1)) cells index = 1 := by
+  have cast : (index < (assignment .int limit).toNat) <-> (index : Int) < assignment .int limit := by
+    rw [<- Int.ofNat_lt, Int.toNat_of_nonneg domain]
+  simpa only [natSetArray, decide_eq_true_eq, cast] using
     NativeArrayNatSet.member_correct _ (nat_set_array_valid assignment cells limit domain) index
 
 theorem nat_set_observation_correct (assignment : Assignment) (cells limit : Nat)
-    (domain : NatSetDomain assignment cells limit) (index : Nat) (expected : Bool) :
-    (Term.equal (natSetMember cells (.integer index))
+    (domain : NatSetDomain assignment limit) (index : Nat) (expected : Bool) :
+    (Term.equal (natSetMember cells limit (.integer index))
       (.boolean expected)).eval assignment Locals.empty = true <->
       decide (index ∈ (natSetArray assignment cells limit domain).decode) = expected := by
   have membership := nat_set_member_correct assignment cells limit domain index
-  cases expected <;> simp [natSetMember, Term.eval, membership]
+  cases expected <;> simp [natSetMember, all, lt, Term.eval, membership]
+  simp only [or_iff_not_imp_left, not_le]
 
 def natSetAssignment (seed : Assignment) (cells limit : Nat) (values : Finset Nat) : Assignment :=
   let assignment := seed.set (.array .int (.bits 1)) cells
@@ -80,25 +72,23 @@ theorem nat_set_assignment_agrees_below (seed : Assignment) (cells limit boundar
     (filled.agrees_below_set boundary .int limit (NativeArrayNatSet.Array.ofFinset values).limit limitFresh)
 
 theorem nat_set_assignment_domain (seed : Assignment) (cells limit : Nat) (values : Finset Nat) :
-    NatSetDomain (natSetAssignment seed cells limit values) cells limit := by
-  constructor
-  · simp [natSetAssignment, Assignment.set]
-  · intro index outside
-    have outside' : index < 0 \/ ((values.sup Nat.succ : Nat) : Int) <= index := by
-      simpa [natSetAssignment, Assignment.set, NativeArrayNatSet.Array.ofFinset] using outside
-    have absent : Not (0 <= index /\ index.toNat ∈ values) := by
-      rintro ⟨nonnegative, member⟩
-      have bound : index.toNat + 1 <= values.sup Nat.succ := Finset.le_sup member
-      have same := Int.toNat_of_nonneg nonnegative
-      rcases outside' with negative | beyond <;> omega
-    simp [natSetAssignment, Assignment.set, absent]
+    NatSetDomain (natSetAssignment seed cells limit values) limit := by
+  simp [NatSetDomain, natSetAssignment, Assignment.set]
+
+theorem nat_set_assignment_member (seed : Assignment) (cells limit : Nat) (values : Finset Nat) (index : Nat) :
+    ((index : Int) < (natSetAssignment seed cells limit values) .int limit /\
+      (natSetAssignment seed cells limit values) (.array .int (.bits 1)) cells index = 1) <->
+      index ∈ values := by
+  simp [natSetAssignment, Assignment.set, NativeArrayNatSet.Array.ofFinset]
+  intro member
+  exact ⟨index, member, le_refl _⟩
 
 theorem nat_set_assignment_decode (seed : Assignment) (cells limit : Nat) (values : Finset Nat) :
     (natSetArray (natSetAssignment seed cells limit values) cells limit
       (nat_set_assignment_domain seed cells limit values)).decode = values := by
   ext index
   rw [nat_set_member_correct]
-  simp [natSetAssignment, Assignment.set]
+  exact nat_set_assignment_member seed cells limit values index
 
 end CCFRaft.NativeEncode
 

@@ -6,12 +6,12 @@
 from __future__ import annotations
 
 import copy
-from http.client import HTTPConnection
 import json
-from pathlib import Path
 import tempfile
-from threading import Thread
 import unittest
+from http.client import HTTPConnection
+from pathlib import Path
+from threading import Thread
 
 from explorer_api import ApiError, ExplorerApi, make_server
 from native_run import (
@@ -41,6 +41,7 @@ class NativeExplorerTests(unittest.TestCase):
         self.details = {
             "schema": ENCODING_SCHEMA,
             "input": copy.deepcopy(self.document),
+            "queries": {"unsatCore": "(get-unsat-core)\n"},
             "script": (
                 "(set-logic ALL)\n(declare-const flag Bool)\n"
                 "(assert (! true :named assertion_0))\n"
@@ -61,6 +62,7 @@ class NativeExplorerTests(unittest.TestCase):
         self.result = {
             "schema": RUN_SCHEMA,
             "encoder": ENCODER,
+            "solver": "z3",
             "status": "unsat",
             "solver_ms": 0.1,
             "assurance": dict(ASSURANCE),
@@ -115,6 +117,31 @@ class NativeExplorerTests(unittest.TestCase):
         (self.root / "trace.smt2").write_text("(check-sat)\n", encoding="ascii")
         with self.assertRaisesRegex(ValidationError, "artifacts changed"):
             NativeRun.load(self.root)
+
+    def test_old_schemas_and_other_solvers_are_rejected(self):
+        original = copy.deepcopy(self.result)
+        for field, value in (("schema", "ccfraft-native-run/v1"), ("solver", "cvc5")):
+            with self.subTest(field=field):
+                self.result = copy.deepcopy(original)
+                self.result[field] = value
+                self.save()
+                with self.assertRaises(ValidationError):
+                    NativeRun.load(self.root)
+        self.result = original
+        self.details["schema"] = "ccfraft-native-encoding/v1"
+        self.save()
+        with self.assertRaisesRegex(ValidationError, "encoding schema"):
+            NativeRun.load(self.root)
+
+    def test_missing_or_invalid_solver_queries_are_rejected(self):
+        original = copy.deepcopy(self.details)
+        for queries in ({}, {"unsatCore": ""}, {"unsatCore": False}):
+            with self.subTest(queries=queries):
+                self.details = copy.deepcopy(original)
+                self.details["queries"] = queries
+                self.save()
+                with self.assertRaises(ValidationError):
+                    NativeRun.load(self.root)
 
     def test_encoding_is_bound_to_exact_input_types(self):
         self.document["instructions"][0]["value"] = 1

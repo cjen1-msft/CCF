@@ -67,7 +67,7 @@ def frameObservationClauses {width : PNat} (columns : Columns) :
     .ok [.equal (.select (.free (.array .int (.bits width)) columns.retirementCompleted) (.integer node.val))
       (.bits (encodeBits expected))]
   | .submittedTxId txId expected =>
-    .ok [.equal (natSetMember columns.submittedTxIds (.integer txId)) (.boolean expected)]
+    .ok [.equal (natSetMember columns.submittedTxIds columns.submittedTxLimit (.integer txId)) (.boolean expected)]
   | .queueLength source destination expected =>
     .ok [.equal (queueScalarTerm columns.queueLength (.integer destination.val) (.integer source.val))
       (.integer expected)]
@@ -86,7 +86,7 @@ def frameInstruction {width : PNat} (item : FrameInstruction width) : EncodeM wi
     assertAll (<- frameObservationClauses state.toColumns item)
 
 def initialFrameAssertions (width : PNat) : List (Expr .bool) :=
-  initialAssertions width ++ [natSetDomain 19 20]
+  initialAssertions width ++ [natSetDomain 20]
 
 def initialFrameDomains (width : PNat) : EncodeM width Unit :=
   assertAll (initialFrameAssertions width)

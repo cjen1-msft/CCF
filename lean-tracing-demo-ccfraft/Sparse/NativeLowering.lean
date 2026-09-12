@@ -74,8 +74,8 @@ theorem Ty.defaultSyntax_eval (sort : Ty) (assignment : Assignment) (environment
     rw [Ty.defaultSyntax, evalSyntax] <;> try decide +kernel
     simp [Ty.default, parse_sort_syntax, applyConstructor, second]
   | pair first second left right =>
-    rw [Ty.defaultSyntax, eval_application _ _ _ _ (by decide +kernel) (by decide +kernel) (by decide +kernel)]
-    simp [Ty.default, evalArguments, applyOperator, left, right]
+    rw [Ty.defaultSyntax, evalSyntax] <;> try decide +kernel
+    simp [Ty.default, parse_sort_syntax, left, right]
 
 theorem Term.syntax_eval (assignment : Assignment) (environment : NamedLocals) :
     {context : List Ty} -> {sort : Ty} -> (expression : Term context sort) -> (locals : Locals context) ->
@@ -112,11 +112,15 @@ theorem Term.syntax_eval (assignment : Assignment) (environment : NamedLocals) :
   | _, _, .and left right, locals, represented
   | _, _, .or left right, locals, represented
   | _, _, .select left right, locals, represented
-  | _, _, .pair left right, locals, represented
   | _, _, .bitsAnd left right, locals, represented
   | _, _, .bitsOr left right, locals, represented => by
     rw [Term.syntax, eval_application _ _ _ _ (by decide +kernel) (by decide +kernel) (by decide +kernel)]
     simp [Term.eval, evalArguments, applyOperator,
+      left.syntax_eval assignment environment locals represented,
+      right.syntax_eval assignment environment locals represented]
+  | _, _, .pair left right, locals, represented => by
+    rw [Term.syntax, evalSyntax] <;> try decide +kernel
+    simp [Term.eval, parse_sort_syntax,
       left.syntax_eval assignment environment locals represented,
       right.syntax_eval assignment environment locals represented]
   | _, _, .not value, locals, represented

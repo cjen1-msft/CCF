@@ -72,7 +72,7 @@ theorem Ty.defaultSyntax_safe (sort : Ty) : sort.defaultSyntax.Safe := by
   | pair first second left right =>
     simp only [Ty.defaultSyntax, NativeSExpr.Expr.Safe, List.mem_cons, List.not_mem_nil,
       or_false, or_imp, forall_and, forall_eq]
-    exact ⟨by decide +kernel, left, right⟩
+    exact ⟨⟨by decide +kernel, by decide +kernel, Ty.syntax_safe _⟩, left, right⟩
 
 theorem Term.syntax_safe : {context : List Ty} -> {sort : Ty} ->
     (expression : Term context sort) -> expression.syntax.Safe
@@ -99,11 +99,16 @@ theorem Term.syntax_safe : {context : List Ty} -> {sort : Ty} ->
     simpa only [Term.syntax, NativeSExpr.Expr.Safe] using binder_safe ref.level
   | _, _, .add left right | _, _, .sub left right | _, _, .le left right
   | _, _, .equal left right | _, _, .and left right | _, _, .or left right
-  | _, _, .select left right | _, _, .pair left right
+  | _, _, .select left right
   | _, _, .bitsAnd left right | _, _, .bitsOr left right => by
     simp only [Term.syntax, NativeSExpr.Expr.Safe, List.mem_cons, List.not_mem_nil,
       or_false, or_imp, forall_and, forall_eq]
     exact ⟨by decide +kernel, left.syntax_safe, right.syntax_safe⟩
+  | _, .pair first second, .pair left right => by
+    simp only [Term.syntax, NativeSExpr.Expr.Safe, List.mem_cons, List.not_mem_nil,
+      or_false, or_imp, forall_and, forall_eq]
+    exact ⟨⟨by decide +kernel, by decide +kernel, (Ty.pair first second).syntax_safe⟩,
+      left.syntax_safe, right.syntax_safe⟩
   | _, _, .not value | _, _, .fst value | _, _, .snd value | _, _, .bitsNot value => by
     simp only [Term.syntax, NativeSExpr.Expr.Safe, List.mem_cons, List.not_mem_nil,
       or_false, or_imp, forall_and, forall_eq]

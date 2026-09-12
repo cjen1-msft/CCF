@@ -225,25 +225,29 @@ private def optionalIdentity (name : String) (width : PNat) (value : Option Int)
 
 private def natSetOutside (name : String) (index : Term [] .int) : Case :=
   { name
-    formula := .and (NativeEncode.natSetDomain 0 1)
+    formula := .and (NativeEncode.natSetDomain 1)
       (.and (.or (NativeEncode.lt index (.integer 0)) (.le (.free .int 1) index))
-        (NativeEncode.natSetMember 0 index))
+        (NativeEncode.natSetMember 0 1 index))
     expected := false
     correct := by
       intro assignment
       apply Bool.eq_false_iff.mpr
       intro held
       simp only [Term.eval, Bool.and_eq_true] at held
-      obtain ⟨domain, outside, present⟩ := held
-      have valid := (NativeEncode.nat_set_domain_correct assignment 0 1).mp domain
+      obtain ⟨_, outside, present⟩ := held
       have outside' : index.eval assignment Locals.empty < 0 \/
           assignment .int 1 <= index.eval assignment Locals.empty := by
         simpa [NativeEncode.lt, Term.eval] using outside
-      simp [NativeEncode.natSetMember, Term.eval, valid.2 _ outside'] at present }
+      simp only [NativeEncode.natSetMember, NativeEncode.all, List.foldr_cons, List.foldr_nil,
+        NativeEncode.lt, Term.eval, Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq,
+        decide_eq_false_iff_not, not_le, and_true] at present
+      rcases outside' with negative | beyond
+      · exact (not_lt_of_ge present.1) negative
+      · exact (not_lt_of_ge beyond) present.2.1 }
 
 private def natSetNegativeLimit : Case :=
   { name := "nat-set-negative-limit"
-    formula := .and (NativeEncode.natSetDomain 0 1)
+    formula := .and (NativeEncode.natSetDomain 1)
       (NativeEncode.lt (.free .int 1) (.integer 0))
     expected := false
     correct := by
@@ -252,29 +256,48 @@ private def natSetNegativeLimit : Case :=
       intro held
       simp only [Term.eval, Bool.and_eq_true] at held
       obtain ⟨domain, negative⟩ := held
-      have nonnegative := ((NativeEncode.nat_set_domain_correct assignment 0 1).mp domain).1
+      have nonnegative := (NativeEncode.nat_set_domain_correct assignment 1).mp domain
       simp [NativeEncode.lt, Term.eval] at negative
       exact (not_lt_of_ge nonnegative) negative }
 
 private def natSetEmpty : Case :=
   { name := "nat-set-empty-prefix"
     formula := NativeEncode.implies
-      (.and (NativeEncode.natSetDomain 0 1) (.equal (.free .int 1) (.integer 0)))
-      (.forall_ .int (.not (NativeEncode.natSetMember 0 (.bound .here))))
+      (.and (NativeEncode.natSetDomain 1) (.equal (.free .int 1) (.integer 0)))
+      (.forall_ .int (.not (NativeEncode.natSetMember 0 1 (.bound .here))))
     expected := true
     correct := by
       intro assignment
       rw [NativeEncode.implies_eval]
       intro held
       simp only [Term.eval, Bool.and_eq_true, decide_eq_true_eq] at held
-      obtain ⟨domain, zero⟩ := held
-      have valid := (NativeEncode.nat_set_domain_correct assignment 0 1).mp domain
+      obtain ⟨_, zero⟩ := held
       simp only [Term.eval, decide_eq_true_eq]
       intro index
-      have outside : index < 0 \/ assignment .int 1 <= index := by
-        rw [zero]
-        exact lt_or_ge (index : Int) 0
-      simp [NativeEncode.natSetMember, Term.eval, Locals.cons, valid.2 index outside] }
+      by_cases nonnegative : 0 <= index
+      · simp [NativeEncode.natSetMember, NativeEncode.all, NativeEncode.lt, Term.eval,
+          Locals.cons, zero, nonnegative]
+      · simp [NativeEncode.natSetMember, NativeEncode.all, NativeEncode.lt, Term.eval,
+          Locals.cons, nonnegative] }
+
+private def natSetTailFreedom (index : Int) : SatCase :=
+  { name := s!"nat-set-ignored-tail-{index}"
+    formula := NativeEncode.all [
+      NativeEncode.natSetDomain 1,
+      .equal (.free .int 1) (.integer 0),
+      .equal (.select (.free (.array .int (.bits 1)) 0) (.integer index)) (.bits 1),
+      .not (NativeEncode.natSetMember 0 1 (.integer index))]
+    correct := by
+      let assignment := Assignment.default.set (.array .int (.bits 1)) 0 (fun _ => 1)
+      refine ⟨assignment, ?_⟩
+      by_cases nonnegative : 0 <= index
+      · simp [NativeEncode.natSetDomain, NativeEncode.natSetMember, NativeEncode.all,
+          NativeEncode.lt, Term.eval, assignment, Assignment.set, Assignment.default, Ty.default, nonnegative]
+      · simp [NativeEncode.natSetDomain, NativeEncode.natSetMember, NativeEncode.all,
+          NativeEncode.lt, Term.eval, assignment, Assignment.set, Assignment.default, Ty.default, nonnegative] }
+
+def natSetSatCases : List SatCase :=
+  [-1, 0, 1, 10 ^ 30].map natSetTailFreedom
 
 private def logOutside (name : String) (index : Term [] .int) : Case :=
   let value : Term [] (NativeEncode.logTy 2) := .free (NativeEncode.logTy 2) 0
@@ -790,7 +813,8 @@ def cases : List Case := [
 end CCFRaft.NativeSmt
 
 run_cmd do
-  for name in [``CCFRaft.NativeSmt.cases, ``CCFRaft.NativeSmt.packetSatCases, ``CCFRaft.NativeSmt.queueSatCases] do
+  for name in [``CCFRaft.NativeSmt.cases, ``CCFRaft.NativeSmt.packetSatCases,
+      ``CCFRaft.NativeSmt.queueSatCases, ``CCFRaft.NativeSmt.natSetSatCases] do
     for axiomName in (<- Lean.collectAxioms name) do
       unless axiomName == ``propext || axiomName == ``Classical.choice ||
           axiomName == ``Quot.sound do
@@ -802,6 +826,6 @@ def main : IO Unit := do
       ("script", Lean.toJson (CCFRaft.NativeSmt.renderScript [formula]))]
   let fixtures := CCFRaft.NativeSmt.cases.map (fun item =>
     fixture item.name item.formula (if item.expected then "sat" else "unsat")) ++
-    (CCFRaft.NativeSmt.packetSatCases ++ CCFRaft.NativeSmt.queueSatCases).map
+    (CCFRaft.NativeSmt.packetSatCases ++ CCFRaft.NativeSmt.queueSatCases ++ CCFRaft.NativeSmt.natSetSatCases).map
       (fun item => fixture item.name item.formula "sat")
   IO.println (Lean.toJson fixtures).compress

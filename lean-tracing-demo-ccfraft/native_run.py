@@ -5,10 +5,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
 import math
+from dataclasses import dataclass
 from pathlib import Path
 
 from native_input import canonical_json, unique_object
@@ -16,8 +16,8 @@ from Shared.smt import parse_unsat_core
 from Shared.solver import SolverRun, ValidationError, query_payload, solver_status
 
 ENCODER = "native-lean-experimental"
-RUN_SCHEMA = "ccfraft-native-run/v1"
-ENCODING_SCHEMA = "ccfraft-native-encoding/v1"
+RUN_SCHEMA = "ccfraft-native-run/v2"
+ENCODING_SCHEMA = "ccfraft-native-encoding/v2"
 ARTIFACTS = (
     "input.json",
     "encoding.json",
@@ -73,7 +73,9 @@ def validate_encoding(document: object, details: object) -> dict:
                 f"instruction {index}: expected an instruction object"
             )
     details = _object(
-        details, {"schema", "input", "script", "groups", "clauses"}, "encoding"
+        details,
+        {"schema", "input", "script", "queries", "groups", "clauses"},
+        "encoding",
     )
     if details["schema"] != ENCODING_SCHEMA:
         raise ValidationError("unsupported native encoding schema")
@@ -81,6 +83,9 @@ def validate_encoding(document: object, details: object) -> dict:
         raise ValidationError("encoding belongs to different Model input")
     if not isinstance(details["script"], str) or not details["script"]:
         raise ValidationError("encoding script must be nonempty text")
+    queries = _object(details["queries"], {"unsatCore"}, "queries")
+    if not isinstance(queries["unsatCore"], str) or not queries["unsatCore"].strip():
+        raise ValidationError("unsat-core query must be nonempty text")
     clauses = _array(details["clauses"], "clauses")
     for index, clause in enumerate(clauses):
         clause = _object(clause, {"name", "expression"}, f"clause {index}")
@@ -156,11 +161,21 @@ class NativeRun:
                 (directory / "result.json").read_text(encoding="utf-8"),
                 object_pairs_hook=unique_object,
             ),
-            {"schema", "encoder", "status", "solver_ms", "assurance", "artifacts"},
+            {
+                "schema",
+                "encoder",
+                "solver",
+                "status",
+                "solver_ms",
+                "assurance",
+                "artifacts",
+            },
             "result",
         )
         if result["schema"] != RUN_SCHEMA or result["encoder"] != ENCODER:
             raise ValidationError("the API requires a native Lean run")
+        if result["solver"] != "z3":
+            raise ValidationError("unsupported native solver")
         assurance = _object(result["assurance"], set(ASSURANCE), "assurance")
         if any(assurance[key] is not value for key, value in ASSURANCE.items()):
             raise ValidationError("unsupported native proof or integration claims")

@@ -14,7 +14,7 @@ from pathlib import Path
 
 from explorer_api import ExplorerApi
 from native_run import NativeRun
-from Shared.solver import find_cvc5, run_solver
+from native_solver import find_z3, run_z3
 
 ROOT = Path(__file__).resolve().parents[1]
 RETIREMENT_FIELDS = (
@@ -72,7 +72,7 @@ def packet_observation(packet, *, source=None, destination=None, index=0):
 
 @unittest.skipUnless(
     os.environ.get("CCF_NATIVE_ARRAY_TESTS") == "1",
-    "set CCF_NATIVE_ARRAY_TESTS=1 to run Lean/cvc5 fixtures",
+    "set CCF_NATIVE_ARRAY_TESTS=1 to run Lean/Z3 fixtures",
 )
 class NativeLeanSmtTests(unittest.TestCase):
     def test_proved_fixtures(self):
@@ -84,7 +84,7 @@ class NativeLeanSmtTests(unittest.TestCase):
             check=True,
         )
         fixtures = json.loads(result.stdout)
-        self.assertGreaterEqual(len(fixtures), 152)
+        self.assertGreaterEqual(len(fixtures), 156)
         self.assertEqual(len(fixtures), len({item["name"] for item in fixtures}))
         self.solve(fixtures)
 
@@ -132,9 +132,23 @@ class NativeLeanSmtTests(unittest.TestCase):
             )
         self.solve(fixtures)
 
+    def test_model_active_membership(self):
+        result = subprocess.run(
+            ["lake", "env", "lean", "--run", "Sparse/NativeMembershipFixtureMain.lean"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        fixtures = json.loads(result.stdout)
+        self.assertEqual(len(fixtures), 1140)
+        self.assertEqual(len(fixtures), len({item["name"] for item in fixtures}))
+        self.assertEqual({item["expected"] for item in fixtures}, {"sat", "unsat"})
+        self.solve(fixtures)
+
     def solve(self, fixtures):
-        requested = os.environ.get("CVC5")
-        solver = find_cvc5(Path(requested) if requested else None)
+        requested = os.environ.get("Z3")
+        solver = find_z3(Path(requested) if requested else None)
         with tempfile.TemporaryDirectory(prefix="native-lean-smt-") as temporary:
             artifacts = Path(os.environ.get("CCF_NATIVE_ARRAY_ARTIFACTS", temporary))
             artifacts.mkdir(parents=True, exist_ok=True)
@@ -143,13 +157,7 @@ class NativeLeanSmtTests(unittest.TestCase):
                     name = f"lean-smt-{fixture['name']}"
                     path = artifacts / f"{name}.smt2"
                     path.write_text(fixture["script"], encoding="ascii")
-                    result = run_solver(
-                        solver,
-                        path,
-                        artifacts,
-                        name,
-                        extra_arguments=("--arrays-exp", "--mbqi"),
-                    )
+                    result = run_z3(solver, fixture["script"], "", artifacts, name)
                     (artifacts / f"{name}.metrics.json").write_text(
                         json.dumps(
                             {
@@ -980,8 +988,9 @@ class NativeLeanSmtTests(unittest.TestCase):
             ]
         )
         sizes = {name: len(script) for (name, _, _), script in zip(cases, scripts)}
+        # The index appears in both bounds and the cell read.
         self.assertEqual(
-            sizes[f"submitted-{10**30}-False"] - sizes["submitted-0-False"], 30
+            sizes[f"submitted-{10**30}-False"] - sizes["submitted-0-False"], 3 * 30
         )
 
     def test_submitted_transaction_input_errors(self):
@@ -1662,13 +1671,20 @@ class NativeLeanSmtTests(unittest.TestCase):
                 self.assertIn("native encoding error:", result.stderr)
 
     def test_python_wrapper_and_solver_outcomes(self):
-        requested = os.environ.get("CVC5")
-        solver = find_cvc5(Path(requested) if requested else None)
+        requested = os.environ.get("Z3")
+        solver = find_z3(Path(requested) if requested else None)
         name = "node-\u03bb"
         with tempfile.TemporaryDirectory(prefix="native-lean-cli-") as temporary:
             directory = Path(temporary)
-            unknown = directory / "unknown-cvc5"
-            unknown.write_text("#!/bin/sh\nprintf 'unknown\\n'\n", encoding="ascii")
+            unknown = directory / "unknown-z3"
+            unknown.write_text(
+                f"#!{sys.executable}\nimport sys\n"
+                "for line in sys.stdin:\n"
+                "    if line.strip() == '(check-sat)':\n"
+                "        print('unknown', flush=True)\n"
+                "        break\n",
+                encoding="ascii",
+            )
             unknown.chmod(0o755)
             for label, status, instructions, executable in [
                 ("sat", "sat", [], solver),
@@ -1724,7 +1740,7 @@ class NativeLeanSmtTests(unittest.TestCase):
                             str(path),
                             "--output-dir",
                             str(output),
-                            "--cvc5",
+                            "--z3",
                             str(executable),
                         ],
                         cwd=ROOT,
@@ -1735,6 +1751,7 @@ class NativeLeanSmtTests(unittest.TestCase):
                     summary = json.loads(result.stdout)
                     self.assertEqual(summary["status"], status)
                     self.assertEqual(summary["encoder"], "native-lean-experimental")
+                    self.assertEqual(summary["solver"], "z3")
                     for artifact in ("trace.smt2", "trace.stdout", "trace.stderr"):
                         self.assertTrue((output / artifact).is_file())
                     snapshot = NativeRun.load(output)

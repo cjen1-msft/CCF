@@ -57,8 +57,8 @@ theorem frame_observation_correct {width : PNat} [Bootstrap (Fin width)]
     simp [Holds, Term.eval, rep.retirementCompleted, encode_bits_eq, NativeArrayVote.follows]
   case submittedTxId txId expected =>
     cases Except.ok.inj emitted
-    cases expected <;> simp [Holds, natSetMember, Term.eval, NativeArrayVote.follows]
-    · exact not_congr (rep.submittedTxIds txId)
+    cases expected <;> simp [Holds, natSetMember, all, lt, Term.eval, NativeArrayVote.follows]
+    · simpa only [not_and_or, not_lt] using not_congr (rep.submittedTxIds txId)
     · exact rep.submittedTxIds txId
   case queueLength source destination expected =>
     cases Except.ok.inj emitted
@@ -149,11 +149,11 @@ theorem frame_quorum_success {width : PNat} [Bootstrap (Fin width)]
       FrameColumnsRep assignment after.toColumns (frame.nodeStep (.checkQuorum node)) := by
   obtain ⟨previous, enabled, nodes⟩ :=
     quorum_native_success node before after run assignment holds frame.nodes rep.nodes sameBootstrap
-  have joined := congrArg Columns.hasJoined (quorum_success node.val before after run).columns
-  have status := congrArg Columns.preVoteStatus (quorum_success node.val before after run).columns
-  have completed := congrArg Columns.retirementCompleted (quorum_success node.val before after run).columns
-  have submitted := congrArg Columns.submittedTxIds (quorum_success node.val before after run).columns
   have columns := (quorum_success node.val before after run).columns
+  have joined := congrArg Columns.hasJoined columns
+  have status := congrArg Columns.preVoteStatus columns
+  have completed := congrArg Columns.retirementCompleted columns
+  have submitted := And.intro (congrArg Columns.submittedTxIds columns) (congrArg Columns.submittedTxLimit columns)
   have queue := And.intro (congrArg Columns.queueLength columns)
     (And.intro (congrArg Columns.queueHead columns) (congrArg Columns.queueCells columns))
   exact ⟨previous, enabled, rep.node_step assignment before.toColumns after.toColumns frame
@@ -173,11 +173,11 @@ theorem frame_quorum_complete {width : PNat} [Bootstrap (Fin width)]
   obtain ⟨extended, agreement, held, nodes⟩ :=
     quorum_complete node before after run assignment holds frame.nodes rep.nodes valid sameBootstrap enabled
   have extendedRep := rep.agrees_below before assignment extended frame valid agreement
-  have joined := congrArg Columns.hasJoined (quorum_success node.val before after run).columns
-  have status := congrArg Columns.preVoteStatus (quorum_success node.val before after run).columns
-  have completed := congrArg Columns.retirementCompleted (quorum_success node.val before after run).columns
-  have submitted := congrArg Columns.submittedTxIds (quorum_success node.val before after run).columns
   have columns := (quorum_success node.val before after run).columns
+  have joined := congrArg Columns.hasJoined columns
+  have status := congrArg Columns.preVoteStatus columns
+  have completed := congrArg Columns.retirementCompleted columns
+  have submitted := And.intro (congrArg Columns.submittedTxIds columns) (congrArg Columns.submittedTxLimit columns)
   have queue := And.intro (congrArg Columns.queueLength columns)
     (And.intro (congrArg Columns.queueHead columns) (congrArg Columns.queueCells columns))
   exact ⟨extended, agreement, held,

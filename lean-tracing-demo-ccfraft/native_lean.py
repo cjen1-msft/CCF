@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 from native_input import canonical_json, unique_object
 from native_run import (
@@ -20,15 +20,10 @@ from native_run import (
     core_names,
     validate_encoding,
 )
-from Shared.solver import ValidationError, find_cvc5, run_solver
+from native_solver import find_z3, run_z3
+from Shared.solver import ValidationError
 
 ROOT = Path(__file__).resolve().parent
-SOLVER_ARGUMENTS = (
-    "--arrays-exp",
-    "--mbqi",
-    "--produce-unsat-cores",
-    "--dump-unsat-cores",
-)
 
 
 def _invoke_encoder(document: object, *arguments: str) -> str:
@@ -68,7 +63,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("trace", type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument("--cvc5", type=Path)
+    parser.add_argument("--z3", type=Path)
     args = parser.parse_args()
     try:
         args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -78,7 +73,7 @@ def main() -> None:
             args.trace.read_text(encoding="utf-8"), object_pairs_hook=unique_object
         )
         details = encode_details(document)
-        cvc5 = find_cvc5(args.cvc5)
+        z3 = find_z3(args.z3)
         formula = args.output_dir / "trace.smt2"
         formula.write_text(details["script"], encoding="ascii")
         for name, value in (("input.json", document), ("encoding.json", details)):
@@ -86,13 +81,18 @@ def main() -> None:
                 json.dumps(value, ensure_ascii=True, allow_nan=False) + "\n",
                 encoding="utf-8",
             )
-        result = run_solver(
-            cvc5, formula, args.output_dir, "trace", extra_arguments=SOLVER_ARGUMENTS
+        result = run_z3(
+            z3,
+            details["script"],
+            details["queries"]["unsatCore"],
+            args.output_dir,
+            "trace",
         )
         core_names(result, details)
         summary = {
             "schema": RUN_SCHEMA,
             "encoder": ENCODER,
+            "solver": "z3",
             "status": result.status,
             "solver_ms": result.wall_time_ms,
             "assurance": ASSURANCE,

@@ -2,6 +2,101 @@
 
 ## Current direction: native-array exact encoding
 
+### Immediate continuation: vote-packet construction
+
+The completed migration builds on `137a4f3d6`, the versioned FIFO column slice.
+`NativeMembershipEncoding.lean` proves scoped active membership,
+existential witnesses, and correspondence with `activeNodeUnion`.
+It is imported by `Sparse.lean` and builds with the normal axiom gate.
+`NativeMembershipFixtureMain.lean` and `test_model_active_membership` generate
+1,140 Model-derived cases. The old cvc5 runner failed these cases.
+The explicit Z3 migration is complete. All 48 native solver and explorer test
+methods pass, including 156 kernel-backed formulas and 1,140 membership cases.
+Next prove last-committable index/term reads and symbolic vote-packet construction,
+then wire requestVote/requestPreVote through the public compiler and frame proofs.
+
+cvc5 1.3.4 returns incorrect UNSAT on
+`membership-free-false-1-0-0`. The two-assertion reduction contains a canonical
+one-entry signature log and `currentCandidate`. Setting the current index to
+zero supplies a satisfying witness. cvc5 returns UNSAT without that equality,
+then SAT after adding it. Its `--check-proofs --dump-proofs` invocation aborts
+with an unclosed proof using the free assumption `(not true)`.
+Z3 4.16.0 returns SAT on the same reduced script.
+The false UNSAT occurs without MBQI too.
+This is a solver trust-boundary failure, not evidence of a Model contradiction.
+Later explicit pair-sort qualification removes that small cvc5 failure.
+The Z3 migration remains justified by the qualified large-commit case:
+cvc5 returns unknown at a 30-second budget, while Z3 returns SAT in 10 ms.
+`native-qualified-large-commit-comparison.log` records that comparison.
+The full qualified case matrix is `native-membership-qualified-cases.json`.
+The cvc5 matrix probe stopped at that case; it did not complete all 1,140.
+
+Session artifacts under `files/`:
+- `native-membership-first-failure.log`: first failed default-runner case.
+- `native_membership_probe.py`: repeatable clause and option isolation.
+- `native-membership-probe/`: reduced scripts, results, and `cvc5-proof.txt`.
+- `native-membership-cases.json`: all 1,140 generated scripts and expected verdicts.
+- `native_membership_solvers.py`: explicit solver comparison with a five-second
+  per-query measurement budget.
+- `native-membership-z3.log`: all 1,140 cases match in 11.2 seconds.
+- `native-membership-z3/results.jsonl`: individual outcomes and timings.
+- `native-membership-weak.log`: partial alternative-cvc5 results.
+
+`--arrays-weak-equiv` avoids the small false UNSAT, but rejects model generation
+and returns unknown on many `10^30` commit cases within the measurement budget.
+That experiment was stopped after the repeated failures. The original failing
+batch was also stopped.
+No expected verdicts or assurance flags changed.
+Z3 is available at
+`/nix/store/xv5zrxcpp6qj1lkbq1kxj5xfv017v39n-z3-4.16.0/bin/z3`.
+`native_solver.py` now runs Z3 interactively and requests the core only after
+UNSAT. `NativeEncode.compiledDetails` emits that query text. The native wrapper
+now accepts `--z3`, not `--cvc5`. Version 2 encoding/run schemas retain the query
+and solver identity; the explorer rejects older artifacts.
+The complete Sparse proof build passes in `native-z3-protocol-build.log`.
+Fifteen protocol/explorer tests pass in `native-z3-protocol-tests.log`.
+The first full native run stopped after 14 methods, at
+`test_proved_fixtures / queue-decode-invalid-term`. Z3 rejects an ambiguous
+unqualified polymorphic `native_pair` constructor. The runner correctly rejects
+the error instead of adopting the subsequent SAT line.
+The renderer now qualifies pair constructors, including ground defaults, with
+their explicit pair sort. Matching raw interpretation, syntax-safety, lowering,
+and reference proofs pass in `native-qualified-pair-build.log`.
+Z3 then returned unknown on the older `packet-match-0` fixture because of
+incomplete quantifiers. `native_z3_packet_probe.py` records that diagnosis in
+`native-z3-packet-probe.json`. `NativePacketMatch` now uses the already-proved
+packet literal, removing the redundant field-by-field matcher. Its Model
+correspondence statement is unchanged, and no expected verdict was relaxed.
+All 152 proved formulas and 17 solver/explorer tests now pass in
+`native-exact-packet-match-tests.log`.
+The full Sparse build passed in `native-z3-final-build.log`.
+The next suite stopped after 21 methods on a public append-packet observation
+returning unknown. `native_z3_point_minimize.py` isolated the unrelated global
+transaction-set tail quantifier as the cause. Packet observation alone was SAT,
+as was its combination with each other initial clause.
+`NativeNatSet` now guards membership with the finite extent and ignores raw
+negative and tail cells. Its domain only requires a nonnegative limit.
+The finite-set codec, initial frame, observations, frame preservation, trace,
+and decoded-script proofs all build with the revised representation.
+Four new kernel-backed formulas force raw tail cells to one but membership to
+false. All 156 kernel-backed formulas pass. The sparse-ID script-size delta is
+now 90 characters, with the index in two bounds and one lookup, not 30.
+No expected solver verdict changed.
+`native-finite-set-tests.log` records seven passing targeted methods, including
+public packet observations, transaction membership, queue writes, and all local
+fields. `native-finite-set-full-build.log` records the full Sparse/native build.
+All 31 native Lean methods and 17 solver/explorer methods pass in
+`native-migration-complete-tests.log`, taking 1,016 seconds.
+Black and Ruff pass on all six affected Python files, retaining the pre-existing
+EXE001 exclusion for the non-executable wrapper.
+The full original failure remains in
+`native-z3-full-tests.log`. New scripts are in
+`native-lean-z3-fixtures/`, preserving the older cvc5 evidence separately.
+The loopback explorer now serves the synthetic Z3/schema-v2 run from
+`files/native-explorer-z3-run`, on `http://127.0.0.1:8091/api/run`.
+Its shell handle is `native-explorer-api-v2`. Both run and core endpoints respond.
+The old snapshot artifacts remain untouched. Both assurance flags remain false.
+
 The user superseded the eager bounded-entry architecture described below.
 Keep that implementation as a reference; do not resume its unfinished integration
 as the delivery path.
@@ -37,8 +132,8 @@ The first native explorer API is implemented in `explorer_api.py` and
 `native_run.py`. Lean `encodeFrameDetails` emits named SMT clauses and instruction
 ranges from the actual compiled assertion array. `native_lean.py` retains the
 exact input, encoding metadata, solver outputs, and a hash manifest written only
-after a successful solver invocation. cvc5 supplies the core through
-`--produce-unsat-cores --dump-unsat-cores`; Python does not construct SMT queries.
+after a successful solver invocation. Z3 supplies the core in response to the
+Lean-emitted query; Python does not construct SMT queries.
 The API is read-only, binds to loopback, and serves a fixed startup snapshot.
 It exposes run status, input, paginated instructions, named constraints, and the
 solver core. It rejects mixed artifacts and never adopts old checked-backend
@@ -232,7 +327,7 @@ The emitted text has a satisfying
 assignment exactly when the supported Model trace has an execution, under
 the same successful-compilation and initial-state premises. Both named and
 unnamed scripts are covered. The SMT interpretation is explicit Lean
-semantics for the generated subset; cvc5 itself is not verified.
+semantics for the generated subset; the solver itself is not verified.
 
 `NativeEncode.decodeDocument` now produces `Decoded`, carrying a positive
 width, a nonempty bootstrap set, and typed instructions. It checks nonemptiness
@@ -246,7 +341,7 @@ the actual script field returned in details mode. Both equate script
 satisfiability with `DocumentConsistent`, defined through the actual decoder.
 The proof-only bootstrap witness chooses a member of the nonempty set. It
 does not impose an initial leader or fresh initial Model state in SMT.
-Lean's JSON parser, IO runtime, and cvc5 are not verified by these theorems.
+Lean's JSON parser, IO runtime, and the solver are not verified by these theorems.
 
 Next, expand Model actions and observations before raw reducer integration.
 Keep the full-model assurance flag false: current coverage is still one
@@ -286,8 +381,9 @@ joined sets, and all 150 Model quorum cases.
 `submittedTxId` now has its full correspondence proof and solver coverage.
 Column 19 stores one-bit cells, column 20 is the unknown finite support limit,
 and fresh allocation starts at 21. `initialFrameDomains` combines node domains
-with the finite-set domain. `NativeNatSet.natSetMember` interprets bit one as
-membership. Negative cells and cells at or beyond the limit must be zero.
+with the finite-set domain. `NativeNatSet.natSetMember` now requires both an
+in-range index and bit one. The initial zero-tail constraint described in this
+checkpoint was replaced by extent-guarded reads during the Z3 migration above.
 The initial Boolean-cell implementation returned `unknown` on a mixed-global
 SAT case after about 32 seconds. The same constraints with one-bit cells solved
 in about 27 ms. No bounds or observations were dropped. Solver-option changes
@@ -299,8 +395,9 @@ errors, all 150 Model quorum cases, and actual wrapper/explorer core ownership.
 The fixture method initially failed because a Lean linter warning preceded
 its JSON output. The proof was rewritten to remove that warning, and all
 31 kernel-backed formulas passed in `native-submitted-fixture-tests.log`.
-The sparse-ID case grows by exactly 30 characters when replacing zero with
-`10^30`, rather than allocating or enumerating intervening cells.
+The sparse-ID case initially grew by 30 characters when replacing zero with
+`10^30`. Extent-guarded reads now grow by 90 characters, without allocating or
+enumerating intervening cells.
 `Assignment.set_other_index` avoids assuming distinct sorts when writing
 other symbol IDs. This matters when the node universe also has width one.
 Packet observations, remaining actions, and raw reducer integration are still
@@ -652,8 +749,10 @@ Next migrate global and queue state and the broader instruction type from
 integration. Do not mark the full-model or raw-reducer assurance flags true.
 The current runtime action is still only `checkQuorum`.
 
-`NativeNatSet` is the first global-value unit. `natSetDomain` emits the actual
-finite-prefix one-bit-array constraint, including negative cells and the tail.
+`NativeNatSet` is the first global-value unit. `natSetDomain` initially emitted
+a finite-prefix one-bit-array constraint, including negative cells and the tail.
+The Z3 migration replaces that constraint with a nonnegative limit and guards
+membership reads by the extent. Decoding ignores raw cells outside that extent.
 `nat_set_domain_correct` characterizes that expression. `natSetArray` requires
 the domain proof before constructing a finite Model set, and the membership
 and observation theorems are exact. `natSetAssignment` realizes every finite

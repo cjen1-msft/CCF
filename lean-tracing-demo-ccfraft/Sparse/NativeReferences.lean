@@ -62,8 +62,8 @@ theorem Ty.defaultSyntax_symbols (sort : Ty) : syntaxSymbols sort.defaultSyntax 
     simp [Ty.defaultSyntax, syntaxSymbols, Ty.syntax_symbols, second, atomSymbols]
     exact ⟨rfl, rfl⟩
   | pair first second left right =>
-    simp [Ty.defaultSyntax, syntaxSymbols, left, right, atomSymbols]
-    rfl
+    simp [Ty.defaultSyntax, syntaxSymbols, Ty.syntax_symbols, left, right, atomSymbols]
+    exact ⟨rfl, rfl⟩
 
 theorem Term.syntax_symbols :
     {context : List Ty} -> {sort : Ty} -> (expression : Term context sort) ->
@@ -94,10 +94,13 @@ theorem Term.syntax_symbols :
   | _, _, .and left right
   | _, _, .or left right
   | _, _, .select left right
-  | _, _, .pair left right
   | _, _, .bitsAnd left right
   | _, _, .bitsOr left right => by
     simp [Term.syntax, Term.symbols, syntaxSymbols, atomSymbols, left.syntax_symbols, right.syntax_symbols]
+    rfl
+  | _, _, .pair left right => by
+    simp [Term.syntax, Term.symbols, syntaxSymbols, Ty.syntax_symbols, atomSymbols,
+      left.syntax_symbols, right.syntax_symbols]
     rfl
   | _, _, .not value
   | _, _, .fst value

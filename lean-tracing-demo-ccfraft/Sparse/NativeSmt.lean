@@ -60,7 +60,9 @@ def Ty.defaultSyntax : Ty -> NativeSExpr.Expr
   | .bits width => .list [.atom "_", .atom "bv0", .atom (toString width.val)]
   | .array key value =>
     .list [.list [.atom "as", .atom "const", (Ty.array key value).syntax], value.defaultSyntax]
-  | .pair first second => .list [.atom "native_pair", first.defaultSyntax, second.defaultSyntax]
+  | .pair first second =>
+    .list [.list [.atom "as", .atom "native_pair", (Ty.pair first second).syntax],
+      first.defaultSyntax, second.defaultSyntax]
   | .sum first second =>
     .list [.list [.atom "as", .atom "native_left", (Ty.sum first second).syntax], first.defaultSyntax]
 
@@ -191,7 +193,8 @@ def Term.syntax : {context : List Ty} -> {sort : Ty} -> Term context sort -> Nat
     .list [.atom "forall", .list [.list [.atom (binderName context.length), sort.syntax]], body.syntax]
   | _, _, .select array index => .list [.atom "select", array.syntax, index.syntax]
   | _, _, .store array index value => .list [.atom "store", array.syntax, index.syntax, value.syntax]
-  | _, _, .pair left right => .list [.atom "native_pair", left.syntax, right.syntax]
+  | _, .pair first second, .pair left right =>
+    .list [.list [.atom "as", .atom "native_pair", (Ty.pair first second).syntax], left.syntax, right.syntax]
   | _, _, .fst value => .list [.atom "native_fst", value.syntax]
   | _, _, .snd value => .list [.atom "native_snd", value.syntax]
   | _, .sum first second, .inl value =>

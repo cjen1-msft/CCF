@@ -432,9 +432,11 @@ def compiledDetails (document : Json) (compiled : Compiled) : Json :=
   let clauses := compiled.assertions.mapIdx fun index expression =>
     Json.mkObj [("name", toJson (assertionName index)), ("expression", toJson expression.render)]
   Json.mkObj [
-    ("schema", toJson "ccfraft-native-encoding/v1"),
+    ("schema", toJson "ccfraft-native-encoding/v2"),
     ("input", document),
     ("script", toJson (renderScript compiled.assertions.toList true)),
+    ("queries", Json.mkObj [
+      ("unsatCore", toJson ((NativeSExpr.Expr.list [.atom "get-unsat-core"]).render ++ "\n"))]),
     ("groups", toJson compiled.groups),
     ("clauses", toJson clauses)]
 

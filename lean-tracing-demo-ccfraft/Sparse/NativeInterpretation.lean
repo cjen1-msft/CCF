@@ -237,6 +237,11 @@ mutual
     | .list [.list [.atom "as", .atom constructor, sortExpression], argument] => do
       let sort <- parseSort sortExpression
       applyConstructor constructor sort (<- evalSyntax assignment environment argument)
+    | .list [.list [.atom "as", .atom "native_pair", sortExpression], left, right] => do
+      let .pair first second <- parseSort sortExpression | none
+      let left <- (<- evalSyntax assignment environment left).asType first
+      let right <- (<- evalSyntax assignment environment right).asType second
+      return ⟨.pair first second, (left, right)⟩
     | _ => none
   termination_by sizeOf expression
   decreasing_by

@@ -92,8 +92,8 @@ construction to Lean, with no Python encoder fallback.
 
 ```sh
 lake build Sparse Sparse.NativeEncodeMain Sparse.NativeSmtFixtureMain
-python3 native_lean.py reduced.json --output-dir /tmp/native-lean --cvc5 /path/to/cvc5
-CCF_NATIVE_ARRAY_TESTS=1 CVC5=/path/to/cvc5 python3 -m unittest discover -s tests -p test_native_lean_smt.py -v
+python3 native_lean.py reduced.json --output-dir /tmp/native-lean --z3 /path/to/z3
+CCF_NATIVE_ARRAY_TESTS=1 Z3=/path/to/z3 python3 -m unittest discover -s tests -p test_native_lean_smt.py -v
 ```
 
 The wrapper accepts ordinary JSON and rejects duplicate keys. The internal Lean
@@ -101,15 +101,32 @@ stdin interface requires canonical JSON with sorted keys and no interior
 whitespace, which also prevents its parser from silently collapsing duplicates.
 The output directory retains SMT, solver stdout, and solver stderr.
 SAT, UNSAT, unknown, and encoding errors remain distinct outcomes.
+The native runner uses Z3 explicitly, without a solver fallback. Lean emits the
+unsat-core query alongside the assertion script. Python sends that query only
+after UNSAT. Encoding and run artifacts use schema version 2 and identify Z3.
+The explorer rejects version 1 artifacts rather than reusing older solver claims.
+
+cvc5 1.3.4 returned incorrect UNSAT for a satisfiable constant-array and
+configuration-selector fixture with unqualified pair constructors.
+Adding the satisfying current-index equality
+changed its answer to SAT, and its own proof checker aborted on the UNSAT result.
+Explicit pair sorts remove that small failure. On a qualified large-commit
+fixture, cvc5 still returns unknown after 30 seconds while Z3 returns SAT in 10 ms.
+Z3 4.16.0 matches all 1,140 Model-derived membership cases.
+The cvc5 alternative `--arrays-weak-equiv` rejects model generation and stalls
+on large-index cases, so the native runner does not use it.
+The older Python reference backend still uses cvc5 and is not the delivery path.
 
 `Sparse/NativeSmt.lean` provides typed terms, scoped binders, native arrays,
 arbitrary-width bitvectors, and product and sum datatypes. Symbolic constant-array
-expressions are deliberately absent: cvc5 rejects that syntax.
+expressions remain deliberately absent. The original cvc5 backend rejected that syntax.
 `Term.defaultValue` emits a ground literal for a sort's fixed default, including
 constant arrays and nested datatypes. It cannot contain free symbols or bound
 variables. A fresh array with a symbolic default can instead be constrained with
 `forall`.
 Sorts and terms now render through explicit S-expression trees.
+Pair constructors carry their result sort explicitly, avoiding ambiguous
+polymorphic constructor inference in nested packet expressions.
 `NativeSyntaxProofs` proves that their emitted text parses back to those trees.
 This round trip alone does not prove evaluation or declaration semantics.
 `NativeNames` proves unique free-symbol names across recursive sorts and IDs,
@@ -236,7 +253,7 @@ and observation subset, not the remaining Model actions or SMT text semantics.
 with whole-script interpretation. Under the
 same compilation and initial-state premises, the emitted text has a satisfying
 assignment exactly when the supported Model trace has an execution.
-The theorem covers named and unnamed scripts. It does not verify cvc5.
+The theorem covers named and unnamed scripts. It does not verify the solver.
 
 [`NativeDecoded`](Sparse/NativeDecoded.lean) connects actual JSON compilation
 to those premises. `decodeDocument` returns a positive identity width, a
@@ -288,6 +305,12 @@ earlier symbols. This internal storage operation is not a public Model action.
 `NativeQueueStoreFixtureMain` exercises six interleaved sends in each of 56
 solver cases, including duplicates, self queues, huge offsets, and negative
 raw head and length values. Five rejection cases cover fresh packet references.
+`NativeMembershipEncoding` connects the scoped active-peer guard to
+`activeNodeUnion`, including the implicit bootstrap configuration and later
+physical configurations. Its witness need not identify a log entry when the
+bootstrap branch succeeds. `NativeMembershipFixtureMain` checks 1,140 cases
+against actual Model membership, including fixed invalid witnesses and
+commit indices beyond the log.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.
@@ -314,14 +337,19 @@ Indices can exceed the source log length.
 `checkQuorum` or has an observation encoding. The solver suite includes a single
 trace that observes every local field before and after quorum.
 `NativeNatSet` encodes the submitted-transaction set as one-bit array cells and
-an unknown finite limit. Negative cells and cells at or beyond the limit are
-zero. A cell containing one denotes membership. The proofs establish exact
-membership and representation of every finite natural-number set. Observed
+an unknown finite limit. Membership requires a nonnegative index below the
+limit and a cell containing one. Raw negative and tail cells are unconstrained;
+decoding ignores them. The proofs establish exact membership and representation
+of every finite natural-number set. Observed
 transaction IDs do not bound the set, and missing IDs do not imply absence.
 The original Boolean-cell representation returned `unknown` for a mixed-global
 SAT case. Equivalent one-bit cells solved that case without weakening its
 constraints. The solver suite retains that regression, including single-node
 and 21-node variants.
+The later universal zero-tail constraint made Z3 return `unknown` on an unrelated
+append-packet observation. Extent-guarded membership removes that quantifier
+without changing the decoded Model sets. Kernel-backed cases force raw tail
+cells to one while proving that membership remains false.
 `Encoding` now inherits its mutable column references from `Columns`.
 Compiler frame proofs preserve that whole record, and the quorum result
 specifies a record update for the two changed fields.
@@ -421,7 +449,7 @@ The initial-domain group has no instruction owner.
 
 ```sh
 lake build Sparse.NativeEncodeMain
-python3 native_lean.py Traces/native_quorum_conflict.json --output-dir /tmp/native-explorer --cvc5 /path/to/cvc5
+python3 native_lean.py Traces/native_quorum_conflict.json --output-dir /tmp/native-explorer --z3 /path/to/z3
 python3 explorer_api.py /tmp/native-explorer --port 8091
 ```
 

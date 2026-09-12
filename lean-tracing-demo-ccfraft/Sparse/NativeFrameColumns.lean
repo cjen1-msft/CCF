@@ -21,7 +21,8 @@ structure FrameColumnsRep {width : PNat} (assignment : Assignment) (columns : Co
     assignment (.array .int (.bits width)) columns.retirementCompleted node.val =
       encodeBits (frame.globals.retirementCompleted node)
   submittedTxIds : forall txId : Nat,
-    assignment (.array .int (.bits 1)) columns.submittedTxIds txId = 1 <->
+    ((txId : Int) < assignment .int columns.submittedTxLimit /\
+      assignment (.array .int (.bits 1)) columns.submittedTxIds txId = 1) <->
       txId ∈ frame.globals.submittedTxIds
   queues : forall destination source : Fin width,
     (queueRow assignment columns destination source).decode = (frame.queues destination source).decode
@@ -36,7 +37,7 @@ theorem FrameColumnsRep.queue_length {width : PNat} {assignment : Assignment} {c
 
 noncomputable def initialFrame (width : PNat) (assignment : Assignment)
     (domains : forall node : Fin width, NodeDomain width assignment node.val)
-    (submitted : NatSetDomain assignment 19 20) :
+    (submitted : NatSetDomain assignment 20) :
     NativeArrayVote.Frame (Fin width) Nat :=
   { nodes := initialArrays width assignment domains
     queues := queueRow assignment {}
@@ -48,7 +49,7 @@ noncomputable def initialFrame (width : PNat) (assignment : Assignment)
 
 theorem initial_frame_rep (width : PNat) (assignment : Assignment)
     (domains : forall node : Fin width, NodeDomain width assignment node.val)
-    (submitted : NatSetDomain assignment 19 20) :
+    (submitted : NatSetDomain assignment 20) :
     FrameColumnsRep assignment {} (initialFrame width assignment domains submitted) := by
   refine ⟨initial_arrays_rep width assignment domains, ?_, ?_, ?_, ?_, ?_⟩
   · simp [initialFrame]
@@ -63,7 +64,7 @@ theorem initial_frame_rep (width : PNat) (assignment : Assignment)
 
 theorem initial_frame_valid (width : PNat) (assignment : Assignment)
     (domains : forall node : Fin width, NodeDomain width assignment node.val)
-    (submitted : NatSetDomain assignment 19 20) :
+    (submitted : NatSetDomain assignment 20) :
     (initialFrame width assignment domains submitted).Valid := by
   intro destination source message member
   simp only [initialFrame, NativeArrayQueue.decodeNetwork, queueRow] at member
@@ -102,7 +103,7 @@ theorem initial_frame_assignment_rep (width : PNat) (seed : Assignment)
   · intro txId
     simp only [initialFrameAssignment, initialAssignment]
     simp [Assignment.set_other_index]
-    simp [natSetAssignment, Assignment.set]
+    exact nat_set_assignment_member _ 19 20 frame.globals.submittedTxIds txId
   · intro destination source
     have complete := model_queue_complete source (frame.queues destination source)
       (fun packet member => valid destination source packet member)
@@ -116,7 +117,7 @@ theorem initial_frame_assignment_domains (width : PNat) (seed : Assignment)
 
 theorem initial_frame_assignment_submitted_domain (width : PNat) (seed : Assignment)
     (frame : NativeArrayVote.Frame (Fin width) Nat) :
-    NatSetDomain (initialFrameAssignment width seed frame) 19 20 := by
+    NatSetDomain (initialFrameAssignment width seed frame) 20 := by
   simp only [NatSetDomain, initialFrameAssignment, initialAssignment]
   simpa [NatSetDomain, Assignment.set_other_index] using
     nat_set_assignment_domain seed 19 20 frame.globals.submittedTxIds
@@ -126,13 +127,13 @@ theorem initial_frame_domains_success {width : PNat} (before after : Encoding wi
     SameReferences before after /\
       (Holds after.assertions.toList assignment <-> Holds before.assertions.toList assignment /\
         (forall node : Fin width, NodeDomain width assignment node.val) /\
-        NatSetDomain assignment 19 20) := by
+        NatSetDomain assignment 20) := by
   refine ⟨(assert_all_success (initialFrameAssertions width) before after run).1, ?_⟩
   rw [assert_all_holds (initialFrameAssertions width) before after run assignment]
   have domains : Holds (initialFrameAssertions width) assignment <->
-      Holds (initialAssertions width) assignment /\ NatSetDomain assignment 19 20 := by
+      Holds (initialAssertions width) assignment /\ NatSetDomain assignment 20 := by
     simp [initialFrameAssertions, Holds, or_imp, forall_and]
-    exact fun _ => nat_set_domain_correct assignment 19 20
+    exact fun _ => nat_set_domain_correct assignment 20
   rw [domains, initial_assertions_domains]
 
 theorem FrameColumnsRep.agrees_below {width : PNat} (state : Encoding width)
@@ -147,7 +148,8 @@ theorem FrameColumnsRep.agrees_below {width : PNat} (state : Encoding width)
     fun node => congrFun (same (.array .int (.bits width)) state.retirementCompleted valid.retirementCompleted).symm
       (node.val : Int) |>.trans (rep.retirementCompleted node),
     fun txId => by
-      rw [<- same (.array .int (.bits 1)) state.submittedTxIds valid.submittedTxIds]
+      rw [<- same (.array .int (.bits 1)) state.submittedTxIds valid.submittedTxIds,
+        <- same .int state.submittedTxLimit valid.submittedTxLimit]
       exact rep.submittedTxIds txId,
     fun destination source => by
       simp only [queueRow]
@@ -164,7 +166,7 @@ theorem FrameColumnsRep.node_step {width : PNat} (assignment : Assignment)
     (joined : after.hasJoined = before.hasJoined)
     (status : after.preVoteStatus = before.preVoteStatus)
     (completed : after.retirementCompleted = before.retirementCompleted)
-    (submitted : after.submittedTxIds = before.submittedTxIds)
+    (submitted : after.submittedTxIds = before.submittedTxIds /\ after.submittedTxLimit = before.submittedTxLimit)
     (queue : after.queueLength = before.queueLength /\ after.queueHead = before.queueHead /\
       after.queueCells = before.queueCells) :
     FrameColumnsRep assignment after (frame.nodeStep item) := by
@@ -174,7 +176,7 @@ theorem FrameColumnsRep.node_step {width : PNat} (assignment : Assignment)
   · simpa only [globals, joined] using rep.hasJoined
   · simpa only [globals, status] using rep.preVoteStatus
   · simpa only [globals, completed] using rep.retirementCompleted
-  · simpa only [globals, submitted] using rep.submittedTxIds
+  · simpa only [globals, submitted.1, submitted.2] using rep.submittedTxIds
   · simpa only [queues, queueRow, queue.1, queue.2.1, queue.2.2] using rep.queues
 
 theorem observation_node_step {width : PNat} (frame : NativeArrayVote.Frame (Fin width) Nat)
