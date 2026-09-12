@@ -75,6 +75,21 @@ The main-agent semantic prerequisites now include:
   first retired-committed entry naming a node, and membership in committed
   retired records. These use list searches without ordered-term assumptions.
   `native-retirement-secondary-scans-build.log` records the proof build.
+- `NativeArrayFirstMatch` proves a reusable first-match summary over live
+  array positions, including absent matches and shifted indices.
+  `NativeArrayRetirement` uses it for exact Model signature and retired-record
+  indices. It also proves bounded array membership for committed and all
+  retired records. `native-array-retirement-build.log` records the proof build.
+
+Parent-owned public append integration coverage is ready in
+`NativeArrayAppendFixtureMain`, `Traces/native_append_fifo_conflict.json`,
+and `test_native_lean_smt.py`. It includes 1,200 Model-derived traces,
+successive cursor updates, duplicate heartbeats, strict input errors, and
+explorer core attribution. The first public run still failed during encoding
+before the worker wired `appendEntries`; rerun these cases after its result.
+`frameObservations` in `NativeArrayFixtureJson` now shares complete local and
+queue observations with the receive-write fixture. The 192 receive-write cases
+and import-boundary check pass in `native-shared-frame-tests.log`.
 
 `NativeQueuePop` and `NativeQueuePopEncoding` now prove total directed FIFO
 pop, including empty queues and negative raw scalars, full-frame preservation,
