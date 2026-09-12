@@ -53,7 +53,8 @@ It supports `checkQuorum` and all sixteen local observation kinds, including
 the nullable `retirementIndex`, `retirementCommittableIndex`, and
 `retiredCommittedIndex` fields, nullable `votedFor`, both vote sets, and
 `membershipState`, `sentIndex`, and `matchIndex`, plus global `hasJoined` and
-`preVoteStatus`, `retirementCompleted`, and `submittedTxId`, plus `queueLength`.
+`preVoteStatus`, `retirementCompleted`, and `submittedTxId`, plus `queueLength`
+and exact `queuePoint` observations of all seven packet kinds.
 The Python reference still supports six actions and the broader observation
 schema. Do not confuse these coverage levels or fall back to Python SMT emission.
 
@@ -85,8 +86,8 @@ any encoding. The Python wrapper accepts ordinary JSON and canonicalizes it.
 
 The supported trace now has a Model-to-script theorem, and the actual JSON
 compiler establishes its compilation and initial-state premises.
-Full Model coverage remains unfinished. No observation specialization is
-applied by the current compiler.
+Full Model coverage remains unfinished. Queue-point clauses use proved
+observation-directed packet literals, retaining the complete observed value.
 Reducer integration, remaining action coverage, and initial-state materialization
 remain unfinished. The new Lean encoder is experimental, not a proved validator.
 `Sparse/NativeQuorumEncoding.lean` now connects the exact `currentCandidate` and
@@ -250,7 +251,7 @@ Lean's JSON parser, IO runtime, and cvc5 are not verified by these theorems.
 Next, expand Model actions and observations before raw reducer integration.
 Keep the full-model assurance flag false: current coverage is still one
 action, sixteen local observation kinds, all four global observation kinds,
-and queue lengths. Packet observations remain unsupported.
+queue lengths, and exact queue packet points. Partial packets remain unsupported.
 No change to the reducer's untrusted
 interpretation boundary follows from proving the JSON encoder.
 
@@ -462,7 +463,7 @@ The full public proof and normal Sparse build pass. Seven runtime regression
 methods pass in `native-queue-columns-tests.log`, including queue lengths,
 all 115 formulas, all 150 Model quorum cases, global/local framing, and actual
 wrapper/explorer outcomes. Total time was 220.271 seconds.
-Next add strict packet JSON decoding and public `queuePoint`, then actions.
+The following slices integrate strict packet JSON and public `queuePoint`.
 
 The public queue-point slice exposed two solver failures when append-packet
 observations were combined with quorum constraints. Their expected verdicts
@@ -481,9 +482,29 @@ the constructor. Eight new kernel-backed fixtures cover all default sorts,
 one-bit and 21-bit arrays, nested arrays, and a large negative read index.
 The normal Sparse build passes in `native-ground-default-complete-build.log`;
 all 123 formulas pass in `native-ground-default-fixture-tests.log`.
-Next use ground defaults and finite stores to construct exact packet-log
-literals, then complete the public queue-point runtime cases. The strict packet
-decoder and public point correspondence are present but not yet committed.
+`NativeLogTerm.log_term_eval` now proves that finite stores over a ground default
+array equal the complete canonical packet log, including negative and tail cells.
+`NativePacketTerm` constructs all seven packet literals with full value
+correspondence. `queuePacketMatches` now asserts literal equality and the
+expected source partition. Only the default-packet case retains the invalid
+raw-cell alternative from the total decoder. Its correspondence theorem still
+has no raw packet-domain premise.
+
+`NativePacketJson` strictly decodes every packet field and append entry.
+The public `queuePoint` path now builds through `NativeFrameDecoded`.
+Seven runtime methods pass in `native-public-queue-ground-tests.log`, covering
+all packet kinds, scalar and log conflicts, independent pairs, duplicate
+packets, huge positions, quorum framing, 123 formulas, queue lengths, and
+actual wrapper/explorer core ownership. The 168 existing Model fixtures also
+round-trip their packet JSON through the new decoder and independent serializer.
+Malformed packet/point inputs pass separately in `native-public-packet-input-tests.log`.
+The former two-node failure now solves in 57.7 ms with 11,314 bytes.
+The 21-node case solves in 9.8 seconds with 60,173 bytes.
+The full normal Sparse build passes in `native-ground-queue-final-build.log`.
+No queue bounds, missing-packet defaults, or solver-option changes were added.
+Next integrate the existing native action semantics with public Lean emission
+and correspondence. Partial packet observations, raw reduction, readback, and
+raw/code explorer provenance remain unfinished. Both assurance flags stay false.
 
 `NativeOptional` is the next value-codec unit for local-state coverage.
 It uses the existing sum datatype for optional natural indices and identities.

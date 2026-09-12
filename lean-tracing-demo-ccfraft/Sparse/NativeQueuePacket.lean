@@ -2,7 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeQueueDomain
-import Sparse.NativePacketMatch
+import Sparse.NativePacketTerm
 
 set_option autoImplicit false
 
@@ -32,9 +32,9 @@ def queuePacketTerm {context : List Ty} {width : PNat} (source : Fin width)
 def queuePacketMatches {context : List Ty} {width : PNat} (source : Fin width)
     (value : Term context (packetTy width)) (expected : Message (Fin width) Nat) : Term context .bool :=
   if expected = defaultQueuePacket source then
-    .or (.not (queuePacketDomain (.integer source.val) value)) (packetMatches value expected)
+    .or (.not (queuePacketDomain (.integer source.val) value)) (.equal value (packetTerm expected))
   else
-    .and (queuePacketDomain (.integer source.val) value) (packetMatches value expected)
+    .and (.boolean (decide (expected.source = source))) (.equal value (packetTerm expected))
 
 theorem model_queue_packet_exact {width : PNat} (source : Fin width) (value : (packetTy width).denote)
     (valid : QueuePacketValid source value) :
@@ -92,13 +92,32 @@ theorem queue_packet_matches_correct {context : List Ty} {width : PNat} (source 
     queue_packet_domain_correct (.integer source.val) value assignment locals
   by_cases valid : QueuePacketValid source (value.eval assignment locals)
   · rw [model_queue_packet_exact source _ valid]
-    have observed := packet_matches_correct value expected assignment locals valid.1
-    by_cases same : expected = defaultQueuePacket source <;>
-      simpa [queuePacketMatches, same, Term.eval, domain.mpr valid] using observed
+    have observed := model_packet_eq_iff (value.eval assignment locals) expected valid.1
+    have sourceCorrect := model_queue_packet_source source (value.eval assignment locals)
+    rw [model_queue_packet_exact source _ valid] at sourceCorrect
+    by_cases same : expected = defaultQueuePacket source
+    · simpa [queuePacketMatches, same, Term.eval, domain.mpr valid, packet_term_eval] using observed
+    · simp only [queuePacketMatches, if_neg same, Term.eval, Bool.and_eq_true,
+        decide_eq_true_eq, packet_term_eval]
+      rw [observed]
+      constructor
+      · exact And.right
+      · intro matched
+        exact ⟨matched ▸ sourceCorrect, matched⟩
   · have invalid := Bool.eq_false_iff.mpr (fun holds => valid (domain.mp holds))
     simp only [modelQueuePacket, dif_neg valid]
-    by_cases same : expected = defaultQueuePacket source <;>
-      simp [queuePacketMatches, same, Term.eval, invalid, eq_comm]
+    by_cases same : expected = defaultQueuePacket source
+    · simp [queuePacketMatches, same, Term.eval, invalid]
+    · simp only [queuePacketMatches, if_neg same, Term.eval, Bool.and_eq_true,
+        decide_eq_true_eq, packet_term_eval]
+      constructor
+      · rintro ⟨sameSource, sameValue⟩
+        exfalso
+        apply valid
+        rw [sameValue]
+        exact ⟨packet_value_valid expected, by simp [packetValue, packetHeaderValue, sameSource]⟩
+      · intro equal
+        exact False.elim (same equal.symm)
 
 end CCFRaft.NativeEncode
 

@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from copy import deepcopy
 from pathlib import Path
 
 from explorer_api import ExplorerApi
@@ -32,6 +33,43 @@ MEMBERSHIP_STATES = (
 )
 
 
+def packet_samples(source, destination):
+    header = {"term": 7, "source": source, "destination": destination}
+    payloads = [
+        (
+            "appendEntriesRequest",
+            {
+                "prevLogIndex": 0,
+                "prevLogTerm": 3,
+                "leaderCommit": 7,
+                "entries": [
+                    {"term": 4, "content": "signature"},
+                    {"term": 5, "content": {"transaction": 10**30}},
+                    {"term": 6, "content": {"reconfiguration": [source, destination]}},
+                    {"term": 7, "content": {"retiredCommitted": [destination]}},
+                ],
+            },
+        ),
+        ("appendEntriesResponse", {"success": False, "lastLogIndex": 9}),
+        ("requestVoteRequest", {"lastCommittableTerm": 3, "lastCommittableIndex": 9}),
+        ("requestVoteResponse", {"voteGranted": True}),
+        ("requestPreVote", {"lastCommittableTerm": 3, "lastCommittableIndex": 9}),
+        ("requestPreVoteResponse", {"voteGranted": False}),
+        ("proposeVoteRequest", {}),
+    ]
+    return [dict(header, kind=kind, **payload) for kind, payload in payloads]
+
+
+def packet_observation(packet, *, source=None, destination=None, index=0):
+    return {
+        "kind": "queuePoint",
+        "source": packet["source"] if source is None else source,
+        "destination": packet["destination"] if destination is None else destination,
+        "index": index,
+        "value": packet,
+    }
+
+
 @unittest.skipUnless(
     os.environ.get("CCF_NATIVE_ARRAY_TESTS") == "1",
     "set CCF_NATIVE_ARRAY_TESTS=1 to run Lean/cvc5 fixtures",
@@ -46,7 +84,7 @@ class NativeLeanSmtTests(unittest.TestCase):
             check=True,
         )
         fixtures = json.loads(result.stdout)
-        self.assertGreaterEqual(len(fixtures), 115)
+        self.assertGreaterEqual(len(fixtures), 123)
         self.assertEqual(len(fixtures), len({item["name"] for item in fixtures}))
         self.solve(fixtures)
 
@@ -1030,6 +1068,332 @@ class NativeLeanSmtTests(unittest.TestCase):
             ]
         )
 
+    def test_queue_point_observations(self):
+        cases = []
+        documents = []
+        for names in (["a"], ["a", "b"]):
+            source, destination = names[0], names[-1]
+            quorum = {"kind": "checkQuorum", "node": source}
+            for packet in packet_samples(source, destination):
+                observation = packet_observation(packet)
+                changed = packet_observation(dict(packet, term=packet["term"] + 1))
+                length = {
+                    "kind": "queueLength",
+                    "source": source,
+                    "destination": destination,
+                    "value": 1,
+                }
+                variations = [
+                    ("value", [observation], "sat"),
+                    ("repeat", [observation, observation], "sat"),
+                    ("conflict", [observation, changed], "unsat"),
+                    ("known-length", [length, observation], "sat"),
+                    ("empty", [dict(length, value=0), observation], "unsat"),
+                    (
+                        "unallocated-endpoints",
+                        [
+                            {"kind": "allocated", "node": node, "value": False}
+                            for node in names
+                        ]
+                        + [observation],
+                        "sat",
+                    ),
+                ]
+                if len(names) > 1:
+                    variations += [
+                        ("quorum-frame", [observation, quorum, observation], "sat"),
+                        ("quorum-conflict", [observation, quorum, changed], "unsat"),
+                    ]
+                for suffix, instructions, expected in variations:
+                    cases.append(
+                        (
+                            f"queue-point-{len(names)}-{packet['kind']}-{suffix}",
+                            expected,
+                        )
+                    )
+                    documents.append(
+                        {
+                            "nodes": names,
+                            "bootstrap": names,
+                            "instructions": instructions,
+                        }
+                    )
+        packets = packet_samples("a", "b")
+        for index, packet in enumerate(packets):
+            cases.append((f"queue-point-tag-{index}", "unsat"))
+            documents.append(
+                {
+                    "nodes": ["a", "b"],
+                    "bootstrap": ["a", "b"],
+                    "instructions": [
+                        packet_observation(packet),
+                        packet_observation(packets[(index + 1) % len(packets)]),
+                    ],
+                }
+            )
+        scripts = self.encode(documents)
+        self.solve(
+            [
+                {"name": name, "script": script, "expected": expected}
+                for (name, expected), script in zip(cases, scripts)
+            ]
+        )
+
+    def test_model_packet_json_roundtrips(self):
+        generated = subprocess.run(
+            ["lake", "env", "lean", "--run", "Sparse/NativeArrayTermFixtureMain.lean"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        fixtures = json.loads(generated.stdout)
+        packets = [
+            instruction["value"]
+            for fixture in fixtures
+            for instruction in fixture["trace"]["instructions"]
+            if instruction["kind"] == "queuePoint"
+        ]
+        self.assertEqual(len({packet["kind"] for packet in packets}), 7)
+        decoded = subprocess.run(
+            ["lake", "env", "lean", "--run", "Sparse/NativePacketJsonFixtureMain.lean"],
+            cwd=ROOT,
+            input=json.dumps(packets),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(json.loads(decoded.stdout), packets)
+
+    def test_queue_packet_fields_and_ranges(self):
+        packets = packet_samples("a", "b")
+        cases = []
+        for packet in packets:
+            for field, value in packet.items():
+                if field in ("kind", "source", "destination", "entries"):
+                    continue
+                changed = dict(
+                    packet,
+                    **{field: not value if isinstance(value, bool) else value + 1},
+                )
+                cases.append(
+                    (
+                        f"packet-field-{packet['kind']}-{field}",
+                        [packet_observation(packet), packet_observation(changed)],
+                        "unsat",
+                    )
+                )
+        append = packets[0]
+        for label, entries in (
+            ("length", append["entries"][:-1]),
+            ("order", list(reversed(append["entries"]))),
+            ("duplicate", append["entries"] + append["entries"]),
+        ):
+            cases.append(
+                (
+                    f"packet-entries-{label}",
+                    [
+                        packet_observation(append),
+                        packet_observation(dict(append, entries=entries)),
+                    ],
+                    "unsat",
+                )
+            )
+        reordered = deepcopy(append)
+        reordered["entries"][2]["content"]["reconfiguration"] = ["b", "a", "a"]
+        cases.append(
+            (
+                "packet-entry-set-order",
+                [packet_observation(append), packet_observation(reordered)],
+                "sat",
+            )
+        )
+        default = {
+            "kind": "proposeVoteRequest",
+            "term": 0,
+            "source": "a",
+            "destination": "a",
+        }
+        cases.extend(
+            [
+                ("packet-default", [packet_observation(default)], "sat"),
+                (
+                    "packet-default-conflict",
+                    [
+                        packet_observation(default),
+                        packet_observation(dict(default, term=1)),
+                    ],
+                    "unsat",
+                ),
+                (
+                    "packet-destination-is-not-queue-destination",
+                    [packet_observation(default, destination="b")],
+                    "sat",
+                ),
+                (
+                    "packet-source-must-match-partition",
+                    [packet_observation(dict(default, source="b"), source="a")],
+                    "unsat",
+                ),
+            ]
+        )
+        for size in (2, 10**30):
+            length = {
+                "kind": "queueLength",
+                "source": "a",
+                "destination": "b",
+                "value": size,
+            }
+            cases.extend(
+                [
+                    (
+                        f"packet-duplicate-positions-{size}",
+                        [
+                            length,
+                            packet_observation(packets[-1]),
+                            packet_observation(packets[-1], index=size - 1),
+                        ],
+                        "sat",
+                    ),
+                    (
+                        f"packet-at-tail-{size}",
+                        [length, packet_observation(packets[-1], index=size)],
+                        "unsat",
+                    ),
+                ]
+            )
+        scripts = self.encode(
+            [
+                {
+                    "nodes": ["a", "b"],
+                    "bootstrap": ["a", "b"],
+                    "instructions": instructions,
+                }
+                for _, instructions, _ in cases
+            ]
+        )
+        self.solve(
+            [
+                {"name": name, "script": script, "expected": expected}
+                for (name, _, expected), script in zip(cases, scripts)
+            ]
+        )
+        sizes = {name: len(script) for (name, _, _), script in zip(cases, scripts)}
+        self.assertLess(
+            sizes[f"packet-duplicate-positions-{10**30}"]
+            - sizes["packet-duplicate-positions-2"],
+            5000,
+        )
+
+    def test_queue_point_identity_matrix(self):
+        names = [f"node-{index}" for index in range(21)]
+        first, last = names[0], names[-1]
+        observations = [
+            packet_observation(
+                dict(packet_samples(source, source)[-1], term=index),
+                destination=destination,
+            )
+            for index, (source, destination) in enumerate(
+                ((first, first), (first, last), (last, first), (last, last))
+            )
+        ]
+        huge = packet_observation(packet_samples(last, first)[0], index=10**30 - 1)
+        scripts = self.encode(
+            [
+                {
+                    "nodes": names,
+                    "bootstrap": [first, last],
+                    "instructions": observations
+                    + [{"kind": "checkQuorum", "node": first}]
+                    + observations
+                    + [huge],
+                }
+            ]
+        )
+        self.solve(
+            [
+                {
+                    "name": "queue-point-identity-matrix",
+                    "script": scripts[0],
+                    "expected": "sat",
+                }
+            ]
+        )
+        self.assertLess(len(scripts[0]), 150_000)
+
+    def test_queue_point_input_errors(self):
+        packets = packet_samples("a", "a")
+        invalid = []
+        numeric_fields = set()
+        for packet in packets:
+            invalid.append(packet_observation(dict(packet, extra=0)))
+            payload_fields = [
+                key
+                for key in packet
+                if key not in ("kind", "term", "source", "destination")
+            ]
+            if payload_fields:
+                invalid.append(
+                    packet_observation(
+                        {
+                            key: value
+                            for key, value in packet.items()
+                            if key != payload_fields[0]
+                        }
+                    )
+                )
+            for field, value in packet.items():
+                if isinstance(value, bool):
+                    invalid.append(packet_observation(dict(packet, **{field: 1})))
+                elif isinstance(value, int) and field not in numeric_fields:
+                    numeric_fields.add(field)
+                    invalid.append(packet_observation(dict(packet, **{field: -1})))
+        packet = packets[-1]
+        invalid += [
+            packet_observation(dict(packet, kind="unknown")),
+            packet_observation(dict(packet, term=True)),
+            packet_observation(dict(packet, term=1.5)),
+            packet_observation(dict(packet, source="b"), source="a", destination="a"),
+            packet_observation(
+                dict(packet, destination="b"), source="a", destination="a"
+            ),
+            packet_observation(dict(packet, source=0), source="a", destination="a"),
+            packet_observation(
+                dict(packet, destination=None), source="a", destination="a"
+            ),
+            packet_observation(packet, source="b"),
+            packet_observation(packet, destination="b"),
+        ]
+        invalid += [
+            packet_observation(packet, index=value) for value in (-1, True, 1.5, "0")
+        ]
+        for field in ("kind", "term", "source", "destination"):
+            invalid.append(
+                packet_observation(
+                    {key: value for key, value in packet.items() if key != field},
+                    source="a",
+                    destination="a",
+                )
+            )
+        observation = packet_observation(packet)
+        invalid += [
+            {key: value for key, value in observation.items() if key != field}
+            for field in ("source", "destination", "index", "value")
+        ]
+        invalid.append(dict(observation, value=None))
+        invalid += [
+            packet_observation(dict(packets[0], entries=value))
+            for value in (
+                None,
+                {},
+                [{"term": -1, "content": "signature"}],
+                [{"term": 0, "content": {"transaction": -1}}],
+                [{"term": 0, "content": {"reconfiguration": ["b"]}}],
+                [{"term": 0, "content": {"unexpected": 0}}],
+            )
+        ]
+        self.assert_invalid_instructions(invalid)
+
     def assert_invalid_instructions(self, instructions):
         self.assert_input_errors(
             [
@@ -1279,6 +1643,17 @@ class NativeLeanSmtTests(unittest.TestCase):
                     [
                         {"kind": "submittedTxId", "txId": 10**30, "value": True},
                         {"kind": "submittedTxId", "txId": 10**30, "value": False},
+                    ],
+                    solver,
+                ),
+                (
+                    "packet",
+                    "unsat",
+                    [
+                        packet_observation(
+                            dict(packet_samples(name, name)[-1], term=term)
+                        )
+                        for term in (7, 8)
                     ],
                     solver,
                 ),

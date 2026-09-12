@@ -30,6 +30,9 @@ theorem frame_observation_run {width : PNat} (item : FrameInstruction width)
   case queueLength source destination expected =>
     cases Except.ok.inj emitted
     rfl
+  case queuePoint source destination index expected =>
+    cases Except.ok.inj emitted
+    rfl
   all_goals cases emitted
 
 theorem frame_observation_correct {width : PNat} [Bootstrap (Fin width)]
@@ -60,6 +63,27 @@ theorem frame_observation_correct {width : PNat} [Bootstrap (Fin width)]
   case queueLength source destination expected =>
     cases Except.ok.inj emitted
     simp [Holds, Term.eval, queue_scalar_correct, rep.queue_length, NativeArrayVote.follows]
+  case queuePoint source destination index expected =>
+    cases Except.ok.inj emitted
+    have headNatural : 0 <= (queueScalarTerm columns.queueHead
+        (.integer destination.val) (.integer source.val)).eval assignment Locals.empty := by
+      rw [queue_scalar_correct]
+      exact Int.natCast_nonneg _
+    have lengthNatural : 0 <= (queueScalarTerm columns.queueLength
+        (.integer destination.val) (.integer source.val)).eval assignment Locals.empty := by
+      rw [queue_scalar_correct]
+      exact Int.natCast_nonneg _
+    simp only [Holds, List.mem_singleton, forall_eq]
+    rw [queue_point_correct source
+      (queueScalarTerm columns.queueHead (.integer destination.val) (.integer source.val))
+      (queueScalarTerm columns.queueLength (.integer destination.val) (.integer source.val))
+      (queueCellsTerm columns.queueCells (.integer destination.val) (.integer source.val))
+      index expected assignment Locals.empty headNatural lengthNatural]
+    simp only [queue_scalar_correct, queueCellsTerm, Term.eval]
+    change (queueRow assignment columns destination source).decode[index]? = some expected <->
+      NativeArrayVote.follows frame [.queuePoint source destination index expected]
+    rw [rep.queues destination source]
+    simp only [NativeArrayVote.follows, and_true, NativeArrayQueue.Queue.point_correct]
   all_goals cases emitted
 
 theorem frame_observation_cons {width : PNat} [Bootstrap (Fin width)]
@@ -76,6 +100,7 @@ theorem frame_observation_cons {width : PNat} [Bootstrap (Fin width)]
   case retirementCompleted => simp [NativeArrayVote.follows]
   case submittedTxId => simp [NativeArrayVote.follows]
   case queueLength => simp [NativeArrayVote.follows]
+  case queuePoint => simp [NativeArrayVote.follows]
   all_goals cases emitted
 
 theorem frame_instruction_cases {width : PNat} (item : FrameInstruction width)
@@ -93,6 +118,9 @@ theorem frame_instruction_cases {width : PNat} (item : FrameInstruction width)
   case retirementCompleted node expected => exact Or.inr ⟨_, rfl, run⟩
   case submittedTxId txId expected => exact Or.inr ⟨_, rfl, run⟩
   case queueLength source destination expected => exact Or.inr ⟨_, rfl, run⟩
+  case queuePoint source destination index expected =>
+    refine Or.inr ⟨_, rfl, ?_⟩
+    exact (frame_observation_run (.queuePoint source destination index expected) before _ rfl).symm.trans run
   all_goals cases run
 
 theorem frame_instruction_references {width : PNat} (item : FrameInstruction width)

@@ -79,6 +79,13 @@ whether that transaction belongs to the submitted set.
 `queueLength` requires declared `source` and `destination` identities and a
 natural `value`. Each directed pair has an independent length, including self
 queues and queues between unallocated nodes. Unobserved queues remain arbitrary.
+`queuePoint` adds a natural `index` and a complete packet `value`, using the
+[packet fields shared with the reference prototype](#native-term-updates-and-packet-observations).
+The index is relative to the live queue head. The packet's source must match
+the source partition; its destination need not match the containing queue.
+Duplicate packets at different positions remain distinct FIFO elements.
+Missing fields, unknown identities, extra fields, and negative numbers are
+input errors. Partial packets are not accepted.
 Other instructions are errors.
 `native_lean.py` handles JSON input and solver execution. It delegates all SMT
 construction to Lean, with no Python encoder fallback.
@@ -243,19 +250,28 @@ implementation correctly, or verify Lean's JSON parser and IO runtime.
 
 [`NativeFrameDecoded`](Sparse/NativeFrameDecoded.lean) extends this correspondence
 to the public encoder, including `hasJoined`, `preVoteStatus`, `retirementCompleted`,
-`submittedTxId`, and `queueLength`.
+`submittedTxId`, `queueLength`, and exact `queuePoint` packets of all seven kinds.
 `encodeFrame_document_iff` and `encodeFrameDetails_document_iff` cover the
 actual plain and details outputs. `FrameDocumentConsistent` uses the broader
 decoder and Model trace semantics. `NativeFrameColumns` realizes arbitrary
 joined sets independently of allocation and bootstrap membership.
-`NativeFrameTrace` composes local, global, and queue-length observations with
+`NativeFrameTrace` composes local, global, and queue observations with
 quorum steps without restricting unobserved global state or queues.
 
 This Lean encoder remains experimental. Remaining Model actions, observations,
 and raw reducer integration are unfinished. The API's full-model assurance
 flag remains false; current coverage is one action, sixteen local observation
-kinds, all four global observation kinds, and queue lengths.
-Packet observations remain unsupported.
+kinds, all four global observation kinds, queue lengths, and exact packet points.
+Partial packet observations remain unsupported.
+
+`NativeLogTerm` constructs canonical packet logs from a ground default array
+and one store per supplied entry. `NativePacketTerm` proves that complete
+packet literals denote their Model values. Exact queue observations assert
+that literal equality and the source partition, without repeating packet-log
+domain quantifiers. The default-packet case also permits raw cells that the
+total queue decoder maps to that packet. Both cases have correspondence proofs.
+The public two-node append/quorum case solves in 58 ms; the 21-node case with
+an index near `10^30` solves in 9.8 seconds. Both previously returned `unknown`.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.

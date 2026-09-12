@@ -5,6 +5,7 @@ import Sparse.NativeEncode
 import Sparse.NativeArrayVote
 import Sparse.NativeNatSet
 import Sparse.NativeQueueColumns
+import Sparse.NativePacketJson
 
 set_option autoImplicit false
 
@@ -26,6 +27,11 @@ def decodeFrameInstruction (width : PNat) (names : Array String) (value : Json) 
     return .queueLength (<- resolve width names (<- field value "source"))
       (<- resolve width names (<- field value "destination"))
       (<- natural (<- field value "value"))
+  else if kind = "queuePoint" then
+    fields value ["kind", "source", "destination", "index", "value"]
+    return .queuePoint (<- resolve width names (<- field value "source"))
+      (<- resolve width names (<- field value "destination"))
+      (<- natural (<- field value "index")) (<- decodePacket width names (<- field value "value"))
   else if kind = "submittedTxId" then
     fields value ["kind", "txId", "value"]
     return .submittedTxId (<- natural (<- field value "txId"))
@@ -65,6 +71,11 @@ def frameObservationClauses {width : PNat} (columns : Columns) :
   | .queueLength source destination expected =>
     .ok [.equal (queueScalarTerm columns.queueLength (.integer destination.val) (.integer source.val))
       (.integer expected)]
+  | .queuePoint source destination index expected =>
+    .ok [queuePoint source
+      (queueScalarTerm columns.queueHead (.integer destination.val) (.integer source.val))
+      (queueScalarTerm columns.queueLength (.integer destination.val) (.integer source.val))
+      (queueCellsTerm columns.queueCells (.integer destination.val) (.integer source.val)) index expected]
   | _ => .error "unsupported native Lean frame observation"
 
 def frameInstruction {width : PNat} (item : FrameInstruction width) : EncodeM width Unit :=
