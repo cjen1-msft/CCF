@@ -513,10 +513,14 @@ defaults and have no live-entry obligations. It avoids re-proving row stores.
 The parent inspected the complete module. Its independent build and import audit
 pass in `native-allocation-parent-build.log` and `native-allocation-import-tests.log`.
 The runtime, proof, and fixtures are parent-owned.
-Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` now owns only
-`NativeArrayChangeConfiguration.lean`, extracting a generic Model frame bridge
-from `change_configuration_rep`. It accepts a source row through its Model
-equality rather than requiring the exact retirement witness tuple.
+`NativeArrayChangeConfiguration.change_configuration_output_rep` is committed
+as `b7b231fd4`. It accepts a source row through its Model equality rather than
+requiring the exact retirement witness tuple. `change_configuration_rep`
+reuses that frame proof. The parent build, including dependent membership
+guard and row proofs, passes in `native-membership-frame-parent-build.log`.
+Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` now owns only new
+`NativeNodeRowModelEncoding.lean`. It transports row representations across
+equal Model states without equating inactive log tails.
 `NativeMembershipChange.lean`, `NativeMembershipRowTerms.lean`, and
 `NativeMembershipChangeFixtureMain.lean` are committed as `a006368c5`.
 The private action composes the proved guards, new log entry, local and global
@@ -539,8 +543,8 @@ allocation starts. Its 15 future-ID rejections pass in
 `native-membership-write-reference-tests.log`. All 1,572 membership scripts
 and 184 combined sequences remain byte-identical after extraction.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns only new
-`NativeMembershipWritesEncoding.lean`. It proves execution and the post-allocation
-writes, then composes full correspondence when A's allocation proof is available.
+`NativeMembershipWritesEncoding.lean`. It proves execution and composes allocation,
+source-row replacement, and global stores. The allocation API is now available.
 The runtime remains parent-owned.
 
 `NativeArrayCoreActionsFixtureMain` and `NativeCoreActionsFixtureMain` are
