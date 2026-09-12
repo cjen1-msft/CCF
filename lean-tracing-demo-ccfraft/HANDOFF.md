@@ -161,7 +161,7 @@ allocated rows and already allocated rows separately.
 Both generators build. Their Model-only coverage checks pass in
 `native-core-model-fixture-coverage.log`. Neither action is public yet.
 All append receive cases now pass against the private encoder. Membership
-cases remain prepared inputs without encoder coverage.
+guards now pass against these inputs; membership post-state encoding is pending.
 Wire both through `assert_model_traces` when their public actions land.
 
 `NativeQueuePop` and `NativeQueuePopEncoding` now prove total directed FIFO
@@ -408,6 +408,16 @@ The shared scenario extraction leaves all response scripts byte-identical.
 The private encoder and both trace methods are committed as `8695f7c49`.
 Whole-action soundness and completeness remain unfinished; do not expose the
 action publicly or change either assurance flag.
+
+`NativeMembershipTerms` and the fixture-only membership decoder are committed
+as `9681215b7`. The guard uses the latest configuration at the old log length,
+not the committed configuration. It checks source allocation and role, both
+old and refreshed retirement state, a nonempty changed configuration, and
+whether any newly added identity has already joined.
+`NativeMembershipGuardFixtureMain` stops before post-state observations.
+All 1,572 guard scripts pass, including 314 SAT cases, in
+`native-membership-guard-tests.log`. Guard correspondence, allocation writes,
+and the full membership encoder still need implementation or proof.
 
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns only new
 `NativeArrayAppendCandidate.lean`. It composes the existing handler lemmas for
