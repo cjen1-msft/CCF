@@ -53,6 +53,17 @@ def Ty.syntax : Ty -> NativeSExpr.Expr
 
 def Ty.render (sort : Ty) : String := sort.syntax.render
 
+def Ty.defaultSyntax : Ty -> NativeSExpr.Expr
+  | .bool => .atom "false"
+  | .int => .atom "0"
+  | .unit => .atom "native_unit"
+  | .bits width => .list [.atom "_", .atom "bv0", .atom (toString width.val)]
+  | .array key value =>
+    .list [.list [.atom "as", .atom "const", (Ty.array key value).syntax], value.defaultSyntax]
+  | .pair first second => .list [.atom "native_pair", first.defaultSyntax, second.defaultSyntax]
+  | .sum first second =>
+    .list [.list [.atom "as", .atom "native_left", (Ty.sum first second).syntax], first.defaultSyntax]
+
 inductive Variable : List Ty -> Ty -> Type where
   | here {context : List Ty} {sort : Ty} : Variable (sort :: context) sort
   | there {context : List Ty} {sort other : Ty} :
@@ -87,6 +98,7 @@ inductive Term : List Ty -> Ty -> Type where
   | integer {context : List Ty} (value : Int) : Term context .int
   | unit {context : List Ty} : Term context .unit
   | bits {context : List Ty} {width : PNat} (value : BitVec width) : Term context (.bits width)
+  | defaultValue {context : List Ty} (sort : Ty) : Term context sort
   | free {context : List Ty} (sort : Ty) (id : Nat) : Term context sort
   | bound {context : List Ty} {sort : Ty} (ref : Variable context sort) : Term context sort
   | add {context : List Ty} (left right : Term context .int) : Term context .int
@@ -123,6 +135,7 @@ noncomputable def Term.eval (assignment : Assignment) :
   | _, _, _, .integer value => value
   | _, _, _, .unit => ()
   | _, _, _, .bits value => value
+  | _, _, _, .defaultValue sort => sort.default
   | _, _, _, .free sort id => assignment sort id
   | _, _, locals, .bound ref => locals _ ref
   | _, _, locals, .add left right => left.eval assignment locals + right.eval assignment locals
@@ -163,6 +176,7 @@ def Term.syntax : {context : List Ty} -> {sort : Ty} -> Term context sort -> Nat
   | _, _, .unit => .atom "native_unit"
   | _, _, .bits (width := width) value =>
     .list [.atom "_", .atom s!"bv{value.toNat}", .atom (toString width.val)]
+  | _, _, .defaultValue sort => sort.defaultSyntax
   | _, _, .free sort id => .atom (symbolName sort id)
   | _, _, .bound ref => .atom (binderName ref.level)
   | _, _, .add left right => .list [.atom "+", left.syntax, right.syntax]
@@ -200,7 +214,8 @@ def Term.render {context : List Ty} {sort : Ty} (expression : Term context sort)
 
 def Term.symbols : {context : List Ty} -> {sort : Ty} -> Term context sort -> List (Ty × Nat)
   | _, _, .free sort id => [(sort, id)]
-  | _, _, .boolean _ | _, _, .integer _ | _, _, .unit | _, _, .bits _ | _, _, .bound _ => []
+  | _, _, .boolean _ | _, _, .integer _ | _, _, .unit | _, _, .bits _
+  | _, _, .defaultValue _ | _, _, .bound _ => []
   | _, _, .add left right | _, _, .sub left right | _, _, .le left right
   | _, _, .equal left right | _, _, .and left right | _, _, .or left right
   | _, _, .select left right | _, _, .pair left right
@@ -223,7 +238,7 @@ theorem Term.eval_congr {context : List Ty} {sort : Ty} (expression : Term conte
     (same : forall ty id, (ty, id) ∈ expression.symbols -> left ty id = right ty id) :
     expression.eval left locals = expression.eval right locals := by
   match expression with
-  | .boolean _ | .integer _ | .unit | .bits _ | .bound _ => rfl
+  | .boolean _ | .integer _ | .unit | .bits _ | .defaultValue _ | .bound _ => rfl
   | .free ty id => exact same ty id (by simp [symbols])
   | .add first second | .sub first second | .le first second
   | .equal first second | .and first second | .or first second

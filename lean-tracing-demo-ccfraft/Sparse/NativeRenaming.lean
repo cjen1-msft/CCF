@@ -21,6 +21,7 @@ def Term.rename : {source target : List Ty} -> {sort : Ty} ->
   | _, _, _, _, .integer value => .integer value
   | _, _, _, _, .unit => .unit
   | _, _, _, _, .bits value => .bits value
+  | _, _, _, _, .defaultValue sort => .defaultValue sort
   | _, _, _, _, .free sort id => .free sort id
   | _, _, _, rename, .bound ref => .bound (rename ref)
   | _, _, _, rename, .add left right => .add (left.rename rename) (right.rename rename)
@@ -63,7 +64,7 @@ theorem Term.rename_eval {source target : List Ty} {sort : Ty}
     (same : forall {sort : Ty} (ref : Variable source sort), right _ (rename ref) = left _ ref) :
     (expression.rename rename).eval assignment right = expression.eval assignment left := by
   match expression with
-  | .boolean _ | .integer _ | .unit | .bits _ | .free _ _ => rfl
+  | .boolean _ | .integer _ | .unit | .bits _ | .defaultValue _ | .free _ _ => rfl
   | .bound ref => exact same ref
   | .add first second | .sub first second | .le first second
   | .and first second | .or first second
@@ -102,7 +103,7 @@ theorem Term.rename_symbols {source target : List Ty} {sort : Ty}
     (expression : Term source sort) (rename : Renaming source target) :
     (expression.rename rename).symbols = expression.symbols := by
   match expression with
-  | .boolean _ | .integer _ | .unit | .bits _ | .free _ _ | .bound _ => rfl
+  | .boolean _ | .integer _ | .unit | .bits _ | .defaultValue _ | .free _ _ | .bound _ => rfl
   | .add first second | .sub first second | .le first second
   | .equal first second | .and first second | .or first second
   | .select first second | .pair first second

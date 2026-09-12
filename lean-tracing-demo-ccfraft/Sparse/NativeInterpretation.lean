@@ -128,6 +128,9 @@ noncomputable def applyOperator (operator : String) (values : List Value) : Opti
   | _ => none
 
 def applyConstructor : String -> Ty -> Value -> Option Value
+  | "const", .array key element, value => do
+    let value <- value.asType element
+    return ⟨.array key element, fun _ => value⟩
   | "native_left", .sum first second, value => do
     let value <- value.asType first
     return ⟨.sum first second, Sum.inl value⟩

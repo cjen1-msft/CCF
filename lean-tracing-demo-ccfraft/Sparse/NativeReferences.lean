@@ -52,6 +52,19 @@ theorem Ty.syntax_symbols (sort : Ty) : syntaxSymbols sort.syntax = [] := by
     simp [Ty.syntax, syntaxSymbols, atomSymbols, first, second]
     rfl
 
+theorem Ty.defaultSyntax_symbols (sort : Ty) : syntaxSymbols sort.defaultSyntax = [] := by
+  induction sort with
+  | bool | int | unit => simp [Ty.defaultSyntax, syntaxSymbols, atomSymbols]; rfl
+  | bits width =>
+    simp only [Ty.defaultSyntax, syntaxSymbols, List.flatMap_cons, List.flatMap_nil, numeral_symbols]
+    rfl
+  | array key value _ second | sum key value second _ =>
+    simp [Ty.defaultSyntax, syntaxSymbols, Ty.syntax_symbols, second, atomSymbols]
+    exact ⟨rfl, rfl⟩
+  | pair first second left right =>
+    simp [Ty.defaultSyntax, syntaxSymbols, left, right, atomSymbols]
+    rfl
+
 theorem Term.syntax_symbols :
     {context : List Ty} -> {sort : Ty} -> (expression : Term context sort) ->
       syntaxSymbols expression.syntax = expression.symbols
@@ -71,6 +84,7 @@ theorem Term.syntax_symbols :
     rfl
   | _, _, .free sort id => by
     simpa only [Term.syntax, Term.symbols, syntaxSymbols] using free_symbols sort id
+  | _, _, .defaultValue sort => sort.defaultSyntax_symbols
   | _, _, .bound ref => by
     simpa only [Term.syntax, Term.symbols, syntaxSymbols] using binder_symbols ref.level
   | _, _, .add left right

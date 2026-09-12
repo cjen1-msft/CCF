@@ -19,6 +19,7 @@ theorem Term.unwrap_syntax {context : List Ty} {sort : Ty} (expression : Term co
     unwrapAssertion index expression.syntax = some expression.syntax := by
   cases expression <;> try simp [Term.syntax, unwrapAssertion]
   case integer value => cases value <;> simp [Term.syntax, unwrapAssertion]
+  case defaultValue => cases sort <;> simp [Ty.defaultSyntax]
 
 theorem unwrap_emitted (named : Bool) (index : Nat) (expression : Term [] .bool) :
     unwrapAssertion index

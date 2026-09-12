@@ -72,6 +72,21 @@ private def pair : Case :=
     expected := true
     correct := by intro assignment; simp [Term.eval] }
 
+private def groundDefault {sort : Ty} (name : String) (literal : Term [] sort)
+    (correct : forall assignment, literal.eval assignment Locals.empty = sort.default) : Case :=
+  { name := "ground-default-" ++ name
+    formula := .equal (.select (.defaultValue (.array .int sort)) (.integer (-1000000000000000000000000000000))) literal
+    expected := true
+    correct := by intro assignment; simp [Term.eval, Ty.default, correct assignment] }
+
+private def nestedDefault : Case :=
+  { name := "ground-default-nested-array"
+    formula := .forall_ .int (.equal
+      (.select (.select (.defaultValue (.array .int (.array .int .bool))) (.bound .here)) (.integer 99))
+      (.boolean false))
+    expected := true
+    correct := by intro assignment; simp [Term.eval, Ty.default] }
+
 private def sum : Case :=
   { name := "sum-match"
     formula := .equal
@@ -650,6 +665,14 @@ def queueSatCases : List SatCase := [
 
 def cases : List Case := [
   stored, wrongStore, nestedArray, constantArray, pair, sum, capture, nestedQuantifiers,
+  groundDefault "bool" (.boolean false) (by intro assignment; rfl),
+  groundDefault "int" (.integer 0) (by intro assignment; rfl),
+  groundDefault "unit" .unit (by intro assignment; rfl),
+  groundDefault "bits-one" (.bits (width := 1) 0) (by intro assignment; rfl),
+  groundDefault "bits-wide" (.bits (width := 21) 0) (by intro assignment; rfl),
+  groundDefault "pair" (.pair (.integer 0) (.boolean false)) (by intro assignment; rfl),
+  groundDefault "sum" (.inl .unit : Term [] (.sum .unit .int)) (by intro assignment; rfl),
+  nestedDefault,
   wideBits, widerBits, bitsOperations, unitAndSecond, typedSymbols, overwrittenStore,
   assertedCondition, arithmetic, weakenedQuantifier, weakenedMatch, weakenedFree,
   optionalNatural "optional-index-none" none,

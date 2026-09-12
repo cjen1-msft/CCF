@@ -61,7 +61,8 @@ schema. Do not confuse these coverage levels or fall back to Python SMT emission
 Lean can resolve the underlying integer, Boolean, and bitvector instances.
 The typed AST supports native arrays, scoped quantifiers, arbitrary-width bits,
 products, and sums. cvc5 rejected symbolic `as const` array values, so that
-constructor was removed. Use explicit quantified constraints for array resets.
+constructor was removed. The later `Term.defaultValue` constructor permits
+only ground defaults. Use explicit quantified constraints for symbolic resets.
 `NativeSmtFixtureMain` supplies kernel-proved formula verdicts to the solver
 suite. `NativeEncodeProofs` proves the bitset/configuration selectors and
 assertion-backed allocation specialization. Normal `lake build Sparse` includes
@@ -462,6 +463,27 @@ methods pass in `native-queue-columns-tests.log`, including queue lengths,
 all 115 formulas, all 150 Model quorum cases, global/local framing, and actual
 wrapper/explorer outcomes. Total time was 220.271 seconds.
 Next add strict packet JSON decoding and public `queuePoint`, then actions.
+
+The public queue-point slice exposed two solver failures when append-packet
+observations were combined with quorum constraints. Their expected verdicts
+remain SAT. The original two-node and 21-node scripts are preserved in session
+files under `native-packet-observation-probe`, with metrics.
+The rerunnable `native_packet_observation_probe.py` compares unchanged scripts,
+literal tail guards, exact quantified cells, existential construction, and
+ground constant-array construction. Only the ground construction solved both
+cases, in 59 ms and 9.7 seconds. Nested MBQI did not fix the original formula.
+No solver flags or Model bounds changed.
+
+`Term.defaultValue sort` emits `Ty.defaultSyntax` and denotes `Ty.default`.
+The constructor takes no expression, so a symbolic `as const` cannot be emitted.
+The syntax, interpretation, declaration/reference, and renaming proofs cover
+the constructor. Eight new kernel-backed fixtures cover all default sorts,
+one-bit and 21-bit arrays, nested arrays, and a large negative read index.
+The normal Sparse build passes in `native-ground-default-complete-build.log`;
+all 123 formulas pass in `native-ground-default-fixture-tests.log`.
+Next use ground defaults and finite stores to construct exact packet-log
+literals, then complete the public queue-point runtime cases. The strict packet
+decoder and public point correspondence are present but not yet committed.
 
 `NativeOptional` is the next value-codec unit for local-state coverage.
 It uses the existing sum datatype for optional natural indices and identities.

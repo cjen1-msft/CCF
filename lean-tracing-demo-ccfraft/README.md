@@ -97,8 +97,11 @@ SAT, UNSAT, unknown, and encoding errors remain distinct outcomes.
 
 `Sparse/NativeSmt.lean` provides typed terms, scoped binders, native arrays,
 arbitrary-width bitvectors, and product and sum datatypes. Symbolic constant-array
-expressions are deliberately absent: cvc5 rejects that syntax. A fresh array
-can instead be constrained with `forall`.
+expressions are deliberately absent: cvc5 rejects that syntax.
+`Term.defaultValue` emits a ground literal for a sort's fixed default, including
+constant arrays and nested datatypes. It cannot contain free symbols or bound
+variables. A fresh array with a symbolic default can instead be constrained with
+`forall`.
 Sorts and terms now render through explicit S-expression trees.
 `NativeSyntaxProofs` proves that their emitted text parses back to those trees.
 This round trip alone does not prove evaluation or declaration semantics.

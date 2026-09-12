@@ -55,6 +55,28 @@ theorem eval_bit_literal {width : PNat} (value : BitVec width) :
   have numeral : parseNumeral (toString width) = some width := Sparse.SmtNumerals.parseNumeral_render width
   simp [evalBitLiteral, parse_bit_word, numeral, positive]
 
+theorem Ty.defaultSyntax_eval (sort : Ty) (assignment : Assignment) (environment : NamedLocals) :
+    evalSyntax assignment environment sort.defaultSyntax = some ⟨sort, sort.default⟩ := by
+  induction sort with
+  | bool =>
+    rw [Ty.defaultSyntax, evalSyntax]
+    exact eval_boolean assignment environment false
+  | int =>
+    rw [Ty.defaultSyntax, evalSyntax]
+    exact eval_numeral assignment environment 0
+  | unit =>
+    rw [Ty.defaultSyntax, evalSyntax]
+    exact eval_unit assignment environment
+  | bits width =>
+    rw [Ty.defaultSyntax, evalSyntax]
+    simpa [Ty.default] using (eval_bit_literal (0 : BitVec width))
+  | array key value _ second | sum key value second _ =>
+    rw [Ty.defaultSyntax, evalSyntax] <;> try decide +kernel
+    simp [Ty.default, parse_sort_syntax, applyConstructor, second]
+  | pair first second left right =>
+    rw [Ty.defaultSyntax, eval_application _ _ _ _ (by decide +kernel) (by decide +kernel) (by decide +kernel)]
+    simp [Ty.default, evalArguments, applyOperator, left, right]
+
 theorem Term.syntax_eval (assignment : Assignment) (environment : NamedLocals) :
     {context : List Ty} -> {sort : Ty} -> (expression : Term context sort) -> (locals : Locals context) ->
     environment.Rep locals ->
@@ -76,6 +98,7 @@ theorem Term.syntax_eval (assignment : Assignment) (environment : NamedLocals) :
   | _, _, .bits value, locals, _ => by
     rw [Term.syntax, evalSyntax]
     exact eval_bit_literal value
+  | _, _, .defaultValue sort, locals, _ => sort.defaultSyntax_eval assignment environment
   | _, _, .free ty id, locals, _ => by
     rw [Term.syntax, evalSyntax]
     exact eval_free assignment environment ty id

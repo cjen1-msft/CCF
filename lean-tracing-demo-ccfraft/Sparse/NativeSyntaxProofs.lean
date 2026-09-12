@@ -56,6 +56,24 @@ theorem Ty.syntax_safe (sort : Ty) : sort.syntax.Safe := by
       or_false, or_imp, forall_and, forall_eq]
     exact ⟨by decide +kernel, first, second⟩
 
+theorem Ty.defaultSyntax_safe (sort : Ty) : sort.defaultSyntax.Safe := by
+  induction sort with
+  | bool | int | unit =>
+    simp only [Ty.defaultSyntax, NativeSExpr.Expr.Safe]
+    decide +kernel
+  | bits width =>
+    simp only [Ty.defaultSyntax, NativeSExpr.Expr.Safe, List.mem_cons, List.not_mem_nil,
+      or_false, or_imp, forall_and, forall_eq]
+    exact ⟨by decide +kernel, by decide +kernel, numeral_safe width.val⟩
+  | array key value _ second | sum key value second _ =>
+    simp only [Ty.defaultSyntax, NativeSExpr.Expr.Safe, List.mem_cons, List.not_mem_nil,
+      or_false, or_imp, forall_and, forall_eq]
+    exact ⟨⟨by decide +kernel, by decide +kernel, Ty.syntax_safe _⟩, second⟩
+  | pair first second left right =>
+    simp only [Ty.defaultSyntax, NativeSExpr.Expr.Safe, List.mem_cons, List.not_mem_nil,
+      or_false, or_imp, forall_and, forall_eq]
+    exact ⟨by decide +kernel, left, right⟩
+
 theorem Term.syntax_safe : {context : List Ty} -> {sort : Ty} ->
     (expression : Term context sort) -> expression.syntax.Safe
   | _, _, .boolean value => by
@@ -76,6 +94,7 @@ theorem Term.syntax_safe : {context : List Ty} -> {sort : Ty} ->
       numeral_safe width.val⟩
   | _, _, .free sort id => by
     simpa only [Term.syntax, NativeSExpr.Expr.Safe] using symbolName_safe sort id
+  | _, _, .defaultValue sort => sort.defaultSyntax_safe
   | _, _, .bound ref => by
     simpa only [Term.syntax, NativeSExpr.Expr.Safe] using binder_safe ref.level
   | _, _, .add left right | _, _, .sub left right | _, _, .le left right
