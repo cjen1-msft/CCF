@@ -101,7 +101,7 @@ theorem compiled_frame_trace_iff {width : PNat} [Bootstrap (Fin width)]
     (items : List (FrameInstruction width))
     (initial started final : Encoding width) (index : Nat) (groups result : Array Group)
     (initialColumns : initial.toColumns = {}) (empty : initial.assertions = #[])
-    (valid : ReferencesValid initial) (start : (initialDomains width).run initial = .ok ((), started))
+    (valid : ReferencesValid initial) (start : (initialFrameDomains width).run initial = .ok ((), started))
     (run : (compileInstructionsWith frameInstruction index groups items).run started = .ok (result, final))
     (sameBootstrap : decodeBits initial.bootstrap = INITIAL_CONFIGURATION) :
     (exists assignment : Assignment, Holds final.assertions.toList assignment) <->
@@ -110,22 +110,23 @@ theorem compiled_frame_trace_iff {width : PNat} [Bootstrap (Fin width)]
   · rintro ⟨assignment, holds⟩
     have startedHolds := compile_with_holds_before frameInstruction frame_instruction_holds_before
       items started final index groups result run assignment holds
-    obtain ⟨references, initialHolds⟩ := initial_domains_success initial started start assignment
-    have domains := (initialHolds.mp startedHolds).2
-    let frame := initialFrame width assignment domains
+    obtain ⟨references, initialHolds⟩ := initial_frame_domains_success initial started start assignment
+    obtain ⟨_, domains, submitted⟩ := initialHolds.mp startedHolds
+    let frame := initialFrame width assignment domains submitted
     have rep : FrameColumnsRep assignment started.toColumns frame := by
-      simpa only [references.columns, initialColumns] using initial_frame_rep width assignment domains
+      simpa only [references.columns, initialColumns] using initial_frame_rep width assignment domains submitted
     have bootstrap : decodeBits started.bootstrap = INITIAL_CONFIGURATION := by
       rw [references.bootstrap, sameBootstrap]
     exact (NativeArrayVote.exists_iff items).mp
-      ⟨frame, initial_frame_valid width assignment domains,
+      ⟨frame, initial_frame_valid width assignment domains submitted,
         compile_frame_sound items started final index groups result run assignment holds frame rep domains bootstrap⟩
   · rintro ⟨model, follows⟩
     let frame := NativeArrayVote.Frame.ofModel model
     let assignment := initialFrameAssignment width Assignment.default frame
     have domains := initial_frame_assignment_domains width Assignment.default frame
-    obtain ⟨references, initialHolds⟩ := initial_domains_success initial started start assignment
-    have startedHolds := initialHolds.mpr ⟨by simp [empty, Holds], domains⟩
+    have submitted := initial_frame_assignment_submitted_domain width Assignment.default frame
+    obtain ⟨references, initialHolds⟩ := initial_frame_domains_success initial started start assignment
+    have startedHolds := initialHolds.mpr ⟨by simp [empty, Holds], domains, submitted⟩
     have rep : FrameColumnsRep assignment started.toColumns frame := by
       simpa only [references.columns, initialColumns] using initial_frame_assignment_rep width Assignment.default frame
     have bootstrap : decodeBits started.bootstrap = INITIAL_CONFIGURATION := by

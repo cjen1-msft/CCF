@@ -3,6 +3,7 @@
 
 import Sparse.NativeEncode
 import Sparse.NativeArrayVote
+import Sparse.NativeNatSet
 
 set_option autoImplicit false
 
@@ -19,6 +20,10 @@ def decodeFrameInstruction (width : PNat) (names : Array String) (value : Json) 
   if kind = "hasJoined" then
     fields value ["kind", "value"]
     return .hasJoined (<- decodeNodeSet width names (<- field value "value"))
+  else if kind = "submittedTxId" then
+    fields value ["kind", "txId", "value"]
+    return .submittedTxId (<- natural (<- field value "txId"))
+      (<- (<- field value "value").getBool?)
   else if kind = "retirementCompleted" then
     fields value ["kind", "node", "value"]
     return .retirementCompleted (<- resolve width names (<- field value "node"))
@@ -49,6 +54,8 @@ def frameObservationClauses {width : PNat} (columns : Columns) :
   | .retirementCompleted node expected =>
     .ok [.equal (.select (.free (.array .int (.bits width)) columns.retirementCompleted) (.integer node.val))
       (.bits (encodeBits expected))]
+  | .submittedTxId txId expected =>
+    .ok [.equal (natSetMember columns.submittedTxIds (.integer txId)) (.boolean expected)]
   | _ => .error "unsupported native Lean frame observation"
 
 def frameInstruction {width : PNat} (item : FrameInstruction width) : EncodeM width Unit :=
@@ -58,8 +65,14 @@ def frameInstruction {width : PNat} (item : FrameInstruction width) : EncodeM wi
     let state <- get
     assertAll (<- frameObservationClauses state.toColumns item)
 
+def initialFrameAssertions (width : PNat) : List (Expr .bool) :=
+  initialAssertions width ++ [natSetDomain 19 20]
+
+def initialFrameDomains (width : PNat) : EncodeM width Unit :=
+  assertAll (initialFrameAssertions width)
+
 def compileFrameDecoded (input : FrameDecoded) : Except String Compiled := do
-  let (_, start) <- (initialDomains input.width).run (initialEncoding input.width input.bootstrap)
+  let (_, start) <- (initialFrameDomains input.width).run (initialEncoding input.width input.bootstrap)
   let groups := #[{ instruction := none, start := 0, stop := start.assertions.size : Group }]
   let (groups, final) <-
     (compileInstructionsWith frameInstruction 0 groups input.instructions.toList).run start

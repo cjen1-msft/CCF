@@ -74,6 +74,8 @@ that any node is allocated. Global `preVoteStatus` requires a declared `node`
 and a `value` of `capable` or `enabled`, independently of allocation.
 Global `retirementCompleted` requires a declared `node` and a `value` list of
 declared identities. Neither the node nor the listed identities must be allocated.
+Global `submittedTxId` requires a natural `txId` and Boolean `value`, indicating
+whether that transaction belongs to the submitted set.
 Other instructions are errors.
 `native_lean.py` handles JSON input and solver execution. It delegates all SMT
 construction to Lean, with no Python encoder fallback.
@@ -183,7 +185,8 @@ decoder. This does not prove that a raw-event reducer interpreted the
 implementation correctly, or verify Lean's JSON parser and IO runtime.
 
 [`NativeFrameDecoded`](Sparse/NativeFrameDecoded.lean) extends this correspondence
-to the public encoder, including `hasJoined`, `preVoteStatus`, and `retirementCompleted`.
+to the public encoder, including `hasJoined`, `preVoteStatus`, `retirementCompleted`,
+and `submittedTxId`.
 `encodeFrame_document_iff` and `encodeFrameDetails_document_iff` cover the
 actual plain and details outputs. `FrameDocumentConsistent` uses the broader
 decoder and Model trace semantics. `NativeFrameColumns` realizes arbitrary
@@ -194,7 +197,7 @@ steps without restricting unobserved global state or queues.
 This Lean encoder remains experimental. Remaining Model actions, observations,
 and raw reducer integration are unfinished. The API's full-model assurance
 flag remains false; current coverage is one action, sixteen local observation
-kinds, and global `hasJoined`, `preVoteStatus`, and `retirementCompleted`.
+kinds, and all four global observation kinds. Queue observations remain unsupported.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.
@@ -220,11 +223,15 @@ Indices can exceed the source log length.
 `instruction_has_encoding` proves that every typed local instruction is either
 `checkQuorum` or has an observation encoding. The solver suite includes a single
 trace that observes every local field before and after quorum.
-`NativeNatSet` prepares the submitted-transaction set for global-state encoding.
-Its Boolean array has an unknown finite limit, with false cells at negative
-indices and beyond the limit. The proofs establish exact membership and
-representation of every finite natural-number set. `submittedTxId` is not yet
-accepted by the JSON encoder.
+`NativeNatSet` encodes the submitted-transaction set as one-bit array cells and
+an unknown finite limit. Negative cells and cells at or beyond the limit are
+zero. A cell containing one denotes membership. The proofs establish exact
+membership and representation of every finite natural-number set. Observed
+transaction IDs do not bound the set, and missing IDs do not imply absence.
+The original Boolean-cell representation returned `unknown` for a mixed-global
+SAT case. Equivalent one-bit cells solved that case without weakening its
+constraints. The solver suite retains that regression, including single-node
+and 21-node variants.
 `Encoding` now inherits its mutable column references from `Columns`.
 Compiler frame proofs preserve that whole record, and the quorum result
 specifies a record update for the two changed fields.
@@ -431,17 +438,20 @@ need an exhaustive declared universe.
 
 Global fields do not use absent-node defaults. An unallocated identity can
 have enabled pre-votes, appear in join history, or have recorded completed
-retirements. All six currently supported actions preserve global fields.
+retirements. All six actions in the Python reference preserve global fields.
+The public Lean encoder currently supports only `checkQuorum`.
 
-Submitted transactions use a Boolean array and a symbolic natural upper bound.
-Cells outside the finite nonnegative prefix are false. The bound is unknown,
+The Python reference uses Boolean cells for submitted transactions. The public
+Lean encoder uses one-bit cells. Both have a symbolic natural upper bound.
+Cells outside the finite nonnegative prefix denote absence. The bound is unknown,
 not a cap supplied by the trace. `Sparse/NativeArrayNatSet.lean` proves that
 this represents every finite set of natural-number IDs. The emitter does not
 enumerate the prefix, even when an observed ID is a trillion.
 
 `NativeArrayVote.exists_submitted_array_iff` connects that array's decoded set
-to the same initial Model state as the remaining fields. The JSON adapter and
-SMT printer remain outside the theorem. The complete-state fixture now includes
+to the same initial Model state as the remaining fields. That theorem excludes
+JSON and SMT printing; `NativeFrameDecoded` covers the actual Lean compiler.
+The Python reference's complete-state fixture includes
 global observations before and after all six actions, including unallocated
 identities and trillion-valued transaction IDs.
 

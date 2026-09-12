@@ -803,6 +803,108 @@ class NativeLeanSmtTests(unittest.TestCase):
             ]
         )
 
+    def test_submitted_transaction_observations(self):
+        names = ["a", "b"]
+
+        def observed(tx_id, present):
+            return {"kind": "submittedTxId", "txId": tx_id, "value": present}
+
+        quorum = {"kind": "checkQuorum", "node": "a"}
+        cases = []
+        for tx_id in (0, 7, 10**30):
+            for present in (False, True):
+                observation = observed(tx_id, present)
+                cases.extend(
+                    [
+                        (f"submitted-{tx_id}-{present}", [observation], "sat"),
+                        (
+                            f"submitted-{tx_id}-{present}-quorum-frame",
+                            [observation, quorum, observation],
+                            "sat",
+                        ),
+                        (
+                            f"submitted-{tx_id}-{present}-conflict",
+                            [observation, quorum, observed(tx_id, not present)],
+                            "unsat",
+                        ),
+                    ]
+                )
+        cases.extend(
+            [
+                (
+                    "submitted-observations-do-not-exhaust-set",
+                    [observed(0, False), observed(7, False), observed(10**30, True)],
+                    "sat",
+                ),
+                (
+                    "submitted-independent-of-nodes-and-other-globals",
+                    [
+                        {"kind": "allocated", "node": node, "value": False}
+                        for node in names
+                    ]
+                    + [
+                        {"kind": "hasJoined", "value": []},
+                        {"kind": "preVoteStatus", "node": "a", "value": "enabled"},
+                        {"kind": "retirementCompleted", "node": "a", "value": ["b"]},
+                        observed(0, True),
+                        observed(7, False),
+                        observed(10**30, True),
+                    ],
+                    "sat",
+                ),
+            ]
+        )
+        documents = [
+            {
+                "nodes": names,
+                "bootstrap": names,
+                "instructions": instructions,
+            }
+            for _, instructions, _ in cases
+        ]
+        for width in (1, 21):
+            universe = [f"node-{index}" for index in range(width)]
+            node = universe[0]
+            instructions = [
+                {"kind": "allocated", "node": node, "value": False},
+                {"kind": "hasJoined", "value": universe},
+                {"kind": "preVoteStatus", "node": node, "value": "enabled"},
+                {"kind": "retirementCompleted", "node": node, "value": universe},
+                observed(0, True),
+                observed(7, False),
+                observed(10**30, True),
+            ]
+            cases.append((f"submitted-global-sorts-{width}", instructions, "sat"))
+            documents.append(
+                {"nodes": universe, "bootstrap": [node], "instructions": instructions}
+            )
+        scripts = self.encode(documents)
+        self.solve(
+            [
+                {"name": name, "script": script, "expected": expected}
+                for (name, _, expected), script in zip(cases, scripts)
+            ]
+        )
+        sizes = {name: len(script) for (name, _, _), script in zip(cases, scripts)}
+        self.assertEqual(
+            sizes[f"submitted-{10**30}-False"] - sizes["submitted-0-False"], 30
+        )
+
+    def test_submitted_transaction_input_errors(self):
+        valid = {"kind": "submittedTxId", "txId": 0, "value": True}
+        self.assert_invalid_instructions(
+            [
+                dict(valid, txId=-1),
+                dict(valid, txId=True),
+                dict(valid, txId="0"),
+                dict(valid, txId=None),
+                dict(valid, value=0),
+                dict(valid, value="true"),
+                dict(valid, node="a"),
+                {"kind": "submittedTxId", "value": True},
+            ]
+        )
+
     def assert_invalid_instructions(self, instructions):
         self.assert_input_errors(
             [
@@ -1035,9 +1137,10 @@ class NativeLeanSmtTests(unittest.TestCase):
             unknown = directory / "unknown-cvc5"
             unknown.write_text("#!/bin/sh\nprintf 'unknown\\n'\n", encoding="ascii")
             unknown.chmod(0o755)
-            for status, instructions, executable in [
-                ("sat", [], solver),
+            for label, status, instructions, executable in [
+                ("sat", "sat", [], solver),
                 (
+                    "joined",
                     "unsat",
                     [
                         {"kind": "hasJoined", "value": [name]},
@@ -1045,10 +1148,19 @@ class NativeLeanSmtTests(unittest.TestCase):
                     ],
                     solver,
                 ),
-                ("unknown", [], unknown),
+                (
+                    "submitted",
+                    "unsat",
+                    [
+                        {"kind": "submittedTxId", "txId": 10**30, "value": True},
+                        {"kind": "submittedTxId", "txId": 10**30, "value": False},
+                    ],
+                    solver,
+                ),
+                ("unknown", "unknown", [], unknown),
             ]:
-                with self.subTest(status=status):
-                    path = directory / f"{status}.json"
+                with self.subTest(label=label):
+                    path = directory / f"{label}.json"
                     path.write_text(
                         json.dumps(
                             {
@@ -1060,7 +1172,7 @@ class NativeLeanSmtTests(unittest.TestCase):
                         ),
                         encoding="utf-8",
                     )
-                    output = directory / status
+                    output = directory / label
                     result = subprocess.run(
                         [
                             sys.executable,

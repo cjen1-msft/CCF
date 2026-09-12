@@ -53,7 +53,7 @@ It supports `checkQuorum` and all sixteen local observation kinds, including
 the nullable `retirementIndex`, `retirementCommittableIndex`, and
 `retiredCommittedIndex` fields, nullable `votedFor`, both vote sets, and
 `membershipState`, `sentIndex`, and `matchIndex`, plus global `hasJoined` and
-`preVoteStatus` and `retirementCompleted`.
+`preVoteStatus`, `retirementCompleted`, and `submittedTxId`.
 The Python reference still supports six actions and the broader observation
 schema. Do not confuse these coverage levels or fall back to Python SMT emission.
 
@@ -248,8 +248,8 @@ Lean's JSON parser, IO runtime, and cvc5 are not verified by these theorems.
 
 Next, expand Model actions and observations before raw reducer integration.
 Keep the full-model assurance flag false: current coverage is still one
-action, sixteen local observation kinds, and global `hasJoined`, `preVoteStatus`,
-and `retirementCompleted`.
+action, sixteen local observation kinds, and all four global observation kinds.
+Queue observations remain unsupported.
 No change to the reducer's untrusted
 interpretation boundary follows from proving the JSON encoder.
 
@@ -281,8 +281,31 @@ state. The generated cases cover all identities, duplicate and reordered
 members, absent nodes, mixed rows, and preservation across quorum steps.
 Six targeted methods passed, covering both newer globals, strict input errors,
 joined sets, and all 150 Model quorum cases.
-Other globals, queues, and actions remain unsupported by the public encoder.
-Next add `submittedTxId` using `NativeNatSet`.
+`submittedTxId` now has its full correspondence proof and solver coverage.
+Column 19 stores one-bit cells, column 20 is the unknown finite support limit,
+and fresh allocation starts at 21. `initialFrameDomains` combines node domains
+with the finite-set domain. `NativeNatSet.natSetMember` interprets bit one as
+membership. Negative cells and cells at or beyond the limit must be zero.
+The initial Boolean-cell implementation returned `unknown` on a mixed-global
+SAT case after about 32 seconds. The same constraints with one-bit cells solved
+in about 27 ms. No bounds or observations were dropped. Solver-option changes
+did not fix the Boolean case, and no solver flags were changed.
+The build `native-submitted-bit-complete-build.log` in session files passes
+the full Sparse proof chain. Seven targeted methods passed in
+`native-submitted-bit-tests.log`, including all global fields, strict input
+errors, all 150 Model quorum cases, and actual wrapper/explorer core ownership.
+The fixture method initially failed because a Lean linter warning preceded
+its JSON output. The proof was rewritten to remove that warning, and all
+31 kernel-backed formulas passed in `native-submitted-fixture-tests.log`.
+The sparse-ID case grows by exactly 30 characters when replacing zero with
+`10^30`, rather than allocating or enumerating intervening cells.
+`Assignment.set_other_index` avoids assuming distinct sorts when writing
+other symbol IDs. This matters when the node universe also has width one.
+Queue observations, remaining actions, and raw reducer integration are still
+unsupported by the public encoder.
+Next implement packet value/domain encoding and source-local queue observations,
+then the already-proved native vote and campaign actions. Do not stop at
+observation coverage; reducer integration is still the requested delivery boundary.
 
 `NativeOptional` is the next value-codec unit for local-state coverage.
 It uses the existing sum datatype for optional natural indices and identities.
@@ -377,7 +400,7 @@ integration. Do not mark the full-model or raw-reducer assurance flags true.
 The current runtime action is still only `checkQuorum`.
 
 `NativeNatSet` is the first global-value unit. `natSetDomain` emits the actual
-finite-prefix Boolean-array constraint, including negative cells and the tail.
+finite-prefix one-bit-array constraint, including negative cells and the tail.
 `nat_set_domain_correct` characterizes that expression. `natSetArray` requires
 the domain proof before constructing a finite Model set, and the membership
 and observation theorems are exact. `natSetAssignment` realizes every finite
@@ -385,10 +408,10 @@ natural-number set, preserving the seed's other symbols. Its chosen limit is a
 proof witness, not a runtime bound inferred from observed transaction IDs.
 Six new kernel-backed solver cases cover negative cells, the limit cell,
 large indices, negative limits, and an empty prefix. The normal Sparse audit
-includes this module. Global JSON observations remain unwired.
+includes this module. All four global JSON observation kinds are now wired.
 
 The reference record is now named `Columns`, with projection `toColumns`.
-Global references will share this record and the existing symbol allocator.
+Global references share this record and the existing symbol allocator.
 `NodeColumnsRep` remains the node-specific representation relation.
 The rename preserves all 150 Model-case scripts byte for byte.
 
@@ -469,7 +492,7 @@ Global observations now cover `hasJoined`, `preVoteStatus`,
 `retirementCompleted`, and membership in `submittedTxIds`. They remain
 independent of allocation. The shared frame correspondence preserves all global
 fields alongside complete node records and source-local queues.
-Submitted IDs use a Boolean array with an unknown finite upper bound, not an
+The Python reference uses a Boolean array with an unknown finite upper bound, not an
 exhaustive transaction-ID universe. `NativeArrayNatSet` proves complete finite-set
 representation, and `exists_submitted_array_iff` connects it to the same Model
 execution. See [Native global state](README.md#native-global-state).

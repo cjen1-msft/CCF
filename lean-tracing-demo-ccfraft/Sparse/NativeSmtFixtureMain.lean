@@ -164,7 +164,7 @@ private def natSetOutside (name : String) (index : Term [] .int) : Case :=
   { name
     formula := .and (NativeEncode.natSetDomain 0 1)
       (.and (.or (NativeEncode.lt index (.integer 0)) (.le (.free .int 1) index))
-        (.select (.free (.array .int .bool) 0) index))
+        (NativeEncode.natSetMember 0 index))
     expected := false
     correct := by
       intro assignment
@@ -176,8 +176,7 @@ private def natSetOutside (name : String) (index : Term [] .int) : Case :=
       have outside' : index.eval assignment Locals.empty < 0 \/
           assignment .int 1 <= index.eval assignment Locals.empty := by
         simpa [NativeEncode.lt, Term.eval] using outside
-      rw [valid.2 _ outside'] at present
-      contradiction }
+      simp [NativeEncode.natSetMember, Term.eval, valid.2 _ outside'] at present }
 
 private def natSetNegativeLimit : Case :=
   { name := "nat-set-negative-limit"
@@ -198,7 +197,7 @@ private def natSetEmpty : Case :=
   { name := "nat-set-empty-prefix"
     formula := NativeEncode.implies
       (.and (NativeEncode.natSetDomain 0 1) (.equal (.free .int 1) (.integer 0)))
-      (.forall_ .int (.not (.select (.free (.array .int .bool) 0) (.bound .here))))
+      (.forall_ .int (.not (NativeEncode.natSetMember 0 (.bound .here))))
     expected := true
     correct := by
       intro assignment
@@ -212,7 +211,7 @@ private def natSetEmpty : Case :=
       have outside : index < 0 \/ assignment .int 1 <= index := by
         rw [zero]
         exact lt_or_ge (index : Int) 0
-      simp [Locals.cons, valid.2 index outside] }
+      simp [NativeEncode.natSetMember, Term.eval, Locals.cons, valid.2 index outside] }
 
 def cases : List Case := [
   stored, wrongStore, nestedArray, constantArray, pair, sum, capture, nestedQuantifiers,

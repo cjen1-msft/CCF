@@ -27,7 +27,7 @@ theorem compileFrameDecoded_script_iff (input : FrameDecoded) [Bootstrap (Fin in
       runScriptText assignment (renderScript compiled.assertions.toList named) = some true) <->
       (exists model : State (Fin input.width) Nat,
         NativeArrayVote.modelFollows model input.instructions.toList) := by
-  cases first : (initialDomains input.width).run (initialEncoding input.width input.bootstrap) with
+  cases first : (initialFrameDomains input.width).run (initialEncoding input.width input.bootstrap) with
   | error message => simp [compileFrameDecoded, first, Bind.bind, Except.bind] at success
   | ok pair =>
     rcases pair with ⟨⟨⟩, started⟩
