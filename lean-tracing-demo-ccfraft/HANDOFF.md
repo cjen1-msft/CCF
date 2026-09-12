@@ -550,13 +550,18 @@ All row and bitvector inputs are checked against the original counter before
 allocation starts. Its 15 future-ID rejections pass in
 `native-membership-write-reference-tests.log`. All 1,572 membership scripts
 and 184 combined sequences remain byte-identical after extraction.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns new
-`NativeMembershipWritesEncoding.lean` plus existing `NativeNodeRowWritesEncoding.lean`
-and `NativeDefinitionsEncoding.lean`.
-Its full writer proof is complete but not yet accepted. The parent requested one
-shared row-definition bounds proof, shared SSA preservation lemmas, and removal
-of the two completeness-only helper layers now that allocation is available.
-The runtime remains parent-owned.
+`NativeMembershipWritesEncoding.lean` is committed as `06df11eac`.
+It proves execution, reference preservation, full-frame soundness, and extension
+of the supplied assignment, with exact growth `17 * width + 18`.
+The parent removed duplicated row-bound reasoning through
+`node_row_definition_values_bounded` and moved SSA preservation lemmas into
+`NativeDefinitionsEncoding`. Completeness now follows one direct extension sequence.
+The parent inspected the result and rebuilt affected append, allocation, and row
+proofs in `native-membership-writes-parent-build.log`; the import audit passes.
+Those three proof files and the runtime are parent-owned.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns only new
+`NativeMembershipFrameEncoding.lean`, composing writes with the accepted generic
+Model frame bridge.
 
 `NativeArrayCoreActionsFixtureMain` and `NativeCoreActionsFixtureMain` are
 committed as `05b512bdc`. They exercise all five prioritized actions in one
