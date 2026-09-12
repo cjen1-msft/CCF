@@ -419,10 +419,17 @@ All 1,572 guard scripts pass, including 314 SAT cases, in
 `native-membership-guard-tests.log`. Guard correspondence, allocation writes,
 and the full membership encoder still need implementation or proof.
 
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns only new
-`NativeArrayAppendCandidate.lean`. It composes the existing handler lemmas for
-the selected log, commit, and new-follower fields. Inactive signature witnesses
-must remain unconstrained. The parent owns all accepted response files.
+`NativeArrayAppendCandidate.lean` is committed as `2fa2a9ed2`.
+It composes all consuming handler results for the selected log, commit, and
+new-follower fields, using reusable branch-disjointness lemmas.
+It also proves that candidate stepdown leaves this candidate row unchanged.
+Inactive signature witnesses need no scan premise. The parent inspected the
+full proof and rebuilt it in `native-array-append-candidate-parent-build.log`.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns only new
+`NativeAppendReceiveCandidateTerms.lean` and
+`NativeAppendReceiveCandidateEncoding.lean`. It connects the actual guarded
+splice, selected-array definitions, and conditional signature scan to that
+native candidate row. Inactive SMT signature integers may be negative.
 
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only new
 `NativeRetirementCompletedConstraints.lean` and
