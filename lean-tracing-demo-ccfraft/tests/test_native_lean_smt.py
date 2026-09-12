@@ -119,6 +119,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeLogSummaryEncoding",
             "Sparse.NativeAppendReceiveTermsEncoding",
             "Sparse.NativeRetirementRefreshEncoding",
+            "Sparse.NativeAppendReceiveWritesEncoding",
         ):
             visit(module)
         forbidden = {
@@ -283,6 +284,52 @@ class NativeLeanSmtTests(unittest.TestCase):
             self.assertEqual(
                 fixture["expected"] == "sat",
                 model["modelEnabled"] and model["selectedAppendRequest"],
+            )
+        self.solve(fixtures)
+
+    def test_model_append_receive_writes(self):
+        result = subprocess.run(
+            [
+                "lake",
+                "env",
+                "lean",
+                "--run",
+                "Sparse/NativeAppendReceiveWritesFixtureMain.lean",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        output = json.loads(result.stdout)
+        fixtures = output["fixtures"]
+        self.assertEqual(len(fixtures), 2436)
+        self.assertEqual(len({item["name"] for item in fixtures}), len(fixtures))
+        successful = [item for item in fixtures if item["expected"] == "sat"]
+        self.assertEqual(len(successful), 348)
+        self.assertEqual(
+            {item["branch"] for item in successful},
+            {"stepdown", "reject", "alreadyDone", "extension", "conflict"},
+        )
+        for field in ("sourcePresent", "self"):
+            self.assertEqual({item[field] for item in successful}, {False, True})
+        self.assertEqual(len(output["rejected"]), 16)
+        self.assertEqual(
+            {(item["kind"], item["symbol"]) for item in output["rejected"]},
+            {
+                (kind, symbol)
+                for kind in ("stepDown", "response", "completed", "row")
+                for symbol in (24, 39, 47, 1024)
+            },
+        )
+        for item in output["rejected"]:
+            self.assertEqual(
+                item["error"],
+                (
+                    "internal encoder error: row write references an unallocated SMT symbol"
+                    if item["kind"] == "row"
+                    else "internal encoder error: append receive inputs reference an unallocated SMT symbol"
+                ),
             )
         self.solve(fixtures)
 
