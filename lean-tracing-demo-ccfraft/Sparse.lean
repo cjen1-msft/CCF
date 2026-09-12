@@ -57,6 +57,7 @@ import Sparse.NativeAssignmentEncoding
 import Sparse.NativeTraceCompleteness
 import Sparse.NativeNodeEncoding
 import Sparse.NativeQuorumEncoding
+import Sparse.NativeSignatureEncoding
 import Sparse.NativeConstructors
 import Sparse.NativeNodeOperations
 import Sparse.NativeNodeSets

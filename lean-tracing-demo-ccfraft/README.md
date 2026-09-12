@@ -273,6 +273,12 @@ total queue decoder maps to that packet. Both cases have correspondence proofs.
 The public two-node append/quorum case solves in 58 ms; the 21-node case with
 an index near `10^30` solves in 9.8 seconds. Both previously returned `unknown`.
 
+`NativeSignatureEncoding` supplies the next action-encoding component.
+Its scoped integer scan has correspondence with `maxCommittableIndex`,
+including the zero sentinel, live-index guards, and exclusion of later signatures.
+`NativeSignatureFixtureMain` generates 483 cases from actual Model results.
+Vote sends and campaigns are not yet accepted by the public Lean encoder.
+
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.
 Invalid payloads fail decoding rather than becoming `none` or wrapping to

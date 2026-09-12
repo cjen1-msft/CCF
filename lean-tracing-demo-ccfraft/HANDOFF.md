@@ -506,6 +506,22 @@ Next integrate the existing native action semantics with public Lean emission
 and correspondence. Partial packet observations, raw reduction, readback, and
 raw/code explorer provenance remain unfinished. Both assurance flags stay false.
 
+`NativeSignatureEncoding` now supplies the shared scan needed by vote sends
+and campaigns. `signatureAtTerm` checks the positive, live one-based index
+before inspecting content. `signatureIndexTerm` accepts zero or a signature
+position and excludes later signatures with an integer quantifier.
+The proofs cover arbitrary scoped terms, recover natural witnesses from the
+emitted guards, and connect the result to actual `maxCommittableIndex`.
+They reuse `ConfigurationLogRep`; no log-length or identity bound was added.
+The normal Sparse target imports and audits the module.
+`NativeSignatureFixtureMain` generates all 85 logs of length zero through three
+over the four entry kinds, then checks every candidate from -1 through length+1.
+All 483 Model-derived cases pass in `native-signature-model-tests.log`, including
+85 SAT cases. The proof build is `native-signature-final-build.log`.
+This is action-encoding support, not another publicly accepted action.
+Next prove active-peer membership, last-committable term construction, and
+FIFO append storage, then wire requestVote/requestPreVote through the compiler.
+
 `NativeOptional` is the next value-codec unit for local-state coverage.
 It uses the existing sum datatype for optional natural indices and identities.
 Decoding distinguishes a valid absent value, `some none`, from invalid payloads,

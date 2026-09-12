@@ -88,6 +88,20 @@ class NativeLeanSmtTests(unittest.TestCase):
         self.assertEqual(len(fixtures), len({item["name"] for item in fixtures}))
         self.solve(fixtures)
 
+    def test_model_signature_indices(self):
+        result = subprocess.run(
+            ["lake", "env", "lean", "--run", "Sparse/NativeSignatureFixtureMain.lean"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        fixtures = json.loads(result.stdout)
+        self.assertEqual(len(fixtures), 483)
+        self.assertEqual(len(fixtures), len({item["name"] for item in fixtures}))
+        self.assertEqual(sum(item["expected"] == "sat" for item in fixtures), 85)
+        self.solve(fixtures)
+
     def solve(self, fixtures):
         requested = os.environ.get("CVC5")
         solver = find_cvc5(Path(requested) if requested else None)
