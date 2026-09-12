@@ -94,8 +94,10 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeFrameColumns",
             "Sparse.NativeCampaignWrites",
             "Sparse.NativeVoteReceiveWritesEncoding",
+            "Sparse.NativeVoteReceiveEncoding",
             "Sparse.NativeAppendGuardEncoding",
             "Sparse.NativeAppendSendEncoding",
+            "Sparse.NativeFirstMatchEncoding",
         ):
             visit(module)
         forbidden = {
@@ -127,17 +129,25 @@ class NativeLeanSmtTests(unittest.TestCase):
         self.solve(fixtures)
 
     def test_model_signature_indices(self):
+        self.assert_script_fixtures("NativeSignatureFixtureMain", 483, 85)
+
+    def test_first_match_encoding(self):
+        self.assert_script_fixtures("NativeFirstMatchFixtureMain", 530, 66)
+
+    def assert_script_fixtures(self, module, count, satisfiable):
         result = subprocess.run(
-            ["lake", "env", "lean", "--run", "Sparse/NativeSignatureFixtureMain.lean"],
+            ["lake", "env", "lean", "--run", f"Sparse/{module}.lean"],
             cwd=ROOT,
             capture_output=True,
             text=True,
             check=True,
         )
         fixtures = json.loads(result.stdout)
-        self.assertEqual(len(fixtures), 483)
+        self.assertEqual(len(fixtures), count)
         self.assertEqual(len(fixtures), len({item["name"] for item in fixtures}))
-        self.assertEqual(sum(item["expected"] == "sat" for item in fixtures), 85)
+        self.assertEqual(
+            sum(item["expected"] == "sat" for item in fixtures), satisfiable
+        )
         self.solve(fixtures)
 
     def test_queue_store_execution(self):
@@ -924,13 +934,29 @@ class NativeLeanSmtTests(unittest.TestCase):
         )
 
     def test_public_model_append_sends(self):
+        self.assert_model_traces(
+            "NativeArrayAppendFixtureMain", 1200, "public-model-append"
+        )
+
+    def test_public_model_vote_receives(self):
+        fixtures = self.assert_model_traces(
+            "NativeArrayVoteReceiveFixtureMain", 480, "public-model-vote-receive"
+        )
+        self.assertTrue(
+            any(
+                fixture["modelEnabled"] and not fixture["selectedVoteRequest"]
+                for fixture in fixtures
+            )
+        )
+
+    def assert_model_traces(self, module, count, prefix):
         result = subprocess.run(
             [
                 "lake",
                 "env",
                 "lean",
                 "--run",
-                "Sparse/NativeArrayAppendFixtureMain.lean",
+                f"Sparse/{module}.lean",
             ],
             cwd=ROOT,
             capture_output=True,
@@ -938,7 +964,7 @@ class NativeLeanSmtTests(unittest.TestCase):
             check=True,
         )
         fixtures = json.loads(result.stdout)
-        self.assertEqual(len(fixtures), 1200)
+        self.assertEqual(len(fixtures), count)
         self.assertEqual(
             {fixture["expected"] for fixture in fixtures}, {"sat", "unsat"}
         )
@@ -946,13 +972,14 @@ class NativeLeanSmtTests(unittest.TestCase):
         self.solve(
             [
                 {
-                    "name": f"public-model-append-{index}",
+                    "name": f"{prefix}-{index}",
                     "script": script,
                     "expected": fixture["expected"],
                 }
                 for index, (fixture, script) in enumerate(zip(fixtures, scripts))
             ]
         )
+        return fixtures
 
     def test_append_send_input_errors(self):
         valid = {
@@ -1077,7 +1104,12 @@ class NativeLeanSmtTests(unittest.TestCase):
 
     def test_peer_action_input_errors(self):
         invalid = []
-        for kind in ("requestVote", "requestPreVote", "updateTerm"):
+        for kind in (
+            "requestVote",
+            "requestPreVote",
+            "updateTerm",
+            "receiveRequestVote",
+        ):
             valid = {"kind": kind, "source": "a", "destination": "b"}
             invalid.extend(
                 [
@@ -1102,6 +1134,78 @@ class NativeLeanSmtTests(unittest.TestCase):
     def test_append_send_explorer_core(self):
         self.assert_explorer_core(
             "Traces/native_append_fifo_conflict.json", {11, 12, 13, 14, 16}
+        )
+
+    def test_vote_receive_explorer_core(self):
+        self.assert_explorer_core(
+            "Traces/native_vote_receive_fifo_conflict.json", {14, 15, 18}
+        )
+
+    def test_vote_receive_send_sequence(self):
+        document = json.loads(
+            (ROOT / "Traces/native_vote_receive_fifo_conflict.json").read_text()
+        )
+        document["instructions"][-1]["value"] = 2
+        document["instructions"].extend(
+            {
+                "kind": "queuePoint",
+                "source": "b",
+                "destination": "a",
+                "index": index,
+                "value": {
+                    "kind": "requestVoteResponse",
+                    "source": "b",
+                    "destination": "a",
+                    "term": 4,
+                    "voteGranted": True,
+                },
+            }
+            for index in range(2)
+        )
+        variants = [("vote-send-receive-duplicates", document, "sat")]
+        larger = deepcopy(document)
+        larger["nodes"] += [f"node-{index}" for index in range(2, 21)]
+        variants.append(("twenty-one-node-vote-receive", larger, "sat"))
+        for index in range(2):
+            wrong = deepcopy(document)
+            wrong["instructions"][-2 + index]["value"]["voteGranted"] = False
+            variants.append((f"vote-receive-wrong-grant-{index}", wrong, "unsat"))
+        remaining = deepcopy(document)
+        remaining["instructions"][16]["value"] = 1
+        variants.append(("vote-receive-wrong-remaining", remaining, "unsat"))
+        empty = deepcopy(document)
+        empty["instructions"].append(
+            {"kind": "receiveRequestVote", "source": "a", "destination": "b"}
+        )
+        variants.append(("vote-receive-empty-after-consumption", empty, "unsat"))
+        stale = deepcopy(document)
+        stale["nodes"].append("c")
+        stale["instructions"][14:14] = [
+            {"kind": "queueLength", "source": "c", "destination": "b", "value": 1},
+            {
+                "kind": "queuePoint",
+                "source": "c",
+                "destination": "b",
+                "index": 0,
+                "value": {
+                    "kind": "proposeVoteRequest",
+                    "source": "c",
+                    "destination": "b",
+                    "term": 9,
+                },
+            },
+            {"kind": "updateTerm", "source": "c", "destination": "b"},
+        ]
+        stale["instructions"][20]["value"] = None
+        for instruction in stale["instructions"][-2:]:
+            instruction["value"].update(term=9, voteGranted=False)
+        variants.append(("vote-receive-stale-after-update", stale, "sat"))
+        scripts = self.encode([trace for _, trace, _ in variants])
+        self.solve(
+            [
+                {"name": name, "script": script, "expected": expected}
+                for (name, _, expected), script in zip(variants, scripts)
+            ]
         )
 
     def assert_explorer_core(self, trace, required):

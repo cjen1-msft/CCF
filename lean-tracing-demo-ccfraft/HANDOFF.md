@@ -5,7 +5,8 @@
 ### Immediate continuation: core receive and membership actions
 
 The user now prioritizes `requestVote`, receive requestVote, `appendEntries`,
-receive appendEntries, and membership change. Vote and append sends are public.
+receive appendEntries, and membership change. Vote sends, vote-request receive,
+and append sends are public.
 Finish this core before unrelated remaining actions.
 Delegate mechanical proofs to `gpt-5.6-sol` with medium reasoning effort.
 The main agent owns semantic lemmas. Build reusable proof components where
@@ -26,12 +27,15 @@ Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` completed public `appendEntries`
 decoding, dispatch, and both whole-trace proofs. The parent accepted its
 three-file compiler change after inspection and an independent public build
 in `native-public-append-parent-build.log`. Those files are parent-owned again.
-That worker now owns only `NativeFirstMatchEncoding.lean`, proving a generic
-SMT first-match assertion against `NativeArrayFirstMatch`. It takes explicit
-limit, selected-index, and predicate terms rather than fixed log columns.
+`NativeFirstMatchEncoding` is complete and independently builds. Its 530
+emitted-SMT cases include ignored tails, nested binders, and huge live bounds.
+Those cases and signature regressions pass in `native-first-match-tests.log`.
+That worker now owns only `NativeRetirementEncoding.lean`, composing concrete
+signature-after-retirement and first-retired-record SMT predicates with that
+generic first-match proof. Log terms remain explicit rather than fixed columns.
 The main agent owns `NativeArrayVoteReceive` and subsequent receive semantics.
 Its handler and full-frame correspondence proofs build in
-`native-vote-receive-model-build.log`. No public receive action is wired yet.
+`native-vote-receive-model-build.log`. Public `receiveRequestVote` is now wired.
 Campaign integration is committed as `bf0c05a55`.
 
 The main-agent semantic prerequisites now include:
@@ -88,6 +92,10 @@ The main-agent semantic prerequisites now include:
   committed-prefix retirement condition. The combined build passes in
   `native-retirement-refresh-build.log`. Consuming append NACKs refresh this
   metadata too; only the nonconsuming candidate-stepdown branch skips refresh.
+  `NativeArrayConfiguration` now proves the full current configuration from
+  native index and node-set witnesses. `completed_nodes_from_scans_correct`
+  combines this with bounded previous-membership and retired-record scans.
+  `native-retirement-completed-scans-build.log` records the proof build.
 
 Public append integration coverage is in
 `NativeArrayAppendFixtureMain`, `Traces/native_append_fifo_conflict.json`,
@@ -112,23 +120,27 @@ vote store, FIFO pop, and reply. Replies read the original columns.
 cases and four invalid-symbol errors. Cases include stale requests,
 unallocated senders, self receives, existing duplicate replies, and full
 post-state observations.
-Mechanical worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns only
-`NativeVoteReceive.lean`, `NativeVoteReceiveEncoding.lean`,
-`NativeFrameEncode.lean`, `NativeFrameStep.lean`, and `NativeFrameTrace.lean`.
-It composes the request-specific guard and signature witness, then wires
-public `receiveRequestVote`, using GPT-5.6 Sol at medium effort.
-Do not edit those files until it completes.
-Parent-owned `NativeArrayVoteReceiveFixtureMain` builds and generates 480
+`NativeVoteReceive` and `NativeVoteReceiveEncoding` now compose the
+request-specific guard, signature witness, and writes. Public decoding,
+dispatch, and both trace-proof directions include `receiveRequestVote`.
+`NativeArrayVoteReceiveFixtureMain` builds and generates 480
 Model-derived traces, including enabled generic receives of the wrong packet
 kind that must be rejected by the vote-specific action.
 `native-public-vote-receive-failing-first.log` records rejection before wiring.
-The new public receive, send/update/receive sequence, and explorer-core tests
-are pending. The shared Model fixture runner passes the existing 1,200 append
-cases in `native-model-runner-tests.log`.
+All six targeted methods, including send/update/receive sequences, explorer
+core attribution, input errors, and append regressions, pass in 197 seconds
+in `native-public-vote-receive-tests.log`.
+The shared Model fixture runner also passes the existing 1,200 append cases
+in `native-model-runner-tests.log`.
+Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns only
+`NativeArrayChangeConfiguration.lean`, proving native membership-change
+guards and row/frame updates. It does not own any public compiler files.
 
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only
-`NativeArrayAppendHandler.lean`. It composes four local append handler branches
-against the complete Model handler, including conflict truncation and retry.
+`NativeArrayAppendHandlerCases.lean`, proving exact local handler enablement
+from the four native branch guards. Its completed `NativeArrayAppendHandler`
+already composes all four soundness branches, including conflict truncation
+and retry, and passes `native-append-handler-parent-build.log`.
 It does not own retirement refresh, network transitions, or public receive.
 
 `NativeArrayVoteState` now holds frame state and the existing action semantics.
@@ -140,7 +152,7 @@ the state module, so the trace module can later import them without a cycle.
 Internal `.receiveVote` trace semantics now retain an explicit
 selected-vote-request premise. Internal `.appendEntries` traces also have
 actual Model correspondence, including the exact batch frontier.
-The public decoder accepts append sends and still rejects vote receive.
+The public decoder accepts append sends and vote-request receives.
 `NativeArrayVote`, `NativeFrameStep`, and the public decoded-trace
 proofs build in `native-vote-receive-trace-model-build.log`,
 `native-vote-receive-writes-integration-build.log`, and
@@ -163,8 +175,8 @@ No solver or representation change is involved.
 `native-vote-receive-tests.log` records 1,728 passing response/guard cases.
 `native-append-packet-tests.log` records 2,538 passing packet/normalization cases.
 Both compare with actual Model results. Each new proof module builds with the
-allowed-axiom gate. Append send is now public; vote receive still needs guarded
-action composition and public wiring. Keep append receive and membership change
+allowed-axiom gate. Append send and vote-request receive are now public.
+Keep append receive and membership change
 next in priority. Do not replace generic receive with a silently restricted
 vote-only action: retain the packet-kind fact in the correspondence statement.
 
@@ -280,7 +292,7 @@ campaign traces, 18 state/sequence cases, strict campaign input errors, the
 1,200 guard cases, and vote/term/quorum/explorer regressions.
 `native-public-campaign-failing-first.log` records the test failure before
 public action wiring. The guard fixture now reuses the public decoder.
-The public encoder now covers seven actions. The full-model and raw-reducer
+The public encoder now covers eight actions. The full-model and raw-reducer
 assurance flags remain false.
 Then continue the remaining Model actions and partial packet observations,
 followed by Python raw reduction and explorer raw/code provenance.

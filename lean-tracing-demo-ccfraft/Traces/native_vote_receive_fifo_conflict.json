@@ -1,0 +1,25 @@
+{
+  "nodes": ["a", "b"],
+  "bootstrap": ["a", "b"],
+  "instructions": [
+    {"kind": "allocated", "node": "a", "value": true},
+    {"kind": "allocated", "node": "b", "value": true},
+    {"kind": "role", "node": "a", "value": "candidate"},
+    {"kind": "logLength", "node": "a", "value": 0},
+    {"kind": "commit", "node": "a", "value": 0},
+    {"kind": "currentTerm", "node": "a", "value": 4},
+    {"kind": "logLength", "node": "b", "value": 0},
+    {"kind": "commit", "node": "b", "value": 0},
+    {"kind": "currentTerm", "node": "b", "value": 4},
+    {"kind": "votedFor", "node": "b", "value": null},
+    {"kind": "queueLength", "source": "a", "destination": "b", "value": 0},
+    {"kind": "queueLength", "source": "b", "destination": "a", "value": 0},
+    {"kind": "requestVote", "source": "a", "destination": "b"},
+    {"kind": "requestVote", "source": "a", "destination": "b"},
+    {"kind": "receiveRequestVote", "source": "a", "destination": "b"},
+    {"kind": "receiveRequestVote", "source": "a", "destination": "b"},
+    {"kind": "queueLength", "source": "a", "destination": "b", "value": 0},
+    {"kind": "votedFor", "node": "b", "value": "a"},
+    {"kind": "queueLength", "source": "b", "destination": "a", "value": 1}
+  ]
+}

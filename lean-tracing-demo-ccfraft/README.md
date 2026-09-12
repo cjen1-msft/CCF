@@ -60,7 +60,7 @@ or restricting possible executions is not a performance optimization.
 The public Lean encoder uses `Sparse/NativeFrameEncode.lean` and shares
 local-state compilation with `Sparse/NativeEncode.lean`.
 It accepts `checkQuorum`, `requestVote`, `requestPreVote`, `updateTerm`, `timeout`,
-`becomePreVoteCandidate`, and `appendEntries`, plus the
+`becomePreVoteCandidate`, `appendEntries`, and `receiveRequestVote`, plus the
 `allocated`, `role`, `newFollower`, `logLength`,
 `commit`, `currentTerm`, `entry`, `retirementIndex`,
 `retirementCommittableIndex`, `retiredCommittedIndex`, `votedFor`, and
@@ -76,6 +76,14 @@ natural `batchEnd`. The Model requires
 The action asserts the Model's send guards, updates the cursor, and enqueues
 the packet constructed from the original cursor. Repeated heartbeats remain
 separate queue entries. This send frontier does not limit incoming packet size.
+`receiveRequestVote` requires a declared `source`, a declared and allocated
+`destination`, and a vote request at the selected queue head.
+The request must name that destination and have no newer term.
+It consumes one request, conditionally updates `votedFor`, and enqueues one
+reply. Stale requests receive negative replies. Freshness uses the latest
+signature, not the commit frontier. Unallocated senders and self receives
+are allowed. A different packet kind makes this action UNSAT.
+Generic `receive` remains an input error.
 `updateTerm` reads the directed queue head without consuming it. It requires an
 allocated destination and a strictly newer packet term. Responses also require
 an allocated source. It sets follower role, current term, and the new-follower
@@ -301,12 +309,12 @@ actual plain and details outputs. `FrameDocumentConsistent` uses the broader
 decoder and Model trace semantics. `NativeFrameColumns` realizes arbitrary
 joined sets independently of allocation and bootstrap membership.
 `NativeFrameTrace` composes local, global, and queue observations with
-quorum, vote-send, append-send, term-update, and campaign steps without restricting
+quorum, vote-send, vote-receive, append-send, term-update, and campaign steps without restricting
 unobserved global state or queues.
 
 This Lean encoder remains experimental. Remaining Model actions, observations,
 and raw reducer integration are unfinished. The API's full-model assurance
-flag remains false; current coverage is seven actions, sixteen local observation
+flag remains false; current coverage is eight actions, sixteen local observation
 kinds, all four global observation kinds, queue lengths, and exact packet points.
 Partial packet observations remain unsupported.
 
@@ -385,8 +393,8 @@ theorem. The public matrix includes 400 complete Model campaign traces and
 Both actions currently emit five stores. Pre-vote writes back three unchanged
 values to keep one proof path. This is a baseline, not a solver optimization.
 
-The remaining core covers vote-request receive, AppendEntries receive, and
-membership change. These actions are not public yet.
+The remaining core covers AppendEntries receive and membership change.
+These actions are not public yet.
 `NativeArrayVoteReceive` proves vote-handler and full-frame receive semantics.
 `NativeVoteReceiveGuardEncoding` equates the request-specific guard with Model
 receive enablement and the fact that the selected packet is a vote request.
@@ -430,8 +438,12 @@ duplicates, self queues, negative raw scalars, and large head offsets.
 `NativeVoteReceiveWritesEncoding` composes the conditional vote update, FIFO
 pop, and reply with full-frame correspondence and assignment extension.
 Its 192 Model-derived transition cases include existing duplicate replies,
-stale requests, unallocated senders, and self receives. Public receive
-dispatch and guard composition remain unfinished.
+stale requests, unallocated senders, and self receives.
+`NativeVoteReceiveEncoding` composes the guard, signature witness, and writes.
+Public `receiveRequestVote` has both whole-trace proof directions.
+Its 480 Model-derived cases include generic receives enabled for the wrong
+packet kind, which the vote-specific action rejects. Sequence cases cover
+duplicate replies and stale requests after `updateTerm`.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.
