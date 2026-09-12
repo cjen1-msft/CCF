@@ -522,6 +522,20 @@ This is action-encoding support, not another publicly accepted action.
 Next prove active-peer membership, last-committable term construction, and
 FIFO append storage, then wire requestVote/requestPreVote through the compiler.
 
+`NativeQueuePush` now proves the row-level append used by sends.
+`queuePushCells` stores at decoded head plus decoded length.
+`model_queue_push` equates the full decoded queue structure with native
+`Queue.push`, and `queue_push_cells_correct` gives exact list append for the
+actual emitted store. The packet must have the row's source; old raw cells
+need not have a packet-domain proof. Duplicate packets are not suppressed.
+The normal Sparse target includes the module. All 152 kernel-backed formulas
+pass in `native-queue-push-fixture-tests.log`.
+The 29 new cases cover each packet kind at empty, nonzero, and `10^30`
+head/length positions, two identical pushes per packet kind, and preservation
+of every other raw cell. Build log: `native-queue-push-fixture-build.log`.
+This does not yet update the outer destination/source columns or allocate
+fresh column versions. Those are the next send-storage step.
+
 `NativeOptional` is the next value-codec unit for local-state coverage.
 It uses the existing sum datatype for optional natural indices and identities.
 Decoding distinguishes a valid absent value, `some none`, from invalid payloads,

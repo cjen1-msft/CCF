@@ -12,6 +12,7 @@ import Sparse.NativePacketDomain
 import Sparse.NativePacketMatch
 import Sparse.NativeQueueScalars
 import Sparse.NativeQueuePoint
+import Sparse.NativeQueuePush
 import Lean.Data.Json
 
 set_option autoImplicit false
@@ -663,6 +664,71 @@ def queueSatCases : List SatCase := [
   queueRowSat "queue-row-append-packets" 3 2 (.appendEntriesRequest sampleAppend) (by decide),
   queueRowSat "queue-row-default-packets" 3 2 (NativeEncode.defaultQueuePacket (width := 2) 0) (by decide)]
 
+private def queuePushLast (name : String) (head length : Nat) (packet : Message (Fin 2) Nat) : Case :=
+  let cells : Term [] (.array .int (NativeEncode.packetTy 2)) := .free _ 0
+  let updated := NativeEncode.queuePushCells cells (.integer head) (.integer length) (NativeEncode.packetTerm packet)
+  { name
+    formula := NativeEncode.queuePoint (width := 2) packet.source (.integer head)
+      (.integer ((length + 1 : Nat) : Int)) updated length packet
+    expected := true
+    correct := by
+      intro assignment
+      rw [NativeEncode.queue_point_correct (width := 2) packet.source (.integer head)
+        (.integer ((length + 1 : Nat) : Int)) updated length packet assignment Locals.empty
+        (Int.natCast_nonneg head) (Int.natCast_nonneg (length + 1))]
+      simp only [Term.eval, Int.toNat_natCast]
+      rw [NativeEncode.queue_push_cells_correct (width := 2) packet.source head length packet cells
+        (.integer head) (.integer length) (NativeEncode.packetTerm packet) assignment Locals.empty
+        rfl rfl (NativeEncode.packet_term_eval (width := 2) packet assignment Locals.empty) rfl]
+      simp [NativeArrayQueue.Queue.decode_length, NativeEncode.modelQueue] }
+
+private def queuePushDuplicate (name : String) (packet : Message (Fin 2) Nat) : Case :=
+  let head : Nat := 10 ^ 30
+  let cells : Term [] (.array .int (NativeEncode.packetTy 2)) := .free _ 0
+  let first := NativeEncode.queuePushCells cells (.integer head) (.integer 0) (NativeEncode.packetTerm packet)
+  let second := NativeEncode.queuePushCells first (.integer head) (.integer 1) (NativeEncode.packetTerm packet)
+  let point (index : Nat) := NativeEncode.queuePoint (width := 2) packet.source (.integer head)
+    (.integer 2) second index packet
+  { name
+    formula := .and (point 0) (point 1)
+    expected := true
+    correct := by
+      intro assignment
+      have observed (index : Nat) (within : index < 2) :
+          (point index).eval assignment Locals.empty = true := by
+        rw [NativeEncode.queue_point_correct (width := 2) packet.source (.integer head)
+          (.integer 2) second index packet assignment Locals.empty (Int.natCast_nonneg head)
+          (show (0 : Int) <= 2 by decide),
+          <- NativeArrayQueue.Queue.point_correct]
+        simp only [NativeEncode.modelQueue, Term.eval]
+        refine ⟨within, ?_⟩
+        have indices : index = 0 \/ index = 1 := by omega
+        rcases indices with rfl | rfl <;>
+          simp [first, second, NativeEncode.queuePushCells, Term.eval, NativeEncode.packet_term_eval,
+            NativeEncode.model_queue_packet_value (width := 2) packet.source packet rfl]
+      simpa only [Term.eval, Bool.and_eq_true] using
+        And.intro (observed 0 (by decide)) (observed 1 (by decide)) }
+
+private def queuePushPreserves : Case :=
+  let cells : Term [] (.array .int (NativeEncode.packetTy 2)) := .free _ 0
+  let updated := NativeEncode.queuePushCells cells (.integer 3) (.integer 2) (.free _ 1)
+  { name := "queue-push-preserves-other-cells"
+    formula := .forall_ .int (NativeEncode.implies (.not (.equal (.bound .here) (.integer 5)))
+      (.equal (.select (updated.weaken .int) (.bound .here)) (.select (cells.weaken .int) (.bound .here))))
+    expected := true
+    correct := by
+      intro assignment
+      simp [NativeEncode.implies, NativeEncode.queuePushCells, Term.eval, Term.weaken_eval,
+        Locals.cons, Function.update_apply, updated, cells]
+      intro value
+      by_cases same : value = 5 <;> simp [same] }
+
+private def queuePushCases : List Case :=
+  queuePushPreserves :: (samplePackets.zipIdx.flatMap fun (packet, index) =>
+    queuePushDuplicate s!"queue-push-duplicate-{index}" packet ::
+      ([(0, 0), (3, 2), (10 ^ 30, 10 ^ 30)].map fun (head, length) =>
+        queuePushLast s!"queue-push-last-{index}-{head}-{length}" head length packet))
+
 def cases : List Case := [
   stored, wrongStore, nestedArray, constantArray, pair, sum, capture, nestedQuantifiers,
   groundDefault "bool" (.boolean false) (by intro assignment; rfl),
@@ -719,7 +785,7 @@ def cases : List Case := [
   queuePointOutOfRange "queue-distant-point" 2 (10 ^ 30) (by decide),
   queueInvalidRaw "queue-decode-invalid-term" (-1) 0 (by decide),
   queueInvalidRaw "queue-decode-wrong-raw-source" 9 1 (by decide)] ++
-  packetCases ++ logMatchCases ++ packetMatchConflicts
+  packetCases ++ logMatchCases ++ packetMatchConflicts ++ queuePushCases
 
 end CCFRaft.NativeSmt
 

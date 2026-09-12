@@ -278,6 +278,9 @@ Its scoped integer scan has correspondence with `maxCommittableIndex`,
 including the zero sentinel, live-index guards, and exclusion of later signatures.
 `NativeSignatureFixtureMain` generates 483 cases from actual Model results.
 Vote sends and campaigns are not yet accepted by the public Lean encoder.
+`NativeQueuePush` proves that a store at head plus length appends exactly one
+decoded packet, preserving duplicates and every other raw cell. This covers
+the row update, not fresh column allocation or a complete send action.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.

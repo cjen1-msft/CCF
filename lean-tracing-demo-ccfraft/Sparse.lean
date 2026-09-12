@@ -38,6 +38,7 @@ import Sparse.NativePacketHeader
 import Sparse.NativePacketDomain
 import Sparse.NativePacketMatch
 import Sparse.NativeQueuePoint
+import Sparse.NativeQueuePush
 import Sparse.NativeSyntaxProofs
 import Sparse.NativeNames
 import Sparse.NativeLowering
