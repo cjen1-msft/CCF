@@ -63,6 +63,21 @@ theorem membership_code_bounds (state : MembershipState) :
 
 @[simp] theorem membership_code_active : membershipCode .active = 0 := rfl
 
+def preVoteBit : PreVoteStatus -> Bool
+  | .capable => false
+  | .enabled => true
+
+def decodePreVote (value : Bool) : PreVoteStatus :=
+  if value then .enabled else .capable
+
+@[simp] theorem pre_vote_bit_decode (value : Bool) :
+    preVoteBit (decodePreVote value) = value := by
+  cases value <;> rfl
+
+theorem pre_vote_bit_eq (left right : PreVoteStatus) :
+    preVoteBit left = preVoteBit right <-> left = right := by
+  cases left <;> cases right <;> simp [preVoteBit]
+
 def decodeBits {width : PNat} (bits : BitVec width) : Finset (Fin width) :=
   Finset.univ.filter fun node => bits.getLsbD node.val = true
 

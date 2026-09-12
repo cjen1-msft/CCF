@@ -14,6 +14,9 @@ structure FrameColumnsRep {width : PNat} (assignment : Assignment) (columns : Co
     (frame : NativeArrayVote.Frame (Fin width) Nat) : Prop where
   nodes : NodeColumnsRep assignment columns frame.nodes
   hasJoined : assignment (.bits width) columns.hasJoined = encodeBits frame.globals.hasJoined
+  preVoteStatus : forall node : Fin width,
+    assignment (.array .int .bool) columns.preVoteStatus node.val =
+      preVoteBit (frame.globals.preVoteStatus node)
 
 noncomputable def initialFrame (width : PNat) [Bootstrap (Fin width)] (assignment : Assignment)
     (domains : forall node : Fin width, NodeDomain width assignment node.val) :
@@ -22,13 +25,17 @@ noncomputable def initialFrame (width : PNat) [Bootstrap (Fin width)] (assignmen
   let template := NativeArrayVote.Frame.ofModel (NativeArrayCheckQuorum.realize nodes)
   { template with
     nodes
-    globals := { template.globals with hasJoined := decodeBits (assignment (.bits width) 16) } }
+    globals := { template.globals with
+      hasJoined := decodeBits (assignment (.bits width) 16)
+      preVoteStatus := fun node => decodePreVote (assignment (.array .int .bool) 17 node.val) } }
 
 theorem initial_frame_rep (width : PNat) [Bootstrap (Fin width)] (assignment : Assignment)
     (domains : forall node : Fin width, NodeDomain width assignment node.val) :
     FrameColumnsRep assignment {} (initialFrame width assignment domains) := by
-  refine ⟨initial_arrays_rep width assignment domains, ?_⟩
-  simp [initialFrame]
+  refine ⟨initial_arrays_rep width assignment domains, ?_, ?_⟩
+  · simp [initialFrame]
+  · intro node
+    simp [initialFrame]
 
 theorem initial_frame_valid (width : PNat) [Bootstrap (Fin width)] (assignment : Assignment)
     (domains : forall node : Fin width, NodeDomain width assignment node.val) :
@@ -37,13 +44,18 @@ theorem initial_frame_valid (width : PNat) [Bootstrap (Fin width)] (assignment :
 
 noncomputable def initialFrameAssignment (width : PNat) (seed : Assignment)
     (frame : NativeArrayVote.Frame (Fin width) Nat) : Assignment :=
-  initialAssignment width (seed.set (.bits width) 16 (encodeBits frame.globals.hasJoined)) frame.nodes
+  let seed := seed.set (.bits width) 16 (encodeBits frame.globals.hasJoined)
+  let seed := seed.set (.array .int .bool) 17
+    (nodeArray false fun node => preVoteBit (frame.globals.preVoteStatus node))
+  initialAssignment width seed frame.nodes
 
 theorem initial_frame_assignment_rep (width : PNat) (seed : Assignment)
     (frame : NativeArrayVote.Frame (Fin width) Nat) :
     FrameColumnsRep (initialFrameAssignment width seed frame) {} frame := by
-  refine ⟨initial_assignment_rep width _ frame.nodes, ?_⟩
-  simp [initialFrameAssignment, initialAssignment, Assignment.set]
+  refine ⟨initial_assignment_rep width _ frame.nodes, ?_, ?_⟩
+  · simp [initialFrameAssignment, initialAssignment, Assignment.set]
+  · intro node
+    simp [initialFrameAssignment, initialAssignment, Assignment.set, entryTy, optionalIntTy]
 
 theorem initial_frame_assignment_domains (width : PNat) (seed : Assignment)
     (frame : NativeArrayVote.Frame (Fin width) Nat) (node : Fin width) :
@@ -56,18 +68,22 @@ theorem FrameColumnsRep.agrees_below {width : PNat} (state : Encoding width)
     (same : left.AgreesBelow state.next right) :
     FrameColumnsRep right state.toColumns frame :=
   ⟨rep.nodes.agrees_below state left right frame.nodes valid same,
-    (same (.bits width) state.hasJoined valid.hasJoined).symm.trans rep.hasJoined⟩
+    (same (.bits width) state.hasJoined valid.hasJoined).symm.trans rep.hasJoined,
+    fun node => congrFun (same (.array .int .bool) state.preVoteStatus valid.preVoteStatus).symm
+      (node.val : Int) |>.trans (rep.preVoteStatus node)⟩
 
 theorem FrameColumnsRep.node_step {width : PNat} (assignment : Assignment)
     (before after : Columns) (frame : NativeArrayVote.Frame (Fin width) Nat)
     (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat)
     (rep : FrameColumnsRep assignment before frame)
     (nodes : NodeColumnsRep assignment after (frame.nodeStep item).nodes)
-    (joined : after.hasJoined = before.hasJoined) :
+    (joined : after.hasJoined = before.hasJoined)
+    (status : after.preVoteStatus = before.preVoteStatus) :
     FrameColumnsRep assignment after (frame.nodeStep item) := by
-  refine ⟨nodes, ?_⟩
   have globals : (frame.nodeStep item).globals = frame.globals := by cases item <;> rfl
-  simpa only [globals, joined] using rep.hasJoined
+  refine ⟨nodes, ?_, ?_⟩
+  · simpa only [globals, joined] using rep.hasJoined
+  · simpa only [globals, status] using rep.preVoteStatus
 
 theorem observation_node_step {width : PNat} (frame : NativeArrayVote.Frame (Fin width) Nat)
     (columns : Columns) (item : NativeArrayCheckQuorum.Instruction (Fin width) Nat)

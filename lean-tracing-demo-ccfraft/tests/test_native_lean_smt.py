@@ -231,8 +231,10 @@ class NativeLeanSmtTests(unittest.TestCase):
             ]
         )
 
-    def framed_observation_cases(self, kind, default, value, other):
-        """Cases for fields preserved by checkQuorum, including absent-node defaults."""
+    def framed_observation_cases(
+        self, kind, default, value, other, *, allocation_guarded=True
+    ):
+        """Cases for quorum framing and allocation-dependent or global fields."""
 
         def observed(value):
             return {"kind": kind, "node": "a", "value": value}
@@ -243,7 +245,11 @@ class NativeLeanSmtTests(unittest.TestCase):
             ("default", [observed(default)], "sat"),
             ("value", [observed(value)], "sat"),
             ("absent-node", [absent, observed(default)], "sat"),
-            ("requires-node", [absent, observed(value)], "unsat"),
+            (
+                "requires-node" if allocation_guarded else "unallocated-value",
+                [absent, observed(value)],
+                "unsat" if allocation_guarded else "sat",
+            ),
             ("default-conflict", [observed(default), observed(value)], "unsat"),
             ("value-conflict", [observed(value), observed(other)], "unsat"),
             ("quorum-frame", [observed(value), quorum, observed(value)], "sat"),
@@ -649,6 +655,89 @@ class NativeLeanSmtTests(unittest.TestCase):
             ]
         )
 
+    def test_pre_vote_status_observations(self):
+        names = ["a", "b"] + [f"node-{index}" for index in range(2, 21)]
+        cases = self.framed_observation_cases(
+            "preVoteStatus", "capable", "enabled", "capable", allocation_guarded=False
+        )
+        mixed = [
+            {
+                "kind": "preVoteStatus",
+                "node": node,
+                "value": "enabled" if index % 2 else "capable",
+            }
+            for index, node in enumerate(names)
+        ]
+        cases.extend(
+            [
+                (
+                    "pre-vote-independent-rows-and-joined-set",
+                    mixed
+                    + [
+                        {"kind": "hasJoined", "value": [names[-1]]},
+                        {"kind": "checkQuorum", "node": "a"},
+                    ]
+                    + mixed,
+                    "sat",
+                ),
+                (
+                    "pre-vote-all-nodes-absent",
+                    [
+                        {"kind": "allocated", "node": node, "value": False}
+                        for node in names
+                    ]
+                    + mixed,
+                    "sat",
+                ),
+            ]
+        )
+        scripts = self.encode(
+            [
+                {
+                    "nodes": names,
+                    "bootstrap": ["a", "b"],
+                    "instructions": instructions,
+                }
+                for _, instructions, _ in cases
+            ]
+        )
+        self.solve(
+            [
+                {"name": name, "script": script, "expected": expected}
+                for (name, _, expected), script in zip(cases, scripts)
+            ]
+        )
+
+    def test_pre_vote_status_input_errors(self):
+        valid = {"kind": "preVoteStatus", "node": "a", "value": "capable"}
+        self.assert_input_errors(
+            [
+                (
+                    f"preVoteStatus-{index}",
+                    json.dumps(
+                        {
+                            "nodes": ["a"],
+                            "bootstrap": ["a"],
+                            "instructions": [instruction],
+                        },
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                )
+                for index, instruction in enumerate(
+                    [
+                        dict(valid, value="unknown"),
+                        dict(valid, value=True),
+                        dict(valid, value=None),
+                        dict(valid, value=0),
+                        dict(valid, node="b"),
+                        dict(valid, peer="a"),
+                        {"kind": "preVoteStatus", "value": "capable"},
+                    ]
+                )
+            ]
+        )
+
     def test_decoded_bootstrap_sets(self):
         variants = [["a", "b"], ["b", "a"], ["b", "a", "a"], ["a"]]
         scripts = self.encode(
@@ -836,6 +925,9 @@ class NativeLeanSmtTests(unittest.TestCase):
                 ("extra-node", {"kind": "hasJoined", "node": "a", "value": []}),
             ]
         )
+        self.assert_input_errors(invalid)
+
+    def assert_input_errors(self, invalid):
         for name, document in invalid:
             with self.subTest(name=name):
                 result = subprocess.run(

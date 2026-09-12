@@ -70,7 +70,9 @@ identities, interpreted as a set. `membershipState` accepts the five Model
 membership-state names. Both peer-index fields require a declared `peer` and a natural
 `value`. The global `hasJoined` observation accepts a `value` list of declared
 identities, interpreted as a set. It does not require a `node` field or imply
-that any node is allocated. Other instructions are errors.
+that any node is allocated. Global `preVoteStatus` requires a declared `node`
+and a `value` of `capable` or `enabled`, independently of allocation.
+Other instructions are errors.
 `native_lean.py` handles JSON input and solver execution. It delegates all SMT
 construction to Lean, with no Python encoder fallback.
 
@@ -179,7 +181,7 @@ decoder. This does not prove that a raw-event reducer interpreted the
 implementation correctly, or verify Lean's JSON parser and IO runtime.
 
 [`NativeFrameDecoded`](Sparse/NativeFrameDecoded.lean) extends this correspondence
-to the public encoder, including `hasJoined`.
+to the public encoder, including `hasJoined` and `preVoteStatus`.
 `encodeFrame_document_iff` and `encodeFrameDetails_document_iff` cover the
 actual plain and details outputs. `FrameDocumentConsistent` uses the broader
 decoder and Model trace semantics. `NativeFrameColumns` realizes arbitrary
@@ -190,7 +192,7 @@ steps without restricting unobserved global state or queues.
 This Lean encoder remains experimental. Remaining Model actions, observations,
 and raw reducer integration are unfinished. The API's full-model assurance
 flag remains false; current coverage is one action, sixteen local observation
-kinds, and global `hasJoined`.
+kinds, and global `hasJoined` and `preVoteStatus`.
 
 `NativeOptional` supplies codecs for the next local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.
@@ -229,6 +231,11 @@ refer to the default initial column record rather than separate field premises.
 `TypedDocument`, `decodeDocumentWith`, and `compileInstructionsWith` share
 identity validation, bootstrap decoding, indexed errors, and clause groups
 between instruction families. The local encoder uses these same functions.
+`preVoteStatus` uses an unguarded Boolean array. `NativeValues.pre_vote_bit_eq`
+proves exact equality for its two Model values. Initial representation permits
+both values for every identity, including absent nodes and identities outside
+the bootstrap set. The global field and its distinct rows remain independent
+of local fields and `hasJoined` through quorum steps.
 
 The older Python reference has broader action coverage:
 `native_arrays.py` accepts `checkQuorum`, `requestVote`, `requestPreVote`, and

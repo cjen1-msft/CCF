@@ -18,6 +18,9 @@ theorem frame_observation_run {width : PNat} (item : FrameInstruction width)
   case hasJoined expected =>
     cases Except.ok.inj emitted
     rfl
+  case preVoteStatus node expected =>
+    cases Except.ok.inj emitted
+    rfl
   all_goals cases emitted
 
 theorem frame_observation_correct {width : PNat} [Bootstrap (Fin width)]
@@ -34,6 +37,9 @@ theorem frame_observation_correct {width : PNat} [Bootstrap (Fin width)]
   case hasJoined expected =>
     cases Except.ok.inj emitted
     simp [Holds, Term.eval, rep.hasJoined, encode_bits_eq, NativeArrayVote.follows]
+  case preVoteStatus node expected =>
+    cases Except.ok.inj emitted
+    simp [Holds, Term.eval, rep.preVoteStatus, pre_vote_bit_eq, NativeArrayVote.follows]
   all_goals cases emitted
 
 theorem frame_observation_cons {width : PNat} [Bootstrap (Fin width)]
@@ -46,6 +52,7 @@ theorem frame_observation_cons {width : PNat} [Bootstrap (Fin width)]
   case node item =>
     simp only [NativeArrayVote.follows, observation_node_step frame columns item clauses emitted, and_true]
   case hasJoined => simp [NativeArrayVote.follows]
+  case preVoteStatus => simp [NativeArrayVote.follows]
   all_goals cases emitted
 
 theorem frame_instruction_cases {width : PNat} (item : FrameInstruction width)
@@ -59,6 +66,7 @@ theorem frame_instruction_cases {width : PNat} (item : FrameInstruction width)
     · exact Or.inl ⟨node, rfl, action⟩
     · exact Or.inr ⟨clauses, emitted, asserted⟩
   case hasJoined expected => exact Or.inr ⟨_, rfl, run⟩
+  case preVoteStatus node expected => exact Or.inr ⟨_, rfl, run⟩
   all_goals cases run
 
 theorem frame_instruction_references {width : PNat} (item : FrameInstruction width)
@@ -88,8 +96,9 @@ theorem frame_quorum_success {width : PNat} [Bootstrap (Fin width)]
   obtain ⟨previous, enabled, nodes⟩ :=
     quorum_native_success node before after run assignment holds frame.nodes rep.nodes sameBootstrap
   have joined := congrArg Columns.hasJoined (quorum_success node.val before after run).columns
+  have status := congrArg Columns.preVoteStatus (quorum_success node.val before after run).columns
   exact ⟨previous, enabled, rep.node_step assignment before.toColumns after.toColumns frame
-    (.checkQuorum node) nodes joined⟩
+    (.checkQuorum node) nodes joined status⟩
 
 theorem frame_quorum_complete {width : PNat} [Bootstrap (Fin width)]
     (node : Fin width) (before after : Encoding width)
@@ -106,9 +115,10 @@ theorem frame_quorum_complete {width : PNat} [Bootstrap (Fin width)]
     quorum_complete node before after run assignment holds frame.nodes rep.nodes valid sameBootstrap enabled
   have extendedRep := rep.agrees_below before assignment extended frame valid agreement
   have joined := congrArg Columns.hasJoined (quorum_success node.val before after run).columns
+  have status := congrArg Columns.preVoteStatus (quorum_success node.val before after run).columns
   exact ⟨extended, agreement, held,
     extendedRep.node_step extended before.toColumns after.toColumns frame (.checkQuorum node) nodes
-      joined⟩
+      joined status⟩
 
 end CCFRaft.NativeEncode
 

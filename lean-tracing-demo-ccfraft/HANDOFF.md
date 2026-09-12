@@ -52,7 +52,8 @@ wrapper. It shares local-state compilation with `Sparse/NativeEncode.lean`.
 It supports `checkQuorum` and all sixteen local observation kinds, including
 the nullable `retirementIndex`, `retirementCommittableIndex`, and
 `retiredCommittedIndex` fields, nullable `votedFor`, both vote sets, and
-`membershipState`, `sentIndex`, and `matchIndex`, plus global `hasJoined`.
+`membershipState`, `sentIndex`, and `matchIndex`, plus global `hasJoined` and
+`preVoteStatus`.
 The Python reference still supports six actions and the broader observation
 schema. Do not confuse these coverage levels or fall back to Python SMT emission.
 
@@ -247,7 +248,7 @@ Lean's JSON parser, IO runtime, and cvc5 are not verified by these theorems.
 
 Next, expand Model actions and observations before raw reducer integration.
 Keep the full-model assurance flag false: current coverage is still one
-action, sixteen local observation kinds, and global `hasJoined`.
+action, sixteen local observation kinds, and global `hasJoined` and `preVoteStatus`.
 No change to the reducer's untrusted
 interpretation boundary follows from proving the JSON encoder.
 
@@ -265,8 +266,15 @@ arbitrary frames. It seeds global values before reusing node initialization.
 The normal Sparse build audits the entire proof chain. The 31-test combined
 native suite passes, including joined-set conflicts, 21 identities, quorum
 framing, malformed inputs, and actual wrapper/explorer core ownership.
+`preVoteStatus` adds Boolean-array column 17, with fresh allocation starting
+at 18. Both `capable` and `enabled` are valid for every declared identity,
+regardless of allocation or bootstrap membership. `NativeValues` proves its
+Boolean decoding and equality. The full initial-state, frame, trace, and
+JSON-to-script correspondence includes the field. `nodeArray` supplies the
+completeness assignment without a new indexing helper. Generated framing
+cases now distinguish allocation-guarded local fields from global fields.
 Other globals, queues, and actions remain unsupported by the public encoder.
-Next add `preVoteStatus`, then `retirementCompleted` and `submittedTxId`.
+Next add `retirementCompleted`, then `submittedTxId`.
 
 `NativeOptional` is the next value-codec unit for local-state coverage.
 It uses the existing sum datatype for optional natural indices and identities.
