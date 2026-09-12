@@ -470,6 +470,10 @@ Their proofs extract valid natural indices from arbitrary satisfying SMT integer
 `NativeRetirementCompletedEncoding` composes current-configuration and
 committed-prefix scans into the exact Model completed-retirement bitvector.
 It also constructs canonical witnesses satisfying all scan and bit constraints.
+`NativeRetirementCompletedConstraintsEncoding` proves execution of the fresh-symbol
+loop and extension of a specific assignment for enabled and disabled scans.
+The loop checks inputs against its original counter and uses `1 + 3 * width`
+fresh symbols. Its 240 solver cases include ignored tails and invalid witnesses.
 `NativeQueuePopEncoding` proves directed FIFO removal and full-frame
 assignment extension. Empty removal is total internally; receive guards
 separately require a packet. The queue fixtures cover repeated pop/push,
@@ -483,6 +487,17 @@ Public `receiveRequestVote` has both whole-trace proof directions.
 Its 480 Model-derived cases include generic receives enabled for the wrong
 packet kind, which the vote-specific action rejects. Sequence cases cover
 duplicate replies and stale requests after `updateTerm`.
+
+The private `NativeMembershipChange` encoder passes 1,572 Model-derived
+transition scripts, including 147 SAT cases. It appends the configuration,
+refreshes retirement, allocates newly added identities, and sets their sent
+cursors to the old log length. `NativeMembershipTermsEncoding` proves the
+guards. Allocation and whole-action correspondence remain unfinished, so
+public `changeConfiguration` remains unsupported.
+`NativeAllocation` reuses row snapshots to reset hidden fields before exposing
+missing nodes. Existing rows survive. The baseline uses 17 definitions per
+declared identity and passes 4,416 Model-derived scripts, including repeated
+allocation, disabled conditions, and full-frame mutations.
 
 `NativeOptional` supplies codecs for optional local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.

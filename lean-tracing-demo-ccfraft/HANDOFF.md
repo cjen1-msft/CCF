@@ -160,8 +160,8 @@ NACKs, duplicate and self queues, and wrong packet kinds.
 allocated rows and already allocated rows separately.
 Both generators build. Their Model-only coverage checks pass in
 `native-core-model-fixture-coverage.log`. Neither action is public yet.
-All append receive cases now pass against the private encoder. Membership
-guards now pass against these inputs; membership post-state encoding is pending.
+All append receive and membership cases now pass against their private encoders.
+Whole-action proofs and public wiring remain unfinished.
 Wire both through `assert_model_traces` when their public actions land.
 
 `NativeQueuePop` and `NativeQueuePopEncoding` now prove total directed FIFO
@@ -422,7 +422,8 @@ arbitrary current and retirement scan witnesses. It is committed as `52a8bd34d`.
 The parent removed a duplicate bitset-equality lemma, inspected the full module,
 and rebuilt it in `native-membership-terms-parent-build.log`.
 The guard cases and import audit pass in `native-membership-terms-parent-tests.log`.
-Allocation writes and the full membership encoder remain unfinished.
+The private allocation writer and full membership encoder now pass Model-derived
+regressions. Their whole-action correspondence proofs remain unfinished.
 
 `NativeArrayAppendCandidate.lean` is committed as `2fa2a9ed2`.
 It composes all consuming handler results for the selected log, commit, and
@@ -491,15 +492,29 @@ The parent inspected the full proof and rebuilt it in
 `native-append-final-row-parent-build.log`. The private encoder now uses the
 helper; the 110 focused scripts remain byte-identical and the import audit passes.
 
-The private `NativeAllocation.lean` runtime now builds. It writes the existing
+The private `NativeAllocation.lean` runtime is committed as `2d9001571`.
+It writes the existing
 row snapshot, then sets allocation to the original allocation bit OR the
 requested condition. Snapshot defaults reset hidden fields of newly allocated
 nodes. Existing rows survive, and disabled missing nodes remain missing.
 It uses 17 definitions per peer. No solver optimization is claimed.
+`NativeAllocationFixtureMain` passes 4,416 Model-derived scripts, including
+192 SAT cases and ten original-counter errors, in `native-allocation-fixture-tests.log`.
+The cases cover all old and added masks, poisoned hidden fields, disabled nodes,
+repeated allocation, arbitrary log tails, and every local field plus global and FIFO
+mutations. Shared row scenarios remain byte-identical after extraction.
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only new
 `NativeAllocationEncoding.lean`, proving single-node and set allocation against
 `NativeArrayAllocation.allocate`. The parent owns its runtime and fixtures.
-Allocation remains uncommitted and is not wired into membership change.
+`NativeMembershipChange.lean`, `NativeMembershipRowTerms.lean`, and
+`NativeMembershipChangeFixtureMain.lean` are committed as `a006368c5`.
+The private action composes the proved guards, new log entry, local and global
+retirement scans, conditional allocation, source row, and global writes.
+Added-peer sent cursors use the old log length.
+All 1,572 full Model transitions pass, including 147 SAT cases, in
+`native-membership-change-tests.log`. The parent build passes in
+`native-membership-change-build.log`. Public membership remains unsupported.
+The row terms and whole-action correspondence still need proofs.
 
 `NativeArrayVoteState` now holds frame state and the existing action semantics.
 `NativeArrayVote` retains instruction traces and their correspondence proofs.
