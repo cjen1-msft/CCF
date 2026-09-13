@@ -13,25 +13,6 @@ namespace CCFRaft.NativeEncode
 
 open NativeSmt
 
-private theorem term_symbols_bounded_mono {context : List Ty} {sort : Ty}
-    (term : Term context sort) {lower upper : Nat}
-    (bounded : term.symbols.all (fun symbol => symbol.2 < lower) = true)
-    (le : lower <= upper) :
-    term.symbols.all (fun symbol => symbol.2 < upper) = true := by
-  rw [List.all_eq_true] at bounded ⊢
-  intro symbol member
-  have below := bounded symbol member
-  have below' : symbol.2 < lower := by
-    simpa only [decide_eq_true_eq] using below
-  simpa only [decide_eq_true_eq] using lt_of_lt_of_le below' le
-
-private theorem NodeRowTerms.Bounded.mono {width : PNat}
-    {values : NodeRowTerms width} {lower upper : Nat}
-    (bounded : values.Bounded lower) (le : lower <= upper) :
-    values.Bounded upper := by
-  cases bounded
-  constructor <;> apply term_symbols_bounded_mono <;> assumption
-
 theorem commit_prefix_assignment {width : PNat} [Bootstrap (Fin width)]
     (source : Fin width) (before after : Encoding width)
     (states : CommitExecutionStates width)

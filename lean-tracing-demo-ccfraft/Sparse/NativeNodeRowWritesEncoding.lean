@@ -58,6 +58,25 @@ structure NodeRowTerms.Bounded {width : PNat} (values : NodeRowTerms width)
   sentIndex : values.sentIndex.symbols.all (fun symbol => symbol.2 < limit) = true
   matchIndex : values.matchIndex.symbols.all (fun symbol => symbol.2 < limit) = true
 
+private theorem term_symbols_bounded_mono {context : List Ty} {sort : Ty}
+    (term : Term context sort) {lower upper : Nat}
+    (bounded : term.symbols.all (fun symbol => symbol.2 < lower) = true)
+    (le : lower <= upper) :
+    term.symbols.all (fun symbol => symbol.2 < upper) = true := by
+  rw [List.all_eq_true] at bounded ⊢
+  intro symbol member
+  have below := bounded symbol member
+  have below' : symbol.2 < lower := by
+    simpa only [decide_eq_true_eq] using below
+  simpa only [decide_eq_true_eq] using lt_of_lt_of_le below' le
+
+theorem NodeRowTerms.Bounded.mono {width : PNat}
+    {values : NodeRowTerms width} {lower upper : Nat}
+    (bounded : values.Bounded lower) (le : lower <= upper) :
+    values.Bounded upper := by
+  cases bounded
+  constructor <;> apply term_symbols_bounded_mono <;> assumption
+
 theorem node_row_snapshot_bounded {width : PNat} (state : Encoding width)
     (node : Fin width) (valid : ReferencesValid state) :
     (nodeRowSnapshot state.toColumns node).Bounded state.next := by
