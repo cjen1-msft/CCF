@@ -1917,6 +1917,55 @@ class NativeLeanSmtTests(unittest.TestCase):
             "vote-responses",
         )
 
+    def vote_request_response_traces(self):
+        document = json.loads(
+            (ROOT / "Traces/native_vote_receive_fifo_conflict.json").read_text()
+        )
+        document["instructions"][-1]["value"] = 2
+        document["instructions"].insert(
+            0, {"kind": "votesGranted", "node": "a", "value": []}
+        )
+        for remaining in (1, 0):
+            document["instructions"].extend(
+                [
+                    {
+                        "kind": "receiveRequestVoteResponse",
+                        "source": "b",
+                        "destination": "a",
+                    },
+                    {"kind": "votesGranted", "node": "a", "value": ["b"]},
+                    {
+                        "kind": "queueLength",
+                        "source": "b",
+                        "destination": "a",
+                        "value": remaining,
+                    },
+                ]
+            )
+        wrong_tally = deepcopy(document)
+        wrong_tally["instructions"][-2]["value"] = []
+        empty = deepcopy(document)
+        empty["instructions"].append(
+            {"kind": "receiveRequestVoteResponse", "source": "b", "destination": "a"}
+        )
+        variants = [
+            ("vote-round-trip-duplicates", document, "sat"),
+            ("vote-round-trip-missing-vote", wrong_tally, "unsat"),
+            ("vote-round-trip-empty", empty, "unsat"),
+        ]
+        return [
+            {"name": name, "trace": trace, "expected": expected}
+            for name, trace, expected in variants
+        ]
+
+    def test_internal_vote_request_response_sequence(self):
+        self.assert_internal_model_traces(
+            "NativeReceiveVoteResponseFixtureMain",
+            self.vote_request_response_traces(),
+            1,
+            "vote-round-trip",
+        )
+
     def test_append_receive_model_fixture_coverage(self):
         fixtures = self.model_traces("NativeArrayAppendReceiveFixtureMain", 1344)
         self.assertEqual(
