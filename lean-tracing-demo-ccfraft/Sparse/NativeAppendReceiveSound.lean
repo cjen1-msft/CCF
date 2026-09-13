@@ -1,7 +1,7 @@
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-import Sparse.NativeAppendReceiveExecution
+import Sparse.NativeAppendReceiveExecutionConstraints
 import Sparse.NativeAppendReceiveLocalEncoding
 import Sparse.NativeAppendReceiveFrameEncoding
 
@@ -134,6 +134,26 @@ theorem append_receive_execution_model_sound {width : PNat} [Bootstrap (Fin widt
         ⟨(consumeCorrect stepFalse).1, (consumeCorrect stepFalse).2,
           completedCorrect stepFalse⟩)
   exact ⟨request, selectedAppend, enabled, _, writtenRep, writtenModel⟩
+
+theorem receive_append_model_sound {width : PNat} [Bootstrap (Fin width)]
+    (source destination : Fin width) (before after : Encoding width)
+    (run : (receiveAppend source destination).run before = .ok ((), after))
+    (assignment : Assignment) (holds : Holds after.assertions.toList assignment)
+    (frame : NativeArrayVote.Frame (Fin width) Nat) (state : State (Fin width) Nat)
+    (columnsRep : FrameColumnsRep assignment before.toColumns frame)
+    (modelRep : frame.Rep state)
+    (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION) :
+    exists request : AppendEntriesRequest (Fin width) Nat,
+      NativeArrayAppendNetwork.SelectedAppend frame source destination request /\
+      CCFRaft.Enabled state (.receive source destination) /\
+      exists written : NativeArrayVote.Frame (Fin width) Nat,
+        FrameColumnsRep assignment after.toColumns written /\
+        written.Rep (CCFRaft.next state (.receive source destination)) := by
+  obtain ⟨states, execution⟩ := receive_append_success source destination before after run
+  exact append_receive_execution_model_sound source destination before after states
+    execution assignment holds
+    (receive_append_constraints source destination before after run assignment holds)
+    frame state columnsRep modelRep sameBootstrap
 
 end CCFRaft.NativeEncode
 
