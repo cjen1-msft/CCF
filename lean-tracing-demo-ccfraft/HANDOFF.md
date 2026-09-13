@@ -542,9 +542,14 @@ Parent inspection, build, and import audit pass in
 Commit `cf717f736` removes the repeated local copies from the append proofs.
 Affected callers and the import audit pass in `native-shared-assertion-helpers-build.log`
 and `native-shared-assertion-helpers-import-tests.log`.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns only new
-`NativeAppendReceiveTailAssignment.lean`, covering the completed-retirement loop
-and NACK witness from `currentAsserted` through `writerBefore`.
+`NativeAppendReceiveTailAssignment.lean` is committed as `7460aac22`.
+It extends through the enabled or disabled completed-retirement loop and the NACK
+witness, preserving the supplied assignment and original frame representation.
+The parent inspected it and the current-prefix assembly, then built both in
+`native-append-current-tail-parent-build.log`. The import audit passes.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` is investigating public append
+integration read-only, with no owned files. The design must preserve the native
+FIFO head update rather than allowing arbitrary Model-equivalent queue layouts.
 
 `append_receive_prefix_constraints`, committed as `4a74a4892`, exposes the
 existing backward constraint extraction before frame writes.
@@ -558,9 +563,11 @@ The build and import audit pass in `native-append-finish-assignment-build.log`
 and `native-append-finish-assignment-import-tests.log`.
 This completes the write phase, not the whole-action completeness proof.
 Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns only
-`NativeAppendReceiveComplete.lean`. It is composing Model-enabled input through
-the accepted log, commit, and retirement assignment helpers, ending at `currentAsserted`.
-It preserves the existing finish-assignment API and does not yet import B's tail proof.
+`NativeAppendReceiveComplete.lean`. Its `append_receive_current_assignment`
+is accepted as `3c99321d0`: Model-enabled input produces a satisfying assignment
+through `currentAsserted`, with frame, request, log, and commit representations.
+It is now combining that theorem, the accepted tail, and the finish helper into
+whole-action `receive_append_model_complete`.
 `NativeAppendReceiveFinalRowTerms.lean` and
 `NativeAppendReceiveFinalRowEncoding.lean` are committed as `158d506bb`.
 They prove candidate stepdown and conditional local retirement refresh,
@@ -597,13 +604,19 @@ guard and row proofs, passes in `native-membership-frame-parent-build.log`.
 `NodeRowTerms.Rep.of_model_eq` transports row representations across equal
 Model states without equating inactive log tails. The parent inspected and
 rebuilt it in `native-node-row-model-parent-build.log`; the import audit passes.
-Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` now owns only new
-`NativeMembershipExecution.lean`, proving actual run decomposition and prefix
-constraints. Keep `NativeMembershipChange.lean` unchanged while it works.
-Expected offsets are current/previous/added/entries/length at `+0` through `+4`,
+`NativeMembershipExecution.lean` is committed as `5a9ceaebe`.
+It proves actual run decomposition, prior-Holds, and reference preservation.
+The parent inspected the full module and replaced its local preservation helpers
+with the shared rules. Its independent build and import audit pass in
+`native-membership-execution-parent-build.log` and `native-membership-execution-import-tests.log`.
+Offsets are current/previous/added/entries/length at `+0` through `+4`,
 local witnesses at `+5` through `+8`, committed current at `+9`,
 completed bits at `+10`, and the writer at `+11 + 3 * width`.
 The final counter is `before.next + 29 + 20 * width`.
+Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only new
+`NativeMembershipExecutionConstraints.lean`. It extracts prefix constraints before
+frame writes and exposes a short actual-run/final-Holds wrapper.
+Keep `NativeMembershipChange.lean` unchanged.
 `NativeMembershipChange.lean`, `NativeMembershipRowTerms.lean`, and
 `NativeMembershipChangeFixtureMain.lean` are committed as `a006368c5`.
 The private action composes the proved guards, new log entry, local and global
