@@ -15,6 +15,12 @@ inductive ParameterizedFrameInstruction (width : PNat) (count : Nat) where
   | core (instruction : FrameInstruction width)
   | clientRequest (source : Fin width) (transaction : NatArgument count)
 
+def ParameterizedFrameInstruction.materialize {width : PNat} {count : Nat}
+    (values : Fin count -> Nat) :
+    ParameterizedFrameInstruction width count -> FrameInstruction width
+  | .core instruction => instruction
+  | .clientRequest source transaction => .clientRequest source (transaction.value values)
+
 structure ParameterizedFrameDecoded where
   unknowns : Array String
   unknownsDistinct : unknowns.toList.Nodup
