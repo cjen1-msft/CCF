@@ -11,23 +11,31 @@ namespace CCFRaft.NativeEncode
 
 open NativeSmt
 
-theorem append_receive_execution_model_sound {width : PNat} [Bootstrap (Fin width)]
-    (source destination : Fin width) (before after : Encoding width)
-    (states : AppendReceivePrefixStates width)
-    (execution : AppendReceiveExecutionResult source destination before after states)
-    (assignment : Assignment) (holds : Holds after.assertions.toList assignment)
+theorem append_receive_prefix_model_correct {width : PNat} [Bootstrap (Fin width)]
+    (source destination : Fin width) (before : Encoding width)
+    (assignment : Assignment)
     (constraints : AppendReceivePrefixConstraints before source destination
       (appendReceiveExecutionTerms before source destination) assignment)
     (frame : NativeArrayVote.Frame (Fin width) Nat) (state : State (Fin width) Nat)
     (columnsRep : FrameColumnsRep assignment before.toColumns frame)
     (modelRep : frame.Rep state)
     (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION) :
-    exists request : AppendEntriesRequest (Fin width) Nat,
+    let terms := appendReceiveExecutionTerms before source destination
+    exists (request : AppendEntriesRequest (Fin width) Nat)
+      (output : NativeArrayCheckQuorum.Local (Fin width) Nat)
+      (response : AppendEntriesResponse (Fin width)) (completed : Finset (Fin width)),
       NativeArrayAppendNetwork.SelectedAppend frame source destination request /\
       CCFRaft.Enabled state (.receive source destination) /\
-      exists written : NativeArrayVote.Frame (Fin width) Nat,
-        FrameColumnsRep assignment after.toColumns written /\
-        written.Rep (CCFRaft.next state (.receive source destination)) := by
+      terms.values.Rep assignment output /\
+      terms.response.eval assignment Locals.empty =
+        packetValue (.appendEntriesResponse response) /\
+      response.source = destination /\
+      response.destination = source /\
+      terms.completed.eval assignment Locals.empty = encodeBits completed /\
+      (appendReceiveWriteFrame frame source destination
+        (terms.branches.stepDown.eval assignment Locals.empty)
+        output response completed).Rep
+          (CCFRaft.next state (.receive source destination)) := by
   let terms := appendReceiveExecutionTerms before source destination
   obtain ⟨allocated, nonempty, request, selected, recipient, action⟩ :=
     (append_receive_guards_correct assignment before.toColumns frame columnsRep
@@ -120,19 +128,47 @@ theorem append_receive_execution_model_sound {width : PNat} [Bootstrap (Fin widt
       (fun peer => (accepted peer).1) (fun peer => (accepted peer).2.1)
       (fun peer => (accepted peer).2.2)
     exact (congrArg decodeBits bitsCorrect).trans (decode_encode_bits _)
+  have writtenModel := append_receive_write_frame_rep frame state modelRep source
+    destination request selectedAppend step output candidate response completed
+    stepDownCorrect (fun stepFalse =>
+      ⟨(consumeCorrect stepFalse).1, (consumeCorrect stepFalse).2,
+        completedCorrect stepFalse⟩)
+  exact ⟨request, output, response, completed, selectedAppend, enabled, outputRep,
+    responseValue, responseSource, responseDestination, sameCompleted, writtenModel⟩
+
+theorem append_receive_execution_model_sound {width : PNat} [Bootstrap (Fin width)]
+    (source destination : Fin width) (before after : Encoding width)
+    (states : AppendReceivePrefixStates width)
+    (execution : AppendReceiveExecutionResult source destination before after states)
+    (assignment : Assignment) (holds : Holds after.assertions.toList assignment)
+    (constraints : AppendReceivePrefixConstraints before source destination
+      (appendReceiveExecutionTerms before source destination) assignment)
+    (frame : NativeArrayVote.Frame (Fin width) Nat) (state : State (Fin width) Nat)
+    (columnsRep : FrameColumnsRep assignment before.toColumns frame)
+    (modelRep : frame.Rep state)
+    (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION) :
+    exists request : AppendEntriesRequest (Fin width) Nat,
+      NativeArrayAppendNetwork.SelectedAppend frame source destination request /\
+      CCFRaft.Enabled state (.receive source destination) /\
+      exists written : NativeArrayVote.Frame (Fin width) Nat,
+        FrameColumnsRep assignment after.toColumns written /\
+        written.Rep (CCFRaft.next state (.receive source destination)) := by
+  let terms := appendReceiveExecutionTerms before source destination
+  obtain ⟨request, output, response, completed, selectedAppend, enabled, outputRep,
+    responseValue, responseSource, responseDestination, sameCompleted, writtenModel⟩ :=
+    append_receive_prefix_model_correct source destination before assignment constraints
+      frame state columnsRep modelRep sameBootstrap
   have writerRep : FrameColumnsRep assignment
       states.middle.suffix.writerBefore.toColumns frame := by
     rw [execution.writerColumns]
     exact columnsRep
-  obtain ⟨writtenRep, writtenModel⟩ :=
-    append_receive_writes_model_sound source destination terms.branches.stepDown
+  have writtenRep :=
+    append_receive_writes_frame_sound source destination terms.branches.stepDown
       terms.values output terms.response response terms.completed completed
       states.middle.suffix.writerBefore after execution.runs.middleRuns.suffixRuns.writeRun
-      assignment holds frame state writerRep modelRep outputRep step rfl responseValue
-      responseSource responseDestination sameCompleted request selectedAppend candidate
-      stepDownCorrect (fun stepFalse =>
-        ⟨(consumeCorrect stepFalse).1, (consumeCorrect stepFalse).2,
-          completedCorrect stepFalse⟩)
+      assignment holds frame writerRep outputRep
+      (terms.branches.stepDown.eval assignment Locals.empty) rfl responseValue
+      responseSource responseDestination sameCompleted
   exact ⟨request, selectedAppend, enabled, _, writtenRep, writtenModel⟩
 
 theorem receive_append_model_sound {width : PNat} [Bootstrap (Fin width)]
