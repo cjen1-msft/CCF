@@ -36,6 +36,61 @@ private theorem sum_terms_eval {context : List Ty} (terms : List (Term context .
   | nil => rfl
   | cons value rest ih => simp [sumTerms, Term.eval, ih]
 
+private theorem sum_terms_bounded {context : List Ty}
+    (terms : List (Term context .int)) (limit : Nat)
+    (bounded : forall term, term ∈ terms ->
+      term.symbols.all (fun symbol => symbol.2 < limit) = true) :
+    (sumTerms terms).symbols.all (fun symbol => symbol.2 < limit) = true := by
+  induction terms with
+  | nil => simp [sumTerms, Term.symbols]
+  | cons value rest ih =>
+      simp only [sumTerms, Term.symbols, List.all_append, Bool.and_eq_true]
+      exact ⟨bounded value (by simp), ih (fun term member =>
+        bounded term (by simp [member]))⟩
+
+theorem count_nodes_term_bounded {context : List Ty} {width : PNat}
+    (predicate : Fin width -> Term context .bool) (limit : Nat)
+    (bounded : forall node,
+      (predicate node).symbols.all (fun symbol => symbol.2 < limit) = true) :
+    (countNodesTerm predicate).symbols.all
+      (fun symbol => symbol.2 < limit) = true := by
+  unfold countNodesTerm
+  apply sum_terms_bounded
+  intro term member
+  rw [List.mem_ofFn] at member
+  obtain ⟨node, rfl⟩ := member
+  simpa [Term.symbols] using bounded node
+
+theorem bit_cardinality_term_bounded {context : List Ty} {width : PNat}
+    (value : Term context (.bits width)) (limit : Nat)
+    (bounded :
+      value.symbols.all (fun symbol => symbol.2 < limit) = true) :
+    (bitCardinalityTerm value).symbols.all
+      (fun symbol => symbol.2 < limit) = true := by
+  apply count_nodes_term_bounded
+  intro node
+  simpa [Term.symbols] using bounded
+
+theorem configuration_majority_term_bounded {context : List Ty} {width : PNat}
+    (configuration : Term context (.bits width))
+    (support : Fin width -> Term context .bool) (limit : Nat)
+    (configurationBounded :
+      configuration.symbols.all (fun symbol => symbol.2 < limit) = true)
+    (supportBounded : forall node,
+      (support node).symbols.all (fun symbol => symbol.2 < limit) = true) :
+    (configurationMajorityTerm configuration support).symbols.all
+      (fun symbol => symbol.2 < limit) = true := by
+  have hitsBounded :
+      (countNodesTerm fun node =>
+        .and (.bit configuration node) (support node)).symbols.all
+          (fun symbol => symbol.2 < limit) = true := by
+    apply count_nodes_term_bounded
+    intro node
+    simp [Term.symbols, configurationBounded, supportBounded node]
+  have totalBounded :=
+    bit_cardinality_term_bounded configuration limit configurationBounded
+  simp [configurationMajorityTerm, Term.symbols, hitsBounded, totalBounded]
+
 theorem count_nodes_term_eval {context : List Ty} {width : PNat}
     (predicate : Fin width -> Term context .bool)
     (assignment : Assignment) (locals : Locals context) :
