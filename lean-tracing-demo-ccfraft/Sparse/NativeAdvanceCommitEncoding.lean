@@ -1,7 +1,7 @@
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-import Sparse.NativeCommitSound
+import Sparse.NativeCommitComplete
 import Sparse.NativeArrayCommitTransition
 import Sparse.NativeNodeRowModelEncoding
 
@@ -33,6 +33,32 @@ theorem advance_commit_frame_success {width : PNat} [Bootstrap (Fin width)]
   exact ⟨nextFrame, step, FrameColumnsRep.of_model_rep assignment after.toColumns
     written nextFrame (CCFRaft.next state (.advanceCommitIndex source))
     writtenRep writtenModel nextModel⟩
+
+theorem advance_commit_complete {width : PNat} [Bootstrap (Fin width)]
+    (source : Fin width) (before after : Encoding width)
+    (run : (advanceCommitIndex source).run before = .ok ((), after))
+    (assignment : Assignment) (holds : Holds before.assertions.toList assignment)
+    (frame nextFrame : NativeArrayVote.Frame (Fin width) Nat)
+    (rep : FrameColumnsRep assignment before.toColumns frame)
+    (valid : ReferencesValid before)
+    (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION)
+    (step : NativeArrayAdvanceCommit.AdvanceCommit frame source nextFrame) :
+    exists extended : Assignment,
+      assignment.AgreesBelow before.next extended /\
+        Holds after.assertions.toList extended /\
+        FrameColumnsRep extended after.toColumns nextFrame := by
+  let state := frame.realize
+  have modelRep : frame.Rep state := NativeArrayVote.realize_rep frame rep.valid
+  obtain ⟨allowed, nextModel⟩ :=
+    NativeArrayAdvanceCommit.AdvanceCommit.model_correct
+      frame nextFrame state modelRep source step
+  obtain ⟨extended, agreement, afterHolds, written, writtenRep, writtenModel⟩ :=
+    advance_commit_model_complete source before after run assignment holds
+      valid frame state rep modelRep allowed sameBootstrap
+  exact ⟨extended, agreement, afterHolds,
+    FrameColumnsRep.of_model_rep extended after.toColumns written nextFrame
+      (CCFRaft.next state (.advanceCommitIndex source))
+      writtenRep writtenModel nextModel⟩
 
 end CCFRaft.NativeEncode
 
