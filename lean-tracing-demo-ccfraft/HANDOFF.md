@@ -32,8 +32,8 @@ write given the exact maximum and refreshed row. These build in
 `commit_index_correct` maximum proof and reusable dynamic-width majority terms.
 `NativeMaximumSummary` supplies bounded-fold correspondence, uniqueness, and
 live-range predicate congruence. The composed maximum builds in
-`native-commit-maximum-parent-build.log`. The complete commit SMT scan,
-assignment correspondence, and public action are not complete.
+`native-commit-maximum-parent-build.log`. Whole-action soundness, assignment
+completeness, and public dispatch are not complete.
 `bounded_forall_nat_eval` now removes repeated integer-to-natural conversions
 from quantified live-range proofs.
 Commit `7c08626b2` adds exact native commit transitions with Model soundness
@@ -47,23 +47,30 @@ including natural-witness extraction, and the reusable 17-binding
 The 127 commit-index SMT fixtures have 32 expected SAT cases and pass in
 `native-commit-index-parent-tests.log`. Their Model metadata pins genuine
 joint-majority rejection, ignored future configurations, and fallback to a
-lower committable signature. The private full-action implementation in
-`NativeAdvanceCommit.lean` and its `NativeCommitTerms.lean` row/guard helpers
-build in `native-advance-commit-runtime-build.log` but remain uncommitted pending
-whole-action proofs and fixtures. The expected final counter increment is
-`25 + 3 * width`; it still needs derivation from the actual run.
+lower committable signature. The private full-action implementation is committed
+as `57abeb0c9`. Its 43 Model cases have 7 expected SAT results; an explicit
+17-identity extension adds one SAT and one UNSAT case. These pass in
+`native-advance-commit-parent-tests.log`. Disabled cases have no postconditions,
+so an impossible successor cannot mask a missing guard. A stale old
+`retiredCommitted` membership state may become active and advance when the
+actual refresh permits it. The fixture protects that arbitrary-initial-state
+behavior.
+The row/guard proofs are committed as `385b80798`; canonical commit-index
+assignment and symbol-bound helpers are committed as `4c87b10c8`.
+The initial `NativeCommitExecution` proof derives the final counter increment
+`25 + 3 * width` from the actual run and passes the parent build in
+`native-commit-execution-parent-build.log`. It remains worker-owned for additive
+constraint-extraction and checkpoint metadata before the whole-action proofs.
 Commit `5626d9503` shares canonical maximum-assignment construction and reuses
 it for bounded signatures without changing the exported signature. The public
 correspondence rebuild passes in `native-max-match-assignment-parent-build.log`.
 
 Mechanical workers retain separate files. Worker
-`2a020198-af17-47bf-b45b-0b82864a50ad` owns
-`NativeAdvanceCommitFixtureMain.lean` and `NativeArrayAdvanceCommitFixtureMain.lean`.
+`2a020198-af17-47bf-b45b-0b82864a50ad` owns `NativeCommitSuffixAssignment.lean`.
 Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns
-`NativeCommitIndexAssignment.lean` and free-symbol-bound lemmas only in
-`NativeMajorityTerms.lean`.
+`NativeCommitPrefixAssignment.lean`.
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns
-`NativeCommitTermsEncoding.lean`. The parent owns commit semantics and runtime.
+`NativeCommitSound.lean`. The parent owns commit semantics, runtime, and fixtures.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns
 `NativeCommitExecution.lean`.
 Its classifier refactor passed the independent public build and is committed
