@@ -33,6 +33,26 @@ atomicity disagreement. The nine-record bootstrap prefix is SAT.
 No Model or implementation behavior was changed to hide the disagreement.
 The requested integration/demo scope is complete; broader Model action coverage
 or a change to callback atomicity would be separate work.
+`Sparse.lean` imports the parameterized correspondence module.
+The aggregate proof build passes in `native-delivery-root-build.log`.
+
+The retained public runs have the following solver-reported core locations.
+Every listed run is UNSAT; these are not claims that the cores are minimal.
+
+| Capture | Instructions | Core clauses | Raw source lines |
+| --- | ---: | ---: | --- |
+| `bad_network` | 2107 | 12 | 15, 19, 44, 45, 47, 49 |
+| `bad_network-direct` | 2107 | 2 | 150, 151 |
+| `bad_network-indirect` | 2095 | 4 | 224, 228 |
+| `soft_rollback` | 1566 | 12 | 15, 19, 44, 45, 47, 49 |
+| `soft_rollback-direct` | 1566 | 2 | 112, 113 |
+| `soft_rollback-indirect` | 1554 | 4 | 117, 118, 119, 122 |
+
+Scripts contain 21.5-26.1 MB. Recorded Z3 times range from 1.845 to 2.512 seconds.
+The live session explorer serves the retained `soft_rollback` run at
+`http://127.0.0.1:43619/api/run`, Bash handle `native-delivery-explorer`.
+It is session-attached, not a persistent service. The original port 8091 service
+was not changed. Live instruction 238 includes raw source line 45.
 
 ### Implementation checkpoints
 
