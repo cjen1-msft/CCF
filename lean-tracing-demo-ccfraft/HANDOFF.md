@@ -6,7 +6,7 @@
 
 The user now prioritizes `requestVote`, receive requestVote, `appendEntries`,
 receive appendEntries, and membership change. Vote sends, vote-request receive,
-append sends, and append-request receive are public.
+append sends, append-request receive, and membership change are public.
 Finish this core before unrelated remaining actions.
 Delegate mechanical proofs to `gpt-5.6-sol` with medium reasoning effort.
 The main agent owns semantic lemmas. Build reusable proof components where
@@ -14,8 +14,9 @@ they remove repeated execution decomposition and assignment-extension repair.
 This supersedes the earlier serial-only worker instruction.
 
 Both private core actions now have whole-action Model and exact native-step
-soundness and assignment completeness. Public append-receive integration is
-complete; public membership integration is next. Both assurance flags
+soundness and assignment completeness. Both public integrations are complete.
+Continue remaining Model actions and partial observations toward raw reduction.
+Both assurance flags
 remain false.
 
 Factory tools are unavailable in this session. `NativeDefinitions` and
@@ -570,8 +571,19 @@ and affected Model fixtures in `native-public-append-receive-parent-build.log`.
 The 1,454 public append-receive cases, input errors, explorer core attribution,
 1,200 append-send cases, 480 vote-receive cases, and import audit pass in
 `native-public-append-receive-tests.log`.
-Generic `receive` remains rejected. Membership is the next serial slice.
-The public compiler files are parent-owned until the next assignment.
+Public append receive is committed as `5077346b6`.
+Generic `receive` remains rejected. Public membership integration is also
+complete in the same four files, with strict set decoding and both trace proofs.
+The parent inspected the diffs and built public proofs and fixtures in
+`native-public-membership-parent-build.log`.
+The 1,572 membership cases, input errors, set semantics, and explorer core pass
+in `native-public-membership-tests.log`. That invocation was stopped during the
+unconstrained 21-node experiment described below, not because of a failing core case.
+The 184 public five-action sequences, the explicitly inactive 21-node case, and
+110 append-hint regressions pass in `native-public-core-sequence-tests.log`.
+All public compiler files are parent-owned.
+The root `CHANGELOG.md` has an Unreleased demo entry; add its actual PR reference
+when a PR exists. No PR has been opened.
 
 `append_receive_prefix_constraints`, committed as `4a74a4892`, exposes the
 existing backward constraint extraction before frame writes.
@@ -705,23 +717,38 @@ uses the existing update operation and proves Model correspondence and existence
 encoder assertions, using the shared Model-equivalence transport.
 Bootstrap preservation is also proved. Builds pass in
 `native-membership-transition-build.log` and `native-membership-frame-sound-build.log`;
-the import audit passes. Assignment completeness is now complete in `b39691ba8`;
-public wiring remains pending.
+the import audit passes. Assignment completeness is complete in `b39691ba8`;
+public wiring is now covered by the integration results above.
 
 The public append Model and hint tests reuse the existing 1,344 and 110 cases.
-`test_public_model_membership_changes` is still deliberately uncommitted.
-It reuses the existing 1,572 Model cases. The original failing-first run is in
+`test_public_model_membership_changes` reuses the existing 1,572 Model cases.
+The original failing-first run is in
 `native-core-public-failing-first.log`. Canonical minimal receive input still
 falls through to the local decoder, reporting `property not found: node`;
 see `native-public-receive-decoder-before.log`.
-Append input-error and explorer-core tests now pass publicly.
-Membership input-error, configuration-set, and explorer-core tests remain
-uncommitted. Stage each public test only after its action works.
+Both action input-error and explorer-core tests now pass publicly.
+Membership configuration-set and all 184 five-action sequence cases also pass.
+The 21-identity sequence explicitly observes the 18 added inactive identities
+as unallocated; this is a trace condition, never an encoder default.
 Commit `997954377` adds `Traces/native_append_receive_fifo_conflict.json`,
 `Traces/native_membership_allocation_conflict.json`, and
 `test_core_explorer_fixture_transitions`. Both contradictions and their corrected
 traces pass against the private encoders in `native-core-explorer-fixture-tests.log`.
 The public explorer tests will require instruction indices 8 and 9 in each core.
+Both now pass with those requirements.
+
+Scalability evidence: a 21-identity core sequence with 18 wholly unobserved
+additional nodes ran for more than five minutes with E-matching disabled before
+cancellation. Its 2,149,111-byte script is preserved as
+`native-core-21-baseline.smt2`; E-matching returned unknown under a 30-second probe.
+Adding explicit absence observations for those inactive nodes solved in 3,018 ms.
+`native_core_width_probe.py` and `native-core-21-absent-probe/` preserve the
+reproducer, input, scripts, and metrics. The two inputs differ; this is not a
+representation optimization or evidence that arbitrary initial states solve quickly.
+Do not silently assume unobserved nodes are absent. No solver or encoder runtime
+was changed to make this test pass.
+Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` is read-only, inventorying the remaining
+Model actions and existing reducer observation requirements for the next slice.
 `NativeMembershipChange.lean`, `NativeMembershipRowTerms.lean`, and
 `NativeMembershipChangeFixtureMain.lean` are committed as `a006368c5`.
 The private action composes the proved guards, new log entry, local and global

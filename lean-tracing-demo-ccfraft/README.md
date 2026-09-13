@@ -60,8 +60,8 @@ or restricting possible executions is not a performance optimization.
 The public Lean encoder uses `Sparse/NativeFrameEncode.lean` and shares
 local-state compilation with `Sparse/NativeEncode.lean`.
 It accepts `checkQuorum`, `requestVote`, `requestPreVote`, `updateTerm`, `timeout`,
-`becomePreVoteCandidate`, `appendEntries`, `receiveRequestVote`, and
-`receiveAppendEntries`, plus the
+`becomePreVoteCandidate`, `appendEntries`, `receiveRequestVote`,
+`receiveAppendEntries`, and `changeConfiguration`, plus the
 `allocated`, `role`, `newFollower`, `logLength`,
 `commit`, `currentTerm`, `entry`, `retirementIndex`,
 `retirementCommittableIndex`, `retiredCommittedIndex`, `votedFor`, and
@@ -90,6 +90,14 @@ The request must name the destination and have no newer term.
 A same-term candidate or pre-vote candidate steps down without consuming the
 request or replying. Other enabled branches consume the request, send an ACK
 or NACK, and refresh retirement metadata. NACKs also refresh that metadata.
+`changeConfiguration` requires a declared `source` and a `configuration` list
+of declared identities. The list is a set, so order and duplicates do not matter.
+The Model rejects empty or unchanged configurations and newly added identities
+already in `hasJoined`. The source must be an eligible allocated leader.
+The action appends a configuration entry, refreshes retirement metadata, and
+allocates newly added identities. New rows start with role `none`, not `follower`.
+Other already-allocated nodes retain their local state. The source's sent cursor
+for each added identity becomes the old log length.
 Generic `receive` remains an input error.
 `updateTerm` reads the directed queue head without consuming it. It requires an
 allocated destination and a strictly newer packet term. Responses also require
@@ -408,8 +416,8 @@ theorem. The public matrix includes 400 complete Model campaign traces and
 Both actions currently emit five stores. Pre-vote writes back three unchanged
 values to keep one proof path. This is a baseline, not a solver optimization.
 
-The remaining core covers AppendEntries receive and membership change.
-These actions are not public yet.
+All five prioritized actions are public. Remaining Model actions and partial
+packet observations are still needed before raw reducer integration.
 `NativeArrayVoteReceive` proves vote-handler and full-frame receive semantics.
 `NativeVoteReceiveGuardEncoding` equates the request-specific guard with Model
 receive enablement and the fact that the selected packet is a vote request.
@@ -508,7 +516,7 @@ Its 480 Model-derived cases include generic receives enabled for the wrong
 packet kind, which the vote-specific action rejects. Sequence cases cover
 duplicate replies and stale requests after `updateTerm`.
 
-The private `NativeMembershipChange` encoder passes 1,572 Model-derived
+The `NativeMembershipChange` encoder passes 1,572 Model-derived
 transition scripts, including 147 SAT cases. It appends the configuration,
 refreshes retirement, allocates newly added identities, and sets their sent
 cursors to the old log length. `NativeMembershipTermsEncoding` proves the
@@ -519,17 +527,22 @@ and next-state representation from the actual run and satisfying final assertion
 membership transition. `NativeMembershipComplete.membership_change_model_complete`
 composes all assignment stages. `NativeMembershipChangeEncoding` then realizes
 the particular native successor required by a trace, preserving the supplied
-assignment below its original counter. Public trace integration remains unfinished, so
-public `changeConfiguration` remains unsupported.
+assignment below its original counter. Public `changeConfiguration` has both
+whole-trace proof directions. `Traces/native_membership_allocation_conflict.json`
+attributes a missing allocation to the membership action and its post-state observation.
 `NativeAllocation` reuses row snapshots to reset hidden fields before exposing
 missing nodes. Existing rows survive. The baseline uses 17 definitions per
 declared identity and passes 4,416 Model-derived scripts, including repeated
 allocation, disabled conditions, and full-frame mutations.
 `NativeAllocationEncoding` proves single-node and whole-set soundness,
 reference preservation, and extension of each starting assignment.
-The private combined pipeline also covers all five prioritized actions in
+The public combined pipeline covers all five prioritized actions in
 184 sequence scripts. These include successive configurations, append ACKs and
 NACKs, term updates, and vote send/receive, with full observations after each step.
+The 21-identity sequence observes its 18 inactive extra nodes as unallocated.
+Leaving their allocation unobserved made solving exceed five minutes; adding
+those observations solved in about three seconds. These are different traces,
+not an encoder optimization. Unobserved initial state remains arbitrary.
 
 `NativeOptional` supplies codecs for optional local-state observations.
 Optional natural indices and node identities use `NativeSum NativeUnit Int`.

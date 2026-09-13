@@ -13,6 +13,7 @@ import Sparse.NativeCampaign
 import Sparse.NativeAppendSend
 import Sparse.NativeVoteReceive
 import Sparse.NativeAppendReceive
+import Sparse.NativeMembershipChange
 
 set_option autoImplicit false
 
@@ -51,6 +52,10 @@ def decodeFrameInstruction (width : PNat) (names : Array String) (value : Json) 
     fields value ["kind", "source", "destination"]
     return .receiveAppend (<- resolve width names (<- field value "source"))
       (<- resolve width names (<- field value "destination"))
+  else if kind = "changeConfiguration" then
+    fields value ["kind", "source", "configuration"]
+    return .changeConfiguration (<- resolve width names (<- field value "source"))
+      (<- decodeNodeSet width names (<- field value "configuration"))
   else if kind = "hasJoined" then
     fields value ["kind", "value"]
     return .hasJoined (<- decodeNodeSet width names (<- field value "value"))
@@ -119,6 +124,7 @@ def frameInstruction {width : PNat} (item : FrameInstruction width) : EncodeM wi
   | .appendEntries source destination batchEnd => sendAppend source destination batchEnd
   | .receiveVote source destination => receiveVote source destination
   | .receiveAppend source destination => receiveAppend source destination
+  | .changeConfiguration source configuration => membershipChange source configuration
   | _ => do
     let state <- get
     assertAll (<- frameObservationClauses state.toColumns item)

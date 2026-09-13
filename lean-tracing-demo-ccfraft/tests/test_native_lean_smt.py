@@ -521,6 +521,43 @@ class NativeLeanSmtTests(unittest.TestCase):
             "NativeCoreActionsFixtureMain", models, 4, "core"
         )
 
+    def test_public_core_action_sequences(self):
+        fixtures = self.assert_model_traces(
+            "NativeArrayCoreActionsFixtureMain", 184, "public-core"
+        )
+        successful = [item for item in fixtures if item["expected"] == "sat"]
+        self.assertEqual(len(successful), 4)
+        required = {
+            "requestVote",
+            "receiveRequestVote",
+            "appendEntries",
+            "receiveAppendEntries",
+            "changeConfiguration",
+        }
+        for item in successful:
+            kinds = {entry["kind"] for entry in item["trace"]["instructions"]}
+            self.assertTrue(required.issubset(kinds))
+        larger = deepcopy(successful[0]["trace"])
+        inactive = [
+            f"node-{index}" for index in range(len(larger["nodes"]), 21)
+        ]
+        larger["nodes"] += inactive
+        larger["instructions"] = [
+            {"kind": "allocated", "node": node, "value": False}
+            for node in inactive
+        ] + larger["instructions"]
+        self.assertEqual(len(larger["nodes"]), 21)
+        scripts = self.encode([larger])
+        self.solve(
+            [
+                {
+                    "name": "twenty-one-node-core-sequence",
+                    "script": scripts[0],
+                    "expected": "sat",
+                }
+            ]
+        )
+
     def test_model_append_receive_writes(self):
         result = subprocess.run(
             [
@@ -1432,6 +1469,11 @@ class NativeLeanSmtTests(unittest.TestCase):
             "NativeArrayAppendReceiveHintFixtureMain", 110, "public-model-append-hint"
         )
 
+    def test_public_model_membership_changes(self):
+        self.assert_model_traces(
+            "NativeArrayMembershipFixtureMain", 1572, "public-model-membership"
+        )
+
     def test_append_receive_model_fixture_coverage(self):
         fixtures = self.model_traces("NativeArrayAppendReceiveFixtureMain", 1344)
         self.assertEqual(
@@ -1674,6 +1716,55 @@ class NativeLeanSmtTests(unittest.TestCase):
         )
         self.assert_invalid_instructions(invalid)
 
+    def test_membership_change_input_errors(self):
+        valid = {
+            "kind": "changeConfiguration",
+            "source": "a",
+            "configuration": ["a"],
+        }
+        invalid = [
+            {key: value for key, value in valid.items() if key != missing}
+            for missing in ("source", "configuration")
+        ]
+        invalid.extend(
+            dict(valid, configuration=value)
+            for value in (
+                None, False, 0, 1.5, "a", {"a": True}, ["missing"], [0], [True]
+            )
+        )
+        invalid.extend(
+            [
+                dict(valid, source="missing"),
+                dict(valid, source=0),
+                dict(valid, source=False),
+                dict(valid, node="a"),
+                dict(valid, value=True),
+            ]
+        )
+        self.assert_invalid_instructions(invalid)
+
+    def test_membership_change_configuration_sets(self):
+        scripts = self.encode(
+            [
+                {
+                    "nodes": ["a", "b"],
+                    "bootstrap": ["a"],
+                    "instructions": [
+                        {
+                            "kind": "changeConfiguration",
+                            "source": "a",
+                            "configuration": configuration,
+                        }
+                    ],
+                }
+                for configuration in (["a", "b"], ["b", "a"], ["b", "a", "a"], [])
+            ]
+        )
+        self.assertEqual(scripts[1:3], [scripts[0], scripts[0]])
+        self.solve(
+            [{"name": "empty-membership-change", "script": scripts[3], "expected": "unsat"}]
+        )
+
     def test_append_cursor_and_duplicate_heartbeats(self):
         document = json.loads(
             (ROOT / "Traces/native_append_fifo_conflict.json").read_text()
@@ -1811,6 +1902,11 @@ class NativeLeanSmtTests(unittest.TestCase):
     def test_append_receive_explorer_core(self):
         self.assert_explorer_core(
             "Traces/native_append_receive_fifo_conflict.json", {8, 9}
+        )
+
+    def test_membership_change_explorer_core(self):
+        self.assert_explorer_core(
+            "Traces/native_membership_allocation_conflict.json", {8, 9}
         )
 
     def test_core_explorer_fixture_transitions(self):

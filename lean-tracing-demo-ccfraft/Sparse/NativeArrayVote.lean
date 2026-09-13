@@ -5,6 +5,7 @@ import Sparse.NativeArrayVoteState
 import Sparse.NativeArrayVoteReceive
 import Sparse.NativeArrayAppend
 import Sparse.NativeArrayAppendNetwork
+import Sparse.NativeArrayMembershipTransition
 
 set_option autoImplicit false
 
@@ -21,6 +22,7 @@ inductive Instruction (N T : Type) where
   | campaign (preVote : Bool) (node : N)
   | receiveVote (source destination : N)
   | receiveAppend (source destination : N)
+  | changeConfiguration (source : N) (configuration : Finset N)
   | appendEntries (source destination : N) (batchEnd : Nat)
   | submittedTxId (txId : T) (expected : Bool)
   | hasJoined (expected : Finset N)
@@ -55,6 +57,11 @@ def follows (frame : Frame N T) : List (Instruction N T) -> Prop
   | .receiveAppend source destination :: rest =>
       exists nextFrame,
         NativeArrayAppendNetwork.ReceiveAppend frame source destination nextFrame /\
+          follows nextFrame rest
+  | .changeConfiguration source configuration :: rest =>
+      exists nextFrame,
+        NativeArrayChangeConfiguration.ChangeConfiguration
+            frame source configuration nextFrame /\
           follows nextFrame rest
   | .appendEntries source destination batchEnd :: rest =>
       NativeArrayAppend.enabled frame source destination batchEnd /\
@@ -96,6 +103,9 @@ def modelFollows (state : State N T) : List (Instruction N T) -> Prop
         (exists request remaining, takeFirstFrom source (state.network destination) =
           some (.appendEntriesRequest request, remaining)) /\
         modelFollows (CCFRaft.next state (.receive source destination)) rest
+  | .changeConfiguration source configuration :: rest =>
+      CCFRaft.Enabled state (.changeConfiguration source configuration) /\
+        modelFollows (CCFRaft.next state (.changeConfiguration source configuration)) rest
   | .appendEntries source destination batchEnd :: rest =>
       CCFRaft.Enabled state (.appendEntries source destination batchEnd) /\
         modelFollows (CCFRaft.next state (.appendEntries source destination batchEnd)) rest
@@ -208,6 +218,21 @@ theorem follows_correct (trace : List (Instruction N T)) (frame : Frame N T) (st
             frame state rep source destination request selected enabled
         have nextRep := NativeArrayAppendNetwork.receive_append_rep
           frame state rep source destination nextFrame step
+        exact ⟨nextFrame, step, (ih _ _ nextRep).mpr held⟩
+    | changeConfiguration source configuration =>
+      constructor
+      · rintro ⟨nextFrame, step, held⟩
+        obtain ⟨enabled, nextRep⟩ :=
+          NativeArrayChangeConfiguration.ChangeConfiguration.model_correct
+            frame nextFrame state rep source configuration step
+        exact ⟨enabled, (ih _ _ nextRep).mp held⟩
+      · rintro ⟨enabled, held⟩
+        obtain ⟨nextFrame, step⟩ :=
+          NativeArrayChangeConfiguration.ChangeConfiguration.exists_of_enabled
+            frame state rep source configuration enabled
+        have nextRep :=
+          (NativeArrayChangeConfiguration.ChangeConfiguration.model_correct
+            frame nextFrame state rep source configuration step).2
         exact ⟨nextFrame, step, (ih _ _ nextRep).mpr held⟩
     | appendEntries source destination batchEnd =>
       constructor

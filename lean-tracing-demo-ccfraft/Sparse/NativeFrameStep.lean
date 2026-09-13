@@ -9,6 +9,7 @@ import Sparse.NativeCampaignEncoding
 import Sparse.NativeAppendSendEncoding
 import Sparse.NativeVoteReceiveEncoding
 import Sparse.NativeAppendReceiveEncoding
+import Sparse.NativeMembershipChangeEncoding
 
 set_option autoImplicit false
 
@@ -122,6 +123,8 @@ theorem frame_instruction_cases {width : PNat} (item : FrameInstruction width)
         (receiveVote source destination).run before = .ok ((), after)) \/
       (exists source destination, item = .receiveAppend source destination /\
         (receiveAppend source destination).run before = .ok ((), after)) \/
+      (exists source configuration, item = .changeConfiguration source configuration /\
+        (membershipChange source configuration).run before = .ok ((), after)) \/
       (exists source destination batchEnd, item = .appendEntries source destination batchEnd /\
         (sendAppend source destination batchEnd).run before = .ok ((), after)) \/
       (exists clauses, frameObservationClauses before.toColumns item = .ok clauses /\
@@ -131,7 +134,7 @@ theorem frame_instruction_cases {width : PNat} (item : FrameInstruction width)
     rcases instruction_cases item before after run with ⟨node, rfl, action⟩ | ⟨clauses, emitted, asserted⟩
     · exact Or.inl ⟨node, rfl, action⟩
     · exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
-        (Or.inr ⟨clauses, emitted, asserted⟩))))))
+        (Or.inr (Or.inr ⟨clauses, emitted, asserted⟩)))))))
   case vote preVote source destination => exact Or.inr (Or.inl ⟨preVote, source, destination, rfl, run⟩)
   case updateTerm source destination => exact Or.inr (Or.inr (Or.inl ⟨source, destination, rfl, run⟩))
   case campaign preVote node => exact Or.inr (Or.inr (Or.inr (Or.inl ⟨preVote, node, rfl, run⟩)))
@@ -142,26 +145,30 @@ theorem frame_instruction_cases {width : PNat} (item : FrameInstruction width)
     refine Or.inr (Or.inr (Or.inr (Or.inr
       (Or.inr (Or.inl ⟨source, destination, rfl, ?_⟩)))))
     simpa only [frameInstruction] using run
+  case changeConfiguration source configuration =>
+    refine Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
+      (Or.inr (Or.inl ⟨source, configuration, rfl, ?_⟩))))))
+    simpa only [frameInstruction] using run
   case appendEntries source destination batchEnd =>
     exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
-      (Or.inr (Or.inl ⟨source, destination, batchEnd, rfl, run⟩))))))
+      (Or.inr (Or.inr (Or.inl ⟨source, destination, batchEnd, rfl, run⟩)))))))
   case hasJoined expected => exact Or.inr (Or.inr (Or.inr (Or.inr
-    (Or.inr (Or.inr (Or.inr ⟨_, rfl, run⟩))))))
+    (Or.inr (Or.inr (Or.inr (Or.inr ⟨_, rfl, run⟩)))))))
   case preVoteStatus node expected =>
     exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
-      (Or.inr ⟨_, rfl, run⟩))))))
+      (Or.inr (Or.inr ⟨_, rfl, run⟩)))))))
   case retirementCompleted node expected =>
     exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
-      (Or.inr ⟨_, rfl, run⟩))))))
+      (Or.inr (Or.inr ⟨_, rfl, run⟩)))))))
   case submittedTxId txId expected =>
     exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
-      (Or.inr ⟨_, rfl, run⟩))))))
+      (Or.inr (Or.inr ⟨_, rfl, run⟩)))))))
   case queueLength source destination expected =>
     exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
-      (Or.inr ⟨_, rfl, run⟩))))))
+      (Or.inr (Or.inr ⟨_, rfl, run⟩)))))))
   case queuePoint source destination index expected =>
     refine Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
-      (Or.inr ⟨_, rfl, ?_⟩))))))
+      (Or.inr (Or.inr ⟨_, rfl, ?_⟩)))))))
     exact (frame_observation_run (.queuePoint source destination index expected) before _ rfl).symm.trans run
 theorem frame_instruction_references {width : PNat} (item : FrameInstruction width)
     (before after : Encoding width) (run : (frameInstruction item).run before = .ok ((), after))
@@ -170,6 +177,7 @@ theorem frame_instruction_references {width : PNat} (item : FrameInstruction wid
     ⟨preVote, source, destination, _, action⟩ | ⟨source, destination, _, action⟩ |
     ⟨preVote, node, _, action⟩ | ⟨source, destination, _, action⟩ |
     ⟨source, destination, _, action⟩ |
+    ⟨source, configuration, _, action⟩ |
     ⟨source, destination, batchEnd, _, action⟩ |
     ⟨clauses, _, asserted⟩
   · exact instruction_references (.checkQuorum node) before after action valid
@@ -178,6 +186,7 @@ theorem frame_instruction_references {width : PNat} (item : FrameInstruction wid
   · exact campaign_references preVote node before after action valid
   · exact receive_vote_references source destination before after action valid
   · exact receive_append_references source destination before after action valid
+  · exact membership_change_references source configuration before after action valid
   · exact send_append_references source destination batchEnd before after action valid
   · exact valid.same_references (assert_all_success clauses before after asserted).1
 
@@ -189,6 +198,7 @@ theorem frame_instruction_holds_before {width : PNat} (item : FrameInstruction w
     ⟨preVote, source, destination, _, action⟩ | ⟨source, destination, _, action⟩ |
     ⟨preVote, node, _, action⟩ | ⟨source, destination, _, action⟩ |
     ⟨source, destination, _, action⟩ |
+    ⟨source, configuration, _, action⟩ |
     ⟨source, destination, batchEnd, _, action⟩ |
     ⟨clauses, _, asserted⟩
   · exact ((quorum_holds node.val before after action assignment).mp holds).1
@@ -197,6 +207,7 @@ theorem frame_instruction_holds_before {width : PNat} (item : FrameInstruction w
   · exact campaign_holds_before preVote node before after action assignment holds
   · exact receive_vote_holds_before source destination before after action assignment holds
   · exact receive_append_prior_holds source destination before after action assignment holds
+  · exact membership_change_prior_holds source configuration before after action assignment holds
   · exact send_append_holds_before source destination batchEnd before after action assignment holds
   · exact ((assert_all_holds clauses before after asserted assignment).mp holds).1
 
