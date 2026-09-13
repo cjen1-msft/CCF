@@ -1770,6 +1770,50 @@ class NativeLeanSmtTests(unittest.TestCase):
             self.fail(f"Unhandled frame observation: {observed}")
         return dict(observed, value=replacement)
 
+    def response_guard_traces(self, baseline, expected_kind):
+        action = baseline["trace"]["instructions"][baseline["stepIndex"]]
+        source, destination = action["source"], action["destination"]
+        cases = []
+        for packet in packet_samples(source, destination):
+            if packet["kind"] == expected_kind:
+                continue
+            changed = deepcopy(baseline)
+            prefix = changed["trace"]["instructions"][: baseline["stepIndex"] + 1]
+            selected = next(
+                item
+                for item in prefix
+                if item["kind"] == "queuePoint"
+                and item["source"] == source
+                and item["destination"] == destination
+                and item["index"] == 0
+            )
+            selected["value"] = dict(packet, term=selected["value"]["term"])
+            changed["trace"]["instructions"] = prefix
+            changed["expected"] = "unsat"
+            changed["name"] = f"{baseline['name']}-wrong-{packet['kind']}"
+            cases.append(changed)
+        empty = deepcopy(baseline)
+        empty["trace"]["instructions"] = [
+            item
+            for item in empty["trace"]["instructions"][: baseline["stepIndex"] + 1]
+            if not (
+                item["kind"] == "queuePoint"
+                and item["source"] == source
+                and item["destination"] == destination
+            )
+        ]
+        selected_length = next(
+            item
+            for item in empty["trace"]["instructions"]
+            if item["kind"] == "queueLength"
+            and item["source"] == source
+            and item["destination"] == destination
+        )
+        selected_length["value"] = 0
+        empty["expected"] = "unsat"
+        empty["name"] = f"{baseline['name']}-empty"
+        return cases + [empty]
+
     def vote_response_traces(self):
         models = self.model_traces("NativeArrayVoteResponseFixtureMain", 120)
         guard_cases = []
@@ -1805,46 +1849,7 @@ class NativeLeanSmtTests(unittest.TestCase):
             expected_kind = (
                 "requestPreVoteResponse" if pre_vote else "requestVoteResponse"
             )
-            for packet in packet_samples("a", "b"):
-                if packet["kind"] == expected_kind:
-                    continue
-                wrong_kind = deepcopy(baseline)
-                prefix = wrong_kind["trace"]["instructions"][
-                    : baseline["stepIndex"] + 1
-                ]
-                selected = next(
-                    item
-                    for item in prefix
-                    if item["kind"] == "queuePoint"
-                    and item["source"] == "a"
-                    and item["destination"] == "b"
-                    and item["index"] == 0
-                )
-                selected["value"] = dict(packet, term=1)
-                wrong_kind["trace"]["instructions"] = prefix
-                wrong_kind["expected"] = "unsat"
-                guard_cases.append(wrong_kind)
-
-            empty = deepcopy(baseline)
-            empty["trace"]["instructions"] = [
-                item
-                for item in empty["trace"]["instructions"][: baseline["stepIndex"] + 1]
-                if not (
-                    item["kind"] == "queuePoint"
-                    and item["source"] == "a"
-                    and item["destination"] == "b"
-                )
-            ]
-            selected_length = next(
-                item
-                for item in empty["trace"]["instructions"]
-                if item["kind"] == "queueLength"
-                and item["source"] == "a"
-                and item["destination"] == "b"
-            )
-            selected_length["value"] = 0
-            empty["expected"] = "unsat"
-            guard_cases.append(empty)
+            guard_cases.extend(self.response_guard_traces(baseline, expected_kind))
 
             for index in range(baseline["stepIndex"] + 1, len(instructions)):
                 changed = deepcopy(baseline)
@@ -1979,6 +1984,8 @@ class NativeLeanSmtTests(unittest.TestCase):
                 and model["source"] == "a"
                 and model["sourceAllocated"]
             )
+            if not success:
+                models.extend(self.response_guard_traces(baseline, "appendEntriesResponse"))
             for index in range(
                 baseline["stepIndex"] + 1, len(baseline["trace"]["instructions"])
             ):
