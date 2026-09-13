@@ -136,7 +136,9 @@ and `native-commit-shared-assignments-parent-build.log`.
 
 Mechanical workers retain separate files.
 Worker `2a020198-af17-47bf-b45b-0b82864a50ad` completed public signature
-integration and is idle. Its four public files are parent-owned.
+integration. Its four public files are parent-owned. It now owns
+`NativeVoteResponseExecution`, extracting the guard, row-write, and pop stages
+and proving structural preservation without duplicating the shared writers.
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns
 `NativeQueuePatternEncoding`, including equivalence to the slower baseline.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns Model correspondence
@@ -144,7 +146,8 @@ in `NativeArrayVoteResponse`. Worker
 `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns
 `NativeVoteResponseTermsEncoding`.
 The parent owns runtime, tests, docs, and all accepted modules.
-The public signature parent build passes in `native-public-signature-parent-build.log`.
+Public signature integration is committed as `ba6aff545`.
+The parent build passes in `native-public-signature-parent-build.log`.
 Public Model, input-error, sequence, and explorer cases pass together with
 private signature, old signature-index, commit, and core-sequence regressions
 in `native-public-signature-tests.log`.
@@ -157,6 +160,13 @@ semantics. `NativeNatSet.natSetMember` masks membership by its live limit;
 limit are unconstrained. A store followed by increasing the limit can expose
 stale tail bits as spurious submitted transactions. The insert encoding must
 preserve old masked membership and add only the requested transaction.
+Raw transaction names are shared unknowns, not distinct natural literals.
+`raw_normalization.py` preserves repeated names and permits different names
+to alias. The native instruction type currently fixes transactions to `Nat`
+and its JSON decoders accept literals. Native client-request integration must
+represent shared existential transaction values in Lean and preserve their
+bindings across assignment extensions. Do not map different raw names to
+distinct ordinal transaction IDs. This interface work remains unresolved.
 
 Commit `36efa30f6` adds a private typed packet-pattern representation, SMT
 terms, strict JSON decoding, and fixtures. All seven existing packet families
@@ -200,8 +210,11 @@ pre-vote replies. It reuses `writeNodeRow` and FIFO pop, with 18 fresh symbols.
 This is the simple baseline, not a specialized single-column writer.
 `NativeArrayVoteResponseFixtureMain` derives 120 cases from actual Model
 enablement and next-state functions, including 76 enabled cases.
-The Python test also mutates every post-state observation in two tally cases.
-These pass in `native-vote-response-model-tests.log`.
+The Python `vote_response_traces` helper also mutates every post-state
+observation in two tally cases, rejects wrong packet kinds and empty queues,
+and exercises bit 16 in 17-identity vote and pre-vote tallies.
+All 304 cases pass, including 78 SAT cases, in
+`native-vote-response-complete-fixtures.log`.
 `NativeReceiveVoteResponseFixtureMain` is the private compiler.
 Whole-action correspondence and public response dispatch remain pending.
 Unlike `updateTerm`, response receive does not require an allocated source.
