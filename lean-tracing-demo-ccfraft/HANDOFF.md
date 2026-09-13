@@ -273,13 +273,17 @@ the shared stages. The increment is `27 + 3 * width`; argument bounds come from
 the first definition, before any fresh symbol could be captured.
 The parent build is `native-client-request-structure-parent-build.log`.
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` is idle.
-`NativeFrameStep` and `NativeFrameTrace` are accepted and parent-owned.
+The accepted `NativeFrameStep` and `NativeFrameTrace` continuation APIs remain:
 `frame_instruction_next_mono` proves that every successful instruction preserves
 the symbol counter's lower bound.
 `compile_frame_sound_continuation` connects a concrete segment to a supplied
 suffix. `compile_frame_complete_continuation` returns a represented final frame,
 the remaining suffix, and agreement below the segment's original counter.
 Existing public soundness/completeness signatures remain empty-suffix wrappers.
+Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns public concrete-client
+wiring in `NativeArrayVote`, `NativeFrameEncode`, `NativeFrameStep`, and
+`NativeFrameTrace`. It preserves those APIs and waits for the accepted
+`NativeClientRequestComplete` before building dependent proof modules.
 This lets a parameterized compiler reuse core segments without duplicating
 every action proof. The parent build and regressions are in
 `native-frame-continuation-parent-build.log` and
@@ -351,6 +355,14 @@ Changed and mixed artifacts, including rehashed inconsistent inputs, fail.
 Legacy reduced-input runs keep their existing response shapes.
 These contracts pass in `native-raw-explorer-tests.log`.
 The native CLI does not yet produce raw manifests.
+The parent has prepared an uncommitted `--raw --bootstrap ...` route and
+`test_native_raw_cli.py`. Mock orchestration checks pass in
+`native-raw-cli-orchestration-tests.log`; these are not semantic evidence.
+The route rejects input/output artifact aliases before touching the source.
+`test_raw_capture_cli_and_explorer` is the prepared public end-to-end gate.
+It currently fails because the public Lean decoder rejects `unknowns`, recorded
+in `native-raw-cli-failing-first.log`. Do not accept or advertise raw CLI support
+until parameterized correspondence and the public compiler switch are complete.
 Retained native inputs now accept optional, validated `unknowns` declarations,
 with exact input binding and existing strict field rejection unchanged.
 Those artifact checks pass in `native-parameter-artifacts-tests.log`.
