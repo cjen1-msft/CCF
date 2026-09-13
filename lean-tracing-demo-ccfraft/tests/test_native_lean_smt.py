@@ -188,6 +188,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeSignCommittableEncoding",
             "Sparse.NativeQueuePattern",
             "Sparse.NativePacketPatternEncoding",
+            "Sparse.NativeVoteResponse",
         ):
             visit(module)
         forbidden = {
@@ -1734,6 +1735,183 @@ class NativeLeanSmtTests(unittest.TestCase):
             "NativeArraySignatureFixtureMain", 50, "public-model-signature"
         )
         self.assertEqual(sum(item["expected"] == "sat" for item in fixtures), 8)
+
+    def vote_response_traces(self):
+        models = self.model_traces("NativeArrayVoteResponseFixtureMain", 120)
+        guard_cases = []
+        self.assertEqual(sum(item["expected"] == "sat" for item in models), 76)
+        for model in models:
+            if not model["destinationAllocated"] or not model["recipientMatches"]:
+                self.assertEqual(model["expected"], "unsat", model["name"])
+            elif not model["sourceAllocated"]:
+                self.assertEqual(model["expected"], "sat", model["name"])
+            elif model["term"] == 2:
+                candidate = "preVoteCandidate" if model["preVote"] else "candidate"
+                self.assertEqual(
+                    model["expected"],
+                    "unsat" if model["role"] == candidate else "sat",
+                    model["name"],
+                )
+
+        for pre_vote in (False, True):
+            candidate = "preVoteCandidate" if pre_vote else "candidate"
+            baseline = next(
+                model
+                for model in models
+                if model["preVote"] == pre_vote
+                and model["role"] == candidate
+                and model["term"] == 1
+                and model["granted"]
+                and model["sourceAllocated"]
+                and model["destinationAllocated"]
+                and model["recipientMatches"]
+                and model["source"] == "a"
+            )
+            instructions = baseline["trace"]["instructions"]
+            expected_kind = (
+                "requestPreVoteResponse" if pre_vote else "requestVoteResponse"
+            )
+            for packet in packet_samples("a", "b"):
+                if packet["kind"] == expected_kind:
+                    continue
+                wrong_kind = deepcopy(baseline)
+                prefix = wrong_kind["trace"]["instructions"][
+                    : baseline["stepIndex"] + 1
+                ]
+                selected = next(
+                    item
+                    for item in prefix
+                    if item["kind"] == "queuePoint"
+                    and item["source"] == "a"
+                    and item["destination"] == "b"
+                    and item["index"] == 0
+                )
+                selected["value"] = dict(packet, term=1)
+                wrong_kind["trace"]["instructions"] = prefix
+                wrong_kind["expected"] = "unsat"
+                guard_cases.append(wrong_kind)
+
+            empty = deepcopy(baseline)
+            empty["trace"]["instructions"] = [
+                item
+                for item in empty["trace"]["instructions"][: baseline["stepIndex"] + 1]
+                if not (
+                    item["kind"] == "queuePoint"
+                    and item["source"] == "a"
+                    and item["destination"] == "b"
+                )
+            ]
+            selected_length = next(
+                item
+                for item in empty["trace"]["instructions"]
+                if item["kind"] == "queueLength"
+                and item["source"] == "a"
+                and item["destination"] == "b"
+            )
+            selected_length["value"] = 0
+            empty["expected"] = "unsat"
+            guard_cases.append(empty)
+
+            for index in range(baseline["stepIndex"] + 1, len(instructions)):
+                changed = deepcopy(baseline)
+                observed = changed["trace"]["instructions"][index]
+                kind, value = observed["kind"], observed["value"]
+                if isinstance(value, bool):
+                    replacement = not value
+                elif isinstance(value, int):
+                    replacement = value + 1
+                elif value is None:
+                    replacement = "a" if kind == "votedFor" else 0
+                elif isinstance(value, list):
+                    replacement = [] if value else ["a"]
+                elif isinstance(value, dict) and "term" in value:
+                    replacement = dict(value, term=value["term"] + 1)
+                elif kind == "votedFor":
+                    replacement = None
+                elif kind == "role":
+                    replacement = "leader" if value != "leader" else "follower"
+                elif kind == "membershipState":
+                    replacement = "active" if value != "active" else "retiredCommitted"
+                elif kind == "preVoteStatus":
+                    replacement = "enabled" if value == "capable" else "capable"
+                else:
+                    self.fail(f"Unhandled vote-response observation: {observed}")
+                observed["value"] = replacement
+                changed["expected"] = "unsat"
+                changed["name"] = f"vote-response-{pre_vote}-changed-{index}-{kind}"
+                models.append(changed)
+        self.assertEqual(len(models), 288)
+        models.extend(guard_cases)
+        names = [f"peer-{index}" for index in range(17)]
+        source, destination = names[-1], names[1]
+        for pre_vote in (False, True):
+            vote_field = "preVotesGranted" if pre_vote else "votesGranted"
+            packet = {
+                "kind": "requestPreVoteResponse" if pre_vote else "requestVoteResponse",
+                "term": 1,
+                "source": source,
+                "destination": destination,
+                "voteGranted": True,
+            }
+            queue_length = {
+                "kind": "queueLength",
+                "source": source,
+                "destination": destination,
+                "value": 1,
+            }
+            models.append(
+                {
+                    "expected": "sat",
+                    "trace": {
+                        "nodes": names,
+                        "bootstrap": [names[0]],
+                        "instructions": [
+                            {
+                                "kind": "allocated",
+                                "node": node,
+                                "value": node in (source, destination),
+                            }
+                            for node in names
+                        ]
+                        + [
+                            {
+                                "kind": "role",
+                                "node": destination,
+                                "value": "preVoteCandidate" if pre_vote else "candidate",
+                            },
+                            {"kind": "currentTerm", "node": destination, "value": 1},
+                            {"kind": vote_field, "node": destination, "value": []},
+                            queue_length,
+                            packet_observation(packet),
+                            {
+                                "kind": (
+                                    "receiveRequestPreVoteResponse"
+                                    if pre_vote
+                                    else "receiveRequestVoteResponse"
+                                ),
+                                "source": source,
+                                "destination": destination,
+                            },
+                            {
+                                "kind": vote_field,
+                                "node": destination,
+                                "value": [source],
+                            },
+                            dict(queue_length, value=0),
+                        ],
+                    },
+                }
+            )
+        self.assertEqual(len(models), 304)
+        return models
+
+    def test_internal_vote_responses(self):
+        self.assert_internal_model_traces(
+            "NativeReceiveVoteResponseFixtureMain",
+            self.vote_response_traces(),
+            78,
+            "vote-responses",
+        )
 
     def test_append_receive_model_fixture_coverage(self):
         fixtures = self.model_traces("NativeArrayAppendReceiveFixtureMain", 1344)
