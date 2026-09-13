@@ -524,11 +524,29 @@ the selected-log prefix, using the accepted per-stage runs, splice assignment,
 and candidate-log representation proof. Its scope ends at `entriesDefined`,
 before the commit-signature witness. It must preserve the original frame
 representation and arbitrary splice tails.
+`NativeAppendReceiveCommitAssignment.lean` is committed as `9ef7ff17d`.
+It extends the supplied assignment from `entriesDefined` through `commitDefined`,
+choosing the bounded-signature witness and defining a natural commit value.
+It preserves the frame, packet, and selected log. Parent inspection, build, and
+import audit pass in `native-append-commit-assignment-parent-build.log` and
+`native-append-commit-assignment-import-tests.log`.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns only new
-`NativeAppendReceiveCommitAssignment.lean`. It extends the supplied assignment
-from `entriesDefined` through `commitDefined`, choosing the bounded-signature
-witness and defining commit. It must preserve the frame, packet, and selected log,
-and derive a natural commit value. Runtime and accepted proof files remain unchanged.
+`NativeAppendReceiveRetirementAssignment.lean`, extending from `commitDefined`
+through the local retirement and current-configuration assertions at `currentAsserted`.
+It reuses the canonical four-witness and single-index assignment helpers.
+Runtime and accepted proof files remain unchanged.
+
+`append_receive_prefix_constraints`, committed as `4a74a4892`, exposes the
+existing backward constraint extraction before frame writes.
+`append_receive_prefix_model_correct`, committed as `ef576f125`, derives the
+output-row, response, completed-set, and Model-frame facts at that same boundary.
+Both preserve the existing whole-action soundness API.
+`NativeAppendReceiveComplete.append_receive_finish_assignment` is committed
+as `31a9018d7`. Given a satisfying pre-write assignment, it assigns the write
+outputs and proves representation of the actual Model next state.
+The build and import audit pass in `native-append-finish-assignment-build.log`
+and `native-append-finish-assignment-import-tests.log`.
+This completes the write phase, not the whole-action completeness proof.
 `NativeAppendReceiveFinalRowTerms.lean` and
 `NativeAppendReceiveFinalRowEncoding.lean` are committed as `158d506bb`.
 They prove candidate stepdown and conditional local retirement refresh,
