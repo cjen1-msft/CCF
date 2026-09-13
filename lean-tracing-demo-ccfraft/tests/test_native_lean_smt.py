@@ -158,6 +158,8 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeArrayAdvanceCommit",
             "Sparse.NativeMajorityTerms",
             "Sparse.NativeActiveConfigurationEncoding",
+            "Sparse.NativeReplicationMajority",
+            "Sparse.NativeArrayCommitTransition",
         ):
             visit(module)
         forbidden = {
@@ -192,6 +194,9 @@ class NativeLeanSmtTests(unittest.TestCase):
 
     def test_model_signature_indices(self):
         self.assert_script_fixtures("NativeSignatureFixtureMain", 483, 85)
+
+    def test_configuration_majority_terms(self):
+        self.assert_script_fixtures("NativeMajorityFixtureMain", 200, 100)
 
     def test_first_match_encoding(self):
         self.assert_script_fixtures("NativeFirstMatchFixtureMain", 530, 66)
