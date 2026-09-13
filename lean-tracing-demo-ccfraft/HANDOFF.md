@@ -13,8 +13,8 @@ The main agent owns semantic lemmas. Build reusable proof components where
 they remove repeated execution decomposition and assignment-extension repair.
 This supersedes the earlier serial-only worker instruction.
 
-Both private core actions now have whole-action Model and exact native-step
-soundness and assignment completeness. Both public integrations are complete.
+Append-request receipt and membership change have whole-action Model and
+exact native-step soundness and assignment completeness. Both are public.
 Continue remaining Model actions and partial observations toward raw reduction.
 Both assurance flags
 remain false.
@@ -68,8 +68,8 @@ scan fixture. Both suites pass in
 Signature followed by public commit advancement passes in
 `native-signature-commit-sequence-tests.log`, including a 17-identity case.
 Attempting commit before the new current-term signature is UNSAT.
-Whole-action signature soundness, assignment completeness, and public dispatch
-are still incomplete. Signature guards reject both old and refreshed
+Whole-action signature soundness and assignment completeness are complete.
+Public dispatch is in progress. Signature guards reject both old and refreshed
 `retiredCommitted` membership and require a nonempty old log. Do not copy the
 commit action's weaker old-membership guard.
 
@@ -108,12 +108,87 @@ Mechanical workers retain separate files.
 Both assignment components take a represented input row, its symbol bounds,
 and a separately bounded natural commit expression. Do not substitute a
 frame snapshot for that supplied row.
-Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` is idle.
+Their parent builds pass in `native-retirement-tail-sound-parent-build.log`,
+`native-retirement-tail-prefix-parent-build.log`, and
+`native-retirement-tail-suffix-parent-build.log`.
+Commit `3ebce072a` adds `NativeRetirementTailComplete` and whole-action
+`NativeSignatureSound`. Generic completeness takes a caller-supplied proof
+of the action's guards. Parent builds pass in
+`native-retirement-tail-complete-parent-build.log` and
+`native-signature-shared-row-build.log`.
+`signature_prefix_row_rep` now shares appended-row reconstruction between
+signature soundness and assignment construction.
+Commit `4c30cb52f` adds exact native signature soundness and structural
+preservation in `NativeSignCommittableEncoding`. Do not overwrite the
+pre-existing signature-index module `NativeSignatureEncoding`.
+
+Commit `1cfc56b4c` adds private signature completeness.
+`NativeSignatureComplete.signature_assignment` composes the signature prefix
+with generic tail completeness. `NativeSignCommittableEncoding.signature_complete`
+then applies independent soundness and transports the represented successor to
+the exact native `Sign` result. Both preserve the supplied assignment below
+the original symbol counter. The parent build passes in
+`native-signature-complete-parent-build.log`.
+Commit `e3dc9a71d` makes commit execution reuse generic tail extraction.
+It exposes `commit_tail_execution`, `commitTailStates`, and the actual tail run
+for the remaining commit proof consumers.
+
+Mechanical workers retain separate files.
+Worker `2a020198-af17-47bf-b45b-0b82864a50ad` owns public signature integration
+in `NativeArrayVote`, `NativeFrameEncode`, `NativeFrameStep`, and `NativeFrameTrace`.
+Workers `af5d19d5-1186-4609-9b0b-4f224d4a4330`,
+`b53cfbd8-539b-4835-b9bf-32d4fb1d4892`, and
+`a04f39b9-8aa6-4733-9c2c-228d7432032e` own shared-tail refactors in
+`NativeCommitSuffixAssignment`, `NativeCommitPrefixAssignment`, and
+`NativeCommitSound`, respectively.
 The parent owns runtime, tests, docs, and all accepted modules.
-Next compose signature soundness and completeness through these components,
-then wire public decoding and whole-trace correspondence. Reuse the shared
-proofs for commit advancement too, removing its duplicate retirement-stage
-bookkeeping once the common APIs are complete.
+Finish public signature decoding and whole-trace correspondence. Remove
+duplicate commit retirement bookkeeping through the shared proofs.
+Public signature Model, input-error, sequence, and explorer tests are prepared
+but not committed. The shared private sequence and commit input-error helpers
+pass; public signature dispatch still fails explicitly as unsupported in
+`native-signature-public-before-integration-tests.log`.
+
+For the later `clientRequest` action, preserve the submitted-set tail
+semantics. `NativeNatSet.natSetMember` masks membership by its live limit;
+`natSetDomain` constrains only the nonnegative limit. Raw cells beyond that
+limit are unconstrained. A store followed by increasing the limit can expose
+stale tail bits as spurious submitted transactions. The insert encoding must
+preserve old masked membership and add only the requested transaction.
+
+Commit `36efa30f6` adds a private typed packet-pattern representation, SMT
+terms, strict JSON decoding, and fixtures. All seven existing packet families
+support optional fields. Only `kind` is required. Omitted fields stay
+unconstrained; explicit `null`, unknown fields, and wrong-family fields fail.
+Append patterns support `entriesLength` without supplying `prevLogTerm` or
+entry contents. `native-packet-pattern-tests.log` records passing semantic
+and malformed-input cases.
+Worker `59af956e-475e-495a-a970-a32160960217` owns only
+`NativePacketPatternEncoding`, proving correspondence against actual Model
+messages through a reusable optional-field lemma.
+Commit `2b76987e9` adds `NativeQueuePattern`,
+`NativeQueuePatternFixtureMain`, and `test_queue_patterns`. These are parent-owned.
+Their 126 cases cover FIFO bounds, large heads and lengths, and normalization
+of malformed packets and mismatched sources.
+The first implementation normalized the complete packet before matching each
+field. Case 67 remained unsolved for at least 56 seconds. Applying the pattern
+inside one packet-domain conditional reduced that script from 52,707 to 14,163
+bytes and solved it in 10.337 ms. All 126 cases then passed in 6.888 seconds.
+The invalid branch still matches the existing `defaultQueuePacket`; it does
+not reject or repair the represented Model state.
+Artifacts are `native-queue-pattern-baseline-67.smt2`,
+`native-queue-pattern-baseline/`, `native-queue-pattern-conditional/`, and
+`native-queue-pattern-comparison.json` in the session files directory.
+Queue-pattern correspondence and baseline equivalence remain unproved.
+Neither packet patterns nor queue patterns are public yet.
+The intended public observation is `queuePattern` with the same
+`source`, `destination`, `index`, and `value` envelope as `queuePoint`.
+Existing complete-packet `queuePoint` decoding must remain strict.
+The reducer's `firstMessageFrom` will use index zero, without inventing
+unobserved packet fields.
+Public pattern coverage and strict-input cases are prepared but unstaged,
+along with `Traces/native_partial_packet_conflict.json` and its explorer case.
+The two contradictory partial observations should map to owners `{0, 1}`.
 
 Factory tools are unavailable in this session. `NativeDefinitions` and
 `NativeDefinitionsEncoding` now provide reusable heterogeneous definition
