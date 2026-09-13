@@ -4,6 +4,7 @@
 import Sparse.NativeCommitExecution
 import Sparse.NativeCommitIndexEncoding
 import Sparse.NativeCommitTermsEncoding
+import Sparse.NativeRetirementTailSound
 
 set_option autoImplicit false
 
@@ -28,11 +29,20 @@ theorem advance_commit_model_sound {width : PNat} [Bootstrap (Fin width)]
   obtain ⟨states, execution⟩ := advance_commit_success source before after run
   let terms := commitExecutionTerms before source
   let old := NativeArrayCheckQuorum.get frame.nodes source
-  have writerHolds :=
-    retirement_writes_prior_holds source terms.values terms.completed
-      states.suffixStates.writerBefore after execution.runs.writeRun assignment holds
-  have constraints :=
-    commit_prefix_constraints source before after states execution assignment writerHolds
+  have bestAssertedHolds :=
+    retirement_tail_prior_holds before.bootstrap source terms.old terms.best
+      (commitGuards before.toColumns source terms.best)
+      states.prefixStates.bestAsserted after execution.runs.tailRun assignment holds
+  have bestFacts :=
+    assertion_holds _ states.prefixStates.bestFresh states.prefixStates.bestAsserted
+      execution.runs.bestAssertionRun assignment bestAssertedHolds
+  have currentAssertedHolds :=
+    fresh_prior_holds states.prefixStates.currentAsserted states.prefixStates.bestFresh
+      (before.next + 1) execution.runs.bestRun assignment bestFacts.1
+  have currentFacts :=
+    assertion_holds _ states.prefixStates.currentFresh
+      states.prefixStates.currentAsserted execution.runs.currentAssertionRun
+      assignment currentAssertedHolds
   have oldRep :=
     node_row_snapshot_rep assignment before.toColumns frame.nodes columnsRep.nodes source
   have sameRow : state.nodes source = old.toModel :=
@@ -46,7 +56,7 @@ theorem advance_commit_model_sound {width : PNat} [Bootstrap (Fin width)]
       (by
         intro position live
         simpa [terms, old] using oldRep.logEntries position live)
-      (by simpa [terms] using constraints.current)
+      (by simpa [terms] using currentFacts.2)
   have currentIndex :
       NativeArrayCheckQuorum.CurrentIndex old.log old.commit currentNat :=
     (NativeArrayCheckQuorum.current_index_correct old.log old.commit currentNat).mpr
@@ -66,56 +76,35 @@ theorem advance_commit_model_sound {width : PNat} [Bootstrap (Fin width)]
       (by simpa [terms, old] using oldRep.commit)
       (by simpa [terms, old] using oldRep.currentTerm)
       sameCurrent sameRow currentIndex
-      (by simpa [terms] using constraints.best)
-  obtain ⟨output, outputRep, outputModelOld⟩ :=
-    commit_refresh_constraints_output_sound assignment before.bootstrap terms.old
-      source terms.best terms.first terms.retirement terms.signature terms.retired
-      old bestNat
+      (by simpa [terms] using bestFacts.2)
+  have tailColumnsRep :
+      FrameColumnsRep assignment states.prefixStates.bestAsserted.toColumns frame := by
+    rw [execution.bestAssertedColumns]
+    exact columnsRep
+  obtain ⟨output, outputRep, outputModelOld, guardHolds, writtenColumns⟩ :=
+    retirement_tail_sound before.bootstrap source terms.old terms.best
+      (commitGuards before.toColumns source terms.best)
+      states.prefixStates.bestAsserted after execution.runs.tailRun assignment holds
+      frame tailColumnsRep old
       (by simpa [terms, old] using oldRep)
-      sameBootstrap sameBest
-      (by simpa [terms] using constraints.refresh)
+      bestNat sameBest sameBootstrap
   have outputModel :
       output.toModel =
         refreshRetirementState source
           { (state.nodes source) with commitIndex := bestNat } := by
     rw [sameRow]
     exact outputModelOld
+  let tailTerms :=
+    retirementTailTerms states.prefixStates.bestAsserted terms.old terms.best
   have nativeEnabled : NativeArrayAdvanceCommit.enabled frame source bestNat output :=
     (commit_guards_correct assignment before.toColumns frame columnsRep source
-      terms.best terms.values.membershipState bestNat output sameBest
-      outputRep.membershipState).mp (by simpa [terms] using constraints.guards)
+      terms.best tailTerms.values.membershipState bestNat output sameBest
+      (by simpa [tailTerms] using outputRep.membershipState)).mp
+      (by simpa [tailTerms] using guardHolds)
   have enabled : CCFRaft.Enabled state (.advanceCommitIndex source) :=
     (NativeArrayAdvanceCommit.enabled_correct frame state modelRep source bestNat
       output bestModel outputModel).mp nativeEnabled
   let completed := retirementCompletedNodes output.log.decode output.commit
-  have completedValue :
-      terms.completed.eval assignment Locals.empty = encodeBits completed := by
-    have correct :=
-      retirement_completed_constraints_bits_correct before.bootstrap (.boolean true)
-        terms.old.logLength terms.old.logEntries terms.best terms.committedCurrent
-        states.suffixStates.committedCurrentAsserted
-        states.suffixStates.writerBefore (before.next + 7)
-        execution.runs.completedRun assignment writerHolds output.log output.commit
-        (by simpa [terms] using outputRep.logLength)
-        (by simpa [terms] using outputRep.commit)
-        sameBootstrap
-        (by
-          intro position live
-          simpa [terms] using outputRep.logEntries position live)
-        rfl
-        (by simpa [terms] using constraints.committedCurrent)
-    simpa [terms, completed] using correct
-  have completedDecoded :
-      decodeBits (terms.completed.eval assignment Locals.empty) = completed := by
-    rw [completedValue, decode_encode_bits]
-  have writerRep : FrameColumnsRep assignment
-      states.suffixStates.writerBefore.toColumns frame := by
-    rw [execution.writerColumns]
-    exact columnsRep
-  have writtenColumns :=
-    retirement_writes_frame_sound source terms.values terms.completed
-      states.suffixStates.writerBefore after execution.runs.writeRun assignment holds
-      frame output writerRep outputRep
   have outputModelHighest :
       output.toModel =
         refreshRetirementState source
@@ -130,7 +119,7 @@ theorem advance_commit_model_sound {width : PNat} [Bootstrap (Fin width)]
       output completed outputModelHighest rfl nativeEnabled.2.2.2
   refine ⟨enabled, NativeArrayAdvanceCommit.advanceCommit frame source output completed, ?_, writtenModel⟩
   simpa [retirementWriteFrame, NativeArrayAdvanceCommit.advanceCommit,
-    completedDecoded] using writtenColumns
+    completed] using writtenColumns
 
 end CCFRaft.NativeEncode
 
