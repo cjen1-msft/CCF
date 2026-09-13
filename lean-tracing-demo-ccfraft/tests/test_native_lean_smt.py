@@ -186,6 +186,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeSignatureSound",
             "Sparse.NativeSignatureComplete",
             "Sparse.NativeSignCommittableEncoding",
+            "Sparse.NativeQueuePattern",
         ):
             visit(module)
         forbidden = {
@@ -3517,6 +3518,91 @@ class NativeLeanSmtTests(unittest.TestCase):
             with self.subTest(name=fixture["name"]):
                 self.assertEqual(set(fixture), {"name", "error"})
                 self.assertTrue(fixture["error"])
+
+    def test_queue_patterns(self):
+        cases = []
+        expected = []
+
+        def add(packet, pattern, verdict, **queue):
+            cases.append(
+                dict(
+                    {
+                        "name": f"queue-pattern-{len(cases)}",
+                        "packet": packet,
+                        "pattern": pattern,
+                        "source": packet["source"],
+                        "head": 0,
+                        "length": 1,
+                        "index": 0,
+                        "invalidTerm": False,
+                    },
+                    **queue,
+                )
+            )
+            expected.append(verdict)
+
+        for packet in packet_samples("a", "b"):
+            for head in (0, 10**30):
+                for length, index in (
+                    (0, 0),
+                    (1, 0),
+                    (1, 1),
+                    (3, 2),
+                    (10**30, 10**30 - 1),
+                    (10**30, 10**30),
+                ):
+                    add(
+                        packet,
+                        packet,
+                        "sat" if index < length else "unsat",
+                        head=head,
+                        length=length,
+                        index=index,
+                    )
+            for source, invalid in (("a", True), ("c", False)):
+                queue = {"source": source, "invalidTerm": invalid, "head": 10**30}
+                add(packet, packet, "unsat", **queue)
+                add(
+                    packet,
+                    {
+                        "kind": "proposeVoteRequest",
+                        "term": 0,
+                        "source": source,
+                        "destination": source,
+                    },
+                    "sat",
+                    **queue,
+                )
+            add(packet, {"kind": packet["kind"]}, "sat")
+            other = (
+                "proposeVoteRequest"
+                if packet["kind"] != "proposeVoteRequest"
+                else "appendEntriesRequest"
+            )
+            add(packet, {"kind": other}, "unsat")
+
+        result = subprocess.run(
+            [
+                "lake",
+                "env",
+                "lean",
+                "--run",
+                "Sparse/NativeQueuePatternFixtureMain.lean",
+            ],
+            cwd=ROOT,
+            input=json.dumps(cases),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        fixtures = json.loads(result.stdout)
+        self.assertEqual(
+            [fixture["name"] for fixture in fixtures],
+            [case["name"] for case in cases],
+        )
+        self.assertEqual([fixture["expected"] for fixture in fixtures], expected)
+        self.solve(fixtures)
 
     def test_queue_packet_fields_and_ranges(self):
         packets = packet_samples("a", "b")
