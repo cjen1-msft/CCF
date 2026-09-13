@@ -145,12 +145,13 @@ and now owns `NativeVoteResponseComplete`. The parent inspected and built
 the queue proof, then committed it as `b396e0955`.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` completed Model correspondence
 in `NativeArrayVoteResponse` and the exact native `receive_eq_write_pop`
-bridge, accepted in `0547ae584`. It now owns `NativeArrayAppendResponse`,
-adding Model proofs to the parent's four compiled semantic definitions. Worker
+bridge, accepted in `0547ae584`. Its append-response Model proofs are
+accepted in `816ca46fd`. It now owns `NativeAppendResponseTermsEncoding`.
+Worker
 `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns
-only a proof-body refactor in `NativeVoteResponseTermsEncoding`, reusing
-the snapshot row representation instead of reproving unchanged fields.
-Its exported statements are fixed.
+`NativeAppendResponseExecution`. Its vote-response row refactor is accepted
+in `501abf1fc`, reusing the snapshot representation instead of reproving
+unchanged fields. All accepted response statements are fixed.
 The parent owns runtime, tests, docs, and all accepted modules.
 Public signature integration is committed as `ba6aff545`.
 The parent build passes in `native-public-signature-parent-build.log`.
@@ -257,9 +258,10 @@ when its term is newer. With an allocated source, a newer reply to the wrong
 role is ignored, while a newer reply to the expected candidate role is
 disabled. Membership and pre-vote status are not response guards.
 
-The next append-response slice starts from `NativeArrayAppendResponse`.
-Its definitions build in `native-append-response-definitions-build.log`;
-Model correspondence is pending. Every NACK is handled, regardless of role
+The append-response slice starts from `NativeArrayAppendResponse`.
+Its Model correspondence is accepted in `816ca46fd`; the parent build passes
+in `native-append-response-model-parent-build.log`.
+Every NACK is handled, regardless of role
 or term. Its sent cursor becomes
 `max (min (findHighestPossibleMatch log lastLogIndex term) oldSent) oldMatch`.
 Do not assume ordered terms, bounded cursors, or `oldMatch <= oldSent`.
@@ -269,6 +271,18 @@ and ACKs to other roles are ignored. Newer ACKs to leaders are disabled.
 An unallocated source bypasses the handler and only consumes the packet.
 Reuse `nackMatchTerm` in `NativeLogSummaryTerms.lean` and its existing
 correspondence for the SMT scan rather than adding another maximum implementation.
+Commit `d056140bb` adds the private `NativeAppendResponse` runtime, its Model
+fixture generator, and `NativeReceiveAppendResponseFixtureMain`.
+The runtime uses one unconditional NACK-match witness, the 16-binding row
+writer, and the two-binding FIFO pop. Its increment is 19.
+All 226 Model cases pass, including 194 SAT cases, in
+`native-append-response-baseline-tests.log`. They cover empty and unsorted logs,
+zero and large indices and terms, inconsistent cursors, source absence,
+wrong recipients, and self-responses.
+Commit `af3f79790` extracts `mutate_frame_observation` for both response families
+and mutates every post-state observation in an ACK and a NACK case.
+Both response suites pass in `native-response-shared-mutations-tests.log`.
+Whole-action SMT correspondence and public append-response dispatch are pending.
 
 Raw reduction also emits per-identity `joined` observations. Their existing
 Model meaning is membership in `state.hasJoined`, not current allocation.
