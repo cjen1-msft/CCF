@@ -469,6 +469,10 @@ representation of the next state, given the original frame and bootstrap represe
 satisfying input assignment for an enabled, selected request and realizes the Model
 next state. Exact native-step correspondence and public trace integration remain
 unfinished, so public `receiveAppendEntries` remains unsupported.
+`NativeNodeRowModelEncoding` shares row and whole-frame representation transport
+across equal Model states. Allocation remains explicit. Inactive log tails and
+physical queue heads need not agree because the representation observes live logs
+and decoded FIFOs.
 `NativeLogSummaryEncoding` proves bounded signatures, committed configuration
 indices and members, and NACK matches for explicit candidate logs.
 All three scans reuse `NativeMaxMatchEncoding`, with zero for no match.
@@ -499,7 +503,9 @@ transition scripts, including 147 SAT cases. It appends the configuration,
 refreshes retirement, allocates newly added identities, and sets their sent
 cursors to the old log length. `NativeMembershipTermsEncoding` proves the
 guards, and `NativeMembershipRowEncoding` proves the source-row terms.
-Whole-action correspondence remains unfinished, so
+`NativeMembershipSound.membership_change_model_sound` proves Model enablement
+and next-state representation from the actual run and satisfying final assertions.
+Assignment completeness and public trace integration remain unfinished, so
 public `changeConfiguration` remains unsupported.
 `NativeAllocation` reuses row snapshots to reset hidden fields before exposing
 missing nodes. Existing rows survive. The baseline uses 17 definitions per

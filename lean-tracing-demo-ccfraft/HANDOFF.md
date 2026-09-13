@@ -547,9 +547,10 @@ It extends through the enabled or disabled completed-retirement loop and the NAC
 witness, preserving the supplied assignment and original frame representation.
 The parent inspected it and the current-prefix assembly, then built both in
 `native-append-current-tail-parent-build.log`. The import audit passes.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` is investigating public append
-integration read-only, with no owned files. The design must preserve the native
-FIFO head update rather than allowing arbitrary Model-equivalent queue layouts.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns
+`NativeArrayAppendNetwork.lean`. It adds an exact `ReceiveAppend` relation over
+the existing stepdown and consuming operations, with Model correspondence and
+existence from an enabled selected request. No encoder imports belong in that file.
 
 `append_receive_prefix_constraints`, committed as `4a74a4892`, exposes the
 existing backward constraint extraction before frame writes.
@@ -571,8 +572,10 @@ a native output representing the enabled Model next state.
 Parent inspection, build, and import audit pass in
 `native-append-whole-action-complete-parent-build.log` and
 `native-append-whole-action-complete-import-tests.log`.
-This proves existence of a native output, not correspondence to an arbitrary
-chosen native trace frame. Public integration must preserve physical FIFO updates.
+This proves existence of a native output, not yet correspondence to the native
+frame chosen by a trace step. Use the shared Model-equivalence transport below
+to close that gap. The native relation retains the existing FIFO operations,
+but `FrameColumnsRep` observes decoded queues, not physical head equality.
 The Complete module is parent-owned.
 `NativeAppendReceiveFinalRowTerms.lean` and
 `NativeAppendReceiveFinalRowEncoding.lean` are committed as `158d506bb`.
@@ -610,6 +613,14 @@ guard and row proofs, passes in `native-membership-frame-parent-build.log`.
 `NodeRowTerms.Rep.of_model_eq` transports row representations across equal
 Model states without equating inactive log tails. The parent inspected and
 rebuilt it in `native-node-row-model-parent-build.log`; the import audit passes.
+Commit `ccc8c441b` adds `NodeColumnsRep.of_model_eq` and
+`FrameColumnsRep.of_model_rep`. Allocation must agree separately from defaulted
+local-row values. Frames representing the same Model state can share a columns
+representation despite different dead log tails or physical queue heads.
+`FrameColumnsRep.valid` derives source-partition validity from represented queues,
+so `NativeArrayVote.realize_rep frame rep.valid` supplies a Model input when needed.
+The parent builds pass in `native-node-model-transport-build.log` and
+`native-frame-model-transport-build.log`; the import audit passes.
 `NativeMembershipExecution.lean` is committed as `5a9ceaebe`.
 It proves actual run decomposition, prior-Holds, and reference preservation.
 The parent inspected the full module and replaced its local preservation helpers
@@ -619,9 +630,18 @@ Offsets are current/previous/added/entries/length at `+0` through `+4`,
 local witnesses at `+5` through `+8`, committed current at `+9`,
 completed bits at `+10`, and the writer at `+11 + 3 * width`.
 The final counter is `before.next + 29 + 20 * width`.
+`NativeMembershipExecutionConstraints.lean` is committed as `b3e603131`.
+It extracts prefix constraints before frame writes and exposes an actual-run
+wrapper using final Holds.
+`NativeMembershipSound.lean` is committed as `c6e79e735`.
+It derives the previous configuration, added nodes, refreshed row, completed set,
+and Model enablement from those constraints. `membership_change_model_sound`
+proves whole-action Model soundness from the actual run and final Holds.
+The parent build passes in `native-membership-whole-action-sound-build.log`.
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only new
-`NativeMembershipExecutionConstraints.lean`. It extracts prefix constraints before
-frame writes and exposes a short actual-run/final-Holds wrapper.
+`NativeMembershipRetirementAssignment.lean`. It extends the supplied assignment
+from `initial.lengthDefined` through `suffix.guardsAsserted`, using canonical
+retirement witnesses and Model-enabled membership guards.
 Keep `NativeMembershipChange.lean` unchanged.
 Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns only new
 `NativeMembershipLogAssignment.lean`, constructing an assignment through
