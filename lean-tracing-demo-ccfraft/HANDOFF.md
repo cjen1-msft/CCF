@@ -482,10 +482,20 @@ proof to the Model receive step using the conditional stepdown/handler/refresh
 facts, with both soundness and specific-assignment extension.
 The parent build and import audit pass in `native-append-frame-parent-build.log`
 and `native-append-frame-import-tests.log`.
-Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns only new
-`NativeAppendReceiveExecution.lean`. It proves actual receive execution shape,
-constraint retrieval, and reference preservation. Keep `NativeAppendReceive.lean`
-unchanged until this worker completes.
+Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` returned only compiling
+declarations in `NativeAppendReceiveExecution.lean`, not an actual-run theorem.
+That checkpoint is uncommitted and not accepted as a proof.
+The worker is idle and no longer owns the file.
+The parent reproduced the elaboration problem with a first-guard-only theorem:
+`simp only [receiveAppend, get_bind_run] at run` did not finish after 240 seconds.
+The parent stopped that probe. Replacing that line with
+`rw [receiveAppend, get_bind_run] at run` compiled at the default budgets.
+The reproducer is `files/AppendExecutionProbe.lean`, with the passing log
+`native-append-first-bind-rewrite-probe.log`. Use shallow rewrites to expose the
+outer action and `get`, rather than simplifying the entire generated body.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns only
+`NativeAppendReceiveExecution.lean`, constructing the actual-run theorem with
+this approach. Keep `NativeAppendReceive.lean` unchanged.
 `NativeAppendReceiveFinalRowTerms.lean` and
 `NativeAppendReceiveFinalRowEncoding.lean` are committed as `158d506bb`.
 They prove candidate stepdown and conditional local retirement refresh,
@@ -586,8 +596,7 @@ refreshed-membership expressions, using the established Model output row
 instead of repeating the retirement witnesses.
 The parent inspected and rebuilt the proof and guard fixture in
 `native-membership-output-guard-parent-build.log`; the import audit passes.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` is idle with no owned files.
-The next dependency is the actual execution decomposition from A and AF,
+The next dependency is the actual execution decomposition from A and B,
 followed by whole-action soundness and specific-assignment completeness.
 Existing API statements and runtime files remain unchanged.
 
