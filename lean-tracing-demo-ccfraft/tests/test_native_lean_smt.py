@@ -2076,6 +2076,119 @@ class NativeLeanSmtTests(unittest.TestCase):
             "append-responses",
         )
 
+    def become_leader_traces(self):
+        models = self.model_traces("NativeArrayBecomeLeaderFixtureMain", 202)
+        named = {model["name"]: model for model in models}
+        for name in (
+            "empty-commit-7-votes-3",
+            "allocation-0",
+            "discard-configuration-commit-0-votes-5",
+            "discard-terminal-commit-7-votes-3",
+            "large-naturals",
+        ):
+            self.assertEqual(named[name]["expected"], "sat", name)
+        for name in (
+            "discard-configuration-commit-0-votes-3",
+            "terminal-commit-7-votes-5",
+            "membership-4",
+        ):
+            self.assertEqual(named[name]["expected"], "unsat", name)
+        for model in models:
+            if model["expected"] != "sat":
+                continue
+            before = model["trace"]["instructions"][: model["stepIndex"]]
+            self.assertEqual(model["logLengthAfter"], model["latestSignature"])
+            for kind, observed in (
+                ("commit", "commitAfter"),
+                ("newFollower", "newFollowerAfter"),
+            ):
+                expected = next(
+                    item["value"]
+                    for item in before
+                    if item["kind"] == kind and item.get("node") == "a"
+                )
+                self.assertEqual(model[observed], expected, model["name"])
+        for name in (
+            "truncate-commit-7-votes-3",
+            "retirement-completed-commit-7-votes-5",
+        ):
+            baseline = named[name]
+            self.assertEqual(baseline["expected"], "sat", name)
+            for index in range(
+                baseline["stepIndex"] + 1, len(baseline["trace"]["instructions"])
+            ):
+                changed = deepcopy(baseline)
+                changed["trace"]["instructions"][index] = self.mutate_frame_observation(
+                    changed["trace"]["instructions"][index], changed["trace"]["nodes"]
+                )
+                changed["expected"] = "unsat"
+                changed["name"] = f"{name}-changed-{index}"
+                models.append(changed)
+        names = [f"peer-{index}" for index in range(17)]
+        source = names[-1]
+        instructions = [
+            {"kind": "allocated", "node": node, "value": node == source}
+            for node in names
+        ] + [
+            {"kind": "role", "node": source, "value": "candidate"},
+            {"kind": "membershipState", "node": source, "value": "active"},
+            {"kind": "votesGranted", "node": source, "value": [names[0]]},
+            {"kind": "commit", "node": source, "value": 10**30},
+            {"kind": "newFollower", "node": source, "value": True},
+            {"kind": "logLength", "node": source, "value": 3},
+        ]
+        instructions.extend(
+            {
+                "kind": "entry",
+                "node": source,
+                "index": index,
+                "value": {"term": term, "content": content},
+            }
+            for index, (term, content) in enumerate(
+                ((9, {"transaction": 99}), (0, "signature"), (10, {"transaction": 99}))
+            )
+        )
+        instructions.extend(
+            [
+                {"kind": "becomeLeader", "node": source},
+                {"kind": "role", "node": source, "value": "leader"},
+                {"kind": "commit", "node": source, "value": 10**30},
+                {"kind": "newFollower", "node": source, "value": True},
+                {"kind": "logLength", "node": source, "value": 2},
+            ]
+        )
+        instructions.extend(
+            {"kind": kind, "node": source, "peer": peer, "value": value}
+            for peer in names
+            for kind, value in (("sentIndex", 2), ("matchIndex", 0))
+        )
+        wide = {
+            "name": "become-leader-wide",
+            "expected": "sat",
+            "trace": {"nodes": names, "bootstrap": [names[0]], "instructions": instructions},
+        }
+        wrong = deepcopy(wide)
+        wrong["expected"] = "unsat"
+        wrong["name"] += "-wrong-cursor"
+        wrong["trace"]["instructions"][-2]["value"] += 1
+        tail = deepcopy(wide)
+        tail["expected"] = "unsat"
+        tail["name"] += "-truncated-entry"
+        tail["trace"]["instructions"].append(
+            {"kind": "entry", "node": source, "index": 2,
+             "value": {"term": 10, "content": {"transaction": 99}}}
+        )
+        models.extend([wide, wrong, tail])
+        return models
+
+    def test_internal_become_leader(self):
+        self.assert_internal_model_traces(
+            "NativeBecomeLeaderFixtureMain",
+            self.become_leader_traces(),
+            58,
+            "become-leader",
+        )
+
     def vote_request_response_traces(self):
         document = json.loads(
             (ROOT / "Traces/native_vote_receive_fifo_conflict.json").read_text()
