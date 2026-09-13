@@ -197,6 +197,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeVoteResponseComplete",
             "Sparse.NativeArrayAppendResponse",
             "Sparse.NativeAppendResponse",
+            "Sparse.NativeAppendResponseExecution",
         ):
             visit(module)
         forbidden = {
