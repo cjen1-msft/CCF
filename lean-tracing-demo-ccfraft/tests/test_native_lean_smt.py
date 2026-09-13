@@ -187,6 +187,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeSignatureComplete",
             "Sparse.NativeSignCommittableEncoding",
             "Sparse.NativeQueuePattern",
+            "Sparse.NativePacketPatternEncoding",
         ):
             visit(module)
         forbidden = {

@@ -20,7 +20,7 @@ def optionalPatternTerm {α : Type} {context : List Ty} {sort : Ty}
 def packetHeaderPatternTerm {context : List Ty} {width : PNat}
     (expected : NativePacketPattern.Header (Fin width))
     (actual : Term context packetHeaderTy) : Term context .bool :=
-  all [optionalPatternTerm (fun n => .integer n) expected.term (.fst actual),
+  all [optionalPatternTerm (fun n : Nat => .integer n) expected.term (.fst actual),
     optionalPatternTerm (fun node => .integer node.val) expected.source (.fst (.snd actual)),
     optionalPatternTerm (fun node => .integer node.val) expected.destination (.snd (.snd actual))]
 
@@ -31,24 +31,24 @@ def packetPayloadPatternTerm {context : List Ty} {width : PNat}
   | .appendEntriesRequest previous previousTerm commit length entries =>
     .cases actual
       (all [
-        optionalPatternTerm (fun n => .integer n) previous (.fst (.bound .here)),
-        optionalPatternTerm (fun n => .integer n) previousTerm (.fst (.snd (.bound .here))),
-        optionalPatternTerm (fun n => .integer n) commit (.fst (.snd (.snd (.bound .here)))),
-        optionalPatternTerm (fun n => .integer n) length (.fst (.snd (.snd (.snd (.bound .here))))),
+        optionalPatternTerm (fun n : Nat => .integer n) previous (.fst (.bound .here)),
+        optionalPatternTerm (fun n : Nat => .integer n) previousTerm (.fst (.snd (.bound .here))),
+        optionalPatternTerm (fun n : Nat => .integer n) commit (.fst (.snd (.snd (.bound .here)))),
+        optionalPatternTerm (fun n : Nat => .integer n) length (.fst (.snd (.snd (.snd (.bound .here))))),
         optionalPatternTerm logTerm entries (.snd (.snd (.snd (.bound .here))))])
       (.boolean false)
   | .appendEntriesResponse success lastIndex =>
     .cases actual (.boolean false)
       (.cases (.bound .here)
         (.and (optionalPatternTerm Term.boolean success (.fst (.bound .here)))
-          (optionalPatternTerm (fun n => .integer n) lastIndex (.snd (.bound .here))))
+          (optionalPatternTerm (fun n : Nat => .integer n) lastIndex (.snd (.bound .here))))
         (.boolean false))
   | .requestVoteRequest lastTerm lastIndex =>
     .cases actual (.boolean false)
       (.cases (.bound .here) (.boolean false)
         (.cases (.bound .here)
-          (.and (optionalPatternTerm (fun n => .integer n) lastTerm (.fst (.bound .here)))
-            (optionalPatternTerm (fun n => .integer n) lastIndex (.snd (.bound .here))))
+          (.and (optionalPatternTerm (fun n : Nat => .integer n) lastTerm (.fst (.bound .here)))
+            (optionalPatternTerm (fun n : Nat => .integer n) lastIndex (.snd (.bound .here))))
           (.boolean false)))
   | .requestVoteResponse granted =>
     .cases actual (.boolean false)
@@ -63,8 +63,8 @@ def packetPayloadPatternTerm {context : List Ty} {width : PNat}
         (.cases (.bound .here) (.boolean false)
           (.cases (.bound .here) (.boolean false)
             (.cases (.bound .here)
-              (.and (optionalPatternTerm (fun n => .integer n) lastTerm (.fst (.bound .here)))
-                (optionalPatternTerm (fun n => .integer n) lastIndex (.snd (.bound .here))))
+              (.and (optionalPatternTerm (fun n : Nat => .integer n) lastTerm (.fst (.bound .here)))
+                (optionalPatternTerm (fun n : Nat => .integer n) lastIndex (.snd (.bound .here))))
               (.boolean false)))))
   | .requestPreVoteResponse granted =>
     .cases actual (.boolean false)
