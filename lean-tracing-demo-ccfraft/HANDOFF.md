@@ -499,10 +499,10 @@ It derives all per-stage runs from the actual `receiveAppend` run.
 Writer entry preserves the original columns and bootstrap, with counter
 `before.next + 14 + 3 * width`. The final counter is `before.next + 38 + 3 * width`.
 The parent build log is `native-append-execution-parent-build.log`.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns only new
-`NativeAppendReceiveExecutionConstraints.lean`, deriving prefix constraints,
-prior-Holds, and reference preservation from that accepted execution record.
-Keep `NativeAppendReceive.lean` unchanged.
+`NativeAppendReceiveExecutionConstraints.lean` is committed as `c914eab56`.
+It derives prefix constraints, prior-Holds, and reference preservation from the
+actual run and final assertions. The parent inspected the module, rebuilt it in
+`native-append-execution-constraints-parent-build.log`, and ran the import audit.
 The parent composed `append_receive_execution_model_sound` in
 `NativeAppendReceiveSound.lean`, committed as `ed9226cf1`.
 Given the execution record and emitted prefix constraints, it derives the selected
@@ -510,13 +510,25 @@ request, Model enablement, and final-frame correspondence.
 Completed-retirement bits remain arbitrary during stepdown.
 The build and import audit pass in `native-append-execution-model-sound-build.log`
 and `native-append-execution-model-sound-import-tests.log`.
-The whole-action wrapper still needs B's constraint-retrieval theorem.
+`receive_append_model_sound` is committed as `34e9ed2f8`.
+It derives the selected request, Model enablement, and final Model-next
+representation from the actual encoder run and final assertions, given the
+original frame, Model, and bootstrap representations.
+The build and import audit pass in `native-append-whole-action-sound-build.log`
+and `native-append-whole-action-sound-import-tests.log`.
+Append receive remains private until specific-assignment completeness and trace
+integration are proved.
 Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns only new
 `NativeAppendReceiveLogAssignment.lean`. It extends a supplied assignment through
 the selected-log prefix, using the accepted per-stage runs, splice assignment,
 and candidate-log representation proof. Its scope ends at `entriesDefined`,
 before the commit-signature witness. It must preserve the original frame
 representation and arbitrary splice tails.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns only new
+`NativeAppendReceiveCommitAssignment.lean`. It extends the supplied assignment
+from `entriesDefined` through `commitDefined`, choosing the bounded-signature
+witness and defining commit. It must preserve the frame, packet, and selected log,
+and derive a natural commit value. Runtime and accepted proof files remain unchanged.
 `NativeAppendReceiveFinalRowTerms.lean` and
 `NativeAppendReceiveFinalRowEncoding.lean` are committed as `158d506bb`.
 They prove candidate stepdown and conditional local retirement refresh,
@@ -617,8 +629,8 @@ refreshed-membership expressions, using the established Model output row
 instead of repeating the retirement witnesses.
 The parent inspected and rebuilt the proof and guard fixture in
 `native-membership-output-guard-parent-build.log`; the import audit passes.
-The next dependencies are membership execution from A and append constraint retrieval
-from B, followed by whole-action soundness and specific-assignment completeness.
+The next dependencies are membership execution from A and append prefix
+completeness from AF and B. Append whole-action soundness is complete.
 Existing API statements and runtime files remain unchanged.
 
 `NativeArrayCoreActionsFixtureMain` and `NativeCoreActionsFixtureMain` are
