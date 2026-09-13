@@ -2366,6 +2366,32 @@ class NativeLeanSmtTests(unittest.TestCase):
                 [group["start"] for group in groups[1:]],
             )
 
+    def test_native_reduction_decodes_saved_captures(self):
+        from native_reduction import native_document
+        from raw_normalization import normalize
+        from reduction import build_certificate
+        from Shared.trace_io import read_ndjson
+
+        paths = sorted((ROOT / "Traces/Captured").glob("*.ndjson"))
+        paths += sorted((ROOT / "Traces/Mutated").glob("*.ndjson"))
+        self.assertEqual(len(paths), 6)
+        documents = []
+        for path in paths:
+            certificate = build_certificate(read_ndjson(path))
+            documents.append(native_document(
+                normalize(certificate, native_ids=True), [certificate["steps"][0]["node"]]
+            ))
+        result = subprocess.run(
+            ["lake", "env", "lean", "--run",
+             "Sparse/NativeParameterizedFrameFixtureMain.lean", "--decode"],
+            cwd=ROOT, input=json.dumps(documents), capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        errors = json.loads(result.stdout)
+        self.assertEqual(len(errors), len(paths))
+        for path, error in zip(paths, errors, strict=True):
+            self.assertIsNone(error, f"{path.name}: {error}")
+
     def become_leader_traces(self):
         models = self.model_traces("NativeArrayBecomeLeaderFixtureMain", 202)
         named = {model["name"]: model for model in models}

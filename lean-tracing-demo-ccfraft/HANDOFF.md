@@ -308,6 +308,23 @@ Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns
 `NativeClientRequestAssignment`, composing the shared append prefix,
 retirement tail, and submitted write while preserving the supplied assignment.
 
+`raw_normalization.normalize(..., native_ids=True)` now indexes observed
+identity strings without fixed decimal IDs or the historical 15-slot limit.
+Historical normalization remains the default. Native results explicitly reject
+the old bounded-certificate method.
+`native_reduction.native_document` projects one instruction per normalized
+step and requires an explicit bootstrap over observed identities.
+It maps `firstMessageFrom` to incoming `queuePattern` index zero and derives
+typed receives from evidence, checked against the preceding packet observation.
+It preserves transaction names, omitted packet fields, optional zero/`null`,
+step order, provenance indexes, and response-correlation evidence.
+Unsupported native actions and receive families fail explicitly.
+Python coverage and private Lean decoding of both captures and all four
+mutations pass in `native-reduction-projection-tests.log` and
+`native-reduction-decode-tests.log`. This is library projection and decode
+coverage, not yet raw CLI/solver/explorer integration. Both assurance flags
+remain false.
+
 Commit `36efa30f6` adds a private typed packet-pattern representation, SMT
 terms, strict JSON decoding, and fixtures. All seven existing packet families
 support optional fields. Only `kind` is required. Omitted fields stay

@@ -30,6 +30,76 @@ def action(name: str, node: str, **parameters: object) -> dict:
 
 
 class RawNormalizationTests(unittest.TestCase):
+    def test_native_identifiers_preserve_names_without_fixed_slots(self) -> None:
+        source = certificate(
+            action("requestVote", "node-alpha", destination="105"),
+            action("changeConfiguration", "105", configuration=["node-beta", "105"]),
+            action("clientRequest", "node-beta", transaction="shared"),
+            action("clientRequest", "node-alpha", transaction="shared"),
+        )
+        before = deepcopy(source)
+        trace = normalize(source, native_ids=True)
+        self.assertEqual(source, before)
+        self.assertEqual(set(trace.node_names), {0, 1, 2})
+        self.assertEqual(
+            set(trace.node_names.values()), {"105", "node-alpha", "node-beta"}
+        )
+        self.assertEqual(trace.node_names[trace.steps[0]["node"]], "node-alpha")
+        self.assertEqual(trace.node_names[trace.steps[0]["destination"]], "105")
+        self.assertEqual(
+            [trace.node_names[node] for node in trace.steps[1]["configuration"]],
+            ["node-beta", "105"],
+        )
+        self.assertEqual(trace.unknowns, ("shared",))
+        self.assertEqual(
+            [step["transaction"] for step in trace.steps[2:]],
+            [{"unknown": "shared"}, {"unknown": "shared"}],
+        )
+        with self.assertRaisesRegex(ReductionError, "native projection"):
+            trace.certificate({})
+        with self.assertRaisesRegex(ReductionError, "0 to 14"):
+            normalize(source)
+
+    def test_native_saved_reductions_keep_packet_names_and_provenance(self) -> None:
+        for path in sorted((ROOT / "Traces/Captured").glob("*.ndjson")):
+            source = build_certificate(read_ndjson(path))
+            old = normalize(source)
+            native = normalize(source, native_ids=True)
+            self.assertEqual(
+                set(old.node_names.values()), set(native.node_names.values())
+            )
+            self.assertEqual(old.unknowns, native.unknowns)
+            self.assertEqual(old.evidence, native.evidence)
+            for previous, current in zip(old.steps, native.steps, strict=True):
+                self.assertEqual(previous["provenance"], current["provenance"])
+                self.assertEqual(previous["rule"], current["rule"])
+                self.assertEqual(
+                    old.node_names[previous["node"]], native.node_names[current["node"]]
+                )
+                if previous.get("variable") == "firstMessageFrom":
+                    self.assertEqual(
+                        old.node_names[previous["value"]["source"]],
+                        native.node_names[current["value"]["source"]],
+                    )
+                    self.assertEqual(set(previous["value"]), set(current["value"]))
+
+    def test_native_identifier_count_is_not_the_historical_slot_count(self) -> None:
+        names = [f"identity-{index}" for index in range(21)]
+        trace = normalize(
+            certificate(
+                *(action("requestVote", name, destination=names[0]) for name in names)
+            ),
+            native_ids=True,
+        )
+        self.assertEqual(len(trace.node_names), 21)
+        self.assertEqual(set(trace.node_names.values()), set(names))
+        for invalid in (None, "", 1, True):
+            with self.subTest(invalid=invalid), self.assertRaises(ReductionError):
+                normalize(
+                    certificate(action("timeout", invalid)),
+                    native_ids=True,
+                )
+
     def test_symbolic_certificate_keeps_declared_bounds_without_defaults(self) -> None:
         trace = normalize(certificate(action("clientRequest", "0", transaction="tx")))
         bounds = {

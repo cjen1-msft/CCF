@@ -98,9 +98,14 @@ class NormalizedTrace:
     unknowns: tuple[str, ...]
     steps: list[dict[str, Any]]
     evidence: dict[int, dict[str, Any]]
+    native_ids: bool = False
 
     def certificate(self, bounds: Mapping[str, object]) -> dict[str, Any]:
         """Declare a fully symbolic entry constrained by the ordered observations."""
+        _require(
+            not self.native_ids,
+            "native identifiers require native projection, not a bounded certificate",
+        )
         _require(set(bounds) == BOUND_FIELDS, "declare exactly the five model bounds")
         _require(
             all(type(value) is int and value >= 0 for value in bounds.values()),
@@ -120,7 +125,13 @@ def _require(condition: bool, message: str) -> None:
         raise ReductionError(message)
 
 
-def _node_name(value: Any) -> str:
+def _node_name(value: Any, *, native_ids: bool = False) -> str:
+    if native_ids:
+        _require(
+            isinstance(value, str) and bool(value),
+            "raw node must be a nonempty identity string",
+        )
+        return value
     _require(
         isinstance(value, str)
         and value.isascii()
@@ -181,11 +192,15 @@ def _message_pattern(
     return pattern
 
 
-def normalize(certificate: dict[str, Any]) -> NormalizedTrace:
+def normalize(
+    certificate: dict[str, Any], *, native_ids: bool = False
+) -> NormalizedTrace:
     """Preserve step order, provenance, and unknown transaction aliasing.
 
     This does not supply an entry state or choose bounds. Unmentioned packet
     fields stay absent from the pattern rather than becoming concrete values.
+    Native mode indexes observed identity strings without the historical
+    decimal-ID limit. Its result cannot produce a bounded certificate.
     """
     _require(
         certificate.get("schema_version") == SCHEMA_VERSION,
@@ -196,7 +211,7 @@ def normalize(certificate: dict[str, Any]) -> NormalizedTrace:
     names: set[str] = set()
     for step in steps:
         _require(isinstance(step, dict), "reduced instruction must be an object")
-        names.add(_node_name(step.get("node")))
+        names.add(_node_name(step.get("node"), native_ids=native_ids))
         kind = step.get("kind")
         if kind == "action":
             action = step.get("action")
@@ -212,13 +227,16 @@ def normalize(certificate: dict[str, Any]) -> NormalizedTrace:
             )
             for field in ("source", "destination"):
                 if field in parameters:
-                    names.add(_node_name(step[field]))
+                    names.add(_node_name(step[field], native_ids=native_ids))
             if "configuration" in parameters:
                 _require(
                     isinstance(step["configuration"], list),
                     "configuration must be an array",
                 )
-                names.update(_node_name(node) for node in step["configuration"])
+                names.update(
+                    _node_name(node, native_ids=native_ids)
+                    for node in step["configuration"]
+                )
         elif kind == "observation":
             variable = step.get("variable")
             _require(
@@ -235,12 +253,17 @@ def normalize(certificate: dict[str, Any]) -> NormalizedTrace:
                 _require(
                     isinstance(step["value"], dict), "packet summary must be an object"
                 )
-                names.add(_node_name(step["value"].get("source")))
+                names.add(
+                    _node_name(step["value"].get("source"), native_ids=native_ids)
+                )
         else:
             raise ReductionError(f"unsupported reduced instruction kind: {kind!r}")
 
-    # Renumbering sparse IDs would change the implicit bootstrap configuration.
-    nodes = {name: int(name) for name in sorted(names, key=int)}
+    if native_ids:
+        nodes = {name: index for index, name in enumerate(sorted(names))}
+    else:
+        # Renumbering historical IDs would change the implicit bootstrap configuration.
+        nodes = {name: int(name) for name in sorted(names, key=int)}
     node_names = {node: name for name, node in nodes.items()}
     unknowns: dict[str, None] = {}
     evidence = {}
@@ -269,4 +292,6 @@ def normalize(certificate: dict[str, Any]) -> NormalizedTrace:
         elif step["variable"] == "firstMessageFrom":
             step["value"] = _message_pattern(step["value"], nodes, step["node"])
         normalized.append(step)
-    return NormalizedTrace(node_names, tuple(unknowns), normalized, evidence)
+    return NormalizedTrace(
+        node_names, tuple(unknowns), normalized, evidence, native_ids=native_ids
+    )
