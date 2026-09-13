@@ -347,15 +347,13 @@ class NativeExplorerTests(unittest.TestCase):
                 api.get(target)
             self.assertEqual(caught.exception.status, status)
 
-    def test_http_server_is_read_only_and_loopback_scoped(self):
+    def serve(self):
         server = make_server(NativeRun.load(self.root), 0)
         thread = Thread(target=server.serve_forever)
         thread.start()
         self.addCleanup(server.server_close)
         self.addCleanup(thread.join)
         self.addCleanup(server.shutdown)
-        self.assertEqual(server.server_address[0], "127.0.0.1")
-
         def request(method, target, headers=None):
             connection = HTTPConnection(*server.server_address, timeout=5)
             try:
@@ -366,6 +364,11 @@ class NativeExplorerTests(unittest.TestCase):
             finally:
                 connection.close()
 
+        return server, request
+
+    def test_http_server_is_read_only_and_loopback_scoped(self):
+        server, request = self.serve()
+        self.assertEqual(server.server_address[0], "127.0.0.1")
         status, headers, body = request("GET", "/api/run")
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["result"]["status"], "unsat")
@@ -377,6 +380,18 @@ class NativeExplorerTests(unittest.TestCase):
         self.assertEqual(request("GET", "/api/run", {"Host": "example.com"})[0], 403)
         self.assertEqual(request("GET", "/api/instructions?limit=0")[0], 400)
         self.assertEqual(request("GET", "/api/missing")[0], 404)
+
+    def test_raw_origins_survive_http_serialization(self):
+        origin = self.save_raw()
+        _, request = self.serve()
+        status, _, body = request("GET", "/api/reduction")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), origin.certificate)
+        status, _, body = request("GET", "/api/instructions/238")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["origin"], origin.instruction(238))
+        self.assertEqual(request("POST", "/api/reduction")[0], 405)
+        self.assertEqual(request("GET", "/api/reduction?file=other")[0], 400)
 
 
 if __name__ == "__main__":
