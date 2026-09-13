@@ -28,18 +28,23 @@ intersection. `NativeArrayCommitIndex.eligible_correct` covers live current-term
 signature candidates. `NativeArrayAdvanceCommit` proves the guard and full-frame
 write given the exact maximum and refreshed row. These build in
 `native-advance-commit-model-build.log`; the import audit is in
-`native-commit-import-audit.log`. The selected-maximum proof, SMT terms,
+`native-commit-import-audit.log`. Commit `f8b40fd43` adds the exact
+`commit_index_correct` maximum proof and reusable dynamic-width majority terms.
+`NativeMaximumSummary` supplies bounded-fold correspondence, uniqueness, and
+live-range predicate congruence. The composed maximum builds in
+`native-commit-maximum-parent-build.log`. The complete commit SMT scan,
 assignment correspondence, and public action are not complete.
 `bounded_forall_nat_eval` now removes repeated integer-to-natural conversions
 from quantified live-range proofs.
 
 Mechanical workers retain separate files. Worker
-`2a020198-af17-47bf-b45b-0b82864a50ad` owns `NativeMajorityTerms.lean`.
+`2a020198-af17-47bf-b45b-0b82864a50ad` owns `NativeMajorityFixtureMain.lean`.
 Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns
-`NativeMaximumSummary.lean`. Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e`
+`NativeReplicationMajority.lean`. Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e`
 owns `NativeActiveConfigurationEncoding.lean`. The parent owns commit semantics.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` still owns the proof-only
-`NativeFrameStep.lean` and `NativeFrameTrace.lean` classifier refactor.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns
+`NativeArrayCommitTransition.lean`. Its proof-only classifier refactor is back
+with the parent and awaiting the independent public build.
 
 Factory tools are unavailable in this session. `NativeDefinitions` and
 `NativeDefinitionsEncoding` now provide reusable heterogeneous definition
@@ -605,10 +610,11 @@ The 184 public five-action sequences, the explicitly inactive 21-node case, and
 110 append-hint regressions pass in `native-public-core-sequence-tests.log`.
 All public compiler files are parent-owned.
 Public membership and the five-action pipeline are committed as `38d10f664`.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns only
-`NativeFrameStep.lean` and `NativeFrameTrace.lean` for a proof-only replacement
-of nested-Or run classification with named, instruction-indexed cases.
-Runtime and final correspondence theorem statements must stay unchanged.
+`NativeFrameStep.lean` and `NativeFrameTrace.lean` now use named,
+instruction-indexed `FrameInstructionRun` cases instead of nested disjunctions.
+Runtime and final correspondence theorem statements are unchanged.
+The parent inspected the diff; the independent public build is still running
+in `native-frame-run-cases-parent-build.log`.
 The root `CHANGELOG.md` has an Unreleased demo entry; add its actual PR reference
 when a PR exists. No PR has been opened.
 

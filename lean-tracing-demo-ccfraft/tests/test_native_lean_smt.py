@@ -165,6 +165,8 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeFrameStep",
             "Sparse.NativeFrameTrace",
             "Sparse.NativeFrameDecoded",
+            "Sparse.NativeNodeSets",
+            "Sparse.NativeNodeOperations",
         }
         self.assertFalse(seen & forbidden, sorted(seen & forbidden))
 
