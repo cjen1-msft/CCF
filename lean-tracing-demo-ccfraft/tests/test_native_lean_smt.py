@@ -151,6 +151,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeMembershipSound",
             "Sparse.NativeMembershipComplete",
             "Sparse.NativeMembershipChangeEncoding",
+            "Sparse.NativeMembershipRetirementAssignment",
         ):
             visit(module)
         forbidden = {
