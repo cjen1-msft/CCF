@@ -168,6 +168,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeBecomeLeaderRowEncoding",
             "Sparse.NativeBecomeLeaderPrefixAssignment",
             "Sparse.NativeBecomeLeaderSound",
+            "Sparse.NativeBecomeLeaderComplete",
             "Sparse.NativeNatSetInsert",
             "Sparse.NativeNatSetInsertEncoding",
             "Sparse.NativeActiveConfigurationEncoding",

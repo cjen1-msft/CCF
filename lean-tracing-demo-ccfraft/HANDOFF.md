@@ -166,7 +166,7 @@ Worker
 Its public response integration is inspected and parent-built.
 Those four public files are parent-owned again.
 Its `NativeBecomeLeaderExecution` is accepted and parent-owned.
-It now owns `NativeBecomeLeaderComplete`.
+Its `NativeBecomeLeaderComplete` is accepted and parent-owned; it is idle.
 Its vote-response row refactor is accepted
 in `501abf1fc`, reusing the snapshot representation instead of reproving
 unchanged fields. All accepted response statements are fixed.
@@ -403,7 +403,7 @@ It preserves commit even above the truncated length and preserves
 `NativeArrayBecomeLeaderFixtureMain` generates 202 actual-Model cases.
 `test_internal_become_leader` adds post-state mutations and 17-identity cases.
 It passes in `native-become-leader-private-tests.log`.
-The runtime is not public and its whole-action correspondence is unfinished.
+Private whole-action correspondence is complete; public integration is pending.
 The parent owns runtime and fixtures. Mechanical ownership is listed above.
 `NativeArrayBecomeLeader` now proves prepared/refreshed row correspondence,
 full-frame Model updates, and exact Model enabledness. The latter uses the
@@ -438,6 +438,12 @@ the prefix scans, prepared row, shared retirement tail, and native transition.
 Model-equality transport preserves arbitrary inactive tails. Unchanged frame
 fields reuse the existing representation record. The parent build passes in
 `native-become-leader-sound-parent-build.log`.
+`NativeBecomeLeaderComplete` composes the specific prefix assignment with
+generic retirement-tail completeness. Its exact-native theorem preserves
+every original symbol and represents the supplied native successor, using
+independent soundness and Model-equality transport. No reachability or
+canonical-tail premise is added. The parent build passes in
+`native-become-leader-complete-parent-build.log`.
 
 Raw reduction also emits per-identity `joined` observations. Their existing
 Model meaning is membership in `state.hasJoined`, not current allocation.
