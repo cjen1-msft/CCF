@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativePacketPatternEncoding
+import Sparse.NativePacketArrayHintEncoding
 import Sparse.NativeQueuePattern
 
 set_option autoImplicit false
@@ -9,6 +10,41 @@ set_option autoImplicit false
 namespace CCFRaft.NativeEncode
 
 open NativeSmt
+
+theorem queue_pattern_domain_eval {context : List Ty} {width : PNat}
+    (source : Fin width) (value : Term context (packetTy width))
+    (expected : NativePacketPattern.Pattern (Fin width) Nat)
+    (assignment : Assignment) (locals : Locals context) :
+    (queuePatternDomain source value expected).eval assignment locals =
+      (queuePacketDomain (.integer source.val) value).eval assignment locals := by
+  rcases expected with ⟨header, payload⟩
+  cases payload with
+  | appendEntriesRequest previous previousTerm commit length entries =>
+    cases length with
+    | none =>
+      simp [queuePatternDomain]
+    | some count =>
+      cases entries with
+      | none =>
+        by_cases bounded : count <= packetArrayHintLimit
+        · simpa [queuePatternDomain, bounded] using
+            queue_packet_domain_and_array_hint_eval
+              (.integer source.val) value count assignment locals
+        · simp [queuePatternDomain, bounded]
+      | some entries =>
+        simp [queuePatternDomain]
+  | appendEntriesResponse success lastIndex =>
+    simp [queuePatternDomain]
+  | requestVoteRequest lastTerm lastIndex =>
+    simp [queuePatternDomain]
+  | requestVoteResponse granted =>
+    simp [queuePatternDomain]
+  | requestPreVote lastTerm lastIndex =>
+    simp [queuePatternDomain]
+  | requestPreVoteResponse granted =>
+    simp [queuePatternDomain]
+  | proposeVoteRequest =>
+    simp [queuePatternDomain]
 
 theorem queue_pattern_baseline_eval {context : List Ty} {width : PNat}
     (source : Fin width) (head length : Term context .int)
@@ -36,8 +72,13 @@ theorem queue_pattern_baseline_eval {context : List Ty} {width : PNat}
         QueuePacketValid source raw := by
     simpa [raw] using
       queue_packet_domain_correct (.integer source.val) value assignment locals
+  have domainSame :=
+    queue_pattern_domain_eval source value expected assignment locals
   by_cases valid : QueuePacketValid source raw
-  · have domainTrue := domain.mpr valid
+  · have domainTrue :
+        (queuePatternDomain source value expected).eval assignment locals = true := by
+      rw [domainSame]
+      exact domain.mpr valid
     have rawEval : value.eval assignment locals = packetValue message := by
       exact (packet_value_model raw valid.1).symm.trans
         (congrArg packetValue (model_queue_packet_exact source raw valid).symm)
@@ -46,8 +87,9 @@ theorem queue_pattern_baseline_eval {context : List Ty} {width : PNat}
     simp only [queuePattern, value, Term.eval, domainTrue, ↓reduceIte]
     rw [rawMatch, normalizedMatch]
   · have domainFalse :
-        (queuePacketDomain (.integer source.val) value).eval assignment locals = false :=
-      Bool.eq_false_iff.mpr (fun accepted => valid (domain.mp accepted))
+        (queuePatternDomain source value expected).eval assignment locals = false := by
+      rw [domainSame]
+      exact Bool.eq_false_iff.mpr (fun accepted => valid (domain.mp accepted))
     have messageDefault : message = defaultQueuePacket source := by
       simp [message, raw, modelQueuePacket, valid]
     simp only [queuePattern, value, Term.eval, domainFalse, Bool.false_eq_true,

@@ -187,6 +187,8 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeSignatureComplete",
             "Sparse.NativeSignCommittableEncoding",
             "Sparse.NativeQueuePattern",
+            "Sparse.NativePacketArrayHint",
+            "Sparse.NativePacketArrayHintEncoding",
             "Sparse.NativePacketPatternEncoding",
             "Sparse.NativeQueuePatternEncoding",
             "Sparse.NativeVoteResponse",
