@@ -267,10 +267,18 @@ Build and composition regressions pass in
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` now owns
 `NativeClientRequestStructure`, proving counter, reference, bootstrap,
 prior-assertion, and transaction-symbol-bound facts through the shared stages.
-`af5d19d5-1186-4609-9b0b-4f224d4a4330` owns `NativeFrameStep`
-and `NativeFrameTrace`, extracting continuation-based composition and preserving
-all existing public theorem signatures. This will let a parameterized compiler
-reuse concrete core segments instead of duplicating every action proof.
+`NativeFrameStep` and `NativeFrameTrace` are accepted and parent-owned.
+`frame_instruction_next_mono` proves that every successful instruction preserves
+the symbol counter's lower bound.
+`compile_frame_sound_continuation` connects a concrete segment to a supplied
+suffix. `compile_frame_complete_continuation` returns a represented final frame,
+the remaining suffix, and agreement below the segment's original counter.
+Existing public soundness/completeness signatures remain empty-suffix wrappers.
+This lets a parameterized compiler reuse core segments without duplicating
+every action proof. The parent build and regressions are in
+`native-frame-continuation-parent-build.log` and
+`native-continuation-and-identifiers-tests.log`.
+Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` is idle.
 No worker owns raw reduction or the transaction-binding input design.
 
 The private `NativeNatParameters` declaration prefix allocates shared natural

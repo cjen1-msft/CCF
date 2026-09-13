@@ -273,6 +273,78 @@ theorem frame_instruction_cases {width : PNat} (item : FrameInstruction width)
       ((frame_observation_run
         (.queuePattern source destination index expected) before _ rfl).symm.trans run)
 
+theorem frame_instruction_next_mono {width : PNat} (item : FrameInstruction width)
+    (before after : Encoding width) (run : (frameInstruction item).run before = .ok ((), after)) :
+    before.next <= after.next := by
+  cases frame_instruction_cases item before after run with
+  | quorum node action =>
+    rw [(quorum_success node.val before after action).next]
+    omega
+  | vote preVote source destination action =>
+    obtain ⟨guarded, shape, pushed⟩ :=
+      send_vote_prefix preVote source destination before after action
+    rw [(push_queue_success destination source _ guarded after pushed).next, shape.next]
+    omega
+  | updateTerm source destination action =>
+    rw [(term_update_success source destination before after action).next]
+    omega
+  | campaign preVote node action =>
+    obtain ⟨guarded, shape, written⟩ :=
+      campaign_prefix preVote node before after action
+    rw [(campaign_writes_success preVote node guarded after written).next, shape.next]
+    omega
+  | receiveVote source destination action =>
+    obtain ⟨signature, guarded, prefixRun, writesRun⟩ :=
+      receive_vote_runs source destination before after action
+    obtain ⟨signatureEq, prefixShape⟩ :=
+      receive_vote_prefix_success source destination before guarded signature prefixRun
+    subst signature
+    rw [receiveVoteTail] at writesRun
+    obtain ⟨voted, popped, writes, popRun, pushRun⟩ :=
+      vote_receive_writes_steps source destination _ _ guarded after writesRun
+    rw [(push_queue_success source destination _ popped after pushRun).next,
+      (pop_queue_success destination source voted popped popRun).next, writes.next,
+      prefixShape.next]
+    omega
+  | receiveAppend source destination action =>
+    obtain ⟨states, execution⟩ :=
+      receive_append_success source destination before after action
+    rw [execution.finalNext]
+    omega
+  | receiveVoteResponse preVote source destination action =>
+    rw [vote_response_next preVote source destination before after action]
+    omega
+  | receiveAppendResponse source destination action =>
+    rw [append_response_next source destination before after action]
+    omega
+  | changeConfiguration source configuration action =>
+    obtain ⟨initial, suffix, execution⟩ :=
+      membership_change_success source configuration before after action
+    rw [execution.finalNext]
+    omega
+  | advanceCommit source action =>
+    rw [advance_commit_next source before after action]
+    omega
+  | signCommittable source action =>
+    obtain ⟨states, execution⟩ :=
+      sign_committable_messages_prefix source before after action
+    let terms := signaturePrefixTerms before source
+    rw [retirement_tail_next before.bootstrap source terms.appended terms.old.commit
+      (signatureGuards before.toColumns source) states.tailBefore after execution.runs.tailRun,
+      execution.tailBeforeNext]
+    omega
+  | becomeLeader source action =>
+    rw [become_leader_next source before after action]
+    omega
+  | appendEntries source destination batchEnd action =>
+    obtain ⟨guarded, defined, prefixShape, definition, pushed⟩ :=
+      append_send_steps source destination batchEnd before after action
+    rw [(push_queue_success destination source _ _ after pushed).next,
+      (define_success _ guarded defined _ definition).2.1, prefixShape.next]
+    omega
+  | observation clauses emitted action =>
+    rw [(assert_all_success clauses before after action).1.next]
+
 theorem frame_instruction_references {width : PNat} (item : FrameInstruction width)
     (before after : Encoding width) (run : (frameInstruction item).run before = .ok ((), after))
     (valid : ReferencesValid before) : ReferencesValid after := by

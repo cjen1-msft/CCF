@@ -9,18 +9,24 @@ namespace CCFRaft.NativeEncode
 
 open NativeSmt
 
-theorem compile_frame_sound {width : PNat} [Bootstrap (Fin width)]
+theorem compile_frame_sound_continuation {width : PNat} [Bootstrap (Fin width)]
     (items : List (FrameInstruction width))
     (before after : Encoding width) (index : Nat) (groups result : Array Group)
     (run : (compileInstructionsWith frameInstruction index groups items).run before = .ok (result, after))
     (assignment : Assignment) (holds : Holds after.assertions.toList assignment)
     (frame : NativeArrayVote.Frame (Fin width) Nat)
     (rep : FrameColumnsRep assignment before.toColumns frame)
-    (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION) :
-    NativeArrayVote.follows frame items := by
-  induction items generalizing before index groups frame with
-  | nil => trivial
-  | cons item rest ih =>
+    (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION)
+    (rest : List (FrameInstruction width))
+    (continuation : forall nextFrame,
+      FrameColumnsRep assignment after.toColumns nextFrame ->
+        NativeArrayVote.follows nextFrame rest) :
+    NativeArrayVote.follows frame (items ++ rest) := by
+  induction items generalizing before index groups frame rest with
+  | nil =>
+    have same : before = after := congrArg Prod.snd (Except.ok.inj run)
+    exact continuation frame (by simpa only [same] using rep)
+  | cons item items ih =>
     cases step : frameInstruction item before with
     | error error => simp [compileInstructionsWith, StateT.run, step] at run
     | ok pair =>
@@ -28,34 +34,37 @@ theorem compile_frame_sound {width : PNat} [Bootstrap (Fin width)]
       cases value
       simp only [compileInstructionsWith, StateT.run, step] at run
       have middleHolds := compile_with_holds_before frameInstruction frame_instruction_holds_before
-        rest middle after _ _ result run assignment holds
+        items middle after _ _ result run assignment holds
       cases frame_instruction_cases item before middle step with
       | quorum node action =>
         obtain ⟨_, enabled, afterColumns⟩ :=
           frame_quorum_success node before middle action assignment middleHolds frame rep sameBootstrap
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [(quorum_success node.val before middle action).bootstrap, sameBootstrap]
-        have restFollows := ih middle _ _ run _ afterColumns bootstrap
-        simpa only [NativeArrayVote.follows, NativeArrayCheckQuorum.follows, and_true] using
+        have restFollows := ih middle _ _ run _ afterColumns bootstrap rest continuation
+        simpa only [List.cons_append, NativeArrayVote.follows,
+          NativeArrayCheckQuorum.follows, and_true] using
           And.intro enabled restFollows
       | vote preVote source destination action =>
         obtain ⟨enabled, signature, latest, afterColumns⟩ :=
           send_vote_frame_success preVote source destination before middle action assignment middleHolds frame rep sameBootstrap
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [send_vote_bootstrap preVote source destination before middle action, sameBootstrap]
-        exact ⟨enabled, signature, latest, ih middle _ _ run _ afterColumns bootstrap⟩
+        exact ⟨enabled, signature, latest,
+          ih middle _ _ run _ afterColumns bootstrap rest continuation⟩
       | updateTerm source destination action =>
         obtain ⟨present, available, afterColumns⟩ :=
           term_update_frame_success source destination before middle action assignment middleHolds frame rep
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [(term_update_success source destination before middle action).bootstrap, sameBootstrap]
-        exact ⟨present, available, ih middle _ _ run _ afterColumns bootstrap⟩
+        exact ⟨present, available,
+          ih middle _ _ run _ afterColumns bootstrap rest continuation⟩
       | campaign preVote node action =>
         obtain ⟨enabled, afterColumns⟩ :=
           campaign_frame_success preVote node before middle action assignment middleHolds frame rep sameBootstrap
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [campaign_bootstrap preVote node before middle action, sameBootstrap]
-        exact ⟨enabled, ih middle _ _ run _ afterColumns bootstrap⟩
+        exact ⟨enabled, ih middle _ _ run _ afterColumns bootstrap rest continuation⟩
       | receiveVote source destination action =>
         obtain ⟨present, request, signature, selected, sameSource, recipient, term, latest,
             afterColumns⟩ :=
@@ -64,7 +73,7 @@ theorem compile_frame_sound {width : PNat} [Bootstrap (Fin width)]
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [receive_vote_bootstrap source destination before middle action, sameBootstrap]
         exact ⟨present, request, signature, selected, sameSource, recipient, term, latest,
-          ih middle _ _ run _ afterColumns bootstrap⟩
+          ih middle _ _ run _ afterColumns bootstrap rest continuation⟩
       | receiveAppend source destination action =>
         obtain ⟨nextFrame, nativeStep, afterColumns⟩ :=
           receive_append_frame_success source destination before middle action assignment
@@ -72,7 +81,7 @@ theorem compile_frame_sound {width : PNat} [Bootstrap (Fin width)]
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [receive_append_bootstrap source destination before middle action, sameBootstrap]
         exact ⟨nextFrame, nativeStep,
-          ih middle _ _ run nextFrame afterColumns bootstrap⟩
+          ih middle _ _ run nextFrame afterColumns bootstrap rest continuation⟩
       | receiveVoteResponse preVote source destination action =>
         obtain ⟨response, selected, enabled, afterColumns⟩ :=
           vote_response_frame_sound preVote source destination before middle
@@ -81,7 +90,7 @@ theorem compile_frame_sound {width : PNat} [Bootstrap (Fin width)]
           rw [vote_response_bootstrap preVote source destination before middle
             action, sameBootstrap]
         exact ⟨response, selected, enabled,
-          ih middle _ _ run _ afterColumns bootstrap⟩
+          ih middle _ _ run _ afterColumns bootstrap rest continuation⟩
       | receiveAppendResponse source destination action =>
         obtain ⟨response, selected, enabled, afterColumns⟩ :=
           append_response_frame_sound source destination before middle action
@@ -90,7 +99,7 @@ theorem compile_frame_sound {width : PNat} [Bootstrap (Fin width)]
           rw [append_response_bootstrap source destination before middle action,
             sameBootstrap]
         exact ⟨response, selected, enabled,
-          ih middle _ _ run _ afterColumns bootstrap⟩
+          ih middle _ _ run _ afterColumns bootstrap rest continuation⟩
       | changeConfiguration source configuration action =>
         obtain ⟨nextFrame, nativeStep, afterColumns⟩ :=
           membership_change_frame_success source configuration before middle action assignment
@@ -98,7 +107,7 @@ theorem compile_frame_sound {width : PNat} [Bootstrap (Fin width)]
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [membership_change_bootstrap source configuration before middle action, sameBootstrap]
         exact ⟨nextFrame, nativeStep,
-          ih middle _ _ run nextFrame afterColumns bootstrap⟩
+          ih middle _ _ run nextFrame afterColumns bootstrap rest continuation⟩
       | advanceCommit source action =>
         obtain ⟨nextFrame, nativeStep, afterColumns⟩ :=
           advance_commit_frame_success source before middle action assignment middleHolds
@@ -106,7 +115,7 @@ theorem compile_frame_sound {width : PNat} [Bootstrap (Fin width)]
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [advance_commit_bootstrap source before middle action, sameBootstrap]
         exact ⟨nextFrame, nativeStep,
-          ih middle _ _ run nextFrame afterColumns bootstrap⟩
+          ih middle _ _ run nextFrame afterColumns bootstrap rest continuation⟩
       | signCommittable source action =>
         obtain ⟨nextFrame, nativeStep, afterColumns⟩ :=
           signature_frame_success source before middle action assignment middleHolds
@@ -114,7 +123,7 @@ theorem compile_frame_sound {width : PNat} [Bootstrap (Fin width)]
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [signature_bootstrap source before middle action, sameBootstrap]
         exact ⟨nextFrame, nativeStep,
-          ih middle _ _ run nextFrame afterColumns bootstrap⟩
+          ih middle _ _ run nextFrame afterColumns bootstrap rest continuation⟩
       | becomeLeader source action =>
         obtain ⟨nextFrame, nativeStep, afterColumns⟩ :=
           become_leader_frame_sound source before middle action assignment middleHolds
@@ -122,14 +131,14 @@ theorem compile_frame_sound {width : PNat} [Bootstrap (Fin width)]
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [become_leader_bootstrap source before middle action, sameBootstrap]
         exact ⟨nextFrame, nativeStep,
-          ih middle _ _ run nextFrame afterColumns bootstrap⟩
+          ih middle _ _ run nextFrame afterColumns bootstrap rest continuation⟩
       | appendEntries source destination batchEnd action =>
         obtain ⟨enabled, afterColumns⟩ :=
           send_append_frame_success source destination batchEnd before middle action assignment
             middleHolds frame rep sameBootstrap
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [send_append_bootstrap source destination batchEnd before middle action, sameBootstrap]
-        exact ⟨enabled, ih middle _ _ run _ afterColumns bootstrap⟩
+        exact ⟨enabled, ih middle _ _ run _ afterColumns bootstrap rest continuation⟩
       | observation clauses emitted asserted =>
         have references := (assert_all_success clauses before middle asserted).1
         have observed := (frame_observation_correct assignment before.toColumns frame rep
@@ -139,8 +148,190 @@ theorem compile_frame_sound {width : PNat} [Bootstrap (Fin width)]
           simpa only [references.columns] using rep
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [references.bootstrap, sameBootstrap]
-        exact (frame_observation_cons frame _ item rest clauses emitted).mpr
-          ⟨observed, ih middle _ _ run frame afterColumns bootstrap⟩
+        exact (frame_observation_cons frame _ item (items ++ rest) clauses emitted).mpr
+          ⟨observed, ih middle _ _ run frame afterColumns bootstrap rest continuation⟩
+
+theorem compile_frame_sound {width : PNat} [Bootstrap (Fin width)]
+    (items : List (FrameInstruction width))
+    (before after : Encoding width) (index : Nat) (groups result : Array Group)
+    (run : (compileInstructionsWith frameInstruction index groups items).run before = .ok (result, after))
+    (assignment : Assignment) (holds : Holds after.assertions.toList assignment)
+    (frame : NativeArrayVote.Frame (Fin width) Nat)
+    (rep : FrameColumnsRep assignment before.toColumns frame)
+    (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION) :
+    NativeArrayVote.follows frame items := by
+  simpa using compile_frame_sound_continuation items before after index groups result run
+    assignment holds frame rep sameBootstrap [] (fun _ _ => by trivial)
+
+theorem compile_frame_complete_continuation {width : PNat} [Bootstrap (Fin width)]
+    (items : List (FrameInstruction width))
+    (before after : Encoding width) (index : Nat) (groups result : Array Group)
+    (run : (compileInstructionsWith frameInstruction index groups items).run before = .ok (result, after))
+    (assignment : Assignment) (holds : Holds before.assertions.toList assignment)
+    (frame : NativeArrayVote.Frame (Fin width) Nat)
+    (rep : FrameColumnsRep assignment before.toColumns frame) (valid : ReferencesValid before)
+    (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION)
+    (rest : List (FrameInstruction width))
+    (follows : NativeArrayVote.follows frame (items ++ rest)) :
+    exists extended nextFrame,
+      assignment.AgreesBelow before.next extended /\
+      Holds after.assertions.toList extended /\
+      FrameColumnsRep extended after.toColumns nextFrame /\
+      NativeArrayVote.follows nextFrame rest := by
+  induction items generalizing before index groups assignment frame rest with
+  | nil =>
+    have same : before = after := congrArg Prod.snd (Except.ok.inj run)
+    exact ⟨assignment, frame, (fun _ _ _ => rfl), by simpa only [same] using holds,
+      by simpa only [same] using rep, follows⟩
+  | cons item items ih =>
+    cases step : frameInstruction item before with
+    | error error => simp [compileInstructionsWith, StateT.run, step] at run
+    | ok pair =>
+      rcases pair with ⟨value, middle⟩
+      cases value
+      simp only [compileInstructionsWith, StateT.run, step] at run
+      have afterValid := frame_instruction_references item before middle step valid
+      have nextMono := frame_instruction_next_mono item before middle step
+      have finish (middleAssignment : Assignment)
+          (nextFrame : NativeArrayVote.Frame (Fin width) Nat)
+          (agreement : assignment.AgreesBelow before.next middleAssignment)
+          (middleHolds : Holds middle.assertions.toList middleAssignment)
+          (afterColumns : FrameColumnsRep middleAssignment middle.toColumns nextFrame)
+          (bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION)
+          (restFollows : NativeArrayVote.follows nextFrame (items ++ rest)) :
+          exists extended finalFrame,
+            assignment.AgreesBelow before.next extended /\
+            Holds after.assertions.toList extended /\
+            FrameColumnsRep extended after.toColumns finalFrame /\
+            NativeArrayVote.follows finalFrame rest := by
+        obtain ⟨extended, finalFrame, finalAgreement, finalHolds, finalColumns,
+            finalFollows⟩ :=
+          ih middle _ _ run middleAssignment middleHolds nextFrame afterColumns afterValid
+            bootstrap rest restFollows
+        exact ⟨extended, finalFrame,
+          agreement.trans (finalAgreement.restrict nextMono),
+          finalHolds, finalColumns, finalFollows⟩
+      cases frame_instruction_cases item before middle step with
+      | quorum node action =>
+        have stepFollows : NativeArrayCheckQuorum.enabled frame.nodes node /\
+            NativeArrayVote.follows (frame.nodeStep (.checkQuorum node)) (items ++ rest) := by
+          simpa only [List.cons_append, NativeArrayVote.follows,
+            NativeArrayCheckQuorum.follows, and_true] using follows
+        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+          frame_quorum_complete node before middle action assignment holds frame rep valid sameBootstrap stepFollows.1
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [(quorum_success node.val before middle action).bootstrap, sameBootstrap]
+        exact finish extended _ agreement middleHolds afterColumns bootstrap stepFollows.2
+      | vote preVote source destination action =>
+        obtain ⟨enabled, signature, latest, restFollows⟩ := follows
+        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+          send_vote_complete preVote source destination before middle action assignment holds frame rep valid
+            sameBootstrap enabled signature latest
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [send_vote_bootstrap preVote source destination before middle action, sameBootstrap]
+        exact finish extended _ agreement middleHolds afterColumns bootstrap restFollows
+      | updateTerm source destination action =>
+        obtain ⟨present, available, restFollows⟩ := follows
+        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+          term_update_complete source destination before middle action assignment holds frame rep valid present available
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [(term_update_success source destination before middle action).bootstrap, sameBootstrap]
+        exact finish extended _ agreement middleHolds afterColumns bootstrap restFollows
+      | campaign preVote node action =>
+        obtain ⟨enabled, restFollows⟩ := follows
+        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+          campaign_complete preVote node before middle action assignment holds frame rep valid sameBootstrap enabled
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [campaign_bootstrap preVote node before middle action, sameBootstrap]
+        exact finish extended _ agreement middleHolds afterColumns bootstrap restFollows
+      | receiveVote source destination action =>
+        obtain ⟨present, request, signature, selected, sameSource, recipient, term, latest,
+            restFollows⟩ := follows
+        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+          receive_vote_complete source destination request signature before middle action assignment
+            holds frame rep valid present selected sameSource recipient term latest
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [receive_vote_bootstrap source destination before middle action, sameBootstrap]
+        exact finish extended _ agreement middleHolds afterColumns bootstrap restFollows
+      | receiveAppend source destination action =>
+        obtain ⟨nextFrame, nativeStep, restFollows⟩ := follows
+        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+          receive_append_complete source destination before middle action assignment holds
+            frame nextFrame rep valid sameBootstrap nativeStep
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [receive_append_bootstrap source destination before middle action, sameBootstrap]
+        exact finish extended nextFrame agreement middleHolds afterColumns bootstrap restFollows
+      | receiveVoteResponse preVote source destination action =>
+        obtain ⟨response, selected, enabled, restFollows⟩ := follows
+        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+          vote_response_complete preVote source destination before middle action
+            assignment holds valid frame rep response selected enabled
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [vote_response_bootstrap preVote source destination before middle
+            action, sameBootstrap]
+        exact finish extended _ agreement middleHolds afterColumns bootstrap restFollows
+      | receiveAppendResponse source destination action =>
+        obtain ⟨response, selected, enabled, restFollows⟩ := follows
+        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+          append_response_complete source destination before middle action
+            assignment holds valid frame rep response selected enabled
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [append_response_bootstrap source destination before middle action,
+            sameBootstrap]
+        exact finish extended _ agreement middleHolds afterColumns bootstrap restFollows
+      | changeConfiguration source configuration action =>
+        obtain ⟨nextFrame, nativeStep, restFollows⟩ := follows
+        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+          membership_change_complete source configuration before middle action assignment holds
+            frame nextFrame rep valid sameBootstrap nativeStep
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [membership_change_bootstrap source configuration before middle action, sameBootstrap]
+        exact finish extended nextFrame agreement middleHolds afterColumns bootstrap restFollows
+      | advanceCommit source action =>
+        obtain ⟨nextFrame, nativeStep, restFollows⟩ := follows
+        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+          advance_commit_complete source before middle action assignment holds
+            frame nextFrame rep valid sameBootstrap nativeStep
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [advance_commit_bootstrap source before middle action, sameBootstrap]
+        exact finish extended nextFrame agreement middleHolds afterColumns bootstrap restFollows
+      | signCommittable source action =>
+        obtain ⟨nextFrame, nativeStep, restFollows⟩ := follows
+        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+          signature_complete source before middle action assignment holds
+            frame nextFrame rep valid sameBootstrap nativeStep
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [signature_bootstrap source before middle action, sameBootstrap]
+        exact finish extended nextFrame agreement middleHolds afterColumns bootstrap restFollows
+      | becomeLeader source action =>
+        obtain ⟨nextFrame, nativeStep, restFollows⟩ := follows
+        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+          become_leader_complete source before middle action assignment holds
+            frame nextFrame rep valid sameBootstrap nativeStep
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [become_leader_bootstrap source before middle action, sameBootstrap]
+        exact finish extended nextFrame agreement middleHolds afterColumns bootstrap restFollows
+      | appendEntries source destination batchEnd action =>
+        obtain ⟨enabled, restFollows⟩ := follows
+        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+          send_append_complete source destination batchEnd before middle action assignment holds frame rep
+            valid sameBootstrap enabled
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [send_append_bootstrap source destination batchEnd before middle action, sameBootstrap]
+        exact finish extended _ agreement middleHolds afterColumns bootstrap restFollows
+      | observation clauses emitted asserted =>
+        obtain ⟨observed, restFollows⟩ :=
+          (frame_observation_cons frame _ item (items ++ rest) clauses emitted).mp follows
+        have references := (assert_all_success clauses before middle asserted).1
+        have middleHolds := (assert_all_holds clauses before middle asserted assignment).mpr
+          ⟨holds, (frame_observation_correct assignment before.toColumns frame rep
+            item clauses emitted).mpr observed⟩
+        have afterColumns : FrameColumnsRep assignment middle.toColumns frame := by
+          simpa only [references.columns] using rep
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [references.bootstrap, sameBootstrap]
+        exact finish assignment frame (fun _ _ _ => rfl) middleHolds afterColumns bootstrap
+          restFollows
 
 theorem compile_frame_complete {width : PNat} [Bootstrap (Fin width)]
     (items : List (FrameInstruction width))
@@ -152,144 +343,10 @@ theorem compile_frame_complete {width : PNat} [Bootstrap (Fin width)]
     (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION)
     (follows : NativeArrayVote.follows frame items) :
     exists extended : Assignment, Holds after.assertions.toList extended := by
-  induction items generalizing before index groups assignment frame with
-  | nil =>
-    have same : before = after := congrArg Prod.snd (Except.ok.inj run)
-    exact ⟨assignment, by simpa only [same] using holds⟩
-  | cons item rest ih =>
-    cases step : frameInstruction item before with
-    | error error => simp [compileInstructionsWith, StateT.run, step] at run
-    | ok pair =>
-      rcases pair with ⟨value, middle⟩
-      cases value
-      simp only [compileInstructionsWith, StateT.run, step] at run
-      have afterValid := frame_instruction_references item before middle step valid
-      cases frame_instruction_cases item before middle step with
-      | quorum node action =>
-        have stepFollows : NativeArrayCheckQuorum.enabled frame.nodes node /\
-            NativeArrayVote.follows (frame.nodeStep (.checkQuorum node)) rest := by
-          simpa only [NativeArrayVote.follows, NativeArrayCheckQuorum.follows, and_true] using follows
-        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
-          frame_quorum_complete node before middle action assignment holds frame rep valid sameBootstrap stepFollows.1
-        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
-          rw [(quorum_success node.val before middle action).bootstrap, sameBootstrap]
-        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid bootstrap stepFollows.2
-      | vote preVote source destination action =>
-        obtain ⟨enabled, signature, latest, restFollows⟩ := follows
-        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
-          send_vote_complete preVote source destination before middle action assignment holds frame rep valid
-            sameBootstrap enabled signature latest
-        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
-          rw [send_vote_bootstrap preVote source destination before middle action, sameBootstrap]
-        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid bootstrap restFollows
-      | updateTerm source destination action =>
-        obtain ⟨present, available, restFollows⟩ := follows
-        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
-          term_update_complete source destination before middle action assignment holds frame rep valid present available
-        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
-          rw [(term_update_success source destination before middle action).bootstrap, sameBootstrap]
-        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid bootstrap restFollows
-      | campaign preVote node action =>
-        obtain ⟨enabled, restFollows⟩ := follows
-        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
-          campaign_complete preVote node before middle action assignment holds frame rep valid sameBootstrap enabled
-        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
-          rw [campaign_bootstrap preVote node before middle action, sameBootstrap]
-        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid bootstrap restFollows
-      | receiveVote source destination action =>
-        obtain ⟨present, request, signature, selected, sameSource, recipient, term, latest,
-            restFollows⟩ := follows
-        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
-          receive_vote_complete source destination request signature before middle action assignment
-            holds frame rep valid present selected sameSource recipient term latest
-        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
-          rw [receive_vote_bootstrap source destination before middle action, sameBootstrap]
-        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid bootstrap restFollows
-      | receiveAppend source destination action =>
-        obtain ⟨nextFrame, nativeStep, restFollows⟩ := follows
-        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
-          receive_append_complete source destination before middle action assignment holds
-            frame nextFrame rep valid sameBootstrap nativeStep
-        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
-          rw [receive_append_bootstrap source destination before middle action, sameBootstrap]
-        exact ih middle _ _ run extended middleHolds nextFrame afterColumns afterValid
-          bootstrap restFollows
-      | receiveVoteResponse preVote source destination action =>
-        obtain ⟨response, selected, enabled, restFollows⟩ := follows
-        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
-          vote_response_complete preVote source destination before middle action
-            assignment holds valid frame rep response selected enabled
-        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
-          rw [vote_response_bootstrap preVote source destination before middle
-            action, sameBootstrap]
-        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid
-          bootstrap restFollows
-      | receiveAppendResponse source destination action =>
-        obtain ⟨response, selected, enabled, restFollows⟩ := follows
-        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
-          append_response_complete source destination before middle action
-            assignment holds valid frame rep response selected enabled
-        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
-          rw [append_response_bootstrap source destination before middle action,
-            sameBootstrap]
-        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid
-          bootstrap restFollows
-      | changeConfiguration source configuration action =>
-        obtain ⟨nextFrame, nativeStep, restFollows⟩ := follows
-        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
-          membership_change_complete source configuration before middle action assignment holds
-            frame nextFrame rep valid sameBootstrap nativeStep
-        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
-          rw [membership_change_bootstrap source configuration before middle action, sameBootstrap]
-        exact ih middle _ _ run extended middleHolds nextFrame afterColumns afterValid
-          bootstrap restFollows
-      | advanceCommit source action =>
-        obtain ⟨nextFrame, nativeStep, restFollows⟩ := follows
-        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
-          advance_commit_complete source before middle action assignment holds
-            frame nextFrame rep valid sameBootstrap nativeStep
-        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
-          rw [advance_commit_bootstrap source before middle action, sameBootstrap]
-        exact ih middle _ _ run extended middleHolds nextFrame afterColumns afterValid
-          bootstrap restFollows
-      | signCommittable source action =>
-        obtain ⟨nextFrame, nativeStep, restFollows⟩ := follows
-        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
-          signature_complete source before middle action assignment holds
-            frame nextFrame rep valid sameBootstrap nativeStep
-        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
-          rw [signature_bootstrap source before middle action, sameBootstrap]
-        exact ih middle _ _ run extended middleHolds nextFrame afterColumns afterValid
-          bootstrap restFollows
-      | becomeLeader source action =>
-        obtain ⟨nextFrame, nativeStep, restFollows⟩ := follows
-        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
-          become_leader_complete source before middle action assignment holds
-            frame nextFrame rep valid sameBootstrap nativeStep
-        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
-          rw [become_leader_bootstrap source before middle action, sameBootstrap]
-        exact ih middle _ _ run extended middleHolds nextFrame afterColumns afterValid
-          bootstrap restFollows
-      | appendEntries source destination batchEnd action =>
-        obtain ⟨enabled, restFollows⟩ := follows
-        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
-          send_append_complete source destination batchEnd before middle action assignment holds frame rep
-            valid sameBootstrap enabled
-        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
-          rw [send_append_bootstrap source destination batchEnd before middle action, sameBootstrap]
-        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid bootstrap restFollows
-      | observation clauses emitted asserted =>
-        obtain ⟨observed, restFollows⟩ :=
-          (frame_observation_cons frame _ item rest clauses emitted).mp follows
-        have references := (assert_all_success clauses before middle asserted).1
-        have middleHolds := (assert_all_holds clauses before middle asserted assignment).mpr
-          ⟨holds, (frame_observation_correct assignment before.toColumns frame rep
-            item clauses emitted).mpr observed⟩
-        have afterColumns : FrameColumnsRep assignment middle.toColumns frame := by
-          simpa only [references.columns] using rep
-        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
-          rw [references.bootstrap, sameBootstrap]
-        exact ih middle _ _ run assignment middleHolds frame afterColumns afterValid bootstrap restFollows
+  obtain ⟨extended, _, _, afterHolds, _, _⟩ :=
+    compile_frame_complete_continuation items before after index groups result run
+      assignment holds frame rep valid sameBootstrap [] (by simpa using follows)
+  exact ⟨extended, afterHolds⟩
 
 theorem compiled_frame_trace_iff {width : PNat} [Bootstrap (Fin width)]
     (items : List (FrameInstruction width))
