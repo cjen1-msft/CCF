@@ -49,6 +49,21 @@ theorem bounded_forall_eval {context : List Ty}
         decide_eq_false_iff_not, not_le] using upper
     exact accepted offset nonnegative within
 
+theorem bounded_forall_nat_eval {context : List Ty}
+    (assignment : Assignment) (locals : Locals context)
+    (count : Term context .int) (predicate : Term (.int :: context) .bool)
+    (countValue : Nat) (sameCount : count.eval assignment locals = (countValue : Int)) :
+    (boundedForall count predicate).eval assignment locals = true <->
+      forall offset : Nat, offset < countValue ->
+        predicate.eval assignment (locals.cons (offset : Int)) = true := by
+  rw [bounded_forall_eval, sameCount]
+  constructor
+  · intro accepted offset within
+    exact accepted (offset : Int) (by omega) (by omega)
+  · intro accepted offset nonnegative within
+    have natural : (offset.toNat : Int) = offset := Int.toNat_of_nonneg nonnegative
+    simpa only [natural] using accepted offset.toNat (by omega)
+
 def logRangeEntryEqual {context : List Ty} {width : PNat} (termsOnly : Bool)
     (left right : Term context (entryTy width)) : Term context .bool :=
   if termsOnly then
