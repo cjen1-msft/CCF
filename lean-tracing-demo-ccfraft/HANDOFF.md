@@ -159,7 +159,7 @@ accepted in `816ca46fd`; its append-response term proofs are accepted in
 `f16fe45ab`. Its shared voting-majority proofs are accepted and parent-owned.
 Its leadership guard correspondence and bounds are accepted and parent-owned.
 Its `NativeBecomeLeaderPrefixAssignment` is accepted and parent-owned.
-It now owns `NativeNatSetInsertEncoding`.
+Its `NativeNatSetInsertEncoding` is accepted and parent-owned; it is idle.
 Worker
 `af5d19d5-1186-4609-9b0b-4f224d4a4330` completed
 `NativeAppendResponseExecution`, accepted in `03e5f7809`.
@@ -208,7 +208,13 @@ that existing representation contract rather than require a stronger invariant.
 The first 74 queries in `native-nat-set-insert-baseline/` take a median
 10.446 ms and maximum 14.157 ms; maximum script size is 2,636 bytes.
 No solver optimization is warranted by these cases. The parent owns the
-constraint and fixtures; its correspondence proof is still worker-owned.
+constraint, fixtures, and correspondence proof.
+`nat_set_insert_constraints_rep_correct` matches the existing frame's
+membership representation without an old-limit nonnegativity premise.
+`nat_set_insert_rep_assignment` reuses `natSetAssignment` and preserves every
+bounded input symbol, including the inserted value expression. Domain/decode
+variants remain corollaries. The parent build passes in
+`native-nat-set-insert-parent-build.log`.
 This is not yet a client-request action or a transaction-name binding API.
 
 Commit `36efa30f6` adds a private typed packet-pattern representation, SMT
