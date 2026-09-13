@@ -1,0 +1,15 @@
+{
+  "nodes": ["a", "b"],
+  "bootstrap": ["a", "b"],
+  "instructions": [
+    {"kind": "allocated", "node": "a", "value": true},
+    {"kind": "role", "node": "a", "value": "leader"},
+    {"kind": "currentTerm", "node": "a", "value": 1},
+    {"kind": "commit", "node": "a", "value": 0},
+    {"kind": "logLength", "node": "a", "value": 1},
+    {"kind": "entry", "node": "a", "index": 0, "value": {"term": 1, "content": "signature"}},
+    {"kind": "matchIndex", "node": "a", "peer": "b", "value": 1},
+    {"kind": "advanceCommitIndex", "node": "a"},
+    {"kind": "commit", "node": "a", "value": 0}
+  ]
+}

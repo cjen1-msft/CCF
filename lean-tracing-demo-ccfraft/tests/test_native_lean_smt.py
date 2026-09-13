@@ -2027,6 +2027,11 @@ class NativeLeanSmtTests(unittest.TestCase):
                 "NativeMembershipChangeFixtureMain",
                 True,
             ),
+            (
+                "native_commit_advancement_conflict",
+                "NativeAdvanceCommitFixtureMain",
+                1,
+            ),
         ):
             with self.subTest(trace=trace):
                 conflict = json.loads(
