@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeSignatureSound
+import Sparse.NativeSignatureComplete
 import Sparse.NativeArraySignatureTransition
 import Sparse.NativeNodeRowModelEncoding
 
@@ -68,6 +69,36 @@ theorem signature_frame_success {width : PNat} [Bootstrap (Fin width)]
   exact ⟨nextFrame, step, FrameColumnsRep.of_model_rep assignment after.toColumns
     written nextFrame (CCFRaft.next state (.signCommittableMessages source))
     writtenRep writtenModel nextModel⟩
+
+theorem signature_complete {width : PNat} [Bootstrap (Fin width)]
+    (source : Fin width) (before after : Encoding width)
+    (run : (signCommittableMessages source).run before = .ok ((), after))
+    (assignment : Assignment) (holds : Holds before.assertions.toList assignment)
+    (frame nextFrame : NativeArrayVote.Frame (Fin width) Nat)
+    (rep : FrameColumnsRep assignment before.toColumns frame)
+    (valid : ReferencesValid before)
+    (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION)
+    (step : NativeArraySignature.Sign frame source nextFrame) :
+    exists extended : Assignment,
+      assignment.AgreesBelow before.next extended /\
+        Holds after.assertions.toList extended /\
+        FrameColumnsRep extended after.toColumns nextFrame := by
+  let state := frame.realize
+  have modelRep : frame.Rep state := NativeArrayVote.realize_rep frame rep.valid
+  obtain ⟨allowed, nextModel⟩ :=
+    NativeArraySignature.Sign.model_correct frame nextFrame state modelRep source step
+  obtain ⟨extended, agreement, afterHolds⟩ :=
+    signature_assignment source before after run assignment holds valid
+      frame state rep modelRep allowed sameBootstrap
+  have originalRep : FrameColumnsRep extended before.toColumns frame :=
+    rep.agrees_below before assignment extended frame valid agreement
+  obtain ⟨_, written, writtenRep, writtenModel⟩ :=
+    signature_model_sound source before after run extended afterHolds
+      frame state originalRep modelRep sameBootstrap
+  exact ⟨extended, agreement, afterHolds,
+    FrameColumnsRep.of_model_rep extended after.toColumns written nextFrame
+      (CCFRaft.next state (.signCommittableMessages source))
+      writtenRep writtenModel nextModel⟩
 
 end CCFRaft.NativeEncode
 

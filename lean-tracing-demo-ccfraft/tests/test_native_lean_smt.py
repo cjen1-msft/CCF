@@ -184,6 +184,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeRetirementTailSuffixAssignment",
             "Sparse.NativeRetirementTailComplete",
             "Sparse.NativeSignatureSound",
+            "Sparse.NativeSignatureComplete",
             "Sparse.NativeSignCommittableEncoding",
         ):
             visit(module)
