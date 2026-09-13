@@ -502,6 +502,19 @@ theorem receive_append_success {width : PNat} (source destination : Fin width)
   exact ⟨states, runs, writerBootstrap, writerColumns, writerNext, finalNext⟩
 
 
+theorem receive_append_bootstrap {width : PNat} (source destination : Fin width)
+    (before after : Encoding width)
+    (run : (receiveAppend source destination).run before = .ok ((), after)) :
+    after.bootstrap = before.bootstrap := by
+  obtain ⟨states, execution⟩ :=
+    receive_append_success source destination before after run
+  let terms := appendReceiveExecutionTerms before source destination
+  obtain ⟨_, _, _, _, _, _, _, writes⟩ :=
+    append_receive_writes_success source destination terms.branches.stepDown
+      terms.values terms.response terms.completed states.middle.suffix.writerBefore after
+      execution.runs.middleRuns.suffixRuns.writeRun
+  exact writes.bootstrap.trans execution.writerBootstrap
+
 end CCFRaft.NativeEncode
 
 run_cmd do
