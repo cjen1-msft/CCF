@@ -2481,6 +2481,11 @@ class NativeLeanSmtTests(unittest.TestCase):
                 "NativeSignCommittableFixtureMain",
                 2,
             ),
+            (
+                "native_vote_response_tally_conflict",
+                "NativeReceiveVoteResponseFixtureMain",
+                ["a"],
+            ),
         ):
             with self.subTest(trace=trace):
                 conflict = json.loads(

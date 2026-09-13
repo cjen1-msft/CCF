@@ -1,0 +1,14 @@
+{
+  "nodes": ["a", "b"],
+  "bootstrap": ["a"],
+  "instructions": [
+    {"kind": "allocated", "node": "a", "value": true},
+    {"kind": "role", "node": "b", "value": "candidate"},
+    {"kind": "currentTerm", "node": "b", "value": 1},
+    {"kind": "queuePoint", "source": "a", "destination": "b", "index": 0,
+     "value": {"kind": "requestVoteResponse", "source": "a", "destination": "b",
+               "term": 1, "voteGranted": true}},
+    {"kind": "receiveRequestVoteResponse", "source": "a", "destination": "b"},
+    {"kind": "votesGranted", "node": "b", "value": []}
+  ]
+}
