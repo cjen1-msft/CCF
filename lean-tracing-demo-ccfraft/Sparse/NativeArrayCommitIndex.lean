@@ -2,7 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeArrayMajority
-import Sparse.LogMatchSummary
+import Sparse.NativeMaximumSummary
 
 set_option autoImplicit false
 
@@ -35,6 +35,31 @@ theorem eligible_correct (row : Local N T) (state : State N T) (leader : N)
   rw [Eligible, majority_at_correct row state leader current (position + 1) same selected, same]
   simp only [Local.toModel, isSignatureAt, termAt, entry, decide_eq_true_eq,
     Option.map_some, Option.getD_some]
+
+theorem commit_index_correct (row : Local N T) (state : State N T) (leader : N)
+    (current best : Nat) (same : state.nodes leader = row.toModel)
+    (selected : CurrentIndex row.log row.commit current) :
+    CommitIndex row leader current best <-> highestCommittableIndex state leader = best := by
+  let candidate := fun index =>
+    (state.nodes leader).commitIndex < index /\
+      isSignatureAt (state.nodes leader).log index = true /\
+      termAt (state.nodes leader).log index = (state.nodes leader).currentTerm /\
+      hasMajorityAt state leader index
+  have sameLength : (state.nodes leader).log.length = row.log.length := by
+    rw [same]
+    exact Log.decode_length row.log
+  have fold := NativeMaximumSummary.bounded_maximum_iff_storage_summary
+    candidate row.log.length row.log.length best
+  have modelSummary :
+      highestCommittableIndex state leader = best <->
+        Sparse.LogMatchSummary.StorageSummary row.log.length row.log.length best
+          (fun position => candidate (position + 1)) := by
+    simpa only [highestCommittableIndex, sameLength, Nat.min_self, candidate] using fold
+  exact (NativeMaximumSummary.storage_summary_congr
+    (Eligible row leader current) (fun position => candidate (position + 1))
+    row.log.length row.log.length best (fun position live =>
+      eligible_correct row state leader current position same selected (by simpa using live))).trans
+        modelSummary.symm
 
 end CCFRaft.NativeArrayCommitIndex
 
