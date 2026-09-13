@@ -337,6 +337,9 @@ and parameters and returns a represented final frame.
 No distinct-value or extra initial-state assumptions are added.
 The parent build is `native-parameterized-frame-trace-parent-build.log`.
 Decoded-document and emitted-script correspondence remain pending.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns that final composition in
+`NativeParameterizedFrameDecoded` and a public aggregate prior-Holds helper
+in `NativeParameterizedFrameTrace`.
 
 `ParameterizedFrameInstruction.materialize values` now gives the concrete
 instruction semantics. `NativeParameterizedFrameDecoded` defines Model
@@ -348,6 +351,9 @@ Parent logs are `native-parameter-materialize-parent-build.log` and
 `parameterized_client_traces` shares the existing 30 cases between private and
 prepared public acceptance. The private cases still pass in
 `native-shared-parameter-fixtures-tests.log`.
+The parent added build-stable `encodeParameterizedFrame` and
+`encodeParameterizedFrameDetails` wrappers. `NativeEncodeMain` still uses the
+concrete compiler until the decoded-script proof is accepted.
 
 `raw_normalization.normalize(..., native_ids=True)` now indexes observed
 identity strings without fixed decimal IDs or the historical 15-slot limit.
