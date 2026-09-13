@@ -182,6 +182,8 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeRetirementTailSound",
             "Sparse.NativeRetirementTailPrefixAssignment",
             "Sparse.NativeRetirementTailSuffixAssignment",
+            "Sparse.NativeRetirementTailComplete",
+            "Sparse.NativeSignatureSound",
         ):
             visit(module)
         forbidden = {
@@ -679,7 +681,7 @@ class NativeLeanSmtTests(unittest.TestCase):
             "NativeSignCommittableFixtureMain", models, 8, "signature"
         )
 
-    def test_signature_commit_sequence(self):
+    def signature_commit_traces(self):
         models = self.model_traces("NativeArraySignatureFixtureMain", 50)
         base = next(
             item
@@ -716,8 +718,14 @@ class NativeLeanSmtTests(unittest.TestCase):
         ]
         wide["instructions"] = absent + wide["instructions"] + absent
         variants.append({"trace": wide, "expected": "sat"})
+        return variants
+
+    def test_signature_commit_sequence(self):
         self.assert_internal_model_traces(
-            "NativeSignCommittableFixtureMain", variants, 2, "signature-commit"
+            "NativeSignCommittableFixtureMain",
+            self.signature_commit_traces(),
+            2,
+            "signature-commit",
         )
 
     def test_internal_core_action_sequences(self):
@@ -1996,10 +2004,13 @@ class NativeLeanSmtTests(unittest.TestCase):
         )
 
     def test_advance_commit_input_errors(self):
-        valid = {"kind": "advanceCommitIndex", "node": "a"}
+        self.assert_unary_action_input_errors("advanceCommitIndex")
+
+    def assert_unary_action_input_errors(self, kind):
+        valid = {"kind": kind, "node": "a"}
         invalid = [
-            {"kind": "advanceCommitIndex"},
-            {"kind": "advanceCommitIndex", "source": "a"},
+            {"kind": kind},
+            {"kind": kind, "source": "a"},
             dict(valid, source="a"),
             dict(valid, value=1),
         ]

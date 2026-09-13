@@ -53,7 +53,7 @@ theorem leader_log_row_terms_rep {width : PNat}
       subst position
       simp [NativeArrayLeaderLogWrite.appendRow, NativeArrayLogWrite.append,
         NativeArrayCheckQuorum.Log.ofList, oldRep.currentTerm, sameContent,
-        modelEntry, Function.update_apply]
+        modelEntry]
 
 theorem signature_refresh_constraints_output_sound {width : PNat}
     [Bootstrap (Fin width)]

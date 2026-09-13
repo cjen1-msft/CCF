@@ -120,6 +120,27 @@ theorem signature_prefix_facts {width : PNat} (source : Fin width)
   · simpa [terms, signaturePrefixTerms, Term.eval] using entriesParts.2
   · simpa [terms, signaturePrefixTerms, Term.eval] using lengthParts.2
 
+theorem signature_prefix_row_rep {width : PNat} (source : Fin width)
+    (before : Encoding width) (assignment : Assignment)
+    (frame : NativeArrayVote.Frame (Fin width) Nat)
+    (rep : FrameColumnsRep assignment before.toColumns frame)
+    (facts : SignaturePrefixFacts before source assignment) :
+    (signaturePrefixTerms before source).appended.Rep assignment
+      (NativeArrayLeaderLogWrite.appendRow
+        (NativeArrayCheckQuorum.get frame.nodes source) .signature) := by
+  let terms := signaturePrefixTerms before source
+  let old := NativeArrayCheckQuorum.get frame.nodes source
+  have oldRep : terms.old.Rep assignment old :=
+    node_row_snapshot_rep assignment before.toColumns frame.nodes rep.nodes source
+  apply leader_log_row_terms_rep assignment terms.old old (contentTerm .signature)
+    .signature terms.length terms.entries oldRep
+  · simp [content_term_eval, contentValue, decodeContent]
+  · rw [facts.length]
+    change terms.old.logLength.eval assignment Locals.empty + 1 =
+      (old.log.length + 1 : Int)
+    rw [oldRep.logLength]
+  · exact facts.entries
+
 theorem signature_prefix_assignment {width : PNat} (source : Fin width)
     (before after : Encoding width) (states : SignaturePrefixStates width)
     (result : SignaturePrefixResult source before after states)
@@ -152,21 +173,9 @@ theorem signature_prefix_assignment {width : PNat} (source : Fin width)
     rep.agrees_below before assignment extended frame valid agreement
   let old := NativeArrayCheckQuorum.get frame.nodes source
   let appended := NativeArrayLeaderLogWrite.appendRow old .signature
-  have oldRep :=
-    node_row_snapshot_rep extended before.toColumns frame.nodes extendedRep.nodes source
   have facts := signature_prefix_facts source before after states result extended prefixHolds
-  have appendedRep : terms.appended.Rep extended appended := by
-    apply leader_log_row_terms_rep extended terms.old old (contentTerm .signature)
-      .signature terms.length terms.entries oldRep
-    · simp [content_term_eval, contentValue, decodeContent]
-    · rw [facts.length]
-      have oldLength :
-          terms.old.logLength.eval extended Locals.empty = (old.log.length : Int) := by
-        simpa [terms, old, signaturePrefixTerms] using oldRep.logLength
-      change terms.old.logLength.eval extended Locals.empty + 1 =
-        (old.log.length + 1 : Int)
-      rw [oldLength]
-    · exact facts.entries
+  have appendedRep : terms.appended.Rep extended appended :=
+    signature_prefix_row_rep source before extended frame extendedRep facts
   have oldBounded :=
     (node_row_snapshot_bounded before source valid).mono
       (show before.next <= states.tailBefore.next by
