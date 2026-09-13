@@ -1422,6 +1422,16 @@ class NativeLeanSmtTests(unittest.TestCase):
             )
         )
 
+    def test_public_model_append_receives(self):
+        self.assert_model_traces(
+            "NativeArrayAppendReceiveFixtureMain", 1344, "public-model-append-receive"
+        )
+
+    def test_public_model_append_receive_hints(self):
+        self.assert_model_traces(
+            "NativeArrayAppendReceiveHintFixtureMain", 110, "public-model-append-hint"
+        )
+
     def test_append_receive_model_fixture_coverage(self):
         fixtures = self.model_traces("NativeArrayAppendReceiveFixtureMain", 1344)
         self.assertEqual(
@@ -1642,6 +1652,28 @@ class NativeLeanSmtTests(unittest.TestCase):
         )
         self.assert_invalid_instructions(invalid)
 
+    def test_append_receive_input_errors(self):
+        valid = {
+            "kind": "receiveAppendEntries",
+            "source": "a",
+            "destination": "a",
+        }
+        invalid = [
+            {key: value for key, value in valid.items() if key != missing}
+            for missing in ("source", "destination")
+        ]
+        invalid.extend(
+            [
+                dict(valid, source="missing"),
+                dict(valid, destination="missing"),
+                dict(valid, source=0),
+                dict(valid, destination=False),
+                dict(valid, value=True),
+                {"kind": "receive", "source": "a", "destination": "a"},
+            ]
+        )
+        self.assert_invalid_instructions(invalid)
+
     def test_append_cursor_and_duplicate_heartbeats(self):
         document = json.loads(
             (ROOT / "Traces/native_append_fifo_conflict.json").read_text()
@@ -1774,6 +1806,11 @@ class NativeLeanSmtTests(unittest.TestCase):
     def test_vote_receive_explorer_core(self):
         self.assert_explorer_core(
             "Traces/native_vote_receive_fifo_conflict.json", {14, 15, 18}
+        )
+
+    def test_append_receive_explorer_core(self):
+        self.assert_explorer_core(
+            "Traces/native_append_receive_fifo_conflict.json", {8, 9}
         )
 
     def test_core_explorer_fixture_transitions(self):

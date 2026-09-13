@@ -60,7 +60,8 @@ or restricting possible executions is not a performance optimization.
 The public Lean encoder uses `Sparse/NativeFrameEncode.lean` and shares
 local-state compilation with `Sparse/NativeEncode.lean`.
 It accepts `checkQuorum`, `requestVote`, `requestPreVote`, `updateTerm`, `timeout`,
-`becomePreVoteCandidate`, `appendEntries`, and `receiveRequestVote`, plus the
+`becomePreVoteCandidate`, `appendEntries`, `receiveRequestVote`, and
+`receiveAppendEntries`, plus the
 `allocated`, `role`, `newFollower`, `logLength`,
 `commit`, `currentTerm`, `entry`, `retirementIndex`,
 `retirementCommittableIndex`, `retiredCommittedIndex`, `votedFor`, and
@@ -83,6 +84,12 @@ It consumes one request, conditionally updates `votedFor`, and enqueues one
 reply. Stale requests receive negative replies. Freshness uses the latest
 signature, not the commit frontier. Unallocated senders and self receives
 are allowed. A different packet kind makes this action UNSAT.
+`receiveAppendEntries` requires declared `source` and `destination` identities,
+an allocated destination, and an append request at that queue's head.
+The request must name the destination and have no newer term.
+A same-term candidate or pre-vote candidate steps down without consuming the
+request or replying. Other enabled branches consume the request, send an ACK
+or NACK, and refresh retirement metadata. NACKs also refresh that metadata.
 Generic `receive` remains an input error.
 `updateTerm` reads the directed queue head without consuming it. It requires an
 allocated destination and a strictly newer packet term. Responses also require
@@ -447,7 +454,7 @@ retirement refresh after consuming NACKs. `NativeLogRangeEncoding` and
 `NativeRetirementRefreshTerms` emits the scalar retirement results from
 canonical scan witnesses. `NativeRetirementRefreshEncoding` connects the combined
 scan constraints to Model refresh outputs and extracts canonical witnesses from
-arbitrary satisfying integers. Public append receive remains unwired.
+arbitrary satisfying integers.
 `NativeNodeRowWritesEncoding` proves whole-row replacement and allocation,
 including full-frame preservation and extension of a particular prior assignment.
 Snapshots use fresh defaults for absent nodes and preserve arbitrary log tails.
@@ -460,7 +467,7 @@ original queues and globals on candidate stepdown.
 `NativeAppendReceiveResponseEncoding` proves ACK and NACK metadata.
 Inactive best-index witnesses remain unconstrained. The NACK hint uses the
 last local log term, not the term at the requested previous index.
-The private `NativeAppendReceive` encoder passes 1,454 Model-derived transition
+The `NativeAppendReceive` encoder passes 1,454 Model-derived transition
 scripts, including the focused hinted-NACK cases.
 `NativeAppendReceiveSound.receive_append_model_sound` proves whole-action soundness:
 the actual run and satisfying final assertions imply Model enablement and
@@ -469,8 +476,9 @@ representation of the next state, given the original frame and bootstrap represe
 satisfying input assignment for an enabled, selected request and realizes the Model
 next state. `NativeAppendReceiveEncoding` proves soundness and assignment
 completeness for the exact native successor chosen by trace semantics.
-Public trace integration remains unfinished, so `receiveAppendEntries` remains
-unsupported by the public decoder.
+Public `receiveAppendEntries` has both whole-trace proof directions.
+`Traces/native_append_receive_fifo_conflict.json` attributes a missing reply to
+the receive action and the contradictory queue observation in the explorer.
 `NativeNodeRowModelEncoding` shares row and whole-frame representation transport
 across equal Model states. Allocation remains explicit. Inactive log tails and
 physical queue heads need not agree because the representation observes live logs

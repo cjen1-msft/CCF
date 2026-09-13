@@ -6,7 +6,7 @@
 
 The user now prioritizes `requestVote`, receive requestVote, `appendEntries`,
 receive appendEntries, and membership change. Vote sends, vote-request receive,
-and append sends are public.
+append sends, and append-request receive are public.
 Finish this core before unrelated remaining actions.
 Delegate mechanical proofs to `gpt-5.6-sol` with medium reasoning effort.
 The main agent owns semantic lemmas. Build reusable proof components where
@@ -14,8 +14,8 @@ they remove repeated execution decomposition and assignment-extension repair.
 This supersedes the earlier serial-only worker instruction.
 
 Both private core actions now have whole-action Model and exact native-step
-soundness and assignment completeness. Public append-receive integration is the
-active slice, followed by public membership integration. Both assurance flags
+soundness and assignment completeness. Public append-receive integration is
+complete; public membership integration is next. Both assurance flags
 remain false.
 
 Factory tools are unavailable in this session. `NativeDefinitions` and
@@ -563,10 +563,15 @@ The parent inspected the diff and rebuilt it in
 encoder runs to the exact native step through shared Model-equivalence transport.
 The parent build passes in `native-append-frame-correspondence-build.log`;
 the import audit passes.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns exactly
-`NativeArrayVote.lean`, `NativeFrameEncode.lean`, `NativeFrameStep.lean`, and
-`NativeFrameTrace.lean` for public `receiveAppendEntries` integration only.
-Membership is the following serial slice. All lower-level files are parent-owned.
+Public `receiveAppendEntries` is integrated in `NativeArrayVote.lean`,
+`NativeFrameEncode.lean`, `NativeFrameStep.lean`, and `NativeFrameTrace.lean`.
+The parent inspected all four diffs and built the public proofs, executable,
+and affected Model fixtures in `native-public-append-receive-parent-build.log`.
+The 1,454 public append-receive cases, input errors, explorer core attribution,
+1,200 append-send cases, 480 vote-receive cases, and import audit pass in
+`native-public-append-receive-tests.log`.
+Generic `receive` remains rejected. Membership is the next serial slice.
+The public compiler files are parent-owned until the next assignment.
 
 `append_receive_prefix_constraints`, committed as `4a74a4892`, exposes the
 existing backward constraint extraction before frame writes.
@@ -703,16 +708,15 @@ Bootstrap preservation is also proved. Builds pass in
 the import audit passes. Assignment completeness is now complete in `b39691ba8`;
 public wiring remains pending.
 
-Three public Model fixture tests are added but deliberately uncommitted:
-`test_public_model_append_receives`, `test_public_model_append_receive_hints`,
-and `test_public_model_membership_changes`. They reuse the existing 1,344,
-110, and 1,572 Model cases. The failing-first run is in
+The public append Model and hint tests reuse the existing 1,344 and 110 cases.
+`test_public_model_membership_changes` is still deliberately uncommitted.
+It reuses the existing 1,572 Model cases. The original failing-first run is in
 `native-core-public-failing-first.log`. Canonical minimal receive input still
 falls through to the local decoder, reporting `property not found: node`;
 see `native-public-receive-decoder-before.log`.
-Five more public tests are pending: the two action input-error tests,
-configuration-set decoding, and the two explorer-core tests.
-Stage each public test only after its action works.
+Append input-error and explorer-core tests now pass publicly.
+Membership input-error, configuration-set, and explorer-core tests remain
+uncommitted. Stage each public test only after its action works.
 Commit `997954377` adds `Traces/native_append_receive_fifo_conflict.json`,
 `Traces/native_membership_allocation_conflict.json`, and
 `test_core_explorer_fixture_transitions`. Both contradictions and their corrected

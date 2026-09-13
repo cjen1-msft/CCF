@@ -33,6 +33,7 @@ theorem compile_frame_sound {width : PNat} [Bootstrap (Fin width)]
           ⟨preVote, source, destination, same, action⟩ |
           ⟨source, destination, same, action⟩ | ⟨preVote, node, same, action⟩ |
           ⟨source, destination, same, action⟩ |
+          ⟨source, destination, same, action⟩ |
           ⟨source, destination, batchEnd, same, action⟩ | ⟨clauses, emitted, asserted⟩
       · subst item
         obtain ⟨_, enabled, afterColumns⟩ :=
@@ -69,6 +70,14 @@ theorem compile_frame_sound {width : PNat} [Bootstrap (Fin width)]
           rw [receive_vote_bootstrap source destination before middle action, sameBootstrap]
         exact ⟨present, request, signature, selected, sameSource, recipient, term, latest,
           ih middle _ _ run _ afterColumns bootstrap⟩
+      · subst item
+        obtain ⟨nextFrame, nativeStep, afterColumns⟩ :=
+          receive_append_frame_success source destination before middle action assignment
+            middleHolds frame rep sameBootstrap
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [receive_append_bootstrap source destination before middle action, sameBootstrap]
+        exact ⟨nextFrame, nativeStep,
+          ih middle _ _ run nextFrame afterColumns bootstrap⟩
       · subst item
         obtain ⟨enabled, afterColumns⟩ :=
           send_append_frame_success source destination batchEnd before middle action assignment
@@ -113,6 +122,7 @@ theorem compile_frame_complete {width : PNat} [Bootstrap (Fin width)]
           ⟨preVote, source, destination, same, action⟩ |
           ⟨source, destination, same, action⟩ | ⟨preVote, node, same, action⟩ |
           ⟨source, destination, same, action⟩ |
+          ⟨source, destination, same, action⟩ |
           ⟨source, destination, batchEnd, same, action⟩ | ⟨clauses, emitted, asserted⟩
       · subst item
         have stepFollows : NativeArrayCheckQuorum.enabled frame.nodes node /\
@@ -154,6 +164,15 @@ theorem compile_frame_complete {width : PNat} [Bootstrap (Fin width)]
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [receive_vote_bootstrap source destination before middle action, sameBootstrap]
         exact ih middle _ _ run extended middleHolds _ afterColumns afterValid bootstrap restFollows
+      · subst item
+        obtain ⟨nextFrame, nativeStep, restFollows⟩ := follows
+        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
+          receive_append_complete source destination before middle action assignment holds
+            frame nextFrame rep valid sameBootstrap nativeStep
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [receive_append_bootstrap source destination before middle action, sameBootstrap]
+        exact ih middle _ _ run extended middleHolds nextFrame afterColumns afterValid
+          bootstrap restFollows
       · subst item
         obtain ⟨enabled, restFollows⟩ := follows
         obtain ⟨extended, _, middleHolds, afterColumns⟩ :=

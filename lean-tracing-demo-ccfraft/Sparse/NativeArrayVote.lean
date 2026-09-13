@@ -4,6 +4,7 @@
 import Sparse.NativeArrayVoteState
 import Sparse.NativeArrayVoteReceive
 import Sparse.NativeArrayAppend
+import Sparse.NativeArrayAppendNetwork
 
 set_option autoImplicit false
 
@@ -19,6 +20,7 @@ inductive Instruction (N T : Type) where
   | updateTerm (source destination : N)
   | campaign (preVote : Bool) (node : N)
   | receiveVote (source destination : N)
+  | receiveAppend (source destination : N)
   | appendEntries (source destination : N) (batchEnd : Nat)
   | submittedTxId (txId : T) (expected : Bool)
   | hasJoined (expected : Finset N)
@@ -50,6 +52,10 @@ def follows (frame : Frame N T) : List (Instruction N T) -> Prop
           request.term <= (get frame.nodes destination).currentTerm /\
           SignatureIndex (get frame.nodes destination).log signature /\
           follows (NativeArrayVoteReceive.receive frame destination request signature) rest
+  | .receiveAppend source destination :: rest =>
+      exists nextFrame,
+        NativeArrayAppendNetwork.ReceiveAppend frame source destination nextFrame /\
+          follows nextFrame rest
   | .appendEntries source destination batchEnd :: rest =>
       NativeArrayAppend.enabled frame source destination batchEnd /\
         follows (NativeArrayAppend.send frame source destination batchEnd) rest
@@ -84,6 +90,11 @@ def modelFollows (state : State N T) : List (Instruction N T) -> Prop
       CCFRaft.Enabled state (.receive source destination) /\
         (exists request remaining, takeFirstFrom source (state.network destination) =
           some (.requestVoteRequest request, remaining)) /\
+        modelFollows (CCFRaft.next state (.receive source destination)) rest
+  | .receiveAppend source destination :: rest =>
+      CCFRaft.Enabled state (.receive source destination) /\
+        (exists request remaining, takeFirstFrom source (state.network destination) =
+          some (.appendEntriesRequest request, remaining)) /\
         modelFollows (CCFRaft.next state (.receive source destination)) rest
   | .appendEntries source destination batchEnd :: rest =>
       CCFRaft.Enabled state (.appendEntries source destination batchEnd) /\
@@ -162,6 +173,42 @@ theorem follows_correct (trace : List (Instruction N T)) (frame : Frame N T) (st
         refine ⟨present, request, signature, ?_, sameSource, recipient, term, latest, (ih _ _ nextRep).mpr held⟩
         rw [NativeArrayQueue.model_peek_correct frame.queues state.network rep.queues source destination, taken]
         rfl
+    | receiveAppend source destination =>
+      constructor
+      · rintro ⟨nextFrame, step, held⟩
+        have enabled := NativeArrayAppendNetwork.receive_append_enabled
+          frame state rep source destination nextFrame step
+        have selected : exists request,
+            NativeArrayAppendNetwork.SelectedAppend frame source destination request := by
+          cases step <;> exact ⟨_, by assumption⟩
+        obtain ⟨request, selected⟩ := selected
+        obtain ⟨remaining, taken⟩ :=
+          NativeArrayVoteReceive.selected_model_take frame state rep source destination
+            (.appendEntriesRequest request) selected.head
+        have nextRep := NativeArrayAppendNetwork.receive_append_rep
+          frame state rep source destination nextFrame step
+        exact ⟨enabled, ⟨request, remaining, taken⟩, (ih _ _ nextRep).mp held⟩
+      · rintro ⟨enabled, ⟨request, remaining, taken⟩, held⟩
+        have selectedHead :
+            (frame.queues destination source).peek =
+              some (.appendEntriesRequest request) := by
+          rw [NativeArrayQueue.model_peek_correct
+            frame.queues state.network rep.queues source destination, taken]
+          rfl
+        have guard := (NativeArrayAppendReceiveGuard.enabled_correct frame state rep
+          source destination request (Log.ofList request.entries) selectedHead (by simp)).mp enabled
+        have selected : NativeArrayAppendNetwork.SelectedAppend
+            frame source destination request :=
+          ⟨selectedHead, guard.1,
+            NativeArrayAppendReceiveGuard.selected_append_source
+              frame state rep source destination request selectedHead,
+            guard.2.1⟩
+        obtain ⟨nextFrame, step⟩ :=
+          NativeArrayAppendNetwork.receive_append_exists
+            frame state rep source destination request selected enabled
+        have nextRep := NativeArrayAppendNetwork.receive_append_rep
+          frame state rep source destination nextFrame step
+        exact ⟨nextFrame, step, (ih _ _ nextRep).mpr held⟩
     | appendEntries source destination batchEnd =>
       constructor
       · rintro ⟨enabled, held⟩
