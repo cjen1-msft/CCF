@@ -82,16 +82,38 @@ correspondence build pass in `native-retirement-tail-refactor-build.log` and
 `native-retirement-tail-equivalence.log`.
 New signature proofs should use this shared tail, not duplicate the commit
 action's execution and assignment bookkeeping.
+Commit `ee09a189a` adds generic tail execution/constraint extraction and the
+signature's two-definition prefix, including specific-assignment extension
+and appended-row representation. Parent builds pass in
+`native-retirement-tail-execution-parent-build.log` and
+`native-signature-prefix-parent-build.log`.
+The shared tail starts with four retirement witnesses, then guards, current
+configuration, completed-retirement witnesses, and row writes. Its increment
+is `23 + 3 * width`. Its input row need not be a snapshot of the frame:
+signature writing supplies an already appended row.
+`Traces/native_signature_append_conflict.json` has action owner 7 and
+contradictory length observation 8. Its private UNSAT/corrected-SAT pair passes
+in `native-signature-conflict-fixture-tests.log`; public signature attribution
+is not yet wired.
 Commit `6085bf4ec` moves `NodeRowTerms.Bounded.mono` from the commit prefix to
 `NativeNodeRowWritesEncoding`. The downstream public rebuild passes in
 `native-shared-row-bounds-public-build.log`.
 
 Mechanical workers retain separate files.
-`af5d19d5-1186-4609-9b0b-4f224d4a4330` owns `NativeRetirementTailExecution`.
-`a04f39b9-8aa6-4733-9c2c-228d7432032e` owns `NativeSignaturePrefix`.
-Workers `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` and
-`2a020198-af17-47bf-b45b-0b82864a50ad` are idle.
+`b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns `NativeRetirementTailSound`.
+`af5d19d5-1186-4609-9b0b-4f224d4a4330` owns
+`NativeRetirementTailPrefixAssignment`, which stops before guards.
+`2a020198-af17-47bf-b45b-0b82864a50ad` owns
+`NativeRetirementTailSuffixAssignment`, which starts after guards.
+Both assignment components take a represented input row, its symbol bounds,
+and a separately bounded natural commit expression. Do not substitute a
+frame snapshot for that supplied row.
+Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` is idle.
 The parent owns runtime, tests, docs, and all accepted modules.
+Next compose signature soundness and completeness through these components,
+then wire public decoding and whole-trace correspondence. Reuse the shared
+proofs for commit advancement too, removing its duplicate retirement-stage
+bookkeeping once the common APIs are complete.
 
 Factory tools are unavailable in this session. `NativeDefinitions` and
 `NativeDefinitionsEncoding` now provide reusable heterogeneous definition
