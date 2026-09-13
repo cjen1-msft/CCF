@@ -166,6 +166,10 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeCommitIndexAssignment",
             "Sparse.NativeAdvanceCommit",
             "Sparse.NativeCommitExecution",
+            "Sparse.NativeCommitSound",
+            "Sparse.NativeCommitPrefixAssignment",
+            "Sparse.NativeCommitSuffixAssignment",
+            "Sparse.NativeAdvanceCommitEncoding",
         ):
             visit(module)
         forbidden = {
