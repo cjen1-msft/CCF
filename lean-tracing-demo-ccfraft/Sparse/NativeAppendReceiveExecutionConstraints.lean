@@ -39,22 +39,20 @@ private theorem define_holds {width : PNat} {sort : Ty} (value : Expr sort)
   · simpa [Term.eval] using
       holds (.equal (.free sort id) value) (by simp)
 
-theorem receive_append_constraints {width : PNat} (source destination : Fin width)
+theorem append_receive_prefix_constraints {width : PNat} (source destination : Fin width)
     (before after : Encoding width)
-    (run : (receiveAppend source destination).run before = .ok ((), after))
-    (assignment : Assignment) (holds : Holds after.assertions.toList assignment) :
+    (states : AppendReceivePrefixStates width)
+    (result : AppendReceiveExecutionResult source destination before after states)
+    (assignment : Assignment)
+    (writerHolds : Holds states.middle.suffix.writerBefore.assertions.toList assignment) :
     AppendReceivePrefixConstraints before source destination
       (appendReceiveExecutionTerms before source destination) assignment := by
-  obtain ⟨states, result⟩ := receive_append_success source destination before after run
   let terms := appendReceiveExecutionTerms before source destination
   let middle := states.middle
   let suffix := middle.suffix
   let runs := result.runs
   let middleRuns := runs.middleRuns
   let suffixRuns := middleRuns.suffixRuns
-  have writerHolds := append_receive_writes_holds_before source destination
-    terms.branches.stepDown terms.values terms.response terms.completed suffix.writerBefore after
-    suffixRuns.writeRun assignment holds
   obtain ⟨bestHolds, nackHolds⟩ := assertion_holds _ suffix.bestFresh
     suffix.writerBefore suffixRuns.nackRun assignment writerHolds
   have completedHolds := fresh_prior_holds suffix.completedState suffix.bestFresh
@@ -121,6 +119,21 @@ theorem receive_append_constraints {width : PNat} (source destination : Fin widt
       completed := ?_
       nack := nackHolds }
   simpa [completedShape.completedId] using completedParts.2
+
+theorem receive_append_constraints {width : PNat} (source destination : Fin width)
+    (before after : Encoding width)
+    (run : (receiveAppend source destination).run before = .ok ((), after))
+    (assignment : Assignment) (holds : Holds after.assertions.toList assignment) :
+    AppendReceivePrefixConstraints before source destination
+      (appendReceiveExecutionTerms before source destination) assignment := by
+  obtain ⟨states, result⟩ := receive_append_success source destination before after run
+  let terms := appendReceiveExecutionTerms before source destination
+  have writerHolds := append_receive_writes_holds_before source destination
+    terms.branches.stepDown terms.values terms.response terms.completed
+    states.middle.suffix.writerBefore after result.runs.middleRuns.suffixRuns.writeRun
+    assignment holds
+  exact append_receive_prefix_constraints source destination before after states result
+    assignment writerHolds
 
 theorem receive_append_prior_holds {width : PNat} (source destination : Fin width)
     (before after : Encoding width)
