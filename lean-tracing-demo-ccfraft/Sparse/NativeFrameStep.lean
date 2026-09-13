@@ -280,6 +280,41 @@ theorem frame_instruction_cases {width : PNat} (item : FrameInstruction width)
       ((frame_observation_run
         (.queuePattern source destination index expected) before _ rfl).symm.trans run)
 
+theorem frame_instruction_bootstrap {width : PNat}
+    (item : FrameInstruction width) (before after : Encoding width)
+    (run : (frameInstruction item).run before = .ok ((), after)) :
+    after.bootstrap = before.bootstrap := by
+  cases frame_instruction_cases item before after run with
+  | quorum node action => exact (quorum_success node.val before after action).bootstrap
+  | vote preVote source destination action =>
+    exact send_vote_bootstrap preVote source destination before after action
+  | updateTerm source destination action =>
+    exact (term_update_success source destination before after action).bootstrap
+  | campaign preVote node action =>
+    exact campaign_bootstrap preVote node before after action
+  | receiveVote source destination action =>
+    exact receive_vote_bootstrap source destination before after action
+  | receiveAppend source destination action =>
+    exact receive_append_bootstrap source destination before after action
+  | receiveVoteResponse preVote source destination action =>
+    exact vote_response_bootstrap preVote source destination before after action
+  | receiveAppendResponse source destination action =>
+    exact append_response_bootstrap source destination before after action
+  | changeConfiguration source configuration action =>
+    exact membership_change_bootstrap source configuration before after action
+  | advanceCommit source action =>
+    exact advance_commit_bootstrap source before after action
+  | signCommittable source action =>
+    exact signature_bootstrap source before after action
+  | becomeLeader source action =>
+    exact become_leader_bootstrap source before after action
+  | clientRequest source transaction action =>
+    exact client_request_bootstrap source (.integer transaction) before after action
+  | appendEntries source destination batchEnd action =>
+    exact send_append_bootstrap source destination batchEnd before after action
+  | observation clauses emitted asserted =>
+    exact (assert_all_success clauses before after asserted).1.bootstrap
+
 theorem frame_instruction_next_mono {width : PNat} (item : FrameInstruction width)
     (before after : Encoding width) (run : (frameInstruction item).run before = .ok ((), after)) :
     before.next <= after.next := by

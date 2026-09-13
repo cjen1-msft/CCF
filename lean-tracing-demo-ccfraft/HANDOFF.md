@@ -329,16 +329,20 @@ transaction-symbol bound from the actual runtime and uses independent soundness
 to represent the exact supplied native successor, preserving the original
 assignment below its counter. It adds no domain or reachability assumptions.
 The parent build is `native-client-request-complete-parent-build.log`.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns
-`NativeParameterizedFrameTrace` and a reusable bootstrap-preservation lemma
-in `NativeFrameStep`. It composes core continuations with dynamic client steps
-under one fixed natural valuation, preserving parameters across assignments.
-Decoded-document and emitted-script correspondence are outside that worker scope.
+`NativeParameterizedFrameTrace` and `frame_instruction_bootstrap` in
+`NativeFrameStep` are accepted and parent-owned. Parameterized trace soundness
+and completeness compose core continuations with dynamic client steps under
+one fixed natural valuation. Completeness preserves the supplied assignment
+and parameters and returns a represented final frame.
+No distinct-value or extra initial-state assumptions are added.
+The parent build is `native-parameterized-frame-trace-parent-build.log`.
+Decoded-document and emitted-script correspondence remain pending.
 
 `ParameterizedFrameInstruction.materialize values` now gives the concrete
 instruction semantics. `NativeParameterizedFrameDecoded` defines Model
 consistency using one existential valuation for the entire instruction list.
-These definitions are built, but parameterized correspondence is still pending.
+These definitions are built; the remaining correspondence joins initial frame
+domains and parameter declarations to the proved trace and emitted script.
 Parent logs are `native-parameter-materialize-parent-build.log` and
 `native-parameterized-model-consistency-build.log`.
 `parameterized_client_traces` shares the existing 30 cases between private and
