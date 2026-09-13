@@ -29,6 +29,14 @@ structure FrameColumnsRep {width : PNat} (assignment : Assignment) (columns : Co
   queues : forall destination source : Fin width,
     (queueRow assignment columns destination source).decode = (frame.queues destination source).decode
 
+theorem FrameColumnsRep.valid {width : PNat} {assignment : Assignment} {columns : Columns}
+    {frame : NativeArrayVote.Frame (Fin width) Nat}
+    (rep : FrameColumnsRep assignment columns frame) : frame.Valid := by
+  intro destination source message member
+  change message ∈ (frame.queues destination source).decode at member
+  rw [<- rep.queues destination source] at member
+  exact model_queue_source source _ _ _ message member
+
 theorem FrameColumnsRep.queue_length {width : PNat} {assignment : Assignment} {columns : Columns}
     {frame : NativeArrayVote.Frame (Fin width) Nat} (rep : FrameColumnsRep assignment columns frame)
     (destination source : Fin width) :

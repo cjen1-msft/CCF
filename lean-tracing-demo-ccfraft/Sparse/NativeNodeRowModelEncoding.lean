@@ -101,6 +101,79 @@ theorem NodeRowTerms.Rep.of_model_eq {width : PNat}
     exact (rep.matchIndex peer).trans
       (congrArg (fun matched => (matched peer : Int)) sameMatch)
 
+theorem NodeColumnsRep.of_model_eq {width : PNat}
+    (assignment : Assignment) (columns : Columns)
+    (arrays other : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
+    (rep : NodeColumnsRep assignment columns arrays)
+    (sameAllocation : forall node, (arrays node).isSome = (other node).isSome)
+    (sameRows : forall node,
+      (NativeArrayCheckQuorum.get arrays node).toModel =
+        (NativeArrayCheckQuorum.get other node).toModel) :
+    NodeColumnsRep assignment columns other := by
+  have rows (node : Fin width) :
+      (nodeRowSnapshot columns node).Rep assignment
+        (NativeArrayCheckQuorum.get other node) :=
+    NodeRowTerms.Rep.of_model_eq assignment (nodeRowSnapshot columns node)
+      (NativeArrayCheckQuorum.get arrays node) (NativeArrayCheckQuorum.get other node)
+      (node_row_snapshot_rep assignment columns arrays rep node) (sameRows node)
+  refine
+    { allocated := fun node => (rep.allocated node).trans (sameAllocation node)
+      role := fun node => (rows node).role
+      newFollower := fun node => (rows node).newFollower
+      currentTerm := fun node => (rows node).currentTerm
+      commit := fun node => (rows node).commit
+      length := fun node => (rows node).logLength
+      entries := ?_
+      retirementIndex := fun node => (rows node).retirementIndex
+      retirementCommittableIndex := fun node => (rows node).retirementCommittableIndex
+      retiredCommittedIndex := fun node => (rows node).retiredCommittedIndex
+      votedFor := fun node => (rows node).votedFor
+      votesGranted := fun node => (rows node).votesGranted
+      preVotesGranted := fun node => (rows node).preVotesGranted
+      membershipState := fun node => (rows node).membershipState
+      sentIndex := ?_
+      matchIndex := ?_ }
+  · intro node index live
+    simpa only [nodeRowSnapshot, entryAt, Term.eval] using (rows node).logEntries index live
+  · intro node peer
+    by_cases present :
+        (NativeEncode.allocated columns node.val : Expr .bool).eval assignment Locals.empty = true
+    · simpa [nodeRowSnapshot, peerIndex, read, Term.eval, present] using (rows node).sentIndex peer
+    · simpa [nodeRowSnapshot, peerIndex, read, Term.eval, present] using (rows node).sentIndex peer
+  · intro node peer
+    by_cases present :
+        (NativeEncode.allocated columns node.val : Expr .bool).eval assignment Locals.empty = true
+    · simpa [nodeRowSnapshot, peerIndex, read, Term.eval, present] using (rows node).matchIndex peer
+    · simpa [nodeRowSnapshot, peerIndex, read, Term.eval, present] using (rows node).matchIndex peer
+
+theorem FrameColumnsRep.of_model_rep {width : PNat} [Bootstrap (Fin width)]
+    (assignment : Assignment) (columns : Columns)
+    (frame other : NativeArrayVote.Frame (Fin width) Nat) (state : State (Fin width) Nat)
+    (rep : FrameColumnsRep assignment columns frame)
+    (frameModel : frame.Rep state) (otherModel : other.Rep state) :
+    FrameColumnsRep assignment columns other := by
+  have sameGlobals : frame.globals = other.globals :=
+    frameModel.globals.trans otherModel.globals.symm
+  have sameQueues :
+      NativeArrayQueue.decodeNetwork frame.queues = NativeArrayQueue.decodeNetwork other.queues :=
+    frameModel.queues.trans otherModel.queues.symm
+  constructor
+  · apply NodeColumnsRep.of_model_eq assignment columns frame.nodes other.nodes rep.nodes
+    · intro node
+      apply Bool.eq_iff_iff.mpr
+      exact (NativeArrayCheckQuorum.allocated_rep frame.nodes state frameModel.nodes node).trans
+        (NativeArrayCheckQuorum.allocated_rep other.nodes state otherModel.nodes node).symm
+    · intro node
+      exact (NativeArrayCheckQuorum.get_rep frame.nodes state frameModel.nodes node).trans
+        (NativeArrayCheckQuorum.get_rep other.nodes state otherModel.nodes node).symm
+  · simpa only [<- sameGlobals] using rep.hasJoined
+  · simpa only [<- sameGlobals] using rep.preVoteStatus
+  · simpa only [<- sameGlobals] using rep.retirementCompleted
+  · simpa only [<- sameGlobals] using rep.submittedTxIds
+  · intro destination source
+    exact (rep.queues destination source).trans
+      (congrFun (congrFun sameQueues destination) source)
+
 end CCFRaft.NativeEncode
 
 run_cmd do
