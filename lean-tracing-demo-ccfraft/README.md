@@ -61,7 +61,7 @@ The public Lean encoder uses `Sparse/NativeFrameEncode.lean` and shares
 local-state compilation with `Sparse/NativeEncode.lean`.
 It accepts `checkQuorum`, `requestVote`, `requestPreVote`, `updateTerm`, `timeout`,
 `becomePreVoteCandidate`, `appendEntries`, `receiveRequestVote`,
-`receiveAppendEntries`, and `changeConfiguration`, plus the
+`receiveAppendEntries`, `changeConfiguration`, and `advanceCommitIndex`, plus the
 `allocated`, `role`, `newFollower`, `logLength`,
 `commit`, `currentTerm`, `entry`, `retirementIndex`,
 `retirementCommittableIndex`, `retiredCommittedIndex`, `votedFor`, and
@@ -98,6 +98,13 @@ The action appends a configuration entry, refreshes retirement metadata, and
 allocates newly added identities. New rows start with role `none`, not `follower`.
 Other already-allocated nodes retain their local state. The source's sent cursor
 for each added identity becomes the old log length.
+`advanceCommitIndex` requires a declared `node` that is an allocated leader.
+It selects the greatest newer current-term signature acknowledged by strict
+majorities of the governing active configurations. It then advances commit
+and refreshes the node's retirement metadata and completed-retirement set.
+No eligible newer signature, or a refreshed `retiredCommitted` state, makes
+the action UNSAT. The old membership state is not a guard.
+Logs, queues, peer rows, and other globals remain unchanged.
 Generic `receive` remains an input error.
 `updateTerm` reads the directed queue head without consuming it. It requires an
 allocated destination and a strictly newer packet term. Responses also require

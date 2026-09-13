@@ -81,6 +81,14 @@ theorem compile_frame_sound {width : PNat} [Bootstrap (Fin width)]
           rw [membership_change_bootstrap source configuration before middle action, sameBootstrap]
         exact ⟨nextFrame, nativeStep,
           ih middle _ _ run nextFrame afterColumns bootstrap⟩
+      | advanceCommit source action =>
+        obtain ⟨nextFrame, nativeStep, afterColumns⟩ :=
+          advance_commit_frame_success source before middle action assignment middleHolds
+            frame rep sameBootstrap
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [advance_commit_bootstrap source before middle action, sameBootstrap]
+        exact ⟨nextFrame, nativeStep,
+          ih middle _ _ run nextFrame afterColumns bootstrap⟩
       | appendEntries source destination batchEnd action =>
         obtain ⟨enabled, afterColumns⟩ :=
           send_append_frame_success source destination batchEnd before middle action assignment
@@ -179,6 +187,15 @@ theorem compile_frame_complete {width : PNat} [Bootstrap (Fin width)]
             frame nextFrame rep valid sameBootstrap nativeStep
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [membership_change_bootstrap source configuration before middle action, sameBootstrap]
+        exact ih middle _ _ run extended middleHolds nextFrame afterColumns afterValid
+          bootstrap restFollows
+      | advanceCommit source action =>
+        obtain ⟨nextFrame, nativeStep, restFollows⟩ := follows
+        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
+          advance_commit_complete source before middle action assignment holds
+            frame nextFrame rep valid sameBootstrap nativeStep
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [advance_commit_bootstrap source before middle action, sameBootstrap]
         exact ih middle _ _ run extended middleHolds nextFrame afterColumns afterValid
           bootstrap restFollows
       | appendEntries source destination batchEnd action =>

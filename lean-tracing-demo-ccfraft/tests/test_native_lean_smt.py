@@ -1651,6 +1651,12 @@ class NativeLeanSmtTests(unittest.TestCase):
             "NativeArrayMembershipFixtureMain", 1572, "public-model-membership"
         )
 
+    def test_public_model_advance_commit(self):
+        fixtures = self.assert_model_traces(
+            "NativeArrayAdvanceCommitFixtureMain", 43, "public-model-advance-commit"
+        )
+        self.assertEqual(sum(item["expected"] == "sat" for item in fixtures), 7)
+
     def test_append_receive_model_fixture_coverage(self):
         fixtures = self.model_traces("NativeArrayAppendReceiveFixtureMain", 1344)
         self.assertEqual(
@@ -1943,6 +1949,96 @@ class NativeLeanSmtTests(unittest.TestCase):
             [{"name": "empty-membership-change", "script": scripts[3], "expected": "unsat"}]
         )
 
+    def test_advance_commit_input_errors(self):
+        valid = {"kind": "advanceCommitIndex", "node": "a"}
+        invalid = [
+            {"kind": "advanceCommitIndex"},
+            {"kind": "advanceCommitIndex", "source": "a"},
+            dict(valid, source="a"),
+            dict(valid, value=1),
+        ]
+        invalid.extend(
+            dict(valid, node=value)
+            for value in ("missing", None, False, 0, 1.5, [], {})
+        )
+        self.assert_invalid_instructions(invalid)
+
+    def test_advance_commit_send_sequence(self):
+        document = json.loads(
+            (ROOT / "Traces/native_commit_advancement_conflict.json").read_text()
+        )
+        document["instructions"][-1]["value"] = 1
+        document["instructions"][:0] = [
+            {"kind": "allocated", "node": "b", "value": True},
+            {"kind": "sentIndex", "node": "a", "peer": "b", "value": 0},
+            {
+                "kind": "queueLength",
+                "source": "a",
+                "destination": "b",
+                "value": 0,
+            },
+        ]
+        packet = {
+            "kind": "appendEntriesRequest",
+            "source": "a",
+            "destination": "b",
+            "term": 1,
+            "prevLogIndex": 0,
+            "prevLogTerm": 0,
+            "leaderCommit": 1,
+            "entries": [{"term": 1, "content": "signature"}],
+        }
+        for index in range(3):
+            document["instructions"].append(
+                {
+                    "kind": "appendEntries",
+                    "source": "a",
+                    "destination": "b",
+                    "batchEnd": 1,
+                }
+            )
+            expected = (
+                packet
+                if index == 0
+                else dict(packet, prevLogIndex=1, prevLogTerm=1, entries=[])
+            )
+            document["instructions"].append(
+                packet_observation(expected, index=index)
+            )
+        document["instructions"].append(
+            {
+                "kind": "queueLength",
+                "source": "a",
+                "destination": "b",
+                "value": 3,
+            }
+        )
+        variants = [("commit-then-append-and-heartbeats", document, "sat")]
+        wrong = deepcopy(document)
+        wrong["instructions"][-2]["value"]["leaderCommit"] = 0
+        variants.append(("heartbeat-uses-stale-commit", wrong, "unsat"))
+        repeated = deepcopy(document)
+        repeated["instructions"].append(
+            {"kind": "advanceCommitIndex", "node": "a"}
+        )
+        variants.append(("commit-without-new-signature", repeated, "unsat"))
+        wide = deepcopy(document)
+        extras = [f"spare-{index}" for index in range(2, 17)]
+        wide["nodes"].extend(extras)
+        absent = [
+            {"kind": "allocated", "node": node, "value": False} for node in extras
+        ]
+        wide["instructions"] = absent + wide["instructions"] + absent
+        variants.append(("seventeen-node-commit-and-send", wide, "sat"))
+        self.solve(
+            [
+                {"name": name, "script": script, "expected": expected}
+                for (name, _, expected), script in zip(
+                    variants, self.encode([trace for _, trace, _ in variants])
+                )
+            ]
+        )
+
     def test_append_cursor_and_duplicate_heartbeats(self):
         document = json.loads(
             (ROOT / "Traces/native_append_fifo_conflict.json").read_text()
@@ -2085,6 +2181,11 @@ class NativeLeanSmtTests(unittest.TestCase):
     def test_membership_change_explorer_core(self):
         self.assert_explorer_core(
             "Traces/native_membership_allocation_conflict.json", {8, 9}
+        )
+
+    def test_advance_commit_explorer_core(self):
+        self.assert_explorer_core(
+            "Traces/native_commit_advancement_conflict.json", {7, 8}
         )
 
     def test_core_explorer_fixture_transitions(self):

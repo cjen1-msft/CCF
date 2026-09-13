@@ -2,7 +2,7 @@
 
 ## Current direction: native-array exact encoding
 
-### Immediate continuation: captured-trace commit advancement
+### Immediate continuation: shared retirement proofs and signature writes
 
 The user now prioritizes `requestVote`, receive requestVote, `appendEntries`,
 receive appendEntries, and membership change. Vote sends, vote-request receive,
@@ -19,62 +19,75 @@ Continue remaining Model actions and partial observations toward raw reduction.
 Both assurance flags
 remain false.
 
-`advanceCommitIndex` is the first unsupported action in both saved captures,
-at normalized step 12. Its semantic foundations are committed as `7d108b287`.
-`NativeArrayConfiguration.AllActive` covers the implicit bootstrap configuration
-and physical active configurations. `NativeArrayMajority` proves that counting
-acknowledgements within each configuration matches the Model's active-union
-intersection. `NativeArrayCommitIndex.eligible_correct` covers live current-term
-signature candidates. `NativeArrayAdvanceCommit` proves the guard and full-frame
-write given the exact maximum and refreshed row. These build in
-`native-advance-commit-model-build.log`; the import audit is in
-`native-commit-import-audit.log`. Commit `f8b40fd43` adds the exact
-`commit_index_correct` maximum proof and reusable dynamic-width majority terms.
-`NativeMaximumSummary` supplies bounded-fold correspondence, uniqueness, and
-live-range predicate congruence. The composed maximum builds in
-`native-commit-maximum-parent-build.log`. Whole-action soundness, assignment
-completeness, and public dispatch are not complete.
-`bounded_forall_nat_eval` now removes repeated integer-to-natural conversions
-from quantified live-range proofs.
-Commit `7c08626b2` adds exact native commit transitions with Model soundness
-and existence, plus replication-support terms. The parent build is in
-`native-commit-transition-parent-build.log`. The 200 majority SMT fixtures
-cover widths 1, 3, 17, 21, and 65 with mixed binders and Model-derived results.
-They pass in `native-majority-parent-tests.log`.
-Commit `2bd4df5e1` completes the `NativeCommitIndexTerms` correspondence proofs,
-including natural-witness extraction, and the reusable 17-binding
-`writeRetirementRow` with soundness and specific-assignment completeness.
-The 127 commit-index SMT fixtures have 32 expected SAT cases and pass in
-`native-commit-index-parent-tests.log`. Their Model metadata pins genuine
-joint-majority rejection, ignored future configurations, and fallback to a
-lower committable signature. The private full-action implementation is committed
-as `57abeb0c9`. Its 43 Model cases have 7 expected SAT results; an explicit
-17-identity extension adds one SAT and one UNSAT case. These pass in
-`native-advance-commit-parent-tests.log`. Disabled cases have no postconditions,
-so an impossible successor cannot mask a missing guard. A stale old
-`retiredCommitted` membership state may become active and advance when the
-actual refresh permits it. The fixture protects that arbitrary-initial-state
-behavior.
-The row/guard proofs are committed as `385b80798`; canonical commit-index
-assignment and symbol-bound helpers are committed as `4c87b10c8`.
-The initial `NativeCommitExecution` proof derives the final counter increment
-`25 + 3 * width` from the actual run and passes the parent build in
-`native-commit-execution-parent-build.log`. It remains worker-owned for additive
-constraint-extraction and checkpoint metadata before the whole-action proofs.
-Commit `5626d9503` shares canonical maximum-assignment construction and reuses
-it for bounded signatures without changing the exported signature. The public
-correspondence rebuild passes in `native-max-match-assignment-parent-build.log`.
+`advanceCommitIndex` was the first unsupported action in both saved captures,
+at normalized step 12. Its private correspondence is now complete.
+Commit `8ea3f37bb` adds whole-action Model soundness and canonical prefix and
+suffix assignment stages. Commit `06624297a` composes assignment completeness
+and exact native-step soundness and completeness. The parent build is in
+`native-advance-commit-complete-parent-build.log`.
+The proof constructs a satisfying assignment before applying independent
+soundness to obtain a represented Model successor. It does not assume that
+the initial state is reachable or that inactive tails are canonical.
+Public dispatch and whole-trace integration are complete and parent-owned.
+The parent build passes in `native-public-commit-parent-build.log`.
 
-Mechanical workers retain separate files. Worker
-`2a020198-af17-47bf-b45b-0b82864a50ad` owns `NativeCommitSuffixAssignment.lean`.
-Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns
-`NativeCommitPrefixAssignment.lean`.
-Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns
-`NativeCommitSound.lean`. The parent owns commit semantics, runtime, and fixtures.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns
-`NativeCommitExecution.lean`.
-Its classifier refactor passed the independent public build and is committed
-as `13bb131fe`. The generic active-configuration scan is committed as `4cb66a132`.
+The reusable commit components include `AllActive`, configuration-local
+majority counting, `NativeMaximumSummary`, canonical maximum assignments,
+bounded quantifier evaluation, and the 17-binding `writeRetirementRow`.
+`NativeCommitExecution` extracts named constraints and exact checkpoint
+counters from the actual runtime. Its final increment is `25 + 3 * width`.
+All accepted commit proof modules are parent-owned.
+The majority fixtures cover 200 cases at widths 1, 3, 17, 21, and 65.
+The 127 highest-commit fixtures pin genuine joint-majority rejection,
+ignored future configurations, and fallback to a lower eligible signature.
+The private action has 43 Model cases, including 7 SAT cases, plus a
+17-identity SAT/UNSAT pair. Disabled cases stop at the action.
+Old `retiredCommitted` metadata may refresh to active and permit commit.
+Public regressions cover commit followed by append sends and
+duplicate heartbeats, a second disabled commit, and 17 declared identities.
+The public Model matrix, strict input errors, sequence, explorer core, and
+import boundary pass in `native-public-commit-final-tests.log`.
+Private commit regressions and the existing public core sequence also pass
+in `native-public-commit-and-signature-tests.log`.
+`Traces/native_commit_advancement_conflict.json` attributes its contradiction
+to owners `{7, 8}`.
+
+The next captured-path action is `signCommittableMessages`.
+Commit `605cc2fb0` adds reusable leader-log append/refresh correspondence and
+signature guards and full-frame Model updates. The parent build is in
+`native-signature-foundations-build.log`.
+Commit `15af9980b` adds exact native signature transition correspondence and
+generic appended-row term correspondence. Commit `5a2e56556` adds the private
+runtime and 50 actual-Model fixtures, including 8 SAT cases. Those pass in
+`native-signature-and-public-commit-tests.log`.
+The private compiler is `NativeSignCommittableFixtureMain`.
+The pre-existing `NativeSignatureFixtureMain` remains the signature-index
+scan fixture. Both suites pass in
+`native-signature-new-and-existing-fixture-tests.log`.
+Whole-action signature soundness, assignment completeness, and public dispatch
+are still incomplete. Signature guards reject both old and refreshed
+`retiredCommitted` membership and require a nonempty old log. Do not copy the
+commit action's weaker old-membership guard.
+
+Commit `51dbea2d8` extracts `retirementTail`, shared by commit and signature
+writes. It reuses the existing retirement scans, `commitRowTerms`, and
+`writeRetirementRow`. The full pre-refactor and post-refactor programs are
+definitionally equal, proved in session artifact
+`native_retirement_tail_equivalence.lean`. Both proofs and the private commit
+correspondence build pass in `native-retirement-tail-refactor-build.log` and
+`native-retirement-tail-equivalence.log`.
+New signature proofs should use this shared tail, not duplicate the commit
+action's execution and assignment bookkeeping.
+`NodeRowTerms.Bounded.mono` has moved from the commit prefix to
+`NativeNodeRowWritesEncoding`. Its parent build passes; the downstream public
+rebuild is running in `native-shared-row-bounds-public-build.log`.
+
+Mechanical workers retain separate files.
+`af5d19d5-1186-4609-9b0b-4f224d4a4330` owns `NativeRetirementTailExecution`.
+`a04f39b9-8aa6-4733-9c2c-228d7432032e` owns `NativeSignaturePrefix`.
+Workers `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` and
+`2a020198-af17-47bf-b45b-0b82864a50ad` are idle.
+The parent owns runtime, tests, docs, and all accepted modules.
 
 Factory tools are unavailable in this session. `NativeDefinitions` and
 `NativeDefinitionsEncoding` now provide reusable heterogeneous definition
