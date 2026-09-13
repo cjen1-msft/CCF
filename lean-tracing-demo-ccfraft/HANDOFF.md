@@ -144,8 +144,9 @@ Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` completed
 and now owns `NativeVoteResponseComplete`. The parent inspected and built
 the queue proof, then committed it as `b396e0955`.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` completed Model correspondence
-in `NativeArrayVoteResponse` and is adding the exact native
-`receive_eq_write_pop` bridge. Worker
+in `NativeArrayVoteResponse` and the exact native `receive_eq_write_pop`
+bridge, accepted in `0547ae584`. It now owns `NativeArrayAppendResponse`,
+adding Model proofs to the parent's four compiled semantic definitions. Worker
 `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns
 only a proof-body refactor in `NativeVoteResponseTermsEncoding`, reusing
 the snapshot row representation instead of reproving unchanged fields.
@@ -255,6 +256,19 @@ An unallocated source's response is consumed without changing nodes, even
 when its term is newer. With an allocated source, a newer reply to the wrong
 role is ignored, while a newer reply to the expected candidate role is
 disabled. Membership and pre-vote status are not response guards.
+
+The next append-response slice starts from `NativeArrayAppendResponse`.
+Its definitions build in `native-append-response-definitions-build.log`;
+Model correspondence is pending. Every NACK is handled, regardless of role
+or term. Its sent cursor becomes
+`max (min (findHighestPossibleMatch log lastLogIndex term) oldSent) oldMatch`.
+Do not assume ordered terms, bounded cursors, or `oldMatch <= oldSent`.
+A NACK can increase the sent cursor in an arbitrary initial state.
+Current-term leader ACKs increase the match cursor with `max`; stale ACKs
+and ACKs to other roles are ignored. Newer ACKs to leaders are disabled.
+An unallocated source bypasses the handler and only consumes the packet.
+Reuse `nackMatchTerm` in `NativeLogSummaryTerms.lean` and its existing
+correspondence for the SMT scan rather than adding another maximum implementation.
 
 Raw reduction also emits per-identity `joined` observations. Their existing
 Model meaning is membership in `state.hasJoined`, not current allocation.
