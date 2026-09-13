@@ -3,6 +3,7 @@
 
 import Sparse.NativeAssignmentEncoding
 import Sparse.NativeLogSummaryEncoding
+import Sparse.NativeMaxMatchAssignment
 
 set_option autoImplicit false
 
@@ -100,48 +101,29 @@ theorem bounded_signature_assignment {width : PNat} [Bootstrap (Fin width)]
         (boundedSignatureTerm width length entries cap
           (.free .int before.next)).eval extended Locals.empty = true := by
   let best := maxCommittableIndexUpTo log.decode capNat
-  let extended := assignment.set .int before.next (best : Int)
-  have agreement : assignment.AgreesBelow before.next extended :=
-    assignment.agrees_below_set before.next .int before.next (best : Int)
-      (le_refl _)
-  have boundedLength :
-      forall symbol, symbol ∈ length.symbols -> symbol.2 < before.next := by
-    intro symbol member
-    simpa using List.all_eq_true.mp lengthBounded symbol member
-  have boundedEntries :
-      forall symbol, symbol ∈ entries.symbols -> symbol.2 < before.next := by
-    intro symbol member
-    simpa using List.all_eq_true.mp entriesBounded symbol member
-  have boundedCap :
-      forall symbol, symbol ∈ cap.symbols -> symbol.2 < before.next := by
-    intro symbol member
-    simpa using List.all_eq_true.mp capBounded symbol member
-  have extendedLength :
-      length.eval extended Locals.empty = (log.length : Int) :=
-    (length.eval_agrees_below assignment extended Locals.empty before.next
-      boundedLength agreement).symm.trans sameLength
-  have extendedCap : cap.eval extended Locals.empty = (capNat : Int) :=
-    (cap.eval_agrees_below assignment extended Locals.empty before.next
-      boundedCap agreement).symm.trans sameCap
-  have extendedEntries : forall position, position < log.length ->
-      modelEntry (entries.eval extended Locals.empty (position : Int)) =
-        log.entries position := by
+  let eligible : Term [.int] .bool :=
+    isSignature (.snd (selectedLogEntry entries))
+  have eligibleBounded :
+      eligible.symbols.all (fun symbol => symbol.2 < before.next) = true := by
+    simpa [eligible, selectedLogEntry, isSignature, Term.symbols,
+      Term.weaken_symbols] using entriesBounded
+  have sameEligible : forall position, position < min capNat log.length ->
+      (eligible.eval assignment (Locals.empty.cons (position : Int)) = true <->
+        (log.entries position).content = .signature) := by
     intro position live
-    have sameArray :=
-      entries.eval_agrees_below assignment extended Locals.empty before.next
-        boundedEntries agreement
-    rw [<- sameArray]
-    exact sameEntries position live
-  have sameSelected :
-      (Term.free .int before.next).eval extended Locals.empty = (best : Int) := by
-    simp only [Term.eval]
-    simp [extended, Assignment.set]
-  refine ⟨extended, agreement,
-    before.holds_agrees_below assignment extended holds agreement, ?_⟩
-  apply (bounded_signature_term_correct extended Locals.empty length entries cap
-    (.free .int before.next) log capNat best extendedLength extendedCap sameSelected
-    extendedEntries).mpr
-  rfl
+    exact bounded_signature_predicate_eval assignment Locals.empty entries log position
+      (by omega) sameEntries
+  have summary :
+      Sparse.LogMatchSummary.StorageSummary log.length capNat best
+        (fun position => (log.entries position).content = .signature) :=
+    (NativeArrayLogSummaries.signature_storage_summary_model_iff
+      log capNat best).mpr rfl
+  obtain ⟨extended, agreement, extendedHolds, _, accepted⟩ :=
+    max_match_assignment before assignment holds length cap eligible log.length capNat
+      best (fun position => (log.entries position).content = .signature)
+      lengthBounded capBounded eligibleBounded sameLength sameCap sameEligible summary
+  exact ⟨extended, agreement, extendedHolds, by
+    simpa [boundedSignatureTerm, eligible] using accepted⟩
 
 theorem nack_match_assignment {width : PNat} [Bootstrap (Fin width)]
     (before : Encoding width) (assignment : Assignment)
