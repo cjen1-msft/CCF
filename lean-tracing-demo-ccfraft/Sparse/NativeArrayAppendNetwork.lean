@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeArrayAppendHandlerCases
+import Sparse.NativeArrayAppendReceiveGuard
 import Sparse.NativeArrayVoteReceive
 
 set_option autoImplicit false
@@ -36,6 +37,28 @@ def consumeAppend (frame : Frame N T) (source destination : N)
       { frame.globals with
         retirementCompleted :=
           Function.update frame.globals.retirementCompleted destination completed } }
+
+inductive ReceiveAppend (frame : Frame N T) (source destination : N) :
+    Frame N T -> Prop where
+  | stepDown (request : AppendEntriesRequest N T)
+      (selected : SelectedAppend frame source destination request)
+      (sameTerm : request.term = (get frame.nodes destination).currentTerm)
+      (candidate : (get frame.nodes destination).role = .candidate \/
+        (get frame.nodes destination).role = .preVoteCandidate) :
+      ReceiveAppend frame source destination (stepDownAppend frame destination)
+  | consume (request : AppendEntriesRequest N T)
+      (selected : SelectedAppend frame source destination request)
+      (nextNode : NodeState N T) (response : AppendEntriesResponse N)
+      (handled : handleAppendEntriesRequest? (get frame.nodes destination).toModel request =
+        some (nextNode, response))
+      (refreshed : Local N T)
+      (refreshedCorrect :
+        refreshed.toModel = refreshRetirementState destination nextNode)
+      (completed : Finset N)
+      (completedCorrect :
+        completed = retirementCompletedNodes nextNode.log nextNode.commitIndex) :
+      ReceiveAppend frame source destination
+        (consumeAppend frame source destination refreshed response completed)
 
 omit [Bootstrap N] in
 theorem successful_handler_excludes_stepdown (row : Local N T)
@@ -170,6 +193,136 @@ theorem consume_append_rep (frame : Frame N T) (state : State N T)
     rw [rep.globals]
     simp [NativeArrayVote.Globals.ofModel, refreshRetirementCompleted,
       refreshedNode, completedCorrect]
+
+theorem receive_append_enabled (frame : Frame N T) (state : State N T)
+    (rep : frame.Rep state) (source destination : N) (after : Frame N T)
+    (step : ReceiveAppend frame source destination after) :
+    CCFRaft.Enabled state (.receive source destination) := by
+  cases step with
+  | stepDown request selected sameTerm candidate =>
+    apply (NativeArrayAppendReceiveGuard.enabled_correct frame state rep source destination
+      request (Log.ofList request.entries) selected.head (by simp)).mpr
+    exact ⟨selected.destinationAllocated, selected.destinationHeader,
+      Or.inl ⟨sameTerm, candidate⟩⟩
+  | consume request selected nextNode response handled refreshed refreshedCorrect
+      completed completedCorrect =>
+    apply (NativeArrayAppendReceiveGuard.enabled_correct frame state rep source destination
+      request (Log.ofList request.entries) selected.head (by simp)).mpr
+    refine ⟨selected.destinationAllocated, selected.destinationHeader, Or.inr ?_⟩
+    apply (NativeArrayAppendHandlerCases.handles_iff
+      (get frame.nodes destination) request (Log.ofList request.entries) (by simp)).mpr
+    rw [handled]
+    rfl
+
+theorem receive_append_exists (frame : Frame N T) (state : State N T)
+    (rep : frame.Rep state) (source destination : N)
+    (request : AppendEntriesRequest N T)
+    (selected : SelectedAppend frame source destination request)
+    (enabled : CCFRaft.Enabled state (.receive source destination)) :
+    exists after, ReceiveAppend frame source destination after := by
+  have cases := (NativeArrayAppendReceiveGuard.enabled_correct frame state rep source
+    destination request (Log.ofList request.entries) selected.head (by simp)).mp enabled
+  rcases cases with ⟨_, _, stepDown | handles⟩
+  · exact ⟨stepDownAppend frame destination,
+      .stepDown request selected stepDown.1 stepDown.2⟩
+  · have handledSome := (NativeArrayAppendHandlerCases.handles_iff
+      (get frame.nodes destination) request (Log.ofList request.entries) (by simp)).mp handles
+    cases handledEq :
+        handleAppendEntriesRequest? (get frame.nodes destination).toModel request with
+    | none =>
+      simp [handledEq] at handledSome
+    | some result =>
+      obtain ⟨nextNode, response⟩ := result
+      let refreshed := Local.ofModel (refreshRetirementState destination nextNode)
+      let completed := retirementCompletedNodes nextNode.log nextNode.commitIndex
+      refine ⟨consumeAppend frame source destination refreshed response completed,
+        .consume request selected nextNode response handledEq refreshed ?_ completed rfl⟩
+      simp [refreshed, Local.ofModel, Local.toModel, refreshRetirementState]
+
+theorem receive_append_rep (frame : Frame N T) (state : State N T)
+    (rep : frame.Rep state) (source destination : N) (after : Frame N T)
+    (step : ReceiveAppend frame source destination after) :
+    after.Rep (CCFRaft.next state (.receive source destination)) := by
+  cases step with
+  | stepDown request selected sameTerm candidate =>
+    exact step_down_append_rep frame state rep source destination request selected
+      sameTerm candidate
+  | consume request selected nextNode response handled refreshed refreshedCorrect
+      completed completedCorrect =>
+    exact consume_append_rep frame state rep source destination request selected nextNode
+      response handled refreshed refreshedCorrect completed completedCorrect
+
+omit [DecidableEq N] [DecidableEq T] [Bootstrap N] in
+theorem SelectedAppend.request_eq (frame : Frame N T) (source destination : N)
+    (left right : AppendEntriesRequest N T)
+    (leftSelected : SelectedAppend frame source destination left)
+    (rightSelected : SelectedAppend frame source destination right) :
+    left = right := by
+  have same := leftSelected.head.symm.trans rightSelected.head
+  exact Message.appendEntriesRequest.inj (Option.some.inj same)
+
+theorem receive_append_compatible (frame : Frame N T) (source destination : N)
+    (left right : Frame N T)
+    (leftStep : ReceiveAppend frame source destination left)
+    (rightStep : ReceiveAppend frame source destination right) :
+    left.queues = right.queues /\
+      left.globals = right.globals /\
+      forall peer,
+        (left.nodes peer).map Local.toModel =
+          (right.nodes peer).map Local.toModel := by
+  cases leftStep with
+  | stepDown leftRequest leftSelected leftTerm leftCandidate =>
+    cases rightStep with
+    | stepDown rightRequest rightSelected rightTerm rightCandidate =>
+      exact ⟨rfl, rfl, fun _ => rfl⟩
+    | consume rightRequest rightSelected nextNode response handled refreshed
+        refreshedCorrect completed completedCorrect =>
+      have sameRequest := SelectedAppend.request_eq frame source destination
+        leftRequest rightRequest leftSelected rightSelected
+      subst rightRequest
+      have returned := NativeArrayAppendReceive.return_to_follower_success
+        (get frame.nodes destination) leftRequest leftTerm leftCandidate
+      have excluded := successful_handler_excludes_stepdown
+        (get frame.nodes destination) leftRequest nextNode response handled
+      rw [excluded] at returned
+      contradiction
+  | consume leftRequest leftSelected leftNode leftResponse leftHandled leftRefreshed
+      leftRefreshedCorrect leftCompleted leftCompletedCorrect =>
+    cases rightStep with
+    | stepDown rightRequest rightSelected rightTerm rightCandidate =>
+      have sameRequest := SelectedAppend.request_eq frame source destination
+        rightRequest leftRequest rightSelected leftSelected
+      subst leftRequest
+      have returned := NativeArrayAppendReceive.return_to_follower_success
+        (get frame.nodes destination) rightRequest rightTerm rightCandidate
+      have excluded := successful_handler_excludes_stepdown
+        (get frame.nodes destination) rightRequest leftNode leftResponse leftHandled
+      rw [excluded] at returned
+      contradiction
+    | consume rightRequest rightSelected rightNode rightResponse rightHandled
+        rightRefreshed rightRefreshedCorrect rightCompleted rightCompletedCorrect =>
+      have sameRequest := SelectedAppend.request_eq frame source destination
+        leftRequest rightRequest leftSelected rightSelected
+      subst rightRequest
+      have sameResult :
+          (leftNode, leftResponse) = (rightNode, rightResponse) :=
+        Option.some.inj (leftHandled.symm.trans rightHandled)
+      have sameNode := congrArg Prod.fst sameResult
+      have sameResponse := congrArg Prod.snd sameResult
+      dsimp only at sameNode sameResponse
+      subst rightNode
+      subst rightResponse
+      have sameCompleted : leftCompleted = rightCompleted := by
+        rw [leftCompletedCorrect, rightCompletedCorrect]
+      have sameRefreshed : leftRefreshed.toModel = rightRefreshed.toModel :=
+        leftRefreshedCorrect.trans rightRefreshedCorrect.symm
+      refine ⟨rfl, ?_, ?_⟩
+      · simp [consumeAppend, sameCompleted]
+      intro peer
+      by_cases same : peer = destination
+      · subst peer
+        simp [consumeAppend, sameRefreshed]
+      · simp [consumeAppend, Function.update, same]
 
 end CCFRaft.NativeArrayAppendNetwork
 
