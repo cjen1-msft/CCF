@@ -169,7 +169,14 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeCommitSound",
             "Sparse.NativeCommitPrefixAssignment",
             "Sparse.NativeCommitSuffixAssignment",
+            "Sparse.NativeCommitComplete",
             "Sparse.NativeAdvanceCommitEncoding",
+            "Sparse.NativeArrayLeaderLogWrite",
+            "Sparse.NativeArraySignature",
+            "Sparse.NativeArraySignatureTransition",
+            "Sparse.NativeSignatureTermsEncoding",
+            "Sparse.NativeSignature",
+            "Sparse.NativeRetirementTail",
         ):
             visit(module)
         forbidden = {
@@ -610,6 +617,63 @@ class NativeLeanSmtTests(unittest.TestCase):
             },
         )
 
+    def test_internal_signature(self):
+        models = self.model_traces("NativeArraySignatureFixtureMain", 50)
+        originals = {
+            item["scenario"]: item
+            for item in models
+            if item["mutation"].endswith(".unchanged")
+        }
+        disabled = {
+            name for name, item in originals.items() if not item["modelEnabled"]
+        }
+        self.assertEqual(
+            disabled,
+            {
+                "unallocated-source",
+                "nonleader",
+                "empty-log",
+                "old-retired-committed",
+                "newly-refreshed-retired-committed",
+            },
+        )
+        for name in disabled:
+            self.assertEqual(
+                originals[name]["trace"]["instructions"][-1]["kind"],
+                "signCommittableMessages",
+            )
+        for name, item in originals.items():
+            self.assertEqual(item["outputLength"], item["oldLength"] + 1, name)
+            self.assertEqual(item["oldVotedFor"], item["outputVotedFor"], name)
+        old_terminal = originals["old-retired-committed"]
+        self.assertTrue(old_terminal["oldTerminal"])
+        self.assertFalse(old_terminal["refreshedTerminal"])
+        refreshed_terminal = originals["newly-refreshed-retired-committed"]
+        self.assertFalse(refreshed_terminal["oldTerminal"])
+        self.assertTrue(refreshed_terminal["refreshedTerminal"])
+        for name, membership in [
+            ("refresh-retirement-signed", "retirementSigned"),
+            ("refresh-retirement-completed", "retirementCompleted"),
+            ("stale-retirement-metadata-refreshes-active", "active"),
+        ]:
+            self.assertEqual(originals[name]["outputMembership"], membership)
+        self.assertEqual(
+            originals["refresh-retirement-signed"]["refreshedRetirementCommittableIndex"],
+            2,
+        )
+        stale = originals["stale-retirement-metadata-refreshes-active"]
+        self.assertGreater(stale["oldCommit"], stale["oldLength"])
+        self.assertEqual(stale["oldRetiredCommittedIndex"], 0)
+        self.assertIsNone(stale["refreshedRetiredCommittedIndex"])
+        zero = originals["transaction-zero-unsorted-current-zero"]
+        self.assertEqual(zero["currentTerm"], 0)
+        self.assertEqual(originals["signature-nonempty"]["oldVotedFor"], "a")
+        self.assertIsNone(originals["nonzero-source"]["oldVotedFor"])
+        self.assertFalse(originals["source-outside-bootstrap"]["sourceInBootstrap"])
+        self.assert_internal_model_traces(
+            "NativeSignCommittableFixtureMain", models, 8, "signature"
+        )
+
     def test_internal_core_action_sequences(self):
         models = self.model_traces("NativeArrayCoreActionsFixtureMain", 184)
         baseline = [item for item in models if item["mutation"] == 0]
@@ -739,8 +803,9 @@ class NativeLeanSmtTests(unittest.TestCase):
             input=json.dumps(models),
             capture_output=True,
             text=True,
-            check=True,
+            check=False,
         )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         fixtures = json.loads(result.stdout)
         self.assertEqual(len(fixtures), len(models))
         self.assertEqual(len({item["name"] for item in fixtures}), len(fixtures))
@@ -759,8 +824,9 @@ class NativeLeanSmtTests(unittest.TestCase):
             cwd=ROOT,
             capture_output=True,
             text=True,
-            check=True,
+            check=False,
         )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         fixtures = json.loads(result.stdout)
         self.assertEqual(len(fixtures), count)
         self.assertEqual(len(fixtures), len({item["name"] for item in fixtures}))
@@ -1024,8 +1090,9 @@ class NativeLeanSmtTests(unittest.TestCase):
             ),
             capture_output=True,
             text=True,
-            check=True,
+            check=False,
         )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         scripts = json.loads(result.stdout)
         self.assertEqual(len(scripts), len(documents))
         return scripts
@@ -1635,8 +1702,9 @@ class NativeLeanSmtTests(unittest.TestCase):
             cwd=ROOT,
             capture_output=True,
             text=True,
-            check=True,
+            check=False,
         )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         fixtures = json.loads(result.stdout)
         self.assertEqual(len(fixtures), count)
         self.assertEqual(
