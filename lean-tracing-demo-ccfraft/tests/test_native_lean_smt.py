@@ -2096,6 +2096,100 @@ class NativeLeanSmtTests(unittest.TestCase):
             "append-responses",
         )
 
+    def client_request_traces(self):
+        models = self.model_traces("NativeArrayClientRequestFixtureMain", 36)
+        named = {model["name"]: model for model in models}
+        for name in (
+            "empty-log",
+            "present-in-log-not-submitted",
+            "retirement-ordered",
+            "retirement-signed",
+            "retirement-completed",
+            "stale-metadata",
+            "zero-transaction",
+            "large-naturals",
+        ):
+            self.assertEqual(named[name]["expected"], "sat", name)
+        for name in (
+            "submitted-but-not-in-log",
+            "refreshed-terminal",
+            "unallocated-source",
+            "membership-retiredCommitted",
+        ):
+            self.assertEqual(named[name]["expected"], "unsat", name)
+        for name in ("empty-log", "retirement-completed"):
+            baseline = named[name]
+            for index in range(
+                baseline["stepIndex"] + 1, len(baseline["trace"]["instructions"])
+            ):
+                changed = deepcopy(baseline)
+                changed["trace"]["instructions"][index] = self.mutate_frame_observation(
+                    changed["trace"]["instructions"][index], changed["trace"]["nodes"]
+                )
+                changed["expected"] = "unsat"
+                changed["name"] = f"{name}-changed-{index}"
+                models.append(changed)
+        duplicate = deepcopy(named["empty-log"])
+        duplicate["name"] += "-duplicate"
+        duplicate["expected"] = "unsat"
+        duplicate["trace"]["instructions"].append(
+            {"kind": "clientRequest", "node": "a", "transaction": 5}
+        )
+        models.append(duplicate)
+        names = [f"peer-{index}" for index in range(17)]
+        source = names[-1]
+        instructions = [
+            {"kind": "allocated", "node": node, "value": node == source}
+            for node in names
+        ] + [
+            {"kind": "role", "node": source, "value": "leader"},
+            {"kind": "membershipState", "node": source, "value": "active"},
+            {"kind": "currentTerm", "node": source, "value": 10**30},
+            {"kind": "commit", "node": source, "value": 10**30},
+            {"kind": "logLength", "node": source, "value": 0},
+            {"kind": "newFollower", "node": source, "value": True},
+            {"kind": "submittedTxId", "txId": 10**30, "value": False},
+            {"kind": "submittedTxId", "txId": 0, "value": True},
+        ]
+        cursors = [
+            {"kind": kind, "node": source, "peer": peer, "value": value}
+            for peer in names
+            for kind, value in (("sentIndex", 5), ("matchIndex", 12))
+        ]
+        instructions.extend(deepcopy(cursors))
+        instructions.extend(
+            [
+                {"kind": "clientRequest", "node": source, "transaction": 10**30},
+                {"kind": "logLength", "node": source, "value": 1},
+                {"kind": "commit", "node": source, "value": 10**30},
+                {"kind": "newFollower", "node": source, "value": True},
+                {"kind": "entry", "node": source, "index": 0,
+                 "value": {"term": 10**30, "content": {"transaction": 10**30}}},
+                {"kind": "submittedTxId", "txId": 10**30, "value": True},
+                {"kind": "submittedTxId", "txId": 0, "value": True},
+            ]
+        )
+        instructions.extend(cursors)
+        wide = {
+            "name": "client-request-wide",
+            "expected": "sat",
+            "trace": {"nodes": names, "bootstrap": [source], "instructions": instructions},
+        }
+        wrong = deepcopy(wide)
+        wrong["name"] += "-wrong-cursor"
+        wrong["expected"] = "unsat"
+        wrong["trace"]["instructions"][-1]["value"] += 1
+        models.extend([wide, wrong])
+        return models
+
+    def test_internal_client_request(self):
+        self.assert_internal_model_traces(
+            "NativeClientRequestFixtureMain",
+            self.client_request_traces(),
+            26,
+            "client-request",
+        )
+
     def become_leader_traces(self):
         models = self.model_traces("NativeArrayBecomeLeaderFixtureMain", 202)
         named = {model["name"]: model for model in models}

@@ -230,6 +230,30 @@ The operation's frame correspondence and assignment proof are being completed
 by worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` in
 `NativeSubmittedWriteEncoding`. Its runtime and fixtures are parent-owned.
 
+The private `NativeClientRequest` runtime composes `prepareLeaderLog`,
+`retirementTail`, and `insertSubmitted`. It accepts a typed integer expression,
+requires a nonnegative transaction absent from the old submitted set, and checks
+both old and refreshed terminal membership. `NativeArrayClientRequest` defines
+the native action and its retirement witnesses.
+The 36 actual-Model fixtures cover all roles and membership states, zero and
+large transaction values, stale metadata, retirement transitions, absent
+sources, and the distinction between log contents and the submitted set.
+Post-state mutations, duplicate submission, and a 17-identity case pass in
+`native-client-request-private-tests.log`.
+This action is not yet public or proved end to end.
+
+Current mechanical work for client integration:
+`2a020198-af17-47bf-b45b-0b82864a50ad` owns
+`NativeArrayClientRequestModel` and `NativeClientRequestTermsEncoding`.
+`a04f39b9-8aa6-4733-9c2c-228d7432032e` owns `NativeLeaderLogPrefix`
+and the `NativeSignature`/`NativeSignaturePrefix` refactor that consumes it.
+Existing signature APIs must stay unchanged.
+`af5d19d5-1186-4609-9b0b-4f224d4a4330` owns `NativeFrameStep`
+and `NativeFrameTrace`, extracting continuation-based composition and preserving
+all existing public theorem signatures. This will let a parameterized compiler
+reuse concrete core segments instead of duplicating every action proof.
+No worker owns raw reduction or the transaction-binding input design.
+
 Commit `36efa30f6` adds a private typed packet-pattern representation, SMT
 terms, strict JSON decoding, and fixtures. All seven existing packet families
 support optional fields. Only `kind` is required. Omitted fields stay
