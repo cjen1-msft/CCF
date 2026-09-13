@@ -3996,6 +3996,140 @@ class NativeLeanSmtTests(unittest.TestCase):
         )
         self.solve(fixtures)
 
+    def test_public_packet_patterns(self):
+        cases = self.packet_pattern_cases()
+        documents = [
+            {
+                "nodes": ["a", "b", "c"],
+                "bootstrap": ["a"],
+                "instructions": [
+                    packet_observation(case["packet"]),
+                    dict(
+                        packet_observation(case["packet"]),
+                        kind="queuePattern",
+                        value=case["pattern"],
+                    ),
+                ],
+            }
+            for case, _ in cases
+        ]
+        scripts = self.encode(documents)
+        self.solve(
+            [
+                {
+                    "name": f"public-{case['name']}",
+                    "script": script,
+                    "expected": expected,
+                }
+                for (case, expected), script in zip(cases, scripts)
+            ]
+        )
+
+    def test_queue_pattern_input_errors(self):
+        valid = {
+            "kind": "queuePattern",
+            "source": "a",
+            "destination": "b",
+            "index": 0,
+            "value": {"kind": "appendEntriesRequest", "entriesLength": 1},
+        }
+        invalid = [
+            {key: value for key, value in valid.items() if key != missing}
+            for missing in valid
+        ]
+        invalid.append(dict(valid, unexpected=0))
+        for field in ("source", "destination"):
+            invalid.extend(
+                dict(valid, **{field: value})
+                for value in ("missing", None, False, 0, [], {})
+            )
+        invalid.extend(
+            dict(valid, index=value) for value in (None, False, -1, 1.5, "0")
+        )
+        invalid.extend(
+            dict(valid, value=value)
+            for value in (
+                None,
+                {},
+                {"kind": "unknown"},
+                {"kind": "appendEntriesRequest", "entriesLength": None},
+                {"kind": "appendEntriesRequest", "entriesLength": -1},
+                {"kind": "appendEntriesRequest", "success": True},
+                {"kind": "requestVoteRequest", "source": "missing"},
+            )
+        )
+        self.assert_invalid_instructions(invalid)
+
+    def test_queue_pattern_explorer_core(self):
+        path = "Traces/native_partial_packet_conflict.json"
+        self.assert_explorer_core(path, {0, 1})
+        document = json.loads((ROOT / path).read_text())
+        document["instructions"][1]["value"]["entriesLength"] = 1
+        corrected = self.encode([document])[0]
+        self.solve(
+            [
+                {
+                    "name": "partial-packet-conflict-corrected",
+                    "script": corrected,
+                    "expected": "sat",
+                }
+            ]
+        )
+
+    def test_queue_pattern_array_hint_boundaries(self):
+        lengths = [0, 1, 2, 8, 16, 32, 33, 10**30]
+        documents = [
+            {
+                "nodes": ["a", "b"],
+                "bootstrap": ["a"],
+                "instructions": [
+                    {
+                        "kind": "queuePattern",
+                        "source": "a",
+                        "destination": "b",
+                        "index": 0,
+                        "value": {
+                            "kind": "appendEntriesRequest",
+                            "entriesLength": length,
+                        },
+                    }
+                ],
+            }
+            for length in lengths
+        ]
+        scripts = self.encode(documents)
+        fixtures = []
+        for length, script in zip(lengths, scripts):
+            self.assertEqual(script.count("(store "), length if length <= 32 else 0)
+            if length <= 32:
+                fixtures.append(
+                    {
+                        "name": f"queue-pattern-hint-{length}",
+                        "script": script,
+                        "expected": "sat",
+                    }
+                )
+        fallback = []
+        packet = dict(packet_samples("a", "b")[0], entries=[])
+        for document in documents[-2:]:
+            conflict = deepcopy(document)
+            conflict["instructions"].insert(0, packet_observation(packet))
+            fallback.append(conflict)
+        large = deepcopy(documents[-2])
+        packet = dict(packet, entries=[{"term": 0, "content": "signature"}] * 33)
+        large["instructions"].insert(0, packet_observation(packet))
+        fallback.append(large)
+        fallback_scripts = self.encode(fallback)
+        fixtures.extend(
+            {
+                "name": f"queue-pattern-hint-fallback-{index}",
+                "script": script,
+                "expected": "sat" if index == 2 else "unsat",
+            }
+            for index, script in enumerate(fallback_scripts)
+        )
+        self.solve(fixtures)
+
     def test_packet_pattern_errors(self):
         packet = packet_samples("a", "b")[0]
         patterns = [{}, None, [], {"kind": "unknown"}, {"kind": None}]

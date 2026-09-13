@@ -137,11 +137,11 @@ and `native-commit-shared-assignments-parent-build.log`.
 Mechanical workers retain separate files.
 Worker `2a020198-af17-47bf-b45b-0b82864a50ad` completed public signature
 integration and vote-response soundness, accepted in `40109af92`.
-It now owns `NativeAppendResponseSound`.
+Its append-response soundness is accepted in `e0e491ac6`; it is idle.
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` completed
 `NativeQueuePatternEncoding`, including equivalence to the slower baseline,
 and vote-response completeness, accepted in `705731c26`.
-It now owns `NativeAppendResponseComplete`.
+Its append-response completeness is accepted in `5ad3747f6`; it is idle.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` completed Model correspondence
 in `NativeArrayVoteResponse` and the exact native `receive_eq_write_pop`
 bridge, accepted in `0547ae584`. Its append-response Model proofs are
@@ -211,7 +211,7 @@ evaluation equality to the original normalization-before-matching expression.
 The parent build passes in `native-queue-pattern-encoding-parent-build.log`.
 Both statements preserve arbitrary raw cells, source mismatches, and inactive
 tails. The optimized and baseline encodings have the same meaning.
-Public integration is implemented but not committed yet.
+Public queue-pattern integration is complete.
 The observation is `queuePattern` with the same
 `source`, `destination`, `index`, and `value` envelope as `queuePoint`.
 Existing complete-packet `queuePoint` decoding must remain strict.
@@ -238,12 +238,17 @@ Boundary cases at 0, 1, 2, 8, 16, and 32 entries solve in 14-29 ms.
 A length-33 SAT case and conflicts at lengths 33 and `10^30` also pass
 through the fallback.
 These are formula-expansion limits, not representation bounds.
-Worker `59af956e-475e-495a-a970-a32160960217` owns
-`NativePacketArrayHintEncoding` and `NativeQueuePatternEncoding`, proving
-the new hint redundant and preserving both existing queue-pattern theorems.
+Commit `a136d7881` proves the hint redundant and preserves both existing
+queue-pattern theorems. `log_prefix_cells_eval` preserves every live source
+cell; `log_prefix_hint_correct` uses only the existing packet `LogValueValid.tail`.
+`queue_packet_domain_and_array_hint_eval` and `queue_pattern_domain_eval`
+hold unconditionally, including malformed raw packets.
 The parent owns runtime, the three public integration files, tests, and docs.
-Do not commit or declare public pattern completion until this proof and the
-full public rebuild pass. Runtime results are in
+The full public rebuild passes in `native-public-pattern-hint-proof-parent-build.log`.
+All seven public pattern, input, explorer, boundary, private queue, joined,
+and import-isolation methods pass in `native-public-pattern-complete-tests.log`.
+Existing complete-packet and queue-length cases pass in
+`native-public-pattern-existing-queue-tests.log`. Earlier runtime results are in
 `native-public-pattern-hint-tests.log` and
 `native-public-pattern-hint-boundaries-tests.log`.
 
@@ -315,7 +320,15 @@ Execution extraction and append-response term correspondence are accepted
 in `03e5f7809` and `f16fe45ab`. Their parent builds pass in
 `native-append-response-execution-parent-build.log` and
 `native-append-response-terms-parent-build.log`.
-Whole-action SMT correspondence and public append-response dispatch are pending.
+Whole-action append-response soundness and exact native completeness are
+accepted in `e0e491ac6` and `5ad3747f6`.
+The parent build passes in `native-append-response-whole-action-parent-build.log`.
+The expanded private matrix includes 17-identity cursor updates and 196 SAT
+cases; it passes in `native-append-response-wide-tests.log`.
+`Traces/native_append_response_match_conflict.json` and its corrected cursor
+pass privately in `native-append-response-conflict-private-tests.log`;
+the fixture is committed as `be39a4520`.
+Both response families still await public dispatch.
 
 Raw reduction also emits per-identity `joined` observations. Their existing
 Model meaning is membership in `state.hasJoined`, not current allocation.

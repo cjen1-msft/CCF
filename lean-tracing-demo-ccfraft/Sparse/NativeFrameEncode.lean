@@ -6,7 +6,8 @@ import Sparse.NativeFrameInitial
 import Sparse.NativeArrayVote
 import Sparse.NativeNatSet
 import Sparse.NativeQueueColumns
-import Sparse.NativePacketJson
+import Sparse.NativePacketPatternJson
+import Sparse.NativeQueuePattern
 import Sparse.NativeVoteSend
 import Sparse.NativeTermUpdate
 import Sparse.NativeCampaign
@@ -81,6 +82,12 @@ def decodeFrameInstruction (width : PNat) (names : Array String) (value : Json) 
     return .queuePoint (<- resolve width names (<- field value "source"))
       (<- resolve width names (<- field value "destination"))
       (<- natural (<- field value "index")) (<- decodePacket width names (<- field value "value"))
+  else if kind = "queuePattern" then
+    fields value ["kind", "source", "destination", "index", "value"]
+    return .queuePattern (<- resolve width names (<- field value "source"))
+      (<- resolve width names (<- field value "destination"))
+      (<- natural (<- field value "index"))
+      (<- decodePacketPattern width names (<- field value "value"))
   else if kind = "submittedTxId" then
     fields value ["kind", "txId", "value"]
     return .submittedTxId (<- natural (<- field value "txId"))
@@ -124,6 +131,11 @@ def frameObservationClauses {width : PNat} (columns : Columns) :
       (.integer expected)]
   | .queuePoint source destination index expected =>
     .ok [queuePoint source
+      (queueScalarTerm columns.queueHead (.integer destination.val) (.integer source.val))
+      (queueScalarTerm columns.queueLength (.integer destination.val) (.integer source.val))
+      (queueCellsTerm columns.queueCells (.integer destination.val) (.integer source.val)) index expected]
+  | .queuePattern source destination index expected =>
+    .ok [queuePattern source
       (queueScalarTerm columns.queueHead (.integer destination.val) (.integer source.val))
       (queueScalarTerm columns.queueLength (.integer destination.val) (.integer source.val))
       (queueCellsTerm columns.queueCells (.integer destination.val) (.integer source.val)) index expected]

@@ -12,6 +12,7 @@ import Sparse.NativeAppendReceiveEncoding
 import Sparse.NativeMembershipChangeEncoding
 import Sparse.NativeAdvanceCommitEncoding
 import Sparse.NativeSignCommittableEncoding
+import Sparse.NativeQueuePatternEncoding
 
 set_option autoImplicit false
 
@@ -23,30 +24,36 @@ theorem frame_observation_run {width : PNat} (item : FrameInstruction width)
     (before : Encoding width) (clauses : List (Expr .bool))
     (emitted : frameObservationClauses before.toColumns item = .ok clauses) :
     (frameInstruction item).run before = (assertAll clauses).run before := by
-  cases item <;> simp only [frameObservationClauses] at emitted
-  case node item => exact observation_instruction_run item before clauses emitted
+  have observationRun
+      (same : frameInstruction item = do
+        let state <- get
+        assertAll (<- frameObservationClauses state.toColumns item)) :
+      (frameInstruction item).run before = (assertAll clauses).run before := by
+    rw [same]
+    simp only [get_bind_run]
+    rw [emitted]
+    rfl
+  cases item
+  case node item =>
+    simp only [frameObservationClauses] at emitted
+    exact observation_instruction_run item before clauses emitted
   case joined node expected =>
-    cases Except.ok.inj emitted
-    rfl
+    exact observationRun rfl
   case hasJoined expected =>
-    cases Except.ok.inj emitted
-    rfl
+    exact observationRun rfl
   case preVoteStatus node expected =>
-    cases Except.ok.inj emitted
-    rfl
+    exact observationRun rfl
   case retirementCompleted node expected =>
-    cases Except.ok.inj emitted
-    rfl
+    exact observationRun rfl
   case submittedTxId txId expected =>
-    cases Except.ok.inj emitted
-    rfl
+    exact observationRun rfl
   case queueLength source destination expected =>
-    cases Except.ok.inj emitted
-    rfl
+    exact observationRun rfl
   case queuePoint source destination index expected =>
-    cases Except.ok.inj emitted
-    rfl
-  all_goals cases emitted
+    exact observationRun rfl
+  case queuePattern source destination index expected =>
+    exact observationRun rfl
+  all_goals (simp only [frameObservationClauses] at emitted; cases emitted)
 
 theorem frame_observation_correct {width : PNat} [Bootstrap (Fin width)]
     (assignment : Assignment) (columns : Columns) (frame : NativeArrayVote.Frame (Fin width) Nat)
@@ -54,8 +61,9 @@ theorem frame_observation_correct {width : PNat} [Bootstrap (Fin width)]
     (item : FrameInstruction width) (clauses : List (Expr .bool))
     (emitted : frameObservationClauses columns item = .ok clauses) :
     Holds clauses assignment <-> NativeArrayVote.follows frame [item] := by
-  cases item <;> simp only [frameObservationClauses] at emitted
+  cases item
   case node item =>
+    simp only [frameObservationClauses] at emitted
     simpa only [NativeArrayVote.follows, and_true] using
       observation_correct assignment columns frame.nodes rep.nodes item clauses emitted
   case joined node expected =>
@@ -104,7 +112,38 @@ theorem frame_observation_correct {width : PNat} [Bootstrap (Fin width)]
       NativeArrayVote.follows frame [.queuePoint source destination index expected]
     rw [rep.queues destination source]
     simp only [NativeArrayVote.follows, and_true, NativeArrayQueue.Queue.point_correct]
-  all_goals cases emitted
+  case queuePattern source destination index expected =>
+    change Except.ok [queuePattern source
+      (queueScalarTerm columns.queueHead
+        (.integer destination.val) (.integer source.val))
+      (queueScalarTerm columns.queueLength
+        (.integer destination.val) (.integer source.val))
+      (queueCellsTerm columns.queueCells
+        (.integer destination.val) (.integer source.val)) index expected] =
+      .ok clauses at emitted
+    cases Except.ok.inj emitted
+    have headNatural : 0 <= (queueScalarTerm columns.queueHead
+        (.integer destination.val) (.integer source.val)).eval assignment Locals.empty := by
+      rw [queue_scalar_correct]
+      exact Int.natCast_nonneg _
+    have lengthNatural : 0 <= (queueScalarTerm columns.queueLength
+        (.integer destination.val) (.integer source.val)).eval assignment Locals.empty := by
+      rw [queue_scalar_correct]
+      exact Int.natCast_nonneg _
+    simp only [Holds, List.mem_singleton, forall_eq]
+    rw [queue_pattern_correct source
+      (queueScalarTerm columns.queueHead (.integer destination.val) (.integer source.val))
+      (queueScalarTerm columns.queueLength (.integer destination.val) (.integer source.val))
+      (queueCellsTerm columns.queueCells (.integer destination.val) (.integer source.val))
+      index expected assignment Locals.empty headNatural lengthNatural]
+    simp only [queue_scalar_correct, queueCellsTerm, Term.eval]
+    change (exists message,
+      (queueRow assignment columns destination source).decode[index]? = some message /\
+        expected.matches message = true) <->
+      NativeArrayVote.follows frame [.queuePattern source destination index expected]
+    rw [rep.queues destination source]
+    simp only [NativeArrayVote.follows, and_true]
+  all_goals (simp only [frameObservationClauses] at emitted; cases emitted)
 
 theorem frame_observation_cons {width : PNat} [Bootstrap (Fin width)]
     (frame : NativeArrayVote.Frame (Fin width) Nat) (columns : Columns)
@@ -112,17 +151,27 @@ theorem frame_observation_cons {width : PNat} [Bootstrap (Fin width)]
     (clauses : List (Expr .bool)) (emitted : frameObservationClauses columns item = .ok clauses) :
     NativeArrayVote.follows frame (item :: rest) <->
       NativeArrayVote.follows frame [item] /\ NativeArrayVote.follows frame rest := by
-  cases item <;> simp only [frameObservationClauses] at emitted
+  cases item
   case node item =>
+    simp only [frameObservationClauses] at emitted
     simp only [NativeArrayVote.follows, observation_node_step frame columns item clauses emitted, and_true]
-  case joined => simp [NativeArrayVote.follows]
-  case hasJoined => simp [NativeArrayVote.follows]
-  case preVoteStatus => simp [NativeArrayVote.follows]
-  case retirementCompleted => simp [NativeArrayVote.follows]
-  case submittedTxId => simp [NativeArrayVote.follows]
-  case queueLength => simp [NativeArrayVote.follows]
-  case queuePoint => simp [NativeArrayVote.follows]
-  all_goals cases emitted
+  case joined =>
+    simp [NativeArrayVote.follows]
+  case hasJoined =>
+    simp [NativeArrayVote.follows]
+  case preVoteStatus =>
+    simp [NativeArrayVote.follows]
+  case retirementCompleted =>
+    simp [NativeArrayVote.follows]
+  case submittedTxId =>
+    simp [NativeArrayVote.follows]
+  case queueLength =>
+    simp [NativeArrayVote.follows]
+  case queuePoint =>
+    simp [NativeArrayVote.follows]
+  case queuePattern =>
+    simp [NativeArrayVote.follows]
+  all_goals (simp only [frameObservationClauses] at emitted; cases emitted)
 
 inductive FrameInstructionRun {width : PNat} (before after : Encoding width) :
     FrameInstruction width -> Prop where
@@ -194,6 +243,11 @@ theorem frame_instruction_cases {width : PNat} (item : FrameInstruction width)
       rfl
       ((frame_observation_run
         (.queuePoint source destination index expected) before _ rfl).symm.trans run)
+  case queuePattern source destination index expected =>
+    exact FrameInstructionRun.observation _
+      rfl
+      ((frame_observation_run
+        (.queuePattern source destination index expected) before _ rfl).symm.trans run)
 
 theorem frame_instruction_references {width : PNat} (item : FrameInstruction width)
     (before after : Encoding width) (run : (frameInstruction item).run before = .ok ((), after))

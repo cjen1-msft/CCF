@@ -8,6 +8,7 @@ import Sparse.NativeArrayAppendNetwork
 import Sparse.NativeArrayMembershipTransition
 import Sparse.NativeArrayCommitTransition
 import Sparse.NativeArraySignatureTransition
+import Sparse.NativePacketPattern
 
 set_option autoImplicit false
 
@@ -35,6 +36,8 @@ inductive Instruction (N T : Type) where
   | retirementCompleted (node : N) (expected : Finset N)
   | queueLength (source destination : N) (expected : Nat)
   | queuePoint (source destination : N) (index : Nat) (expected : Message N T)
+  | queuePattern (source destination : N) (index : Nat)
+      (expected : NativePacketPattern.Pattern N T)
 
 def follows (frame : Frame N T) : List (Instruction N T) -> Prop
   | [] => True
@@ -93,6 +96,11 @@ def follows (frame : Frame N T) : List (Instruction N T) -> Prop
       (index < (frame.queues destination source).length /\
         (frame.queues destination source).cells ((frame.queues destination source).head + index) = expected) /\
           follows frame rest
+  | .queuePattern source destination index expected :: rest =>
+      (exists message,
+        (frame.queues destination source).decode[index]? = some message /\
+          expected.matches message = true) /\
+        follows frame rest
 
 def modelFollows (state : State N T) : List (Instruction N T) -> Prop
   | [] => True
@@ -143,6 +151,11 @@ def modelFollows (state : State N T) : List (Instruction N T) -> Prop
         modelFollows state rest
   | .queuePoint source destination index expected :: rest =>
       (Sparse.Queue.partition source (state.network destination))[index]? = some expected /\
+        modelFollows state rest
+  | .queuePattern source destination index expected :: rest =>
+      (exists message,
+        (Sparse.Queue.partition source (state.network destination))[index]? = some message /\
+          expected.matches message = true) /\
         modelFollows state rest
 
 theorem follows_correct (trace : List (Instruction N T)) (frame : Frame N T) (state : State N T)
@@ -306,6 +319,10 @@ theorem follows_correct (trace : List (Instruction N T)) (frame : Frame N T) (st
       have same := congrFun (congrFun rep.queues destination) source
       simp only [NativeArrayQueue.decodeNetwork, Sparse.Queue.abstractNetwork] at same
       simp only [follows, modelFollows, NativeArrayQueue.Queue.point_correct, same, ih frame state rep]
+    | queuePattern source destination index expected =>
+      have same := congrFun (congrFun rep.queues destination) source
+      simp only [NativeArrayQueue.decodeNetwork, Sparse.Queue.abstractNetwork] at same
+      simp only [follows, modelFollows, same, ih frame state rep]
     | submittedTxId txId expected =>
       simp only [follows, modelFollows, rep.globals, Globals.ofModel, ih frame state rep]
     | joined node expected =>

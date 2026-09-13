@@ -153,7 +153,25 @@ The index is relative to the live queue head. The packet's source must match
 the source partition; its destination need not match the containing queue.
 Duplicate packets at different positions remain distinct FIFO elements.
 Missing fields, unknown identities, extra fields, and negative numbers are
-input errors. Partial packets are not accepted.
+input errors for `queuePoint`.
+`queuePattern` uses the same envelope but accepts a partial packet `value`.
+Only the packet's `kind` is required. Omitted packet fields stay unconstrained;
+explicit `null`, unknown fields, and fields from another packet family are errors.
+Append-request patterns also accept `entriesLength` without requiring `entries`
+or `prevLogTerm`. If both `entriesLength` and `entries` are present, both constrain
+the packet. An inconsistent pair makes the observation unsatisfiable.
+For example, this observation requires one entry without fixing its contents:
+
+```json
+{"kind":"queuePattern","source":"a","destination":"b","index":0,
+ "value":{"kind":"appendEntriesRequest","entriesLength":1}}
+```
+
+For observed lengths up to 32 with omitted entries, the encoder adds a
+redundant array equality that copies the existing symbolic cells. It does not
+choose entry contents or change packet validity. Larger and unknown lengths
+retain the quantified encoding; 32 is not an input limit.
+
 Other instructions are errors.
 `native_lean.py` handles JSON input and solver execution. It delegates all SMT
 construction to Lean, with no Python encoder fallback.

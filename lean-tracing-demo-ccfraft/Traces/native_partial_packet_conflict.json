@@ -1,0 +1,31 @@
+{
+  "nodes": ["a", "b"],
+  "bootstrap": ["a"],
+  "instructions": [
+    {
+      "kind": "queuePattern",
+      "source": "a",
+      "destination": "b",
+      "index": 0,
+      "value": {
+        "kind": "appendEntriesRequest",
+        "source": "a",
+        "destination": "b",
+        "term": 2,
+        "prevLogIndex": 0,
+        "entriesLength": 1,
+        "leaderCommit": 0
+      }
+    },
+    {
+      "kind": "queuePattern",
+      "source": "a",
+      "destination": "b",
+      "index": 0,
+      "value": {
+        "kind": "appendEntriesRequest",
+        "entriesLength": 2
+      }
+    }
+  ]
+}
