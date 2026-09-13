@@ -192,6 +192,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeVoteResponse",
             "Sparse.NativeArrayVoteResponse",
             "Sparse.NativeVoteResponseExecution",
+            "Sparse.NativeVoteResponseTermsEncoding",
         ):
             visit(module)
         forbidden = {
