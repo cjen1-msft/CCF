@@ -6,14 +6,17 @@
 from __future__ import annotations
 
 import copy
+from contextlib import redirect_stderr
+from io import StringIO
 import json
 import tempfile
 import unittest
 from http.client import HTTPConnection
 from pathlib import Path
 from threading import Thread
+from unittest.mock import patch
 
-from explorer_api import ApiError, ExplorerApi, make_server
+from explorer_api import ApiError, ExplorerApi, main, make_server
 from native_origin import reduce_raw
 from native_reduction import native_document
 from native_run import (
@@ -155,6 +158,20 @@ class NativeExplorerTests(unittest.TestCase):
         (self.root / "raw.ndjson").write_bytes(b"changed")
         with self.assertRaisesRegex(ValidationError, "artifacts changed"):
             NativeRun.load(self.root)
+
+    def test_reduction_rejection_is_a_startup_diagnostic(self):
+        self.save_raw()
+        (self.root / "raw.ndjson").write_bytes(b"{}\n")
+        self.save()
+        errors = StringIO()
+        with (
+            patch("sys.argv", ["explorer_api.py", str(self.root)]),
+            redirect_stderr(errors),
+            self.assertRaises(SystemExit) as error,
+        ):
+            main()
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("explorer API:", errors.getvalue())
 
     def test_rehashed_wrong_reduction_is_rejected(self):
         origin = self.save_raw()

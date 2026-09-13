@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from native_run import NativeRun
+from reduction import ReductionError
 from Shared.solver import ValidationError
 
 
@@ -202,7 +203,7 @@ def main() -> None:
         with make_server(run, args.port) as server:
             print(f"http://127.0.0.1:{server.server_port}/api/run", flush=True)
             server.serve_forever()
-    except (ValidationError, OSError, ValueError) as error:
+    except (ValidationError, ReductionError, OSError, ValueError) as error:
         parser.exit(2, f"explorer API: {error}\n")
     except KeyboardInterrupt:
         pass
