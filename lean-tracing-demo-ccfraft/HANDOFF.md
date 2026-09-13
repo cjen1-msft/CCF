@@ -28,7 +28,8 @@ and exact native-step soundness and completeness. The parent build is in
 The proof constructs a satisfying assignment before applying independent
 soundness to obtain a represented Model successor. It does not assume that
 the initial state is reachable or that inactive tails are canonical.
-Public dispatch and whole-trace integration are complete and parent-owned.
+Public dispatch and whole-trace integration are committed as `ea2e0ec5a`
+and parent-owned.
 The parent build passes in `native-public-commit-parent-build.log`.
 
 The reusable commit components include `AllActive`, configuration-local
@@ -64,6 +65,9 @@ The private compiler is `NativeSignCommittableFixtureMain`.
 The pre-existing `NativeSignatureFixtureMain` remains the signature-index
 scan fixture. Both suites pass in
 `native-signature-new-and-existing-fixture-tests.log`.
+Signature followed by public commit advancement passes in
+`native-signature-commit-sequence-tests.log`, including a 17-identity case.
+Attempting commit before the new current-term signature is UNSAT.
 Whole-action signature soundness, assignment completeness, and public dispatch
 are still incomplete. Signature guards reject both old and refreshed
 `retiredCommitted` membership and require a nonempty old log. Do not copy the
@@ -78,9 +82,9 @@ correspondence build pass in `native-retirement-tail-refactor-build.log` and
 `native-retirement-tail-equivalence.log`.
 New signature proofs should use this shared tail, not duplicate the commit
 action's execution and assignment bookkeeping.
-`NodeRowTerms.Bounded.mono` has moved from the commit prefix to
-`NativeNodeRowWritesEncoding`. Its parent build passes; the downstream public
-rebuild is running in `native-shared-row-bounds-public-build.log`.
+Commit `6085bf4ec` moves `NodeRowTerms.Bounded.mono` from the commit prefix to
+`NativeNodeRowWritesEncoding`. The downstream public rebuild passes in
+`native-shared-row-bounds-public-build.log`.
 
 Mechanical workers retain separate files.
 `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns `NativeRetirementTailExecution`.

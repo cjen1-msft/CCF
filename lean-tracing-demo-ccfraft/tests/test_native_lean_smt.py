@@ -674,6 +674,47 @@ class NativeLeanSmtTests(unittest.TestCase):
             "NativeSignCommittableFixtureMain", models, 8, "signature"
         )
 
+    def test_signature_commit_sequence(self):
+        models = self.model_traces("NativeArraySignatureFixtureMain", 50)
+        base = next(
+            item
+            for item in models
+            if item["scenario"] == "signature-nonempty"
+            and item["mutation"].endswith(".unchanged")
+        )
+        document = deepcopy(base["trace"])
+        document["instructions"].extend(
+            [
+                {"kind": "advanceCommitIndex", "node": "a"},
+                {"kind": "commit", "node": "a", "value": 2},
+            ]
+        )
+        variants = [{"trace": document, "expected": "sat"}]
+        stale = deepcopy(document)
+        stale["instructions"][-1]["value"] = 0
+        variants.append({"trace": stale, "expected": "unsat"})
+        early = deepcopy(document)
+        signature_index = next(
+            index
+            for index, instruction in enumerate(early["instructions"])
+            if instruction["kind"] == "signCommittableMessages"
+        )
+        early["instructions"].insert(
+            signature_index, {"kind": "advanceCommitIndex", "node": "a"}
+        )
+        variants.append({"trace": early, "expected": "unsat"})
+        wide = deepcopy(document)
+        extras = [f"spare-{index}" for index in range(3, 17)]
+        wide["nodes"].extend(extras)
+        absent = [
+            {"kind": "allocated", "node": node, "value": False} for node in extras
+        ]
+        wide["instructions"] = absent + wide["instructions"] + absent
+        variants.append({"trace": wide, "expected": "sat"})
+        self.assert_internal_model_traces(
+            "NativeSignCommittableFixtureMain", variants, 2, "signature-commit"
+        )
+
     def test_internal_core_action_sequences(self):
         models = self.model_traces("NativeArrayCoreActionsFixtureMain", 184)
         baseline = [item for item in models if item["mutation"] == 0]
