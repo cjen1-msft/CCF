@@ -220,6 +220,16 @@ variants remain corollaries. The parent build passes in
 `native-nat-set-insert-parent-build.log`.
 This is not yet a client-request action or a transaction-name binding API.
 
+`NativeSubmittedWrite.insertSubmitted` now allocates two fresh submitted
+columns and applies that constraint. It checks the argument's symbol bounds
+before allocation, so an invalid argument cannot capture either output symbol.
+The 60 runtime cases cover repeated writes, duplicate insertion, symbolic
+arguments, negative old limits, large values, and unconstrained inactive tails.
+They pass with the 122 constraint cases in `native-submitted-write-tests.log`.
+The operation's frame correspondence and assignment proof are being completed
+by worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` in
+`NativeSubmittedWriteEncoding`. Its runtime and fixtures are parent-owned.
+
 Commit `36efa30f6` adds a private typed packet-pattern representation, SMT
 terms, strict JSON decoding, and fixtures. All seven existing packet families
 support optional fields. Only `kind` is required. Omitted fields stay

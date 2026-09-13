@@ -273,6 +273,9 @@ class NativeLeanSmtTests(unittest.TestCase):
         self.assertEqual(named["naive-store-resurrects-gap-false"]["expected"], "unsat")
         self.assertEqual(named["naive-store-resurrects-gap-true"]["expected"], "sat")
 
+    def test_submitted_set_writes(self):
+        self.assert_script_fixtures("NativeSubmittedWriteFixtureMain", 60, 30)
+
     def test_highest_commit_index(self):
         fixtures = self.assert_script_fixtures("NativeCommitIndexFixtureMain", 127, 32)
         by_name = {fixture["name"]: fixture for fixture in fixtures}
