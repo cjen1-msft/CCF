@@ -342,9 +342,15 @@ It exposes each instruction's reduced step, correlation evidence, and original
 records. Bootstrap stays an explicit input assumption.
 All six captures and mutations retain their source-line mapping.
 Changed reductions, captures, and instructions fail in `native-origin-tests.log`.
-This helper is not yet connected to the CLI or retained-run loader.
-The intended retained form adds only `raw.ndjson` and `reduction.json`.
+The retained-run loader now consumes this helper. Raw manifests add
+`"origin": "raw"` and hashes for `raw.ndjson` and `reduction.json`.
 Normalization is reconstructed rather than stored as a third redundant artifact.
+The explorer exposes instruction origins and `/api/reduction` from its loaded
+snapshot. Requests never reread source files or invoke the reducer.
+Changed and mixed artifacts, including rehashed inconsistent inputs, fail.
+Legacy reduced-input runs keep their existing response shapes.
+These contracts pass in `native-raw-explorer-tests.log`.
+The native CLI does not yet produce raw manifests.
 Retained native inputs now accept optional, validated `unknowns` declarations,
 with exact input binding and existing strict field rejection unchanged.
 Those artifact checks pass in `native-parameter-artifacts-tests.log`.

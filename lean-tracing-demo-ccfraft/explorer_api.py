@@ -73,10 +73,15 @@ class ExplorerApi:
                     "input": "/api/input",
                     "instructions": "/api/instructions",
                     "core": "/api/core",
+                    **({"reduction": "/api/reduction"} if self.run.origin else {}),
                 },
             }
         if path == "/api/input":
             return self.run.document
+        if path == "/api/reduction":
+            if self.run.origin is None:
+                raise ApiError(404, "run has no raw reduction")
+            return self.run.origin.certificate
         if path == "/api/core":
             return {
                 "status": self.run.result["status"],

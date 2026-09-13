@@ -787,9 +787,10 @@ curl http://127.0.0.1:8091/api/core
 | `/api/run` | Solver outcome, proof status, identity universe, counts, and endpoint links |
 | `/api/input` | Exact reduced Model input |
 | `/api/instructions?offset=0&limit=50` | Ordered instruction page and core membership |
-| `/api/instructions/{index}` | One instruction and all of its emitted constraints |
+| `/api/instructions/{index}` | One instruction, its emitted constraints, and retained raw origin when present |
 | `/api/constraints/{name}` | One named constraint, its instruction owner, and core membership |
 | `/api/core` | Solver-reported core and affected instruction indices |
+| `/api/reduction` | Full retained reduction certificate for a raw run, otherwise 404 |
 
 `HEAD` returns the same headers without a body. Invalid parameters return 400,
 missing items return 404, and writes return 405. Page limits range from 1 to 200.
@@ -801,9 +802,18 @@ artifacts, mismatched inputs, malformed clause ownership, unknown core labels,
 and unsupported proof claims. Hashes check consistency, not authenticity; local
 run artifacts remain trusted inputs.
 
+Raw manifests add `"origin": "raw"` and hashes for `raw.ndjson` and
+`reduction.json`. The loader reconstructs reduction and normalization once,
+then requires the projected document to match `input.json` exactly.
+A changed reducer can therefore reject an older retained run.
+Instruction details include the reduced step, correlation evidence, and original
+source records. `/api/reduction` also preserves preprocessing and omission decisions.
+Request handling never rereads source files or invokes the reducer.
+The native CLI does not yet produce these raw manifests.
+
 SAT, UNSAT, and unknown remain distinct. The core is not minimized and is not a
-replayable instruction subsequence. The API currently exposes reduced-input
-provenance only; raw-event/code links depend on the unfinished reducer integration.
+replayable instruction subsequence. Raw provenance identifies recorded source
+events, not a proof that their reduction is correct.
 
 ### Native local node state
 

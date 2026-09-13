@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from native_input import canonical_json, unique_object
+from native_origin import RAW_ARTIFACTS, RawOrigin, validate_raw_origin
 from Shared.smt import parse_unsat_core
 from Shared.solver import SolverRun, ValidationError, query_payload, solver_status
 
@@ -56,10 +57,9 @@ def validate_encoding(document: object, details: object) -> dict:
         fields.add("unknowns")
     document = _object(document, fields, "input")
     unknowns = _array(document.get("unknowns", []), "unknowns")
-    if (
-        any(not isinstance(name, str) or not name for name in unknowns)
-        or len(unknowns) != len(set(unknowns))
-    ):
+    if any(not isinstance(name, str) or not name for name in unknowns) or len(
+        unknowns
+    ) != len(set(unknowns)):
         raise ValidationError("unknowns must be distinct nonempty strings")
     nodes = _array(document["nodes"], "nodes")
     if (
@@ -146,10 +146,10 @@ def core_names(run: SolverRun, details: dict) -> tuple[str, ...]:
     return core
 
 
-def artifact_hashes(directory: Path) -> dict[str, str]:
+def artifact_hashes(directory: Path, *, raw: bool = False) -> dict[str, str]:
     return {
         name: hashlib.sha256((directory / name).read_bytes()).hexdigest()
-        for name in ARTIFACTS
+        for name in ARTIFACTS + (RAW_ARTIFACTS if raw else ())
     }
 
 
@@ -162,25 +162,29 @@ class NativeRun:
     result: dict
     core: frozenset[str]
     owners: tuple[int | None, ...]
+    origin: RawOrigin | None = None
 
     @classmethod
     def load(cls, directory: Path) -> NativeRun:
-        result = _object(
-            json.loads(
-                (directory / "result.json").read_text(encoding="utf-8"),
-                object_pairs_hook=unique_object,
-            ),
-            {
-                "schema",
-                "encoder",
-                "solver",
-                "status",
-                "solver_ms",
-                "assurance",
-                "artifacts",
-            },
-            "result",
+        result = json.loads(
+            (directory / "result.json").read_text(encoding="utf-8"),
+            object_pairs_hook=unique_object,
         )
+        fields = {
+            "schema",
+            "encoder",
+            "solver",
+            "status",
+            "solver_ms",
+            "assurance",
+            "artifacts",
+        }
+        raw = isinstance(result, dict) and "origin" in result
+        if raw:
+            fields.add("origin")
+        result = _object(result, fields, "result")
+        if raw and result["origin"] != "raw":
+            raise ValidationError("unsupported native run origin")
         if result["schema"] != RUN_SCHEMA or result["encoder"] != ENCODER:
             raise ValidationError("the API requires a native Lean run")
         if result["solver"] != "z3":
@@ -195,8 +199,9 @@ class NativeRun:
             or duration < 0
         ):
             raise ValidationError("solver_ms must be a finite nonnegative number")
-        expected = _object(result["artifacts"], set(ARTIFACTS), "artifact hashes")
-        data = {name: (directory / name).read_bytes() for name in ARTIFACTS}
+        names = ARTIFACTS + (RAW_ARTIFACTS if raw else ())
+        expected = _object(result["artifacts"], set(names), "artifact hashes")
+        data = {name: (directory / name).read_bytes() for name in names}
         actual = {
             name: hashlib.sha256(value).hexdigest() for name, value in data.items()
         }
@@ -205,6 +210,15 @@ class NativeRun:
         document = json.loads(data["input.json"], object_pairs_hook=unique_object)
         details = validate_encoding(
             document, json.loads(data["encoding.json"], object_pairs_hook=unique_object)
+        )
+        origin = (
+            validate_raw_origin(
+                data["raw.ndjson"],
+                json.loads(data["reduction.json"], object_pairs_hook=unique_object),
+                document,
+            )
+            if raw
+            else None
         )
         script = data["trace.smt2"].decode("ascii")
         if script != details["script"]:
@@ -224,7 +238,7 @@ class NativeRun:
             for group in details["groups"]
             for _ in range(group["start"], group["stop"])
         )
-        return cls(document, details, result, frozenset(core), owners)
+        return cls(document, details, result, frozenset(core), owners, origin)
 
     def instruction(self, index: int) -> dict:
         if _natural(index, "instruction index") >= len(self.document["instructions"]):
@@ -237,6 +251,7 @@ class NativeRun:
                 self.constraint(position)
                 for position in range(group["start"], group["stop"])
             ],
+            **({"origin": self.origin.instruction(index)} if self.origin else {}),
         }
 
     def constraint(self, index: int) -> dict:

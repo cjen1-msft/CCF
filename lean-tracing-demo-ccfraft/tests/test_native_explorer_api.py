@@ -14,6 +14,8 @@ from pathlib import Path
 from threading import Thread
 
 from explorer_api import ApiError, ExplorerApi, make_server
+from native_origin import reduce_raw
+from native_reduction import native_document
 from native_run import (
     ASSURANCE,
     ENCODER,
@@ -79,7 +81,9 @@ class NativeExplorerTests(unittest.TestCase):
         (self.root / "trace.smt2").write_text(self.details["script"], encoding="ascii")
         (self.root / "trace.stdout").write_text(self.stdout, encoding="utf-8")
         (self.root / "trace.stderr").write_text("", encoding="utf-8")
-        self.result["artifacts"] = artifact_hashes(self.root)
+        self.result["artifacts"] = artifact_hashes(
+            self.root, raw=self.result.get("origin") == "raw"
+        )
         (self.root / "result.json").write_text(
             json.dumps(self.result), encoding="utf-8"
         )
@@ -104,6 +108,91 @@ class NativeExplorerTests(unittest.TestCase):
         self.assertFalse(core["minimal"])
         self.assertFalse(core["includes_initial_domains"])
         self.assertEqual(api.get("/api/input"), self.document)
+
+    def save_raw(self):
+        data = (
+            Path(__file__).resolve().parents[1] / "Traces/Captured/soft_rollback.ndjson"
+        ).read_bytes()
+        origin = reduce_raw(data)
+        self.document = native_document(origin.trace, ["0"])
+        self.details["input"] = copy.deepcopy(self.document)
+        self.details["groups"].extend(
+            {"instruction": index, "start": 3, "stop": 3}
+            for index in range(2, len(self.document["instructions"]))
+        )
+        self.result["origin"] = "raw"
+        (self.root / "raw.ndjson").write_bytes(data)
+        (self.root / "reduction.json").write_text(
+            json.dumps(origin.certificate), encoding="utf-8"
+        )
+        self.save()
+        return origin
+
+    def test_raw_instruction_and_reduction_links(self):
+        origin = self.save_raw()
+        api = ExplorerApi(NativeRun.load(self.root))
+        self.assertEqual(api.get("/api/run")["links"]["reduction"], "/api/reduction")
+        self.assertEqual(api.get("/api/reduction"), origin.certificate)
+        self.assertEqual(
+            api.get("/api/instructions/238")["origin"], origin.instruction(238)
+        )
+        self.assertEqual(
+            api.get("/api/instructions/238")["origin"]["records"][0]["line"], 45
+        )
+
+    def test_raw_snapshots_do_not_reread_source_files(self):
+        origin = self.save_raw()
+        api = ExplorerApi(NativeRun.load(self.root))
+        (self.root / "raw.ndjson").write_bytes(b"changed")
+        (self.root / "reduction.json").unlink()
+        self.assertEqual(api.get("/api/reduction"), origin.certificate)
+        self.assertEqual(
+            api.get("/api/instructions/238")["origin"], origin.instruction(238)
+        )
+
+    def test_changed_raw_artifacts_are_rejected(self):
+        self.save_raw()
+        (self.root / "raw.ndjson").write_bytes(b"changed")
+        with self.assertRaisesRegex(ValidationError, "artifacts changed"):
+            NativeRun.load(self.root)
+
+    def test_rehashed_wrong_reduction_is_rejected(self):
+        origin = self.save_raw()
+        origin.certificate["steps"].pop()
+        (self.root / "reduction.json").write_text(
+            json.dumps(origin.certificate), encoding="utf-8"
+        )
+        self.save()
+        with self.assertRaisesRegex(ValidationError, "does not match"):
+            NativeRun.load(self.root)
+
+    def test_rehashed_wrong_native_input_is_rejected(self):
+        self.save_raw()
+        self.document["instructions"][0]["value"] = "changed"
+        self.details["input"] = copy.deepcopy(self.document)
+        self.save()
+        with self.assertRaisesRegex(ValidationError, "different Model input"):
+            NativeRun.load(self.root)
+
+    def test_unknown_origin_and_missing_raw_manifest_are_rejected(self):
+        self.result["origin"] = "other"
+        self.save()
+        with self.assertRaisesRegex(ValidationError, "origin"):
+            NativeRun.load(self.root)
+        self.result["origin"] = "raw"
+        (self.root / "result.json").write_text(
+            json.dumps(self.result), encoding="utf-8"
+        )
+        with self.assertRaisesRegex(ValidationError, "artifact hashes"):
+            NativeRun.load(self.root)
+
+    def test_model_runs_have_no_raw_reduction(self):
+        api = ExplorerApi(NativeRun.load(self.root))
+        self.assertNotIn("reduction", api.get("/api/run")["links"])
+        self.assertNotIn("origin", api.get("/api/instructions/0"))
+        with self.assertRaises(ApiError) as error:
+            api.get("/api/reduction")
+        self.assertEqual(error.exception.status, 404)
 
     def test_unknown_does_not_become_sat(self):
         self.result["status"] = "unknown"
