@@ -193,6 +193,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeArrayVoteResponse",
             "Sparse.NativeVoteResponseExecution",
             "Sparse.NativeVoteResponseTermsEncoding",
+            "Sparse.NativeVoteResponseSound",
             "Sparse.NativeArrayAppendResponse",
             "Sparse.NativeAppendResponse",
         ):
