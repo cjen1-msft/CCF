@@ -89,6 +89,12 @@ def compileParameterizedFrameDecoded (input : ParameterizedFrameDecoded) :
 def compileParameterizedFrame (document : Json) : Except String Compiled := do
   compileParameterizedFrameDecoded (<- decodeParameterizedFrameDocument document)
 
+def encodeParameterizedFrame (document : Json) : Except String String := do
+  return renderScript (<- compileParameterizedFrame document).assertions.toList
+
+def encodeParameterizedFrameDetails (document : Json) : Except String Json := do
+  return compiledDetails document (<- compileParameterizedFrame document)
+
 end CCFRaft.NativeEncode
 
 run_cmd do
