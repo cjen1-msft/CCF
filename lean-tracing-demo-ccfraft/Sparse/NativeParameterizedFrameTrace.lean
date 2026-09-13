@@ -64,6 +64,19 @@ private theorem parameterized_frame_instruction_bootstrap {width : PNat}
   | clientRequest source transaction =>
     exact client_request_bootstrap source (transaction.term base) before after run
 
+theorem compile_parameterized_frame_prior_holds {width : PNat}
+    {count : Nat} (base : Nat)
+    (items : List (ParameterizedFrameInstruction width count))
+    (before after : Encoding width) (index : Nat) (groups result : Array Group)
+    (run :
+      (compileInstructionsWith (parameterizedFrameInstruction base)
+        index groups items).run before = .ok (result, after))
+    (assignment : Assignment) (holds : Holds after.assertions.toList assignment) :
+    Holds before.assertions.toList assignment :=
+  compile_with_holds_before (parameterizedFrameInstruction base)
+    (parameterized_frame_instruction_holds_before base) items before after index
+    groups result run assignment holds
+
 theorem compile_parameterized_frame_sound {width : PNat} [Bootstrap (Fin width)]
     {count : Nat} (base : Nat) (values : Fin count -> Nat)
     (items : List (ParameterizedFrameInstruction width count))

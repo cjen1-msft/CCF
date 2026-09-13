@@ -2,15 +2,16 @@
 
 ## Current direction: native-array exact encoding
 
-### Immediate continuation: client requests and raw reduction
+### Immediate continuation: public parameterized encoder and raw runs
 
 The user now prioritizes `requestVote`, receive requestVote, `appendEntries`,
 receive appendEntries, and membership change. Vote sends, vote-request receive,
 append sends, append-request receive, and membership change are public.
-Continue the remaining actions needed by the saved captures.
-After public leadership promotion, `clientRequest` is the only unsupported
-action name in either saved capture. Generic receives still need typed dispatch
-in the raw adapter. Both captures also require shared transaction-name bindings.
+All action names needed by the saved captures are now public, including
+`clientRequest`. The raw adapter dispatches typed receives and retains shared
+transaction-name bindings. Parameterized whole-trace, decoded-document, and
+actual emitted-script correspondence are accepted. The next step switches the
+public entry point and runs the prepared raw CLI end-to-end gate.
 Delegate mechanical proofs to `gpt-5.6-sol` with medium reasoning effort.
 The main agent owns semantic lemmas. Build reusable proof components where
 they remove repeated execution decomposition and assignment-extension repair.
@@ -18,9 +19,8 @@ This supersedes the earlier serial-only worker instruction.
 
 Append-request receipt and membership change have whole-action Model and
 exact native-step soundness and assignment completeness. Both are public.
-Continue remaining Model actions and partial observations toward raw reduction.
-Both assurance flags
-remain false.
+The explorer already binds raw events and reduction decisions to instructions.
+Both assurance flags remain false until public raw integration is accepted.
 
 `advanceCommitIndex` was the first unsupported action in both saved captures,
 at normalized step 12. Its private correspondence is now complete.
@@ -336,16 +336,21 @@ one fixed natural valuation. Completeness preserves the supplied assignment
 and parameters and returns a represented final frame.
 No distinct-value or extra initial-state assumptions are added.
 The parent build is `native-parameterized-frame-trace-parent-build.log`.
-Decoded-document and emitted-script correspondence remain pending.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns that final composition in
-`NativeParameterizedFrameDecoded` and a public aggregate prior-Holds helper
-in `NativeParameterizedFrameTrace`.
+`NativeParameterizedFrameDecoded` and the aggregate prior-Holds helper in
+`NativeParameterizedFrameTrace` are accepted and parent-owned.
+The decoded, JSON compiler, unnamed-script, and named-details theorems connect
+actual emitted text to Model consistency under one shared natural valuation.
+Soundness recovers that valuation from declaration constraints. Completeness
+installs any supplied valuation without requiring different values for different
+names. The final iff adds no initial-state or numeric-bound premises.
+The parent build is `native-parameterized-decoded-parent-build.log`.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` is idle.
 
 `ParameterizedFrameInstruction.materialize values` now gives the concrete
 instruction semantics. `NativeParameterizedFrameDecoded` defines Model
 consistency using one existential valuation for the entire instruction list.
-These definitions are built; the remaining correspondence joins initial frame
-domains and parameter declarations to the proved trace and emitted script.
+The correspondence now joins initial frame domains and parameter declarations
+to the proved trace and emitted script.
 Parent logs are `native-parameter-materialize-parent-build.log` and
 `native-parameterized-model-consistency-build.log`.
 `parameterized_client_traces` shares the existing 30 cases between private and
