@@ -239,6 +239,17 @@ SMT guard and conditional-row correspondence. Both parent builds pass in
 `native-vote-response-foundations-parent-build.log` and
 `native-vote-response-terms-parent-build.log`.
 Whole-action correspondence and public response dispatch remain pending.
+Commit `a041d0251` retains `Traces/native_vote_response_tally_conflict.json`.
+The private conflict and corrected `["a"]` tally pass in
+`native-response-conflict-private-tests.log`.
+The shared `vote_request_response_traces` generator covers duplicate request,
+request receipt, and response receipt, including idempotent tally insertion
+and rejection after the FIFO becomes empty. Its private cases pass in
+`native-vote-round-trip-private-tests.log`.
+Public response Model, input-error, round-trip, and explorer tests are prepared
+but unstaged. The pre-integration public Model matrix fails on the unsupported
+response action at instruction 85, recorded in
+`native-public-vote-responses-before-integration.log`.
 Unlike `updateTerm`, response receive does not require an allocated source.
 An unallocated source's response is consumed without changing nodes, even
 when its term is newer. With an allocated source, a newer reply to the wrong
@@ -258,7 +269,8 @@ membership-change, malformed-input, and explorer cases pass in
 `native-public-joined-tests.log`, alongside existing joined-set and public
 membership-change coverage. `Traces/native_joined_point_conflict.json`
 attributes the contradiction to owners `{0, 1}`.
-The three public files are parent-owned until queue-pattern integration starts.
+Worker `59af956e-475e-495a-a970-a32160960217` now owns these three public files
+for queue-pattern integration. Preserve the accepted `joined` behavior.
 
 Factory tools are unavailable in this session. `NativeDefinitions` and
 `NativeDefinitionsEncoding` now provide reusable heterogeneous definition
