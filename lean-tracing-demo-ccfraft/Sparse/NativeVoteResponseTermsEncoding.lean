@@ -203,24 +203,13 @@ theorem vote_response_row_terms_rep {width : PNat}
           assignment Locals.empty =
         packetValue (NativeArrayVoteResponse.packet preVote response) :=
     samePacket.trans (congrArg packetValue headValue)
-  have responseTerm :
-      (Term.fst (Term.fst
-        (queueHeadPacketTerm columns source destination))).eval
-          assignment Locals.empty = (response.term : Int) := by
-    have same := congrArg (fun value => value.1.1) selectedPacket
-    cases preVote <;>
-      simpa [packetValue, packetHeaderValue, NativeArrayVoteResponse.packet] using same
-  have responseMessageTerm :
-      (NativeArrayVoteResponse.packet (T := Nat) preVote response).term =
-        response.term := by
-    cases preVote <;> rfl
   have oldRep :
       (nodeRowSnapshot columns destination).Rep assignment old :=
     node_row_snapshot_rep assignment columns frame.nodes rep.nodes destination
   have sourceAllocated :
       (allocated columns source.val : Expr .bool).eval assignment Locals.empty =
-        (frame.nodes response.source).isSome := by
-    simpa only [responseSource] using rep.nodes.allocated source
+        (frame.nodes source).isSome :=
+    rep.nodes.allocated source
   have grantedValue :
       (voteResponseGrantedTerm
         (queueHeadPacketTerm columns source destination)).eval
@@ -228,64 +217,94 @@ theorem vote_response_row_terms_rep {width : PNat}
     vote_response_granted_term_correct
       (queueHeadPacketTerm columns source destination) assignment Locals.empty
       preVote response selectedPacket
-  by_cases sourcePresent : (frame.nodes response.source).isSome = true
+  rw [responseSource]
+  by_cases sourcePresent : (frame.nodes source).isSome = true
   · by_cases grant :
         response.term = old.currentTerm /\
           old.role = (if preVote then .preVoteCandidate else .candidate) /\
           response.voteGranted = true
-    · have sourcePresent' : (frame.nodes source).isSome = true := by
-        simpa only [responseSource] using sourcePresent
-      cases voteMode : preVote <;>
-        simp only [voteMode, Bool.false_eq_true, if_false, if_true] at grant
-      all_goals
-        constructor <;>
-        simp [voteResponseRowTerms, NativeArrayVoteResponse.nextRow,
-          voteMode, NativeArrayVoteResponse.packet, old, oldRep.role, oldRep.newFollower,
-          oldRep.logLength, oldRep.commit, oldRep.currentTerm,
-          oldRep.retirementIndex, oldRep.retirementCommittableIndex,
-          oldRep.retiredCommittedIndex, oldRep.votedFor, oldRep.votesGranted,
-          oldRep.preVotesGranted, oldRep.membershipState, oldRep.sentIndex,
-          oldRep.matchIndex, sourceAllocated, selectedPacket, grantedValue,
-          sourcePresent', grant,
-          encode_bits_or_singleton,
-          responseSource, packetValue, packetHeaderValue, all, Term.eval,
-          Message.term]
-      all_goals try
-        exact fun index live => oldRep.logEntries index live
-    · have sourcePresent' : (frame.nodes source).isSome = true := by
-        simpa only [responseSource] using sourcePresent
-      cases voteMode : preVote <;>
-        simp only [voteMode, Bool.false_eq_true, if_false, if_true] at grant
-      all_goals
-        constructor <;>
-        simp [voteResponseRowTerms, NativeArrayVoteResponse.nextRow,
-          voteMode, NativeArrayVoteResponse.packet, old, oldRep.role, oldRep.newFollower,
-          oldRep.logLength, oldRep.commit, oldRep.currentTerm,
-          oldRep.retirementIndex, oldRep.retirementCommittableIndex,
-          oldRep.retiredCommittedIndex, oldRep.votedFor, oldRep.votesGranted,
-          oldRep.preVotesGranted, oldRep.membershipState, oldRep.sentIndex,
-          oldRep.matchIndex, sourceAllocated, selectedPacket, grantedValue,
-          sourcePresent', grant, role_code_eq,
-          responseSource, packetValue, packetHeaderValue, all, Term.eval,
-          Message.term]
-      all_goals try
-        exact fun index live => oldRep.logEntries index live
-  · have sourceAbsent : (frame.nodes source).isSome ≠ true := by
-      simpa only [responseSource] using sourcePresent
-    cases voteMode : preVote <;>
-      all_goals
-      constructor <;>
-      simp [voteResponseRowTerms,
-        voteMode, NativeArrayVoteResponse.packet, old, oldRep.role, oldRep.newFollower,
-        oldRep.logLength, oldRep.commit, oldRep.currentTerm,
-        oldRep.retirementIndex, oldRep.retirementCommittableIndex,
-        oldRep.retiredCommittedIndex, oldRep.votedFor, oldRep.votesGranted,
-        oldRep.preVotesGranted, oldRep.membershipState, oldRep.sentIndex,
-        oldRep.matchIndex, sourceAllocated, selectedPacket, grantedValue,
-        sourceAbsent, role_code_eq, responseSource, packetValue,
-        packetHeaderValue, all, Term.eval, Message.term]
-    all_goals try
-      exact fun index live => oldRep.logEntries index live
+    · cases voteMode : preVote
+      · simp only [voteMode, Bool.false_eq_true, if_false] at grant
+        simp only [if_pos sourcePresent]
+        rw [show NativeArrayVoteResponse.nextRow old false response =
+            { old with votesGranted := insert source old.votesGranted } by
+          simp only [NativeArrayVoteResponse.nextRow, Bool.false_eq_true,
+            if_false, grant, true_and, if_true, responseSource]]
+        simp only [voteResponseRowTerms, Bool.false_eq_true, if_false]
+        change NodeRowTerms.Rep assignment
+          { nodeRowSnapshot columns destination with votesGranted := _ }
+          { old with votesGranted := insert source old.votesGranted }
+        exact { oldRep with
+          votesGranted := by
+            simp [NativeArrayVoteResponse.packet, voteMode, old,
+              oldRep.currentTerm, oldRep.role, oldRep.votesGranted,
+              sourceAllocated, selectedPacket, grantedValue, sourcePresent,
+              grant, encode_bits_or_singleton, packetValue,
+              packetHeaderValue, all, Term.eval, Message.term] }
+      · simp only [voteMode, if_true] at grant
+        simp only [if_pos sourcePresent]
+        rw [show NativeArrayVoteResponse.nextRow old true response =
+            { old with preVotesGranted := insert source old.preVotesGranted } by
+          simp only [NativeArrayVoteResponse.nextRow, if_true, grant,
+            true_and, responseSource]]
+        simp only [voteResponseRowTerms, if_true]
+        change NodeRowTerms.Rep assignment
+          { nodeRowSnapshot columns destination with preVotesGranted := _ }
+          { old with preVotesGranted := insert source old.preVotesGranted }
+        exact { oldRep with
+          preVotesGranted := by
+            simp [NativeArrayVoteResponse.packet, voteMode, old,
+              oldRep.currentTerm, oldRep.role, oldRep.preVotesGranted,
+              sourceAllocated, selectedPacket, grantedValue, sourcePresent,
+              grant, encode_bits_or_singleton, responseSource, packetValue,
+              packetHeaderValue, all, Term.eval, Message.term] }
+    · cases voteMode : preVote
+      · simp only [voteMode, Bool.false_eq_true, if_false] at grant
+        simp only [if_pos sourcePresent]
+        rw [show NativeArrayVoteResponse.nextRow old false response = old by
+          simp only [NativeArrayVoteResponse.nextRow, Bool.false_eq_true,
+            if_false, grant, if_false]]
+        simp only [voteResponseRowTerms, Bool.false_eq_true, if_false]
+        change NodeRowTerms.Rep assignment
+          { nodeRowSnapshot columns destination with votesGranted := _ } old
+        exact { oldRep with
+          votesGranted := by
+            simp [NativeArrayVoteResponse.packet, voteMode, old,
+              oldRep.currentTerm, oldRep.role, oldRep.votesGranted,
+              sourceAllocated, selectedPacket, grantedValue, sourcePresent,
+              grant, role_code_eq, packetValue,
+              packetHeaderValue, all, Term.eval, Message.term] }
+      · simp only [voteMode, if_true] at grant
+        simp only [if_pos sourcePresent]
+        rw [show NativeArrayVoteResponse.nextRow old true response = old by
+          simp only [NativeArrayVoteResponse.nextRow, if_true, grant, if_false]]
+        simp only [voteResponseRowTerms, if_true]
+        change NodeRowTerms.Rep assignment
+          { nodeRowSnapshot columns destination with preVotesGranted := _ } old
+        exact { oldRep with
+          preVotesGranted := by
+            simp [NativeArrayVoteResponse.packet, voteMode, old,
+              oldRep.currentTerm, oldRep.role, oldRep.preVotesGranted,
+              sourceAllocated, selectedPacket, grantedValue, sourcePresent,
+              grant, role_code_eq, responseSource, packetValue,
+              packetHeaderValue, all, Term.eval, Message.term] }
+  · cases voteMode : preVote
+    · simp only [if_neg sourcePresent]
+      simp only [voteResponseRowTerms, Bool.false_eq_true, if_false]
+      change NodeRowTerms.Rep assignment
+        { nodeRowSnapshot columns destination with votesGranted := _ } old
+      exact { oldRep with
+        votesGranted := by
+          simp [sourceAllocated, sourcePresent, oldRep.votesGranted, all,
+            Term.eval] }
+    · simp only [if_neg sourcePresent]
+      simp only [voteResponseRowTerms, if_true]
+      change NodeRowTerms.Rep assignment
+        { nodeRowSnapshot columns destination with preVotesGranted := _ } old
+      exact { oldRep with
+        preVotesGranted := by
+          simp [sourceAllocated, sourcePresent, oldRep.preVotesGranted, all,
+            Term.eval] }
 
 private theorem queue_head_packet_term_bounded {width : PNat}
     (before : Encoding width) (source destination : Fin width)
