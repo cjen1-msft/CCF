@@ -138,7 +138,8 @@ Mechanical workers retain separate files.
 Worker `2a020198-af17-47bf-b45b-0b82864a50ad` completed public signature
 integration and vote-response soundness, accepted in `40109af92`.
 Its append-response soundness is accepted in `e0e491ac6`.
-It now owns Model lemmas in `NativeArrayBecomeLeader`.
+Its Model lemmas in `NativeArrayBecomeLeader` are accepted and parent-owned.
+It now owns `NativeBecomeLeaderSound`.
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` completed
 `NativeQueuePatternEncoding`, including equivalence to the slower baseline,
 and vote-response completeness, accepted in `705731c26`.
@@ -373,6 +374,11 @@ It preserves commit even above the truncated length and preserves
 It passes in `native-become-leader-private-tests.log`.
 The runtime is not public and its whole-action correspondence is unfinished.
 The parent owns runtime and fixtures. Mechanical ownership is listed above.
+`NativeArrayBecomeLeader` now proves prepared/refreshed row correspondence,
+full-frame Model updates, and exact Model enabledness. The latter uses the
+original row's voting-majority proof and shows that role/cursor changes do not
+affect refreshed membership. The parent build passes in
+`native-become-leader-model-parent-build.log`.
 
 Raw reduction also emits per-identity `joined` observations. Their existing
 Model meaning is membership in `state.hasJoined`, not current allocation.
