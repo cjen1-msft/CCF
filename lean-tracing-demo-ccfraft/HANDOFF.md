@@ -310,9 +310,14 @@ extension. Count zero and equal parameter values need no separate assumptions.
 The parent build is `native-nat-parameters-parent-build.log`.
 Parameterized whole-trace correspondence is not yet proved. The public encoder
 and raw reducer have not switched to this compiler.
+`NativeClientRequestAssignment` is accepted and parent-owned. Its specific
+assignment construction composes the shared append prefix, retirement tail,
+and submitted write while preserving all original symbols.
+It checks guards against the original submitted set.
+The parent build is `native-client-request-assignment-parent-build.log`.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns
-`NativeClientRequestAssignment`, composing the shared append prefix,
-retirement tail, and submitted write while preserving the supplied assignment.
+`NativeClientRequestComplete`, using independent soundness to represent the
+exact supplied native successor.
 
 `raw_normalization.normalize(..., native_ids=True)` now indexes observed
 identity strings without fixed decimal IDs or the historical 15-slot limit.
