@@ -36,15 +36,26 @@ live-range predicate congruence. The composed maximum builds in
 assignment correspondence, and public action are not complete.
 `bounded_forall_nat_eval` now removes repeated integer-to-natural conversions
 from quantified live-range proofs.
+Commit `7c08626b2` adds exact native commit transitions with Model soundness
+and existence, plus replication-support terms. The parent build is in
+`native-commit-transition-parent-build.log`. The 200 majority SMT fixtures
+cover widths 1, 3, 17, 21, and 65 with mixed binders and Model-derived results.
+They pass in `native-majority-parent-tests.log`.
+`NativeCommitIndexTerms.lean` composes active configurations, replication
+majorities, and the bounded maximum. It builds but remains uncommitted pending
+its correspondence proof and emitted-SMT fixtures.
 
 Mechanical workers retain separate files. Worker
-`2a020198-af17-47bf-b45b-0b82864a50ad` owns `NativeMajorityFixtureMain.lean`.
+`2a020198-af17-47bf-b45b-0b82864a50ad` owns `NativeCommitIndexFixtureMain.lean`.
 Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns
-`NativeReplicationMajority.lean`. Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e`
-owns `NativeActiveConfigurationEncoding.lean`. The parent owns commit semantics.
+`NativeMaxMatchAssignment.lean` and only the `bounded_signature_assignment`
+refactor in `NativeLogSummaryAssignment.lean`.
+Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns
+`NativeCommitIndexEncoding.lean`. The parent owns commit semantics and terms.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns
-`NativeArrayCommitTransition.lean`. Its proof-only classifier refactor is back
-with the parent and awaiting the independent public build.
+`NativeRetirementWrites.lean` and `NativeRetirementWritesEncoding.lean`.
+Its classifier refactor passed the independent public build and is committed
+as `13bb131fe`. The generic active-configuration scan is committed as `4cb66a132`.
 
 Factory tools are unavailable in this session. `NativeDefinitions` and
 `NativeDefinitionsEncoding` now provide reusable heterogeneous definition
@@ -613,8 +624,8 @@ Public membership and the five-action pipeline are committed as `38d10f664`.
 `NativeFrameStep.lean` and `NativeFrameTrace.lean` now use named,
 instruction-indexed `FrameInstructionRun` cases instead of nested disjunctions.
 Runtime and final correspondence theorem statements are unchanged.
-The parent inspected the diff; the independent public build is still running
-in `native-frame-run-cases-parent-build.log`.
+The parent inspected the diff and accepted the independent public build in
+`native-frame-run-cases-parent-build.log`. This refactor is committed as `13bb131fe`.
 The root `CHANGELOG.md` has an Unreleased demo entry; add its actual PR reference
 when a PR exists. No PR has been opened.
 
