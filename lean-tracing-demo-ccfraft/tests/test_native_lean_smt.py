@@ -2414,6 +2414,22 @@ class NativeLeanSmtTests(unittest.TestCase):
         for path, error in zip(paths, errors, strict=True):
             self.assertIsNone(error, f"{path.name}: {error}")
 
+    def test_configuration_callback_heartbeat_conflict(self):
+        document = json.loads(
+            (ROOT / "Traces/native_configuration_callback_heartbeat_conflict.json").read_text()
+        )
+        model_send = deepcopy(document)
+        model_send["instructions"][-1]["batchEnd"] = 5
+        scripts = self.encode([document, model_send])
+        self.solve(
+            [
+                {"name": "configuration-callback-heartbeat", "script": scripts[0],
+                 "expected": "unsat"},
+                {"name": "configuration-model-send", "script": scripts[1],
+                 "expected": "sat"},
+            ]
+        )
+
     def become_leader_traces(self):
         models = self.model_traces("NativeArrayBecomeLeaderFixtureMain", 202)
         named = {model["name"]: model for model in models}

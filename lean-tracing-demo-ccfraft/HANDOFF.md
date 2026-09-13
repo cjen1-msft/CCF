@@ -336,6 +336,33 @@ mutations pass in `native-reduction-projection-tests.log` and
 coverage, not yet raw CLI/solver/explorer integration. Both assurance flags
 remain false.
 
+The private full-capture probe encodes all 1,566 `soft_rollback.ndjson`
+instructions into 5,320 clauses and 21,511,165 SMT bytes in 14.655 seconds.
+A separate Z3 run returns UNSAT in 1.944 seconds with 12 core clauses.
+The retained `native-soft-rollback-probe/` contains input, encoding, SMT,
+solver output, and `probe-result.json`. This is not a public native run.
+`native-soft-rollback-core-map.json` maps the core to source observations.
+
+The core exposes a configuration-callback atomicity disagreement.
+Raw lines 44-45 add configuration entry 5 and send an empty heartbeat with
+`prev_idx = idx = 4` before `last_idx` advances from 4 to 5.
+In `src/consensus/aft/raft.h`, replication hooks precede the `last_idx` update
+at lines 684-709. New-peer creation sends immediately at lines 2829-2837.
+The Model's atomic `changeConfiguration` already appends entry 5 and sets
+the new peer's sent cursor to 4 at `Model.lean:1819-1839`.
+Its `appendEntries` guard requires batch end 5 at `Model.lean:1651-1655`.
+The reducer omits the callback's mixed log-length snapshot but preserves the
+actual packet's batch end. No Model, C++, or packet observations were changed.
+This diagnoses disagreement between reduction and Model atomicity, not a
+production defect.
+`Traces/native_configuration_callback_heartbeat_conflict.json` reproduces it
+with six instructions through the already-proved public encoder.
+`test_configuration_callback_heartbeat_conflict` requires UNSAT for batch end 4
+and SAT for batch end 5. The latter is a Model-admitted contrast, not a repair
+of the raw capture. Results are in `native-configuration-callback-conflict-tests.log`.
+The probe uses explicit singleton bootstrap `["0"]`; bootstrap derivation
+remains an integration decision, not a proved fact.
+
 `Traces/native_client_request_duplicate_conflict.json` rejects two submissions
 of transaction 5. Changing the second to 6 is SAT through the private compiler,
 recorded in `native-client-duplicate-tests.log`.

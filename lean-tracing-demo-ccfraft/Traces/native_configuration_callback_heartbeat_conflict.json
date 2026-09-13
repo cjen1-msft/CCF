@@ -1,0 +1,12 @@
+{
+  "nodes": ["0", "1", "2"],
+  "bootstrap": ["0"],
+  "instructions": [
+    {"kind": "joined", "node": "0", "value": true},
+    {"kind": "joined", "node": "1", "value": true},
+    {"kind": "allocated", "node": "0", "value": true},
+    {"kind": "logLength", "node": "0", "value": 4},
+    {"kind": "changeConfiguration", "source": "0", "configuration": ["0", "1", "2"]},
+    {"kind": "appendEntries", "source": "0", "destination": "2", "batchEnd": 4}
+  ]
+}
