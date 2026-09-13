@@ -194,7 +194,8 @@ to alias. The native instruction type currently fixes transactions to `Nat`
 and its JSON decoders accept literals. Native client-request integration must
 represent shared existential transaction values in Lean and preserve their
 bindings across assignment extensions. Do not map different raw names to
-distinct ordinal transaction IDs. This interface work remains unresolved.
+distinct ordinal transaction IDs. A private interface is now implemented below;
+its correspondence proofs and public integration remain pending.
 
 The private `NativeNatSetInsert` baseline expresses insertion as exact masked
 membership equivalence over integers, with an existential nonnegative output
@@ -253,6 +254,25 @@ and `NativeFrameTrace`, extracting continuation-based composition and preserving
 all existing public theorem signatures. This will let a parameterized compiler
 reuse concrete core segments instead of duplicating every action proof.
 No worker owns raw reduction or the transaction-binding input design.
+
+The private `NativeNatParameters` declaration prefix allocates shared natural
+parameters before the trace. Different parameters may have equal values.
+`NatArgument` selects a literal or a typed parameter index.
+`NativeParameterizedFrame` accepts an optional `unknowns` list and
+`clientRequest.transaction` as a natural literal or `{"unknown": "name"}`.
+Repeated names select the same parameter. Undeclared names, duplicate
+declarations, empty names, negative literals, decimals, and extra fields fail.
+Symbolic transaction-bearing observations are not supported.
+This narrower interface covers the saved captures, whose transaction unknowns
+occur only in client requests. The alternative sketches are in session artifact
+`native-transaction-binding-design.txt`.
+The 29 parameter-domain cases and 30 parameterized client cases pass in
+`native-parameterized-client-tests.log`, including reuse across signature and
+commit actions and a numeric-looking name whose value is different.
+Concrete core scripts stay byte-identical, with unchanged instruction ownership
+groups, in `native-parameterized-core-tests.log`.
+The parameter prefix and parameterized whole-trace correspondence are not yet
+proved. The public encoder and raw reducer have not switched to this compiler.
 
 Commit `36efa30f6` adds a private typed packet-pattern representation, SMT
 terms, strict JSON decoding, and fixtures. All seven existing packet families

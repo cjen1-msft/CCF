@@ -276,6 +276,9 @@ class NativeLeanSmtTests(unittest.TestCase):
     def test_submitted_set_writes(self):
         self.assert_script_fixtures("NativeSubmittedWriteFixtureMain", 60, 30)
 
+    def test_natural_parameters(self):
+        self.assert_script_fixtures("NativeNatParametersFixtureMain", 29, 16)
+
     def test_highest_commit_index(self):
         fixtures = self.assert_script_fixtures("NativeCommitIndexFixtureMain", 127, 32)
         by_name = {fixture["name"]: fixture for fixture in fixtures}
@@ -2189,6 +2192,173 @@ class NativeLeanSmtTests(unittest.TestCase):
             26,
             "client-request",
         )
+
+    def test_parameterized_client_requests(self):
+        models = [
+            deepcopy(model)
+            for model in self.client_request_traces()
+            if model["expected"] == "sat"
+        ]
+        for model in models:
+            names = {}
+            for item in model["trace"]["instructions"]:
+                if item["kind"] == "clientRequest":
+                    name = f"tx-{item['transaction']}"
+                    names[name] = None
+                    item["transaction"] = {"unknown": name}
+            model["trace"]["unknowns"] = list(names)
+        initial = [
+            {"kind": "allocated", "node": "a", "value": True},
+            {"kind": "role", "node": "a", "value": "leader"},
+            {"kind": "membershipState", "node": "a", "value": "active"},
+            {"kind": "currentTerm", "node": "a", "value": 3},
+            {"kind": "commit", "node": "a", "value": 0},
+            {"kind": "logLength", "node": "a", "value": 0},
+            {"kind": "submittedTxId", "txId": 5, "value": False},
+            {"kind": "submittedTxId", "txId": 99, "value": False},
+        ]
+        sequence = {
+            "nodes": ["a"],
+            "bootstrap": ["a"],
+            "unknowns": ["x", "y"],
+            "instructions": initial + [
+                {"kind": "clientRequest", "node": "a", "transaction": {"unknown": "x"}},
+                {"kind": "entry", "node": "a", "index": 0,
+                 "value": {"term": 3, "content": {"transaction": 5}}},
+                {"kind": "signCommittableMessages", "node": "a"},
+                {"kind": "advanceCommitIndex", "node": "a"},
+                {"kind": "commit", "node": "a", "value": 2},
+                {"kind": "clientRequest", "node": "a", "transaction": {"unknown": "y"}},
+                {"kind": "entry", "node": "a", "index": 2,
+                 "value": {"term": 3, "content": {"transaction": 99}}},
+                {"kind": "submittedTxId", "txId": 5, "value": True},
+                {"kind": "submittedTxId", "txId": 99, "value": True},
+            ],
+        }
+        duplicate = deepcopy(sequence)
+        duplicate["instructions"][-4]["transaction"] = {"unknown": "x"}
+        opaque = {
+            "nodes": ["a"],
+            "bootstrap": ["a"],
+            "unknowns": ["5"],
+            "instructions": deepcopy(initial) + [
+                {"kind": "clientRequest", "node": "a", "transaction": {"unknown": "5"}},
+                {"kind": "entry", "node": "a", "index": 0,
+                 "value": {"term": 3, "content": {"transaction": 99}}},
+            ],
+        }
+        opaque["instructions"][-4]["value"] = True
+        literal = deepcopy(opaque)
+        literal["instructions"][-2]["transaction"] = 5
+        models.extend(
+            [
+                {"name": "parameters-across-core", "trace": sequence, "expected": "sat"},
+                {"name": "shared-parameter-repeated", "trace": duplicate, "expected": "unsat"},
+                {"name": "opaque-name-not-value", "trace": opaque, "expected": "sat"},
+                {"name": "literal-already-submitted", "trace": literal, "expected": "unsat"},
+            ]
+        )
+        self.assert_internal_model_traces(
+            "NativeParameterizedFrameFixtureMain", models, 28, "parameterized-client"
+        )
+
+    def test_transaction_parameter_input_errors(self):
+        valid = {
+            "nodes": ["a"],
+            "bootstrap": ["a"],
+            "unknowns": ["x"],
+            "instructions": [
+                {"kind": "clientRequest", "node": "a", "transaction": {"unknown": "x"}}
+            ],
+        }
+        documents = [valid]
+        expected = [None]
+        for value, message in (
+            (-1, "negative"),
+            (1.5, "decimal"),
+            (True, "natural transaction"),
+            ("x", "natural transaction"),
+            (None, "natural transaction"),
+            ({"unknown": "missing"}, "undeclared transaction"),
+            ({"unknown": "x", "other": 0}, "expected fields"),
+            ({"unknown": 1}, "String"),
+        ):
+            document = deepcopy(valid)
+            document["instructions"][0]["transaction"] = value
+            documents.append(document)
+            expected.append(message)
+        for unknowns, message in (
+            (["x", "x"], "distinct"),
+            ([""], "nonempty"),
+            ([1], "String"),
+            ("x", "array"),
+            ([], "undeclared transaction"),
+        ):
+            document = deepcopy(valid)
+            document["unknowns"] = unknowns
+            documents.append(document)
+            expected.append(message)
+        missing = deepcopy(valid)
+        del missing["unknowns"]
+        documents.append(missing)
+        expected.append("undeclared transaction")
+        extra = deepcopy(valid)
+        extra["extra"] = True
+        documents.append(extra)
+        expected.append("expected fields")
+        result = subprocess.run(
+            ["lake", "env", "lean", "--run",
+             "Sparse/NativeParameterizedFrameFixtureMain.lean", "--decode"],
+            cwd=ROOT, input=json.dumps(documents), capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        errors = json.loads(result.stdout)
+        self.assertEqual(len(errors), len(expected))
+        for index, (error, message) in enumerate(zip(errors, expected, strict=True)):
+            with self.subTest(index=index):
+                if message is None:
+                    self.assertIsNone(error)
+                else:
+                    self.assertIsInstance(error, str)
+                    self.assertIn(message.lower(), error.lower())
+
+    def test_parameterized_core_encoding_unchanged(self):
+        documents = [
+            json.loads((ROOT / "Traces" / name).read_text(encoding="utf-8"))
+            for name in (
+                "native_vote_fifo_conflict.json",
+                "native_commit_advancement_conflict.json",
+                "native_become_leader_follower_conflict.json",
+            )
+        ]
+        scripts = self.encode(documents)
+        models = [
+            {"trace": document, "expected": "unsat"}
+            for document in documents
+        ]
+        models.extend(
+            {"trace": {**document, "unknowns": []}, "expected": "unsat"}
+            for document in documents
+        )
+        result = subprocess.run(
+            ["lake", "env", "lean", "--run",
+             "Sparse/NativeParameterizedFrameFixtureMain.lean"],
+            cwd=ROOT, input=json.dumps(models), capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        fixtures = json.loads(result.stdout)
+        self.assertEqual([item["script"] for item in fixtures], scripts + scripts)
+        for fixture, model in zip(fixtures, models, strict=True):
+            groups = fixture["groups"]
+            self.assertEqual(
+                [group["instruction"] for group in groups],
+                [None, *range(len(model["trace"]["instructions"]))],
+            )
+            self.assertEqual(groups[0]["start"], 0)
+            self.assertEqual(
+                [group["stop"] for group in groups[:-1]],
+                [group["start"] for group in groups[1:]],
+            )
 
     def become_leader_traces(self):
         models = self.model_traces("NativeArrayBecomeLeaderFixtureMain", 202)

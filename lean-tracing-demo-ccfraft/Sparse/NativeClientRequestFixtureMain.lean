@@ -16,7 +16,7 @@ def fixtureInstruction (width : PNat) (names : Array String) (value : Json) :
   if (<- (<- field value "kind").getStr?) = "clientRequest" then
     fields value ["kind", "node", "transaction"]
     return .inr ((<- resolve width names (<- field value "node")),
-      (<- (<- field value "transaction").getNat?))
+      (<- natural (<- field value "transaction")))
   else
     return .inl (<- decodeFrameInstruction width names value)
 
