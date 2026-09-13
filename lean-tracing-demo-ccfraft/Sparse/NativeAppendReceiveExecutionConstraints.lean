@@ -9,36 +9,6 @@ namespace CCFRaft.NativeEncode
 
 open NativeSmt
 
-private theorem assertion_holds {width : PNat} (formula : Expr .bool)
-    (before after : Encoding width)
-    (run : (assertion formula).run before = .ok ((), after))
-    (assignment : Assignment) (holds : Holds after.assertions.toList assignment) :
-    Holds before.assertions.toList assignment /\
-      formula.eval assignment Locals.empty = true := by
-  rw [(assertion_success formula before after run).2] at holds
-  constructor
-  · exact fun item member => holds item (by simp [member])
-  · exact holds formula (by simp)
-
-private theorem fresh_prior_holds {width : PNat} (before after : Encoding width) (id : Nat)
-    (run : fresh.run before = .ok (id, after))
-    (assignment : Assignment) (holds : Holds after.assertions.toList assignment) :
-    Holds before.assertions.toList assignment := by
-  rw [(fresh_success before after id run).2.2.2.2] at holds
-  exact holds
-
-private theorem define_holds {width : PNat} {sort : Ty} (value : Expr sort)
-    (before after : Encoding width) (id : Nat)
-    (run : (define value).run before = .ok (id, after))
-    (assignment : Assignment) (holds : Holds after.assertions.toList assignment) :
-    Holds before.assertions.toList assignment /\
-      assignment sort id = value.eval assignment Locals.empty := by
-  rw [(define_success value before after id run).2.2.2.2] at holds
-  constructor
-  · exact fun item member => holds item (by simp [member])
-  · simpa [Term.eval] using
-      holds (.equal (.free sort id) value) (by simp)
-
 theorem append_receive_prefix_constraints {width : PNat} (source destination : Fin width)
     (before after : Encoding width)
     (states : AppendReceivePrefixStates width)

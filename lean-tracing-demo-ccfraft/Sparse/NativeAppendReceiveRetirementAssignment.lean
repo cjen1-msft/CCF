@@ -11,27 +11,6 @@ namespace CCFRaft.NativeEncode
 
 open NativeSmt
 
-private theorem assertion_extension_holds {width : PNat} (formula : Expr .bool)
-    (before after : Encoding width)
-    (run : (assertion formula).run before = .ok ((), after))
-    (assignment : Assignment) (holds : Holds before.assertions.toList assignment)
-    (accepted : formula.eval assignment Locals.empty = true) :
-    Holds after.assertions.toList assignment := by
-  rw [(assertion_success formula before after run).2, Array.toList_push]
-  intro item member
-  rcases List.mem_append.mp member with previous | added
-  · exact holds item previous
-  · have same := List.mem_singleton.mp added
-    subst item
-    exact accepted
-
-private theorem fresh_holds {width : PNat} (before after : Encoding width) (id : Nat)
-    (run : fresh.run before = .ok (id, after))
-    (assignment : Assignment) (holds : Holds before.assertions.toList assignment) :
-    Holds after.assertions.toList assignment := by
-  rw [(fresh_success before after id run).2.2.2.2]
-  exact holds
-
 theorem append_receive_retirement_assignment {width : PNat}
     [Bootstrap (Fin width)] (source destination : Fin width)
     (before after : Encoding width) (states : AppendReceivePrefixStates width)
