@@ -41,19 +41,31 @@ and existence, plus replication-support terms. The parent build is in
 `native-commit-transition-parent-build.log`. The 200 majority SMT fixtures
 cover widths 1, 3, 17, 21, and 65 with mixed binders and Model-derived results.
 They pass in `native-majority-parent-tests.log`.
-`NativeCommitIndexTerms.lean` composes active configurations, replication
-majorities, and the bounded maximum. It builds but remains uncommitted pending
-its correspondence proof and emitted-SMT fixtures.
+Commit `2bd4df5e1` completes the `NativeCommitIndexTerms` correspondence proofs,
+including natural-witness extraction, and the reusable 17-binding
+`writeRetirementRow` with soundness and specific-assignment completeness.
+The 127 commit-index SMT fixtures have 32 expected SAT cases and pass in
+`native-commit-index-parent-tests.log`. Their Model metadata pins genuine
+joint-majority rejection, ignored future configurations, and fallback to a
+lower committable signature. The private full-action implementation in
+`NativeAdvanceCommit.lean` and its `NativeCommitTerms.lean` row/guard helpers
+build in `native-advance-commit-runtime-build.log` but remain uncommitted pending
+whole-action proofs and fixtures. The expected final counter increment is
+`25 + 3 * width`; it still needs derivation from the actual run.
+Commit `5626d9503` shares canonical maximum-assignment construction and reuses
+it for bounded signatures without changing the exported signature. The public
+correspondence rebuild passes in `native-max-match-assignment-parent-build.log`.
 
 Mechanical workers retain separate files. Worker
-`2a020198-af17-47bf-b45b-0b82864a50ad` owns `NativeCommitIndexFixtureMain.lean`.
+`2a020198-af17-47bf-b45b-0b82864a50ad` owns
+`NativeAdvanceCommitFixtureMain.lean` and `NativeArrayAdvanceCommitFixtureMain.lean`.
 Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns
-`NativeMaxMatchAssignment.lean` and only the `bounded_signature_assignment`
-refactor in `NativeLogSummaryAssignment.lean`.
+`NativeCommitIndexAssignment.lean` and free-symbol-bound lemmas only in
+`NativeMajorityTerms.lean`.
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns
-`NativeCommitIndexEncoding.lean`. The parent owns commit semantics and terms.
+`NativeCommitTermsEncoding.lean`. The parent owns commit semantics and runtime.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns
-`NativeRetirementWrites.lean` and `NativeRetirementWritesEncoding.lean`.
+`NativeCommitExecution.lean`.
 Its classifier refactor passed the independent public build and is committed
 as `13bb131fe`. The generic active-configuration scan is committed as `4cb66a132`.
 
