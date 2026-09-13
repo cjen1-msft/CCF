@@ -163,6 +163,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeArrayBecomeLeader",
             "Sparse.NativeBecomeLeader",
             "Sparse.NativeBecomeLeaderGuardsEncoding",
+            "Sparse.NativeBecomeLeaderExecution",
             "Sparse.NativeActiveConfigurationEncoding",
             "Sparse.NativeReplicationMajority",
             "Sparse.NativeArrayCommitTransition",
@@ -2192,6 +2193,46 @@ class NativeLeanSmtTests(unittest.TestCase):
             "become-leader",
         )
 
+    def become_leader_append_traces(self):
+        baseline = next(
+            model
+            for model in self.model_traces("NativeArrayBecomeLeaderFixtureMain", 202)
+            if model["name"] == "truncate-commit-7-votes-3"
+        )
+        document = deepcopy(baseline["trace"])
+        document["instructions"].extend(
+            [
+                {"kind": "appendEntries", "source": "a", "destination": "b", "batchEnd": 2},
+                {"kind": "queuePattern", "source": "a", "destination": "b", "index": 0,
+                 "value": {"kind": "appendEntriesRequest", "term": 0,
+                           "prevLogIndex": 2, "entriesLength": 0}},
+                {"kind": "receiveAppendEntries", "source": "a", "destination": "b"},
+                {"kind": "queuePattern", "source": "b", "destination": "a", "index": 0,
+                 "value": {"kind": "appendEntriesResponse", "term": 31,
+                           "success": False, "lastLogIndex": 3}},
+                {"kind": "receiveAppendEntriesResponse", "source": "b", "destination": "a"},
+                {"kind": "currentTerm", "node": "a", "value": 0},
+                {"kind": "newFollower", "node": "a", "value": True},
+                {"kind": "queueLength", "source": "c", "destination": "b", "value": 2},
+                {"kind": "queueLength", "source": "b", "destination": "a", "value": 0},
+                {"kind": "sentIndex", "node": "a", "peer": "b", "value": 2},
+            ]
+        )
+        wrong = deepcopy(document)
+        wrong["instructions"][-1]["value"] = 3
+        return [
+            {"name": "leader-append-nack", "trace": document, "expected": "sat"},
+            {"name": "leader-append-nack-wrong-cursor", "trace": wrong, "expected": "unsat"},
+        ]
+
+    def test_internal_become_leader_append_sequence(self):
+        self.assert_internal_model_traces(
+            "NativeBecomeLeaderFixtureMain",
+            self.become_leader_append_traces(),
+            1,
+            "become-leader-append",
+        )
+
     def test_public_vote_responses(self):
         models = self.vote_response_traces()
         scripts = self.encode([model["trace"] for model in models])
@@ -2889,6 +2930,11 @@ class NativeLeanSmtTests(unittest.TestCase):
                 "native_append_response_match_conflict",
                 "NativeReceiveAppendResponseFixtureMain",
                 7,
+            ),
+            (
+                "native_become_leader_follower_conflict",
+                "NativeBecomeLeaderFixtureMain",
+                True,
             ),
         ):
             with self.subTest(trace=trace):

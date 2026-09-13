@@ -1,0 +1,10 @@
+{
+  "nodes": ["a"],
+  "bootstrap": ["a"],
+  "instructions": [
+    {"kind": "logLength", "node": "a", "value": 0},
+    {"kind": "newFollower", "node": "a", "value": true},
+    {"kind": "becomeLeader", "node": "a"},
+    {"kind": "newFollower", "node": "a", "value": false}
+  ]
+}

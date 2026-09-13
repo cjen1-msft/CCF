@@ -160,7 +160,8 @@ Worker
 `NativeAppendResponseExecution`, accepted in `03e5f7809`.
 Its public response integration is inspected and parent-built.
 Those four public files are parent-owned again.
-It now owns `NativeBecomeLeaderExecution`.
+Its `NativeBecomeLeaderExecution` is accepted and parent-owned.
+It now owns `NativeBecomeLeaderComplete`.
 Its vote-response row refactor is accepted
 in `501abf1fc`, reusing the snapshot representation instead of reproving
 unchanged fields. All accepted response statements are fixed.
@@ -384,6 +385,18 @@ affect refreshed membership. The parent build passes in
 symbol bounds through the shared voting-majority lemmas. Source allocation
 remains a guard rather than an extra premise. The parent build passes in
 `native-become-leader-guards-parent-build.log`.
+`NativeBecomeLeaderExecution` extracts both prefix witnesses and their
+assertions from the actual runtime, then reuses `RetirementTailExecutionResult`.
+It preserves the original columns through the prefix and proves the exact
+`25 + 3 * width` counter increment. The parent build passes in
+`native-become-leader-execution-parent-build.log`.
+The private leadership/append/NACK sequence and
+`Traces/native_become_leader_follower_conflict.json` pass in
+`native-become-leader-sequence-fixture-tests.log`.
+The sequence retains duplicate messages in an unrelated source partition.
+The conflict rejects changing `newFollower` during promotion and becomes
+satisfiable when the final flag is corrected. Public leadership matrix,
+input-error, and explorer tests are prepared but not yet accepted.
 
 Raw reduction also emits per-identity `joined` observations. Their existing
 Model meaning is membership in `state.hasJoined`, not current allocation.
