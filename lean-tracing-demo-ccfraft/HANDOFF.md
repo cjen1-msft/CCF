@@ -158,7 +158,7 @@ bridge, accepted in `0547ae584`. Its append-response Model proofs are
 accepted in `816ca46fd`; its append-response term proofs are accepted in
 `f16fe45ab`. Its shared voting-majority proofs are accepted and parent-owned.
 Its leadership guard correspondence and bounds are accepted and parent-owned.
-It now owns `NativeBecomeLeaderPrefixAssignment`.
+Its `NativeBecomeLeaderPrefixAssignment` is accepted and parent-owned; it is idle.
 Worker
 `af5d19d5-1186-4609-9b0b-4f224d4a4330` completed
 `NativeAppendResponseExecution`, accepted in `03e5f7809`.
@@ -401,6 +401,12 @@ The sequence retains duplicate messages in an unrelated source partition.
 The conflict rejects changing `newFollower` during promotion and becomes
 satisfiable when the final flag is corrected. Public leadership matrix,
 input-error, and explorer tests are prepared but not yet accepted.
+`NativeBecomeLeaderPrefixAssignment` now constructs both canonical scan
+witnesses through the shared log-summary assignment helpers. It preserves
+every original symbol below the initial counter, all prefix assertions, and
+the original frame, and represents the prepared row at the tail boundary.
+It needs no allocation, enabledness, bootstrap-equality, or reachability premise.
+The parent build passes in `native-become-leader-prefix-parent-build.log`.
 
 Raw reduction also emits per-identity `joined` observations. Their existing
 Model meaning is membership in `state.hasJoined`, not current allocation.
