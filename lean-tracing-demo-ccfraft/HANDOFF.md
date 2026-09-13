@@ -252,10 +252,21 @@ correspondence, native transition correctness/existence, and exact symbolic
 guard correspondence and bounds. The submitted guard uses the existing masked
 set representation, without an old-limit nonnegativity premise.
 The parent build is `native-client-request-model-parent-build.log`.
-Worker `2a020198-af17-47bf-b45b-0b82864a50ad` is idle.
-`a04f39b9-8aa6-4733-9c2c-228d7432032e` owns `NativeLeaderLogPrefix`
-and the `NativeSignature`/`NativeSignaturePrefix` refactor that consumes it.
-Existing signature APIs must stay unchanged.
+`NativeClientRequestExecution` extracts the actual prepare, retirement, and
+submitted-write runs without expanding component internals. It is accepted
+and parent-owned; the build is `native-client-request-execution-parent-build.log`.
+Worker `2a020198-af17-47bf-b45b-0b82864a50ad` now owns
+`NativeClientRequestSound`.
+`NativeLeaderLogPrefix` and the `NativeSignature`/`NativeSignaturePrefix`
+refactor are accepted and parent-owned. The generic prefix proves actual
+execution, appended-row representation, and specific-assignment extension for
+a supplied content expression. Existing signature APIs remain unchanged.
+`sign_committable_messages_eq_direct` proves equality with the old runtime.
+Build and composition regressions pass in
+`native-leader-log-prefix-parent-build.log` and `native-leader-log-prefix-tests.log`.
+Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` now owns
+`NativeClientRequestStructure`, proving counter, reference, bootstrap,
+prior-assertion, and transaction-symbol-bound facts through the shared stages.
 `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns `NativeFrameStep`
 and `NativeFrameTrace`, extracting continuation-based composition and preserving
 all existing public theorem signatures. This will let a parameterized compiler

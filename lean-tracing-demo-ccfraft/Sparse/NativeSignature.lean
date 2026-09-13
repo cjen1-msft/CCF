@@ -1,7 +1,7 @@
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-import Sparse.NativeSignatureTerms
+import Sparse.NativeLeaderLogWrite
 import Sparse.NativeRetirementTail
 
 set_option autoImplicit false
@@ -13,11 +13,23 @@ open NativeSmt
 def signCommittableMessages {width : PNat} (source : Fin width) : EncodeM width Unit := do
   let before <- get
   let old := nodeRowSnapshot before.toColumns source
-  let entriesId <- define (leaderLogEntriesTerm old (contentTerm .signature))
-  let lengthId <- define (.add old.logLength (.integer 1))
-  let appended := leaderLogRowTerms old (.free .int lengthId) (.free _ entriesId)
+  let appended <- prepareLeaderLog source (contentTerm .signature)
   retirementTail before.bootstrap source appended old.commit
     (signatureGuards before.toColumns source)
+
+theorem sign_committable_messages_eq_direct {width : PNat}
+    (source : Fin width) :
+    signCommittableMessages source = (do
+      let before <- get
+      let old := nodeRowSnapshot before.toColumns source
+      let entriesId <- define (leaderLogEntriesTerm old (contentTerm .signature))
+      let lengthId <- define (.add old.logLength (.integer 1))
+      let appended :=
+        leaderLogRowTerms old (.free .int lengthId) (.free _ entriesId)
+      retirementTail before.bootstrap source appended old.commit
+        (signatureGuards before.toColumns source)) := by
+  funext state
+  simp [signCommittableMessages, prepareLeaderLog]
 
 end CCFRaft.NativeEncode
 
