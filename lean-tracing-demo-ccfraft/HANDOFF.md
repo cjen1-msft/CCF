@@ -143,7 +143,10 @@ Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` completed
 `NativeQueuePatternEncoding`, including equivalence to the slower baseline,
 and vote-response completeness, accepted in `705731c26`.
 Its append-response completeness is accepted in `5ad3747f6`.
-It now owns `NativeBecomeLeaderRowEncoding`.
+Its generic leadership row correspondence is inspected and parent-built in
+`native-become-leader-row-parent-build.log`. It is simplifying the unchanged
+bound fields, then owns `NativeArrayBecomeLeaderTransition` for Model
+correspondence and existence.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` completed Model correspondence
 in `NativeArrayVoteResponse` and the exact native `receive_eq_write_pop`
 bridge, accepted in `0547ae584`. Its append-response Model proofs are
@@ -334,7 +337,8 @@ cases; it passes in `native-append-response-wide-tests.log`.
 `Traces/native_append_response_match_conflict.json` and its corrected cursor
 pass privately in `native-append-response-conflict-private-tests.log`;
 the fixture is committed as `be39a4520`.
-Both response families now have public dispatch and whole-trace correspondence.
+Commit `90fdf9c9b` adds public dispatch and whole-trace correspondence for
+both response families.
 The strict JSON kinds are `receiveRequestVoteResponse`,
 `receiveRequestPreVoteResponse`, and `receiveAppendEntriesResponse`, each with
 only `source` and `destination` besides `kind`. Model follows includes typed
