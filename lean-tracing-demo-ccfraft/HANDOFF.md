@@ -516,8 +516,8 @@ representation from the actual encoder run and final assertions, given the
 original frame, Model, and bootstrap representations.
 The build and import audit pass in `native-append-whole-action-sound-build.log`
 and `native-append-whole-action-sound-import-tests.log`.
-Append receive remains private until specific-assignment completeness and trace
-integration are proved.
+Append receive remains private until exact native-step correspondence and public
+trace integration are proved.
 `NativeAppendReceiveLogAssignment.lean` is committed as `f47e0c2f1`.
 It extends a supplied assignment through `entriesDefined`, preserving the original
 frame and request and proving the selected candidate log representation.
@@ -562,12 +562,18 @@ outputs and proves representation of the actual Model next state.
 The build and import audit pass in `native-append-finish-assignment-build.log`
 and `native-append-finish-assignment-import-tests.log`.
 This completes the write phase, not the whole-action completeness proof.
-Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns only
-`NativeAppendReceiveComplete.lean`. Its `append_receive_current_assignment`
-is accepted as `3c99321d0`: Model-enabled input produces a satisfying assignment
-through `currentAsserted`, with frame, request, log, and commit representations.
-It is now combining that theorem, the accepted tail, and the finish helper into
-whole-action `receive_append_model_complete`.
+`NativeAppendReceiveComplete.append_receive_current_assignment` is accepted as
+`3c99321d0`: Model-enabled input produces a satisfying assignment through
+`currentAsserted`, with frame, request, log, and commit representations.
+`receive_append_model_complete` is committed as `c7e57346a`.
+It extends the supplied original assignment through the actual action and realizes
+a native output representing the enabled Model next state.
+Parent inspection, build, and import audit pass in
+`native-append-whole-action-complete-parent-build.log` and
+`native-append-whole-action-complete-import-tests.log`.
+This proves existence of a native output, not correspondence to an arbitrary
+chosen native trace frame. Public integration must preserve physical FIFO updates.
+The Complete module is parent-owned.
 `NativeAppendReceiveFinalRowTerms.lean` and
 `NativeAppendReceiveFinalRowEncoding.lean` are committed as `158d506bb`.
 They prove candidate stepdown and conditional local retirement refresh,
@@ -617,6 +623,11 @@ Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only new
 `NativeMembershipExecutionConstraints.lean`. It extracts prefix constraints before
 frame writes and exposes a short actual-run/final-Holds wrapper.
 Keep `NativeMembershipChange.lean` unchanged.
+Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns only new
+`NativeMembershipLogAssignment.lean`, constructing an assignment through
+`initial.lengthDefined` from the original satisfying frame.
+It must derive previous/added member sets and the appended log representation.
+It stops before local retirement witnesses and membership guards.
 `NativeMembershipChange.lean`, `NativeMembershipRowTerms.lean`, and
 `NativeMembershipChangeFixtureMain.lean` are committed as `a006368c5`.
 The private action composes the proved guards, new log entry, local and global

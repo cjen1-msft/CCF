@@ -465,8 +465,10 @@ scripts, including the focused hinted-NACK cases.
 `NativeAppendReceiveSound.receive_append_model_sound` proves whole-action soundness:
 the actual run and satisfying final assertions imply Model enablement and
 representation of the next state, given the original frame and bootstrap representations.
-Assignment completeness and public trace integration remain unfinished, so
-public `receiveAppendEntries` remains unsupported.
+`NativeAppendReceiveComplete.receive_append_model_complete` extends a supplied
+satisfying input assignment for an enabled, selected request and realizes the Model
+next state. Exact native-step correspondence and public trace integration remain
+unfinished, so public `receiveAppendEntries` remains unsupported.
 `NativeLogSummaryEncoding` proves bounded signatures, committed configuration
 indices and members, and NACK matches for explicit candidate logs.
 All three scans reuse `NativeMaxMatchEncoding`, with zero for no match.
