@@ -7,6 +7,7 @@ import Sparse.NativeArrayAppend
 import Sparse.NativeArrayAppendNetwork
 import Sparse.NativeArrayMembershipTransition
 import Sparse.NativeArrayCommitTransition
+import Sparse.NativeArraySignatureTransition
 
 set_option autoImplicit false
 
@@ -25,6 +26,7 @@ inductive Instruction (N T : Type) where
   | receiveAppend (source destination : N)
   | changeConfiguration (source : N) (configuration : Finset N)
   | advanceCommit (source : N)
+  | signCommittable (source : N)
   | appendEntries (source destination : N) (batchEnd : Nat)
   | submittedTxId (txId : T) (expected : Bool)
   | hasJoined (expected : Finset N)
@@ -68,6 +70,10 @@ def follows (frame : Frame N T) : List (Instruction N T) -> Prop
   | .advanceCommit source :: rest =>
       exists nextFrame,
         NativeArrayAdvanceCommit.AdvanceCommit frame source nextFrame /\
+          follows nextFrame rest
+  | .signCommittable source :: rest =>
+      exists nextFrame,
+        NativeArraySignature.Sign frame source nextFrame /\
           follows nextFrame rest
   | .appendEntries source destination batchEnd :: rest =>
       NativeArrayAppend.enabled frame source destination batchEnd /\
@@ -115,6 +121,9 @@ def modelFollows (state : State N T) : List (Instruction N T) -> Prop
   | .advanceCommit source :: rest =>
       CCFRaft.Enabled state (.advanceCommitIndex source) /\
         modelFollows (CCFRaft.next state (.advanceCommitIndex source)) rest
+  | .signCommittable source :: rest =>
+      CCFRaft.Enabled state (.signCommittableMessages source) /\
+        modelFollows (CCFRaft.next state (.signCommittableMessages source)) rest
   | .appendEntries source destination batchEnd :: rest =>
       CCFRaft.Enabled state (.appendEntries source destination batchEnd) /\
         modelFollows (CCFRaft.next state (.appendEntries source destination batchEnd)) rest
@@ -256,6 +265,21 @@ theorem follows_correct (trace : List (Instruction N T)) (frame : Frame N T) (st
             frame state rep source enabled
         have nextRep :=
           (NativeArrayAdvanceCommit.AdvanceCommit.model_correct
+            frame nextFrame state rep source step).2
+        exact ⟨nextFrame, step, (ih _ _ nextRep).mpr held⟩
+    | signCommittable source =>
+      constructor
+      · rintro ⟨nextFrame, step, held⟩
+        obtain ⟨enabled, nextRep⟩ :=
+          NativeArraySignature.Sign.model_correct
+            frame nextFrame state rep source step
+        exact ⟨enabled, (ih _ _ nextRep).mp held⟩
+      · rintro ⟨enabled, held⟩
+        obtain ⟨nextFrame, step⟩ :=
+          NativeArraySignature.Sign.exists_of_enabled
+            frame state rep source enabled
+        have nextRep :=
+          (NativeArraySignature.Sign.model_correct
             frame nextFrame state rep source step).2
         exact ⟨nextFrame, step, (ih _ _ nextRep).mpr held⟩
     | appendEntries source destination batchEnd =>

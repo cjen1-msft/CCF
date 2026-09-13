@@ -731,6 +731,20 @@ class NativeLeanSmtTests(unittest.TestCase):
             "signature-commit",
         )
 
+    def test_public_signature_commit_sequence(self):
+        models = self.signature_commit_traces()
+        scripts = self.encode([model["trace"] for model in models])
+        self.solve(
+            [
+                {
+                    "name": f"public-signature-commit-{index}",
+                    "script": script,
+                    "expected": model["expected"],
+                }
+                for index, (model, script) in enumerate(zip(models, scripts))
+            ]
+        )
+
     def test_internal_core_action_sequences(self):
         models = self.model_traces("NativeArrayCoreActionsFixtureMain", 184)
         baseline = [item for item in models if item["mutation"] == 0]
@@ -1714,6 +1728,12 @@ class NativeLeanSmtTests(unittest.TestCase):
         )
         self.assertEqual(sum(item["expected"] == "sat" for item in fixtures), 7)
 
+    def test_public_model_signatures(self):
+        fixtures = self.assert_model_traces(
+            "NativeArraySignatureFixtureMain", 50, "public-model-signature"
+        )
+        self.assertEqual(sum(item["expected"] == "sat" for item in fixtures), 8)
+
     def test_append_receive_model_fixture_coverage(self):
         fixtures = self.model_traces("NativeArrayAppendReceiveFixtureMain", 1344)
         self.assertEqual(
@@ -2009,6 +2029,9 @@ class NativeLeanSmtTests(unittest.TestCase):
     def test_advance_commit_input_errors(self):
         self.assert_unary_action_input_errors("advanceCommitIndex")
 
+    def test_signature_input_errors(self):
+        self.assert_unary_action_input_errors("signCommittableMessages")
+
     def assert_unary_action_input_errors(self, kind):
         valid = {"kind": kind, "node": "a"}
         invalid = [
@@ -2246,6 +2269,11 @@ class NativeLeanSmtTests(unittest.TestCase):
     def test_advance_commit_explorer_core(self):
         self.assert_explorer_core(
             "Traces/native_commit_advancement_conflict.json", {7, 8}
+        )
+
+    def test_signature_explorer_core(self):
+        self.assert_explorer_core(
+            "Traces/native_signature_append_conflict.json", {7, 8}
         )
 
     def test_core_explorer_fixture_transitions(self):

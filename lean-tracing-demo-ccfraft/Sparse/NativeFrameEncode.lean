@@ -15,6 +15,7 @@ import Sparse.NativeVoteReceive
 import Sparse.NativeAppendReceive
 import Sparse.NativeMembershipChange
 import Sparse.NativeAdvanceCommit
+import Sparse.NativeSignature
 
 set_option autoImplicit false
 
@@ -60,6 +61,9 @@ def decodeFrameInstruction (width : PNat) (names : Array String) (value : Json) 
   else if kind = "advanceCommitIndex" then
     fields value ["kind", "node"]
     return .advanceCommit (<- resolve width names (<- field value "node"))
+  else if kind = "signCommittableMessages" then
+    fields value ["kind", "node"]
+    return .signCommittable (<- resolve width names (<- field value "node"))
   else if kind = "hasJoined" then
     fields value ["kind", "value"]
     return .hasJoined (<- decodeNodeSet width names (<- field value "value"))
@@ -130,6 +134,7 @@ def frameInstruction {width : PNat} (item : FrameInstruction width) : EncodeM wi
   | .receiveAppend source destination => receiveAppend source destination
   | .changeConfiguration source configuration => membershipChange source configuration
   | .advanceCommit source => advanceCommitIndex source
+  | .signCommittable source => signCommittableMessages source
   | _ => do
     let state <- get
     assertAll (<- frameObservationClauses state.toColumns item)

@@ -61,8 +61,8 @@ The public Lean encoder uses `Sparse/NativeFrameEncode.lean` and shares
 local-state compilation with `Sparse/NativeEncode.lean`.
 It accepts `checkQuorum`, `requestVote`, `requestPreVote`, `updateTerm`, `timeout`,
 `becomePreVoteCandidate`, `appendEntries`, `receiveRequestVote`,
-`receiveAppendEntries`, `changeConfiguration`, and `advanceCommitIndex`, plus the
-`allocated`, `role`, `newFollower`, `logLength`,
+`receiveAppendEntries`, `changeConfiguration`, `advanceCommitIndex`, and
+`signCommittableMessages`, plus the `allocated`, `role`, `newFollower`, `logLength`,
 `commit`, `currentTerm`, `entry`, `retirementIndex`,
 `retirementCommittableIndex`, `retiredCommittedIndex`, `votedFor`, and
 `votesGranted`, `preVotesGranted`, `membershipState`, `sentIndex`, and `matchIndex`
@@ -105,6 +105,13 @@ and refreshes the node's retirement metadata and completed-retirement set.
 No eligible newer signature, or a refreshed `retiredCommitted` state, makes
 the action UNSAT. The old membership state is not a guard.
 Logs, queues, peer rows, and other globals remain unchanged.
+`signCommittableMessages` requires a declared `node` that is an allocated
+leader with a nonempty log. Both its old and refreshed membership must differ
+from `retiredCommitted`. The action appends one current-term signature and
+refreshes retirement metadata and the completed-retirement set. It preserves
+the commit index, including when the old log already ends with a signature.
+Commit advancement and signature writing share the same retirement scans,
+guards stage, and row writer, with reusable soundness and assignment proofs.
 Generic `receive` remains an input error.
 `updateTerm` reads the directed queue head without consuming it. It requires an
 allocated destination and a strictly newer packet term. Responses also require

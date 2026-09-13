@@ -11,6 +11,7 @@ import Sparse.NativeVoteReceiveEncoding
 import Sparse.NativeAppendReceiveEncoding
 import Sparse.NativeMembershipChangeEncoding
 import Sparse.NativeAdvanceCommitEncoding
+import Sparse.NativeSignCommittableEncoding
 
 set_option autoImplicit false
 
@@ -137,6 +138,9 @@ inductive FrameInstructionRun {width : PNat} (before after : Encoding width) :
   | advanceCommit (source : Fin width)
       (run : (advanceCommitIndex source).run before = .ok ((), after)) :
       FrameInstructionRun before after (.advanceCommit source)
+  | signCommittable (source : Fin width)
+      (run : (signCommittableMessages source).run before = .ok ((), after)) :
+      FrameInstructionRun before after (.signCommittable source)
   | appendEntries (source destination : Fin width) (batchEnd : Nat)
       (run : (sendAppend source destination batchEnd).run before = .ok ((), after)) :
       FrameInstructionRun before after (.appendEntries source destination batchEnd)
@@ -161,6 +165,7 @@ theorem frame_instruction_cases {width : PNat} (item : FrameInstruction width)
   case changeConfiguration source configuration =>
     exact .changeConfiguration source configuration run
   case advanceCommit source => exact .advanceCommit source run
+  case signCommittable source => exact .signCommittable source run
   case appendEntries source destination batchEnd =>
     exact .appendEntries source destination batchEnd run
   case hasJoined expected => exact .observation _ rfl run
@@ -196,6 +201,8 @@ theorem frame_instruction_references {width : PNat} (item : FrameInstruction wid
     exact membership_change_references source configuration before after action valid
   | advanceCommit source action =>
     exact advance_commit_references source before after action valid
+  | signCommittable source action =>
+    exact signature_references source before after action valid
   | appendEntries source destination batchEnd action =>
     exact send_append_references source destination batchEnd before after action valid
   | observation clauses emitted asserted =>
@@ -221,6 +228,8 @@ theorem frame_instruction_holds_before {width : PNat} (item : FrameInstruction w
     exact membership_change_prior_holds source configuration before after action assignment holds
   | advanceCommit source action =>
     exact advance_commit_prior_holds source before after action assignment holds
+  | signCommittable source action =>
+    exact signature_prior_holds source before after action assignment holds
   | appendEntries source destination batchEnd action =>
     exact send_append_holds_before source destination batchEnd before after action assignment holds
   | observation clauses emitted asserted =>

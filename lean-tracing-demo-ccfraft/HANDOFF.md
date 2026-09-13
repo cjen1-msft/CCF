@@ -2,7 +2,7 @@
 
 ## Current direction: native-array exact encoding
 
-### Immediate continuation: shared retirement proofs and signature writes
+### Immediate continuation: packet observations and response handlers
 
 The user now prioritizes `requestVote`, receive requestVote, `appendEntries`,
 receive appendEntries, and membership change. Vote sends, vote-request receive,
@@ -53,7 +53,7 @@ in `native-public-commit-and-signature-tests.log`.
 `Traces/native_commit_advancement_conflict.json` attributes its contradiction
 to owners `{7, 8}`.
 
-The next captured-path action is `signCommittableMessages`.
+`signCommittableMessages` is now public.
 Commit `605cc2fb0` adds reusable leader-log append/refresh correspondence and
 signature guards and full-frame Model updates. The parent build is in
 `native-signature-foundations-build.log`.
@@ -69,7 +69,8 @@ Signature followed by public commit advancement passes in
 `native-signature-commit-sequence-tests.log`, including a 17-identity case.
 Attempting commit before the new current-term signature is UNSAT.
 Whole-action signature soundness and assignment completeness are complete.
-Public dispatch is in progress. Signature guards reject both old and refreshed
+Public dispatch and both whole-trace proofs are complete.
+Signature guards reject both old and refreshed
 `retiredCommitted` membership and require a nonempty old log. Do not copy the
 commit action's weaker old-membership guard.
 
@@ -93,18 +94,15 @@ is `23 + 3 * width`. Its input row need not be a snapshot of the frame:
 signature writing supplies an already appended row.
 `Traces/native_signature_append_conflict.json` has action owner 7 and
 contradictory length observation 8. Its private UNSAT/corrected-SAT pair passes
-in `native-signature-conflict-fixture-tests.log`; public signature attribution
-is not yet wired.
+in `native-signature-conflict-fixture-tests.log`. Public attribution to
+the same owners now passes in `native-public-signature-tests.log`.
 Commit `6085bf4ec` moves `NodeRowTerms.Bounded.mono` from the commit prefix to
 `NativeNodeRowWritesEncoding`. The downstream public rebuild passes in
 `native-shared-row-bounds-public-build.log`.
 
-Mechanical workers retain separate files.
-`b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns `NativeRetirementTailSound`.
-`af5d19d5-1186-4609-9b0b-4f224d4a4330` owns
-`NativeRetirementTailPrefixAssignment`, which stops before guards.
-`2a020198-af17-47bf-b45b-0b82864a50ad` owns
-`NativeRetirementTailSuffixAssignment`, which starts after guards.
+`NativeRetirementTailSound`, `NativeRetirementTailPrefixAssignment`, and
+`NativeRetirementTailSuffixAssignment` are accepted as `a4366dfee`.
+The prefix stops before guards; the suffix starts after guards.
 Both assignment components take a represented input row, its symbol bounds,
 and a separately bounded natural commit expression. Do not substitute a
 frame snapshot for that supplied row.
@@ -131,23 +129,27 @@ the original symbol counter. The parent build passes in
 `native-signature-complete-parent-build.log`.
 Commit `e3dc9a71d` makes commit execution reuse generic tail extraction.
 It exposes `commit_tail_execution`, `commitTailStates`, and the actual tail run
-for the remaining commit proof consumers.
+for the commit proof consumers. Commits `890ca9b04` and `7a9aed408` make
+commit soundness and both assignment stages reuse the generic tail proofs.
+Their parent builds pass in `native-commit-shared-sound-parent-build.log`
+and `native-commit-shared-assignments-parent-build.log`.
 
 Mechanical workers retain separate files.
-Worker `2a020198-af17-47bf-b45b-0b82864a50ad` owns public signature integration
-in `NativeArrayVote`, `NativeFrameEncode`, `NativeFrameStep`, and `NativeFrameTrace`.
-Workers `af5d19d5-1186-4609-9b0b-4f224d4a4330`,
-`b53cfbd8-539b-4835-b9bf-32d4fb1d4892`, and
-`a04f39b9-8aa6-4733-9c2c-228d7432032e` own shared-tail refactors in
-`NativeCommitSuffixAssignment`, `NativeCommitPrefixAssignment`, and
-`NativeCommitSound`, respectively.
+Worker `2a020198-af17-47bf-b45b-0b82864a50ad` completed public signature
+integration and is idle. Its four public files are parent-owned.
+Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns
+`NativeQueuePatternEncoding`, including equivalence to the slower baseline.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns Model correspondence
+in `NativeArrayVoteResponse`. Worker
+`af5d19d5-1186-4609-9b0b-4f224d4a4330` owns
+`NativeVoteResponseTermsEncoding`.
 The parent owns runtime, tests, docs, and all accepted modules.
-Finish public signature decoding and whole-trace correspondence. Remove
-duplicate commit retirement bookkeeping through the shared proofs.
-Public signature Model, input-error, sequence, and explorer tests are prepared
-but not committed. The shared private sequence and commit input-error helpers
-pass; public signature dispatch still fails explicitly as unsupported in
-`native-signature-public-before-integration-tests.log`.
+The public signature parent build passes in `native-public-signature-parent-build.log`.
+Public Model, input-error, sequence, and explorer cases pass together with
+private signature, old signature-index, commit, and core-sequence regressions
+in `native-public-signature-tests.log`.
+The earlier unsupported-signature result in
+`native-signature-public-before-integration-tests.log` is superseded.
 
 For the later `clientRequest` action, preserve the submitted-set tail
 semantics. `NativeNatSet.natSetMember` masks membership by its live limit;
@@ -165,7 +167,10 @@ entry contents. `native-packet-pattern-tests.log` records passing semantic
 and malformed-input cases.
 Worker `59af956e-475e-495a-a970-a32160960217` owns only
 `NativePacketPatternEncoding`, proving correspondence against actual Model
-messages through a reusable optional-field lemma.
+messages through a reusable optional-field lemma. The first version compiled
+and was inspected. The worker is making natural literal types explicit so
+the reusable Nat lemma does not expose an inferred `Option.bind` coercion.
+The master `packet_pattern_term_correct` signature remains unchanged.
 Commit `2b76987e9` adds `NativeQueuePattern`,
 `NativeQueuePatternFixtureMain`, and `test_queue_patterns`. These are parent-owned.
 Their 126 cases cover FIFO bounds, large heads and lengths, and normalization
@@ -189,6 +194,21 @@ unobserved packet fields.
 Public pattern coverage and strict-input cases are prepared but unstaged,
 along with `Traces/native_partial_packet_conflict.json` and its explorer case.
 The two contradictory partial observations should map to owners `{0, 1}`.
+
+The uncommitted private vote-response runtime is `NativeVoteResponse`, shared by vote and
+pre-vote replies. It reuses `writeNodeRow` and FIFO pop, with 18 fresh symbols.
+This is the simple baseline, not a specialized single-column writer.
+`NativeArrayVoteResponseFixtureMain` derives 120 cases from actual Model
+enablement and next-state functions, including 76 enabled cases.
+The Python test also mutates every post-state observation in two tally cases.
+These pass in `native-vote-response-model-tests.log`.
+`NativeReceiveVoteResponseFixtureMain` is the private compiler.
+Whole-action correspondence and public response dispatch remain pending.
+Unlike `updateTerm`, response receive does not require an allocated source.
+An unallocated source's response is consumed without changing nodes, even
+when its term is newer. With an allocated source, a newer reply to the wrong
+role is ignored, while a newer reply to the expected candidate role is
+disabled. Membership and pre-vote status are not response guards.
 
 Factory tools are unavailable in this session. `NativeDefinitions` and
 `NativeDefinitionsEncoding` now provide reusable heterogeneous definition
