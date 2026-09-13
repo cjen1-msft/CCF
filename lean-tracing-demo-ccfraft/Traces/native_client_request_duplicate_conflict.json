@@ -1,0 +1,9 @@
+{
+  "nodes": ["a"],
+  "bootstrap": ["a"],
+  "instructions": [
+    {"kind": "logLength", "node": "a", "value": 0},
+    {"kind": "clientRequest", "node": "a", "transaction": 5},
+    {"kind": "clientRequest", "node": "a", "transaction": 5}
+  ]
+}

@@ -255,8 +255,11 @@ The parent build is `native-client-request-model-parent-build.log`.
 `NativeClientRequestExecution` extracts the actual prepare, retirement, and
 submitted-write runs without expanding component internals. It is accepted
 and parent-owned; the build is `native-client-request-execution-parent-build.log`.
-Worker `2a020198-af17-47bf-b45b-0b82864a50ad` now owns
-`NativeClientRequestSound`.
+`NativeClientRequestSound` is accepted and parent-owned. It proves exact native
+and Model soundness by composing the shared stages and transporting refreshed
+rows by Model equality, preserving unconstrained tails.
+The parent build is `native-client-request-sound-parent-build.log`.
+Worker `2a020198-af17-47bf-b45b-0b82864a50ad` is idle.
 `NativeLeaderLogPrefix` and the `NativeSignature`/`NativeSignaturePrefix`
 refactor are accepted and parent-owned. The generic prefix proves actual
 execution, appended-row representation, and specific-assignment extension for
@@ -264,9 +267,12 @@ a supplied content expression. Existing signature APIs remain unchanged.
 `sign_committable_messages_eq_direct` proves equality with the old runtime.
 Build and composition regressions pass in
 `native-leader-log-prefix-parent-build.log` and `native-leader-log-prefix-tests.log`.
-Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` now owns
-`NativeClientRequestStructure`, proving counter, reference, bootstrap,
-prior-assertion, and transaction-symbol-bound facts through the shared stages.
+`NativeClientRequestStructure` is accepted and parent-owned. It proves counter,
+reference, bootstrap, prior-assertion, and transaction-symbol-bound facts through
+the shared stages. The increment is `27 + 3 * width`; argument bounds come from
+the first definition, before any fresh symbol could be captured.
+The parent build is `native-client-request-structure-parent-build.log`.
+Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` is idle.
 `NativeFrameStep` and `NativeFrameTrace` are accepted and parent-owned.
 `frame_instruction_next_mono` proves that every successful instruction preserves
 the symbol counter's lower bound.
@@ -324,6 +330,12 @@ mutations pass in `native-reduction-projection-tests.log` and
 `native-reduction-decode-tests.log`. This is library projection and decode
 coverage, not yet raw CLI/solver/explorer integration. Both assurance flags
 remain false.
+
+`Traces/native_client_request_duplicate_conflict.json` rejects two submissions
+of transaction 5. Changing the second to 6 is SAT through the private compiler,
+recorded in `native-client-duplicate-tests.log`.
+`test_public_client_request` is prepared but not accepted; its current input
+error is recorded in `native-client-public-failing-first.log`.
 
 Commit `36efa30f6` adds a private typed packet-pattern representation, SMT
 terms, strict JSON decoding, and fixtures. All seven existing packet families

@@ -93,6 +93,8 @@ class NativeImportBoundaryTests(unittest.TestCase):
                         visit(dependency)
 
         for module in (
+            "Sparse.NativeClientRequestSound",
+            "Sparse.NativeClientRequestStructure",
             "Sparse.NativeNatParametersEncoding",
             "Sparse.NativeLeaderLogPrefix",
             "Sparse.NativeClientRequestExecution",
@@ -2197,6 +2199,25 @@ class NativeLeanSmtTests(unittest.TestCase):
             self.client_request_traces(),
             26,
             "client-request",
+        )
+
+    def client_request_duplicate_traces(self):
+        document = json.loads(
+            (ROOT / "Traces/native_client_request_duplicate_conflict.json").read_text()
+        )
+        corrected = deepcopy(document)
+        corrected["instructions"][-1]["transaction"] = 6
+        return [
+            {"name": "duplicate-client-request", "trace": document, "expected": "unsat"},
+            {"name": "different-client-request", "trace": corrected, "expected": "sat"},
+        ]
+
+    def test_internal_client_request_duplicate(self):
+        self.assert_internal_model_traces(
+            "NativeClientRequestFixtureMain",
+            self.client_request_duplicate_traces(),
+            1,
+            "client-request-duplicate",
         )
 
     def test_parameterized_client_requests(self):
