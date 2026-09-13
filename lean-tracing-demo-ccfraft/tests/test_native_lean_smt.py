@@ -199,6 +199,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeAppendResponse",
             "Sparse.NativeAppendResponseExecution",
             "Sparse.NativeAppendResponseTermsEncoding",
+            "Sparse.NativeAppendResponseSound",
         ):
             visit(module)
         forbidden = {
