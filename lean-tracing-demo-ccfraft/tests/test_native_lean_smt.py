@@ -2189,6 +2189,67 @@ class NativeLeanSmtTests(unittest.TestCase):
             "become-leader",
         )
 
+    def test_public_vote_responses(self):
+        models = self.vote_response_traces()
+        scripts = self.encode([model["trace"] for model in models])
+        self.solve(
+            [
+                {
+                    "name": f"public-vote-response-{index}",
+                    "script": script,
+                    "expected": model["expected"],
+                }
+                for index, (model, script) in enumerate(zip(models, scripts))
+            ]
+        )
+
+    def test_public_append_responses(self):
+        models = self.append_response_traces()
+        scripts = self.encode([model["trace"] for model in models])
+        self.solve(
+            [
+                {
+                    "name": f"public-append-response-{index}",
+                    "script": script,
+                    "expected": model["expected"],
+                }
+                for index, (model, script) in enumerate(zip(models, scripts))
+            ]
+        )
+
+    def test_response_receive_input_errors(self):
+        invalid = []
+        for kind in (
+            "receiveRequestVoteResponse",
+            "receiveRequestPreVoteResponse",
+            "receiveAppendEntriesResponse",
+        ):
+            valid = {"kind": kind, "source": "a", "destination": "b"}
+            invalid.extend(
+                {key: value for key, value in valid.items() if key != missing}
+                for missing in valid
+            )
+            invalid.extend(
+                dict(valid, **{field: value})
+                for field in ("source", "destination")
+                for value in ("missing", None, False, 0, 1.5, [], {})
+            )
+            invalid.extend(
+                dict(valid, **{field: value})
+                for field, value in (("node", "a"), ("value", True), ("preVote", True))
+            )
+        self.assert_invalid_instructions(invalid)
+
+    def test_vote_response_explorer_core(self):
+        self.assert_explorer_core(
+            "Traces/native_vote_response_tally_conflict.json", set(range(6))
+        )
+
+    def test_append_response_explorer_core(self):
+        self.assert_explorer_core(
+            "Traces/native_append_response_match_conflict.json", set(range(6))
+        )
+
     def vote_request_response_traces(self):
         document = json.loads(
             (ROOT / "Traces/native_vote_receive_fifo_conflict.json").read_text()
@@ -2236,6 +2297,20 @@ class NativeLeanSmtTests(unittest.TestCase):
             self.vote_request_response_traces(),
             1,
             "vote-round-trip",
+        )
+
+    def test_vote_request_response_sequence(self):
+        models = self.vote_request_response_traces()
+        scripts = self.encode([model["trace"] for model in models])
+        self.solve(
+            [
+                {
+                    "name": model["name"],
+                    "script": script,
+                    "expected": model["expected"],
+                }
+                for model, script in zip(models, scripts)
+            ]
         )
 
     def test_append_receive_model_fixture_coverage(self):

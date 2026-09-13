@@ -73,6 +73,24 @@ theorem compile_frame_sound {width : PNat} [Bootstrap (Fin width)]
           rw [receive_append_bootstrap source destination before middle action, sameBootstrap]
         exact ⟨nextFrame, nativeStep,
           ih middle _ _ run nextFrame afterColumns bootstrap⟩
+      | receiveVoteResponse preVote source destination action =>
+        obtain ⟨response, selected, enabled, afterColumns⟩ :=
+          vote_response_frame_sound preVote source destination before middle
+            action assignment middleHolds frame rep
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [vote_response_bootstrap preVote source destination before middle
+            action, sameBootstrap]
+        exact ⟨response, selected, enabled,
+          ih middle _ _ run _ afterColumns bootstrap⟩
+      | receiveAppendResponse source destination action =>
+        obtain ⟨response, selected, enabled, afterColumns⟩ :=
+          append_response_frame_sound source destination before middle action
+            assignment middleHolds frame rep
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [append_response_bootstrap source destination before middle action,
+            sameBootstrap]
+        exact ⟨response, selected, enabled,
+          ih middle _ _ run _ afterColumns bootstrap⟩
       | changeConfiguration source configuration action =>
         obtain ⟨nextFrame, nativeStep, afterColumns⟩ :=
           membership_change_frame_success source configuration before middle action assignment
@@ -187,6 +205,26 @@ theorem compile_frame_complete {width : PNat} [Bootstrap (Fin width)]
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [receive_append_bootstrap source destination before middle action, sameBootstrap]
         exact ih middle _ _ run extended middleHolds nextFrame afterColumns afterValid
+          bootstrap restFollows
+      | receiveVoteResponse preVote source destination action =>
+        obtain ⟨response, selected, enabled, restFollows⟩ := follows
+        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
+          vote_response_complete preVote source destination before middle action
+            assignment holds valid frame rep response selected enabled
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [vote_response_bootstrap preVote source destination before middle
+            action, sameBootstrap]
+        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid
+          bootstrap restFollows
+      | receiveAppendResponse source destination action =>
+        obtain ⟨response, selected, enabled, restFollows⟩ := follows
+        obtain ⟨extended, _, middleHolds, afterColumns⟩ :=
+          append_response_complete source destination before middle action
+            assignment holds valid frame rep response selected enabled
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [append_response_bootstrap source destination before middle action,
+            sameBootstrap]
+        exact ih middle _ _ run extended middleHolds _ afterColumns afterValid
           bootstrap restFollows
       | changeConfiguration source configuration action =>
         obtain ⟨nextFrame, nativeStep, restFollows⟩ := follows

@@ -3,8 +3,10 @@
 
 import Sparse.NativeArrayVoteState
 import Sparse.NativeArrayVoteReceive
+import Sparse.NativeArrayVoteResponse
 import Sparse.NativeArrayAppend
 import Sparse.NativeArrayAppendNetwork
+import Sparse.NativeArrayAppendResponse
 import Sparse.NativeArrayMembershipTransition
 import Sparse.NativeArrayCommitTransition
 import Sparse.NativeArraySignatureTransition
@@ -25,6 +27,8 @@ inductive Instruction (N T : Type) where
   | campaign (preVote : Bool) (node : N)
   | receiveVote (source destination : N)
   | receiveAppend (source destination : N)
+  | receiveVoteResponse (preVote : Bool) (source destination : N)
+  | receiveAppendResponse (source destination : N)
   | changeConfiguration (source : N) (configuration : Finset N)
   | advanceCommit (source : N)
   | signCommittable (source : N)
@@ -66,6 +70,19 @@ def follows (frame : Frame N T) : List (Instruction N T) -> Prop
       exists nextFrame,
         NativeArrayAppendNetwork.ReceiveAppend frame source destination nextFrame /\
           follows nextFrame rest
+  | .receiveVoteResponse preVote source destination :: rest =>
+      exists response,
+        (frame.queues destination source).peek =
+          some (NativeArrayVoteResponse.packet preVote response) /\
+        NativeArrayVoteResponse.enabled frame preVote destination response /\
+        follows
+          (NativeArrayVoteResponse.receive frame preVote destination response) rest
+  | .receiveAppendResponse source destination :: rest =>
+      exists response,
+        (frame.queues destination source).peek =
+          some (.appendEntriesResponse response) /\
+        NativeArrayAppendResponse.enabled frame destination response /\
+        follows (NativeArrayAppendResponse.receive frame destination response) rest
   | .changeConfiguration source configuration :: rest =>
       exists nextFrame,
         NativeArrayChangeConfiguration.ChangeConfiguration
@@ -125,6 +142,16 @@ def modelFollows (state : State N T) : List (Instruction N T) -> Prop
       CCFRaft.Enabled state (.receive source destination) /\
         (exists request remaining, takeFirstFrom source (state.network destination) =
           some (.appendEntriesRequest request, remaining)) /\
+        modelFollows (CCFRaft.next state (.receive source destination)) rest
+  | .receiveVoteResponse preVote source destination :: rest =>
+      CCFRaft.Enabled state (.receive source destination) /\
+        (exists response remaining, takeFirstFrom source (state.network destination) =
+          some (NativeArrayVoteResponse.packet preVote response, remaining)) /\
+        modelFollows (CCFRaft.next state (.receive source destination)) rest
+  | .receiveAppendResponse source destination :: rest =>
+      CCFRaft.Enabled state (.receive source destination) /\
+        (exists response remaining, takeFirstFrom source (state.network destination) =
+          some (.appendEntriesResponse response, remaining)) /\
         modelFollows (CCFRaft.next state (.receive source destination)) rest
   | .changeConfiguration source configuration :: rest =>
       CCFRaft.Enabled state (.changeConfiguration source configuration) /\
@@ -255,6 +282,92 @@ theorem follows_correct (trace : List (Instruction N T)) (frame : Frame N T) (st
         have nextRep := NativeArrayAppendNetwork.receive_append_rep
           frame state rep source destination nextFrame step
         exact ⟨nextFrame, step, (ih _ _ nextRep).mpr held⟩
+    | receiveVoteResponse preVote source destination =>
+      constructor
+      · rintro ⟨response, selected, nativeEnabled, held⟩
+        obtain ⟨remaining, taken⟩ :=
+          NativeArrayVoteReceive.selected_model_take frame state rep source
+            destination (NativeArrayVoteResponse.packet preVote response) selected
+        have sameSource : response.source = source :=
+          (NativeArrayVoteResponse.packet_source preVote response).symm.trans
+            (Sparse.Queue.take_some_spec source (state.network destination)
+              (NativeArrayVoteResponse.packet preVote response) remaining taken).1
+        have takenFromResponse :
+            takeFirstFrom response.source (state.network destination) =
+              some (NativeArrayVoteResponse.packet preVote response, remaining) := by
+          simpa only [sameSource] using taken
+        have enabled :=
+          (NativeArrayVoteResponse.enabled_correct frame state rep preVote
+            destination response remaining takenFromResponse).mp nativeEnabled
+        have nextRep :=
+          NativeArrayVoteResponse.receive_rep frame state rep preVote destination
+            response remaining takenFromResponse nativeEnabled
+        rw [sameSource] at enabled nextRep
+        exact ⟨enabled, ⟨response, remaining, taken⟩, (ih _ _ nextRep).mp held⟩
+      · rintro ⟨enabled, ⟨response, remaining, taken⟩, held⟩
+        have sameSource : response.source = source :=
+          (NativeArrayVoteResponse.packet_source preVote response).symm.trans
+            (Sparse.Queue.take_some_spec source (state.network destination)
+              (NativeArrayVoteResponse.packet preVote response) remaining taken).1
+        have takenFromResponse :
+            takeFirstFrom response.source (state.network destination) =
+              some (NativeArrayVoteResponse.packet preVote response, remaining) := by
+          simpa only [sameSource] using taken
+        have nativeEnabled :=
+          (NativeArrayVoteResponse.enabled_correct frame state rep preVote
+            destination response remaining takenFromResponse).mpr
+              (by simpa only [sameSource] using enabled)
+        have nextRep :=
+          NativeArrayVoteResponse.receive_rep frame state rep preVote destination
+            response remaining takenFromResponse nativeEnabled
+        rw [sameSource] at nextRep
+        refine ⟨response, ?_, nativeEnabled, (ih _ _ nextRep).mpr held⟩
+        rw [NativeArrayQueue.model_peek_correct
+          frame.queues state.network rep.queues source destination, taken]
+        rfl
+    | receiveAppendResponse source destination =>
+      constructor
+      · rintro ⟨response, selected, nativeEnabled, held⟩
+        obtain ⟨remaining, taken⟩ :=
+          NativeArrayVoteReceive.selected_model_take frame state rep source
+            destination (.appendEntriesResponse response) selected
+        have sameSource : response.source = source :=
+          (NativeArrayAppendResponse.packet_source response).symm.trans
+            (Sparse.Queue.take_some_spec source (state.network destination)
+              (.appendEntriesResponse response) remaining taken).1
+        have takenFromResponse :
+            takeFirstFrom response.source (state.network destination) =
+              some (.appendEntriesResponse response, remaining) := by
+          simpa only [sameSource] using taken
+        have enabled :=
+          (NativeArrayAppendResponse.enabled_correct frame state rep destination
+            response remaining takenFromResponse).mp nativeEnabled
+        have nextRep :=
+          NativeArrayAppendResponse.receive_rep frame state rep destination
+            response remaining takenFromResponse nativeEnabled
+        rw [sameSource] at enabled nextRep
+        exact ⟨enabled, ⟨response, remaining, taken⟩, (ih _ _ nextRep).mp held⟩
+      · rintro ⟨enabled, ⟨response, remaining, taken⟩, held⟩
+        have sameSource : response.source = source :=
+          (NativeArrayAppendResponse.packet_source response).symm.trans
+            (Sparse.Queue.take_some_spec source (state.network destination)
+              (.appendEntriesResponse response) remaining taken).1
+        have takenFromResponse :
+            takeFirstFrom response.source (state.network destination) =
+              some (.appendEntriesResponse response, remaining) := by
+          simpa only [sameSource] using taken
+        have nativeEnabled :=
+          (NativeArrayAppendResponse.enabled_correct frame state rep destination
+            response remaining takenFromResponse).mpr
+              (by simpa only [sameSource] using enabled)
+        have nextRep :=
+          NativeArrayAppendResponse.receive_rep frame state rep destination
+            response remaining takenFromResponse nativeEnabled
+        rw [sameSource] at nextRep
+        refine ⟨response, ?_, nativeEnabled, (ih _ _ nextRep).mpr held⟩
+        rw [NativeArrayQueue.model_peek_correct
+          frame.queues state.network rep.queues source destination, taken]
+        rfl
     | changeConfiguration source configuration =>
       constructor
       · rintro ⟨nextFrame, step, held⟩

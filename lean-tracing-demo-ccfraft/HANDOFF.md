@@ -137,19 +137,25 @@ and `native-commit-shared-assignments-parent-build.log`.
 Mechanical workers retain separate files.
 Worker `2a020198-af17-47bf-b45b-0b82864a50ad` completed public signature
 integration and vote-response soundness, accepted in `40109af92`.
-Its append-response soundness is accepted in `e0e491ac6`; it is idle.
+Its append-response soundness is accepted in `e0e491ac6`.
+It now owns Model lemmas in `NativeArrayBecomeLeader`.
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` completed
 `NativeQueuePatternEncoding`, including equivalence to the slower baseline,
 and vote-response completeness, accepted in `705731c26`.
-Its append-response completeness is accepted in `5ad3747f6`; it is idle.
+Its append-response completeness is accepted in `5ad3747f6`.
+It now owns `NativeBecomeLeaderRowEncoding`.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` completed Model correspondence
 in `NativeArrayVoteResponse` and the exact native `receive_eq_write_pop`
 bridge, accepted in `0547ae584`. Its append-response Model proofs are
 accepted in `816ca46fd`; its append-response term proofs are accepted in
-`f16fe45ab`. It is idle.
+`f16fe45ab`. Its shared voting-majority proofs are accepted and parent-owned.
+It now owns `NativeBecomeLeaderGuardsEncoding`.
 Worker
 `af5d19d5-1186-4609-9b0b-4f224d4a4330` completed
-`NativeAppendResponseExecution`, accepted in `03e5f7809`, and is idle.
+`NativeAppendResponseExecution`, accepted in `03e5f7809`.
+Its public response integration is inspected and parent-built.
+Those four public files are parent-owned again.
+It now owns `NativeBecomeLeaderExecution`.
 Its vote-response row refactor is accepted
 in `501abf1fc`, reusing the snapshot representation instead of reproving
 unchanged fields. All accepted response statements are fixed.
@@ -328,7 +334,41 @@ cases; it passes in `native-append-response-wide-tests.log`.
 `Traces/native_append_response_match_conflict.json` and its corrected cursor
 pass privately in `native-append-response-conflict-private-tests.log`;
 the fixture is committed as `be39a4520`.
-Both response families still await public dispatch.
+Both response families now have public dispatch and whole-trace correspondence.
+The strict JSON kinds are `receiveRequestVoteResponse`,
+`receiveRequestPreVoteResponse`, and `receiveAppendEntriesResponse`, each with
+only `source` and `destination` besides `kind`. Model follows includes typed
+FIFO selection, not merely generic receive enablement.
+The parent build is in `native-public-responses-parent-build.log`.
+The public response matrices, strict input errors, duplicate round trip,
+explorer cores, and existing core/observation regressions pass in
+`native-public-responses-tests.log`. Both conflict fixtures retain their
+six contributing instruction owners and have satisfiable corrections.
+
+Commit `c1102f592` adds shared voting-majority correspondence.
+`NativeArrayVotingMajority` relates support-set majority to every active
+configuration, with election and pre-vote Model corollaries.
+`NativeVotingMajority` reuses the existing all-active scan and
+configuration-majority counter. `NativeVotingMajorityEncoding` proves its
+evaluation and symbol bounds without a replication-index cutoff, allocation
+filter, or automatic self vote. Empty configurations fail.
+The parent build is in `native-voting-majority-parent-build.log`.
+`test_voting_majority_terms` exercises 318 direct SMT cases, including nested
+binders, inactive tails, joint and obsolete configurations, and widths
+1, 3, 17, and 65. These and the existing configuration-majority cases pass in
+`native-voting-majority-tests.log`.
+
+Commit `baf54210a` adds the private `becomeLeader` runtime and fixtures.
+The runtime reuses signature/current-configuration
+scans and `retirementTail`. It checks majority on the original log, truncates
+to the last signature, resets every sent/match cursor, and refreshes retirement.
+It preserves commit even above the truncated length and preserves
+`isNewFollower`. Both old and refreshed terminal membership disable the action.
+`NativeArrayBecomeLeaderFixtureMain` generates 202 actual-Model cases.
+`test_internal_become_leader` adds post-state mutations and 17-identity cases.
+It passes in `native-become-leader-private-tests.log`.
+The runtime is not public and its whole-action correspondence is unfinished.
+The parent owns runtime and fixtures. Mechanical ownership is listed above.
 
 Raw reduction also emits per-identity `joined` observations. Their existing
 Model meaning is membership in `state.hasJoined`, not current allocation.

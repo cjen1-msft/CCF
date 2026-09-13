@@ -13,7 +13,9 @@ import Sparse.NativeTermUpdate
 import Sparse.NativeCampaign
 import Sparse.NativeAppendSend
 import Sparse.NativeVoteReceive
+import Sparse.NativeVoteResponse
 import Sparse.NativeAppendReceive
+import Sparse.NativeAppendResponse
 import Sparse.NativeMembershipChange
 import Sparse.NativeAdvanceCommit
 import Sparse.NativeSignature
@@ -54,6 +56,17 @@ def decodeFrameInstruction (width : PNat) (names : Array String) (value : Json) 
   else if kind = "receiveAppendEntries" then
     fields value ["kind", "source", "destination"]
     return .receiveAppend (<- resolve width names (<- field value "source"))
+      (<- resolve width names (<- field value "destination"))
+  else if kind = "receiveRequestVoteResponse" ||
+      kind = "receiveRequestPreVoteResponse" then
+    fields value ["kind", "source", "destination"]
+    return .receiveVoteResponse (kind = "receiveRequestPreVoteResponse")
+      (<- resolve width names (<- field value "source"))
+      (<- resolve width names (<- field value "destination"))
+  else if kind = "receiveAppendEntriesResponse" then
+    fields value ["kind", "source", "destination"]
+    return .receiveAppendResponse
+      (<- resolve width names (<- field value "source"))
       (<- resolve width names (<- field value "destination"))
   else if kind = "changeConfiguration" then
     fields value ["kind", "source", "configuration"]
@@ -150,6 +163,10 @@ def frameInstruction {width : PNat} (item : FrameInstruction width) : EncodeM wi
   | .appendEntries source destination batchEnd => sendAppend source destination batchEnd
   | .receiveVote source destination => receiveVote source destination
   | .receiveAppend source destination => receiveAppend source destination
+  | .receiveVoteResponse preVote source destination =>
+      receiveVoteResponse preVote source destination
+  | .receiveAppendResponse source destination =>
+      receiveAppendResponse source destination
   | .changeConfiguration source configuration => membershipChange source configuration
   | .advanceCommit source => advanceCommitIndex source
   | .signCommittable source => signCommittableMessages source

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Added
 
-- The experimental Lean trace-validation demo supports AppendEntries request receipt, membership changes, commit advancement, signature writes, per-identity joined observations, and partial-packet observations through its public encoder, with native trace correspondence proofs and explorer attribution.
+- The experimental Lean trace-validation demo supports AppendEntries request receipt, vote and AppendEntries response receipt, membership changes, commit advancement, signature writes, per-identity joined observations, and partial-packet observations through its public encoder, with native trace correspondence proofs and explorer attribution.
 
 ## [7.0.12]
 

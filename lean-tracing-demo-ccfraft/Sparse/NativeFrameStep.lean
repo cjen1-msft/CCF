@@ -9,6 +9,10 @@ import Sparse.NativeCampaignEncoding
 import Sparse.NativeAppendSendEncoding
 import Sparse.NativeVoteReceiveEncoding
 import Sparse.NativeAppendReceiveEncoding
+import Sparse.NativeVoteResponseSound
+import Sparse.NativeVoteResponseComplete
+import Sparse.NativeAppendResponseSound
+import Sparse.NativeAppendResponseComplete
 import Sparse.NativeMembershipChangeEncoding
 import Sparse.NativeAdvanceCommitEncoding
 import Sparse.NativeSignCommittableEncoding
@@ -193,6 +197,15 @@ inductive FrameInstructionRun {width : PNat} (before after : Encoding width) :
   | receiveAppend (source destination : Fin width)
       (run : (NativeEncode.receiveAppend source destination).run before = .ok ((), after)) :
       FrameInstructionRun before after (.receiveAppend source destination)
+  | receiveVoteResponse (preVote : Bool) (source destination : Fin width)
+      (run : (NativeEncode.receiveVoteResponse preVote source destination).run
+        before = .ok ((), after)) :
+      FrameInstructionRun before after
+        (.receiveVoteResponse preVote source destination)
+  | receiveAppendResponse (source destination : Fin width)
+      (run : (NativeEncode.receiveAppendResponse source destination).run
+        before = .ok ((), after)) :
+      FrameInstructionRun before after (.receiveAppendResponse source destination)
   | changeConfiguration (source : Fin width) (configuration : Finset (Fin width))
       (run : (membershipChange source configuration).run before = .ok ((), after)) :
       FrameInstructionRun before after (.changeConfiguration source configuration)
@@ -223,6 +236,10 @@ theorem frame_instruction_cases {width : PNat} (item : FrameInstruction width)
   case campaign preVote node => exact .campaign preVote node run
   case receiveVote source destination => exact .receiveVote source destination run
   case receiveAppend source destination => exact .receiveAppend source destination run
+  case receiveVoteResponse preVote source destination =>
+    exact .receiveVoteResponse preVote source destination run
+  case receiveAppendResponse source destination =>
+    exact .receiveAppendResponse source destination run
   case changeConfiguration source configuration =>
     exact .changeConfiguration source configuration run
   case advanceCommit source => exact .advanceCommit source run
@@ -264,6 +281,10 @@ theorem frame_instruction_references {width : PNat} (item : FrameInstruction wid
     exact receive_vote_references source destination before after action valid
   | receiveAppend source destination action =>
     exact receive_append_references source destination before after action valid
+  | receiveVoteResponse preVote source destination action =>
+    exact vote_response_references preVote source destination before after action valid
+  | receiveAppendResponse source destination action =>
+    exact append_response_references source destination before after action valid
   | changeConfiguration source configuration action =>
     exact membership_change_references source configuration before after action valid
   | advanceCommit source action =>
@@ -291,6 +312,12 @@ theorem frame_instruction_holds_before {width : PNat} (item : FrameInstruction w
     exact receive_vote_holds_before source destination before after action assignment holds
   | receiveAppend source destination action =>
     exact receive_append_prior_holds source destination before after action assignment holds
+  | receiveVoteResponse preVote source destination action =>
+    exact vote_response_prior_holds preVote source destination before after action
+      assignment holds
+  | receiveAppendResponse source destination action =>
+    exact append_response_prior_holds source destination before after action
+      assignment holds
   | changeConfiguration source configuration action =>
     exact membership_change_prior_holds source configuration before after action assignment holds
   | advanceCommit source action =>

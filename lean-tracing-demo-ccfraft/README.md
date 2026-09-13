@@ -61,7 +61,8 @@ The public Lean encoder uses `Sparse/NativeFrameEncode.lean` and shares
 local-state compilation with `Sparse/NativeEncode.lean`.
 It accepts `checkQuorum`, `requestVote`, `requestPreVote`, `updateTerm`, `timeout`,
 `becomePreVoteCandidate`, `appendEntries`, `receiveRequestVote`,
-`receiveAppendEntries`, `changeConfiguration`, `advanceCommitIndex`, and
+`receiveAppendEntries`, `receiveRequestVoteResponse`, `receiveRequestPreVoteResponse`,
+`receiveAppendEntriesResponse`, `changeConfiguration`, `advanceCommitIndex`, and
 `signCommittableMessages`, plus the `allocated`, `role`, `newFollower`, `logLength`,
 `commit`, `currentTerm`, `entry`, `retirementIndex`,
 `retirementCommittableIndex`, `retiredCommittedIndex`, `votedFor`, and
@@ -90,6 +91,20 @@ The request must name the destination and have no newer term.
 A same-term candidate or pre-vote candidate steps down without consuming the
 request or replying. Other enabled branches consume the request, send an ACK
 or NACK, and refresh retirement metadata. NACKs also refresh that metadata.
+All three response-receive actions accept exactly `kind`, `source`, and
+`destination`. They require the corresponding response family at the selected
+directed FIFO head, an allocated destination, and a matching packet destination.
+They consume one response, including when its source is unallocated. An
+unallocated source leaves node state unchanged.
+For allocated sources, vote and pre-vote replies add a granted vote only in
+the corresponding candidate role and current term. Stale replies and replies
+to other roles are ignored. A newer reply to the corresponding candidate role
+makes the action UNSAT, even if the vote was denied.
+An append ACK raises `matchIndex[source]` only for a current-term leader.
+Stale ACKs and ACKs to other roles are ignored. A newer ACK to a leader is UNSAT.
+Every NACK updates `sentIndex[source]` using the Model's highest-match scan,
+regardless of role or term. Response receipt preserves logs, retirement
+metadata, and globals.
 `changeConfiguration` requires a declared `source` and a `configuration` list
 of declared identities. The list is a set, so order and duplicates do not matter.
 The Model rejects empty or unchanged configurations and newly added identities
@@ -550,6 +565,14 @@ Public `receiveRequestVote` has both whole-trace proof directions.
 Its 480 Model-derived cases include generic receives enabled for the wrong
 packet kind, which the vote-specific action rejects. Sequence cases cover
 duplicate replies and stale requests after `updateTerm`.
+
+`NativeVoteResponseSound` and `NativeVoteResponseComplete` prove exact native
+and Model correspondence for vote and pre-vote replies.
+`NativeAppendResponseSound` and `NativeAppendResponseComplete` do the same for
+append replies, reusing the NACK scan and shared row/FIFO writes.
+All three public response actions have both whole-trace proof directions,
+including typed packet selection. Their explorer fixtures attribute tally
+and cursor contradictions to the contributing observations and receive action.
 
 The `NativeMembershipChange` encoder passes 1,572 Model-derived
 transition scripts, including 147 SAT cases. It appends the configuration,
