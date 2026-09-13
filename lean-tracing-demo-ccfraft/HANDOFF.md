@@ -518,23 +518,33 @@ The build and import audit pass in `native-append-whole-action-sound-build.log`
 and `native-append-whole-action-sound-import-tests.log`.
 Append receive remains private until specific-assignment completeness and trace
 integration are proved.
-Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns only new
-`NativeAppendReceiveLogAssignment.lean`. It extends a supplied assignment through
-the selected-log prefix, using the accepted per-stage runs, splice assignment,
-and candidate-log representation proof. Its scope ends at `entriesDefined`,
-before the commit-signature witness. It must preserve the original frame
-representation and arbitrary splice tails.
+`NativeAppendReceiveLogAssignment.lean` is committed as `f47e0c2f1`.
+It extends a supplied assignment through `entriesDefined`, preserving the original
+frame and request and proving the selected candidate log representation.
+The splice keeps raw live cells and uses the previous fresh-array value as its tail.
+The parent inspected the complete proof, removed its copied assertion helper,
+and rebuilt it in `native-append-log-assignment-parent-build.log`. The import audit passes.
 `NativeAppendReceiveCommitAssignment.lean` is committed as `9ef7ff17d`.
 It extends the supplied assignment from `entriesDefined` through `commitDefined`,
 choosing the bounded-signature witness and defining a natural commit value.
 It preserves the frame, packet, and selected log. Parent inspection, build, and
 import audit pass in `native-append-commit-assignment-parent-build.log` and
 `native-append-commit-assignment-import-tests.log`.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns only new
-`NativeAppendReceiveRetirementAssignment.lean`, extending from `commitDefined`
-through the local retirement and current-configuration assertions at `currentAsserted`.
-It reuses the canonical four-witness and single-index assignment helpers.
-Runtime and accepted proof files remain unchanged.
+`NativeAppendReceiveRetirementAssignment.lean` is committed as `932f50595`.
+It extends from `commitDefined` through `currentAsserted` using the canonical
+four-witness and single-index helpers. It preserves the frame, request, log, and
+commit, and supplies the unconditional current-index constraint.
+Parent inspection, build, and import audit pass in
+`native-append-retirement-assignment-parent-build.log` and
+`native-append-retirement-assignment-import-tests.log`.
+`NativeDefinitionsEncoding` now shares `assertion_holds`,
+`assertion_extension_holds`, `fresh_holds`, `fresh_prior_holds`, and `define_holds`.
+Commit `cf717f736` removes the repeated local copies from the append proofs.
+Affected callers and the import audit pass in `native-shared-assertion-helpers-build.log`
+and `native-shared-assertion-helpers-import-tests.log`.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns only new
+`NativeAppendReceiveTailAssignment.lean`, covering the completed-retirement loop
+and NACK witness from `currentAsserted` through `writerBefore`.
 
 `append_receive_prefix_constraints`, committed as `4a74a4892`, exposes the
 existing backward constraint extraction before frame writes.
@@ -547,6 +557,10 @@ outputs and proves representation of the actual Model next state.
 The build and import audit pass in `native-append-finish-assignment-build.log`
 and `native-append-finish-assignment-import-tests.log`.
 This completes the write phase, not the whole-action completeness proof.
+Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns only
+`NativeAppendReceiveComplete.lean`. It is composing Model-enabled input through
+the accepted log, commit, and retirement assignment helpers, ending at `currentAsserted`.
+It preserves the existing finish-assignment API and does not yet import B's tail proof.
 `NativeAppendReceiveFinalRowTerms.lean` and
 `NativeAppendReceiveFinalRowEncoding.lean` are committed as `158d506bb`.
 They prove candidate stepdown and conditional local retirement refresh,

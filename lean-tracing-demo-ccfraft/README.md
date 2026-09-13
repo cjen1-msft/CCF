@@ -461,8 +461,12 @@ original queues and globals on candidate stepdown.
 Inactive best-index witnesses remain unconstrained. The NACK hint uses the
 last local log term, not the term at the requested previous index.
 The private `NativeAppendReceive` encoder passes 1,454 Model-derived transition
-scripts, including the focused hinted-NACK cases. Its whole-action encoding
-proof is unfinished, so public `receiveAppendEntries` remains unsupported.
+scripts, including the focused hinted-NACK cases.
+`NativeAppendReceiveSound.receive_append_model_sound` proves whole-action soundness:
+the actual run and satisfying final assertions imply Model enablement and
+representation of the next state, given the original frame and bootstrap representations.
+Assignment completeness and public trace integration remain unfinished, so
+public `receiveAppendEntries` remains unsupported.
 `NativeLogSummaryEncoding` proves bounded signatures, committed configuration
 indices and members, and NACK matches for explicit candidate logs.
 All three scans reuse `NativeMaxMatchEncoding`, with zero for no match.
