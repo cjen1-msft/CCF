@@ -3384,6 +3384,140 @@ class NativeLeanSmtTests(unittest.TestCase):
         )
         self.assertEqual(json.loads(decoded.stdout), packets)
 
+    def compile_packet_patterns(self, cases):
+        result = subprocess.run(
+            [
+                "lake",
+                "env",
+                "lean",
+                "--run",
+                "Sparse/NativePacketPatternFixtureMain.lean",
+            ],
+            cwd=ROOT,
+            input=json.dumps(cases),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        fixtures = json.loads(result.stdout)
+        self.assertEqual(
+            [fixture["name"] for fixture in fixtures],
+            [case["name"] for case in cases],
+        )
+        return fixtures
+
+    def packet_pattern_cases(self):
+        cases = []
+
+        def add(packet, pattern, expected):
+            cases.append(
+                (
+                    {
+                        "name": f"packet-pattern-{len(cases)}",
+                        "packet": packet,
+                        "pattern": pattern,
+                    },
+                    expected,
+                )
+            )
+
+        for source, destination in (("a", "b"), ("b", "a"), ("a", "a")):
+            packets = packet_samples(source, destination)
+            for packet in packets:
+                add(packet, packet, "sat")
+                for other in packets:
+                    add(
+                        packet,
+                        {"kind": other["kind"]},
+                        "sat" if packet["kind"] == other["kind"] else "unsat",
+                    )
+                for field, value in packet.items():
+                    if field == "kind":
+                        continue
+                    add(packet, {"kind": packet["kind"], field: value}, "sat")
+                    if isinstance(value, bool):
+                        changed = not value
+                    elif isinstance(value, int):
+                        changed = value + 10**30
+                    elif isinstance(value, str):
+                        changed = "c"
+                    else:
+                        changed = []
+                    add(packet, {"kind": packet["kind"], field: changed}, "unsat")
+                zero_term = dict(packet, term=0)
+                add(zero_term, {"kind": packet["kind"], "term": 0}, "sat")
+                add(zero_term, {"kind": packet["kind"], "term": 1}, "unsat")
+
+            append = packets[0]
+            length_pattern = {"kind": append["kind"], "entriesLength": 4}
+            for previous_term in (0, 3, 10**30):
+                changed = deepcopy(append)
+                changed["prevLogTerm"] = previous_term
+                changed["entries"][0] = {
+                    "term": previous_term,
+                    "content": {"transaction": 10**30 + previous_term},
+                }
+                add(changed, length_pattern, "sat")
+            add(append, dict(length_pattern, entriesLength=0), "unsat")
+            add(dict(append, entries=[]), dict(length_pattern, entriesLength=0), "sat")
+            add(append, dict(append, entriesLength=4), "sat")
+            add(append, dict(append, entriesLength=3), "unsat")
+        return cases
+
+    def test_packet_patterns(self):
+        cases = self.packet_pattern_cases()
+        fixtures = self.compile_packet_patterns([case for case, _ in cases])
+        self.assertEqual(
+            [fixture.get("expected") for fixture in fixtures],
+            [expected for _, expected in cases],
+        )
+        self.solve(fixtures)
+
+    def test_packet_pattern_errors(self):
+        packet = packet_samples("a", "b")[0]
+        patterns = [{}, None, [], {"kind": "unknown"}, {"kind": None}]
+        for sample in packet_samples("a", "b"):
+            for field, value in sample.items():
+                if field == "kind":
+                    continue
+                if isinstance(value, bool):
+                    invalid = [None, 0, 1, "true"]
+                elif isinstance(value, int):
+                    invalid = [None, True, -1, 1.5, "1"]
+                elif isinstance(value, str):
+                    invalid = [None, 0, "undeclared"]
+                else:
+                    invalid = [None, "signature", [{}]]
+                patterns.extend(
+                    {"kind": sample["kind"], field: bad} for bad in invalid
+                )
+            patterns.append({"kind": sample["kind"], "unexpected": 0})
+        patterns.extend(
+            [
+                {"kind": "appendEntriesResponse", "prevLogIndex": 0},
+                {"kind": "requestVoteRequest", "voteGranted": True},
+                {"kind": "proposeVoteRequest", "entries": []},
+                {"kind": "appendEntriesRequest", "entriesLength": -1},
+                {"kind": "appendEntriesRequest", "entriesLength": None},
+                {"kind": "appendEntriesRequest", "entriesLength": True},
+            ]
+        )
+        fixtures = self.compile_packet_patterns(
+            [
+                {
+                    "name": f"packet-pattern-error-{index}",
+                    "packet": packet,
+                    "pattern": pattern,
+                }
+                for index, pattern in enumerate(patterns)
+            ]
+        )
+        for fixture in fixtures:
+            with self.subTest(name=fixture["name"]):
+                self.assertEqual(set(fixture), {"name", "error"})
+                self.assertTrue(fixture["error"])
+
     def test_queue_packet_fields_and_ranges(self):
         packets = packet_samples("a", "b")
         cases = []
