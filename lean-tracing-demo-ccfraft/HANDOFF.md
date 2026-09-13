@@ -135,6 +135,8 @@ Their parent builds pass in `native-commit-shared-sound-parent-build.log`
 and `native-commit-shared-assignments-parent-build.log`.
 
 Mechanical workers retain separate files.
+The session artifact `proof_owners.py` resolves current ownership by module
+name, including modules whose historical worker has moved to another task.
 Worker `2a020198-af17-47bf-b45b-0b82864a50ad` completed public signature
 integration and vote-response soundness, accepted in `40109af92`.
 Its append-response soundness is accepted in `e0e491ac6`.
@@ -144,10 +146,12 @@ Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` completed
 `NativeQueuePatternEncoding`, including equivalence to the slower baseline,
 and vote-response completeness, accepted in `705731c26`.
 Its append-response completeness is accepted in `5ad3747f6`.
-Its generic leadership row correspondence is inspected and parent-built in
-`native-become-leader-row-parent-build.log`. It is simplifying the unchanged
-bound fields, then owns `NativeArrayBecomeLeaderTransition` for Model
-correspondence and existence.
+Its generic leadership row correspondence and native transition
+correspondence/existence are accepted and parent-owned. The bound proof reuses
+the unchanged record fields. The parent build passes in
+`native-become-leader-transition-parent-build.log`.
+It now owns public leadership integration in `NativeArrayVote`,
+`NativeFrameEncode`, `NativeFrameStep`, and `NativeFrameTrace`.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` completed Model correspondence
 in `NativeArrayVoteResponse` and the exact native `receive_eq_write_pop`
 bridge, accepted in `0547ae584`. Its append-response Model proofs are
