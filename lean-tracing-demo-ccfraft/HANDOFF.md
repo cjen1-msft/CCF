@@ -243,7 +243,8 @@ large transaction values, stale metadata, retirement transitions, absent
 sources, and the distinction between log contents and the submitted set.
 Post-state mutations, duplicate submission, and a 17-identity case pass in
 `native-client-request-private-tests.log`.
-This action is not yet public or proved end to end.
+Its private runtime now has exact native soundness and completeness.
+Public integration remains pending.
 
 Current mechanical work for client integration:
 `NativeArrayClientRequestModel` and `NativeClientRequestTermsEncoding` are
@@ -282,8 +283,8 @@ the remaining suffix, and agreement below the segment's original counter.
 Existing public soundness/completeness signatures remain empty-suffix wrappers.
 Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns public concrete-client
 wiring in `NativeArrayVote`, `NativeFrameEncode`, `NativeFrameStep`, and
-`NativeFrameTrace`. It preserves those APIs and waits for the accepted
-`NativeClientRequestComplete` before building dependent proof modules.
+`NativeFrameTrace`. It preserves those APIs. `NativeClientRequestComplete`
+is now released for its dependent proof builds.
 This lets a parameterized compiler reuse core segments without duplicating
 every action proof. The parent build and regressions are in
 `native-frame-continuation-parent-build.log` and
@@ -319,9 +320,12 @@ assignment construction composes the shared append prefix, retirement tail,
 and submitted write while preserving all original symbols.
 It checks guards against the original submitted set.
 The parent build is `native-client-request-assignment-parent-build.log`.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns
-`NativeClientRequestComplete`, using independent soundness to represent the
-exact supplied native successor.
+`NativeClientRequestComplete` is accepted and parent-owned. It derives the
+transaction-symbol bound from the actual runtime and uses independent soundness
+to represent the exact supplied native successor, preserving the original
+assignment below its counter. It adds no domain or reachability assumptions.
+The parent build is `native-client-request-complete-parent-build.log`.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` is idle.
 
 `raw_normalization.normalize(..., native_ids=True)` now indexes observed
 identity strings without fixed decimal IDs or the historical 15-slot limit.

@@ -93,6 +93,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
                         visit(dependency)
 
         for module in (
+            "Sparse.NativeClientRequestComplete",
             "Sparse.NativeClientRequestAssignment",
             "Sparse.NativeClientRequestSound",
             "Sparse.NativeClientRequestStructure",
