@@ -2,12 +2,12 @@
 
 ## Current direction: native-array exact encoding
 
-### Immediate continuation: core receive and membership actions
+### Immediate continuation: captured-trace commit advancement
 
 The user now prioritizes `requestVote`, receive requestVote, `appendEntries`,
 receive appendEntries, and membership change. Vote sends, vote-request receive,
 append sends, append-request receive, and membership change are public.
-Finish this core before unrelated remaining actions.
+Continue the remaining actions needed by the saved captures.
 Delegate mechanical proofs to `gpt-5.6-sol` with medium reasoning effort.
 The main agent owns semantic lemmas. Build reusable proof components where
 they remove repeated execution decomposition and assignment-extension repair.
@@ -18,6 +18,28 @@ soundness and assignment completeness. Both public integrations are complete.
 Continue remaining Model actions and partial observations toward raw reduction.
 Both assurance flags
 remain false.
+
+`advanceCommitIndex` is the first unsupported action in both saved captures,
+at normalized step 12. Its semantic foundations are committed as `7d108b287`.
+`NativeArrayConfiguration.AllActive` covers the implicit bootstrap configuration
+and physical active configurations. `NativeArrayMajority` proves that counting
+acknowledgements within each configuration matches the Model's active-union
+intersection. `NativeArrayCommitIndex.eligible_correct` covers live current-term
+signature candidates. `NativeArrayAdvanceCommit` proves the guard and full-frame
+write given the exact maximum and refreshed row. These build in
+`native-advance-commit-model-build.log`; the import audit is in
+`native-commit-import-audit.log`. The selected-maximum proof, SMT terms,
+assignment correspondence, and public action are not complete.
+`bounded_forall_nat_eval` now removes repeated integer-to-natural conversions
+from quantified live-range proofs.
+
+Mechanical workers retain separate files. Worker
+`2a020198-af17-47bf-b45b-0b82864a50ad` owns `NativeMajorityTerms.lean`.
+Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns
+`NativeMaximumSummary.lean`. Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e`
+owns `NativeActiveConfigurationEncoding.lean`. The parent owns commit semantics.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` still owns the proof-only
+`NativeFrameStep.lean` and `NativeFrameTrace.lean` classifier refactor.
 
 Factory tools are unavailable in this session. `NativeDefinitions` and
 `NativeDefinitionsEncoding` now provide reusable heterogeneous definition
@@ -105,7 +127,7 @@ The main-agent semantic prerequisites now include:
   request. Reuses `LogMatchSummary.StorageSummary` rather than a new scan
   definition. `native-append-receive-branches-build.log` records the clean build.
   Local branch composition and full-frame retirement refresh are proved.
-  Public append receive remains unwired.
+  Public append receive is now wired, as recorded below.
 - `NativeArrayAllocation` proves exact Model allocation for membership change.
   Existing rows survive; missing members become fresh nodes. Abstract reads
   stay unchanged because missing rows already read as fresh. The eventual
@@ -114,7 +136,7 @@ The main-agent semantic prerequisites now include:
 - `NativeArrayChangeConfiguration` now proves membership-change guards,
   source-row updates, and full-frame Model correspondence given the exact
   configuration and retirement witnesses. Existing allocated rows survive.
-  Added-peer cursors use the old log length. The public action is not wired.
+  Added-peer cursors use the old log length. The public action is now wired.
   `native-array-change-configuration-parent-build.log` records the parent build.
 - `RetirementScan` proves the first exclusion after first inclusion, including
   the implicit bootstrap configuration. Once found, that retirement index
@@ -582,6 +604,11 @@ unconstrained 21-node experiment described below, not because of a failing core 
 The 184 public five-action sequences, the explicitly inactive 21-node case, and
 110 append-hint regressions pass in `native-public-core-sequence-tests.log`.
 All public compiler files are parent-owned.
+Public membership and the five-action pipeline are committed as `38d10f664`.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns only
+`NativeFrameStep.lean` and `NativeFrameTrace.lean` for a proof-only replacement
+of nested-Or run classification with named, instruction-indexed cases.
+Runtime and final correspondence theorem statements must stay unchanged.
 The root `CHANGELOG.md` has an Unreleased demo entry; add its actual PR reference
 when a PR exists. No PR has been opened.
 
