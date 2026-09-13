@@ -2,10 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeCommitIndexTerms
-import Sparse.NativeCommitTerms
-import Sparse.NativeRetirementRefreshConstraints
-import Sparse.NativeRetirementCompletedConstraints
-import Sparse.NativeRetirementWrites
+import Sparse.NativeRetirementTail
 
 set_option autoImplicit false
 
@@ -22,21 +19,8 @@ def advanceCommitIndex {width : PNat} (source : Fin width) : EncodeM width Unit 
   let best <- fresh
   assertion (highestCommitIndexTerm width before.bootstrap old.logLength old.logEntries
     old.matchIndex source old.commit old.currentTerm (.free .int current) (.free .int best))
-  let first <- fresh
-  let retirement <- fresh
-  let signature <- fresh
-  let retired <- fresh
-  assertion (retirementRefreshConstraints width before.bootstrap old.logLength old.logEntries
-    source (.free .int first) (.free .int retirement) (.free .int signature) (.free .int retired))
-  let values := commitRowTerms old (.free .int best) (.free .int retirement)
-    (.free .int signature) (.free .int retired)
-  assertAll (commitGuards before.toColumns source (.free .int best) values.membershipState)
-  let committedCurrent <- fresh
-  assertion (currentConfigurationIndexTerm width old.logLength old.logEntries
-    (.free .int best) (.free .int committedCurrent))
-  let completed <- retirementCompletedConstraints before.bootstrap (.boolean true)
-    old.logLength old.logEntries (.free .int best) (.free .int committedCurrent)
-  writeRetirementRow source values (.free (.bits width) completed)
+  retirementTail before.bootstrap source old (.free .int best)
+    (commitGuards before.toColumns source (.free .int best))
 
 end CCFRaft.NativeEncode
 
