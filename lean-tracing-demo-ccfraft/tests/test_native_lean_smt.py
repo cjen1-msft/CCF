@@ -2246,6 +2246,25 @@ class NativeLeanSmtTests(unittest.TestCase):
             "become-leader-append",
         )
 
+    def test_public_become_leader(self):
+        models = self.become_leader_traces() + self.become_leader_append_traces()
+        scripts = self.encode([model["trace"] for model in models])
+        self.solve(
+            [
+                {"name": f"public-leader-{index}", "script": script,
+                 "expected": model["expected"]}
+                for index, (model, script) in enumerate(zip(models, scripts))
+            ]
+        )
+
+    def test_become_leader_input_errors(self):
+        self.assert_unary_action_input_errors("becomeLeader")
+
+    def test_become_leader_explorer_core(self):
+        self.assert_explorer_core(
+            "Traces/native_become_leader_follower_conflict.json", {1, 2, 3}
+        )
+
     def test_public_vote_responses(self):
         models = self.vote_response_traces()
         scripts = self.encode([model["trace"] for model in models])

@@ -2,12 +2,15 @@
 
 ## Current direction: native-array exact encoding
 
-### Immediate continuation: packet observations and response handlers
+### Immediate continuation: client requests and raw reduction
 
 The user now prioritizes `requestVote`, receive requestVote, `appendEntries`,
 receive appendEntries, and membership change. Vote sends, vote-request receive,
 append sends, append-request receive, and membership change are public.
 Continue the remaining actions needed by the saved captures.
+After public leadership promotion, `clientRequest` is the only unsupported
+action name in either saved capture. Generic receives still need typed dispatch
+in the raw adapter. Both captures also require shared transaction-name bindings.
 Delegate mechanical proofs to `gpt-5.6-sol` with medium reasoning effort.
 The main agent owns semantic lemmas. Build reusable proof components where
 they remove repeated execution decomposition and assignment-extension repair.
@@ -150,8 +153,8 @@ Its generic leadership row correspondence and native transition
 correspondence/existence are accepted and parent-owned. The bound proof reuses
 the unchanged record fields. The parent build passes in
 `native-become-leader-transition-parent-build.log`.
-It now owns public leadership integration in `NativeArrayVote`,
-`NativeFrameEncode`, `NativeFrameStep`, and `NativeFrameTrace`.
+Its public leadership integration in `NativeArrayVote`, `NativeFrameEncode`,
+`NativeFrameStep`, and `NativeFrameTrace` is accepted and parent-owned.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` completed Model correspondence
 in `NativeArrayVoteResponse` and the exact native `receive_eq_write_pop`
 bridge, accepted in `0547ae584`. Its append-response Model proofs are
@@ -403,7 +406,7 @@ It preserves commit even above the truncated length and preserves
 `NativeArrayBecomeLeaderFixtureMain` generates 202 actual-Model cases.
 `test_internal_become_leader` adds post-state mutations and 17-identity cases.
 It passes in `native-become-leader-private-tests.log`.
-Private whole-action correspondence is complete; public integration is pending.
+Private whole-action correspondence and public integration are complete.
 The parent owns runtime and fixtures. Mechanical ownership is listed above.
 `NativeArrayBecomeLeader` now proves prepared/refreshed row correspondence,
 full-frame Model updates, and exact Model enabledness. The latter uses the
@@ -425,7 +428,10 @@ The private leadership/append/NACK sequence and
 The sequence retains duplicate messages in an unrelated source partition.
 The conflict rejects changing `newFollower` during promotion and becomes
 satisfiable when the final flag is corrected. Public leadership matrix,
-input-error, and explorer tests are prepared but not yet accepted.
+input-error, explorer, core-sequence, and response regressions pass together
+with import isolation in `native-public-become-leader-tests.log`.
+The public conflict attributes its contradiction to owners `{1, 2, 3}`.
+The parent build is in `native-public-become-leader-parent-build.log`.
 `NativeBecomeLeaderPrefixAssignment` now constructs both canonical scan
 witnesses through the shared log-summary assignment helpers. It preserves
 every original symbol below the initial counter, all prefix assertions, and

@@ -10,6 +10,7 @@ import Sparse.NativeArrayAppendResponse
 import Sparse.NativeArrayMembershipTransition
 import Sparse.NativeArrayCommitTransition
 import Sparse.NativeArraySignatureTransition
+import Sparse.NativeArrayBecomeLeaderTransition
 import Sparse.NativePacketPattern
 
 set_option autoImplicit false
@@ -32,6 +33,7 @@ inductive Instruction (N T : Type) where
   | changeConfiguration (source : N) (configuration : Finset N)
   | advanceCommit (source : N)
   | signCommittable (source : N)
+  | becomeLeader (source : N)
   | appendEntries (source destination : N) (batchEnd : Nat)
   | submittedTxId (txId : T) (expected : Bool)
   | joined (node : N) (expected : Bool)
@@ -95,6 +97,10 @@ def follows (frame : Frame N T) : List (Instruction N T) -> Prop
   | .signCommittable source :: rest =>
       exists nextFrame,
         NativeArraySignature.Sign frame source nextFrame /\
+          follows nextFrame rest
+  | .becomeLeader source :: rest =>
+      exists nextFrame,
+        NativeArrayBecomeLeader.BecomeLeader frame source nextFrame /\
           follows nextFrame rest
   | .appendEntries source destination batchEnd :: rest =>
       NativeArrayAppend.enabled frame source destination batchEnd /\
@@ -162,6 +168,9 @@ def modelFollows (state : State N T) : List (Instruction N T) -> Prop
   | .signCommittable source :: rest =>
       CCFRaft.Enabled state (.signCommittableMessages source) /\
         modelFollows (CCFRaft.next state (.signCommittableMessages source)) rest
+  | .becomeLeader source :: rest =>
+      CCFRaft.Enabled state (.becomeLeader source) /\
+        modelFollows (CCFRaft.next state (.becomeLeader source)) rest
   | .appendEntries source destination batchEnd :: rest =>
       CCFRaft.Enabled state (.appendEntries source destination batchEnd) /\
         modelFollows (CCFRaft.next state (.appendEntries source destination batchEnd)) rest
@@ -411,6 +420,21 @@ theorem follows_correct (trace : List (Instruction N T)) (frame : Frame N T) (st
             frame state rep source enabled
         have nextRep :=
           (NativeArraySignature.Sign.model_correct
+            frame nextFrame state rep source step).2
+        exact ⟨nextFrame, step, (ih _ _ nextRep).mpr held⟩
+    | becomeLeader source =>
+      constructor
+      · rintro ⟨nextFrame, step, held⟩
+        obtain ⟨enabled, nextRep⟩ :=
+          NativeArrayBecomeLeader.BecomeLeader.model_correct
+            frame nextFrame state rep source step
+        exact ⟨enabled, (ih _ _ nextRep).mp held⟩
+      · rintro ⟨enabled, held⟩
+        obtain ⟨nextFrame, step⟩ :=
+          NativeArrayBecomeLeader.BecomeLeader.exists_of_enabled
+            frame state rep source enabled
+        have nextRep :=
+          (NativeArrayBecomeLeader.BecomeLeader.model_correct
             frame nextFrame state rep source step).2
         exact ⟨nextFrame, step, (ih _ _ nextRep).mpr held⟩
     | appendEntries source destination batchEnd =>

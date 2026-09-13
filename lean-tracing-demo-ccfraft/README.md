@@ -62,7 +62,7 @@ local-state compilation with `Sparse/NativeEncode.lean`.
 It accepts `checkQuorum`, `requestVote`, `requestPreVote`, `updateTerm`, `timeout`,
 `becomePreVoteCandidate`, `appendEntries`, `receiveRequestVote`,
 `receiveAppendEntries`, `receiveRequestVoteResponse`, `receiveRequestPreVoteResponse`,
-`receiveAppendEntriesResponse`, `changeConfiguration`, `advanceCommitIndex`, and
+`receiveAppendEntriesResponse`, `becomeLeader`, `changeConfiguration`, `advanceCommitIndex`, and
 `signCommittableMessages`, plus the `allocated`, `role`, `newFollower`, `logLength`,
 `commit`, `currentTerm`, `entry`, `retirementIndex`,
 `retirementCommittableIndex`, `retiredCommittedIndex`, `votedFor`, and
@@ -105,6 +105,15 @@ Stale ACKs and ACKs to other roles are ignored. A newer ACK to a leader is UNSAT
 Every NACK updates `sentIndex[source]` using the Model's highest-match scan,
 regardless of role or term. Response receipt preserves logs, retirement
 metadata, and globals.
+`becomeLeader` requires a declared `node` that is an allocated candidate.
+Its granted votes must form a strict majority in every active configuration
+of the original log, including configurations later removed by truncation.
+Both its old and refreshed membership must differ from `retiredCommitted`.
+The action truncates the log after its last signature, or to empty if none
+exists. It sets leader role, every sent cursor to the truncated length, and
+every match cursor to zero, then refreshes retirement metadata and the
+completed-retirement set. It preserves the term, votes, `votedFor`, and
+`newFollower`. Commit is unchanged even when it exceeds the truncated length.
 `changeConfiguration` requires a declared `source` and a `configuration` list
 of declared identities. The list is a set, so order and duplicates do not matter.
 The Model rejects empty or unchanged configurations and newly added identities
@@ -127,6 +136,7 @@ refreshes retirement metadata and the completed-retirement set. It preserves
 the commit index, including when the old log already ends with a signature.
 Commit advancement and signature writing share the same retirement scans,
 guards stage, and row writer, with reusable soundness and assignment proofs.
+Leadership promotion reuses that retirement tail with a prepared, truncated row.
 Generic `receive` remains an input error.
 `updateTerm` reads the directed queue head without consuming it. It requires an
 allocated destination and a strictly newer packet term. Responses also require
@@ -573,6 +583,12 @@ append replies, reusing the NACK scan and shared row/FIFO writes.
 All three public response actions have both whole-trace proof directions,
 including typed packet selection. Their explorer fixtures attribute tally
 and cursor contradictions to the contributing observations and receive action.
+
+`NativeBecomeLeaderSound` and `NativeBecomeLeaderComplete` prove whole-action
+native and Model correspondence for promotion. They reuse the voting-majority,
+log-scan, row-write, and retirement-tail components. Assignment construction
+preserves all prior symbols. The public action has both whole-trace directions;
+its explorer fixture diagnoses an incorrect change to `newFollower`.
 
 The `NativeMembershipChange` encoder passes 1,572 Model-derived
 transition scripts, including 147 SAT cases. It appends the configuration,
