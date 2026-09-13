@@ -17,7 +17,8 @@ private def rawCells {context : List Ty} (positions : List Int) :
   positions.foldl (fun cells index => .store cells (.integer index) (.bits 1))
     (.defaultValue _)
 
-private def fixture (index limit value : Nat) (positions : List Int) (agrees : Bool) : Json :=
+private def fixture (index : Nat) (limit : Int) (value : Nat)
+    (positions : List Int) (agrees : Bool) : Json :=
   let oldSet :=
     ((positions.filter fun position => 0 <= position && position < (limit : Int)).map
       Int.toNat).toFinset
@@ -62,8 +63,8 @@ private def naiveResurrection (gapPresent : Bool) : Json :=
     ("expected", toJson (if gapPresent then "sat" else "unsat"))]
 
 def cases : List Json :=
-  let scenarios : List (Nat × Nat × List Int) :=
-    [0, 2, 10^30].flatMap fun (limit : Nat) =>
+  let scenarios : List (Int × Nat × List Int) :=
+    [0, 2, 10^30, -1, -(10^30)].flatMap fun (limit : Int) =>
     [0, 1, 5, 10^30].flatMap fun (value : Nat) =>
       let variants : List (List Int) :=
         [[], [-1, 0, 1, limit, (limit : Int) + 1], [(limit : Int) + 1]]

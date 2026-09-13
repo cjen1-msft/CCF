@@ -198,11 +198,14 @@ membership equivalence over integers, with an existential nonnegative output
 limit. It avoids raw store-and-widen, which would expose old tail bits.
 No new native array layer is needed: frame globals already contain a `Finset`.
 The constraint accepts a typed value expression for later symbolic bindings.
-`NativeNatSetInsertFixtureMain` includes 72 insertion cases and two negative
+`NativeNatSetInsertFixtureMain` includes 120 insertion cases and two negative
 controls reproducing the naive store's resurrection of a previously absent
 value. Nested binders, duplicate insertion, unconstrained output tails, and
-values/limits up to `10^30` pass in `native-nat-set-insert-tests.log`.
-The retained 74 queries in `native-nat-set-insert-baseline/` take a median
+values/limits up to `10^30` pass in `native-nat-set-insert-negative-limit-tests.log`.
+Negative old limits are included because `FrameColumnsRep` promises masked
+set membership, not old-limit nonnegativity. The core insertion proof must use
+that existing representation contract rather than require a stronger invariant.
+The first 74 queries in `native-nat-set-insert-baseline/` take a median
 10.446 ms and maximum 14.157 ms; maximum script size is 2,636 bytes.
 No solver optimization is warranted by these cases. The parent owns the
 constraint and fixtures; its correspondence proof is still worker-owned.

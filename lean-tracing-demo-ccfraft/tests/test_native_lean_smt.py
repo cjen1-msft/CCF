@@ -265,7 +265,7 @@ class NativeLeanSmtTests(unittest.TestCase):
             self.assertEqual(named[name]["majority"], expected, name)
 
     def test_nat_set_insert_terms(self):
-        fixtures = self.assert_script_fixtures("NativeNatSetInsertFixtureMain", 74, 37)
+        fixtures = self.assert_script_fixtures("NativeNatSetInsertFixtureMain", 122, 61)
         named = {fixture["name"]: fixture for fixture in fixtures}
         self.assertEqual(named["naive-store-resurrects-gap-false"]["expected"], "unsat")
         self.assertEqual(named["naive-store-resurrects-gap-true"]["expected"], "sat")
