@@ -142,6 +142,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeAppendReceiveSound",
             "Sparse.NativeAppendReceiveExecutionConstraints",
             "Sparse.NativeAppendReceiveCommitAssignment",
+            "Sparse.NativeAppendReceiveComplete",
         ):
             visit(module)
         forbidden = {
