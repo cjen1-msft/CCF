@@ -149,6 +149,39 @@ class NativeExplorerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "different Model input"):
             NativeRun.load(self.root)
 
+    def test_transaction_parameter_names_are_retained(self):
+        for names in ([], ["x"], ["5", "another transaction"]):
+            with self.subTest(names=names):
+                self.document["unknowns"] = names
+                self.details["input"] = copy.deepcopy(self.document)
+                self.save()
+                api = ExplorerApi(NativeRun.load(self.root))
+                self.assertEqual(api.get("/api/input")["unknowns"], names)
+
+    def test_invalid_transaction_parameter_names_are_rejected(self):
+        for names in (None, False, "x", {}, [""], [1], [False], [[]], ["x", "x"]):
+            with self.subTest(names=names):
+                self.document["unknowns"] = names
+                self.details["input"] = copy.deepcopy(self.document)
+                self.save()
+                with self.assertRaisesRegex(ValidationError, "unknowns"):
+                    NativeRun.load(self.root)
+
+    def test_transaction_parameter_names_are_bound_to_encoding(self):
+        self.document["unknowns"] = ["x"]
+        self.details["input"]["unknowns"] = ["y"]
+        self.save()
+        with self.assertRaisesRegex(ValidationError, "different Model input"):
+            NativeRun.load(self.root)
+
+    def test_unrecognized_input_fields_are_still_rejected(self):
+        self.document["unknowns"] = []
+        self.document["extra"] = []
+        self.details["input"] = copy.deepcopy(self.document)
+        self.save()
+        with self.assertRaisesRegex(ValidationError, "expected fields"):
+            NativeRun.load(self.root)
+
     def test_gapped_overlapping_and_reordered_groups_are_rejected(self):
         original = copy.deepcopy(self.details)
         mutations = [

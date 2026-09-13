@@ -51,7 +51,16 @@ def _natural(value: object, where: str) -> int:
 
 def validate_encoding(document: object, details: object) -> dict:
     """Require ordered, exhaustive ownership of the Lean-generated clauses."""
-    document = _object(document, {"nodes", "bootstrap", "instructions"}, "input")
+    fields = {"nodes", "bootstrap", "instructions"}
+    if isinstance(document, dict) and "unknowns" in document:
+        fields.add("unknowns")
+    document = _object(document, fields, "input")
+    unknowns = _array(document.get("unknowns", []), "unknowns")
+    if (
+        any(not isinstance(name, str) or not name for name in unknowns)
+        or len(unknowns) != len(set(unknowns))
+    ):
+        raise ValidationError("unknowns must be distinct nonempty strings")
     nodes = _array(document["nodes"], "nodes")
     if (
         not nodes
