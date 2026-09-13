@@ -243,8 +243,13 @@ large transaction values, stale metadata, retirement transitions, absent
 sources, and the distinction between log contents and the submitted set.
 Post-state mutations, duplicate submission, and a 17-identity case pass in
 `native-client-request-private-tests.log`.
-Its private runtime now has exact native soundness and completeness.
-Public integration remains pending.
+Its runtime now has exact native soundness and completeness.
+Concrete client requests are public through `NativeArrayVote`,
+`NativeFrameEncode`, `NativeFrameStep`, and `NativeFrameTrace`.
+`NativeFrameDecoded` includes the whole decoded-script correspondence theorem.
+The parent build and public Model cases, malformed-input checks, duplicate-core
+ownership, old-input compatibility, and import boundaries pass in
+`native-public-client-parent-build.log` and `native-public-client-tests.log`.
 
 Current mechanical work for client integration:
 `NativeArrayClientRequestModel` and `NativeClientRequestTermsEncoding` are
@@ -281,10 +286,9 @@ the symbol counter's lower bound.
 suffix. `compile_frame_complete_continuation` returns a represented final frame,
 the remaining suffix, and agreement below the segment's original counter.
 Existing public soundness/completeness signatures remain empty-suffix wrappers.
-Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns public concrete-client
-wiring in `NativeArrayVote`, `NativeFrameEncode`, `NativeFrameStep`, and
-`NativeFrameTrace`. It preserves those APIs. `NativeClientRequestComplete`
-is now released for its dependent proof builds.
+Public concrete-client wiring in `NativeArrayVote`, `NativeFrameEncode`,
+`NativeFrameStep`, and `NativeFrameTrace` is accepted and parent-owned.
+Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` is idle.
 This lets a parameterized compiler reuse core segments without duplicating
 every action proof. The parent build and regressions are in
 `native-frame-continuation-parent-build.log` and
@@ -401,8 +405,9 @@ remains an integration decision, not a proved fact.
 `Traces/native_client_request_duplicate_conflict.json` rejects two submissions
 of transaction 5. Changing the second to 6 is SAT through the private compiler,
 recorded in `native-client-duplicate-tests.log`.
-`test_public_client_request` is prepared but not accepted; its current input
-error is recorded in `native-client-public-failing-first.log`.
+`test_public_client_request` now passes, following the input error recorded
+in `native-client-public-failing-first.log`.
+The public duplicate-submission core includes instruction owners `{1, 2}`.
 
 Commit `36efa30f6` adds a private typed packet-pattern representation, SMT
 terms, strict JSON decoding, and fixtures. All seven existing packet families

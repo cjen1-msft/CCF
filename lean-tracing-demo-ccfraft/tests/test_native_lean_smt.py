@@ -2222,6 +2222,43 @@ class NativeLeanSmtTests(unittest.TestCase):
             "client-request-duplicate",
         )
 
+    def test_public_client_request(self):
+        models = self.client_request_traces() + self.client_request_duplicate_traces()
+        scripts = self.encode([model["trace"] for model in models])
+        self.solve(
+            [
+                {"name": f"public-client-{index}", "script": script,
+                 "expected": model["expected"]}
+                for index, (model, script) in enumerate(zip(models, scripts, strict=True))
+            ]
+        )
+
+    def test_client_request_input_errors(self):
+        valid = {"kind": "clientRequest", "node": "a", "transaction": 5}
+        invalid = [
+            {key: value for key, value in valid.items() if key != missing}
+            for missing in ("node", "transaction")
+        ]
+        invalid.extend(
+            dict(valid, transaction=value)
+            for value in (-1, 1.5, None, True, "5", [], {}, {"unknown": "x"})
+        )
+        invalid.extend(
+            [
+                dict(valid, node="missing"),
+                dict(valid, node=0),
+                dict(valid, node=False),
+                dict(valid, source="a"),
+                dict(valid, value=True),
+            ]
+        )
+        self.assert_invalid_instructions(invalid)
+
+    def test_client_request_explorer_core(self):
+        self.assert_explorer_core(
+            "Traces/native_client_request_duplicate_conflict.json", {1, 2}
+        )
+
     def test_parameterized_client_requests(self):
         models = [
             deepcopy(model)

@@ -19,6 +19,9 @@ import Sparse.NativeSignCommittableEncoding
 import Sparse.NativeBecomeLeaderExecution
 import Sparse.NativeBecomeLeaderSound
 import Sparse.NativeBecomeLeaderComplete
+import Sparse.NativeClientRequestSound
+import Sparse.NativeClientRequestStructure
+import Sparse.NativeClientRequestComplete
 import Sparse.NativeQueuePatternEncoding
 
 set_option autoImplicit false
@@ -221,6 +224,9 @@ inductive FrameInstructionRun {width : PNat} (before after : Encoding width) :
   | becomeLeader (source : Fin width)
       (run : (NativeEncode.becomeLeader source).run before = .ok ((), after)) :
       FrameInstructionRun before after (.becomeLeader source)
+  | clientRequest (source : Fin width) (transaction : Nat)
+      (run : (clientRequest source (.integer transaction)).run before = .ok ((), after)) :
+      FrameInstructionRun before after (.clientRequest source transaction)
   | appendEntries (source destination : Fin width) (batchEnd : Nat)
       (run : (sendAppend source destination batchEnd).run before = .ok ((), after)) :
       FrameInstructionRun before after (.appendEntries source destination batchEnd)
@@ -251,6 +257,7 @@ theorem frame_instruction_cases {width : PNat} (item : FrameInstruction width)
   case advanceCommit source => exact .advanceCommit source run
   case signCommittable source => exact .signCommittable source run
   case becomeLeader source => exact .becomeLeader source run
+  case clientRequest source transaction => exact .clientRequest source transaction run
   case appendEntries source destination batchEnd =>
     exact .appendEntries source destination batchEnd run
   case joined node expected => exact .observation _ rfl run
@@ -336,6 +343,9 @@ theorem frame_instruction_next_mono {width : PNat} (item : FrameInstruction widt
   | becomeLeader source action =>
     rw [become_leader_next source before after action]
     omega
+  | clientRequest source transaction action =>
+    rw [client_request_next source (.integer transaction) before after action]
+    omega
   | appendEntries source destination batchEnd action =>
     obtain ⟨guarded, defined, prefixShape, definition, pushed⟩ :=
       append_send_steps source destination batchEnd before after action
@@ -372,6 +382,8 @@ theorem frame_instruction_references {width : PNat} (item : FrameInstruction wid
     exact signature_references source before after action valid
   | becomeLeader source action =>
     exact become_leader_references source before after action valid
+  | clientRequest source transaction action =>
+    exact client_request_references source (.integer transaction) before after action valid
   | appendEntries source destination batchEnd action =>
     exact send_append_references source destination batchEnd before after action valid
   | observation clauses emitted asserted =>
@@ -407,6 +419,9 @@ theorem frame_instruction_holds_before {width : PNat} (item : FrameInstruction w
     exact signature_prior_holds source before after action assignment holds
   | becomeLeader source action =>
     exact become_leader_prior_holds source before after action assignment holds
+  | clientRequest source transaction action =>
+    exact client_request_prior_holds source (.integer transaction) before after action
+      assignment holds
   | appendEntries source destination batchEnd action =>
     exact send_append_holds_before source destination batchEnd before after action assignment holds
   | observation clauses emitted asserted =>

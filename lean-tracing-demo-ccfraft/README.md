@@ -63,7 +63,7 @@ It accepts `checkQuorum`, `requestVote`, `requestPreVote`, `updateTerm`, `timeou
 `becomePreVoteCandidate`, `appendEntries`, `receiveRequestVote`,
 `receiveAppendEntries`, `receiveRequestVoteResponse`, `receiveRequestPreVoteResponse`,
 `receiveAppendEntriesResponse`, `becomeLeader`, `changeConfiguration`, `advanceCommitIndex`, and
-`signCommittableMessages`, plus the `allocated`, `role`, `newFollower`, `logLength`,
+`signCommittableMessages`, and `clientRequest`, plus the `allocated`, `role`, `newFollower`, `logLength`,
 `commit`, `currentTerm`, `entry`, `retirementIndex`,
 `retirementCommittableIndex`, `retiredCommittedIndex`, `votedFor`, and
 `votesGranted`, `preVotesGranted`, `membershipState`, `sentIndex`, and `matchIndex`
@@ -137,6 +137,15 @@ the commit index, including when the old log already ends with a signature.
 Commit advancement and signature writing share the same retirement scans,
 guards stage, and row writer, with reusable soundness and assignment proofs.
 Leadership promotion reuses that retirement tail with a prepared, truncated row.
+`clientRequest` requires a declared `node` and a natural `transaction`.
+The node must be an allocated leader. Both its old and refreshed membership
+must differ from `retiredCommitted`, and the transaction must be absent from
+the original global submitted set. The action appends one current-term
+transaction entry, refreshes retirement metadata and the completed-retirement
+set, and inserts the transaction into the submitted set. Commit stays unchanged.
+A transaction already in the log is allowed if it is absent from the submitted
+set. Submitting the same transaction twice is UNSAT.
+Client requests reuse the leader-log preparation and retirement proofs.
 Generic `receive` remains an input error.
 `updateTerm` reads the directed queue head without consuming it. It requires an
 allocated destination and a strictly newer packet term. Responses also require

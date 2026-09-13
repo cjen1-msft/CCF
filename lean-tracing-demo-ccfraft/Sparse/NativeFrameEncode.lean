@@ -20,6 +20,7 @@ import Sparse.NativeMembershipChange
 import Sparse.NativeAdvanceCommit
 import Sparse.NativeSignature
 import Sparse.NativeBecomeLeader
+import Sparse.NativeClientRequest
 
 set_option autoImplicit false
 
@@ -82,6 +83,10 @@ def decodeFrameInstruction (width : PNat) (names : Array String) (value : Json) 
   else if kind = "becomeLeader" then
     fields value ["kind", "node"]
     return .becomeLeader (<- resolve width names (<- field value "node"))
+  else if kind = "clientRequest" then
+    fields value ["kind", "node", "transaction"]
+    return .clientRequest (<- resolve width names (<- field value "node"))
+      (<- natural (<- field value "transaction"))
   else if kind = "joined" then
     fields value ["kind", "node", "value"]
     return .joined (<- resolve width names (<- field value "node"))
@@ -175,6 +180,7 @@ def frameInstruction {width : PNat} (item : FrameInstruction width) : EncodeM wi
   | .advanceCommit source => advanceCommitIndex source
   | .signCommittable source => signCommittableMessages source
   | .becomeLeader source => becomeLeader source
+  | .clientRequest source transaction => clientRequest source (.integer transaction)
   | _ => do
     let state <- get
     assertAll (<- frameObservationClauses state.toColumns item)

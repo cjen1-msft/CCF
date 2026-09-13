@@ -11,6 +11,7 @@ import Sparse.NativeArrayMembershipTransition
 import Sparse.NativeArrayCommitTransition
 import Sparse.NativeArraySignatureTransition
 import Sparse.NativeArrayBecomeLeaderTransition
+import Sparse.NativeArrayClientRequestModel
 import Sparse.NativePacketPattern
 
 set_option autoImplicit false
@@ -34,6 +35,7 @@ inductive Instruction (N T : Type) where
   | advanceCommit (source : N)
   | signCommittable (source : N)
   | becomeLeader (source : N)
+  | clientRequest (source : N) (transaction : T)
   | appendEntries (source destination : N) (batchEnd : Nat)
   | submittedTxId (txId : T) (expected : Bool)
   | joined (node : N) (expected : Bool)
@@ -101,6 +103,10 @@ def follows (frame : Frame N T) : List (Instruction N T) -> Prop
   | .becomeLeader source :: rest =>
       exists nextFrame,
         NativeArrayBecomeLeader.BecomeLeader frame source nextFrame /\
+          follows nextFrame rest
+  | .clientRequest source transaction :: rest =>
+      exists nextFrame,
+        NativeArrayClientRequest.Request frame source transaction nextFrame /\
           follows nextFrame rest
   | .appendEntries source destination batchEnd :: rest =>
       NativeArrayAppend.enabled frame source destination batchEnd /\
@@ -171,6 +177,9 @@ def modelFollows (state : State N T) : List (Instruction N T) -> Prop
   | .becomeLeader source :: rest =>
       CCFRaft.Enabled state (.becomeLeader source) /\
         modelFollows (CCFRaft.next state (.becomeLeader source)) rest
+  | .clientRequest source transaction :: rest =>
+      CCFRaft.Enabled state (.clientRequest source transaction) /\
+        modelFollows (CCFRaft.next state (.clientRequest source transaction)) rest
   | .appendEntries source destination batchEnd :: rest =>
       CCFRaft.Enabled state (.appendEntries source destination batchEnd) /\
         modelFollows (CCFRaft.next state (.appendEntries source destination batchEnd)) rest
@@ -436,6 +445,21 @@ theorem follows_correct (trace : List (Instruction N T)) (frame : Frame N T) (st
         have nextRep :=
           (NativeArrayBecomeLeader.BecomeLeader.model_correct
             frame nextFrame state rep source step).2
+        exact ⟨nextFrame, step, (ih _ _ nextRep).mpr held⟩
+    | clientRequest source transaction =>
+      constructor
+      · rintro ⟨nextFrame, step, held⟩
+        obtain ⟨enabled, nextRep⟩ :=
+          NativeArrayClientRequest.Request.model_correct
+            frame nextFrame state rep source transaction step
+        exact ⟨enabled, (ih _ _ nextRep).mp held⟩
+      · rintro ⟨enabled, held⟩
+        obtain ⟨nextFrame, step⟩ :=
+          NativeArrayClientRequest.Request.exists_of_enabled
+            frame state rep source transaction enabled
+        have nextRep :=
+          (NativeArrayClientRequest.Request.model_correct
+            frame nextFrame state rep source transaction step).2
         exact ⟨nextFrame, step, (ih _ _ nextRep).mpr held⟩
     | appendEntries source destination batchEnd =>
       constructor

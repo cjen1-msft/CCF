@@ -132,6 +132,15 @@ theorem compile_frame_sound_continuation {width : PNat} [Bootstrap (Fin width)]
           rw [become_leader_bootstrap source before middle action, sameBootstrap]
         exact ⟨nextFrame, nativeStep,
           ih middle _ _ run nextFrame afterColumns bootstrap rest continuation⟩
+      | clientRequest source transaction action =>
+        obtain ⟨nextFrame, nativeStep, afterColumns⟩ :=
+          client_request_frame_sound source (.integer transaction) transaction before
+            middle action assignment middleHolds frame rep sameBootstrap rfl
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [client_request_bootstrap source (.integer transaction) before middle action,
+            sameBootstrap]
+        exact ⟨nextFrame, nativeStep,
+          ih middle _ _ run nextFrame afterColumns bootstrap rest continuation⟩
       | appendEntries source destination batchEnd action =>
         obtain ⟨enabled, afterColumns⟩ :=
           send_append_frame_success source destination batchEnd before middle action assignment
@@ -310,6 +319,15 @@ theorem compile_frame_complete_continuation {width : PNat} [Bootstrap (Fin width
             frame nextFrame rep valid sameBootstrap nativeStep
         have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
           rw [become_leader_bootstrap source before middle action, sameBootstrap]
+        exact finish extended nextFrame agreement middleHolds afterColumns bootstrap restFollows
+      | clientRequest source transaction action =>
+        obtain ⟨nextFrame, nativeStep, restFollows⟩ := follows
+        obtain ⟨extended, agreement, middleHolds, afterColumns⟩ :=
+          client_request_complete source (.integer transaction) transaction before middle
+            action assignment holds frame nextFrame rep valid sameBootstrap rfl nativeStep
+        have bootstrap : decodeBits middle.bootstrap = INITIAL_CONFIGURATION := by
+          rw [client_request_bootstrap source (.integer transaction) before middle action,
+            sameBootstrap]
         exact finish extended nextFrame agreement middleHolds afterColumns bootstrap restFollows
       | appendEntries source destination batchEnd action =>
         obtain ⟨enabled, restFollows⟩ := follows
