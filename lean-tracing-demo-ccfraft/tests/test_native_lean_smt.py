@@ -164,6 +164,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeRetirementWritesEncoding",
             "Sparse.NativeCommitTermsEncoding",
             "Sparse.NativeCommitIndexAssignment",
+            "Sparse.NativeAdvanceCommit",
         ):
             visit(module)
         forbidden = {
@@ -508,6 +509,69 @@ class NativeLeanSmtTests(unittest.TestCase):
         models = self.model_traces("NativeArrayMembershipFixtureMain", 1572)
         self.assert_internal_model_traces(
             "NativeMembershipChangeFixtureMain", models, 147, "membership"
+        )
+
+    def test_internal_advance_commit(self):
+        models = self.model_traces("NativeArrayAdvanceCommitFixtureMain", 43)
+        originals = {
+            item["scenario"]: item
+            for item in models
+            if item["mutation"].endswith(".unchanged")
+        }
+        self.assertEqual(
+            {name for name, item in originals.items() if item["modelEnabled"]},
+            {
+                "bootstrap-success",
+                "stale-retired-metadata-success",
+                "retirement-refresh-success",
+                "configuration-commit-success",
+                "transaction-zero-success",
+                "nonzero-source-success",
+                "source-outside-bootstrap-success",
+            },
+        )
+        for item in models:
+            if not item["modelEnabled"]:
+                self.assertEqual(
+                    item["trace"]["instructions"][-1]["kind"], "advanceCommitIndex"
+                )
+        self.assertFalse(originals["majority-rejection"]["advances"])
+        self.assertFalse(originals["wrong-role"]["leader"])
+        self.assertFalse(originals["unallocated-source"]["allocated"])
+        self.assertFalse(originals["no-new-current-term-signature"]["advances"])
+        terminal = originals["terminal-retirement-rejection"]
+        self.assertTrue(terminal["advances"])
+        self.assertTrue(terminal["terminalRetirement"])
+        refreshed = originals["retirement-refresh-success"]
+        self.assertEqual(refreshed["afterMembership"], "retirementCompleted")
+        self.assertEqual(refreshed["completedBefore"], ["c"])
+        self.assertEqual(refreshed["completedAfter"], ["a"])
+        stale = originals["stale-retired-metadata-success"]
+        self.assertEqual(stale["beforeMembership"], "retiredCommitted")
+        self.assertEqual(stale["afterMembership"], "active")
+        self.assert_internal_model_traces(
+            "NativeAdvanceCommitFixtureMain", models, 7, "advance-commit"
+        )
+
+        extras = [f"spare-{index}" for index in range(3, 17)]
+        absent = [
+            {"kind": "allocated", "node": node, "value": False} for node in extras
+        ]
+        wide = []
+        for item in models:
+            if item["scenario"] == "bootstrap-success" and (
+                item["mutation"].endswith(".unchanged")
+                or item["mutation"].endswith(".sourceCommit")
+            ):
+                extended = deepcopy(item)
+                extended["trace"]["nodes"].extend(extras)
+                extended["trace"]["instructions"] = (
+                    absent + extended["trace"]["instructions"] + absent
+                )
+                wide.append(extended)
+        self.assertEqual(len(wide), 2)
+        self.assert_internal_model_traces(
+            "NativeAdvanceCommitFixtureMain", wide, 1, "advance-commit-wide"
         )
 
     def test_membership_write_reference_checks(self):
