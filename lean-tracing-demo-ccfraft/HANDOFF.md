@@ -153,7 +153,8 @@ in `NativeArrayVoteResponse` and the exact native `receive_eq_write_pop`
 bridge, accepted in `0547ae584`. Its append-response Model proofs are
 accepted in `816ca46fd`; its append-response term proofs are accepted in
 `f16fe45ab`. Its shared voting-majority proofs are accepted and parent-owned.
-It now owns `NativeBecomeLeaderGuardsEncoding`.
+Its leadership guard correspondence and bounds are accepted and parent-owned.
+It now owns `NativeBecomeLeaderPrefixAssignment`.
 Worker
 `af5d19d5-1186-4609-9b0b-4f224d4a4330` completed
 `NativeAppendResponseExecution`, accepted in `03e5f7809`.
@@ -379,6 +380,10 @@ full-frame Model updates, and exact Model enabledness. The latter uses the
 original row's voting-majority proof and shows that role/cursor changes do not
 affect refreshed membership. The parent build passes in
 `native-become-leader-model-parent-build.log`.
+`NativeBecomeLeaderGuardsEncoding` proves exact guard correspondence and
+symbol bounds through the shared voting-majority lemmas. Source allocation
+remains a guard rather than an extra premise. The parent build passes in
+`native-become-leader-guards-parent-build.log`.
 
 Raw reduction also emits per-identity `joined` observations. Their existing
 Model meaning is membership in `state.hasJoined`, not current allocation.

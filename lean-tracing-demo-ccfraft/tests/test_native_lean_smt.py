@@ -162,6 +162,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeVotingMajorityEncoding",
             "Sparse.NativeArrayBecomeLeader",
             "Sparse.NativeBecomeLeader",
+            "Sparse.NativeBecomeLeaderGuardsEncoding",
             "Sparse.NativeActiveConfigurationEncoding",
             "Sparse.NativeReplicationMajority",
             "Sparse.NativeArrayCommitTransition",
