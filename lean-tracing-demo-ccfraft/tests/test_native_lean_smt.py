@@ -144,6 +144,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeAppendReceiveCommitAssignment",
             "Sparse.NativeAppendReceiveComplete",
             "Sparse.NativeAppendReceiveRetirementAssignment",
+            "Sparse.NativeAppendReceiveLogAssignment",
         ):
             visit(module)
         forbidden = {
