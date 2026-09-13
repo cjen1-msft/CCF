@@ -136,15 +136,20 @@ and `native-commit-shared-assignments-parent-build.log`.
 
 Mechanical workers retain separate files.
 Worker `2a020198-af17-47bf-b45b-0b82864a50ad` completed public signature
-integration. Its four public files are parent-owned. It now owns
-`NativeVoteResponseExecution`, extracting the guard, row-write, and pop stages
-and proving structural preservation without duplicating the shared writers.
-Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns
-`NativeQueuePatternEncoding`, including equivalence to the slower baseline.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns Model correspondence
-in `NativeArrayVoteResponse`. Worker
+integration and response execution extraction. It now owns
+`NativeVoteResponseSound`, composing exact native and Model soundness from
+the shared row writer and FIFO pop.
+Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` completed
+`NativeQueuePatternEncoding`, including equivalence to the slower baseline,
+and now owns `NativeVoteResponseComplete`. The parent inspected and built
+the queue proof, then committed it as `b396e0955`.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` completed Model correspondence
+in `NativeArrayVoteResponse` and is adding the exact native
+`receive_eq_write_pop` bridge. Worker
 `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns
-`NativeVoteResponseTermsEncoding`.
+only a proof-body refactor in `NativeVoteResponseTermsEncoding`, reusing
+the snapshot row representation instead of reproving unchanged fields.
+Its exported statements are fixed.
 The parent owns runtime, tests, docs, and all accepted modules.
 Public signature integration is committed as `ba6aff545`.
 The parent build passes in `native-public-signature-parent-build.log`.
@@ -175,12 +180,15 @@ unconstrained; explicit `null`, unknown fields, and wrong-family fields fail.
 Append patterns support `entriesLength` without supplying `prevLogTerm` or
 entry contents. `native-packet-pattern-tests.log` records passing semantic
 and malformed-input cases.
-Worker `59af956e-475e-495a-a970-a32160960217` owns only
-`NativePacketPatternEncoding`, proving correspondence against actual Model
-messages through a reusable optional-field lemma. The first version compiled
-and was inspected. The worker is making natural literal types explicit so
-the reusable Nat lemma does not expose an inferred `Option.bind` coercion.
-The master `packet_pattern_term_correct` signature remains unchanged.
+Commit `ca1a092ed` proves packet-pattern correspondence against actual Model
+messages through a reusable optional-field lemma. Natural literals have
+explicit `Nat` arguments rather than an inferred `Option.bind` coercion.
+The parent build and packet/queue cases pass in
+`native-packet-pattern-encoding-parent-build.log` and
+`native-packet-pattern-proved-tests.log`.
+`packet_pattern_term_correct` takes expected pattern, actual packet term,
+assignment, locals, Model message, and equality to its `packetValue`.
+It returns equality of term evaluation and `expected.matches message`.
 Commit `2b76987e9` adds `NativeQueuePattern`,
 `NativeQueuePatternFixtureMain`, and `test_queue_patterns`. These are parent-owned.
 Their 126 cases cover FIFO bounds, large heads and lengths, and normalization
@@ -194,7 +202,12 @@ not reject or repair the represented Model state.
 Artifacts are `native-queue-pattern-baseline-67.smt2`,
 `native-queue-pattern-baseline/`, `native-queue-pattern-conditional/`, and
 `native-queue-pattern-comparison.json` in the session files directory.
-Queue-pattern correspondence and baseline equivalence remain unproved.
+`queue_pattern_correct` proves decoded-queue matching with only nonnegative
+head and length premises. `queue_pattern_baseline_eval` proves unconditional
+evaluation equality to the original normalization-before-matching expression.
+The parent build passes in `native-queue-pattern-encoding-parent-build.log`.
+Both statements preserve arbitrary raw cells, source mismatches, and inactive
+tails. The optimized and baseline encodings have the same meaning.
 Neither packet patterns nor queue patterns are public yet.
 The intended public observation is `queuePattern` with the same
 `source`, `destination`, `index`, and `value` envelope as `queuePoint`.
@@ -204,9 +217,13 @@ unobserved packet fields.
 Public pattern coverage and strict-input cases are prepared but unstaged,
 along with `Traces/native_partial_packet_conflict.json` and its explorer case.
 The two contradictory partial observations should map to owners `{0, 1}`.
+The pre-integration public test fails at instruction 1 with
+`property not found: node`, from the unsupported kind's local-observation
+fallback. See `native-public-patterns-before-integration.log`.
 
-The uncommitted private vote-response runtime is `NativeVoteResponse`, shared by vote and
-pre-vote replies. It reuses `writeNodeRow` and FIFO pop, with 18 fresh symbols.
+Commit `2fd560cee` adds the private vote-response runtime `NativeVoteResponse`,
+shared by vote and pre-vote replies. It reuses `writeNodeRow` and FIFO pop,
+with 18 fresh symbols.
 This is the simple baseline, not a specialized single-column writer.
 `NativeArrayVoteResponseFixtureMain` derives 120 cases from actual Model
 enablement and next-state functions, including 76 enabled cases.
@@ -216,12 +233,32 @@ and exercises bit 16 in 17-identity vote and pre-vote tallies.
 All 304 cases pass, including 78 SAT cases, in
 `native-vote-response-complete-fixtures.log`.
 `NativeReceiveVoteResponseFixtureMain` is the private compiler.
+Commit `f679304e7` proves actual Model response correspondence and reusable
+guard, row-write, and pop execution extraction. Commit `0b3e4610e` proves
+SMT guard and conditional-row correspondence. Both parent builds pass in
+`native-vote-response-foundations-parent-build.log` and
+`native-vote-response-terms-parent-build.log`.
 Whole-action correspondence and public response dispatch remain pending.
 Unlike `updateTerm`, response receive does not require an allocated source.
 An unallocated source's response is consumed without changing nodes, even
 when its term is newer. With an allocated source, a newer reply to the wrong
 role is ignored, while a newer reply to the expected candidate role is
 disabled. Membership and pre-vote status are not response guards.
+
+Raw reduction also emits per-identity `joined` observations. Their existing
+Model meaning is membership in `state.hasJoined`, not current allocation.
+The native API's whole-set `hasJoined` cannot represent one such observation
+without inventing facts about other identities.
+Public `joined` support is complete in `NativeArrayVote`, `NativeFrameEncode`,
+and `NativeFrameStep`. Its strict shape is
+`{"kind":"joined","node":"a","value":true}`.
+The parent build passes in `native-public-joined-parent-build.log`.
+Boolean, whole-set consistency, allocation-independent, widths 1, 3, 17, and 65,
+membership-change, malformed-input, and explorer cases pass in
+`native-public-joined-tests.log`, alongside existing joined-set and public
+membership-change coverage. `Traces/native_joined_point_conflict.json`
+attributes the contradiction to owners `{0, 1}`.
+The three public files are parent-owned until queue-pattern integration starts.
 
 Factory tools are unavailable in this session. `NativeDefinitions` and
 `NativeDefinitionsEncoding` now provide reusable heterogeneous definition

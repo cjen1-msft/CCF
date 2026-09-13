@@ -1,0 +1,8 @@
+{
+  "nodes": ["a", "b"],
+  "bootstrap": ["a"],
+  "instructions": [
+    {"kind": "joined", "node": "b", "value": true},
+    {"kind": "hasJoined", "value": ["a"]}
+  ]
+}

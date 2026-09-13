@@ -25,6 +25,9 @@ theorem frame_observation_run {width : PNat} (item : FrameInstruction width)
     (frameInstruction item).run before = (assertAll clauses).run before := by
   cases item <;> simp only [frameObservationClauses] at emitted
   case node item => exact observation_instruction_run item before clauses emitted
+  case joined node expected =>
+    cases Except.ok.inj emitted
+    rfl
   case hasJoined expected =>
     cases Except.ok.inj emitted
     rfl
@@ -55,6 +58,14 @@ theorem frame_observation_correct {width : PNat} [Bootstrap (Fin width)]
   case node item =>
     simpa only [NativeArrayVote.follows, and_true] using
       observation_correct assignment columns frame.nodes rep.nodes item clauses emitted
+  case joined node expected =>
+    cases Except.ok.inj emitted
+    simp only [Holds, List.mem_singleton, forall_eq, Term.eval, rep.hasJoined,
+      NativeArrayVote.follows, and_true]
+    change decide ((encodeBits frame.globals.hasJoined).getLsbD node.val = expected) = true <->
+      decide (node ∈ frame.globals.hasJoined) = expected
+    rw [encode_bits_bit]
+    simp
   case hasJoined expected =>
     cases Except.ok.inj emitted
     simp [Holds, Term.eval, rep.hasJoined, encode_bits_eq, NativeArrayVote.follows]
@@ -104,6 +115,7 @@ theorem frame_observation_cons {width : PNat} [Bootstrap (Fin width)]
   cases item <;> simp only [frameObservationClauses] at emitted
   case node item =>
     simp only [NativeArrayVote.follows, observation_node_step frame columns item clauses emitted, and_true]
+  case joined => simp [NativeArrayVote.follows]
   case hasJoined => simp [NativeArrayVote.follows]
   case preVoteStatus => simp [NativeArrayVote.follows]
   case retirementCompleted => simp [NativeArrayVote.follows]
@@ -168,6 +180,7 @@ theorem frame_instruction_cases {width : PNat} (item : FrameInstruction width)
   case signCommittable source => exact .signCommittable source run
   case appendEntries source destination batchEnd =>
     exact .appendEntries source destination batchEnd run
+  case joined node expected => exact .observation _ rfl run
   case hasJoined expected => exact .observation _ rfl run
   case preVoteStatus node expected => exact .observation _ rfl run
   case retirementCompleted node expected =>

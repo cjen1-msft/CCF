@@ -3135,6 +3135,113 @@ class NativeLeanSmtTests(unittest.TestCase):
             ]
         )
 
+    def test_joined_node_observations(self):
+        cases = self.framed_observation_cases(
+            "joined", False, True, False, allocation_guarded=False
+        )
+        for joined in ([], ["a"], ["b"], ["a", "b"], ["b", "a", "a"], ["c"]):
+            for node in ("a", "b"):
+                for value in (False, True):
+                    cases.append(
+                        (
+                            f"joined-node-{len(cases)}",
+                            [
+                                {"kind": "joined", "node": node, "value": value},
+                                {"kind": "hasJoined", "value": joined},
+                            ],
+                            "sat" if (node in joined) == value else "unsat",
+                        )
+                    )
+        documents = [
+            {
+                "nodes": ["a", "b", "c"],
+                "bootstrap": ["a"],
+                "instructions": instructions,
+            }
+            for _, instructions, _ in cases
+        ]
+        for width in (1, 3, 17, 65):
+            names = [f"node-{index}" for index in range(width)]
+            node = names[-1]
+            for value in (False, True):
+                for agrees in (False, True):
+                    instructions = [
+                        {"kind": "allocated", "node": name, "value": False}
+                        for name in names
+                    ] + [
+                        {"kind": "joined", "node": node, "value": value},
+                        {
+                            "kind": "hasJoined",
+                            "value": [node] if value == agrees else [],
+                        },
+                    ]
+                    cases.append(
+                        (
+                            f"joined-node-{width}-{value}-{agrees}",
+                            instructions,
+                            "sat" if agrees else "unsat",
+                        )
+                    )
+                    documents.append(
+                        {
+                            "nodes": names,
+                            "bootstrap": [names[0]],
+                            "instructions": instructions,
+                        }
+                    )
+        scripts = self.encode(documents)
+        self.solve(
+            [
+                {"name": name, "script": script, "expected": expected}
+                for (name, _, expected), script in zip(cases, scripts)
+            ]
+        )
+
+    def test_joined_node_input_errors(self):
+        valid = {"kind": "joined", "node": "a", "value": True}
+        invalid = [
+            {key: value for key, value in valid.items() if key != missing}
+            for missing in valid
+        ]
+        invalid.append(dict(valid, unexpected=0))
+        invalid.extend(
+            dict(valid, node=value) for value in ("missing", None, 0, [], {})
+        )
+        invalid.extend(
+            dict(valid, value=value) for value in (None, 0, 1, "true", [], {})
+        )
+        self.assert_invalid_instructions(invalid)
+
+    def test_membership_joined_node_sequence(self):
+        document = json.loads(
+            (ROOT / "Traces/native_membership_allocation_conflict.json").read_text()
+        )
+        document["instructions"][6] = {
+            "kind": "joined", "node": "b", "value": False
+        }
+        document["instructions"][-1]["value"] = True
+        document["instructions"].append(
+            {"kind": "joined", "node": "b", "value": True}
+        )
+        conflict = deepcopy(document)
+        conflict["instructions"][-1]["value"] = False
+        scripts = self.encode([document, conflict])
+        self.solve(
+            [
+                {"name": "joined-membership", "script": scripts[0], "expected": "sat"},
+                {
+                    "name": "joined-membership-conflict",
+                    "script": scripts[1],
+                    "expected": "unsat",
+                },
+            ]
+        )
+
+    def test_joined_node_explorer_core(self):
+        self.assert_explorer_core(
+            "Traces/native_joined_point_conflict.json", {0, 1}
+        )
+
     def test_pre_vote_status_observations(self):
         names = ["a", "b"] + [f"node-{index}" for index in range(2, 21)]
         cases = self.framed_observation_cases(

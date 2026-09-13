@@ -64,6 +64,10 @@ def decodeFrameInstruction (width : PNat) (names : Array String) (value : Json) 
   else if kind = "signCommittableMessages" then
     fields value ["kind", "node"]
     return .signCommittable (<- resolve width names (<- field value "node"))
+  else if kind = "joined" then
+    fields value ["kind", "node", "value"]
+    return .joined (<- resolve width names (<- field value "node"))
+      (<- (<- field value "value").getBool?)
   else if kind = "hasJoined" then
     fields value ["kind", "value"]
     return .hasJoined (<- decodeNodeSet width names (<- field value "value"))
@@ -103,6 +107,8 @@ def decodeFrameDocument (document : Json) : Except String FrameDecoded :=
 def frameObservationClauses {width : PNat} (columns : Columns) :
     FrameInstruction width -> Except String (List (Expr .bool))
   | .node item => observationClauses columns item
+  | .joined node expected =>
+    .ok [.equal (.bit (.free (.bits width) columns.hasJoined) node) (.boolean expected)]
   | .hasJoined expected =>
     .ok [.equal (.free (.bits width) columns.hasJoined) (.bits (encodeBits expected))]
   | .preVoteStatus node expected =>

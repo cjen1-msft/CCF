@@ -137,6 +137,9 @@ membership-state names. Both peer-index fields require a declared `peer` and a n
 identities, interpreted as a set. It does not require a `node` field or imply
 that any node is allocated. Global `preVoteStatus` requires a declared `node`
 and a `value` of `capable` or `enabled`, independently of allocation.
+Global `joined` requires a declared `node` and Boolean `value`. It observes
+only that identity's membership in `hasJoined`, without constraining other
+identities or requiring allocation.
 Global `retirementCompleted` requires a declared `node` and a `value` list of
 declared identities. Neither the node nor the listed identities must be allocated.
 Global `submittedTxId` requires a natural `txId` and Boolean `value`, indicating

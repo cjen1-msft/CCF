@@ -29,6 +29,7 @@ inductive Instruction (N T : Type) where
   | signCommittable (source : N)
   | appendEntries (source destination : N) (batchEnd : Nat)
   | submittedTxId (txId : T) (expected : Bool)
+  | joined (node : N) (expected : Bool)
   | hasJoined (expected : Finset N)
   | preVoteStatus (node : N) (expected : PreVoteStatus)
   | retirementCompleted (node : N) (expected : Finset N)
@@ -80,6 +81,8 @@ def follows (frame : Frame N T) : List (Instruction N T) -> Prop
         follows (NativeArrayAppend.send frame source destination batchEnd) rest
   | .submittedTxId txId expected :: rest =>
       decide (txId ∈ frame.globals.submittedTxIds) = expected /\ follows frame rest
+  | .joined node expected :: rest =>
+      decide (node ∈ frame.globals.hasJoined) = expected /\ follows frame rest
   | .hasJoined expected :: rest => frame.globals.hasJoined = expected /\ follows frame rest
   | .preVoteStatus node expected :: rest => frame.globals.preVoteStatus node = expected /\ follows frame rest
   | .retirementCompleted node expected :: rest =>
@@ -129,6 +132,8 @@ def modelFollows (state : State N T) : List (Instruction N T) -> Prop
         modelFollows (CCFRaft.next state (.appendEntries source destination batchEnd)) rest
   | .submittedTxId txId expected :: rest =>
       decide (txId ∈ state.submittedTxIds) = expected /\ modelFollows state rest
+  | .joined node expected :: rest =>
+      decide (node ∈ state.hasJoined) = expected /\ modelFollows state rest
   | .hasJoined expected :: rest => state.hasJoined = expected /\ modelFollows state rest
   | .preVoteStatus node expected :: rest => state.preVoteStatus node = expected /\ modelFollows state rest
   | .retirementCompleted node expected :: rest =>
@@ -302,6 +307,8 @@ theorem follows_correct (trace : List (Instruction N T)) (frame : Frame N T) (st
       simp only [NativeArrayQueue.decodeNetwork, Sparse.Queue.abstractNetwork] at same
       simp only [follows, modelFollows, NativeArrayQueue.Queue.point_correct, same, ih frame state rep]
     | submittedTxId txId expected =>
+      simp only [follows, modelFollows, rep.globals, Globals.ofModel, ih frame state rep]
+    | joined node expected =>
       simp only [follows, modelFollows, rep.globals, Globals.ofModel, ih frame state rep]
     | hasJoined expected =>
       simp only [follows, modelFollows, rep.globals, Globals.ofModel, ih frame state rep]
