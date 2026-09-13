@@ -136,20 +136,21 @@ and `native-commit-shared-assignments-parent-build.log`.
 
 Mechanical workers retain separate files.
 Worker `2a020198-af17-47bf-b45b-0b82864a50ad` completed public signature
-integration and response execution extraction. It now owns
-`NativeVoteResponseSound`, composing exact native and Model soundness from
-the shared row writer and FIFO pop.
+integration and vote-response soundness, accepted in `40109af92`.
+It now owns `NativeAppendResponseSound`.
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` completed
 `NativeQueuePatternEncoding`, including equivalence to the slower baseline,
-and now owns `NativeVoteResponseComplete`. The parent inspected and built
-the queue proof, then committed it as `b396e0955`.
+and vote-response completeness, accepted in `705731c26`.
+It now owns `NativeAppendResponseComplete`.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` completed Model correspondence
 in `NativeArrayVoteResponse` and the exact native `receive_eq_write_pop`
 bridge, accepted in `0547ae584`. Its append-response Model proofs are
-accepted in `816ca46fd`. It now owns `NativeAppendResponseTermsEncoding`.
+accepted in `816ca46fd`; its append-response term proofs are accepted in
+`f16fe45ab`. It is idle.
 Worker
-`af5d19d5-1186-4609-9b0b-4f224d4a4330` owns
-`NativeAppendResponseExecution`. Its vote-response row refactor is accepted
+`af5d19d5-1186-4609-9b0b-4f224d4a4330` completed
+`NativeAppendResponseExecution`, accepted in `03e5f7809`, and is idle.
+Its vote-response row refactor is accepted
 in `501abf1fc`, reusing the snapshot representation instead of reproving
 unchanged fields. All accepted response statements are fixed.
 The parent owns runtime, tests, docs, and all accepted modules.
@@ -210,18 +211,41 @@ evaluation equality to the original normalization-before-matching expression.
 The parent build passes in `native-queue-pattern-encoding-parent-build.log`.
 Both statements preserve arbitrary raw cells, source mismatches, and inactive
 tails. The optimized and baseline encodings have the same meaning.
-Neither packet patterns nor queue patterns are public yet.
-The intended public observation is `queuePattern` with the same
+Public integration is implemented but not committed yet.
+The observation is `queuePattern` with the same
 `source`, `destination`, `index`, and `value` envelope as `queuePoint`.
 Existing complete-packet `queuePoint` decoding must remain strict.
 The reducer's `firstMessageFrom` will use index zero, without inventing
 unobserved packet fields.
-Public pattern coverage and strict-input cases are prepared but unstaged,
-along with `Traces/native_partial_packet_conflict.json` and its explorer case.
-The two contradictory partial observations should map to owners `{0, 1}`.
-The pre-integration public test fails at instruction 1 with
+Public pattern coverage and strict-input cases pass, as do the existing
+complete-packet and queue-length cases. The explorer attributes the
+contradictory observations to owners `{0, 1}`.
+The pre-integration failure at instruction 1 with
 `property not found: node`, from the unsupported kind's local-observation
-fallback. See `native-public-patterns-before-integration.log`.
+fallback, is superseded. See `native-public-patterns-before-integration.log`.
+The corrected SAT case exposed a separate solver bottleneck: its 12,737-byte
+query remained unsolved 341 seconds after script creation. E-matching did
+not resolve the unchanged query within 120 seconds.
+The retained script and probes are in `native-public-pattern-corrected-baseline/`
+and `pattern_domain_probe.py`. The packet log domain already requires canonical
+inactive cells. Adding a redundant finite-array reconstruction implication
+keeps that domain and leaves live entry contents unknown.
+The Lean-emitted query is 14,335 bytes and solves in 16.136 ms.
+`NativePacketArrayHint` implements the hint; `queuePatternDomain` uses it only
+for append patterns with an explicit `entriesLength <= 32` and omitted `entries`.
+Larger or unknown lengths retain the original quantified domain.
+Boundary cases at 0, 1, 2, 8, 16, and 32 entries solve in 14-29 ms.
+A length-33 SAT case and conflicts at lengths 33 and `10^30` also pass
+through the fallback.
+These are formula-expansion limits, not representation bounds.
+Worker `59af956e-475e-495a-a970-a32160960217` owns
+`NativePacketArrayHintEncoding` and `NativeQueuePatternEncoding`, proving
+the new hint redundant and preserving both existing queue-pattern theorems.
+The parent owns runtime, the three public integration files, tests, and docs.
+Do not commit or declare public pattern completion until this proof and the
+full public rebuild pass. Runtime results are in
+`native-public-pattern-hint-tests.log` and
+`native-public-pattern-hint-boundaries-tests.log`.
 
 Commit `2fd560cee` adds the private vote-response runtime `NativeVoteResponse`,
 shared by vote and pre-vote replies. It reuses `writeNodeRow` and FIFO pop,
@@ -240,7 +264,10 @@ guard, row-write, and pop execution extraction. Commit `0b3e4610e` proves
 SMT guard and conditional-row correspondence. Both parent builds pass in
 `native-vote-response-foundations-parent-build.log` and
 `native-vote-response-terms-parent-build.log`.
-Whole-action correspondence and public response dispatch remain pending.
+Whole-action vote-response soundness and exact native assignment completeness
+are accepted in `40109af92` and `705731c26`.
+The parent build passes in `native-vote-response-whole-action-parent-build.log`.
+Public response dispatch remains pending.
 Commit `a041d0251` retains `Traces/native_vote_response_tally_conflict.json`.
 The private conflict and corrected `["a"]` tally pass in
 `native-response-conflict-private-tests.log`.
@@ -282,6 +309,12 @@ wrong recipients, and self-responses.
 Commit `af3f79790` extracts `mutate_frame_observation` for both response families
 and mutates every post-state observation in an ACK and a NACK case.
 Both response suites pass in `native-response-shared-mutations-tests.log`.
+Commit `f8998ddee` shares wrong-packet-kind and empty-FIFO rejection cases.
+Both response suites pass in `native-response-shared-guards-tests.log`.
+Execution extraction and append-response term correspondence are accepted
+in `03e5f7809` and `f16fe45ab`. Their parent builds pass in
+`native-append-response-execution-parent-build.log` and
+`native-append-response-terms-parent-build.log`.
 Whole-action SMT correspondence and public append-response dispatch are pending.
 
 Raw reduction also emits per-identity `joined` observations. Their existing
@@ -297,8 +330,7 @@ membership-change, malformed-input, and explorer cases pass in
 `native-public-joined-tests.log`, alongside existing joined-set and public
 membership-change coverage. `Traces/native_joined_point_conflict.json`
 attributes the contradiction to owners `{0, 1}`.
-Worker `59af956e-475e-495a-a970-a32160960217` now owns these three public files
-for queue-pattern integration. Preserve the accepted `joined` behavior.
+The parent owns these three public files. Preserve the accepted `joined` behavior.
 
 Factory tools are unavailable in this session. `NativeDefinitions` and
 `NativeDefinitionsEncoding` now provide reusable heterogeneous definition
