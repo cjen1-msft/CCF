@@ -167,6 +167,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeArrayBecomeLeaderTransition",
             "Sparse.NativeBecomeLeaderRowEncoding",
             "Sparse.NativeBecomeLeaderPrefixAssignment",
+            "Sparse.NativeNatSetInsert",
             "Sparse.NativeActiveConfigurationEncoding",
             "Sparse.NativeReplicationMajority",
             "Sparse.NativeArrayCommitTransition",
@@ -262,6 +263,12 @@ class NativeLeanSmtTests(unittest.TestCase):
             ("wide-singleton-65-commit-1-support-18446744073709551616-true", True),
         ):
             self.assertEqual(named[name]["majority"], expected, name)
+
+    def test_nat_set_insert_terms(self):
+        fixtures = self.assert_script_fixtures("NativeNatSetInsertFixtureMain", 74, 37)
+        named = {fixture["name"]: fixture for fixture in fixtures}
+        self.assertEqual(named["naive-store-resurrects-gap-false"]["expected"], "unsat")
+        self.assertEqual(named["naive-store-resurrects-gap-true"]["expected"], "sat")
 
     def test_highest_commit_index(self):
         fixtures = self.assert_script_fixtures("NativeCommitIndexFixtureMain", 127, 32)

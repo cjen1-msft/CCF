@@ -158,7 +158,8 @@ bridge, accepted in `0547ae584`. Its append-response Model proofs are
 accepted in `816ca46fd`; its append-response term proofs are accepted in
 `f16fe45ab`. Its shared voting-majority proofs are accepted and parent-owned.
 Its leadership guard correspondence and bounds are accepted and parent-owned.
-Its `NativeBecomeLeaderPrefixAssignment` is accepted and parent-owned; it is idle.
+Its `NativeBecomeLeaderPrefixAssignment` is accepted and parent-owned.
+It now owns `NativeNatSetInsertEncoding`.
 Worker
 `af5d19d5-1186-4609-9b0b-4f224d4a4330` completed
 `NativeAppendResponseExecution`, accepted in `03e5f7809`.
@@ -191,6 +192,21 @@ and its JSON decoders accept literals. Native client-request integration must
 represent shared existential transaction values in Lean and preserve their
 bindings across assignment extensions. Do not map different raw names to
 distinct ordinal transaction IDs. This interface work remains unresolved.
+
+The private `NativeNatSetInsert` baseline expresses insertion as exact masked
+membership equivalence over integers, with an existential nonnegative output
+limit. It avoids raw store-and-widen, which would expose old tail bits.
+No new native array layer is needed: frame globals already contain a `Finset`.
+The constraint accepts a typed value expression for later symbolic bindings.
+`NativeNatSetInsertFixtureMain` includes 72 insertion cases and two negative
+controls reproducing the naive store's resurrection of a previously absent
+value. Nested binders, duplicate insertion, unconstrained output tails, and
+values/limits up to `10^30` pass in `native-nat-set-insert-tests.log`.
+The retained 74 queries in `native-nat-set-insert-baseline/` take a median
+10.446 ms and maximum 14.157 ms; maximum script size is 2,636 bytes.
+No solver optimization is warranted by these cases. The parent owns the
+constraint and fixtures; its correspondence proof is still worker-owned.
+This is not yet a client-request action or a transaction-name binding API.
 
 Commit `36efa30f6` adds a private typed packet-pattern representation, SMT
 terms, strict JSON decoding, and fixtures. All seven existing packet families
