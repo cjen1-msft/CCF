@@ -227,9 +227,11 @@ before allocation, so an invalid argument cannot capture either output symbol.
 The 60 runtime cases cover repeated writes, duplicate insertion, symbolic
 arguments, negative old limits, large values, and unconstrained inactive tails.
 They pass with the 122 constraint cases in `native-submitted-write-tests.log`.
-The operation's frame correspondence and assignment proof are being completed
-by worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` in
-`NativeSubmittedWriteEncoding`. Its runtime and fixtures are parent-owned.
+`NativeSubmittedWriteEncoding` now proves actual execution, exact output
+columns and constraints, frame soundness, and specific-assignment completeness.
+It preserves all prior symbols and requires no old-limit nonnegativity.
+The parent build passes in `native-submitted-write-parent-build.log`.
+The module, runtime, and fixtures are accepted and parent-owned.
 
 The private `NativeClientRequest` runtime composes `prepareLeaderLog`,
 `retirementTail`, and `insertSubmitted`. It accepts a typed integer expression,
@@ -244,8 +246,13 @@ Post-state mutations, duplicate submission, and a 17-identity case pass in
 This action is not yet public or proved end to end.
 
 Current mechanical work for client integration:
-`2a020198-af17-47bf-b45b-0b82864a50ad` owns
-`NativeArrayClientRequestModel` and `NativeClientRequestTermsEncoding`.
+`NativeArrayClientRequestModel` and `NativeClientRequestTermsEncoding` are
+accepted and parent-owned. They prove native enabledness, Model output
+correspondence, native transition correctness/existence, and exact symbolic
+guard correspondence and bounds. The submitted guard uses the existing masked
+set representation, without an old-limit nonnegativity premise.
+The parent build is `native-client-request-model-parent-build.log`.
+Worker `2a020198-af17-47bf-b45b-0b82864a50ad` is idle.
 `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns `NativeLeaderLogPrefix`
 and the `NativeSignature`/`NativeSignaturePrefix` refactor that consumes it.
 Existing signature APIs must stay unchanged.
@@ -273,6 +280,9 @@ Concrete core scripts stay byte-identical, with unchanged instruction ownership
 groups, in `native-parameterized-core-tests.log`.
 The parameter prefix and parameterized whole-trace correspondence are not yet
 proved. The public encoder and raw reducer have not switched to this compiler.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns
+`NativeNatParametersEncoding`, proving exact declaration execution, natural
+valuation soundness/completeness, and argument evaluation/preservation.
 
 Commit `36efa30f6` adds a private typed packet-pattern representation, SMT
 terms, strict JSON decoding, and fixtures. All seven existing packet families

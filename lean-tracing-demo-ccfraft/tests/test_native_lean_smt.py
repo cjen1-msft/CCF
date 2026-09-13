@@ -93,6 +93,9 @@ class NativeImportBoundaryTests(unittest.TestCase):
                         visit(dependency)
 
         for module in (
+            "Sparse.NativeSubmittedWriteEncoding",
+            "Sparse.NativeArrayClientRequestModel",
+            "Sparse.NativeClientRequestTermsEncoding",
             "Sparse.NativeFrameColumns",
             "Sparse.NativeCampaignWrites",
             "Sparse.NativeVoteReceiveWritesEncoding",
