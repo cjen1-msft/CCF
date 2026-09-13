@@ -48,6 +48,38 @@ def receive (frame : Frame N T) (preVote : Bool) (destination : N)
       else frame.nodes
     queues := NativeArrayQueue.popSource frame.queues destination response.source }
 
+omit [DecidableEq T] [Bootstrap N] in
+theorem receive_eq_write_pop (frame : Frame N T) (preVote : Bool)
+    (destination : N) (response : RequestVoteResponse N)
+    (destinationPresent : (frame.nodes destination).isSome = true) :
+    receive frame preVote destination response =
+      { frame with
+        nodes := Function.update frame.nodes destination
+          (some (if (frame.nodes response.source).isSome then
+            nextRow (get frame.nodes destination) preVote response
+          else get frame.nodes destination))
+        queues :=
+          NativeArrayQueue.popSource frame.queues destination response.source } := by
+  by_cases sourcePresent : (frame.nodes response.source).isSome = true
+  · simp [receive, sourcePresent]
+  · have destinationValue :
+        frame.nodes destination = some (get frame.nodes destination) := by
+      cases destinationSlot : frame.nodes destination with
+      | none =>
+          simp [destinationSlot] at destinationPresent
+      | some row =>
+          simp [NativeArrayCheckQuorum.get, destinationSlot]
+    have nodesUnchanged :
+        Function.update frame.nodes destination
+            (some (get frame.nodes destination)) =
+          frame.nodes := by
+      funext node
+      by_cases same : node = destination
+      · subst node
+        simp [destinationValue]
+      · simp [Function.update, same]
+    simp [receive, sourcePresent, nodesUnchanged]
+
 omit [DecidableEq N] [DecidableEq T] [Bootstrap N] in
 @[simp]
 theorem packet_source (preVote : Bool) (response : RequestVoteResponse N) :
