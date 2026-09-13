@@ -511,6 +511,12 @@ Completed-retirement bits remain arbitrary during stepdown.
 The build and import audit pass in `native-append-execution-model-sound-build.log`
 and `native-append-execution-model-sound-import-tests.log`.
 The whole-action wrapper still needs B's constraint-retrieval theorem.
+Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns only new
+`NativeAppendReceiveLogAssignment.lean`. It extends a supplied assignment through
+the selected-log prefix, using the accepted per-stage runs, splice assignment,
+and candidate-log representation proof. Its scope ends at `entriesDefined`,
+before the commit-signature witness. It must preserve the original frame
+representation and arbitrary splice tails.
 `NativeAppendReceiveFinalRowTerms.lean` and
 `NativeAppendReceiveFinalRowEncoding.lean` are committed as `158d506bb`.
 They prove candidate stepdown and conditional local retirement refresh,

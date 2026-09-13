@@ -87,12 +87,9 @@ theorem append_receive_execution_model_sound {width : PNat} [Bootstrap (Fin widt
       rfl
     have currentAccepted :
         (currentConfigurationIndexTerm width terms.logLength terms.logEntries
-          terms.commit terms.current).eval assignment Locals.empty = true := by
-      have guarded := constraints.current
-      change ((!terms.consumes.eval assignment Locals.empty) ||
-        (currentConfigurationIndexTerm width terms.logLength terms.logEntries
-          terms.commit terms.current).eval assignment Locals.empty) = true at guarded
-      simpa only [consumesTrue, Bool.not_true, Bool.false_or] using guarded
+          terms.commit terms.current).eval assignment Locals.empty = true :=
+      (implies_eval terms.consumes _ assignment Locals.empty).mp
+        constraints.current consumesTrue
     have witnesses := retirement_completed_peer_constraints_sound before.bootstrap
       terms.consumes terms.logEntries (logRangeMinTerm terms.commit terms.logLength)
       terms.current
