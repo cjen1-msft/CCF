@@ -162,6 +162,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeArrayCommitTransition",
             "Sparse.NativeCommitIndexEncoding",
             "Sparse.NativeRetirementWritesEncoding",
+            "Sparse.NativeCommitTermsEncoding",
         ):
             visit(module)
         forbidden = {
