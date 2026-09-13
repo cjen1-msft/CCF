@@ -505,6 +505,9 @@ cursors to the old log length. `NativeMembershipTermsEncoding` proves the
 guards, and `NativeMembershipRowEncoding` proves the source-row terms.
 `NativeMembershipSound.membership_change_model_sound` proves Model enablement
 and next-state representation from the actual run and satisfying final assertions.
+`NativeMembershipChangeEncoding` connects that result to the exact native
+membership transition. `NativeMembershipComplete.membership_finish_assignment`
+extends satisfying pre-write assignments through allocation and final writes.
 Assignment completeness and public trace integration remain unfinished, so
 public `changeConfiguration` remains unsupported.
 `NativeAllocation` reuses row snapshots to reset hidden fields before exposing

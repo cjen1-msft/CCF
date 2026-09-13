@@ -577,6 +577,9 @@ frame chosen by a trace step. Use the shared Model-equivalence transport below
 to close that gap. The native relation retains the existing FIFO operations,
 but `FrameColumnsRep` observes decoded queues, not physical head equality.
 The Complete module is parent-owned.
+`receive_append_bootstrap` is committed as `9726e7d53` in
+`NativeAppendReceiveExecution.lean`. It composes the actual prefix and writer
+preservation proofs. The build passes in `native-append-bootstrap-build.log`.
 `NativeAppendReceiveFinalRowTerms.lean` and
 `NativeAppendReceiveFinalRowEncoding.lean` are committed as `158d506bb`.
 They prove candidate stepdown and conditional local retirement refresh,
@@ -648,6 +651,32 @@ Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns only new
 `initial.lengthDefined` from the original satisfying frame.
 It must derive previous/added member sets and the appended log representation.
 It stops before local retirement witnesses and membership guards.
+Worker `2a020198-af17-47bf-b45b-0b82864a50ad` owns only new
+`NativeMembershipTailAssignment.lean`. It extends from `suffix.guardsAsserted`
+through the committed-current witness and completed-retirement loop to
+`suffix.writerBefore`.
+`NativeMembershipComplete.membership_finish_assignment` is committed as
+`d5e69756d`. It extends a satisfying pre-write assignment through the actual
+allocation, source-row, and global writes. It reuses the pre-write Model facts.
+The build and import audit pass in `native-membership-finish-assignment-build.log`
+and `native-membership-finish-assignment-import-tests.log`.
+Commit `9dc1092c0` adds `NativeArrayMembershipTransition.lean` and
+`NativeMembershipChangeEncoding.lean`. The exact native membership relation
+uses the existing update operation and proves Model correspondence and existence.
+`membership_change_frame_success` now proves native-step soundness from actual
+encoder assertions, using the shared Model-equivalence transport.
+Bootstrap preservation is also proved. Builds pass in
+`native-membership-transition-build.log` and `native-membership-frame-sound-build.log`;
+the import audit passes. Assignment completeness and public wiring remain pending.
+
+Three public Model fixture tests are added but deliberately uncommitted:
+`test_public_model_append_receives`, `test_public_model_append_receive_hints`,
+and `test_public_model_membership_changes`. They reuse the existing 1,344,
+110, and 1,572 Model cases. The failing-first run is in
+`native-core-public-failing-first.log`. Canonical minimal receive input still
+falls through to the local decoder, reporting `property not found: node`;
+see `native-public-receive-decoder-before.log`.
+Stage each test only after its public action works.
 `NativeMembershipChange.lean`, `NativeMembershipRowTerms.lean`, and
 `NativeMembershipChangeFixtureMain.lean` are committed as `a006368c5`.
 The private action composes the proved guards, new log entry, local and global
