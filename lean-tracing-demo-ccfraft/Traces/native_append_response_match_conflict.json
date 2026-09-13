@@ -1,0 +1,14 @@
+{
+  "nodes": ["a", "b"],
+  "bootstrap": ["a"],
+  "instructions": [
+    {"kind": "allocated", "node": "a", "value": true},
+    {"kind": "role", "node": "b", "value": "leader"},
+    {"kind": "currentTerm", "node": "b", "value": 1},
+    {"kind": "queuePoint", "source": "a", "destination": "b", "index": 0,
+     "value": {"kind": "appendEntriesResponse", "source": "a", "destination": "b",
+               "term": 1, "success": true, "lastLogIndex": 7}},
+    {"kind": "receiveAppendEntriesResponse", "source": "a", "destination": "b"},
+    {"kind": "matchIndex", "node": "b", "peer": "a", "value": 0}
+  ]
+}
