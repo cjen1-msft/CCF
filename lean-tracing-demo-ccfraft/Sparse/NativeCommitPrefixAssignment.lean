@@ -4,8 +4,8 @@
 import Sparse.NativeCommitExecution
 import Sparse.NativeCommitIndexAssignment
 import Sparse.NativeLogSummaryAssignment
-import Sparse.NativeRetirementRefreshAssignment
 import Sparse.NativeCommitTermsEncoding
+import Sparse.NativeRetirementTailPrefixAssignment
 
 set_option autoImplicit false
 
@@ -119,33 +119,37 @@ theorem commit_prefix_assignment {width : PNat} [Bootstrap (Fin width)]
     columnsRep.agrees_below before assignment bestAssignment frame valid assignmentToBest
   have bestOldRep :=
     node_row_snapshot_rep bestAssignment before.toColumns frame.nodes bestRep.nodes source
-  obtain ⟨refreshAssignment, refreshAgreement, refreshBaseHolds, refreshAccepted⟩ :=
-    retirement_refresh_assignment prefixStates.bestAsserted bestAssignment bestAssertedHolds
-      before.bootstrap terms.old.logLength terms.old.logEntries source row.log
-      sameBootstrap bestOldBounded.logLength bestOldBounded.logEntries
-      bestOldRep.logLength bestOldRep.logEntries
-  rw [execution.bestAssertedNext] at refreshAccepted
-  have actualRefreshAccepted :
-      (retirementRefreshConstraints width before.bootstrap terms.old.logLength
-        terms.old.logEntries source terms.first terms.retirement terms.signature
-        terms.retired).eval refreshAssignment Locals.empty = true := by
-    simpa [terms, commitExecutionTerms] using refreshAccepted
-  have firstHolds :=
-    fresh_holds prefixStates.bestAsserted refresh.firstFresh (before.next + 2)
-      runs.firstRun refreshAssignment refreshBaseHolds
-  have retirementHolds :=
-    fresh_holds refresh.firstFresh refresh.retirementFresh (before.next + 3)
-      runs.retirementRun refreshAssignment firstHolds
-  have signatureHolds :=
-    fresh_holds refresh.retirementFresh refresh.signatureFresh (before.next + 4)
-      runs.signatureRun refreshAssignment retirementHolds
-  have retiredHolds :=
-    fresh_holds refresh.signatureFresh refresh.retiredFresh (before.next + 5)
-      runs.retiredRun refreshAssignment signatureHolds
-  have refreshAssertedHolds : Holds refresh.refreshAsserted.assertions.toList
-      refreshAssignment :=
-    assertion_extension_holds _ refresh.retiredFresh refresh.refreshAsserted
-      runs.refreshRun refreshAssignment retiredHolds actualRefreshAccepted
+  have bestValue' :
+      terms.best.eval bestAssignment Locals.empty = (best : Int) := by
+    simpa [terms, commitExecutionTerms] using bestValue
+  have bestBounded :
+      terms.best.symbols.all
+        (fun symbol => symbol.2 < prefixStates.bestAsserted.next) = true := by
+    simp only [terms, commitExecutionTerms, Term.symbols, List.all_cons,
+      List.all_nil, Bool.and_true, decide_eq_true_eq]
+    rw [execution.bestAssertedNext]
+    omega
+  let tailStates := commitTailStates states
+  have tailExecution :=
+    commit_tail_execution source before after states execution
+  obtain ⟨refreshAssignment, refreshAgreement, refreshAssertedHoldsRaw,
+      output, outputRepRaw, outputModel⟩ :=
+    retirement_tail_prefix_assignment before.bootstrap source terms.old terms.best
+      (commitGuards before.toColumns source terms.best)
+      prefixStates.bestAsserted after tailStates tailExecution bestAssignment
+      bestAssertedHolds row bestOldRep bestOldBounded best bestValue' bestBounded
+      sameBootstrap
+  have refreshAssertedHolds :
+      Holds refresh.refreshAsserted.assertions.toList refreshAssignment := by
+    simpa [tailStates, commitTailStates] using refreshAssertedHoldsRaw
+  have outputRep : terms.values.Rep refreshAssignment output := by
+    have tailStartNext :
+        prefixStates.bestAsserted.next = before.next + 2 := by
+      simpa [prefixStates] using execution.bestAssertedNext
+    simp only [retirementTailTerms] at outputRepRaw
+    rw [tailStartNext] at outputRepRaw
+    simpa [terms, retirementTailTerms, commitExecutionTerms, Nat.add_assoc] using
+      outputRepRaw
   have assignmentToRefresh : assignment.AgreesBelow before.next refreshAssignment :=
     assignmentToBest.trans
       (refreshAgreement.restrict (by rw [execution.bestAssertedNext]; omega))
@@ -154,20 +158,10 @@ theorem commit_prefix_assignment {width : PNat} [Bootstrap (Fin width)]
       assignmentToRefresh
   have refreshBest :
       terms.best.eval refreshAssignment Locals.empty = (best : Int) := by
-    have bestValue' :
-        terms.best.eval bestAssignment Locals.empty = (best : Int) := by
-      simpa [terms, commitExecutionTerms] using bestValue
     have same := refreshAgreement .int (before.next + 1) (by
       rw [execution.bestAssertedNext]
       omega)
     simpa [terms, commitExecutionTerms, Term.eval] using same.symm.trans bestValue'
-  have refreshOldRep :=
-    node_row_snapshot_rep refreshAssignment before.toColumns frame.nodes
-      refreshRep.nodes source
-  obtain ⟨output, outputRep, outputModel⟩ :=
-    commit_refresh_constraints_output_sound refreshAssignment before.bootstrap
-      terms.old source terms.best terms.first terms.retirement terms.signature
-      terms.retired row best refreshOldRep sameBootstrap refreshBest actualRefreshAccepted
   have outputState :
       output.toModel =
         refreshRetirementState source
