@@ -289,11 +289,16 @@ The 29 parameter-domain cases and 30 parameterized client cases pass in
 commit actions and a numeric-looking name whose value is different.
 Concrete core scripts stay byte-identical, with unchanged instruction ownership
 groups, in `native-parameterized-core-tests.log`.
-The parameter prefix and parameterized whole-trace correspondence are not yet
-proved. The public encoder and raw reducer have not switched to this compiler.
+`NativeNatParametersEncoding` is accepted and parent-owned. It proves exact
+declaration execution, natural valuation soundness and specific-assignment
+completeness, and argument evaluation, bounds, and preservation under assignment
+extension. Count zero and equal parameter values need no separate assumptions.
+The parent build is `native-nat-parameters-parent-build.log`.
+Parameterized whole-trace correspondence is not yet proved. The public encoder
+and raw reducer have not switched to this compiler.
 Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns
-`NativeNatParametersEncoding`, proving exact declaration execution, natural
-valuation soundness/completeness, and argument evaluation/preservation.
+`NativeClientRequestAssignment`, composing the shared append prefix,
+retirement tail, and submitted write while preserving the supplied assignment.
 
 Commit `36efa30f6` adds a private typed packet-pattern representation, SMT
 terms, strict JSON decoding, and fixtures. All seven existing packet families
