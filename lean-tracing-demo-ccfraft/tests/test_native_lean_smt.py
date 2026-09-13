@@ -175,8 +175,10 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeArraySignature",
             "Sparse.NativeArraySignatureTransition",
             "Sparse.NativeSignatureTermsEncoding",
+            "Sparse.NativeSignaturePrefix",
             "Sparse.NativeSignature",
             "Sparse.NativeRetirementTail",
+            "Sparse.NativeRetirementTailExecution",
         ):
             visit(module)
         forbidden = {
@@ -2245,6 +2247,11 @@ class NativeLeanSmtTests(unittest.TestCase):
                 "native_commit_advancement_conflict",
                 "NativeAdvanceCommitFixtureMain",
                 1,
+            ),
+            (
+                "native_signature_append_conflict",
+                "NativeSignCommittableFixtureMain",
+                2,
             ),
         ):
             with self.subTest(trace=trace):
