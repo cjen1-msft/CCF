@@ -2259,6 +2259,70 @@ class NativeLeanSmtTests(unittest.TestCase):
             "Traces/native_client_request_duplicate_conflict.json", {1, 2}
         )
 
+    def run_raw_capture(self, capture, output):
+        requested = os.environ.get("Z3")
+        solver = find_z3(Path(requested) if requested else None)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "native_lean.py",
+                str(capture),
+                "--output-dir",
+                str(output),
+                "--z3",
+                str(solver),
+                "--raw",
+                "--bootstrap",
+                "0",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        run = NativeRun.load(output)
+        self.assertEqual(json.loads(result.stdout), run.result)
+        self.assertEqual(
+            run.result["assurance"],
+            {"full_model_to_script_proved": False, "raw_reducer_integrated": True},
+        )
+        return run
+
+    def test_raw_capture_cli_and_explorer(self):
+        capture = ROOT / "Traces/Captured/soft_rollback.ndjson"
+        with tempfile.TemporaryDirectory(prefix="native-raw-capture-") as temporary:
+            output = Path(temporary)
+            run = self.run_raw_capture(capture, output)
+            self.assertEqual(run.result["status"], "unsat")
+            api = ExplorerApi(run)
+            self.assertEqual(
+                (output / "raw.ndjson").read_bytes(), capture.read_bytes()
+            )
+            self.assertEqual(len(run.document["instructions"]), 1566)
+            self.assertEqual(len(api.get("/api/reduction")["steps"]), 1566)
+            core = api.get("/api/core")
+            self.assertTrue(core["instructions"])
+            self.assertFalse(core["minimal"])
+            raw_lines = capture.read_text(encoding="utf-8").splitlines()
+            for index in core["instructions"]:
+                detail = api.get(f"/api/instructions/{index}")
+                self.assertTrue(detail["origin"]["records"])
+                for record in detail["origin"]["records"]:
+                    self.assertEqual(record["raw"], raw_lines[record["line"] - 1])
+
+    def test_raw_bootstrap_prefix_is_sat(self):
+        capture = ROOT / "Traces/Captured/soft_rollback.ndjson"
+        with tempfile.TemporaryDirectory(prefix="native-raw-bootstrap-") as temporary:
+            root = Path(temporary)
+            prefix = root / "bootstrap.ndjson"
+            prefix.write_bytes(b"".join(capture.read_bytes().splitlines(keepends=True)[:9]))
+            run = self.run_raw_capture(prefix, root / "run")
+            self.assertEqual(run.result["status"], "sat")
+            self.assertFalse(run.core)
+            self.assertTrue(run.document["instructions"])
+            self.assertEqual(run.document["unknowns"], [])
+
     def parameterized_client_traces(self):
         models = [
             deepcopy(model)
@@ -2332,6 +2396,20 @@ class NativeLeanSmtTests(unittest.TestCase):
             self.parameterized_client_traces(),
             28,
             "parameterized-client",
+        )
+
+    def test_public_parameterized_client_requests(self):
+        models = self.parameterized_client_traces()
+        scripts = self.encode([model["trace"] for model in models])
+        self.solve(
+            [
+                {
+                    "name": f"public-parameterized-{model['name']}",
+                    "script": script,
+                    "expected": model["expected"],
+                }
+                for model, script in zip(models, scripts, strict=True)
+            ]
         )
 
     def test_transaction_parameter_input_errors(self):

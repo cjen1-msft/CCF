@@ -12,15 +12,19 @@ import subprocess
 from pathlib import Path
 
 from native_input import canonical_json, unique_object
+from native_origin import RAW_ARTIFACTS, reduce_raw
+from native_reduction import native_document
 from native_run import (
-    ASSURANCE,
+    ARTIFACTS,
     ENCODER,
     RUN_SCHEMA,
     artifact_hashes,
     core_names,
+    run_assurance,
     validate_encoding,
 )
 from native_solver import find_z3, run_z3
+from reduction import ReductionError
 from Shared.solver import ValidationError
 
 ROOT = Path(__file__).resolve().parent
@@ -64,19 +68,40 @@ def main() -> None:
     parser.add_argument("trace", type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--z3", type=Path)
+    parser.add_argument(
+        "--raw", action="store_true", help="reduce a raw NDJSON capture"
+    )
+    parser.add_argument(
+        "--bootstrap", nargs="+", help="explicit initial configuration for --raw"
+    )
     args = parser.parse_args()
+    if args.raw != (args.bootstrap is not None):
+        parser.error("--raw requires --bootstrap; --bootstrap is only valid with --raw")
     try:
+        reserved = ARTIFACTS + RAW_ARTIFACTS + ("result.json", "result.json.tmp")
+        if args.trace.resolve() in {
+            (args.output_dir / name).resolve() for name in reserved
+        }:
+            raise ValidationError("input trace aliases a reserved output artifact")
         args.output_dir.mkdir(parents=True, exist_ok=True)
         result_path = args.output_dir / "result.json"
         result_path.unlink(missing_ok=True)
-        document = json.loads(
-            args.trace.read_text(encoding="utf-8"), object_pairs_hook=unique_object
+        raw_data = args.trace.read_bytes()
+        origin = reduce_raw(raw_data) if args.raw else None
+        document = (
+            native_document(origin.trace, args.bootstrap)
+            if origin is not None
+            else json.loads(raw_data.decode("utf-8"), object_pairs_hook=unique_object)
         )
-        details = encode_details(document)
         z3 = find_z3(args.z3)
+        details = encode_details(document)
         formula = args.output_dir / "trace.smt2"
         formula.write_text(details["script"], encoding="ascii")
-        for name, value in (("input.json", document), ("encoding.json", details)):
+        artifacts = [("input.json", document), ("encoding.json", details)]
+        if origin is not None:
+            (args.output_dir / "raw.ndjson").write_bytes(raw_data)
+            artifacts.append(("reduction.json", origin.certificate))
+        for name, value in artifacts:
             (args.output_dir / name).write_text(
                 json.dumps(value, ensure_ascii=True, allow_nan=False) + "\n",
                 encoding="utf-8",
@@ -95,13 +120,14 @@ def main() -> None:
             "solver": "z3",
             "status": result.status,
             "solver_ms": result.wall_time_ms,
-            "assurance": ASSURANCE,
-            "artifacts": artifact_hashes(args.output_dir),
+            "assurance": run_assurance(raw=args.raw),
+            "artifacts": artifact_hashes(args.output_dir, raw=args.raw),
+            **({"origin": "raw"} if args.raw else {}),
         }
         temporary_result = args.output_dir / "result.json.tmp"
         temporary_result.write_text(json.dumps(summary) + "\n", encoding="utf-8")
         temporary_result.replace(result_path)
-    except (ValidationError, OSError, ValueError) as error:
+    except (ValidationError, ReductionError, OSError, ValueError) as error:
         parser.exit(2, f"native Lean encoder: {error}\n")
     print(json.dumps(summary))
 

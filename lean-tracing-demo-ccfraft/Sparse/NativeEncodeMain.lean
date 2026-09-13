@@ -1,7 +1,7 @@
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-import Sparse.NativeFrameEncode
+import Sparse.NativeParameterizedFrame
 
 def main (arguments : List String) : IO UInt32 := do
   let input <- (← IO.getStdin).readToEnd
@@ -10,10 +10,10 @@ def main (arguments : List String) : IO UInt32 := do
     if input.trimAscii.toString != document.compress then
       throw "expected canonical JSON: sorted keys, no extra whitespace or duplicate keys"
     match arguments with
-    | [] => CCFRaft.NativeEncode.encodeFrame document
-    | ["--details"] => return (← CCFRaft.NativeEncode.encodeFrameDetails document).compress
+    | [] => CCFRaft.NativeEncode.encodeParameterizedFrame document
+    | ["--details"] => return (← CCFRaft.NativeEncode.encodeParameterizedFrameDetails document).compress
     | ["--batch"] => do
-      let scripts <- (<- document.getArr?).mapM CCFRaft.NativeEncode.encodeFrame
+      let scripts <- (<- document.getArr?).mapM CCFRaft.NativeEncode.encodeParameterizedFrame
       return (Lean.toJson scripts).compress
     | _ => throw "usage: NativeEncodeMain [--batch | --details]"
   match result with

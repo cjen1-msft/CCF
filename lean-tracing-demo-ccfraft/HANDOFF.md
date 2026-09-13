@@ -2,7 +2,7 @@
 
 ## Current direction: native-array exact encoding
 
-### Immediate continuation: public parameterized encoder and raw runs
+### Completed delivery: reducer integration and explorer API
 
 The user now prioritizes `requestVote`, receive requestVote, `appendEntries`,
 receive appendEntries, and membership change. Vote sends, vote-request receive,
@@ -10,8 +10,9 @@ append sends, append-request receive, and membership change are public.
 All action names needed by the saved captures are now public, including
 `clientRequest`. The raw adapter dispatches typed receives and retains shared
 transaction-name bindings. Parameterized whole-trace, decoded-document, and
-actual emitted-script correspondence are accepted. The next step switches the
-public entry point and runs the prepared raw CLI end-to-end gate.
+actual emitted-script correspondence are accepted. The public entry point uses
+that compiler, and `native_lean.py --raw --bootstrap ...` runs the complete
+Python reduction, Lean emission, Z3, retained-artifact, and explorer path.
 Delegate mechanical proofs to `gpt-5.6-sol` with medium reasoning effort.
 The main agent owns semantic lemmas. Build reusable proof components where
 they remove repeated execution decomposition and assignment-extension repair.
@@ -19,8 +20,24 @@ This supersedes the earlier serial-only worker instruction.
 
 Append-request receipt and membership change have whole-action Model and
 exact native-step soundness and assignment completeness. Both are public.
-The explorer already binds raw events and reduction decisions to instructions.
-Both assurance flags remain false until public raw integration is accepted.
+The explorer binds raw events and reduction decisions to instructions.
+Raw runs set `raw_reducer_integrated` to true; direct Model inputs leave it false.
+`full_model_to_script_proved` remains false because unsupported Model actions
+remain outside the delivered subset. Neither flag proves the reducer or solver.
+All workers are idle, and accepted files are parent-owned.
+
+Both saved captures and all four mutations ran through the public path.
+Retained runs and `summary.json` are in the session's `native-public-raw-captures/`.
+The full captures are UNSAT because of the documented configuration-callback
+atomicity disagreement. The nine-record bootstrap prefix is SAT.
+No Model or implementation behavior was changed to hide the disagreement.
+The requested integration/demo scope is complete; broader Model action coverage
+or a change to callback atomicity would be separate work.
+
+### Implementation checkpoints
+
+The sections below retain earlier build and proof checkpoints. Their historical
+pending-state and assurance notes are superseded by the delivery status above.
 
 `advanceCommitIndex` was the first unsupported action in both saved captures,
 at normalized step 12. Its private correspondence is now complete.
@@ -317,8 +334,8 @@ declaration execution, natural valuation soundness and specific-assignment
 completeness, and argument evaluation, bounds, and preservation under assignment
 extension. Count zero and equal parameter values need no separate assumptions.
 The parent build is `native-nat-parameters-parent-build.log`.
-Parameterized whole-trace correspondence is not yet proved. The public encoder
-and raw reducer have not switched to this compiler.
+Parameterized whole-trace correspondence is proved, and the public encoder
+and raw reducer now use this compiler.
 `NativeClientRequestAssignment` is accepted and parent-owned. Its specific
 assignment construction composes the shared append prefix, retirement tail,
 and submitted write while preserving all original symbols.
@@ -354,11 +371,12 @@ to the proved trace and emitted script.
 Parent logs are `native-parameter-materialize-parent-build.log` and
 `native-parameterized-model-consistency-build.log`.
 `parameterized_client_traces` shares the existing 30 cases between private and
-prepared public acceptance. The private cases still pass in
+public acceptance. The private cases pass in
 `native-shared-parameter-fixtures-tests.log`.
 The parent added build-stable `encodeParameterizedFrame` and
-`encodeParameterizedFrameDetails` wrappers. `NativeEncodeMain` still uses the
-concrete compiler until the decoded-script proof is accepted.
+`encodeParameterizedFrameDetails` wrappers. `NativeEncodeMain` now uses them.
+Public parameterized cases, old-input compatibility, strict input checks,
+and the raw end-to-end gate pass in `native-public-raw-integration-tests.log`.
 
 `raw_normalization.normalize(..., native_ids=True)` now indexes observed
 identity strings without fixed decimal IDs or the historical 15-slot limit.
@@ -373,9 +391,8 @@ step order, provenance indexes, and response-correlation evidence.
 Unsupported native actions and receive families fail explicitly.
 Python coverage and private Lean decoding of both captures and all four
 mutations pass in `native-reduction-projection-tests.log` and
-`native-reduction-decode-tests.log`. This is library projection and decode
-coverage, not yet raw CLI/solver/explorer integration. Both assurance flags
-remain false.
+`native-reduction-decode-tests.log`. Public CLI/solver/explorer integration
+is now covered separately by `native-raw-acceptance-tests.log`.
 
 `native_origin.py` reconstructs normalization and projection from retained raw
 bytes and checks them against the retained reduction and native document.
@@ -391,15 +408,15 @@ snapshot. Requests never reread source files or invoke the reducer.
 Changed and mixed artifacts, including rehashed inconsistent inputs, fail.
 Legacy reduced-input runs keep their existing response shapes.
 These contracts pass in `native-raw-explorer-tests.log`.
-The native CLI does not yet produce raw manifests.
-The parent has prepared an uncommitted `--raw --bootstrap ...` route and
-`test_native_raw_cli.py`. Mock orchestration checks pass in
+The native CLI produces raw manifests with `--raw --bootstrap ...`.
+`test_native_raw_cli.py` covers orchestration and failures. Those checks pass in
 `native-raw-cli-orchestration-tests.log`; these are not semantic evidence.
 The route rejects input/output artifact aliases before touching the source.
-`test_raw_capture_cli_and_explorer` is the prepared public end-to-end gate.
-It currently fails because the public Lean decoder rejects `unknowns`, recorded
-in `native-raw-cli-failing-first.log`. Do not accept or advertise raw CLI support
-until parameterized correspondence and the public compiler switch are complete.
+`test_raw_capture_cli_and_explorer` now passes after the decoder failure recorded
+in `native-raw-cli-failing-first.log`. `test_raw_bootstrap_prefix_is_sat` confirms
+a SAT raw control. Both use the actual public Lean encoder and Z3.
+Per-run integration claims require matching raw artifacts. Direct Model runs
+cannot claim raw integration. The acceptance log is `native-raw-acceptance-tests.log`.
 Retained native inputs now accept optional, validated `unknowns` declarations,
 with exact input binding and existing strict field rejection unchanged.
 Those artifact checks pass in `native-parameter-artifacts-tests.log`.

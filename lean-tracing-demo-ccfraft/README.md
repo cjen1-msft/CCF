@@ -57,7 +57,8 @@ or restricting possible executions is not a performance optimization.
 
 ### Native-array prototype
 
-The public Lean encoder uses `Sparse/NativeFrameEncode.lean` and shares
+The public Lean encoder uses `Sparse/NativeParameterizedFrame.lean` over
+`Sparse/NativeFrameEncode.lean` and shares
 local-state compilation with `Sparse/NativeEncode.lean`.
 It accepts `checkQuorum`, `requestVote`, `requestPreVote`, `updateTerm`, `timeout`,
 `becomePreVoteCandidate`, `appendEntries`, `receiveRequestVote`,
@@ -137,7 +138,12 @@ the commit index, including when the old log already ends with a signature.
 Commit advancement and signature writing share the same retirement scans,
 guards stage, and row writer, with reusable soundness and assignment proofs.
 Leadership promotion reuses that retirement tail with a prepared, truncated row.
-`clientRequest` requires a declared `node` and a natural `transaction`.
+`clientRequest` requires a declared `node` and a natural `transaction`, or
+`{"unknown":"name"}` referencing the optional root `unknowns` array.
+Parameter names must be distinct nonempty strings. One shared natural value
+is chosen for each name across the whole trace. Names are opaque, so `"5"`
+does not mean the value 5. Different names are not forced to have different values.
+Without `unknowns`, existing concrete inputs retain the same emitted script.
 The node must be an allocated leader. Both its old and refreshed membership
 must differ from `retiredCommitted`, and the transaction must be absent from
 the original global submitted set. The action appends one current-term
@@ -217,7 +223,7 @@ SAT and UNSAT are accepted only as solver verdicts. A second `unknown` remains
 inconclusive, and solver errors are not retried.
 
 ```sh
-lake build Sparse Sparse.NativeEncodeMain Sparse.NativeSmtFixtureMain
+lake build Sparse.NativeParameterizedFrameDecoded Sparse.NativeEncodeMain
 python3 native_lean.py reduced.json --output-dir /tmp/native-lean --z3 /path/to/z3
 CCF_NATIVE_ARRAY_TESTS=1 Z3=/path/to/z3 python3 -m unittest discover -s tests -p test_native_lean_smt.py -v
 ```
@@ -231,6 +237,33 @@ The native runner uses Z3 explicitly, without a solver fallback. Lean emits the
 unsat-core query alongside the assertion script. Python sends that query only
 after UNSAT. Encoding and run artifacts use schema version 2 and identify Z3.
 The explorer rejects version 1 artifacts rather than reusing older solver claims.
+
+#### Run a raw capture
+
+```sh
+python3 native_lean.py Traces/Captured/soft_rollback.ndjson \
+	--raw --bootstrap 0 --output-dir /tmp/native-raw --z3 /path/to/z3
+python3 explorer_api.py /tmp/native-raw --port 8091
+```
+
+`--bootstrap` is required with `--raw`. It states the Model's initial
+configuration; the runner does not infer it or reuse historical identity slots.
+All observed identity strings form the declared universe. Python performs the
+audited reduction and normalization, then Lean emits SMT and Z3 solves it.
+There is no historical bounded-encoder fallback.
+The input must not alias a reserved output artifact, including through symlinks.
+Failed reduction, encoding, or solving leaves no successful `result.json`.
+
+Both saved captures currently return UNSAT because configuration callbacks
+send a heartbeat before the implementation advances its log frontier, while
+the Model appends the configuration atomically. This is a reduction/Model
+atomicity disagreement, not evidence of a production defect.
+The first nine records of `soft_rollback.ndjson`, the audited bootstrap prefix,
+are SAT. `native_configuration_callback_heartbeat_conflict.json` isolates the
+disagreement; changing its final `batchEnd` from 4 to 5 gives a Model-admitted
+SAT contrast. The runner never changes the captured heartbeat to obtain SAT.
+
+#### SMT backend
 
 cvc5 1.3.4 returned incorrect UNSAT for a satisfiable constant-array and
 configuration-selector fixture with unqualified pair constructors.
@@ -394,7 +427,7 @@ decoder. This does not prove that a raw-event reducer interpreted the
 implementation correctly, or verify Lean's JSON parser and IO runtime.
 
 [`NativeFrameDecoded`](Sparse/NativeFrameDecoded.lean) extends this correspondence
-to the public encoder, including `hasJoined`, `preVoteStatus`, `retirementCompleted`,
+to concrete frame instructions, including `hasJoined`, `preVoteStatus`, `retirementCompleted`,
 `submittedTxId`, `queueLength`, and exact `queuePoint` packets of all seven kinds.
 `encodeFrame_document_iff` and `encodeFrameDetails_document_iff` cover the
 actual plain and details outputs. `FrameDocumentConsistent` uses the broader
@@ -404,11 +437,17 @@ joined sets independently of allocation and bootstrap membership.
 quorum, vote-send, vote-receive, append-send, term-update, and campaign steps without restricting
 unobserved global state or queues.
 
-This Lean encoder remains experimental. Remaining Model actions, observations,
-and raw reducer integration are unfinished. The API's full-model assurance
-flag remains false; current coverage is eight actions, sixteen local observation
-kinds, all four global observation kinds, queue lengths, and exact packet points.
-Partial packet observations remain unsupported.
+[`NativeParameterizedFrameDecoded`](Sparse/NativeParameterizedFrameDecoded.lean)
+covers the public encoder with shared transaction parameters.
+`encodeParameterizedFrame_document_iff` and
+`encodeParameterizedFrameDetails_document_iff` connect actual emitted text to
+one Model execution under one fixed natural valuation. Initial frame domains
+and parameter declarations are included in both proof directions.
+
+The encoder remains experimental and rejects Model actions outside the supported
+list above. `full_model_to_script_proved` therefore remains false.
+`raw_reducer_integrated` is true for runs with retained raw artifacts and false
+for direct Model inputs. It records integration, not reducer correctness.
 
 `NativeLogTerm` constructs canonical packet logs from a ground default array
 and one store per supplied entry. `NativePacketTerm` proves that complete
@@ -818,7 +857,7 @@ A changed reducer can therefore reject an older retained run.
 Instruction details include the reduced step, correlation evidence, and original
 source records. `/api/reduction` also preserves preprocessing and omission decisions.
 Request handling never rereads source files or invokes the reducer.
-The native CLI does not yet produce these raw manifests.
+`native_lean.py --raw --bootstrap ...` produces these raw manifests.
 
 SAT, UNSAT, and unknown remain distinct. The core is not minimized and is not a
 replayable instruction subsequence. Raw provenance identifies recorded source

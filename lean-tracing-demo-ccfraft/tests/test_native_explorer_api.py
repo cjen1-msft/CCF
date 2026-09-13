@@ -124,6 +124,7 @@ class NativeExplorerTests(unittest.TestCase):
             for index in range(2, len(self.document["instructions"]))
         )
         self.result["origin"] = "raw"
+        self.result["assurance"]["raw_reducer_integrated"] = True
         (self.root / "raw.ndjson").write_bytes(data)
         (self.root / "reduction.json").write_text(
             json.dumps(origin.certificate), encoding="utf-8"
@@ -197,6 +198,7 @@ class NativeExplorerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "origin"):
             NativeRun.load(self.root)
         self.result["origin"] = "raw"
+        self.result["assurance"]["raw_reducer_integrated"] = True
         (self.root / "result.json").write_text(
             json.dumps(self.result), encoding="utf-8"
         )
@@ -210,6 +212,12 @@ class NativeExplorerTests(unittest.TestCase):
         with self.assertRaises(ApiError) as error:
             api.get("/api/reduction")
         self.assertEqual(error.exception.status, 404)
+
+    def test_raw_integration_claim_requires_raw_artifacts(self):
+        self.result["assurance"]["raw_reducer_integrated"] = True
+        self.save()
+        with self.assertRaisesRegex(ValidationError, "claims"):
+            NativeRun.load(self.root)
 
     def test_unknown_does_not_become_sat(self):
         self.result["status"] = "unknown"
@@ -354,6 +362,7 @@ class NativeExplorerTests(unittest.TestCase):
         self.addCleanup(server.server_close)
         self.addCleanup(thread.join)
         self.addCleanup(server.shutdown)
+
         def request(method, target, headers=None):
             connection = HTTPConnection(*server.server_address, timeout=5)
             try:

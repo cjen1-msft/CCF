@@ -32,6 +32,10 @@ ASSURANCE = {
 }
 
 
+def run_assurance(*, raw: bool) -> dict[str, bool]:
+    return {**ASSURANCE, "raw_reducer_integrated": raw}
+
+
 def _object(value: object, fields: set[str], where: str) -> dict:
     if not isinstance(value, dict) or set(value) != fields:
         raise ValidationError(f"{where}: expected fields {sorted(fields)}")
@@ -190,7 +194,9 @@ class NativeRun:
         if result["solver"] != "z3":
             raise ValidationError("unsupported native solver")
         assurance = _object(result["assurance"], set(ASSURANCE), "assurance")
-        if any(assurance[key] is not value for key, value in ASSURANCE.items()):
+        if any(
+            assurance[key] is not value for key, value in run_assurance(raw=raw).items()
+        ):
             raise ValidationError("unsupported native proof or integration claims")
         duration = result["solver_ms"]
         if (
