@@ -188,6 +188,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeSignCommittableEncoding",
             "Sparse.NativeQueuePattern",
             "Sparse.NativePacketPatternEncoding",
+            "Sparse.NativeQueuePatternEncoding",
             "Sparse.NativeVoteResponse",
         ):
             visit(module)
