@@ -190,6 +190,8 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativePacketPatternEncoding",
             "Sparse.NativeQueuePatternEncoding",
             "Sparse.NativeVoteResponse",
+            "Sparse.NativeArrayVoteResponse",
+            "Sparse.NativeVoteResponseExecution",
         ):
             visit(module)
         forbidden = {
