@@ -2259,7 +2259,7 @@ class NativeLeanSmtTests(unittest.TestCase):
             "Traces/native_client_request_duplicate_conflict.json", {1, 2}
         )
 
-    def test_parameterized_client_requests(self):
+    def parameterized_client_traces(self):
         models = [
             deepcopy(model)
             for model in self.client_request_traces()
@@ -2324,8 +2324,14 @@ class NativeLeanSmtTests(unittest.TestCase):
                 {"name": "literal-already-submitted", "trace": literal, "expected": "unsat"},
             ]
         )
+        return models
+
+    def test_parameterized_client_requests(self):
         self.assert_internal_model_traces(
-            "NativeParameterizedFrameFixtureMain", models, 28, "parameterized-client"
+            "NativeParameterizedFrameFixtureMain",
+            self.parameterized_client_traces(),
+            28,
+            "parameterized-client",
         )
 
     def test_transaction_parameter_input_errors(self):

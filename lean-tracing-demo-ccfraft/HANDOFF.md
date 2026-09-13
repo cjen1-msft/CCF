@@ -329,7 +329,21 @@ transaction-symbol bound from the actual runtime and uses independent soundness
 to represent the exact supplied native successor, preserving the original
 assignment below its counter. It adds no domain or reachability assumptions.
 The parent build is `native-client-request-complete-parent-build.log`.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` is idle.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns
+`NativeParameterizedFrameTrace` and a reusable bootstrap-preservation lemma
+in `NativeFrameStep`. It composes core continuations with dynamic client steps
+under one fixed natural valuation, preserving parameters across assignments.
+Decoded-document and emitted-script correspondence are outside that worker scope.
+
+`ParameterizedFrameInstruction.materialize values` now gives the concrete
+instruction semantics. `NativeParameterizedFrameDecoded` defines Model
+consistency using one existential valuation for the entire instruction list.
+These definitions are built, but parameterized correspondence is still pending.
+Parent logs are `native-parameter-materialize-parent-build.log` and
+`native-parameterized-model-consistency-build.log`.
+`parameterized_client_traces` shares the existing 30 cases between private and
+prepared public acceptance. The private cases still pass in
+`native-shared-parameter-fixtures-tests.log`.
 
 `raw_normalization.normalize(..., native_ids=True)` now indexes observed
 identity strings without fixed decimal IDs or the historical 15-slot limit.
