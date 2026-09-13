@@ -482,10 +482,9 @@ proof to the Model receive step using the conditional stepdown/handler/refresh
 facts, with both soundness and specific-assignment extension.
 The parent build and import audit pass in `native-append-frame-parent-build.log`
 and `native-append-frame-import-tests.log`.
-Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` returned only compiling
+Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` initially returned only compiling
 declarations in `NativeAppendReceiveExecution.lean`, not an actual-run theorem.
-That checkpoint is uncommitted and not accepted as a proof.
-The worker is idle and no longer owns the file.
+That checkpoint was not accepted as a proof. The worker is idle with no owned files.
 The parent reproduced the elaboration problem with a first-guard-only theorem:
 `simp only [receiveAppend, get_bind_run] at run` did not finish after 240 seconds.
 The parent stopped that probe. Replacing that line with
@@ -493,9 +492,25 @@ The parent stopped that probe. Replacing that line with
 The reproducer is `files/AppendExecutionProbe.lean`, with the passing log
 `native-append-first-bind-rewrite-probe.log`. Use shallow rewrites to expose the
 outer action and `get`, rather than simplifying the entire generated body.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns only
-`NativeAppendReceiveExecution.lean`, constructing the actual-run theorem with
-this approach. Keep `NativeAppendReceive.lean` unchanged.
+Worker B completed `receive_append_success` using this approach.
+`NativeAppendReceiveExecution.lean` is committed as `dccdc4b74` after full parent
+inspection, an independent build, and the import audit.
+It derives all per-stage runs from the actual `receiveAppend` run.
+Writer entry preserves the original columns and bootstrap, with counter
+`before.next + 14 + 3 * width`. The final counter is `before.next + 38 + 3 * width`.
+The parent build log is `native-append-execution-parent-build.log`.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns only new
+`NativeAppendReceiveExecutionConstraints.lean`, deriving prefix constraints,
+prior-Holds, and reference preservation from that accepted execution record.
+Keep `NativeAppendReceive.lean` unchanged.
+The parent composed `append_receive_execution_model_sound` in
+`NativeAppendReceiveSound.lean`, committed as `ed9226cf1`.
+Given the execution record and emitted prefix constraints, it derives the selected
+request, Model enablement, and final-frame correspondence.
+Completed-retirement bits remain arbitrary during stepdown.
+The build and import audit pass in `native-append-execution-model-sound-build.log`
+and `native-append-execution-model-sound-import-tests.log`.
+The whole-action wrapper still needs B's constraint-retrieval theorem.
 `NativeAppendReceiveFinalRowTerms.lean` and
 `NativeAppendReceiveFinalRowEncoding.lean` are committed as `158d506bb`.
 They prove candidate stepdown and conditional local retirement refresh,
@@ -596,8 +611,8 @@ refreshed-membership expressions, using the established Model output row
 instead of repeating the retirement witnesses.
 The parent inspected and rebuilt the proof and guard fixture in
 `native-membership-output-guard-parent-build.log`; the import audit passes.
-The next dependency is the actual execution decomposition from A and B,
-followed by whole-action soundness and specific-assignment completeness.
+The next dependencies are membership execution from A and append constraint retrieval
+from B, followed by whole-action soundness and specific-assignment completeness.
 Existing API statements and runtime files remain unchanged.
 
 `NativeArrayCoreActionsFixtureMain` and `NativeCoreActionsFixtureMain` are
