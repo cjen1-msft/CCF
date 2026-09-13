@@ -650,18 +650,26 @@ The parent inspected the complete proof and rebuilt it in
 `native-membership-retirement-assignment-parent-build.log`; the import audit passes.
 The file is parent-owned. Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` is idle.
 Keep `NativeMembershipChange.lean` unchanged.
-Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns only new
-`NativeMembershipLogAssignment.lean`, constructing an assignment through
-`initial.lengthDefined` from the original satisfying frame.
-It must derive previous/added member sets and the appended log representation.
-It stops before local retirement witnesses and membership guards.
+`NativeMembershipLogAssignment.lean` is committed as `8b20d6a5a`.
+It constructs an assignment through `initial.lengthDefined` from the original
+satisfying frame, deriving previous/added sets and the appended log representation.
+The parent inspected the complete proof and rebuilt it in
+`native-membership-log-assignment-parent-build.log`; the import audit passes.
+Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns only
+`NativeMembershipComplete.lean`, composing all four accepted stages into
+`membership_change_model_complete`.
 `NativeMembershipTailAssignment.lean` is committed as `071676cb0`.
 It extends from `suffix.guardsAsserted`
 through the committed-current witness and completed-retirement loop to
 `suffix.writerBefore`.
 The parent inspected the complete proof and rebuilt it in
 `native-membership-tail-assignment-parent-build.log`; the import audit passes.
-The file is parent-owned. Worker `2a020198-af17-47bf-b45b-0b82864a50ad` is idle.
+Worker `2a020198-af17-47bf-b45b-0b82864a50ad` now owns exactly
+`NativeNodeRowWritesEncoding.lean`, `NativeMembershipLogAssignment.lean`, and
+`NativeMembershipTailAssignment.lean`. It adds shared snapshot reference bounds
+and replaces manual snapshot-field unfolding in the two assignment proofs.
+Existing theorem statements stay unchanged. The previously suggested
+`node_row_snapshot_bounded` did not exist when those proofs were written.
 `NativeMembershipComplete.membership_finish_assignment` is committed as
 `d5e69756d`. It extends a satisfying pre-write assignment through the actual
 allocation, source-row, and global writes. It reuses the pre-write Model facts.
@@ -683,7 +691,14 @@ and `test_public_model_membership_changes`. They reuse the existing 1,344,
 `native-core-public-failing-first.log`. Canonical minimal receive input still
 falls through to the local decoder, reporting `property not found: node`;
 see `native-public-receive-decoder-before.log`.
-Stage each test only after its public action works.
+Five more public tests are pending: the two action input-error tests,
+configuration-set decoding, and the two explorer-core tests.
+Stage each public test only after its action works.
+Commit `997954377` adds `Traces/native_append_receive_fifo_conflict.json`,
+`Traces/native_membership_allocation_conflict.json`, and
+`test_core_explorer_fixture_transitions`. Both contradictions and their corrected
+traces pass against the private encoders in `native-core-explorer-fixture-tests.log`.
+The public explorer tests will require instruction indices 8 and 9 in each core.
 `NativeMembershipChange.lean`, `NativeMembershipRowTerms.lean`, and
 `NativeMembershipChangeFixtureMain.lean` are committed as `a006368c5`.
 The private action composes the proved guards, new log entry, local and global
