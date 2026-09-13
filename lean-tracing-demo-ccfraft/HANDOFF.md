@@ -336,6 +336,19 @@ mutations pass in `native-reduction-projection-tests.log` and
 coverage, not yet raw CLI/solver/explorer integration. Both assurance flags
 remain false.
 
+`native_origin.py` reconstructs normalization and projection from retained raw
+bytes and checks them against the retained reduction and native document.
+It exposes each instruction's reduced step, correlation evidence, and original
+records. Bootstrap stays an explicit input assumption.
+All six captures and mutations retain their source-line mapping.
+Changed reductions, captures, and instructions fail in `native-origin-tests.log`.
+This helper is not yet connected to the CLI or retained-run loader.
+The intended retained form adds only `raw.ndjson` and `reduction.json`.
+Normalization is reconstructed rather than stored as a third redundant artifact.
+Retained native inputs now accept optional, validated `unknowns` declarations,
+with exact input binding and existing strict field rejection unchanged.
+Those artifact checks pass in `native-parameter-artifacts-tests.log`.
+
 The private full-capture probe encodes all 1,566 `soft_rollback.ndjson`
 instructions into 5,320 clauses and 21,511,165 SMT bytes in 14.655 seconds.
 A separate Z3 run returns UNSAT in 1.944 seconds with 12 core clauses.
