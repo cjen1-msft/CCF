@@ -13,6 +13,11 @@ The main agent owns semantic lemmas. Build reusable proof components where
 they remove repeated execution decomposition and assignment-extension repair.
 This supersedes the earlier serial-only worker instruction.
 
+Both private core actions now have whole-action Model and exact native-step
+soundness and assignment completeness. Public append-receive integration is the
+active slice, followed by public membership integration. Both assurance flags
+remain false.
+
 Factory tools are unavailable in this session. `NativeDefinitions` and
 `NativeDefinitionsEncoding` now provide reusable heterogeneous definition
 sequences, execution shape, and specific-assignment extension. Campaign writes
@@ -547,10 +552,21 @@ It extends through the enabled or disabled completed-retirement loop and the NAC
 witness, preserving the supplied assignment and original frame representation.
 The parent inspected it and the current-prefix assembly, then built both in
 `native-append-current-tail-parent-build.log`. The import audit passes.
-Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` owns
-`NativeArrayAppendNetwork.lean`. It adds an exact `ReceiveAppend` relation over
-the existing stepdown and consuming operations, with Model correspondence and
-existence from an enabled selected request. No encoder imports belong in that file.
+`NativeArrayAppendNetwork.lean` is committed as `72304303c`.
+It supplies the exact `ReceiveAppend` relation, Model enablement/correspondence,
+and existence from an enabled selected request. Output compatibility also
+preserves exact queues/globals and pointwise Model node values.
+The parent inspected the diff and rebuilt it in
+`native-array-append-transition-parent-build.log`; the import audit passes.
+`NativeAppendReceiveEncoding.lean` is committed as `6b9be8933`.
+`receive_append_frame_success` and `receive_append_complete` connect actual
+encoder runs to the exact native step through shared Model-equivalence transport.
+The parent build passes in `native-append-frame-correspondence-build.log`;
+the import audit passes.
+Worker `b53cfbd8-539b-4835-b9bf-32d4fb1d4892` now owns exactly
+`NativeArrayVote.lean`, `NativeFrameEncode.lean`, `NativeFrameStep.lean`, and
+`NativeFrameTrace.lean` for public `receiveAppendEntries` integration only.
+Membership is the following serial slice. All lower-level files are parent-owned.
 
 `append_receive_prefix_constraints`, committed as `4a74a4892`, exposes the
 existing backward constraint extraction before frame writes.
@@ -655,21 +671,23 @@ It constructs an assignment through `initial.lengthDefined` from the original
 satisfying frame, deriving previous/added sets and the appended log representation.
 The parent inspected the complete proof and rebuilt it in
 `native-membership-log-assignment-parent-build.log`; the import audit passes.
-Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` now owns only
-`NativeMembershipComplete.lean`, composing all four accepted stages into
-`membership_change_model_complete`.
+Commit `b39691ba8` adds `membership_change_model_complete` and the exact native
+`membership_change_complete` wrapper. All four accepted assignment stages compose
+with agreement below the original counter. The parent inspected the composition
+and built both modules in `native-membership-frame-complete-build.log`.
+Both files are parent-owned; worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` is idle.
 `NativeMembershipTailAssignment.lean` is committed as `071676cb0`.
 It extends from `suffix.guardsAsserted`
 through the committed-current witness and completed-retirement loop to
 `suffix.writerBefore`.
 The parent inspected the complete proof and rebuilt it in
 `native-membership-tail-assignment-parent-build.log`; the import audit passes.
-Worker `2a020198-af17-47bf-b45b-0b82864a50ad` now owns exactly
-`NativeNodeRowWritesEncoding.lean`, `NativeMembershipLogAssignment.lean`, and
-`NativeMembershipTailAssignment.lean`. It adds shared snapshot reference bounds
-and replaces manual snapshot-field unfolding in the two assignment proofs.
-Existing theorem statements stay unchanged. The previously suggested
-`node_row_snapshot_bounded` did not exist when those proofs were written.
+Commit `fe88cd8a6` adds `node_row_snapshot_bounded` in
+`NativeNodeRowWritesEncoding.lean`. The log and tail assignments reuse its field
+bounds instead of unfolding snapshot representation choices themselves.
+The parent inspected the diff and rebuilt both callers in
+`native-snapshot-bounds-parent-build.log`; the import audit passes.
+All three files are parent-owned; worker `2a020198-af17-47bf-b45b-0b82864a50ad` is idle.
 `NativeMembershipComplete.membership_finish_assignment` is committed as
 `d5e69756d`. It extends a satisfying pre-write assignment through the actual
 allocation, source-row, and global writes. It reuses the pre-write Model facts.
@@ -682,7 +700,8 @@ uses the existing update operation and proves Model correspondence and existence
 encoder assertions, using the shared Model-equivalence transport.
 Bootstrap preservation is also proved. Builds pass in
 `native-membership-transition-build.log` and `native-membership-frame-sound-build.log`;
-the import audit passes. Assignment completeness and public wiring remain pending.
+the import audit passes. Assignment completeness is now complete in `b39691ba8`;
+public wiring remains pending.
 
 Three public Model fixture tests are added but deliberately uncommitted:
 `test_public_model_append_receives`, `test_public_model_append_receive_hints`,

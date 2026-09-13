@@ -467,8 +467,10 @@ the actual run and satisfying final assertions imply Model enablement and
 representation of the next state, given the original frame and bootstrap representations.
 `NativeAppendReceiveComplete.receive_append_model_complete` extends a supplied
 satisfying input assignment for an enabled, selected request and realizes the Model
-next state. Exact native-step correspondence and public trace integration remain
-unfinished, so public `receiveAppendEntries` remains unsupported.
+next state. `NativeAppendReceiveEncoding` proves soundness and assignment
+completeness for the exact native successor chosen by trace semantics.
+Public trace integration remains unfinished, so `receiveAppendEntries` remains
+unsupported by the public decoder.
 `NativeNodeRowModelEncoding` shares row and whole-frame representation transport
 across equal Model states. Allocation remains explicit. Inactive log tails and
 physical queue heads need not agree because the representation observes live logs
@@ -506,9 +508,10 @@ guards, and `NativeMembershipRowEncoding` proves the source-row terms.
 `NativeMembershipSound.membership_change_model_sound` proves Model enablement
 and next-state representation from the actual run and satisfying final assertions.
 `NativeMembershipChangeEncoding` connects that result to the exact native
-membership transition. `NativeMembershipComplete.membership_finish_assignment`
-extends satisfying pre-write assignments through allocation and final writes.
-Assignment completeness and public trace integration remain unfinished, so
+membership transition. `NativeMembershipComplete.membership_change_model_complete`
+composes all assignment stages. `NativeMembershipChangeEncoding` then realizes
+the particular native successor required by a trace, preserving the supplied
+assignment below its original counter. Public trace integration remains unfinished, so
 public `changeConfiguration` remains unsupported.
 `NativeAllocation` reuses row snapshots to reset hidden fields before exposing
 missing nodes. Existing rows survive. The baseline uses 17 definitions per
