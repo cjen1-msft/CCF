@@ -141,7 +141,7 @@ Worker `2a020198-af17-47bf-b45b-0b82864a50ad` completed public signature
 integration and vote-response soundness, accepted in `40109af92`.
 Its append-response soundness is accepted in `e0e491ac6`.
 Its Model lemmas in `NativeArrayBecomeLeader` are accepted and parent-owned.
-It now owns `NativeBecomeLeaderSound`.
+Its `NativeBecomeLeaderSound` is accepted and parent-owned; it is idle.
 Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` completed
 `NativeQueuePatternEncoding`, including equivalence to the slower baseline,
 and vote-response completeness, accepted in `705731c26`.
@@ -426,6 +426,12 @@ every original symbol below the initial counter, all prefix assertions, and
 the original frame, and represents the prepared row at the tail boundary.
 It needs no allocation, enabledness, bootstrap-equality, or reachability premise.
 The parent build passes in `native-become-leader-prefix-parent-build.log`.
+`NativeBecomeLeaderSound` now proves exact native frame soundness and Model
+soundness from the actual runtime and final satisfying assignment. It composes
+the prefix scans, prepared row, shared retirement tail, and native transition.
+Model-equality transport preserves arbitrary inactive tails. Unchanged frame
+fields reuse the existing representation record. The parent build passes in
+`native-become-leader-sound-parent-build.log`.
 
 Raw reduction also emits per-identity `joined` observations. Their existing
 Model meaning is membership in `state.hasJoined`, not current allocation.
