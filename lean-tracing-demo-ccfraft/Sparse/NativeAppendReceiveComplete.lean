@@ -5,6 +5,7 @@ import Sparse.NativeAppendReceiveSound
 import Sparse.NativeAppendReceiveLogAssignment
 import Sparse.NativeAppendReceiveCommitAssignment
 import Sparse.NativeAppendReceiveRetirementAssignment
+import Sparse.NativeAppendReceiveTailAssignment
 
 set_option autoImplicit false
 
@@ -153,6 +154,57 @@ theorem append_receive_finish_assignment {width : PNat} [Bootstrap (Fin width)]
       (terms.branches.stepDown.eval assignment Locals.empty) rfl responseValue
       responseSource responseDestination sameCompleted
   exact ⟨extended, agreement, afterHolds, _, writtenRep, writtenModel⟩
+
+theorem receive_append_model_complete {width : PNat} [Bootstrap (Fin width)]
+    (source destination : Fin width) (before after : Encoding width)
+    (run : (receiveAppend source destination).run before = .ok ((), after))
+    (assignment : Assignment)
+    (holds : Holds before.assertions.toList assignment)
+    (valid : ReferencesValid before)
+    (frame : NativeArrayVote.Frame (Fin width) Nat) (state : State (Fin width) Nat)
+    (columnsRep : FrameColumnsRep assignment before.toColumns frame)
+    (modelRep : frame.Rep state)
+    (request : AppendEntriesRequest (Fin width) Nat)
+    (selected : NativeArrayAppendNetwork.SelectedAppend
+      frame source destination request)
+    (enabled : CCFRaft.Enabled state (.receive source destination))
+    (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION) :
+    exists extended : Assignment,
+      assignment.AgreesBelow before.next extended /\
+      Holds after.assertions.toList extended /\
+      exists written : NativeArrayVote.Frame (Fin width) Nat,
+        FrameColumnsRep extended after.toColumns written /\
+        written.Rep (CCFRaft.next state (.receive source destination)) := by
+  obtain ⟨states, execution⟩ :=
+    receive_append_success source destination before after run
+  obtain ⟨currentAssignment, currentAgreement, currentHolds, currentRep,
+      currentPacket, log, commit, currentLength, currentEntries, currentCommit,
+      currentConstraint⟩ :=
+    append_receive_current_assignment source destination before after states execution
+      assignment holds valid frame state columnsRep modelRep request selected enabled
+      sameBootstrap
+  obtain ⟨tailAssignment, tailAgreement, tailHolds, tailRep⟩ :=
+    append_receive_tail_assignment source destination before after states execution
+      currentAssignment frame currentHolds valid currentRep request currentPacket log
+      currentLength currentEntries commit currentCommit sameBootstrap currentConstraint
+  obtain ⟨extended, finishAgreement, afterHolds, written, writtenRep, writtenModel⟩ :=
+    append_receive_finish_assignment source destination before after states execution
+      tailAssignment tailHolds valid frame state tailRep modelRep sameBootstrap
+  let terms := appendReceiveExecutionTerms before source destination
+  have completedShape :=
+    retirement_completed_constraints_success before.bootstrap terms.consumes terms.logLength
+      terms.logEntries terms.commit terms.current states.middle.suffix.currentAsserted
+      states.middle.suffix.completedState (before.next + 12)
+      execution.runs.middleRuns.suffixRuns.completedRun
+  have currentStart :
+      states.middle.suffix.currentAsserted.next = before.next + 12 :=
+    completedShape.completedId.symm
+  have originalToTail : assignment.AgreesBelow before.next tailAssignment :=
+    currentAgreement.trans (tailAgreement.restrict (by rw [currentStart]; omega))
+  have originalToExtended : assignment.AgreesBelow before.next extended :=
+    originalToTail.trans
+      (finishAgreement.restrict (by rw [execution.writerNext]; omega))
+  exact ⟨extended, originalToExtended, afterHolds, written, writtenRep, writtenModel⟩
 
 end CCFRaft.NativeEncode
 
