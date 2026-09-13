@@ -1,0 +1,31 @@
+{
+  "nodes": ["a", "b"],
+  "bootstrap": ["a", "b"],
+  "instructions": [
+    {"kind": "allocated", "node": "b", "value": true},
+    {"kind": "role", "node": "b", "value": "follower"},
+    {"kind": "currentTerm", "node": "b", "value": 4},
+    {"kind": "logLength", "node": "b", "value": 0},
+    {"kind": "commit", "node": "b", "value": 0},
+    {"kind": "queueLength", "source": "a", "destination": "b", "value": 1},
+    {
+      "kind": "queuePoint",
+      "source": "a",
+      "destination": "b",
+      "index": 0,
+      "value": {
+        "kind": "appendEntriesRequest",
+        "source": "a",
+        "destination": "b",
+        "term": 4,
+        "prevLogIndex": 0,
+        "prevLogTerm": 0,
+        "leaderCommit": 0,
+        "entries": []
+      }
+    },
+    {"kind": "queueLength", "source": "b", "destination": "a", "value": 0},
+    {"kind": "receiveAppendEntries", "source": "a", "destination": "b"},
+    {"kind": "queueLength", "source": "b", "destination": "a", "value": 0}
+  ]
+}

@@ -1775,6 +1775,35 @@ class NativeLeanSmtTests(unittest.TestCase):
             "Traces/native_vote_receive_fifo_conflict.json", {14, 15, 18}
         )
 
+    def test_core_explorer_fixture_transitions(self):
+        for trace, module, corrected in (
+            (
+                "native_append_receive_fifo_conflict",
+                "NativeAppendReceiveFixtureMain",
+                1,
+            ),
+            (
+                "native_membership_allocation_conflict",
+                "NativeMembershipChangeFixtureMain",
+                True,
+            ),
+        ):
+            with self.subTest(trace=trace):
+                conflict = json.loads(
+                    (ROOT / "Traces" / f"{trace}.json").read_text()
+                )
+                fixed = deepcopy(conflict)
+                fixed["instructions"][-1]["value"] = corrected
+                self.assert_internal_model_traces(
+                    module,
+                    [
+                        {"trace": conflict, "expected": "unsat"},
+                        {"trace": fixed, "expected": "sat"},
+                    ],
+                    1,
+                    trace,
+                )
+
     def test_vote_receive_send_sequence(self):
         document = json.loads(
             (ROOT / "Traces/native_vote_receive_fifo_conflict.json").read_text()

@@ -1,0 +1,16 @@
+{
+  "nodes": ["a", "b"],
+  "bootstrap": ["a"],
+  "instructions": [
+    {"kind": "allocated", "node": "a", "value": true},
+    {"kind": "role", "node": "a", "value": "leader"},
+    {"kind": "membershipState", "node": "a", "value": "active"},
+    {"kind": "logLength", "node": "a", "value": 0},
+    {"kind": "currentTerm", "node": "a", "value": 4},
+    {"kind": "commit", "node": "a", "value": 0},
+    {"kind": "hasJoined", "value": ["a"]},
+    {"kind": "allocated", "node": "b", "value": false},
+    {"kind": "changeConfiguration", "source": "a", "configuration": ["a", "b"]},
+    {"kind": "allocated", "node": "b", "value": false}
+  ]
+}
