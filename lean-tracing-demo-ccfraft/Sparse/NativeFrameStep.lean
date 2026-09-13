@@ -110,106 +110,112 @@ theorem frame_observation_cons {width : PNat} [Bootstrap (Fin width)]
   case queuePoint => simp [NativeArrayVote.follows]
   all_goals cases emitted
 
+inductive FrameInstructionRun {width : PNat} (before after : Encoding width) :
+    FrameInstruction width -> Prop where
+  | quorum (node : Fin width)
+      (run : (checkQuorum node.val).run before = .ok ((), after)) :
+      FrameInstructionRun before after (.node (.checkQuorum node))
+  | vote (preVote : Bool) (source destination : Fin width)
+      (run : (sendVote preVote source destination).run before = .ok ((), after)) :
+      FrameInstructionRun before after (.vote preVote source destination)
+  | updateTerm (source destination : Fin width)
+      (run : (NativeEncode.updateTerm source destination).run before = .ok ((), after)) :
+      FrameInstructionRun before after (.updateTerm source destination)
+  | campaign (preVote : Bool) (node : Fin width)
+      (run : (NativeEncode.campaign preVote node).run before = .ok ((), after)) :
+      FrameInstructionRun before after (.campaign preVote node)
+  | receiveVote (source destination : Fin width)
+      (run : (NativeEncode.receiveVote source destination).run before = .ok ((), after)) :
+      FrameInstructionRun before after (.receiveVote source destination)
+  | receiveAppend (source destination : Fin width)
+      (run : (NativeEncode.receiveAppend source destination).run before = .ok ((), after)) :
+      FrameInstructionRun before after (.receiveAppend source destination)
+  | changeConfiguration (source : Fin width) (configuration : Finset (Fin width))
+      (run : (membershipChange source configuration).run before = .ok ((), after)) :
+      FrameInstructionRun before after (.changeConfiguration source configuration)
+  | appendEntries (source destination : Fin width) (batchEnd : Nat)
+      (run : (sendAppend source destination batchEnd).run before = .ok ((), after)) :
+      FrameInstructionRun before after (.appendEntries source destination batchEnd)
+  | observation {item : FrameInstruction width} (clauses : List (Expr .bool))
+      (emitted : frameObservationClauses before.toColumns item = .ok clauses)
+      (run : (assertAll clauses).run before = .ok ((), after)) :
+      FrameInstructionRun before after item
+
 theorem frame_instruction_cases {width : PNat} (item : FrameInstruction width)
     (before after : Encoding width) (run : (frameInstruction item).run before = .ok ((), after)) :
-    (exists node, item = .node (.checkQuorum node) /\ (checkQuorum node.val).run before = .ok ((), after)) \/
-      (exists preVote source destination, item = .vote preVote source destination /\
-        (sendVote preVote source destination).run before = .ok ((), after)) \/
-      (exists source destination, item = .updateTerm source destination /\
-        (updateTerm source destination).run before = .ok ((), after)) \/
-      (exists preVote node, item = .campaign preVote node /\
-        (campaign preVote node).run before = .ok ((), after)) \/
-      (exists source destination, item = .receiveVote source destination /\
-        (receiveVote source destination).run before = .ok ((), after)) \/
-      (exists source destination, item = .receiveAppend source destination /\
-        (receiveAppend source destination).run before = .ok ((), after)) \/
-      (exists source configuration, item = .changeConfiguration source configuration /\
-        (membershipChange source configuration).run before = .ok ((), after)) \/
-      (exists source destination batchEnd, item = .appendEntries source destination batchEnd /\
-        (sendAppend source destination batchEnd).run before = .ok ((), after)) \/
-      (exists clauses, frameObservationClauses before.toColumns item = .ok clauses /\
-        (assertAll clauses).run before = .ok ((), after)) := by
+    FrameInstructionRun before after item := by
   cases item
   case node item =>
     rcases instruction_cases item before after run with ⟨node, rfl, action⟩ | ⟨clauses, emitted, asserted⟩
-    · exact Or.inl ⟨node, rfl, action⟩
-    · exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
-        (Or.inr (Or.inr ⟨clauses, emitted, asserted⟩)))))))
-  case vote preVote source destination => exact Or.inr (Or.inl ⟨preVote, source, destination, rfl, run⟩)
-  case updateTerm source destination => exact Or.inr (Or.inr (Or.inl ⟨source, destination, rfl, run⟩))
-  case campaign preVote node => exact Or.inr (Or.inr (Or.inr (Or.inl ⟨preVote, node, rfl, run⟩)))
-  case receiveVote source destination =>
-    refine Or.inr (Or.inr (Or.inr (Or.inr (Or.inl ⟨source, destination, rfl, ?_⟩))))
-    simpa only [frameInstruction] using run
-  case receiveAppend source destination =>
-    refine Or.inr (Or.inr (Or.inr (Or.inr
-      (Or.inr (Or.inl ⟨source, destination, rfl, ?_⟩)))))
-    simpa only [frameInstruction] using run
+    · exact .quorum node action
+    · exact .observation clauses emitted asserted
+  case vote preVote source destination => exact .vote preVote source destination run
+  case updateTerm source destination => exact .updateTerm source destination run
+  case campaign preVote node => exact .campaign preVote node run
+  case receiveVote source destination => exact .receiveVote source destination run
+  case receiveAppend source destination => exact .receiveAppend source destination run
   case changeConfiguration source configuration =>
-    refine Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
-      (Or.inr (Or.inl ⟨source, configuration, rfl, ?_⟩))))))
-    simpa only [frameInstruction] using run
+    exact .changeConfiguration source configuration run
   case appendEntries source destination batchEnd =>
-    exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
-      (Or.inr (Or.inr (Or.inl ⟨source, destination, batchEnd, rfl, run⟩)))))))
-  case hasJoined expected => exact Or.inr (Or.inr (Or.inr (Or.inr
-    (Or.inr (Or.inr (Or.inr (Or.inr ⟨_, rfl, run⟩)))))))
-  case preVoteStatus node expected =>
-    exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
-      (Or.inr (Or.inr ⟨_, rfl, run⟩)))))))
+    exact .appendEntries source destination batchEnd run
+  case hasJoined expected => exact .observation _ rfl run
+  case preVoteStatus node expected => exact .observation _ rfl run
   case retirementCompleted node expected =>
-    exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
-      (Or.inr (Or.inr ⟨_, rfl, run⟩)))))))
+    exact .observation _ rfl run
   case submittedTxId txId expected =>
-    exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
-      (Or.inr (Or.inr ⟨_, rfl, run⟩)))))))
+    exact .observation _ rfl run
   case queueLength source destination expected =>
-    exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
-      (Or.inr (Or.inr ⟨_, rfl, run⟩)))))))
+    exact .observation _ rfl run
   case queuePoint source destination index expected =>
-    refine Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
-      (Or.inr (Or.inr ⟨_, rfl, ?_⟩)))))))
-    exact (frame_observation_run (.queuePoint source destination index expected) before _ rfl).symm.trans run
+    exact FrameInstructionRun.observation _
+      rfl
+      ((frame_observation_run
+        (.queuePoint source destination index expected) before _ rfl).symm.trans run)
+
 theorem frame_instruction_references {width : PNat} (item : FrameInstruction width)
     (before after : Encoding width) (run : (frameInstruction item).run before = .ok ((), after))
     (valid : ReferencesValid before) : ReferencesValid after := by
-  rcases frame_instruction_cases item before after run with ⟨node, _, action⟩ |
-    ⟨preVote, source, destination, _, action⟩ | ⟨source, destination, _, action⟩ |
-    ⟨preVote, node, _, action⟩ | ⟨source, destination, _, action⟩ |
-    ⟨source, destination, _, action⟩ |
-    ⟨source, configuration, _, action⟩ |
-    ⟨source, destination, batchEnd, _, action⟩ |
-    ⟨clauses, _, asserted⟩
-  · exact instruction_references (.checkQuorum node) before after action valid
-  · exact send_vote_references preVote source destination before after action valid
-  · exact term_update_references source destination before after action valid
-  · exact campaign_references preVote node before after action valid
-  · exact receive_vote_references source destination before after action valid
-  · exact receive_append_references source destination before after action valid
-  · exact membership_change_references source configuration before after action valid
-  · exact send_append_references source destination batchEnd before after action valid
-  · exact valid.same_references (assert_all_success clauses before after asserted).1
+  cases frame_instruction_cases item before after run with
+  | quorum node action => exact instruction_references (.checkQuorum node) before after action valid
+  | vote preVote source destination action =>
+    exact send_vote_references preVote source destination before after action valid
+  | updateTerm source destination action =>
+    exact term_update_references source destination before after action valid
+  | campaign preVote node action =>
+    exact campaign_references preVote node before after action valid
+  | receiveVote source destination action =>
+    exact receive_vote_references source destination before after action valid
+  | receiveAppend source destination action =>
+    exact receive_append_references source destination before after action valid
+  | changeConfiguration source configuration action =>
+    exact membership_change_references source configuration before after action valid
+  | appendEntries source destination batchEnd action =>
+    exact send_append_references source destination batchEnd before after action valid
+  | observation clauses emitted asserted =>
+    exact valid.same_references (assert_all_success clauses before after asserted).1
 
 theorem frame_instruction_holds_before {width : PNat} (item : FrameInstruction width)
     (before after : Encoding width) (run : (frameInstruction item).run before = .ok ((), after))
     (assignment : Assignment) (holds : Holds after.assertions.toList assignment) :
     Holds before.assertions.toList assignment := by
-  rcases frame_instruction_cases item before after run with ⟨node, _, action⟩ |
-    ⟨preVote, source, destination, _, action⟩ | ⟨source, destination, _, action⟩ |
-    ⟨preVote, node, _, action⟩ | ⟨source, destination, _, action⟩ |
-    ⟨source, destination, _, action⟩ |
-    ⟨source, configuration, _, action⟩ |
-    ⟨source, destination, batchEnd, _, action⟩ |
-    ⟨clauses, _, asserted⟩
-  · exact ((quorum_holds node.val before after action assignment).mp holds).1
-  · exact send_vote_holds_before preVote source destination before after action assignment holds
-  · exact ((term_update_holds source destination before after action assignment).mp holds).1
-  · exact campaign_holds_before preVote node before after action assignment holds
-  · exact receive_vote_holds_before source destination before after action assignment holds
-  · exact receive_append_prior_holds source destination before after action assignment holds
-  · exact membership_change_prior_holds source configuration before after action assignment holds
-  · exact send_append_holds_before source destination batchEnd before after action assignment holds
-  · exact ((assert_all_holds clauses before after asserted assignment).mp holds).1
+  cases frame_instruction_cases item before after run with
+  | quorum node action => exact ((quorum_holds node.val before after action assignment).mp holds).1
+  | vote preVote source destination action =>
+    exact send_vote_holds_before preVote source destination before after action assignment holds
+  | updateTerm source destination action =>
+    exact ((term_update_holds source destination before after action assignment).mp holds).1
+  | campaign preVote node action =>
+    exact campaign_holds_before preVote node before after action assignment holds
+  | receiveVote source destination action =>
+    exact receive_vote_holds_before source destination before after action assignment holds
+  | receiveAppend source destination action =>
+    exact receive_append_prior_holds source destination before after action assignment holds
+  | changeConfiguration source configuration action =>
+    exact membership_change_prior_holds source configuration before after action assignment holds
+  | appendEntries source destination batchEnd action =>
+    exact send_append_holds_before source destination batchEnd before after action assignment holds
+  | observation clauses emitted asserted =>
+    exact ((assert_all_holds clauses before after asserted assignment).mp holds).1
 
 theorem frame_quorum_success {width : PNat} [Bootstrap (Fin width)]
     (node : Fin width) (before after : Encoding width)
