@@ -58,6 +58,17 @@ structure NodeRowTerms.Bounded {width : PNat} (values : NodeRowTerms width)
   sentIndex : values.sentIndex.symbols.all (fun symbol => symbol.2 < limit) = true
   matchIndex : values.matchIndex.symbols.all (fun symbol => symbol.2 < limit) = true
 
+theorem node_row_snapshot_bounded {width : PNat} (state : Encoding width)
+    (node : Fin width) (valid : ReferencesValid state) :
+    (nodeRowSnapshot state.toColumns node).Bounded state.next := by
+  constructor <;>
+    simp [nodeRowSnapshot, read, allocated, NativeEncode.length, NativeEncode.commit,
+      Term.symbols, valid.allocated, valid.role, valid.newFollower, valid.logLength,
+      valid.commit, valid.currentTerm, valid.logEntries, valid.retirementIndex,
+      valid.retirementCommittableIndex, valid.retiredCommittedIndex, valid.votedFor,
+      valid.votesGranted, valid.preVotesGranted, valid.membershipState, valid.sentIndex,
+      valid.matchIndex]
+
 theorem NodeRowTerms.Rep.agrees_below {width : PNat} (left right : Assignment)
     (values : NodeRowTerms width) (row : NativeArrayCheckQuorum.Local (Fin width) Nat)
     (limit : Nat) (rep : values.Rep left row) (bounded : values.Bounded limit)

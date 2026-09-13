@@ -56,26 +56,15 @@ theorem membership_log_assignment {width : PNat} [Bootstrap (Fin width)]
         old.log.entries position := by
     intro position live
     simpa [terms, old, membershipExecutionTerms] using oldRep.logEntries position live
+  have oldBounded := node_row_snapshot_bounded before source valid
   have oldLengthBounded :
       terms.old.logLength.symbols.all
         (fun symbol => symbol.2 < before.next) = true := by
-    rw [List.all_eq_true]
-    intro symbol member
-    simp only [terms, membershipExecutionTerms, nodeRowSnapshot, NativeEncode.length,
-      read, allocated, Term.symbols, List.append_nil, List.mem_append, List.mem_cons,
-      List.not_mem_nil, or_false] at member
-    rcases member with rfl | rfl
-    · simpa only [decide_eq_true_eq] using valid.allocated
-    · simpa only [decide_eq_true_eq] using valid.logLength
+    simpa [terms, membershipExecutionTerms] using oldBounded.logLength
   have oldEntriesBounded :
       terms.old.logEntries.symbols.all
         (fun symbol => symbol.2 < before.next) = true := by
-    rw [List.all_eq_true]
-    intro symbol member
-    simp only [terms, membershipExecutionTerms, nodeRowSnapshot, Term.symbols,
-      List.append_nil, List.mem_cons, List.not_mem_nil, or_false] at member
-    subst symbol
-    simpa only [decide_eq_true_eq] using valid.logEntries
+    simpa [terms, membershipExecutionTerms] using oldBounded.logEntries
   obtain ⟨currentAssignment, currentAgreement, currentBaseHolds, currentAccepted⟩ :=
     current_configuration_index_assignment before assignment holds terms.old.logLength
       terms.old.logEntries terms.old.logLength old.log old.log.length oldLengthBounded

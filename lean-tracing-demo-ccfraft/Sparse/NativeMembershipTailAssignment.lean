@@ -50,23 +50,19 @@ theorem membership_tail_assignment {width : PNat} [Bootstrap (Fin width)]
       terms.entries.symbols.all
         (fun symbol => symbol.2 < suffix.guardsAsserted.next) = true := by
     simp [terms, membershipExecutionTerms, Term.symbols, guardsNext]
+  have oldBounded := node_row_snapshot_bounded before source valid
   have commitBounded :
       terms.old.commit.symbols.all
         (fun symbol => symbol.2 < suffix.guardsAsserted.next) = true := by
     rw [List.all_eq_true]
     intro symbol member
-    simp only [terms, membershipExecutionTerms, nodeRowSnapshot, NativeEncode.commit,
-      read, allocated, Term.symbols, List.append_nil, List.mem_append, List.mem_cons,
-      List.not_mem_nil, or_false] at member
-    rcases member with rfl | rfl
-    · rw [guardsNext]
+    have within : symbol.2 < before.next := by
       simpa only [decide_eq_true_eq] using
-        lt_trans valid.allocated
-          (show before.next < before.next + 9 by omega)
-    · rw [guardsNext]
-      simpa only [decide_eq_true_eq] using
-        lt_trans valid.commit
-          (show before.next < before.next + 9 by omega)
+        List.all_eq_true.mp oldBounded.commit symbol (by
+          simpa [terms, membershipExecutionTerms] using member)
+    rw [guardsNext]
+    simpa only [decide_eq_true_eq] using
+      lt_trans within (show before.next < before.next + 9 by omega)
   have oldRep :=
     node_row_snapshot_rep assignment before.toColumns frame.nodes rep.nodes source
   obtain ⟨currentAssignment, currentAgreement, currentBaseHolds, currentAccepted⟩ :=
