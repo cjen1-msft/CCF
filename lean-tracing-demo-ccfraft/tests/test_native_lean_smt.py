@@ -157,6 +157,9 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeAppendReceiveEncoding",
             "Sparse.NativeArrayAdvanceCommit",
             "Sparse.NativeMajorityTerms",
+            "Sparse.NativeArrayVotingMajority",
+            "Sparse.NativeVotingMajority",
+            "Sparse.NativeVotingMajorityEncoding",
             "Sparse.NativeActiveConfigurationEncoding",
             "Sparse.NativeReplicationMajority",
             "Sparse.NativeArrayCommitTransition",
@@ -240,6 +243,18 @@ class NativeLeanSmtTests(unittest.TestCase):
 
     def test_configuration_majority_terms(self):
         self.assert_script_fixtures("NativeMajorityFixtureMain", 200, 100)
+
+    def test_voting_majority_terms(self):
+        fixtures = self.assert_script_fixtures("NativeVotingMajorityFixtureMain", 318, 159)
+        named = {fixture["name"]: fixture for fixture in fixtures}
+        for name, expected in (
+            ("future-configuration-commit-0-support-3-true", False),
+            ("future-configuration-commit-0-support-7-true", True),
+            ("obsolete-configuration-commit-1000000000000000000000000000000-support-3-true", True),
+            ("empty-configuration-commit-0-support-7-true", False),
+            ("wide-singleton-65-commit-1-support-18446744073709551616-true", True),
+        ):
+            self.assertEqual(named[name]["majority"], expected, name)
 
     def test_highest_commit_index(self):
         fixtures = self.assert_script_fixtures("NativeCommitIndexFixtureMain", 127, 32)
