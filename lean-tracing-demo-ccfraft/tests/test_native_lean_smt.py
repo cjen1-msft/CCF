@@ -194,6 +194,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeVoteResponseExecution",
             "Sparse.NativeVoteResponseTermsEncoding",
             "Sparse.NativeArrayAppendResponse",
+            "Sparse.NativeAppendResponse",
         ):
             visit(module)
         forbidden = {
@@ -1916,6 +1917,45 @@ class NativeLeanSmtTests(unittest.TestCase):
             self.vote_response_traces(),
             78,
             "vote-responses",
+        )
+
+    def test_internal_append_responses(self):
+        models = self.model_traces("NativeArrayAppendResponseFixtureMain", 226)
+        for model in models:
+            allowed = (
+                model["destinationAllocated"]
+                and model["recipientMatches"]
+                and (
+                    not model["sourceAllocated"]
+                    or not model["success"]
+                    or model["term"] <= 1
+                    or model["role"] != "leader"
+                )
+            )
+            self.assertEqual(model["expected"], "sat" if allowed else "unsat", model["name"])
+            if not allowed:
+                continue
+            sent, matched = model["sentBefore"], model["matchBefore"]
+            if model["sourceAllocated"] and not model["success"]:
+                possible = max(
+                    (
+                        index
+                        for index, term in enumerate(model["logTerms"], 1)
+                        if index <= model["lastLogIndex"] and term <= model["term"]
+                    ),
+                    default=0,
+                )
+                sent = max(min(possible, sent), matched)
+            elif (
+                model["sourceAllocated"]
+                and model["term"] == 1
+                and model["role"] == "leader"
+            ):
+                matched = max(matched, model["lastLogIndex"])
+            self.assertEqual(model["sentAfter"], sent, model["name"])
+            self.assertEqual(model["matchAfter"], matched, model["name"])
+        self.assert_internal_model_traces(
+            "NativeReceiveAppendResponseFixtureMain", models, 194, "append-responses"
         )
 
     def vote_request_response_traces(self):
