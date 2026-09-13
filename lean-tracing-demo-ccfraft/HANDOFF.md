@@ -641,20 +641,27 @@ It derives the previous configuration, added nodes, refreshed row, completed set
 and Model enablement from those constraints. `membership_change_model_sound`
 proves whole-action Model soundness from the actual run and final Holds.
 The parent build passes in `native-membership-whole-action-sound-build.log`.
-Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` owns only new
-`NativeMembershipRetirementAssignment.lean`. It extends the supplied assignment
+`NativeMembershipRetirementAssignment.lean` is committed as `c260f6722`.
+It extends the supplied assignment
 from `initial.lengthDefined` through `suffix.guardsAsserted`, using canonical
 retirement witnesses and Model-enabled membership guards.
+Exact SSA bindings come from retained assertions, not live-log representation alone.
+The parent inspected the complete proof and rebuilt it in
+`native-membership-retirement-assignment-parent-build.log`; the import audit passes.
+The file is parent-owned. Worker `a04f39b9-8aa6-4733-9c2c-228d7432032e` is idle.
 Keep `NativeMembershipChange.lean` unchanged.
 Worker `af5d19d5-1186-4609-9b0b-4f224d4a4330` owns only new
 `NativeMembershipLogAssignment.lean`, constructing an assignment through
 `initial.lengthDefined` from the original satisfying frame.
 It must derive previous/added member sets and the appended log representation.
 It stops before local retirement witnesses and membership guards.
-Worker `2a020198-af17-47bf-b45b-0b82864a50ad` owns only new
-`NativeMembershipTailAssignment.lean`. It extends from `suffix.guardsAsserted`
+`NativeMembershipTailAssignment.lean` is committed as `071676cb0`.
+It extends from `suffix.guardsAsserted`
 through the committed-current witness and completed-retirement loop to
 `suffix.writerBefore`.
+The parent inspected the complete proof and rebuilt it in
+`native-membership-tail-assignment-parent-build.log`; the import audit passes.
+The file is parent-owned. Worker `2a020198-af17-47bf-b45b-0b82864a50ad` is idle.
 `NativeMembershipComplete.membership_finish_assignment` is committed as
 `d5e69756d`. It extends a satisfying pre-write assignment through the actual
 allocation, source-row, and global writes. It reuses the pre-write Model facts.
