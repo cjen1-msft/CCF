@@ -160,6 +160,8 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeActiveConfigurationEncoding",
             "Sparse.NativeReplicationMajority",
             "Sparse.NativeArrayCommitTransition",
+            "Sparse.NativeCommitIndexEncoding",
+            "Sparse.NativeRetirementWritesEncoding",
         ):
             visit(module)
         forbidden = {
@@ -197,6 +199,33 @@ class NativeLeanSmtTests(unittest.TestCase):
 
     def test_configuration_majority_terms(self):
         self.assert_script_fixtures("NativeMajorityFixtureMain", 200, 100)
+
+    def test_highest_commit_index(self):
+        fixtures = self.assert_script_fixtures("NativeCommitIndexFixtureMain", 127, 32)
+        by_name = {fixture["name"]: fixture for fixture in fixtures}
+        for name, best, last_signature, majorities in [
+            ("pending-joint-rejects", 0, 2, [(0, False), (1, True)]),
+            ("future-configuration-ignored", 1, 1, [(0, True), (2, False)]),
+            ("joint-falls-back", 2, 4, [(1, False), (3, True)]),
+        ]:
+            with self.subTest(name=name):
+                fixture = by_name[f"commit-index-{name}-exact"]
+                self.assertEqual(fixture["best"], best)
+                self.assertEqual(fixture["lastSignature"], last_signature)
+                self.assertEqual(
+                    [
+                        (configuration["index"], configuration["majority"])
+                        for configuration in fixture["configurationMajorities"]
+                    ],
+                    majorities,
+                )
+        for name, best in [
+            ("non-current-unsorted-terms", 1),
+            ("no-current-term-signature", 0),
+            ("nonzero-source-with-remote", 1),
+        ]:
+            with self.subTest(name=name):
+                self.assertEqual(by_name[f"commit-index-{name}-exact"]["best"], best)
 
     def test_first_match_encoding(self):
         self.assert_script_fixtures("NativeFirstMatchFixtureMain", 530, 66)
