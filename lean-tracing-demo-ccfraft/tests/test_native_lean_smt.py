@@ -1742,6 +1742,30 @@ class NativeLeanSmtTests(unittest.TestCase):
         )
         self.assertEqual(sum(item["expected"] == "sat" for item in fixtures), 8)
 
+    def mutate_frame_observation(self, observed, names):
+        kind, value = observed["kind"], observed["value"]
+        if isinstance(value, bool):
+            replacement = not value
+        elif isinstance(value, int):
+            replacement = value + 1
+        elif value is None:
+            replacement = names[0] if kind == "votedFor" else 0
+        elif isinstance(value, list):
+            replacement = [] if value else [names[0]]
+        elif isinstance(value, dict) and "term" in value:
+            replacement = dict(value, term=value["term"] + 1)
+        elif kind == "votedFor":
+            replacement = None
+        elif kind == "role":
+            replacement = "leader" if value != "leader" else "follower"
+        elif kind == "membershipState":
+            replacement = "active" if value != "active" else "retiredCommitted"
+        elif kind == "preVoteStatus":
+            replacement = "enabled" if value == "capable" else "capable"
+        else:
+            self.fail(f"Unhandled frame observation: {observed}")
+        return dict(observed, value=replacement)
+
     def vote_response_traces(self):
         models = self.model_traces("NativeArrayVoteResponseFixtureMain", 120)
         guard_cases = []
@@ -1821,30 +1845,11 @@ class NativeLeanSmtTests(unittest.TestCase):
             for index in range(baseline["stepIndex"] + 1, len(instructions)):
                 changed = deepcopy(baseline)
                 observed = changed["trace"]["instructions"][index]
-                kind, value = observed["kind"], observed["value"]
-                if isinstance(value, bool):
-                    replacement = not value
-                elif isinstance(value, int):
-                    replacement = value + 1
-                elif value is None:
-                    replacement = "a" if kind == "votedFor" else 0
-                elif isinstance(value, list):
-                    replacement = [] if value else ["a"]
-                elif isinstance(value, dict) and "term" in value:
-                    replacement = dict(value, term=value["term"] + 1)
-                elif kind == "votedFor":
-                    replacement = None
-                elif kind == "role":
-                    replacement = "leader" if value != "leader" else "follower"
-                elif kind == "membershipState":
-                    replacement = "active" if value != "active" else "retiredCommitted"
-                elif kind == "preVoteStatus":
-                    replacement = "enabled" if value == "capable" else "capable"
-                else:
-                    self.fail(f"Unhandled vote-response observation: {observed}")
-                observed["value"] = replacement
+                changed["trace"]["instructions"][index] = self.mutate_frame_observation(
+                    observed, changed["trace"]["nodes"]
+                )
                 changed["expected"] = "unsat"
-                changed["name"] = f"vote-response-{pre_vote}-changed-{index}-{kind}"
+                changed["name"] = f"vote-response-{pre_vote}-changed-{index}-{observed['kind']}"
                 models.append(changed)
         self.assertEqual(len(models), 288)
         models.extend(guard_cases)
@@ -1919,7 +1924,7 @@ class NativeLeanSmtTests(unittest.TestCase):
             "vote-responses",
         )
 
-    def test_internal_append_responses(self):
+    def append_response_traces(self):
         models = self.model_traces("NativeArrayAppendResponseFixtureMain", 226)
         for model in models:
             allowed = (
@@ -1954,8 +1959,40 @@ class NativeLeanSmtTests(unittest.TestCase):
                 matched = max(matched, model["lastLogIndex"])
             self.assertEqual(model["sentAfter"], sent, model["name"])
             self.assertEqual(model["matchAfter"], matched, model["name"])
+        for success, last_index, terms in (
+            (True, 21, [9, 0]),
+            (False, 3, [4, 0, 2]),
+        ):
+            baseline = next(
+                model
+                for model in models
+                if model["expected"] == "sat"
+                and model["success"] == success
+                and model["term"] == 1
+                and model["lastLogIndex"] == last_index
+                and model["logTerms"] == terms
+                and model["role"] == "leader"
+                and model["source"] == "a"
+                and model["sourceAllocated"]
+            )
+            for index in range(
+                baseline["stepIndex"] + 1, len(baseline["trace"]["instructions"])
+            ):
+                changed = deepcopy(baseline)
+                changed["trace"]["instructions"][index] = self.mutate_frame_observation(
+                    changed["trace"]["instructions"][index], changed["trace"]["nodes"]
+                )
+                changed["expected"] = "unsat"
+                changed["name"] = f"append-response-{success}-changed-{index}"
+                models.append(changed)
+        return models
+
+    def test_internal_append_responses(self):
         self.assert_internal_model_traces(
-            "NativeReceiveAppendResponseFixtureMain", models, 194, "append-responses"
+            "NativeReceiveAppendResponseFixtureMain",
+            self.append_response_traces(),
+            194,
+            "append-responses",
         )
 
     def vote_request_response_traces(self):
