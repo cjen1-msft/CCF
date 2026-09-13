@@ -200,6 +200,7 @@ class NativeImportBoundaryTests(unittest.TestCase):
             "Sparse.NativeAppendResponseExecution",
             "Sparse.NativeAppendResponseTermsEncoding",
             "Sparse.NativeAppendResponseSound",
+            "Sparse.NativeAppendResponseComplete",
         ):
             visit(module)
         forbidden = {
@@ -1997,13 +1998,64 @@ class NativeLeanSmtTests(unittest.TestCase):
                 changed["expected"] = "unsat"
                 changed["name"] = f"append-response-{success}-changed-{index}"
                 models.append(changed)
+        names = [f"peer-{index}" for index in range(17)]
+        source, destination = names[-1], names[1]
+        for success in (False, True):
+            packet = {
+                "kind": "appendEntriesResponse",
+                "source": source,
+                "destination": destination,
+                "term": 1 if success else 0,
+                "success": success,
+                "lastLogIndex": 10**30 if success else 2,
+            }
+            cursor = "matchIndex" if success else "sentIndex"
+            expected_cursor = 10**30 if success else 2
+            instructions = [
+                {"kind": "allocated", "node": node, "value": node in (source, destination)}
+                for node in names
+            ] + [
+                {"kind": "role", "node": destination, "value": "leader"},
+                {"kind": "currentTerm", "node": destination, "value": 1},
+                {"kind": "logLength", "node": destination, "value": 2},
+            ]
+            instructions.extend(
+                {
+                    "kind": "entry",
+                    "node": destination,
+                    "index": index,
+                    "value": {"term": term, "content": "signature"},
+                }
+                for index, term in enumerate((4, 0))
+            )
+            instructions.extend(
+                [
+                    {"kind": "sentIndex", "node": destination, "peer": source, "value": 5},
+                    {"kind": "matchIndex", "node": destination, "peer": source, "value": 0},
+                    {"kind": "queueLength", "source": source, "destination": destination, "value": 1},
+                    packet_observation(packet),
+                    {"kind": "receiveAppendEntriesResponse", "source": source, "destination": destination},
+                    {"kind": cursor, "node": destination, "peer": source, "value": expected_cursor},
+                    {"kind": "queueLength", "source": source, "destination": destination, "value": 0},
+                ]
+            )
+            model = {
+                "name": f"append-response-wide-{success}",
+                "expected": "sat",
+                "trace": {"nodes": names, "bootstrap": [names[0]], "instructions": instructions},
+            }
+            wrong = deepcopy(model)
+            wrong["name"] += "-wrong-cursor"
+            wrong["expected"] = "unsat"
+            wrong["trace"]["instructions"][-2]["value"] += 1
+            models.extend([model, wrong])
         return models
 
     def test_internal_append_responses(self):
         self.assert_internal_model_traces(
             "NativeReceiveAppendResponseFixtureMain",
             self.append_response_traces(),
-            194,
+            196,
             "append-responses",
         )
 
