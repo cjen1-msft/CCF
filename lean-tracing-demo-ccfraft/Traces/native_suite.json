@@ -1,18 +1,18 @@
 {
   "schema": "ccfraft-native-suite/v1",
-  "directories": ["Captured", "Mutated"],
+  "directories": ["Captured", "Mutated", "Controls"],
   "cases": [
     {
       "trace": "Captured/bad_network.ndjson",
       "bootstrap": ["0"],
-      "expected": "unsat",
-      "reason": "Known configuration-callback atomicity disagreement, not an expected-consistent baseline."
+      "expected": "sat",
+      "reason": "Unmodified capture, expected consistent under the TLA heartbeat trace policy. Full-capture solver verdict remains unconfirmed."
     },
     {
       "trace": "Captured/soft_rollback.ndjson",
       "bootstrap": ["0"],
-      "expected": "unsat",
-      "reason": "Known configuration-callback atomicity disagreement, not an expected-consistent baseline."
+      "expected": "sat",
+      "reason": "Unmodified capture, expected consistent under the TLA heartbeat trace policy. Full-capture solver verdict remains unconfirmed."
     },
     {
       "trace": "Mutated/bad_network-direct.ndjson",
@@ -37,6 +37,12 @@
       "bootstrap": ["0"],
       "expected": "unsat",
       "reason": "Deliberately contradictory observations across Model actions."
+    },
+    {
+      "trace": "Controls/configuration_callback.ndjson",
+      "bootstrap": ["0"],
+      "expected": "sat",
+      "reason": "First 22 records of soft_rollback: a complete configuration callback heartbeat and NACK exchange with exact packet bounds."
     }
   ]
 }

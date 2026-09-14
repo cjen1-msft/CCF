@@ -19,7 +19,10 @@ def appendLeadingGuards {width : PNat} (columns : Columns)
   [allocated columns source.val, allocated columns destination.val,
     .equal (read columns columns.role source.val (.integer 0)) (.integer (roleCode .leader)),
     .boolean (decide (source ≠ destination)),
-    .equal (.integer batchEnd) (appendFrontierTerm columns source destination),
+    .and
+      (.le (peerIndex columns columns.sentIndex source.val (.integer destination.val))
+        (.integer batchEnd))
+      (.le (.integer batchEnd) (appendFrontierTerm columns source destination)),
     .or (.not (.equal (read columns columns.membershipState source.val (.integer 0))
       (.integer (membershipCode .retiredCommitted))))
       (lt (peerIndex columns columns.sentIndex source.val (.integer destination.val)) (.integer batchEnd))]

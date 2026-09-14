@@ -2,6 +2,7 @@
 -- Licensed under the Apache 2.0 License.
 
 import Sparse.NativeArrayFixtureJson
+import Sparse.TraceEnabled
 import MachineGenerated.ModelProofs
 
 set_option autoImplicit false
@@ -43,7 +44,7 @@ def fixture (log : List (Entry (Fin 3) Nat)) (commit previous : Nat) (completed 
   let event := Json.mkObj [("kind", toJson "appendEntries"), ("source", toJson "a"),
     ("destination", toJson (nodeName destination)), ("batchEnd", toJson batchEnd)]
   Json.mkObj [
-    ("expected", toJson (if decide (Enabled state action) && !conflict then "sat" else "unsat")),
+    ("expected", toJson (if decide (TraceEnabled state action) && !conflict then "sat" else "unsat")),
     ("trace", Json.mkObj [("nodes", toJson (["a", "b", "c"] : List String)),
       ("bootstrap", toJson (["a", "b"] : List String)),
       ("instructions", toJson (frameObservations state [0, 1, 10 ^ 30] ++ [event] ++

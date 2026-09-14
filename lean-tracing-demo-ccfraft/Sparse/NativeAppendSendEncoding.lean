@@ -209,7 +209,7 @@ theorem append_send_body_steps {width : PNat} (columns : Columns)
     exists defined : Encoding width,
       (define (appendSentIndex columns source destination batchEnd)).run guarded =
         .ok (guarded.next, defined) /\
-      (pushQueue destination source (appendPacketTerm columns source destination)).run
+      (pushQueue destination source (appendPacketTerm columns source destination batchEnd)).run
         { defined with sentIndex := guarded.next } = .ok ((), after) := by
   simp only [appendSendBody] at run
   obtain ⟨sentIndex, defined, definition, pushed⟩ := (bind_run _ _ _ _ _).mp run
@@ -224,7 +224,7 @@ theorem append_send_steps {width : PNat} (source destination : Fin width) (batch
       AppendSendGuardPrefix before guarded source destination batchEnd /\
       (define (appendSentIndex before.toColumns source destination batchEnd)).run guarded =
         .ok (before.next + 2, defined) /\
-      (pushQueue destination source (appendPacketTerm before.toColumns source destination)).run
+      (pushQueue destination source (appendPacketTerm before.toColumns source destination batchEnd)).run
         { defined with sentIndex := before.next + 2 } = .ok ((), after) := by
   obtain ⟨guarded, shape, body⟩ :=
     append_send_guard_steps source destination batchEnd before after run
@@ -364,9 +364,9 @@ theorem send_append_frame_success {width : PNat} [Bootstrap (Fin width)]
       append_sent_frame assignment before.toColumns (before.next + 2) frame source destination
         batchEnd rep enabled.1 binding
   have samePacket := append_packet_term_correct assignment before.toColumns frame.nodes rep.nodes
-    source destination
+    source destination batchEnd
   have pushedRep := push_queue_frame_success _ (.appendEntriesRequest
-      (NativeArrayAppend.request (NativeArrayCheckQuorum.get frame.nodes source) source destination))
+      (NativeArrayAppend.request (NativeArrayCheckQuorum.get frame.nodes source) source destination batchEnd))
     { defined with sentIndex := before.next + 2 } after pushed assignment holds sentFrame sentRep
     samePacket
   refine ⟨enabled, ?_⟩
@@ -380,7 +380,7 @@ theorem send_append_model_success {width : PNat} [Bootstrap (Fin width)]
     (columns : FrameColumnsRep assignment before.toColumns frame)
     (model : frame.Rep state)
     (sameBootstrap : decodeBits before.bootstrap = INITIAL_CONFIGURATION) :
-    Enabled state (.appendEntries source destination batchEnd) /\
+    TraceEnabled state (.appendEntries source destination batchEnd) /\
       FrameColumnsRep assignment after.toColumns
         (NativeArrayAppend.send frame source destination batchEnd) /\
       (NativeArrayAppend.send frame source destination batchEnd).Rep
@@ -389,9 +389,9 @@ theorem send_append_model_success {width : PNat} [Bootstrap (Fin width)]
     run assignment holds frame columns sameBootstrap
   refine ⟨(NativeArrayAppend.enabled_correct frame state model source destination batchEnd).mp enabled,
     encoded, ?_⟩
-  have frontier : batchEnd =
-      min ((NativeArrayCheckQuorum.get frame.nodes source).sentIndex destination + 1)
-        (NativeArrayCheckQuorum.get frame.nodes source).log.length := by
+  have frontier : appendBatchAllowed
+      ((NativeArrayCheckQuorum.get frame.nodes source).sentIndex destination)
+      (NativeArrayCheckQuorum.get frame.nodes source).log.length batchEnd := by
     rcases enabled with ⟨_, _, _, _, _, frontier, _⟩
     exact frontier
   exact NativeArrayAppend.send_rep frame state model source destination batchEnd frontier
@@ -439,10 +439,10 @@ theorem send_append_complete {width : PNat} [Bootstrap (Fin width)]
       append_sent_frame written before.toColumns (before.next + 2) frame source destination
         batchEnd writtenRep enabled.1 binding
   have samePacket := append_packet_term_correct written before.toColumns frame.nodes
-    writtenRep.nodes source destination
+    writtenRep.nodes source destination batchEnd
   obtain ⟨extended, pushAgreement, finalHolds, finalRep⟩ :=
     push_queue_complete _ (.appendEntriesRequest
-      (NativeArrayAppend.request (NativeArrayCheckQuorum.get frame.nodes source) source destination))
+      (NativeArrayAppend.request (NativeArrayCheckQuorum.get frame.nodes source) source destination batchEnd))
       { defined with sentIndex := before.next + 2 } after pushed written definedHolds sentFrame sentRep
       (by
         have guardedValid := shape.references valid

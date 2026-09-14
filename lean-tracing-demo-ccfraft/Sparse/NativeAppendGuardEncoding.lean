@@ -34,13 +34,13 @@ theorem append_leading_guards_correct {width : PNat} (assignment : Assignment) (
     Holds (appendLeadingGuards columns source destination batchEnd) assignment <->
       (arrays source).isSome = true /\ (arrays destination).isSome = true /\
         (NativeArrayCheckQuorum.get arrays source).role = .leader /\ source ≠ destination /\
-        batchEnd = min ((NativeArrayCheckQuorum.get arrays source).sentIndex destination + 1)
-          (NativeArrayCheckQuorum.get arrays source).log.length /\
+        appendBatchAllowed ((NativeArrayCheckQuorum.get arrays source).sentIndex destination)
+          (NativeArrayCheckQuorum.get arrays source).log.length batchEnd /\
         ((NativeArrayCheckQuorum.get arrays source).membershipState ≠ .retiredCommitted \/
           (NativeArrayCheckQuorum.get arrays source).sentIndex destination < batchEnd) := by
   simp [Holds, appendLeadingGuards, Term.eval, rep.allocated, rep.role,
     append_frontier_term_correct assignment columns arrays rep, rep.membershipState,
-    rep.sentIndex, role_code_eq, membership_code_eq, lt]
+    rep.sentIndex, role_code_eq, membership_code_eq, lt, appendBatchAllowed]
   norm_cast
   simp
 

@@ -25,51 +25,56 @@ theorem singleton_log_term_correct {context : List Ty} {width : PNat}
     List.getElem?_cons_zero, Option.getD_some, Term.eval, entry_term_eval, same] using ground
 
 def appendLogTerm {context : List Ty} (width : PNat) (columns : Columns)
-    (node : Nat) (previous : Term context .int) :
+    (node : Nat) (previous : Term context .int) (batchEnd : Nat) :
     Term context (logTy width) :=
-  .ite (lt previous (length columns node))
+  .ite (.and (lt previous (length columns node)) (lt previous (.integer batchEnd)))
     (singletonLogTerm (normalizedEntryTerm (entryAt width columns node previous)))
     (logTerm [])
 
 theorem append_log_term_correct {width : PNat}
     (assignment : Assignment) (columns : Columns) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
     (rep : NodeColumnsRep assignment columns arrays) (node : Fin width)
-    (previous : Expr .int) (index : Nat) (same : previous.eval assignment Locals.empty = (index : Int)) :
-    (appendLogTerm width columns node.val previous).eval assignment Locals.empty =
-      logValue (NativeArrayAppend.batchEntries (NativeArrayCheckQuorum.get arrays node).log index) := by
+    (previous : Expr .int) (index batchEnd : Nat)
+    (same : previous.eval assignment Locals.empty = (index : Int)) :
+    (appendLogTerm width columns node.val previous batchEnd).eval assignment Locals.empty =
+      logValue (NativeArrayAppend.batchEntries (NativeArrayCheckQuorum.get arrays node).log index batchEnd) := by
   have lengthAt := (rep.configuration_log node).length
   by_cases live : index < (NativeArrayCheckQuorum.get arrays node).log.length
-  · have entry := rep.entries node index live
-    have normalized := normalized_entry_term_correct (entryAt width columns node.val previous) assignment Locals.empty
-    simp only [entryAt, Term.eval, same] at normalized entry
-    rw [entry] at normalized
-    have singleton := singleton_log_term_correct (normalizedEntryTerm (entryAt width columns node.val previous))
-      ((NativeArrayCheckQuorum.get arrays node).log.entries index) assignment Locals.empty normalized
-    simpa only [appendLogTerm, lt, Term.eval, same, lengthAt, Int.ofNat_le,
-      decide_eq_false (Nat.not_le.mpr live), Bool.not_false, if_true,
-      NativeArrayAppend.batchEntries, if_pos live] using singleton
+  · by_cases selected : index < batchEnd
+    · have entry := rep.entries node index live
+      have normalized := normalized_entry_term_correct (entryAt width columns node.val previous) assignment Locals.empty
+      simp only [entryAt, Term.eval, same] at normalized entry
+      rw [entry] at normalized
+      have singleton := singleton_log_term_correct (normalizedEntryTerm (entryAt width columns node.val previous))
+        ((NativeArrayCheckQuorum.get arrays node).log.entries index) assignment Locals.empty normalized
+      simpa [appendLogTerm, lt, Term.eval, same, lengthAt, live, selected,
+        NativeArrayAppend.batchEntries] using singleton
+    · simp [appendLogTerm, lt, Term.eval, same, lengthAt, live, selected,
+        NativeArrayAppend.batchEntries, log_term_eval]
   · simp [appendLogTerm, lt, Term.eval, same, lengthAt, live,
       NativeArrayAppend.batchEntries, log_term_eval]
 
-def appendPacketTerm {width : PNat} (columns : Columns) (source destination : Fin width) :
+def appendPacketTerm {width : PNat} (columns : Columns) (source destination : Fin width)
+    (batchEnd : Nat) :
     Expr (packetTy width) :=
   let previous := peerIndex columns columns.sentIndex source.val (.integer destination.val)
   .pair (.pair (read columns columns.currentTerm source.val (.integer 0))
     (.pair (.integer source.val) (.integer destination.val)))
     (.inl (.pair previous (.pair (logTermAt width columns source.val previous)
-      (.pair (commit columns source.val) (appendLogTerm width columns source.val previous)))))
+      (.pair (commit columns source.val)
+        (appendLogTerm width columns source.val previous batchEnd)))))
 
 theorem append_packet_term_correct {width : PNat}
     (assignment : Assignment) (columns : Columns) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
-    (rep : NodeColumnsRep assignment columns arrays) (source destination : Fin width) :
-    (appendPacketTerm columns source destination).eval assignment Locals.empty =
+    (rep : NodeColumnsRep assignment columns arrays) (source destination : Fin width) (batchEnd : Nat) :
+    (appendPacketTerm columns source destination batchEnd).eval assignment Locals.empty =
       packetValue (.appendEntriesRequest (NativeArrayAppend.request
-        (NativeArrayCheckQuorum.get arrays source) source destination)) := by
+        (NativeArrayCheckQuorum.get arrays source) source destination batchEnd)) := by
   have previous := rep.sentIndex source destination
   have term := log_term_at_correct assignment Locals.empty columns arrays rep source
     (peerIndex columns columns.sentIndex source.val (.integer destination.val)) _ previous
   have entries := append_log_term_correct assignment columns arrays rep source
-    (peerIndex columns columns.sentIndex source.val (.integer destination.val)) _ previous
+    (peerIndex columns columns.sentIndex source.val (.integer destination.val)) _ batchEnd previous
   simp only [appendPacketTerm, Term.eval, previous, term, entries, rep.currentTerm, rep.commit,
     packetValue, packetHeaderValue, packetPayloadValue, NativeArrayAppend.request,
     Message.term, Message.source, Message.destination]
@@ -78,12 +83,12 @@ theorem append_packet_term_model_correct {width : PNat} [Bootstrap (Fin width)]
     (assignment : Assignment) (columns : Columns) (arrays : NativeArrayCheckQuorum.Arrays (Fin width) Nat)
     (state : State (Fin width) Nat) (rep : NodeColumnsRep assignment columns arrays)
     (model : NativeArrayCheckQuorum.Rep arrays state) (source destination : Fin width) (batchEnd : Nat)
-    (frontier : batchEnd = min ((NativeArrayCheckQuorum.get arrays source).sentIndex destination + 1)
-      (NativeArrayCheckQuorum.get arrays source).log.length) :
-    (appendPacketTerm columns source destination).eval assignment Locals.empty =
+    (allowed : appendBatchAllowed ((NativeArrayCheckQuorum.get arrays source).sentIndex destination)
+      (NativeArrayCheckQuorum.get arrays source).log.length batchEnd) :
+    (appendPacketTerm columns source destination batchEnd).eval assignment Locals.empty =
       packetValue (.appendEntriesRequest (makeAppendEntriesRequest state source destination batchEnd)) := by
-  rw [append_packet_term_correct assignment columns arrays rep source destination,
-    NativeArrayAppend.request_correct arrays state model source destination batchEnd frontier]
+  rw [append_packet_term_correct assignment columns arrays rep source destination batchEnd,
+    NativeArrayAppend.request_correct arrays state model source destination batchEnd allowed]
 
 end CCFRaft.NativeEncode
 

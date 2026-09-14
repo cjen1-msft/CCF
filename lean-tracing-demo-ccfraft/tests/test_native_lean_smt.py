@@ -1056,7 +1056,7 @@ class NativeLeanSmtTests(unittest.TestCase):
             check=True,
         )
         fixtures = json.loads(result.stdout)
-        self.assertEqual(len(fixtures), 1216)
+        self.assertEqual(len(fixtures), 1616)
         self.assertEqual(len(fixtures), len({item["name"] for item in fixtures}))
         self.assertEqual({item["expected"] for item in fixtures}, {"sat", "unsat"})
         self.solve(fixtures)
@@ -2259,7 +2259,7 @@ class NativeLeanSmtTests(unittest.TestCase):
             "Traces/native_client_request_duplicate_conflict.json", {1, 2}
         )
 
-    def run_raw_capture(self, capture, output, *options):
+    def run_raw_capture(self, capture, output):
         requested = os.environ.get("Z3")
         solver = find_z3(Path(requested) if requested else None)
         result = subprocess.run(
@@ -2274,7 +2274,6 @@ class NativeLeanSmtTests(unittest.TestCase):
                 "--raw",
                 "--bootstrap",
                 "0",
-                *options,
             ],
             cwd=ROOT,
             capture_output=True,
@@ -2291,7 +2290,7 @@ class NativeLeanSmtTests(unittest.TestCase):
         return run
 
     def test_raw_capture_cli_and_explorer(self):
-        capture = ROOT / "Traces/Captured/soft_rollback.ndjson"
+        capture = ROOT / "Traces/Mutated/soft_rollback-direct.ndjson"
         with tempfile.TemporaryDirectory(prefix="native-raw-capture-") as temporary:
             output = Path(temporary)
             run = self.run_raw_capture(capture, output)
@@ -2324,7 +2323,7 @@ class NativeLeanSmtTests(unittest.TestCase):
             self.assertTrue(run.document["instructions"])
             self.assertEqual(run.document["unknowns"], [])
 
-    def test_raw_rejected_callback_prefix_is_sat_with_abstraction(self):
+    def test_raw_rejected_callback_prefix_preserves_packet(self):
         capture = ROOT / "Traces/Captured/soft_rollback.ndjson"
         with tempfile.TemporaryDirectory(prefix="native-raw-callback-") as temporary:
             root = Path(temporary)
@@ -2332,26 +2331,33 @@ class NativeLeanSmtTests(unittest.TestCase):
             prefix.write_bytes(
                 b"".join(capture.read_bytes().splitlines(keepends=True)[:22])
             )
-            literal = self.run_raw_capture(prefix, root / "literal")
-            self.assertEqual(literal.result["status"], "unsat")
-            abstracted = self.run_raw_capture(
-                prefix, root / "abstracted", "--abstract-rejected-callbacks"
-            )
-            self.assertEqual(abstracted.result["status"], "sat")
-            api = ExplorerApi(abstracted)
+            run = self.run_raw_capture(prefix, root / "run")
+            self.assertEqual(run.result["status"], "sat")
+            api = ExplorerApi(run)
             certificate = api.get("/api/reduction")
-            self.assertTrue(certificate["preprocessing"]["abstract_rejected_callbacks"])
+            self.assertNotIn(
+                "abstract_rejected_callbacks", certificate["preprocessing"]
+            )
             index = next(
                 index
                 for index, step in enumerate(certificate["steps"])
                 if step.get("action") == "appendEntries"
-                and step["rule"] == "abstract-rejected-configuration-callback"
+                and step["provenance"][0]["line"] == 15
             )
             origin = api.get(f"/api/instructions/{index}")["origin"]
             self.assertEqual(origin["records"][0]["value"]["msg"]["packet"]["idx"], 2)
-            self.assertEqual(
-                origin["evidence"]["callbackAbstraction"]["modelBatchEnd"], 3
+            self.assertEqual(run.document["instructions"][index]["batchEnd"], 2)
+            self.assertIsNone(origin["evidence"])
+            received = next(
+                item
+                for step, item in zip(
+                    certificate["steps"], run.document["instructions"]
+                )
+                if step.get("variable") == "firstMessageFrom"
+                and step["provenance"][0]["line"] == 19
             )
+            self.assertEqual(received["value"]["prevLogIndex"], 2)
+            self.assertEqual(received["value"]["entriesLength"], 0)
 
     def test_raw_capture_suite(self):
         from native_suite import load_cases, run_suite
@@ -2582,7 +2588,7 @@ class NativeLeanSmtTests(unittest.TestCase):
         for path, error in zip(paths, errors, strict=True):
             self.assertIsNone(error, f"{path.name}: {error}")
 
-    def test_configuration_callback_heartbeat_conflict(self):
+    def test_configuration_callback_heartbeat_and_data(self):
         document = json.loads(
             (ROOT / "Traces/native_configuration_callback_heartbeat_conflict.json").read_text()
         )
@@ -2591,10 +2597,16 @@ class NativeLeanSmtTests(unittest.TestCase):
         scripts = self.encode([document, model_send])
         self.solve(
             [
-                {"name": "configuration-callback-heartbeat", "script": scripts[0],
-                 "expected": "unsat"},
-                {"name": "configuration-model-send", "script": scripts[1],
-                 "expected": "sat"},
+                {
+                    "name": "configuration-callback-heartbeat",
+                    "script": scripts[0],
+                    "expected": "sat",
+                },
+                {
+                    "name": "configuration-model-send",
+                    "script": scripts[1],
+                    "expected": "sat",
+                },
             ]
         )
 
@@ -2628,13 +2640,38 @@ class NativeLeanSmtTests(unittest.TestCase):
             )
         cases = [
             ("earlier-inactive-peer", [heartbeat, configuration], "unsat"),
-            ("after-configuration", [configuration, heartbeat], "unsat"),
+            ("after-configuration", [configuration, heartbeat], "sat"),
             (
                 "after-next-signature",
-                [configuration, {"kind": "signCommittableMessages", "node": "0"}, heartbeat],
-                "unsat",
+                [
+                    configuration,
+                    {"kind": "signCommittableMessages", "node": "0"},
+                    heartbeat,
+                ],
+                "sat",
             ),
             ("model-data-send", [configuration, dict(heartbeat, batchEnd=5)], "sat"),
+            ("backwards-end", [configuration, dict(heartbeat, batchEnd=3)], "unsat"),
+            ("past-log-end", [configuration, dict(heartbeat, batchEnd=6)], "unsat"),
+            (
+                "multi-entry-send-not-reduced",
+                [
+                    configuration,
+                    {"kind": "signCommittableMessages", "node": "0"},
+                    dict(heartbeat, batchEnd=6),
+                ],
+                "unsat",
+            ),
+            (
+                "repeated-heartbeat-keeps-cursor",
+                [
+                    configuration,
+                    heartbeat,
+                    heartbeat,
+                    {"kind": "sentIndex", "node": "0", "peer": "2", "value": 4},
+                ],
+                "sat",
+            ),
         ]
         scripts = self.encode(
             [dict(document, instructions=initial + actions) for _, actions, _ in cases]
@@ -2724,16 +2761,19 @@ class NativeLeanSmtTests(unittest.TestCase):
         }
         literal = deepcopy(corrected)
         literal["instructions"][len(initial)]["batchEnd"] = 2
-        incorrect_nack = deepcopy(corrected)
+        literal["instructions"][len(initial) + 1]["value"]["entriesLength"] = 0
+        incorrect_nack = deepcopy(literal)
         incorrect_nack["instructions"][len(initial) + 8]["value"]["lastLogIndex"] = 1
-        scripts = self.encode([literal, corrected, incorrect_nack])
+        wrong_payload = deepcopy(literal)
+        wrong_payload["instructions"][len(initial) + 1]["value"]["entriesLength"] = 1
+        scripts = self.encode([literal, corrected, incorrect_nack, wrong_payload])
         self.solve(
             [
                 {"name": name, "script": script, "expected": expected}
                 for name, script, expected in zip(
-                    ["literal-callback", "abstracted-rejected-callback", "wrong-nack"],
+                    ["literal-callback", "data-probe", "wrong-nack", "wrong-payload"],
                     scripts,
-                    ["unsat", "sat", "unsat"],
+                    ["sat", "sat", "unsat", "unsat"],
                     strict=True,
                 )
             ]

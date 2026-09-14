@@ -20,7 +20,7 @@ def appendSendBody {width : PNat} (columns : Columns) (source destination : Fin 
     (batchEnd : Nat) : EncodeM width Unit := do
   let sentIndex <- define (appendSentIndex columns source destination batchEnd)
   modify fun state => { state with sentIndex }
-  pushQueue destination source (appendPacketTerm columns source destination)
+  pushQueue destination source (appendPacketTerm columns source destination batchEnd)
 
 def appendSendGuard {width : PNat} (columns : Columns) (bootstrap : BitVec width)
     (source destination : Fin width) (batchEnd : Nat) : EncodeM width Unit := do

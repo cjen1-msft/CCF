@@ -55,6 +55,12 @@ class NativeOriginTests(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "does not match"):
             validate_raw_origin(self.data, certificate, self.document)
 
+    def test_removed_abstraction_policy_is_not_replayed(self):
+        certificate = deepcopy(self.origin.certificate)
+        certificate["preprocessing"]["abstract_rejected_callbacks"] = True
+        with self.assertRaisesRegex(ValidationError, "does not match"):
+            validate_raw_origin(self.data, certificate, self.document)
+
     def test_different_capture_is_rejected(self):
         data = (ROOT / "Traces/Captured/bad_network.ndjson").read_bytes()
         with self.assertRaisesRegex(ValidationError, "does not match"):
@@ -71,36 +77,6 @@ class NativeOriginTests(unittest.TestCase):
         retained = validate_raw_origin(self.data, self.origin.certificate, document)
         self.assertEqual(retained.trace, self.origin.trace)
         self.assertEqual(document["bootstrap"], ["0", "1"])
-
-    def test_callback_abstraction_is_opt_in_and_bound_to_retained_input(self):
-        self.assertNotIn(
-            "abstract_rejected_callbacks", self.origin.certificate["preprocessing"]
-        )
-        origin = reduce_raw(self.data, abstract_rejected_callbacks=True)
-        document = native_document(origin.trace, ["0"])
-        retained = validate_raw_origin(self.data, origin.certificate, document)
-        self.assertEqual(retained, origin)
-        index = next(
-            index
-            for index, step in enumerate(origin.certificate["steps"])
-            if step.get("action") == "appendEntries"
-            and step["rule"] == "abstract-rejected-configuration-callback"
-        )
-        detail = retained.instruction(index)
-        self.assertEqual(detail["records"][0]["value"]["msg"]["packet"]["idx"], 2)
-        self.assertEqual(document["instructions"][index]["batchEnd"], 3)
-        self.assertEqual(detail["evidence"]["callbackAbstraction"]["rawBatchEnd"], 2)
-        without_mode = deepcopy(origin.certificate)
-        del without_mode["preprocessing"]["abstract_rejected_callbacks"]
-        with self.assertRaisesRegex(ValidationError, "does not match"):
-            validate_raw_origin(self.data, without_mode, document)
-        for invalid in (None, "true", 1):
-            with self.subTest(mode=invalid), self.assertRaisesRegex(
-                ValidationError, "Boolean"
-            ):
-                changed = deepcopy(origin.certificate)
-                changed["preprocessing"]["abstract_rejected_callbacks"] = invalid
-                validate_raw_origin(self.data, changed, document)
 
 
 if __name__ == "__main__":

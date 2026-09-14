@@ -23,7 +23,9 @@ def fixture (index : Nat) (log : List (Entry (Fin 3) Nat)) (previous : Nat)
   let expected := makeAppendEntriesRequest state source destination
     (min ((state.nodes source).sentIndex destination + 1) (state.nodes source).log.length)
   let equality : Expr .bool :=
-    .equal (appendPacketTerm (width := 3) columns source destination) (packetTerm (width := 3) (.appendEntriesRequest expected))
+    .equal (appendPacketTerm (width := 3) columns source destination
+      (min ((state.nodes source).sentIndex destination + 1) (state.nodes source).log.length))
+      (packetTerm (width := 3) (.appendEntriesRequest expected))
   let assertions : List (Expr .bool) := [
     .equal (allocated columns source.val) (.boolean present),
     .equal (.select (.free (.array .int .int) 3) (.integer source.val)) (.integer log.length),

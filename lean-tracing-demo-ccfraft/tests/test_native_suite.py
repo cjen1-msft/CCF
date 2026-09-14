@@ -48,6 +48,17 @@ class NativeSuiteTests(unittest.TestCase):
             <= {case.trace for case in cases}
         )
         self.assertTrue(all(case.reason for case in cases))
+        expected = {case.trace: case.expected for case in cases}
+        self.assertEqual(expected["Controls/configuration_callback.ndjson"], "sat")
+        self.assertEqual(expected["Captured/bad_network.ndjson"], "sat")
+        self.assertEqual(expected["Captured/soft_rollback.ndjson"], "sat")
+        self.assertTrue(
+            all(
+                case.expected == "unsat"
+                for case in cases
+                if case.trace.startswith("Mutated/")
+            )
+        )
 
     def test_new_nested_captures_require_explicit_metadata(self):
         directory = self.root / "future/scenario"

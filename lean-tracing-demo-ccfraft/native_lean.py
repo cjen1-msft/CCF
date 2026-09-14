@@ -74,16 +74,9 @@ def main() -> None:
     parser.add_argument(
         "--bootstrap", nargs="+", help="explicit initial configuration for --raw"
     )
-    parser.add_argument(
-        "--abstract-rejected-callbacks",
-        action="store_true",
-        help="with --raw, abstract closed, rejected configuration probes",
-    )
     args = parser.parse_args()
     if args.raw != (args.bootstrap is not None):
         parser.error("--raw requires --bootstrap; --bootstrap is only valid with --raw")
-    if args.abstract_rejected_callbacks and not args.raw:
-        parser.error("--abstract-rejected-callbacks requires --raw")
     try:
         reserved = ARTIFACTS + RAW_ARTIFACTS + ("result.json", "result.json.tmp")
         if args.trace.resolve() in {
@@ -94,13 +87,7 @@ def main() -> None:
         result_path = args.output_dir / "result.json"
         result_path.unlink(missing_ok=True)
         raw_data = args.trace.read_bytes()
-        origin = (
-            reduce_raw(
-                raw_data, abstract_rejected_callbacks=args.abstract_rejected_callbacks
-            )
-            if args.raw
-            else None
-        )
+        origin = reduce_raw(raw_data) if args.raw else None
         document = (
             native_document(origin.trace, args.bootstrap)
             if origin is not None

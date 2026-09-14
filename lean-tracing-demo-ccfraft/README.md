@@ -74,11 +74,16 @@ They assert the Model's allocation, role, distinct-peer, and active-membership
 guards, then append one packet to the directed FIFO. Sending the same packet
 twice appends two copies. A disabled action is UNSAT, not an input error.
 `appendEntries` requires declared `source` and `destination` identities and a
-natural `batchEnd`. The Model requires
-`batchEnd = min(sentIndex[destination] + 1, logLength)`.
-The action asserts the Model's send guards, updates the cursor, and enqueues
+natural `batchEnd`. The trace policy requires
+`sentIndex[destination] <= batchEnd <= min(sentIndex[destination] + 1, logLength)`.
+This includes empty heartbeats while data is pending. Data batches remain
+split into single-entry sends. The base Model's stricter guard is unchanged;
+`Sparse/TraceEnabled.lean` defines the trace-specific choice.
+The action asserts the trace send guards, updates the cursor, and enqueues
 the packet constructed from the original cursor. Repeated heartbeats remain
 separate queue entries. This send frontier does not limit incoming packet size.
+An end before the cursor or beyond the log is UNSAT, even when the initial
+state itself permits such an out-of-range cursor.
 `receiveRequestVote` requires a declared `source`, a declared and allocated
 `destination`, and a vote request at the selected queue head.
 The request must name that destination and have no newer term.
@@ -254,53 +259,28 @@ There is no historical bounded-encoder fallback.
 The input must not alias a reserved output artifact, including through symlinks.
 Failed reduction, encoding, or solving leaves no successful `result.json`.
 
-With literal reduction, both saved captures return UNSAT because configuration
-callbacks send a heartbeat before the implementation advances its log frontier, while
-the Model appends the configuration atomically. This is a reduction/Model
-atomicity disagreement, not evidence of a production defect.
-The first nine records of `soft_rollback.ndjson`, the audited bootstrap prefix,
-are SAT. `native_configuration_callback_heartbeat_conflict.json` isolates the
-disagreement; changing its final `batchEnd` from 4 to 5 gives a Model-admitted
-SAT contrast. Literal reduction preserves the captured heartbeat's batch end.
+#### Configuration-callback heartbeats
 
-#### Rejected configuration-callback probes
+The trace policy follows the heartbeat allowance in
+[`Traceccfraft.tla`](../tla/consensus/Traceccfraft.tla#L112).
+Configuration changes still append their entry atomically, but the next send
+can choose the old cursor as its batch end and carry no entries.
+The reducer preserves the actual packet bounds at both send and receive.
+It omits the callback's mixed-snapshot `logLength` observation only within the
+same command as `add_configuration`.
 
-`--abstract-rejected-callbacks` enables a guarded packet abstraction in
-`native_lean.py --raw` and the standalone `reduction.py` CLI. It is off by default.
+The encoder constructs an empty or single-entry payload from the chosen batch
+end. Its correspondence target is `NativeArrayVote.modelFollows`, whose send
+steps use `TraceEnabled`. Other steps use the unchanged base Model guards.
+This is the zero-or-one-entry specialization of TLA's arbitrary trace batches,
+not an extension of the base Model's safety theorems.
 
-The implementation sends an empty probe to a newly added peer before advancing
-its log frontier. The Model requires that send to contain the configuration entry.
-If the peer has an empty log, it rejects either packet before inspecting entries.
-The reducer can therefore represent this exchange with the Model's one-entry
-probe. This is a payload abstraction, not an exact reconstruction of the packet.
-The Model and encoder proofs are unchanged.
-
-The rule requires the first complete AppendEntries exchange on that directed
-node pair, matching packet headers, an empty receiver log, and a zero-index NACK.
-The NACK must reach the sender before another send to that peer.
-Only log replication, commits, and sends to other peers may intervene on the
-sender. Duplicate sends, drops, incomplete exchanges, successful responses, and
-preexisting peers remain literal.
-
-Compared with literal reduction, this rule removes no state observations.
-It retains the original NDJSON.
-Its certificate records the raw and Model batch ends and the source lines
-supporting the abstraction. The explorer exposes this evidence.
-Loading a retained run recomputes reduction with its recorded mode.
-
-For example:
-
-```sh
-python3 native_lean.py Traces/Captured/soft_rollback.ndjson \
-	--raw --bootstrap 0 --abstract-rejected-callbacks \
-	--output-dir /tmp/native-abstracted --z3 /path/to/z3
-```
-
-The first 22 records of `soft_rollback.ndjson` include a complete callback
-exchange. That prefix is UNSAT with literal reduction and SAT with this rule.
-Full-capture consistency with the abstraction remains unconfirmed.
-Longer solver experiments were stopped without a verdict.
-The capture manifest and warm timings below still use literal reduction.
+The former `--abstract-rejected-callbacks` packet-rewriting option is removed.
+Retained runs containing that reduction mode must be regenerated.
+The historical `native_configuration_callback_heartbeat_conflict.json` fixture
+now describes an allowed heartbeat, as does its one-entry-send contrast.
+`Traces/Controls/configuration_callback.ndjson` retains the exact first 22 records
+of `soft_rollback`, including the heartbeat and its NACK. This control is SAT.
 
 #### Capture regressions and warm timing
 
@@ -308,17 +288,31 @@ The capture manifest and warm timings below still use literal reduction.
 The manifest records each trace's bootstrap, expected verdict, and reason.
 Every `.ndjson` file under the manifest's configured directories must have an
 entry, including files in new subdirectories. New captures cannot be silently
-skipped. The initial directories are `Captured` and `Mutated`; add another
+skipped. The configured directories are `Captured`, `Mutated`, and `Controls`; add another
 directory to include another collection. Historical `Legacy` fixtures are not
 part of this native suite.
-The two original captures currently expect UNSAT for the known callback
-disagreement. Matching that expectation does not establish Model consistency.
-The four deliberate mutations also expect UNSAT.
+The two original captures now expect SAT rather than preserving the obsolete
+callback contradiction as a passing regression. Their full solver verdicts
+remain unconfirmed. These expectations are acceptance goals, not recorded SAT
+results. The callback control is SAT, and the four deliberate mutations are
+UNSAT with source-attributed cores.
 
 Run the complete suite with a fresh output directory outside `Traces/`:
 
 ```sh
 python3 native_suite.py --output-dir /tmp/native-suite --z3 /path/to/z3
+```
+
+To run the completed callback control and negative regressions without the
+unresolved full-capture solver runs:
+
+```sh
+python3 native_suite.py --output-dir /tmp/native-controls --z3 /path/to/z3 \
+	--case Controls/configuration_callback.ndjson \
+	--case Mutated/bad_network-direct.ndjson \
+	--case Mutated/bad_network-indirect.ndjson \
+	--case Mutated/soft_rollback-direct.ndjson \
+	--case Mutated/soft_rollback-indirect.ndjson
 ```
 
 Measure the two original captures with one excluded warmup each and three
@@ -337,6 +331,8 @@ The initial build, warmup runs, and subsequent explorer loading are excluded.
 `summary.json` records medians, ranges, and individual samples.
 Each sample retains its own native-run artifacts. An unexpected verdict,
 including `unknown`, fails the suite rather than becoming a passing result.
+Previously recorded 17-20 second timings for the original captures measured
+the old UNSAT contradiction. They do not describe the new trace policy.
 
 The same full capture suite is available through the existing opt-in tests:
 

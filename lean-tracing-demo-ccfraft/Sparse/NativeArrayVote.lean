@@ -181,7 +181,7 @@ def modelFollows (state : State N T) : List (Instruction N T) -> Prop
       CCFRaft.Enabled state (.clientRequest source transaction) /\
         modelFollows (CCFRaft.next state (.clientRequest source transaction)) rest
   | .appendEntries source destination batchEnd :: rest =>
-      CCFRaft.Enabled state (.appendEntries source destination batchEnd) /\
+      CCFRaft.TraceEnabled state (.appendEntries source destination batchEnd) /\
         modelFollows (CCFRaft.next state (.appendEntries source destination batchEnd)) rest
   | .submittedTxId txId expected :: rest =>
       decide (txId ∈ state.submittedTxIds) = expected /\ modelFollows state rest

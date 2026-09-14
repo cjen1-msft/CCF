@@ -36,7 +36,7 @@ def fixture (index : Nat) (state : State (Fin 3) Nat) (destination : Fin 3) (bat
   let (_, final) <- program.run (initialEncoding input.width input.bootstrap)
   return Json.mkObj [("name", toJson s!"append-guard-model-{index}"),
     ("script", toJson (renderScript final.assertions.toList)),
-    ("expected", toJson (if decide (Enabled state (.appendEntries 0 destination batchEnd)) then "sat" else "unsat"))]
+    ("expected", toJson (if decide (TraceEnabled state (.appendEntries 0 destination batchEnd)) then "sat" else "unsat"))]
 
 def state (present : Finset (Fin 3)) (role : Role) (membershipState : MembershipState)
     (completed : Bool) (log : List (Entry (Fin 3) Nat)) (previous : Nat) : State (Fin 3) Nat :=
@@ -59,7 +59,7 @@ def cases : Except String (List Json) := do
         logs.flatMap fun log =>
           [0, 1, 2, 3, 10 ^ 30].flatMap fun previous =>
             let frontier := min (previous + 1) log.length
-            [frontier, frontier + 1, 10 ^ 30].map fun batchEnd =>
+            [previous, frontier, frontier + 1, 10 ^ 30].map fun batchEnd =>
               (state {0, 1} role membership completed log previous, (1 : Fin 3), batchEnd)
   let allocation := [false, true].flatMap fun sourcePresent =>
     [false, true].flatMap fun destinationPresent =>

@@ -56,6 +56,47 @@ was not changed. Live instruction 238 includes raw source line 45.
 
 ### Implementation checkpoints
 
+The TLA-alignment follow-up supersedes the payload abstraction below.
+`Sparse/TraceEnabled.lean` defines the trace send policy:
+`cursor <= batchEnd <= min(cursor + 1, log length)`.
+This allows the exact empty heartbeat with pending configuration data while
+retaining the reducer's single-entry data-batch specialization.
+The base `Model.Enabled`, simulator, and base safety lemmas are unchanged.
+Native send correspondence and the send branch of `NativeArrayVote.modelFollows`
+use `TraceEnabled`; other actions retain their existing Model guards.
+The packet encoder now uses the explicit batch end to choose an empty or
+single-entry payload. It still ignores inactive log tails.
+
+The `--abstract-rejected-callbacks` flag, packet rewriting, and recorded-policy
+replay have been removed. Previously retained abstracted runs are rejected and
+must be regenerated. Retained packet-exact runs must still match recomputed
+reduction.
+The reducer only omits the known mixed `logLength` snapshot, and only for sends
+in the same command as `add_configuration`.
+
+Acceptance is recorded in `tla-heartbeat-final-build.log` (aggregate `Sparse`,
+public encoder, and guard fixture), `tla-heartbeat-native-tests.log` (packet,
+guard, and public-send matrices plus exact callback controls), and
+`tla-heartbeat-final-tests.log` (65 targeted Python and native tests).
+No extra axioms, proof-budget increases, or `sorry` were introduced.
+
+`Traces/Controls/configuration_callback.ndjson` is the exact 22-record prefix
+of `soft_rollback`. The saved suite now includes that SAT control.
+`tla-heartbeat-controls/summary.json` retains its SAT run and all four full
+mutated UNSAT runs. The mutations retain these source-attributed cores:
+`bad_network-direct` lines 150/151, `bad_network-indirect` lines 224/228,
+`soft_rollback-direct` lines 112/113, and `soft_rollback-indirect` lines
+117/118/119/122. The control took 6.849 seconds end to end, including 0.873
+seconds in Z3, in one run.
+
+Full original `soft_rollback` and `bad_network` runs were stopped without
+solver verdicts. Their directories are `tla-heartbeat-soft/` and
+`tla-heartbeat-bad-network/`; neither has a successful result manifest.
+The suite now expects SAT for originals as an acceptance goal, not a measured
+outcome. Full-capture validation and warm timings under the new policy remain
+open. The old 17-20 second figures measured the removed contradiction.
+
+The earlier payload-abstraction checkpoint follows for historical context.
 The rejected-callback follow-up adds `--abstract-rejected-callbacks` to the raw
 native CLI and standalone reducer. The default remains literal.
 The rule maps a newly added empty peer's rejected heartbeat to the Model's
