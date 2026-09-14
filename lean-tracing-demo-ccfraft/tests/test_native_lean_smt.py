@@ -2323,6 +2323,22 @@ class NativeLeanSmtTests(unittest.TestCase):
             self.assertTrue(run.document["instructions"])
             self.assertEqual(run.document["unknowns"], [])
 
+    def test_raw_capture_suite(self):
+        from native_suite import load_cases, run_suite
+
+        requested = os.environ.get("Z3")
+        solver = find_z3(Path(requested) if requested else None)
+        cases = load_cases()
+        with tempfile.TemporaryDirectory(prefix="native-capture-suite-") as temporary:
+            report = run_suite(cases, Path(temporary) / "runs", solver)
+        self.assertEqual(
+            [case["trace"] for case in report["cases"]],
+            [case.trace for case in cases],
+        )
+        self.assertTrue(
+            all(len(case["samples"]) == 1 for case in report["cases"])
+        )
+
     def parameterized_client_traces(self):
         models = [
             deepcopy(model)
@@ -2549,6 +2565,54 @@ class NativeLeanSmtTests(unittest.TestCase):
                  "expected": "unsat"},
                 {"name": "configuration-model-send", "script": scripts[1],
                  "expected": "sat"},
+            ]
+        )
+
+    def test_configuration_callback_send_boundary_positions(self):
+        document = json.loads(
+            (ROOT / "Traces/native_configuration_callback_heartbeat_conflict.json").read_text()
+        )
+        configuration, heartbeat = document["instructions"][-2:]
+        # Pin peer eligibility rather than letting unknown history justify a send.
+        initial = document["instructions"][:-2] + [
+            {"kind": "allocated", "node": "2", "value": True},
+            {"kind": "joined", "node": "2", "value": False},
+            {"kind": "role", "node": "0", "value": "leader"},
+            {"kind": "membershipState", "node": "0", "value": "active"},
+            {"kind": "currentTerm", "node": "0", "value": 2},
+            {"kind": "commit", "node": "0", "value": 4},
+            {"kind": "sentIndex", "node": "0", "peer": "2", "value": 4},
+            {"kind": "retirementCompleted", "node": "0", "value": []},
+        ]
+        for index, content in enumerate(
+            [
+                {"reconfiguration": ["0"]},
+                "signature",
+                {"reconfiguration": ["0", "1"]},
+                "signature",
+            ]
+        ):
+            initial.append(
+                {"kind": "entry", "node": "0", "index": index,
+                 "value": {"term": 2, "content": content}}
+            )
+        cases = [
+            ("earlier-inactive-peer", [heartbeat, configuration], "unsat"),
+            ("after-configuration", [configuration, heartbeat], "unsat"),
+            (
+                "after-next-signature",
+                [configuration, {"kind": "signCommittableMessages", "node": "0"}, heartbeat],
+                "unsat",
+            ),
+            ("model-data-send", [configuration, dict(heartbeat, batchEnd=5)], "sat"),
+        ]
+        scripts = self.encode(
+            [dict(document, instructions=initial + actions) for _, actions, _ in cases]
+        )
+        self.solve(
+            [
+                {"name": name, "script": script, "expected": expected}
+                for (name, _, expected), script in zip(cases, scripts, strict=True)
             ]
         )
 

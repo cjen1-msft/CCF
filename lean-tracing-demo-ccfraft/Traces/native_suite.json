@@ -1,0 +1,42 @@
+{
+  "schema": "ccfraft-native-suite/v1",
+  "directories": ["Captured", "Mutated"],
+  "cases": [
+    {
+      "trace": "Captured/bad_network.ndjson",
+      "bootstrap": ["0"],
+      "expected": "unsat",
+      "reason": "Known configuration-callback atomicity disagreement, not an expected-consistent baseline."
+    },
+    {
+      "trace": "Captured/soft_rollback.ndjson",
+      "bootstrap": ["0"],
+      "expected": "unsat",
+      "reason": "Known configuration-callback atomicity disagreement, not an expected-consistent baseline."
+    },
+    {
+      "trace": "Mutated/bad_network-direct.ndjson",
+      "bootstrap": ["0"],
+      "expected": "unsat",
+      "reason": "Deliberately contradictory direct state observations."
+    },
+    {
+      "trace": "Mutated/bad_network-indirect.ndjson",
+      "bootstrap": ["0"],
+      "expected": "unsat",
+      "reason": "Deliberately contradictory observations across Model actions."
+    },
+    {
+      "trace": "Mutated/soft_rollback-direct.ndjson",
+      "bootstrap": ["0"],
+      "expected": "unsat",
+      "reason": "Deliberately contradictory direct state observations."
+    },
+    {
+      "trace": "Mutated/soft_rollback-indirect.ndjson",
+      "bootstrap": ["0"],
+      "expected": "unsat",
+      "reason": "Deliberately contradictory observations across Model actions."
+    }
+  ]
+}

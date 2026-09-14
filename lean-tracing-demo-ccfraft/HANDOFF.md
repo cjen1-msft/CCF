@@ -56,6 +56,43 @@ was not changed. Live instruction 238 includes raw source line 45.
 
 ### Implementation checkpoints
 
+The callback-regrouping follow-up adds
+`test_configuration_callback_send_boundary_positions`. With the old log and
+peer eligibility fixed, the exact heartbeat is rejected before configuration,
+after configuration, and after the next signature. The Model-admitted data
+send ending at 5 remains SAT. Results are in `native-callback-boundary-controls.log`.
+An earlier full-prefix experiment became SAT when the send moved earlier,
+but left initial history unconstrained. That result is not accepted as a
+faithful general reduction rule. A slower follow-up on that unconstrained
+prefix was stopped; it supplied no additional verdict.
+No production reducer or Model semantics were changed in this follow-up.
+Representing the callback effect still requires an explicit modeling or
+abstraction decision.
+
+`native_suite.py` and `Traces/native_suite.json` now provide a repeatable suite
+for both original captures and all four mutations. Every NDJSON file under
+the configured capture directories requires explicit expected-status/bootstrap
+metadata. `test_native_suite.py` covers discovery and measurement contracts;
+`test_raw_capture_suite` runs every registered case through the real CLI.
+Final unit, callback-control, and full-suite results are in
+`native-suite-final-targeted.log`.
+The manifest initially covers `Captured` and `Mutated`, not the historical
+`Legacy` input fixtures. Additional collections can be listed explicitly.
+
+Warm end-to-end measurements build Lean once outside the clock and exclude one
+full warmup per capture. Three measured runs per capture are interleaved.
+Times include CLI startup, reduction, Lean invocation/encoding, Z3, and artifact
+publication, but exclude subsequent explorer loading.
+`native-warm-suite/summary.json` retains every sample and artifact path.
+
+| Capture | Median total | Total range | Median Z3 |
+| --- | ---: | ---: | ---: |
+| `bad_network` | 20.213 s | 20.184-20.712 s | 2.468 s |
+| `soft_rollback` | 17.418 s | 17.408-17.683 s | 2.042 s |
+
+These measurements concern the current UNSAT captures, not hypothetical
+full-length SAT runs. The two medians sum to 37.631 seconds sequentially.
+
 The sections below retain earlier build and proof checkpoints. Their historical
 pending-state and assurance notes are superseded by the delivery status above.
 

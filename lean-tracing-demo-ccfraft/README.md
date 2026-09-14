@@ -263,6 +263,49 @@ are SAT. `native_configuration_callback_heartbeat_conflict.json` isolates the
 disagreement; changing its final `batchEnd` from 4 to 5 gives a Model-admitted
 SAT contrast. The runner never changes the captured heartbeat to obtain SAT.
 
+#### Capture regressions and warm timing
+
+`native_suite.py` runs the captures listed in `Traces/native_suite.json`.
+The manifest records each trace's bootstrap, expected verdict, and reason.
+Every `.ndjson` file under the manifest's configured directories must have an
+entry, including files in new subdirectories. New captures cannot be silently
+skipped. The initial directories are `Captured` and `Mutated`; add another
+directory to include another collection. Historical `Legacy` fixtures are not
+part of this native suite.
+The two original captures currently expect UNSAT for the known callback
+disagreement. Matching that expectation does not establish Model consistency.
+The four deliberate mutations also expect UNSAT.
+
+Run the complete suite with a fresh output directory outside `Traces/`:
+
+```sh
+python3 native_suite.py --output-dir /tmp/native-suite --z3 /path/to/z3
+```
+
+Measure the two original captures with one excluded warmup each and three
+interleaved measured runs each:
+
+```sh
+python3 native_suite.py --output-dir /tmp/native-warm --z3 /path/to/z3 \
+	--case Captured/bad_network.ndjson --case Captured/soft_rollback.ndjson \
+	--warmups 1 --samples 3
+```
+
+The suite builds the Lean proof and encoder modules once before timing.
+Each sample measures the complete native CLI process, including raw reduction,
+normal per-run Lean startup and encoding, Z3, and artifact publication.
+The initial build, warmup runs, and subsequent explorer loading are excluded.
+`summary.json` records medians, ranges, and individual samples.
+Each sample retains its own native-run artifacts. An unexpected verdict,
+including `unknown`, fails the suite rather than becoming a passing result.
+
+The same full capture suite is available through the existing opt-in tests:
+
+```sh
+PYTHONPATH=tests CCF_NATIVE_ARRAY_TESTS=1 Z3=/path/to/z3 \
+	python3 -m unittest test_native_lean_smt.NativeLeanSmtTests.test_raw_capture_suite
+```
+
 #### SMT backend
 
 cvc5 1.3.4 returned incorrect UNSAT for a satisfiable constant-array and
