@@ -38,16 +38,25 @@ class RawOrigin:
         }
 
 
-def reduce_raw(data: bytes) -> RawOrigin:
+def reduce_raw(data: bytes, *, abstract_rejected_callbacks: bool = False) -> RawOrigin:
     """Run the untrusted reducer without historical bounds or identity slots."""
     records = tuple(loads_ndjson(data.decode("utf-8"), source="raw.ndjson"))
-    certificate = build_certificate(records)
+    certificate = build_certificate(
+        records, abstract_rejected_callbacks=abstract_rejected_callbacks
+    )
     return RawOrigin(records, certificate, normalize(certificate, native_ids=True))
 
 
 def validate_raw_origin(data: bytes, certificate: object, document: dict) -> RawOrigin:
     """Recompute once at load time, before serving an immutable snapshot."""
-    origin = reduce_raw(data)
+    if not isinstance(certificate, dict) or not isinstance(
+        certificate.get("preprocessing"), dict
+    ):
+        raise ValidationError("retained reduction has no preprocessing metadata")
+    abstract = certificate["preprocessing"].get("abstract_rejected_callbacks", False)
+    if type(abstract) is not bool:
+        raise ValidationError("retained callback abstraction must be Boolean")
+    origin = reduce_raw(data, abstract_rejected_callbacks=abstract)
     if canonical_json(origin.certificate) != canonical_json(certificate):
         raise ValidationError("retained reduction does not match the raw capture")
     projected = native_document(origin.trace, document["bootstrap"])

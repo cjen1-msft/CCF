@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Added
 
-- The experimental Lean trace-validation demo supports AppendEntries request receipt, vote and AppendEntries response receipt, leadership promotion, membership changes, commit advancement, signature writes, client requests, per-identity joined observations, and partial-packet observations through its public encoder, with native trace correspondence proofs and explorer attribution. Shared transaction parameters have whole-trace emitted-script correspondence. The native raw CLI integrates Python reduction, Lean encoding, Z3, and a read-only explorer with retained raw-event provenance and reduction decisions. A manifest-driven capture suite records expected verdicts and measures warm end-to-end validation time.
+- The experimental Lean trace-validation demo supports AppendEntries request receipt, vote and AppendEntries response receipt, leadership promotion, membership changes, commit advancement, signature writes, client requests, per-identity joined observations, and partial-packet observations through its public encoder, with native trace correspondence proofs and explorer attribution. Shared transaction parameters have whole-trace emitted-script correspondence. The native raw CLI integrates Python reduction, Lean encoding, Z3, and a read-only explorer with retained raw-event provenance and reduction decisions. A manifest-driven capture suite records expected verdicts and measures warm end-to-end validation time. An opt-in reduction abstracts closed, rejected configuration-callback probes while retaining raw packet evidence.
 
 ## [7.0.12]
 

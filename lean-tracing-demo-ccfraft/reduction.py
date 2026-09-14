@@ -101,6 +101,7 @@ class PreprocessedTrace:
     ignored_events: list[IgnoredEvent]
     groups: list[dict[str, Any]]
     command_associations: list[dict[str, Any]]
+    abstract_rejected_callbacks: bool = False
 
 
 def _require(condition: bool, message: str) -> None:
@@ -906,17 +907,19 @@ def _correlate_nominations(trace: PreprocessedTrace) -> None:
 
 
 def _mark_configuration_callback_sends(trace: PreprocessedTrace) -> None:
-    pending_source: str | None = None
+    configuration: AssociatedEvent | None = None
     for event in trace.events:
         if event.kind == "add_configuration":
-            pending_source = event.events[0].node
+            configuration = event.events[0]
             continue
         if (
-            pending_source is not None
+            configuration is not None
             and event.kind == "send_append_entries"
-            and event.events[0].node == pending_source
+            and event.events[0].node == configuration.node
+            and event.events[0].command_line == configuration.command_line
         ):
             event.data["configuration_callback"] = True
+            event.data["callback_configuration"] = configuration
             trace.groups.append(
                 {
                     "functions": [event.events[0].function],
@@ -926,12 +929,153 @@ def _mark_configuration_callback_sends(trace: PreprocessedTrace) -> None:
                 }
             )
             continue
-        pending_source = None
+        configuration = None
 
 
-def preprocess(records: Sequence[NDJSONRecord]) -> PreprocessedTrace:
+def _abstract_rejected_configuration_callbacks(trace: PreprocessedTrace) -> None:
+    """Relate a fresh peer's rejected probe to the Model's mandatory data send."""
+    lanes: dict[tuple[str, str], list[NDJSONRecord]] = {}
+    for record in trace.records:
+        message = record.value.get("msg")
+        if not isinstance(message, dict):
+            continue
+        packet = message.get("packet")
+        if not isinstance(packet, dict) or packet.get("msg") not in {
+            "raft_append_entries",
+            "raft_append_entries_response",
+        }:
+            continue
+        function = message.get("function")
+        receiving = function in {"recv_append_entries", "recv_append_entries_response"}
+        peer_field = "from_node_id" if receiving else "to_node_id"
+        node = _node(message["state"]["node_id"], "packet node")
+        peer = _node(message.get(peer_field), "packet peer")
+        source, destination = (peer, node) if receiving else (node, peer)
+        lane = (
+            (destination, source)
+            if packet["msg"] == "raft_append_entries_response"
+            else (source, destination)
+        )
+        lanes.setdefault(lane, []).append(record)
+
+    by_line = {event.first_line: event for event in trace.events}
+    for position, send in enumerate(trace.events):
+        configuration = send.data.get("callback_configuration")
+        if configuration is None:
+            continue
+        primary = send.events[0]
+        destination = _peer(primary, "to_node_id")
+        index, members = _configuration(configuration)
+        previous, end = _append_range(primary)
+        old_configurations = configuration.message.get("configurations")
+        if not isinstance(old_configurations, list) or any(
+            not isinstance(item, dict)
+            or not isinstance(item.get("nodes"), (dict, list))
+            for item in old_configurations
+        ):
+            continue
+        if (
+            previous == 0
+            or previous != end
+            or index != end + 1
+            or configuration.state["last_idx"] != end
+            or destination not in members
+            or any(
+                destination
+                in {
+                    _node(node, "previous configuration node") for node in item["nodes"]
+                }
+                for item in old_configurations
+            )
+        ):
+            continue
+        packets = lanes[(primary.node, destination)]
+        # Only the first complete exchange on this lane is eligible. Duplicates,
+        # retransmissions and drops must not change which packet is abstracted.
+        if (
+            len(packets) < 4
+            or packets[0].line_number != primary.record.line_number
+            or [record.value["msg"]["function"] for record in packets[:4]]
+            != [
+                "send_append_entries",
+                "recv_append_entries",
+                "send_append_entries_response",
+                "recv_append_entries_response",
+            ]
+        ):
+            continue
+        receive = by_line.get(packets[1].line_number)
+        acknowledgement = by_line.get(packets[3].line_number)
+        if (
+            receive is None
+            or receive.kind != "recv_append_entries_group"
+            or acknowledgement is None
+            or receive.data["response"].record.line_number != packets[2].line_number
+            or acknowledgement.data.get("matching_receive_provenance")
+            != _provenance(receive.events)
+        ):
+            continue
+        incoming = receive.events[0]
+        response = receive.data["response"]
+        packet = _packet(primary, "raft_append_entries")
+        reply = _packet(response, "raft_append_entries_response")
+        if (
+            incoming.message["packet"] != packet
+            or acknowledgement.events[0].message["packet"] != reply
+            or incoming.state["last_idx"] != 0
+            or response.state["last_idx"] != 0
+            or reply["success"] != "FAIL"
+            or reply["last_log_idx"] != 0
+            or reply["term"] != packet["term"]
+            or response.state["current_view"] != packet["term"]
+            or _role(response) != "Follower"
+            or receive.data["follower_transition"] == "same-term-fallback"
+        ):
+            continue
+        intervening = [
+            event
+            for event in trace.events[position + 1 :]
+            if event.first_line < acknowledgement.first_line
+            and event.events[0].node == primary.node
+        ]
+        if any(
+            event.kind not in {"replicate", "commit", "send_append_entries"}
+            or (
+                event.kind == "send_append_entries"
+                and _peer(event.events[0], "to_node_id") == destination
+            )
+            for event in intervening
+        ):
+            continue
+        rule = "abstract-rejected-configuration-callback"
+        evidence = {
+            "rule": rule,
+            "rawBatchEnd": end,
+            "modelBatchEnd": index,
+            "previousIndex": previous,
+            "reason": (
+                "The empty peer rejects before reading entries. The zero-index "
+                "NACK resets both send cursors equally before another lane send."
+            ),
+            "provenance": _provenance(
+                [configuration, primary, *receive.events, *acknowledgement.events]
+            ),
+        }
+        send.data["callback_abstraction"] = evidence
+        receive.data["callback_abstraction"] = evidence
+        receive.data["split_ends"] = [index]
+        trace.groups.append(evidence)
+
+
+def preprocess(
+    records: Sequence[NDJSONRecord], *, abstract_rejected_callbacks: bool = False
+) -> PreprocessedTrace:
     """Apply the manually audited implementation-event preprocessing rules."""
 
+    _require(
+        type(abstract_rejected_callbacks) is bool,
+        "callback abstraction must be Boolean",
+    )
     associated, ignored = _associate_commands(records)
     command_associations = [
         {
@@ -954,10 +1098,13 @@ def preprocess(records: Sequence[NDJSONRecord]) -> PreprocessedTrace:
         ignored,
         groups,
         command_associations,
+        abstract_rejected_callbacks,
     )
     _correlate_response_batches(trace)
     _correlate_nominations(trace)
     _mark_configuration_callback_sends(trace)
+    if abstract_rejected_callbacks:
+        _abstract_rejected_configuration_callbacks(trace)
     return trace
 
 
@@ -1297,12 +1444,18 @@ def _reduce_receive_with_optional_term_update(
             receive,
             source=source,
             destination=destination,
-            rule="observe-selected-message-before-receive",
+            rule=(
+                receive_rule
+                if "callback_abstraction" in event.data
+                else "observe-selected-message-before-receive"
+            ),
             batch_position=position,
             batch_count=receive_count,
             batch_end=(batch_ends[position - 1] if batch_ends is not None else None),
         )
         evidence: dict[str, Any] = {"messageType": packet["msg"]}
+        if "callback_abstraction" in event.data:
+            evidence["callbackAbstraction"] = event.data["callback_abstraction"]
         if matching_receive_provenance is not None and position == 1:
             evidence.update(
                 {
@@ -1413,6 +1566,7 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
             )
         elif event.kind == "send_append_entries":
             destination = _peer(primary, "to_node_id")
+            abstraction = event.data.get("callback_abstraction")
             builder.observe_state(
                 primary,
                 rule="split-append-entries-batch",
@@ -1422,14 +1576,27 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
                     else frozenset()
                 ),
             )
-            for batch_end in _split_ends(primary):
+            for batch_end in (
+                [abstraction["modelBatchEnd"]]
+                if abstraction is not None
+                else _split_ends(primary)
+            ):
                 builder.action(
                     "appendEntries",
                     primary.node,
                     destination=destination,
                     batchEnd=batch_end,
-                    rule="split-append-entries-batch",
+                    rule=(
+                        abstraction["rule"]
+                        if abstraction is not None
+                        else "split-append-entries-batch"
+                    ),
                     events=event.events,
+                    evidence=(
+                        {"callbackAbstraction": abstraction}
+                        if abstraction is not None
+                        else None
+                    ),
                 )
         elif event.kind == "recv_append_entries_group":
             receive = event.data["receive"]
@@ -1440,7 +1607,11 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
                 receive_count=len(event.data["split_ends"]),
                 source=source,
                 destination=receive.node,
-                receive_rule="split-append-entries-receive",
+                receive_rule=(
+                    event.data["callback_abstraction"]["rule"]
+                    if "callback_abstraction" in event.data
+                    else "split-append-entries-receive"
+                ),
                 post_event=event.data["response"],
                 batch_ends=event.data["split_ends"],
             )
@@ -1699,16 +1870,25 @@ def reduce(preprocessed: PreprocessedTrace) -> dict[str, Any]:
             "command_associations": preprocessed.command_associations,
             "groups": preprocessed.groups,
             "ignored_events": ignored_events,
+            **(
+                {"abstract_rejected_callbacks": True}
+                if preprocessed.abstract_rejected_callbacks
+                else {}
+            ),
         },
         "schema_version": SCHEMA_VERSION,
         "steps": builder.steps,
     }
 
 
-def build_certificate(records: Sequence[NDJSONRecord]) -> dict[str, Any]:
+def build_certificate(
+    records: Sequence[NDJSONRecord], *, abstract_rejected_callbacks: bool = False
+) -> dict[str, Any]:
     """Preprocess and reduce parsed NDJSON records."""
 
-    return reduce(preprocess(records))
+    return reduce(
+        preprocess(records, abstract_rejected_callbacks=abstract_rejected_callbacks)
+    )
 
 
 def write_certificate(path: Path, certificate: Mapping[str, Any]) -> None:
@@ -1724,12 +1904,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path, help="captured NDJSON input")
     parser.add_argument("output", type=Path, help="canonical JSON certificate")
+    parser.add_argument(
+        "--abstract-rejected-callbacks",
+        action="store_true",
+        help="abstract the unread payload of closed, rejected configuration probes",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
-    certificate = build_certificate(read_ndjson(args.input))
+    certificate = build_certificate(
+        read_ndjson(args.input),
+        abstract_rejected_callbacks=args.abstract_rejected_callbacks,
+    )
     write_certificate(args.output, certificate)
     return 0
 

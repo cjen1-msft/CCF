@@ -2259,7 +2259,7 @@ class NativeLeanSmtTests(unittest.TestCase):
             "Traces/native_client_request_duplicate_conflict.json", {1, 2}
         )
 
-    def run_raw_capture(self, capture, output):
+    def run_raw_capture(self, capture, output, *options):
         requested = os.environ.get("Z3")
         solver = find_z3(Path(requested) if requested else None)
         result = subprocess.run(
@@ -2274,6 +2274,7 @@ class NativeLeanSmtTests(unittest.TestCase):
                 "--raw",
                 "--bootstrap",
                 "0",
+                *options,
             ],
             cwd=ROOT,
             capture_output=True,
@@ -2322,6 +2323,35 @@ class NativeLeanSmtTests(unittest.TestCase):
             self.assertFalse(run.core)
             self.assertTrue(run.document["instructions"])
             self.assertEqual(run.document["unknowns"], [])
+
+    def test_raw_rejected_callback_prefix_is_sat_with_abstraction(self):
+        capture = ROOT / "Traces/Captured/soft_rollback.ndjson"
+        with tempfile.TemporaryDirectory(prefix="native-raw-callback-") as temporary:
+            root = Path(temporary)
+            prefix = root / "callback.ndjson"
+            prefix.write_bytes(
+                b"".join(capture.read_bytes().splitlines(keepends=True)[:22])
+            )
+            literal = self.run_raw_capture(prefix, root / "literal")
+            self.assertEqual(literal.result["status"], "unsat")
+            abstracted = self.run_raw_capture(
+                prefix, root / "abstracted", "--abstract-rejected-callbacks"
+            )
+            self.assertEqual(abstracted.result["status"], "sat")
+            api = ExplorerApi(abstracted)
+            certificate = api.get("/api/reduction")
+            self.assertTrue(certificate["preprocessing"]["abstract_rejected_callbacks"])
+            index = next(
+                index
+                for index, step in enumerate(certificate["steps"])
+                if step.get("action") == "appendEntries"
+                and step["rule"] == "abstract-rejected-configuration-callback"
+            )
+            origin = api.get(f"/api/instructions/{index}")["origin"]
+            self.assertEqual(origin["records"][0]["value"]["msg"]["packet"]["idx"], 2)
+            self.assertEqual(
+                origin["evidence"]["callbackAbstraction"]["modelBatchEnd"], 3
+            )
 
     def test_raw_capture_suite(self):
         from native_suite import load_cases, run_suite
@@ -2613,6 +2643,99 @@ class NativeLeanSmtTests(unittest.TestCase):
             [
                 {"name": name, "script": script, "expected": expected}
                 for (name, _, expected), script in zip(cases, scripts, strict=True)
+            ]
+        )
+
+    def test_rejected_configuration_callback_exchange(self):
+        initial = [
+            {"kind": "allocated", "node": "0", "value": True},
+            {"kind": "joined", "node": "0", "value": True},
+            {"kind": "allocated", "node": "1", "value": False},
+            {"kind": "joined", "node": "1", "value": False},
+            {"kind": "role", "node": "0", "value": "leader"},
+            {"kind": "membershipState", "node": "0", "value": "active"},
+            {"kind": "currentTerm", "node": "0", "value": 2},
+            {"kind": "commit", "node": "0", "value": 2},
+            {"kind": "logLength", "node": "0", "value": 2},
+            {
+                "kind": "entry",
+                "node": "0",
+                "index": 0,
+                "value": {"term": 2, "content": {"reconfiguration": ["0"]}},
+            },
+            {
+                "kind": "entry",
+                "node": "0",
+                "index": 1,
+                "value": {"term": 2, "content": "signature"},
+            },
+            {"kind": "matchIndex", "node": "0", "peer": "1", "value": 0},
+            {"kind": "queueLength", "source": "0", "destination": "1", "value": 0},
+            {"kind": "queueLength", "source": "1", "destination": "0", "value": 0},
+            {"kind": "changeConfiguration", "source": "0", "configuration": ["0", "1"]},
+        ]
+        exchange = [
+            {"kind": "appendEntries", "source": "0", "destination": "1", "batchEnd": 3},
+            {
+                "kind": "queuePattern",
+                "source": "0",
+                "destination": "1",
+                "index": 0,
+                "value": {
+                    "kind": "appendEntriesRequest",
+                    "source": "0",
+                    "destination": "1",
+                    "term": 2,
+                    "prevLogIndex": 2,
+                    "prevLogTerm": 2,
+                    "leaderCommit": 2,
+                    "entriesLength": 1,
+                },
+            },
+            {"kind": "updateTerm", "source": "0", "destination": "1"},
+            {"kind": "receiveAppendEntries", "source": "0", "destination": "1"},
+            {"kind": "logLength", "node": "1", "value": 0},
+            {"kind": "commit", "node": "1", "value": 0},
+            {"kind": "currentTerm", "node": "1", "value": 2},
+            {"kind": "role", "node": "1", "value": "follower"},
+            {
+                "kind": "queuePattern",
+                "source": "1",
+                "destination": "0",
+                "index": 0,
+                "value": {
+                    "kind": "appendEntriesResponse",
+                    "source": "1",
+                    "destination": "0",
+                    "term": 2,
+                    "success": False,
+                    "lastLogIndex": 0,
+                },
+            },
+            {"kind": "receiveAppendEntriesResponse", "source": "1", "destination": "0"},
+            {"kind": "sentIndex", "node": "0", "peer": "1", "value": 0},
+            {"kind": "queueLength", "source": "0", "destination": "1", "value": 0},
+            {"kind": "queueLength", "source": "1", "destination": "0", "value": 0},
+        ]
+        corrected = {
+            "nodes": ["0", "1"],
+            "bootstrap": ["0"],
+            "instructions": initial + exchange,
+        }
+        literal = deepcopy(corrected)
+        literal["instructions"][len(initial)]["batchEnd"] = 2
+        incorrect_nack = deepcopy(corrected)
+        incorrect_nack["instructions"][len(initial) + 8]["value"]["lastLogIndex"] = 1
+        scripts = self.encode([literal, corrected, incorrect_nack])
+        self.solve(
+            [
+                {"name": name, "script": script, "expected": expected}
+                for name, script, expected in zip(
+                    ["literal-callback", "abstracted-rejected-callback", "wrong-nack"],
+                    scripts,
+                    ["unsat", "sat", "unsat"],
+                    strict=True,
+                )
             ]
         )
 

@@ -97,6 +97,33 @@ class NativeRawCliTests(unittest.TestCase):
             self.assertEqual(error.exception.code, 2)
         self.assertFalse(self.output.exists())
 
+    def test_callback_abstraction_requires_raw_and_survives_loading(self):
+        with self.assertRaises(SystemExit) as error:
+            self.invoke(
+                self.source,
+                "--output-dir",
+                self.output,
+                "--abstract-rejected-callbacks",
+            )
+        self.assertEqual(error.exception.code, 2)
+        self.assertFalse(self.output.exists())
+        self.invoke(
+            self.source,
+            "--output-dir",
+            self.output,
+            "--raw",
+            "--bootstrap",
+            "0",
+            "--abstract-rejected-callbacks",
+        )
+        run = NativeRun.load(self.output)
+        self.assertTrue(
+            run.origin.certificate["preprocessing"]["abstract_rejected_callbacks"]
+        )
+        self.assertEqual(
+            (self.output / "raw.ndjson").read_bytes(), self.source.read_bytes()
+        )
+
     def test_invalid_raw_input_clears_stale_result(self):
         self.output.mkdir()
         result = self.output / "result.json"

@@ -254,14 +254,53 @@ There is no historical bounded-encoder fallback.
 The input must not alias a reserved output artifact, including through symlinks.
 Failed reduction, encoding, or solving leaves no successful `result.json`.
 
-Both saved captures currently return UNSAT because configuration callbacks
-send a heartbeat before the implementation advances its log frontier, while
+With literal reduction, both saved captures return UNSAT because configuration
+callbacks send a heartbeat before the implementation advances its log frontier, while
 the Model appends the configuration atomically. This is a reduction/Model
 atomicity disagreement, not evidence of a production defect.
 The first nine records of `soft_rollback.ndjson`, the audited bootstrap prefix,
 are SAT. `native_configuration_callback_heartbeat_conflict.json` isolates the
 disagreement; changing its final `batchEnd` from 4 to 5 gives a Model-admitted
-SAT contrast. The runner never changes the captured heartbeat to obtain SAT.
+SAT contrast. Literal reduction preserves the captured heartbeat's batch end.
+
+#### Rejected configuration-callback probes
+
+`--abstract-rejected-callbacks` enables a guarded packet abstraction in
+`native_lean.py --raw` and the standalone `reduction.py` CLI. It is off by default.
+
+The implementation sends an empty probe to a newly added peer before advancing
+its log frontier. The Model requires that send to contain the configuration entry.
+If the peer has an empty log, it rejects either packet before inspecting entries.
+The reducer can therefore represent this exchange with the Model's one-entry
+probe. This is a payload abstraction, not an exact reconstruction of the packet.
+The Model and encoder proofs are unchanged.
+
+The rule requires the first complete AppendEntries exchange on that directed
+node pair, matching packet headers, an empty receiver log, and a zero-index NACK.
+The NACK must reach the sender before another send to that peer.
+Only log replication, commits, and sends to other peers may intervene on the
+sender. Duplicate sends, drops, incomplete exchanges, successful responses, and
+preexisting peers remain literal.
+
+Compared with literal reduction, this rule removes no state observations.
+It retains the original NDJSON.
+Its certificate records the raw and Model batch ends and the source lines
+supporting the abstraction. The explorer exposes this evidence.
+Loading a retained run recomputes reduction with its recorded mode.
+
+For example:
+
+```sh
+python3 native_lean.py Traces/Captured/soft_rollback.ndjson \
+	--raw --bootstrap 0 --abstract-rejected-callbacks \
+	--output-dir /tmp/native-abstracted --z3 /path/to/z3
+```
+
+The first 22 records of `soft_rollback.ndjson` include a complete callback
+exchange. That prefix is UNSAT with literal reduction and SAT with this rule.
+Full-capture consistency with the abstraction remains unconfirmed.
+Longer solver experiments were stopped without a verdict.
+The capture manifest and warm timings below still use literal reduction.
 
 #### Capture regressions and warm timing
 

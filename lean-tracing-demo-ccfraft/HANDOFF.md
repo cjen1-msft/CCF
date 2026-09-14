@@ -56,7 +56,34 @@ was not changed. Live instruction 238 includes raw source line 45.
 
 ### Implementation checkpoints
 
-The callback-regrouping follow-up adds
+The rejected-callback follow-up adds `--abstract-rejected-callbacks` to the raw
+native CLI and standalone reducer. The default remains literal.
+The rule maps a newly added empty peer's rejected heartbeat to the Model's
+mandatory one-entry probe. It requires a complete, unambiguous first exchange
+and a zero-index NACK received before another same-lane send.
+The certificate records the abstraction mode, both batch ends, and supporting
+source lines. Raw records and state observation values are unchanged.
+`native_origin.py` replays the recorded mode when loading retained artifacts.
+No Model or Lean proof changes were made.
+
+The first 22 records of `soft_rollback` now give UNSAT in literal mode and SAT
+with the flag. A retained SAT run is in `callback-first-exchange/`; its Z3 time
+was 0.939 seconds. This is the solver portion, not end-to-end latency.
+`test_rejected_configuration_callback_exchange` fixes initial logs and empty
+queues, covers the complete request/NACK exchange and cursor reset, and rejects
+a wrong NACK. `test_raw_rejected_callback_prefix_is_sat_with_abstraction`
+exercises both modes through the real CLI and explorer.
+The final 59-case run, including all six literal capture regressions, is in
+`callback-reduction-final.log`.
+
+The abstracted 52-record prefix and full `soft_rollback` run did not finish.
+The full-capture E-matching experiment also produced no verdict before it was
+stopped. All three processes were stopped explicitly.
+Do not treat those experiments as SAT, UNSAT, or solver-reported unknown.
+Full-capture validation with the abstraction remains open; the saved suite
+expectations and timing figures still concern literal reduction.
+
+The earlier callback-regrouping follow-up added
 `test_configuration_callback_send_boundary_positions`. With the old log and
 peer eligibility fixed, the exact heartbeat is rejected before configuration,
 after configuration, and after the next signature. The Model-admitted data
@@ -65,9 +92,8 @@ An earlier full-prefix experiment became SAT when the send moved earlier,
 but left initial history unconstrained. That result is not accepted as a
 faithful general reduction rule. A slower follow-up on that unconstrained
 prefix was stopped; it supplied no additional verdict.
-No production reducer or Model semantics were changed in this follow-up.
-Representing the callback effect still requires an explicit modeling or
-abstraction decision.
+That regrouping experiment changed neither the production reducer nor the Model.
+It motivated the opt-in payload abstraction above.
 
 `native_suite.py` and `Traces/native_suite.json` now provide a repeatable suite
 for both original captures and all four mutations. Every NDJSON file under
