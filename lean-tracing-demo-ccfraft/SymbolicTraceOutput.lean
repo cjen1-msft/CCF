@@ -59,7 +59,7 @@ private structure Group where
   instruction : Json
   clauses : List (String × Expr .bool)
 
-private def inspect (input : Input) (index : Option Nat) : Except String Unit := do
+def inspect (input : Input) (index : Option Nat) : Except String Unit := do
   if let some index := index then
     if index = 0 then
       throw "inspect-group must select an action, not the unknown domains"

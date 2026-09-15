@@ -59,6 +59,14 @@ name = "EncodeTrace"
 name = "encode_trace"
 root = "EncodeTrace"
 
+[[lean_exe]]
+name = "symbolic_receive_tests"
+root = "MachineGenerated.SymbolicReceiveTests"
+
+[[lean_exe]]
+name = "symbolic_transition_tests"
+root = "MachineGenerated.SymbolicTransitionTests"
+
 [[lean_lib]]
 name = "EncoderAudit"
 

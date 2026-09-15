@@ -245,6 +245,10 @@ The explorer rejects version 1 artifacts rather than reusing older solver claims
 
 #### Run a raw capture
 
+The [SMT encoding study](Measurements/encoding-study/testing.md) records
+performance baselines, proposed encoding experiments, and their differential
+testing protocol.
+
 ```sh
 python3 native_lean.py Traces/Captured/soft_rollback.ndjson \
 	--raw --bootstrap 0 --output-dir /tmp/native-raw --z3 /path/to/z3
@@ -875,14 +879,15 @@ defaults, live-tail separation, 21 identities, symbolic logs, and explicit input
 rejection. `CCF_NATIVE_ARRAY_ARTIFACTS=/path/to/output` retains the emitted
 formulas, solver output, and `measurements.json` for comparison.
 
-### Native explorer API
+### Native UNSAT explorer
 
-`explorer_api.py` exposes one completed `native_lean.py` run as read-only JSON.
+`explorer_api.py` displays one completed `native_lean.py` run in a webpage and
+exposes its read-only JSON API.
 It does not use the older checked-backend explorer or claim full encoder proof.
 Lean emits named clauses and half-open clause ranges for each instruction.
 The initial-domain group has no instruction owner.
 
-#### Run the API
+#### Open the explorer
 
 ```sh
 lake build Sparse.NativeEncodeMain
@@ -890,12 +895,38 @@ python3 native_lean.py Traces/native_quorum_conflict.json --output-dir /tmp/nati
 python3 explorer_api.py /tmp/native-explorer --port 8091
 ```
 
+Open `http://127.0.0.1:8091/`. The three columns show original raw events,
+expanded actions and observations, and the returned UNSAT clauses.
+They share a scrolling grid. Padding aligns each instruction with its clauses.
+Click any event, instruction, or clause to highlight its links and inspect the
+exact source records, reduction rule, and SMT expressions.
+
+UNSAT runs open at the first core instruction with **Core context only** enabled.
+Clear that checkbox to see every event and instruction, including command
+markers with no emitted instruction. Search retains the matching rows and their
+source context. **Previous core** and **Next core** navigate between core
+instructions. Selection URLs retain instruction, clause, or raw-line anchors.
+
+Both capture order and instruction order are preserved. A combined or reordered
+instruction appears at or after its latest source event. Its source links name
+the actual contributing lines, which can occur earlier in the left column.
+Vertical proximity alone does not imply provenance. The returned Z3 core is
+not necessarily minimal, and the explorer does not run a minimisation pass.
+
 The example is synthetic reduced input, not a captured implementation trace.
 It deliberately observes a leader after `checkQuorum` steps that node down, so
 the result is UNSAT.
 `Traces/native_vote_fifo_conflict.json` is another synthetic UNSAT example.
 It sends the same vote packet twice into an empty queue, then claims length one.
 The explorer core links the contradiction to both sends and the final observation.
+
+To populate all three columns from a captured negative case:
+
+```sh
+python3 native_lean.py Traces/Mutated/bad_network-indirect.ndjson \
+	--raw --bootstrap 0 --output-dir /tmp/native-raw-explorer --z3 /path/to/z3
+python3 explorer_api.py /tmp/native-raw-explorer --port 8091
+```
 
 The server binds only to `127.0.0.1`. For remote access, forward the port through
 SSH. It reads a fixed snapshot at startup; restart it to inspect a newer run.
@@ -910,6 +941,7 @@ curl http://127.0.0.1:8091/api/core
 
 | GET endpoint | Response |
 | --- | --- |
+| `/` | Aligned event, instruction, and UNSAT-core webpage |
 | `/api/run` | Solver outcome, proof status, identity universe, counts, and endpoint links |
 | `/api/input` | Exact reduced Model input |
 | `/api/instructions?offset=0&limit=50` | Ordered instruction page and core membership |
@@ -921,6 +953,18 @@ curl http://127.0.0.1:8091/api/core
 `HEAD` returns the same headers without a body. Invalid parameters return 400,
 missing items return 404, and writes return 405. Page limits range from 1 to 200.
 The API has no solver-execution or filesystem-selection endpoint.
+The webpage uses no external scripts or services. SAT and UNKNOWN runs retain
+their verdict and show no core. Model-only runs explicitly show no raw capture.
+
+The layout and provenance regressions run with the existing Chromium runner:
+
+```sh
+PYTHONPATH=.:tests python3 -m unittest test_native_explorer_view test_native_explorer_api
+```
+
+Browser cases require `chromium` on PATH. They cover one-to-many and reordered
+sources, column alignment after content expansion, narrow windows, selection,
+search, deep links, and SAT/UNKNOWN states.
 
 Native runs retain `input.json`, `encoding.json`, `trace.smt2`, solver stdout and
 stderr, and a final `result.json` manifest. The loader rejects mixed or changed
@@ -1542,335 +1586,362 @@ This is a proof library, not a complete sparse trace validator. Full Model
 composition, full-trace SMT correspondence, and end-to-end performance remain
 unfinished. The design and remaining work are in [HANDOFF.md](HANDOFF.md).
 
-## Checked trace encoding
+## Existing bounded backend
 
-The checked encoder is a separate entry point:
+**Development status:** Python raw orchestration now uses the checked backend.
+The full symbolic adapter, including `modelReceive` and `checkedEncoder`, is
+assembled and audited. Symbolic dispatch in `EncodeTrace` elaborates, and
+the concrete receive proof boundary is buildable. Fresh symbolic receive
+execution and SMT solving now complete. Transition runtime performance and
+causal attribution still need work. End-to-end raw validation is not yet
+confirmed. The commands below describe the integration
+interface, not a currently green demo. Decoding and mocked orchestration tests
+do not establish raw-model semantics.
+
+## Inputs and prerequisites
+
+Run commands from this directory. Python tests use the standard library.
+Use the pinned Lean toolchain and Lake dependencies. The checked runners need
+cvc5 on `PATH`, or an explicit `--cvc5 /path/to/cvc5`.
+
+Capture, corpus audit, and benchmarking with fresh capture also need the CCF repository's
+`build/raft_driver` and `tests/raft_scenarios/`. They do not build the driver.
+If it is missing, `Shared.capture_traces.find_repo_root()` fails with
+`could not locate repo-root build/raft_driver`. Validating saved NDJSON files
+does not need the driver.
+
+## Raw trace validation
+
+The raw runner has one route, with no projection fallback:
+
+```text
+NDJSON
+  -> reduction.preprocess / reduction.reduce
+  -> raw_normalization.normalize
+  -> NormalizedTrace.certificate(bounds)
+  -> validate_checked.validate_checked
+  -> audited encode_trace executable
+  -> cvc5
+```
+
+Declare exactly five nonnegative integer bounds in a JSON file. Booleans,
+missing fields, and extra fields are rejected. This is an illustrative
+`bounds.json`, not a profile validated for the six saved traces:
+
+```json
+{
+  "transaction_count": 4,
+  "term_count": 4,
+  "index_count": 16,
+  "log_capacity": 2,
+  "queue_capacity": 2
+}
+```
+
+`transaction_count`, `term_count`, and `index_count` are exclusive limits.
+`log_capacity` and `queue_capacity` are inclusive. Choose the profile for the
+bounded question being asked; the runner never infers or enlarges it from
+observations. Syntactically valid bounds can still exclude every execution.
+
+```bash
+python3 validate.py \
+	Traces/Captured/bad_network.ndjson Artifacts/runs/bad_network \
+	--bounds bounds.json
+```
+
+`--output-dir PATH` is an alternative to the positional output directory.
+`--inspect-group N` selects one instruction group for fine-grained naming.
+`--core-reduction-seconds` sets the core-reduction budget, defaulting to five
+seconds. For UNSAT, the raw runner saves a cvc5-checked proof of the reduced
+formula; `--show-proof` also prints that proof after the status line.
+
+The Python API takes a bounds mapping rather than a profile path:
+
+```python
+from pathlib import Path
+from validate import read_bounds, validate
+
+status = validate(
+	Path("Traces/Captured/bad_network.ndjson"),
+	Path("Artifacts/runs/bad_network"),
+	bounds=read_bounds(Path("bounds.json")),
+	core_reduction_budget_seconds=5.0,
+)
+```
+
+Omitting `bounds` is an error. The API also accepts `cvc5`, `show_proof`,
+`inspect_group`, and `encode_only`. With `encode_only=True`, it still builds
+the proof gate and runs the checked encoder, but returns `encoded`, not a
+solver verdict. There is no raw CLI `--encode-only` flag.
+
+### Normalization and artifacts
+
+`reduction.py` is the sole reducer. It groups implementation events and emits
+one ordered array of proposed actions and observations. Normalization preserves
+that order, reduction rules, and source provenance.
+
+Raw node names must be canonical slots `"0"` through `"14"`. Sparse IDs are
+not renumbered. Raw transaction names become shared unknowns, not distinct
+concrete IDs; different names may alias under the same assignment.
+For `receive` and `updateTerm`, normalization converts raw receiver `node`
+and `source` fields to checked source `node` and receiver `destination`.
+
+A `firstMessageFrom` observation constrains the first queued packet from that
+source, not a later matching packet. Only reported fields enter the pattern.
+AppendEntries payload length is `batchEnd - previousIndex`; missing payloads
+and previous terms are not fabricated. Correlation evidence is retained
+separately rather than treated as an extra semantic constraint.
+
+| Artifact | Contents |
+| --- | --- |
+| `reduced-certificate.json` | Original reduction, counts, preprocessing record, and provenance |
+| `certificate.json` | Actual checked input, using `ccfraft-symbolic-trace/v1` |
+| `normalization.json` | Node-name and transaction-name mappings |
+| `provenance.json` | Source locations, rules, and action boundaries indexed by instruction |
+| `evidence.json` | Correlation evidence indexed by instruction |
+| `formula.smt2`, `constraint-map.json` | Lean-generated constraints and diagnostic groups |
+| `result.json` | Verdict, assurance metadata, timings, and artifact references |
+| `diagnosis.json`, `unsat-core.txt`, `formula-reduced.smt2` | Reduced UNSAT explanation |
+| `proof.txt`, `formula-reduced-proof.smt2` | Raw runner's UNSAT proof and queried formula |
+
+Solver stdout and stderr are retained. Normalization or backend failures remove
+stale verdicts and write `error.json` when possible. Input/output collisions
+are different: the call refuses to change any files, including `error.json`,
+and produces no new verdict. Guards cover resolved paths and existing hard
+links. Nonreserved co-location such as `out/raw.ndjson` is allowed.
+
+## Checked certificate schemas
+
+`validate_checked.py` accepts certificate JSON directly:
 
 ```bash
 python3 validate_checked.py \
-  Traces/LeaderWrites/bootstrap-writes.json \
-  Artifacts/checked-traces/leader-writes
+	Artifacts/runs/bad_network/certificate.json Artifacts/checked-raw/bad_network
 ```
 
-Add `--cvc5 /path/to/cvc5` if cvc5 is not on `PATH`.
+It builds `encode_trace` from the audited `EncodeTrace` module before encoding
+and solving. It does not substitute an unproved backend when the gate fails.
 
-The runner builds `encode_trace` from the audited `EncodeTrace` module, then
-runs that executable. Repeated encodings do not re-elaborate the Lean proofs.
+The strict `ccfraft-symbolic-trace/v1` schema has exactly these top-level fields:
+`schema_version`, `bounds`, `unknowns`, `entry`, and `steps`.
+`entry` is `"symbolic"`. The initial state is arbitrary within the declared
+bounds, including symbolic roles, terms, allocation, logs, queues, and stored
+control fields. It is not reconstructed from observations or assumed reachable
+from bootstrap.
 
-The `ccfraft-trace/v1` schema accepts the four leader writes,
-`appendEntries`, and all eleven control actions:
-`advanceCommitIndex`, `timeout`, `becomePreVoteCandidate`, `becomeCandidate`,
-`requestVote`, `requestPreVote`, `checkQuorum`, `updateTerm`, `becomeLeader`,
-`proposeVote`, and `advanceCommitIndexAndProposeVote`.
-Observations cover `role`, `currentTerm`, `logLength`, `queueLength`,
-`commitIndex`, `allocated`, `joined`, and `submitted`.
-The leader writes are `clientRequest`, `signCommittableMessages`,
-`changeConfiguration`, and `appendRetiredCommitted`.
-Single-node actions use `node`. Two-node actions use `node` for the source
-and `destination` for the receiver. In particular, `updateTerm` updates the
-destination from a newer queued message from the source; it does not take
-an arbitrary term value. `clientRequest` supplies `transaction`,
-`changeConfiguration` supplies a `configuration` array, and `appendEntries`
-also supplies `batchEnd`. Entry can be the canonical bootstrap or an explicit
-full-state template:
+The symbolic action schema covers all 17 model actions:
+`clientRequest`, `signCommittableMessages`, `changeConfiguration`,
+`appendRetiredCommitted`, `appendEntries`, `receive`, `advanceCommitIndex`,
+`timeout`, `becomePreVoteCandidate`, `becomeCandidate`, `requestVote`,
+`requestPreVote`, `checkQuorum`, `updateTerm`, `becomeLeader`, `proposeVote`,
+and `advanceCommitIndexAndProposeVote`.
+
+Single-node actions use `node`. Two-node actions use source `node` and receiver
+`destination`. `clientRequest` supplies `transaction`, `changeConfiguration`
+supplies `configuration`, and `appendEntries` also supplies `batchEnd`.
+`updateTerm` uses the selected source's queued message; it does not take an
+arbitrary replacement term.
+
+Symbolic observations include `role`, `currentTerm`, `logLength`, `queueLength`,
+`commitIndex`, `allocated`, `joined`, `submitted`, `preVoteStatus`,
+`membershipState`, `retirementIndex`, `retirementCommittableIndex`,
+`retiredCommittedIndex`, `retirementCompleted`, and partial `firstMessageFrom`
+packet summaries.
+See [SymbolicTraceCertificate.lean](SymbolicTraceCertificate.lean) and
+[SymbolicTraceObservationJson.lean](SymbolicTraceObservationJson.lean) for the
+exact decoder contracts. The raw reducer emits only observations present in
+its audited rules; schema support does not fabricate additional observations.
+
+The explicit-entry `ccfraft-trace/v1` schema remains available for bootstrap
+and full-state templates. The legacy `ccfraft-client-request/v1` and
+`ccfraft-client-request/v2` schemas retain their client-request-only
+restrictions. Explicit templates have concrete structural fields; transaction
+IDs can be unknown. They do not replace symbolic entry for raw traces.
 
 ```bash
 python3 validate_checked.py \
-  Traces/ClientRequests/template.json \
-  Artifacts/checked-client-requests/template
-```
-
-The v2 example has node 1 leading in term 7, a pre-existing log entry, and
-symbolic old and new transaction IDs. Every other state field is explicit.
-Unknown roles, terms, allocation, and queue shapes are not supported yet.
-Other actions and raw NDJSON input remain unsupported. Unsupported syntax
-is an error; the runner never falls back to the projected backend.
-
-AppendEntries deduplication compares evaluated packets. Different transaction
-unknowns can alias, so a send may retain the existing queue or append a packet.
-The encoder carries these guarded alternatives through later actions and
-observations under the same assignment. Constant guards collapse without
-duplicating later frames. Queue-length observations use `node` to identify
-the receiving queue.
-
-Run the persistent send example:
-
-```bash
+	Traces/LeaderWrites/bootstrap-writes.json Artifacts/checked-traces/leader-writes
 python3 validate_checked.py \
-	Traces/Replication/send.json \
-	Artifacts/checked-traces/replication
+	Traces/ClientRequests/template.json Artifacts/checked-traces/template
 ```
 
-The general schema declares exclusive `transaction_count`, `term_count`, and `index_count`
-limits, plus inclusive `log_capacity` and `queue_capacity` limits. Bounds
-apply before every instruction and at the end, including transaction payloads
-inside queued AppendEntries messages. A bound violation produces UNSAT, not a
-parse error. The older `ccfraft-client-request/v1` bootstrap and
-`ccfraft-client-request/v2` template schemas remain accepted by the same encoder,
-but retain their client-request-only action restrictions.
+An unknown reference such as `{"unknown": "first"}` denotes the same transaction
+at every occurrence. Different names may alias. Freshness, prefix equality,
+and packet deduplication use evaluated values, not syntactic names. JSON `null`
+denotes an absent optional field or node where allowed, not an unknown.
 
-Transaction values are
-natural numbers or references such as `{"unknown": "first"}` to names in the
-`unknowns` array. Every occurrence of a name denotes the same value. All named
-unknowns range from zero through `transaction_count - 1`. Different names may
-denote the same value; client-request freshness is checked after evaluation.
-JSON `null` is not a transaction unknown. It denotes an absent node slot or an
-absent optional field where the schema permits one.
+## Execution contract and trust boundary
 
-Every node-indexed table has exactly 15 entries in node-ID order. Template
-field names match `Model.lean`, including votes, peer indices, all seven
-message variants, and retirement metadata. The entry need not be reachable
-from bootstrap: this is a bounded execution claim from the supplied template,
-not a reachability claim. See `TraceStateJson.lean` for the exact JSON mapping.
+[BoundedSymbolicTrace.lean](BoundedSymbolicTrace.lean) defines symbolic
+`Follows` and `VerifiedEncoder`. For the **same assignment**, formula truth
+must agree with declared transaction domains and execution of the actual
+`Model.Enabled` and `Model.next`. Bounds hold before every instruction and at
+the end. Observations constrain the current state without advancing it.
+Full bounds include all 15 node slots, logs, queued packet payloads, peer
+indices, optional retirement indices, and submitted transactions.
 
-`BoundedTrace.lean` is the reviewed execution contract.
-`VerifiedEncoder` requires a single theorem, quantified over all supported
-entries, traces, bounds, and assignments, connecting the actual formula to
-that contract. Updates call `Model.next` on transaction-symbolic templates;
-`TransactionMapping.lean` defines their evaluation into concrete model states.
-The executable uses a value of this type and rejects unapproved proof axioms.
-The proof is not regenerated for each input trace.
+SAT means some bounded entry and assignment fit the encoded trace. UNSAT
+means none does within that profile. Unknown is inconclusive. These claims
+are not reachability, unbounded safety, or implementation-equivalence results.
+[BoundedTrace.lean](BoundedTrace.lean) gives the corresponding explicit-entry
+contract. Neither contract is a proof generated separately for each raw trace.
 
-The assurance boundary is:
+Review the model and contracts, [BoundedState.lean](BoundedState.lean),
+[TraceInstructions.lean](TraceInstructions.lean), the certificate and observation
+decoders, [raw_normalization.py](raw_normalization.py), [reduction.py](reduction.py),
+and `EncodeTrace.lean`. `TransactionMapping.lean` also belongs to the review
+boundary for explicit-entry encoding. Lean checks model adapters and
+correspondence proofs in `MachineGenerated/`. The allowed proof axioms are
+`propext`, `Classical.choice`, and `Quot.sound`.
 
-- Review the model, contracts, bounds, transaction mapping, JSON decoders,
-  and `EncodeTrace.lean`, listed below.
-- Lean checks representation roundtrips, transaction mapping, and encoding
-  equivalence in `MachineGenerated/`.
-- Review `Shared/Smt.lean`, `Shared/SmtOrder.lean`, solver execution, and core reduction
-  as infrastructure. SMT serialization and cvc5 remain trusted.
+Trace instrumentation, Python parsing and reduction, JSON decoding, SMT
+serialization, the compiler, and cvc5 remain trusted. Diagnostic labels,
+provenance, and saved run artifacts are not a second formal correspondence
+theorem. See [Shared/README.md](Shared/README.md) for reusable infrastructure.
+The old `ccfraft_projection.py` file is retained during cleanup, but raw
+validation, audit, and benchmarking no longer use it.
 
-The output includes `formula.smt2` and `constraint-map.json`. Each instruction
-has a group ID and labelled component constraints. `--inspect-group N` changes
-one action's assertion granularity without changing its meaning. Group indices
-are recorded in the map; index 0 is the unknown-domain group, not an action.
-In this mode, reduction removes only clauses of the selected action. Other
-assertions in that run's solver core stay fixed. This does not yet reuse a
-previously reduced high-level core. Use `refine_checked.py` for that second stage.
-`instruction_index` is one-based, matching the existing reduction diagnostics.
-Intermediate log lengths, terms, commit frontiers, accepted transaction IDs,
-refreshed retirement indices and completion sets, allocation and join markers,
-assigned sent indices, and queue lengths
-have defining equalities in their action groups. Later constraints refer to these values
-so the core can retain the actions that produced them.
-A new enqueue defines the prior queue length plus one; a duplicate retains
-the prior binding. Branch-local definitions have distinct names while references
-to earlier actions keep their original names.
-The equivalence theorem covers formula meaning. Diagnostic labels and their
-source mapping are infrastructure metadata, not an additional proved claim.
-Structural action guards are single clauses, so a failed guard does not yet
-identify which model precondition failed.
-A reduced SMT core is not a replayable subsequence of model actions: other
-instructions can contribute concrete state used during encoding.
+## Core inspection and reports
 
-The runner writes the verdict to `result.json`. Reusing an output directory
-replaces that run's artifacts, even if the new certificate is rejected.
-Failures write `error.json` instead when the directory is writable.
+Each instruction has a group ID. Group 0 holds entry/domain constraints;
+the final group holds final-state bounds. Named definitions retain the action
+that produced a value. `--inspect-group N` changes naming granularity, not
+the encoded trace. Core reduction then holds the other core groups fixed.
+The checked runner spells the budget flag `--core-reduction-budget-seconds`.
 
-SAT and UNSAT apply only to the supplied entry template and declared bounds.
-They do not quantify over unspecified structural fields or establish an
-unbounded result. The existing `validate.py` entry point still uses the
-separate, unverified projection described below.
+A reduced SMT core is **not a replayable subsequence** of model actions.
+Instructions outside the core can still contribute state used during encoding.
+Minimality applies only to the selected named constraints and reduction scope.
 
-To run the focused checked-encoder gate:
+Generate an explorer from an existing checked group-level run:
 
 ```bash
-./check_checked.sh
-```
-
-Set `CVC5` to an executable path if the solver is not on `PATH`.
-The gate builds `ControlActionAudit`, `EncoderAudit`, and `encode_trace`,
-runs the checked action, diagnostic, and explorer regressions, and requires SAT for the
-persistent send example. Missing tools fail the gate rather than skip tests.
-It does not build the unrelated safety proofs in `Demo`.
-
-## Explore a reduced core
-
-First produce a group-level checked run. Then generate its explorer:
-
-```bash
-python3 validate_checked.py \
-	Traces/ClientRequests/wrong-log-length.json Artifacts/checked-traces/conflict
 python3 explore_checked.py \
-	Artifacts/checked-traces/conflict Artifacts/explorer/conflict.html
+	Artifacts/runs/bad_network Artifacts/explorer/bad_network.html \
+	--raw-trace Traces/Captured/bad_network.ndjson
 ```
 
-The standalone HTML has three panes: raw NDJSON, ordered actions and
-observations, and the reduced core. Selecting an instruction shows its labelled
-constraints and highlights its source lines. Pass `--raw-trace PATH` when the
-certificate's instruction provenance refers to that file. Without a raw file,
-the first pane says that the run starts from a certificate.
+The existing three-pane explorer displays raw NDJSON, ordered instructions,
+and the reduced core. Selecting an instruction shows its labelled constraints
+and source lines. By default, it precomputes fine refinements for actions in
+an UNSAT core, keeping every other reduced group fixed. `--no-refine` omits
+these solver runs but retains constraint inspection. No solver runs in the
+browser. `--cvc5 PATH` selects the solver, and `--workspace-uri` sets the remote
+VS Code workspace link.
 
-For each action remaining in an UNSAT core, the generator precomputes a
-clause reduction with every other reduced group fixed. **Show reduced clauses**
-displays that result; **Group view** returns to the high-level core. No discarded
-group is restored. The report does not run a solver in the browser.
-`--no-refine` omits clause reductions but retains full constraint inspection.
-SAT and unknown runs show their status without a conflicting core.
+For a separate refinement, use `refine_checked.py SOURCE OUTPUT --inspect-group N`.
+It retains the source run and writes its own formula, diagnosis, and solver
+artifacts. It rejects actions outside the reduced core.
 
-To refine just one action without generating a report:
+The report index reuses that explorer for all six saved raw runs:
 
 ```bash
-python3 refine_checked.py Artifacts/checked-traces/conflict \
-	Artifacts/checked-traces/conflict-action-2 --inspect-group 2
+python3 generate_report.py \
+	--runs-dir Artifacts/runs --output Report/index.html \
+	--cvc5 /path/to/cvc5
 ```
 
-The source directory remains unchanged. The refinement has its own formula,
-constraint map, diagnosis, solver outputs, and result. The operation rejects
-an action outside the reduced core or a formula that disagrees with its map.
-Saved run artifacts remain trusted local inputs.
+`--runs-dir` and `--output` default to the paths above. Explorers go under
+`Report/index-runs/`; a different output stem changes that subdirectory.
+`--no-refine` disables precomputed refinements. The index displays actual
+verdicts and declared bounds, with local SSH source links. Missing, malformed,
+or unproved runs fail generation; no new index is published unless all six
+explorers succeed. Older generated HTML remains pending regeneration and is
+not evidence of a completed symbolic run.
 
-Both tools accept `--cvc5 PATH`. The explorer's `--workspace-uri` sets its
-remote VS Code workspace link. The report embeds its data and needs no network
-access except when you follow a source link.
+## Capture, audit, and benchmark
 
-## Review these files
-
-The manual review boundary contains these files:
-
-- `Model.lean` contains the model's types, state, and executable definitions,
-  including `CCFRaft.Action`, `CCFRaft.Enabled`, and `CCFRaft.next`.
-  Only inline proofs required to construct typed values remain here.
-- `Properties.lean` defines the three consensus-safety claims.
-- `reduction.py` defines the preprocessing and reduction rules.
-- `TraceProperties.lean` defines `ValidEntryState`,
-  `MidtraceSatisfiable`, `FormulaSatisfiable`, and `lowerTrace_correct`.
-- `TraceInstructions.lean` defines typed instructions and observations.
-- `BoundedTrace.lean` defines full-entry execution and the
-  correctness requirement for its encoder.
-- `BoundedState.lean` defines lossless finite state data and full-state bounds.
-- `TransactionMapping.lean` defines transaction evaluation throughout a state.
-- `TraceJson.lean`, `TraceStateJson.lean`, `LegacyClientRequestCertificate.lean`, and
-  `TraceCertificate.lean` define the JSON mapping and v1 adapter.
-- `EncodeTrace.lean` enforces the checked-encoder type and proof-axiom
-  policy before emitting the formula and its constraint map.
-
-The reducers separate three jobs:
-
-1. Shared code parses and consumes the captured trace without changing its
-   meaning.
-2. Audited preprocessing groups or removes implementation events.
-3. Audited reduction rules emit model actions and observations.
-
-The reduction certificate has one ordered `steps` array. Each item is either:
-
-```json
-{"kind": "observation", "node": "2", "variable": "currentTerm", "value": 3}
-```
-
-or:
-
-```json
-{"kind": "action", "node": "2", "action": "receive", "source": "1"}
-```
-
-Array order defines the semantics. An observation reads the current state. An
-action checks `Enabled` and advances the state with `next`.
-
-Before every receive, the reducer emits a `firstMessageFrom` observation with
-the packet fields available in the implementation trace. The Lean definition
-means the first queued message from the chosen source equals that message.
-
-## Do not manually review generated proofs
-
-`MachineGenerated/` contains lowering code, proof bodies, and the inductive
-model proof. An agent may replace these files. Lean must compile them without
-`sorry` before the demo passes.
-
-`MachineGenerated/ModelProofs.lean` contains the model's bootstrap, state-update,
-retirement, and reachability lemmas. Proof consumers import this module for
-the lemmas and their simplification rules. `Model.lean` does not import it.
-
-`Shared/` contains model-independent trace and solver code. Review this code
-once as infrastructure, not once per model.
-
-## Claim made by the validator
-
-`TraceProperties.lean` defines the intended claim. For one reduced trace,
-`MidtraceSatisfiable` means that an entry state satisfying `ValidEntryState`
-and a sequence of enabled `CCFRaft.next` transitions can explain every reduced
-action and observation.
-
-The result does not prove that the entry state is reachable from bootstrap.
-It does not prove whole-implementation equivalence. Running many overlapping
-segments provides operational evidence, not a stronger theorem.
-
-The legacy `validate.py` backend checks only a projection of that claim.
-`ccfraft_projection.py` models terms, roles, log lengths, commit indices, allocation,
-and join state. It does not encode complete logs, messages, votes, or
-configurations. Its `sat` and `unsat` results therefore do not yet establish
-`MidtraceSatisfiable` for the complete model.
-
-The projected backend checks the shape and ordering of `firstMessageFrom`, but
-does not yet encode queues or message contents. The generated SMT file marks
-that observation as an unencoded projection constraint.
-
-`MachineGenerated/Lowering.lean` and
-`MachineGenerated/LoweringProofs.lean` prove that the typed action
-lowerings preserve the canonical Lean transition relation. The remaining
-blocker is to connect the emitted SMT formula to that typed formula.
-
-The projected backend trusts cvc5 for `sat` and `unsat`. For `unsat`, it saves
-the cvc5 proof and unsat core and asks cvc5 to check both. It reduces the core
-within a fixed wall-clock budget by removing deterministic chunks and then
-individual assertions. It accepts a removal only when cvc5 still returns
-`unsat`. It reconstructs a formula from the reduced core and generates the
-proof from that formula. `diagnosis.json` maps each remaining constraint back
-to its action or observation, reducer rule, and raw trace line.
-The report records wall-clock time for the initial check, core generation,
-budgeted reduction, and proof invocation.
-
-For repeated timing measurements, run:
+Capture and audit require `build/raft_driver`; the encoder's native build does
+not supply it. Benchmarking can use saved traces without the driver.
+To compare fresh captures with the saved fixtures:
 
 ```bash
-python3 benchmark_pipeline.py --cvc5 /path/to/cvc5
+python3 Shared/capture_traces.py --check
 ```
 
-The benchmark removes only this package's `.lake/build` directory for the
-clean project build. It retains the pinned toolchain and dependency cache. It
-then runs five interleaved capture and validation samples per trace and writes
-raw samples plus median and p90 values to `Measurements/pipeline.json`.
+Without `--check`, this tool replaces the captured fixtures.
 
-Generate the colleague overview from those measurements with:
+To audit selected scenarios:
 
 ```bash
-python3 generate_colleague_report.py
+python3 audit_trace_coverage.py --bounds bounds.json \
+	--scenario bad_network --solve --require-all
 ```
 
-The output is `Report/colleague-overview.html`.
+Omit `--scenario` to audit the corpus. Without `--solve`, the audit still runs
+the proof gate and checked encoding, but reports no solver verdict.
+`--capture-dir` retains captured NDJSON, `--artifacts` selects per-run outputs,
+and `--output` selects the report JSON. `--core-reduction-seconds` defaults to
+five. `--require-all` requires encoding acceptance, and SAT as well when
+`--solve` is selected. `--refresh-demo-certificates` regenerates the saved
+reduction certificates before the audit.
 
-## Run the demo
-
-Run:
+For repeated timing measurements:
 
 ```bash
-./check_demo.sh
+python3 benchmark_pipeline.py --bounds bounds.json \
+	--samples 5 --output Measurements/pipeline.json \
+	--artifacts Artifacts/benchmark --cvc5 /path/to/cvc5
 ```
 
-The command:
+Add `--saved-traces` to skip capture and benchmark only the saved NDJSON files.
+This mode needs no `raft_driver`; the report records an empty `capture` section
+and `trace_source: "saved"`. Both modes retain the checked backend and its proof gate.
 
-1. Builds `Demo.lean` and checks every `CCFRaft` theorem for forbidden axioms.
-2. Runs the Python reducer tests.
-3. Checks that both captured traces are `sat`.
-4. Checks that all four hand-edited traces are `unsat`.
-5. Uses `jq -S` and `diff` to compare regenerated Python certificates with
-   the checked-in certificates.
-6. Writes `Report/index.html`.
+Those paths and the sample count are the defaults. The benchmark alternates
+scenario and trace order across samples, capturing first and then validating
+the saved traces. It measures the incremental
+checked proof gate without removing `.lake/build`. `--reuse-build-timings`
+reuses checked gate timing metadata from `--output`; it rejects legacy Demo
+timings and does not bypass validation's proof gate.
+`--core-reduction-seconds` defaults to ten.
 
-The Python reducer is the sole reducer implementation. Its deterministic JSON
-certificate is the input to SMT lowering.
+Measurements retain samples, median and p90 timing fields, and median phase
+timings. Current fields include `encoder_wall_ms`, `checked_validation_wall_ms`,
+`core_solver_wall_ms`, and `validation_wall_ms`. There are no fabricated
+separate SMT-write, decision, or cold-build measurements. Changed verdicts
+between samples fail aggregation.
 
-To reproduce the captured implementation traces, run:
+Both callers guard their known read inputs against report, capture, and
+artifact destinations before mutation. Put the bounds file at a nonreserved
+path, not at `certificate.json`, `error.json`, or another generated output.
+
+## Development gates
+
+The focused Python suite below uses mocks at native boundaries and does not
+build the encoder:
 
 ```bash
-./Shared/capture_traces.py --check
+python3 -m unittest \
+	tests.test_trace_io tests.test_reduction tests.test_raw_normalization \
+	tests.test_solver tests.test_smt.SmtFormulaTests \
+	tests.test_raw_orchestration tests.test_pipeline_orchestration \
+	tests.test_report_generation
 ```
 
-This command invokes `build/raft_driver` directly. It does not call the old
-semantic preprocessor in `tests/raft_scenarios_runner.py`.
+Native gates remain subject to the development-status blockers above.
+Use the checked gate, not the unrelated failing full `Demo` target:
 
-## Source checkpoint
+```bash
+nix shell nixpkgs#cvc5 --command ./check_checked.sh
+```
 
-The original CCFRaft model and proof came from commit `73292060d`.
-Development continues in this directory. Git history retains the retired
-prototype encoders, reports, and one-time checkpoint migration script.
+`check_demo.sh` additionally requires an explicit bounds profile:
+
+```bash
+nix shell nixpkgs#cvc5 --command ./check_demo.sh /path/to/bounds.json
+```
+
+It runs formatting and focused Python checks, invokes `check_checked.sh`,
+then requires SAT for both captured traces and UNSAT for all four mutations.
+It compares regenerated `reduced-certificate.json` files with
+`Traces/Certificates/` and generates the report index. These six expectations
+must pass against real symbolic execution. Old projection results do not
+establish them.
+
+Real raw tests in `tests.test_smt` are opt-in. After the native gate passes,
+set `CCF_RAW_BACKEND_TESTS=1`, `CCF_RAW_BOUNDS` to the bounds JSON path, and
+`CVC5` to the solver executable before running that module. Mocked tests are
+not a substitute for these runs.
+
+[HANDOFF.md](HANDOFF.md) tracks the remaining integration work.

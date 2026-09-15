@@ -63,6 +63,10 @@ class CertificateRejected(ValidationError):
     """The Lean decoder refused this certificate, so nothing was encoded."""
 
 
+class ArtifactCollision(ValidationError):
+    """An input aliases a runner artifact; the rejected call changes no files."""
+
+
 CERTIFICATE_SCHEMA = "ccfraft-trace/v1"
 SYMBOLIC_CERTIFICATE_SCHEMA = "ccfraft-symbolic-trace/v1"
 CONSTRAINT_MAP_SCHEMA = "ccfraft-trace-constraints/v1"
@@ -448,15 +452,9 @@ def _assurance(
     }
 
 
-def _remove_stale_artifacts(output_directory: Path) -> None:
-    """Delete artifacts of an earlier run so no stale evidence is read back.
-
-    A reused output directory must never mix runs: an old ``result.json``
-    reporting ``sat`` alongside a rejected certificate would read as the
-    current verdict. Only names this runner writes are removed.
-    """
-
-    for name in (
+def artifact_paths(output_directory: Path) -> tuple[Path, ...]:
+    """Enumerate reserved outputs and existing solver logs without changing them."""
+    names = (
         "constraint-map.json",
         "diagnosis.json",
         "error.json",
@@ -470,11 +468,33 @@ def _remove_stale_artifacts(output_directory: Path) -> None:
         "result.json",
         "unsat-core.txt",
         "unsat-core-original.txt",
-    ):
-        (output_directory / name).unlink(missing_ok=True)
-    for path in output_directory.glob("cvc5-*.stdout"):
-        path.unlink(missing_ok=True)
-    for path in output_directory.glob("cvc5-*.stderr"):
+    )
+    return (
+        *(output_directory / name for name in names),
+        *sorted(output_directory.glob("cvc5-*.stdout")),
+        *sorted(output_directory.glob("cvc5-*.stderr")),
+    )
+
+
+def reject_artifact_collisions(
+    inputs: Sequence[Path], artifacts: Sequence[Path]
+) -> None:
+    """Check resolved paths and existing hard links before cleanup or writing."""
+    for source in inputs:
+        resolved = source.resolve()
+        for artifact in artifacts:
+            if resolved == artifact.resolve() or (
+                source.exists() and artifact.exists() and source.samefile(artifact)
+            ):
+                raise ArtifactCollision(
+                    f"input/output collision: {source} aliases artifact {artifact}; "
+                    "no files changed and no new verdict"
+                )
+
+
+def _remove_stale_artifacts(output_directory: Path) -> None:
+    """Delete only this runner's outputs, after the caller's collision check."""
+    for path in artifact_paths(output_directory):
         path.unlink(missing_ok=True)
 
 
@@ -537,11 +557,12 @@ def validate_checked(
 ) -> str:
     """Validate one certificate, leaving either a verdict or a failure record.
 
-    The output directory is cleared of this runner's artifacts before any
-    other work, so a reused directory can never present an earlier verdict as
-    the current one. Failures write ``error.json`` when the directory is writable.
+    Input/output collisions reject the call without changing any files.
+    Otherwise, earlier artifacts are cleared and failures write ``error.json``
+    when the directory is writable.
     """
 
+    reject_artifact_collisions((certificate_path,), artifact_paths(output_directory))
     output_directory.mkdir(parents=True, exist_ok=True)
     _remove_stale_artifacts(output_directory)
     try:

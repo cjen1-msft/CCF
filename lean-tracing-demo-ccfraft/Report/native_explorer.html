@@ -1,0 +1,330 @@
+<!doctype html>
+<!-- Copyright (c) Microsoft Corporation. All rights reserved.
+     Licensed under the Apache 2.0 License. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UNSAT trace explorer</title>
+<style>
+:root { color-scheme:light dark; --bg:#f4f6f9; --paper:#fff; --text:#18273b; --muted:#57677b; --line:#d5deea; --blue:#175cc4; --selected:#eaf2ff; --core:#fff4e3; --core-line:#a65208; }
+@media(prefers-color-scheme:dark) { :root { --bg:#111925; --paper:#182333; --text:#e4edf7; --muted:#acbdd1; --line:#34455d; --blue:#91beff; --selected:#243c5b; --core:#3c2c19; --core-line:#ffbf72; } }
+* { box-sizing:border-box; }
+body { margin:0; height:100vh; display:flex; flex-direction:column; font:14px/1.5 system-ui,"DejaVu Sans",sans-serif; color:var(--text); background:var(--bg); }
+header { flex-shrink:0; padding:18px 24px 12px; background:var(--paper); border-bottom:1px solid var(--line); }
+h1 { margin:0; font-size:22px; letter-spacing:-.5px; }
+h2 { margin:0; font-size:15px; }
+p { margin:6px 0; }
+a { color:var(--blue); }
+button,input { font:inherit; color:inherit; }
+button { cursor:pointer; }
+button:focus-visible,a:focus-visible,input:focus-visible { outline:3px solid var(--blue); outline-offset:2px; }
+.topline,.toolbar { display:flex; gap:16px; justify-content:space-between; align-items:center; flex-wrap:wrap; }
+.toolbar { margin-top:12px; justify-content:flex-start; }
+.toolbar input[type=search] { padding:7px 10px; width:290px; max-width:100%; border:1px solid var(--line); border-radius:6px; background:var(--bg); }
+.button { background:var(--paper); border:1px solid var(--line); border-radius:6px; padding:6px 12px; }
+.muted,.meta { color:var(--muted); }
+.meta { font-size:12px; display:block; overflow-wrap:anywhere; }
+#summary { overflow-wrap:anywhere; }
+main { padding:14px 20px; flex:1; min-height:0; display:flex; flex-direction:column; }
+#timeline-scroll { flex:1; min-height:160px; overflow:auto; border:1px solid var(--line); border-radius:8px; background:var(--paper); }
+.columns,.event-group { display:grid; grid-template-columns:minmax(250px,1fr) minmax(330px,1.2fr) minmax(290px,1fr); min-width:900px; }
+.columns { position:sticky; top:0; z-index:2; background:var(--paper); border-bottom:2px solid var(--line); }
+.columns > div { padding:12px 14px; }
+.columns small { color:var(--muted); }
+.event-group { border-bottom:1px solid var(--line); }
+.cell { padding:6px; border-right:1px solid var(--line); min-width:0; }
+.raw-cell { grid-column:1; background:var(--bg); }
+.raw-cell .card { position:sticky; top:74px; }
+.instruction-cell { grid-column:2; }
+.core-cell { grid-column:3; border-right:0; }
+.card { display:block; width:100%; text-align:left; padding:9px 10px; background:var(--paper); border:1px solid var(--line); border-radius:5px; overflow-wrap:anywhere; }
+button.card:hover { border-color:var(--blue); }
+.card + .card { margin-top:6px; }
+.card.in-core { background:var(--core); border-left:3px solid var(--core-line); }
+.card.selected { outline:2px solid var(--blue); outline-offset:-2px; background:var(--selected); }
+.card strong { display:block; font-size:13px; font-weight:650; }
+.preview { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow:hidden; margin:5px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.5 ui-monospace,"DejaVu Sans Mono",monospace; }
+.source-links { padding:3px 4px 0; font-size:11px; color:var(--muted); }
+.source-link { border:0; background:transparent; padding:2px 4px; color:var(--blue); text-decoration:underline; }
+.padding-note { margin:8px; font-size:12px; color:var(--muted); }
+#empty { padding:20px; }
+.details { flex:0 0 27vh; min-height:120px; display:flex; flex-direction:column; margin-top:12px; border:1px solid var(--line); border-radius:7px; background:var(--paper); }
+.detail-head { padding:10px 14px; border-bottom:1px solid var(--line); }
+#detail { flex:1; min-height:0; overflow:auto; padding:10px 14px; }
+#detail pre { white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.5 ui-monospace,"DejaVu Sans Mono",monospace; padding:8px; border:1px solid var(--line); border-radius:4px; }
+#detail h3 { font-size:13px; margin:12px 0 4px; }
+#selection-note { font-size:12px; }
+[hidden] { display:none!important; }
+@media(max-width:700px) { header { padding:12px; } main { padding:8px; } .toolbar { gap:8px; } }
+</style>
+</head>
+<body>
+<header>
+<div class="topline"><div><h1>UNSAT trace explorer</h1><p id="summary" class="muted"></p></div><a id="workspace">Open workspace</a></div>
+<div class="toolbar">
+<label>Find <input id="search" type="search" placeholder="Event, action, node, or assertion"></label>
+<label><input id="core-only" type="checkbox"> Core context only</label>
+<button id="previous" class="button" type="button">Previous core</button>
+<button id="next" class="button" type="button">Next core</button>
+<span id="counts" class="meta" aria-live="polite"></span>
+</div>
+<p id="verdict-note" class="meta"></p>
+</header>
+<main>
+<div id="timeline-scroll" tabindex="0" aria-label="Aligned trace, scrolls all three columns together">
+<div class="columns">
+<div><h2>1. Original events</h2><small>Captured order, including command markers</small></div>
+<div><h2>2. Actions and observations</h2><small>Expanded instruction order, with source links</small></div>
+<div><h2>3. UNSAT core</h2><small>Retained clauses aligned with their owner</small></div>
+</div>
+<div id="timeline"></div>
+<p id="empty" class="muted" hidden>No rows match. Clear the search or show the full trace.</p>
+</div>
+<section class="details" aria-labelledby="detail-title">
+<div class="detail-head"><h2 id="detail-title">Select an event, instruction, or core clause</h2><p id="selection-note" class="muted" aria-live="polite">Linked items will be highlighted across all three columns.</p></div>
+<div id="detail"><p class="muted">Padding keeps each instruction level with its core clauses. Source links remain authoritative when reduction reorders or combines events.</p></div>
+</section>
+</main>
+<script id="explorer-data" type="application/json">__NATIVE_EXPLORER_DATA__</script>
+<script>
+"use strict";
+const data = JSON.parse(document.getElementById("explorer-data").textContent);
+const byId = id => document.getElementById(id);
+const key = item => item.index === null ? "initial" : String(item.index);
+const items = data.rows.flatMap(row => row.instructions);
+const itemByKey = new Map(items.map(item => [key(item), item]));
+const rawByLine = new Map(data.rows.filter(row => row.record).map(row => [row.line, row.record]));
+const coreItems = items.filter(item => item.core.length);
+const coreLines = new Set(coreItems.flatMap(item => item.source_lines));
+let selection = null;
+let corePosition = -1;
+
+function element(tag, text, className) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = text;
+  if (className) node.className = className;
+  return node;
+}
+function rawTitle(record) {
+  const value = record.value;
+  const message = value.msg;
+  return `L${record.line}  ${value.cmd || (message && message.function) || "Trace record"}`;
+}
+function instructionTitle(item) {
+  return item.instruction ? `#${item.index}  ${item.instruction.kind}` : "Initial domains";
+}
+function params(instruction) {
+  return JSON.stringify(Object.fromEntries(Object.entries(instruction || {}).filter(([name]) => name !== "kind")));
+}
+function card(title, subtitle, callback) {
+  const button = element("button", undefined, "card");
+  button.type = "button";
+  button.append(element("strong", title), element("span", subtitle, "meta"));
+  button.addEventListener("click", callback);
+  return button;
+}
+function matches(value, query) {
+  return !query || JSON.stringify(value).toLowerCase().includes(query);
+}
+function visibleRows() {
+  const query = byId("search").value.toLowerCase().trim();
+  const candidates = data.rows.filter(row => !byId("core-only").checked ||
+    coreLines.has(row.line) || row.instructions.some(item => item.core.length));
+  if (!query) return candidates;
+  const directlyMatched = candidates.filter(row => matches(row, query));
+  const matchedLines = new Set(directlyMatched.map(row => row.line));
+  const matching = candidates.filter(row => directlyMatched.includes(row) ||
+    row.instructions.some(item => item.source_lines.some(line => matchedLines.has(line))));
+  const sources = new Set(matching.flatMap(row => row.instructions.flatMap(item => item.source_lines)));
+  return candidates.filter(row => matching.includes(row) || sources.has(row.line));
+}
+function render() {
+  const timeline = byId("timeline");
+  timeline.replaceChildren();
+  const rows = visibleRows();
+  byId("empty").hidden = rows.length !== 0;
+  byId("counts").textContent = `${rows.filter(row => row.record).length} / ${data.event_count} events`;
+  for (const row of rows) {
+    const group = element("div", undefined, "event-group");
+    group.dataset.line = row.line === null ? "initial" : String(row.line);
+    const rawCell = element("div", undefined, "cell raw-cell");
+    rawCell.style.gridRow = `1 / span ${Math.max(1, row.instructions.length)}`;
+    if (row.record) {
+      const record = row.record;
+      const message = record.value.msg;
+      const state = message && message.state;
+      const raw = card(rawTitle(record), state
+        ? `node ${state.node_id} | view ${state.current_view} | ${state.leadership_state}`
+        : "Command or trace metadata", () => selectRaw(row.line));
+      raw.dataset.raw = String(row.line);
+      raw.classList.toggle("in-core", coreLines.has(row.line));
+      raw.append(element("pre", record.raw, "preview"));
+      rawCell.append(raw);
+    } else {
+      rawCell.append(element("p", data.event_count ? "No raw event: initial domains or unmapped instructions." : "No raw capture supplied. This run starts from Model instructions.", "padding-note"));
+    }
+    group.append(rawCell);
+    if (!row.instructions.length) {
+      group.append(element("p", "No instruction anchored here", "padding-note instruction-cell"));
+    }
+    row.instructions.forEach((item, offset) => {
+      const middle = element("div", undefined, "cell instruction-cell");
+      middle.style.gridRow = String(offset + 1);
+      middle.dataset.owner = key(item);
+      const instruction = card(instructionTitle(item),
+        `${item.kind} | ${item.clause_count} constraints`, () => selectInstruction(key(item)));
+      instruction.dataset.instruction = key(item);
+      instruction.classList.toggle("in-core", item.core.length > 0);
+      if (item.instruction) instruction.append(element("pre", params(item.instruction), "preview"));
+      if (item.rule) instruction.append(element("span", item.rule, "meta"));
+      middle.append(instruction);
+      const links = element("div", item.source_lines.length ? "Source " : "No raw source", "source-links");
+      for (const line of item.source_lines) {
+        const link = element("button", `L${line}`, "source-link");
+        link.type = "button";
+        link.addEventListener("click", () => selectRaw(line, true));
+        links.append(link);
+      }
+      middle.append(links);
+      const right = element("div", undefined, "cell core-cell");
+      right.style.gridRow = String(offset + 1);
+      right.dataset.owner = key(item);
+      for (const clause of item.core) {
+        const kept = card(clause.name, instructionTitle(item), () => selectInstruction(key(item), clause.name));
+        kept.classList.add("in-core");
+        kept.dataset.clause = clause.name;
+        kept.dataset.instruction = key(item);
+        kept.append(element("pre", clause.expression, "preview"));
+        right.append(kept);
+      }
+      group.append(middle, right);
+    });
+    timeline.append(group);
+  }
+  highlight();
+}
+function highlight() {
+  const selectedItems = new Set(selection
+    ? selection.type === "raw"
+      ? items.filter(item => item.source_lines.includes(selection.line)).map(key)
+      : [selection.owner]
+    : []);
+  const selectedLines = new Set(selection
+    ? selection.type === "raw" ? [selection.line] : itemByKey.get(selection.owner).source_lines
+    : []);
+  for (const button of document.querySelectorAll(".card")) {
+    const linked = button.dataset.raw !== undefined
+      ? selectedLines.has(Number(button.dataset.raw))
+      : selectedItems.has(button.dataset.instruction);
+    button.classList.toggle("selected", linked);
+    button.setAttribute("aria-pressed", String(linked));
+  }
+}
+function detailHeading(text, note) {
+  byId("detail-title").textContent = text;
+  byId("selection-note").textContent = note;
+  byId("detail").replaceChildren();
+}
+function showRaw(record) {
+  const detail = byId("detail");
+  const heading = element("h3", rawTitle(record));
+  if (data.raw_url) {
+    const link = element("a", "Open source");
+    link.href = `${data.raw_url}:${record.line}:1`;
+    heading.append(document.createTextNode("  "), link);
+  }
+  detail.append(heading, element("pre", JSON.stringify(record.value, null, 2)));
+}
+function selectRaw(line, reveal = false) {
+  selection = {type:"raw", line};
+  const linked = items.filter(item => item.source_lines.includes(line));
+  detailHeading(rawTitle(rawByLine.get(line)), `${linked.length} linked instructions. Exact source record below.`);
+  for (const item of linked) {
+    const link = element("button", instructionTitle(item), "source-link");
+    link.type = "button";
+    link.addEventListener("click", () => selectInstruction(key(item), null, true));
+    byId("detail").append(link);
+  }
+  showRaw(rawByLine.get(line));
+  location.hash = `raw-${line}`;
+  highlight();
+  if (reveal) revealCard(`[data-raw="${line}"]`);
+}
+function selectInstruction(owner, clauseName = null, reveal = false) {
+  const item = itemByKey.get(owner);
+  selection = {type:"instruction", owner, clauseName};
+  corePosition = coreItems.indexOf(item);
+  detailHeading(clauseName || instructionTitle(item),
+    `${item.core.length} of ${item.clause_count} clauses in the returned core. Instruction indices are zero-based.`);
+  const detail = byId("detail");
+  detail.append(element("pre", JSON.stringify(item.instruction || {kind:"initialDomains"}, null, 2)));
+  if (item.rule) detail.append(element("p", `Reduction rule: ${item.rule}`, "meta"));
+  const apiLink = element("a", "Inspect all emitted constraints (JSON)");
+  apiLink.href = item.index === null ? "/api/core" : `/api/instructions/${item.index}`;
+  apiLink.textContent = item.index === null ? "Inspect core attribution (JSON)" : apiLink.textContent;
+  detail.append(apiLink);
+  const clauses = clauseName ? item.core.filter(clause => clause.name === clauseName) : item.core;
+  for (const clause of clauses) detail.append(element("h3", clause.name), element("pre", clause.expression));
+  item.source_lines.forEach(line => showRaw(rawByLine.get(line)));
+  location.hash = clauseName || `instruction-${owner}`;
+  highlight();
+  if (reveal) revealCard(`[data-instruction="${owner}"]`);
+}
+function revealCard(selector) {
+  let target = byId("timeline").querySelector(selector);
+  if (!target) {
+    byId("search").value = "";
+    byId("core-only").checked = false;
+    render();
+    target = byId("timeline").querySelector(selector);
+  }
+  if (target) {
+    const scroller = byId("timeline-scroll");
+    scroller.scrollTop += target.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+      - document.querySelector(".columns").getBoundingClientRect().height - 8;
+    target.focus({preventScroll:true});
+  }
+}
+function navigate(direction) {
+  if (!coreItems.length) return;
+  corePosition = corePosition < 0 ? (direction > 0 ? 0 : coreItems.length - 1)
+    : (corePosition + direction + coreItems.length) % coreItems.length;
+  selectInstruction(key(coreItems[corePosition]), null, true);
+}
+byId("workspace").href = data.workspace_url;
+byId("summary").textContent = `${data.status.toUpperCase()} | ${data.instruction_count} instructions | ${data.core_count} core clauses | ${data.run_name.split("/").slice(-2).join("/")}`;
+byId("summary").title = data.run_name;
+byId("verdict-note").textContent = data.status === "unsat"
+  ? "Z3 returned these conflicting clauses. This core is not necessarily minimal and is not a replayable subsequence."
+  : data.status === "sat"
+    ? "SAT: the retained constraints are satisfiable. There is no UNSAT core."
+    : "UNKNOWN: the solver did not establish satisfiability or a conflicting core.";
+byId("core-only").checked = data.status === "unsat";
+byId("core-only").disabled = data.status !== "unsat";
+byId("previous").disabled = byId("next").disabled = coreItems.length === 0;
+byId("search").addEventListener("input", render);
+byId("core-only").addEventListener("change", render);
+byId("previous").addEventListener("click", () => navigate(-1));
+byId("next").addEventListener("click", () => navigate(1));
+render();
+function selectFromHash() {
+  const fragment = location.hash.slice(1);
+  const item = items.find(candidate => `instruction-${key(candidate)}` === fragment || candidate.core.some(clause => clause.name === fragment));
+  const raw = /^raw-([0-9]+)$/.exec(fragment);
+  if (item) {
+    const clauseName = fragment.startsWith("assertion_") ? fragment : null;
+    if (!selection || selection.owner !== key(item) || selection.clauseName !== clauseName) {
+      selectInstruction(key(item), clauseName, true);
+    }
+  } else if (raw && rawByLine.has(Number(raw[1]))) {
+    if (!selection || selection.line !== Number(raw[1])) selectRaw(Number(raw[1]), true);
+  } else if (!selection && coreItems.length) {
+    selectInstruction(key(coreItems[0]), null, true);
+  }
+}
+selectFromHash();
+window.addEventListener("hashchange", selectFromHash);
+</script>
+</body>
+</html>

@@ -3427,6 +3427,39 @@ the unfinished migration checkpoint in `f1c84033b`. Receive trace integration,
 symbolic entry controls, and raw-trace integration
 remain unfinished.
 
+### Current working-tree integration
+
+The working tree also contains uncommitted integration work. A bundle of the
+branch alone does not include those files.
+
+- All 17 symbolic actions are assembled in
+  `MachineGenerated/SymbolicTransitionAdapter.lean`. `modelReceive` binds the
+  actual receive implementation. `checkedEncoder` enforces the reviewed
+  same-assignment contract.
+- `SymbolicTransitionCompleteness.lean` proves arbitrary bounded-entry
+  completeness while preserving external transaction assignments. Its input
+  scope condition is explicit. The aggregate axiom audit and independent
+  contract review pass.
+- `EncodeTrace.lean` now contains symbolic schema dispatch. Local elaboration
+  passes, and the concrete receive proof boundary is buildable.
+  The full native integration gate still needs to run.
+- Native fresh receive exposed a real stack overflow in shared equality.
+  An explicit-frame comparison loop fixes that reproduction. All three fresh
+  assignments and 101 receive fixtures pass natively. Zero-bound receive
+  formulas return the expected SAT and UNSAT results.
+  Fresh-entry receive SMT generation now completes, and its solver cases pass.
+  The native transition runner still stalls during fixture initialization.
+  Causal review also found missing concrete receive predicates and overly
+  broad symbolic whole-state writer attribution. Both source fixes now exist,
+  but complete native causal and raw-trace gates remain pending.
+- Raw Python callers now delegate to `validate_checked.py`, with no projection
+  fallback. The 85-test non-native migration suite passes. Real six-trace
+  execution, final reports, and full gates remain pending.
+
+`tests/test_symbolic_backend.py`, `tests/test_symbolic_receive.py`, and the
+native transition runner cover the next integration checks. Do not interpret
+their presence as a passing gate.
+
 ## Start here
 
 Repository: `cjen1-msft/CCF`. Branch: `lean-ccfraft-slices`.
@@ -3580,6 +3613,14 @@ membership are not a second formal correspondence theorem.
 | `b7fa4f6d0` | All eleven control actions, complete causal tracking, and send scaling regressions |
 | `214a222af` | Exact memoized equality for independently allocated symbolic expression DAGs |
 | `ff7faf2be` | Proved symbolic evaluation with an assignment-local cache |
+| `adc2c97fd` | Memoized normalization and SMT emission with selector simplification |
+| `bfcc31a44` | Reuse of symbolic name validation in later owner groups |
+| `06f2e3d3f` | Reuse of state bounds across observations, with exact AST equality |
+| `e521f3b82` | Stack-safe shared-expression comparison with typed explicit frames |
+| `119c99e2a` | Natural minimum and maximum terms with single-visit operands |
+| `24b54d434` | Conditional scalar clamps with a single old-value operand |
+| `aae734bbd` | Recursive type shortcuts and selector-path normalization caches |
+| `70d8aa1dc` | Changed-field causal naming with field-local DAG caches |
 
 The end-to-end CLI supports `clientRequest`,
 `signCommittableMessages`, `changeConfiguration`,
@@ -3717,6 +3758,15 @@ under their branch guards. Track consumption with `.sub oldQueueLength 1`;
 deduplicate responses against the post-removal queue. For self-receives,
 compose removal and response insertion on the same tracked queue.
 
+`NatTerm.min` and `NatTerm.max` now support scalar clamps without duplicating
+the old-value expression. Evaluation has no operand-ordering precondition.
+SMT rendering binds each operand once with `let`; binding collection also
+visits each operand once. `Shared/SmtMinMaxTests.lean` covers semantics,
+lexical scopes, named-definition validation, causal cores, and repeated
+clamps. At 12, 15, and 64 repetitions it records 25, 31, and 129 binding
+occurrences. The concrete receive integration must use these operations and
+pass its own growth regression.
+
 The minimal regression has a follower with one transaction entry and a
 two-entry request whose first transaction uses another unknown. Equal terms
 do not imply equal transaction IDs. Aliasing can enable the extension while
@@ -3758,9 +3808,13 @@ not weaken the public trace correspondence.
 `Expr.named` evaluates its underlying expression under the same assignment.
 Normalization retains the name. Grouped serialization gives each name a typed
 constant and a total defining equality in its producer group.
-The symbolic trace encoder names the initial state in group 0 and each
-successor in its action group. Observations advance instruction numbering
-without introducing state writes. `tests.test_symbolic_causality` checks that
+The symbolic trace encoder names the initial state in group 0.
+`Shared/SymbolicNaming.lean` compares each predecessor and successor,
+preserves unchanged fields and branches, and names changed leaves in the
+action group. Cross-field copies retain a writer even when their values came
+from an earlier field. Field-local caches preserve conditional DAG sharing.
+Observations advance instruction numbering without introducing state writes.
+`tests.test_symbolic_causality` checks that
 an inconsistent counter trace retains its entry, writer, and observation
 groups, and that removing any of them makes the constraints satisfiable.
 This test covers shared composition, not the unfinished model transitions.
@@ -3793,10 +3847,25 @@ nice -n 10 lake env lean --run Shared/SymbolicSharingMain.lean
 nice -n 10 lake env lean --run Shared/SymbolicEvalMemoMain.lean
 ```
 
-These libraries do not complete symbolic Receive integration. Normalization
-and serialization must also preserve sharing without losing useful selector
-and sequence simplification. Native Receive execution remains a separate
-gate; small DAG regressions do not establish its performance.
+`Shared/SymbolicNormalizeMemo.lean` preserves sharing through normalization,
+including pair, sum, and sequence selectors. Cached results carry
+same-assignment equivalence proofs. SMT emission shares normalization and
+serialization caches across groups, while validating the original syntax.
+The 15-node state fixtures enforce an output-size ceiling of 1 MB.
+
+Name validation reuses a previous result only in the same or a later owner
+group. Earlier contexts still check ownership independently.
+`Shared/SymbolicValidationScalingMain.lean` records 68 visited nodes for each
+of the 1, 32, and 128 repeated-group cases.
+
+`Shared/SymbolicTrace.lean` constructs bounds once per state, not once per
+observation. `Shared/SymbolicTraceScalingMain.lean` proves exact AST equality
+with the original algorithm. Its 3,000-observation fixture constructs bounds
+three times rather than 3,003 times.
+
+These libraries do not complete symbolic Receive integration. Native Receive
+execution remains a separate gate. Small DAG regressions do not establish its
+performance.
 
 First-source queue selection uses a skipped-prefix accumulator. The earlier
 implementation traversed its recursive result three times per level.
@@ -3807,13 +3876,14 @@ results at capacities 16 and 32, with a 200 KB serialized-size ceiling.
 
 ### Raw trace integration and explorer
 
-`reduction.py` remains the only reducer. `validate.py` still uses the unproved
-projection in `ccfraft_projection.py`. Do not restore the old `Reduction.lean`.
+`reduction.py` remains the only reducer. The current `validate.py` routes
+normalized symbolic certificates through `validate_checked.py`, with an
+explicit five-bound profile. Do not restore the old `Reduction.lean`.
 
 The raw reducer's partial observations do not supply a complete explicit entry
-state. Connect it to the checked backend only after the missing symbolic entry
-semantics exist. Unsupported syntax must fail explicitly, never fall back.
-Remove the projection only after its live callers migrate.
+state. The symbolic route does not fabricate one. Unsupported syntax fails
+explicitly, never falling back to the retained `ccfraft_projection.py`.
+Remove that unused module after real backend integration passes.
 
 `raw_normalization.py` preserves instruction order and provenance, converts
 transaction names to shared unknowns, and retains correlation evidence
@@ -3866,10 +3936,12 @@ Lean proof gate.
 - Structural guards are currently coarse clauses. Not every failed
   precondition has its own fine-grained label.
 
-Live schemas remain `ccfraft-trace/v1`, `ccfraft-client-request/v1`, and
-`ccfraft-client-request/v2`. Legacy schemas restrict actions to client
-requests. The v1 bootstrap adapter derives term count 2, index count 1 and
-queue capacity 0. General and v2 certificates declare all five bounds.
+The last completed native gate covers `ccfraft-trace/v1`,
+`ccfraft-client-request/v1`, and `ccfraft-client-request/v2`. The working-tree
+frontend also dispatches `ccfraft-symbolic-trace/v1`, pending its native gate.
+Legacy schemas restrict actions to client requests. The v1 bootstrap adapter
+derives term count 2, index count 1 and queue capacity 0.
+General, symbolic, and v2 certificates declare all five bounds.
 
 ## Existing failures and cleanup
 
@@ -3894,10 +3966,11 @@ required to resume from this document.
 
 The last complete checked-encoder gate passed 184 tests with no skips and
 returned SAT for the persistent send example. It includes the control
-causality and repeated-send corrections. The two newer shared-DAG libraries
-have separate proof, runtime, and independent-review results; the full gate
-must run again after Receive and the symbolic model adapters are integrated.
+causality and repeated-send corrections. The newer shared-DAG libraries have separate proof, runtime, solver, and
+independent-review results. The full gate must run again after Receive and
+the symbolic model adapters are integrated.
 `EncoderAudit` enforces the allowed proof axioms transitively.
-The receive step is complete but not yet exposed as a trace instruction.
-Resume from committed files, not old agent handles. Symbolic entry-state
-lowering remains the prerequisite for migrating raw traces.
+Concrete receive trace integration remains unfinished. The assembled symbolic
+adapter is proved, but native execution and raw-trace validation still block
+delivery. Preserve uncommitted integration files when transferring this
+working tree. Do not depend on old agent handles to reconstruct them.

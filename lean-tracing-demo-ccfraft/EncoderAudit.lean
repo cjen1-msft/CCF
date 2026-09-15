@@ -16,6 +16,7 @@ import MachineGenerated.MessageEqualityTests
 import MachineGenerated.AppendEntriesMappingProofs
 import MachineGenerated.GuardedAppendEntriesTests
 import MachineGenerated.ControlTraceTests
+import MachineGenerated.ReceiveTraceTests
 
 run_cmd do
   for theoremName in [
@@ -35,6 +36,27 @@ run_cmd do
       ``TraceSmt.Guarded.test_holds,
       ``TraceSmt.Guarded.eval_enqueueNoDup_map,
       ``CCFRaft.GuardedAppendEntries.step_correct,
+      ``CCFRaft.GuardedReceive.step_correct,
+      ``CCFRaft.GuardedReceive.step_enabledExpr_correct,
+      ``CCFRaft.TraceEncoding.receiveGroup_correct,
+      ``CCFRaft.TraceEncoding.receiveFrames_correct,
+      ``CCFRaft.TraceEncoding.receiveFrames_state,
+      ``CCFRaft.TraceEncoding.responseMatchValue_actual,
+      ``CCFRaft.TraceEncoding.responseSentValue_actual,
+      ``CCFRaft.ReceiveTraceValues.conditionalClamp_correct,
+      ``CCFRaft.TraceEncoding.trackedReceiveStep_eval,
+      ``CCFRaft.TraceEncoding.appendLogLengthValue_actual,
+      ``CCFRaft.TraceEncoding.appendLogTerm_copied,
+      ``CCFRaft.TraceEncoding.indexedLogTerm_correct,
+      ``CCFRaft.TraceEncoding.appendStepdownValue_role_actual,
+      ``CCFRaft.TraceEncoding.rememberUnappliedAppend_correct,
+      ``CCFRaft.TraceEncoding.receiveConsumptionAmount_correct,
+      ``CCFRaft.ReceiveTraceQueue.reconcile_correct,
+      ``CCFRaft.TraceEncoding.receiveCommitShape,
+      ``CCFRaft.TraceEncoding.receiveConfigurationSnapshots_correct,
+      ``CCFRaft.TraceEncoding.receiveQueueValue_correct,
+      ``CCFRaft.TraceEncoding.appendReplyValues_actual,
+      ``CCFRaft.ReceiveTraceBranching.step_eval,
       ``CCFRaft.TraceEncoding.nextControlTracking_correct,
       ``CCFRaft.TraceEncoding.roleGuard_correct,
       ``CCFRaft.TraceEncoding.actionGuard_correct,

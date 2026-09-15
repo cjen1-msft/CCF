@@ -57,12 +57,13 @@ def instruction (unknowns : Array String) (json : Json) :
           | "advanceCommitIndex" => .advanceCommitIndex node
           | "checkQuorum" => .checkQuorum node
           | _ => .becomeLeader node)
-    | "updateTerm" | "requestVote" | "requestPreVote" | "proposeVote"
+    | "receive" | "updateTerm" | "requestVote" | "requestPreVote" | "proposeVote"
     | "advanceCommitIndexAndProposeVote" =>
         checkKeys json ["kind", "action", "node", "destination", "provenance", "rule"]
         let source <- field json "node" >>= nodeValue
         let destination <- field json "destination" >>= nodeValue
         pure (match action with
+          | "receive" => .receive source destination
           | "updateTerm" => .updateTerm source destination
           | "requestVote" => .requestVote source destination
           | "requestPreVote" => .requestPreVote source destination

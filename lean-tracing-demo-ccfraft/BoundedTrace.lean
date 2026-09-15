@@ -60,6 +60,10 @@ def Follows {holes : Nat}
       BoundedState.WithinBounds bounds state /\
         Enabled state (.timeout node) /\
           Follows bounds assignment (next state (.timeout node)) rest
+  | .receive source destination :: rest =>
+      BoundedState.WithinBounds bounds state /\
+        Enabled state (.receive source destination) /\
+          Follows bounds assignment (next state (.receive source destination)) rest
   | .becomePreVoteCandidate node :: rest =>
       BoundedState.WithinBounds bounds state /\
         Enabled state (.becomePreVoteCandidate node) /\

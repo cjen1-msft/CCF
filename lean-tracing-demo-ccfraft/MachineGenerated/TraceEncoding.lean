@@ -4,6 +4,15 @@
 import BoundedTrace
 import Shared.SmtOrder
 import MachineGenerated.GuardedAppendEntries
+import MachineGenerated.GuardedReceive
+import MachineGenerated.ReceiveTraceQueue
+import MachineGenerated.ReceiveTraceGuards
+import MachineGenerated.ReceiveTraceValues
+import MachineGenerated.ReceiveTraceReplication
+import MachineGenerated.ReceiveTraceEffects
+import MachineGenerated.ReceiveTraceConfigurations
+import MachineGenerated.ReceiveTracePackets
+import MachineGenerated.ReceiveTraceBranching
 import MachineGenerated.ControlActionMappingProofs
 import MachineGenerated.ControlTraceConfigurations
 import MachineGenerated.ControlTraceRetirement
@@ -49,7 +58,10 @@ def VOTE_SLOT_BASE : Nat := 400
 def PRE_VOTE_SLOT_BASE : Nat := 420
 def CONFIGURATION_SLOT : Nat := 440
 def COMPLETED_SLOT_BASE : Nat := 450
-def PATH_SLOT_STRIDE : Nat := 480
+def QUEUE_ARCHIVE_SLOT : Nat := 470
+def PAYLOAD_POSITION_SLOT : Nat := 471
+def LOCAL_FIELD_SLOT_BASE : Nat := 480
+def PATH_SLOT_STRIDE : Nat := 560
 
 #guard 4 < ALLOCATED_SLOT_BASE &&
   ALLOCATED_SLOT_BASE + NODE_COUNT ≤ JOINED_SLOT_BASE &&
@@ -61,11 +73,13 @@ def PATH_SLOT_STRIDE : Nat := 480
   COMMIT_SLOT_BASE + NODE_COUNT ≤ MATCH_SLOT_BASE &&
   MATCH_SLOT_BASE + NODE_COUNT * NODE_COUNT ≤ PACKET_TERM_SLOT &&
   PACKET_TERM_SLOT < LOG_TERM_SLOT && LOG_TERM_SLOT < PACKET_FIELD_SLOT_BASE &&
-  PACKET_FIELD_SLOT_BASE + 6 ≤ PAYLOAD_TERM_SLOT && PAYLOAD_TERM_SLOT < VOTE_SLOT_BASE &&
+  PACKET_FIELD_SLOT_BASE + 8 ≤ PAYLOAD_TERM_SLOT && PAYLOAD_TERM_SLOT < VOTE_SLOT_BASE &&
   VOTE_SLOT_BASE + NODE_COUNT ≤ PRE_VOTE_SLOT_BASE &&
   PRE_VOTE_SLOT_BASE + NODE_COUNT ≤ CONFIGURATION_SLOT &&
   CONFIGURATION_SLOT < COMPLETED_SLOT_BASE &&
-  COMPLETED_SLOT_BASE + NODE_COUNT ≤ PATH_SLOT_STRIDE
+  COMPLETED_SLOT_BASE + NODE_COUNT ≤ QUEUE_ARCHIVE_SLOT &&
+  QUEUE_ARCHIVE_SLOT < PAYLOAD_POSITION_SLOT && PAYLOAD_POSITION_SLOT < LOCAL_FIELD_SLOT_BASE &&
+  LOCAL_FIELD_SLOT_BASE + 4 * NODE_COUNT ≤ PATH_SLOT_STRIDE
 
 def pathSlot (pathId base : Nat) : Nat :=
   pathId * PATH_SLOT_STRIDE + base
@@ -87,6 +101,24 @@ structure Tracking (holes : Nat) where
   voteMembers : Node -> Bool -> Node -> Bool -> Value holes
   configurations : Node -> List (Configuration Node) -> List (ControlTraceConfigurations.Snapshot holes)
   completedMembers : Node -> Node -> Bool -> Value holes
+  queues : Node -> List (Message Node (Value holes)) -> List (ReceiveTraceQueue.Snapshot holes)
+  matchIndices : Node -> Node -> Nat -> Value holes
+  localFields : Node -> Nat -> Nat -> Value holes
+  packetPositions : Message Node (Value holes) -> Nat -> Nat -> Value holes
+
+def roleCode : Role -> Nat
+  | .none => 0
+  | .follower => 1
+  | .preVoteCandidate => 2
+  | .candidate => 3
+  | .leader => 4
+
+def localField {holes : Nat} (state : NodeState Node (Value holes)) : Nat -> Nat
+  | 0 => if state.isNewFollower then 1 else 0
+  | 1 => (state.votedFor.map fun node => node.val + 1).getD 0
+  | 2 => roleCode state.role
+  | 3 => if state.role = .follower ∨ state.role = .preVoteCandidate ∨ state.role = .candidate then 1 else 0
+  | _ => 0
 
 def minValue {holes : Nat} (left right : Value holes) : Value holes :=
   .sub left (.sub left right)
@@ -112,6 +144,17 @@ def fieldOrigin {holes : Nat}
     (.named position (pathSlot pathId (PACKET_FIELD_SLOT_BASE + field))
       (packetFieldLabel field) value)
 
+def logTermValue {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (node : Node) (index : ReceiveTraceValues.Scalar holes) : ReceiveTraceValues.Scalar holes :=
+  ReceiveTraceReplication.lookupTerm (state.nodes node).log index (tracking.logLengths node)
+    (tracking.logPositions node) (tracking.logTerms node)
+
+def indexedLogTerm {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (node : Node) (index : ReceiveTraceValues.Scalar holes) (term : Nat) : Value holes :=
+  if term = termAt (state.nodes node).log index.actual then
+    (logTermValue state tracking node index).expression
+  else tracking.logTerms node index.actual term
+
 def electionFrontier {holes : Nat}
     (state : Template holes) (tracking : Tracking holes) (source : Node) : Value holes :=
   maxValue (tracking.commitIndices source (state.nodes source).commitIndex)
@@ -123,8 +166,8 @@ def votePacketFields {holes : Nat}
   | 3 => fieldOrigin position pathId 3 (lastCommittableIndex (state.nodes source))
       (electionFrontier state tracking source)
   | 4 => fieldOrigin position pathId 4 (lastCommittableTerm (state.nodes source))
-      (tracking.logTerms source (lastCommittableIndex (state.nodes source))
-        (lastCommittableTerm (state.nodes source)))
+      (logTermValue state tracking source
+        ⟨lastCommittableIndex (state.nodes source), electionFrontier state tracking source⟩).expression
   | _ => fun value => .literal value
 
 def appendPacketFields {holes : Nat}
@@ -137,7 +180,7 @@ def appendPacketFields {holes : Nat}
     match field with
     | 0 => fieldOrigin position pathId 0 previous sent
     | 1 => fieldOrigin position pathId 1 (termAt localState.log previous)
-        (tracking.logTerms source previous (termAt localState.log previous))
+        (logTermValue state tracking source ⟨previous, sent⟩).expression
     | 2 => fieldOrigin position pathId 2 localState.commitIndex
         (tracking.commitIndices source localState.commitIndex)
     | 5 => fieldOrigin position pathId 5 (messageEntries localState.log previous batchEnd).length
@@ -146,15 +189,17 @@ def appendPacketFields {holes : Nat}
         if 6 ≤ field then
           fun term => .named position (pathSlot (Nat.pair pathId (field - 6)) PAYLOAD_TERM_SLOT)
             s!"payload entry term {field - 6}"
-            (tracking.logTerms source (previous + (field - 6)) term)
+            (indexedLogTerm state tracking source
+              ⟨previous + (field - 6), .add sent (.literal (field - 6))⟩ term)
         else fun value => .literal value
 
-def roleCode : Role -> Nat
-  | .none => 0
-  | .follower => 1
-  | .preVoteCandidate => 2
-  | .candidate => 3
-  | .leader => 4
+def appendPacketPositions {holes : Nat} (position pathId : Nat) (state : Template holes) (tracking : Tracking holes)
+    (source destination : Node) (offset value : Nat) : Value holes :=
+  let index := (state.nodes source).sentIndex destination + offset
+  if value = index then
+    .named position (pathSlot (Nat.pair pathId offset) PAYLOAD_POSITION_SLOT) s!"payload log position {offset}"
+      (tracking.logPositions source index)
+  else .literal value
 
 def controlValue {holes : Nat}
     (tracking : Tracking holes) (node : Node) (slot : Nat)
@@ -197,8 +242,7 @@ def roleGuard {holes : Nat}
     (state : Template holes) (tracking : Tracking holes) (node : Node)
     (predicate : Template holes -> Prop) [DecidablePred predicate] : Expr holes :=
   roleCases
-    (controlValue tracking node (markerSlot ROLE_SLOT_BASE node)
-      "role" (roleCode (state.nodes node).role))
+    (tracking.localFields node 2 (roleCode (state.nodes node).role))
     (fun role => predicate (withRole state node role))
 
 def allExpr {holes : Nat} (values : List (Expr holes)) : Expr holes :=
@@ -356,8 +400,7 @@ def replicationMajorityExpr {holes : Nat}
     let count : Value holes := (configuration.nodes.sort (· ≤ ·)).foldl (fun total peer =>
       .add total (if peer = node then .literal 1 else
         leValue position
-          (controlValue tracking node (MATCH_SLOT_BASE + node.val * NODE_COUNT + peer.val)
-            s!"match index {peer.val}" ((state.nodes node).matchIndex peer)))) (.literal 0)
+          (tracking.matchIndices node peer ((state.nodes node).matchIndex peer)))) (.literal 0)
     (configurationPresent snapshot).implies
       ((activeConfigurationExpr state tracking node configuration).implies
         ((Expr.not (.lessThan position snapshot.position)).implies
@@ -420,8 +463,7 @@ def configurationRankLeExpr {holes : Nat}
 
 def matchValue {holes : Nat}
     (state : Template holes) (tracking : Tracking holes) (node peer : Node) : Value holes :=
-  controlValue tracking node (MATCH_SLOT_BASE + node.val * NODE_COUNT + peer.val)
-    s!"match index {peer.val}" ((state.nodes node).matchIndex peer)
+  tracking.matchIndices node peer ((state.nodes node).matchIndex peer)
 
 def successorExpr {holes : Nat}
     (state : Template holes) (tracking : Tracking holes) (source destination : Node) : Expr holes :=
@@ -486,8 +528,7 @@ def structuralClientExpr {holes : Nat}
     (state : Template holes) (tracking : Tracking holes) (node : Node)
     (transaction : Value holes) : Expr holes :=
   .and (allocatedExpr tracking node)
-    (.and (.equal (controlValue tracking node (markerSlot ROLE_SLOT_BASE node)
-        "role" (roleCode (state.nodes node).role)) (.literal (roleCode .leader)))
+    (.and (.equal (tracking.localFields node 2 (roleCode (state.nodes node).role)) (.literal (roleCode .leader)))
       (.and (.not (retiredStateExpr state tracking node))
         (.not (appendRetiredExpr state tracking node (.transaction transaction)))))
 
@@ -541,13 +582,321 @@ def sourceAllowedExpr {holes : Nat}
   | .requestPreVoteResponse response => allocatedExpr tracking response.source
   | _ => .boolean true
 
+def firstPacketTerm {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (source destination : Node) : Value holes :=
+  ReceiveTraceQueue.firstValue source tracking.packetTerms (.literal 0)
+    (tracking.queues destination (state.network destination))
+
+def packetFieldNumber {holes : Nat} (message : Message Node (Value holes)) (field : Nat) : Nat :=
+  match message with
+  | .appendEntriesRequest request =>
+      match field with
+      | 0 => request.prevLogIndex
+      | 1 => request.prevLogTerm
+      | 2 => request.leaderCommit
+      | 5 => request.entries.length
+      | _ => if 7 ≤ field then ((request.entries[field - 7]?).map Entry.term).getD 0 else 0
+  | .appendEntriesResponse response =>
+      if field = 3 then response.lastLogIndex else if field = 6 then (if response.success then 1 else 0) else 0
+  | .requestVoteRequest request =>
+      if field = 3 then request.lastCommittableIndex else if field = 4 then request.lastCommittableTerm else 0
+  | .requestPreVote request =>
+      if field = 3 then request.lastCommittableIndex else if field = 4 then request.lastCommittableTerm else 0
+  | .requestVoteResponse response =>
+      if field = 7 then (if response.voteGranted then 1 else 0) else 0
+  | .requestPreVoteResponse response =>
+      if field = 7 then (if response.voteGranted then 1 else 0) else 0
+  | .proposeVoteRequest _ => 0
+
+def firstPacketField {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (source destination : Node) (field : Nat) : Value holes :=
+  ReceiveTraceQueue.firstValue source
+    (fun packet => tracking.packetFields packet field (packetFieldNumber packet field)) (.literal 0)
+    (tracking.queues destination (state.network destination))
+
+def voteFreshExpr {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (source destination : Node) : Expr holes :=
+  let log := (state.nodes destination).log
+  let index := maxCommittableIndex log
+  let localTerm := tracking.logTerms destination index (maxCommittableTerm log)
+  let offeredTerm := firstPacketField state tracking source destination 4
+  let offeredIndex := firstPacketField state tracking source destination 3
+  orExpr (.lessThan localTerm offeredTerm)
+    (.and (.equal localTerm offeredTerm)
+      (.not (.lessThan offeredIndex (tracking.logPositions destination index))))
+
+def voteGrantExpr {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (source destination : Node) (preVote : Bool) : Expr holes :=
+  let votedFor := tracking.localFields destination 1 (localField (state.nodes destination) 1)
+  .and (.equal (firstPacketTerm state tracking source destination) (tracking.currentTerms destination))
+    (.and (voteFreshExpr state tracking source destination)
+      (if preVote then .boolean true else
+        orExpr (.equal votedFor (.literal 0)) (.equal votedFor (.literal (source.val + 1)))))
+
+def voteGrantCondition {holes : Nat} (state : Template holes) (source destination : Node)
+    (preVote : Bool) (message : Message Node (Value holes)) : Prop :=
+  message.term = (state.nodes destination).currentTerm ∧
+    (packetFieldNumber message 4 > maxCommittableTerm (state.nodes destination).log ∨
+      packetFieldNumber message 4 = maxCommittableTerm (state.nodes destination).log ∧
+        packetFieldNumber message 3 ≥ maxCommittableIndex (state.nodes destination).log) ∧
+    (preVote = true ∨ (state.nodes destination).votedFor = none ∨
+      (state.nodes destination).votedFor = some source)
+
+instance {holes : Nat} (state : Template holes) (source destination : Node)
+    (preVote : Bool) (message : Message Node (Value holes)) :
+    Decidable (voteGrantCondition state source destination preVote message) := by
+  unfold voteGrantCondition
+  infer_instance
+
+def voteGrantValue {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (source destination : Node) (preVote : Bool) (message : Message Node (Value holes)) :
+    ReceiveTraceValues.Scalar holes :=
+  { actual := if voteGrantCondition state source destination preVote message then 1 else 0
+    expression := (voteGrantExpr state tracking source destination preVote).ite (.literal 1) (.literal 0) }
+
+def receiveVoteCondition {holes : Nat} (state : Template holes) (source destination : Node)
+    (preVote : Bool) (message : Message Node (Value holes)) : Prop :=
+  state.allocated source ∧
+    (state.nodes destination).role = (if preVote then .preVoteCandidate else .candidate) ∧
+    message.term = (state.nodes destination).currentTerm ∧ packetFieldNumber message 7 = 1
+
+instance {holes : Nat} (state : Template holes) (source destination : Node)
+    (preVote : Bool) (message : Message Node (Value holes)) :
+    Decidable (receiveVoteCondition state source destination preVote message) := by
+  unfold receiveVoteCondition
+  infer_instance
+
+def receiveVoteExpr {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (source destination : Node) (preVote : Bool) : Expr holes :=
+  .and (allocatedExpr tracking source)
+    (.and (roleGuard state tracking destination fun current =>
+      (current.nodes destination).role = (if preVote then .preVoteCandidate else .candidate))
+      (.and (.equal (firstPacketTerm state tracking source destination) (tracking.currentTerms destination))
+        (.equal (firstPacketField state tracking source destination 7) (.literal 1))))
+
+def candidateEligibilityExpr {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (node : Node) : Expr holes :=
+  .and (allocatedExpr tracking node)
+    (.and (.equal (tracking.localFields node 3 (localField (state.nodes node) 3)) (.literal 1))
+      (.and (membershipRequirementsExpr state tracking (.timeout node))
+        (.not (retiredStateExpr state tracking node))))
+
+def proposalEffectCondition {holes : Nat} (state : Template holes) (destination : Node)
+    (request : ProposeVoteRequest Node) : Prop :=
+  request.destination = destination ∧ request.term = (state.nodes destination).currentTerm ∧
+    candidateTransitionEnabled state destination
+
+instance {holes : Nat} (state : Template holes) (destination : Node) (request : ProposeVoteRequest Node) :
+    Decidable (proposalEffectCondition state destination request) := by
+  unfold proposalEffectCondition
+  infer_instance
+
+def proposalEffectExpr {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (source destination : Node) (request : ProposeVoteRequest Node) : Expr holes :=
+  .and (.boolean (decide (request.destination = destination)))
+    (.and (.equal (firstPacketTerm state tracking source destination) (tracking.currentTerms destination))
+      (candidateEligibilityExpr state tracking destination))
+
+def responseAckCondition {holes : Nat} (state : Template holes) (source destination : Node)
+    (response : AppendEntriesResponse Node) : Prop :=
+  response.destination = destination ∧ state.allocated source ∧ response.success = true ∧
+    response.term = (state.nodes destination).currentTerm ∧ (state.nodes destination).role = .leader
+
+def responseNackCondition {holes : Nat} (state : Template holes) (source destination : Node)
+    (response : AppendEntriesResponse Node) : Prop :=
+  response.destination = destination ∧ state.allocated source ∧ response.success = false
+
+instance {holes : Nat} (state : Template holes) (source destination : Node) (response : AppendEntriesResponse Node) :
+    Decidable (responseAckCondition state source destination response) := by
+  unfold responseAckCondition
+  infer_instance
+
+instance {holes : Nat} (state : Template holes) (source destination : Node) (response : AppendEntriesResponse Node) :
+    Decidable (responseNackCondition state source destination response) := by
+  unfold responseNackCondition
+  infer_instance
+
+def responseAckExpr {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (source destination : Node) (response : AppendEntriesResponse Node) : Expr holes :=
+  .and (.boolean (decide (response.destination = destination)))
+    (.and (allocatedExpr tracking source)
+      (.and (.equal (firstPacketField state tracking source destination 6) (.literal 1))
+        (.and (.equal (firstPacketTerm state tracking source destination) (tracking.currentTerms destination))
+          (roleGuard state tracking destination fun current => (current.nodes destination).role = .leader))))
+
+def responseNackExpr {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (source destination : Node) (response : AppendEntriesResponse Node) : Expr holes :=
+  .and (.boolean (decide (response.destination = destination)))
+    (.and (allocatedExpr tracking source)
+      (.equal (firstPacketField state tracking source destination 6) (.literal 0)))
+
+def highestPossibleValue {holes : Nat} (state : Template holes) (tracking : Tracking holes) (node : Node)
+    (limit term : ReceiveTraceValues.Scalar holes) : ReceiveTraceValues.Scalar holes :=
+  ReceiveTraceReplication.highestPossible (state.nodes node).log limit term
+    (tracking.logLengths node) (tracking.logPositions node) (tracking.logTerms node)
+
+def sourcePresentExpr {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (source destination : Node) : Expr holes :=
+  .equal (ReceiveTraceQueue.firstValue source (fun _ => .literal 1) (.literal 0)
+    (tracking.queues destination (state.network destination))) (.literal 1)
+
+def receiveEntryAllowed {holes : Nat} (state : Template holes) (source destination : Node) : Bool :=
+  ReceiveTraceGuards.allowed state source destination
+
+def appendLogOkExpr {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (destination : Node) (request : AppendEntriesRequest Node (Value holes)) : Expr holes :=
+  let packet := Message.appendEntriesRequest request
+  let previous := tracking.packetFields packet 0 request.prevLogIndex
+  orExpr (.equal previous (.literal 0))
+    (.and (.not (.lessThan (tracking.logLengths destination) previous))
+      (.equal (logTermValue state tracking destination ⟨request.prevLogIndex, previous⟩).expression
+        (tracking.packetFields packet 1 request.prevLogTerm)))
+
+open ReceiveTraceValues in
+def appendFailureValues {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (destination : Node) (request : AppendEntriesRequest Node (Value holes)) : Scalar holes × Scalar holes :=
+  let packet := Message.appendEntriesRequest request
+  let current : Scalar holes := ⟨(state.nodes destination).currentTerm, tracking.currentTerms destination⟩
+  let length : Scalar holes := ⟨(state.nodes destination).log.length, tracking.logLengths destination⟩
+  let previous : Scalar holes := ⟨request.prevLogIndex, tracking.packetFields packet 0 request.prevLogIndex⟩
+  let offered : Scalar holes := ⟨request.term, tracking.packetTerms packet⟩
+  let previousTerm := choose (equal previous (literal 0)) (literal 0)
+    (choose (less length previous) (literal 0) (logTermValue state tracking destination length))
+  let ordinary := orCondition (less offered current) (equal previousTerm (literal 0))
+  let possible := highestPossibleValue state tracking destination previous
+    ⟨request.prevLogTerm, tracking.packetFields packet 1 request.prevLogTerm⟩
+  (choose ordinary current
+    (choose (equal possible (literal 0)) (literal TERM_ONE)
+      (logTermValue state tracking destination possible)),
+   choose ordinary length possible)
+
+def appendRejected {holes : Nat} (state : Template holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : Prop :=
+  request.term < (state.nodes destination).currentTerm ∨
+    (request.term = (state.nodes destination).currentTerm ∧
+      (state.nodes destination).role = .follower ∧ ¬ logOk (state.nodes destination) request)
+
+instance {holes : Nat} (state : Template holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : Decidable (appendRejected state destination request) := by
+  unfold appendRejected
+  infer_instance
+
+def appendRejectedExpr {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (destination : Node) (request : AppendEntriesRequest Node (Value holes)) : Expr holes :=
+  let term := tracking.packetTerms (.appendEntriesRequest request)
+  let current := tracking.currentTerms destination
+  orExpr (.lessThan term current)
+    (.and (.equal term current)
+      (.and (roleGuard state tracking destination fun current => (current.nodes destination).role = .follower)
+        (.not (appendLogOkExpr state tracking destination request))))
+
+def appendAlreadyExpr {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (destination : Node) (request : AppendEntriesRequest Node (Value holes)) : Expr holes :=
+  let packet := Message.appendEntriesRequest request
+  let previous := tracking.packetFields packet 0 request.prevLogIndex
+  let count := tracking.packetFields packet 5 request.entries.length
+  orExpr (.equal count (.literal 0))
+    (.and (.not (.lessThan (tracking.logLengths destination) (.add previous count)))
+      (.and (.equal (minValue (.sub (tracking.logLengths destination) previous) count) count)
+        (ReceiveTracePackets.termsEqual
+          (fun offset => indexedLogTerm state tracking destination
+            ⟨request.prevLogIndex + offset, .add previous (.literal offset)⟩)
+          (fun offset => tracking.packetFields packet (6 + offset)) 1
+          (((state.nodes destination).log.drop request.prevLogIndex).take request.entries.length) request.entries)))
+
+def appendConflictExpr {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (destination : Node) (request : AppendEntriesRequest Node (Value holes)) : Expr holes :=
+  let packet := Message.appendEntriesRequest request
+  let previous := tracking.packetFields packet 0 request.prevLogIndex
+  let count := tracking.packetFields packet 5 request.entries.length
+  let suffix := NatTerm.sub (tracking.logLengths destination) previous
+  let overlap := minValue count suffix
+  .and (.not (.equal count (.literal 0)))
+    (.not (.and (.equal (minValue suffix overlap) (minValue count overlap))
+      (ReceiveTracePackets.termsEqual
+        (fun offset => indexedLogTerm state tracking destination
+          ⟨request.prevLogIndex + offset, .add previous (.literal offset)⟩)
+        (fun offset => tracking.packetFields packet (6 + offset)) 1
+        (((state.nodes destination).log.drop request.prevLogIndex).take (overlapLength (state.nodes destination) request))
+        (request.entries.take (overlapLength (state.nodes destination) request)))))
+
+def appendProgressExpr {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (destination : Node) (request : AppendEntriesRequest Node (Value holes)) : Expr holes :=
+  let packet := Message.appendEntriesRequest request
+  let previous := tracking.packetFields packet 0 request.prevLogIndex
+  let count := tracking.packetFields packet 5 request.entries.length
+  orExpr (appendAlreadyExpr state tracking destination request)
+    (orExpr (.and (.not (.equal count (.literal 0)))
+        (.and (.not (.lessThan (tracking.logLengths destination) previous))
+          (.and (.lessThan (tracking.logLengths destination) (.add previous count))
+            (.not (appendConflictExpr state tracking destination request)))))
+      (.and (appendConflictExpr state tracking destination request)
+        (.equal (tracking.localFields destination 0 (localField (state.nodes destination) 0)) (.literal 1))))
+
+def receiveHeaderExpr {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (destination : Node) (message : Message Node (Value holes)) : Expr holes :=
+  let current := tracking.currentTerms destination
+  let term := tracking.packetTerms message
+  .and (.boolean (decide (message.destination = destination)))
+    (match message with
+    | .appendEntriesRequest request =>
+        orExpr (.lessThan term current)
+          (.and (.equal term current)
+            (orExpr (roleGuard state tracking destination fun current =>
+                (current.nodes destination).role = .candidate ∨
+                  (current.nodes destination).role = .preVoteCandidate)
+              (.and (roleGuard state tracking destination fun current => (current.nodes destination).role = .follower)
+                (orExpr (.not (appendLogOkExpr state tracking destination request))
+                  (.and (.not (.lessThan (tracking.packetFields message 0 request.prevLogIndex)
+                    (tracking.commitIndices destination (state.nodes destination).commitIndex)))
+                    (appendProgressExpr state tracking destination request))))))
+    | .appendEntriesResponse response =>
+        orExpr (.not (allocatedExpr tracking response.source))
+          (orExpr (.equal (tracking.packetFields message 6 (if response.success then 1 else 0)) (.literal 0))
+            (orExpr (roleGuard state tracking destination fun current => (current.nodes destination).role ≠ .leader)
+              (.not (.lessThan current term))))
+
+    | .requestVoteRequest _ | .requestPreVote _ | .proposeVoteRequest _ =>
+        .not (.lessThan current term)
+    | .requestVoteResponse response =>
+        orExpr (.not (allocatedExpr tracking response.source))
+          (orExpr (roleGuard state tracking destination fun current => (current.nodes destination).role ≠ .candidate)
+            (.not (.lessThan current term)))
+    | .requestPreVoteResponse response =>
+        orExpr (.not (allocatedExpr tracking response.source))
+          (orExpr (roleGuard state tracking destination fun current => (current.nodes destination).role ≠ .preVoteCandidate)
+            (.not (.lessThan current term))))
+
+def appendPrefixExpr {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (destination : Node) (request : AppendEntriesRequest Node (Value holes)) : Expr holes :=
+  let packet := Message.appendEntriesRequest request
+  let suffix := NatTerm.sub (tracking.logLengths destination) (tracking.packetFields packet 0 request.prevLogIndex)
+  let count := tracking.packetFields packet 5 request.entries.length
+  .and (.equal suffix (minValue count suffix))
+    (ReceiveTraceBranching.prefixExpr suffix (fun index => .literal index)
+      (fun offset => indexedLogTerm state tracking destination
+        ⟨request.prevLogIndex + offset,
+          .add (tracking.packetFields packet 0 request.prevLogIndex) (.literal offset)⟩)
+      (fun offset => tracking.packetFields packet (6 + offset)) 1
+      (((state.nodes destination).log.drop request.prevLogIndex).take
+        ((state.nodes destination).log.length - request.prevLogIndex))
+      (request.entries.take ((state.nodes destination).log.length - request.prevLogIndex)))
+
+def receiveEntryExpr {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (source destination : Node) : Expr holes :=
+  .and (allocatedExpr tracking destination)
+    (.equal (ReceiveTraceQueue.firstValue source
+      (fun packet => (receiveHeaderExpr state tracking destination packet).ite (.literal 1) (.literal 0))
+      (.literal 0) (tracking.queues destination (state.network destination))) (.literal 1))
+
 def newerMessageExpr {holes : Nat}
     (state : Template holes) (tracking : Tracking holes) (source destination : Node) : Expr holes :=
   match takeFirstFrom source (state.network destination) with
-  | none => .boolean false
+  | none => sourcePresentExpr state tracking source destination
   | some (message, _) =>
-      .and (sourceAllowedExpr tracking message)
-        (.lessThan (tracking.currentTerms destination) (tracking.packetTerms message))
+      .and (sourcePresentExpr state tracking source destination)
+        (.and (sourceAllowedExpr tracking message)
+          (.lessThan (tracking.currentTerms destination) (firstPacketTerm state tracking source destination)))
 
 def actionRequirements {holes : Nat}
     (state : Template holes) (action : Action Node (Value holes)) : Prop :=
@@ -729,9 +1078,7 @@ def localBoundsClauses {holes : Nat}
     [lessClause "sent index domain"
        (tracking.sentIndex node peer) bounds.indexCount,
      lessClause "match index domain"
-       (controlValue tracking node
-         (MATCH_SLOT_BASE + node.val * NODE_COUNT + peer.val)
-         s!"match index {peer.val}" (state.matchIndex peer))
+       (tracking.matchIndices node peer (state.matchIndex peer))
        bounds.indexCount]) ++
   optionalIndexClauses bounds (tracking.logPositions node) (tracking.retirementWriters node) 2
       "retirement index" state.retirementIndex ++
@@ -779,8 +1126,7 @@ def observationExpression {holes : Nat}
     TraceInstructions.Observation holes -> Expr holes
   | .role node value =>
       .equal
-        (controlValue tracking node (markerSlot ROLE_SLOT_BASE node)
-          "role" (roleCode (assignmentState.nodes node).role))
+        (tracking.localFields node 2 (roleCode (assignmentState.nodes node).role))
         (.literal (roleCode value))
   | .currentTerm node value =>
       .equal (tracking.currentTerms node) (.literal value)
@@ -873,6 +1219,10 @@ def initialTracking {holes : Nat} (state : Template holes) : Tracking holes wher
   voteMembers := fun _ _ _ value => boolValue value
   configurations := fun _ values => ControlTraceConfigurations.literals values
   completedMembers := fun _ _ value => boolValue value
+  queues := fun _ values => ReceiveTraceQueue.literals values
+  matchIndices := fun _ _ value => .literal value
+  localFields := fun _ _ value => .literal value
+  packetPositions := fun _ _ value => .literal value
 
 def controlVoteMembers {holes : Nat}
     (position pathId : Nat) (state : Template holes) (tracking : Tracking holes) :
@@ -1118,7 +1468,20 @@ def nextControlTracking {holes : Nat}
     packetFields := tracking.packetFields
     voteMembers := tracking.voteMembers
     configurations := tracking.configurations
-    completedMembers := tracking.completedMembers }
+    completedMembers := tracking.completedMembers
+    queues := tracking.queues
+    matchIndices := fun node peer value =>
+      if value = (after.nodes node).matchIndex peer ∧ value ≠ (before.nodes node).matchIndex peer then
+        .named position (pathSlot pathId (MATCH_SLOT_BASE + node.val * NODE_COUNT + peer.val))
+          s!"match index {peer.val}" (.literal value)
+      else tracking.matchIndices node peer value
+    localFields := fun node field value =>
+      if field < 4 ∧ value = localField (after.nodes node) field ∧ value ≠ localField (before.nodes node) field then
+        .named position (pathSlot pathId (LOCAL_FIELD_SLOT_BASE + field * NODE_COUNT + node.val))
+          (match field with | 0 => "new follower" | 1 => "voted for" | 2 => "role" | _ => "campaign role")
+          (.literal value)
+      else tracking.localFields node field value
+    packetPositions := tracking.packetPositions }
 
 def controlQueueLength {holes : Nat}
     (position pathId : Nat) (state : Template holes) (tracking : Tracking holes)
@@ -1246,7 +1609,7 @@ def controlCurrentTerms {holes : Nat}
       | some message =>
           Function.update tracking.currentTerms destination
             (.named position (pathSlot pathId (markerSlot TERM_SLOT_BASE destination))
-              "current term" (tracking.packetTerms message))
+              "current term" (firstPacketTerm state tracking source destination))
   | _ =>
       (nextControlTracking position pathId state (next state action) tracking).currentTerms
 
@@ -1257,6 +1620,19 @@ structure Frame (holes : Nat) where
 
 def finishFrame {holes : Nat} (position : Nat) (node : Node) (frame : Frame holes) : Frame holes :=
   { frame with tracking := refreshCompletedTracking position frame.pathId frame.state frame.tracking node }
+
+def rememberQueueFrame {holes : Nat} (position : Nat) (node : Node) (before after : Frame holes)
+    (consumed : Value holes := .literal 1) : Frame holes :=
+  let oldQueue := before.state.network node
+  let queue := after.state.network node
+  if oldQueue = queue then after
+  else
+    let snapshots := ReceiveTraceQueue.reconcile position
+      (fun index => pathSlot (Nat.pair after.pathId (Nat.pair node.val index)) QUEUE_ARCHIVE_SLOT)
+      consumed 0 (before.tracking.queues node oldQueue) queue
+    { after with tracking := { after.tracking with
+        queues := Function.update after.tracking.queues node
+          (Function.update (after.tracking.queues node) queue snapshots) } }
 
 def controlSuccessor {holes : Nat} (state : Template holes) (action : Action Node (Value holes)) :
     Template holes :=
@@ -1306,8 +1682,10 @@ def controlSendFrame {holes : Nat} (position : Nat) (action : Action Node (Value
 def controlFrame {holes : Nat} (position : Nat) (action : Action Node (Value holes)) (frame : Frame holes) : Frame holes :=
   match action with
   | .requestVote _ destination | .requestPreVote _ destination | .proposeVote _ destination =>
-      controlSendFrame position action destination frame
-  | .advanceCommitIndex node | .advanceCommitIndexAndProposeVote node _ | .becomeLeader node =>
+      rememberQueueFrame position destination frame (controlSendFrame position action destination frame)
+  | .advanceCommitIndexAndProposeVote node destination =>
+      rememberQueueFrame position destination frame (finishFrame position node (rawControlFrame position action frame))
+  | .advanceCommitIndex node | .becomeLeader node =>
       finishFrame position node (rawControlFrame position action frame)
   | _ => rawControlFrame position action frame
 
@@ -1428,9 +1806,16 @@ def rememberAppendPacketFrame {holes : Nat}
         (.appendEntriesRequest (makeAppendEntriesRequest before.state source destination batchEnd))
         (appendPacketFields position current.pathId before.state before.tracking source destination batchEnd)
     else current.tracking.packetFields
+  let packetPositions :=
+    if (before.state.network destination).length < (current.state.network destination).length then
+      Function.update current.tracking.packetPositions
+        (.appendEntriesRequest (makeAppendEntriesRequest before.state source destination batchEnd))
+        (appendPacketPositions position current.pathId before.state before.tracking source destination)
+    else current.tracking.packetPositions
   { current with tracking := { current.tracking with
       packetTerms
       packetFields
+      packetPositions
       queueLengths := Function.update current.tracking.queueLengths destination
         (appendQueueLength position current.pathId before.state before.tracking source destination batchEnd) } }
 
@@ -1444,7 +1829,659 @@ def appendFrames {holes : Nat}
   (attachAppendFrame position priorLength frame.tracking source destination
     batchEnd frame.pathId
     (GuardedAppendEntries.step frame.state source destination batchEnd)).map
-      (fun current => rememberAppendPacketFrame position frame current source destination batchEnd)
+      (fun current => rememberQueueFrame position destination frame
+        (rememberAppendPacketFrame position frame current source destination batchEnd))
+
+def receiveVotedForValue {holes : Nat} (position pathId : Nat) (before : Frame holes)
+    (source destination : Node) (message : Message Node (Value holes)) : ReceiveTraceValues.Scalar holes :=
+  let old : ReceiveTraceValues.Scalar holes :=
+    ⟨localField (before.state.nodes destination) 1,
+      before.tracking.localFields destination 1 (localField (before.state.nodes destination) 1)⟩
+  if old.actual = source.val + 1 then old
+  else
+    ReceiveTraceValues.choose
+      ⟨decide (voteGrantCondition before.state source destination false message),
+        voteGrantExpr before.state before.tracking source destination false⟩
+      (ReceiveTraceValues.named position
+        (pathSlot pathId (LOCAL_FIELD_SLOT_BASE + NODE_COUNT + destination.val))
+        "voted for" (ReceiveTraceValues.literal (source.val + 1))) old
+
+def assignLocalValue {holes : Nat} (node : Node) (field : Nat)
+    (value : ReceiveTraceValues.Scalar holes) (frame : Frame holes) : Frame holes :=
+  { frame with tracking := { frame.tracking with
+      localFields := Function.update frame.tracking.localFields node
+        (Function.update (frame.tracking.localFields node) field
+          (ReceiveTraceValues.install (frame.tracking.localFields node field) value)) } }
+
+def assignPacketField {holes : Nat} (packet : Message Node (Value holes)) (field : Nat)
+    (value : ReceiveTraceValues.Scalar holes) (frame : Frame holes) : Frame holes :=
+  { frame with tracking := { frame.tracking with
+      packetFields := Function.update frame.tracking.packetFields packet
+        (Function.update (frame.tracking.packetFields packet) field
+          (ReceiveTraceValues.install (frame.tracking.packetFields packet field) value)) } }
+
+def assignPacketTerm {holes : Nat} (packet : Message Node (Value holes))
+    (value : ReceiveTraceValues.Scalar holes) (frame : Frame holes) : Frame holes :=
+  { frame with tracking := { frame.tracking with
+      packetTerms := Function.update frame.tracking.packetTerms packet value.expression } }
+
+def assignCurrentTerm {holes : Nat} (node : Node) (value : ReceiveTraceValues.Scalar holes)
+    (frame : Frame holes) : Frame holes :=
+  { frame with tracking := { frame.tracking with
+      currentTerms := Function.update frame.tracking.currentTerms node value.expression } }
+
+def assignMatchIndex {holes : Nat} (node peer : Node) (value : ReceiveTraceValues.Scalar holes)
+    (frame : Frame holes) : Frame holes :=
+  { frame with tracking := { frame.tracking with
+      matchIndices := Function.update frame.tracking.matchIndices node
+        (Function.update (frame.tracking.matchIndices node) peer
+          (ReceiveTraceValues.install (frame.tracking.matchIndices node peer) value)) } }
+
+def assignSentIndex {holes : Nat} (node peer : Node) (value : ReceiveTraceValues.Scalar holes)
+    (frame : Frame holes) : Frame holes :=
+  { frame with tracking := { frame.tracking with
+      sentIndex := Function.update frame.tracking.sentIndex node
+        (Function.update (frame.tracking.sentIndex node) peer value.expression) } }
+
+def responseMatchValue {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) (response : AppendEntriesResponse Node) : ReceiveTraceValues.Scalar holes :=
+  let old : ReceiveTraceValues.Scalar holes :=
+    ⟨(before.state.nodes destination).matchIndex source,
+      before.tracking.matchIndices destination source ((before.state.nodes destination).matchIndex source)⟩
+  let offered : ReceiveTraceValues.Scalar holes :=
+    ⟨response.lastLogIndex, firstPacketField before.state before.tracking source destination 3⟩
+  let offered := if (after.state.nodes destination).matchIndex source = old.actual then offered else
+    ReceiveTraceValues.named position
+      (pathSlot after.pathId (MATCH_SLOT_BASE + destination.val * NODE_COUNT + source.val)) "received match index" offered
+  ReceiveTraceValues.maximum old (ReceiveTraceValues.choose
+    ⟨decide (responseAckCondition before.state source destination response),
+      responseAckExpr before.state before.tracking source destination response⟩ offered (ReceiveTraceValues.literal 0))
+
+def responseSentValue {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) (response : AppendEntriesResponse Node) : ReceiveTraceValues.Scalar holes :=
+  let old : ReceiveTraceValues.Scalar holes :=
+    ⟨(before.state.nodes destination).sentIndex source, before.tracking.sentIndex destination source⟩
+  let possible := highestPossibleValue before.state before.tracking destination
+    ⟨response.lastLogIndex, firstPacketField before.state before.tracking source destination 3⟩
+    ⟨response.term, firstPacketTerm before.state before.tracking source destination⟩
+  let updated := ReceiveTraceValues.conditionalClamp
+    ⟨decide (responseNackCondition before.state source destination response),
+      responseNackExpr before.state before.tracking source destination response⟩ old
+    ⟨(before.state.nodes destination).matchIndex source,
+      before.tracking.matchIndices destination source ((before.state.nodes destination).matchIndex source)⟩ possible
+  if (after.state.nodes destination).sentIndex source = old.actual then updated else
+    ReceiveTraceValues.named position (pathSlot after.pathId (markerSlot SENT_INDEX_SLOT_BASE source))
+      "received sent index" updated
+
+def rememberReceiveResponse {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) : Frame holes :=
+  match takeFirstFrom source (before.state.network destination) with
+  | some (.appendEntriesResponse response, _) =>
+      assignSentIndex destination source (responseSentValue position before after source destination response)
+        (assignMatchIndex destination source (responseMatchValue position before after source destination response) after)
+  | _ => after
+
+def proposalTermValue {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) (request : ProposeVoteRequest Node) : ReceiveTraceValues.Scalar holes :=
+  let old : ReceiveTraceValues.Scalar holes :=
+    ⟨(before.state.nodes destination).currentTerm, before.tracking.currentTerms destination⟩
+  let offered := ReceiveTraceValues.add
+    ⟨request.term, firstPacketTerm before.state before.tracking source destination⟩ (ReceiveTraceValues.literal 1)
+  let candidate := if (after.state.nodes destination).currentTerm = old.actual then offered else
+    ReceiveTraceValues.named position (pathSlot after.pathId (markerSlot TERM_SLOT_BASE destination))
+      "proposal term" offered
+  ReceiveTraceValues.maximum old (ReceiveTraceValues.choose
+    ⟨decide (candidateTransitionEnabled before.state destination),
+      candidateEligibilityExpr before.state before.tracking destination⟩
+    candidate (ReceiveTraceValues.literal 0))
+
+def proposalLocalValue {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) (request : ProposeVoteRequest Node) (field desired : Nat) :
+    ReceiveTraceValues.Scalar holes :=
+  let old : ReceiveTraceValues.Scalar holes :=
+    ⟨localField (before.state.nodes destination) field,
+      before.tracking.localFields destination field (localField (before.state.nodes destination) field)⟩
+  if old.actual = desired then old
+  else ReceiveTraceValues.choose
+    ⟨decide (proposalEffectCondition before.state destination request),
+      proposalEffectExpr before.state before.tracking source destination request⟩
+    (ReceiveTraceValues.named position
+      (pathSlot after.pathId (LOCAL_FIELD_SLOT_BASE + field * NODE_COUNT + destination.val))
+      (if field = 2 then "proposal role" else "proposal voted for") (ReceiveTraceValues.literal desired)) old
+
+def proposalMemberValue {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) (request : ProposeVoteRequest Node) (preVote : Bool) (peer : Node) :
+    ReceiveTraceValues.Scalar holes :=
+  let old := decide (peer ∈ if preVote then (before.state.nodes destination).preVotesGranted
+    else (before.state.nodes destination).votesGranted)
+  let desired := !preVote && decide (peer = destination)
+  let oldValue : ReceiveTraceValues.Scalar holes :=
+    ⟨if old then 1 else 0, before.tracking.voteMembers destination preVote peer old⟩
+  if old = desired then oldValue
+  else ReceiveTraceValues.choose
+    ⟨decide (proposalEffectCondition before.state destination request),
+      proposalEffectExpr before.state before.tracking source destination request⟩
+    (ReceiveTraceValues.named position
+      (pathSlot after.pathId (markerSlot (if preVote then PRE_VOTE_SLOT_BASE else VOTE_SLOT_BASE) peer))
+      "proposal vote membership" (ReceiveTraceValues.literal (if desired then 1 else 0))) oldValue
+
+def rememberReceiveProposal {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) : Frame holes :=
+  match takeFirstFrom source (before.state.network destination) with
+  | some (.proposeVoteRequest request, _) =>
+      if request.destination = destination ∧ request.term ≤ (before.state.nodes destination).currentTerm then
+        let updated := assignCurrentTerm destination (proposalTermValue position before after source destination request) after
+        let updated := assignLocalValue destination 2
+          (proposalLocalValue position before after source destination request 2 (roleCode .candidate)) updated
+        let updated := assignLocalValue destination 1
+          (proposalLocalValue position before after source destination request 1 (destination.val + 1)) updated
+        { updated with tracking := { updated.tracking with
+            voteMembers := Function.update updated.tracking.voteMembers destination (fun preVote peer value =>
+              let proposed := proposalMemberValue position before after source destination request preVote peer
+              if (if value then 1 else 0) = proposed.actual then proposed.expression
+              else updated.tracking.voteMembers destination preVote peer value) } }
+      else after
+  | _ => after
+
+def assignVoteMember {holes : Nat} (node : Node) (preVote : Bool) (peer : Node) (present : Bool)
+    (value : ReceiveTraceValues.Scalar holes) (frame : Frame holes) : Frame holes :=
+  { frame with tracking := { frame.tracking with
+      voteMembers := Function.update frame.tracking.voteMembers node (fun mode candidate input =>
+        if mode = preVote ∧ candidate = peer ∧ input = present then value.expression
+        else frame.tracking.voteMembers node mode candidate input) } }
+
+def receivedVoteValue {holes : Nat} (position pathId : Nat) (before : Frame holes)
+    (source destination : Node) (preVote : Bool) (message : Message Node (Value holes)) :
+    ReceiveTraceValues.Scalar holes :=
+  let old := decide (source ∈ if preVote then (before.state.nodes destination).preVotesGranted
+    else (before.state.nodes destination).votesGranted)
+  { actual := if receiveVoteCondition before.state source destination preVote message then 1 else if old then 1 else 0
+    expression := (receiveVoteExpr before.state before.tracking source destination preVote).ite
+      (.named position (pathSlot pathId (markerSlot (if preVote then PRE_VOTE_SLOT_BASE else VOTE_SLOT_BASE) source))
+        "received vote membership" (.literal 1))
+      (before.tracking.voteMembers destination preVote source old) }
+
+def rememberReceivedVote {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) (preVote : Bool) (message : Message Node (Value holes)) : Frame holes :=
+  if source ∈ (if preVote then (before.state.nodes destination).preVotesGranted
+      else (before.state.nodes destination).votesGranted) then after
+  else
+    assignVoteMember destination preVote source
+      (decide (receiveVoteCondition before.state source destination preVote message))
+      (receivedVoteValue position after.pathId before source destination preVote message) after
+
+def rememberReceiveVotes {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) : Frame holes :=
+  match takeFirstFrom source (before.state.network destination) with
+  | some (message@(.requestVoteResponse _), _) =>
+      rememberReceivedVote position before after source destination false message
+  | some (message@(.requestPreVoteResponse _), _) =>
+      rememberReceivedVote position before after source destination true message
+  | _ => after
+
+def rememberVoteReply {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) (preVote : Bool) (message : Message Node (Value holes))
+    (remaining : List (Message Node (Value holes))) : Frame holes :=
+  let grant := voteGrantValue before.state before.tracking source destination preVote message
+  let granted := decide (voteGrantCondition before.state source destination preVote message)
+  let response : Message Node (Value holes) :=
+    if preVote then .requestPreVoteResponse
+      { term := (before.state.nodes destination).currentTerm, voteGranted := granted,
+        source := destination, destination := source }
+    else .requestVoteResponse
+      { term := (before.state.nodes destination).currentTerm, voteGranted := granted,
+        source := destination, destination := source }
+  let votedFor := receiveVotedForValue position after.pathId before source destination message
+  let updated : Frame holes :=
+    if preVote then after else
+      assignLocalValue destination 1 votedFor after
+  let postDequeue := updateQueue before.state.network destination remaining
+  if response ∈ postDequeue source ∨ response ∉ after.state.network source then updated
+  else
+    assignPacketField response 7
+      (ReceiveTraceValues.named position (pathSlot after.pathId (PACKET_FIELD_SLOT_BASE + 7)) "vote granted" grant)
+      (assignPacketTerm response
+        (ReceiveTraceValues.named position (pathSlot after.pathId PACKET_TERM_SLOT) "message term"
+          ⟨(before.state.nodes destination).currentTerm, before.tracking.currentTerms destination⟩)
+        updated)
+
+def selectedPacketFrame {holes : Nat} (before : Frame holes) (source destination : Node)
+    (message : Message Node (Value holes)) : Frame holes :=
+  { before with tracking := { before.tracking with
+      packetTerms := Function.update before.tracking.packetTerms message
+        (firstPacketTerm before.state before.tracking source destination)
+      packetFields := Function.update before.tracking.packetFields message (fun field =>
+        Function.update (before.tracking.packetFields message field) (packetFieldNumber message field)
+          (firstPacketField before.state before.tracking source destination field))
+      packetPositions := Function.update before.tracking.packetPositions message (fun offset =>
+        Function.update (before.tracking.packetPositions message offset) (packetFieldNumber message 0 + offset)
+          (ReceiveTraceQueue.firstValue source
+            (fun packet => before.tracking.packetPositions packet offset (packetFieldNumber packet 0 + offset))
+            (.literal 0) (before.tracking.queues destination (before.state.network destination)))) } }
+
+structure ReceiveReplyValues (holes : Nat) where
+  term : ReceiveTraceValues.Scalar holes
+  index : ReceiveTraceValues.Scalar holes
+  success : ReceiveTraceValues.Scalar holes
+
+open ReceiveTraceValues in
+def appendReplyValues {holes : Nat} (before : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : ReceiveReplyValues holes :=
+  let packet := Message.appendEntriesRequest request
+  let rejected : Condition holes := ⟨decide (appendRejected before.state destination request),
+    appendRejectedExpr before.state before.tracking destination request⟩
+  let failure := appendFailureValues before.state before.tracking destination request
+  { term := choose rejected failure.1
+      ⟨(before.state.nodes destination).currentTerm, before.tracking.currentTerms destination⟩
+    index := choose rejected failure.2
+      (add ⟨request.prevLogIndex, before.tracking.packetFields packet 0 request.prevLogIndex⟩
+        ⟨request.entries.length, before.tracking.packetFields packet 5 request.entries.length⟩)
+    success := boolean (notCondition rejected) }
+
+def appendReplyPacket {holes : Nat} (before : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : Message Node (Value holes) :=
+  .appendEntriesResponse (if appendRejected before.state destination request then
+    failureResponse (before.state.nodes destination) request else
+    successResponse (before.state.nodes destination) request (request.prevLogIndex + request.entries.length))
+
+def rememberAppendReply {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) (request : AppendEntriesRequest Node (Value holes))
+    (remaining : List (Message Node (Value holes))) : Frame holes :=
+  let selected := selectedPacketFrame before source destination (.appendEntriesRequest request)
+  let response := appendReplyPacket selected destination request
+  let values := appendReplyValues selected destination request
+  let postDequeue := updateQueue before.state.network destination remaining
+  if response ∈ postDequeue source ∨ response ∉ after.state.network source then after
+  else
+    assignPacketField response 6
+      (ReceiveTraceValues.named position (pathSlot after.pathId (PACKET_FIELD_SLOT_BASE + 6))
+        "AppendEntries reply success" values.success)
+      (assignPacketField response 3
+        (ReceiveTraceValues.named position (pathSlot after.pathId (PACKET_FIELD_SLOT_BASE + 3))
+          "AppendEntries reply index" values.index)
+        (assignPacketTerm response
+          (ReceiveTraceValues.named position (pathSlot after.pathId PACKET_TERM_SLOT)
+            "AppendEntries reply term" values.term) after))
+
+def rememberReceiveReply {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) : Frame holes :=
+  match takeFirstFrom source (before.state.network destination) with
+  | some (.appendEntriesRequest request, remaining) =>
+      rememberAppendReply position before after source destination request remaining
+  | some (message@(.requestVoteRequest _), remaining) =>
+      rememberVoteReply position before after source destination false message remaining
+  | some (message@(.requestPreVote _), remaining) =>
+      rememberVoteReply position before after source destination true message remaining
+  | _ => after
+
+open ReceiveTraceValues in
+def appendRetainedValue {holes : Nat} (before : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : Scalar holes :=
+  minimum ⟨(before.state.nodes destination).log.length, before.tracking.logLengths destination⟩
+    ⟨request.prevLogIndex, before.tracking.packetFields (.appendEntriesRequest request) 0 request.prevLogIndex⟩
+
+def appendAcceptanceHeader {holes : Nat} (before : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : Prop :=
+  request.destination = destination ∧ request.term = (before.state.nodes destination).currentTerm ∧
+    (before.state.nodes destination).role = .follower ∧ logOk (before.state.nodes destination) request ∧
+    (before.state.nodes destination).commitIndex ≤ request.prevLogIndex
+
+instance {holes : Nat} (before : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : Decidable (appendAcceptanceHeader before destination request) := by
+  unfold appendAcceptanceHeader
+  infer_instance
+
+def appendAcceptanceHeaderExpr {holes : Nat} (before : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : Expr holes :=
+  let packet := Message.appendEntriesRequest request
+  .and (.boolean (decide (request.destination = destination)))
+    (.and (.equal (before.tracking.packetTerms packet) (before.tracking.currentTerms destination))
+      (.and (roleGuard before.state before.tracking destination fun state => (state.nodes destination).role = .follower)
+        (.and (appendLogOkExpr before.state before.tracking destination request)
+          (.not (.lessThan (before.tracking.packetFields packet 0 request.prevLogIndex)
+            (before.tracking.commitIndices destination (before.state.nodes destination).commitIndex))))))
+
+open ReceiveTraceValues in
+def appendLogLengthValue {holes : Nat} (position : Nat) (before after : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : Scalar holes :=
+  if (after.state.nodes destination).log = (before.state.nodes destination).log then
+    ⟨(before.state.nodes destination).log.length, before.tracking.logLengths destination⟩
+  else
+    let retained := appendRetainedValue before destination request
+    let length := if (after.state.nodes destination).log =
+        (before.state.nodes destination).log.take request.prevLogIndex then retained else
+      add retained ⟨request.entries.length,
+        before.tracking.packetFields (.appendEntriesRequest request) 5 request.entries.length⟩
+    if (after.state.nodes destination).log.length = (before.state.nodes destination).log.length then length else
+      named position (pathSlot after.pathId 1) "received log length" length
+
+def appendLogPosition {holes : Nat} (position : Nat) (before after : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) (index : Nat) : Value holes :=
+  let retained := appendRetainedValue before destination request
+  if (after.state.nodes destination).log ≠ (before.state.nodes destination).log ∧
+      retained.actual < index ∧ index ≤ (after.state.nodes destination).log.length then
+    let offset := index - retained.actual
+    .named position (pathSlot (Nat.pair after.pathId index) PAYLOAD_POSITION_SLOT) "received entry position"
+      (.add retained.expression
+        (.sub (before.tracking.packetPositions (.appendEntriesRequest request) offset (request.prevLogIndex + offset))
+          (before.tracking.packetFields (.appendEntriesRequest request) 0 request.prevLogIndex)))
+  else before.tracking.logPositions destination index
+
+def appendLogTerm {holes : Nat} (position : Nat) (before after : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) (index term : Nat) : Value holes :=
+  let retained := appendRetainedValue before destination request
+  if (after.state.nodes destination).log = (before.state.nodes destination).log ∨ index ≤ retained.actual then
+    before.tracking.logTerms destination index term
+  else if index ≤ (after.state.nodes destination).log.length then
+    let offset := index - retained.actual
+    if term = termAt request.entries offset then
+      .named position (pathSlot (Nat.pair after.pathId index) LOG_TERM_SLOT) "received entry term"
+        (before.tracking.packetFields (.appendEntriesRequest request) (6 + offset) term)
+    else before.tracking.logTerms destination index term
+  else if term = 0 ∧ termAt (before.state.nodes destination).log index ≠ 0 then
+    .named position (pathSlot (Nat.pair after.pathId index) LOG_TERM_SLOT) "received truncation term"
+      ((Expr.lessThan (appendLogLengthValue position before after destination request).expression
+        (before.tracking.logPositions destination index)).ite (.literal 0)
+          (before.tracking.logTerms destination index (termAt (before.state.nodes destination).log index)))
+  else before.tracking.logTerms destination index term
+
+def rememberAppendLog {holes : Nat} (position : Nat) (before after : Frame holes) (source destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : Frame holes :=
+  let selected := selectedPacketFrame before source destination (.appendEntriesRequest request)
+  { after with tracking := { after.tracking with
+      logLengths := Function.update after.tracking.logLengths destination
+        (appendLogLengthValue position selected after destination request).expression
+      logPositions := Function.update after.tracking.logPositions destination
+        (appendLogPosition position selected after destination request)
+      logTerms := Function.update after.tracking.logTerms destination
+        (appendLogTerm position selected after destination request) } }
+
+def rememberReceiveLog {holes : Nat} (position : Nat) (before after : Frame holes) (source destination : Node) : Frame holes :=
+  match takeFirstFrom source (before.state.network destination) with
+  | some (.appendEntriesRequest request, _) => rememberAppendLog position before after source destination request
+  | _ => after
+
+open ReceiveTraceValues in
+def appendCommitValue {holes : Nat} (before after : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : Scalar holes :=
+  let packet := Message.appendEntriesRequest request
+  let extent := add ⟨request.prevLogIndex, before.tracking.packetFields packet 0 request.prevLogIndex⟩
+    ⟨request.entries.length, before.tracking.packetFields packet 5 request.entries.length⟩
+  let limit := minimum ⟨request.leaderCommit, before.tracking.packetFields packet 2 request.leaderCommit⟩ extent
+  maximum ⟨(before.state.nodes destination).commitIndex,
+      before.tracking.commitIndices destination (before.state.nodes destination).commitIndex⟩
+    (ReceiveTraceReplication.signedFrontier (after.state.nodes destination).log limit
+      (after.tracking.logLengths destination) (after.tracking.logPositions destination))
+
+def rememberAppendCommit {holes : Nat} (position : Nat) (before after : Frame holes) (source destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : Frame holes :=
+  if (after.state.nodes destination).commitIndex = (before.state.nodes destination).commitIndex then after
+  else
+    let selected := selectedPacketFrame before source destination (.appendEntriesRequest request)
+    let value := appendCommitValue selected after destination request
+    { after with tracking := { after.tracking with
+        commitIndices := Function.update after.tracking.commitIndices destination
+          (Function.update (after.tracking.commitIndices destination) (after.state.nodes destination).commitIndex
+            (.named position (pathSlot after.pathId (markerSlot COMMIT_SLOT_BASE destination))
+              "received commit index" value.expression)) } }
+
+def unappliedAppendValues {holes : Nat} (before : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : Value holes × Value holes :=
+  let packet := Message.appendEntriesRequest request
+  let previous := before.tracking.packetFields packet 0 request.prevLogIndex
+  let count := before.tracking.packetFields packet 5 request.entries.length
+  let extent := NatTerm.add previous count
+  let applies := appendAcceptanceHeaderExpr before destination request
+  let already := appendAlreadyExpr before.state before.tracking destination request
+  let retained := appendRetainedValue before destination request
+  let candidate := (before.state.nodes destination).log.take request.prevLogIndex ++ request.entries
+  let positions := fun index =>
+    if index ≤ retained.actual then before.tracking.logPositions destination index
+    else NatTerm.add retained.expression
+      (.sub (before.tracking.packetPositions packet (index - retained.actual)
+        (request.prevLogIndex + (index - retained.actual))) previous)
+  let limit : ReceiveTraceValues.Scalar holes :=
+    ⟨min request.leaderCommit (request.prevLogIndex + request.entries.length),
+      .min (before.tracking.packetFields packet 2 request.leaderCommit) extent⟩
+  let oldFrontier := ReceiveTraceReplication.signedFrontier (before.state.nodes destination).log limit
+    (before.tracking.logLengths destination) (before.tracking.logPositions destination)
+  let candidateFrontier := ReceiveTraceReplication.signedFrontier candidate limit
+    (.add retained.expression count) positions
+  ((Expr.and applies (.not already)).ite extent (before.tracking.logLengths destination),
+    .max (before.tracking.commitIndices destination (before.state.nodes destination).commitIndex)
+      (applies.ite (already.ite oldFrontier.expression candidateFrontier.expression) (.literal 0)))
+
+def rememberUnappliedAppend {holes : Nat} (before after : Frame holes) (source destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : Frame holes :=
+  if ¬appendAcceptanceHeader before destination request ∧
+      (after.state.nodes destination).log = (before.state.nodes destination).log ∧
+      (after.state.nodes destination).commitIndex = (before.state.nodes destination).commitIndex then
+    let selected := selectedPacketFrame before source destination (.appendEntriesRequest request)
+    let values := unappliedAppendValues selected destination request
+    { after with tracking := { after.tracking with
+        logLengths := Function.update after.tracking.logLengths destination values.1
+        commitIndices := Function.update after.tracking.commitIndices destination
+          (Function.update (after.tracking.commitIndices destination) (after.state.nodes destination).commitIndex values.2) } }
+  else after
+
+def rememberReceiveCommit {holes : Nat} (position : Nat) (before after : Frame holes) (source destination : Node) : Frame holes :=
+  match takeFirstFrom source (before.state.network destination) with
+  | some (.appendEntriesRequest request, _) =>
+      rememberUnappliedAppend before (rememberAppendCommit position before after source destination request) source destination request
+  | _ => after
+
+def receiveConfigurationSnapshots {holes : Nat} (position : Nat) (before after : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : List (ControlTraceConfigurations.Snapshot holes) :=
+  let old := before.tracking.configurations destination (allConfigurations (before.state.nodes destination).log)
+  if (after.state.nodes destination).log = (before.state.nodes destination).log then old
+  else
+    let retained := appendRetainedValue before destination request
+    let kept := ControlTraceConfigurations.truncate old retained.expression position
+      (fun index => pathSlot (Nat.pair after.pathId (2 * index)) CONFIGURATION_SLOT)
+    if (after.state.nodes destination).log = (before.state.nodes destination).log.take request.prevLogIndex then kept
+    else kept ++ ReceiveTraceConfigurations.copied
+      (configurationsInLogFrom (retained.actual + 1) request.entries)
+      (after.tracking.logPositions destination) retained.expression (after.tracking.logLengths destination)
+      position (fun index => pathSlot (Nat.pair after.pathId (2 * index + 1)) CONFIGURATION_SLOT)
+
+def rememberAppendConfigurations {holes : Nat} (position : Nat) (before after : Frame holes) (source destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : Frame holes :=
+  if allConfigurations (after.state.nodes destination).log = allConfigurations (before.state.nodes destination).log then after
+  else
+    let selected := selectedPacketFrame before source destination (.appendEntriesRequest request)
+    { after with tracking := { after.tracking with
+        configurations := Function.update after.tracking.configurations destination
+          (Function.update (after.tracking.configurations destination) (allConfigurations (after.state.nodes destination).log)
+            (receiveConfigurationSnapshots position selected after destination request)) } }
+
+def rememberReceiveConfigurations {holes : Nat} (position : Nat) (before after : Frame holes) (source destination : Node) : Frame holes :=
+  match takeFirstFrom source (before.state.network destination) with
+  | some (.appendEntriesRequest request, _) => rememberAppendConfigurations position before after source destination request
+  | _ => after
+
+def appendStepdownExpr {holes : Nat} (before : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : Expr holes :=
+  .and (.boolean (decide (request.destination = destination)))
+    (.and (.equal (before.tracking.packetTerms (.appendEntriesRequest request)) (before.tracking.currentTerms destination))
+      (roleGuard before.state before.tracking destination fun state =>
+        (state.nodes destination).role = .candidate ∨ (state.nodes destination).role = .preVoteCandidate))
+
+def appendStepdownCondition {holes : Nat} (before : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : Prop :=
+  request.destination = destination ∧ request.term = (before.state.nodes destination).currentTerm ∧
+    ((before.state.nodes destination).role = .candidate ∨ (before.state.nodes destination).role = .preVoteCandidate)
+
+instance {holes : Nat} (before : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : Decidable (appendStepdownCondition before destination request) := by
+  unfold appendStepdownCondition
+  infer_instance
+
+def appendStepdownValue {holes : Nat} (position : Nat) (before after : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) (field desired : Nat) : ReceiveTraceValues.Scalar holes :=
+  let old := localField (before.state.nodes destination) field
+  if old = desired then ⟨old, before.tracking.localFields destination field old⟩ else
+    ReceiveTraceValues.choose
+      ⟨decide (appendStepdownCondition before destination request), appendStepdownExpr before destination request⟩
+      (ReceiveTraceValues.named position (pathSlot after.pathId (LOCAL_FIELD_SLOT_BASE + field * NODE_COUNT + destination.val))
+        "AppendEntries stepdown" (ReceiveTraceValues.literal desired))
+      ⟨old, before.tracking.localFields destination field old⟩
+
+def appendConflictAppliedExpr {holes : Nat} (before : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : Expr holes :=
+  let packet := Message.appendEntriesRequest request
+  .and (.boolean (decide (request.destination = destination)))
+    (.and (.equal (before.tracking.packetTerms packet) (before.tracking.currentTerms destination))
+      (.and (roleGuard before.state before.tracking destination fun state => (state.nodes destination).role = .follower)
+        (.and (appendLogOkExpr before.state before.tracking destination request)
+          (.and (.not (.lessThan (before.tracking.packetFields packet 0 request.prevLogIndex)
+              (before.tracking.commitIndices destination (before.state.nodes destination).commitIndex)))
+            (appendConflictExpr before.state before.tracking destination request)))))
+
+def appendConflictAppliedCondition {holes : Nat} (before : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : Prop :=
+  request.destination = destination ∧ request.term = (before.state.nodes destination).currentTerm ∧
+    (before.state.nodes destination).role = .follower ∧ logOk (before.state.nodes destination) request ∧
+    (before.state.nodes destination).commitIndex ≤ request.prevLogIndex ∧
+    hasTermConflict (before.state.nodes destination) request
+
+instance {holes : Nat} (before : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : Decidable (appendConflictAppliedCondition before destination request) := by
+  unfold appendConflictAppliedCondition
+  infer_instance
+
+def appendConflictValue {holes : Nat} (position : Nat) (before after : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) : ReceiveTraceValues.Scalar holes :=
+  ReceiveTraceValues.choose
+    ⟨decide (appendConflictAppliedCondition before destination request), appendConflictAppliedExpr before destination request⟩
+    (ReceiveTraceValues.named position (pathSlot after.pathId (LOCAL_FIELD_SLOT_BASE + destination.val))
+      "AppendEntries conflict applied" (ReceiveTraceValues.literal 0))
+    ⟨localField (before.state.nodes destination) 0,
+      before.tracking.localFields destination 0 (localField (before.state.nodes destination) 0)⟩
+
+def rememberReceiveStepdown {holes : Nat} (position : Nat) (before after : Frame holes) (source destination : Node) : Frame holes :=
+  match takeFirstFrom source (before.state.network destination) with
+  | some (.appendEntriesRequest request, _) =>
+      let selected := selectedPacketFrame before source destination (.appendEntriesRequest request)
+      let role := appendStepdownValue position selected after destination request 2 (roleCode .follower)
+      let updated := assignLocalValue destination 2 role after
+      if (after.state.nodes destination).isNewFollower = true then
+        assignLocalValue destination 0 (appendStepdownValue position selected after destination request 0 1) updated
+      else if (before.state.nodes destination).isNewFollower = true then
+        assignLocalValue destination 0 (appendConflictValue position selected after destination request) updated
+      else updated
+  | _ => after
+
+def rememberReceiveRetirement {holes : Nat} (position : Nat) (before after : Frame holes) (destination : Node) : Frame holes :=
+  let refreshed := finishFrame position destination after
+  { after with tracking := { after.tracking with
+      completedMembers := fun node peer =>
+        if node = destination ∧
+            decide (peer ∈ before.state.retirementCompleted node) ≠ decide (peer ∈ after.state.retirementCompleted node) then
+          refreshed.tracking.completedMembers node peer
+        else after.tracking.completedMembers node peer } }
+
+def receiveReplyFrame {holes : Nat} (before : Frame holes) (source destination : Node)
+    (message : Message Node (Value holes)) : Frame holes × Option (Message Node (Value holes)) :=
+  match message with
+  | .appendEntriesRequest request =>
+      let selected := selectedPacketFrame before source destination message
+      let response := appendReplyPacket selected destination request
+      let values := appendReplyValues selected destination request
+      (assignPacketField response 6 values.success
+        (assignPacketField response 3 values.index (assignPacketTerm response values.term before)), some response)
+  | .requestVoteRequest _ | .requestPreVote _ =>
+      let preVote := match message with | .requestPreVote _ => true | _ => false
+      let granted := decide (voteGrantCondition before.state source destination preVote message)
+      let response : Message Node (Value holes) :=
+        if preVote then .requestPreVoteResponse
+          { term := (before.state.nodes destination).currentTerm, voteGranted := granted, source := destination, destination := source }
+        else .requestVoteResponse
+          { term := (before.state.nodes destination).currentTerm, voteGranted := granted, source := destination, destination := source }
+      (assignPacketField response 7 (voteGrantValue before.state before.tracking source destination preVote message)
+        (assignPacketTerm response ⟨(before.state.nodes destination).currentTerm, before.tracking.currentTerms destination⟩ before),
+        some response)
+  | _ => (before, none)
+
+def receiveConsumptionAmount {holes : Nat} (before : Frame holes) (source destination : Node) : Value holes :=
+  match takeFirstFrom source (before.state.network destination) with
+  | some (.appendEntriesRequest request, _) =>
+      if appendStepdownCondition before destination request then .literal 1 else
+        let selected := selectedPacketFrame before source destination (.appendEntriesRequest request)
+        (appendStepdownExpr selected destination request).ite (.literal 0) (.literal 1)
+  | _ => .literal 1
+
+def receiveQueueValue {holes : Nat} (position : Nat) (before after : Frame holes)
+    (destination node : Node) (remaining : List (Message Node (Value holes)))
+    (replyFrame : Frame holes) (response : Option (Message Node (Value holes)))
+    (consumed : Value holes := .literal 1) : Value holes :=
+  let base := if node = destination then
+      .sub (before.tracking.queueLengths node)
+        (.named position (pathSlot after.pathId (markerSlot QUEUE_LENGTH_SLOT_BASE node)) "dequeued packet" consumed)
+    else before.tracking.queueLengths node
+  match response with
+  | none => base
+  | some packet =>
+      if packet.destination = node then
+        .add base
+          (.named position (pathSlot (childPath after.pathId true) (markerSlot QUEUE_LENGTH_SLOT_BASE node))
+            "reply enqueued" (.literal 1))
+      else base
+
+def rememberReceiveQueues {holes : Nat} (position : Nat) (before after : Frame holes) (source destination : Node) : Frame holes :=
+  match takeFirstFrom source (before.state.network destination) with
+  | none => after
+  | some (message, remaining) =>
+      if before.state.network destination = after.state.network destination then after else
+        let (replyFrame, response) := receiveReplyFrame before source destination message
+        let dequeued := updateQueue before.state.network destination remaining
+        let expected := match response with | none => dequeued | some packet => enqueue dequeued packet
+        { after with tracking := { after.tracking with
+            queueLengths := fun node =>
+            if after.state.network node = expected node then
+              receiveQueueValue position before after destination node remaining replyFrame response
+                (receiveConsumptionAmount before source destination)
+            else after.tracking.queueLengths node } }
+
+def trackedReceiveStep {holes : Nat} (before : Frame holes) (source destination : Node) :
+    Guarded holes (GuardedReceive.Result holes) :=
+  match takeFirstFrom source (before.state.network destination) with
+  | some (.appendEntriesRequest request, _) =>
+      let selected := selectedPacketFrame before source destination (.appendEntriesRequest request)
+      ReceiveTraceBranching.step before.state source destination
+        (appendPrefixExpr selected.state selected.tracking destination request)
+  | _ => GuardedReceive.step before.state source destination
+
+def attachReceiveFrame {holes : Nat} (position pathId : Nat) (before : Frame holes) :
+    Guarded holes (GuardedReceive.Result holes) -> Guarded holes (Frame holes)
+  | .pure result =>
+      .pure {
+        state := result.successor
+        tracking := nextControlTracking position pathId before.state result.successor before.tracking
+        pathId }
+  | .branch condition left right =>
+      Guarded.branchSmart condition
+        (attachReceiveFrame position (childPath pathId false) before left)
+        (attachReceiveFrame position (childPath pathId true) before right)
+
+def receiveFrames {holes : Nat} (position : Nat) (before : Frame holes) (source destination : Node) :
+    Guarded holes (Frame holes) :=
+  (attachReceiveFrame position before.pathId before (trackedReceiveStep before source destination)).map
+    (fun after => rememberQueueFrame position source before (rememberQueueFrame position destination before
+      (rememberReceiveQueues position before (rememberReceiveRetirement position before (rememberReceiveStepdown position before (rememberReceiveConfigurations position before (rememberReceiveCommit position before (rememberReceiveLog position before (rememberReceiveProposal position before
+        (rememberReceiveResponse position before
+          (rememberReceiveVotes position before (rememberReceiveReply position before after source destination) source destination)
+          source destination)
+        source destination) source destination) source destination) source destination) source destination) destination) source destination)
+        (receiveConsumptionAmount before source destination)) (receiveConsumptionAmount before source destination))
+
+def receiveGroup {holes : Nat} (bounds : Bounds) (before : Frame holes) (source destination : Node) :
+    Group holes :=
+  { label := "receive"
+    clauses := stateBoundsClauses bounds before.state before.tracking ++
+      [{ label := "receive enabled"
+         expression := .and (receiveEntryExpr before.state before.tracking source destination)
+           ((trackedReceiveStep before source destination).test fun result =>
+             if receiveEntryAllowed before.state source destination then result.enabledExpr else .boolean true) }] }
 
 def encodeFrom {holes : Nat}
     (bounds : Bounds)
@@ -1504,6 +2541,11 @@ def encodeFrom {holes : Nat}
           (.timeout node)).clauses) ::
         encodeFrom bounds (position + 1)
           (frames.map (controlFrame position (.timeout node))) rest
+  | .receive source destination :: rest =>
+      (guardedGroup "receive" frames fun frame =>
+        (receiveGroup bounds frame source destination).clauses) ::
+        encodeFrom bounds (position + 1)
+          (frames.bind fun frame => receiveFrames position frame source destination) rest
   | .becomePreVoteCandidate node :: rest =>
       (guardedGroup "becomePreVoteCandidate" frames fun frame =>
         (leaderWriteGroup "becomePreVoteCandidate" bounds frame.state frame.tracking

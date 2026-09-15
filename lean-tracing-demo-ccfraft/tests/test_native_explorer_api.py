@@ -390,6 +390,21 @@ class NativeExplorerTests(unittest.TestCase):
         self.assertEqual(request("GET", "/api/instructions?limit=0")[0], 400)
         self.assertEqual(request("GET", "/api/missing")[0], 404)
 
+    def test_html_page_uses_the_same_loopback_and_read_only_guards(self):
+        _, request = self.serve()
+        status, headers, body = request("GET", "/")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Content-Type"], "text/html; charset=utf-8")
+        self.assertIn('id="timeline"', body.decode())
+        self.assertNotIn("__NATIVE_EXPLORER_DATA__", body.decode())
+        self.assertIn("script-src 'sha256-", headers["Content-Security-Policy"])
+        self.assertIn("frame-ancestors 'none'", headers["Content-Security-Policy"])
+        self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(request("HEAD", "/")[2], b"")
+        self.assertEqual(request("POST", "/")[0], 405)
+        self.assertEqual(request("GET", "/", {"Host": "example.com"})[0], 403)
+        self.assertEqual(request("GET", "/?file=other")[0], 400)
+
     def test_raw_origins_survive_http_serialization(self):
         origin = self.save_raw()
         _, request = self.serve()

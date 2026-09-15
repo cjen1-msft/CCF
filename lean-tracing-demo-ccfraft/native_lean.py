@@ -68,6 +68,11 @@ def main() -> None:
     parser.add_argument("trace", type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--z3", type=Path)
+    parser.add_argument("--cells", action="store_true", help="use the unproved canonical-cell backend")
+    parser.add_argument("--cells-initial-state", type=Path, help="explicit initial allocation, ledger lengths, and queue extents")
+    parser.add_argument("--cells-timeout", type=float, default=60, help="cell-backend solver wall-time limit")
+    parser.add_argument("--cells-capacity-scale", type=int, default=1, help="multiply derived capacities for differential checks")
+    parser.add_argument("--cells-profile", action="store_true", help="collect cell-backend Z3 statistics and quantifier traces")
     parser.add_argument(
         "--raw", action="store_true", help="reduce a raw NDJSON capture"
     )
@@ -77,6 +82,21 @@ def main() -> None:
     args = parser.parse_args()
     if args.raw != (args.bootstrap is not None):
         parser.error("--raw requires --bootstrap; --bootstrap is only valid with --raw")
+    if args.cells:
+        if args.cells_initial_state is None:
+            parser.error("--cells requires --cells-initial-state")
+        if args.cells_timeout <= 1:
+            parser.error("--cells-timeout must be greater than one second")
+        try:
+            from native_cells_cli import run_cells
+            run_cells(args)
+        except ModuleNotFoundError as error:
+            parser.exit(2, f"Canonical-cell dependency missing: {error}. Use a Python environment with z3-solver.\n")
+        except (ValidationError, ReductionError, OSError, ValueError) as error:
+            parser.exit(2, f"canonical cells: {error}\n")
+        return
+    if args.cells_initial_state is not None:
+        parser.error("--cells-initial-state is only valid with --cells")
     try:
         reserved = ARTIFACTS + RAW_ARTIFACTS + ("result.json", "result.json.tmp")
         if args.trace.resolve() in {

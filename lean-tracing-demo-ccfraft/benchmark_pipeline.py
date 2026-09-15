@@ -2,16 +2,16 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the Apache 2.0 License.
 
-"""Measure the current trace-validation pipeline with cold and warm builds."""
+"""Measure raw normalization and checked encoding without deleting build products."""
 
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 import contextlib
 import io
 import json
 import platform
-import shutil
 import statistics
 import subprocess
 import sys
@@ -19,7 +19,9 @@ import time
 from pathlib import Path
 
 from Shared.capture_traces import SCENARIOS, capture, find_repo_root
-from validate import validate
+from Shared.solver import find_cvc5
+from validate import VALIDATION_ERRORS, artifact_paths, read_bounds, validate
+import validate_checked as checked
 
 ROOT = Path(__file__).resolve().parent
 RUNS = (
@@ -39,32 +41,15 @@ def read_json(path: Path) -> dict[str, object]:
     return value
 
 
-def timed_command(command: list[str], *, cwd: Path, log: Path) -> float:
+def measure_proof_gate(artifacts: Path) -> dict[str, object]:
+    """Measure the existing incremental gate, including a possible cache hit."""
     started = time.perf_counter_ns()
-    completed = subprocess.run(
-        command,
-        cwd=cwd,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    wall_time_ms = (time.perf_counter_ns() - started) / 1_000_000
-    log.write_text(
-        completed.stdout + completed.stderr,
-        encoding="utf-8",
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(f"{' '.join(command)} failed; see {log}")
-    return wall_time_ms
-
-
-def find_cvc5(requested: Path | None) -> Path:
-    if requested is not None:
-        return requested
-    located = shutil.which("cvc5")
-    if located is None:
-        raise RuntimeError("cvc5 was not found on PATH; pass --cvc5")
-    return Path(located)
+    gate = checked.build_proof_gate(ROOT, artifacts / "lean-proof-gate.log")
+    return {
+        "proof_gate": gate,
+        "proof_gate_wall_ms": (time.perf_counter_ns() - started) / 1_000_000,
+        "measurement": "incremental proof gate; existing build products retained",
+    }
 
 
 def percentile(values: list[float], fraction: float) -> float:
@@ -79,14 +64,17 @@ def percentile(values: list[float], fraction: float) -> float:
 
 
 def aggregate_samples(samples: list[dict[str, object]]) -> dict[str, object]:
+    if len({sample["status"] for sample in samples}) != 1:
+        raise RuntimeError("validation statuses changed between benchmark samples")
     result = dict(samples[-1])
     timing_keys = (
         "check_sat_wall_ms",
         "core_reduction_wall_ms",
-        "decision_wall_ms",
+        "encoder_wall_ms",
+        "checked_validation_wall_ms",
         "proof_wall_ms",
         "total_solver_wall_ms",
-        "unsat_core_wall_ms",
+        "core_solver_wall_ms",
         "validation_wall_ms",
     )
     for key in timing_keys:
@@ -106,14 +94,20 @@ def aggregate_samples(samples: list[dict[str, object]]) -> dict[str, object]:
     return result
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--bounds", type=Path, required=True)
     parser.add_argument("--cvc5", type=Path)
     parser.add_argument(
         "--samples",
         type=int,
         default=5,
-        help="interleaved capture and validation samples per trace",
+        help="interleaved validation samples per trace, including capture unless disabled",
+    )
+    parser.add_argument(
+        "--saved-traces",
+        action="store_true",
+        help="benchmark saved traces without running raft_driver or recapturing scenarios",
     )
     parser.add_argument(
         "--output",
@@ -134,21 +128,55 @@ def main() -> int:
     parser.add_argument(
         "--reuse-build-timings",
         action="store_true",
-        help="keep cold and warm build timings already stored in --output",
+        help="reuse checked proof-gate timing metadata from --output",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.samples < 1:
         parser.error("--samples must be positive")
+    repo_root = ROOT.parent if args.saved_traces else find_repo_root()
+    driver = repo_root / "build/raft_driver"
+    destinations = [args.output]
+    if not args.reuse_build_timings:
+        destinations.append(args.artifacts / "lean-proof-gate.log")
+    for name, _ in RUNS:
+        destinations.extend(artifact_paths(args.artifacts / name))
+    inputs = (
+        args.bounds,
+        driver,
+        *(repo_root / "tests/raft_scenarios" / scenario for scenario in SCENARIOS),
+        *(trace for _, trace in RUNS),
+        *(ROOT / "Traces/Captured" / f"{scenario}.ndjson" for scenario in SCENARIOS),
+    )
+    try:
+        checked.reject_artifact_collisions(inputs, destinations)
+    except VALIDATION_ERRORS as error:
+        parser.error(str(error))
+    previous_gate = None
+    if args.reuse_build_timings:
+        previous_gate = read_json(args.output).get("lean")
+        if (
+            not isinstance(previous_gate, dict)
+            or "proof_gate_wall_ms" not in previous_gate
+            or not isinstance(previous_gate.get("proof_gate"), dict)
+            or previous_gate["proof_gate"].get("build_target") != checked.ENCODER_TARGET
+            or previous_gate["proof_gate"].get("checked") is not True
+        ):
+            parser.error("--reuse-build-timings requires checked encoder measurements")
+    args.output.unlink(missing_ok=True)
+    try:
+        bounds = read_bounds(args.bounds)
+        cvc5 = find_cvc5(args.cvc5)
+    except VALIDATION_ERRORS as error:
+        parser.error(str(error))
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.artifacts.mkdir(parents=True, exist_ok=True)
-    repo_root = find_repo_root()
-    driver = repo_root / "build/raft_driver"
 
-    capture_samples: dict[str, list[float]] = {scenario: [] for scenario in SCENARIOS}
+    scenarios = () if args.saved_traces else SCENARIOS
+    capture_samples: dict[str, list[float]] = {scenario: [] for scenario in scenarios}
     capture_results: dict[str, tuple[bytes, bool]] = {}
     for sample in range(args.samples):
-        order = SCENARIOS if sample % 2 == 0 else tuple(reversed(SCENARIOS))
+        order = scenarios if sample % 2 == 0 else tuple(reversed(scenarios))
         for scenario in order:
             output, wall_time_ms = capture(
                 driver,
@@ -165,29 +193,15 @@ def main() -> int:
             "wall_time_ms": statistics.median(capture_samples[scenario]),
             "wall_time_ms_p90": percentile(capture_samples[scenario], 0.9),
         }
-        for scenario in SCENARIOS
+        for scenario in scenarios
     }
 
-    if args.reuse_build_timings:
-        existing = read_json(args.output)
-        cold_build_ms = existing["lean"]["cold_build_wall_ms"]
-        warm_build_ms = existing["lean"]["warm_build_wall_ms"]
-    else:
-        project_build = ROOT / ".lake/build"
-        if project_build.exists():
-            shutil.rmtree(project_build)
-        cold_build_ms = timed_command(
-            ["lake", "build", "Demo"],
-            cwd=ROOT,
-            log=args.artifacts / "lean-cold-build.log",
-        )
-        warm_build_ms = timed_command(
-            ["lake", "build", "Demo"],
-            cwd=ROOT,
-            log=args.artifacts / "lean-warm-build.log",
-        )
+    lean = (
+        {**previous_gate, "reused": True}
+        if previous_gate is not None
+        else measure_proof_gate(args.artifacts)
+    )
 
-    cvc5 = find_cvc5(args.cvc5)
     validation_samples: dict[str, list[dict[str, object]]] = {
         name: [] for name, _ in RUNS
     }
@@ -201,6 +215,7 @@ def main() -> int:
                 validate(
                     trace,
                     output_directory,
+                    bounds=bounds,
                     cvc5=cvc5,
                     core_reduction_budget_seconds=args.core_reduction_seconds,
                 )
@@ -212,7 +227,7 @@ def main() -> int:
     for name, samples in validation_samples.items():
         output_directory = args.artifacts / name
         certificate = json.loads(
-            (output_directory / "certificate.json").read_text(encoding="utf-8")
+            (output_directory / "reduced-certificate.json").read_text(encoding="utf-8")
         )
         validations[name] = {
             **aggregate_samples(samples),
@@ -233,7 +248,11 @@ def main() -> int:
     args.output.write_text(
         json.dumps(
             {
+                "bounds": dict(bounds),
                 "capture": captures,
+                "trace_source": (
+                    "saved" if args.saved_traces else "saved_with_capture_comparison"
+                ),
                 "environment": {
                     "cvc5": cvc5_version,
                     "git_revision": subprocess.run(
@@ -248,10 +267,7 @@ def main() -> int:
                     "python": sys.version.split()[0],
                     "samples_per_trace": args.samples,
                 },
-                "lean": {
-                    "cold_build_wall_ms": cold_build_ms,
-                    "warm_build_wall_ms": warm_build_ms,
-                },
+                "lean": lean,
                 "validations": validations,
             },
             indent=2,

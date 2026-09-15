@@ -58,10 +58,12 @@ theorem roleCases_correct {holes : Nat}
 theorem roleGuard_correct {holes : Nat}
     (assignment : Fin holes -> Nat) (state : Template holes)
     (tracking : Tracking holes) (node : Node)
-    (predicate : Template holes -> Prop) [DecidablePred predicate] :
+    (predicate : Template holes -> Prop) [DecidablePred predicate]
+    (roleCorrect : (tracking.localFields node 2 (roleCode (state.nodes node).role)).eval assignment =
+      roleCode (state.nodes node).role) :
     (roleGuard state tracking node predicate).Holds assignment ↔ predicate state := by
   unfold roleGuard
-  rw [roleCases_correct assignment _ (state.nodes node).role (by simp)]
+  rw [roleCases_correct assignment _ (state.nodes node).role roleCorrect]
   simp [withRole]
 
 def ClausesHold {holes : Nat}
@@ -324,15 +326,14 @@ theorem peerIndexClauses_correct {holes : Nat}
     (assignment : Fin holes -> Nat)
     (tracking : Tracking holes)
     (node : Node)
-    (state : NodeState Node (Value holes)) :
+    (state : NodeState Node (Value holes))
+    (matched : ∀ peer value, (tracking.matchIndices node peer value).eval assignment = value) :
     ClausesHold assignment
         ((List.finRange NODE_COUNT).flatMap fun peer =>
           [lessClause "sent index domain"
              (tracking.sentIndex node peer) bounds.indexCount,
            lessClause "match index domain"
-             (controlValue tracking node
-               (MATCH_SLOT_BASE + node.val * NODE_COUNT + peer.val)
-               s!"match index {peer.val}" (state.matchIndex peer))
+             (tracking.matchIndices node peer (state.matchIndex peer))
              bounds.indexCount]) ↔
       (∀ peer,
         (tracking.sentIndex node peer).eval assignment <
@@ -340,7 +341,7 @@ theorem peerIndexClauses_correct {holes : Nat}
         (∀ peer, state.matchIndex peer < bounds.indexCount) := by
   rw [clausesHold_flatMap]
   simp only [List.mem_finRange, true_implies]
-  simp [ClausesHold, constantClause, lessClause, Expr.Holds, NatTerm.eval]
+  simp [ClausesHold, constantClause, lessClause, Expr.Holds, NatTerm.eval, matched]
   constructor
   · intro both
     exact ⟨fun peer => (both peer).1, fun peer => (both peer).2⟩
@@ -360,7 +361,8 @@ theorem localBoundsClauses_correct {holes : Nat}
       (tracking.currentTerms node).eval assignment = state.currentTerm)
     (commitIndices : ∀ index, (tracking.commitIndices node index).eval assignment = index)
     (logPositions : ∀ index, (tracking.logPositions node index).eval assignment = index)
-    (logTerms : ∀ index term, (tracking.logTerms node index term).eval assignment = term) :
+    (logTerms : ∀ index term, (tracking.logTerms node index term).eval assignment = term)
+    (matched : ∀ peer value, (tracking.matchIndices node peer value).eval assignment = value) :
     (sentIndices :
       ∀ peer,
         (tracking.sentIndex node peer).eval assignment =
@@ -372,7 +374,7 @@ theorem localBoundsClauses_correct {holes : Nat}
   intro sentIndices
   simp only [localBoundsClauses, clausesHold_append,
     logBoundsClauses_correct bounds assignment (tracking.logTerms node) logTerms,
-    peerIndexClauses_correct bounds assignment tracking node state,
+    peerIndexClauses_correct bounds assignment tracking node state matched,
     optionalIndexClauses_correct bounds assignment (tracking.logPositions node) logPositions]
   simp [ClausesHold, constantClause, lessClause, atMostClause, Expr.Holds, NatTerm.eval,
     BoundedState.LocalWithin, mapNodeState, logLength, sentIndices, currentTerm, commitIndices]
@@ -415,6 +417,11 @@ structure TrackingCorrect {holes : Nat}
     ControlTraceConfigurations.Correct assignment values (tracking.configurations node values)
   completedMembers : ∀ node peer value,
     (tracking.completedMembers node peer value).eval assignment = if value then 1 else 0
+  queues : ∀ node values,
+    ReceiveTraceQueue.Correct assignment values (tracking.queues node values)
+  matchIndices : ∀ node peer value, (tracking.matchIndices node peer value).eval assignment = value
+  localFields : ∀ node field value, (tracking.localFields node field value).eval assignment = value
+  packetPositions : ∀ packet index value, (tracking.packetPositions packet index value).eval assignment = value
 
 theorem allExpr_correct {holes : Nat} (assignment : Fin holes -> Nat) (values : List (Expr holes)) :
     (allExpr values).Holds assignment ↔ ∀ value ∈ values, value.Holds assignment := by
@@ -704,13 +711,12 @@ theorem replicationMajorityExpr_correct {holes : Nat}
       ((members.sort (· ≤ ·)).foldl (fun total peer => NatTerm.add total
         (if peer = node then .literal 1 else
           leValue (tracking.logPositions node index)
-            (controlValue tracking node (MATCH_SLOT_BASE + node.val * NODE_COUNT + peer.val)
-              s!"match index {peer.val}" ((state.nodes node).matchIndex peer)))) (.literal 0)).eval assignment =
+            (tracking.matchIndices node peer ((state.nodes node).matchIndex peer)))) (.literal 0)).eval assignment =
         (support ∩ members).card := by
     apply supportCount_correct
     intro peer
     by_cases same : peer = node <;>
-      simp [same, support, NatTerm.eval, leValue_eval, correct.logPositions]
+      simp [same, support, NatTerm.eval, leValue_eval, correct.logPositions, correct.matchIndices]
   have intersection (configuration : Configuration Node)
       (active : configuration ∈ activeConfigurations (state.nodes node)) :
       support ∩ configuration.nodes = acknowledgingNodes state node index ∩ configuration.nodes := by
@@ -899,7 +905,7 @@ theorem successorExpr_correct {holes : Nat}
   simp [successorExpr, allExpr_map_correct, Expr.implies_holds, Expr.Holds, NatTerm.eval,
     activeMemberExpr_correct assignment state tracking correct,
     configurationRankLeExpr_correct assignment state tracking correct,
-    matchValue, plausibleSuccessor, and_imp]
+    matchValue, plausibleSuccessor, and_imp, correct.matchIndices]
 
 theorem membershipRequirementsExpr_correct {holes : Nat}
     (assignment : Fin holes -> Nat) (state : Template holes) (tracking : Tracking holes)
@@ -986,7 +992,7 @@ theorem structuralClientExpr_correct {holes : Nat}
     allocatedExpr_correct assignment state tracking correct,
     retiredStateExpr_correct assignment state tracking correct,
     appendRetiredExpr_correct assignment state tracking correct, NatTerm.eval,
-    structuralClientRequestEnabled]
+    structuralClientRequestEnabled, correct.localFields]
 
 theorem promotedRetiredExpr_correct {holes : Nat}
     (assignment : Fin holes -> Nat) (state : Template holes) (tracking : Tracking holes)
@@ -1029,16 +1035,299 @@ theorem sourceAllowedExpr_correct {holes : Nat}
   cases message <;> simp [sourceAllowedExpr, messageSourceAllowed, Expr.Holds,
     allocatedExpr_correct assignment state tracking correct]
 
+theorem firstPacketTerm_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking)
+    (source destination : Node) :
+    (firstPacketTerm state tracking source destination).eval assignment =
+      ((takeFirstFrom source (state.network destination)).map (fun pair => pair.1.term)).getD 0 := by
+  rw [firstPacketTerm, ReceiveTraceQueue.firstValue_takeFirst assignment source _ _
+    (correct.queues destination _) tracking.packetTerms (.literal 0)]
+  simp [correct.packetTerms, NatTerm.eval]
+
+theorem firstPacketField_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking)
+    (source destination : Node) (field : Nat) :
+    (firstPacketField state tracking source destination field).eval assignment =
+      ((takeFirstFrom source (state.network destination)).map (fun pair => packetFieldNumber pair.1 field)).getD 0 := by
+  rw [firstPacketField, ReceiveTraceQueue.firstValue_takeFirst assignment source _ _
+    (correct.queues destination _) _ (.literal 0)]
+  simp [correct.packetFields, NatTerm.eval]
+
+theorem voteGrantExpr_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking)
+    (source destination : Node) (preVote : Bool) (message : Message Node (Value holes))
+    (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (state.network destination) = some (message, remaining)) :
+    (voteGrantExpr state tracking source destination preVote).Holds assignment ↔
+      voteGrantCondition state source destination preVote message := by
+  cases preVote <;> cases voted : (state.nodes destination).votedFor <;>
+    simp [voteGrantExpr, voteFreshExpr, voteGrantCondition, orExpr, Expr.Holds, NatTerm.eval,
+      firstPacketTerm_correct assignment state tracking correct,
+      firstPacketField_correct assignment state tracking correct,
+      selected, correct.currentTerms, correct.logTerms, correct.logPositions,
+      correct.localFields, localField, voted, Fin.ext_iff]
+  all_goals omega
+
+theorem voteGrantValue_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking)
+    (source destination : Node) (preVote : Bool) (message : Message Node (Value holes))
+    (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (state.network destination) = some (message, remaining)) :
+    (voteGrantValue state tracking source destination preVote message).Correct assignment := by
+  simp [voteGrantValue, ReceiveTraceValues.Scalar.Correct, Expr.ite_eval, NatTerm.eval,
+    voteGrantExpr_correct assignment state tracking correct source destination preVote message remaining selected]
+
+theorem receiveVoteExpr_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking)
+    (source destination : Node) (preVote : Bool) (message : Message Node (Value holes))
+    (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (state.network destination) = some (message, remaining)) :
+    (receiveVoteExpr state tracking source destination preVote).Holds assignment ↔
+      receiveVoteCondition state source destination preVote message := by
+  simp [receiveVoteExpr, receiveVoteCondition, Expr.Holds, NatTerm.eval,
+    firstPacketTerm_correct assignment state tracking correct,
+    firstPacketField_correct assignment state tracking correct, selected, correct.currentTerms,
+    allocatedExpr_correct assignment state tracking correct, roleGuard_correct assignment state tracking, correct.localFields]
+
+theorem candidateEligibilityExpr_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking) (node : Node) :
+    (candidateEligibilityExpr state tracking node).Holds assignment ↔ candidateTransitionEnabled state node := by
+  cases role : (state.nodes node).role <;>
+    simp [candidateEligibilityExpr, Expr.Holds, NatTerm.eval, correct.localFields, localField, role,
+      allocatedExpr_correct assignment state tracking correct,
+      membershipRequirementsExpr_correct assignment state tracking correct,
+      retiredStateExpr_correct assignment state tracking correct,
+      membershipRequirements, candidateTransitionEnabled]
+
+theorem proposalEffectExpr_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking)
+    (source destination : Node) (request : ProposeVoteRequest Node) (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (state.network destination) = some (.proposeVoteRequest request, remaining)) :
+    (proposalEffectExpr state tracking source destination request).Holds assignment ↔
+      proposalEffectCondition state destination request := by
+  simp [proposalEffectExpr, proposalEffectCondition, Expr.Holds, NatTerm.eval, correct.currentTerms,
+    firstPacketTerm_correct assignment state tracking correct, selected, Message.term,
+    candidateEligibilityExpr_correct assignment state tracking correct]
+
+theorem sourcePresentExpr_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking)
+    (source destination : Node) :
+    (sourcePresentExpr state tracking source destination).Holds assignment ↔
+      (takeFirstFrom source (state.network destination)).isSome := by
+  simp only [sourcePresentExpr, Expr.Holds, NatTerm.eval]
+  rw [ReceiveTraceQueue.firstValue_takeFirst assignment source _ _
+    (correct.queues destination _) (fun _ => .literal 1) (.literal 0)]
+  cases takeFirstFrom source (state.network destination) <;> simp [NatTerm.eval]
+
+theorem logTermValue_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking)
+    (node : Node) (index : ReceiveTraceValues.Scalar holes) (indexCorrect : index.Correct assignment) :
+    (logTermValue state tracking node index).Correct assignment := by
+  apply ReceiveTraceReplication.lookupTerm_correct assignment _ _ _ _ _ indexCorrect
+  · simpa [mapState_nodes_get, mapNodeState] using correct.logLengths node
+  · exact correct.logPositions node
+  · exact correct.logTerms node
+
+theorem indexedLogTerm_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking)
+    (node : Node) (index : ReceiveTraceValues.Scalar holes) (indexCorrect : index.Correct assignment) (term : Nat) :
+    (indexedLogTerm state tracking node index term).eval assignment = term := by
+  unfold indexedLogTerm
+  split
+  · rename_i same
+    exact (logTermValue_correct assignment state tracking correct node index indexCorrect).trans same.symm
+  · exact correct.logTerms _ _ _
+
+theorem indexedPacketOffsetTerm_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking)
+    (node : Node) (request : AppendEntriesRequest Node (Value holes)) (offset term : Nat) :
+    (indexedLogTerm state tracking node
+      ⟨request.prevLogIndex + offset,
+        .add (tracking.packetFields (.appendEntriesRequest request) 0 request.prevLogIndex) (.literal offset)⟩ term).eval assignment = term :=
+  indexedLogTerm_correct assignment state tracking correct node _
+    (by simp [ReceiveTraceValues.Scalar.Correct, NatTerm.eval, correct.packetFields]) term
+
+theorem appendLogOkExpr_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking)
+    (destination : Node) (request : AppendEntriesRequest Node (Value holes)) :
+    (appendLogOkExpr state tracking destination request).Holds assignment ↔ logOk (state.nodes destination) request := by
+  have termCorrect := logTermValue_correct assignment state tracking correct destination
+    ⟨request.prevLogIndex, tracking.packetFields (.appendEntriesRequest request) 0 request.prevLogIndex⟩
+    (correct.packetFields _ _ _)
+  change (logTermValue state tracking destination
+    ⟨request.prevLogIndex, tracking.packetFields (.appendEntriesRequest request) 0 request.prevLogIndex⟩).expression.eval assignment =
+      termAt (state.nodes destination).log request.prevLogIndex at termCorrect
+  simp [appendLogOkExpr, orExpr, Expr.Holds, NatTerm.eval, correct.packetFields, termCorrect,
+    correct.logLengths, logOk, mapState_nodes_get, mapNodeState]
+  tauto
+
+theorem orExpr_holds {holes : Nat} (assignment : Fin holes -> Nat) (left right : Expr holes) :
+    (orExpr left right).Holds assignment ↔ left.Holds assignment ∨ right.Holds assignment := by
+  simp only [orExpr, Expr.Holds, not_and_or, not_not]
+
+theorem appendAlreadyExpr_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking)
+    (destination : Node) (request : AppendEntriesRequest Node (Value holes)) :
+    (appendAlreadyExpr state tracking destination request).Holds assignment ↔ alreadyDone (state.nodes destination) request := by
+  have equal := ReceiveTracePackets.termsEqual_correct assignment
+    (fun offset => indexedLogTerm state tracking destination
+      ⟨request.prevLogIndex + offset,
+        .add (tracking.packetFields (.appendEntriesRequest request) 0 request.prevLogIndex) (.literal offset)⟩)
+    (fun offset => tracking.packetFields (.appendEntriesRequest request) (6 + offset))
+    (indexedPacketOffsetTerm_correct assignment state tracking correct destination request)
+    (fun offset term => correct.packetFields _ _ _)
+    (((state.nodes destination).log.drop request.prevLogIndex).take request.entries.length) request.entries 1
+  simp only [List.length_take, List.length_drop] at equal
+  simp only [appendAlreadyExpr, orExpr_holds, Expr.Holds, correct.packetFields, NatTerm.eval, correct.logLengths,
+    mapState_nodes_get, mapNodeState, List.length_map, minValue_eval]
+  rw [show min ((state.nodes destination).log.length - request.prevLogIndex) request.entries.length =
+      min request.entries.length ((state.nodes destination).log.length - request.prevLogIndex) from min_comm _ _,
+    equal]
+  simp [alreadyDone]
+
+theorem appendConflictExpr_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking)
+    (destination : Node) (request : AppendEntriesRequest Node (Value holes)) :
+    (appendConflictExpr state tracking destination request).Holds assignment ↔ hasTermConflict (state.nodes destination) request := by
+  have equal := ReceiveTracePackets.termsEqual_correct assignment
+    (fun offset => indexedLogTerm state tracking destination
+      ⟨request.prevLogIndex + offset,
+        .add (tracking.packetFields (.appendEntriesRequest request) 0 request.prevLogIndex) (.literal offset)⟩)
+    (fun offset => tracking.packetFields (.appendEntriesRequest request) (6 + offset))
+    (indexedPacketOffsetTerm_correct assignment state tracking correct destination request)
+    (fun offset term => correct.packetFields _ _ _)
+    (((state.nodes destination).log.drop request.prevLogIndex).take (overlapLength (state.nodes destination) request))
+    (request.entries.take (overlapLength (state.nodes destination) request)) 1
+  simp only [List.length_take, List.length_drop] at equal
+  simp only [appendConflictExpr, Expr.Holds, correct.packetFields, NatTerm.eval, minValue_eval, correct.logLengths,
+    mapState_nodes_get, mapNodeState, List.length_map, overlapLength]
+  simp only [overlapLength] at equal
+  rw [min_comm ((state.nodes destination).log.length - request.prevLogIndex),
+    min_comm request.entries.length (min request.entries.length ((state.nodes destination).log.length - request.prevLogIndex)),
+    equal]
+  simp [hasTermConflict, overlapLength]
+
+theorem appendProgressExpr_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking)
+    (destination : Node) (request : AppendEntriesRequest Node (Value holes)) :
+    (appendProgressExpr state tracking destination request).Holds assignment ↔ ReceiveTraceGuards.progress (state.nodes destination) request := by
+  simp only [appendProgressExpr, ReceiveTraceGuards.progress, orExpr_holds, Expr.Holds,
+    appendAlreadyExpr_correct assignment state tracking correct, appendConflictExpr_correct assignment state tracking correct,
+    correct.packetFields, correct.logLengths, correct.localFields, localField, NatTerm.eval,
+    mapState_nodes_get, mapNodeState, List.length_map]
+  cases (state.nodes destination).isNewFollower <;> simp
+
+theorem appendPrefixExpr_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking)
+    (destination : Node) (request : AppendEntriesRequest Node (Value holes)) :
+    (appendPrefixExpr state tracking destination request).Holds assignment ↔
+      (GuardedReceive.prefixEqual (state.nodes destination) request).Holds assignment := by
+  let suffix := NatTerm.sub (tracking.logLengths destination) (tracking.packetFields (.appendEntriesRequest request) 0 request.prevLogIndex)
+  have length : suffix.eval assignment = (state.nodes destination).log.length - request.prevLogIndex := by
+    simp [suffix, NatTerm.eval, correct.logLengths, correct.packetFields, mapState, mapNodeState]
+  have equal := ReceiveTraceBranching.prefix_correct assignment suffix (fun index => .literal index)
+    (fun offset => indexedLogTerm state tracking destination
+      ⟨request.prevLogIndex + offset,
+        .add (tracking.packetFields (.appendEntriesRequest request) 0 request.prevLogIndex) (.literal offset)⟩)
+    (fun offset => tracking.packetFields (.appendEntriesRequest request) (6 + offset))
+    (fun _ => rfl) (indexedPacketOffsetTerm_correct assignment state tracking correct destination request)
+    (fun _ term => correct.packetFields _ _ _)
+    (((state.nodes destination).log.drop request.prevLogIndex).take ((state.nodes destination).log.length - request.prevLogIndex))
+    (request.entries.take ((state.nodes destination).log.length - request.prevLogIndex)) 1
+    (by simp [length, Nat.add_comm])
+  rw [GuardedReceive.prefixEqual_correct]
+  simp only [appendPrefixExpr, Expr.Holds, minValue_eval, correct.packetFields]
+  change (suffix.eval assignment = min request.entries.length (suffix.eval assignment) ∧ _) ↔ _
+  rw [length]
+  simp only [List.length_take, List.length_drop, min_self] at equal
+  rw [min_comm request.entries.length, equal]
+  simp [mapNodeState, ReceiveMapping.mapRequest, List.map_take, List.map_drop]
+
+theorem receiveHeaderExpr_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking)
+    (destination : Node) (message : Message Node (Value holes)) :
+    (receiveHeaderExpr state tracking destination message).Holds assignment ↔
+      ReceiveTraceGuards.header state destination message := by
+  cases message <;>
+    simp only [receiveHeaderExpr, Expr.Holds, orExpr, not_and_or, not_not] <;>
+    simp [receiveHeaderExpr, ReceiveTraceGuards.header, Expr.Holds, orExpr, NatTerm.eval,
+      correct.currentTerms, correct.packetTerms, correct.packetFields, correct.commitIndices, Message.term, Message.destination,
+      appendLogOkExpr_correct assignment state tracking correct,
+      appendProgressExpr_correct assignment state tracking correct,
+      allocatedExpr_correct assignment state tracking correct,
+      roleGuard_correct assignment state tracking, correct.localFields]
+  all_goals tauto
+
+theorem receiveHeader_map {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (destination : Node) (message : Message Node (Value holes)) :
+    ReceiveTraceGuards.header (mapState (NatTerm.eval assignment) state) destination
+        (mapMessage (NatTerm.eval assignment) message) ↔
+      ReceiveTraceGuards.header state destination message := by
+  cases message <;>
+    simp [ReceiveTraceGuards.header, mapMessage, mapState_allocated, mapState_nodes_get, mapNodeState,
+      Message.destination, logOk, termAt_map, ReceiveTraceGuards.progress,
+      alreadyDone, hasTermConflict, overlapLength, List.map_take, List.map_drop,
+      List.map_map, Function.comp_def, mapEntry]
+
+theorem receiveEntry_map {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (source destination : Node) :
+    ReceiveTraceGuards.allowed (mapState (NatTerm.eval assignment) state) source destination =
+      receiveEntryAllowed state source destination := by
+  have selected := takeFirstFrom_map (NatTerm.eval assignment) source (state.network destination)
+  change takeFirstFrom source ((mapState (NatTerm.eval assignment) state).network destination) = _ at selected
+  simp only [ReceiveTraceGuards.allowed, receiveEntryAllowed, mapState_allocated]
+  rw [selected]
+  cases takeFirstFrom source (state.network destination) <;>
+    simp [receiveHeader_map]
+
+theorem receiveEntryExpr_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking)
+    (source destination : Node) :
+    (receiveEntryExpr state tracking source destination).Holds assignment ↔
+      receiveEntryAllowed state source destination = true := by
+  simp only [receiveEntryExpr, Expr.Holds, NatTerm.eval]
+  rw [allocatedExpr_correct assignment state tracking correct,
+    ReceiveTraceQueue.firstValue_takeFirst assignment source _ _ (correct.queues destination _)]
+  cases selected : takeFirstFrom source (state.network destination) <;>
+    simp [receiveEntryAllowed, ReceiveTraceGuards.allowed, selected, Expr.ite_eval, NatTerm.eval,
+      receiveHeaderExpr_correct assignment state tracking correct]
+
+theorem receive_enabled_entry {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (source destination : Node) :
+    Enabled (mapState (NatTerm.eval assignment) state) (.receive source destination) →
+      receiveEntryAllowed state source destination = true := by
+  intro enabled
+  simpa only [receiveEntry_map] using
+    ReceiveTraceGuards.allowed_of_enabled (mapState (NatTerm.eval assignment) state) source destination enabled
+
+theorem firstPacketTerm_newer {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking)
+    (source destination : Node) (message : Message Node (Value holes))
+    (newer : newerMessage? state source destination = some message) :
+    (firstPacketTerm state tracking source destination).eval assignment = message.term := by
+  rw [firstPacketTerm_correct assignment state tracking correct]
+  cases selected : takeFirstFrom source (state.network destination) with
+  | none => simp [newerMessage?, selected] at newer
+  | some pair =>
+      rcases pair with ⟨packet, rest⟩
+      simp only [newerMessage?, selected, Option.bind_some] at newer
+      change (if messageSourceAllowed state packet ∧ (state.nodes destination).currentTerm < packet.term
+        then some packet else none) = some message at newer
+      split_ifs at newer <;> simp_all
+
 theorem newerMessageExpr_correct {holes : Nat}
     (assignment : Fin holes -> Nat) (state : Template holes) (tracking : Tracking holes)
     (correct : TrackingCorrect assignment state tracking) (source destination : Node) :
     (newerMessageExpr state tracking source destination).Holds assignment ↔
       (newerMessage? state source destination).isSome := by
   cases selected : takeFirstFrom source (state.network destination) with
-  | none => simp [newerMessageExpr, newerMessage?, selected, Expr.Holds]
+  | none => simp [newerMessageExpr, newerMessage?, selected,
+      sourcePresentExpr_correct assignment state tracking correct]
   | some pair =>
       rcases pair with ⟨message, rest⟩
       simp [newerMessageExpr, newerMessage?, selected, Expr.Holds,
+        sourcePresentExpr_correct assignment state tracking correct,
+        firstPacketTerm_correct assignment state tracking correct,
         sourceAllowedExpr_correct assignment state tracking correct,
         correct.currentTerms, correct.packetTerms]
 
@@ -1086,7 +1375,7 @@ theorem actionGuard_correct {holes : Nat}
   simp only [actionGuard, Expr.Holds,
     actionRequirementsExpr_correct assignment state tracking correct,
     membershipRequirementsExpr_correct assignment state tracking correct,
-    retirementRequirementsExpr_correct assignment state tracking correct, roleGuard_correct]
+    retirementRequirementsExpr_correct assignment state tracking correct, roleGuard_correct, correct.localFields]
   exact ⟨fun ⟨requirements, enabled⟩ => enabled requirements,
     fun enabled => ⟨⟨enabled_actionRequirements state action enabled,
       enabled_membershipRequirements state action enabled,
@@ -1101,6 +1390,36 @@ theorem finishFrame_correct {holes : Nat} (assignment : Fin holes -> Nat)
     (position : Nat) (node : Node) (frame : Frame holes) (correct : FrameCorrect assignment frame) :
     FrameCorrect assignment (finishFrame position node frame) :=
   refreshCompletedTracking_correct assignment position frame.pathId frame.state frame.tracking correct node
+
+@[simp]
+theorem rememberQueueFrame_state {holes : Nat} (position : Nat) (node : Node) (before after : Frame holes)
+    (consumed : Value holes := .literal 1) :
+    (rememberQueueFrame position node before after consumed).state = after.state := by
+  simp [rememberQueueFrame, apply_ite]
+
+theorem rememberQueueFrame_consumption_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (position : Nat) (node : Node) (before after : Frame holes)
+    (beforeCorrect : FrameCorrect assignment before) (consumed : Value holes)
+    (consumedCorrect : consumed.eval assignment = 1) (afterCorrect : FrameCorrect assignment after) :
+    FrameCorrect assignment (rememberQueueFrame position node before after consumed) := by
+  dsimp only [rememberQueueFrame]
+  split_ifs
+  · exact afterCorrect
+  · refine { afterCorrect with queues := ?_ }
+    intro queried values
+    simp only [Function.update_apply, ite_apply]
+    split_ifs with same expected
+    · subst queried
+      subst values
+      exact ReceiveTraceQueue.reconcile_correct assignment position _ consumed consumedCorrect _ _ _
+        (beforeCorrect.queues node _).presence
+    all_goals exact afterCorrect.queues _ _
+
+theorem rememberQueueFrame_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (position : Nat) (node : Node) (before after : Frame holes)
+    (beforeCorrect : FrameCorrect assignment before) (afterCorrect : FrameCorrect assignment after) :
+    FrameCorrect assignment (rememberQueueFrame position node before after) :=
+  rememberQueueFrame_consumption_correct assignment position node before after beforeCorrect (.literal 1) rfl afterCorrect
 
 @[simp]
 theorem controlSuccessor_eq_next {holes : Nat} (state : Template holes) (action : Action Node (Value holes)) :
@@ -1158,6 +1477,7 @@ theorem nodeBoundsClauses_correct {holes : Nat}
       · exact trackingCorrect.commitIndices node
       · exact trackingCorrect.logPositions node
       · exact trackingCorrect.logTerms node
+      · exact trackingCorrect.matchIndices node
       · intro peer
         have correct := trackingCorrect.sentIndex node peer
         rw [mapState_nodes_get] at correct
@@ -1289,7 +1609,7 @@ theorem observationExpression_correct {holes : Nat}
   cases observation with
   | role node value =>
       simp [observationExpression, ObservedValueHolds,
-        Expr.Holds, NatTerm.eval, mapState_nodes_get, mapNodeState]
+        Expr.Holds, NatTerm.eval, mapState_nodes_get, mapNodeState, trackingCorrect.localFields]
   | currentTerm node value =>
       simp [observationExpression, ObservedValueHolds,
         Expr.Holds, NatTerm.eval, trackingCorrect.currentTerms,
@@ -1465,6 +1785,11 @@ theorem initialTracking_correct {holes : Nat}
     exact ControlTraceConfigurations.literals_correct assignment values
   · intro node peer value
     rfl
+  · intro node values
+    exact ReceiveTraceQueue.literals_correct assignment values
+  · intros; rfl
+  · intros; rfl
+  · intros; rfl
 
 theorem nextWriteTracking_positions_correct {holes : Nat}
     (assignment : Fin holes -> Nat) (position pathId : Nat)
@@ -1586,6 +1911,10 @@ theorem nextWriteTracking_clientRequest_correct {holes : Nat}
   · exact correct.voteMembers
   · exact correct.configurations
   · exact correct.completedMembers
+  · exact correct.queues
+  · exact correct.matchIndices
+  · exact correct.localFields
+  · exact correct.packetPositions
 
 theorem nextWriteTracking_signature_correct {holes : Nat}
     (assignment : Fin holes -> Nat)
@@ -1664,6 +1993,10 @@ theorem nextWriteTracking_signature_correct {holes : Nat}
   · exact correct.voteMembers
   · exact correct.configurations
   · exact correct.completedMembers
+  · exact correct.queues
+  · exact correct.matchIndices
+  · exact correct.localFields
+  · exact correct.packetPositions
 
 theorem nextWriteTracking_retiredCommitted_correct {holes : Nat}
     (assignment : Fin holes -> Nat)
@@ -1742,6 +2075,10 @@ theorem nextWriteTracking_retiredCommitted_correct {holes : Nat}
   · exact correct.voteMembers
   · exact correct.configurations
   · exact correct.completedMembers
+  · exact correct.queues
+  · exact correct.matchIndices
+  · exact correct.localFields
+  · exact correct.packetPositions
 
 @[simp]
 theorem NodeStore.get_allocate
@@ -1913,6 +2250,10 @@ theorem nextConfigurationTracking_correct {holes : Nat}
     · exact correct.configurations _ _
     · exact correct.configurations _ _
   · exact correct.completedMembers
+  · exact correct.queues
+  · exact correct.matchIndices
+  · exact correct.localFields
+  · exact correct.packetPositions
 
 theorem attachAppendFrame_eval_state {holes : Nat}
     (assignment : Fin holes -> Nat)
@@ -2076,6 +2417,10 @@ theorem attachAppendFrame_correct {holes : Nat}
       · exact trackingCorrect.voteMembers
       · exact trackingCorrect.configurations
       · exact trackingCorrect.completedMembers
+      · exact trackingCorrect.queues
+      · exact trackingCorrect.matchIndices
+      · exact trackingCorrect.localFields
+      · exact trackingCorrect.packetPositions
 
 theorem rememberPacketTerm_correct {holes : Nat}
     (assignment : Fin holes -> Nat) (position pathId : Nat)
@@ -2116,7 +2461,9 @@ theorem votePacketFields_correct {holes : Nat}
   · apply fieldOrigin_correct
     simp [electionFrontier, correct.commitIndices, correct.logPositions, lastCommittableIndex]
   · apply fieldOrigin_correct
-    exact correct.logTerms source _ _
+    exact logTermValue_correct assignment state tracking correct source _
+      (by simp [ReceiveTraceValues.Scalar.Correct, electionFrontier,
+        correct.commitIndices, correct.logPositions, lastCommittableIndex])
   · intro value
     rfl
 
@@ -2133,7 +2480,8 @@ theorem appendPacketFields_correct {holes : Nat}
   · apply fieldOrigin_correct
     simpa [mapState_nodes_get, mapNodeState] using correct.sentIndex source destination
   · apply fieldOrigin_correct
-    exact correct.logTerms source _ _
+    exact logTermValue_correct assignment state tracking correct source _
+      (by simpa [ReceiveTraceValues.Scalar.Correct, mapState_nodes_get, mapNodeState] using correct.sentIndex source destination)
   · apply fieldOrigin_correct
     exact correct.commitIndices source _
   · apply fieldOrigin_correct
@@ -2141,9 +2489,19 @@ theorem appendPacketFields_correct {holes : Nat}
       mapState_nodes_get, mapNodeState, Nat.min_comm]
   · split
     · intro term
-      simp [NatTerm.eval, correct.logTerms]
+      simp only [NatTerm.eval]
+      exact indexedLogTerm_correct assignment state tracking correct source _
+        (by simp [ReceiveTraceValues.Scalar.Correct, NatTerm.eval, correct.sentIndex,
+          mapState_nodes_get, mapNodeState]) term
     · intro term
       rfl
+
+theorem appendPacketPositions_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (position pathId : Nat) (state : Template holes) (tracking : Tracking holes)
+    (correct : TrackingCorrect assignment state tracking) (source destination : Node) (offset value : Nat) :
+    (appendPacketPositions position pathId state tracking source destination offset value).eval assignment = value := by
+  dsimp only [appendPacketPositions]
+  split <;> simp_all [NatTerm.eval, correct.logPositions]
 
 theorem rememberPacketFields_correct {holes : Nat}
     (assignment : Fin holes -> Nat) (state : Template holes) (tracking : Tracking holes)
@@ -2212,7 +2570,18 @@ theorem rememberAppendPacketFrame_correct {holes : Nat}
       · apply rememberPacketFields_correct assignment before.state before.tracking beforeCorrect
         exact appendPacketFields_correct assignment position current.pathId
           before.state before.tracking beforeCorrect source destination batchEnd
-      · exact currentCorrect.packetFields }
+      · exact currentCorrect.packetFields
+    packetPositions := by
+      intro packet offset value
+      by_cases grew : (before.state.network destination).length < (current.state.network destination).length
+      · simp only [rememberAppendPacketFrame, if_pos grew]
+        by_cases same : packet =
+            .appendEntriesRequest (makeAppendEntriesRequest before.state source destination batchEnd)
+        · subst packet
+          simpa using appendPacketPositions_correct assignment position current.pathId before.state before.tracking
+            beforeCorrect source destination offset value
+        · simp [same, currentCorrect.packetPositions]
+      · simpa only [rememberAppendPacketFrame, if_neg grew] using currentCorrect.packetPositions packet offset value }
 
 theorem appendFrames_correct {holes : Nat}
     (bounds : Bounds)
@@ -2227,6 +2596,7 @@ theorem appendFrames_correct {holes : Nat}
       ((appendFrames position frame source destination batchEnd).eval
         assignment) := by
   simp only [appendFrames, Guarded.eval_map]
+  apply rememberQueueFrame_correct assignment position destination frame _ frameCorrect
   apply rememberAppendPacketFrame_correct assignment position frame _
     frameCorrect
   · apply attachAppendFrame_correct bounds assignment position
@@ -2253,7 +2623,7 @@ theorem appendFrames_state_correct {holes : Nat}
           assignment).state =
       next (mapState (NatTerm.eval assignment) frame.state)
         (.appendEntries source destination batchEnd) := by
-  simp only [appendFrames, Guarded.eval_map, rememberAppendPacketFrame]
+  simp only [appendFrames, Guarded.eval_map, rememberQueueFrame_state, rememberAppendPacketFrame]
   rw [attachAppendFrame_eval_state]
   exact GuardedAppendEntries.step_correct assignment frame.state
     source destination batchEnd
@@ -2331,6 +2701,14 @@ theorem nextControlTracking_correct {holes : Nat}
   · exact correct.voteMembers
   · exact correct.configurations
   · exact correct.completedMembers
+  · exact correct.queues
+  · intro node peer value
+    simp only [nextControlTracking]
+    split_ifs <;> simp [NatTerm.eval, correct.matchIndices]
+  · intro node field value
+    simp only [nextControlTracking]
+    split_ifs <;> simp [NatTerm.eval, correct.localFields]
+  · exact correct.packetPositions
 
 theorem controlPacketTerms_correct {holes : Nat}
     (assignment : Fin holes -> Nat) (position pathId : Nat)
@@ -2573,7 +2951,8 @@ theorem rawControlFrame_correct {holes : Nat}
                intro node
                by_cases same : node = destination
                · subst node
-                 simp [selected, next, NatTerm.eval, correct.packetTerms]
+                 simp [selected, next, NatTerm.eval,
+                   firstPacketTerm_newer assignment frame.state frame.tracking correct source destination message selected]
                · simp [selected, next, same, correct.currentTerms]) }
 
 theorem controlSendFrame_correct {holes : Nat}
@@ -2614,20 +2993,1335 @@ theorem controlFrame_correct {holes : Nat}
     FrameCorrect assignment (controlFrame position action frame) := by
   cases action with
   | requestVote source destination =>
+      apply rememberQueueFrame_correct assignment position destination frame _ correct
       exact controlSendFrame_correct assignment position _ destination frame correct
         (.requestVoteRequest (makeRequestVoteRequest frame.state source destination)) rfl rfl
   | requestPreVote source destination =>
+      apply rememberQueueFrame_correct assignment position destination frame _ correct
       exact controlSendFrame_correct assignment position _ destination frame correct
         (.requestPreVote (makeRequestPreVote frame.state source destination)) rfl rfl
   | proposeVote source destination =>
+      apply rememberQueueFrame_correct assignment position destination frame _ correct
       exact controlSendFrame_correct assignment position _ destination frame correct
         (.proposeVoteRequest (makeProposeVoteRequest frame.state source destination)) rfl rfl
+  | advanceCommitIndexAndProposeVote source destination =>
+      apply rememberQueueFrame_correct assignment position destination frame _ correct
+      apply finishFrame_correct
+      exact rawControlFrame_correct assignment position _ frame correct
   | _ =>
       simp only [controlFrame]
       first
         | exact rawControlFrame_correct assignment position _ frame correct
         | (apply finishFrame_correct
            exact rawControlFrame_correct assignment position _ frame correct)
+
+@[simp] theorem assignLocalValue_state {holes : Nat} (node : Node) (field : Nat)
+    (value : ReceiveTraceValues.Scalar holes) (frame : Frame holes) :
+    (assignLocalValue node field value frame).state = frame.state := rfl
+
+@[simp] theorem assignPacketField_state {holes : Nat} (packet : Message Node (Value holes)) (field : Nat)
+    (value : ReceiveTraceValues.Scalar holes) (frame : Frame holes) :
+    (assignPacketField packet field value frame).state = frame.state := rfl
+
+@[simp] theorem assignPacketTerm_state {holes : Nat} (packet : Message Node (Value holes))
+    (value : ReceiveTraceValues.Scalar holes) (frame : Frame holes) :
+    (assignPacketTerm packet value frame).state = frame.state := rfl
+
+theorem assignLocalValue_correct {holes : Nat} (assignment : Fin holes -> Nat) (node : Node) (field : Nat)
+    (value : ReceiveTraceValues.Scalar holes) (frame : Frame holes)
+    (valueCorrect : value.Correct assignment) (correct : FrameCorrect assignment frame) :
+    FrameCorrect assignment (assignLocalValue node field value frame) := by
+  refine { correct with localFields := ?_ }
+  intro candidate index input
+  by_cases same : candidate = node
+  · subst candidate
+    by_cases sameField : index = field
+    · subst index
+      simpa [assignLocalValue] using ReceiveTraceValues.install_correct assignment _
+        (correct.localFields node field) value valueCorrect input
+    · simp [assignLocalValue, sameField, correct.localFields]
+  · simp [assignLocalValue, same, correct.localFields]
+
+theorem assignPacketField_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (packet : Message Node (Value holes)) (field : Nat) (value : ReceiveTraceValues.Scalar holes) (frame : Frame holes)
+    (valueCorrect : value.Correct assignment) (correct : FrameCorrect assignment frame) :
+    FrameCorrect assignment (assignPacketField packet field value frame) := by
+  refine { correct with packetFields := ?_ }
+  intro candidate index input
+  by_cases same : candidate = packet
+  · subst candidate
+    by_cases sameField : index = field
+    · subst index
+      simpa [assignPacketField] using ReceiveTraceValues.install_correct assignment _
+        (correct.packetFields packet field) value valueCorrect input
+    · simp [assignPacketField, sameField, correct.packetFields]
+  · simp [assignPacketField, same, correct.packetFields]
+
+theorem assignPacketTerm_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (packet : Message Node (Value holes)) (value : ReceiveTraceValues.Scalar holes) (frame : Frame holes)
+    (term : value.actual = packet.term) (valueCorrect : value.Correct assignment)
+    (correct : FrameCorrect assignment frame) :
+    FrameCorrect assignment (assignPacketTerm packet value frame) := by
+  refine { correct with packetTerms := ?_ }
+  intro candidate
+  by_cases same : candidate = packet
+  · subst candidate
+    simpa [assignPacketTerm, ReceiveTraceValues.Scalar.Correct, term] using valueCorrect
+  · simp [assignPacketTerm, same, correct.packetTerms]
+
+theorem receiveVotedForValue_correct {holes : Nat} (assignment : Fin holes -> Nat) (position pathId : Nat)
+    (before : Frame holes) (correct : FrameCorrect assignment before)
+    (source destination : Node) (message : Message Node (Value holes)) (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (message, remaining)) :
+    (receiveVotedForValue position pathId before source destination message).Correct assignment := by
+  dsimp only [receiveVotedForValue]
+  split_ifs
+  · exact correct.localFields destination 1 _
+  · apply ReceiveTraceValues.choose_correct
+    · simpa [ReceiveTraceValues.Condition.Correct] using
+        voteGrantExpr_correct assignment before.state before.tracking correct source destination false message remaining selected
+    · rfl
+    · exact correct.localFields destination 1 _
+
+@[simp] theorem rememberVoteReply_state {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) (preVote : Bool) (message : Message Node (Value holes))
+    (remaining : List (Message Node (Value holes))) :
+    (rememberVoteReply position before after source destination preVote message remaining).state = after.state := by
+  cases preVote <;> dsimp only [rememberVoteReply] <;> split_ifs <;> rfl
+
+theorem rememberVoteReply_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (beforeCorrect : FrameCorrect assignment before) (afterCorrect : FrameCorrect assignment after)
+    (source destination : Node) (preVote : Bool) (message : Message Node (Value holes))
+    (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (message, remaining)) :
+    FrameCorrect assignment (rememberVoteReply position before after source destination preVote message remaining) := by
+  have grant := voteGrantValue_correct assignment before.state before.tracking beforeCorrect
+    source destination preVote message remaining selected
+  have voted := receiveVotedForValue_correct assignment position after.pathId before beforeCorrect
+    source destination message remaining selected
+  cases preVote <;> dsimp only [rememberVoteReply] <;> split_ifs
+  all_goals first
+    | exact afterCorrect
+    | exact assignLocalValue_correct assignment destination 1 _ after voted afterCorrect
+    | (apply assignPacketField_correct
+       · simpa only [ReceiveTraceValues.named_correct] using grant
+       · apply assignPacketTerm_correct
+         · rfl
+         · simpa only [ReceiveTraceValues.named_correct, ReceiveTraceValues.Scalar.Correct] using beforeCorrect.currentTerms destination
+         · first
+           | exact afterCorrect
+           | exact assignLocalValue_correct assignment destination 1 _ after voted afterCorrect)
+
+@[simp] theorem rememberAppendReply_state {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) (request : AppendEntriesRequest Node (Value holes))
+    (remaining : List (Message Node (Value holes))) :
+    (rememberAppendReply position before after source destination request remaining).state = after.state := by
+  simp [rememberAppendReply, apply_ite]
+
+@[simp] theorem rememberReceiveReply_state {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) :
+    (rememberReceiveReply position before after source destination).state = after.state := by
+  cases selected : takeFirstFrom source (before.state.network destination) with
+  | none => simp [rememberReceiveReply, selected]
+  | some pair =>
+      rcases pair with ⟨message, remaining⟩
+      cases message <;> simp [rememberReceiveReply, selected]
+
+@[simp] theorem assignVoteMember_state {holes : Nat} (node : Node) (preVote : Bool) (peer : Node) (present : Bool)
+    (value : ReceiveTraceValues.Scalar holes) (frame : Frame holes) :
+    (assignVoteMember node preVote peer present value frame).state = frame.state := rfl
+
+theorem assignVoteMember_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (node : Node) (preVote : Bool) (peer : Node) (present : Bool) (value : ReceiveTraceValues.Scalar holes)
+    (frame : Frame holes) (actual : value.actual = if present then 1 else 0)
+    (valueCorrect : value.Correct assignment) (correct : FrameCorrect assignment frame) :
+    FrameCorrect assignment (assignVoteMember node preVote peer present value frame) := by
+  refine { correct with voteMembers := ?_ }
+  intro candidate mode voter input
+  simp only [assignVoteMember, Function.update_apply, ite_apply]
+  split_ifs <;> simp_all [ReceiveTraceValues.Scalar.Correct, correct.voteMembers]
+
+theorem receivedVoteValue_correct {holes : Nat} (assignment : Fin holes -> Nat) (position pathId : Nat)
+    (before : Frame holes) (correct : FrameCorrect assignment before) (source destination : Node)
+    (preVote : Bool) (message : Message Node (Value holes)) (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (message, remaining)) :
+    (receivedVoteValue position pathId before source destination preVote message).Correct assignment := by
+  simp [receivedVoteValue, ReceiveTraceValues.Scalar.Correct, Expr.ite_eval, NatTerm.eval,
+    receiveVoteExpr_correct assignment before.state before.tracking correct source destination preVote message remaining selected,
+    correct.voteMembers]
+
+@[simp] theorem rememberReceivedVote_state {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) (preVote : Bool) (message : Message Node (Value holes)) :
+    (rememberReceivedVote position before after source destination preVote message).state = after.state := by
+  simp [rememberReceivedVote, apply_ite]
+
+theorem rememberReceivedVote_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (beforeCorrect : FrameCorrect assignment before) (afterCorrect : FrameCorrect assignment after)
+    (source destination : Node) (preVote : Bool) (message : Message Node (Value holes))
+    (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (message, remaining)) :
+    FrameCorrect assignment (rememberReceivedVote position before after source destination preVote message) := by
+  by_cases old : source ∈ (if preVote then (before.state.nodes destination).preVotesGranted
+      else (before.state.nodes destination).votesGranted)
+  · simpa only [rememberReceivedVote, if_pos old] using afterCorrect
+  · rw [rememberReceivedVote, if_neg old]
+    apply assignVoteMember_correct
+    · simp [receivedVoteValue, old]
+    · exact receivedVoteValue_correct assignment position after.pathId before beforeCorrect
+        source destination preVote message remaining selected
+    · exact afterCorrect
+
+@[simp] theorem rememberReceiveVotes_state {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) :
+    (rememberReceiveVotes position before after source destination).state = after.state := by
+  cases selected : takeFirstFrom source (before.state.network destination) with
+  | none => simp [rememberReceiveVotes, selected]
+  | some pair =>
+      rcases pair with ⟨message, remaining⟩
+      cases message <;> simp [rememberReceiveVotes, selected]
+
+theorem rememberReceiveVotes_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (beforeCorrect : FrameCorrect assignment before) (afterCorrect : FrameCorrect assignment after)
+    (source destination : Node) :
+    FrameCorrect assignment (rememberReceiveVotes position before after source destination) := by
+  cases selected : takeFirstFrom source (before.state.network destination) with
+  | none => simpa [rememberReceiveVotes, selected] using afterCorrect
+  | some pair =>
+      rcases pair with ⟨message, remaining⟩
+      cases message <;> simp only [rememberReceiveVotes, selected]
+      all_goals first
+        | exact afterCorrect
+        | exact rememberReceivedVote_correct assignment position before after beforeCorrect afterCorrect
+            source destination _ _ remaining selected
+
+@[simp] theorem assignCurrentTerm_state {holes : Nat} (node : Node) (value : ReceiveTraceValues.Scalar holes)
+    (frame : Frame holes) : (assignCurrentTerm node value frame).state = frame.state := rfl
+
+theorem assignCurrentTerm_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (node : Node) (value : ReceiveTraceValues.Scalar holes) (frame : Frame holes)
+    (actual : value.actual = (frame.state.nodes node).currentTerm)
+    (valueCorrect : value.Correct assignment) (correct : FrameCorrect assignment frame) :
+    FrameCorrect assignment (assignCurrentTerm node value frame) := by
+  refine { correct with currentTerms := ?_ }
+  intro candidate
+  by_cases same : candidate = node
+  · subst candidate
+    simpa [assignCurrentTerm, ReceiveTraceValues.Scalar.Correct, actual] using valueCorrect
+  · simp [assignCurrentTerm, same, correct.currentTerms]
+
+theorem proposalTermValue_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (correct : FrameCorrect assignment before)
+    (source destination : Node) (request : ProposeVoteRequest Node) (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (.proposeVoteRequest request, remaining)) :
+    (proposalTermValue position before after source destination request).Correct assignment := by
+  have offered : (ReceiveTraceValues.add
+      ⟨request.term, firstPacketTerm before.state before.tracking source destination⟩
+      (ReceiveTraceValues.literal 1)).Correct assignment := by
+    apply ReceiveTraceValues.add_correct
+    · simp [ReceiveTraceValues.Scalar.Correct,
+        firstPacketTerm_correct assignment before.state before.tracking correct, selected, Message.term]
+    · rfl
+  unfold proposalTermValue
+  apply ReceiveTraceValues.maximum_correct
+  · exact correct.currentTerms destination
+  · apply ReceiveTraceValues.choose_correct
+    · simpa [ReceiveTraceValues.Condition.Correct] using
+        candidateEligibilityExpr_correct assignment before.state before.tracking correct destination
+    · split_ifs <;> simpa only [ReceiveTraceValues.named_correct] using offered
+    · rfl
+
+theorem proposalTermValue_actual {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) (request : ProposeVoteRequest Node) (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (.proposeVoteRequest request, remaining))
+    (allowed : request.destination = destination ∧ request.term ≤ (before.state.nodes destination).currentTerm)
+    (shape : after.state = next before.state (.receive source destination)) :
+    (proposalTermValue position before after source destination request).actual = (after.state.nodes destination).currentTerm := by
+  have node := ReceiveTraceGuards.proposal_node before.state source destination request remaining selected
+  by_cases candidate : candidateTransitionEnabled before.state destination <;>
+    by_cases term : request.term = (before.state.nodes destination).currentTerm <;>
+      simp [proposalTermValue, ReceiveTraceValues.maximum, ReceiveTraceValues.choose, ReceiveTraceValues.add,
+        ReceiveTraceValues.literal, ReceiveTraceValues.named, apply_ite, shape, node, allowed.1, candidate, term] <;> omega
+
+theorem proposalLocalValue_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (correct : FrameCorrect assignment before)
+    (source destination : Node) (request : ProposeVoteRequest Node) (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (.proposeVoteRequest request, remaining))
+    (field desired : Nat) :
+    (proposalLocalValue position before after source destination request field desired).Correct assignment := by
+  by_cases same : localField (before.state.nodes destination) field = desired
+  · simp only [proposalLocalValue, if_pos same]
+    exact correct.localFields destination field _
+  · simp only [proposalLocalValue, if_neg same]
+    apply ReceiveTraceValues.choose_correct
+    · simpa [ReceiveTraceValues.Condition.Correct] using
+        proposalEffectExpr_correct assignment before.state before.tracking correct source destination request remaining selected
+    · rfl
+    · exact correct.localFields destination field _
+
+theorem proposalMemberValue_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (correct : FrameCorrect assignment before)
+    (source destination : Node) (request : ProposeVoteRequest Node) (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (.proposeVoteRequest request, remaining))
+    (preVote : Bool) (peer : Node) :
+    (proposalMemberValue position before after source destination request preVote peer).Correct assignment := by
+  by_cases same : decide (peer ∈ if preVote then (before.state.nodes destination).preVotesGranted
+      else (before.state.nodes destination).votesGranted) = (!preVote && decide (peer = destination))
+  · simp only [proposalMemberValue, if_pos same]
+    exact correct.voteMembers destination preVote peer _
+  · simp only [proposalMemberValue, if_neg same]
+    apply ReceiveTraceValues.choose_correct
+    · simpa [ReceiveTraceValues.Condition.Correct] using
+        proposalEffectExpr_correct assignment before.state before.tracking correct source destination request remaining selected
+    · rfl
+    · exact correct.voteMembers destination preVote peer _
+
+@[simp] theorem rememberReceiveProposal_state {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) :
+    (rememberReceiveProposal position before after source destination).state = after.state := by
+  cases selected : takeFirstFrom source (before.state.network destination) with
+  | none => simp [rememberReceiveProposal, selected]
+  | some pair =>
+      rcases pair with ⟨message, remaining⟩
+      cases message <;> simp [rememberReceiveProposal, selected, apply_ite]
+
+theorem rememberReceiveProposal_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (beforeCorrect : FrameCorrect assignment before) (afterCorrect : FrameCorrect assignment after)
+    (source destination : Node)
+    (shape : ∀ request remaining, takeFirstFrom source (before.state.network destination) =
+      some (.proposeVoteRequest request, remaining) → after.state = next before.state (.receive source destination)) :
+    FrameCorrect assignment (rememberReceiveProposal position before after source destination) := by
+  cases selected : takeFirstFrom source (before.state.network destination) with
+  | none => simpa [rememberReceiveProposal, selected] using afterCorrect
+  | some pair =>
+      rcases pair with ⟨message, remaining⟩
+      cases message with
+      | proposeVoteRequest request =>
+          simp only [rememberReceiveProposal, selected]
+          split
+          · rename_i allowed
+            have termCorrect := assignCurrentTerm_correct assignment destination _ after
+              (proposalTermValue_actual position before after source destination request remaining selected allowed
+                (shape request remaining selected))
+              (proposalTermValue_correct assignment position before after beforeCorrect source destination request remaining selected)
+              afterCorrect
+            have roleCorrect := assignLocalValue_correct assignment destination 2 _ _
+              (proposalLocalValue_correct assignment position before after beforeCorrect source destination request remaining selected 2 (roleCode .candidate))
+              termCorrect
+            have localCorrect := assignLocalValue_correct assignment destination 1 _ _
+              (proposalLocalValue_correct assignment position before after beforeCorrect source destination request remaining selected 1 (destination.val + 1))
+              roleCorrect
+            refine { localCorrect with voteMembers := ?_ }
+            intro node preVote peer value
+            have memberCorrect := proposalMemberValue_correct assignment position before after beforeCorrect
+              source destination request remaining selected preVote peer
+            simp only [Function.update_apply, ite_apply]
+            split_ifs <;> simp_all [ReceiveTraceValues.Scalar.Correct, localCorrect.voteMembers]
+          · exact afterCorrect
+      | _ => simpa only [rememberReceiveProposal, selected] using afterCorrect
+
+theorem attachReceiveFrame_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (position pathId : Nat) (before : Frame holes) (correct : FrameCorrect assignment before)
+    (tree : Guarded holes (GuardedReceive.Result holes)) :
+    FrameCorrect assignment ((attachReceiveFrame position pathId before tree).eval assignment) := by
+  induction tree generalizing pathId with
+  | pure result =>
+      exact nextControlTracking_correct assignment position pathId before.state result.successor before.tracking correct
+  | branch condition left right leftIH rightIH =>
+      simp only [attachReceiveFrame, Guarded.eval_branchSmart]
+      split <;> first | exact leftIH _ | exact rightIH _
+
+theorem responseAckExpr_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (before : Frame holes) (correct : FrameCorrect assignment before)
+    (source destination : Node) (response : AppendEntriesResponse Node) (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (.appendEntriesResponse response, remaining)) :
+    (responseAckExpr before.state before.tracking source destination response).Holds assignment ↔
+      responseAckCondition before.state source destination response := by
+  cases success : response.success <;>
+    simp [responseAckExpr, responseAckCondition, Expr.Holds, NatTerm.eval,
+      allocatedExpr_correct assignment before.state before.tracking correct,
+      firstPacketField_correct assignment before.state before.tracking correct,
+      firstPacketTerm_correct assignment before.state before.tracking correct,
+      selected, packetFieldNumber, Message.term, success, correct.currentTerms,
+      roleGuard_correct _ _ _ _ _ (correct.localFields destination 2 _)]
+
+theorem responseNackExpr_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (before : Frame holes) (correct : FrameCorrect assignment before)
+    (source destination : Node) (response : AppendEntriesResponse Node) (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (.appendEntriesResponse response, remaining)) :
+    (responseNackExpr before.state before.tracking source destination response).Holds assignment ↔
+      responseNackCondition before.state source destination response := by
+  cases success : response.success <;>
+    simp [responseNackExpr, responseNackCondition, Expr.Holds, NatTerm.eval,
+      allocatedExpr_correct assignment before.state before.tracking correct,
+      firstPacketField_correct assignment before.state before.tracking correct,
+      selected, packetFieldNumber, success]
+
+theorem highestPossibleValue_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking)
+    (node : Node) (limit term : ReceiveTraceValues.Scalar holes)
+    (limitCorrect : limit.Correct assignment) (termCorrect : term.Correct assignment) :
+    (highestPossibleValue state tracking node limit term).Correct assignment := by
+  apply ReceiveTraceReplication.highestPossible_correct assignment _ _ _ _ _ _ limitCorrect termCorrect
+  · simpa [mapState_nodes_get, mapNodeState] using correct.logLengths node
+  · exact correct.logPositions node
+  · exact correct.logTerms node
+
+theorem responseMatchValue_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (correct : FrameCorrect assignment before)
+    (source destination : Node) (response : AppendEntriesResponse Node) (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (.appendEntriesResponse response, remaining)) :
+    (responseMatchValue position before after source destination response).Correct assignment := by
+  unfold responseMatchValue
+  apply ReceiveTraceValues.maximum_correct
+  · exact correct.matchIndices destination source _
+  · apply ReceiveTraceValues.choose_correct
+    · simpa [ReceiveTraceValues.Condition.Correct] using
+        responseAckExpr_correct assignment before correct source destination response remaining selected
+    · split_ifs <;>
+        simp [ReceiveTraceValues.Scalar.Correct, ReceiveTraceValues.named, NatTerm.eval,
+          firstPacketField_correct assignment before.state before.tracking correct, selected, packetFieldNumber]
+    · rfl
+
+@[simp] theorem logTermValue_actual {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (node : Node) (index : ReceiveTraceValues.Scalar holes) :
+    (logTermValue state tracking node index).actual = termAt (state.nodes node).log index.actual := rfl
+
+@[simp] theorem highestPossibleValue_actual {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (node : Node) (limit term : ReceiveTraceValues.Scalar holes) :
+    (highestPossibleValue state tracking node limit term).actual =
+      findHighestPossibleMatch (state.nodes node).log limit.actual term.actual :=
+  ReceiveTraceReplication.highestPossible_actual _ _ _ _ _ _
+
+theorem appendFailureValues_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking)
+    (destination : Node) (request : AppendEntriesRequest Node (Value holes)) :
+    (appendFailureValues state tracking destination request).1.Correct assignment ∧
+      (appendFailureValues state tracking destination request).2.Correct assignment := by
+  dsimp only [appendFailureValues]
+  constructor
+  all_goals
+    repeat' first
+      | exact correct.packetFields _ _ _
+      | exact correct.packetTerms _
+      | exact correct.currentTerms _
+      | simpa only [ReceiveTraceValues.Scalar.Correct, mapState_nodes_get, mapNodeState, List.length_map] using correct.logLengths destination
+      | apply ReceiveTraceValues.literal_correct
+      | apply ReceiveTraceValues.choose_correct
+      | apply ReceiveTraceValues.orCondition_correct
+      | apply ReceiveTraceValues.equal_correct
+      | apply ReceiveTraceValues.less_correct
+      | apply logTermValue_correct assignment state tracking correct
+      | apply highestPossibleValue_correct assignment state tracking correct
+
+theorem appendFailureValues_actual {holes : Nat} (state : Template holes) (tracking : Tracking holes)
+    (destination : Node) (request : AppendEntriesRequest Node (Value holes)) :
+    (appendFailureValues state tracking destination request).1.actual =
+        (failureResponse (state.nodes destination) request).term ∧
+      (appendFailureValues state tracking destination request).2.actual =
+        (failureResponse (state.nodes destination) request).lastLogIndex := by
+  simp only [appendFailureValues, ReceiveTraceValues.choose_actual, ReceiveTraceValues.equal_actual,
+    ReceiveTraceValues.less_actual, ReceiveTraceValues.orCondition_actual,
+    logTermValue_actual, highestPossibleValue_actual, ReceiveTraceValues.literal]
+  by_cases stale : request.term < (state.nodes destination).currentTerm
+  · simp [failureResponse, stale]
+  · simp only [failureResponse, if_neg stale]
+    split_ifs <;> simp_all <;> omega
+
+theorem appendRejectedExpr_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (state : Template holes) (tracking : Tracking holes) (correct : TrackingCorrect assignment state tracking)
+    (destination : Node) (request : AppendEntriesRequest Node (Value holes)) :
+    (appendRejectedExpr state tracking destination request).Holds assignment ↔ appendRejected state destination request := by
+  by_cases stale : request.term < (state.nodes destination).currentTerm
+  all_goals simp [appendRejectedExpr, appendRejected, Expr.Holds, orExpr, correct.packetTerms,
+    correct.currentTerms, Message.term, appendLogOkExpr_correct assignment state tracking correct,
+    roleGuard_correct assignment state tracking, correct.localFields, stale]
+
+@[simp] theorem selectedPacketFrame_state {holes : Nat} (before : Frame holes) (source destination : Node)
+    (message : Message Node (Value holes)) :
+    (selectedPacketFrame before source destination message).state = before.state := rfl
+
+theorem selectedPacketFrame_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (before : Frame holes) (correct : FrameCorrect assignment before) (source destination : Node)
+    (message : Message Node (Value holes)) (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (message, remaining)) :
+    FrameCorrect assignment (selectedPacketFrame before source destination message) := by
+  refine { correct with packetTerms := ?_, packetFields := ?_, packetPositions := ?_ }
+  · intro packet
+    by_cases same : packet = message
+    · subst packet
+      simp [selectedPacketFrame, firstPacketTerm_correct assignment before.state before.tracking correct, selected]
+    · simp [selectedPacketFrame, same, correct.packetTerms]
+  · intro packet field input
+    by_cases same : packet = message
+    · subst packet
+      by_cases value : input = packetFieldNumber message field
+      · subst input
+        simp [selectedPacketFrame, firstPacketField_correct assignment before.state before.tracking correct, selected]
+      · simp [selectedPacketFrame, value, correct.packetFields]
+    · simp [selectedPacketFrame, same, correct.packetFields]
+  · intro packet offset input
+    by_cases same : packet = message
+    · subst packet
+      by_cases value : input = packetFieldNumber message 0 + offset
+      · subst input
+        simp only [selectedPacketFrame, Function.update_self]
+        rw [ReceiveTraceQueue.firstValue_takeFirst assignment source _ _
+          (correct.queues destination _) _ _, selected]
+        exact correct.packetPositions _ _ _
+      · simp [selectedPacketFrame, value, correct.packetPositions]
+    · simp [selectedPacketFrame, same, correct.packetPositions]
+
+theorem trackedReceiveStep_eval {holes : Nat} (assignment : Fin holes -> Nat)
+    (before : Frame holes) (correct : FrameCorrect assignment before) (source destination : Node) :
+    (trackedReceiveStep before source destination).eval assignment =
+      (GuardedReceive.step before.state source destination).eval assignment := by
+  cases selected : takeFirstFrom source (before.state.network destination) with
+  | none => simp [trackedReceiveStep, selected]
+  | some pair =>
+      rcases pair with ⟨message, remaining⟩
+      cases message with
+      | appendEntriesRequest request =>
+          simp only [trackedReceiveStep, selected]
+          apply ReceiveTraceBranching.step_eval assignment before.state source destination _ request remaining selected
+          exact appendPrefixExpr_correct assignment _ _
+            (selectedPacketFrame_correct assignment before correct source destination _ remaining selected) destination request
+      | _ => simp [trackedReceiveStep, selected]
+
+theorem appendReplyValues_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (before : Frame holes) (correct : FrameCorrect assignment before) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) :
+    (appendReplyValues before destination request).term.Correct assignment ∧
+      (appendReplyValues before destination request).index.Correct assignment ∧
+      (appendReplyValues before destination request).success.Correct assignment := by
+  have failure := appendFailureValues_correct assignment before.state before.tracking correct destination request
+  have rejected : (ReceiveTraceValues.Condition.mk (decide (appendRejected before.state destination request))
+      (appendRejectedExpr before.state before.tracking destination request)).Correct assignment := by
+    simpa [ReceiveTraceValues.Condition.Correct] using
+      appendRejectedExpr_correct assignment before.state before.tracking correct destination request
+  dsimp only [appendReplyValues]
+  refine ⟨?_, ?_, ?_⟩
+  · exact ReceiveTraceValues.choose_correct assignment _ _ _ rejected failure.1 (correct.currentTerms destination)
+  · apply ReceiveTraceValues.choose_correct assignment _ _ _ rejected failure.2
+    exact ReceiveTraceValues.add_correct assignment _ _ (correct.packetFields _ _ _) (correct.packetFields _ _ _)
+  · exact ReceiveTraceValues.boolean_correct assignment _ (ReceiveTraceValues.notCondition_correct assignment _ rejected)
+
+theorem appendReplyValues_actual {holes : Nat} (before : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) :
+    (appendReplyValues before destination request).term.actual = (appendReplyPacket before destination request).term ∧
+      (appendReplyValues before destination request).index.actual =
+        packetFieldNumber (appendReplyPacket before destination request) 3 ∧
+      (appendReplyValues before destination request).success.actual =
+        packetFieldNumber (appendReplyPacket before destination request) 6 := by
+  have failure := appendFailureValues_actual before.state before.tracking destination request
+  have metadata := failureResponseMetadata (before.state.nodes destination) request
+  by_cases rejected : appendRejected before.state destination request
+  all_goals simp [appendReplyValues, appendReplyPacket, rejected, ReceiveTraceValues.choose_actual,
+    ReceiveTraceValues.boolean, ReceiveTraceValues.notCondition, ReceiveTraceValues.literal,
+    ReceiveTraceValues.add, failure.1, failure.2, Message.term, packetFieldNumber, metadata.2.2, successResponse]
+
+theorem rememberAppendReply_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (beforeCorrect : FrameCorrect assignment before) (afterCorrect : FrameCorrect assignment after)
+    (source destination : Node) (request : AppendEntriesRequest Node (Value holes))
+    (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (.appendEntriesRequest request, remaining)) :
+    FrameCorrect assignment (rememberAppendReply position before after source destination request remaining) := by
+  have selectedCorrect := selectedPacketFrame_correct assignment before beforeCorrect source destination
+    (.appendEntriesRequest request) remaining selected
+  have values := appendReplyValues_correct assignment _ selectedCorrect destination request
+  have actual := appendReplyValues_actual (selectedPacketFrame before source destination (.appendEntriesRequest request))
+    destination request
+  dsimp only [rememberAppendReply]
+  split
+  · exact afterCorrect
+  · apply assignPacketField_correct
+    · exact values.2.2
+    · apply assignPacketField_correct
+      · exact values.2.1
+      · exact assignPacketTerm_correct assignment _ _ after actual.1 values.1 afterCorrect
+
+theorem rememberReceiveReply_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (beforeCorrect : FrameCorrect assignment before) (afterCorrect : FrameCorrect assignment after)
+    (source destination : Node) :
+    FrameCorrect assignment (rememberReceiveReply position before after source destination) := by
+  cases selected : takeFirstFrom source (before.state.network destination) with
+  | none => simpa [rememberReceiveReply, selected] using afterCorrect
+  | some pair =>
+      rcases pair with ⟨message, remaining⟩
+      cases message <;> simp only [rememberReceiveReply, selected]
+      all_goals first
+        | exact afterCorrect
+        | exact rememberAppendReply_correct assignment position before after beforeCorrect afterCorrect
+            source destination _ remaining selected
+        | exact rememberVoteReply_correct assignment position before after beforeCorrect afterCorrect
+            source destination _ _ remaining selected
+
+theorem responseSentValue_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (correct : FrameCorrect assignment before)
+    (source destination : Node) (response : AppendEntriesResponse Node) (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (.appendEntriesResponse response, remaining)) :
+    (responseSentValue position before after source destination response).Correct assignment := by
+  have possible : (highestPossibleValue before.state before.tracking destination
+      ⟨response.lastLogIndex, firstPacketField before.state before.tracking source destination 3⟩
+      ⟨response.term, firstPacketTerm before.state before.tracking source destination⟩).Correct assignment := by
+    apply highestPossibleValue_correct assignment _ _ correct
+    · simp [ReceiveTraceValues.Scalar.Correct,
+        firstPacketField_correct assignment before.state before.tracking correct, selected, packetFieldNumber]
+    · simp [ReceiveTraceValues.Scalar.Correct,
+        firstPacketTerm_correct assignment before.state before.tracking correct, selected, Message.term]
+  dsimp only [responseSentValue]
+  split_ifs <;> try simp only [ReceiveTraceValues.named_correct]
+  all_goals apply ReceiveTraceValues.conditionalClamp_correct
+  all_goals first
+    | simpa [ReceiveTraceValues.Condition.Correct] using
+      responseNackExpr_correct assignment before correct source destination response remaining selected
+    | exact possible
+    | exact correct.matchIndices destination source _
+    | simpa [ReceiveTraceValues.Scalar.Correct, mapState_nodes_get, mapNodeState] using
+      correct.sentIndex destination source
+
+theorem responseSentValue_actual {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) (response : AppendEntriesResponse Node) (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (.appendEntriesResponse response, remaining))
+    (shape : after.state = next before.state (.receive source destination)) :
+    (responseSentValue position before after source destination response).actual =
+      (after.state.nodes destination).sentIndex source := by
+  have node := ReceiveTraceGuards.response_node before.state source destination response remaining selected
+  dsimp only [responseSentValue]
+  split_ifs <;> simp only [ReceiveTraceValues.named_actual, ReceiveTraceValues.conditionalClamp_actual,
+    highestPossibleValue, ReceiveTraceReplication.highestPossible_actual]
+  all_goals rw [shape, node]
+  all_goals unfold responseNackCondition
+  all_goals split_ifs <;> simp_all [updateIndex, min_comm]
+
+theorem responseMatchValue_actual {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) (response : AppendEntriesResponse Node) (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (.appendEntriesResponse response, remaining))
+    (shape : after.state = next before.state (.receive source destination)) :
+    (responseMatchValue position before after source destination response).actual =
+      (after.state.nodes destination).matchIndex source := by
+  have node := ReceiveTraceGuards.response_node before.state source destination response remaining selected
+  simp only [responseMatchValue, ReceiveTraceValues.choose, ReceiveTraceValues.named,
+    ReceiveTraceValues.maximum, ReceiveTraceValues.literal, apply_ite]
+  rw [shape, node]
+  unfold responseAckCondition
+  split_ifs <;> simp_all [updateIndex]
+
+@[simp] theorem assignMatchIndex_state {holes : Nat} (node peer : Node)
+    (value : ReceiveTraceValues.Scalar holes) (frame : Frame holes) :
+    (assignMatchIndex node peer value frame).state = frame.state := rfl
+
+@[simp] theorem assignSentIndex_state {holes : Nat} (node peer : Node)
+    (value : ReceiveTraceValues.Scalar holes) (frame : Frame holes) :
+    (assignSentIndex node peer value frame).state = frame.state := rfl
+
+theorem assignMatchIndex_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (node peer : Node) (value : ReceiveTraceValues.Scalar holes) (frame : Frame holes)
+    (valueCorrect : value.Correct assignment) (correct : FrameCorrect assignment frame) :
+    FrameCorrect assignment (assignMatchIndex node peer value frame) := by
+  refine { correct with matchIndices := ?_ }
+  intro candidate target index
+  simp only [assignMatchIndex, Function.update_apply, ite_apply]
+  split_ifs <;> first
+    | exact ReceiveTraceValues.install_correct assignment _ (correct.matchIndices node peer) value valueCorrect index
+    | exact correct.matchIndices _ _ _
+
+theorem assignSentIndex_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (node peer : Node) (value : ReceiveTraceValues.Scalar holes) (frame : Frame holes)
+    (actual : value.actual = (frame.state.nodes node).sentIndex peer)
+    (valueCorrect : value.Correct assignment) (correct : FrameCorrect assignment frame) :
+    FrameCorrect assignment (assignSentIndex node peer value frame) := by
+  refine { correct with sentIndex := ?_ }
+  intro candidate target
+  simp only [assignSentIndex, Function.update_apply, ite_apply]
+  split_ifs <;> simp_all [ReceiveTraceValues.Scalar.Correct, correct.sentIndex, mapNodeState]
+
+@[simp] theorem rememberReceiveResponse_state {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) :
+    (rememberReceiveResponse position before after source destination).state = after.state := by
+  cases selected : takeFirstFrom source (before.state.network destination) with
+  | none => simp [rememberReceiveResponse, selected]
+  | some pair =>
+      rcases pair with ⟨message, remaining⟩
+      cases message <;> simp [rememberReceiveResponse, selected]
+
+theorem rememberReceiveResponse_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (beforeCorrect : FrameCorrect assignment before) (afterCorrect : FrameCorrect assignment after)
+    (source destination : Node)
+    (shape : ∀ response remaining, takeFirstFrom source (before.state.network destination) =
+      some (.appendEntriesResponse response, remaining) → after.state = next before.state (.receive source destination)) :
+    FrameCorrect assignment (rememberReceiveResponse position before after source destination) := by
+  cases selected : takeFirstFrom source (before.state.network destination) with
+  | none => simpa [rememberReceiveResponse, selected] using afterCorrect
+  | some pair =>
+      rcases pair with ⟨message, remaining⟩
+      cases message with
+      | appendEntriesResponse response =>
+          simp only [rememberReceiveResponse, selected]
+          apply assignSentIndex_correct
+          · exact responseSentValue_actual position before after source destination response remaining selected
+              (shape response remaining selected)
+          · exact responseSentValue_correct assignment position before after beforeCorrect source destination response remaining selected
+          · exact assignMatchIndex_correct assignment destination source _ after
+              (responseMatchValue_correct assignment position before after beforeCorrect source destination response remaining selected)
+              afterCorrect
+      | _ => simpa only [rememberReceiveResponse, selected] using afterCorrect
+
+theorem attachReceiveFrame_state {holes : Nat} (assignment : Fin holes -> Nat)
+    (position pathId : Nat) (before : Frame holes) (tree : Guarded holes (GuardedReceive.Result holes)) :
+    ((attachReceiveFrame position pathId before tree).eval assignment).state = (tree.eval assignment).successor := by
+  induction tree generalizing pathId with
+  | pure => rfl
+  | branch condition left right leftIH rightIH =>
+      simp only [attachReceiveFrame, Guarded.eval_branchSmart, Guarded.eval]
+      split <;> first | exact leftIH _ | exact rightIH _
+
+theorem appendRetainedValue_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (before : Frame holes) (correct : FrameCorrect assignment before) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) :
+    (appendRetainedValue before destination request).Correct assignment := by
+  apply ReceiveTraceValues.minimum_correct
+  · simpa [ReceiveTraceValues.Scalar.Correct, mapState_nodes_get, mapNodeState] using correct.logLengths destination
+  · exact correct.packetFields _ _ _
+
+theorem appendLogLengthValue_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (correct : FrameCorrect assignment before) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) :
+    (appendLogLengthValue position before after destination request).Correct assignment := by
+  dsimp only [appendLogLengthValue]
+  split_ifs <;> try simp only [ReceiveTraceValues.named_correct]
+  all_goals repeat' first
+    | simpa [ReceiveTraceValues.Scalar.Correct, mapState_nodes_get, mapNodeState] using correct.logLengths destination
+    | exact appendRetainedValue_correct assignment before correct destination request
+    | exact correct.packetFields _ _ _
+    | apply ReceiveTraceValues.add_correct
+
+theorem appendLogLengthValue_actual {holes : Nat} (position : Nat) (before after : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes))
+    (shape : ReceiveTraceEffects.LogShape (before.state.nodes destination) request (after.state.nodes destination)) :
+    (appendLogLengthValue position before after destination request).actual = (after.state.nodes destination).log.length := by
+  dsimp only [appendLogLengthValue]
+  split_ifs <;> simp_all [ReceiveTraceEffects.LogShape, appendRetainedValue, ReceiveTraceValues.minimum,
+    ReceiveTraceValues.add, ReceiveTraceValues.named, min_comm]
+
+theorem appendLogPosition_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (correct : FrameCorrect assignment before) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) (index : Nat) :
+    (appendLogPosition position before after destination request index).eval assignment = index := by
+  have retained := appendRetainedValue_correct assignment before correct destination request
+  dsimp only [ReceiveTraceValues.Scalar.Correct] at retained
+  dsimp only [appendLogPosition]
+  split_ifs <;> simp_all [NatTerm.eval, correct.packetPositions, correct.packetFields, correct.logPositions]
+  omega
+
+theorem appendLogTerm_copied {holes : Nat} (position : Nat) (before after : Frame holes)
+    (destination : Node) (request : AppendEntriesRequest Node (Value holes)) (index : Nat)
+    (shape : ReceiveTraceEffects.LogShape (before.state.nodes destination) request (after.state.nodes destination))
+    (changed : (after.state.nodes destination).log ≠ (before.state.nodes destination).log)
+    (beyond : (appendRetainedValue before destination request).actual < index)
+    (within : index ≤ (after.state.nodes destination).log.length) :
+    appendLogTerm position before after destination request index (termAt (after.state.nodes destination).log index) =
+      .named position (pathSlot (Nat.pair after.pathId index) LOG_TERM_SLOT) "received entry term"
+        (before.tracking.packetFields (.appendEntriesRequest request)
+          (6 + (index - (appendRetainedValue before destination request).actual))
+          (termAt request.entries (index - (appendRetainedValue before destination request).actual))) := by
+  have copied : (after.state.nodes destination).log =
+      (before.state.nodes destination).log.take request.prevLogIndex ++ request.entries := by
+    rcases shape.resolve_left changed with truncated | copied
+    · simp [truncated, List.length_take, appendRetainedValue, ReceiveTraceValues.minimum] at within beyond
+      omega
+    · exact copied
+  have term : termAt (after.state.nodes destination).log index =
+      termAt request.entries (index - (appendRetainedValue before destination request).actual) := by
+    rw [copied, ReceiveTraceEffects.termAt_append_right]
+    · simp [appendRetainedValue, ReceiveTraceValues.minimum, List.length_take, min_comm]
+    · simpa [appendRetainedValue, ReceiveTraceValues.minimum, List.length_take, min_comm] using beyond
+  have notRetained : ¬index ≤ (appendRetainedValue before destination request).actual := by omega
+  simp [appendLogTerm, changed, notRetained, within, term]
+
+theorem appendLogTerm_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (correct : FrameCorrect assignment before) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes))
+    (shape : ReceiveTraceEffects.LogShape (before.state.nodes destination) request (after.state.nodes destination))
+    (index term : Nat) :
+    (appendLogTerm position before after destination request index term).eval assignment = term := by
+  have length := appendLogLengthValue_correct assignment position before after correct destination request
+  rw [ReceiveTraceValues.Scalar.Correct, appendLogLengthValue_actual position before after destination request shape] at length
+  dsimp only [appendLogTerm]
+  split_ifs <;> simp_all [NatTerm.eval, Expr.ite_eval, Expr.Holds, correct.packetFields,
+    correct.logPositions, correct.logTerms]
+
+@[simp] theorem rememberAppendLog_state {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) (request : AppendEntriesRequest Node (Value holes)) :
+    (rememberAppendLog position before after source destination request).state = after.state := rfl
+
+theorem rememberAppendLog_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (beforeCorrect : FrameCorrect assignment before) (afterCorrect : FrameCorrect assignment after)
+    (source destination : Node) (request : AppendEntriesRequest Node (Value holes)) (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (.appendEntriesRequest request, remaining))
+    (shape : ReceiveTraceEffects.LogShape (before.state.nodes destination) request (after.state.nodes destination)) :
+    FrameCorrect assignment (rememberAppendLog position before after source destination request) := by
+  let selectedFrame := selectedPacketFrame before source destination (.appendEntriesRequest request)
+  have selectedCorrect : FrameCorrect assignment selectedFrame :=
+    selectedPacketFrame_correct assignment before beforeCorrect source destination _ remaining selected
+  have length := appendLogLengthValue_correct assignment position selectedFrame after selectedCorrect destination request
+  have actual := appendLogLengthValue_actual position selectedFrame after destination request shape
+  refine { afterCorrect with logLengths := ?_, logPositions := ?_, logTerms := ?_ }
+  · intro node
+    by_cases same : node = destination
+    · subst node
+      simpa [rememberAppendLog, ReceiveTraceValues.Scalar.Correct, actual, mapState_nodes_get, mapNodeState] using length
+    · simp [rememberAppendLog, same, afterCorrect.logLengths]
+  · intro node index
+    by_cases same : node = destination
+    · subst node
+      simpa [rememberAppendLog] using appendLogPosition_correct assignment position selectedFrame after selectedCorrect destination request index
+    · simp [rememberAppendLog, same, afterCorrect.logPositions]
+  · intro node index term
+    by_cases same : node = destination
+    · subst node
+      simpa [rememberAppendLog] using appendLogTerm_correct assignment position selectedFrame after selectedCorrect destination request shape index term
+    · simp [rememberAppendLog, same, afterCorrect.logTerms]
+
+@[simp] theorem rememberReceiveLog_state {holes : Nat} (position : Nat) (before after : Frame holes) (source destination : Node) :
+    (rememberReceiveLog position before after source destination).state = after.state := by
+  cases selected : takeFirstFrom source (before.state.network destination) with
+  | none => simp [rememberReceiveLog, selected]
+  | some pair =>
+      rcases pair with ⟨message, remaining⟩
+      cases message <;> simp [rememberReceiveLog, selected]
+
+theorem rememberReceiveLog_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (beforeCorrect : FrameCorrect assignment before) (afterCorrect : FrameCorrect assignment after)
+    (source destination : Node)
+    (shape : ∀ request remaining, takeFirstFrom source (before.state.network destination) =
+      some (.appendEntriesRequest request, remaining) →
+      ReceiveTraceEffects.LogShape (before.state.nodes destination) request (after.state.nodes destination)) :
+    FrameCorrect assignment (rememberReceiveLog position before after source destination) := by
+  cases selected : takeFirstFrom source (before.state.network destination) with
+  | none => simpa [rememberReceiveLog, selected] using afterCorrect
+  | some pair =>
+      rcases pair with ⟨message, remaining⟩
+      cases message <;> simp only [rememberReceiveLog, selected]
+      all_goals first
+        | exact afterCorrect
+        | exact rememberAppendLog_correct assignment position before after beforeCorrect afterCorrect
+            source destination _ remaining selected (shape _ remaining selected)
+
+theorem appendCommitValue_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (before after : Frame holes) (beforeCorrect : FrameCorrect assignment before) (afterCorrect : FrameCorrect assignment after)
+    (destination : Node) (request : AppendEntriesRequest Node (Value holes)) :
+    (appendCommitValue before after destination request).Correct assignment := by
+  apply ReceiveTraceValues.maximum_correct
+  · exact beforeCorrect.commitIndices _ _
+  · apply ReceiveTraceReplication.signedFrontier_correct
+    · apply ReceiveTraceValues.minimum_correct
+      · exact beforeCorrect.packetFields _ _ _
+      · exact ReceiveTraceValues.add_correct assignment _ _ (beforeCorrect.packetFields _ _ _) (beforeCorrect.packetFields _ _ _)
+    · simpa [mapState_nodes_get, mapNodeState] using afterCorrect.logLengths destination
+    · exact afterCorrect.logPositions destination
+
+theorem appendCommitValue_actual {holes : Nat} (before after : Frame holes) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) :
+    (appendCommitValue before after destination request).actual =
+      committedFromLeader (before.state.nodes destination) request (after.state.nodes destination).log := by
+  simp [appendCommitValue, ReceiveTraceValues.maximum, ReceiveTraceReplication.signedFrontier_actual,
+    ReceiveTraceValues.minimum, ReceiveTraceValues.add, committedFromLeader]
+
+theorem receiveCommitShape {holes : Nat} (assignment : Fin holes -> Nat)
+    (before after : Frame holes) (source destination : Node) (request : AppendEntriesRequest Node (Value holes))
+    (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (.appendEntriesRequest request, remaining))
+    (shape : mapState (NatTerm.eval assignment) after.state =
+      next (mapState (NatTerm.eval assignment) before.state) (.receive source destination)) :
+    (after.state.nodes destination).commitIndex = (before.state.nodes destination).commitIndex ∨
+      (after.state.nodes destination).commitIndex =
+        committedFromLeader (before.state.nodes destination) request (after.state.nodes destination).log := by
+  have selectedMapped :
+      takeFirstFrom source ((mapState (NatTerm.eval assignment) before.state).network destination) =
+        some (.appendEntriesRequest (ReceiveMapping.mapRequest (NatTerm.eval assignment) request),
+          remaining.map (mapMessage (NatTerm.eval assignment))) := by
+    change takeFirstFrom source ((before.state.network destination).map (mapMessage (NatTerm.eval assignment))) = _
+    rw [takeFirstFrom_map, selected]
+    rfl
+  have commits := ReceiveTraceEffects.receive_commit (mapState (NatTerm.eval assignment) before.state)
+    source destination _ _ selectedMapped
+  rw [← shape] at commits
+  simpa [mapState_nodes_get, mapNodeState, committedFromLeader, ReceiveMapping.mapRequest,
+    maxCommittableIndexUpTo_map] using commits
+
+@[simp] theorem rememberAppendCommit_state {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) (request : AppendEntriesRequest Node (Value holes)) :
+    (rememberAppendCommit position before after source destination request).state = after.state := by
+  simp [rememberAppendCommit, apply_ite]
+
+theorem rememberAppendCommit_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (beforeCorrect : FrameCorrect assignment before) (afterCorrect : FrameCorrect assignment after)
+    (source destination : Node) (request : AppendEntriesRequest Node (Value holes)) (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (.appendEntriesRequest request, remaining))
+    (shape : mapState (NatTerm.eval assignment) after.state =
+      next (mapState (NatTerm.eval assignment) before.state) (.receive source destination)) :
+    FrameCorrect assignment (rememberAppendCommit position before after source destination request) := by
+  dsimp only [rememberAppendCommit]
+  split
+  · exact afterCorrect
+  · rename_i changed
+    let selectedFrame := selectedPacketFrame before source destination (.appendEntriesRequest request)
+    have selectedCorrect : FrameCorrect assignment selectedFrame :=
+      selectedPacketFrame_correct assignment before beforeCorrect source destination _ remaining selected
+    have value := appendCommitValue_correct assignment selectedFrame after selectedCorrect afterCorrect destination request
+    have actual := appendCommitValue_actual selectedFrame after destination request
+    have committed := (receiveCommitShape assignment before after source destination request remaining selected shape).resolve_left changed
+    have evaluated : (appendCommitValue selectedFrame after destination request).expression.eval assignment =
+        (after.state.nodes destination).commitIndex := by
+      exact value.trans (actual.trans committed.symm)
+    refine { afterCorrect with commitIndices := ?_ }
+    intro node index
+    simp only [Function.update_apply, ite_apply]
+    split_ifs <;> simp_all [NatTerm.eval, afterCorrect.commitIndices, selectedFrame]
+
+theorem appendAcceptanceHeaderExpr_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (before : Frame holes) (correct : FrameCorrect assignment before) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) :
+    (appendAcceptanceHeaderExpr before destination request).Holds assignment ↔ appendAcceptanceHeader before destination request := by
+  simp [appendAcceptanceHeaderExpr, appendAcceptanceHeader, Expr.Holds, correct.packetTerms,
+    correct.currentTerms, correct.packetFields, correct.commitIndices, Message.term,
+    appendLogOkExpr_correct assignment before.state before.tracking correct,
+    roleGuard_correct assignment before.state before.tracking, correct.localFields]
+
+@[simp] theorem rememberUnappliedAppend_state {holes : Nat} (before after : Frame holes)
+    (source destination : Node) (request : AppendEntriesRequest Node (Value holes)) :
+    (rememberUnappliedAppend before after source destination request).state = after.state := by
+  unfold rememberUnappliedAppend
+  split <;> rfl
+
+theorem rememberUnappliedAppend_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (before after : Frame holes) (beforeCorrect : FrameCorrect assignment before) (afterCorrect : FrameCorrect assignment after)
+    (source destination : Node) (request : AppendEntriesRequest Node (Value holes)) (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (.appendEntriesRequest request, remaining)) :
+    FrameCorrect assignment (rememberUnappliedAppend before after source destination request) := by
+  unfold rememberUnappliedAppend
+  split
+  · rename_i unchanged
+    let selectedFrame := selectedPacketFrame before source destination (.appendEntriesRequest request)
+    have selectedCorrect := selectedPacketFrame_correct assignment before beforeCorrect source destination _ remaining selected
+    have rejected : ¬(appendAcceptanceHeaderExpr selectedFrame destination request).Holds assignment := by
+      rw [appendAcceptanceHeaderExpr_correct assignment selectedFrame selectedCorrect]
+      exact unchanged.1
+    have values :
+        (unappliedAppendValues selectedFrame destination request).1.eval assignment = (before.state.nodes destination).log.length ∧
+        (unappliedAppendValues selectedFrame destination request).2.eval assignment = (before.state.nodes destination).commitIndex := by
+      simp only [unappliedAppendValues, NatTerm.max_eval, Expr.ite_eval, Expr.Holds,
+        rejected, false_and, if_false]
+      change (before.tracking.logLengths destination).eval assignment = _ ∧
+        max ((before.tracking.commitIndices destination _).eval assignment) 0 = _
+      simp [beforeCorrect.logLengths, beforeCorrect.commitIndices, mapState_nodes_get, mapNodeState, selectedFrame]
+    refine { afterCorrect with logLengths := ?_, commitIndices := ?_ }
+    · intro node
+      by_cases same : node = destination
+      · subst node
+        simpa [Function.update_self, mapState_nodes_get, mapNodeState, unchanged.2.1, selectedFrame] using values.1
+      · simpa [Function.update_of_ne same] using afterCorrect.logLengths node
+    · intro node index
+      simp only [Function.update_apply, ite_apply]
+      split_ifs <;> simp_all [selectedFrame, afterCorrect.commitIndices]
+  · exact afterCorrect
+
+@[simp] theorem rememberReceiveCommit_state {holes : Nat} (position : Nat) (before after : Frame holes) (source destination : Node) :
+    (rememberReceiveCommit position before after source destination).state = after.state := by
+  cases selected : takeFirstFrom source (before.state.network destination) with
+  | none => simp [rememberReceiveCommit, selected]
+  | some pair =>
+      rcases pair with ⟨message, remaining⟩
+      cases message <;> simp [rememberReceiveCommit, selected]
+
+theorem rememberReceiveCommit_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (beforeCorrect : FrameCorrect assignment before) (afterCorrect : FrameCorrect assignment after)
+    (source destination : Node)
+    (shape : mapState (NatTerm.eval assignment) after.state =
+      next (mapState (NatTerm.eval assignment) before.state) (.receive source destination)) :
+    FrameCorrect assignment (rememberReceiveCommit position before after source destination) := by
+  cases selected : takeFirstFrom source (before.state.network destination) with
+  | none => simpa [rememberReceiveCommit, selected] using afterCorrect
+  | some pair =>
+      rcases pair with ⟨message, remaining⟩
+      cases message <;> simp only [rememberReceiveCommit, selected]
+      all_goals first
+        | exact afterCorrect
+        | exact rememberUnappliedAppend_correct assignment before _ beforeCorrect
+            (rememberAppendCommit_correct assignment position before after beforeCorrect afterCorrect
+              source destination _ remaining selected shape) source destination _ remaining selected
+
+theorem receiveConfigurationSnapshots_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (beforeCorrect : FrameCorrect assignment before) (afterCorrect : FrameCorrect assignment after)
+    (destination : Node) (request : AppendEntriesRequest Node (Value holes))
+    (shape : ReceiveTraceEffects.LogShape (before.state.nodes destination) request (after.state.nodes destination)) :
+    ControlTraceConfigurations.Correct assignment (allConfigurations (after.state.nodes destination).log)
+      (receiveConfigurationSnapshots position before after destination request) := by
+  by_cases same : (after.state.nodes destination).log = (before.state.nodes destination).log
+  · simpa [receiveConfigurationSnapshots, same] using beforeCorrect.configurations destination (allConfigurations (before.state.nodes destination).log)
+  · have retained := appendRetainedValue_correct assignment before beforeCorrect destination request
+    change (appendRetainedValue before destination request).expression.eval assignment =
+      (appendRetainedValue before destination request).actual at retained
+    have taken : (before.state.nodes destination).log.take (appendRetainedValue before destination request).actual =
+        (before.state.nodes destination).log.take request.prevLogIndex := by
+      by_cases bounded : (before.state.nodes destination).log.length ≤ request.prevLogIndex
+      · simp [appendRetainedValue, ReceiveTraceValues.minimum, Nat.min_eq_left bounded, List.take_of_length_le bounded]
+      · simp [appendRetainedValue, ReceiveTraceValues.minimum, Nat.min_eq_right (Nat.le_of_lt (Nat.lt_of_not_ge bounded))]
+    have kept := ControlTraceConfigurations.truncate_correct assignment _ _
+      (beforeCorrect.configurations destination (allConfigurations (before.state.nodes destination).log))
+      (appendRetainedValue before destination request).expression position
+      (fun index => pathSlot (Nat.pair after.pathId (2 * index)) CONFIGURATION_SLOT)
+    rw [retained, ← ControlTraceConfigurations.allConfigurations_take, taken] at kept
+    by_cases truncated : (after.state.nodes destination).log = (before.state.nodes destination).log.take request.prevLogIndex
+    · simp only [receiveConfigurationSnapshots, if_neg same, if_pos truncated]
+      simpa only [truncated] using kept
+    · have copied := (shape.resolve_left same).resolve_left truncated
+      have added := ReceiveTraceConfigurations.copied_correct assignment
+        (configurationsInLogFrom ((appendRetainedValue before destination request).actual + 1) request.entries)
+        (after.tracking.logPositions destination) (appendRetainedValue before destination request).expression
+        (after.tracking.logLengths destination) position
+        (fun index => pathSlot (Nat.pair after.pathId (2 * index + 1)) CONFIGURATION_SLOT)
+        (afterCorrect.logPositions destination)
+        (by
+          intro configuration member
+          have bounds := configurationsInLogFrom_index_bounds _ _ member
+          have length := afterCorrect.logLengths destination
+          simp only [mapState_nodes_get, mapNodeState, List.length_map, copied, List.length_append, List.length_take] at length
+          rw [retained, length]
+          dsimp only [appendRetainedValue, ReceiveTraceValues.minimum] at bounds ⊢
+          omega)
+      have combined := ReceiveTraceConfigurations.append_correct assignment _ _ _ _ kept added
+      simp only [receiveConfigurationSnapshots, if_neg same, if_neg truncated]
+      simpa [copied, ReceiveTraceConfigurations.allConfigurations_append,
+        appendRetainedValue, ReceiveTraceValues.minimum, min_comm] using combined
+
+@[simp] theorem rememberAppendConfigurations_state {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) (request : AppendEntriesRequest Node (Value holes)) :
+    (rememberAppendConfigurations position before after source destination request).state = after.state := by
+  unfold rememberAppendConfigurations
+  split <;> rfl
+
+theorem rememberAppendConfigurations_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (beforeCorrect : FrameCorrect assignment before) (afterCorrect : FrameCorrect assignment after)
+    (source destination : Node) (request : AppendEntriesRequest Node (Value holes)) (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (.appendEntriesRequest request, remaining))
+    (shape : ReceiveTraceEffects.LogShape (before.state.nodes destination) request (after.state.nodes destination)) :
+    FrameCorrect assignment (rememberAppendConfigurations position before after source destination request) := by
+  have selectedCorrect := selectedPacketFrame_correct assignment before beforeCorrect source destination _ remaining selected
+  have configurations := receiveConfigurationSnapshots_correct assignment position _ after selectedCorrect afterCorrect destination request shape
+  dsimp only [rememberAppendConfigurations]
+  split
+  · exact afterCorrect
+  · refine { afterCorrect with configurations := ?_ }
+    intro node values
+    simp only [Function.update_apply, ite_apply]
+    split_ifs <;> first
+      | (subst_vars; exact configurations)
+      | exact afterCorrect.configurations _ _
+
+@[simp] theorem rememberReceiveConfigurations_state {holes : Nat} (position : Nat) (before after : Frame holes) (source destination : Node) :
+    (rememberReceiveConfigurations position before after source destination).state = after.state := by
+  cases selected : takeFirstFrom source (before.state.network destination) with
+  | none => simp [rememberReceiveConfigurations, selected]
+  | some pair =>
+      rcases pair with ⟨message, remaining⟩
+      cases message <;> simp [rememberReceiveConfigurations, selected]
+
+theorem rememberReceiveConfigurations_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (beforeCorrect : FrameCorrect assignment before) (afterCorrect : FrameCorrect assignment after)
+    (source destination : Node)
+    (shape : ∀ request remaining, takeFirstFrom source (before.state.network destination) =
+      some (.appendEntriesRequest request, remaining) →
+      ReceiveTraceEffects.LogShape (before.state.nodes destination) request (after.state.nodes destination)) :
+    FrameCorrect assignment (rememberReceiveConfigurations position before after source destination) := by
+  cases selected : takeFirstFrom source (before.state.network destination) with
+  | none => simpa [rememberReceiveConfigurations, selected] using afterCorrect
+  | some pair =>
+      rcases pair with ⟨message, remaining⟩
+      cases message <;> simp only [rememberReceiveConfigurations, selected]
+      all_goals first
+        | exact afterCorrect
+        | exact rememberAppendConfigurations_correct assignment position before after beforeCorrect afterCorrect
+            source destination _ remaining selected (shape _ remaining selected)
+
+theorem appendStepdownExpr_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (before : Frame holes) (correct : FrameCorrect assignment before) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) :
+    (appendStepdownExpr before destination request).Holds assignment ↔ appendStepdownCondition before destination request := by
+  simp [appendStepdownExpr, appendStepdownCondition, Expr.Holds, correct.currentTerms, correct.packetTerms,
+    Message.term, roleGuard_correct assignment before.state before.tracking, correct.localFields]
+
+theorem appendStepdownValue_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (correct : FrameCorrect assignment before) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) (field desired : Nat) :
+    (appendStepdownValue position before after destination request field desired).Correct assignment := by
+  dsimp only [appendStepdownValue]
+  split
+  · exact correct.localFields _ _ _
+  · apply ReceiveTraceValues.choose_correct
+    · simpa [ReceiveTraceValues.Condition.Correct] using appendStepdownExpr_correct assignment before correct destination request
+    · rfl
+    · exact correct.localFields _ _ _
+
+theorem appendConflictValue_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (correct : FrameCorrect assignment before) (destination : Node)
+    (request : AppendEntriesRequest Node (Value holes)) :
+    (appendConflictValue position before after destination request).Correct assignment := by
+  apply ReceiveTraceValues.choose_correct
+  · simp [ReceiveTraceValues.Condition.Correct, appendConflictAppliedExpr, appendConflictAppliedCondition,
+      Expr.Holds, correct.packetTerms, correct.currentTerms, correct.packetFields, correct.commitIndices,
+      Message.term, appendLogOkExpr_correct assignment before.state before.tracking correct,
+      appendConflictExpr_correct assignment before.state before.tracking correct,
+      roleGuard_correct assignment before.state before.tracking, correct.localFields]
+  · rfl
+  · exact correct.localFields _ _ _
+
+theorem appendStepdownValue_role_actual {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) (request : AppendEntriesRequest Node (Value holes))
+    (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (.appendEntriesRequest request, remaining)) :
+    (appendStepdownValue position before after destination request 2 (roleCode .follower)).actual =
+      roleCode ((next before.state (.receive source destination)).nodes destination).role := by
+  rw [ReceiveTraceEffects.receive_role before.state source destination request remaining selected]
+  by_cases condition : appendStepdownCondition before destination request
+  · have actual := condition
+    unfold appendStepdownCondition at actual
+    simp [appendStepdownValue, localField, condition, actual, ReceiveTraceValues.choose,
+      ReceiveTraceValues.named, ReceiveTraceValues.literal]
+    split_ifs <;> simp_all
+  · have actual := condition
+    unfold appendStepdownCondition at actual
+    simp [appendStepdownValue, localField, condition, actual, ReceiveTraceValues.choose,
+      ReceiveTraceValues.named, ReceiveTraceValues.literal]
+    split_ifs <;> rfl
+
+@[simp] theorem rememberReceiveStepdown_state {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) :
+    (rememberReceiveStepdown position before after source destination).state = after.state := by
+  cases selected : takeFirstFrom source (before.state.network destination) with
+  | none => simp [rememberReceiveStepdown, selected]
+  | some pair =>
+      rcases pair with ⟨message, remaining⟩
+      cases message <;> simp only [rememberReceiveStepdown, selected]
+      all_goals first | rfl | (split_ifs <;> rfl)
+
+theorem rememberReceiveStepdown_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (beforeCorrect : FrameCorrect assignment before) (afterCorrect : FrameCorrect assignment after)
+    (source destination : Node) :
+    FrameCorrect assignment (rememberReceiveStepdown position before after source destination) := by
+  cases selected : takeFirstFrom source (before.state.network destination) with
+  | none => simpa [rememberReceiveStepdown, selected] using afterCorrect
+  | some pair =>
+      rcases pair with ⟨message, remaining⟩
+      cases message with
+      | appendEntriesRequest request =>
+          have selectedCorrect := selectedPacketFrame_correct assignment before beforeCorrect source destination _ remaining selected
+          have roleCorrect := assignLocalValue_correct assignment destination 2 _ after
+            (appendStepdownValue_correct assignment position _ after selectedCorrect destination request 2 (roleCode .follower))
+            afterCorrect
+          simp only [rememberReceiveStepdown, selected]
+          split
+          · exact assignLocalValue_correct assignment destination 0 _ _
+              (appendStepdownValue_correct assignment position _ after selectedCorrect destination request 0 1) roleCorrect
+          · split
+            · exact assignLocalValue_correct assignment destination 0 _ _
+                (appendConflictValue_correct assignment position _ after selectedCorrect destination request) roleCorrect
+            · exact roleCorrect
+      | _ => simpa [rememberReceiveStepdown, selected] using afterCorrect
+
+@[simp] theorem rememberReceiveRetirement_state {holes : Nat} (position : Nat) (before after : Frame holes)
+    (destination : Node) :
+    (rememberReceiveRetirement position before after destination).state = after.state := rfl
+
+theorem rememberReceiveRetirement_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (correct : FrameCorrect assignment after) (destination : Node) :
+    FrameCorrect assignment (rememberReceiveRetirement position before after destination) := by
+  have refreshed := finishFrame_correct assignment position destination after correct
+  refine { correct with completedMembers := ?_ }
+  intro node peer value
+  dsimp only [rememberReceiveRetirement]
+  split
+  · exact refreshed.completedMembers node peer value
+  · exact correct.completedMembers node peer value
+
+theorem receiveReplyFrame_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (before : Frame holes) (correct : FrameCorrect assignment before) (source destination : Node)
+    (message : Message Node (Value holes)) (remaining : List (Message Node (Value holes)))
+    (selected : takeFirstFrom source (before.state.network destination) = some (message, remaining)) :
+    FrameCorrect assignment (receiveReplyFrame before source destination message).1 := by
+  cases message with
+  | appendEntriesRequest request =>
+      have selectedCorrect := selectedPacketFrame_correct assignment before correct source destination _ remaining selected
+      have values := appendReplyValues_correct assignment _ selectedCorrect destination request
+      have actual := appendReplyValues_actual (selectedPacketFrame before source destination (.appendEntriesRequest request)) destination request
+      exact assignPacketField_correct assignment _ _ _ _ values.2.2
+        (assignPacketField_correct assignment _ _ _ _ values.2.1
+          (assignPacketTerm_correct assignment _ _ _ actual.1 values.1 correct))
+  | requestVoteRequest request =>
+      apply assignPacketField_correct
+      · exact voteGrantValue_correct assignment before.state before.tracking correct source destination false _ remaining selected
+      · exact assignPacketTerm_correct assignment _ _ _ rfl (correct.currentTerms destination) correct
+  | requestPreVote request =>
+      apply assignPacketField_correct
+      · exact voteGrantValue_correct assignment before.state before.tracking correct source destination true _ remaining selected
+      · exact assignPacketTerm_correct assignment _ _ _ rfl (correct.currentTerms destination) correct
+  | _ => exact correct
+
+theorem receiveConsumptionAmount_correct {holes : Nat} (assignment : Fin holes -> Nat)
+    (before : Frame holes) (correct : FrameCorrect assignment before) (source destination : Node) :
+    (receiveConsumptionAmount before source destination).eval assignment = 1 := by
+  cases selected : takeFirstFrom source (before.state.network destination) with
+  | none => simp [receiveConsumptionAmount, selected, NatTerm.eval]
+  | some pair =>
+      rcases pair with ⟨message, remaining⟩
+      cases message with
+      | appendEntriesRequest request =>
+          have selectedCorrect := selectedPacketFrame_correct assignment before correct source destination _ remaining selected
+          simp only [receiveConsumptionAmount, selected]
+          split
+          · rfl
+          · rename_i notStepdown
+            have notHolds : ¬(appendStepdownExpr (selectedPacketFrame before source destination
+                (.appendEntriesRequest request)) destination request).Holds assignment := by
+              rw [appendStepdownExpr_correct assignment _ selectedCorrect]
+              exact notStepdown
+            simp only [Expr.ite_eval, if_neg notHolds]
+            rfl
+      | _ => simp [receiveConsumptionAmount, selected, NatTerm.eval]
+
+theorem receiveQueueValue_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (correct : FrameCorrect assignment before)
+    (destination node : Node) (remaining : List (Message Node (Value holes)))
+    (replyFrame : Frame holes) (replyCorrect : FrameCorrect assignment replyFrame)
+    (response : Option (Message Node (Value holes)))
+    (removed : remaining.length + 1 = (before.state.network destination).length)
+    (consumed : Value holes) (consumedCorrect : consumed.eval assignment = 1) :
+    (receiveQueueValue position before after destination node remaining replyFrame response consumed).eval assignment =
+      ((match response with
+        | none => updateQueue before.state.network destination remaining
+        | some packet => enqueue (updateQueue before.state.network destination remaining) packet) node).length := by
+  have base :
+      (if node = destination then
+        NatTerm.sub (before.tracking.queueLengths node)
+          (.named position (pathSlot after.pathId (markerSlot QUEUE_LENGTH_SLOT_BASE node)) "dequeued packet" consumed)
+      else before.tracking.queueLengths node).eval assignment =
+        (updateQueue before.state.network destination remaining node).length := by
+    by_cases same : node = destination
+    · subst node
+      simp [NatTerm.eval, consumedCorrect, correct.queueLengths, updateQueue, mapState, ← removed]
+    · simp [same, correct.queueLengths, updateQueue, mapState]
+  cases response with
+  | none => exact base
+  | some packet =>
+      dsimp only [receiveQueueValue]
+      by_cases routed : packet.destination = node
+      · simp only [if_pos routed]
+        change (NatTerm.add _ _).eval assignment = _
+        simp only [NatTerm.eval, base]
+        simp only [enqueue]
+        rw [routed]
+        simp [updateQueue]
+      · simp only [if_neg routed, base]
+        simp [enqueue, updateQueue, Ne.symm routed]
+
+@[simp] theorem rememberReceiveQueues_state {holes : Nat} (position : Nat) (before after : Frame holes)
+    (source destination : Node) :
+    (rememberReceiveQueues position before after source destination).state = after.state := by
+  cases selected : takeFirstFrom source (before.state.network destination) with
+  | none => simp [rememberReceiveQueues, selected]
+  | some pair =>
+      rcases pair with ⟨message, remaining⟩
+      simp [rememberReceiveQueues, selected, apply_ite]
+
+theorem rememberReceiveQueues_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before after : Frame holes) (beforeCorrect : FrameCorrect assignment before) (afterCorrect : FrameCorrect assignment after)
+    (source destination : Node) :
+    FrameCorrect assignment (rememberReceiveQueues position before after source destination) := by
+  cases selected : takeFirstFrom source (before.state.network destination) with
+  | none => simpa [rememberReceiveQueues, selected] using afterCorrect
+  | some pair =>
+      rcases pair with ⟨message, remaining⟩
+      simp only [rememberReceiveQueues, selected]
+      split
+      · exact afterCorrect
+      · have replyCorrect := receiveReplyFrame_correct assignment before beforeCorrect source destination message remaining selected
+        refine { afterCorrect with queueLengths := ?_ }
+        intro node
+        dsimp only
+        split
+        · rename_i expected
+          have value := receiveQueueValue_correct assignment position before after beforeCorrect destination node remaining
+            _ replyCorrect (receiveReplyFrame before source destination message).2
+              (ReceiveTraceEffects.takeFirst_length source _ remaining message selected)
+              _ (receiveConsumptionAmount_correct assignment before beforeCorrect source destination)
+          simpa [mapState, expected] using value
+        · exact afterCorrect.queueLengths node
+
+theorem receiveFrames_correct {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before : Frame holes) (correct : FrameCorrect assignment before) (source destination : Node) :
+    FrameCorrect assignment ((receiveFrames position before source destination).eval assignment) := by
+  simp only [receiveFrames, Guarded.eval_map]
+  apply rememberQueueFrame_consumption_correct assignment position source before _ correct _
+    (receiveConsumptionAmount_correct assignment before correct source destination)
+  apply rememberQueueFrame_consumption_correct assignment position destination before _ correct _
+    (receiveConsumptionAmount_correct assignment before correct source destination)
+  apply rememberReceiveQueues_correct assignment position before _ correct
+  apply rememberReceiveRetirement_correct assignment position before
+  apply rememberReceiveStepdown_correct assignment position before _ correct
+  apply rememberReceiveConfigurations_correct assignment position before _ correct
+  swap
+  · intro request remaining selected
+    simp only [rememberReceiveCommit_state, rememberReceiveLog_state, rememberReceiveProposal_state, rememberReceiveResponse_state,
+      rememberReceiveVotes_state, rememberReceiveReply_state, attachReceiveFrame_state, trackedReceiveStep_eval assignment before correct]
+    exact ReceiveTraceEffects.step_log assignment before.state source destination request remaining selected
+  apply rememberReceiveCommit_correct assignment position before _ correct
+  swap
+  · simp only [rememberReceiveLog_state, rememberReceiveProposal_state, rememberReceiveResponse_state,
+    rememberReceiveVotes_state, rememberReceiveReply_state, attachReceiveFrame_state, trackedReceiveStep_eval assignment before correct]
+    exact GuardedReceive.step_correct assignment before.state source destination
+  apply rememberReceiveLog_correct assignment position before _ correct
+  swap
+  · intro request remaining selected
+    simp only [rememberReceiveProposal_state, rememberReceiveResponse_state,
+      rememberReceiveVotes_state, rememberReceiveReply_state, attachReceiveFrame_state, trackedReceiveStep_eval assignment before correct]
+    exact ReceiveTraceEffects.step_log assignment before.state source destination request remaining selected
+  apply rememberReceiveProposal_correct assignment position before _ correct
+  · apply rememberReceiveResponse_correct assignment position before _ correct
+    · apply rememberReceiveVotes_correct assignment position before _ correct
+      apply rememberReceiveReply_correct assignment position before _ correct
+      exact attachReceiveFrame_correct assignment position before.pathId before correct _
+    · intro response remaining selected
+      simp only [rememberReceiveVotes_state, rememberReceiveReply_state, attachReceiveFrame_state, trackedReceiveStep_eval assignment before correct]
+      exact ReceiveTraceGuards.nonAppend_step_state assignment before.state source destination
+        (.appendEntriesResponse response) remaining selected trivial
+  · intro request remaining selected
+    simp only [rememberReceiveResponse_state, rememberReceiveVotes_state, rememberReceiveReply_state, attachReceiveFrame_state, trackedReceiveStep_eval assignment before correct]
+    exact ReceiveTraceGuards.proposal_step_state assignment before.state source destination request remaining selected
+
+theorem receiveFrames_state {holes : Nat} (assignment : Fin holes -> Nat) (position : Nat)
+    (before : Frame holes) (correct : FrameCorrect assignment before) (source destination : Node) :
+    mapState (NatTerm.eval assignment) ((receiveFrames position before source destination).eval assignment).state =
+      next (mapState (NatTerm.eval assignment) before.state) (.receive source destination) := by
+  simp only [receiveFrames, Guarded.eval_map, rememberQueueFrame_state, rememberReceiveQueues_state, rememberReceiveRetirement_state, rememberReceiveStepdown_state, rememberReceiveConfigurations_state, rememberReceiveCommit_state, rememberReceiveLog_state, rememberReceiveProposal_state,
+    rememberReceiveResponse_state, rememberReceiveVotes_state, rememberReceiveReply_state]
+  rw [attachReceiveFrame_state, trackedReceiveStep_eval assignment before correct]
+  exact GuardedReceive.step_correct assignment before.state source destination
+
+theorem receiveGroup_correct {holes : Nat} (bounds : Bounds) (assignment : Fin holes -> Nat)
+    (before : Frame holes) (correct : FrameCorrect assignment before) (source destination : Node) :
+    (receiveGroup bounds before source destination).Holds assignment ↔
+      BoundedState.WithinBounds bounds (mapState (NatTerm.eval assignment) before.state) ∧
+        Enabled (mapState (NatTerm.eval assignment) before.state) (.receive source destination) := by
+  simp only [receiveGroup, Group.Holds, List.mem_append, or_imp, forall_and, List.mem_singleton, forall_eq]
+  change (ClausesHold assignment (stateBoundsClauses bounds before.state before.tracking) ∧ _) ↔ _
+  rw [stateBoundsClauses_correct bounds assignment before.state before.tracking correct]
+  by_cases allowed : receiveEntryAllowed before.state source destination = true
+  · simp [allowed, Expr.Holds, Guarded.test_holds,
+      receiveEntryExpr_correct assignment before.state before.tracking correct,
+      trackedReceiveStep_eval assignment before correct, GuardedReceive.step_enabledExpr_correct]
+  · have disabled := mt (receive_enabled_entry assignment before.state source destination) allowed
+    simp [allowed, Expr.Holds, Guarded.test_holds,
+      receiveEntryExpr_correct assignment before.state before.tracking correct, disabled]
 
 theorem encodeFrom_correct {holes : Nat}
     (bounds : Bounds)
@@ -2669,6 +4363,18 @@ theorem encodeFrom_correct {holes : Nat}
           rw [observationGroup_correct bounds assignment frame.state
             frame.tracking frameCorrect observation]
           rw [inductionHypothesis (position + 1) frames frameCorrect]
+          tauto
+      | receive source destination =>
+          simp only [encodeFrom, Formula.holds_cons, Follows]
+          rw [guardedGroup_correct]
+          change (receiveGroup bounds frame source destination).Holds assignment ∧ _ ↔ _
+          rw [receiveGroup_correct bounds assignment frame frameCorrect source destination]
+          rw [inductionHypothesis (position + 1)
+            (frames.bind fun before => receiveFrames position before source destination)
+            (by
+              simp only [Guarded.eval_bind]
+              exact receiveFrames_correct assignment position frame frameCorrect source destination)]
+          rw [Guarded.eval_bind, receiveFrames_state assignment position frame frameCorrect]
           tauto
       | clientRequest node transaction =>
           let accepted : Value holes :=

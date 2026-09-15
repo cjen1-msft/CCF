@@ -26,8 +26,18 @@ nice -n 10 lake build ControlActionAudit EncoderAudit encode_trace \
   MachineGenerated.BoundedSymbolicTraceTests \
   MachineGenerated.SymbolicTraceCertificateTests \
   MachineGenerated.SymbolicTraceOutputTests \
+  MachineGenerated.SymbolicTransitionAudit \
+  Shared.SmtTests Shared.SmtOrderTests Shared.SmtMinMaxTests Shared.SmtClampTests Shared.SmtDagTests \
+  Shared.SymbolicSharingTests Shared.SymbolicEvalMemoTests \
+  Shared.SymbolicMemoTests Shared.SymbolicMemoSelectorTests \
+  Shared.SymbolicNormalizeCacheTests \
+  Shared.SymbolicNamingTests Shared.SymbolicNamingTraceTests Shared.SymbolicNamingDagTests \
   Shared.SymbolicTraceTests Shared.SymbolicNamedTests Shared.SymbolicNamedScalingTests \
   Shared.SymbolicContainerScalingTests
+for fixture in SmtMinMaxTests SmtClampTests SmtDagTests SymbolicNamingTests SymbolicNamingTraceTests; do
+  nice -n 10 lake env lean --run "Shared/$fixture.lean" "$CVC5"
+done
+nice -n 10 lake env lean --run Shared/SymbolicNamingDagTests.lean
 nice -n 10 lake env lean --run Shared/SymbolicContainerScalingTests.lean
 nice -n 10 lake env lean --run Shared/SymbolicNamedTests.lean "$CVC5"
 nice -n 10 lake env lean --run Shared/SymbolicNamedScalingTests.lean
@@ -42,6 +52,11 @@ nice -n 10 python3 -m unittest -v \
   tests.test_symbolic_encoding \
   tests.test_symbolic_causality \
   tests.test_symbolic_trace_decoding \
+  tests.test_symbolic_trace_scaling \
+  tests.test_symbolic_backend \
+  tests.test_symbolic_receive \
+  tests.test_symbolic_transitions \
+  tests.test_receive_encoding \
   tests.test_raw_normalization \
   tests.test_leader_writes \
   tests.test_client_request_encoding \

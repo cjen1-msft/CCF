@@ -2,16 +2,19 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the Apache 2.0 License.
 
-"""Serve read-only JSON inspection of one retained native Lean run on loopback."""
+"""Serve an aligned explorer and read-only JSON for a retained native Lean run."""
 
 from __future__ import annotations
 
 import argparse
+from base64 import b64encode
+from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from native_explorer import render_explorer
 from native_run import NativeRun
 from reduction import ReductionError
 from Shared.solver import ValidationError
@@ -133,8 +136,13 @@ class ExplorerApi:
         raise ApiError(404, "endpoint not found")
 
 
-def make_server(run: NativeRun, port: int = 8091) -> HTTPServer:
+def make_server(
+    run: NativeRun, port: int = 8091, *, directory: Path | None = None
+) -> HTTPServer:
     api = ExplorerApi(run)
+    page = render_explorer(run, directory).encode("utf-8")
+    script = page.split(b"<script>", 1)[1].split(b"</script>", 1)[0]
+    script_hash = b64encode(sha256(script).digest()).decode("ascii")
 
     class Handler(BaseHTTPRequestHandler):
         def send_json(self, status: int, value: object) -> None:
@@ -174,6 +182,21 @@ def make_server(run: NativeRun, port: int = 8091) -> HTTPServer:
                     403, {"error": "only loopback Host headers are accepted"}
                 )
                 return
+            if self.path == "/":
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(page)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header(
+                    "Content-Security-Policy",
+                    f"default-src 'none'; script-src 'sha256-{script_hash}'; "
+                    "style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+                )
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(page)
+                return
             try:
                 value = api.get(self.path)
             except ApiError as error:
@@ -200,8 +223,8 @@ def main() -> None:
         parser.error("port must be between 0 and 65535")
     try:
         run = NativeRun.load(args.run)
-        with make_server(run, args.port) as server:
-            print(f"http://127.0.0.1:{server.server_port}/api/run", flush=True)
+        with make_server(run, args.port, directory=args.run) as server:
+            print(f"http://127.0.0.1:{server.server_port}/", flush=True)
             server.serve_forever()
     except (ValidationError, ReductionError, OSError, ValueError) as error:
         parser.exit(2, f"explorer API: {error}\n")

@@ -39,6 +39,7 @@ inductive Instruction (holes : Nat) where
   | changeConfiguration (node : Node) (configuration : Finset Node)
   | appendRetiredCommitted (node : Node)
   | appendEntries (source destination : Node) (batchEnd : Nat)
+  | receive (source destination : Node)
   | timeout (node : Node)
   | becomePreVoteCandidate (node : Node)
   | becomeCandidate (node : Node)
@@ -61,7 +62,7 @@ def supportedActions : List String :=
    "appendRetiredCommitted", "appendEntries", "timeout",
    "becomePreVoteCandidate", "becomeCandidate", "advanceCommitIndex",
    "checkQuorum", "updateTerm", "becomeLeader", "requestVote",
-   "requestPreVote", "proposeVote", "advanceCommitIndexAndProposeVote"]
+   "requestPreVote", "proposeVote", "advanceCommitIndexAndProposeVote", "receive"]
 
 def Observation.Holds {holes : Nat}
     (bounds : Bounds)

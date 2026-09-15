@@ -90,6 +90,25 @@ def peerControls : List String :=
   | .error _ => true
   | .ok _ => false
 
+#guard match TraceCertificate.decode
+    (writes "ccfraft-trace/v1" [action "receive" [("destination", toJson (1 : Nat))]]) with
+  | .ok input =>
+      match input.trace with
+      | [.receive source destination] => source.val == 0 && destination.val == 1
+      | _ => false
+  | .error _ => false
+
+#guard ["ccfraft-client-request/v1", "ccfraft-client-request/v2"].all fun version =>
+  match TraceCertificate.decode (writes version [action "receive" [("destination", toJson (1 : Nat))]]
+      (if version == "ccfraft-client-request/v1" then legacyBounds else bounds)) with
+  | .error _ => true
+  | .ok _ => false
+
+#guard match TraceCertificate.decode
+    (writes "ccfraft-trace/v1" [action "receive" [("destination", toJson (1 : Nat)), ("batchEnd", toJson (1 : Nat))]]) with
+  | .error _ => true
+  | .ok _ => false
+
 #guard match TraceCertificate.decode (writes "ccfraft-trace/v1"
     [action "appendEntries" [("destination", toJson (1 : Nat)), ("batchEnd", toJson (1 : Nat))]]) with
   | .ok input =>

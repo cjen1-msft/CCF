@@ -2,15 +2,20 @@
 -- Licensed under the Apache 2.0 License.
 
 import MachineGenerated.TraceEncodingProofs
+import MachineGenerated.SymbolicTransitionCompleteness
 import TraceCertificate
+import SymbolicTraceOutput
 import Lean
 
 set_option autoImplicit false
 
 run_cmd do
-  for name in ← Lean.collectAxioms ``CCFRaft.TraceEncoding.checkedEncoder do
-    unless name == ``propext || name == ``Classical.choice || name == ``Quot.sound do
-      throwError "trace encoder correctness depends on unapproved axiom {name}"
+  for encoder in [``CCFRaft.TraceEncoding.checkedEncoder,
+      ``CCFRaft.SymbolicTransition.checkedEncoder,
+      ``CCFRaft.SymbolicTransition.checkedEncoder_satisfiable_iff] do
+    for name in ← Lean.collectAxioms encoder do
+      unless name == ``propext || name == ``Classical.choice || name == ``Quot.sound do
+        throwError "{encoder} depends on unapproved axiom {name}"
 
 namespace CCFRaft.EncodeTrace
 
@@ -57,13 +62,16 @@ def constraintMap (input : Input)
      ("inspect_group", toJson inspectGroup),
      ("groups", toJson groups)]
 
+def inspectIndex (raw : Option String) : Except String (Option Nat) := do
+  raw.mapM fun value =>
+    match value.toNat? with
+    | some index => pure index
+    | none => throw "inspect-group must be a natural number"
+
 def inspectArgument (input : Input) (raw : Option String) : Except String (Option Nat) := do
-  match raw with
+  match ← inspectIndex raw with
   | none => pure none
-  | some raw =>
-      let index <- match raw.toNat? with
-        | some index => pure index
-        | none => throw "inspect-group must be a natural number"
+  | some index =>
       if index = 0 then
         throw "inspect-group must select an action, not the unknown domains"
       match input.trace[index - 1]? with
@@ -71,6 +79,35 @@ def inspectArgument (input : Input) (raw : Option String) : Except String (Optio
           if instruction.isAction then pure (some index)
           else throw "inspect-group must select an action"
       | none => throw "inspect-group must select an action"
+
+inductive PreparationError where
+  | input : String → PreparationError
+  | serialization : String → PreparationError
+
+def prepare (json : Json) (rawInspect : Option String) :
+    Except PreparationError (String × Json) := do
+  let schema ← (TraceJson.field json "schema_version" >>= Json.getStr?).mapError .input
+  if schema == "ccfraft-symbolic-trace/v1" then
+    let input ← (SymbolicTraceCertificate.decode json).mapError .input
+    let inspectGroup ← (inspectIndex rawInspect).mapError .input
+    (SymbolicTraceOutput.inspect input inspectGroup).mapError .input
+    unless SymbolicTransition.traceInputsAtOrAfter
+        (SymbolicModel.entryWidth input.bounds) input.trace do
+      throw (.input "transaction inputs must follow the structural entry inputs")
+    let encoder : {encode // BoundedSymbolicTrace.VerifiedEncoder encode} :=
+      SymbolicTransition.checkedEncoder
+    let formula := encoder.val input.bounds input.unknowns.size input.entry input.trace
+    let prepared ← (SymbolicTraceOutput.prepare input formula inspectGroup).mapError
+      .serialization
+    return (prepared.smt, prepared.constraintMap)
+  else
+    let input ← (TraceCertificate.decode json).mapError .input
+    let inspectGroup ← (inspectArgument input rawInspect).mapError .input
+    let encoder : BoundedTrace.VerifiedEncoder input.unknowns.size :=
+      TraceEncoding.checkedEncoder input.unknowns.size
+    let formula := encoder.encode input.bounds input.entry input.trace
+    let prepared ← formula.prepare.mapError .serialization
+    return (prepared.toSmt inspectGroup, constraintMap input prepared inspectGroup)
 
 end CCFRaft.EncodeTrace
 
@@ -81,25 +118,17 @@ def main (args : List String) : IO UInt32 := do
     return 1
   let text <- IO.FS.readFile args[0]!
   let decoded := do
-    let input <- Lean.Json.parse text >>= CCFRaft.TraceCertificate.decode
-    let inspectGroup <- CCFRaft.EncodeTrace.inspectArgument input args[2]?
-    pure (input, inspectGroup)
+    let json ← (Lean.Json.parse text).mapError CCFRaft.EncodeTrace.PreparationError.input
+    CCFRaft.EncodeTrace.prepare json args[2]?
   match decoded with
   | .error error =>
-      stderr.putStrLn s!"encoding error: {error}"
+      match error with
+      | .input message => stderr.putStrLn s!"encoding error: {message}"
+      | .serialization message => stderr.putStrLn s!"SMT serialization error: {message}"
       return 1
-  | .ok (input, inspectGroup) =>
-      let encoder : CCFRaft.BoundedTrace.VerifiedEncoder input.unknowns.size :=
-        CCFRaft.TraceEncoding.checkedEncoder input.unknowns.size
-      let formula := encoder.encode input.bounds input.entry input.trace
-      match formula.prepare with
-      | .error error =>
-          stderr.putStrLn s!"SMT serialization error: {error}"
-          return 1
-      | .ok prepared =>
-          let output := System.FilePath.mk args[1]!
-          IO.FS.createDirAll output
-          IO.FS.writeFile (output / "formula.smt2") (prepared.toSmt inspectGroup)
-          IO.FS.writeFile (output / "constraint-map.json")
-            ((CCFRaft.EncodeTrace.constraintMap input prepared inspectGroup).pretty ++ "\n")
-          return 0
+  | .ok (smt, metadata) =>
+      let output := System.FilePath.mk args[1]!
+      IO.FS.createDirAll output
+      IO.FS.writeFile (output / "formula.smt2") smt
+      IO.FS.writeFile (output / "constraint-map.json") (metadata.pretty ++ "\n")
+      return 0
