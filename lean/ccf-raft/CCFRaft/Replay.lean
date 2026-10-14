@@ -44,38 +44,38 @@ def ReplayState.pending (replay : ReplayState) (source destination : String)
   replay.live.filter
     fun envelope => envelope.source == source && envelope.target == destination
 
-private def objectFields (value : Json) : Except String (List (String × Json)) := do
+def objectFields (value : Json) : Except String (List (String × Json)) := do
   return (← value.getObj?).toList
 
-private def keys (value : Json) (allowed : List String) : Except String Unit := do
+def keys (value : Json) (allowed : List String) : Except String Unit := do
   for (key, _) in ← objectFields value do
     unless key ∈ allowed do
       throw s!"unsupported field '{key}'"
 
-private def field (value : Json) (key : String) : Except String Json :=
+def field (value : Json) (key : String) : Except String Json :=
   (value.getObjVal? key).mapError fun error => s!"{key}: {error}"
 
-private def text (value : Json) : Except String String := do
+def text (value : Json) : Except String String := do
   let result ← value.getStr?
   if result.isEmpty then throw "expected a nonempty string"
   return result
 
-private def stringField (value : Json) (key : String) : Except String String := do
+def stringField (value : Json) (key : String) : Except String String := do
   text (← field value key)
 
-private def natField (value : Json) (key : String) : Except String Nat := do
+def natField (value : Json) (key : String) : Except String Nat := do
   (← field value key).getNat?
 
-private def optionalField (value : Json) (key : String)
+def optionalField (value : Json) (key : String)
     : Except String (Option Json) := do
   return (← objectFields value).lookup key
 
-private def occurrence (value : Json) : Except String Nat := do
+def occurrence (value : Json) : Except String Nat := do
   match ← optionalField value "occurrence" with
   | none => return 0
   | some index => index.getNat?
 
-private def nodeList (value : Json) : Except String (List String) := do
+def nodeList (value : Json) : Except String (List String) := do
   let nodes ← (← value.getArr?).toList.mapM text
   if nodes.isEmpty then throw "configuration must not be empty"
   unless nodes.toFinset.card == nodes.length do
@@ -125,7 +125,7 @@ def parseHeader (value : Json) : Except String Header := do
   else
     throw s!"bootstrap leader '{leader}' is not in the configuration"
 
-private def nodeField (header : Header) (value : Json) (key : String)
+def nodeField (header : Header) (value : Json) (key : String)
     : Except String String := do
   let node ← stringField value key
   unless node ∈ header.declared do
@@ -137,7 +137,7 @@ inductive Step where
   | receive (source destination : String)
   | drop (source destination : String) (occurrence : Nat)
 
-private def declaredNodes (header : Header) (value : Json) (key : String)
+def declaredNodes (header : Header) (value : Json) (key : String)
     : Except String (Finset String) := do
   let nodes ← nodeList (← field value key)
   for node in nodes do
@@ -145,7 +145,7 @@ private def declaredNodes (header : Header) (value : Json) (key : String)
       throw s!"{key}: undeclared node '{node}'"
   return nodes.toFinset
 
-private def parseEffect (header : Header) (value : Json)
+def parseEffect (header : Header) (value : Json)
     : Except String (TransactionEffect String) := do
   match ← stringField value "kind" with
   | "configuration" =>
@@ -156,7 +156,7 @@ private def parseEffect (header : Header) (value : Json)
       return .retiredCommitted (← declaredNodes header value "nodes")
   | kind => throw s!"unsupported transaction effect '{kind}'"
 
-private def parseEntry (header : Header) (value : Json)
+def parseEntry (header : Header) (value : Json)
     : Except String (EntryContent String String) := do
   match ← stringField value "kind" with
   | "transaction" =>
@@ -169,7 +169,7 @@ private def parseEntry (header : Header) (value : Json)
       return .signature
   | kind => throw s!"unsupported entry kind '{kind}'"
 
-private def parseAction (header : Header) (value : Json) : Except String Step := do
+def parseAction (header : Header) (value : Json) : Except String Step := do
   let name ← stringField value "action"
   let base := ["kind", "action", "origin"]
   match name with
@@ -226,21 +226,21 @@ private def runStep (header : Header) (replay : ReplayState) (step : Step) (name
           s!"no pending packet from '{source}' to '{destination}' at occurrence {index}"
       return { replay with dropped := replay.dropped ++ [envelope] }
 
-private def roleName : Role → String
+def roleName : Role → String
   | .none => "none"
   | .follower => "follower"
   | .preVoteCandidate => "preVoteCandidate"
   | .candidate => "candidate"
   | .leader => "leader"
 
-private def membershipName : MembershipState → String
+def membershipName : MembershipState → String
   | .active => "active"
   | .retirementOrdered => "retirementOrdered"
   | .retirementSigned => "retirementSigned"
   | .retirementCompleted => "retirementCompleted"
   | .retiredCommitted => "retiredCommitted"
 
-private def checkFields (expected actual : Json) : Except String Unit := do
+def checkFields (expected actual : Json) : Except String Unit := do
   let observed ← objectFields expected
   if observed.isEmpty then throw "observation must contain at least one field"
   for (key, expectedValue) in observed do
@@ -439,7 +439,7 @@ private def observeMessage (header : Header) (replay : ReplayState) (value : Jso
   let _ ← stringField packet "msg"
   checkFields packet (messageJson message)
 
-private def originLabel (value : Json) : Except String String := do
+def originLabel (value : Json) : Except String String := do
   let origins ← (← field value "origin").getArr?
   if origins.isEmpty then throw "origin must not be empty"
   let labels ←

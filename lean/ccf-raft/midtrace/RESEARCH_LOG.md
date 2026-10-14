@@ -70,6 +70,68 @@ Counts over all 53 reduced traces.
   log length and retirement fields before every action except election
   timeouts.
 
+## Size of the unknown at the cut
+
+`true-state DOC N` gives the real state at the cut. Over the 50 scenarios:
+
+| cut | max log | max entries (all nodes) | config entries | in-flight msgs | AE entries in flight |
+| --- | --- | --- | --- | --- | --- |
+| after 10 actions | 6 | 10 | 5 | 8 | 0 |
+| half the actions | 22 | 84 | 25 | 15 | 8 |
+
+At cut 10, 169 of 309 initial entries get a `kind` observation somewhere in
+the suffix, and 67 of 156 configuration-carrying entries get a
+`configurations` observation. Every node's scalars (role, currentTerm,
+logLength, commitIndex, retiredCommittedIndex) are observed before its first
+action (168/168 node instances), via the `*-pre` observations.
+
+## Which unknowns matter (perturbation study)
+
+`build/research/scripts/perturb.py` (research only, not part of validation)
+perturbs one unknown of the true cut-10 state and reruns the real
+`replay-from`. 5164 runs, 28 s:
+
+| unknown | still passes | rejected | rejection instruction (p50 / p90 / max) |
+| --- | --- | --- | --- |
+| entry content | 110 | 864 | 19 / 81 / 224 |
+| entry term | 230 | 388 | 19 / 103 / 305 |
+| matchIndex | 220 | 492 | 14 / - / 269 |
+| sentIndex | 344 | 368 | 3 / - / 68 |
+| votedFor | 604 | 0 | - |
+| leaderKnown | 168 | 0 | - |
+| isNewFollower | 168 | 0 | - |
+| votesGranted | 604 | 0 | - |
+| preVotesGranted | 604 | 0 | - |
+
+Implications:
+
+- Hidden booleans and vote sets almost never matter at cut 10: forking on
+  them lazily is cheap.
+- Entry content and term errors are often detected far from the cut (p90
+  ~100 instructions, max ~300): any approach must carry the uncertainty
+  forward a long way, so eager guessing plus backtracking from the end is
+  expensive, and the explanation of a failure can be far from its cause.
+- Many perturbations of content/terms still pass: the witness is not unique,
+  so a search must not demand it.
+
+## Message access pattern
+
+In the cut-10 suffixes every `receive` (2885) is immediately preceded by an
+observation of the same channel at occurrence 0, and every `drop` (413) is at
+occurrence 0 and preceded by such an observation. `selection: "last"` (3204
+uses) only follows sends. So the network can be modelled per channel as
+`pre-cut messages ++ post-cut messages` with head deletion, and pre-cut
+messages can be materialized lazily from the head observation that precedes
+their use.
+
+## Raw-log coverage
+
+In the raw driver logs, `configurations` is emitted only on
+commit/add_configuration/become_*/step_down events, and `committable_indices`
+in ~96% of events (but `reduction.py` does not forward it). Emitting more of
+the existing fields would pin far more of the unknowns (see "engineering
+alternatives" below).
+
 ## Approaches
 
 (See sections below; updated as work proceeds.)
