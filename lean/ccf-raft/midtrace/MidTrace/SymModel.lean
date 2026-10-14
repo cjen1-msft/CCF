@@ -20,17 +20,20 @@ namespace CCFRaft.MidTrace.Sym
 open Lean CCFRaft.Model.Node
 
 def send (source destination : Nat) (message : SMsg) : M Unit :=
-  M.modify fun world =>
-    {
-      world with
-        channels :=
-          world.channels.modify (world.env.channel source destination)
-            fun channel => { channel with post := channel.post ++ [message] }
-    }
+  M.modify
+    fun world =>
+      {
+        world with
+          channels :=
+            world.channels.modify (world.env.channel source destination)
+              fun channel => { channel with post := channel.post ++ [message] }
+      }
 
-def setAll (n : Nat) (value : SInt) : Array (Option SInt) := Array.replicate n (some value)
+def setAll (n : Nat) (value : SInt) : Array (Option SInt) :=
+  Array.replicate n (some value)
 
-def setAt (values : Array (Option SInt)) (peer : Nat) (value : SInt) : Array (Option SInt) :=
+def setAt (values : Array (Option SInt)) (peer : Nat) (value : SInt)
+    : Array (Option SInt) :=
   values.set! peer (some value)
 
 /-- The highest current-term signature above the commit index with a quorum, or zero. -/
@@ -45,19 +48,23 @@ def highestCommittable (i : Nat) (s : SNode) : M Nat := do
     if ← M.le (SInt.lit index) commitIndex then return 0
     let replicated (candidates : List Nat) : M Nodes := do
       let members ←
-        M.filterM candidates fun peer =>
-          if peer == i then pure true
-          else do M.le (SInt.lit index) (← getMatch i s peer)
+        M.filterM candidates
+          fun peer =>
+            if peer == i then
+              pure true
+            else do
+              M.le (SInt.lit index) (← getMatch i s peer)
       return (members.map env.name).toFinset
     let ok ←
       M.andM (isSig log[index - 1]!.content)
         (M.andM (M.eq log[index - 1]!.term term)
-          (M.allM configs fun config =>
-            match config.nodes with
-            | .known nodes => do
-                let candidates := env.sorted.filter fun peer => env.name peer ∈ nodes
-                configQuorum config (← replicated candidates)
-            | .atom _ => do configQuorum config (← replicated env.sorted)))
+          (M.allM configs
+            fun config =>
+              match config.nodes with
+              | .known nodes => do
+                  let candidates := env.sorted.filter fun peer => env.name peer ∈ nodes
+                  configQuorum config (← replicated candidates)
+              | .atom _ => do configQuorum config (← replicated env.sorted)))
     if ok then return index
     index := index - 1
   return 0
@@ -67,7 +74,8 @@ def latestMembershipIndex (configs : List Config) (node : String) : M Nat :=
     (fun highest config => do
       if ← config.nodes.query (fun nodes => decide (node ∈ nodes)) then
         pure (Nat.max highest config.index)
-      else pure highest)
+      else
+        pure highest)
     0
 
 def findSuccessor (i : Nat) (s : SNode) : M (Option Nat) := do
@@ -89,7 +97,7 @@ def findSuccessor (i : Nat) (s : SNode) : M (Option Nat) := do
                   pure
                     (selectedIndex < candidateIndex
                       || (selectedIndex == candidateIndex
-                        && decide (env.name selected < env.name candidate)))))
+                          && decide (env.name selected < env.name candidate)))))
           pure (if better then some candidate else best))
     none
 
@@ -134,29 +142,38 @@ def makeRequestVote (i : Nat) (s : SNode) : M (SInt × SInt × SInt) := do
 
 /-! ## Appending entries -/
 
-def applyTransactionEffect (i : Nat) (txId : String) (applied : List (TransactionEffect String))
-    (s : SNode) (effect : TransactionEffect String) : M SNode := do
+def applyTransactionEffect (i : Nat) (txId : String)
+    (applied : List (TransactionEffect String)) (s : SNode)
+    (effect : TransactionEffect String)
+    : M SNode := do
   let log ← getLog i s
   let term ← getCt i s
   let hookLog :=
-    if applied.isEmpty then log
-    else log.push { term, content := .known (.transaction txId applied) }
+    if applied.isEmpty then
+      log
+    else
+      log.push { term, content := .known (.transaction txId applied) }
   let hook := { s with log := some hookLog }
   let env ← M.env
   match effect with
   | .reconfiguration nodes =>
       let previous ← lastConfigUpTo hookLog hookLog.size
       M.require (decide nodes.Nonempty) "guard: empty reconfiguration"
-      M.requireM (M.notM (previous.nodes.query (· == nodes))) "guard: unchanged configuration"
+      M.requireM (M.notM (previous.nodes.query (· == nodes)))
+        "guard: unchanged configuration"
       let added ←
-        M.filterM env.sorted fun peer =>
-          if peer == i || !decide (env.name peer ∈ nodes) then pure false
-          else M.notM (eligible i hook peer)
+        M.filterM env.sorted
+          fun peer =>
+            if peer == i || !decide (env.name peer ∈ nodes) then
+              pure false
+            else
+              M.notM (eligible i hook peer)
       let configured :=
         {
           s with
             sentIndex :=
-              added.foldl (fun values peer => setAt values peer (SInt.lit log.size)) s.sentIndex
+              added.foldl (fun values peer => setAt values peer (SInt.lit log.size))
+                s.sentIndex
         }
       for peer in added do
         send i peer (← makeAppendEntries i configured peer log.size)
@@ -182,11 +199,17 @@ def appendEntry (i : Nat) (s : SNode) (content : Content) : M SNode := do
             return (s, applied ++ [effect]))
           (s, [])
       let log ← getLog i s
-      return { s with log := some (log.push { term := ← getCt i s, content := .known content }) }
+      return {
+        s with
+          log := some (log.push { term := ← getCt i s, content := .known content })
+      }
   | .signature =>
       let log ← getLog i s
       M.require (!log.isEmpty) "guard: signature on an empty log"
-      return { s with log := some (log.push { term := ← getCt i s, content := .known content }) }
+      return {
+        s with
+          log := some (log.push { term := ← getCt i s, content := .known content })
+      }
 
 def appendBatch (i : Nat) (s : SNode) (entries : List Content) : M SNode := do
   M.requireM (isRole i s .leader) "guard: append on a non-leader"
@@ -200,10 +223,12 @@ def sendEntries (i : Nat) (s : SNode) (destination endIndex : Nat) : M SNode := 
   let log ← getLog i s
   M.require (endIndex <= log.size) "guard: sendEntries beyond the log"
   let previousS ← getSent i s destination
-  M.requireM (M.le previousS (SInt.lit endIndex)) "guard: sendEntries below the send frontier"
+  M.requireM (M.le previousS (SInt.lit endIndex))
+    "guard: sendEntries below the send frontier"
   let previous ← M.concrete previousS
   let endTerm := termAt log endIndex
-  M.requireM (M.allM (log.extract previous endIndex).toList fun entry => M.eq entry.term endTerm)
+  M.requireM
+    (M.allM (log.extract previous endIndex).toList fun entry => M.eq entry.term endTerm)
     "guard: sendEntries batch spans terms"
   M.requireM (eligible i s destination) "guard: sendEntries to an ineligible peer"
   M.requireM (M.orM (M.notM (isRetiredCommitted i s)) (pure (previous < endIndex)))
@@ -214,14 +239,17 @@ def sendEntries (i : Nat) (s : SNode) (destination endIndex : Nat) : M SNode := 
 /-! ## Handling AppendEntries -/
 
 def handleAppendEntriesFromLeader (i : Nat) (s : SNode) (previous : Nat)
-    (entries : List SEntry) (leaderCommit : SInt) : M (SNode × SMsg) := do
+    (entries : List SEntry) (leaderCommit : SInt)
+    : M (SNode × SMsg) := do
   let log ← getLog i s
   let newLog := log ++ (entries.drop (log.size - previous)).toArray
   let commitIndex0 ← getCi i s
-  let limit ← clamp (← M.min leaderCommit (SInt.lit (previous + entries.length))) newLog.size
+  let limit ←
+    clamp (← M.min leaderCommit (SInt.lit (previous + entries.length))) newLog.size
   let commitIndex ← M.max commitIndex0 (SInt.lit (← maxSigUpTo newLog limit))
   let term ← getCt i s
-  let response := SMsg.appendEntriesResponse term true (SInt.lit (previous + entries.length))
+  let response :=
+    SMsg.appendEntriesResponse term true (SInt.lit (previous + entries.length))
   let withLog := { s with log := some newLog }
   if (← getRci i s).isSome then
     return ({ withLog with commitIndex := some commitIndex }, response)
@@ -237,11 +265,12 @@ def handleAppendEntriesFromLeader (i : Nat) (s : SNode) (previous : Nat)
   return (← commitThrough i committed commitIndex, response)
 
 def handleAppendEntries (i source : Nat) (s : SNode) (term previousS previousTerm : SInt)
-    (entries : List SEntry) (leaderCommit : SInt) : M SNode := do
+    (entries : List SEntry) (leaderCommit : SInt)
+    : M SNode := do
   let currentTerm ← getCt i s
   let s ←
     if ← M.andM (M.eq term currentTerm)
-        (roleQ i s fun role => role == .candidate || role == .preVoteCandidate) then
+          (roleQ i s fun role => role == .candidate || role == .preVoteCandidate) then
       pure { s with role := some .follower, isNewFollower := some true }
     else
       pure s
@@ -249,14 +278,20 @@ def handleAppendEntries (i source : Nat) (s : SNode) (term previousS previousTer
   let previous ← M.concrete previousS
   let stale ← M.lt term currentTerm
   let rejected ←
-    if stale then pure true
-    else if previous == 0 then pure false
-    else if previous > log.size then pure true
-    else M.notM (M.eq (termAt log previous) previousTerm)
+    if stale then
+      pure true
+    else if previous == 0 then
+      pure false
+    else if previous > log.size then
+      pure true
+    else
+      M.notM (M.eq (termAt log previous) previousTerm)
   if rejected then
     let noTerm ←
-      if stale || previous == 0 || previous > log.size then pure true
-      else M.eq (termAt log previous) (SInt.lit 0)
+      if stale || previous == 0 || previous > log.size then
+        pure true
+      else
+        M.eq (termAt log previous) (SInt.lit 0)
     if stale || noTerm then
       send i source (.appendEntriesResponse currentTerm false (SInt.lit log.size))
     else
@@ -266,10 +301,11 @@ def handleAppendEntries (i source : Nat) (s : SNode) (term previousS previousTer
     return s
   let s := { s with leaderKnown := some true }
   let conflict ←
-    M.anyM ((log.extract previous log.size).toList.zip entries) fun (existing, incoming) =>
-      M.notM (M.eq existing.term incoming.term)
+    M.anyM ((log.extract previous log.size).toList.zip entries)
+      fun (existing, incoming) =>
+        M.notM (M.eq existing.term incoming.term)
   if ← M.orM (M.lt (SInt.lit previous) (← getCi i s))
-      (M.andM (pure conflict) (M.notM (isNewFollower i s))) then
+        (M.andM (pure conflict) (M.notM (isNewFollower i s))) then
     return s
   let s :=
     if conflict then
@@ -280,9 +316,11 @@ def handleAppendEntries (i source : Nat) (s : SNode) (term previousS previousTer
   send i source response
   return next
 
-def handleAppendEntriesResponse (i source : Nat) (s : SNode) (term : SInt) (success : Bool)
-    (lastLogIndex : SInt) : M SNode := do
-  unless ← isRole i s .leader do return s
+def handleAppendEntriesResponse (i source : Nat) (s : SNode) (term : SInt)
+    (success : Bool) (lastLogIndex : SInt)
+    : M SNode := do
+  unless ← isRole i s .leader do
+    return s
   if success then
     if ← M.eq term (← getCt i s) then
       let matched ← M.max (← getMatch i s source) lastLogIndex
@@ -320,8 +358,7 @@ def handleRequestVote (i source : Nat) (s : SNode) (term lastTerm lastIndex : SI
 def handleRequestPreVote (i source : Nat) (s : SNode) (term lastTerm lastIndex : SInt)
     : M SNode := do
   let currentTerm ← getCt i s
-  let granted ←
-    M.andM (M.eq term currentTerm) (voteLogUpToDate i s lastTerm lastIndex)
+  let granted ← M.andM (M.eq term currentTerm) (voteLogUpToDate i s lastTerm lastIndex)
   send i source (.requestPreVoteResponse currentTerm granted)
   return s
 
@@ -352,10 +389,11 @@ def becomeLeader (i : Nat) (s : SNode) : M SNode := do
   return leader
 
 def knownConfigs (configs : List Config) : Option (List (Configuration String)) :=
-  configs.mapM fun config =>
-    match config.nodes with
-    | .known nodes => some { index := config.index, nodes }
-    | .atom _ => none
+  configs.mapM
+    fun config =>
+      match config.nodes with
+      | .known nodes => some { index := config.index, nodes }
+      | .atom _ => none
 
 /-- `hasQuorum (activeConfigurations) votesGranted`. -/
 def votesQuorum (i : Nat) (s : SNode) : M Bool := do
@@ -363,13 +401,14 @@ def votesQuorum (i : Nat) (s : SNode) : M Bool := do
   match s.votesGranted, knownConfigs configs with
   | some votes, _ => hasQuorum configs votes
   | none, some known =>
-      votesQ i s fun votes =>
-        known.all fun config => decide (hasConfigurationMajority votes config)
+      votesQ i s
+        fun votes =>
+          known.all fun config => decide (hasConfigurationMajority votes config)
   | none, none => do hasQuorum configs (← votesQ i s id)
 
 def electIfQuorum (i : Nat) (s : SNode) : M SNode := do
   if ← M.andM (isRole i s .candidate)
-      (M.andM (votesQuorum i s) (M.notM (isRetiredCommitted i s))) then
+        (M.andM (votesQuorum i s) (M.notM (isRetiredCommitted i s))) then
     becomeLeader i s
   else
     return s
@@ -398,7 +437,8 @@ def becomePreVoteCandidate (i : Nat) (s : SNode) : M SNode := do
   let candidate :=
     {
       s with
-        role := some .preVoteCandidate, leaderKnown := some false
+        role := some .preVoteCandidate,
+        leaderKnown := some false
         preVotesGranted := some {name}
     }
   let configs ← activeConfigs (← getLog i candidate) (← getCi i candidate)
@@ -421,17 +461,22 @@ def startElection (i : Nat) (s : SNode) : M SNode := do
 def handleRequestVoteResponse (i source : Nat) (s : SNode) (term : SInt) (granted : Bool)
     : M SNode := do
   if !granted then return s
-  if ← M.andM (isRole i s .candidate) (do M.eq term (← getCt i s)) then
+  if ← M.andM (isRole i s .candidate)
+        (do
+          M.eq term (← getCt i s)) then
     let sourceName ← nameOf source
     let votes ← votesQ i s (insert sourceName ·)
     electIfQuorum i { s with votesGranted := some votes }
   else
     return s
 
-def handleRequestPreVoteResponse (i source : Nat) (s : SNode) (term : SInt) (granted : Bool)
+def handleRequestPreVoteResponse (i source : Nat) (s : SNode) (term : SInt)
+    (granted : Bool)
     : M SNode := do
   if !granted then return s
-  if ← M.andM (isRole i s .preVoteCandidate) (do M.eq term (← getCt i s)) then
+  if ← M.andM (isRole i s .preVoteCandidate)
+        (do
+          M.eq term (← getCt i s)) then
     let sourceName ← nameOf source
     let votes ← preVotesQ i s (insert sourceName ·)
     let s := { s with preVotesGranted := some votes }
@@ -446,7 +491,10 @@ def checkQuorum (i : Nat) (s : SNode) : M SNode := do
   return { s with role := some .follower, leaderKnown := some false }
 
 def handleProposeVote (i : Nat) (s : SNode) (term : SInt) : M SNode := do
-  if ← M.andM (do M.eq term (← getCt i s)) (canStartElection i s) then
+  if ← M.andM
+        (do
+          M.eq term (← getCt i s))
+        (canStartElection i s) then
     becomeCandidate i s
   else
     return s

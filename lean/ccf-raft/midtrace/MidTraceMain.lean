@@ -41,14 +41,15 @@ private def document (bootstrap : Json) (instructions : Array Json) : Json :=
 /-- The state after replaying the prefix that a cut drops. -/
 private def trueState (header : Replay.Header) (prefix_ : Array Json)
     : Except String Replay.ReplayState :=
-  prefix_.foldlM (fun state instruction => Prod.fst <$> Replay.runInstruction header state instruction)
+  prefix_.foldlM
+    (fun state instruction => Prod.fst <$> Replay.runInstruction header state instruction)
     { state := header.initial }
 
 private def usage : String :=
-  "usage: ccfraft-midtrace (cut | true-state) DOC N\n" ++
-  "       ccfraft-midtrace replay-from DOC N STATE\n" ++
-  "       ccfraft-midtrace validate DOC N [--no-invariants] [--no-dedup] [--closing] [--global]\n" ++
-  "         [--cap K] [--witness] [--sizes] [--dump K] [--dump-node NODE]"
+  "usage: ccfraft-midtrace (cut | true-state) DOC N\n"
+  ++ "       ccfraft-midtrace replay-from DOC N STATE\n"
+  ++ "       ccfraft-midtrace validate DOC N [--no-invariants] [--no-dedup] [--closing] [--global]\n"
+  ++ "         [--cap K] [--witness] [--sizes] [--dump K] [--dump-node NODE]"
 
 structure ValidateOptions where
   settings : Sym.Settings := {}
@@ -57,18 +58,22 @@ structure ValidateOptions where
 
 private def validateOptions (options : List String) (parsed : ValidateOptions)
     : Option ValidateOptions :=
-  let set (f : Sym.Settings → Sym.Settings) := { parsed with settings := f parsed.settings }
+  let set (f : Sym.Settings → Sym.Settings) :=
+    { parsed with settings := f parsed.settings }
   match options with
   | [] => some parsed
-  | "--no-invariants" :: rest => validateOptions rest (set ({ · with invariants := false }))
+  | "--no-invariants" :: rest =>
+      validateOptions rest (set ({ · with invariants := false }))
   | "--closing" :: rest => validateOptions rest (set ({ · with phantoms := false }))
   | "--global" :: rest => validateOptions rest (set ({ · with perNode := false }))
   | "--no-dedup" :: rest => validateOptions rest (set ({ · with dedup := false }))
   | "--witness" :: rest => validateOptions rest { parsed with witness := true }
   | "--sizes" :: rest => validateOptions rest { parsed with sizes := true }
   | "--dump" :: value :: rest =>
-      value.toNat?.bind fun index => validateOptions rest (set ({ · with dumpAt := some index }))
-  | "--dump-node" :: node :: rest => validateOptions rest (set ({ · with dumpNode := some node }))
+      value.toNat?.bind
+        fun index => validateOptions rest (set ({ · with dumpAt := some index }))
+  | "--dump-node" :: node :: rest =>
+      validateOptions rest (set ({ · with dumpNode := some node }))
   | "--cap" :: value :: rest =>
       value.toNat?.bind fun cap => validateOptions rest (set ({ · with cap }))
   | _ => none
@@ -92,14 +97,14 @@ def main (args : List String) : IO UInt32 := do
         let initial ← orThrow (parseReplayState header (← readJson statePath))
         match Replay.replayFrom header initial suffix with
         | .ok result =>
-            IO.println s!"ok: {result.actions} actions, {result.observations} observations"
+            IO.println
+              s!"ok: {result.actions} actions, {result.observations} observations"
             return 0
         | .error error =>
             IO.println s!"rejected: {error}"
             return 1
     | "validate" :: path :: count :: options =>
-        let some options := validateOptions options {}
-        | stderr.putStrLn usage; return 2
+        let some options := validateOptions options {} | stderr.putStrLn usage; return 2
         let (header, _, suffix) ← split path count.toNat!
         let start ← IO.monoMsNow
         let settings := options.settings
@@ -115,7 +120,12 @@ def main (args : List String) : IO UInt32 := do
         if options.witness then
           if let some state := outcome.witness then
             IO.println (replayStateJson header.declared state).compress
-        return if outcome.verdict == .valid then 0 else if outcome.verdict == .invalid then 1 else 3
+        return  if outcome.verdict == .valid then
+                  0
+                else if outcome.verdict == .invalid then
+                  1
+                else
+                  3
     | _ =>
         stderr.putStrLn usage
         return 2

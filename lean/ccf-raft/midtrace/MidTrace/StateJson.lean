@@ -140,7 +140,8 @@ def replayStateJson (declared : List String) (replay : ReplayState) : Json :=
       (
         "nodes",
         Json.mkObj
-          (replay.state.nodes.map fun (node, state) => (node, nodeStateJson declared state))
+          (replay.state.nodes.map
+            fun (node, state) => (node, nodeStateJson declared state))
       ),
       ("network", Json.arr (replay.live.map (envelopeJson declared)).toArray)
     ]

@@ -31,11 +31,13 @@ def index? (env : Env) (node : String) : Option Nat := env.names.findIdx? (· ==
 
 def config (env : Env) : InitialConfig String := env.header.bootstrap
 
-def channel (env : Env) (source destination : Nat) : Nat := source * env.size + destination
+def channel (env : Env) (source destination : Nat) : Nat :=
+  source * env.size + destination
 
 end Env
 
-def nameOf (i : Nat) : M String := do return (← M.env).name i
+def nameOf (i : Nat) : M String := do
+  return (← M.env).name i
 
 def indexOf (node : String) : M Nat := do
   match (← M.env).index? node with
@@ -51,7 +53,8 @@ def modifyInitial (i : Nat) (f : SNode → SNode) : M Unit :=
 def modifyDom (i : Nat) (f : InitDom → InitDom) : M Unit :=
   M.modify fun world => { world with doms := world.doms.modify i f }
 
-def initialOf (i : Nat) : M SNode := do return (← M.world).initial[i]!
+def initialOf (i : Nat) : M SNode := do
+  return (← M.world).initial[i]!
 
 /-! ## Finite-domain fields -/
 
@@ -61,7 +64,10 @@ def roleQ {β : Type} [BEq β] (i : Nat) (s : SNode) (f : Role → β) : M β :=
   | none =>
       M.pick (fun world => world.doms[i]!.role)
         (fun world roles =>
-          { world with doms := world.doms.modify i fun dom => { dom with role := roles } })
+          {
+            world with
+              doms := world.doms.modify i fun dom => { dom with role := roles }
+          })
         f
 
 def isRole (i : Nat) (s : SNode) (role : Role) : M Bool := roleQ i s (· == role)
@@ -72,7 +78,10 @@ def votedQ {β : Type} [BEq β] (i : Nat) (s : SNode) (f : Option String → β)
   | none =>
       M.pick (fun world => world.doms[i]!.votedFor)
         (fun world values =>
-          { world with doms := world.doms.modify i fun dom => { dom with votedFor := values } })
+          {
+            world with
+              doms := world.doms.modify i fun dom => { dom with votedFor := values }
+          })
         f
 
 def votesQ {β : Type} [BEq β] (i : Nat) (s : SNode) (f : Nodes → β) : M β :=
@@ -95,13 +104,15 @@ def preVotesQ {β : Type} [BEq β] (i : Nat) (s : SNode) (f : Nodes → β) : M 
         (fun world values =>
           {
             world with
-              doms := world.doms.modify i fun dom => { dom with preVotesGranted := values }
+              doms :=
+                world.doms.modify i fun dom => { dom with preVotesGranted := values }
           })
         f
 
 /-- A Boolean field read through `get`, bound in `World.initial` on first use. -/
 def boolField (i : Nat) (s : SNode) (get : SNode → Option Bool)
-    (set : SNode → Bool → SNode) : M Bool := do
+    (set : SNode → Bool → SNode)
+    : M Bool := do
   match get s with
   | some value => pure value
   | none =>
@@ -113,7 +124,8 @@ def boolField (i : Nat) (s : SNode) (get : SNode → Option Bool)
           pure value
 
 def isNewFollower (i : Nat) (s : SNode) : M Bool :=
-  boolField i s (·.isNewFollower) fun node value => { node with isNewFollower := some value }
+  boolField i s (·.isNewFollower)
+    fun node value => { node with isNewFollower := some value }
 
 def leaderKnown (i : Nat) (s : SNode) : M Bool :=
   boolField i s (·.leaderKnown) fun node value => { node with leaderKnown := some value }
@@ -122,12 +134,14 @@ def leaderKnown (i : Nat) (s : SNode) : M Bool :=
 
 /-- Invariant: the last log term is at most the current term. -/
 def termInvariant (i : Nat) : M Unit := do
-  unless (← M.env).invariants do return
+  unless (← M.env).invariants do
+    return
   let initial ← initialOf i
   match initial.log, initial.currentTerm with
   | some log, some term =>
       match log.back? with
-      | some entry => M.assumeLe entry.term term 0 "invariant: last log term <= current term"
+      | some entry =>
+          M.assumeLe entry.term term 0 "invariant: last log term <= current term"
       | none => pure ()
   | _, _ => pure ()
 
@@ -204,7 +218,8 @@ def getLog (i : Nat) (s : SNode) : M (Array SEntry) := do
           | none => M.unsupported "log read before its length is observed"
 
 def peerField (i : Nat) (s : SNode) (peer : Nat) (get : SNode → Array (Option SInt))
-    (set : SNode → Array (Option SInt) → SNode) : M SInt := do
+    (set : SNode → Array (Option SInt) → SNode)
+    : M SInt := do
   match (get s)[peer]! with
   | some value => pure value
   | none =>
@@ -237,7 +252,8 @@ def termAtS (log : Array SEntry) (index : SInt) : M SInt := do
 def isSig (content : SContent) : M Bool := M.content content (· == .signature)
 
 def isSigAt (log : Array SEntry) (index : Nat) : M Bool :=
-  if index == 0 then pure false
+  if index == 0 then
+    pure false
   else
     match log[index - 1]? with
     | some entry => isSig entry.content
@@ -254,7 +270,8 @@ def maxSigUpTo (log : Array SEntry) (limit : Nat) : M Nat := do
 def maxCommittableIndex (log : Array SEntry) : M Nat := maxSigUpTo log log.size
 
 /-- The highest index at or below `min index log.size` whose term is at most `term`. -/
-def findHighestPossibleMatch (log : Array SEntry) (index : Nat) (term : SInt) : M Nat := do
+def findHighestPossibleMatch (log : Array SEntry) (index : Nat) (term : SInt)
+    : M Nat := do
   let mut candidate := Nat.min index log.size
   while candidate > 0 do
     if ← M.le (termAt log candidate) term then return candidate
@@ -327,17 +344,19 @@ def memberOf (configs : List Config) (node : String) : M Bool :=
   M.anyM configs fun config => config.nodes.query (node ∈ ·)
 
 def configQuorum (config : Config) (support : Nodes) : M Bool :=
-  config.nodes.query fun nodes =>
-    decide (hasConfigurationMajority support { index := config.index, nodes })
+  config.nodes.query
+    fun nodes =>
+      decide (hasConfigurationMajority support { index := config.index, nodes })
 
 def hasQuorum (configs : List Config) (support : Nodes) : M Bool :=
   M.allM configs fun config => configQuorum config support
 
 def hasRetiredCommitted (node : String) (content : Content) : Bool :=
-  content.effects.any fun effect =>
-    match effect with
-    | .retiredCommitted nodes => decide (node ∈ nodes)
-    | .reconfiguration _ => false
+  content.effects.any
+    fun effect =>
+      match effect with
+      | .retiredCommitted nodes => decide (node ∈ nodes)
+      | .reconfiguration _ => false
 
 /-- Whether `node ∈ retiredCommittedNodes (log.take limit)`. -/
 def rcMem (log : Array SEntry) (limit : Nat) (node : String) : M Bool :=
@@ -350,11 +369,13 @@ def retireStep (node : String) (inside : Bool) (content : Content) : Option Bool
     (fun state nodes =>
       match state with
       | none => none
-      | some inside => if inside && !decide (node ∈ nodes) then none else some (decide (node ∈ nodes)))
+      | some inside =>
+          if inside && !decide (node ∈ nodes) then none else some (decide (node ∈ nodes)))
     (some inside)
 
 /-- `retirementIndexInLog` for `log.take limit`. -/
-def retirementIndex (log : Array SEntry) (limit : Nat) (node : String) : M (Option Nat) := do
+def retirementIndex (log : Array SEntry) (limit : Nat) (node : String)
+    : M (Option Nat) := do
   let mut inside := decide (node ∈ (← M.env).config.configuration)
   for index in [1:Nat.min limit log.size + 1] do
     match ← M.content log[index - 1]!.content (retireStep node inside) with
@@ -366,14 +387,17 @@ def retirementIndex (log : Array SEntry) (limit : Nat) (node : String) : M (Opti
 def everMember (log : Array SEntry) (limit : Nat) (node : String) : M Bool := do
   if decide (node ∈ (← M.env).config.configuration) then return true
   M.anyM ((List.range (Nat.min limit log.size)).map (log[·]!))
-    fun entry => M.content entry.content fun content =>
-      (entryConfigurations content).any (node ∈ ·)
+    fun entry =>
+      M.content entry.content
+        fun content =>
+          (entryConfigurations content).any (node ∈ ·)
 
 /--
 `node ∈ retirementCompletedNodes`: absent from the last committed configuration,
 present in an earlier committed one, and not retired-committed in the committed log.
 -/
-def retCompletedMem (log : Array SEntry) (commitIndex : SInt) (node : String) : M Bool := do
+def retCompletedMem (log : Array SEntry) (commitIndex : SInt) (node : String)
+    : M Bool := do
   let committed ← clamp commitIndex log.size
   let last ← lastConfigUpTo log committed
   M.andM (M.notM (last.nodes.query (node ∈ ·)))
@@ -385,16 +409,20 @@ def eligible (i : Nat) (s : SNode) (peer : Nat) : M Bool := do
   let log ← getLog i s
   let commitIndex ← getCi i s
   let name ← nameOf peer
-  M.orM (do memberOf (← activeConfigs log commitIndex) name) (retCompletedMem log commitIndex name)
+  M.orM
+    (do
+      memberOf (← activeConfigs log commitIndex) name)
+    (retCompletedMem log commitIndex name)
 
 def eligiblePeersSorted (i : Nat) (s : SNode) : M (List Nat) := do
   M.filterM (← M.env).sorted (eligible i s)
 
 def activeOthersSorted (i : Nat) (s : SNode) : M (List Nat) := do
   let configs ← activeConfigs (← getLog i s) (← getCi i s)
-  M.filterM (← M.env).sorted fun peer => do
-    if peer == i then return false
-    memberOf configs (← nameOf peer)
+  M.filterM (← M.env).sorted
+    fun peer => do
+      if peer == i then return false
+      memberOf configs (← nameOf peer)
 
 /-- `(state.retirement config self).phase = .retiredCommitted`. -/
 def isRetiredCommitted (i : Nat) (s : SNode) : M Bool := do
@@ -407,19 +435,24 @@ def campaignEligible (i : Nat) (s : SNode) : M Bool := do
   let configs ← activeConfigs log (← getCi i s)
   let signed ← maxCommittableIndex log
   let name ← nameOf i
-  M.anyM configs fun config =>
-    if config.index <= signed then config.nodes.query (name ∈ ·) else pure false
+  M.anyM configs
+    fun config =>
+      if config.index <= signed then config.nodes.query (name ∈ ·) else pure false
 
 def canStartElection (i : Nat) (s : SNode) : M Bool := do
   let log ← getLog i s
   let commitIndex ← getCi i s
   let name ← nameOf i
   M.andM
-    (roleQ i s fun role =>
-      role == .follower || role == .preVoteCandidate || role == .candidate)
+    (roleQ i s
+      fun role =>
+        role == .follower || role == .preVoteCandidate || role == .candidate)
     (M.andM
       (M.orM
-        (M.andM (do memberOf (← activeConfigs log commitIndex) name) (campaignEligible i s))
+        (M.andM
+          (do
+            memberOf (← activeConfigs log commitIndex) name)
+          (campaignEligible i s))
         (retCompletedMem log commitIndex name))
       (M.notM (isRetiredCommitted i s)))
 

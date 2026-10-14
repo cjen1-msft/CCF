@@ -66,8 +66,7 @@ def stringField (value : Json) (key : String) : Except String String := do
 def natField (value : Json) (key : String) : Except String Nat := do
   (← field value key).getNat?
 
-def optionalField (value : Json) (key : String)
-    : Except String (Option Json) := do
+def optionalField (value : Json) (key : String) : Except String (Option Json) := do
   return (← objectFields value).lookup key
 
 def occurrence (value : Json) : Except String Nat := do
@@ -125,8 +124,7 @@ def parseHeader (value : Json) : Except String Header := do
   else
     throw s!"bootstrap leader '{leader}' is not in the configuration"
 
-def nodeField (header : Header) (value : Json) (key : String)
-    : Except String String := do
+def nodeField (header : Header) (value : Json) (key : String) : Except String String := do
   let node ← stringField value key
   unless node ∈ header.declared do
     throw s!"{key}: undeclared node '{node}'"

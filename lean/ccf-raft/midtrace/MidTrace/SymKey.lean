@@ -67,39 +67,51 @@ def WorldKey.full (key : WorldKey) : String :=
 
 namespace Key
 
-def emit (text : String) : K Unit := modify fun state => { state with out := state.out ++ text }
+def emit (text : String) : K Unit :=
+  modify fun state => { state with out := state.out ++ text }
 
 def intAtom (id : Nat) : K Nat := do
   if id == 0 then return 0
-  modifyGet fun state =>
-    match state.ints[id]? with
-    | some k => (k, state)
-    | none =>
-        let k := state.intOrder.size + 1
-        (k, { state with ints := state.ints.insert id k, intOrder := state.intOrder.push id })
+  modifyGet
+    fun state =>
+      match state.ints[id]? with
+      | some k => (k, state)
+      | none =>
+          let k := state.intOrder.size + 1
+          (
+            k,
+            {
+              state with
+                ints := state.ints.insert id k, intOrder := state.intOrder.push id
+            }
+          )
 
 def contentAtom (id : Nat) : K Nat :=
-  modifyGet fun state =>
-    match state.contents[id]? with
-    | some k => (k, state)
-    | none =>
-        let k := state.contentOrder.size
-        (k,
-          {
-            state with
-              contents := state.contents.insert id k
-              contentOrder := state.contentOrder.push id
-          })
+  modifyGet
+    fun state =>
+      match state.contents[id]? with
+      | some k => (k, state)
+      | none =>
+          let k := state.contentOrder.size
+          (
+            k,
+            {
+              state with
+                contents := state.contents.insert id k
+                contentOrder := state.contentOrder.push id
+            }
+          )
 
 /-- Records a slot with the rendered candidates and emits a placeholder. -/
 def slot (value : Slot) (cands : List String) : K Unit := do
-  modify fun state =>
-    {
-      state with
-        slots := state.slots.push value
-        cands := state.cands.push (cands.mergeSort (· ≤ ·))
-        out := state.out ++ "$"
-    }
+  modify
+    fun state =>
+      {
+        state with
+          slots := state.slots.push value
+          cands := state.cands.push (cands.mergeSort (· ≤ ·))
+          out := state.out ++ "$"
+      }
 
 def sint (value : SInt) : K Unit := do
   emit s!"{← intAtom value.base}:{value.off},"
@@ -124,7 +136,10 @@ def txId (table : Std.HashMap String Nat) (id : String) : String :=
 def content (declared : List String) (table : Std.HashMap String Nat) : Content → String
   | .signature => "S"
   | .transaction id effects =>
-      txId table id ++ "[" ++ String.intercalate ";" (effects.map (effect declared)) ++ "]"
+      txId table id
+      ++ "["
+      ++ String.intercalate ";" (effects.map (effect declared))
+      ++ "]"
 
 abbrev Ctx := List String × Std.HashMap String Nat
 
@@ -139,8 +154,12 @@ def entry (ctx : Ctx) (value : SEntry) : K Unit := do
 def message (ctx : Ctx) : SMsg → K Unit
   | .appendEntries term previous previousTerm entries leaderCommit => do
       emit "AE("
-      sint term; sint previous; sint previousTerm; sint leaderCommit
-      for value in entries do entry ctx value
+      sint term;
+      sint previous;
+      sint previousTerm;
+      sint leaderCommit
+      for value in entries do
+        entry ctx value
       emit ")"
   | .appendEntriesResponse term success lastLogIndex => do
       emit s!"AR{success}("; sint term; sint lastLogIndex; emit ")"
@@ -172,7 +191,8 @@ def node (ctx : Ctx) (i : Nat) (current initial : SNode) (dom : InitDom) : K Uni
   match current.log <|> initial.log with
   | some log => do
       emit "L"
-      for value in log do entry ctx value
+      for value in log do
+        entry ctx value
   | none => emit "L?"
   emit "|"
   optSInt (current.commitIndex <|> initial.commitIndex)
@@ -221,13 +241,14 @@ def store (ctx : Ctx) (value : Store) : K Unit := do
       let bound := value.dbm.get p q
       if bound >= INF then emit "i," else emit s!"{bound},"
   let renamed :=
-    (value.diseqs.filterMap fun (i, j, c) =>
-      if (i == 0 || state.ints.contains i) && (j == 0 || state.ints.contains j) then
-        let i' := if i == 0 then 0 else state.ints[i]!
-        let j' := if j == 0 then 0 else state.ints[j]!
-        some (if i' < j' then (i', j', c) else (j', i', -c))
-      else
-        none)
+    (value.diseqs.filterMap
+      fun (i, j, c) =>
+        if (i == 0 || state.ints.contains i) && (j == 0 || state.ints.contains j) then
+          let i' := if i == 0 then 0 else state.ints[i]!
+          let j' := if j == 0 then 0 else state.ints[j]!
+          some (if i' < j' then (i', j', c) else (j', i', -c))
+        else
+          none)
   let sorted := (renamed.map fun (i, j, c) => s!"{i}/{j}/{c}").mergeSort (· ≤ ·)
   emit s!"N{sorted.eraseDups}"
   for id in state.contentOrder do
@@ -242,7 +263,8 @@ def worldKey (world : World) : WorldKey :=
     for i in [:world.nodes.size] do
       Key.node ctx i world.nodes[i]! world.initial[i]! world.doms[i]!
     for channel in world.channels do
-      for value in channel.pre do Key.message ctx value
+      for value in channel.pre do
+        Key.message ctx value
       if channel.isOpen then
         -- Once the materialized messages are consumed, an open channel can
         -- materialize a copy of anything another world would deliver, so only
@@ -254,7 +276,8 @@ def worldKey (world : World) : WorldKey :=
         | none, none => pure ()
       else
         Key.emit "C"
-        for value in channel.post do Key.message ctx value
+        for value in channel.post do
+          Key.message ctx value
       Key.emit "/"
     Key.store ctx world.store
   let state := (run.run {}).2
@@ -286,16 +309,27 @@ def mergeSlot (world : World) (mine : Slot) (other : World) (theirs : Slot) : Wo
             }
       }
   | .role i, .role _ =>
-      withDom world i fun dom => { dom with role := unionInto dom.role other.doms[i]!.role }
+      withDom world i
+        fun dom => { dom with role := unionInto dom.role other.doms[i]!.role }
   | .votedFor i, .votedFor _ =>
-      withDom world i fun dom =>
-        { dom with votedFor := unionInto dom.votedFor other.doms[i]!.votedFor }
+      withDom world i
+        fun dom =>
+          { dom with votedFor := unionInto dom.votedFor other.doms[i]!.votedFor }
   | .votes i, .votes _ =>
-      withDom world i fun dom =>
-        { dom with votesGranted := unionInto dom.votesGranted other.doms[i]!.votesGranted }
+      withDom world i
+        fun dom =>
+          {
+            dom with
+              votesGranted := unionInto dom.votesGranted other.doms[i]!.votesGranted
+          }
   | .preVotes i, .preVotes _ =>
-      withDom world i fun dom =>
-        { dom with preVotesGranted := unionInto dom.preVotesGranted other.doms[i]!.preVotesGranted }
+      withDom world i
+        fun dom =>
+          {
+            dom with
+              preVotesGranted :=
+                unionInto dom.preVotesGranted other.doms[i]!.preVotesGranted
+          }
   | _, _ => world
 
 /--
@@ -303,46 +337,53 @@ Repeatedly merges worlds that agree on everything except one slot, replacing
 them by one world whose slot allows the union of their candidates. The set of
 concrete states represented is unchanged.
 -/
-def mergeGroup (group : Array (World × WorldKey)) : Array (World × WorldKey) := Id.run do
-  if group.size <= 1 then return group
-  let width := (group[0]?.map (·.2.slots.size)).getD 0
-  -- Only positions whose candidates vary within the group can distinguish worlds.
-  let first := (group[0]?.map (·.2.cands)).getD #[]
-  let active := (List.range width).filter fun p =>
-    group.any fun (_, key) => key.cands[p]! != first[p]!
-  let mut items := group
-  let mut changed := true
-  while changed do
-    changed := false
-    for p in active do
-      let mut index : Std.HashMap String Nat := {}
-      let mut next : Array (World × WorldKey) := #[]
-      for (world, key) in items do
-        let rest :=
-          String.intercalate "|" (active.filter (· != p) |>.map fun q => renderCands key.cands[q]!)
-        match index[rest]? with
-        | some j =>
-            if let some (kept, keptKey) := next[j]? then
-              let merged := mergeSlot kept keptKey.slots[p]! world key.slots[p]!
-              let cands := mergeSortedCands keptKey.cands[p]! key.cands[p]!
-              next := next.set! j (merged, { keptKey with cands := keptKey.cands.set! p cands })
-              changed := true
-        | none =>
-            index := index.insert rest next.size
-            next := next.push (world, key)
-      items := next
-  return items
+def mergeGroup (group : Array (World × WorldKey)) : Array (World × WorldKey) :=
+  Id.run do
+    if group.size <= 1 then return group
+    let width := (group[0]?.map (·.2.slots.size)).getD 0
+    -- Only positions whose candidates vary within the group can distinguish worlds.
+    let first := (group[0]?.map (·.2.cands)).getD #[]
+    let active :=
+      (List.range width).filter
+        fun p =>
+          group.any fun (_, key) => key.cands[p]! != first[p]!
+    let mut items := group
+    let mut changed := true
+    while changed do
+      changed := false
+      for p in active do
+        let mut index : Std.HashMap String Nat := {}
+        let mut next : Array (World × WorldKey) := #[]
+        for (world, key) in items do
+          let rest :=
+            String.intercalate "|"
+              (active.filter (· != p) |>.map fun q => renderCands key.cands[q]!)
+          match index[rest]? with
+          | some j =>
+              if let some (kept, keptKey) := next[j]? then
+                let merged := mergeSlot kept keptKey.slots[p]! world key.slots[p]!
+                let cands := mergeSortedCands keptKey.cands[p]! key.cands[p]!
+                next :=
+                  next.set! j
+                    (merged, { keptKey with cands := keptKey.cands.set! p cands })
+                changed := true
+          | none =>
+              index := index.insert rest next.size
+              next := next.push (world, key)
+        items := next
+    return items
 
 /-- Merges worlds group by group, keeping groups in order of first appearance. -/
-def mergeWorlds (items : Array (World × WorldKey)) : Array (World × WorldKey) := Id.run do
-  let mut groupOf : Std.HashMap String Nat := {}
-  let mut groups : Array (Array (World × WorldKey)) := #[]
-  for item in items do
-    match groupOf[item.2.base]? with
-    | some g => groups := groups.modify g (·.push item)
-    | none =>
-        groupOf := groupOf.insert item.2.base groups.size
-        groups := groups.push #[item]
-  return groups.foldl (fun out group => out ++ mergeGroup group) #[]
+def mergeWorlds (items : Array (World × WorldKey)) : Array (World × WorldKey) :=
+  Id.run do
+    let mut groupOf : Std.HashMap String Nat := {}
+    let mut groups : Array (Array (World × WorldKey)) := #[]
+    for item in items do
+      match groupOf[item.2.base]? with
+      | some g => groups := groups.modify g (·.push item)
+      | none =>
+          groupOf := groupOf.insert item.2.base groups.size
+          groups := groups.push #[item]
+    return groups.foldl (fun out group => out ++ mergeGroup group) #[]
 
 end CCFRaft.MidTrace.Sym

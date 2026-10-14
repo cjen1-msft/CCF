@@ -37,7 +37,8 @@ def partition {α β : Type} [BEq β] (f : α → β) (items : List α) : List (
     (fun groups item =>
       let key := f item
       if groups.any (fun (k, _) => k == key) then
-        groups.map fun (k, members) => if k == key then (k, members ++ [item]) else (k, members)
+        groups.map
+          fun (k, members) => if k == key then (k, members ++ [item]) else (k, members)
       else
         groups ++ [(key, [item])])
     []
@@ -68,14 +69,15 @@ namespace DBM
 
 def get (dbm : DBM) (i j : Nat) : Int := dbm.bounds[i * dbm.size + j]!
 
-def addVar (dbm : DBM) : DBM × Nat := Id.run do
-  let size := dbm.size + 1
-  let mut bounds := Array.replicate (size * size) INF
-  for i in [:dbm.size] do
-    for j in [:dbm.size] do
-      bounds := bounds.set! (i * size + j) (dbm.get i j)
-  bounds := bounds.set! (dbm.size * size + dbm.size) 0
-  return ({ size, bounds }, dbm.size)
+def addVar (dbm : DBM) : DBM × Nat :=
+  Id.run do
+    let size := dbm.size + 1
+    let mut bounds := Array.replicate (size * size) INF
+    for i in [:dbm.size] do
+      for j in [:dbm.size] do
+        bounds := bounds.set! (i * size + j) (dbm.get i j)
+    bounds := bounds.set! (dbm.size * size + dbm.size) 0
+    return ({ size, bounds }, dbm.size)
 
 /-- Adds `x_i - x_j <= c`, keeping the matrix closed; `none` if infeasible. -/
 def addLe (dbm : DBM) (i j : Nat) (c : Int) : Option DBM :=
@@ -84,19 +86,20 @@ def addLe (dbm : DBM) (i j : Nat) (c : Int) : Option DBM :=
   else if dbm.get j i < INF && dbm.get j i + c < 0 then
     none
   else
-    some (Id.run do
-      let size := dbm.size
-      let mut bounds := dbm.bounds
-      for p in [:size] do
-        let toI := dbm.get p i
-        if toI < INF then
-          for q in [:size] do
-            let fromJ := dbm.get j q
-            if fromJ < INF then
-              let candidate := toI + c + fromJ
-              if candidate < bounds[p * size + q]! then
-                bounds := bounds.set! (p * size + q) candidate
-      return { dbm with bounds })
+    some
+      (Id.run do
+        let size := dbm.size
+        let mut bounds := dbm.bounds
+        for p in [:size] do
+          let toI := dbm.get p i
+          if toI < INF then
+            for q in [:size] do
+              let fromJ := dbm.get j q
+              if fromJ < INF then
+                let candidate := toI + c + fromJ
+                if candidate < bounds[p * size + q]! then
+                  bounds := bounds.set! (p * size + q) candidate
+        return { dbm with bounds })
 
 def lower (dbm : DBM) (i : Nat) : Int := - dbm.get 0 i
 
@@ -189,7 +192,7 @@ deriving BEq, Inhabited
 
 inductive SMsg where
   | appendEntries (term prevIndex prevTerm : SInt) (entries : List SEntry)
-      (leaderCommit : SInt)
+    (leaderCommit : SInt)
   | appendEntriesResponse (term : SInt) (success : Bool) (lastLogIndex : SInt)
   | requestVote (term lastCommittableTerm lastCommittableIndex : SInt)
   | requestVoteResponse (term : SInt) (granted : Bool)
@@ -280,7 +283,8 @@ inductive Res (α : Type) where
 
 def M (α : Type) : Type := World → List (Res α)
 
-def Res.bind {α β : Type} (result : Res α) (next : α → World → List (Res β)) : List (Res β) :=
+def Res.bind {α β : Type} (result : Res α) (next : α → World → List (Res β))
+    : List (Res β) :=
   match result with
   | .ok value world => next value world
   | .dead reason => [.dead reason]
@@ -288,14 +292,16 @@ def Res.bind {α β : Type} (result : Res α) (next : α → World → List (Res
 
 /-- `flatMap` that stops once more than `budget` results are produced. -/
 def boundedFlatMap {α β : Type} (budget : Nat) (results : List (Res α))
-    (next : α → World → List (Res β)) : List (Res β) := Id.run do
-  let mut out : Array (Res β) := #[]
-  for result in results do
-    if out.size > budget then
-      return (out.push (.unsupported "branch budget exceeded")).toList
-    for value in result.bind next do
-      out := out.push value
-  return out.toList
+    (next : α → World → List (Res β))
+    : List (Res β) :=
+  Id.run do
+    let mut out : Array (Res β) := #[]
+    for result in results do
+      if out.size > budget then
+        return (out.push (.unsupported "branch budget exceeded")).toList
+      for value in result.bind next do
+        out := out.push value
+    return out.toList
 
 instance : Monad M where
   pure value world := [.ok value world]
@@ -329,11 +335,14 @@ def ofExcept {α : Type} (result : Except String α) : M α :=
 def require (condition : Bool) (reason : String) : M Unit :=
   if condition then pure () else die reason
 
-def andM (a b : M Bool) : M Bool := do if ← a then b else pure false
+def andM (a b : M Bool) : M Bool := do
+  if ← a then b else pure false
 
-def orM (a b : M Bool) : M Bool := do if ← a then pure true else b
+def orM (a b : M Bool) : M Bool := do
+  if ← a then pure true else b
 
-def notM (a : M Bool) : M Bool := do return !(← a)
+def notM (a : M Bool) : M Bool := do
+  return !(← a)
 
 def requireM (condition : M Bool) (reason : String) : M Unit := do
   if ← condition then pure () else die reason
@@ -358,9 +367,10 @@ def filterM {α : Type} (items : List α) (p : α → M Bool) : M (List α) :=
 
 /-! ## Integer atoms -/
 
-def fresh : M SInt := fun world =>
-  let (dbm, id) := world.store.dbm.addVar
-  [.ok ⟨id, 0⟩ { world with store := { world.store with dbm } }]
+def fresh : M SInt :=
+  fun world =>
+    let (dbm, id) := world.store.dbm.addVar
+    [.ok ⟨id, 0⟩ { world with store := { world.store with dbm } }]
 
 /-- Assume `a <= b + k`; dies if inconsistent. -/
 def assumeLe (a b : SInt) (k : Int := 0) (reason : String := "constraint") : M Unit :=
@@ -369,10 +379,11 @@ def assumeLe (a b : SInt) (k : Int := 0) (reason : String := "constraint") : M U
     | some store => [.ok () { world with store }]
     | none => [.dead reason]
 
-def assumeEq (a b : SInt) (reason : String := "constraint") : M Unit := fun world =>
-  match world.store.eq a b with
-  | some store => [.ok () { world with store }]
-  | none => [.dead reason]
+def assumeEq (a b : SInt) (reason : String := "constraint") : M Unit :=
+  fun world =>
+    match world.store.eq a b with
+    | some store => [.ok () { world with store }]
+    | none => [.dead reason]
 
 def freshNat : M SInt := do
   let value ← fresh
@@ -380,85 +391,98 @@ def freshNat : M SInt := do
   return value
 
 /-- `a <= b + k`, forking when undetermined. -/
-def le (a b : SInt) (k : Int := 0) : M Bool := fun world =>
-  match world.store.decideLe a b k with
-  | some answer => [.ok answer world]
-  | none =>
-      (match world.store.le a b k with
-        | some store => [.ok true { world with store }]
-        | none => [])
-      ++ (match world.store.le b a (-k - 1) with
-        | some store => [.ok false { world with store }]
-        | none => [])
+def le (a b : SInt) (k : Int := 0) : M Bool :=
+  fun world =>
+    match world.store.decideLe a b k with
+    | some answer => [.ok answer world]
+    | none =>
+        (match world.store.le a b k with
+          | some store => [.ok true { world with store }]
+          | none => [])
+        ++ (match world.store.le b a (-k - 1) with
+            | some store => [.ok false { world with store }]
+            | none => [])
 
 def lt (a b : SInt) : M Bool := le a b (-1)
 
-def eq (a b : SInt) : M Bool := fun world =>
-  match world.store.decideEq a b with
-  | some answer => [.ok answer world]
-  | none =>
-      (match world.store.eq a b with
-        | some store => [.ok true { world with store }]
-        | none => [])
-      ++ (match world.store.ne a b with
-        | some store => [.ok false { world with store }]
-        | none => [])
+def eq (a b : SInt) : M Bool :=
+  fun world =>
+    match world.store.decideEq a b with
+    | some answer => [.ok answer world]
+    | none =>
+        (match world.store.eq a b with
+          | some store => [.ok true { world with store }]
+          | none => [])
+        ++ (match world.store.ne a b with
+            | some store => [.ok false { world with store }]
+            | none => [])
 
-def max (a b : SInt) : M SInt := do if ← le a b then pure b else pure a
+def max (a b : SInt) : M SInt := do
+  if ← le a b then pure b else pure a
 
-def min (a b : SInt) : M SInt := do if ← le a b then pure a else pure b
+def min (a b : SInt) : M SInt := do
+  if ← le a b then pure a else pure b
 
 /-- Forks over every value of `a`; `a` must be bounded. -/
-def concrete (a : SInt) : M Nat := fun world =>
-  if a.base == 0 then
-    if 0 <= a.off then [.ok a.off.toNat world] else [.dead "negative natural"]
-  else
-    let (low, high) := world.store.range a
-    match high with
-    | none => [.unsupported "concretizing an unbounded integer"]
-    | some high =>
-        let low := if low < 0 then 0 else low
-        (List.range ((high - low + 1).toNat)).filterMap fun offset =>
-          let value := low + offset
-          match world.store.eq a ⟨0, value⟩ with
-          | some store => some (.ok value.toNat { world with store })
-          | none => none
+def concrete (a : SInt) : M Nat :=
+  fun world =>
+    if a.base == 0 then
+      if 0 <= a.off then [.ok a.off.toNat world] else [.dead "negative natural"]
+    else
+      let (low, high) := world.store.range a
+      match high with
+      | none => [.unsupported "concretizing an unbounded integer"]
+      | some high =>
+          let low := if low < 0 then 0 else low
+          (List.range ((high - low + 1).toNat)).filterMap
+            fun offset =>
+              let value := low + offset
+              match world.store.eq a ⟨0, value⟩ with
+              | some store => some (.ok value.toNat { world with store })
+              | none => none
 
 /-! ## Content atoms -/
 
-def freshContent : M SContent := fun world =>
-  let id := world.store.contents.size
-  [
-    .ok (.atom id)
+def freshContent : M SContent :=
+  fun world =>
+    let id := world.store.contents.size
+    [.ok (.atom id)
       {
         world with
-          store := { world.store with contents := world.store.contents.push world.env.domain }
-      }
-  ]
+          store :=
+            { world.store with contents := world.store.contents.push world.env.domain }
+      }]
 
 /-- `f content`, forking once per feasible answer. -/
-def content {β : Type} [BEq β] (value : SContent) (f : Content → β) : M β := fun world =>
-  match value with
-  | .known content => [.ok (f content) world]
-  | .atom id =>
-      match partition f world.store.contents[id]! with
-      | [(answer, _)] => [.ok answer world]
-      | groups =>
-          groups.map fun (answer, members) =>
-            .ok answer
-              {
-                world with
-                  store :=
-                    { world.store with contents := world.store.contents.set! id members }
-              }
+def content {β : Type} [BEq β] (value : SContent) (f : Content → β) : M β :=
+  fun world =>
+    match value with
+    | .known content => [.ok (f content) world]
+    | .atom id =>
+        match partition f world.store.contents[id]! with
+        | [(answer, _)] => [.ok answer world]
+        | groups =>
+            groups.map
+              fun (answer, members) =>
+                .ok answer
+                  {
+                    world with
+                      store :=
+                        {
+                          world.store with
+                            contents := world.store.contents.set! id members
+                        }
+                  }
 
 /-- `f` of a finite-domain value read with `get`, forking once per answer. -/
 def pick {α β : Type} [BEq β] (get : World → List α) (set : World → List α → World)
-    (f : α → β) : M β := fun world =>
-  match partition f (get world) with
-  | [] => [.dead "empty domain"]
-  | [(answer, _)] => [.ok answer world]
-  | groups => groups.map fun (answer, members) => .ok answer (set world members)
+    (f : α → β)
+    : M β :=
+  fun world =>
+    match partition f (get world) with
+    | [] => [.dead "empty domain"]
+    | [(answer, _)] => [.ok answer world]
+    | groups => groups.map fun (answer, members) => .ok answer (set world members)
 
 end M
 

@@ -27,7 +27,8 @@ open Lean CCFRaft.Model.Node CCFRaft.Replay
 def setNode (i : Nat) (s : SNode) : M Unit :=
   M.modify fun world => { world with nodes := world.nodes.set! i s }
 
-def getChannel (c : Nat) : M Channel := do return (← M.world).channels[c]!
+def getChannel (c : Nat) : M Channel := do
+  return (← M.world).channels[c]!
 
 def setChannel (c : Nat) (channel : Channel) : M Unit :=
   M.modify fun world => { world with channels := world.channels.set! c channel }
@@ -57,7 +58,8 @@ def checkVal (key : String) (expected : Json) : SVal → M Unit
   | .nat actual => checkNat key expected actual
 
 /-- `checkFields` over symbolic values. -/
-def checkObserved (observed : List (String × Json)) (actual : List (String × SVal)) : M Unit := do
+def checkObserved (observed : List (String × Json)) (actual : List (String × SVal))
+    : M Unit := do
   M.require (!observed.isEmpty) "observation must contain at least one field"
   for (key, expected) in observed do
     match actual.lookup key with
@@ -128,9 +130,12 @@ def boolOr (packet : Json) (key : String) (decode : Json → Option Bool) : M Bo
   | .error _ => M.choose [false, true]
 
 def decodeSuccess (value : Json) : Option Bool :=
-  if value == toJson "OK" then some true
-  else if value == toJson "FAIL" then some false
-  else none
+  if value == toJson "OK" then
+    some true
+  else if value == toJson "FAIL" then
+    some false
+  else
+    none
 
 def decodeBool (value : Json) : Option Bool := value.getBool?.toOption
 
@@ -141,9 +146,9 @@ def materialize (packet : Json) : M SMsg := do
   match packet.getObjVal? "msg" with
   | .ok (.str "raft_append_entries") =>
       let some previous := (packet.getObjVal? "prev_idx" >>= Json.getNat?).toOption
-        | M.unsupported "AppendEntries packet without prev_idx"
+      | M.unsupported "AppendEntries packet without prev_idx"
       let some last := (packet.getObjVal? "idx" >>= Json.getNat?).toOption
-        | M.unsupported "AppendEntries packet without idx"
+      | M.unsupported "AppendEntries packet without idx"
       M.require (previous <= last) "idx below prev_idx"
       let previousTerm ← natOr packet "prev_term"
       let leaderCommit ← natOr packet "leader_commit_idx"
@@ -163,7 +168,8 @@ def materialize (packet : Json) : M SMsg := do
         entries := entries.push { term := entryTerm, content := ← M.freshContent }
       if invariants then
         M.assumeLe before term 0 "invariant: entry terms are at most the message term"
-      return .appendEntries term (SInt.lit previous) previousTerm entries.toList leaderCommit
+      return .appendEntries term (SInt.lit previous) previousTerm entries.toList
+        leaderCommit
   | .ok (.str "raft_append_entries_response") =>
       return .appendEntriesResponse term (← boolOr packet "success" decodeSuccess)
         (← natOr packet "last_log_idx")
@@ -172,7 +178,8 @@ def materialize (packet : Json) : M SMsg := do
       return .requestVote term (← natOr packet "term_of_last_committable_idx") lastIndex
   | .ok (.str "raft_request_pre_vote") =>
       let lastIndex ← natOr packet "last_committable_idx"
-      return .requestPreVote term (← natOr packet "term_of_last_committable_idx") lastIndex
+      return .requestPreVote term (← natOr packet "term_of_last_committable_idx")
+        lastIndex
   | .ok (.str "raft_request_vote_response") =>
       return .requestVoteResponse term (← boolOr packet "vote_granted" decodeBool)
   | .ok (.str "raft_request_pre_vote_response") =>
@@ -195,8 +202,10 @@ def popHead (c : Nat) : M SMsg := do
             pure message
         | [] => M.die "no pending packet"
       if channel.isOpen then
-        if !(← M.env).projected && (← M.choose [true, false]) then closed
-        else M.unsupported "unobserved pre-cut message"
+        if !(← M.env).projected && (← M.choose [true, false]) then
+          closed
+        else
+          M.unsupported "unobserved pre-cut message"
       else
         closed
 
@@ -233,7 +242,10 @@ def messageAt (c : Nat) (index : Nat) (packet : Json) : M SMsg := do
     let message ← materialize packet
     let channel ← getChannel c
     setChannel c
-      { channel with pre := channel.pre ++ [message], initial := channel.initial ++ [message] }
+      {
+        channel with
+          pre := channel.pre ++ [message], initial := channel.initial ++ [message]
+      }
     return message
 
 /--
@@ -270,7 +282,16 @@ def observeMessage (instruction : Json) : M Unit := do
   let header := (← M.env).header
   M.ofExcept
     (keys instruction
-      ["kind", "observation", "origin", "source", "destination", "packet", "occurrence", "selection"])
+      [
+        "kind",
+        "observation",
+        "origin",
+        "source",
+        "destination",
+        "packet",
+        "occurrence",
+        "selection"
+      ])
   let source ← M.ofExcept (nodeField header instruction "source")
   let destination ← M.ofExcept (nodeField header instruction "destination")
   let c ← channelIndex source destination
@@ -314,21 +335,26 @@ def stateKeys : List String :=
 
 def checkLogLength (i : Nat) (s : SNode) (expected : Json) : M Unit := do
   let some length := expected.getNat?.toOption
-    | M.die s!"logLength: observed {expected.compress}"
+  | M.die s!"logLength: observed {expected.compress}"
   match s.log with
-  | some log => M.require (log.size == length) s!"logLength: observed {length}, canonical {log.size}"
+  | some log =>
+      M.require (log.size == length)
+        s!"logLength: observed {length}, canonical {log.size}"
   | none =>
       match (← initialOf i).log with
       | some log =>
-          M.require (log.size == length) s!"logLength: observed {length}, canonical {log.size}"
+          M.require (log.size == length)
+            s!"logLength: observed {length}, canonical {log.size}"
       | none => bindLog i length
 
 def checkCommittable (i : Nat) (s : SNode) (expected : Json) : M Unit := do
   let log ← getLog i s
   let commitIndex ← getCi i s
-  let some values := (expected.getArr? >>= fun values => values.toList.mapM Json.getNat?).toOption
-    | M.die s!"committableIndices: observed {expected.compress}"
-  M.require (expected == toJson values) s!"committableIndices: observed {expected.compress}"
+  let some values :=
+    (expected.getArr? >>= fun values => values.toList.mapM Json.getNat?).toOption
+  | M.die s!"committableIndices: observed {expected.compress}"
+  M.require (expected == toJson values)
+    s!"committableIndices: observed {expected.compress}"
   let sorted := (List.range' 1 log.size).filter (values.contains ·)
   M.require (sorted == values) s!"committableIndices: observed {expected.compress}"
   let (low, _) := (← M.world).store.range commitIndex
@@ -343,17 +369,21 @@ def checkConfigurations (i : Nat) (s : SNode) (expected : Json) : M Unit := do
   let configs ← activeConfigs (← getLog i s) (← getCi i s)
   let configs := configs.filter (·.index != 0)
   let some observed := expected.getArr?.toOption
-    | M.die s!"configurations: observed {expected.compress}"
-  M.require (observed.size == configs.length) s!"configurations: observed {expected.compress}"
+  | M.die s!"configurations: observed {expected.compress}"
+  M.require (observed.size == configs.length)
+    s!"configurations: observed {expected.compress}"
   for (config, item) in configs.zip observed.toList do
-    let ok ← config.nodes.query fun nodes =>
-      Json.mkObj [("index", toJson config.index), ("nodes", members header nodes)] == item
+    let ok ←
+      config.nodes.query
+        fun nodes =>
+          Json.mkObj [("index", toJson config.index), ("nodes", members header nodes)]
+          == item
     M.require ok s!"configurations: observed {expected.compress}"
 
 def checkRetirement (i : Nat) (s : SNode) (observed : List (String × Json)) : M Unit := do
   let get key := observed.lookup key
   unless ["retirementIndex", "membershipState", "retirementCommittableIndex"].any
-      (get · |>.isSome) do
+          (get · |>.isSome) do
     return
   let log ← getLog i s
   let name ← nameOf i
@@ -372,16 +402,21 @@ def checkRetirement (i : Nat) (s : SNode) (observed : List (String × Json)) : M
       match index with
       | none => pure MembershipState.active
       | some index => do
-          if (← getRci i s).isSome then pure .retiredCommitted
-          else if ← M.le (SInt.lit index) (← getCi i s) then pure .retirementCompleted
-          else if committable.isSome then pure .retirementSigned
-          else pure .retirementOrdered
+          if (← getRci i s).isSome then
+            pure .retiredCommitted
+          else if ← M.le (SInt.lit index) (← getCi i s) then
+            pure .retirementCompleted
+          else if committable.isSome then
+            pure .retirementSigned
+          else
+            pure .retirementOrdered
     M.require (expected == toJson (membershipName phase))
       s!"membershipState: observed {expected.compress}"
 
 def observeState (instruction : Json) : M Unit := do
   let header := (← M.env).header
-  M.ofExcept (keys instruction ["kind", "observation", "origin", "node", "peer", "fields"])
+  M.ofExcept
+    (keys instruction ["kind", "observation", "origin", "node", "peer", "fields"])
   let node ← M.ofExcept (nodeField header instruction "node")
   let i ← indexOf node
   let peer ←
@@ -399,18 +434,23 @@ def observeState (instruction : Json) : M Unit := do
   if let some expected := get "role" then
     let ok ← roleQ i s fun role => toJson (roleName role) == expected
     M.require ok s!"role: observed {expected.compress}"
-  if let some expected := get "currentTerm" then checkNat "currentTerm" expected (← getCt i s)
+  if let some expected := get "currentTerm" then
+    checkNat "currentTerm" expected (← getCt i s)
   if let some expected := get "logLength" then checkLogLength i s expected
-  if let some expected := get "commitIndex" then checkNat "commitIndex" expected (← getCi i s)
+  if let some expected := get "commitIndex" then
+    checkNat "commitIndex" expected (← getCi i s)
   if let some expected := get "retiredCommittedIndex" then
     match ← getRci i s with
-    | none => M.require (expected == Json.null) s!"retiredCommittedIndex: observed {expected.compress}"
+    | none =>
+        M.require (expected == Json.null)
+          s!"retiredCommittedIndex: observed {expected.compress}"
     | some index => checkNat "retiredCommittedIndex" expected index
   if let some expected := get "preVoteEnabled" then
     let enabled := toJson (decide (header.bootstrap.preVoteStatus node = .enabled))
     M.require (expected == enabled) s!"preVoteEnabled: observed {expected.compress}"
   if let some peer := peer then
-    if let some expected := get "sentIndex" then checkNat "sentIndex" expected (← getSent i s peer)
+    if let some expected := get "sentIndex" then
+      checkNat "sentIndex" expected (← getSent i s peer)
     if let some expected := get "matchIndex" then
       checkNat "matchIndex" expected (← getMatch i s peer)
   if let some expected := get "committableIndices" then checkCommittable i s expected
@@ -433,49 +473,66 @@ def contentFields (header : Header) (content : Content) : List (String × Json) 
                 match effect with
                 | .reconfiguration configuration =>
                     Json.mkObj
-                      [("kind", toJson "configuration"), ("configuration", members header configuration)]
+                      [
+                        ("kind", toJson "configuration"),
+                        ("configuration", members header configuration)
+                      ]
                 | .retiredCommitted nodes =>
-                    Json.mkObj [("kind", toJson "retiredCommitted"), ("nodes", members header nodes)]).toArray
+                    Json.mkObj
+                      [
+                        ("kind", toJson "retiredCommitted"),
+                        ("nodes", members header nodes)
+                      ]).toArray
         ),
-        ("configurations", Json.arr ((entryConfigurations content).map (members header)).toArray)
+        (
+          "configurations",
+          Json.arr ((entryConfigurations content).map (members header)).toArray
+        )
       ]
   | .signature => [("kind", toJson "signature")]
 
 def rewriteContent (id : Nat) (f : Content → Content) : M Unit :=
-  M.modify fun world =>
-    {
-      world with
-        store :=
-          {
-            world.store with
-              contents := world.store.contents.modify id fun candidates => (candidates.map f).eraseDups
-          }
-    }
+  M.modify
+    fun world =>
+      {
+        world with
+          store :=
+            {
+              world.store with
+                contents :=
+                  world.store.contents.modify id
+                    fun candidates => (candidates.map f).eraseDups
+            }
+      }
 
 /--
 Transaction identifiers and effects are otherwise unconstrained, so an atom
 observed with them takes the observed values.
 -/
-def rewriteObserved (header : Header) (content : SContent) (observed : List (String × Json))
+def rewriteObserved (header : Header) (content : SContent)
+    (observed : List (String × Json))
     : M Unit := do
   let .atom id := content | return
   if let some (.str transaction) := observed.lookup "transaction" then
-    rewriteContent id fun content =>
-      match content with
-      | .transaction _ effects => .transaction transaction effects
-      | .signature => .signature
+    rewriteContent id
+      fun content =>
+        match content with
+        | .transaction _ effects => .transaction transaction effects
+        | .signature => .signature
   if let some expected := observed.lookup "effects" then
     let parsed :=
       expected.getArr? >>= fun effects => effects.toList.mapM (parseEffect header)
     if let .ok effects := parsed then
-      rewriteContent id fun content =>
-        match content with
-        | .transaction transaction _ => .transaction transaction effects
-        | .signature => .signature
+      rewriteContent id
+        fun content =>
+          match content with
+          | .transaction transaction _ => .transaction transaction effects
+          | .signature => .signature
 
 def observeEntry (instruction : Json) : M Unit := do
   let header := (← M.env).header
-  M.ofExcept (keys instruction ["kind", "observation", "origin", "node", "index", "fields"])
+  M.ofExcept
+    (keys instruction ["kind", "observation", "origin", "node", "index", "fields"])
   let node ← M.ofExcept (nodeField header instruction "node")
   let index ← M.ofExcept (natField instruction "index")
   M.require (index != 0) "log entry index must be positive"
@@ -483,7 +540,7 @@ def observeEntry (instruction : Json) : M Unit := do
   let s := (← M.world).nodes[i]!
   let log ← getLog i s
   let some entry := log[index - 1]?
-    | M.die s!"node '{node}' has no log entry at index {index}"
+  | M.die s!"node '{node}' has no log entry at index {index}"
   let observed ← M.ofExcept (objectFields (← M.ofExcept (field instruction "fields")))
   M.require (!observed.isEmpty) "observation must contain at least one field"
   rewriteObserved header entry.content observed
@@ -497,8 +554,10 @@ def observeEntry (instruction : Json) : M Unit := do
             M.require (actual == committed) s!"committed: observed {committed}"
         | .error _ => M.die s!"committed: observed {expected.compress}"
     | _ =>
-        let ok ← M.content entry.content fun content =>
-          (contentFields header content).lookup key == some expected
+        let ok ←
+          M.content entry.content
+            fun content =>
+              (contentFields header content).lookup key == some expected
         M.require ok s!"{key}: observed {expected.compress}"
 
 /-! ## Instructions -/
