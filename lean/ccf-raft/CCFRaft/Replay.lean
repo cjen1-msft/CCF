@@ -93,7 +93,7 @@ def Header.initial (header : Header) : Model.State String String :=
     active := header.declared
   }
 
-private def parseHeader (value : Json) : Except String Header := do
+def parseHeader (value : Json) : Except String Header := do
   keys value ["configuration", "leader", "pre_vote_enabled"]
   let configuredNodes ← nodeList (← field value "configuration")
   let configuration := configuredNodes.toFinset
@@ -458,9 +458,42 @@ structure Result where
   observations : Nat
 deriving Repr
 
-/-- Replay in input order. Later malformed instructions cannot hide an earlier
-guard failure or discrepancy. Observations never update protocol state. -/
-def replay (document : Json) : Except String Result := do
+/-- Runs one instruction as `replay` does. The flag is whether it is an action. -/
+def runInstruction (header : Header) (state : ReplayState) (instruction : Json)
+    : Except String (ReplayState × Bool) := do
+  match ← stringField instruction "kind" with
+  | "action" =>
+      let step ← parseAction header instruction
+      return (← runStep header state step (← stringField instruction "action"), true)
+  | "observation" =>
+      match ← stringField instruction "observation" with
+      | "state" => observeState header state instruction
+      | "message" => observeMessage header state instruction
+      | "entry" => observeEntry header state instruction
+      | name => throw s!"unsupported observation '{name}'"
+      return (state, false)
+  | kind => throw s!"unsupported instruction kind '{kind}'"
+
+/-- Replays `instructions` in input order from `initial`. -/
+def replayFrom (header : Header) (initial : ReplayState) (instructions : Array Json)
+    : Except String Result := do
+  let mut state := initial
+  let mut actions := 0
+  let mut observations := 0
+  for index in [:instructions.size] do
+    let instruction := instructions[index]!
+    let label ←
+      (originLabel instruction).mapError
+        fun error => s!"instruction {index + 1}: invalid origin: {error}"
+    let (nextState, isAction) ←
+      (runInstruction header state instruction).mapError
+        fun error => s!"instruction {index + 1} at {label}: {error}"
+    state := nextState
+    if isAction then actions := actions + 1 else observations := observations + 1
+  return { instructions := instructions.size, actions, observations }
+
+/-- The header and instructions of a `ccfraft-replay/v4` document. -/
+def parseDocument (document : Json) : Except String (Header × Array Json) := do
   keys document ["schema", "bootstrap", "instructions"]
   let schema ← stringField document "schema"
   if schema == "ccfraft-replay/v1" then
@@ -478,31 +511,13 @@ def replay (document : Json) : Except String Result := do
   let instructions ← (← field document "instructions").getArr?
   if instructions.isEmpty then
     throw "replay instructions must not be empty"
-  let mut state : ReplayState := { state := header.initial }
-  let mut actions := 0
-  let mut observations := 0
-  for index in [:instructions.size] do
-    let instruction := instructions[index]!
-    let label ←
-      (originLabel instruction).mapError
-        fun error => s!"instruction {index + 1}: invalid origin: {error}"
-    let step : Except String (ReplayState × Bool) := do
-      match ← stringField instruction "kind" with
-      | "action" =>
-          let step ← parseAction header instruction
-          return (← runStep header state step (← stringField instruction "action"), true)
-      | "observation" =>
-          match ← stringField instruction "observation" with
-          | "state" => observeState header state instruction
-          | "message" => observeMessage header state instruction
-          | "entry" => observeEntry header state instruction
-          | name => throw s!"unsupported observation '{name}'"
-          return (state, false)
-      | kind => throw s!"unsupported instruction kind '{kind}'"
-    let (nextState, isAction) ←
-      step.mapError fun error => s!"instruction {index + 1} at {label}: {error}"
-    state := nextState
-    if isAction then actions := actions + 1 else observations := observations + 1
-  return { instructions := instructions.size, actions, observations }
+  return (header, instructions)
+
+/-- Replay in input order from every declared node's initial state. Later
+malformed instructions cannot hide an earlier guard failure or discrepancy.
+Observations never update protocol state. -/
+def replay (document : Json) : Except String Result := do
+  let (header, instructions) ← parseDocument document
+  replayFrom header { state := header.initial } instructions
 
 end CCFRaft.Replay

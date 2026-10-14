@@ -32,3 +32,12 @@ root = "CCFRaft.Tests.CanonicalTests"
 name = "ccfraft-replay"
 srcDir = "replay"
 root = "ReplayMain"
+
+[[lean_lib]]
+name = "MidTrace"
+srcDir = "midtrace"
+
+[[lean_exe]]
+name = "ccfraft-midtrace"
+srcDir = "midtrace"
+root = "MidTraceMain"
