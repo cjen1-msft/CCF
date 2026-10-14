@@ -223,10 +223,28 @@ def certify (header : Header) (suffix : Array Json) (frontier : Array World)
       | .error error => failure := s!"witness rejected: {error}"
   return (none, failure)
 
-def validate (header : Header) (suffix : Array Json) (invariants : Bool) (cap : Nat)
-    (dedup : Bool := true) (dumpAt : Option Nat := none) (phantoms : Bool := true)
-    : Outcome := Id.run do
-  let env := makeEnv header suffix invariants phantoms
+structure Settings where
+  /-- Restrict initial states with `Env.invariants`. -/
+  invariants : Bool := true
+  /-- Give up with `unknown` once the frontier exceeds this. -/
+  cap : Nat := 100000
+  /-- Deduplicate and merge worlds by `worldKey`. -/
+  dedup : Bool := true
+  /-- Stop after this many instructions and report the first world keys. -/
+  dumpAt : Option Nat := none
+  /-- See `Env.phantoms`. -/
+  phantoms : Bool := true
+  /-- Validate each node's projection separately; see `validateNodes`. -/
+  perNode : Bool := true
+
+/--
+Breadth-first search over `suffix`. `positions` gives each instruction's index
+in the original suffix for messages (identity when empty).
+-/
+def validate (header : Header) (suffix : Array Json) (settings : Settings)
+    (projected : Bool := false) (positions : Array Nat := #[]) : Outcome := Id.run do
+  let { invariants, cap, dedup, dumpAt, phantoms, .. } := settings
+  let env := { makeEnv header suffix invariants phantoms with projected }
   let mut frontier := #[initialWorld env]
   let mut maxFrontier := 1
   let mut sizes : Array Nat := #[]
@@ -237,11 +255,19 @@ def validate (header : Header) (suffix : Array Json) (invariants : Bool) (cap : 
     let mut keyed : Array (World × WorldKey) := #[]
     let mut seen : Std.HashSet String := {}
     let mut dead : Array String := #[]
+    -- Keys are costly and forks inside a block are usually pruned by the
+    -- block's own observations, so worlds are only deduplicated and merged
+    -- before the next action.
+    let boundary :=
+      match suffix[index + 1]? with
+      | some following => (stringField following "kind").toOption == some "action"
+      | none => true
+    let keying := dedup && (boundary || dumpAt == some (index + 1))
     for world in frontier do
       for result in runInstr instruction world do
         match result with
         | .ok _ world =>
-            if dedup then
+            if keying then
               let key := worldKey world
               let full := key.full
               unless seen.contains full do
@@ -251,7 +277,7 @@ def validate (header : Header) (suffix : Array Json) (invariants : Bool) (cap : 
               next := next.push world
         | .dead reason => dead := note dead reason
         | .unsupported reason => unsupported := note unsupported reason
-    if dedup then
+    if keying then
       next := (mergeWorlds keyed).map (·.1)
     maxFrontier := Nat.max maxFrontier next.size
     sizes := sizes.push next.size
@@ -265,11 +291,12 @@ def validate (header : Header) (suffix : Array Json) (invariants : Bool) (cap : 
         sizes
       }
     let label := (originLabel instruction).toOption.getD "?"
+    let position := positions[index]?.getD index
     if next.isEmpty then
       if unsupported.isEmpty then
         return {
           verdict := .invalid
-          detail := s!"instruction {index + 1} at {label}: {dead.toList}"
+          detail := s!"instruction {position + 1} at {label}: {dead.toList}"
           processed := index + 1
           maxFrontier
           sizes
@@ -277,7 +304,8 @@ def validate (header : Header) (suffix : Array Json) (invariants : Bool) (cap : 
       else
         return {
           verdict := .unknown
-          detail := s!"instruction {index + 1} at {label}: unsupported {unsupported.toList}, dead {dead.toList}"
+          detail :=
+            s!"instruction {position + 1} at {label}: unsupported {unsupported.toList}, dead {dead.toList}"
           processed := index + 1
           maxFrontier
           sizes
@@ -285,7 +313,7 @@ def validate (header : Header) (suffix : Array Json) (invariants : Bool) (cap : 
     if next.size > cap then
       return {
         verdict := .unknown
-        detail := s!"instruction {index + 1} at {label}: frontier {next.size} exceeds {cap}"
+        detail := s!"instruction {position + 1} at {label}: frontier {next.size} exceeds {cap}"
         processed := index + 1
         maxFrontier
         sizes
@@ -309,5 +337,87 @@ def validate (header : Header) (suffix : Array Json) (invariants : Bool) (cap : 
         maxFrontier
         sizes
       }
+
+/-! ## Per-node projection -/
+
+/--
+The node whose symbolic state `instruction` reads or writes. With phantom
+deliveries (`Env.phantoms`) a receive never reads its sender's state, so a
+channel's materialized head belongs to its destination and its post-cut
+sends, read only by `last` selections, belong to its source.
+-/
+def owner (instruction : Json) : Except String String := do
+  match ← stringField instruction "kind" with
+  | "action" =>
+      match ← stringField instruction "action" with
+      | "receive" | "drop" => stringField instruction "destination"
+      | "sendEntries" => stringField instruction "source"
+      | _ => stringField instruction "node"
+  | "observation" =>
+      match ← stringField instruction "observation" with
+      | "message" =>
+          match (instruction.getObjVal? "selection").toOption with
+          | some (.str "last") => stringField instruction "source"
+          | _ => stringField instruction "destination"
+      | _ => stringField instruction "node"
+  | kind => throw s!"unsupported instruction kind '{kind}'"
+
+/--
+Validates each declared node's projection of `suffix` on its own and joins
+the projections' witnesses: each node's initial state comes from its own
+projection, as do the pre-cut messages addressed to it. Projected worlds
+never close a channel (`Env.projected`), so the joint search space is the
+product of the per-node ones: an `invalid` projection makes the whole suffix
+`invalid`. A `valid` verdict still requires the joined witness to pass
+`Replay.replayFrom` on the whole suffix.
+-/
+def validateNodes (header : Header) (suffix : Array Json) (settings : Settings) : Outcome :=
+  Id.run do
+  let mut owned : Std.HashMap String (Array Nat) := {}
+  for index in [:suffix.size] do
+    match owner suffix[index]! with
+    | .ok node => owned := owned.alter node fun found => some ((found.getD #[]).push index)
+    | .error error =>
+        return { verdict := .invalid, detail := s!"instruction {index + 1}: {error}", processed := index, maxFrontier := 0 }
+  let mut maxFrontier := 0
+  let mut sizes : Array Nat := #[]
+  let mut nodes : List (String × NodeState String String) := []
+  let mut network : List Envelope := []
+  let mut pending : Option Outcome := none
+  for node in header.declared do
+    let positions := owned.getD node #[]
+    let part := positions.map (suffix[·]!)
+    let outcome := validate header part settings (projected := true) positions
+    maxFrontier := Nat.max maxFrontier outcome.maxFrontier
+    sizes := sizes ++ outcome.sizes
+    match outcome.verdict with
+    | .invalid =>
+        return { outcome with detail := s!"node {node}: {outcome.detail}", maxFrontier, sizes }
+    | .unknown =>
+        if pending.isNone then
+          pending := some { outcome with detail := s!"node {node}: {outcome.detail}" }
+    | .valid =>
+        if let some witness := outcome.witness then
+          if let some state := witness.state.nodes.lookup node then
+            nodes := nodes ++ [(node, state)]
+          network := network ++ witness.state.network.filter (·.target == node)
+  if let some outcome := pending then
+    return { outcome with maxFrontier, sizes }
+  let joined : ReplayState := { state := { nodes, active := header.declared, network } }
+  match replayFrom header joined suffix with
+  | .ok _ =>
+      return {
+        verdict := .valid, detail := "", processed := suffix.size, maxFrontier, sizes
+        witness := some joined
+      }
+  | .error error =>
+      return {
+        verdict := .unknown, detail := s!"ENGINE-BUG: joined witness rejected: {error}"
+        processed := suffix.size, maxFrontier, sizes
+      }
+
+/-- Validates `suffix` with `settings`. -/
+def run (header : Header) (suffix : Array Json) (settings : Settings) : Outcome :=
+  if settings.perNode then validateNodes header suffix settings else validate header suffix settings
 
 end CCFRaft.MidTrace.Sym

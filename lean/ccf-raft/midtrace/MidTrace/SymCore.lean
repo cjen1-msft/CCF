@@ -251,6 +251,10 @@ structure Env where
   /-- Deliver a materialized pre-cut copy instead of closing an open channel; see
   `messageAt`. -/
   phantoms : Bool := true
+  /-- The instructions are one node's projection (`validateNodes`): channels
+  are never closed, since a closed channel's post-cut messages were sent by
+  another node whose actions are not replayed here. -/
+  projected : Bool := false
 
 structure World where
   env : Env

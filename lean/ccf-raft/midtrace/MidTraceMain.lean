@@ -47,31 +47,29 @@ private def trueState (header : Replay.Header) (prefix_ : Array Json)
 private def usage : String :=
   "usage: ccfraft-midtrace (cut | true-state) DOC N\n" ++
   "       ccfraft-midtrace replay-from DOC N STATE\n" ++
-  "       ccfraft-midtrace validate DOC N [--no-invariants] [--no-dedup] [--closing]\n" ++
+  "       ccfraft-midtrace validate DOC N [--no-invariants] [--no-dedup] [--closing] [--global]\n" ++
   "         [--cap K] [--witness] [--sizes] [--dump K]"
 
 structure ValidateOptions where
-  invariants : Bool := true
-  dedup : Bool := true
+  settings : Sym.Settings := {}
   witness : Bool := false
   sizes : Bool := false
-  cap : Nat := 100000
-  dumpAt : Option Nat := none
-  phantoms : Bool := true
 
 private def validateOptions (options : List String) (parsed : ValidateOptions)
     : Option ValidateOptions :=
+  let set (f : Sym.Settings → Sym.Settings) := { parsed with settings := f parsed.settings }
   match options with
   | [] => some parsed
-  | "--no-invariants" :: rest => validateOptions rest { parsed with invariants := false }
-  | "--closing" :: rest => validateOptions rest { parsed with phantoms := false }
-  | "--no-dedup" :: rest => validateOptions rest { parsed with dedup := false }
+  | "--no-invariants" :: rest => validateOptions rest (set ({ · with invariants := false }))
+  | "--closing" :: rest => validateOptions rest (set ({ · with phantoms := false }))
+  | "--global" :: rest => validateOptions rest (set ({ · with perNode := false }))
+  | "--no-dedup" :: rest => validateOptions rest (set ({ · with dedup := false }))
   | "--witness" :: rest => validateOptions rest { parsed with witness := true }
   | "--sizes" :: rest => validateOptions rest { parsed with sizes := true }
   | "--dump" :: value :: rest =>
-      value.toNat?.bind fun index => validateOptions rest { parsed with dumpAt := some index }
+      value.toNat?.bind fun index => validateOptions rest (set ({ · with dumpAt := some index }))
   | "--cap" :: value :: rest =>
-      value.toNat?.bind fun cap => validateOptions rest { parsed with cap }
+      value.toNat?.bind fun cap => validateOptions rest (set ({ · with cap }))
   | _ => none
 
 def main (args : List String) : IO UInt32 := do
@@ -103,8 +101,10 @@ def main (args : List String) : IO UInt32 := do
         | stderr.putStrLn usage; return 2
         let (header, _, suffix) ← split path count.toNat!
         let start ← IO.monoMsNow
-        let outcome := Sym.validate header suffix options.invariants options.cap options.dedup options.dumpAt
-          options.phantoms
+        let settings := options.settings
+        -- The search space only factors per node when deliveries are phantoms.
+        let settings := { settings with perNode := settings.perNode && settings.phantoms }
+        let outcome := Sym.run header suffix settings
         let verdict := outcome.verdict.name
         let elapsed := (← IO.monoMsNow) - start
         IO.println

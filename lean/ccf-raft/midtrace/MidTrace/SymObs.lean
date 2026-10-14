@@ -195,7 +195,7 @@ def popHead (c : Nat) : M SMsg := do
             pure message
         | [] => M.die "no pending packet"
       if channel.isOpen then
-        if ← M.choose [true, false] then closed
+        if !(← M.env).projected && (← M.choose [true, false]) then closed
         else M.unsupported "unobserved pre-cut message"
       else
         closed
@@ -247,7 +247,7 @@ def lastMessage (c : Nat) : M SMsg := do
         | some message => pure message
         | none => M.die "no pending packet"
       if !channel.isOpen then return ← closed
-      if ← M.choose [true, false] then
+      if !(← M.env).projected && (← M.choose [true, false]) then
         setChannel c { channel with isOpen := false }
         closed
       else
