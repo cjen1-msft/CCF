@@ -236,12 +236,25 @@ def messageAt (c : Nat) (index : Nat) (packet : Json) : M SMsg := do
       { channel with pre := channel.pre ++ [message], initial := channel.initial ++ [message] }
     return message
 
-/-- The newest pending message of channel `c`. -/
-def lastMessage (c : Nat) : M SMsg := do
+/--
+The newest pending message of channel `c`.
+
+In a projection the destination's materialized messages are invisible, so
+with no post-cut send the newest message is a pre-cut `tail`. Placing it after
+every message the destination consumes keeps it pending, so this subsumes
+the alternatives (an exhausted channel has no newest message at all).
+-/
+def lastMessage (c : Nat) (packet : Json) : M SMsg := do
   let channel ← getChannel c
   match channel.post.getLast? with
   | some message => pure message
   | none =>
+      if (← M.env).projected then
+        if let some message := channel.tail then return message
+        let message ← materialize packet
+        let channel ← getChannel c
+        setChannel c { channel with tail := some message }
+        return message
       let closed : M SMsg :=
         match channel.pre.getLast? with
         | some message => pure message
@@ -272,7 +285,7 @@ def observeMessage (instruction : Json) : M Unit := do
         else
           match ← M.ofExcept (text selection) with
           | "first" => messageAt c 0 packet
-          | "last" => lastMessage c
+          | "last" => lastMessage c packet
           | name => M.die s!"unsupported message selection '{name}'"
   discard <| M.ofExcept (stringField packet "msg")
   checkObserved (← M.ofExcept (objectFields packet)) (msgFields message)

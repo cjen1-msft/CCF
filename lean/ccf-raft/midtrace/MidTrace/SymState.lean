@@ -120,14 +120,6 @@ def leaderKnown (i : Nat) (s : SNode) : M Bool :=
 
 /-! ## Integer fields and the log -/
 
-def getLog (i : Nat) (s : SNode) : M (Array SEntry) := do
-  match s.log with
-  | some log => pure log
-  | none =>
-      match (← initialOf i).log with
-      | some log => pure log
-      | none => M.unsupported "log read before its length is observed"
-
 /-- Invariant: the last log term is at most the current term. -/
 def termInvariant (i : Nat) : M Unit := do
   unless (← M.env).invariants do return
@@ -192,6 +184,24 @@ def bindLog (i : Nat) (length : Nat) : M Unit := do
     log := log.push { term, content := ← M.freshContent }
   modifyInitial i fun node => { node with log := some log }
   termInvariant i
+
+/--
+A node's log. A read before any `logLength` observation tries each length the
+node is later observed with (`Env.logHints`); any other length is unsupported.
+-/
+def getLog (i : Nat) (s : SNode) : M (Array SEntry) := do
+  match s.log with
+  | some log => pure log
+  | none =>
+      match (← initialOf i).log with
+      | some log => pure log
+      | none =>
+          let hints := ((← M.env).logHints[i]?).getD []
+          match ← M.choose (hints.map some ++ [none]) with
+          | some length =>
+              bindLog i length
+              pure (((← initialOf i).log).getD #[])
+          | none => M.unsupported "log read before its length is observed"
 
 def peerField (i : Nat) (s : SNode) (peer : Nat) (get : SNode → Array (Option SInt))
     (set : SNode → Array (Option SInt) → SNode) : M SInt := do

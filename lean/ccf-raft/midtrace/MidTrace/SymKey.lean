@@ -248,7 +248,10 @@ def worldKey (world : World) : WorldKey :=
         -- materialize a copy of anything another world would deliver, so only
         -- the newest pending message (seen by `last` observations) matters.
         Key.emit "O"
-        if let some value := channel.post.getLast? then Key.message ctx value
+        match channel.post.getLast?, channel.tail with
+        | some value, _ => Key.message ctx value
+        | none, some value => Key.emit "T"; Key.message ctx value
+        | none, none => pure ()
       else
         Key.emit "C"
         for value in channel.post do Key.message ctx value

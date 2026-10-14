@@ -55,8 +55,17 @@ def makeEnv (header : Header) (suffix : Array Json) (invariants : Bool)
   let ids := suffix.foldl (fun found value => transactionIds value found) #["midtrace"]
   let txIds := ids.foldl
     (fun table id => if table.contains id then table else table.insert id table.size) {}
+  let logHints := suffix.foldl (init := Array.replicate names.size [])
+    fun hints instruction => Id.run do
+      let some node := (stringField instruction "node").toOption | return hints
+      let some k := names.idxOf? node | return hints
+      let some length :=
+        (instruction.getObjVal? "fields" >>= (·.getObjVal? "logLength") >>= Json.getNat?).toOption
+        | return hints
+      if (stringField instruction "observation").toOption != some "state" then return hints
+      if hints[k]!.contains length then hints else hints.modify k (· ++ [length])
   { header, names, sorted := order, domain := contentDomain header.declared, invariants, txIds,
-    phantoms }
+    phantoms, logHints }
 
 def initialWorld (env : Env) : World :=
   let n := env.size
@@ -182,7 +191,7 @@ def witness (world : World) : Option ReplayState := do
       (env.name i, valuation.node env world.initial[i]! world.doms[i]!)
   let network :=
     (List.range (n * n)).flatMap fun c =>
-      world.channels[c]!.initial.map fun message =>
+      (world.channels[c]!.initial ++ world.channels[c]!.tail.toList).map fun message =>
         { source := env.name (c / n), target := env.name (c % n), payload := valuation.message message }
   return { state := { nodes, active := env.header.declared, network } }
 
@@ -232,6 +241,8 @@ structure Settings where
   dedup : Bool := true
   /-- Stop after this many instructions and report the first world keys. -/
   dumpAt : Option Nat := none
+  /-- With `perNode`, apply `dumpAt` to this node's projection only. -/
+  dumpNode : Option String := none
   /-- See `Env.phantoms`. -/
   phantoms : Bool := true
   /-- Validate each node's projection separately; see `validateNodes`. -/
@@ -244,7 +255,7 @@ in the original suffix for messages (identity when empty).
 def validate (header : Header) (suffix : Array Json) (settings : Settings)
     (projected : Bool := false) (positions : Array Nat := #[]) : Outcome := Id.run do
   let { invariants, cap, dedup, dumpAt, phantoms, .. } := settings
-  let env := { makeEnv header suffix invariants phantoms with projected }
+  let env := { makeEnv header suffix invariants phantoms with projected, budget := cap }
   let mut frontier := #[initialWorld env]
   let mut maxFrontier := 1
   let mut sizes : Array Nat := #[]
@@ -383,11 +394,13 @@ def validateNodes (header : Header) (suffix : Array Json) (settings : Settings) 
   let mut sizes : Array Nat := #[]
   let mut nodes : List (String × NodeState String String) := []
   let mut network : List Envelope := []
+  let mut tails : List Envelope := []
   let mut pending : Option Outcome := none
   for node in header.declared do
     let positions := owned.getD node #[]
     let part := positions.map (suffix[·]!)
-    let outcome := validate header part settings (projected := true) positions
+    let dumpAt := if settings.dumpNode.all (· == node) then settings.dumpAt else none
+    let outcome := validate header part { settings with dumpAt } (projected := true) positions
     maxFrontier := Nat.max maxFrontier outcome.maxFrontier
     sizes := sizes ++ outcome.sizes
     match outcome.verdict with
@@ -400,10 +413,14 @@ def validateNodes (header : Header) (suffix : Array Json) (settings : Settings) 
         if let some witness := outcome.witness then
           if let some state := witness.state.nodes.lookup node then
             nodes := nodes ++ [(node, state)]
+          -- A projection materializes the messages its node consumes, and
+          -- the `tail` of each channel it sends on, which goes last.
           network := network ++ witness.state.network.filter (·.target == node)
+          tails := tails ++ witness.state.network.filter (·.source == node)
   if let some outcome := pending then
     return { outcome with maxFrontier, sizes }
-  let joined : ReplayState := { state := { nodes, active := header.declared, network } }
+  let joined : ReplayState :=
+    { state := { nodes, active := header.declared, network := network ++ tails } }
   match replayFrom header joined suffix with
   | .ok _ =>
       return {

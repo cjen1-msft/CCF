@@ -227,6 +227,10 @@ structure Channel where
   post : List SMsg := []
   /-- Every materialized pre-cut message, in order, for the witness. -/
   initial : List SMsg := []
+  /-- In a projection (`Env.projected`), the newest pre-cut message, seen by a
+  `last` selection before any post-cut send; the witness places it after
+  `initial`. -/
+  tail : Option SMsg := none
 deriving BEq, Inhabited
 
 /-- Remaining candidates for finite-domain initial fields. -/
@@ -255,6 +259,11 @@ structure Env where
   are never closed, since a closed channel's post-cut messages were sent by
   another node whose actions are not replayed here. -/
   projected : Bool := false
+  /-- Per node, the `logLength` values its state observations report, in order
+  of first appearance: the initial lengths tried when the log is read first. -/
+  logHints : Array (List Nat) := #[]
+  /-- Most results one `bind` may produce; the rest become one unsupported result. -/
+  budget : Nat := 100000
 
 structure World where
   env : Env
@@ -271,14 +280,29 @@ inductive Res (α : Type) where
 
 def M (α : Type) : Type := World → List (Res α)
 
+def Res.bind {α β : Type} (result : Res α) (next : α → World → List (Res β)) : List (Res β) :=
+  match result with
+  | .ok value world => next value world
+  | .dead reason => [.dead reason]
+  | .unsupported reason => [.unsupported reason]
+
+/-- `flatMap` that stops once more than `budget` results are produced. -/
+def boundedFlatMap {α β : Type} (budget : Nat) (results : List (Res α))
+    (next : α → World → List (Res β)) : List (Res β) := Id.run do
+  let mut out : Array (Res β) := #[]
+  for result in results do
+    if out.size > budget then
+      return (out.push (.unsupported "branch budget exceeded")).toList
+    for value in result.bind next do
+      out := out.push value
+  return out.toList
+
 instance : Monad M where
   pure value world := [.ok value world]
   bind action next world :=
-    (action world).flatMap fun result =>
-      match result with
-      | .ok value world => next value world
-      | .dead reason => [.dead reason]
-      | .unsupported reason => [.unsupported reason]
+    match action world with
+    | [result] => result.bind next
+    | results => boundedFlatMap world.env.budget results next
 
 namespace M
 

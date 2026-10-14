@@ -48,7 +48,7 @@ private def usage : String :=
   "usage: ccfraft-midtrace (cut | true-state) DOC N\n" ++
   "       ccfraft-midtrace replay-from DOC N STATE\n" ++
   "       ccfraft-midtrace validate DOC N [--no-invariants] [--no-dedup] [--closing] [--global]\n" ++
-  "         [--cap K] [--witness] [--sizes] [--dump K]"
+  "         [--cap K] [--witness] [--sizes] [--dump K] [--dump-node NODE]"
 
 structure ValidateOptions where
   settings : Sym.Settings := {}
@@ -68,6 +68,7 @@ private def validateOptions (options : List String) (parsed : ValidateOptions)
   | "--sizes" :: rest => validateOptions rest { parsed with sizes := true }
   | "--dump" :: value :: rest =>
       value.toNat?.bind fun index => validateOptions rest (set ({ · with dumpAt := some index }))
+  | "--dump-node" :: node :: rest => validateOptions rest (set ({ · with dumpNode := some node }))
   | "--cap" :: value :: rest =>
       value.toNat?.bind fun cap => validateOptions rest (set ({ · with cap }))
   | _ => none
