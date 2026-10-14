@@ -3,6 +3,7 @@ module
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
+public import Std.Data.HashMap
 public import CCFRaft.Replay
 
 @[expose] public section
@@ -245,6 +246,11 @@ structure Env where
   domain : List Content
   /-- Restrict the initial state with cheap reachable-state invariants. -/
   invariants : Bool := true
+  /-- Short names for transaction ids that occur in the trace, used by world keys. -/
+  txIds : Std.HashMap String Nat := {}
+  /-- Deliver a materialized pre-cut copy instead of closing an open channel; see
+  `messageAt`. -/
+  phantoms : Bool := true
 
 structure World where
   env : Env

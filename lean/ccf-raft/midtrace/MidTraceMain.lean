@@ -5,6 +5,7 @@ module
 
 public import MidTrace.Cut
 public import MidTrace.StateJson
+public import MidTrace.SymDriver
 
 public section
 
@@ -45,7 +46,33 @@ private def trueState (header : Replay.Header) (prefix_ : Array Json)
 
 private def usage : String :=
   "usage: ccfraft-midtrace (cut | true-state) DOC N\n" ++
-  "       ccfraft-midtrace replay-from DOC N STATE"
+  "       ccfraft-midtrace replay-from DOC N STATE\n" ++
+  "       ccfraft-midtrace validate DOC N [--no-invariants] [--no-dedup] [--closing]\n" ++
+  "         [--cap K] [--witness] [--sizes] [--dump K]"
+
+structure ValidateOptions where
+  invariants : Bool := true
+  dedup : Bool := true
+  witness : Bool := false
+  sizes : Bool := false
+  cap : Nat := 100000
+  dumpAt : Option Nat := none
+  phantoms : Bool := true
+
+private def validateOptions (options : List String) (parsed : ValidateOptions)
+    : Option ValidateOptions :=
+  match options with
+  | [] => some parsed
+  | "--no-invariants" :: rest => validateOptions rest { parsed with invariants := false }
+  | "--closing" :: rest => validateOptions rest { parsed with phantoms := false }
+  | "--no-dedup" :: rest => validateOptions rest { parsed with dedup := false }
+  | "--witness" :: rest => validateOptions rest { parsed with witness := true }
+  | "--sizes" :: rest => validateOptions rest { parsed with sizes := true }
+  | "--dump" :: value :: rest =>
+      value.toNat?.bind fun index => validateOptions rest { parsed with dumpAt := some index }
+  | "--cap" :: value :: rest =>
+      value.toNat?.bind fun cap => validateOptions rest { parsed with cap }
+  | _ => none
 
 def main (args : List String) : IO UInt32 := do
   let stderr ← IO.getStderr
@@ -71,6 +98,23 @@ def main (args : List String) : IO UInt32 := do
         | .error error =>
             IO.println s!"rejected: {error}"
             return 1
+    | "validate" :: path :: count :: options =>
+        let some options := validateOptions options {}
+        | stderr.putStrLn usage; return 2
+        let (header, _, suffix) ← split path count.toNat!
+        let start ← IO.monoMsNow
+        let outcome := Sym.validate header suffix options.invariants options.cap options.dedup options.dumpAt
+          options.phantoms
+        let verdict := outcome.verdict.name
+        let elapsed := (← IO.monoMsNow) - start
+        IO.println
+          s!"{verdict} time_ms={elapsed} instructions={suffix.size} processed={outcome.processed} max_frontier={outcome.maxFrontier} {outcome.detail}"
+        if options.sizes then
+          IO.println s!"sizes {outcome.sizes.toList}"
+        if options.witness then
+          if let some state := outcome.witness then
+            IO.println (replayStateJson header.declared state).compress
+        return if outcome.verdict == .valid then 0 else if outcome.verdict == .invalid then 1 else 3
     | _ =>
         stderr.putStrLn usage
         return 2
