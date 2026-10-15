@@ -52,7 +52,8 @@ private def usage : String :=
   ++ "       ccfraft-midtrace validate DOC N [--no-invariants] [--no-dedup] [--closing] [--global]\n"
   ++ "         [--cap K] [--witness] [--sizes] [--dump K] [--dump-node NODE]\n"
   ++ "       ccfraft-midtrace smt DOC N [--solver PATH] [--no-invariants] [--no-refine]\n"
-  ++ "         [--explain] [--pin] [--Q n] [--slack n] [--dump-smt PATH] [--witness]"
+  ++ "         [--explain] [--named] [--pin] [--Q n] [--slack n] [--dump-smt PATH] [--witness]\n"
+  ++ "         [--profile]"
 
 structure ValidateOptions where
   settings : Sym.Settings := {}
@@ -86,6 +87,8 @@ structure SmtOptions where
   pin : Bool := false
   witness : Bool := false
   profile : Bool := false
+  /-- On invalid, find a small invalid window and print a minimal unsat core over it. -/
+  explain : Bool := false
 
 private def smtOptions (options : List String) (parsed : SmtOptions)
     : Option SmtOptions :=
@@ -96,7 +99,8 @@ private def smtOptions (options : List String) (parsed : SmtOptions)
   | "--solver" :: path :: rest => smtOptions rest (set ({ · with solver := path }))
   | "--no-invariants" :: rest => smtOptions rest (set ({ · with invariants := false }))
   | "--no-refine" :: rest => smtOptions rest (set ({ · with refine := false }))
-  | "--explain" :: rest => smtOptions rest (set ({ · with explain := true }))
+  | "--explain" :: rest => smtOptions rest { parsed with explain := true }
+  | "--named" :: rest => smtOptions rest (set ({ · with explain := true }))
   | "--dump-smt" :: path :: rest => smtOptions rest (set ({ · with dump := some path }))
   | "--pin" :: rest => smtOptions rest { parsed with pin := true }
   | "--witness" :: rest => smtOptions rest { parsed with witness := true }
@@ -167,6 +171,23 @@ def main (args : List String) : IO UInt32 := do
         let elapsed := (← IO.monoMsNow) - start
         IO.println
           s!"{outcome.verdict.name} time_ms={elapsed} encode_ms={outcome.encodeMs} solve_ms={outcome.solveMs} instructions={suffix.size} processed={outcome.processed} declared={outcome.declared} defined={outcome.defined} asserts={outcome.asserts} {outcome.detail}"
+        if options.explain && outcome.verdict == .invalid then
+          let diagnosis ← Smt.diagnose header suffix settings outcome
+          let explanation := diagnosis.explanation
+          let window := explanation.outcome
+          IO.println
+            s!"window instructions {diagnosis.start + 1}..{diagnosis.failing} actions={diagnosis.actions} checks={diagnosis.checks} search_ms={diagnosis.searchMs} encode_ms={window.encodeMs} defined={window.defined} load_ms={explanation.loadMs} first_ms={explanation.firstMs} groups={explanation.groups} group_checks={explanation.groupChecks} label_checks={explanation.labelChecks} timeouts={explanation.timeouts} time_ms={(← IO.monoMsNow) - start} {window.verdict.name} {window.detail}"
+          let assumption :=
+            if window.detail.startsWith "unsat (assuming invariants)" then
+              " (assuming invariants)"
+            else
+              ""
+          IO.println s!"core {window.core.size}{assumption}:"
+          for (index, description) in window.core do
+            let origin :=
+              (suffix[index]?.map fun i => (Replay.originLabel i).toOption.getD "?").getD
+                "?"
+            IO.println s!"  instruction {index + 1} at {origin}: {description}"
         if options.profile then
           IO.println s!"K={outcome.K}"
           let mut previous := 0

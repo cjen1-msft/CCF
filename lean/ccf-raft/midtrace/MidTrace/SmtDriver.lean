@@ -3,6 +3,7 @@ module
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
+public import MidTrace.Cut
 public import MidTrace.SmtModel
 public import MidTrace.SymDriver
 
@@ -650,7 +651,9 @@ def observeMessage (value : Json) : SM Unit := do
         packetOrder.filterMap (fun key => (fields.lookup key).map (key, ·))
         ++ fields.filter fun (key, _) => !packetOrder.contains key
       for (key, expected) in ordered do
+        -- Message kinds stay narrowed in explain mode: a symbolic kind runs every handler.
         require (← packetFieldIs m key expected) s!"{label}.{key}"
+          (background := key == "msg")
 
 def pop (src dst : Nat) (what : String) : SM (SMsg) := do
   let ch ← chanOf src dst
@@ -791,8 +794,30 @@ def SExp.toInt? : SExp → Option Int
   | .list #[.atom "-", inner] => inner.toInt?.map (- ·)
   | _ => none
 
+/-- Interactive-mode flags for the supported solvers. -/
+def solverArgs (solver : String) : Array String :=
+  let name := (solver.splitOn "/").getLast!
+  if name.startsWith "yices" then
+    #["--incremental"]
+  else if name.startsWith "cvc5" then
+    #["--incremental", "--lang=smt2"]
+  else
+    #["-in"]
+
 structure Session where
   child : IO.Process.Child { stdin := .piped, stdout := .piped, stderr := .piped }
+
+def Session.spawn (solver : String) : IO Session := do
+  let child ←
+    IO.Process.spawn
+      {
+        cmd := solver
+        args := solverArgs solver
+        stdin := .piped
+        stdout := .piped
+        stderr := .piped
+      }
+  return { child }
 
 def Session.send (session : Session) (text : String) : IO Unit := do
   session.child.stdin.putStr text
@@ -817,6 +842,11 @@ partial def Session.response (session : Session) : IO String := do
 def Session.check (session : Session) (assumptions : List String) : IO String := do
   session.send s!"(check-sat-assuming ({" ".intercalate assumptions}))\n"
   session.response
+
+def Session.close (session : Session) : IO Unit := do
+  session.send "(exit)\n"
+  let (_, child) ← session.child.takeStdin
+  let _ ← child.wait
 
 def Session.core (session : Session) : IO (Array String) := do
   session.send "(get-unsat-assumptions)\n"
@@ -1032,52 +1062,49 @@ structure Outcome where
   witness : Option ReplayState := none
   sizes : Array Nat := #[]
   K : Nat := 0
+  /-- In explain mode, the solver's unsat core: zero-based instruction and description. -/
+  core : Array (Nat × String) := #[]
+
+def labelOf (enc : Enc) (name : String) : Option Label :=
+  enc.labels.find? fun label => label.name == name
 
 def describe (env : Env) (enc : Enc) (name : String) : Option String :=
   let _ := env
-  (enc.labels.find? fun label => label.name == name).map
+  (labelOf enc name).map
     fun label =>
       s!"instruction {label.instruction + 1}: {label.description}"
 
-/-- Interactive-mode flags for the supported solvers. -/
-def solverArgs (solver : String) : Array String :=
-  let name := (solver.splitOn "/").getLast!
-  if name.startsWith "yices" then
-    #["--incremental"]
-  else if name.startsWith "cvc5" then
-    #["--incremental", "--lang=smt2"]
-  else
-    #["-in"]
+/-- The environment for `suffix`, with capacities covering a pinned state. -/
+def windowEnv (header : Header) (suffix : Array Json) (settings : Settings) : Env :=
+  let env := makeEnv header suffix settings
+  match settings.pinned with
+  | none => env
+  | some replay =>
+      let longest :=
+        replay.state.nodes.foldl (fun best (_, st) => max best st.log.length) 0
+      let widest :=
+        (replay.live.map fun e => replay.pending e.source e.target |>.length).foldl max 0
+      let entryIds (entries : List (Entry String String)) : List String :=
+        entries.filterMap
+          fun entry =>
+            match entry.content with
+            | .transaction id _ => some id
+            | .signature => none
+      let ids :=
+        (replay.state.nodes.flatMap fun (_, st) => entryIds st.log)
+        ++ replay.live.flatMap
+            fun envelope =>
+              match envelope.payload with
+              | .appendEntriesRequest request => entryIds request.entries
+              | _ => []
+      let txNames :=
+        ids.foldl (fun table id => if table.contains id then table else table.push id)
+          env.txNames
+      { env with K := max env.K longest, Q := max env.Q widest, txNames }
 
 def runOnce (header : Header) (suffix : Array Json) (settings : Settings)
     : IO Outcome := do
-  let env := makeEnv header suffix settings
-  let env :=
-    match settings.pinned with
-    | none => env
-    | some replay =>
-        let longest :=
-          replay.state.nodes.foldl (fun best (_, st) => max best st.log.length) 0
-        let widest :=
-          (replay.live.map fun e => replay.pending e.source e.target |>.length).foldl max
-            0
-        let entryIds (entries : List (Entry String String)) : List String :=
-          entries.filterMap
-            fun entry =>
-              match entry.content with
-              | .transaction id _ => some id
-              | .signature => none
-        let ids :=
-          (replay.state.nodes.flatMap fun (_, st) => entryIds st.log)
-          ++ replay.live.flatMap
-              fun envelope =>
-                match envelope.payload with
-                | .appendEntriesRequest request => entryIds request.entries
-                | _ => []
-        let txNames :=
-          ids.foldl (fun table id => if table.contains id then table else table.push id)
-            env.txNames
-        { env with K := max env.K longest, Q := max env.Q widest, txNames }
+  let env := windowEnv header suffix settings
   let start ← IO.monoMsNow
   let encoding := encode env suffix settings
   let enc := encoding.enc
@@ -1107,16 +1134,7 @@ def runOnce (header : Header) (suffix : Array Json) (settings : Settings)
     ++ "\n".intercalate enc.out.toList
     ++ "\n"
   if let some path := settings.dump then IO.FS.writeFile path script
-  let child ←
-    IO.Process.spawn
-      {
-        cmd := settings.solver
-        args := solverArgs settings.solver
-        stdin := .piped
-        stdout := .piped
-        stderr := .piped
-      }
-  let session : Session := { child }
+  let session ← Session.spawn settings.solver
   let solveStart ← IO.monoMsNow
   session.send script
   let cap := enc.capLit.smt
@@ -1149,13 +1167,15 @@ def runOnce (header : Header) (suffix : Array Json) (settings : Settings)
       let reasons := (final.filterMap (describe env enc)).toList
       let why := if reasons.isEmpty then "" else s!" core: {"; ".intercalate reasons}"
       let assumption := if invariant then " (assuming invariants)" else ""
-      outcome := { base with verdict := .invalid, detail := s!"unsat{assumption}{why}" }
+      let core :=
+        final.filterMap
+          fun name => (labelOf enc name).map fun l => (l.instruction, l.description)
+      outcome :=
+        { base with verdict := .invalid, detail := s!"unsat{assumption}{why}", core }
   else
     let err ← session.child.stderr.readToEnd
     outcome := { base with detail := s!"solver: {answer} {err}" }
-  session.send "(exit)\n"
-  let (_, child) ← session.child.takeStdin
-  let _ ← child.wait
+  session.close
   return { outcome with solveMs := (← IO.monoMsNow) - solveStart }
 
 /-- Retries with larger capacities while the verdict depends on them. -/
@@ -1174,5 +1194,267 @@ def run (header : Header) (suffix : Array Json) (settings : Settings) : IO Outco
           solveMs := outcome.solveMs + next.solveMs
       }
   return outcome
+
+/-! ## Diagnosis -/
+
+/--
+Delta-debugging search for a small subset of `items` on which `invalid`
+holds, given that it holds on all of them. Chunks of a random permutation are
+removed while the rest stays invalid, halving the chunk size down to single
+items. `invalid` returns the items its check used, so one check can discard
+items it never reached. Removing assertions only loosens the encoding, so the
+final pass over single items leaves a 1-minimal subset (counting timeouts as
+valid). Returns the subset and the number of checks.
+-/
+def shrink {α : Type} [BEq α] [Hashable α] (items : Array α) (seed : Nat)
+    (invalid : Array α → IO (Option (Std.HashSet α)))
+    : IO (Array α × Nat) := do
+  let mut items := items
+  let mut gen := mkStdGen seed
+  let mut i := items.size
+  while i > 1 do
+    i := i - 1
+    let (j, next) := randNat gen 0 i
+    gen := next
+    items := items.swapIfInBounds i j
+  let mut checks := 0
+  let mut size := max 1 (items.size / 2)
+  repeat
+    let mut start := 0
+    while start < items.size do
+      let trial := items.extract 0 start ++ items.extract (start + size) items.size
+      checks := checks + 1
+      match ← invalid trial with
+      | some used =>
+          start := ((items.extract 0 start).filter used.contains).size
+          items := trial.filter used.contains
+      | none => start := start + size
+    if size == 1 then break
+    size := max 1 (min (size / 2) (items.size / 2))
+  return (items, checks)
+
+/-- Sets the per-check time limit; yices counts whole seconds. -/
+def timeoutOption (solver : String) (ms : Nat) : String :=
+  let name := (solver.splitOn "/").getLast!
+  if name.startsWith "yices" then
+    s!"(set-option :timeout {max 1 ((ms + 999) / 1000)})\n"
+  else if name.startsWith "cvc5" then
+    s!"(set-option :tlimit-per {ms})\n"
+  else
+    s!"(set-option :timeout {ms})\n"
+
+/-- An unsat core of a window, shrunk within one solver session. -/
+structure Explanation where
+  /-- Verdict, encoding statistics and `core` as zero-based window instructions. -/
+  outcome : Outcome
+  /-- Instructions left after the instruction-level search. -/
+  groups : Nat := 0
+  groupChecks : Nat := 0
+  labelChecks : Nat := 0
+  /-- Checks that timed out, which keep what they tried to remove. -/
+  timeouts : Nat := 0
+  /-- Time for the solver to read the script. -/
+  loadMs : Nat := 0
+  /-- The first check, over every assertion; later checks time out at twice this. -/
+  firstMs : Nat := 0
+
+/--
+Encodes `window` with a guard literal per hard assertion, then shrinks the
+solver's unsat core with `shrink` under `check-sat-assuming`, so every check
+reuses the session's learned lemmas. The search first drops whole
+instructions (all of an action's guards or an observation's fields), then
+single assertions. A check that runs past twice the first check's time counts
+as satisfiable.
+-/
+def explainWindow (header : Header) (window : Array Json) (settings : Settings)
+    (seed : Nat)
+    : IO Explanation := do
+  let settings := { settings with explain := true }
+  let env := windowEnv header window settings
+  let start ← IO.monoMsNow
+  let encoding := encode env window settings
+  let enc := encoding.enc
+  let base : Outcome :=
+    {
+      verdict := .unknown
+      detail := ""
+      processed := encoding.processed
+      encodeMs := (← IO.monoMsNow) - start
+      declared := enc.declared
+      defined := enc.defined
+      asserts := enc.out.size - enc.declared - enc.defined
+      K := env.K
+    }
+  if let some (index, description) := enc.falsified then
+    -- Definitions and unnamed assertions alone refute it.
+    return {
+      outcome :=
+        {
+          base with
+            verdict := .invalid, detail := "unsat", core := #[(index, description)]
+        }
+    }
+  if let some what := enc.unsupported then
+    return { outcome := { base with detail := s!"unsupported: {what}" } }
+  let session ← Session.spawn settings.solver
+  let solveStart ← IO.monoMsNow
+  -- yices only honours later timeouts if one is set before `set-logic`.
+  session.send
+    (timeoutOption settings.solver 100000000
+      ++ "(set-option :produce-unsat-assumptions true)\n(set-logic QF_LIA)\n"
+      ++ "\n".intercalate enc.out.toList
+      ++ "\n(echo \"loaded\")\n")
+  let _ ← session.response
+  let loadMs := (← IO.monoMsNow) - solveStart
+  let cap := enc.capLit.smt
+  let inv := enc.invLit.smt
+  let guards := enc.labels.map (·.name)
+  let finish (outcome : Outcome) (explanation : Explanation) : IO Explanation := do
+    session.close
+    return {
+      explanation with
+        outcome := { outcome with solveMs := (← IO.monoMsNow) - solveStart }
+    }
+  let first ← session.check ([cap, inv] ++ guards.toList)
+  if first != "unsat" then
+    return ← finish { base with detail := s!"solver: {first}" } { outcome := base }
+  let mut core ← session.core
+  if core.contains cap then
+    if (← session.check (inv :: guards.toList)) != "unsat" then
+      return ← finish
+                {
+                  base with
+                    detail := s!"capacity: unsat only within K={env.K} Q={env.Q}"
+                }
+                { outcome := base }
+    core ← session.core
+  let firstMs := (← IO.monoMsNow) - solveStart - loadMs
+  session.send (timeoutOption settings.solver (max 1000 (2 * firstMs)))
+  let instructionOf : Std.HashMap String Nat :=
+    enc.labels.foldl (fun map label => map.insert label.name label.instruction) {}
+  let members : Std.HashMap Nat (Array String) :=
+    enc.labels.foldl
+      (fun map label =>
+        map.insert label.instruction ((map.getD label.instruction #[]).push label.name))
+      {}
+  let last ← IO.mkRef core
+  let timeouts ← IO.mkRef 0
+  let check (assumptions : Array String) : IO (Option (Array String)) := do
+    let answer ← session.check (inv :: assumptions.toList)
+    if answer == "unsat" then
+      let core ← session.core
+      last.set core
+      return some core
+    if answer == "unknown" then
+      timeouts.modify (· + 1)
+    else if answer != "sat" then
+      throw (IO.userError s!"solver: {answer} {← session.child.stderr.readToEnd}")
+    return none
+  let instructions (names : Array String) : Std.HashSet Nat :=
+    Std.HashSet.ofArray (names.filterMap instructionOf.get?)
+  let (kept, groupChecks) ←
+    shrink ((instructions core).toArray.qsort (· < ·)) seed
+      fun trial => do
+        let used ← check (trial.flatMap (members.getD · #[]))
+        return used.map instructions
+  let (final, labelChecks) ←
+    shrink ((← last.get).filter instructionOf.contains) seed
+      fun trial => do return (← check trial).map Std.HashSet.ofArray
+  let invariant := (← last.get).contains inv
+  let described :=
+    (final.filterMap
+      fun name => (labelOf enc name).map fun l => (l.instruction, l.description)).qsort
+      fun a b => a.1 < b.1 || (a.1 == b.1 && a.2 < b.2)
+  let assumption := if invariant then " (assuming invariants)" else ""
+  finish
+    { base with verdict := .invalid, detail := s!"unsat{assumption}", core := described }
+    {
+      outcome := base
+      groups := kept.size
+      groupChecks
+      labelChecks
+      timeouts := ← timeouts.get
+      loadMs
+      firstMs
+    }
+
+/--
+Where an invalid suffix fails: the shortest invalid prefix, the latest cut of
+that prefix that is still invalid, and a small set of hard assertions over
+that window that is still invalid.
+-/
+structure Diagnosis where
+  /-- Instructions in the shortest invalid prefix. -/
+  failing : Nat
+  /-- The window's first instruction. -/
+  start : Nat
+  /-- Actions in the window. -/
+  actions : Nat
+  /-- Checks spent finding the window. -/
+  checks : Nat
+  /-- Time spent finding the window. -/
+  searchMs : Nat
+  /-- The explanation; its core holds suffix indices. -/
+  explanation : Explanation
+
+/--
+Narrows an invalid verdict on `suffix` (`outcome`) to a small window and
+explains it. Both window searches rely on monotonicity: a longer prefix keeps
+every assertion, and an earlier cut only constrains the later cut's state to
+be reachable, so invalid windows stay invalid when extended.
+-/
+def diagnose (header : Header) (suffix : Array Json) (settings : Settings)
+    (outcome : Outcome) (seed : Nat := 0)
+    : IO Diagnosis := do
+  let fast := { settings with explain := false, dump := none }
+  let searchStart ← IO.monoMsNow
+  let mut checks := 0
+  -- Encoding stops at the first falsified assertion; otherwise search for it.
+  let mut failing := outcome.processed
+  if outcome.processed == suffix.size then
+    let mut lo := 0
+    let mut hi := suffix.size
+    while hi - lo > 1 do
+      let mid := (lo + hi) / 2
+      let probe ← run header (suffix.extract 0 mid) fast
+      checks := checks + 1
+      if probe.verdict == .invalid then
+        hi := min mid probe.processed
+      else
+        lo := mid
+    failing := hi
+  let prefix_ := suffix.extract 0 failing
+  -- The latest cut whose window is still invalid.
+  let mut lo := 0
+  let mut hi := actionCount prefix_ + 1
+  while hi - lo > 1 do
+    let mid := (lo + hi) / 2
+    let invalid ←
+      match cutIndex prefix_ mid with
+      | none => pure false
+      | some index => do
+          checks := checks + 1
+          pure ((← run header (prefix_.extract index) fast).verdict == .invalid)
+    if invalid then lo := mid else hi := mid
+  let start := (cutIndex prefix_ lo).getD 0
+  let window := prefix_.extract start
+  let searchMs := (← IO.monoMsNow) - searchStart
+  let mut current := { settings with dump := none }
+  let mut explanation ← explainWindow header window current seed
+  for _ in [0:2] do
+    unless explanation.outcome.detail.startsWith "capacity" do
+      break
+    current := { current with Q := 4 * current.Q, slack := 4 * current.slack }
+    explanation ← explainWindow header window current seed
+  let core :=
+    explanation.outcome.core.map fun (i, description) => (i + start, description)
+  return {
+    failing
+    start
+    actions := actionCount window
+    checks
+    searchMs
+    explanation := { explanation with outcome := { explanation.outcome with core } }
+  }
 
 end CCFRaft.MidTrace.Smt

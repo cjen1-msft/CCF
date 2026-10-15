@@ -531,12 +531,16 @@ def unsupported (what : String) : OpM Unit :=
       else
         { enc with unsupported := some s!"instruction {enc.instruction + 1}: {what}" }
 
-/-- A hard assertion: an action's guard or an observation. -/
-def require (t : Tm) (description : String) : OpM Unit := do
+/--
+A hard assertion: an action's guard or an observation. A `background`
+assertion is never named and always narrows, so in explain mode it keeps the
+encoding small at the cost of never appearing in a core.
+-/
+def require (t : Tm) (description : String) (background : Bool := false) : OpM Unit := do
   let t ← norm t
   let enc ← get
   if t == .bool true then return
-  if enc.named then
+  if enc.named && !background then
     -- A guard literal per assertion lets `get-unsat-assumptions` name the core.
     let name := (← declareBool).smt
     emit s!"(assert (=> {name} {t.smt}))"
@@ -551,7 +555,7 @@ def require (t : Tm) (description : String) : OpM Unit := do
     emit s!"(assert {t.smt})"
   if t == .bool false then
     falsify description
-  else if enc.refine then
+  else if enc.refine || background then
     unless ← narrowTm t 1 1 do
       falsify description
 
