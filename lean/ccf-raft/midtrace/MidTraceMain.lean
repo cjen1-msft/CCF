@@ -6,6 +6,7 @@ module
 public import MidTrace.Cut
 public import MidTrace.StateJson
 public import MidTrace.SymDriver
+public import MidTrace.SmtDriver
 
 public section
 
@@ -49,7 +50,9 @@ private def usage : String :=
   "usage: ccfraft-midtrace (cut | true-state) DOC N\n"
   ++ "       ccfraft-midtrace replay-from DOC N STATE\n"
   ++ "       ccfraft-midtrace validate DOC N [--no-invariants] [--no-dedup] [--closing] [--global]\n"
-  ++ "         [--cap K] [--witness] [--sizes] [--dump K] [--dump-node NODE]"
+  ++ "         [--cap K] [--witness] [--sizes] [--dump K] [--dump-node NODE]\n"
+  ++ "       ccfraft-midtrace smt DOC N [--solver PATH] [--no-invariants] [--no-refine]\n"
+  ++ "         [--explain] [--pin] [--Q n] [--slack n] [--dump-smt PATH] [--witness]"
 
 structure ValidateOptions where
   settings : Sym.Settings := {}
@@ -76,6 +79,32 @@ private def validateOptions (options : List String) (parsed : ValidateOptions)
       validateOptions rest (set ({ · with dumpNode := some node }))
   | "--cap" :: value :: rest =>
       value.toNat?.bind fun cap => validateOptions rest (set ({ · with cap }))
+  | _ => none
+
+structure SmtOptions where
+  settings : Smt.Settings := {}
+  pin : Bool := false
+  witness : Bool := false
+  profile : Bool := false
+
+private def smtOptions (options : List String) (parsed : SmtOptions)
+    : Option SmtOptions :=
+  let set (f : Smt.Settings → Smt.Settings) :=
+    { parsed with settings := f parsed.settings }
+  match options with
+  | [] => some parsed
+  | "--solver" :: path :: rest => smtOptions rest (set ({ · with solver := path }))
+  | "--no-invariants" :: rest => smtOptions rest (set ({ · with invariants := false }))
+  | "--no-refine" :: rest => smtOptions rest (set ({ · with refine := false }))
+  | "--explain" :: rest => smtOptions rest (set ({ · with explain := true }))
+  | "--dump-smt" :: path :: rest => smtOptions rest (set ({ · with dump := some path }))
+  | "--pin" :: rest => smtOptions rest { parsed with pin := true }
+  | "--witness" :: rest => smtOptions rest { parsed with witness := true }
+  | "--profile" :: rest => smtOptions rest { parsed with profile := true }
+  | "--Q" :: value :: rest =>
+      value.toNat?.bind fun q => smtOptions rest (set ({ · with Q := q }))
+  | "--slack" :: value :: rest =>
+      value.toNat?.bind fun slack => smtOptions rest (set ({ · with slack }))
   | _ => none
 
 def main (args : List String) : IO UInt32 := do
@@ -117,6 +146,35 @@ def main (args : List String) : IO UInt32 := do
           s!"{verdict} time_ms={elapsed} instructions={suffix.size} processed={outcome.processed} max_frontier={outcome.maxFrontier} {outcome.detail}"
         if options.sizes then
           IO.println s!"sizes {outcome.sizes.toList}"
+        if options.witness then
+          if let some state := outcome.witness then
+            IO.println (replayStateJson header.declared state).compress
+        return  if outcome.verdict == .valid then
+                  0
+                else if outcome.verdict == .invalid then
+                  1
+                else
+                  3
+    | "smt" :: path :: count :: options =>
+        let some options := smtOptions options {} | stderr.putStrLn usage; return 2
+        let (header, prefix_, suffix) ← split path count.toNat!
+        let mut settings := options.settings
+        if options.pin then
+          settings :=
+            { settings with pinned := some (← orThrow (trueState header prefix_)) }
+        let start ← IO.monoMsNow
+        let outcome ← Smt.run header suffix settings
+        let elapsed := (← IO.monoMsNow) - start
+        IO.println
+          s!"{outcome.verdict.name} time_ms={elapsed} encode_ms={outcome.encodeMs} solve_ms={outcome.solveMs} instructions={suffix.size} processed={outcome.processed} declared={outcome.declared} defined={outcome.defined} asserts={outcome.asserts} {outcome.detail}"
+        if options.profile then
+          IO.println s!"K={outcome.K}"
+          let mut previous := 0
+          for h : i in [0:outcome.sizes.size] do
+            let size := outcome.sizes[i]
+            IO.println
+              s!"profile {i} {size - previous} {((suffix[i]?.map Json.compress).getD "").take 160}"
+            previous := size
         if options.witness then
           if let some state := outcome.witness then
             IO.println (replayStateJson header.declared state).compress
