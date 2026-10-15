@@ -282,8 +282,10 @@ check: every INVALID is compared with `replay-from` of the true state.
   By kind: deleted receive 11, message term 8, commit index 5, entry kind 2,
   logLength 1; role and term mutations are always caught.
 - Cross-check with `--global` (no projection, v5): 679 agree INVALID, 339
-  INVALID vs UNKNOWN (global hits its cap), 2 VALID vs UNKNOWN, 25 agree
-  VALID; no VALID/INVALID conflict.
+  INVALID vs UNKNOWN, 2 VALID vs UNKNOWN, 25 agree VALID; no VALID/INVALID
+  conflict. All 341 global UNKNOWNs are the unsupported case "last pending
+  message is an unmaterialized pre-cut message": channel tails exist only in
+  projected search.
 - INVALID reports the node, instruction, raw log line and the dead reasons of
   the last live branches, e.g. `node 0: instruction 492 at ...stdout:773
 [send-pre]: [logLength: observed 9, canonical 8]`.
