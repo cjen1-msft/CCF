@@ -53,6 +53,10 @@ inductive FoldKind where
   | first
   | any
   | all
+  /-- `default` plus the sum of the values whose condition holds. -/
+  | sum
+  /-- The largest of `default` and the values whose condition holds. -/
+  | max
 deriving BEq, Hashable, Inhabited, Repr
 
 inductive Op where
@@ -62,7 +66,8 @@ inductive Op where
   | arrVar (lo hi : Int)
   /-- The array whose cells are all `0`, `false` or `zero`. -/
   | zero (srt : Srt)
-  /-- A bound index (or accumulator) variable. -/
+  /-- A bound index (or accumulator) variable: `bvar level boolean`. Binders
+  take the next level, so structurally equal binders share their nodes. -/
   | bvar
   | not
   | and
@@ -122,6 +127,8 @@ structure Ir where
   cmds : Array Cmd := #[]
   axioms : Array Axiom := #[]
   instruction : Nat := 0
+  /-- Binder nesting depth while building a binder's body. -/
+  depth : Nat := 0
   falsified : Option (Nat × String) := none
   unsupported : Option String := none
 
@@ -142,9 +149,12 @@ def bvsOf (t : Tm) : GM (Array Nat) := do
   | _ => return #[]
 
 def unionBvs (a b : Array Nat) : Array Nat :=
-  if b.isEmpty then a
-  else if a.isEmpty then b
-  else (b.foldl (fun acc x => if acc.contains x then acc else acc.push x) a).qsort (· < ·)
+  if b.isEmpty then
+    a
+  else if a.isEmpty then
+    b
+  else
+    (b.foldl (fun acc x => if acc.contains x then acc else acc.push x) a).qsort (· < ·)
 
 /-- A hash-consed node; `bound` lists the variables the node binds. -/
 def mk (op : Op) (args : Array Tm) (srt : Srt) (bound : Array Nat := #[]) : GM Tm := do
@@ -156,21 +166,29 @@ def mk (op : Op) (args : Array Tm) (srt : Srt) (bound : Array Nat := #[]) : GM T
   modifyGet
     fun ir =>
       let id := ir.nodes.size
-      (.ref id,
+      let bvs := if op == .bvar then #[id] else bvs
+      (
+        .ref id,
         {
           ir with
             nodes := ir.nodes.push { op, args, srt, bvs, instr := ir.instruction }
             cons := ir.cons.insert (op, args) id
-        })
+        }
+      )
 
 /-- A node that is never shared. -/
 def fresh (op : Op) (srt : Srt) : GM Tm := do
   modifyGet
     fun ir =>
       let id := ir.nodes.size
-      let bvs := if op == .bvar then #[id] else #[]
-      (.ref id,
-        { ir with nodes := ir.nodes.push { op, args := #[], srt, bvs, instr := ir.instruction } })
+      (
+        .ref id,
+        {
+          ir with
+            nodes :=
+              ir.nodes.push { op, args := #[], srt, bvs := #[], instr := ir.instruction }
+        }
+      )
 
 def norm (t : Tm) : GM Tm := pure t
 
@@ -334,24 +352,33 @@ def bvarId (t : Tm) : Nat :=
   | .ref id => id
   | _ => 0
 
+/-- Runs `body` with `count` new binders of sorts `srts`, at the next levels. -/
+def binders {α : Type} (srts : Array Srt) (body : Array Tm → GM α) : GM α := do
+  let level := (← get).depth
+  let mut vars := #[]
+  for h : i in [0:srts.size] do
+    let srt := srts[i]
+    vars := vars.push (← mk .bvar #[.int (level + i), .bool (srt == .bool)] srt)
+  modify fun ir => { ir with depth := level + srts.size }
+  let result ← body vars
+  modify fun ir => { ir with depth := level }
+  return result
+
 /-- The array whose cell `k` is `body k`. -/
 def lam (elem : Srt) (body : Tm → GM Tm) : GM Tm := do
-  let k ← fresh .bvar .int
-  mk .lam #[k, ← body k] (.arr elem) (bound := #[bvarId k])
+  let (k, b) ← binders #[.int] fun vs => do return (vs[0]!, ← body vs[0]!)
+  mk .lam #[k, b] (.arr elem) (bound := #[bvarId k])
 
 /-- `s[k] = init` for `k <= 0`, else `step k s[k-1]`. -/
 def scan (elem : Srt) (init : Tm) (step : Tm → Tm → GM Tm) : GM Tm := do
-  let k ← fresh .bvar .int
-  let acc ← fresh .bvar elem
-  mk .scan #[k, acc, init, ← step k acc] (.arr elem)
-    (bound := #[bvarId k, bvarId acc])
+  let (k, acc, b) ←
+    binders #[.int, elem] fun vs => do return (vs[0]!, vs[1]!, ← step vs[0]! vs[1]!)
+  mk .scan #[k, acc, init, b] (.arr elem) (bound := #[bvarId k, bvarId acc])
 
-def foldWith (kind : FoldKind) (lo hi : Tm) (cond value : Tm → GM Tm)
-    (default : Tm)
+def foldWith (kind : FoldKind) (lo hi : Tm) (cond value : Tm → GM Tm) (default : Tm)
     : GM Tm := do
-  let k ← fresh .bvar .int
-  let c ← cond k
-  let v ← value k
+  let (k, c, v) ←
+    binders #[.int] fun vs => do return (vs[0]!, ← cond vs[0]!, ← value vs[0]!)
   let srt ← if kind == .any || kind == .all then pure Srt.bool else srtOf default
   mk (.fold kind) #[k, lo, hi, c, v, default] srt (bound := #[bvarId k])
 
@@ -369,12 +396,19 @@ def foldAny (lo hi : Tm) (cond : Tm → GM Tm) : GM Tm :=
 def foldAll (lo hi : Tm) (cond : Tm → GM Tm) : GM Tm :=
   foldWith .all lo hi cond (fun _ => pure (.bool true)) (.bool true)
 
+/-- `default` plus the sum of `value k` over `k` in `[lo, hi]` satisfying `cond`. -/
+def foldSum (lo hi : Tm) (cond value : Tm → GM Tm) (default : Tm := .int 0) : GM Tm :=
+  foldWith .sum lo hi cond value default
+
+/-- The largest of `default` and `value k` over `k` in `[lo, hi]` satisfying `cond`. -/
+def foldMax (lo hi : Tm) (cond value : Tm → GM Tm) (default : Tm) : GM Tm :=
+  foldWith .max lo hi cond value default
+
 /-- A property of the cells of `bases` at every index `k`, reading only `k + offsets`. -/
 def axiomCells (bases : Array Tm) (offsets : Array Int) (body : Tm → GM Tm) (hard : Bool)
     (description : String)
     : GM Unit := do
-  let k ← fresh .bvar .int
-  let b ← body k
+  let (k, b) ← binders #[.int] fun vs => do return (vs[0]!, ← body vs[0]!)
   modify
     fun ir =>
       {
@@ -397,7 +431,8 @@ def axiomCells (bases : Array Tm) (offsets : Array Int) (body : Tm → GM Tm) (h
 def falsify (description : String) : GM Unit :=
   modify
     fun ir =>
-      if ir.falsified.isSome then ir
+      if ir.falsified.isSome then
+        ir
       else
         {
           ir with
@@ -408,8 +443,10 @@ def falsify (description : String) : GM Unit :=
 def unsupported (what : String) : GM Unit :=
   modify
     fun ir =>
-      if ir.unsupported.isSome then ir
-      else { ir with unsupported := some s!"instruction {ir.instruction + 1}: {what}" }
+      if ir.unsupported.isSome then
+        ir
+      else
+        { ir with unsupported := some s!"instruction {ir.instruction + 1}: {what}" }
 
 def require (t : Tm) (description : String) (background : Bool := false) : GM Unit := do
   if t == .bool true then return
@@ -455,27 +492,32 @@ def Op.name : Op → String
   | .fold .first => "fold-first"
   | .fold .any => "fold-any"
   | .fold .all => "fold-all"
+  | .fold .sum => "fold-sum"
+  | .fold .max => "fold-max"
   | .scan => "scan"
 
-def Ir.dump (ir : Ir) : String := Id.run do
-  let mut lines := #[]
-  let mut ni := 0
-  for cmd in ir.cmds do
-    match cmd with
-    | .instr i _ =>
-        while ni < ir.nodes.size && ir.nodes[ni]!.instr < i do
-          let node := ir.nodes[ni]!
-          let args := " ".intercalate (node.args.map (·.smt)).toList
-          lines := lines.push s!"(v{ni} ({node.op.name} {args}))"
-          ni := ni + 1
-        lines := lines.push s!"; instruction {i + 1}"
-    | .require t description _ => lines := lines.push s!"(require {t.smt}) ; {description}"
-    | .assume cap t => lines := lines.push s!"(assume {if cap then "cap" else "inv"} {t.smt})"
-  while ni < ir.nodes.size do
-    let node := ir.nodes[ni]!
-    let args := " ".intercalate (node.args.map (·.smt)).toList
-    lines := lines.push s!"(v{ni} ({node.op.name} {args}))"
-    ni := ni + 1
-  return "\n".intercalate lines.toList ++ "\n"
+def Ir.dump (ir : Ir) : String :=
+  Id.run do
+    let mut lines := #[]
+    let mut ni := 0
+    for cmd in ir.cmds do
+      match cmd with
+      | .instr i _ =>
+          while ni < ir.nodes.size && ir.nodes[ni]!.instr < i do
+            let node := ir.nodes[ni]!
+            let args := " ".intercalate (node.args.map (·.smt)).toList
+            lines := lines.push s!"(v{ni} ({node.op.name} {args}))"
+            ni := ni + 1
+          lines := lines.push s!"; instruction {i + 1}"
+      | .require t description _ =>
+          lines := lines.push s!"(require {t.smt}) ; {description}"
+      | .assume cap t =>
+          lines := lines.push s!"(assume {if cap then "cap" else "inv"} {t.smt})"
+    while ni < ir.nodes.size do
+      let node := ir.nodes[ni]!
+      let args := " ".intercalate (node.args.map (·.smt)).toList
+      lines := lines.push s!"(v{ni} ({node.op.name} {args}))"
+      ni := ni + 1
+    return "\n".intercalate lines.toList ++ "\n"
 
 end CCFRaft.MidTrace.Gen

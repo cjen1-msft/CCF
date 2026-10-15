@@ -213,6 +213,14 @@ partial def normD (depth : Nat) (t : Tm) : OpM Tm := do
 
 def norm (t : Tm) : OpM Tm := normD NORM_DEPTH t
 
+/-- `t` as `base + offset`, with `base` not itself an offset term. -/
+def offsetOf (t : Tm) : OpM (Tm × Int) := do
+  let t ← norm t
+  let .ref id := t | return (t, 0)
+  match (← info id).shape with
+  | .add x k => return (← norm (.ref x), k)
+  | _ => return (t, 0)
+
 def range (t : Tm) : OpM (Int × Int) := do
   match ← norm t with
   | .int value => return (value, value)
@@ -322,8 +330,16 @@ def impliesT (a b : Tm) : OpM Tm := do
 
 /-- `a <= b` -/
 def le (a b : Tm) : OpM Tm := do
-  let a ← norm a
-  let b ← norm b
+  let (a, b) ←
+    match ← offsetOf a, ← offsetOf b with
+    | (x, i), (y, j) =>
+        if x == y then
+          pure (.int i, .int j)
+        else
+          match x, y with
+          | .int x, _ => pure (.int (x + i - j), y)
+          | _, .int y => pure (x, .int (y + j - i))
+          | _, _ => pure (← norm a, ← norm b)
   if a == b then return .bool true
   let (la, ha) ← range a
   let (lb, hb) ← range b
@@ -340,8 +356,16 @@ def lt (a b : Tm) : OpM Tm := do
   notT (← le b a)
 
 def eqT (a b : Tm) : OpM Tm := do
-  let a ← norm a
-  let b ← norm b
+  let (a, b) ←
+    match ← offsetOf a, ← offsetOf b with
+    | (x, i), (y, j) =>
+        if x == y then
+          pure (.int i, .int j)
+        else
+          match x, y with
+          | .int x, .ref _ => pure (.int (x + i - j), y)
+          | .ref _, .int y => pure (x, .int (y + j - i))
+          | _, _ => pure (← norm a, ← norm b)
   if a == b then return .bool true
   match a, b with
   | .bool x, .bool y => return .bool (x == y)
@@ -389,7 +413,10 @@ def iteT (c a b : Tm) : OpM Tm := do
           (.ite cid a b)
 
 def addK (a : Tm) (k : Int) : OpM Tm := do
-  let a ← norm a
+  let (a, k) ←
+    match ← offsetOf a with
+    | (.ref x, j) => pure (Tm.ref x, k + j)
+    | _ => pure (← norm a, k)
   if k == 0 then return a
   match a with
   | .int value => return .int (value + k)

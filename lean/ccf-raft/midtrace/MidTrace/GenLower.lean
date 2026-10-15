@@ -81,7 +81,10 @@ def intern (av : AV) : LM Nat := do
   if let some id := (← get).avCons[av]? then return id
   modifyGet
     fun s =>
-      (s.avs.size, { s with avs := s.avs.push av, avCons := s.avCons.insert av s.avs.size })
+      (
+        s.avs.size,
+        { s with avs := s.avs.push av, avCons := s.avCons.insert av s.avs.size }
+      )
 
 def avOf (id : Nat) : LM AV := do
   return (← get).avs[id]!
@@ -113,11 +116,12 @@ def iteVal (c : Tm) (a b : Val) : LM Val := do
       | .a x, .a y => if x == y then return a else return .a (← intern (.ite c x y))
       | _, _ => return a
 
-def bindEnv (bvs : Array Nat) (values : Array Tm) : BEnv := Id.run do
-  let mut env : BEnv := {}
-  for (b, v) in bvs.zip values do
-    env := env.insert b v
-  return env
+def bindEnv (bvs : Array Nat) (values : Array Tm) : BEnv :=
+  Id.run do
+    let mut env : BEnv := {}
+    for (b, v) in bvs.zip values do
+      env := env.insert b v
+    return env
 
 mutual
   partial def lowerV (env : BEnv) (t : Tm) : LM Val := do
@@ -198,11 +202,29 @@ mutual
         return .a (← intern (.node id (node.bvs.map fun b => env.getD b (.int 0))))
     | .fold kind => lowerFold env node kind
 
+  /-- The lowered index of a `store`, with its environment and node. -/
+  partial def storeAt (av : Nat) : LM (Option (Tm × BEnv × Node)) := do
+    let .node id ev ← avOf av | return none
+    let node := (← read).nodes[id]!
+    unless node.op == .store do
+      return none
+    let env := bindEnv node.bvs ev
+    return some (← Smt.norm (← lowerS env node.args[1]!), env, node)
+
   /-- A read at `i`: a case split over the interval of `i`. -/
   partial def selectAt (av : Nat) (i : Tm) : LM Val := do
     match ← Smt.norm i with
     | .int k => cell av k
     | i =>
+        -- Read over write when the store index is `i` plus a known offset.
+        let (bi, oi) ← Smt.offsetOf i
+        let mut av := av
+        repeat
+          let some (j, env, node) ← storeAt av | break
+          let (bj, oj) ← Smt.offsetOf j
+          if bi != bj then break
+          if oi == oj then return ← lowerV env node.args[2]!
+          av ← lowerA env node.args[0]!
         let (lo, hi) ← Smt.range i
         if hi - lo > SPLIT_LIMIT then
           Smt.unsupported s!"a read over [{lo}, {hi}]"
@@ -224,12 +246,15 @@ mutual
     let nodes := (← read).nodes
     let mut cur := av
     repeat
+      if cur != av && (← get).cells.contains (cur, k) then break
       let .node id ev ← avOf cur | break
       let node := nodes[id]!
-      unless node.op == .store do break
+      unless node.op == .store do
+        break
       let env := bindEnv node.bvs ev
       let (lo, hi) ← Smt.range (← lowerS env node.args[1]!)
-      unless k < lo || hi < k do break
+      unless k < lo || hi < k do
+        break
       cur ← lowerA env node.args[0]!
     return cur
 
@@ -249,7 +274,13 @@ mutual
             let j ← Smt.norm (← lowerS env args[1]!)
             let v ← lowerV env args[2]!
             if j == .int k then return v
-            iteVal (← Smt.eqK j k) v (← cell (← lowerA env args[0]!) k)
+            -- Earlier stores at the same index are shadowed whenever `j != k`.
+            let mut rest ← lowerA env args[0]!
+            repeat
+              let some (j', env', node') ← storeAt rest | break
+              if j' != j then break
+              rest ← lowerA env' node'.args[0]!
+            iteVal (← Smt.eqK j k) v (← cell rest k)
         | .lam => lowerV (env.insert (bvarId args[0]!) (.int k)) args[1]!
         | .scan =>
             if k <= 0 then return ← lowerV env args[2]!
@@ -260,8 +291,9 @@ mutual
             for offset in [0:(k - j).toNat] do
               discard <| cell av (j + offset)
             let .s prev ← cell av (k - 1)
-              | Smt.unsupported "a scan over arrays"
-                defaultVal node.srt.elem
+            |
+              Smt.unsupported "a scan over arrays"
+              defaultVal node.srt.elem
             lowerV ((env.insert (bvarId args[0]!) (.int k)).insert (bvarId args[1]!) prev)
               args[3]!
         | _ => defaultVal node.srt.elem
@@ -301,9 +333,11 @@ mutual
         let s ← get
         let ready :=
           eager
-            || ax.bases.all fun b =>
-              ax.offsets.all fun o' => s.materialized.contains (b, kk + o')
-        unless ready do continue
+          || ax.bases.all
+              fun b =>
+                ax.offsets.all fun o' => s.materialized.contains (b, kk + o')
+        unless ready do
+          continue
         modify fun s => { s with axiomDone := s.axiomDone.insert (axIdx, kk) }
         if eager then
           for b in ax.bases do
@@ -317,6 +351,9 @@ mutual
   partial def lowerFold (env : BEnv) (node : Node) (kind : FoldKind) : LM Val := do
     let args := node.args
     let kb := bvarId args[0]!
+    -- The largest index satisfying a condition is the last one.
+    let maxIndex := kind == .max && args[4]! == args[0]!
+    let kind := if maxIndex then .last else kind
     let lo ← Smt.norm (← lowerS env args[1]!)
     let hi ← Smt.norm (← lowerS env args[2]!)
     let (first, _) ← Smt.range lo
@@ -332,6 +369,24 @@ mutual
       Smt.norm (← Smt.andL [g, c])
     let value (k : Int) : LM Val := lowerV (env.insert kb (.int k)) args[4]!
     match kind with
+    | .max =>
+        let mut acc ← lowerS env args[5]!
+        for offset in [0:count] do
+          let k := first + offset
+          let gc ← guarded k
+          if gc == .bool false then continue
+          let .s v ← value k | return ← defaultVal node.srt
+          acc ← Smt.iteT gc (← Smt.maxT acc v) acc
+        return .s acc
+    | .sum =>
+        let mut acc ← lowerS env args[5]!
+        for offset in [0:count] do
+          let k := first + offset
+          let gc ← guarded k
+          if gc == .bool false then continue
+          let .s v ← value k | return ← defaultVal node.srt
+          acc ← Smt.addT acc (← Smt.iteT gc v (.int 0))
+        return .s acc
     | .last | .first =>
         -- Collect from the winning end until a literal hit.
         let mut picks : Array (Tm × Int) := #[]
@@ -347,6 +402,9 @@ mutual
         let mut acc := tail
         for (gc, k) in picks.reverse do
           acc ← iteVal gc (← value k) acc
+        if maxIndex then
+          let .s last := acc | return acc
+          return .s (← Smt.maxT (← lowerS env args[5]!) last)
         return acc
     | .any =>
         let mut parts := #[]
@@ -379,7 +437,8 @@ def lowerAll : LM Unit := do
     if (← getThe Smt.Enc).falsified.isSome then break
     match cmd with
     | .instr i _ =>
-        modifyThe Smt.Enc fun enc => { enc with instruction := i }
+        modifyThe Smt.Enc
+          fun enc => { enc with instruction := i, out := enc.out.push s!"; instr {i}" }
         let size := (← getThe Smt.Enc).infos.size
         modify fun s => { s with sizes := s.sizes.push (i, size) }
     | .require t description background =>

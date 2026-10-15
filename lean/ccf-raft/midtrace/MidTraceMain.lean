@@ -7,6 +7,7 @@ public import MidTrace.Cut
 public import MidTrace.StateJson
 public import MidTrace.SymDriver
 public import MidTrace.SmtDriver
+public import MidTrace.GenDriver
 
 public section
 
@@ -53,7 +54,9 @@ private def usage : String :=
   ++ "         [--cap K] [--witness] [--sizes] [--dump K] [--dump-node NODE]\n"
   ++ "       ccfraft-midtrace smt DOC N [--solver PATH] [--no-invariants] [--no-refine]\n"
   ++ "         [--explain] [--named] [--pin] [--Q n] [--slack n] [--dump-smt PATH] [--witness]\n"
-  ++ "         [--profile]"
+  ++ "         [--profile]\n"
+  ++ "       ccfraft-midtrace gen DOC N [--solver PATH] [--no-refine] [--Q n] [--slack n] [--retry k]\n"
+  ++ "         [--dump-smt PATH] [--dump-ir PATH] [--witness] [--profile]"
 
 structure ValidateOptions where
   settings : Sym.Settings := {}
@@ -109,6 +112,31 @@ private def smtOptions (options : List String) (parsed : SmtOptions)
       value.toNat?.bind fun q => smtOptions rest (set ({ · with Q := q }))
   | "--slack" :: value :: rest =>
       value.toNat?.bind fun slack => smtOptions rest (set ({ · with slack }))
+  | _ => none
+
+structure GenOptions where
+  settings : Gen.Settings := {}
+  witness : Bool := false
+  profile : Bool := false
+
+private def genOptions (options : List String) (parsed : GenOptions)
+    : Option GenOptions :=
+  let set (f : Gen.Settings → Gen.Settings) :=
+    { parsed with settings := f parsed.settings }
+  match options with
+  | [] => some parsed
+  | "--solver" :: path :: rest => genOptions rest (set ({ · with solver := path }))
+  | "--no-refine" :: rest => genOptions rest (set ({ · with refine := false }))
+  | "--retry" :: value :: rest =>
+      value.toNat?.bind fun retry => genOptions rest (set ({ · with retry }))
+  | "--dump-smt" :: path :: rest => genOptions rest (set ({ · with dump := some path }))
+  | "--dump-ir" :: path :: rest => genOptions rest (set ({ · with irDump := some path }))
+  | "--witness" :: rest => genOptions rest { parsed with witness := true }
+  | "--profile" :: rest => genOptions rest { parsed with profile := true }
+  | "--Q" :: value :: rest =>
+      value.toNat?.bind fun q => genOptions rest (set ({ · with Q := q }))
+  | "--slack" :: value :: rest =>
+      value.toNat?.bind fun slack => genOptions rest (set ({ · with slack }))
   | _ => none
 
 def main (args : List String) : IO UInt32 := do
@@ -196,6 +224,34 @@ def main (args : List String) : IO UInt32 := do
             IO.println
               s!"profile {i} {size - previous} {((suffix[i]?.map Json.compress).getD "").take 160}"
             previous := size
+        if options.witness then
+          if let some state := outcome.witness then
+            IO.println (replayStateJson header.declared state).compress
+        return  if outcome.verdict == .valid then
+                  0
+                else if outcome.verdict == .invalid then
+                  1
+                else
+                  3
+    | "gen" :: path :: count :: options =>
+        let some options := genOptions options {} | stderr.putStrLn usage; return 2
+        let (header, _, suffix) ← split path count.toNat!
+        let start ← IO.monoMsNow
+        let outcome ← Gen.run header suffix options.settings
+        let elapsed := (← IO.monoMsNow) - start
+        IO.println
+          s!"{outcome.verdict.name} time_ms={elapsed} build_ms={outcome.buildMs} lower_ms={outcome.lowerMs} solve_ms={outcome.solveMs} instructions={suffix.size} processed={outcome.processed} ir_nodes={outcome.irNodes} smt_lines={outcome.smtLines} L={outcome.L} {outcome.detail}"
+        if options.profile then
+          let smt :=
+            outcome.smtSizes.foldl (fun m (i, size) => m.insert i size)
+              (∅ : Std.HashMap Nat Nat)
+          for h : i in [0:outcome.irSizes.size] do
+            let smtDelta :=
+              match smt[i]?, smt[i + 1]? with
+              | some a, some b => s!"{b - a}"
+              | _, _ => "?"
+            IO.println
+              s!"profile {i} ir={outcome.irSizes[i]} smt={smtDelta} {((suffix[i]?.map Json.compress).getD "").take 140}"
         if options.witness then
           if let some state := outcome.witness then
             IO.println (replayStateJson header.declared state).compress
