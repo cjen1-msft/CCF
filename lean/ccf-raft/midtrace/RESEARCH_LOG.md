@@ -149,7 +149,7 @@ consensus implementation trace from an unknown mid-stream state):
   state spaces.
 - Generalized symbolic execution with lazy initialization (Khurshid,
   Pasareanu, Visser, TACAS 2003): materialize unknown heap only when read.
-  This is the closest fit and the basis of the chosen approach.
+  This is the closest fit and the basis of approach 3.
 - IC3/PDR and array-based model checking (MCMT): backward reachability for
   "is some state consistent", heavy machinery for a single trace.
 - Linear-time history checkers (Elle; Porcupine with P-compositionality,
@@ -159,17 +159,17 @@ consensus implementation trace from an unknown mid-stream state):
 
 Candidates, as assessed:
 
-| #   | approach                                  | VALID                     | INVALID             | verdict                                                                                        |
-| --- | ----------------------------------------- | ------------------------- | ------------------- | ---------------------------------------------------------------------------------------------- |
-| 1   | Observation-seeded concrete witness       | fast when the guess works | cannot prove        | the user's earlier hack; subsumed by 3 (3 builds and certifies a witness)                      |
-| 2   | Belief sets (explicit set of states)      | exact                     | exact               | state is unbounded (logs, terms): needs a symbolic representation, i.e. 3                      |
-| 3   | Lazy symbolic execution (BFS over worlds) | certified by `replayFrom` | exhaustive search   | **chosen; meets the target**                                                                   |
-| 4   | Abstract interpretation                   | no                        | fast but incomplete | useful only as a pre-filter; 3 already rejects in 31 ms p50                                    |
-| 5   | SAT/SMT encoding (+ LRAT checked in Lean) | yes                       | yes                 | the user's quadratic encoding problems; an in-Lean bit-blaster of the model is a large project |
-| 6   | CEGIS / concolic with nogoods             | yes                       | slow to converge    | errors surface ~100 instructions after the cause (perturbation study), so nogoods are weak     |
-| 7   | Richer logs / periodic snapshots          | trivial                   | trivial             | complementary; removes most unknowns at the source                                             |
+| #   | approach                                  | VALID                     | INVALID             | verdict                                                                                    |
+| --- | ----------------------------------------- | ------------------------- | ------------------- | ------------------------------------------------------------------------------------------ |
+| 1   | Observation-seeded concrete witness       | fast when the guess works | cannot prove        | the user's earlier hack; subsumed by 3 (3 builds and certifies a witness)                  |
+| 2   | Belief sets (explicit set of states)      | exact                     | exact               | state is unbounded (logs, terms): needs a symbolic representation, i.e. 3                  |
+| 3   | Lazy symbolic execution (BFS over worlds) | certified by `replayFrom` | exhaustive search   | meets the target at cut 10; blows up at large cuts                                         |
+| 4   | Abstract interpretation                   | no                        | fast but incomplete | useful only as a pre-filter; 3 already rejects in 31 ms p50                                |
+| 5   | SSA SMT encoding (+ external solver)      | certified by `replayFrom` | unsat               | **meets the target at every cut; simplest model; unsat cores for explanations**            |
+| 6   | CEGIS / concolic with nogoods             | yes                       | slow to converge    | errors surface ~100 instructions after the cause (perturbation study), so nogoods are weak |
+| 7   | Richer logs / periodic snapshots          | trivial                   | trivial             | complementary; removes most unknowns at the source                                         |
 
-## Chosen approach: lazy symbolic execution in Lean
+## Approach 3: lazy symbolic execution in Lean
 
 `ccfraft-midtrace validate DOC N`. All code is in `midtrace/MidTrace/Sym*.lean`;
 Python is used only by research harnesses under `build/research/` (not committed).
@@ -330,13 +330,228 @@ Cut sweep (v6; 300 s timeout):
 - Two VALIDs exceed 60 s: fancy_election.2 cut 40 (94 s) and rollback_safety
   half (125 s).
 
+## SMT approach: one SSA formula for the whole suffix
+
+`ccfraft-midtrace smt DOC N [--explain]`. Code: `midtrace/MidTrace/SmtCore.lean`
+(terms and simplifier), `SmtModel.lean` (the model's handlers over terms),
+`SmtDriver.lean` (system state, observations, solver session, diagnosis).
+The solver (yices 2, QF_LIA) runs as a subprocess. Encoding, verdicts and
+witness checking are Lean.
+
+Motivation (from the user): a model that is conceptually simpler than the
+engine (no forking, merging, projection or subsumption arguments), and
+better INVALID explanations (unsat cores over individual guards and
+observations). The user's earlier encodings went quadratic, so the first
+step was to find out which encodings stay linear.
+
+### Microbenchmarks
+
+`build/research/smt/micro.py`: a synthetic follower log under T
+AppendEntries with an unknown initial log, phantom (free) entries and a
+commit index, observed after every step. Same semantics, five encodings;
+negative instances (unsat), z3, growing logs (length ~1.3 T):
+
+| encoding | idea                                          | T=400  | T=800  | T=1600  | T=3200 |
+| -------- | --------------------------------------------- | ------ | ------ | ------- | ------ |
+| arr-sym  | SMT arrays, observations as equalities        | 4.3 s  | 25 s   | timeout | -      |
+| arr-conc | SMT arrays, observed values substituted       | 2.1 s  | 5.6 s  | 23 s    | -      |
+| seq-sym  | SMT sequences, symbolic indices               | 9.4 s  | 55 s   | -       | -      |
+| ssa-fold | one constant per cell, fold over log per step | 0.27 s | 0.99 s | 2.4 s   | 11 s   |
+| ssa-sum  | per-cell SSA + memoized prefix summaries      | 0.04 s | 0.07 s | 0.15 s  | 0.30 s |
+
+- Script size tells the story: ssa-sum grows linearly (0.17 MB -> 1.5 MB),
+  ssa-fold and the array/sequence encodings grow quadratically (array
+  store chains and per-step folds over the whole log are re-emitted).
+- cvc5 on ssa-sum: 1.2 s at T=800, 100 s at T=3200 (z3 0.30 s).
+- With bounded logs (as in the real scenarios, <= ~30 entries) ssa-sum is
+  1.1 s at T=25600.
+- Literature agrees: lemmas-on-demand arrays are quadratic when reads
+  propagate through store chains (Brummayer and Biere, JSAT 2009); CBMC's
+  field sensitivity turns constant-index array accesses into per-index SSA
+  symbols, the precedent for per-cell logs.
+
+### Design
+
+- **Pure SSA, no case splits.** A node's state is a record of terms. Every
+  `if` of `Model/Node.lean` becomes an `ite` over both branches' states, and
+  each send records its path condition. The solver sees one formula whose
+  models are exactly the runs of the suffix. `SmtModel` is a line-by-line
+  transcription, so it is much easier to review against the model than the
+  engine's world/fork machinery.
+- **Logs as cells.** `K` cells per node (`K` = largest number in the
+  suffix + slack 4); index queries are `ite` chains over cells; prefix
+  summaries (last signature, last configuration, ...) are shared.
+- **Hash-consed definitions plus an interval simplifier.** Each term is a
+  `define-fun` keyed by its text, so re-reading an unchanged value costs
+  nothing. Every definition carries an interval; hard assertions narrow
+  intervals and propagate the narrowing to operands, so an observed value
+  becomes a literal and everything downstream folds. This is only a
+  simplifier: every narrowing is implied by the emitted assertions.
+- **Channels as positions.** The first `p` positions of each channel are
+  messages in flight at the cut (phantoms, `p <= Q`, symbolic) and the rest
+  are the suffix's sends in order. The `i`-th receive consumes position `i`,
+  so only `p` and earlier send conditions are symbolic.
+- **Head naming.** Each received message is a fresh tuple of constants,
+  constrained to equal one of the alternatives that can be at that
+  position. The dispatch observation before each receive pins the message
+  kind, so the handler runs one branch. Without naming, the receive's
+  value was a nested `ite` over all alternatives, uncertainty fed back
+  into later sends and per-receive cost grew with trace position
+  (suffix_collision.3: 48.8 s and 5.1M definitions before, 0.47 s after).
+- **Assumptions.** `cap` (logs fit in `K` cells, at most `Q` phantoms; reads
+  past the cells return fresh values, which over-approximates) and `inv`
+  (cheap invariants of the initial state, which only rejects more) are
+  literals passed to `check-sat-assuming`. An unsat core containing `cap` is
+  rechecked without it, and if that is not unsat the run is retried with
+  `Q` and slack multiplied by 4 (twice at most).
+- **Verdicts.** `sat`: the model's initial state is replayed with the
+  unchanged `Replay.replayFrom`, and the verdict is VALID only if replay
+  passes. `unsat` (or a hard assertion folding to `false` while encoding):
+  INVALID.
+- **Solver.** Before head naming yices was far faster than z3 (ackuracy
+  1.7 s vs > 300 s; a 160-instruction prefix 0.2 s vs 3.4 s, cvc5 > 120 s).
+  After it both validate quickly (table below), but explain sessions on
+  ackuracy still took > 300 s with z3 or cvc5, so yices is the default.
+
+### Results (cut 10, yices, Q=32)
+
+| run                                     | verdicts               | time p50 / p90 / max           |
+| --------------------------------------- | ---------------------- | ------------------------------ |
+| scenarios                               | 50/50 VALID            | 0.23 s / 0.77 s / 1.3 s        |
+| mutants (1045)                          | 1018 INVALID, 27 VALID | INVALID 12 ms / 52 ms / 0.28 s |
+| pinned to the true state (differential) | 1041 INVALID, 4 VALID  | 3 ms p50, max 56 ms            |
+| scenarios, z3                           | 50/50 VALID            | 0.22 s / 1.1 s / 3.3 s         |
+| scenarios, `--no-refine`                | 50/50 VALID            | 1.6 s / 16 s / 105 s           |
+| scenarios, Q=4                          | 50/50 VALID            | 70 ms / 0.22 s / 0.48 s        |
+
+- Same verdicts as the engine on all 1045 mutants (0 disagreements); the 27
+  VALID mutants are the same, each certified by replay (max 0.45 s).
+- 1016 of the 1018 INVALIDs are refuted while encoding: an observation
+  narrows to `false`, so the solver is never called.
+- Pinned mode (`--pin`) fixes the initial state to the one replay reaches
+  at the cut: verdicts equal replay on all 1045 mutants and all 50
+  scenarios. This is the main evidence that the transcription is faithful.
+- `--no-refine` (no interval narrowing) is the ablation that matters: the
+  simplifier is what keeps the formula small enough.
+
+Scaling (`scale_smt.txt`, all VALID): suffix truncated to 1/8, 1/4, 1/2, 1
+gives p50 67 ms, 86 ms, 130 ms, 0.24 s and max 0.30 s, 0.51 s, 0.68 s,
+1.9 s. Median log-log slope vs suffix length: definitions 0.85, time 0.79;
+definitions per instruction are flat (14 to 35). Larger cuts, where the
+engine left UNKNOWNs and 94 s / 125 s VALIDs, are easy here:
+
+| cut  | VALID | time p50 / p90 / max    | engine           |
+| ---- | ----- | ----------------------- | ---------------- |
+| 1    | 50/50 | 0.32 s / 0.87 s / 1.9 s | 50/50            |
+| 5    | 50/50 | 0.25 s / 0.66 s / 1.9 s | 50/50            |
+| 20   | 48/48 | 0.23 s / 0.78 s / 1.8 s | 48/48            |
+| 40   | 44/44 | 0.24 s / 0.92 s / 1.7 s | 41/44, max 94 s  |
+| half | 50/50 | 0.21 s / 0.63 s / 1.3 s | 42/50, max 125 s |
+
+(`--no-invariants` at cut 10: 50/50, max 2.1 s.) The engine's blowups came
+from correlated unknown log contents split differently by each membership
+query; in SSA these are just shared unknown cells, so nothing multiplies.
+
+### INVALID diagnosis
+
+Goal: a small set of hard assertions (action guards and observation
+fields) that is already unsat, i.e. "this observation contradicts these
+earlier facts". Three designs were tried; all keep `inv` assumed and report
+whether the final core used it.
+
+1. **Window, then solver-core minimization (first version).** Find the
+   shortest invalid prefix (binary search on the end) and the latest cut
+   that keeps it invalid (binary search on the start; each check is cheap
+   because most refutations happen at encode time). Encode the window with
+   one named literal per assertion and minimize the solver's core in that
+   session. Sample of 100 mutants: p50 0.15 s, p90 0.49 s, max 77 s;
+   window p50 7 instructions (p90 36, max 371); core p50 3 (max 6).
+2. **The user's hierarchical scheme by re-encoding.** Label each
+   instruction's assertions as one group; stochastically delete groups,
+   then individual assertions, re-encoding the remainder each time (deleted
+   assertions also stop narrowing). Delta-debugging style (Zeller's ddmin
+   over a random permutation, halving chunk sizes). Failed on long-range
+   windows: ackuracy 33 s; suffix_collision.3 entry_kind (window 255
+   actions) did not finish in 900 s. Every probe of a small candidate core
+   re-encodes the window without narrowing (5.5M definitions, ~150 s each).
+3. **The user's hierarchical scheme in one session (current, `--explain`).**
+   Encode the window once with a guard literal per assertion (narrowing
+   only from message-kind observations, which stay unnamed so dispatch is
+   concrete), load it into yices once, and run the scheme with
+   `check-sat-assuming` over guard subsets: first over instruction groups
+   (a trial assumes all of a group's guards; an unsat result keeps only the
+   groups in the solver's core), then over the remaining single guards.
+   Timeout per check: twice the first check's time; a timeout counts as
+   "needed" (kept), so cores are 1-minimal modulo timeouts.
+
+| case (window)                       | old (1) | re-encode (2) | session (3) | core          |
+| ----------------------------------- | ------- | ------------- | ----------- | ------------- |
+| retire_one                          | -       | -             | 0.21 s      | 3             |
+| startup_2nodes                      | -       | -             | 0.09 s      | 6, uses `inv` |
+| fancy_election.2 del_receive        | -       | -             | 0.37 s      | 2             |
+| ackuracy del_receive (83 actions)   | 4.4 s   | 33 s          | 10 s        | 4             |
+| suffix_collision.3 entry_kind (255) | 474 s   | > 900 s       | 428 s       | 3             |
+
+- In one session the solver keeps learned lemmas, so later unsat checks
+  are fast (ackuracy ~60 ms, suffix_collision.3 1 to 15 s). Re-encoding
+  throws this away.
+- SAT checks dominate: every "needed" decision is a satisfiable (or timed
+  out) check, so cost is at least core size x levels x a SAT check. For
+  suffix_collision.3 every SAT check hit the 25 s timeout (13 of them,
+  ~325 s of the 428 s).
+- Example core (suffix_collision.3, entry kind mutated at instruction
+  2286): `entry 3[14].committed` (787), `entry 3[9].configurations` (789),
+  `entry 3[9].kind` (2286). Read: on node 3, entry 14 was committed (so
+  entry 9 can never be rolled back) and entry 9 was a configuration entry,
+  1500 instructions before the mutated kind observation.
+- yices quirks: `:timeout` is in seconds (1 s floor, which makes small
+  windows pay ~1 s per SAT check), and changing it mid-session only works
+  if a nonzero timeout was set before `set-logic`; otherwise the check
+  after a timeout crashes ("unexpected context status"). SIGINT kills
+  yices, so a check cannot be interrupted externally. z3 and cvc5 recover
+  from timeouts (millisecond limits), but were too slow for whole windows.
+
+Full run of `--explain` (current design) over all 1018 INVALID mutants
+(`build/research/scripts/explain.py`, wall time per process, 8 in
+parallel):
+
+| measure               | p50    | p90    | p99   | max                        |
+| --------------------- | ------ | ------ | ----- | -------------------------- |
+| wall time             | 0.12 s | 0.30 s | 1.1 s | 438 s (suffix_collision.3) |
+| window (instructions) | 7      | 33     | 139   | 1504                       |
+| window (actions)      | 1      | 4      | -     | 255                        |
+| core (assertions)     | 2      | 4      | -     | 8                          |
+
+- All 1018 explained; 1 over 60 s, 2 more over 5 s (ackuracy del_receive
+  11 s, candidate_viability and election_while_reconfiguration ~5.5 s).
+  Only 3 runs hit any timeout.
+- Core sizes: 2 (572), 3 (319), 4 (68), 6 (33), 5 (21), 1 (3), 8 (2).
+- 40 cores also use the initial-state invariants (28 message-term, 8
+  commit-index, 4 deleted-receive mutants): the contradiction relies on,
+  for example, monotone initial log terms.
+
 ## Implications
 
 - **Cost is frontier width x length.** The per-instruction step is cheap;
   runtime is the sum of frontier sizes. Anything that bounds the frontier
-  gives linear scaling. In the SMT encodings the analogous cost was terms
-  that grow with the trace (each AppendEntries recv rewrites the ledger),
-  giving the quadratic behaviour.
+  gives linear scaling.
+- **SMT is linear when every value is defined once and shared.** Per-cell
+  SSA constants with hash-consed, memoized summaries keep script size
+  linear; arrays, sequences and per-step folds over the whole log do not.
+  The user's quadratic encodings re-derived the ledger at each
+  AppendEntries receive.
+- **Let observations simplify before the solver sees anything.** Interval
+  narrowing from hard assertions turns most of the formula into literals;
+  without it the same encoding is 7x slower at p50 and 80x at max (105 s),
+  and 1016 of 1018 refutations happen at encode time with it.
+- **Break uncertainty feedback loops.** A receive whose value is an `ite`
+  over every candidate message makes later sends uncertain, which makes
+  later receives worse. Naming the received message as fresh constants
+  (constrained to one of the candidates) and letting the dispatch
+  observation pin its kind keeps per-receive cost flat.
+- **Keep the solver session for core minimization.** Learned lemmas make
+  repeated unsat checks of subsets cheap; re-encoding subsets loses both
+  lemmas and narrowing.
 - **Exploit subsumption before searching.** Phantom delivery was the largest
   single win: a semantic argument that one branch subsumes another removed
   a whole fork class and, as a side effect, made nodes independent.
@@ -364,72 +579,92 @@ Cut sweep (v6; 300 s timeout):
 
 ### Result
 
-The target is met at cut 10 by lazy symbolic execution, entirely in Lean
-after reduction:
+The target is met at cut 10 by two independent approaches, entirely in
+Lean after reduction (plus a yices subprocess for SMT). Both certify every
+VALID with the unchanged `Replay.replayFrom`.
 
-- 50/50 scenarios VALID, max 2.8 s, p50 47 ms; about 6 s wall for all of them.
-- 1018/1045 mutated suffixes INVALID, max 5.0 s, p50 31 ms. 0 UNKNOWN.
-  0 INVALIDs where the true initial state replays. The 27 VALID mutants are
-  certified by `replayFrom`; they are explicable from some initial state.
-- Roughly linear in suffix length (median log-log slope 0.51).
-- No loosening: every VALID verdict comes with a concrete initial replay state
-  that the unchanged `Replay.replayFrom` accepts (`--witness` prints it).
-- INVALID pinpoints the node, instruction and raw log line where the last
-  live branches died, with their reasons. This is a cheap first-cut
-  explanation; projection already isolates one node's instructions.
+| cut 10 unless noted       | engine (`validate`)                       | SMT (`smt`)                                         |
+| ------------------------- | ----------------------------------------- | --------------------------------------------------- |
+| scenarios                 | 50/50 VALID, p50 47 ms, max 2.8 s         | 50/50 VALID, p50 0.23 s, max 1.3 s                  |
+| 1045 mutants              | 1018 INVALID, p50 31 ms, max 5.0 s        | 1018 INVALID, p50 12 ms, max 0.28 s                 |
+| scaling (median log-log)  | 0.51                                      | 0.79 (definitions 0.85)                             |
+| cut 40 / half the actions | 41/44 / 42/50, max 125 s                  | 44/44 / 50/50, max 1.7 s                            |
+| INVALID explanation       | node, instruction, dead branches' reasons | unsat core, p50 2 assertions, p50 0.12 s, max 438 s |
+| INVALID trusts            | engine completeness                       | encoding faithfulness, solver                       |
+| model size                | `Sym*.lean`, forks/merging/projection     | `SmtModel.lean`, line-by-line port                  |
 
-Usage: `ccfraft-midtrace validate DOC N [--witness] [--global]
-[--no-invariants] [--cap K]`. `N` is the number of reduced actions dropped.
+- Same verdicts on all 1045 mutants. 0 INVALIDs where the true initial
+  state replays. The 27 VALID mutants are explicable from some initial
+  state (pre-cut messages, early mutations absorbed by `s0`).
+- No loosening: every VALID comes with a concrete initial replay state
+  (`--witness` prints it).
+
+Usage: `ccfraft-midtrace smt DOC N [--explain] [--witness] [--no-invariants]
+[--Q n] [--slack n] [--solver PATH]` and `ccfraft-midtrace validate DOC N
+[--witness] [--global] [--no-invariants] [--cap K]`. `N` is the number of
+reduced actions dropped.
 
 ### Trust argument
 
-- VALID: trusted only as far as `Replay.replayFrom` and the witness's
-  well-formedness (full `NodeState` per declared node, network, `active` =
-  declared, no dropped history).
-- INVALID: relies on the engine being complete over the allowed initial
-  states (every fork enumerated, `unsupported` wherever it cannot
-  represent a case, phantom subsumption, projection product argument). It
-  is tested (0 unsound in 1018, no VALID/INVALID conflict with `--global`
-  mode) but not proved. A Lean proof that
-  `SymModel` over-approximates `Replay` is feasible because both are Lean,
-  but it is a large project.
+- VALID (both): trusted only as far as `Replay.replayFrom` and the
+  witness's well-formedness (full `NodeState` per declared node, network,
+  `active` = declared, no dropped history).
+- INVALID, engine: relies on the engine being complete over the allowed
+  initial states (every fork enumerated, `unsupported` wherever it cannot
+  represent a case, phantom subsumption, projection product argument).
+  Tested (0 unsound in 1018, no conflict with `--global`), not proved.
+- INVALID, SMT: relies on `SmtModel` over-approximating the model and
+  replay's observation checks (outside `cap`, reads are fresh values), on
+  the simplifier only using implied facts, and on yices. Tested by the
+  pinned differential run (verdicts equal replay on 1095 documents) and by
+  agreement with the engine. 1016 of the 1018 INVALIDs never reach the
+  solver. A proof is more tractable than for the engine: it is one
+  denotation lemma per handler ("under any assignment, the terms evaluate
+  to the model's step"), with no search-completeness argument. Solver
+  trust would need proof-producing solving (cvc5 + Lean-SMT
+  reconstruction), but cvc5 was far too slow here.
 - The allowed initial states are restricted (active = declared, no
   dropped history, and by default cheap reachable-state invariants). This
-  only rejects more, so it cannot accept anything replay would not.
+  only rejects more, so it cannot accept anything replay would not. Cores
+  report when they depend on the invariants.
 
 ### Limitations
 
-- Larger cuts: 48/48 at cut 20, 41/44 at cut 40 and 42/50 at half the
-  actions. Failures are frontier blowups from unknown initial log contents
-  (configuration/retirement shape) split differently by each membership
-  query. Two VALIDs take 94 s and 125 s.
-- A log read before any `logLength` observation uses only lengths the node
-  is later observed with; other lengths are `unsupported`, giving UNKNOWN
-  rather than a wrong INVALID.
-- "Exists an initial state" cannot detect mutated or deleted deliveries
-  explicable by pre-cut messages. Only causal links (message ids in the log)
-  can close this gap.
+- Both: "exists an initial state" cannot detect mutated or deleted
+  deliveries explicable by pre-cut messages. Only causal links (message
+  ids in the log) can close this gap.
+- Engine: larger cuts blow up (41/44 at cut 40, 42/50 at half; two VALIDs
+  take 94 s and 125 s). A log read before any `logLength` observation uses
+  only lengths the node is later observed with (else UNKNOWN).
+- SMT: entries with effects other than one reconfiguration or retirement
+  record, and drops of a non-head packet, are `unsupported` (UNKNOWN; none
+  occur in the scenarios). Capacities `K`/`Q` are retried upward when a
+  core uses them.
+- SMT diagnosis: cost is dominated by satisfiable trial checks; long-range
+  windows (suffix_collision.3) take ~7 min. Cores are 1-minimal only
+  modulo timeouts.
 
 ### Recommendation and future work
 
-1. Adopt the engine for cut-sized gaps (tens of actions): it meets the target
-   with margin and needs no external solver.
-2. Log more at the source (approach 7), which shrinks the unknowns that
-   cause large-cut blowups: forward `committable_indices`, emit
-   `configurations` on every event, and log entry terms or a periodic
-   per-node snapshot (term, log terms, commit index, configs). A snapshot
-   every K events bounds the gap regardless of where validation starts.
-3. Engine improvements, in expected value order:
-   - represent "set of configurations above the commit index" symbolically
-     (one atom per membership question instead of per entry), or subsume
-     worlds whose candidate sets are pointwise supersets (generalized
-     merging);
-   - parallel per-node projections (`Task`), trivially parallel;
-   - bitmask candidate sets instead of `List Content` to cut key cost;
-   - a symbolic log length, removing the hint heuristic.
-4. Explanations: INVALID already names node and instruction. For a minimal
-   explanation, run QuickXplain/delta debugging over that node's projection
-   (each check is ~30 ms p50), well inside the 10 min budget.
-5. SAT/SMT (approach 5) is not recommended: the user's encodings were
-   quadratic, and the subsumption/projection insights here are what kept
-   the search linear; they would need re-deriving as encoding tricks.
+1. Use the SMT encoder as the primary mid-trace validator: it meets the
+   target with large margin at every cut, scales better at large cuts,
+   its model is a direct port of `Node.lean`, and it explains INVALID
+   with small cores. Keep the engine as a solver-free differential oracle
+   only if that is worth its maintenance.
+2. Log more at the source (approach 7): forward `committable_indices`,
+   emit `configurations` on every event, log entry terms or a periodic
+   per-node snapshot. This shrinks the unknowns for any approach and
+   makes cores shorter-range.
+3. Correctness: keep the pinned differential run (`smt --pin`) as a
+   regression test; if a proof is wanted, prove `SmtModel`'s per-handler
+   denotation lemmas (option 2 applied to the SMT model, which is smaller
+   than the engine).
+4. Diagnosis speed-ups, in expected value order: start with the latest
+   instruction groups (the contradiction is usually near the end of the
+   window); run trial checks in parallel solver sessions; use a solver with
+   millisecond timeouts for the trial phase only; accept a non-minimal core
+   after a time budget.
+5. If the engine is kept: represent "set of configurations above the commit
+   index" symbolically or subsume worlds whose candidate sets are pointwise
+   supersets (fixes the large-cut blowups); parallel per-node projections;
+   bitmask candidate sets; a symbolic log length instead of hints.
