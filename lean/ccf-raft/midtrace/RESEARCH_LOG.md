@@ -408,10 +408,9 @@ negative instances (unsat), z3, growing logs (length ~1.3 T):
   unchanged `Replay.replayFrom`, and the verdict is VALID only if replay
   passes. `unsat` (or a hard assertion folding to `false` while encoding):
   INVALID.
-- **Solver.** Before head naming yices was far faster than z3 (ackuracy
-  1.7 s vs > 300 s; a 160-instruction prefix 0.2 s vs 3.4 s, cvc5 > 120 s).
-  After it both validate quickly (table below), but explain sessions on
-  ackuracy still took > 300 s with z3 or cvc5, so yices is the default.
+- **Solver.** yices 2 by default; z3 and cvc5 also work through `--solver`.
+  See "Solver choice" below for why yices is 10x to 100x faster on these
+  formulas.
 
 ### Results (cut 10, yices, Q=32)
 
@@ -451,6 +450,131 @@ engine left UNKNOWNs and 94 s / 125 s VALIDs, are easy here:
 (`--no-invariants` at cut 10: 50/50, max 2.1 s.) The engine's blowups came
 from correlated unknown log contents split differently by each membership
 query; in SSA these are just shared unknown cells, so nothing multiplies.
+
+### Solver choice: why yices
+
+`build/research/smt/why.py` runs the same dumped scripts through every
+solver we could install. `cap`, `inv` and all guards are asserted and
+checked once. Times are wall clock, one process at a time
+(`results/why_serial.txt`, `why_big.txt`, `why_ablate.txt`). The scripts
+are VALID cut-10 suffixes:
+
+- bad_network (0.8 MB, 15k definitions);
+- ackuracy (1.6 MB, 29k);
+- suffix_collision.3 (4.1 MB, 74k);
+- bad_network and ackuracy with `--no-refine`, i.e. without narrowing
+  (24 MB and 117 MB).
+
+| solver                      | bad_network | ackuracy | suffix_collision.3 | bad_network no-refine | ackuracy no-refine | `check-sat-assuming` |
+| --------------------------- | ----------- | -------- | ------------------ | --------------------- | ------------------ | -------------------- |
+| yices 2.7.0                 | 0.03 s      | 0.05 s   | 0.13 s             | 0.93 s                | 4.4 s              | yes (0.06 s, 0.15 s) |
+| yices `--mcsat`             | 0.17 s      | 0.32 s   | 1.4 s              | 28 s                  | -                  | -                    |
+| MathSAT 5.6.19              | 0.27 s      | 0.43 s   | 0.97 s             | 205 s                 | > 300 s            | yes (0.66 s, 1.1 s)  |
+| z3 5.1.0, tuned (see below) | 0.26 s      | 0.50 s   | 1.4 s              | > 300 s               | -                  | yes                  |
+| z3 5.1.0                    | 0.91 s      | 2.0 s    | 6.5 s              | > 300 s               | > 300 s            | yes (0.64 s, 2.1 s)  |
+| OpenSMT 2.9.2               | 1.3 s       | 1.1 s    | 9.2 s              | > 300 s               | > 300 s            | no (push/pop only)   |
+| cvc4 1.8                    | 1.7 s       | 2.7 s    | 7.1 s              | > 300 s               | > 300 s            | yes (3.0 s, 12 s)    |
+| cvc5 1.4.0                  | 2.2 s       | 3.3 s    | 13 s               | 145 s                 | > 300 s            | yes (7.2 s, 21 s)    |
+| SMTInterpol 2.5-1453        | 2.7 s       | 3.0 s    | 14 s               | > 300 s               | > 300 s            | crashes (NPE)        |
+| veriT 2021.06.2             | 162 s       | ~33 s    | -                  | -                     | -                  | no                   |
+
+The last column gives times on ackuracy and suffix_collision.3.
+
+Parsing is not the cost. Load-only times are:
+
+- yices 0.04 to 0.09 s;
+- MathSAT 0.07 to 0.16 s;
+- z3 0.2 to 0.5 s;
+- cvc5 0.4 to 0.7 s;
+- OpenSMT 0.9 to 7.3 s;
+- SMTInterpol (JVM) 1.9 to 5.5 s.
+
+The gap comes from how each solver treats a large, nearly functional QF_LIA
+formula: Booleans, integer `ite`s and difference/bound atoms. Three
+mechanisms, each shown by an ablation:
+
+1. **No theory combination in yices.** yices builds its solver stack from
+   the declared logic. For QF_LIA it uses only CDCL plus simplex, and
+   integer `ite`s are flattened into clauses over simplex atoms. Changing
+   only the `set-logic` line to QF_UFLIA adds an egraph, so the same `ite`
+   terms need Nelson-Oppen equality exchange between the egraph and
+   arithmetic. That change makes yices 70x slower on ackuracy (0.05 s to
+   3.4 s, 2.6k to 513k decisions), 190x on suffix_collision.3 (0.13 s to
+   25 s, 9.6k to 3.3M decisions) and 19x on bad_network no-refine
+   (0.95 s to 18 s). That is z3/cvc5 territory. z3 and cvc5 always keep an
+   equality engine over arithmetic terms:
+   - z3 propagates 306k (ackuracy) and 495k (suffix_collision.3)
+     arithmetic equalities into its egraph. Most are offset equalities
+     `x = y + k`, which SSA updates produce everywhere.
+     `smt.arith.propagate_eqs=false` cuts suffix_collision.3 from 6.1 s
+     to 4.9 s.
+   - cvc5's arithmetic equality engine holds 71k terms on ackuracy.
+2. **Preprocessing.** z3's default QF_LIA strategy probes ILP,
+   pseudo-Boolean and bounded-integer tactics and runs ctx-simplify,
+   solve-eqs and elim-term-ite before its SMT core. Skipping these
+   (`tactic.default_tactic=smt`) halves z3's time (suffix_collision.3
+   6.1 s to 2.8 s). cvc5 spends 1.1 to 1.9 s of 2.2 to 3.9 s in
+   preprocessing passes (static-rewrite, apply-substs, theory-preprocess
+   and non-clausal-simp are about 0.25 s each). Its static learning for
+   arithmetic `ite`s alone costs 1.7 s (ackuracy 3.9 s to 2.2 s without
+   it). yices simplifies while building terms (hash-consing, comparisons
+   of `ite`s against constants fold) and ends with 4k atoms on ackuracy.
+   cvc5 has 15k CNF atoms and z3 14k Boolean variables.
+3. **Search barely happens when propagation works.** Once the few unknown
+   initial values are chosen, unit propagation fixes everything else.
+   yices needs 0 conflicts (ackuracy), 20 (suffix_collision.3) and 75
+   (bad_network no-refine). The others make 10x to 50x more decisions:
+   - z3: 94k decisions, 81 conflicts;
+   - cvc5: 82k decisions, 574 arithmetic conflicts;
+   - MathSAT: 130k decisions, 46 conflicts.
+     MathSAT is the closest at 0.43 s. It also builds an egraph (24k nodes,
+     364k merges), but it exchanges no interface equalities with its LA
+     solver (0 needed, 0 extra), so it pays for egraph upkeep but not for
+     theory combination.
+
+Tuning the others narrows the gap only on small inputs. z3 with the SMT
+tactic and the legacy simplex solver (`smt.arith.solver=2`) takes 0.45 s on
+ackuracy and 1.1 s on suffix_collision.3: 5x faster than default, still
+about 9x behind yices. It still times out on bad_network no-refine. The best
+cvc5 combination (`--simplification=none --sat-solver=minisat
+--no-static-learning --no-arith-static-learning`) takes 2.6 s. The overheads
+grow faster than linearly with formula size: without narrowing (24 MB),
+yices takes 0.95 s, cvc5 145 s and MathSAT 205 s, and the rest exceed
+300 s. The simplifier therefore matters most for the other solvers.
+
+Tuning yices changes nothing: branching polarity, var-elim, arith-elim,
+flatten, learn-eq, keep-ite, simplex-prop, cache-tclauses and randomness
+give identical decision and conflict counts. MCSAT is a different
+architecture, model-constructing rather than CDCL(T). It is 7x to 30x
+slower than the default yices, but still beats default z3 and cvc5 on the
+refined scripts.
+
+Diagnosis needs `check-sat-assuming` with unsat assumptions in one session:
+
+- yices, z3, cvc4, cvc5 and MathSAT support it.
+- OpenSMT 2.9.2 and veriT reject it. OpenSMT has push/pop (1.0 s on
+  ackuracy), but cores would need named assertions instead.
+- SMTInterpol supports it on a small example, but throws a
+  NullPointerException on our scripts.
+
+Consequences:
+
+- yices wins because the encoding is pure QF_LIA. Adding uninterpreted
+  functions or arrays would bring in the egraph and lose most of the
+  advantage. Keep the encoding egraph-free.
+- MathSAT is the runner-up (incremental, 0.3 to 1 s), but its license is
+  research and evaluation only.
+- z3, tuned, is usable for validation on refined scripts, not for
+  diagnosis loops.
+- For proof-producing solving, cvc5 (with Lean-SMT reconstruction) is the
+  slowest here. An untested alternative is a bit-vector encoding checked by
+  Lean's `bv_decide`, which runs CaDiCaL and checks its LRAT certificate in
+  the Lean kernel; values here are small.
+- Not benchmarked:
+  - bit-vector-only solvers (Bitwuzla, Boolector, STP), which need a BV
+    encoding;
+  - SMT-COMP variants that are not packaged (Z3++, Z3alpha, SMT-RAT);
+  - Princess.
 
 ### INVALID diagnosis
 
