@@ -127,10 +127,17 @@ private def genOptions (options : List String) (parsed : GenOptions)
   | [] => some parsed
   | "--solver" :: path :: rest => genOptions rest (set ({ · with solver := path }))
   | "--no-refine" :: rest => genOptions rest (set ({ · with refine := false }))
+  | "--backbone" :: value :: rest =>
+      value.toNat?.bind fun backbone => genOptions rest (set ({ · with backbone }))
   | "--retry" :: value :: rest =>
       value.toNat?.bind fun retry => genOptions rest (set ({ · with retry }))
   | "--dump-smt" :: path :: rest => genOptions rest (set ({ · with dump := some path }))
   | "--dump-ir" :: path :: rest => genOptions rest (set ({ · with irDump := some path }))
+  | "--fix-len" :: src :: dst :: n :: rest =>
+      match src.toNat?, dst.toNat?, n.toNat? with
+      | some s, some d, some n =>
+          genOptions rest (set fun o => { o with fixLen := ((s, d), n) :: o.fixLen })
+      | _, _, _ => none
   | "--witness" :: rest => genOptions rest { parsed with witness := true }
   | "--profile" :: rest => genOptions rest { parsed with profile := true }
   | "--Q" :: value :: rest =>
@@ -240,7 +247,7 @@ def main (args : List String) : IO UInt32 := do
         let outcome ← Gen.run header suffix options.settings
         let elapsed := (← IO.monoMsNow) - start
         IO.println
-          s!"{outcome.verdict.name} time_ms={elapsed} build_ms={outcome.buildMs} lower_ms={outcome.lowerMs} solve_ms={outcome.solveMs} instructions={suffix.size} processed={outcome.processed} ir_nodes={outcome.irNodes} smt_lines={outcome.smtLines} L={outcome.L} {outcome.detail}"
+          s!"{outcome.verdict.name} time_ms={elapsed} build_ms={outcome.buildMs} lower_ms={outcome.lowerMs} solve_ms={outcome.solveMs} probe_ms={outcome.probeMs} probes={outcome.probes} pinned={outcome.pinned} instructions={suffix.size} processed={outcome.processed} ir_nodes={outcome.irNodes} smt_lines={outcome.smtLines} L={outcome.L} {outcome.detail}"
         if options.profile then
           let smt :=
             outcome.smtSizes.foldl (fun m (i, size) => m.insert i size)
@@ -252,6 +259,9 @@ def main (args : List String) : IO UInt32 := do
               | _, _ => "?"
             IO.println
               s!"profile {i} ir={outcome.irSizes[i]} smt={smtDelta} {((suffix[i]?.map Json.compress).getD "").take 140}"
+        if options.profile then
+          for (i, node, width) in outcome.wide do
+            IO.println s!"wide {i} v{node} {width}"
         if options.witness then
           if let some state := outcome.witness then
             IO.println (replayStateJson header.declared state).compress

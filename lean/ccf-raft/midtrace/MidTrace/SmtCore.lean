@@ -75,7 +75,21 @@ structure Info where
   shape : Shape := .none
   /-- A simpler equal term, found after the definition was emitted. -/
   equal : Option Tm := none
+  /-- Values strictly inside `[lo, hi]` that are excluded. -/
+  holes : Array Int := #[]
 deriving Inhabited
+
+/-- Moves the bounds of `i` past excluded values; `none` if no value remains. -/
+def Info.tighten (i : Info) : Option Info :=
+  Id.run do
+    let mut lo := i.lo
+    let mut hi := i.hi
+    while lo <= hi && i.holes.contains lo do
+      lo := lo + 1
+    while lo <= hi && i.holes.contains hi do
+      hi := hi - 1
+    if lo > hi then return none
+    return some { i with lo, hi, holes := i.holes.filter fun h => lo < h && h < hi }
 
 /-- A log entry; effects other than one reconfiguration or retirement record are not modelled. -/
 structure SEntry where
@@ -118,6 +132,8 @@ structure Enc where
   entries : Std.HashMap (Nat × Nat) SEntry := {}
   declared : Nat := 0
   defined : Nat := 0
+  /-- Integer terms with a small domain that are compared against constants. -/
+  selectors : Std.HashSet Nat := {}
 
 abbrev OpM := StateM Enc
 
@@ -171,13 +187,13 @@ partial def normD (depth : Nat) (t : Tm) : OpM Tm := do
         | _ => pure none
     | .le x k | .ge x k | .eq x k =>
         let x' ← normD (depth - 1) (.ref x)
-        let (lo, hi) ←
+        let (lo, hi, holes) ←
           match x' with
-          | .int value => pure (value, value)
-          | .bool value => pure (if value then (1, 1) else (0, 0))
+          | .int value => pure (value, value, #[])
+          | .bool value => pure (if value then (1, 1, #[]) else (0, 0, #[]))
           | .ref other => do
               let o ← info other
-              pure (o.lo, o.hi)
+              pure (o.lo, o.hi, o.holes)
         match i.shape with
         | .le _ _ =>
             pure
@@ -199,7 +215,7 @@ partial def normD (depth : Nat) (t : Tm) : OpM Tm := do
             pure
               (if lo == k && hi == k then
                   some (.bool true)
-                else if k < lo || hi < k then
+                else if k < lo || hi < k || holes.contains k then
                   some (.bool false)
                 else
                   none)
@@ -355,6 +371,9 @@ def le (a b : Tm) : OpM Tm := do
 def lt (a b : Tm) : OpM Tm := do
   notT (← le b a)
 
+/-- The widest domain of a term recorded in `Enc.selectors`. -/
+def SELECTOR_WIDTH : Int := 16
+
 def eqT (a b : Tm) : OpM Tm := do
   let (a, b) ←
     match ← offsetOf a, ← offsetOf b with
@@ -376,6 +395,11 @@ def eqT (a b : Tm) : OpM Tm := do
       let (la, ha) ← range a
       let (lb, hb) ← range b
       if ha < lb || hb < la then return .bool false
+      let excluded ←
+        match a, b with
+        | .ref x, .int k | .int k, .ref x => pure ((← info x).holes.contains k)
+        | _, _ => pure false
+      if excluded then return .bool false
       let (a, b) := if b.smt < a.smt then (b, a) else (a, b)
       let shape :=
         match a, b with
@@ -383,6 +407,10 @@ def eqT (a b : Tm) : OpM Tm := do
         | .int k, .ref x => Shape.eq x k
         | .ref x, .ref y => Shape.eqv x y
         | _, _ => .none
+      if let .eq x _ := shape then
+        let i ← info x
+        if !i.isBool && i.hi - i.lo <= SELECTOR_WIDTH then
+          modify fun enc => { enc with selectors := enc.selectors.insert x }
       define true s!"(= {a.smt} {b.smt})" 0 1 shape
 
 def eqK (a : Tm) (k : Int) : OpM Tm := eqT a (.int k)
@@ -485,11 +513,12 @@ mutual
 
   partial def narrow (id : Nat) (lo hi : Int) : OpM Bool := do
     let i ← info id
-    let nlo := max lo i.lo
-    let nhi := min hi i.hi
-    if nlo > nhi then return false
+    let some n := ({ i with lo := max lo i.lo, hi := min hi i.hi } : Info).tighten
+    | return false
+    let nlo := n.lo
+    let nhi := n.hi
     if nlo == i.lo && nhi == i.hi then return true
-    setInfo id { i with lo := nlo, hi := nhi }
+    setInfo id n
     if i.isBool then
       if nlo != nhi then return true
       let value := nlo == 1
@@ -505,13 +534,7 @@ mutual
           if value then
             narrow x k k
           else
-            let o ← info x
-            if o.lo == k then
-              narrow x (k + 1) INF
-            else if o.hi == k then
-              narrow x (-INF) (k - 1)
-            else
-              return true
+            exclude x k
       | .eqv x y =>
           if value then
             let ox ← info x
@@ -528,6 +551,17 @@ mutual
             (if nhi >= INF then INF else nhi - k)
       | .ite c a b => narrowIte c a b nlo nhi
       | _ => return true
+
+  /-- Excludes `k` from the values of `x`; `false` if none remain. -/
+  partial def exclude (x : Nat) (k : Int) : OpM Bool := do
+    let o ← info x
+    if k < o.lo || o.hi < k || o.holes.contains k then return true
+    if o.lo < k && k < o.hi then
+      setInfo x { o with holes := o.holes.push k }
+      return true
+    let some n := ({ o with holes := o.holes.push k } : Info).tighten | return false
+    setInfo x { o with holes := n.holes }
+    narrow x n.lo n.hi
 
   partial def narrowIte (c : Nat) (a b : Tm) (lo hi : Int) : OpM Bool := do
     let (la, ha) ← range a

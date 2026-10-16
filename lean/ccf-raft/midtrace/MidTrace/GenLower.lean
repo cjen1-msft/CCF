@@ -69,10 +69,15 @@ structure LState where
   axiomsByBase : Std.HashMap Nat (Array Nat) := {}
   /-- The SMT term count at the start of each instruction. -/
   sizes : Array (Nat × Nat) := #[]
+  /-- Reads and folds split over more than `WIDE` cases: instruction, node, width. -/
+  wide : Array (Nat × Nat × Int) := #[]
 
 abbrev LM := ReaderT Ir (StateT LState OpM)
 
 abbrev BEnv := Std.HashMap Nat Tm
+
+/-- Splits at least this wide are recorded in `LState.wide`. -/
+def WIDE : Int := 16
 
 /-- The widest case split for a read or fold. -/
 def SPLIT_LIMIT : Int := 100000
@@ -197,10 +202,23 @@ mutual
     | .min => return .s (← Smt.minT (← lowerS env args[0]!) (← lowerS env args[1]!))
     | .max => return .s (← Smt.maxT (← lowerS env args[0]!) (← lowerS env args[1]!))
     | .count => return .s (← Smt.countT (← args.mapM (lowerS env)))
-    | .select => selectAt (← lowerA env args[0]!) (← lowerS env args[1]!)
+    | .select =>
+        let av ← lowerA env args[0]!
+        let i ← lowerS env args[1]!
+        let (lo, hi) ← Smt.range i
+        if hi - lo >= WIDE then
+          let instr := (← getThe Smt.Enc).instruction
+          modify fun s => { s with wide := s.wide.push (instr, id, hi - lo + 1) }
+        selectAt av i
     | .store | .lam | .scan =>
         return .a (← intern (.node id (node.bvs.map fun b => env.getD b (.int 0))))
-    | .fold kind => lowerFold env node kind
+    | .fold kind =>
+        let (lo, _) ← Smt.range (← lowerS env args[1]!)
+        let (_, hi) ← Smt.range (← lowerS env args[2]!)
+        if hi - lo >= WIDE then
+          let instr := (← getThe Smt.Enc).instruction
+          modify fun s => { s with wide := s.wide.push (instr, id, hi - lo + 1) }
+        lowerFold env node kind
 
   /-- The lowered index of a `store`, with its environment and node. -/
   partial def storeAt (av : Nat) : LM (Option (Tm × BEnv × Node)) := do
@@ -426,31 +444,42 @@ mutual
         return .s (← Smt.andL parts.toList)
 end
 
-def lowerAll : LM Unit := do
+def lowerInit : LM Unit := do
   let ir ← read
   let mut byBase : Std.HashMap Nat (Array Nat) := {}
   for h : i in [0:ir.axioms.size] do
     for b in ir.axioms[i].bases do
       byBase := byBase.insert b ((byBase.getD b #[]).push i)
   modify fun s => { s with axiomsByBase := byBase }
-  for cmd in ir.cmds do
-    if (← getThe Smt.Enc).falsified.isSome then break
-    match cmd with
-    | .instr i _ =>
-        modifyThe Smt.Enc
-          fun enc => { enc with instruction := i, out := enc.out.push s!"; instr {i}" }
-        let size := (← getThe Smt.Enc).infos.size
-        modify fun s => { s with sizes := s.sizes.push (i, size) }
-    | .require t description background =>
-        Smt.require (← lowerS {} t) description background
-    | .assume cap t =>
-        let v ← lowerS {} t
-        if cap then Smt.assumeCap v else Smt.assumeInv v
-    modify fun s => { s with bound := {} }
+
+def lowerCmd (cmd : Cmd) : LM Unit := do
+  match cmd with
+  | .instr i _ =>
+      modifyThe Smt.Enc
+        fun enc => { enc with instruction := i, out := enc.out.push s!"; instr {i}" }
+      let size := (← getThe Smt.Enc).infos.size
+      modify fun s => { s with sizes := s.sizes.push (i, size) }
+  | .require t description background =>
+      Smt.require (← lowerS {} t) description background
+  | .assume cap t =>
+      let v ← lowerS {} t
+      if cap then Smt.assumeCap v else Smt.assumeInv v
+  modify fun s => { s with bound := {} }
+
+/-- Runs a lowering step on `ir` from the given states. -/
+def runLM (ir : Ir) (act : LM Unit) (ls : LState) (enc : Smt.Enc) : LState × Smt.Enc :=
+  let ((_, ls), enc) := ((act.run ir).run ls).run enc
+  (ls, enc)
 
 /-- Lowers `ir` into `enc`. -/
 def lower (ir : Ir) (enc : Smt.Enc) : LState × Smt.Enc :=
-  let ((_, st), enc) := ((lowerAll.run ir).run {}).run enc
-  (st, enc)
+  Id.run do
+    let (ls, enc) := runLM ir lowerInit {} enc
+    let mut ls := ls
+    let mut enc := enc
+    for cmd in ir.cmds do
+      if enc.falsified.isSome then break
+      (ls, enc) := runLM ir (lowerCmd cmd) ls enc
+    return (ls, enc)
 
 end CCFRaft.MidTrace.Gen

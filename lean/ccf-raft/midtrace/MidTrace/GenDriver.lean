@@ -47,12 +47,20 @@ structure Settings where
   dump : Option String := none
   /-- Write the IR to this path. -/
   irDump : Option String := none
+  /--
+  The first instruction at which implied selector values are asked of the
+  solver; later checks double the instruction. 0 disables.
+  -/
+  backbone : Nat := 32
+  /-- Debugging: pins the initial packet count of these channels. -/
+  fixLen : List ((Nat × Nat) × Nat) := []
 
 structure Env where
   header : Replay.Header
   c : Ctx
   L : Nat
   Q : Nat
+  fixLen : List ((Nat × Nat) × Nat) := []
 
 def makeEnv (header : Replay.Header) (suffix : Array Json) (settings : Settings) : Env :=
   let names := header.declared.toArray
@@ -79,6 +87,7 @@ def makeEnv (header : Replay.Header) (suffix : Array Json) (settings : Settings)
       }
     L := mentioned + settings.slack
     Q := settings.Q
+    fixLen := settings.fixLen
   }
 
 /-! ## Initial state -/
@@ -152,6 +161,10 @@ def nodeIndex (name : String) : DM Nat := do
 def chanOf (src dst : Nat) : DM SList := do
   if let some ch := (← getThe Sys).chans[(src, dst)]? then return ch
   let ch ← (freshChan (← read) : GM SList)
+  let ch :=
+    match (← read).fixLen.lookup (src, dst) with
+    | some n => { ch with len := .int n }
+    | none => ch
   modifyThe Sys
     fun sys =>
       {
@@ -704,6 +717,13 @@ structure Outcome where
   irSizes : Array Nat := #[]
   /-- SMT terms at the start of each lowered instruction. -/
   smtSizes : Array (Nat × Nat) := #[]
+  /-- Wide reads and folds: instruction, IR node, width. -/
+  wide : Array (Nat × Nat × Int) := #[]
+  /-- Time in backbone checks, included in `lowerMs`. -/
+  probeMs : Nat := 0
+  /-- Solver checks made for the backbone, and selectors they fixed. -/
+  probes : Nat := 0
+  pinned : Nat := 0
   witness : Option Replay.ReplayState := none
 
 def runOnce (header : Replay.Header) (suffix : Array Json) (settings : Settings)
@@ -729,25 +749,81 @@ def runOnce (header : Replay.Header) (suffix : Array Json) (settings : Settings)
   if let some what := ir.unsupported then
     return { base with detail := s!"unsupported: {what}" }
   let lowerStart ← IO.monoMsNow
-  let (ls, enc) := lower ir { refine := settings.refine }
+  let session ← Smt.Session.spawn settings.solver
+  let preamble := "(set-option :produce-models true)\n(set-logic QF_LIA)\n"
+  session.send preamble
+  let (ls, enc) := runLM ir lowerInit {} { refine := settings.refine }
+  let mut ls := ls
+  let mut enc := enc
+  let mut sent := 0
+  let mut nextCheck := settings.backbone
+  let mut probeMs := 0
+  let mut probes := 0
+  let mut pinned := 0
+  let mut early : Option String := none
+  let flush (enc : Smt.Enc) (sent : Nat) : IO Nat := do
+    if sent < enc.out.size then
+      session.send ("\n".intercalate (enc.out.extract sent enc.out.size).toList ++ "\n")
+    return enc.out.size
+  for cmd in ir.cmds do
+    if enc.falsified.isSome || enc.unsupported.isSome then break
+    (ls, enc) := runLM ir (lowerCmd cmd) ls enc
+    let .instr i _ := cmd | continue
+    if nextCheck == 0 || i < nextCheck then continue
+    nextCheck := 2 * i
+    -- Backbone: pin each small-domain selector that the prefix forces.
+    let hot :=
+      enc.selectors.toArray.filter
+        fun x =>
+          let info := enc.infos[x]!
+          info.lo < info.hi
+    if hot.isEmpty then continue
+    let probeStart ← IO.monoMsNow
+    sent ← flush enc sent
+    session.send "(check-sat)\n"
+    probes := probes + 1
+    let answer ← session.response
+    if answer == "unsat" then
+      early := some s!"instruction {i + 1}: the prefix is unsatisfiable"
+      break
+    if answer != "sat" then
+      nextCheck := 0
+      continue
+    let model ← session.values hot
+    for x in hot do
+      let some m := model[x]? | continue
+      let (lit, enc') := (Smt.eqK (.ref x) m).run enc
+      enc := enc'
+      let .ref b := lit | continue
+      sent ← flush enc sent
+      probes := probes + 1
+      if (← session.check [s!"(not v{b})"]) == "unsat" then
+        enc := ((Smt.require lit "backbone" (background := true)).run enc).2
+        pinned := pinned + 1
+    probeMs := probeMs + ((← IO.monoMsNow) - probeStart)
   let smtLines := enc.out.size
   let lowerMs := (← IO.monoMsNow) - lowerStart
-  let base := { base with lowerMs, smtLines, smtSizes := ls.sizes }
+  let base :=
+    {
+      base with
+        lowerMs, smtLines, smtSizes := ls.sizes, wide := ls.wide, probeMs, probes, pinned
+    }
+  if let some detail := early then
+    session.close
+    return { base with verdict := .invalid, detail }
   if let some (index, description) := enc.falsified then
+    session.close
     return {
       base with
         verdict := .invalid, detail := s!"instruction {index + 1}: {description}"
     }
   if let some what := enc.unsupported then
+    session.close
     return { base with detail := s!"unsupported: {what}" }
-  let script :=
-    "(set-option :produce-models true)\n(set-logic QF_LIA)\n"
-    ++ "\n".intercalate enc.out.toList
-    ++ "\n"
-  if let some path := settings.dump then IO.FS.writeFile path script
+  if let some path := settings.dump then
+    IO.FS.writeFile path (preamble ++ "\n".intercalate enc.out.toList ++ "\n")
   let solveStart ← IO.monoMsNow
-  let session ← Smt.Session.spawn settings.solver
-  session.send script
+  discard <| flush enc sent
   session.send "(check-sat)\n"
   let answer ← session.response
   let mut outcome := base
