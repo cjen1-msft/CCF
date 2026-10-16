@@ -55,7 +55,7 @@ private def usage : String :=
   ++ "       ccfraft-midtrace smt DOC N [--solver PATH] [--no-invariants] [--no-refine]\n"
   ++ "         [--explain] [--named] [--pin] [--Q n] [--slack n] [--dump-smt PATH] [--witness]\n"
   ++ "         [--profile]\n"
-  ++ "       ccfraft-midtrace gen DOC N [--solver PATH] [--no-refine] [--Q n] [--slack n] [--retry k] [--gaps off|zero|uniform] [--certify-limit n]\n"
+  ++ "       ccfraft-midtrace gen DOC N [--solver PATH] [--no-refine] [--Q n] [--slack n] [--retry k] [--gaps off|zero|uniform] [--reuse on|off] [--certify-limit n]\n"
   ++ "         [--dump-smt PATH] [--dump-ir PATH] [--witness] [--profile]"
 
 structure ValidateOptions where
@@ -146,6 +146,11 @@ private def genOptions (options : List String) (parsed : GenOptions)
         | "uniform" => some (some .uniform)
         | _ => none
       gaps.bind fun gaps => genOptions rest (set ({ · with gaps }))
+  | "--reuse" :: mode :: rest =>
+      match mode with
+      | "on" => genOptions rest (set ({ · with reuse := true }))
+      | "off" => genOptions rest (set ({ · with reuse := false }))
+      | _ => none
   | "--certify-limit" :: value :: rest =>
       value.toNat?.bind
         fun certifyLimit => genOptions rest (set ({ · with certifyLimit }))
@@ -258,7 +263,7 @@ def main (args : List String) : IO UInt32 := do
         let outcome ← Gen.run header suffix options.settings
         let elapsed := (← IO.monoMsNow) - start
         IO.println
-          s!"{outcome.verdict.name} time_ms={elapsed} build_ms={outcome.buildMs} lower_ms={outcome.lowerMs} solve_ms={outcome.solveMs} certify_ms={outcome.certifyMs} probe_ms={outcome.probeMs} probes={outcome.probes} pinned={outcome.pinned} instructions={suffix.size} processed={outcome.processed} ir_nodes={outcome.irNodes} smt_lines={outcome.smtLines} L={outcome.L} gap_probed={outcome.gapProbed} gap_enumerated={outcome.gapEnumerated.size} {outcome.detail}"
+          s!"{outcome.verdict.name} time_ms={elapsed} build_ms={outcome.buildMs} lower_ms={outcome.lowerMs} solve_ms={outcome.solveMs} certify_ms={outcome.certifyMs} probe_ms={outcome.probeMs} probes={outcome.probes} pinned={outcome.pinned} instructions={suffix.size} processed={outcome.processed} ir_nodes={outcome.irNodes} smt_lines={outcome.smtLines} L={outcome.L} gap_probed={outcome.gapProbed} gap_enumerated={outcome.gapEnumerated.size} fold_points={outcome.foldPoints} fold_reused={outcome.foldReused} scans_seeded={outcome.scansSeeded} {outcome.detail}"
         if options.profile then
           let smt :=
             outcome.smtSizes.foldl (fun m (i, size) => m.insert i size)

@@ -64,6 +64,8 @@ structure Settings where
   quadratic in the log length; above this `L` it is reported uncertified.
   -/
   certifyLimit : Nat := 20000
+  /-- Reuse fold results and scan cells across binders with the same template. -/
+  reuse : Bool := true
 
 structure Env where
   header : Replay.Header
@@ -784,6 +786,10 @@ structure Outcome where
   /-- Gap regions summarized, and gap parts enumerated: instruction, width. -/
   gapProbed : Nat := 0
   gapEnumerated : Array (Nat × Int) := #[]
+  /-- Fold indices evaluated, and reused or skipped; scans seeded from earlier ones. -/
+  foldPoints : Nat := 0
+  foldReused : Nat := 0
+  scansSeeded : Nat := 0
   witness : Option Replay.ReplayState := none
 
 def runOnce (header : Replay.Header) (suffix : Array Json) (settings : Settings)
@@ -815,7 +821,9 @@ def runOnce (header : Replay.Header) (suffix : Array Json) (settings : Settings)
   -- Gap cells cannot complete axioms.
   let explicit := if ir.axioms.isEmpty then e.explicit else #[]
   let fill := settings.gaps.getD .zero
-  let (ls, enc) := runLM ir lowerInit { explicit, fill } { refine := settings.refine }
+  let (ls, enc) :=
+    runLM ir lowerInit { explicit, fill, reuse := settings.reuse }
+      { refine := settings.refine }
   let mut ls := ls
   let mut enc := enc
   let mut sent := 0
@@ -883,7 +891,10 @@ def runOnce (header : Replay.Header) (suffix : Array Json) (settings : Settings)
         pinned,
         lowerUs,
         gapProbed := ls.probed,
-        gapEnumerated := ls.enumerated
+        gapEnumerated := ls.enumerated,
+        foldPoints := ls.points,
+        foldReused := ls.reusedPoints,
+        scansSeeded := ls.seededScans
     }
   if let some detail := early then
     session.close

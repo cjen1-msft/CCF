@@ -378,3 +378,112 @@ Implications:
 
 Status of Q6: deep cuts are solved for the zero fill. Decision time is
 independent of D up to at least 10^6.
+
+### T10. Incremental folds: reuse an earlier lowering of the same fold
+
+After T7 the SMT is linear, but lowering is still about 3x per doubling.
+Cause: the model re-evaluates whole-log folds and scans on every step
+(`maxCommittableIndex`, configuration history, `SList.append` overlays).
+Each step lowers O(L) fold points, and almost all of them are the same as
+the previous step's. elect_160 lowered 2.08M fold points to emit 32k SMT
+lines.
+
+Approach (generic, `GenLower.lowerFold` / `deltaArr`; `--reuse on|off`):
+
+1. Template. The fold body with its binder-free subterms replaced by holes.
+   Templates are interned structurally, so two folds with the same template
+   differ only in their holes (and in lo / hi / default).
+2. Hole use. Each hole is classified by how the body uses it:
+   - `select(h, k + c)`: `.read c` (only cells near k matter);
+   - `le` / `eq` against `k + c`: `.cmp c` (only the cut point matters);
+   - anything else: `.exact` (the hole must be identical).
+3. Delta. For a new fold, take the most recent memo (up to 16) with the same
+   template and compute a "may differ" set D of indices:
+   - `.read`: the region where the two arrays may differ, shifted by c;
+   - `.cmp`: two integer literals give the interval between them;
+   - `.exact`: the same term, or an array with an empty delta;
+   - otherwise top (no reuse).
+   Array deltas walk "overwrite steps" back from both arrays in lockstep
+   until they meet:
+   - `store(a, i, v)` overwrites [i, i] (or [lo, hi] if i has a small range);
+   - `lam k. ite(c, a[k], e)` overwrites the complement of the indices
+     where c is surely true. "Surely" is an interval analysis of c over
+     k, using the ranges of the k-free subterms (`surely`).
+   The delta is the union of the regions above the meet point. If both
+   chains end without meeting, compare the bases (same `ite` condition, or
+   lam / scan with the same template). This is O(distance), memoized per
+   array pair and depth.
+4. Reuse. A point that the old fold covered and that is not in D reuses
+   the old lowered condition and value (shared terms, nothing re-lowered).
+   Points in D, and points outside the old cover, are lowered fresh. Scans
+   are seeded the same way: the accumulator before the first changed index
+   is taken from the memo.
+
+Soundness: hash-consed terms are the meaning of the subterm, and a reused
+term was a valid lowering of the same template at the same index under an
+environment that agrees outside D. D over-approximates the differing
+indices. Simplifications in the old term used only facts that still hold,
+because assertions and pins only grow. So the reused term is equivalent to
+a fresh lowering under the current assertions, though not always the same
+text (the SMT differs by about 1%, and the backbone pinned 9 selectors
+instead of 8 on elect). Eager lowering inside `surely` can emit dead
+definitions, which are never asserted.
+
+Results (sequential, unloaded; all VALID):
+
+| trace | reuse | total | build | lower | solve | fresh fold points | SMT lines |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| elect_40 | off | 6.4 s | 4.8 s | 1.33 s | 0.22 s | 146k | 11.2k |
+| elect_40 | on | 6.1 s | 4.8 s | 1.02 s | 0.22 s | 16k | 11.3k |
+| elect_80 | off | 14.2 s | 9.9 s | 3.72 s | 0.49 s | 540k | 18.2k |
+| elect_80 | on | 12.6 s | 9.9 s | 2.21 s | 0.47 s | 54k | 18.3k |
+| elect_160 | off | 33.3 s | 20.0 s | 11.97 s | 1.21 s | 2.08M | 32.1k |
+| elect_160 | on | 26.3 s | 19.9 s | 5.15 s | 1.24 s | 197k | 32.2k |
+| rep_80 | off | 5.4 s | 3.2 s | 2.00 s | 0.19 s | 406k | 17.2k |
+| rep_80 | on | 4.3 s | 3.2 s | 0.89 s | 0.19 s | 34k | 10.9k |
+| rep_160 | off | 13.9 s | 6.5 s | 6.85 s | 0.46 s | 1.55M | 44.1k |
+| rep_160 | on | 9.1 s | 6.5 s | 2.06 s | 0.46 s | 118k | 18.4k |
+
+- Total time is now 2.07x per doubling on elect (6.1 -> 12.6 -> 26.3 s).
+  Lowering is 2.2-2.3x per doubling (was 2.8-3.2x).
+- Fresh fold points drop 9-13x, but still grow about 3.5x per doubling.
+  They are no longer the cost driver.
+- Reuse also shrinks the SMT on rep (44k -> 18k lines): reused conditions
+  are shared terms, so the solver sees one definition, not one per step.
+- Build (constructing the IR, mostly hash-consing in `mk`) is linear and
+  now 75% of elect_160.
+- Soundness suites, all identical to T9: 50 positives VALID (max 2.2 s,
+  certified); deep cuts D = 1000 and 10^6, 50 VALID; 1045 negatives give
+  the same per-mutant verdicts (1019 INVALID, 26 VALID, 0 ENGINE-BUG, max
+  7.1 s under load).
+
+What did not work first, and why (from per-template profiling):
+
+- The first version reused only 3x. 88% of fresh points had a memo whose
+  delta was top:
+  - `SList.append` is a lam overlay `ite(k < aEnd, x[k], y[k - aEnd + off])`,
+    so each append adds one level. A structural delta recursed one level per
+    append and ran out of depth. Fix: treat the overlay as an overwrite step
+    (above), so a chain of appends is a walk, not a recursion.
+  - Arrays used `.exact` (e.g. the log passed whole into a helper) were top
+    even when unchanged. Fix: an empty array delta counts as equal.
+  - A depth-limited failure was cached and poisoned later, deeper queries.
+    Fix: cache the depth with the result.
+- The remaining fresh points are genuine. An `.exact` integer such as
+  `currentTerm` or `commitIndex` appears in a fold body that spans the whole
+  log. When it changes (every election, every commit advance), the whole fold
+  is different as a term, so all L points are lowered again. That is
+  O(changes * L).
+
+Implications:
+
+- Structural "may differ" sets are cheap and generic, but only as precise as
+  the hole classification. Integers that are compared (`.cmp`) give tight
+  deltas. Integers used arithmetically (`.exact`) give none.
+- The next step would be value-aware deltas for `.exact` integers: for
+  example, `ite(term(k) = currentTerm, ...)` only changes at indices whose
+  term equals the old or new value. That needs the solver or a range
+  analysis per index. YAGNI: the targets are met and build now dominates.
+- Overwrite steps generalize stores. Any `lam k. ite(c, a[k], e)` whose
+  condition has a decidable interval over k is a store to a region. This
+  covers append, truncate and splice without naming them.
