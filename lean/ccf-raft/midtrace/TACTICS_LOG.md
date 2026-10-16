@@ -242,3 +242,139 @@ Implications:
 Negatives with the backbone: the verdicts on all 1045 mutants are identical
 to T2 (1019 INVALID, 26 VALID, 0 ENGINE-BUG). Under 12-way load, p50 is
 0.85 s, p90 2.9 s and max 6.7 s. Build time dominates at these sizes.
+
+### T8. Deep cuts: lowering is O(len0) per instruction
+
+Test bed: `shift.py` adds D to every log index in a repo trace (state
+fields, packet indices, configuration indices), which gives the same run on
+top of a log that already holds D entries. A real service cuts deep into a
+long ledger, so D = 10^6 is realistic.
+
+Before gap compaction (backbone on, D = 1000):
+
+| trace | total | backbone probes | lowering | solve | SMT lines | wide ops |
+| --- | --- | --- | --- | --- | --- | --- |
+| replicate | 15.6 s | 13.7 s | ~1.5 s | 0.37 s | 148k | 125 |
+| reconfiguration | 26.1 s | 14.3 s | - | 7.5 s | 462k | 327 |
+
+- The wide operations are whole-log folds and scans of width ~1004-1008.
+  They come from the model's configuration history, retirement and
+  `maxCommittableIndex`.
+- The first instruction observes `logLength` and `commitIndex`, so most
+  fold bounds are literals early. The cost is the size, not symbolic
+  bounds: every fold emits one term per cell, and each solver check
+  (including backbone probes) pays for them.
+- Cost is linear in D. At D = 10^6 every fold exceeds `SPLIT_LIMIT` and the
+  trace is "unsupported".
+
+Implication: an encoding of an abstract log must not mention every cell. It
+must summarize runs of cells that the suffix cannot distinguish.
+
+### T9. Gap compaction (generic tactic + declared bound)
+
+Bound (declared, like Q). Let E be the union of [v - slack, v + slack] over
+every natural number v in the suffix, plus [-slack, Q + slack]. Intervals
+separated by fewer than 32 indices are merged. Cells of initial-state arrays
+outside E are *gap cells*:
+
+- `--gaps zero` (default): every gap cell is 0 / false / the zero array.
+- `--gaps uniform`: the cells of one gap share one unknown per base array
+  and path.
+- `--gaps off`: every cell is its own unknown (the T7 behaviour).
+
+The bound only removes initial states, so VALID stays sound and is
+certified by witness replay. INVALID becomes "INVALID within L, Q and the
+gap fill", exactly like Q. The capacity retry (T2) re-runs with 4x slack,
+which widens E.
+
+Tactic (`GenLower`, model independent). It acts on the IR's arrays, folds
+and scans, not on Raft:
+
+1. Pieces. Any index range is cut into explicit runs and gap parts
+   (`pieces`, binary search over E).
+2. Symbolic reads. `select a i` with a symbolic i is an ite chain over the
+   explicit cells, plus one term per gap part: the gap cell read at
+   `clamp(i)`, pushed through stores (skipping stores whose range is
+   disjoint), lambdas (beta reduction with the symbolic index) and scans.
+3. Folds over a gap part wider than 32 are probed. Lower the body twice,
+   with two fresh indices k1 and k2 declared over the part.
+   - If the conditions are the same term and the values are the same term
+     (or both are "index + same offset"), the fold is uniform over the
+     part. Then any / all / first / last / max / sum have closed forms in
+     the clipped bounds s = max(a, lo) and e = min(b, hi).
+   - Otherwise SmtCore reports the literals that k1 was compared with
+     (`watch` / `hits`). Split the part around them (h - 1, h, h + 1) and
+     re-probe, up to depth 4. Otherwise enumerate, and record a fallback.
+4. Scans over a gap part are probed with a fresh accumulator x:
+   - absorbing if step(k2, step(k1, x)) == step(k2, x) as terms, so
+     s[k] = step(k, s[a - 1]);
+   - additive if step(k, x) = x + d for one d independent of k and x, so
+     s[k] = s[a - 1] + (k - a + 1) * d;
+   - otherwise split at the hits, or enumerate.
+
+Soundness argument: hash-consing is by SMT text, so two probes giving the
+same term means the term does not depend on the index. Simplifications made
+while lowering with a probe index use only its declared range [a, b], which
+holds for every index the summary is used at. The probe definitions that
+are left in the script are unasserted.
+
+Results (`replicate` / `reconfiguration`, D = 1000):
+
+| mode | replicate | reconfiguration | SMT lines |
+| --- | --- | --- | --- |
+| off | 15.7 s | 26.2 s | 148k / 462k |
+| zero | 0.13 s | 0.54 s | 8.9k / 24.9k |
+
+Sweep over the 50 repo positives (decision time = total - certify; 6-way
+parallel; 3 traces have fewer than 10 actions):
+
+| D | verdicts | decision max | fallbacks | certified |
+| --- | --- | --- | --- | --- |
+| 10^3 | 50 VALID | 3.3 s | 0 | yes |
+| 10^4 | 50 VALID | 3.4 s (6.6 s under certify load) | 0 | yes |
+| 10^6 | 50 VALID | 3.1 s | 0 | no (see below) |
+
+- Lowering at D = 10^4, 10^5 and 10^6 for replicate: 73 / 69 / 87 ms, with
+  identical SMT (8934 lines). Lowering no longer depends on D.
+- Negatives (1045 mutants): unshifted, and at D = 10^6, both give 1019
+  INVALID / 26 VALID, identical to T7, with 0 ENGINE-BUG. The max is 6.9 s
+  unshifted and 11.5 s at D = 10^6 (INVALID pays for the retry).
+- Unshifted positives: identical verdicts and SMT (+-1 line). The gaps are
+  never used because E covers the whole log.
+
+Certification is the new bottleneck. The witness replay runs the reference
+model, whose `maxCommittableIndex` does `List.get?` inside a fold over the
+log, which is O(L^2) per step. It took 31 ms / 484 ms / 35 s at
+D = 10^3 / 10^4 / 10^5 (`perf`: 47% in `List.get?` under that fold), and
+building a 10^6-entry witness alone takes 5.6 s. Above `--certify-limit`
+(default 20000), VALID is reported "uncertified" and no witness is built.
+This is not part of the decision. It only limits the self-check, and would
+go away with an Array-based or `csimp` implementation of the model's log
+functions.
+
+Uniform fill (D = 1000): 50 VALID, but every trace falls back (up to 500
+enumerated parts), and it is 3.8x slower (max 10.6 s). At D = 10^6 it times
+out (> 300 s). Cause: a gap's mask cell is an unknown c, so the ranks scan
+over the gap is rank(k) = r0 + ite(c, k - a + 1, 0). Comparisons such as
+`le(n, rank(k))` then have a symbolic threshold inside a sum. That is not a
+literal hit, so neither the split nor the closed forms apply. Fixing it
+would need linear normal forms (solve `n <= r0 + (k - a + 1) * d` for k) or
+representative-point reasoning. YAGNI until a trace needs a non-zero gap.
+
+Implications:
+
+- A declared bound that makes unmentioned cells *literal* is what turns
+  folds into closed forms. A symbolic default is almost as expensive as no
+  bound, because every threshold becomes symbolic.
+- "Probe with two fresh indices and compare terms" is a cheap, generic
+  uniformity test. It reuses the lowering itself, so no per-operator rules
+  are needed. Splitting at hit literals localizes the non-uniformity to the
+  few cells near mentioned indices.
+- Related work: abstract interpretation over array segments (Cousot,
+  Cousot and Logozzo, "A parametric segmentation functor for fully
+  automatic and scalable array content analysis", POPL 2011). Here the
+  segment bounds come from the trace's literals, not from program
+  variables.
+
+Status of Q6: deep cuts are solved for the zero fill. Decision time is
+independent of D up to at least 10^6.
