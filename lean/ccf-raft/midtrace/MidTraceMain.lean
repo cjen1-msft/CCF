@@ -258,7 +258,7 @@ def main (args : List String) : IO UInt32 := do
               | some a, some b => s!"{b - a}"
               | _, _ => "?"
             IO.println
-              s!"profile {i} ir={outcome.irSizes[i]} smt={smtDelta} {((suffix[i]?.map Json.compress).getD "").take 140}"
+              s!"profile {i} ir={outcome.irSizes[i]} smt={smtDelta} us={outcome.lowerUs[i]?.getD 0} {((suffix[i]?.map Json.compress).getD "").take 140}"
         if options.profile then
           for (i, node, width) in outcome.wide do
             IO.println s!"wide {i} v{node} {width}"

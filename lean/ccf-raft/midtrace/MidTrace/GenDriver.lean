@@ -719,6 +719,8 @@ structure Outcome where
   smtSizes : Array (Nat × Nat) := #[]
   /-- Wide reads and folds: instruction, IR node, width. -/
   wide : Array (Nat × Nat × Int) := #[]
+  /-- Lowering time per instruction, in microseconds. -/
+  lowerUs : Array Nat := #[]
   /-- Time in backbone checks, included in `lowerMs`. -/
   probeMs : Nat := 0
   /-- Solver checks made for the backbone, and selectors they fixed. -/
@@ -765,9 +767,14 @@ def runOnce (header : Replay.Header) (suffix : Array Json) (settings : Settings)
     if sent < enc.out.size then
       session.send ("\n".intercalate (enc.out.extract sent enc.out.size).toList ++ "\n")
     return enc.out.size
+  let mut lowerUs := Array.replicate suffix.size 0
   for cmd in ir.cmds do
     if enc.falsified.isSome || enc.unsupported.isSome then break
+    let t0 ← IO.monoNanosNow
     (ls, enc) := runLM ir (lowerCmd cmd) ls enc
+    let t1 ← IO.monoNanosNow
+    if enc.instruction < lowerUs.size then
+      lowerUs := lowerUs.modify enc.instruction (· + (t1 - t0) / 1000)
     let .instr i _ := cmd | continue
     if nextCheck == 0 || i < nextCheck then continue
     nextCheck := 2 * i
@@ -806,7 +813,8 @@ def runOnce (header : Replay.Header) (suffix : Array Json) (settings : Settings)
   let base :=
     {
       base with
-        lowerMs, smtLines, smtSizes := ls.sizes, wide := ls.wide, probeMs, probes, pinned
+        lowerMs, smtLines, smtSizes := ls.sizes, wide := ls.wide, probeMs, probes, pinned,
+        lowerUs
     }
   if let some detail := early then
     session.close
