@@ -65,6 +65,8 @@ inductive Shape where
   | and (parts : Array Nat)
   | or (parts : Array Nat)
   | add (x : Nat) (k : Int)
+  /-- `x + y` -/
+  | sum (x y : Nat)
   | ite (c : Nat) (a b : Tm)
 deriving Inhabited
 
@@ -134,6 +136,9 @@ structure Enc where
   defined : Nat := 0
   /-- Integer terms with a small domain that are compared against constants. -/
   selectors : Std.HashSet Nat := {}
+  /-- A probe variable whose undecided comparisons with literals are recorded in `hits`. -/
+  watch : Option Nat := none
+  hits : Array Int := #[]
 
 abbrev OpM := StateM Enc
 
@@ -344,6 +349,14 @@ def orL (items : List Tm) : OpM Tm := do
 def impliesT (a b : Tm) : OpM Tm := do
   orL [← notT a, b]
 
+/-- Records an undecided comparison of the watched probe with a literal. -/
+def noteHit (a b : Tm) : OpM Unit := do
+  let some p := (← get).watch | return
+  match a, b with
+  | .ref x, .int k | .int k, .ref x =>
+      if x == p then modify fun enc => { enc with hits := enc.hits.push k }
+  | _, _ => pure ()
+
 /-- `a <= b` -/
 def le (a b : Tm) : OpM Tm := do
   let (a, b) ←
@@ -366,6 +379,7 @@ def le (a b : Tm) : OpM Tm := do
     | .ref x, .int k => Shape.le x k
     | .int k, .ref x => Shape.ge x k
     | _, _ => .none
+  noteHit a b
   define true s!"(<= {a.smt} {b.smt})" 0 1 shape
 
 def lt (a b : Tm) : OpM Tm := do
@@ -411,6 +425,7 @@ def eqT (a b : Tm) : OpM Tm := do
         let i ← info x
         if !i.isBool && i.hi - i.lo <= SELECTOR_WIDTH then
           modify fun enc => { enc with selectors := enc.selectors.insert x }
+      noteHit a b
       define true s!"(= {a.smt} {b.smt})" 0 1 shape
 
 def eqK (a : Tm) (k : Int) : OpM Tm := eqT a (.int k)
@@ -422,8 +437,15 @@ def iteT (c a b : Tm) : OpM Tm := do
   | .int _ => norm b
   | .ref cid =>
       let c := Tm.ref cid
-      let a ← norm a
-      let b ← norm b
+      -- `ite c (ite c x _) (ite c _ y)` is `ite c x y`.
+      let branch (t : Tm) (then_ : Bool) : OpM Tm := do
+        let t ← norm t
+        let .ref id := t | return t
+        match (← info id).shape with
+        | .ite c' x y => if c' == cid then norm (if then_ then x else y) else return t
+        | _ => return t
+      let a ← branch a true
+      let b ← branch b false
       if a == b then return a
       if ← isBoolTm a then
         match a, b with
@@ -462,7 +484,11 @@ def addT (a b : Tm) : OpM Tm := do
   | a, b =>
       let (la, ha) ← range a
       let (lb, hb) ← range b
-      define false s!"(+ {a.smt} {b.smt})" (clampInf (la + lb)) (clampInf (ha + hb))
+      let shape :=
+        match a, b with
+        | .ref x, .ref y => Shape.sum x y
+        | _, _ => .none
+      define false s!"(+ {a.smt} {b.smt})" (clampInf (la + lb)) (clampInf (ha + hb)) shape
 
 def subT (a b : Tm) : OpM Tm := do
   match ← norm a, ← norm b with
@@ -478,6 +504,28 @@ def maxT (a b : Tm) : OpM Tm := do
 
 def minT (a b : Tm) : OpM Tm := do
   iteT (← le a b) a b
+
+/-- `k * a` -/
+def mulK (a : Tm) (k : Int) : OpM Tm := do
+  match ← norm a with
+  | .int value => return .int (value * k)
+  | a =>
+      if k == 0 then return .int 0
+      if k == 1 then return a
+      let (lo, hi) ← range a
+      let (lo, hi) := if k > 0 then (lo * k, hi * k) else (hi * k, lo * k)
+      define false s!"(* {(Tm.int k).smt} {a.smt})" (clampInf lo) (clampInf hi)
+
+/-- `t` clamped to `[lo, hi]`; it equals `t` whenever `t` is in `[lo, hi]`. -/
+def clampT (t : Tm) (lo hi : Int) : OpM Tm := do
+  let t ← norm t
+  let (l, h) ← range t
+  if lo <= l && h <= hi then return t
+  let lo' := max lo (min l hi)
+  let hi' := min hi (max h lo)
+  define false
+    s!"(ite (<= {t.smt} {(Tm.int lo).smt}) {(Tm.int lo).smt} (ite (<= {(Tm.int hi).smt} {t.smt}) {(Tm.int hi).smt} {t.smt}))"
+    lo' hi'
 
 /-- The number of true terms in `bits`. -/
 def countT (bits : Array Tm) : OpM Tm := do

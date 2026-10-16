@@ -55,7 +55,7 @@ private def usage : String :=
   ++ "       ccfraft-midtrace smt DOC N [--solver PATH] [--no-invariants] [--no-refine]\n"
   ++ "         [--explain] [--named] [--pin] [--Q n] [--slack n] [--dump-smt PATH] [--witness]\n"
   ++ "         [--profile]\n"
-  ++ "       ccfraft-midtrace gen DOC N [--solver PATH] [--no-refine] [--Q n] [--slack n] [--retry k]\n"
+  ++ "       ccfraft-midtrace gen DOC N [--solver PATH] [--no-refine] [--Q n] [--slack n] [--retry k] [--gaps off|zero|uniform] [--certify-limit n]\n"
   ++ "         [--dump-smt PATH] [--dump-ir PATH] [--witness] [--profile]"
 
 structure ValidateOptions where
@@ -138,6 +138,17 @@ private def genOptions (options : List String) (parsed : GenOptions)
       | some s, some d, some n =>
           genOptions rest (set fun o => { o with fixLen := ((s, d), n) :: o.fixLen })
       | _, _, _ => none
+  | "--gaps" :: mode :: rest =>
+      let gaps : Option (Option Gen.GapFill) :=
+        match mode with
+        | "off" => some none
+        | "zero" => some (some .zero)
+        | "uniform" => some (some .uniform)
+        | _ => none
+      gaps.bind fun gaps => genOptions rest (set ({ · with gaps }))
+  | "--certify-limit" :: value :: rest =>
+      value.toNat?.bind
+        fun certifyLimit => genOptions rest (set ({ · with certifyLimit }))
   | "--witness" :: rest => genOptions rest { parsed with witness := true }
   | "--profile" :: rest => genOptions rest { parsed with profile := true }
   | "--Q" :: value :: rest =>
@@ -247,7 +258,7 @@ def main (args : List String) : IO UInt32 := do
         let outcome ← Gen.run header suffix options.settings
         let elapsed := (← IO.monoMsNow) - start
         IO.println
-          s!"{outcome.verdict.name} time_ms={elapsed} build_ms={outcome.buildMs} lower_ms={outcome.lowerMs} solve_ms={outcome.solveMs} probe_ms={outcome.probeMs} probes={outcome.probes} pinned={outcome.pinned} instructions={suffix.size} processed={outcome.processed} ir_nodes={outcome.irNodes} smt_lines={outcome.smtLines} L={outcome.L} {outcome.detail}"
+          s!"{outcome.verdict.name} time_ms={elapsed} build_ms={outcome.buildMs} lower_ms={outcome.lowerMs} solve_ms={outcome.solveMs} certify_ms={outcome.certifyMs} probe_ms={outcome.probeMs} probes={outcome.probes} pinned={outcome.pinned} instructions={suffix.size} processed={outcome.processed} ir_nodes={outcome.irNodes} smt_lines={outcome.smtLines} L={outcome.L} gap_probed={outcome.gapProbed} gap_enumerated={outcome.gapEnumerated.size} {outcome.detail}"
         if options.profile then
           let smt :=
             outcome.smtSizes.foldl (fun m (i, size) => m.insert i size)
@@ -262,6 +273,8 @@ def main (args : List String) : IO UInt32 := do
         if options.profile then
           for (i, node, width) in outcome.wide do
             IO.println s!"wide {i} v{node} {width}"
+          for (i, width) in outcome.gapEnumerated do
+            IO.println s!"enumerated {i} {width}"
         if options.witness then
           if let some state := outcome.witness then
             IO.println (replayStateJson header.declared state).compress

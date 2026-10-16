@@ -54,6 +54,16 @@ structure Settings where
   backbone : Nat := 32
   /-- Debugging: pins the initial packet count of these channels. -/
   fixLen : List ((Nat × Nat) × Nat) := []
+  /--
+  Initial array cells more than `slack` from every number the suffix mentions are gap cells,
+  filled as `GapFill` says: a declared bound, like `Q`. `none` makes every cell unknown.
+  -/
+  gaps : Option GapFill := some .zero
+  /--
+  A VALID answer is certified by replaying its witness, which the reference model makes
+  quadratic in the log length; above this `L` it is reported uncertified.
+  -/
+  certifyLimit : Nat := 20000
 
 structure Env where
   header : Replay.Header
@@ -61,6 +71,40 @@ structure Env where
   L : Nat
   Q : Nat
   fixLen : List ((Nat × Nat) × Nat) := []
+  /-- See `LState.explicit`. -/
+  explicit : Array (Int × Int) := #[]
+
+/-- The natural numbers in `value`, ignoring origins. -/
+partial def natsIn (value : Json) (found : Array Nat) : Array Nat :=
+  match value with
+  | .num n =>
+      if n.exponent == 0 && n.mantissa >= 0 then found.push n.mantissa.toNat else found
+  | .arr values => values.foldl (fun found value => natsIn value found) found
+  | .obj fields =>
+      fields.foldl
+        (fun found key value => if key == "origin" then found else natsIn value found)
+        found
+  | _ => found
+
+/-- Gaps narrower than this are merged into the explicit intervals around them. -/
+def MIN_GAP : Int := 32
+
+/-- `[v - slack, v + slack]` around each of `points`, and `[-slack, Q + slack]`, merged. -/
+def explicitIntervals (points : Array Nat) (slack Q : Nat) : Array (Int × Int) :=
+  Id.run do
+    let slack : Int := slack
+    let around := points.map fun (v : Nat) => ((v : Int) - slack, (v : Int) + slack)
+    let sorted := (around.push (-slack, (Q : Int) + slack)).qsort fun a b => a.1 < b.1
+    let mut out : Array (Int × Int) := #[]
+    for (a, b) in sorted do
+      match out.back? with
+      | some (a', b') =>
+          if a - b' - 1 < MIN_GAP then
+            out := out.pop.push (a', max b b')
+          else
+            out := out.push (a, b)
+      | none => out := out.push (a, b)
+    return out
 
 def makeEnv (header : Replay.Header) (suffix : Array Json) (settings : Settings) : Env :=
   let names := header.declared.toArray
@@ -88,6 +132,12 @@ def makeEnv (header : Replay.Header) (suffix : Array Json) (settings : Settings)
     L := mentioned + settings.slack
     Q := settings.Q
     fixLen := settings.fixLen
+    explicit :=
+      if settings.gaps.isSome then
+        explicitIntervals (suffix.foldl (fun found value => natsIn value found) #[])
+          settings.slack settings.Q
+      else
+        #[]
   }
 
 /-! ## Initial state -/
@@ -564,6 +614,7 @@ def build (e : Env) (suffix : Array Json) : Ir × Sys × Nat :=
 
 structure Valuation where
   c : Ctx
+  explicit : Array (Int × Int)
   memo : Std.HashMap Nat Val
   cells : Std.HashMap (Nat × Array Int × Int) Tm
   values : Std.HashMap Nat Int
@@ -591,7 +642,9 @@ def Valuation.bool (v : Valuation) (t : Tm) : Bool := v.int t != 0
 /-- Cell `k` below `path` of an unknown array. -/
 def Valuation.cell (v : Valuation) (arr : Tm) (path : Array Int) (k : Int) : Int :=
   match arr with
-  | .ref id => ((v.cells[(id, path, k)]?).map v.smt).getD 0
+  | .ref id =>
+      let key := cellKey v.explicit
+      ((v.cells[(id, path.map key, key k)]?).map v.smt).getD 0
   | _ => 0
 
 def Valuation.set (v : Valuation) (bit : Nat → Bool) : Finset String :=
@@ -710,6 +763,8 @@ structure Outcome where
   buildMs : Nat := 0
   lowerMs : Nat := 0
   solveMs : Nat := 0
+  /-- Time building and replaying the witness, included in `solveMs`. -/
+  certifyMs : Nat := 0
   irNodes : Nat := 0
   smtLines : Nat := 0
   L : Nat := 0
@@ -726,6 +781,9 @@ structure Outcome where
   /-- Solver checks made for the backbone, and selectors they fixed. -/
   probes : Nat := 0
   pinned : Nat := 0
+  /-- Gap regions summarized, and gap parts enumerated: instruction, width. -/
+  gapProbed : Nat := 0
+  gapEnumerated : Array (Nat × Int) := #[]
   witness : Option Replay.ReplayState := none
 
 def runOnce (header : Replay.Header) (suffix : Array Json) (settings : Settings)
@@ -754,7 +812,10 @@ def runOnce (header : Replay.Header) (suffix : Array Json) (settings : Settings)
   let session ← Smt.Session.spawn settings.solver
   let preamble := "(set-option :produce-models true)\n(set-logic QF_LIA)\n"
   session.send preamble
-  let (ls, enc) := runLM ir lowerInit {} { refine := settings.refine }
+  -- Gap cells cannot complete axioms.
+  let explicit := if ir.axioms.isEmpty then e.explicit else #[]
+  let fill := settings.gaps.getD .zero
+  let (ls, enc) := runLM ir lowerInit { explicit, fill } { refine := settings.refine }
   let mut ls := ls
   let mut enc := enc
   let mut sent := 0
@@ -813,8 +874,16 @@ def runOnce (header : Replay.Header) (suffix : Array Json) (settings : Settings)
   let base :=
     {
       base with
-        lowerMs, smtLines, smtSizes := ls.sizes, wide := ls.wide, probeMs, probes, pinned,
-        lowerUs
+        lowerMs,
+        smtLines,
+        smtSizes := ls.sizes,
+        wide := ls.wide,
+        probeMs,
+        probes,
+        pinned,
+        lowerUs,
+        gapProbed := ls.probed,
+        gapEnumerated := ls.enumerated
     }
   if let some detail := early then
     session.close
@@ -845,15 +914,25 @@ def runOnce (header : Replay.Header) (suffix : Array Json) (settings : Settings)
       cells := cells.insert (base, path, k) t
       if let .ref sid := t then ids := ids.push sid
     let values ← session.values ids
+    let certifyStart ← IO.monoMsNow
     let other :=
       (((List.range (e.c.ntx + 1)).map (s!"other{·}")).find?
         (!e.c.txNames.contains ·)).getD
         "other"
-    let state := witness e sys { c := e.c, memo := ls.memo, cells, values, other }
     outcome :=
-      match Replay.replayFrom header state suffix with
-      | .ok _ => { base with verdict := .valid, witness := some state }
-      | .error error => { base with detail := s!"ENGINE-BUG witness rejected: {error}" }
+      if e.L > settings.certifyLimit then
+        {
+          base with
+            verdict := .valid,
+            detail := s!"uncertified: L={e.L} exceeds the certify limit"
+        }
+      else
+        let state :=
+          witness e sys { c := e.c, explicit, memo := ls.memo, cells, values, other }
+        match Replay.replayFrom header state suffix with
+        | .ok _ => { base with verdict := .valid, witness := some state }
+        | .error error => { base with detail := s!"ENGINE-BUG witness rejected: {error}" }
+    outcome := { outcome with certifyMs := (← IO.monoMsNow) - certifyStart }
   else if answer == "unsat" then
     outcome :=
       { base with verdict := .invalid, detail := s!"unsat within L={e.L} Q={e.Q}" }
