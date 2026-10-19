@@ -487,3 +487,64 @@ Implications:
 - Overwrite steps generalize stores. Any `lam k. ite(c, a[k], e)` whose
   condition has a decidable interval over k is a store to a region. This
   covers append, truncate and splice without naming them.
+
+### T11. Q-free channels: an unbounded cut network makes every receive free
+
+Question: can the per-channel bound Q on packets in flight at the cut go?
+
+Semantics (`Replay.runStep`): channels are FIFO per (source, destination). A
+receive takes the oldest pending packet; the traces only drop the head. The
+traces observe every send with `last` and every receive or drop with
+occurrence 0 just before it. Part 2 puts no constraint on initial packets
+beyond field ranges.
+
+Argument: positions are independent of the initial count p (the i-th consume
+on a channel reads position i; an occurrence-k observation reads consumed + k).
+Take any satisfying p. Raise it to N_c, beyond every position read, and set
+each initial packet to the message that p's alignment put at that position.
+Every read gets the same value, every "pending" check still holds, and `last`
+still reads the newest send if there is one. So with no bound, "p beyond every
+read" is as permissive as any p, and the exact unbounded check is "every
+receive delivers a free message; sends are read only by `last`". No receive is
+ever "definitely sent". Generically, p is a pure variable: raising it only
+turns constrained reads into free ones, so fixing it at its top preserves
+SAT (cf. pure-literal elimination, Z3's `elim-uncnstr`).
+
+Experiment (no Lean change): `build/research/scripts/netfree.py` pins every
+channel with `--fix-len` at N_c = (largest position read) + 2. The +2 keeps the
+initial packet `last` may read apart from consumed ones. It raises `--Q` so
+those positions are explicit cells, not zero gaps. `negatives.py` gained
+`NETFREE=1` and `KINDS=`, plus a new mutation, `dup_receive`: deliver the same
+packet twice (repeat its observation and receive).
+
+| set, cut 10 | bounded (Q 4, retry 16) | Q-free |
+| --- | --- | --- |
+| 50 positives | 50 VALID, max 2.2 s | 50 VALID, all certified, max 2.7 s |
+| 1045 mutants | 1019 INVALID / 26 VALID | 1018 INVALID / 27 VALID |
+| 148 `dup_receive` (all fail replay from the true state) | 10 INVALID | 0 INVALID |
+
+- The only mutant that changed is `suffix_collision.2 late del_receive`,
+  which is VALID with more than 16 packets in flight (it was T2's case). Its
+  new VALID is certified. 1018 equals part 1 after dropping `cap`.
+- `msg_term` and `del_receive` stay INVALID without Q: the receiver's later
+  state observations catch them, not the channel alignment.
+- Duplicate delivery is mostly invisible even with Q (138 of 148 VALID):
+  consecutive packets on a channel are often equal (heartbeats and their
+  responses), so a shift of one changes nothing observable.
+- Timing is a hack artifact: raising `--Q` makes [0, Q + slack] explicit for
+  every array, logs included. Mutant INVALID medians are 1.1 s vs 0.87 s,
+  maxima 11.8 s vs 7.1 s. A direct encoding (a fresh message per consumed
+  position, no channel arrays, no count selector) would be smaller than
+  either. Not built.
+
+Implications:
+
+- Q is a semantic assumption, not just an encoding device. It is the only
+  thing that links a sender's packets to a receiver's, and on these traces it
+  buys 1 of 1045 mutants and 10 of 148 duplicate deliveries.
+- To keep some network checking without a size bound, packets in flight need
+  a sender-relative invariant at the cut, e.g. `term <= currentTerm(source)`
+  (senders stamp their current term, which never decreases). A receive whose
+  term exceeds the sender's cut term is then definitely post-cut, and FIFO
+  makes every later receive on that channel post-cut too. The alignment
+  selector returns, but only until that first receive; T7 pins it.
