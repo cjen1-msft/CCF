@@ -1,21 +1,21 @@
 module
 
-public import CCFRaft.Liveness.Model.Trace
+public import CCFRaft.Liveness.Model.Delivery
 
 @[expose] public section
 
 namespace CCFRaft.Liveness
 
-open Model.Node
+open HasNetwork (pending)
 
-variable {system : CCF.TransitionSystem Model.State Model.Action}
+variable {W : Type} [HasNetwork W]
 
-/-- The packet really was emitted at its claimed step and output position. -/
-def Trace.Sent (trace : Trace system) (packet : Packet) : Prop :=
+/-- The packet first appears in the ledger after step `index`: it was sent there.
+Identity is the ledger's sequence number, so this reads only the network state. -/
+def Trace.SentAt (trace : Trace W Event) (index : Nat) (packet : Packet) : Prop :=
   exists step,
-    trace.timingTrace.stepAt (timingSystem system) packet.sent = some step
-    /\ (step.action.event.action.bind (outgoing step.before.state)).bind
-          (fun messages => messages[packet.ordinal]?)
-        = some packet.envelope
+    trace.stepAt index = some step
+    /\ packet ∈ pending step.after
+    /\ Not (packet ∈ pending step.before)
 
 end CCFRaft.Liveness

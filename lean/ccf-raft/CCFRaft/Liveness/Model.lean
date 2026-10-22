@@ -1,43 +1,43 @@
 module
 
-public import CCFRaft.Liveness.Model.Crash
-public import CCFRaft.Liveness.Model.Timing
 public import CCFRaft.Liveness.Model.Trace
+public import CCFRaft.Liveness.Model.World
+public import CCFRaft.Liveness.Model.WitnessWorld
+public import CCFRaft.Liveness.Model.Protocol
+public import CCFRaft.Liveness.Model.Timing
+public import CCFRaft.Liveness.Model.Crash
+public import CCFRaft.Liveness.Model.Delivery
 public import CCFRaft.Liveness.Model.Packets
 public import CCFRaft.Liveness.Model.Scheduling
-public import CCF.Execution
 public import Mathlib.Data.Set.Card
 
 @[expose] public section
 
 /-!
-A timed, crash-stop environment for the untimed Raft model.
-This module reexports the systems, shared trace definitions, packet bookkeeping,
-and CCF scheduling assumptions from `Liveness/Model/`.
-Protocol steps are unchanged. Idle, crash and drop events stutter in the
-underlying state. A dropped envelope remains in the underlying model's queue,
-where loss is represented by never delivering that occurrence.
+A recorded relational environment for the unchanged Raft protocol.
+`Trace W Event` stores the initial world and every step's before-state, event and
+after-state. Accessors read this recording without replay or filtered projections.
+Coherence connects adjacent endpoints and the initial state.
 
-An execution (`Trace`) stores an initial state and a finite or infinite sequence
-of timed events.
-Protocol states, clocks and live nodes are derived by deterministic replay.
-`Trace.modelActions` computably maps each event to an optional model action.
-`Properties.lean` defines the filtered safety action trace; its
-`Valid` premise takes the protocol's explicit configuration and nodes.
-`Trace.timingTrace` retains the initial timed state and every timed event.
-The projections use the shared `CCF.Execution.Trace.Valid` to check their
-initial state and every recorded action against the appropriate system.
-`Trace.crashTrace` projects the initial live set and every event to `crashSystem`.
-Timing validity enforces packet bookkeeping; crash validity and whole-execution
-scheduling are separate premises.
-A property about an intermediate state names its index `start` explicitly.
+Each `Model` is a TLA-style initial predicate and next-state relation.
+Validity against several models is ordinary conjunction, with no composition
+operator, variable ownership or model ordering. Contradictory constraints simply
+admit fewer traces; unmentioned fields are unrestricted by that model.
 
-This module does not assume delivery or commitment, and every
-constraint either cites the CCF code it models or states a counterexample showing
-why a liveness theorem needs it. Constraints that no theorem needs are left out,
-even where CCF meets them, such as positive intervals, divergent time and the
-quorum-check timer. Stable leadership, a live quorum and delivery fairness are
-separate assumptions (`Liveness.Assumptions`). All constraints are propositions
-over finite or infinite executions. An obligation to act must be met before a
-finite execution ends, so a finite execution can only end once nothing is due.
+Small accessor classes let each model use only the world fields it needs.
+Public statements quantify over any world `W` with the accessors they need, so
+the world is an open row; `World S` is one closed instantiation used by witnesses.
+No scheduling state is stored.
+Protocol, timing, crash and delivery models are independent premises.
+`boundedDelayModel` is an optional deadline constraint, not a delivery guarantee.
+Drops stutter in the underlying protocol, whose untagged queue may retain the
+envelope; the packet ledger still prevents reusing that dropped occurrence.
+
+Scheduling is read-only over the whole trace and is separate from model validity.
+Untimed obligations must resolve or cease to be due before a finite trace ends.
+The timed model retains eventual heartbeat progress and additionally constrains
+each later crossing of a heartbeat deadline, without assuming divergent time.
+Stable leadership, live quorums, fair-loss links and submission remain separate
+assumptions in `Liveness.Assumptions`.
 -/
+

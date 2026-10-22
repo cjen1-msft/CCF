@@ -2,68 +2,81 @@
 
 ## Recommendation and status
 
-A timed trace restriction over the existing multi-node transition system is workable.
-It is a standard explicit-clock/timed-automata construction, not a replacement Raft algorithm.
-The prototype in [`Liveness/Model.lean`](CCFRaft/Liveness/Model.lean) and [`Liveness/Assumptions.lean`](CCFRaft/Liveness/Assumptions.lean) permits finite or infinite executions and unbounded logs.
-`Liveness/Model.lean` imports the transition systems from [`Model/Timing.lean`](CCFRaft/Liveness/Model/Timing.lean) and [`Model/Crash.lean`](CCFRaft/Liveness/Model/Crash.lean), with their shared event vocabulary in [`Model/Event.lean`](CCFRaft/Liveness/Model/Event.lean).
-`Model.lean` reexports the components in `Liveness/Model/`; shared trace definitions live in [`Model/Trace.lean`](CCFRaft/Liveness/Model/Trace.lean).
+The liveness definitions use a fully recorded relational trace over the existing multi-node protocol.
+This is a TLA-style explicit-state formulation, not a replacement Raft algorithm.
+The definitions in [`Liveness/Model.lean`](CCFRaft/Liveness/Model.lean) and [`Liveness/Assumptions.lean`](CCFRaft/Liveness/Assumptions.lean) permit finite or infinite executions and unbounded logs.
+`Model.lean` reexports the independent models in `Liveness/Model/`, with their event vocabulary in [`Model/Event.lean`](CCFRaft/Liveness/Model/Event.lean).
+The local generic relational trace and `Model` definitions live in [`Model/Trace.lean`](CCFRaft/Liveness/Model/Trace.lean); `lean/common/` is unchanged.
 `Assumptions.lean` defines short assumptions inline and imports larger groups of related declarations from `Liveness/Assumptions/`.
-CCF's background-task scheduling predicates, timing bounds, and timed scheduling model are colocated in [`Model/Scheduling.lean`](CCFRaft/Liveness/Model/Scheduling.lean).
+CCF's background-task scheduling predicates and timing bounds are colocated in [`Model/Scheduling.lean`](CCFRaft/Liveness/Model/Scheduling.lean).
 The main commit assumptions are `StableLeader` in [`StableLeader.lean`](CCFRaft/Liveness/Assumptions/StableLeader.lean), `LiveQuorum` inline in [`Assumptions.lean`](CCFRaft/Liveness/Assumptions.lean), `FairLoss` in [`FairLoss.lean`](CCFRaft/Liveness/Assumptions/FairLoss.lean), and `Submitted` in [`Submitted.lean`](CCFRaft/Liveness/Assumptions/Submitted.lean).
-It records an initial state and timed events, deriving subsequent states by deterministic replay rather than storing transition endpoints.
+It records an initial world and each step's before-state, event and after-state, reusing `CCF.Execution.Step W Event`.
 It does not enumerate executions.
 
 Properties quantify `config` and `nodes` explicitly and bind `system := Model.transitionSystem config nodes` once.
-The trace has type `Liveness.Trace system`, tying the safety and timing projections and their replay-based assumptions to that same protocol system.
-The shared `CCF.Execution.Trace State Action` records an initial state and a finite or infinite action sequence.
-`safetyTrace` retains the initial protocol state and recorded model actions, using generic `Seq.filterMap` to omit environment-only events.
-`trace.safetyTrace.Valid system` uses exactly the trace type and `Valid` predicate of the safety properties.
-`timingTrace` retains the initial timed state and every recorded timed event.
-`trace.timingTrace.Valid (Liveness.timingSystem system)` applies the same shared validity definition to that recording.
-Validity requires successful execution of every recorded action, so a disabled action invalidates the trace even when replay stops there.
-There is no failure-sentinel state and no separate `alwaysEnabled` premise.
-`timingSystem system` lifts initialization and transitions to timed states.
-It inherits `system.init` on the protocol state and uses `system.step` for model actions; environment-only events stutter in the protocol state.
-It imposes no additional initial-clock or initial-availability restriction.
-Elapsed durations have type `NNReal`, so zero is permitted and negative time advances cannot be recorded.
-This keeps replay computable and removes the separate `elapsedValid` predicate and premise.
-`crashTrace` records the initial live set and every event, preserving timing-trace indices.
-`trace.crashTrace.Valid Liveness.crashSystem` uses shared validity to require live actors and permanently remove crashed nodes.
-Local steps require their node to be live; delivery requires only the receiver to be live, so a sender may crash after sending.
-A crash requires its node to be live, rejecting repeated crashes; drops and idle events leave availability unchanged.
-The initial live set is unrestricted.
-Crash replay explicitly matches the event after checking its actor is live; a crash removes that actor and other events preserve availability.
-Timing replay tracks the same availability updates through `Event.liveAfter` without enforcing crash validity itself.
-This replaces the separate `crashedValid` scan.
-Timing replay enforces packet accounting directly.
-Its state includes the next event index and a ledger of outstanding packets, initialized to zero and empty respectively.
-Each protocol step's actual outputs are assigned identities `(step, ordinal)`, including distinct identities for equal envelopes.
-Delivery or drop must match an outstanding identity and envelope and removes that occurrence before registering the current step's outputs.
-Thus `timingTrace.Valid` rejects fabricated packets, consumption before emission, repeated delivery, and delivery after a drop, without a separate packet-validity premise.
-The event index advances for every timed event, preserving the correspondence between packet identities and trace indices.
-The untimed protocol queue still contains untagged envelopes; the timing ledger prevents reuse of dropped occurrences even though drops stutter in the protocol state.
-Crash validity remains separate because timing replay still permits actions by unavailable nodes.
+Their single trace has type `Liveness.Trace W Liveness.Event` for any `W` with the required accessor instances, independent of `system`.
+`Trace.Coherent` connects the first step to the initial world and each after-state to the next before-state.
+`trace.stepAt i` and `trace.actionAt i` directly read recorded values, and `trace.stateAt 0` is the initial world while `trace.stateAt (i + 1)` is step `i`'s after-state.
+These are total `Option`-valued accessors, not replay or filtered projections.
+An invalid step remains visible rather than truncating the accessible recording.
+A zero-step trace retains its initial world, and a finite trace has a final recorded state without a dummy event.
+
+A `Model W Event` consists of `init : W -> Prop` and `next : CCF.Execution.Step W Event -> Prop`.
+`trace.Valid model` requires the initial predicate and the next relation at every recorded step.
+Validity against several models is plain conjunction.
+There is no replay, composition operator, model ordering or variable ownership: overlapping constraints are permitted, and contradictions simply shrink the set of valid traces.
+Each model leaves unmentioned fields unconstrained.
+
+[`Model/World.lean`](CCFRaft/Liveness/Model/World.lean) supplies `HasProtocol W S`, `HasTime W`, `HasLive W` and `HasNetwork W`.
+Models are generic in the world and request only the accessors they inspect.
+Lean has no row types or polymorphic variants, so these classes play the role of an open record; the closed `World S` in [`Model/WitnessWorld.lean`](CCFRaft/Liveness/Model/WitnessWorld.lean) is used only by witnesses.
+`HasNetwork` exposes the pending ledger and the count of issued packets; there is no scheduler deadline or last-send variable.
+
+Each public statement conjoins `trace.Coherent` and validity of four models inline:
+
+| Model | Initial predicate | Next relation |
+| ----- | ----------------- | ------------- |
+| `protocolModel system` | `system.init (proto w)` | Execute `Event.action` in `system`, or preserve `proto` for crash, drop and idle. |
+| `timingModel` | `True` | `time before <= time after`. |
+| `crashModel` | `crashSystem.init (live w)` | `crashSystem.step (live before) event = some (live after)`. |
+| `deliveryModel system` | `pending w = [] /\ issued w = 0` | Consume an existing packet for delivery or drop, append this step's actual outgoing packets with fresh sequence numbers, and advance `issued`. |
+
+The protocol model in [`Model/Protocol.lean`](CCFRaft/Liveness/Model/Protocol.lean) preserves the existing `Event.action` mapping, including delivery of the received envelope.
+Its protocol state is generic, while its action type is `Model.Action`, as fixed by the existing `Event` vocabulary.
+The delivery model uses the concrete Raft state and its recording callback to extract outgoing envelopes.
+The timing model in [`Model/Timing.lean`](CCFRaft/Liveness/Model/Timing.lean) permits zero-time steps and any initial absolute time; every event, including idle, may advance time.
+The crash model in [`Model/Crash.lean`](CCFRaft/Liveness/Model/Crash.lean) directly projects to the unchanged `crashSystem`.
+It requires live actors and permanently removes crashed nodes, with unrestricted initial availability.
+Deliveries require only a live receiver, so a sender may crash after sending; a repeated crash is disabled.
+
+The delivery model in [`Model/Delivery.lean`](CCFRaft/Liveness/Model/Delivery.lean) starts from an empty pending ledger.
+Actual outputs receive consecutive sequence numbers from `issued`, with `sentAt := time after` of the sending step.
+Delivery and drop consume an outstanding packet before this step's outputs are registered, rejecting fabrication, early consumption and reuse, including delivery after a drop.
+Equal envelopes remain distinct transmissions.
+`Trace.SentAt index packet` holds when the packet first appears in the ledger after step `index`.
+The protocol queue retains untagged dropped envelopes, while the separate ledger prevents consuming the corresponding occurrence again.
 Packet accounting imposes no delivery guarantee; `Timely` and `FairLoss` remain separate assumptions.
-Untimed scheduling is stated through separate `trace.HeartbeatScheduling`, `trace.SignatureScheduling`, and `trace.ConfirmationScheduling` premises.
-These encode CCF's periodic sends, signature task, and retirement-confirmation handling, retaining eventual execution without a quantitative deadline.
-Timed scheduling is `model.Timed`, defined in [`Model/Scheduling.lean`](CCFRaft/Liveness/Model/Scheduling.lean); it adds heartbeat deadlines and election-timer constraints and reuses the signature and confirmation scheduling predicates.
-These inspect the recorded events and the whole timed execution, including protocol states; scheduling obligations and deadlines do not follow merely from local transition validity.
+The optional sixth model, `boundedDelayModel maxDelay`, constrains every pending packet to a live target by `time <= sentAt + maxDelay`, both initially and after each step.
+It stores no deadlines and no public statement assumes it; it permits dropping a packet and is weaker than an obligation to deliver it.
+
+Scheduling is stated through separate `trace.HeartbeatScheduling bound`, `trace.SignatureScheduling bound`, `trace.ConfirmationScheduling bound` and `trace.ElectionScheduling minimum` premises in [`Model/Scheduling.lean`](CCFRaft/Liveness/Model/Scheduling.lean).
+These encode CCF's periodic sends, signature task, retirement-confirmation handling and election timer.
+Each bound is an `Option Real`: `none` requires eventual execution, `some bound` also requires it before the bound elapses; for elections `none` is no constraint and `some minimum` forbids a timeout within `minimum` of a reset.
+Commit liveness passes `none` everywhere; stable leadership passes `some heartbeatInterval` and `some (electionTimeout / 2)`.
+Scheduling remains a read-only trace predicate, with no world variables, mutable deadline state or model composition.
+For a leader-peer pair due at index `i`, a productive send or the end of the obligation must occur from a state at or after `i` whose time is at most `time (stateAt i) + heartbeatInterval`.
+`Scheduled trace bound Due Fires` is the shared shape: whenever `Due` holds, it eventually ceases or `Fires` runs, from a state satisfying `Deadline bound`; with `some bound` this still implies the `none` form, so it is never vacuous on finite or Zeno traces.
+These predicates inspect recorded steps, protocol states and absolute times; scheduling obligations and deadlines do not follow merely from local model validity.
 They are distinct from the network fairness assumption `FairLoss`.
-`LivenessModel` contains only timing bounds, not the initial configuration or node identities.
+`Bounds` contains only timing bounds, not the initial configuration or node identities.
 An intermediate starting point is an explicit index `start` in this execution from boot, not an implicitly chosen reachable initial state.
-A zero-step execution retains its initial state, and a finite execution has a final computed state without a dummy terminal event.
-Filtering uses the generic helpers in [`Liveness/Seq.lean`](CCFRaft/Liveness/Seq.lean) and is noncomputable because an infinite sequence of environment-only events need not contain a next model action.
-Replay is computable; the noncomputable `Trace.safetyTrace` projection is defined on the theorem side in `Properties.lean`.
-The model itself provides computable event mapping (`Trace.modelActions`).
-Action lookup uses the shared `trace.timingTrace.actionAt index`; finite-prefix replay uses `trace.timingTrace.stateAt (timingSystem system) index` and `trace.timingTrace.stepAt (timingSystem system) index`.
-The shared step type is `CCF.Execution.Step TracedState TimedEvent`, retaining both the event (`step.action.event`) and its elapsed duration (`step.action.elapsed`).
-None of these operations depends on the filtered projection, and no liveness-specific accessor or step record duplicates the shared machinery.
+The generic sequence helpers in [`Liveness/Seq.lean`](CCFRaft/Liveness/Seq.lean) remain independent of this interface.
 
 The existing proofs predate this trace-interface revision and have not yet been adapted or checked against the revised statements.
 The intended claims in [`Properties.lean`](CCFRaft/Properties.lean) are:
 
 - `commit_liveness` separately requires heartbeat, signature, and retirement-confirmation scheduling, plus four assumptions: a primary stable from some point on, a live quorum, fair-loss links and a submitted request.
-- `stable_leader` derives a stable primary from the timed environment `LivenessModel.Timed` and the premises in [stable leadership](#stable-leadership).
+- `stable_leader` derives a stable primary from bounded heartbeat and election scheduling and the premises in [stable leadership](#stable-leadership).
   Some of those premises assume away events rather than derive their absence: quorum-check step-downs, failed log checks, and timeouts of nodes the primary does not send to.
 - `commit_liveness_timed` combines them, so it assumes no stable primary.
 
@@ -108,7 +121,7 @@ Previously proved, reusing the safety invariant from [`Proofs/Safety`](CCFRaft/P
 
 ## Stable leadership
 
-`Properties.stable_leader` states that `leader` stays the primary of `term` from an explicit index `start` in an execution satisfying `LivenessModel.Timed`, with these premises defined in [`Liveness/Assumptions.lean`](CCFRaft/Liveness/Assumptions.lean):
+`Properties.stable_leader` states that `leader` stays the primary of `term` from an explicit index `start` in an execution with `HeartbeatScheduling (some heartbeatInterval)` and `ElectionScheduling (some (electionTimeout / 2))`, with these premises defined in [`Liveness/Assumptions.lean`](CCFRaft/Liveness/Assumptions.lean):
 
 | Premise                | Meaning                                                                                                                                                                        |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -193,7 +206,7 @@ An execution starting just after step 4, with quorum `{L}`, would satisfy every 
 CCF avoids this.
 When a commit retires configurations, `aft::Aft::commit` calls `retired_node_cleanup`, which asks the node itself to run `set_retired_committed`.
 That transaction records `A`'s retirement, and `replicate` runs `update_commit` when there are no other active nodes.
-The liveness model mirrors this with an unbounded obligation, `LivenessModel.Valid.confirmations`: while the primary may append a retirement confirmation, it eventually does so or stops being able to.
+The liveness model mirrors this with the separate unbounded predicate `Trace.ConfirmationScheduling`: while the primary may append a retirement confirmation, it eventually does so or stops being able to.
 
 `owing_of_exec` shows this always suffices.
 The commit scan that made such a signature committable retired the other members, so their confirmations are owed.
@@ -229,13 +242,14 @@ They are environment/scheduler restrictions used to establish the separate reque
 
 ## Execution and transport
 
-`Trace` records a protocol state, an event, a real timestamp and the live identities at each natural-number index.
+`Trace` records an initial world and a sequence of explicit before-state, event and after-state triples.
+Each world includes protocol state, absolute time, live identities, pending packets and the next step index.
 An event is a local input, delivery, drop, crash or idle step.
 Actual local and delivery events use the unchanged `Model.transitionSystem.step`; other events preserve the protocol state.
-`Proofs.Liveness.reachable` proves that every state in such a valid decorated execution is reachable in the original model.
+The existing `Proofs.Liveness.reachable` proof has not yet been ported to this relational interface.
 
 The base network remains a list of envelopes with arbitrary delivery order.
-A packet is identified by its sending step and output ordinal, with its envelope checked against the actual recording callback's output.
+A packet is identified by the sequence number the ledger issues when the actual recording callback emits its envelope, with `sentAt` equal to that step's after-time.
 Each occurrence can resolve at most once, and cannot resolve before being sent.
 Equal message contents therefore do not identify equal transmissions.
 
@@ -250,12 +264,12 @@ Joining and snapshot installation remain outside the underlying model.
 
 ## Constraints and separate assumptions
 
-`LivenessModel.Valid trace` constrains the execution independently of a particular client request.
+Each public statement conjoins coherence and the four base model validities inline, independently of any client request.
+The optional `boundedDelayModel` is separate, as are these read-only scheduling constraints:
 
 | Constraint              | What it says                                                                                                                                                                                 | Used by           |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| Clock monotonicity      | Time is nondecreasing.                                                                                                                                                                       | `stable_leader`   |
-| Replication scheduling  | A persistent live primary-to-peer obligation causes a send within `heartbeatInterval`; if its send frontier has a backlog, the send must carry entries.                                      | both              |
+| Replication scheduling  | A due live primary-to-peer obligation eventually resolves; the timed variant also requires a send in `(i, j]` at each later deadline crossing, carrying entries when the frontier has a backlog. | both              |
 | Signature scheduling    | Unsigned entries, or a latest signature from an earlier term, eventually cause a signature append, unless the obligation ceases.                                                             | `commit_liveness` |
 | Confirmation scheduling | An owed retirement confirmation is eventually appended, unless it ceases to be owed.                                                                                                         | `commit_liveness` |
 | Election lower bounds   | An election timeout cannot fire within `E / 2` of an earlier reset: a timeout, or an AppendEntries of a newer term, or of the node's term that passes its log check or finds it a candidate. | `stable_leader`   |
@@ -276,7 +290,7 @@ The commit property then quantifies over additional, separately defined suffix a
 | `FairLoss`     | Persistent retransmissions of relevant traffic on the working quorum's links yield arbitrarily late deliveries, despite omissions.           |
 | `Submitted`    | Once the primary is stable, the request is submitted to it once, or it already has the request.                                              |
 
-`FairLoss` is **not** a field of `LivenessModel.Valid`.
+`FairLoss` is **not** one of the base models or scheduling predicates.
 It permits drops within the working quorum, without a uniform bound on the number of losses.
 It classifies attempts as AppendEntries traffic, traffic carrying a specified log position, and responses with a specified success flag and minimum acknowledged index, each from a minimum term upwards, and also as exact wire messages.
 Exact-envelope fairness alone can become vacuous as batching and commit advertisements change, while link-level fairness can deliver unrelated heartbeats forever and starve the required data or acknowledgement.

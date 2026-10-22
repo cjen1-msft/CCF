@@ -1,13 +1,13 @@
 module
 
-public import CCFRaft.Liveness.Model.Trace
+public import CCFRaft.Liveness.Model.Timing
 
 @[expose] public section
 
 /-!
 CCF background-task and election-timer scheduling assumptions.
-The untimed predicates retain eventual execution without a quantitative deadline;
-the timed model adds heartbeat deadlines and election-timer lower bounds.
+Each takes an optional real-time bound: `none` requires only eventual execution,
+`some bound` additionally requires it before `bound` has elapsed.
 Network fairness is a separate assumption in `FairLoss`.
 -/
 
@@ -15,7 +15,11 @@ namespace CCFRaft.Liveness
 
 open Model.Node
 
-variable {system : CCF.TransitionSystem Model.State Model.Action}
+open HasProtocol (proto)
+open HasTime (time)
+open HasLive (live)
+
+variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W]
 
 /-- Abstract wall-clock bounds. -/
 structure Bounds where
@@ -32,26 +36,40 @@ structure Bounds where
   the tick interval, and less if node clocks drift. -/
   electionTimeout : Real
 
-/-- Timing parameters only. Protocol initialization belongs to the explicit
-`config` and `nodes` arguments of the safety transition system. -/
-structure LivenessModel where
-  bounds : Bounds
+/-- No deadline, or at most `bound` after `origin`. -/
+def Deadline (bound : Option Real) (origin point : W) : Prop :=
+  match bound with
+  | none => True
+  | some bound => time point <= time origin + bound
+
+/-- Whenever `Due` holds, it later ceases to hold or `Fires` runs, from a state
+within the optional bound. A due obligation must resolve before a finite
+execution ends. -/
+def Scheduled (trace : Trace W Event) (bound : Option Real) (Due : W -> Prop)
+    (Fires : CCF.Execution.Step W Event -> Prop) : Prop :=
+  forall index point,
+    trace.stateAt index = some point
+    -> Due point
+    -> Eventually trace index fun later laterPoint =>
+        Deadline bound point laterPoint
+        /\ (Not (Due laterPoint)
+            \/ exists step, trace.stepAt later = some step /\ Fires step)
 
 /-- An active primary with an eligible, live replication peer. -/
-def PeerDue (point : TracedState) (leader peer : NodeID) : Prop :=
-  leader ∈ point.live
-  /\ peer ∈ point.live
+def PeerDue (point : W) (leader peer : NodeID) : Prop :=
+  Membership.mem (live point) leader
+  /\ Membership.mem (live point) peer
   /\ exists state,
-      CCF.MultiNodeTransitionSystem.nodeState point.state leader = some state
+      CCF.MultiNodeTransitionSystem.nodeState (proto point) leader = some state
       /\ state.role = .primary
       /\ Not (state.isRetiredCommitted leader)
       /\ peer ∈ eligiblePeers state leader
 
 /-- A send must carry entries when its current frontier has a backlog. -/
-def ProductiveSend (step : CCF.Execution.Step TracedState TimedEvent) (leader peer : NodeID) : Prop :=
+def ProductiveSend (step : CCF.Execution.Step W Event) (leader peer : NodeID) : Prop :=
   exists state frontier,
-    CCF.MultiNodeTransitionSystem.nodeState step.before.state leader = some state
-    /\ step.action.event = .local leader (.sendEntries peer frontier)
+    CCF.MultiNodeTransitionSystem.nodeState (proto step.before) leader = some state
+    /\ step.action = .local leader (.sendEntries peer frontier)
     /\ (state.sentIndex peer < state.log.length -> state.sentIndex peer < frontier)
 
 /-- A primary sends AppendEntries from `sent_idx + 1` to every other node each
@@ -60,30 +78,27 @@ is a subset of `all_other_nodes`, from which CCF drops a node only once its
 retirement confirmation commits (`set_retired_committed`). Needed: without it a
 primary that appends a signature and then never sends again leaves a lagging
 follower, whose acknowledgement the signature needs, behind forever.
-A due send must eventually happen or cease to be due, before a finite execution ends. -/
-def Trace.HeartbeatScheduling (trace : Trace system) : Prop :=
-  forall index point leader peer,
-    trace.timingTrace.stateAt (timingSystem system) index = some point
-    -> PeerDue point leader peer
-    -> Eventually trace index fun later point =>
-        Not (PeerDue point leader peer)
-        \/ exists step,
-            trace.timingTrace.stepAt (timingSystem system) later = some step
-            /\ ProductiveSend step leader peer
+With `some bound`, every later state past the deadline follows a productive send.
+Needed: if the primary could wait longer than half an election timeout between
+heartbeats, a follower could time out and depose it. -/
+def Trace.HeartbeatScheduling (trace : Trace W Event) (bound : Option Real) : Prop :=
+  forall leader peer,
+    Scheduled trace bound (fun point => PeerDue point leader peer)
+      (fun step => ProductiveSend step leader peer)
 
 /-- Unsigned entries or a signature from an older term require a new signature. -/
-def SignatureDue (point : TracedState) (leader : NodeID) : Prop :=
-  leader ∈ point.live
+def SignatureDue (point : W) (leader : NodeID) : Prop :=
+  Membership.mem (live point) leader
   /\ exists state,
-      CCF.MultiNodeTransitionSystem.nodeState point.state leader = some state
+      CCF.MultiNodeTransitionSystem.nodeState (proto point) leader = some state
       /\ state.role = .primary
       /\ Not (state.isRetiredCommitted leader)
       /\ (maxCommittableIndex state.log < state.log.length
           \/ maxCommittableTerm state.log ≠ state.currentTerm)
 
 /-- The input actually appends a signature, rather than merely enabling one. -/
-def Signs (step : CCF.Execution.Step TracedState TimedEvent) (leader : NodeID) : Prop :=
-  exists entries, step.action.event = .local leader (.append entries) /\ .signature ∈ entries
+def Signs (step : CCF.Execution.Step W Event) (leader : NodeID) : Prop :=
+  exists entries, step.action = .local leader (.append entries) /\ List.Mem .signature entries
 
 /-- CCF's periodic signature task signs every `sig_ms_interval` when there are
 unsigned entries (`committable_gap() > 0`) or the consensus asks for one
@@ -91,32 +106,25 @@ unsigned entries (`committable_gap() > 0`) or the consensus asks for one
 (`get_signature_disposition`) while `should_sign`, which `become_leader` sets.
 Needed: `Proofs.LivenessWitness.unsigned_starvation_witness` is a stable,
 reliable execution with a submitted request that never commits because it
-never signs. -/
-def Trace.SignatureScheduling (trace : Trace system) : Prop :=
-  forall index point leader,
-    trace.timingTrace.stateAt (timingSystem system) index = some point
-    -> SignatureDue point leader
-    -> Eventually trace index fun later point =>
-        Not (SignatureDue point leader)
-        \/ exists step,
-            trace.timingTrace.stepAt (timingSystem system) later = some step
-            /\ Signs step leader
+never signs. CCF signs within `sig_ms_interval`, but no theorem needs the bound. -/
+def Trace.SignatureScheduling (trace : Trace W Event) (bound : Option Real) : Prop :=
+  forall leader, Scheduled trace bound (fun point => SignatureDue point leader) (fun step => Signs step leader)
 
 /-- The primary may append a retirement confirmation: a committed configuration
 removed a node with no confirmation in the log. This is the enabling condition
 of the confirmation guard in `appendEntry`. -/
-def ConfirmationDue (point : TracedState) (leader : NodeID) : Prop :=
-  leader ∈ point.live
+def ConfirmationDue (point : W) (leader : NodeID) : Prop :=
+  Membership.mem (live point) leader
   /\ exists state,
-      CCF.MultiNodeTransitionSystem.nodeState point.state leader = some state
+      CCF.MultiNodeTransitionSystem.nodeState (proto point) leader = some state
       /\ state.role = .primary
       /\ Not (state.isRetiredCommitted leader)
       /\ (state.retirementCompletedNodes \ retiredCommittedNodes state.log).Nonempty
 
 /-- The input actually appends a retirement confirmation. -/
-def Confirms (step : CCF.Execution.Step TracedState TimedEvent) (leader : NodeID) : Prop :=
+def Confirms (step : CCF.Execution.Step W Event) (leader : NodeID) : Prop :=
   exists entries,
-    step.action.event = .local leader (.append entries)
+    step.action = .local leader (.append entries)
     /\ exists content,
         content ∈ entries /\ content.metadata.retirementConfirmations.Nonempty
 
@@ -127,16 +135,11 @@ confirms every retired node whose retirement is committed. This assumes that
 request succeeds: CCF sends it once and does not retry it. Needed: when a commit
 retires every other member of the configurations before a signature, the
 primary alone makes that signature committable, but only another append or
-acknowledgement reruns the commit scan; see `LIVENESS.md`. -/
-def Trace.ConfirmationScheduling (trace : Trace system) : Prop :=
-  forall index point leader,
-    trace.timingTrace.stateAt (timingSystem system) index = some point
-    -> ConfirmationDue point leader
-    -> Eventually trace index fun later point =>
-        Not (ConfirmationDue point leader)
-        \/ exists step,
-            trace.timingTrace.stepAt (timingSystem system) later = some step
-            /\ Confirms step leader
+acknowledgement reruns the commit scan; see `LIVENESS.md`. The cleanup request
+has no deadline. -/
+def Trace.ConfirmationScheduling (trace : Trace W Event) (bound : Option Real) : Prop :=
+  forall leader, Scheduled trace bound (fun point => ConfirmationDue point leader)
+      (fun step => Confirms step leader)
 
 /-- Events that reset a node's election timer in CCF: starting an election
 (`become_pre_vote_candidate`), and an AppendEntries of a newer term, or of the
@@ -145,64 +148,33 @@ node's term that finds it a candidate or pre-vote candidate (both through
 node's term that fails the log check does not reset the timer (`raft.h`,
 `recv_append_entries`, which calls `restart_election_timeout` only after the
 `prev_term` check). -/
-def ElectionReset (step : CCF.Execution.Step TracedState TimedEvent) (node : NodeID) : Prop :=
-  step.action.event = .local node (.timeout .election)
+def ElectionReset (step : CCF.Execution.Step W Event) (node : NodeID) : Prop :=
+  step.action = .local node (.timeout .election)
   \/ exists envelope request state,
-      step.action.event.delivered = some envelope
+      step.action.delivered = some envelope
       /\ envelope.target = node
       /\ envelope.payload = .appendEntriesRequest request
-      /\ CCF.MultiNodeTransitionSystem.nodeState step.before.state node = some state
+      /\ CCF.MultiNodeTransitionSystem.nodeState (proto step.before) node = some state
       /\ (state.currentTerm < request.term
           \/ (state.currentTerm = request.term
               /\ (state.role = .candidate
                   \/ state.role = .preVoteCandidate
                   \/ termAt state.log request.prevLogIndex = request.prevLogTerm)))
 
-/-- Timed heartbeat, signature and confirmation scheduling, and CCF's
-election-timer constraints. This does not assume eventual commitment. -/
-structure LivenessModel.Timed (model : LivenessModel) (trace : Trace system) : Prop where
-  /-- `Trace.HeartbeatScheduling`, within `heartbeatInterval`. Needed: if the
-  primary could wait longer than half an election timeout between heartbeats, a
-  follower could time out and depose it. -/
-  heartbeats
-    : forall index point leader peer,
-        trace.timingTrace.stateAt (timingSystem system) index = some point
-        -> PeerDue point leader peer
-        -> Within trace index model.bounds.heartbeatInterval fun later point =>
-            Not (PeerDue point leader peer)
-            \/ exists step,
-                trace.timingTrace.stepAt (timingSystem system) later = some step
-                /\ ProductiveSend step leader peer
-  /-- `Trace.SignatureScheduling`. CCF signs within `sig_ms_interval`, but no
-  theorem needs the deadline. -/
-  signatures : trace.SignatureScheduling
-  /-- `Trace.ConfirmationScheduling`. The cleanup request has no deadline. -/
-  confirmations : trace.ConfirmationScheduling
-  /-- No election timeout within `electionTimeout / 2` of a reset (see `Bounds`).
-  CCF also resets on other events, such as granting a vote or stepping down;
-  leaving those out allows more timeouts. Needed: without it any node may time out
-  at any time, and depose the primary. -/
-  electionTimers
-    : forall earlier index reset timeout node,
+/-- No election timeout within `minimum` of a reset; `none` allows a timeout at
+any time. Pass half of `Bounds.electionTimeout`. CCF also resets on other events,
+such as granting a vote or stepping down; leaving those out allows more timeouts.
+Needed: without it any node may time out at any time, and depose the primary. -/
+def Trace.ElectionScheduling (trace : Trace W Event) (minimum : Option Real) : Prop :=
+  match minimum with
+  | none => True
+  | some minimum =>
+      forall earlier index reset timeout node,
         earlier < index
-        -> trace.timingTrace.stepAt (timingSystem system) earlier = some reset
-        -> trace.timingTrace.stepAt (timingSystem system) index = some timeout
-        -> timeout.action.event = .local node (.timeout .election)
+        -> trace.stepAt earlier = some reset
+        -> trace.stepAt index = some timeout
+        -> timeout.action = .local node (.timeout .election)
         -> ElectionReset reset node
-        -> reset.before.time + model.bounds.electionTimeout / 2 <= timeout.before.time
-
-/-- The timed obligations imply the untimed ones. -/
-theorem LivenessModel.Timed.scheduling {model : LivenessModel} {trace : Trace system}
-    (timed : model.Timed trace)
-    : trace.HeartbeatScheduling /\ trace.SignatureScheduling /\ trace.ConfirmationScheduling := by
-  refine
-    {
-      heartbeats := fun index point leader peer found due => ?_
-      signatures := timed.signatures
-      confirmations := timed.confirmations
-    }
-  obtain ⟨_, later, point', _, le, found', _, holds⟩ :=
-    timed.heartbeats index point leader peer found due
-  exact ⟨later, point', le, found', holds⟩
+        -> time reset.before + minimum <= time timeout.before
 
 end CCFRaft.Liveness

@@ -8,20 +8,23 @@ namespace CCFRaft.Liveness
 
 open Model.Node
 
-variable {system : CCF.TransitionSystem Model.State Model.Action}
+open HasProtocol (proto)
+open HasTime (time)
+
+variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasNetwork W]
 
 /-- From `start` on, every message sent on the selected links is delivered. Not a
 premise of `Properties.commit_liveness`; it implies `FairLoss`. -/
-def Reliable (trace : Trace system) (participants : Finset NodeID) (start : Nat) : Prop :=
-  forall packet,
-    trace.Sent packet
-    -> start <= packet.sent
+def Reliable (trace : Trace W Event) (participants : Finset NodeID) (start : Nat) : Prop :=
+  forall sent packet,
+    trace.SentAt sent packet
+    -> start <= sent
     -> packet.envelope.source ∈ participants
     -> packet.envelope.target ∈ participants
     -> exists index step,
-        packet.sent < index
-        /\ trace.timingTrace.stepAt (timingSystem system) index = some step
-        /\ step.action.event = .deliver packet
+        sent < index
+        /\ trace.stepAt index = some step
+        /\ step.action = .deliver packet
 
 /-- Traffic classes ignore changing batch ends and commit advertisements.
 Index-specific classes prevent unrelated heartbeats or old acknowledgements
@@ -51,23 +54,23 @@ def Traffic.Matches : Traffic -> Message -> Prop
   | _, _ => False
 
 /-- The source keeps sending this kind of message on the directed link. -/
-def InfinitelySent (trace : Trace system) (source target : NodeID) (traffic : Traffic) : Prop :=
+def InfinitelySent (trace : Trace W Event) (source target : NodeID) (traffic : Traffic) : Prop :=
   forall cutoff,
-    exists packet,
-      trace.Sent packet
-      /\ cutoff <= packet.sent
+    exists sent packet,
+      trace.SentAt sent packet
+      /\ cutoff <= sent
       /\ packet.envelope.source = source
       /\ packet.envelope.target = target
       /\ traffic.Matches packet.envelope.payload
 
 /-- Messages of this kind sent in the execution keep arriving on the directed link. -/
-def InfinitelyDelivered (trace : Trace system) (source target : NodeID) (traffic : Traffic)
+def InfinitelyDelivered (trace : Trace W Event) (source target : NodeID) (traffic : Traffic)
     : Prop :=
   forall cutoff,
     exists index step packet,
       cutoff <= index
-      /\ trace.timingTrace.stepAt (timingSystem system) index = some step
-      /\ step.action.event = .deliver packet
+      /\ trace.stepAt index = some step
+      /\ step.action = .deliver packet
       /\ packet.envelope.source = source
       /\ packet.envelope.target = target
       /\ traffic.Matches packet.envelope.payload
@@ -80,7 +83,7 @@ and there is no bound on the number of omissions or on successful-delivery laten
 Needed: if the network drops every message, nothing more can commit.
 Finite executions have no infinitely repeated traffic, so this condition is
 vacuous for them; it does not require every outstanding packet to be delivered. -/
-def FairLoss (trace : Trace system) (participants : Finset NodeID) : Prop :=
+def FairLoss (trace : Trace W Event) (participants : Finset NodeID) : Prop :=
   forall source target traffic,
     source ∈ participants
     -> target ∈ participants

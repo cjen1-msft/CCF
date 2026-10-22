@@ -144,25 +144,13 @@ lemma committed_frontier_is_signature_witness
 
 end CCFRaft.Properties
 
-namespace CCFRaft.Liveness
-
-/-- The initial protocol state and every recorded model action, omitting only
-environment-only events. Disabled model actions remain in the recording and
-are rejected by the same `Trace.Valid` used in the safety properties. -/
-noncomputable def Trace.safetyTrace
-    {system : CCF.TransitionSystem Model.State Model.Action} (trace : Trace system)
-    : CCF.Execution.Trace Model.State Model.Action :=
-  { initial := trace.initial.state, actions := trace.modelActions.filterMap id }
-
-end CCFRaft.Liveness
-
 namespace CCFRaft.Properties
 
-/-- Commit liveness, untimed. Take a finite or infinite execution whose safety
-trace is valid for `Model.transitionSystem config nodes`, and whose timing
-trace is valid for `timingSystem`, and whose crash trace is valid for `crashSystem`.
-Timing validity enforces packet provenance and single consumption.
-Assume separately that its recorded events satisfy the untimed scheduling constraints `HeartbeatScheduling`, `SignatureScheduling`, and `ConfirmationScheduling`.
+/-- Commit liveness, untimed. Take one coherent recorded relational trace.
+Assume coherence and validity of the protocol, timing, crash and delivery
+models for `system := Model.transitionSystem config nodes`.
+The delivery model enforces packet provenance and single consumption.
+Assume separately the unbounded (`none`) heartbeat, signature and confirmation scheduling constraints.
 Choose an index `start` in it. Suppose that
 from `start` on `leader` is the live primary of `term`, that from some index on a
 majority of each of its active configurations is live, and that the links between
@@ -171,14 +159,18 @@ majority of each of its active configurations is live, and that the links betwee
 theorem commit_liveness
     : forall (config : Finset NodeID) (nodes : List NodeID),
       let system := Model.transitionSystem config nodes
-      forall (trace : Liveness.Trace system) (start : Nat),
+      forall (W : Type) [Liveness.HasProtocol W Model.State] [Liveness.HasTime W]
+        [Liveness.HasLive W] [Liveness.HasNetwork W],
+      forall (trace : Liveness.Trace W Liveness.Event) (start : Nat),
       forall (leader : NodeID) (term : Nat) (participants : Finset NodeID),
-        (trace.safetyTrace.Valid system
-          /\ trace.timingTrace.Valid (Liveness.timingSystem system)
-          /\ trace.crashTrace.Valid Liveness.crashSystem
-          /\ trace.HeartbeatScheduling
-          /\ trace.SignatureScheduling
-          /\ trace.ConfirmationScheduling
+        (trace.Coherent
+          /\ trace.Valid (Liveness.protocolModel system)
+          /\ trace.Valid Liveness.timingModel
+          /\ trace.Valid Liveness.crashModel
+          /\ trace.Valid (Liveness.deliveryModel system)
+          /\ trace.HeartbeatScheduling none
+          /\ trace.SignatureScheduling none
+          /\ trace.ConfirmationScheduling none
           /\ Liveness.StableLeader trace start leader term
           /\ Liveness.LiveQuorum trace leader participants
           /\ Liveness.FairLoss trace (insert leader participants))
@@ -193,14 +185,16 @@ and commits its request. -/
 lemma commit_liveness_witness
     : exists (config : Finset NodeID) (nodes : List NodeID),
       let system := Model.transitionSystem config nodes
-      exists (trace : Liveness.Trace system) (start : Nat),
+      exists (trace : Liveness.Trace (Liveness.World Model.State) Liveness.Event) (start : Nat),
     exists (leader : NodeID) (term : Nat) (participants : Finset NodeID) (request : ReqID),
-      trace.safetyTrace.Valid system
-      /\ trace.timingTrace.Valid (Liveness.timingSystem system)
-      /\ trace.crashTrace.Valid Liveness.crashSystem
-      /\ trace.HeartbeatScheduling
-      /\ trace.SignatureScheduling
-      /\ trace.ConfirmationScheduling
+      trace.Coherent
+      /\ trace.Valid (Liveness.protocolModel system)
+      /\ trace.Valid Liveness.timingModel
+      /\ trace.Valid Liveness.crashModel
+      /\ trace.Valid (Liveness.deliveryModel system)
+      /\ trace.HeartbeatScheduling none
+      /\ trace.SignatureScheduling none
+      /\ trace.ConfirmationScheduling none
       /\ Liveness.StableLeader trace start leader term
       /\ Liveness.LiveQuorum trace leader participants
       /\ Liveness.FairLoss trace (insert leader participants)
@@ -208,11 +202,11 @@ lemma commit_liveness_witness
       /\ exists index, Liveness.RequestCommitted trace leader request index := by
   exact Proofs.LivenessWitness.commit_liveness_witness
 
-/-- Stable leadership from timing. Take a finite or infinite execution whose
-safety trace is valid for `Model.transitionSystem config nodes`, and whose
-timing trace is valid for `timingSystem`, and whose crash trace is valid for `crashSystem`.
-Timing validity enforces packet provenance and single consumption.
-Assume separately that its recorded events satisfy the timed obligations (`model.Timed`).
+/-- Stable leadership from timing. Take one coherent recorded relational trace.
+Assume coherence and validity of the protocol, timing, crash and delivery
+models for `system := Model.transitionSystem config nodes`.
+The delivery model enforces packet provenance and single consumption.
+Assume separately the scheduling constraints: heartbeats within `bounds.heartbeatInterval`, eventual signatures and confirmations, and no election timeout within `bounds.electionTimeout / 2` of a reset.
 Choose an index `start` in it at which `leader` is the
 newest primary, of `term` (`QuietStart`). Suppose that from `start` on, the
 primary's AppendEntries requests arrive within `delay` and pass the log check of
@@ -225,18 +219,25 @@ quorum checks are assumed, not derived. -/
 theorem stable_leader
     : forall (config : Finset NodeID) (nodes : List NodeID),
       let system := Model.transitionSystem config nodes
-      forall (trace : Liveness.Trace system)
-      (model : Liveness.LivenessModel) (start : Nat),
+      forall (W : Type) [Liveness.HasProtocol W Model.State] [Liveness.HasTime W]
+        [Liveness.HasLive W] [Liveness.HasNetwork W],
+      forall (trace : Liveness.Trace W Liveness.Event)
+      (bounds : Liveness.Bounds) (start : Nat),
       forall (leader : NodeID) (term : Nat) (delay : Real),
-        (trace.safetyTrace.Valid system
-          /\ trace.timingTrace.Valid (Liveness.timingSystem system)
-          /\ trace.crashTrace.Valid Liveness.crashSystem
-          /\ model.Timed trace
-          /\ Liveness.QuietStart trace start leader term model.bounds.electionTimeout
+        (trace.Coherent
+          /\ trace.Valid (Liveness.protocolModel system)
+          /\ trace.Valid Liveness.timingModel
+          /\ trace.Valid Liveness.crashModel
+          /\ trace.Valid (Liveness.deliveryModel system)
+          /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
+          /\ trace.SignatureScheduling none
+          /\ trace.ConfirmationScheduling none
+          /\ trace.ElectionScheduling (some (bounds.electionTimeout / 2))
+          /\ Liveness.QuietStart trace start leader term bounds.electionTimeout
           /\ Liveness.Timely trace start leader delay
           /\ 0 <= delay
           /\ Liveness.Matching trace start leader term
-          /\ model.bounds.heartbeatInterval + delay < model.bounds.electionTimeout / 2
+          /\ bounds.heartbeatInterval + delay < bounds.electionTimeout / 2
           /\ Liveness.Covered trace start leader term
           /\ Liveness.Incumbent trace start leader)
         -> Liveness.StableLeader trace start leader term := by
@@ -249,18 +250,23 @@ theorem stable_leader
 lemma stable_leader_witness
     : exists (config : Finset NodeID) (nodes : List NodeID),
       let system := Model.transitionSystem config nodes
-      exists (trace : Liveness.Trace system)
-      (model : Liveness.LivenessModel) (start : Nat),
+      exists (trace : Liveness.Trace (Liveness.World Model.State) Liveness.Event)
+      (bounds : Liveness.Bounds) (start : Nat),
     exists (leader : NodeID) (term : Nat) (delay : Real),
-      trace.safetyTrace.Valid system
-      /\ trace.timingTrace.Valid (Liveness.timingSystem system)
-      /\ trace.crashTrace.Valid Liveness.crashSystem
-      /\ model.Timed trace
-      /\ Liveness.QuietStart trace start leader term model.bounds.electionTimeout
+      trace.Coherent
+      /\ trace.Valid (Liveness.protocolModel system)
+      /\ trace.Valid Liveness.timingModel
+      /\ trace.Valid Liveness.crashModel
+      /\ trace.Valid (Liveness.deliveryModel system)
+      /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
+      /\ trace.SignatureScheduling none
+      /\ trace.ConfirmationScheduling none
+      /\ trace.ElectionScheduling (some (bounds.electionTimeout / 2))
+      /\ Liveness.QuietStart trace start leader term bounds.electionTimeout
       /\ Liveness.Timely trace start leader delay
       /\ 0 <= delay
       /\ Liveness.Matching trace start leader term
-      /\ model.bounds.heartbeatInterval + delay < model.bounds.electionTimeout / 2
+      /\ bounds.heartbeatInterval + delay < bounds.electionTimeout / 2
       /\ Liveness.Covered trace start leader term
       /\ Liveness.Incumbent trace start leader
       /\ Liveness.StableLeader trace start leader term := by
@@ -271,18 +277,25 @@ lemma stable_leader_witness
 theorem commit_liveness_timed
     : forall (config : Finset NodeID) (nodes : List NodeID),
       let system := Model.transitionSystem config nodes
-      forall (trace : Liveness.Trace system)
-      (model : Liveness.LivenessModel) (start : Nat),
+      forall (W : Type) [Liveness.HasProtocol W Model.State] [Liveness.HasTime W]
+        [Liveness.HasLive W] [Liveness.HasNetwork W],
+      forall (trace : Liveness.Trace W Liveness.Event)
+      (bounds : Liveness.Bounds) (start : Nat),
       forall (leader : NodeID) (term : Nat) (participants : Finset NodeID) (delay : Real),
-        (trace.safetyTrace.Valid system
-          /\ trace.timingTrace.Valid (Liveness.timingSystem system)
-          /\ trace.crashTrace.Valid Liveness.crashSystem
-          /\ model.Timed trace
-          /\ Liveness.QuietStart trace start leader term model.bounds.electionTimeout
+        (trace.Coherent
+          /\ trace.Valid (Liveness.protocolModel system)
+          /\ trace.Valid Liveness.timingModel
+          /\ trace.Valid Liveness.crashModel
+          /\ trace.Valid (Liveness.deliveryModel system)
+          /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
+          /\ trace.SignatureScheduling none
+          /\ trace.ConfirmationScheduling none
+          /\ trace.ElectionScheduling (some (bounds.electionTimeout / 2))
+          /\ Liveness.QuietStart trace start leader term bounds.electionTimeout
           /\ Liveness.Timely trace start leader delay
           /\ 0 <= delay
           /\ Liveness.Matching trace start leader term
-          /\ model.bounds.heartbeatInterval + delay < model.bounds.electionTimeout / 2
+          /\ bounds.heartbeatInterval + delay < bounds.electionTimeout / 2
           /\ Liveness.Covered trace start leader term
           /\ Liveness.Incumbent trace start leader
           /\ Liveness.LiveQuorum trace leader participants
@@ -303,19 +316,24 @@ theorem commit_liveness_timed
 lemma commit_liveness_timed_witness
     : exists (config : Finset NodeID) (nodes : List NodeID),
       let system := Model.transitionSystem config nodes
-      exists (trace : Liveness.Trace system)
-      (model : Liveness.LivenessModel) (start : Nat),
+      exists (trace : Liveness.Trace (Liveness.World Model.State) Liveness.Event)
+      (bounds : Liveness.Bounds) (start : Nat),
     exists (leader : NodeID) (term : Nat) (participants : Finset NodeID) (delay : Real),
     exists (request : ReqID),
-      trace.safetyTrace.Valid system
-      /\ trace.timingTrace.Valid (Liveness.timingSystem system)
-      /\ trace.crashTrace.Valid Liveness.crashSystem
-      /\ model.Timed trace
-      /\ Liveness.QuietStart trace start leader term model.bounds.electionTimeout
+      trace.Coherent
+      /\ trace.Valid (Liveness.protocolModel system)
+      /\ trace.Valid Liveness.timingModel
+      /\ trace.Valid Liveness.crashModel
+      /\ trace.Valid (Liveness.deliveryModel system)
+      /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
+      /\ trace.SignatureScheduling none
+      /\ trace.ConfirmationScheduling none
+      /\ trace.ElectionScheduling (some (bounds.electionTimeout / 2))
+      /\ Liveness.QuietStart trace start leader term bounds.electionTimeout
       /\ Liveness.Timely trace start leader delay
       /\ 0 <= delay
       /\ Liveness.Matching trace start leader term
-      /\ model.bounds.heartbeatInterval + delay < model.bounds.electionTimeout / 2
+      /\ bounds.heartbeatInterval + delay < bounds.electionTimeout / 2
       /\ Liveness.Covered trace start leader term
       /\ Liveness.Incumbent trace start leader
       /\ Liveness.LiveQuorum trace leader participants

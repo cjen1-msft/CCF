@@ -1,6 +1,7 @@
 module
 
 public import CCFRaft.Model
+public import Mathlib.Basic.Real.Basic
 
 @[expose] public section
 
@@ -10,10 +11,15 @@ open Model.Node
 
 /-- A send occurrence, distinguished even when two envelopes have equal contents. -/
 structure Packet where
-  sent : Nat
-  ordinal : Nat
+  /-- Sequence number issued by the network ledger; identity, not content. -/
+  id : Nat
   envelope : Model.Envelope
-deriving BEq, ReflBEq, LawfulBEq
+  /-- Absolute time in the sending step's after-state. -/
+  sentAt : Real
+
+/-- Packets are identified by their issued sequence number, not by content. -/
+def Packet.sameIdentity (left right : Packet) : Bool :=
+  left.id == right.id
 
 /-- Environment events interleave with the unchanged local protocol and deliveries. -/
 inductive Event where

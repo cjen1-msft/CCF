@@ -1,51 +1,60 @@
 module
 
-public import CCFRaft.Liveness.Model.Timing
 public import CCF.Execution
 
 @[expose] public section
 
 namespace CCFRaft.Liveness
 
-open Model.Node
+/-- A finite or infinite recording of transition endpoints and actions.
+Coherence and validity are separate predicates, not replay procedures. -/
+structure Trace (W A : Type) where
+  initial : W
+  steps : Stream'.Seq (CCF.Execution.Step W A)
 
-/-- A finite or infinite recording for the supplied protocol transition system,
-including the zero-step execution. Safety and timing use this same protocol system. -/
-structure Trace (system : CCF.TransitionSystem Model.State Model.Action)
-    extends CCF.Execution.Trace TracedState TimedEvent where
+/-- The recorded step, or `none` past the end of a finite recording. -/
+def Trace.stepAt {W A : Type} (trace : Trace W A) (index : Nat)
+    : Option (CCF.Execution.Step W A) :=
+  trace.steps.get? index
 
-variable {system : CCF.TransitionSystem Model.State Model.Action}
+/-- The recorded action at this position. -/
+def Trace.actionAt {W A : Type} (trace : Trace W A) (index : Nat) : Option A :=
+  (trace.stepAt index).map fun step => step.action
 
-/-- Map events to model actions, retaining environment-only positions as `none`.
-No search through the remaining execution is needed. -/
-def Trace.modelActions (trace : Trace system) : Stream'.Seq (Option Model.Action) :=
-  trace.actions.map fun timed => timed.event.action
+/-- The initial state at zero, then the preceding step's recorded after-state. -/
+def Trace.stateAt {W A : Type} (trace : Trace W A) : Nat -> Option W
+  | 0 => some trace.initial
+  | index + 1 => (trace.stepAt index).map fun step => step.after
 
-/-- The full recording as a shared initial-state/action trace. -/
-def Trace.timingTrace (trace : Trace system) : CCF.Execution.Trace TracedState TimedEvent :=
-  trace.toTrace
+/-- All recorded states, including the final state of a finite execution. -/
+def Trace.states {W A : Type} (trace : Trace W A) : Stream'.Seq W :=
+  Stream'.Seq.cons trace.initial (trace.steps.map fun step => step.after)
 
-/-- The initial live set and every event, preserving timing-trace indices. -/
-def Trace.crashTrace (trace : Trace system) : CCF.Execution.Trace (Finset NodeID) Event :=
-  { initial := trace.initial.live, actions := trace.actions.map fun timed => timed.event }
+/-- The first step starts at `initial`, and adjacent endpoints agree. -/
+def Trace.Coherent {W A : Type} (trace : Trace W A) : Prop :=
+  (forall step, trace.stepAt 0 = some step -> step.before = trace.initial)
+  /\ forall index previous next,
+      trace.stepAt index = some previous
+      -> trace.stepAt (index + 1) = some next
+      -> previous.after = next.before
 
-/-- A future event bounded in real time, not in the number of protocol steps. -/
-def Within (trace : Trace system) (start : Nat) (bound : Real)
-    (predicate : Nat -> TracedState -> Prop)
-    : Prop :=
-  exists first index point,
-    trace.timingTrace.stateAt (timingSystem system) start = some first
-    /\ start <= index
-    /\ trace.timingTrace.stateAt (timingSystem system) index = some point
-    /\ point.time <= first.time + bound
-    /\ predicate index point
+/-- A TLA-style initial predicate and action on a recorded step.
+Fields left unmentioned are unconstrained; models have no variable ownership. -/
+structure Model (W A : Type) where
+  init : W -> Prop
+  next : CCF.Execution.Step W A -> Prop
 
-/-- Eventually, at or after `index`, a point satisfies `predicate`. -/
-def Eventually (trace : Trace system) (index : Nat)
-    (predicate : Nat -> TracedState -> Prop) : Prop :=
+/-- Every recorded step satisfies the model, independently of other models. -/
+def Trace.Valid {W A : Type} (trace : Trace W A) (model : Model W A) : Prop :=
+  model.init trace.initial
+  /\ forall index step, trace.stepAt index = some step -> model.next step
+
+/-- Eventually, at or after `index`, an existing recorded state satisfies the predicate. -/
+def Eventually {W A : Type} (trace : Trace W A) (index : Nat)
+    (predicate : Nat -> W -> Prop) : Prop :=
   exists later point,
     index <= later
-    /\ trace.timingTrace.stateAt (timingSystem system) later = some point
+    /\ trace.stateAt later = some point
     /\ predicate later point
 
 end CCFRaft.Liveness

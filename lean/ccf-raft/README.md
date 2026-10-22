@@ -1,6 +1,6 @@
 # CCF-Raft model
 
-An executable Lean model of CCF's consensus implementation ([`src/consensus/aft/raft.h`](../../src/consensus/aft/raft.h)), safety property statements and a propositional timed liveness layer.
+An executable Lean model of CCF's consensus implementation ([`src/consensus/aft/raft.h`](../../src/consensus/aft/raft.h)), safety property statements and a propositional timed liveness model.
 It assumes familiarity with the [CCF consensus documentation](../../doc/architecture/consensus/index.rst).
 `commit_liveness` states deterministic commit progress under a stable primary, a live quorum, fair-loss links and a submitted request; `stable_leader` states stable leadership from heartbeat, delay and election-timeout bounds, assuming a quiet start and no quorum-check step-down or failed log check; see [the liveness report](LIVENESS.md).
 The liveness trace interface is being revised; its existing proofs have not yet been adapted to the new definitions and statements.
@@ -16,42 +16,54 @@ The liveness trace interface is being revised; its existing proofs have not yet 
 | Initial states and network composition  | [`Model.lean`](CCFRaft/Model.lean) (`initialNodeState`, `transitionSystem`)                                                                                        |
 | Safety and liveness theorems, witnesses | [`Properties.lean`](CCFRaft/Properties.lean)                                                                                                                       |
 | Liveness events and packet identities   | [`Liveness/Model/Event.lean`](CCFRaft/Liveness/Model/Event.lean) |
-| Crash and timing transition systems     | [`Liveness/Model/Crash.lean`](CCFRaft/Liveness/Model/Crash.lean), [`Liveness/Model/Timing.lean`](CCFRaft/Liveness/Model/Timing.lean) |
-| Liveness traces and send occurrences | [`Liveness/Model/Trace.lean`](CCFRaft/Liveness/Model/Trace.lean), [`Liveness/Model/Packets.lean`](CCFRaft/Liveness/Model/Packets.lean) |
+| Recorded relational traces and models | [`Liveness/Model/Trace.lean`](CCFRaft/Liveness/Model/Trace.lean) (`Trace`, `Model`, coherence and validity) |
+| Open world accessors and witness world | [`Liveness/Model/World.lean`](CCFRaft/Liveness/Model/World.lean) (`HasProtocol`, `HasTime`, `HasLive`, `HasNetwork`), [`Liveness/Model/WitnessWorld.lean`](CCFRaft/Liveness/Model/WitnessWorld.lean) (`World`) |
+| Protocol model | [`Liveness/Model/Protocol.lean`](CCFRaft/Liveness/Model/Protocol.lean) |
+| Crash and absolute-time models | [`Liveness/Model/Crash.lean`](CCFRaft/Liveness/Model/Crash.lean), [`Liveness/Model/Timing.lean`](CCFRaft/Liveness/Model/Timing.lean) |
+| Packet ledger, delay constraint and sends | [`Liveness/Model/Delivery.lean`](CCFRaft/Liveness/Model/Delivery.lean), [`Liveness/Model/Packets.lean`](CCFRaft/Liveness/Model/Packets.lean) |
 | CCF scheduling assumptions | [`Liveness/Model/Scheduling.lean`](CCFRaft/Liveness/Model/Scheduling.lean) |
 | Public liveness import entry points | [`Liveness/Model.lean`](CCFRaft/Liveness/Model.lean), [`Liveness/Assumptions.lean`](CCFRaft/Liveness/Assumptions.lean)                                                |
 | Supporting proofs and executions        | [`Proofs/`](CCFRaft/Proofs), with the liveness proofs in [`Proofs/Replication/`](CCFRaft/Proofs/Replication) and [`Proofs/Leadership/`](CCFRaft/Proofs/Leadership) |
 | Action-trace tests and import layering  | [`Tests/CanonicalTraces.lean`](CCFRaft/Tests/CanonicalTraces.lean), [`Tests/Architecture.lean`](CCFRaft/Tests/Architecture.lean)                                   |
 
-Transition systems, traces, effects and network composition come from the local [`ccf_common` package](../common/README.md).
+Transition systems, safety traces, the shared `CCF.Execution.Step` record, effects and network composition come from the local [`ccf_common` package](../common/README.md).
+The relational liveness trace is local to this package; the common package is unchanged.
 Liveness model components live under `Liveness/Model/` and are reexported by `Liveness/Model.lean`.
 Short, single-declaration assumptions are defined directly in [`Liveness/Assumptions.lean`](CCFRaft/Liveness/Assumptions.lean).
 Separate assumption modules are reserved for related groups of declarations or definitions exceeding 80 lines: [`StableLeader.lean`](CCFRaft/Liveness/Assumptions/StableLeader.lean), [`QuietStart.lean`](CCFRaft/Liveness/Assumptions/QuietStart.lean), [`FairLoss.lean`](CCFRaft/Liveness/Assumptions/FairLoss.lean), and [`Submitted.lean`](CCFRaft/Liveness/Assumptions/Submitted.lean).
 Each node reads membership, quorums and retirement from its own ledger; there is no model-wide configuration after initialization.
 Initialization takes a nonempty initial voting membership, whose smallest member starts as primary with the genesis configuration transaction.
 Base actions are local inputs (including timeouts) or delivery of a queued message; the base protocol has no clock.
-The optional liveness layer stores an explicit initial state and a finite or infinite sequence of timed events.
-`Trace system` is parameterized by its protocol transition system, so the safety and timing projections use the same protocol system.
-The shared `trace.timingTrace.actionAt index` reads recorded timed events; `trace.timingTrace.stateAt (timingSystem system) index` and `trace.timingTrace.stepAt (timingSystem system) index` derive states and transitions by deterministic replay, including timestamps and crash-stop availability.
-Steps use `CCF.Execution.Step TracedState TimedEvent`, with the underlying event at `step.action.event`; there are no liveness-specific accessor or step-record copies.
-`Trace.modelActions` computably maps events to optional model actions without filtering.
-Generic `Seq.filter` and `Seq.filterMap` helpers live in [`Liveness/Seq.lean`](CCFRaft/Liveness/Seq.lean), independently of the Raft model.
-`Trace.safetyTrace` retains the initial protocol state and the recorded model actions, omitting environment-only events.
-Liveness statements explicitly require `trace.safetyTrace.Valid system`, using the same initial-state/action trace type and `Valid` definition as the safety statements, with `system := Model.transitionSystem config nodes` bound once.
-`trace.timingTrace.Valid (Liveness.timingSystem system)` applies the same shared validity definition to the initial timed state and all recorded timed events.
-The timing system lifts the supplied protocol system's initialization and transitions, leaving the initial clock and live set without additional restrictions.
-Shared trace validity checks every recorded action, so a disabled action cannot disappear by truncating replay; no failure-sentinel state or separate enabledness premise is needed.
-Elapsed durations have type `NNReal`, so they may be zero but cannot be negative; no separate elapsed-time validity assumption is needed.
-`trace.crashTrace.Valid Liveness.crashSystem` applies shared validity to the initial live set and every event, without filtering or changing indices.
-It requires local actors, delivery receivers and nodes being crashed to be live, then permanently removes crashed nodes; the initial live set remains unrestricted.
-Crash replay explicitly handles crash events after checking the actor is live; timing replay uses `Event.liveAfter` to track availability without enforcing crash validity itself.
-Timing replay starts at event index zero with an empty outstanding-packet ledger and generates each send identity as `(step, ordinal)` from the actual outputs.
-Delivery and drop must match an outstanding identity and its envelope, consume it once, and cannot consume outputs of their own step.
-Identical retransmitted envelopes remain distinct occurrences; packet validity is enforced by `timingTrace.Valid`, without a separate premise.
-Untimed progress states `trace.HeartbeatScheduling`, `trace.SignatureScheduling`, and `trace.ConfirmationScheduling` as separate premises; timed leadership uses `model.Timed`.
-These encode CCF's background-task scheduling obligations, separately from action-trace validity and network fairness (`FairLoss`).
-The scheduling predicates, timing bounds, and timed scheduling model are colocated in `Liveness/Model/Scheduling.lean`.
-`LivenessModel` contains timing bounds only, not protocol configuration or node identities.
+The optional liveness model records an initial world and a finite or infinite sequence of `CCF.Execution.Step W Event` values, each with explicit before-state, action and after-state.
+Public statements quantify over any world type `W` with the accessor instances they need and use `Liveness.Trace W Liveness.Event`, independently of any transition system.
+`trace.stepAt`, `trace.actionAt` and `trace.stateAt` read the recording directly and return `Option`; state zero is the initial world and state `i + 1` is step `i`'s after-state.
+`trace.Coherent` connects the initial world and adjacent recorded endpoints, including finite and zero-step traces.
+There is no replay or filtered protocol projection in this interface.
+
+Each `Model W Event` is a TLA-style action: an initial-state predicate and a relation over a recorded step.
+Validity against several models is plain conjunction; there is no composition operator, model ordering or variable ownership.
+Models may constrain overlapping fields, and contradictory constraints simply admit fewer traces.
+Accessor classes let models work with extensible world types while requiring only the fields they inspect.
+Lean has no row types, so the open world is spelled as typeclass constraints; the closed `World S` in [`Liveness/Model/WitnessWorld.lean`](CCFRaft/Liveness/Model/WitnessWorld.lean) exists only for witnesses.
+Scheduling adds no world variables.
+
+Each public statement conjoins coherence and validity of the protocol, timing, crash and delivery models inline; there is no bundled model predicate.
+The protocol model uses `Event.action` to execute local actions and deliveries in `system := Model.transitionSystem config nodes`; crash, drop and idle stutter in the protocol state.
+The timing model permits any nondecreasing absolute time, including on idle steps.
+The initial absolute time and live set are unrestricted.
+The crash model directly projects to the existing `crashSystem`, requiring live actors and permanently removing crashed nodes.
+Delivery requires only the receiver to be live, so a sender may crash after sending.
+The delivery model starts with an empty pending ledger and zero issued packets; it tags each actual outgoing envelope with the next sequence number and the sending step's after-time as `sentAt`.
+Delivery or drop must consume an existing occurrence before this step's outputs are added.
+Equal envelopes remain distinct transmissions, and an occurrence cannot be consumed twice or after a drop.
+The optional `boundedDelayModel maxDelay` separately forbids an overdue pending packet to a live target; it permits drops and is not the stronger `Timely` delivery assumption.
+
+`trace.HeartbeatScheduling`, `trace.SignatureScheduling`, `trace.ConfirmationScheduling` and `trace.ElectionScheduling` each take an `Option Real`: `none` requires eventual execution, `some bound` also requires it before the bound elapses (for elections, `none` is no constraint and `some minimum` forbids timeouts within `minimum` of a reset).
+These are read-only predicates on the recorded trace, separate from model validity and network fairness (`FairLoss`).
+All four share `Scheduled trace bound Due Fires`, so a bounded obligation implies the unbounded one and is never vacuous on a finite or Zeno trace.
+The scheduling predicates and timing bounds are colocated in `Liveness/Model/Scheduling.lean`.
+`Bounds` contains timing bounds only, not protocol configuration or node identities.
+Generic `Seq.filter` and `Seq.filterMap` helpers remain in [`Liveness/Seq.lean`](CCFRaft/Liveness/Seq.lean), independently of this relational interface.
 
 ## Scope
 
@@ -60,6 +72,7 @@ Commit liveness assumes a stable primary, which `stable_leader` derives from tim
 
 ## Validation
 
+The liveness proofs and theorem bodies are currently unported, so these are the full validation commands for after that port, not checks claimed for the definitions-only rewrite.
 With the pinned Lean toolchain available, run from this directory:
 
 ```sh
