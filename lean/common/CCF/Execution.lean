@@ -9,10 +9,10 @@ namespace CCF.Execution
 
 /-!
 Executions of a `TransitionSystem`. `Run` relates a start state, a finite
-action list, and an end state. `Trace` is the finite or infinite state sequence
-an execution passes through; properties quantify over every valid `Trace`.
-Actions are not stored in a trace, so a step's action is existentially
-quantified where needed.
+action list, and an end state.
+`Trace` records an initial state and a finite or infinite action sequence.
+States are derived by deterministic replay; validity checks every recorded
+action, not just the prefix before the first disabled action.
 -/
 
 /-- `Run system start actions final`: executing `actions` from `start` reaches `final`. -/
@@ -26,26 +26,66 @@ inductive Run {State Action : Type} (system : TransitionSystem State Action)
     (rest : Run system middle actions after)
     : Run system before (action :: actions) after
 
-/-- The states an execution passes through, initial state first. Actions are not recorded.
-A trace may be finite or infinite: `trace.get? i` is `none` past the end of a finite trace. -/
-abbrev Trace (State : Type) := Stream'.Seq State
+/-- A finite or infinite execution, including an explicit initial state even
+when no actions are recorded. -/
+structure Trace (State Action : Type) where
+  initial : State
+  actions : Stream'.Seq Action
 
-/-- The trace is nonempty, its first state is initial, and each later state
-follows its predecessor by some enabled action. -/
-def Trace.Valid {State Action : Type} (trace : Trace State)
+/-- The recorded action at `index`, or `none` past the end of a finite trace. -/
+def Trace.actionAt {State Action : Type} (trace : Trace State Action)
+    (index : Nat) : Option Action :=
+  trace.actions.get? index
+
+/-- The initial state followed by the states produced by successful replay.
+A disabled action ends this derived state sequence, but remains recorded in
+`actions` and is rejected by `Trace.Valid`. -/
+def Trace.states {State Action : Type} (trace : Trace State Action)
+    (system : TransitionSystem State Action) : Stream'.Seq State :=
+  Stream'.Seq.cons trace.initial <|
+    Stream'.Seq.corec (fun (cursor : State × Stream'.Seq Action) => do
+      let (action, remaining) <- cursor.2.destruct
+      let after <- system.step cursor.1 action
+      return (after, (after, remaining))) (trace.initial, trace.actions)
+
+/-- State after exactly `index` actions; index zero is the initial state.
+`none` means the execution ended earlier or a preceding action was disabled. -/
+def Trace.stateAt {State Action : Type} (trace : Trace State Action)
+    (system : TransitionSystem State Action) (index : Nat) : Option State :=
+  (trace.states system).get? index
+
+/-- A derived transition, rather than additional data stored in a trace. -/
+structure Step (State Action : Type) where
+  before : State
+  action : Action
+  after : State
+
+/-- Replay the action at `index`, returning its endpoints when it is enabled. -/
+def Trace.stepAt {State Action : Type} (trace : Trace State Action)
+    (system : TransitionSystem State Action) (index : Nat) : Option (Step State Action) := do
+  let before <- trace.stateAt system index
+  let action <- trace.actionAt index
+  let after <- system.step before action
+  return { before, action, after }
+
+/-- The initial state satisfies `system.init`, and every recorded action is
+enabled after its recorded prefix. A disabled action anywhere invalidates the
+trace, including when its successfully replayed prefix is itself valid. -/
+def Trace.Valid {State Action : Type} (trace : Trace State Action)
     (system : TransitionSystem State Action)
     : Prop :=
-  (exists initial, trace.get? 0 = some initial /\ system.init initial)
-  /\ forall i before after,
-      trace.get? i = some before
-      -> trace.get? (i + 1) = some after
-      -> exists action, system.step before action = some after
+  system.init trace.initial
+  /\ forall index action,
+      trace.actionAt index = some action
+      -> exists before after,
+          trace.stateAt system index = some before
+          /\ system.step before action = some after
 
 /-- Every state in a valid trace is reachable. -/
 theorem Trace.Valid.reachable {State Action : Type}
     {system : TransitionSystem State Action}
-    {trace : Trace State} (valid : trace.Valid system) {state : State}
-    (member : state ∈ trace)
+    {trace : Trace State Action} (valid : trace.Valid system) {state : State}
+    (member : state ∈ trace.states system)
     : system.Reachable state := by
   obtain ⟨index, found⟩ := Stream'.Seq.mem_iff_exists_get?.mp member
   clear member
@@ -67,7 +107,8 @@ last state of some valid finite trace. -/
 theorem reachable_iff_trace {State Action : Type}
     {system : TransitionSystem State Action} {state : State}
     : system.Reachable state
-      <-> exists trace : Trace State, trace.Valid system /\ state ∈ trace := by
+      <-> exists trace : Trace State Action,
+          trace.Valid system /\ state ∈ trace.states system := by
   constructor
   · intro reachable
     suffices finite : exists states : List State,

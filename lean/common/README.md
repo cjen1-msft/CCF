@@ -7,10 +7,18 @@ The `ccf_common` Lake package exposes protocol-independent definitions in the `C
 | `CCF.Capabilities`              | Envelopes, ordered outputs, effects, and recording callbacks |
 | `CCF.TransitionSystem`          | Initial states, enabled transitions, and reachability        |
 | `CCF.MultiNodeTransitionSystem` | Local protocols composed into a message-passing network      |
-| `CCF.Execution`                 | Finite runs and finite or infinite state traces              |
+| `CCF.Execution`                 | Finite runs and initial-state/action traces                   |
 
-`CCF.Execution` represents traces as Mathlib's `Stream'.Seq`, so the package depends on Mathlib.
-`reachable_iff_trace` shows that valid finite traces reach exactly the reachable states.
+`CCF.Execution.Trace State Action` records an explicit `initial` state and a finite or infinite `actions : Stream'.Seq Action`, so the package depends on Mathlib.
+`trace.actionAt index` reads a recorded action.
+`trace.stateAt system index` computes the state before that action by replay, with index zero referring to the initial state.
+`trace.stepAt system index` returns the computed before-state, recorded action, and after-state when the action succeeds.
+`trace.states system` exposes the successful replay prefix, including the initial state.
+
+`trace.Valid system` requires valid initialization and successful execution of every recorded action, not merely the actions in the successful replay prefix.
+A disabled action therefore invalidates the trace rather than silently truncating it.
+A finite recording of `n` enabled actions has `n + 1` derived states; a zero-action trace retains its initial state.
+The reachability theorem statements use this representation, but their proof bodies and downstream proof/test consumers have not yet been migrated.
 
 ## Import coverage
 

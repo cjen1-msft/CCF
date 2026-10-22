@@ -16,16 +16,22 @@ private def allowedImport (owner dependency : Name) : Bool :=
     dependency != `CCFRaft.Model && (`CCFRaft.Model).isPrefixOf dependency
   else if owner == `CCFRaft.Model then
     (`CCFRaft.Model).isPrefixOf dependency
+  else if (`CCFRaft.Liveness).isPrefixOf owner then
+    (`CCFRaft.Model).isPrefixOf dependency || (`CCFRaft.Liveness).isPrefixOf dependency
   else if (`CCFRaft.Properties).isPrefixOf owner then
     (`CCFRaft.Model).isPrefixOf dependency
+    || (`CCFRaft.Liveness).isPrefixOf dependency
     || (`CCFRaft.Proofs).isPrefixOf dependency
     || (`CCFRaft.Properties).isPrefixOf dependency
   else if (`CCFRaft.Proofs).isPrefixOf owner then
-    (`CCFRaft.Model).isPrefixOf dependency || (`CCFRaft.Proofs).isPrefixOf dependency
+    (`CCFRaft.Model).isPrefixOf dependency
+    || (`CCFRaft.Liveness).isPrefixOf dependency
+    || (`CCFRaft.Proofs).isPrefixOf dependency
   else
     true
 
--- Model definitions remain independent of the proved properties.
+-- Model definitions remain independent of the timed environment and the proved
+-- properties, and the timed environment of the proofs.
 run_cmd do
   let header := (← getEnv).header
   for (owner, data) in header.moduleNames.zip header.moduleData do

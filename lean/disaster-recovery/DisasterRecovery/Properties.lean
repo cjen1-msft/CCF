@@ -32,10 +32,10 @@ def QuorumOpenPreservesCommit : Prop :=
   forall (config : Model.Config) (trace : GlobalTrace) (openedState : Model.State),
   forall (opener : Location) (openerState : NodeState),
     (trace.Valid (Model.transitionSystem config)
-      /\ openedState ∈ trace
+      /\ openedState ∈ trace.states (Model.transitionSystem config)
       /\ (opener, openerState) ∈ openedState.nodes
       /\ openerState.openKind = some .quorum
-      /\ (forall voter, voter ∈ openerState.votes -> ReceivedOwnGossip trace voter))
+      /\ (forall voter, voter ∈ openerState.votes -> ReceivedOwnGossip config trace voter))
     -> exists openerTxID,
         Model.recoveredTxID config opener = some openerTxID
         /\ UpToDateWithQuorum config openerTxID
@@ -46,10 +46,10 @@ def QuorumOpenPreservesCommitWitness : Prop :=
   exists (config : Model.Config) (trace : GlobalTrace) (openedState : Model.State),
   exists (opener : Location) (openerState : NodeState),
     trace.Valid (Model.transitionSystem config)
-    /\ openedState ∈ trace
+    /\ openedState ∈ trace.states (Model.transitionSystem config)
     /\ (opener, openerState) ∈ openedState.nodes
     /\ openerState.openKind = some .quorum
-    /\ (forall voter, voter ∈ openerState.votes -> ReceivedOwnGossip trace voter)
+    /\ (forall voter, voter ∈ openerState.votes -> ReceivedOwnGossip config trace voter)
 
 /-- If every configured location has full gossip somewhere in a valid trace, every opener,
 including failover openers, is up to date with a quorum of recovered ledgers. -/
@@ -58,12 +58,12 @@ def FullGossipPreservesCommit : Prop :=
           (gossipedState openedState : Model.State),
   forall (opener : Location) (openerState : NodeState),
     (trace.Valid (Model.transitionSystem config)
-      /\ gossipedState ∈ trace
+      /\ gossipedState ∈ trace.states (Model.transitionSystem config)
       /\ (forall node nodeState,
             node ∈ config.protocol.expectedLocations
             -> (node, nodeState) ∈ gossipedState.nodes
             -> forall gossip, gossip ∈ nodeState.gossips <-> gossip ∈ config.recovered)
-      /\ openedState ∈ trace
+      /\ openedState ∈ trace.states (Model.transitionSystem config)
       /\ (opener, openerState) ∈ openedState.nodes
       /\ openerState.openKind.isSome = true)
     -> exists openerTxID,
@@ -77,12 +77,12 @@ def FullGossipPreservesCommitWitness : Prop :=
   (config : Model.Config) (trace : GlobalTrace) (gossipedState openedState : Model.State),
   exists (opener : Location) (openerState : NodeState),
     trace.Valid (Model.transitionSystem config)
-    /\ gossipedState ∈ trace
+    /\ gossipedState ∈ trace.states (Model.transitionSystem config)
     /\ (forall node nodeState,
           node ∈ config.protocol.expectedLocations
           -> (node, nodeState) ∈ gossipedState.nodes
           -> forall gossip, gossip ∈ nodeState.gossips <-> gossip ∈ config.recovered)
-    /\ openedState ∈ trace
+    /\ openedState ∈ trace.states (Model.transitionSystem config)
     /\ (opener, openerState) ∈ openedState.nodes
     /\ openerState.openKind = some .failover
 

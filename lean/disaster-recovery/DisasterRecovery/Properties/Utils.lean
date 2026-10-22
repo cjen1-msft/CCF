@@ -7,8 +7,8 @@ public import CCF.Execution
 
 namespace DisasterRecovery.Properties
 
-/-- A finite or infinite sequence of network states used to state global recovery properties. -/
-abbrev GlobalTrace := CCF.Execution.Trace Model.State
+/-- An initial network state and finite or infinite recorded model actions. -/
+abbrev GlobalTrace := CCF.Execution.Trace Model.State Model.Action
 
 open Model.Local in
 /-- A recorded local step of one DR node: its before and after states, input, and outputs. -/
@@ -31,9 +31,9 @@ def UpToDateWithQuorum (config : Model.Config) (candidate : TxID) : Prop :=
 
 open Model.Local in
 /-- The trace contains a state in which the node has accepted gossip from itself. -/
-def ReceivedOwnGossip (trace : GlobalTrace) (node : Location) : Prop :=
+def ReceivedOwnGossip (config : Model.Config) (trace : GlobalTrace) (node : Location) : Prop :=
   exists globalState,
-    globalState ∈ trace
+    globalState ∈ trace.states (Model.transitionSystem config)
     /\ exists nodeState txid,
         (node, nodeState) ∈ globalState.nodes /\ (node, txid) ∈ nodeState.gossips
 
@@ -58,8 +58,9 @@ def NotificationAt (config : Model.Config) (trace : GlobalTrace) (step : Nat)
     (node : Location) (notification : Notification)
     : Prop :=
   exists before after action nodeBefore nodeAfter outputs,
-    trace.get? step = some before
-    /\ trace.get? (step + 1) = some after
+    trace.stateAt (Model.transitionSystem config) step = some before
+    /\ trace.stateAt (Model.transitionSystem config) (step + 1) = some after
+    /\ trace.actionAt step = some action
     /\ (Model.transitionSystem config).step before action = some after
     /\ actor action = node
     /\ CCF.MultiNodeTransitionSystem.nodeState before node = some nodeBefore
