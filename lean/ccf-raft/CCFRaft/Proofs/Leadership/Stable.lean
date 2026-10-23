@@ -161,7 +161,7 @@ theorem reset_follows {heartbeatInterval : Real}
       (admissible.before deliveredAt)
     linarith
   rcases delivered with deliverEq | crashed
-  · refine ⟨delivery, deliveryStep, by omega, deliveredAt, by linarith, Or.inr ?_⟩
+  · refine ⟨delivery, deliveryStep, by omega, deliveredAt, by linarith, ?_⟩
     have selectedDelivery : deliveryStep.action.action = some (.deliver packet.envelope) := by
       rw [deliverEq]; rfl
     obtain ⟨receiver, _, targetState, _, _, targetActs, targetFound, _⟩ :=
@@ -169,9 +169,12 @@ theorem reset_follows {heartbeatInterval : Real}
         (admissible.step deliveredAt selectedDelivery)
     obtain ⟨targetEq, _⟩ := targetActs
     rw [targetEq] at targetFound
-    refine ⟨packet.envelope,
-      makeAppendEntriesRequest state node frontier, targetState, by rw [deliverEq]; rfl, target,
-      payload, by simpa only [target] using targetFound, ?_⟩
+    rw [ElectionReset, deliverEq]
+    refine ⟨target, ?_⟩
+    rw [show nodeState (proto deliveryStep.before) node = some targetState by
+        simpa only [target] using targetFound]
+    apply Or.inr
+    rw [payload]
     have le := (quiet delivery deliveryStep.before (by omega) deliveryBefore.le
       (admissible.before deliveredAt)).terms _ _ (Concrete.mem_of_nodeState targetFound)
     simp only [makeAppendEntriesRequest]

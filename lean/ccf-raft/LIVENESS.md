@@ -2,6 +2,16 @@
 
 ## Recommendation and status
 
+**Specification checkpoint:** [`Properties.lean`](CCFRaft/Properties.lean) now states timed `commit_liveness`, probabilistic `duelling_leaders_resolve`, and `signature_settles`.
+These three statements contain `sorry`; their constants and sufficiency of premises are still proof obligations, not established results.
+The window assumptions are in [`Window.lean`](CCFRaft/Liveness/Assumptions/Window.lean), draws and signature commitment in [`Duel.lean`](CCFRaft/Liveness/Assumptions/Duel.lean), and explicit deadlines in [`Timers.lean`](CCFRaft/Liveness/Model/Timers.lean).
+The remainder of this report describes the earlier, still-proved internal untimed commitment and conditional leadership results; references to their old public names do not establish the new statements.
+
+`ElectionReset` now also records quorum-check step-down, actual local term increases (new-term adoption or regular-election starts), and same-term regular-vote grants.
+Using the actual term transition preserves the protocol's known-peer and message-specific guards, including ignoring AppendEntries responses on non-primaries and not adopting a proposal's term.
+The earlier same-term AppendEntries distinction is preserved: a candidate steps down and resets before checking the log, but an established follower does not reset on a failed check.
+The [conservative tick/drift interpretation of timing constants](#timing-constants) is unchanged; the new continuous-draw/deadline specification still needs a correspondence argument for concrete CCF clocks.
+
 The liveness definitions use a fully recorded relational trace over the existing multi-node protocol.
 This is a TLA-style explicit-state formulation, not a replacement Raft algorithm.
 The definitions in [`Liveness/Model.lean`](CCFRaft/Liveness/Model.lean) and [`Liveness/Assumptions.lean`](CCFRaft/Liveness/Assumptions.lean) permit finite or infinite executions and unbounded logs.
@@ -274,12 +284,12 @@ Joining and snapshot installation remain outside the underlying model.
 Each public statement conjoins coherence and the four base model validities inline, independently of any client request.
 The optional `boundedDelayModel` is separate, as are these read-only scheduling constraints:
 
-| Constraint              | What it says                                                                                                                                                                                     | Used by           |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- |
-| Replication scheduling  | A due live primary-to-peer obligation eventually resolves; the timed variant also requires a send in `(i, j]` at each later deadline crossing, carrying entries when the frontier has a backlog. | both              |
-| Signature scheduling    | Unsigned entries, or a latest signature from an earlier term, eventually cause a signature append, unless the obligation ceases.                                                                 | `commit_liveness` |
-| Confirmation scheduling | An owed retirement confirmation is eventually appended, unless it ceases to be owed.                                                                                                             | `commit_liveness` |
-| Election lower bounds   | An election timeout cannot fire within `E / 2` of an earlier reset: a timeout, or an AppendEntries of a newer term, or of the node's term that passes its log check or finds it a candidate.     | `stable_leader`   |
+| Constraint              | What it says                                                                                                                                                                                                           | Used by           |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| Replication scheduling  | A due live primary-to-peer obligation eventually resolves; the timed variant also requires a send in `(i, j]` at each later deadline crossing, carrying entries when the frontier has a backlog.                       | both              |
+| Signature scheduling    | Unsigned entries, or a latest signature from an earlier term, eventually cause a signature append, unless the obligation ceases.                                                                                       | `commit_liveness` |
+| Confirmation scheduling | An owed retirement confirmation is eventually appended, unless it ceases to be owed.                                                                                                                                   | `commit_liveness` |
+| Election lower bounds   | An election timeout cannot fire within `E / 2` of a reset classified by `ElectionReset`, including term adoption, election starts, quorum-check step-down, regular-vote grants and the qualifying AppendEntries paths. | `stable_leader`   |
 
 `commit_liveness` states each untimed CCF scheduling obligation separately, without requiring heartbeat deadlines or election-timer bounds.
 Constraints that CCF meets but no theorem needs are left out, which strengthens the theorems: positive intervals, divergent time, a signature deadline and a quorum-check timer.

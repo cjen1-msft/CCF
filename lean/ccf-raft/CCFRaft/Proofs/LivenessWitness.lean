@@ -57,6 +57,7 @@ private def fixture (signed : Bool) : Trace (World Model.State) Liveness.Event w
 private def bounds : Bounds where
   heartbeatInterval := 1
   electionTimeout := 4
+  signatureInterval := 1
 
 private theorem fixture_stepAt (signed : Bool) (index : Nat)
     : (fixture signed).stepAt index = some (fixtureStep signed index) :=

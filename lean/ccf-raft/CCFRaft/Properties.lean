@@ -142,211 +142,127 @@ lemma committed_frontier_is_signature_witness
       /\ 0 < nodeState.commitIndex := by
   exact Proofs.Witnesses.committed_frontier_is_signature_witness
 
-/-- Commit liveness, untimed. Take one coherent recorded relational trace.
-Assume coherence and validity of the protocol, timing, crash and delivery
-models for `system := Model.transitionSystem config nodes`.
-The delivery model enforces packet provenance and single consumption.
-Assume separately the unbounded (`none`) heartbeat, signature and confirmation scheduling constraints.
-Choose an index `start` in it. Suppose that
-from `start` on `leader` is the live primary of `term`, that from some index on a
-majority of each of its active configurations is live, and that the links between
-`leader` and the participants are fair-loss. Then every request submitted to
-`leader` at or after `start` is eventually in its committed prefix. -/
+/-- Commit liveness, timed. Take one coherent recorded relational trace. Assume
+coherence and validity of the protocol, timing, crash, delivery and bounded-delay
+models for `system := Model.transitionSystem config nodes`: every packet is
+delivered or dropped within `maxDelay`. Assume that a primary sends due heartbeats
+within `bounds.heartbeatInterval` and due signatures within
+`bounds.signatureInterval`. Take a stable window from index `start` for
+`commitLatency bounds maxDelay backlog`: `leader` is the uncontested primary of
+`term`, stays live and unretired, every configuration active at it keeps a live
+majority among `participants`, and no packet between it and a participant is
+dropped. If at `start` no participant's log diverges from the primary's by more
+than `backlog` entries, and the primary holds or appends `request`, then
+`request` is in the primary's committed prefix within the window.
+The window is what `signature_settles` yields after `duelling_leaders_resolve`. -/
 theorem commit_liveness
     : forall (config : Finset NodeID) (nodes : List NodeID),
         let system := Model.transitionSystem config nodes
         forall (W : Type) [Liveness.HasProtocol W Model.State] [Liveness.HasTime W]
                 [Liveness.HasLive W] [Liveness.HasNetwork W],
-        forall (trace : Liveness.Trace W Liveness.Event) (start : Nat),
+        forall (trace : Liveness.Trace W Liveness.Event) (bounds : Liveness.Bounds),
+        forall (maxDelay : Real) (start backlog : Nat),
+        forall (leader : NodeID) (term : Nat) (participants : Finset NodeID)
+                (request : ReqID),
+          let duration := Liveness.commitLatency bounds maxDelay backlog
+          (trace.Coherent
+            /\ trace.Valid (Liveness.protocolModel system)
+            /\ trace.Valid Liveness.timingModel
+            /\ trace.Valid Liveness.crashModel
+            /\ trace.Valid (Liveness.deliveryModel system)
+            /\ trace.Valid (Liveness.boundedDelayModel maxDelay)
+            /\ 0 <= maxDelay
+            /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
+            /\ trace.SignatureScheduling (some bounds.signatureInterval)
+            /\ Liveness.StableWindow trace start duration leader term participants
+            /\ Liveness.Backlog trace start leader participants backlog
+            /\ Liveness.SubmittedAt trace start leader request)
+          -> exists index,
+              Liveness.Within trace start duration index
+              /\ Liveness.RequestCommitted trace leader request index := by
+  sorry
+
+/-- Duelling leaders resolve, with probability tending to one in the number of
+rounds. Sample `draws`, one uniform timeout offset per round per participant, and
+let the adversary choose any execution `family draws` around it: coherent, valid
+for the protocol, timing, crash, delivery, bounded-delay and election-timer
+models, with the clock unbounded, due heartbeats and signatures sent within their
+bounds, due timeouts fired at once, a good period from `start` long enough for
+`rounds` rounds, and each participant's `k`-th timer reset after `start` drawing
+`draws k i`. If the lead `duelMargin` fits in half an election timeout, then the
+probability that some primary commits a signature of its own term within the good
+period is at least `settleProbability = 1 - (1 - marginProbability) ^ rounds`,
+where `marginProbability = (1 - 2 duelMargin / E) ^ competitors > 0`. No independence of
+the adversary from the draws is assumed: each round's margin event forces the
+outcome pointwise. -/
+theorem duelling_leaders_resolve
+    : forall (config : Finset NodeID) (nodes : List NodeID),
+        let system := Model.transitionSystem config nodes
+        forall (W : Type) [Liveness.HasProtocol W Model.State] [Liveness.HasTime W]
+                [Liveness.HasLive W] [Liveness.HasNetwork W] [Liveness.HasTimers W],
+        forall (competitors rounds : Nat) (candidates : Fin competitors -> NodeID),
+        forall (bounds : Liveness.Bounds) (maxDelay : Real) (start : Nat),
+        forall (participants : Finset NodeID),
+        forall (family
+                : Liveness.Draws competitors rounds -> Liveness.Trace W Liveness.Event),
+          let electionTimeout := bounds.electionTimeout
+          let margin := Liveness.duelMargin bounds maxDelay
+          let duration := rounds * Liveness.roundLength bounds maxDelay
+          (Function.Injective candidates
+            /\ (forall node, node ∈ participants <-> exists i, candidates i = node)
+            /\ 0 <= maxDelay
+            /\ margin < electionTimeout / 2
+            /\ (forall draws,
+                  let trace := family draws
+                  trace.Coherent
+                  /\ trace.Valid (Liveness.protocolModel system)
+                  /\ trace.Valid Liveness.timingModel
+                  /\ trace.Valid Liveness.crashModel
+                  /\ trace.Valid (Liveness.deliveryModel system)
+                  /\ trace.Valid (Liveness.boundedDelayModel maxDelay)
+                  /\ trace.Valid (Liveness.timerModel electionTimeout)
+                  /\ Liveness.TimeDiverges trace
+                  /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
+                  /\ trace.SignatureScheduling (some bounds.signatureInterval)
+                  /\ trace.TimeoutScheduling (some 0)
+                  /\ Liveness.GoodPeriod trace start duration participants
+                  /\ Liveness.TimerDraws trace candidates draws start))
+          -> ENNReal.ofReal
+                (Liveness.settleProbability competitors rounds margin electionTimeout)
+              <= Liveness.uniformDraws competitors rounds electionTimeout
+                  {draws |
+                    Liveness.SignatureCommitted (family draws) start duration
+                  } := by
+  sorry
+
+/-- A primary that has committed a signature of its own term stays uncontested
+while the good period lasts and it stays live: the bridge from
+`duelling_leaders_resolve` to the window `commit_liveness` consumes. Needs
+heartbeats to reset every follower before its timer can fire. -/
+theorem signature_settles
+    : forall (config : Finset NodeID) (nodes : List NodeID),
+        let system := Model.transitionSystem config nodes
+        forall (W : Type) [Liveness.HasProtocol W Model.State] [Liveness.HasTime W]
+                [Liveness.HasLive W] [Liveness.HasNetwork W] [Liveness.HasTimers W],
+        forall (trace : Liveness.Trace W Liveness.Event) (bounds : Liveness.Bounds),
+        forall (maxDelay duration : Real) (start : Nat) (point : W),
         forall (leader : NodeID) (term : Nat) (participants : Finset NodeID),
           (trace.Coherent
             /\ trace.Valid (Liveness.protocolModel system)
             /\ trace.Valid Liveness.timingModel
             /\ trace.Valid Liveness.crashModel
             /\ trace.Valid (Liveness.deliveryModel system)
-            /\ trace.HeartbeatScheduling none
-            /\ trace.SignatureScheduling none
-            /\ trace.ConfirmationScheduling none
-            /\ Liveness.StableLeader trace start leader term
-            /\ Liveness.LiveQuorum trace leader participants
-            /\ Liveness.FairLoss trace (insert leader participants))
-          -> forall (request : ReqID),
-              Liveness.Submitted trace start leader request
-              -> exists index, Liveness.RequestCommitted trace leader request index := by
-  intro config nodes system W _ _ _ _ trace start leader term participants
-    ⟨coherent, protocol, timing, crash, delivery, heartbeats, signatures, confirmations, stable,
-      live, fair⟩ request submitted
-  let _ : Proofs.Config.InitialConfiguration := ⟨config⟩
-  exact Proofs.Replication.commit_liveness ⟨coherent, protocol, timing, crash, delivery⟩
-    heartbeats signatures confirmations stable live fair submitted
-
-/-- Witness: an execution from boot satisfies every premise of `commit_liveness`
-and commits its request. -/
-lemma commit_liveness_witness
-    : exists (config : Finset NodeID) (nodes : List NodeID),
-        let system := Model.transitionSystem config nodes
-        exists (trace : Liveness.Trace (Liveness.World Model.State) Liveness.Event),
-        exists (start : Nat) (leader : NodeID) (term : Nat),
-        exists (participants : Finset NodeID) (request : ReqID),
-          trace.Coherent
-          /\ trace.Valid (Liveness.protocolModel system)
-          /\ trace.Valid Liveness.timingModel
-          /\ trace.Valid Liveness.crashModel
-          /\ trace.Valid (Liveness.deliveryModel system)
-          /\ trace.HeartbeatScheduling none
-          /\ trace.SignatureScheduling none
-          /\ trace.ConfirmationScheduling none
-          /\ Liveness.StableLeader trace start leader term
-          /\ Liveness.LiveQuorum trace leader participants
-          /\ Liveness.FairLoss trace (insert leader participants)
-          /\ Liveness.Submitted trace start leader request
-          /\ exists index, Liveness.RequestCommitted trace leader request index := by
-  exact Proofs.LivenessWitness.commit_liveness_witness
-
-/-- Stable leadership from timing. Take one coherent recorded relational trace.
-Assume coherence and validity of the protocol, timing, crash and delivery
-models for `system := Model.transitionSystem config nodes`.
-The delivery model enforces packet provenance and single consumption.
-Assume separately the scheduling constraints: heartbeats within `bounds.heartbeatInterval`, eventual signatures and confirmations, and no election timeout within `bounds.electionTimeout / 2` of a reset.
-Choose an index `start` in it at which `leader` is the
-newest primary, of `term` (`QuietStart`). Suppose that from `start` on, the
-primary's AppendEntries requests arrive within `delay` and pass the log check of
-every follower of the term, a heartbeat interval plus `delay` is below half the
-election timeout, every node that times out in the term has been a replication
-peer of the primary since `start`, and the primary stays live, does not retire,
-and neither hands over nor steps down on a quorum check. Then from `start` on,
-`leader` is the live primary of `term`. The log checks, the coverage and the
-quorum checks are assumed, not derived. -/
-theorem stable_leader
-    : forall (config : Finset NodeID) (nodes : List NodeID),
-        let system := Model.transitionSystem config nodes
-        forall (W : Type) [Liveness.HasProtocol W Model.State] [Liveness.HasTime W]
-                [Liveness.HasLive W] [Liveness.HasNetwork W],
-        forall (trace : Liveness.Trace W Liveness.Event)
-                (bounds : Liveness.Bounds) (start : Nat),
-        forall (leader : NodeID) (term : Nat) (delay : Real),
-          (trace.Coherent
-            /\ trace.Valid (Liveness.protocolModel system)
-            /\ trace.Valid Liveness.timingModel
-            /\ trace.Valid Liveness.crashModel
-            /\ trace.Valid (Liveness.deliveryModel system)
+            /\ trace.Valid (Liveness.boundedDelayModel maxDelay)
+            /\ trace.Valid (Liveness.timerModel bounds.electionTimeout)
+            /\ 0 <= maxDelay
             /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
-            /\ trace.SignatureScheduling none
-            /\ trace.ConfirmationScheduling none
-            /\ trace.ElectionScheduling (some (bounds.electionTimeout / 2))
-            /\ Liveness.QuietStart trace start leader term bounds.electionTimeout
-            /\ Liveness.Timely trace start leader delay
-            /\ 0 <= delay
-            /\ Liveness.Matching trace start leader term
-            /\ bounds.heartbeatInterval + delay < bounds.electionTimeout / 2
-            /\ Liveness.Covered trace start leader term
-            /\ Liveness.Incumbent trace start leader)
-          -> Liveness.StableLeader trace start leader term := by
-  intro config nodes system W _ _ _ _ trace bounds start leader term delay
-    ⟨coherent, protocol, timing, crash, delivery, heartbeats, _, _, elections, quiet, timely,
-      nonneg, matching, ratio, covered, incumbent⟩
-  let _ : Proofs.Config.InitialConfiguration := ⟨config⟩
-  exact Proofs.Leadership.stable_leader ⟨coherent, protocol, timing, crash, delivery⟩ heartbeats
-    elections quiet timely nonneg matching ratio covered incumbent
-
-/-- Witness: an execution from boot satisfies every premise of `stable_leader`. -/
-lemma stable_leader_witness
-    : exists (config : Finset NodeID) (nodes : List NodeID),
-        let system := Model.transitionSystem config nodes
-        exists (trace : Liveness.Trace (Liveness.World Model.State) Liveness.Event),
-        exists (bounds : Liveness.Bounds) (start : Nat),
-        exists (leader : NodeID) (term : Nat) (delay : Real),
-          trace.Coherent
-          /\ trace.Valid (Liveness.protocolModel system)
-          /\ trace.Valid Liveness.timingModel
-          /\ trace.Valid Liveness.crashModel
-          /\ trace.Valid (Liveness.deliveryModel system)
-          /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
-          /\ trace.SignatureScheduling none
-          /\ trace.ConfirmationScheduling none
-          /\ trace.ElectionScheduling (some (bounds.electionTimeout / 2))
-          /\ Liveness.QuietStart trace start leader term bounds.electionTimeout
-          /\ Liveness.Timely trace start leader delay
-          /\ 0 <= delay
-          /\ Liveness.Matching trace start leader term
-          /\ bounds.heartbeatInterval + delay < bounds.electionTimeout / 2
-          /\ Liveness.Covered trace start leader term
-          /\ Liveness.Incumbent trace start leader
-          /\ Liveness.StableLeader trace start leader term := by
-  exact Proofs.LivenessWitness.stable_leader_witness
-
-/-- Commit liveness, timed: `commit_liveness` with the stable primary derived by
-`stable_leader` rather than assumed. -/
-theorem commit_liveness_timed
-    : forall (config : Finset NodeID) (nodes : List NodeID),
-        let system := Model.transitionSystem config nodes
-        forall (W : Type) [Liveness.HasProtocol W Model.State] [Liveness.HasTime W]
-                [Liveness.HasLive W] [Liveness.HasNetwork W],
-        forall (trace : Liveness.Trace W Liveness.Event)
-                (bounds : Liveness.Bounds) (start : Nat),
-        forall (leader : NodeID) (term : Nat) (participants : Finset NodeID)
-                (delay : Real),
-          (trace.Coherent
-            /\ trace.Valid (Liveness.protocolModel system)
-            /\ trace.Valid Liveness.timingModel
-            /\ trace.Valid Liveness.crashModel
-            /\ trace.Valid (Liveness.deliveryModel system)
-            /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
-            /\ trace.SignatureScheduling none
-            /\ trace.ConfirmationScheduling none
-            /\ trace.ElectionScheduling (some (bounds.electionTimeout / 2))
-            /\ Liveness.QuietStart trace start leader term bounds.electionTimeout
-            /\ Liveness.Timely trace start leader delay
-            /\ 0 <= delay
-            /\ Liveness.Matching trace start leader term
-            /\ bounds.heartbeatInterval + delay < bounds.electionTimeout / 2
-            /\ Liveness.Covered trace start leader term
-            /\ Liveness.Incumbent trace start leader
-            /\ Liveness.LiveQuorum trace leader participants
-            /\ Liveness.FairLoss trace (insert leader participants))
-          -> forall (request : ReqID),
-              Liveness.Submitted trace start leader request
-              -> exists index, Liveness.RequestCommitted trace leader request index := by
-  intro config nodes system W _ _ _ _ trace bounds start leader term participants delay
-    ⟨coherent, protocol, timing, crash, delivery, heartbeats, signatures, confirmations, elections,
-      quiet, timely, nonneg, matching, ratio, covered, incumbent, live, fair⟩ request submitted
-  let _ : Proofs.Config.InitialConfiguration := ⟨config⟩
-  have admissible : Proofs.Liveness.Admissible system trace :=
-    ⟨coherent, protocol, timing, crash, delivery⟩
-  exact Proofs.Replication.commit_liveness admissible heartbeats signatures confirmations
-    (Proofs.Leadership.stable_leader admissible heartbeats elections quiet timely nonneg matching
-      ratio covered incumbent)
-    live fair submitted
-
-/-- Witness: an execution from boot satisfies every premise of
-`commit_liveness_timed` and commits its request. -/
-lemma commit_liveness_timed_witness
-    : exists (config : Finset NodeID) (nodes : List NodeID),
-        let system := Model.transitionSystem config nodes
-        exists (trace : Liveness.Trace (Liveness.World Model.State) Liveness.Event),
-        exists (bounds : Liveness.Bounds) (start : Nat),
-        exists (leader : NodeID) (term : Nat) (participants : Finset NodeID),
-        exists (delay : Real) (request : ReqID),
-          trace.Coherent
-          /\ trace.Valid (Liveness.protocolModel system)
-          /\ trace.Valid Liveness.timingModel
-          /\ trace.Valid Liveness.crashModel
-          /\ trace.Valid (Liveness.deliveryModel system)
-          /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
-          /\ trace.SignatureScheduling none
-          /\ trace.ConfirmationScheduling none
-          /\ trace.ElectionScheduling (some (bounds.electionTimeout / 2))
-          /\ Liveness.QuietStart trace start leader term bounds.electionTimeout
-          /\ Liveness.Timely trace start leader delay
-          /\ 0 <= delay
-          /\ Liveness.Matching trace start leader term
-          /\ bounds.heartbeatInterval + delay < bounds.electionTimeout / 2
-          /\ Liveness.Covered trace start leader term
-          /\ Liveness.Incumbent trace start leader
-          /\ Liveness.LiveQuorum trace leader participants
-          /\ Liveness.FairLoss trace (insert leader participants)
-          /\ Liveness.Submitted trace start leader request
-          /\ exists index, Liveness.RequestCommitted trace leader request index := by
-  exact Proofs.LivenessWitness.commit_liveness_timed_witness
+            /\ bounds.heartbeatInterval + maxDelay < bounds.electionTimeout / 2
+            /\ leader ∈ participants
+            /\ trace.stateAt start = some point
+            /\ Liveness.SignedPrimary point leader term
+            /\ Liveness.GoodPeriod trace start duration participants
+            /\ Liveness.Window.StaysActive trace start duration leader)
+          -> Liveness.StableWindow trace start duration leader term participants := by
+  sorry
 
 end CCFRaft.Properties

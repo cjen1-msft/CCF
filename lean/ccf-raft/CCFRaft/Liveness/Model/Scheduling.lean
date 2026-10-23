@@ -35,6 +35,10 @@ structure Bounds where
   counts the time before it. So this is at most `election_timeout` minus twice
   the tick interval, and less if node clocks drift. -/
   electionTimeout : Real
+  /-- An upper bound on the real time a primary with unsigned entries takes to
+  append a signature. CCF signs once `sig_ms_interval` elapses, checked on each
+  tick, so this is at least that plus the tick interval. -/
+  signatureInterval : Real
 
 /-- No deadline, or at most `bound` after `origin`. -/
 def Deadline (bound : Option Real) (origin point : W) : Prop :=
@@ -147,29 +151,46 @@ def Trace.ConfirmationScheduling (trace : Trace W Event) (bound : Option Real) :
     Scheduled trace bound (fun point => ConfirmationDue point leader)
       (fun step => Confirms step leader)
 
-/-- Events that reset a node's election timer in CCF: starting an election
-(`become_pre_vote_candidate`), and an AppendEntries of a newer term, or of the
-node's term that finds it a candidate or pre-vote candidate (both through
-`become_aware_of_new_term`), or that passes the log check. An AppendEntries of the
-node's term that fails the log check does not reset the timer (`raft.h`,
-`recv_append_entries`, which calls `restart_election_timeout` only after the
-`prev_term` check). -/
+/-- Steps that call `restart_election_timeout` in CCF: starting a pre-vote or
+regular election, stepping down on a quorum check, adopting a newer term,
+granting a regular vote, or accepting an AppendEntries term/log check.
+On a valid protocol step, an increased local term records `become_candidate` or
+`become_aware_of_new_term`; inspecting the actual transition preserves the
+message-specific guards (unknown responses, non-primary AE responses, and vote
+proposals cannot cause spurious resets).
+A same-term AppendEntries also resets a candidate through `become_follower`,
+even if its log check fails; an established follower resets only after that
+check. Multiple resets within one atomic step record the final draw. -/
 def ElectionReset (step : CCF.Execution.Step W Event) (node : NodeID) : Prop :=
-  step.action = .local node (.timeout .election)
-  \/ exists envelope request state,
-      step.action.delivered = some envelope
-      /\ envelope.target = node
-      /\ envelope.payload = .appendEntriesRequest request
-      /\ CCF.MultiNodeTransitionSystem.nodeState (proto step.before) node = some state
-      /\ (state.currentTerm < request.term
-          \/ (state.currentTerm = request.term
-              /\ (state.role = .candidate
-                  \/ state.role = .preVoteCandidate
-                  \/ termAt state.log request.prevLogIndex = request.prevLogTerm)))
+  match step.action with
+  | .local actor (.timeout _) => actor = node
+  | .deliver packet =>
+      packet.envelope.target = node
+      /\ match CCF.MultiNodeTransitionSystem.nodeState (proto step.before) node with
+          | none => False
+          | some state =>
+              (match CCF.MultiNodeTransitionSystem.nodeState (proto step.after) node with
+                | some after => state.currentTerm < after.currentTerm
+                | none => False)
+              \/ match packet.envelope.payload with
+                  | .appendEntriesRequest request =>
+                      state.currentTerm < request.term
+                      \/ (state.currentTerm = request.term
+                          /\ (state.role = .candidate
+                              \/ state.role = .preVoteCandidate
+                              \/ termAt state.log request.prevLogIndex
+                                  = request.prevLogTerm))
+                  | .requestVoteRequest request =>
+                      state.currentTerm = request.term
+                      /\ voteLogUpToDate state request
+                      /\ !state.primaryKnown
+                      /\ (state.votedFor = none
+                          \/ state.votedFor = some packet.envelope.source)
+                  | _ => False
+  | _ => False
 
 /-- No election timeout within `minimum` of a reset; `none` allows a timeout at
-any time. Pass half of `Bounds.electionTimeout`. CCF also resets on other events,
-such as granting a vote or stepping down; leaving those out allows more timeouts.
+any time. Pass half of `Bounds.electionTimeout`.
 Needed: without it any node may time out at any time, and depose the primary. -/
 def Trace.ElectionScheduling (trace : Trace W Event) (minimum : Option Real) : Prop :=
   match minimum with

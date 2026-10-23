@@ -5,6 +5,8 @@ public import CCFRaft.Liveness.Assumptions.StableLeader
 public import CCFRaft.Liveness.Assumptions.QuietStart
 public import CCFRaft.Liveness.Assumptions.FairLoss
 public import CCFRaft.Liveness.Assumptions.Submitted
+public import CCFRaft.Liveness.Assumptions.Duel
+public import CCFRaft.Liveness.Assumptions.Window
 
 @[expose] public section
 

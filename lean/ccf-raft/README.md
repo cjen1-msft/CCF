@@ -2,7 +2,9 @@
 
 An executable Lean model of CCF's consensus implementation ([`src/consensus/aft/raft.h`](../../src/consensus/aft/raft.h)), safety property statements and a propositional timed liveness model.
 It assumes familiarity with the [CCF consensus documentation](../../doc/architecture/consensus/index.rst).
-`commit_liveness` states deterministic commit progress under a stable primary, a live quorum, fair-loss links and a submitted request; `stable_leader` states stable leadership from heartbeat, delay and election-timeout bounds, assuming a quiet start and no quorum-check step-down or failed log check; see [the liveness report](LIVENESS.md).
+The public liveness statements are a specification checkpoint: timed `commit_liveness` within a `StableWindow`, probabilistic `duelling_leaders_resolve` during a `GoodPeriod`, and the `signature_settles` bridge.
+All three currently contain `sorry`; their latency and probability bounds are not proved.
+The earlier untimed commitment and conditional stable-leadership proofs remain internal; see [the liveness report](LIVENESS.md).
 
 ## Source map
 
@@ -67,7 +69,9 @@ Generic `Seq.filter` and `Seq.filterMap` helpers remain in [`Liveness/Seq.lean`]
 ## Scope
 
 Node join and snapshot installation are not modeled.
-Commit liveness assumes a stable primary, which `stable_leader` derives from timing under further assumptions; probabilistic election progress is not modeled.
+The timed commitment statement assumes a bounded stable-primary window; the probabilistic election statement and its bridge remain proof obligations.
+Explicit deadlines and continuous uniform draws idealize the concrete tick-based timer; the existing conservative `Bounds.electionTimeout` interpretation is unchanged.
+`ElectionReset` accounts for represented CCF reset paths, including term adoption, regular-election starts, vote grants and quorum-check step-downs, while retaining message-handler guards and the same-term AppendEntries log-check distinction.
 
 ## Validation
 
@@ -82,11 +86,13 @@ lake lint
 ```
 
 `lake check` builds the default target with compiler warnings, including `sorry`, treated as errors, before separately replaying the compiled proofs in Lean's kernel and rejecting nonstandard axioms.
+The three draft liveness statements currently prevent this strict check from passing; no validation settings are relaxed for this checkpoint.
 Kernel tracing reports the declarations checked during compilation; cached modules do not emit fresh compilation traces.
 CI runs this before import coverage, formatting, and linting so the initial build and its traces occur in this step.
 The build also runs two explicit action traces from an initialized network: committing a client request, and adding two nodes then electing a new primary and committing another request.
 The reconfiguration trace checks each node's ledger before delivery, after setup, after replication and commitment, after election, and after the new primary's client request.
 These are regression examples, not exhaustive checking.
+[`Tests/ElectionReset.lean`](CCFRaft/Tests/ElectionReset.lean) executes local protocol handlers and checks timer-reset classification for both reset and ignored/rejected-message cases.
 `lake check` runs without sandboxing here, so build-time code must be trusted.
 `CCFRaft.lean` reexports `Properties.lean` and its public imports transitively, while importing tests privately.
 The shared `check-imports` command rejects modules missing from that import closure.
