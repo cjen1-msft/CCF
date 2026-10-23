@@ -34,11 +34,11 @@ Lean has no row types or polymorphic variants, so these classes play the role of
 
 Each public statement conjoins `trace.Coherent` and validity of four models inline:
 
-| Model | Initial predicate | Next relation |
-| ----- | ----------------- | ------------- |
-| `protocolModel system` | `system.init (proto w)` | Execute `Event.action` in `system`, or preserve `proto` for crash, drop and idle. |
-| `timingModel` | `True` | `time before <= time after`. |
-| `crashModel` | `crashSystem.init (live w)` | `crashSystem.step (live before) event = some (live after)`. |
+| Model                  | Initial predicate                | Next relation                                                                                                                                  |
+| ---------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `protocolModel system` | `system.init (proto w)`          | Execute `Event.action` in `system`, or preserve `proto` for crash, drop and idle.                                                              |
+| `timingModel`          | `True`                           | `time before <= time after`.                                                                                                                   |
+| `crashModel`           | `crashSystem.init (live w)`      | `crashSystem.step (live before) event = some (live after)`.                                                                                    |
 | `deliveryModel system` | `pending w = [] /\ issued w = 0` | Consume an existing packet for delivery or drop, append this step's actual outgoing packets with fresh sequence numbers, and advance `issued`. |
 
 The protocol model in [`Model/Protocol.lean`](CCFRaft/Liveness/Model/Protocol.lean) preserves the existing `Event.action` mapping, including delivery of the received envelope.
@@ -50,7 +50,8 @@ It requires live actors and permanently removes crashed nodes, with unrestricted
 Deliveries require only a live receiver, so a sender may crash after sending; a repeated crash is disabled.
 
 The delivery model in [`Model/Delivery.lean`](CCFRaft/Liveness/Model/Delivery.lean) starts from an empty pending ledger.
-Actual outputs receive consecutive sequence numbers from `issued`, with `sentAt := time after` of the sending step.
+Actual outputs receive consecutive sequence numbers from `issued`, with `sentAt := time before` of the sending step.
+A step happens at its before-time, and time may elapse after it; every timing constraint compares before-times.
 Delivery and drop consume an outstanding packet before this step's outputs are registered, rejecting fabrication, early consumption and reuse, including delivery after a drop.
 Equal envelopes remain distinct transmissions.
 `Trace.SentAt index packet` holds when the packet first appears in the ledger after step `index`.
@@ -72,8 +73,8 @@ They are distinct from the network fairness assumption `FairLoss`.
 An intermediate starting point is an explicit index `start` in this execution from boot, not an implicitly chosen reachable initial state.
 The generic sequence helpers in [`Liveness/Seq.lean`](CCFRaft/Liveness/Seq.lean) remain independent of this interface.
 
-The existing proofs predate this trace-interface revision and have not yet been adapted or checked against the revised statements.
-The intended claims in [`Properties.lean`](CCFRaft/Properties.lean) are:
+The proofs are written directly against these statements.
+The claims in [`Properties.lean`](CCFRaft/Properties.lean) are:
 
 - `commit_liveness` separately requires heartbeat, signature, and retirement-confirmation scheduling, plus four assumptions: a primary stable from some point on, a live quorum, fair-loss links and a submitted request.
 - `stable_leader` derives a stable primary from bounded heartbeat and election scheduling and the premises in [stable leadership](#stable-leadership).
@@ -88,25 +89,26 @@ The proof also needed two changes to bring the model in line with CCF; see [a lo
 `commit_liveness` states eventual inclusion of a submitted request in the stable primary's committed prefix, not a latency bound, commitment at every replica, or election convergence.
 The environment does not assume eventual commitment or eventual quorum acknowledgements.
 
-Previously proved, reusing the safety invariant from [`Proofs/Safety`](CCFRaft/Proofs/Safety) and depending only on the standard axioms; adaptation to the revised trace interface is pending:
+Proved, reusing the safety invariant from [`Proofs/Safety`](CCFRaft/Proofs/Safety) and depending only on the standard axioms:
 
-| Result                                   | File                                                                         | Meaning                                                                                                                                                                                                      |
-| ---------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `commit_liveness`                        | [`Proofs/Replication/Commit.lean`](CCFRaft/Proofs/Replication/Commit.lean)   | `Properties.commit_liveness`.                                                                                                                                                                                |
-| `signature_commits`                      | [`Proofs/Replication/Commit.lean`](CCFRaft/Proofs/Replication/Commit.lean)   | Signature commitment, for every signature in the primary's log, whatever its term.                                                                                                                           |
-| `confirmation_owed`, `owing_of_exec`     | [`Proofs/Replication/Owing.lean`](CCFRaft/Proofs/Replication/Owing.lean)     | In every reachable state, a primary that alone makes an uncommitted current-term signature committable owes a retirement confirmation.                                                                       |
-| `sane_of_exec`                           | [`Proofs/Replication/Sane.lean`](CCFRaft/Proofs/Replication/Sane.lean)       | In every reachable state, every confirmation in a node's log follows a removal it has committed, and every re-add follows a confirmation it has committed, with no configuration naming the node in between. |
-| `advance_owed`                           | [`Proofs/Replication/Confirm.lean`](CCFRaft/Proofs/Replication/Confirm.lean) | Right after a commit scan, such a signature means the scan retired the other members, whose confirmations are then owed.                                                                                     |
-| `request_committed`                      | [`Proofs/CommitLiveness.lean`](CCFRaft/Proofs/CommitLiveness.lean)           | Signature commitment implies commit liveness: the submission puts the request in the primary's log, the signature obligation appends a covering current-term signature, and the primary keeps both.          |
-| `stable_leader`, `quiet_all`             | [`Proofs/Leadership/Stable.lean`](CCFRaft/Proofs/Leadership/Stable.lean)     | `Properties.stable_leader`: the primary's term stays quiet at every index.                                                                                                                                   |
-| `no_timeout`, `reset_follows`            | [`Proofs/Leadership/Stable.lean`](CCFRaft/Proofs/Leadership/Stable.lean)     | While the term is quiet, heartbeats and timely delivery reset every tracked node's election timer often enough that no node of the term times out.                                                           |
-| `Quiet.step`                             | [`Proofs/Leadership/Quiet.lean`](CCFRaft/Proofs/Leadership/Quiet.lean)       | A step keeps the term quiet, unless it is an election timeout in the term, or the primary nominates a successor, retires or fails a quorum check.                                                            |
-| `recent_reset`                           | [`Proofs/Leadership/Timers.lean`](CCFRaft/Proofs/Leadership/Timers.lean)     | A timer reset within `gap` of every earlier point has a reset less than `window > gap` before any point `window` after the start.                                                                            |
-| `match_reaches`                          | [`Proofs/Replication/Peer.lean`](CCFRaft/Proofs/Replication/Peer.lean)       | The primary's match index for a live peer that is eligible from some point on, and is reached by productive sends and fair-loss links, eventually covers every position of the primary's log.                |
-| `peer_term_le`                           | [`Proofs/StablePrimary.lean`](CCFRaft/Proofs/StablePrimary.lean)             | Under `FairLoss`, a live peer that stays eligible for a stable primary never holds a newer term.                                                                                                             |
-| `ack_commits_trace`                      | [`Proofs/StablePrimary.lean`](CCFRaft/Proofs/StablePrimary.lean)             | A successful current-term acknowledgement delivered to the stable primary commits every signature already acknowledged by the commit scan's quorums.                                                         |
-| `acknowledged_signature_commits`         | [`Proofs/Liveness.lean`](CCFRaft/Proofs/Liveness.lean)                       | The node-level commit scan, including retirement and successor handling, commits a quorum-acknowledged current-term signature.                                                                               |
-| `reachable`, `reliable_suffix_fair_loss` | [`Proofs/Liveness.lean`](CCFRaft/Proofs/Liveness.lean)                       | Timed executions only visit reachable states; an eventually reliable suffix satisfies `FairLoss`.                                                                                                            |
+| Result                               | File                                                                         | Meaning                                                                                                                                                                                                      |
+| ------------------------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `commit_liveness`                    | [`Proofs/Replication/Commit.lean`](CCFRaft/Proofs/Replication/Commit.lean)   | `Properties.commit_liveness`.                                                                                                                                                                                |
+| `signature_commits`                  | [`Proofs/Replication/Commit.lean`](CCFRaft/Proofs/Replication/Commit.lean)   | Signature commitment, for every signature in the primary's log, whatever its term.                                                                                                                           |
+| `confirmation_owed`, `owing_of_exec` | [`Proofs/Replication/Owing.lean`](CCFRaft/Proofs/Replication/Owing.lean)     | In every reachable state, a primary that alone makes an uncommitted current-term signature committable owes a retirement confirmation.                                                                       |
+| `sane_of_exec`                       | [`Proofs/Replication/Sane.lean`](CCFRaft/Proofs/Replication/Sane.lean)       | In every reachable state, every confirmation in a node's log follows a removal it has committed, and every re-add follows a confirmation it has committed, with no configuration naming the node in between. |
+| `advance_owed`                       | [`Proofs/Replication/Confirm.lean`](CCFRaft/Proofs/Replication/Confirm.lean) | Right after a commit scan, such a signature means the scan retired the other members, whose confirmations are then owed.                                                                                     |
+| `request_committed`                  | [`Proofs/CommitLiveness.lean`](CCFRaft/Proofs/CommitLiveness.lean)           | Signature commitment implies commit liveness: the submission puts the request in the primary's log, the signature obligation appends a covering current-term signature, and the primary keeps both.          |
+| `stable_leader`, `quiet_all`         | [`Proofs/Leadership/Stable.lean`](CCFRaft/Proofs/Leadership/Stable.lean)     | `Properties.stable_leader`: the primary's term stays quiet at every index.                                                                                                                                   |
+| `no_timeout`, `reset_follows`        | [`Proofs/Leadership/Stable.lean`](CCFRaft/Proofs/Leadership/Stable.lean)     | While the term is quiet, heartbeats and timely delivery reset every tracked node's election timer often enough that no node of the term times out.                                                           |
+| `Quiet.step`                         | [`Proofs/Leadership/Quiet.lean`](CCFRaft/Proofs/Leadership/Quiet.lean)       | A step keeps the term quiet, unless it is an election timeout in the term, or the primary nominates a successor, retires or fails a quorum check.                                                            |
+| `recent_reset`                       | [`Proofs/Leadership/Timers.lean`](CCFRaft/Proofs/Leadership/Timers.lean)     | A timer reset within `gap` of every earlier point has a reset less than `window > gap` before any point `window` after the start.                                                                            |
+| `match_reaches`                      | [`Proofs/Replication/Peer.lean`](CCFRaft/Proofs/Replication/Peer.lean)       | The primary's match index for a live peer that is eligible from some point on, and is reached by productive sends and fair-loss links, eventually covers every position of the primary's log.                |
+| `peer_term_le`                       | [`Proofs/StablePrimary.lean`](CCFRaft/Proofs/StablePrimary.lean)             | Under `FairLoss`, a live peer that stays eligible for a stable primary never holds a newer term.                                                                                                             |
+| `ack_commits_trace`                  | [`Proofs/StablePrimary.lean`](CCFRaft/Proofs/StablePrimary.lean)             | A successful current-term acknowledgement delivered to the stable primary commits every signature already acknowledged by the commit scan's quorums.                                                         |
+| `acknowledged_signature_commits`     | [`Proofs/Liveness.lean`](CCFRaft/Proofs/Liveness.lean)                       | The node-level commit scan, including retirement and successor handling, commits a quorum-acknowledged current-term signature.                                                                               |
+| `Admissible.reachable`               | [`Proofs/Liveness/Admissible.lean`](CCFRaft/Proofs/Liveness/Admissible.lean) | Every recorded protocol state is reachable in the system.                                                                                                                                                    |
+| `reliable_suffix_fair_loss`          | [`Proofs/Liveness.lean`](CCFRaft/Proofs/Liveness.lean)                       | An eventually reliable suffix satisfies `FairLoss`.                                                                                                                                                          |
 
 `signature_commits` takes a covering current-term signature and supposes that it is never committed.
 
@@ -118,6 +120,11 @@ Previously proved, reusing the safety invariant from [`Proofs/Safety`](CCFRaft/P
    Otherwise the primary alone makes the signature committable, so a retirement confirmation is owed (`confirmation_owed`); the primary eventually appends it, and that append runs the commit scan (`append_commits_trace`).
 
 `peer_term_le` discharges the newer-term case that would otherwise block catch-up.
+
+The proofs share a base in [`Proofs/Liveness/`](CCFRaft/Proofs/Liveness).
+`Admissible system trace` bundles coherence and the four base model validities; its lemmas give each recorded step's protocol transition or stutter, live actors, packet provenance and reachability.
+`StableLeader` and `Submitted` are indexed by the explicit `start`, so each argument runs on the recording from that index rather than on a shifted suffix.
+No premise requires an infinite recording: an obligation that stays due must eventually fire, so a primary that stays due to send heartbeats keeps the recording going (`Scheduled.recorded`, `Scheduled.often`).
 
 ## Stable leadership
 
@@ -243,13 +250,13 @@ They are environment/scheduler restrictions used to establish the separate reque
 ## Execution and transport
 
 `Trace` records an initial world and a sequence of explicit before-state, event and after-state triples.
-Each world includes protocol state, absolute time, live identities, pending packets and the next step index.
+Each world includes protocol state, absolute time, live identities, pending packets and the next packet sequence number.
 An event is a local input, delivery, drop, crash or idle step.
 Actual local and delivery events use the unchanged `Model.transitionSystem.step`; other events preserve the protocol state.
-The existing `Proofs.Liveness.reachable` proof has not yet been ported to this relational interface.
+`Proofs.Liveness.Admissible.reachable` shows that every recorded protocol state is reachable in that system.
 
 The base network remains a list of envelopes with arbitrary delivery order.
-A packet is identified by the sequence number the ledger issues when the actual recording callback emits its envelope, with `sentAt` equal to that step's after-time.
+A packet is identified by the sequence number the ledger issues when the actual recording callback emits its envelope, with `sentAt` equal to that step's before-time.
 Each occurrence can resolve at most once, and cannot resolve before being sent.
 Equal message contents therefore do not identify equal transmissions.
 
@@ -267,12 +274,12 @@ Joining and snapshot installation remain outside the underlying model.
 Each public statement conjoins coherence and the four base model validities inline, independently of any client request.
 The optional `boundedDelayModel` is separate, as are these read-only scheduling constraints:
 
-| Constraint              | What it says                                                                                                                                                                                 | Used by           |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| Constraint              | What it says                                                                                                                                                                                     | Used by           |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- |
 | Replication scheduling  | A due live primary-to-peer obligation eventually resolves; the timed variant also requires a send in `(i, j]` at each later deadline crossing, carrying entries when the frontier has a backlog. | both              |
-| Signature scheduling    | Unsigned entries, or a latest signature from an earlier term, eventually cause a signature append, unless the obligation ceases.                                                             | `commit_liveness` |
-| Confirmation scheduling | An owed retirement confirmation is eventually appended, unless it ceases to be owed.                                                                                                         | `commit_liveness` |
-| Election lower bounds   | An election timeout cannot fire within `E / 2` of an earlier reset: a timeout, or an AppendEntries of a newer term, or of the node's term that passes its log check or finds it a candidate. | `stable_leader`   |
+| Signature scheduling    | Unsigned entries, or a latest signature from an earlier term, eventually cause a signature append, unless the obligation ceases.                                                                 | `commit_liveness` |
+| Confirmation scheduling | An owed retirement confirmation is eventually appended, unless it ceases to be owed.                                                                                                             | `commit_liveness` |
+| Election lower bounds   | An election timeout cannot fire within `E / 2` of an earlier reset: a timeout, or an AppendEntries of a newer term, or of the node's term that passes its log check or finds it a candidate.     | `stable_leader`   |
 
 `commit_liveness` states each untimed CCF scheduling obligation separately, without requiring heartbeat deadlines or election-timer bounds.
 Constraints that CCF meets but no theorem needs are left out, which strengthens the theorems: positive intervals, divergent time, a signature deadline and a quorum-check timer.

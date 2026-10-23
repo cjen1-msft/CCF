@@ -46,14 +46,16 @@ def Deadline (bound : Option Real) (origin point : W) : Prop :=
 within the optional bound. A due obligation must resolve before a finite
 execution ends. -/
 def Scheduled (trace : Trace W Event) (bound : Option Real) (Due : W -> Prop)
-    (Fires : CCF.Execution.Step W Event -> Prop) : Prop :=
+    (Fires : CCF.Execution.Step W Event -> Prop)
+    : Prop :=
   forall index point,
     trace.stateAt index = some point
     -> Due point
-    -> Eventually trace index fun later laterPoint =>
-        Deadline bound point laterPoint
-        /\ (Not (Due laterPoint)
-            \/ exists step, trace.stepAt later = some step /\ Fires step)
+    -> Eventually trace index
+        fun later laterPoint =>
+          Deadline bound point laterPoint
+          /\ (Not (Due laterPoint)
+              \/ exists step, trace.stepAt later = some step /\ Fires step)
 
 /-- An active primary with an eligible, live replication peer. -/
 def PeerDue (point : W) (leader peer : NodeID) : Prop :=
@@ -98,7 +100,8 @@ def SignatureDue (point : W) (leader : NodeID) : Prop :=
 
 /-- The input actually appends a signature, rather than merely enabling one. -/
 def Signs (step : CCF.Execution.Step W Event) (leader : NodeID) : Prop :=
-  exists entries, step.action = .local leader (.append entries) /\ List.Mem .signature entries
+  exists entries,
+    step.action = .local leader (.append entries) /\ List.Mem .signature entries
 
 /-- CCF's periodic signature task signs every `sig_ms_interval` when there are
 unsigned entries (`committable_gap() > 0`) or the consensus asks for one
@@ -108,7 +111,9 @@ Needed: `Proofs.LivenessWitness.unsigned_starvation_witness` is a stable,
 reliable execution with a submitted request that never commits because it
 never signs. CCF signs within `sig_ms_interval`, but no theorem needs the bound. -/
 def Trace.SignatureScheduling (trace : Trace W Event) (bound : Option Real) : Prop :=
-  forall leader, Scheduled trace bound (fun point => SignatureDue point leader) (fun step => Signs step leader)
+  forall leader,
+    Scheduled trace bound (fun point => SignatureDue point leader)
+      (fun step => Signs step leader)
 
 /-- The primary may append a retirement confirmation: a committed configuration
 removed a node with no confirmation in the log. This is the enabling condition
@@ -138,7 +143,8 @@ primary alone makes that signature committable, but only another append or
 acknowledgement reruns the commit scan; see `LIVENESS.md`. The cleanup request
 has no deadline. -/
 def Trace.ConfirmationScheduling (trace : Trace W Event) (bound : Option Real) : Prop :=
-  forall leader, Scheduled trace bound (fun point => ConfirmationDue point leader)
+  forall leader,
+    Scheduled trace bound (fun point => ConfirmationDue point leader)
       (fun step => Confirms step leader)
 
 /-- Events that reset a node's election timer in CCF: starting an election

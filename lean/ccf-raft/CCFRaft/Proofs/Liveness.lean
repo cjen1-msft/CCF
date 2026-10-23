@@ -1,54 +1,37 @@
 module
 
-public import CCFRaft.Liveness.Assumptions
+public import CCFRaft.Proofs.Liveness.Admissible
+public import CCFRaft.Proofs.Liveness.Network
+public import CCFRaft.Proofs.Liveness.Scheduling
 
 @[expose] public section
 
-namespace CCFRaft.Proofs
+/-!
+# Liveness proof base
 
-/-- `leader` leads `term` at every index of the execution, `StableLeader` from index
-0. The proofs reduce a primary stable from `start` to this, on the suffix of the
-execution from `start`. -/
-def LeadsThroughout (trace : Liveness.Trace) (leader : Model.Node.NodeID) (term : Nat) : Prop :=
-  forall index, Liveness.Leads trace index leader term
-
-end CCFRaft.Proofs
+Admissible executions, the packet ledger and scheduled obligations, imported
+from `Proofs/Liveness/`, plus fair-loss links and the primary's commit scan.
+-/
 
 namespace CCFRaft.Proofs.Liveness
 
 open Model.Node
 open CCFRaft.Liveness
 
-/-- Environment events do not introduce new protocol states. -/
-theorem reachable {trace : Trace} {config : Finset NodeID} {nodes : List NodeID}
-    (valid : trace.ValidFrom config nodes) (index : Nat)
-    : (Model.transitionSystem config nodes).Reachable (trace.state index) := by
-  induction index with
-  | zero => exact valid.initial
-  | succ index ih =>
-      cases selected : (trace.event index).action with
-      | none => simpa only [valid.stutter index selected] using ih
-      | some action => exact .step ih (valid.step index action selected)
-
 /-- Eventual absence of omissions is sufficient for fair loss, but is not required by it. -/
-theorem reliable_suffix_fair_loss (trace : Trace) (participants : Finset NodeID)
-    (reliableFrom : Nat) (reliable : Reliable trace participants reliableFrom)
+theorem reliable_suffix_fair_loss {W : Type} [HasNetwork W]
+    {trace : Trace W Liveness.Event} {participants : Finset NodeID} {reliableFrom : Nat}
+    (reliable : Reliable trace participants reliableFrom)
     : FairLoss trace participants := by
   intro source target traffic sourceIn targetIn attempts cutoff
-  obtain ⟨packet, sent, afterCutoff, packetSource, packetTarget, matching⟩ :=
+  obtain ⟨sent, packet, sentAt, afterCutoff, packetSource, packetTarget, matching⟩ :=
     attempts (max cutoff reliableFrom)
-  obtain ⟨index, afterSend, delivered⟩ :=
-    reliable packet sent (le_trans (Nat.le_max_right _ _) afterCutoff)
+  obtain ⟨index, step, afterSend, stepped, delivered⟩ :=
+    reliable sent packet sentAt (Nat.le_trans (Nat.le_max_right _ _) afterCutoff)
       (packetSource ▸ sourceIn) (packetTarget ▸ targetIn)
-  exact ⟨index, packet, le_trans (le_trans (Nat.le_max_left _ _) afterCutoff) afterSend,
-    delivered, packetSource, packetTarget, matching⟩
-
-/-- The failure environment only removes live identities; replacement needs reconfiguration. -/
-theorem live_decreases {trace : Trace} {config : Finset NodeID} {nodes : List NodeID}
-    (valid : trace.ValidFrom config nodes) (index : Nat)
-    : trace.live (index + 1) ⊆ trace.live index := by
-  rw [valid.failures index]
-  cases trace.event index <;> simp [Finset.erase_subset]
+  exact ⟨index, step, packet,
+    Nat.le_trans (Nat.le_max_left _ _) (Nat.le_trans afterCutoff (Nat.le_of_lt afterSend)),
+    stepped, delivered, packetSource, packetTarget, matching⟩
 
 private theorem foldMax_acc (predicate : Nat -> Prop) [DecidablePred predicate]
     (values : List Nat) (initial : Nat)

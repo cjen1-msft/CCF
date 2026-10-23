@@ -30,10 +30,11 @@ variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetw
 
 /-- AppendEntries requests the primary sends from index `start` on arrive within
 `delay`, unless their target crashes. Other messages may be lost or delayed.
-Send and delivery times are the respective steps' recorded after-times.
+Send and delivery times are the respective steps' before-times.
 Needed: with only `FairLoss`, the network may drop every heartbeat to a follower
 for a whole election timeout, and the follower then starts an election. -/
-def Timely (trace : Trace W Event) (start : Nat) (leader : NodeID) (delay : Real) : Prop :=
+def Timely (trace : Trace W Event) (start : Nat) (leader : NodeID) (delay : Real)
+    : Prop :=
   forall sent packet,
     trace.SentAt sent packet
     -> start <= sent
@@ -42,7 +43,7 @@ def Timely (trace : Trace W Event) (start : Nat) (leader : NodeID) (delay : Real
     -> exists index step,
         sent < index
         /\ trace.stepAt index = some step
-        /\ time step.after <= packet.sentAt + delay
+        /\ time step.before <= packet.sentAt + delay
         /\ (step.action = .deliver packet
             \/ Not (Membership.mem (live step.after) packet.envelope.target))
 
@@ -57,7 +58,8 @@ primary was elected with the vote of a follower whose log is shorter than the
 primary's, as is the third node's. Each heartbeat fails the follower's log check
 until one of its rejections reaches the primary. If those are lost, the follower
 times out, the third node grants it a pre-vote, and it starts the next term. -/
-def Matching (trace : Trace W Event) (start : Nat) (leader : NodeID) (term : Nat) : Prop :=
+def Matching (trace : Trace W Event) (start : Nat) (leader : NodeID) (term : Nat)
+    : Prop :=
   forall index step packet request state,
     start <= index
     -> trace.stepAt index = some step
@@ -140,17 +142,19 @@ structure Incumbent (trace : Trace W Event) (start : Nat) (leader : NodeID) : Pr
 of live participants. That point must exist, even in a finite execution.
 The majority may change over time. Needed: if every node
 but the primary of a three-node configuration crashes, nothing more can commit. -/
-def LiveQuorum (trace : Trace W Event) (leader : NodeID) (participants : Finset NodeID) : Prop :=
+def LiveQuorum (trace : Trace W Event) (leader : NodeID) (participants : Finset NodeID)
+    : Prop :=
   exists start first,
     trace.stateAt start = some first
     /\ forall index point state,
-      start <= index
-      -> trace.stateAt index = some point
-      -> CCF.MultiNodeTransitionSystem.nodeState (proto point) leader = some state
-      -> hasQuorum state.activeConfigurations ((live point).inter participants)
+        start <= index
+        -> trace.stateAt index = some point
+        -> CCF.MultiNodeTransitionSystem.nodeState (proto point) leader = some state
+        -> hasQuorum state.activeConfigurations (Inter.inter (live point) participants)
 
 /-- The request is in the primary's committed prefix, not merely replicated or signed. -/
-def RequestCommitted (trace : Trace W Event) (leader : NodeID) (request : ReqID) (index : Nat)
+def RequestCommitted (trace : Trace W Event) (leader : NodeID) (request : ReqID)
+    (index : Nat)
     : Prop :=
   exists point state,
     trace.stateAt index = some point

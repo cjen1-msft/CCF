@@ -40,4 +40,3 @@ each later crossing of a heartbeat deadline, without assuming divergent time.
 Stable leadership, live quorums, fair-loss links and submission remain separate
 assumptions in `Liveness.Assumptions`.
 -/
-

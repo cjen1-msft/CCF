@@ -31,20 +31,55 @@ private def requestedNode (signed : Bool) : NodeState :=
 private def requestedState (signed : Bool) : Model.State :=
   { nodes := [(0, requestedNode signed)] }
 
-private def fixture (signed : Bool) : Trace where
-  state index := if index = 0 then initialState else requestedState signed
-  event index := if index = 0 then .local 0 (.append (requestEntries signed)) else .idle
-  time index := index
-  live _ := {0}
+private def fixtureNode (signed : Bool) : Nat -> NodeState
+  | 0 => initialNode
+  | _ + 1 => requestedNode signed
 
-private def environment : LivenessModel where
-  initialConfiguration := {0}
-  nodes := [0]
-  bounds :=
-    {
-      heartbeatInterval := 1
-      electionTimeout := 4
-    }
+private def fixtureWorld (signed : Bool) (index : Nat) : World Model.State where
+  proto := { nodes := [(0, fixtureNode signed index)] }
+  time := index
+  live := {0}
+  pending := []
+  issued := 0
+
+private def fixtureStep (signed : Bool) (index : Nat)
+    : CCF.Execution.Step (World Model.State) Liveness.Event where
+  before := fixtureWorld signed index
+  action := if index = 0 then .local 0 (.append (requestEntries signed)) else .idle
+  after := fixtureWorld signed (index + 1)
+
+/-- One append followed by infinitely many idle steps, with unbounded time.
+There are no peers, hence no sends and no packet identities to advance. -/
+private def fixture (signed : Bool) : Trace (World Model.State) Liveness.Event where
+  initial := fixtureWorld signed 0
+  steps := Stream'.Seq.ofStream (fixtureStep signed)
+
+private def bounds : Bounds where
+  heartbeatInterval := 1
+  electionTimeout := 4
+
+private theorem fixture_stepAt (signed : Bool) (index : Nat)
+    : (fixture signed).stepAt index = some (fixtureStep signed index) :=
+  rfl
+
+private theorem fixture_stateAt (signed : Bool) (index : Nat)
+    : (fixture signed).stateAt index = some (fixtureWorld signed index) := by
+  cases index <;> rfl
+
+private theorem fixture_live (signed : Bool) (index : Nat)
+    : HasLive.live (fixtureWorld signed index) = {0} :=
+  rfl
+
+private theorem coherent (signed : Bool) : (fixture signed).Coherent := by
+  constructor
+  · intro step stepped
+    rw [fixture_stepAt, Option.some.injEq] at stepped
+    subst step
+    rfl
+  · intro index previous next previousStepped nextStepped
+    rw [fixture_stepAt, Option.some.injEq] at previousStepped nextStepped
+    subst previous next
+    rfl
 
 private theorem request_step (signed : Bool)
     : (Model.transitionSystem {0} [0]).step initialState
@@ -56,348 +91,491 @@ private theorem request_outgoing (signed : Bool)
     : outgoing initialState (.local 0 (.append (requestEntries signed))) = some [] := by
   cases signed <;> rfl
 
-private theorem core_valid (signed : Bool) : (fixture signed).Valid {0} [0] := by
-  refine {
-    initial := ?_
-    step := ?_
-    stutter := ?_
-    running := ?_
-    failures := ?_
-    resolution := ?_
-    inFlight := ?_
-  }
-  · apply CCF.TransitionSystem.Reachable.initial
-    simp [fixture, initialState, Model.transitionSystem, CCF.MultiNodeTransitionSystem.lift,
+private theorem protocol_valid (signed : Bool)
+    : (fixture signed).Valid (protocolModel (Model.transitionSystem {0} [0])) := by
+  refine ⟨?_, ?_⟩
+  · change (Model.transitionSystem {0} [0]).init initialState
+    simp [initialState, Model.transitionSystem, CCF.MultiNodeTransitionSystem.lift,
       Model.protocol, initialNode]
-  · intro index action selected
-    by_cases zero : index = 0
-    · subst index
-      simp [fixture, Event.action] at selected
-      subst action
-      simpa [fixture] using request_step signed
-    · simp [fixture, zero, Event.action] at selected
-  · intro index noAction
-    by_cases zero : index = 0
-    · simp [fixture, zero, Event.action] at noAction
-    · simp [fixture, zero]
-  · intro index node selected
-    by_cases zero : index = 0
-    · simp [fixture, zero, Event.actor] at selected
-      subst node
-      simp [fixture]
-    · simp [fixture, zero, Event.actor] at selected
-  · intro index
-    by_cases zero : index = 0 <;> simp [fixture, zero]
-  · intro index packet resolved
-    by_cases zero : index = 0 <;> simp [fixture, zero, Event.resolution] at resolved
-  · refine Set.finite_empty.subset ?_
-    rintro index ⟨envelope, delivered⟩
-    by_cases zero : index = 0 <;> simp [fixture, zero] at delivered
+  · intro index step stepped
+    rw [fixture_stepAt, Option.some.injEq] at stepped
+    subst step
+    cases index with
+    | zero =>
+        change (Model.transitionSystem {0} [0]).step initialState
+          (.local 0 (.append (requestEntries signed))) = some (requestedState signed)
+        exact request_step signed
+    | succ index => rfl
 
-private theorem stable (signed : Bool)
-    : StableLeader (fixture signed) 0 Model.BOOTSTRAP_TERM := by
-  intro index
-  refine ⟨by simp [fixture], ?_⟩
-  cases index with
-  | zero => exact ⟨initialNode, rfl, by decide, rfl, by decide⟩
-  | succ index =>
-      refine ⟨requestedNode signed, rfl, ?_, ?_, ?_⟩ <;> cases signed <;> decide
+private theorem timing_valid (signed : Bool) : (fixture signed).Valid timingModel := by
+  refine ⟨trivial, ?_⟩
+  intro index step stepped
+  rw [fixture_stepAt, Option.some.injEq] at stepped
+  subst step
+  change (index : Real) <= ((index + 1 : Nat) : Real)
+  exact Nat.cast_le.mpr (Nat.le_succ index)
 
-private theorem monotone (signed : Bool) : Monotone (fixture signed).time :=
-  fun _ _ less => Nat.cast_le.mpr less
+private theorem crash_valid (signed : Bool) : (fixture signed).Valid crashModel := by
+  refine ⟨trivial, ?_⟩
+  intro index step stepped
+  rw [fixture_stepAt, Option.some.injEq] at stepped
+  subst step
+  cases index <;> rfl
 
-private theorem live_quorum (signed : Bool) : LiveQuorum (fixture signed) 0 {0} := by
-  refine ⟨0, fun index state _ found => ?_⟩
-  show hasQuorum state.activeConfigurations ({0} ∩ {0})
+private theorem delivery_valid (signed : Bool)
+    : (fixture signed).Valid (deliveryModel (Model.transitionSystem {0} [0])) := by
+  refine ⟨⟨rfl, rfl⟩, ?_⟩
+  intro index step stepped
+  rw [fixture_stepAt, Option.some.injEq] at stepped
+  subst step
   cases index with
   | zero =>
-      have same : state = initialNode := by simpa [fixture, initialState, nodeState] using found.symm
-      subst state
-      decide
-  | succ index =>
-      have same : state = requestedNode signed := by
-        simpa [fixture, requestedState, nodeState] using found.symm
-      subst state
-      cases signed <;> decide
+      refine ⟨trivial, [], ?_, rfl, rfl⟩
+      change (do
+        let _ <- (Model.transitionSystem {0} [0]).step initialState
+          (.local 0 (.append (requestEntries signed)))
+        outgoing initialState (.local 0 (.append (requestEntries signed)))) = some []
+      rw [request_step]
+      exact request_outgoing signed
+  | succ index => exact ⟨trivial, [], rfl, rfl, rfl⟩
+
+private theorem stable (signed : Bool)
+    : StableLeader (fixture signed) 0 0 Model.BOOTSTRAP_TERM := by
+  refine ⟨⟨fixtureWorld signed 0, fixture_stateAt signed 0⟩, ?_⟩
+  intro index point _ found
+  rw [fixture_stateAt, Option.some.injEq] at found
+  subst point
+  refine ⟨fixtureWorld signed index, fixtureNode signed index, fixture_stateAt signed index,
+    Finset.mem_singleton_self 0, rfl, ?_, ?_, ?_⟩
+  all_goals cases index <;> cases signed <;> simp only [fixtureNode] <;> decide
+
+private theorem live_quorum (signed : Bool) : LiveQuorum (fixture signed) 0 {0} := by
+  refine ⟨0, fixtureWorld signed 0, fixture_stateAt signed 0, ?_⟩
+  intro index point state _ found nodeFound
+  rw [fixture_stateAt, Option.some.injEq] at found
+  subst point
+  change some (fixtureNode signed index) = some state at nodeFound
+  have same := Option.some.inj nodeFound
+  subst state
+  cases index <;> cases signed <;> simp only [fixtureNode, fixture_live] <;> decide
 
 private theorem requested (signed : Bool) : HasRequest (requestedNode signed).log 10 := by
   refine ⟨{ term := Model.BOOTSTRAP_TERM, content := .transaction 10 {} }, ?_, {}, rfl⟩
   cases signed <;> simp [requestedNode, requestEntries]
 
-private theorem submitted (signed : Bool) : Submitted (fixture signed) 0 10 :=
-  ⟨0, Or.inr ⟨requestEntries signed, rfl, by cases signed <;> simp [requestEntries]⟩⟩
+private theorem submitted (signed : Bool) : Submitted (fixture signed) 0 0 10 := by
+  refine ⟨0, fixtureWorld signed 0, le_rfl, fixture_stateAt signed 0,
+    Or.inr ⟨fixtureStep signed 0, requestEntries signed, fixture_stepAt signed 0, rfl, ?_⟩⟩
+  cases signed <;> simp [requestEntries]
 
-private theorem no_packets (signed : Bool) (packet : Packet)
-    : Not ((fixture signed).Sent packet) := by
-  by_cases zero : packet.sent = 0
-  · simp [Trace.Sent, fixture, zero, Event.action, request_outgoing]
-  · simp [Trace.Sent, fixture, zero, Event.action]
+private theorem committed : RequestCommitted (fixture true) 0 10 1 := by
+  refine ⟨fixtureWorld true 1, requestedNode true, fixture_stateAt true 1, rfl, ?_⟩
+  simpa [NodeState.committedLog, requestedNode, requestEntries, initialNode,
+    Model.initialNodeState] using requested true
+
+private theorem no_packets (signed : Bool) (index : Nat) (packet : Packet)
+    : Not ((fixture signed).SentAt index packet) := by
+  rintro ⟨step, stepped, sent, _⟩
+  rw [fixture_stepAt, Option.some.injEq] at stepped
+  subst step
+  change packet ∈ ([] : List Packet) at sent
+  cases sent
 
 private theorem reliable (signed : Bool) : Reliable (fixture signed) {0} 0 :=
-  fun packet sent _ _ _ => False.elim (no_packets signed packet sent)
+  fun index packet sent _ _ _ => False.elim (no_packets signed index packet sent)
+
+private theorem fair (signed : Bool) : FairLoss (fixture signed) {0} :=
+  Proofs.Liveness.reliable_suffix_fair_loss (reliable signed)
 
 private theorem no_peers (signed : Bool) (index leader peer : Nat)
-    : Not ((fixture signed).PeerDue leader peer index) := by
+    : Not (PeerDue (fixtureWorld signed index) leader peer) := by
   rintro ⟨leaderLive, peerLive, state, _, _, _, eligible⟩
-  have leaderZero : leader = 0 := by simpa [fixture] using leaderLive
-  have peerZero : peer = 0 := by simpa [fixture] using peerLive
+  have leaderZero : leader = 0 := Finset.mem_singleton.mp leaderLive
+  have peerZero : peer = 0 := Finset.mem_singleton.mp peerLive
   subst leader peer
   simp [eligiblePeers] at eligible
 
-private theorem signed_valid : environment.Valid (fixture true) := by
-  refine {
-    execution := core_valid true
-    clockMonotone := monotone true
-    heartbeats :=
-      fun index leader peer due => False.elim (no_peers true index leader peer due)
-    signatures := ?_
-    confirmations := ?_
-    electionTimers := ?_
-  }
-  · intro index leader due
-    obtain ⟨live, state, found, _, _, unsigned⟩ := due
-    have leaderZero : leader = 0 := by simpa [fixture] using live
-    subst leader
-    cases index with
-    | zero =>
-        exact ⟨0, by omega, Or.inr ⟨requestEntries true, rfl, by simp [requestEntries]⟩⟩
-    | succ index =>
-        have same : state = requestedNode true := by
-          simpa [fixture, requestedState, nodeState] using found.symm
-        subst state
-        have covered : Not (maxCommittableIndex (requestedNode true).log < (requestedNode true).log.length \/
-            maxCommittableTerm (requestedNode true).log ≠ (requestedNode true).currentTerm) := by decide
-        exact False.elim (covered unsigned)
-  · intro index leader due
-    obtain ⟨live, state, found, _, _, owed⟩ := due
-    have leaderZero : leader = 0 := by simpa [fixture] using live
-    subst leader
-    cases index with
-    | zero =>
-        have same : state = initialNode := by
-          simpa [fixture, initialState, nodeState] using found.symm
-        subst state
-        exact absurd owed (by decide)
-    | succ index =>
-        have same : state = requestedNode true := by
-          simpa [fixture, requestedState, nodeState] using found.symm
-        subst state
-        exact absurd owed (by decide)
-  · intro index node _ timeout
-    by_cases zero : index = 0 <;> simp [fixture, zero] at timeout
+private theorem heartbeats (signed : Bool) (bound : Option Real)
+    : (fixture signed).HeartbeatScheduling bound := by
+  intro leader peer index point found due
+  rw [fixture_stateAt, Option.some.injEq] at found
+  subst point
+  exact False.elim (no_peers signed index leader peer due)
 
-/-- All environment and stable-primary assumptions have an actual infinite witness. -/
+private theorem signatures : (fixture true).SignatureScheduling none := by
+  intro leader index point found due
+  rw [fixture_stateAt, Option.some.injEq] at found
+  subst point
+  obtain ⟨leaderLive, state, nodeFound, _, _, unsigned⟩ := due
+  have leaderZero : leader = 0 := Finset.mem_singleton.mp leaderLive
+  subst leader
+  cases index with
+  | zero =>
+      refine ⟨0, fixtureWorld true 0, le_rfl, fixture_stateAt true 0, trivial, Or.inr ?_⟩
+      exact ⟨
+        fixtureStep true 0,
+        fixture_stepAt true 0,
+        requestEntries true,
+        rfl,
+        show EntryContent.signature ∈ requestEntries true by decide
+      ⟩
+  | succ index =>
+      change some (requestedNode true) = some state at nodeFound
+      have same := Option.some.inj nodeFound
+      subst state
+      have covered :
+          Not (maxCommittableIndex (requestedNode true).log < (requestedNode true).log.length
+            \/ maxCommittableTerm (requestedNode true).log
+              ≠ (requestedNode true).currentTerm) := by decide
+      exact False.elim (covered unsigned)
+
+private theorem no_confirmations (signed : Bool) (index leader : Nat)
+    : Not (ConfirmationDue (fixtureWorld signed index) leader) := by
+  rintro ⟨leaderLive, state, found, _, _, owed⟩
+  have leaderZero : leader = 0 := Finset.mem_singleton.mp leaderLive
+  subst leader
+  change some (fixtureNode signed index) = some state at found
+  have same := Option.some.inj found
+  subst state
+  cases index <;> cases signed <;> simp only [fixtureNode] at owed <;>
+    exact absurd owed (by decide)
+
+private theorem confirmations (signed : Bool) (bound : Option Real)
+    : (fixture signed).ConfirmationScheduling bound := by
+  intro leader index point found due
+  rw [fixture_stateAt, Option.some.injEq] at found
+  subst point
+  exact False.elim (no_confirmations signed index leader due)
+
+private theorem no_deliveries (signed : Bool) (index : Nat) (packet : Packet)
+    : Not ((fixtureStep signed index).action = .deliver packet) := by
+  cases index <;> simp [fixtureStep]
+
+private theorem no_timeouts (signed : Bool) (index node : Nat)
+    : Not ((fixtureStep signed index).action = .local node (.timeout .election)) := by
+  cases index <;> simp [fixtureStep]
+
+private theorem elections (signed : Bool) (minimum : Real)
+    : (fixture signed).ElectionScheduling (some minimum) := by
+  intro _ index _ step node _ _ stepped timeout _
+  rw [fixture_stepAt, Option.some.injEq] at stepped
+  subst step
+  exact False.elim (no_timeouts signed index node timeout)
+
+private theorem quiet_start
+    : QuietStart (fixture true) 0 0 Model.BOOTSTRAP_TERM bounds.electionTimeout := by
+  refine ⟨⟨fixtureWorld true 0, fixture_stateAt true 0, ?_⟩, ?_⟩
+  · change Quiet 0 Model.BOOTSTRAP_TERM initialState
+    refine ⟨?_, ?_, ?_, ?_, ?_⟩
+    · intro node local_ member
+      simp only [initialState, List.mem_singleton, Prod.mk.injEq] at member
+      obtain ⟨_, rfl⟩ := member
+      decide
+    · intro node local_ member preVote
+      simp only [initialState, List.mem_singleton, Prod.mk.injEq] at member
+      obtain ⟨_, rfl⟩ := member
+      exact absurd preVote (by decide)
+    · intro envelope member
+      simp [initialState] at member
+    · intro envelope member
+      simp [initialState] at member
+    · exact ⟨initialNode, by simp [initialState], by decide, rfl⟩
+  · intro _ index step node _ _ _ stepped timeout
+    rw [fixture_stepAt, Option.some.injEq] at stepped
+    subst step
+    exact False.elim (no_timeouts true index node timeout)
+
+private theorem timely : Timely (fixture true) 0 0 0 :=
+  fun index packet sent _ _ _ => False.elim (no_packets true index packet sent)
+
+private theorem matching : Matching (fixture true) 0 0 Model.BOOTSTRAP_TERM := by
+  intro index step packet _ _ _ stepped deliver
+  rw [fixture_stepAt, Option.some.injEq] at stepped
+  subst step
+  exact False.elim (no_deliveries true index packet deliver)
+
+private theorem covered : Covered (fixture true) 0 0 Model.BOOTSTRAP_TERM := by
+  intro index step node _ _ stepped timeout
+  rw [fixture_stepAt, Option.some.injEq] at stepped
+  subst step
+  exact False.elim (no_timeouts true index node timeout)
+
+private theorem incumbent : Incumbent (fixture true) 0 0 := by
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · intro index point le found
+    exact (stable true).live le found
+  · intro index point state le found nodeFound
+    apply (stable true).notRetired le
+    rw [Trace.nodeAt_of_stateAt found]
+    exact nodeFound
+  · intro index step _ stepped
+    rw [fixture_stepAt, Option.some.injEq] at stepped
+    subst step
+    cases index <;> simp [fixtureStep]
+  · intro index step _ stepped
+    rw [fixture_stepAt, Option.some.injEq] at stepped
+    subst step
+    cases index <;> simp [fixtureStep]
+
+/-- A single-node execution satisfies every commit-liveness premise.
+Its first append includes request 10 and a signature, committing both immediately. -/
 theorem commit_liveness_witness
-    : exists (model : LivenessModel) (trace : Trace),
-    exists (leader : NodeID) (term : Nat) (participants : Finset NodeID) (request
-                                                                          : ReqID),
-      model.Valid trace
-      /\ StableLeader (trace.shift 0) leader term
-      /\ LiveQuorum trace leader participants
-      /\ FairLoss trace (insert leader participants)
-      /\ Submitted (trace.shift 0) leader request
-      /\ exists index, RequestCommitted trace leader request index := by
-  refine ⟨
-    environment,
+    : exists (config : Finset NodeID) (nodes : List NodeID),
+        let system := Model.transitionSystem config nodes
+        exists
+        (trace : Liveness.Trace (Liveness.World Model.State) Liveness.Event) (start
+                                                                              : Nat),
+        exists (leader : NodeID) (term : Nat) (participants : Finset NodeID) (request
+                                                                              : ReqID),
+          trace.Coherent
+          /\ trace.Valid (Liveness.protocolModel system)
+          /\ trace.Valid Liveness.timingModel
+          /\ trace.Valid Liveness.crashModel
+          /\ trace.Valid (Liveness.deliveryModel system)
+          /\ trace.HeartbeatScheduling none
+          /\ trace.SignatureScheduling none
+          /\ trace.ConfirmationScheduling none
+          /\ Liveness.StableLeader trace start leader term
+          /\ Liveness.LiveQuorum trace leader participants
+          /\ Liveness.FairLoss trace (insert leader participants)
+          /\ Liveness.Submitted trace start leader request
+          /\ exists index, Liveness.RequestCommitted trace leader request index := by
+  exact ⟨
+    {0},
+    [0],
     fixture true,
+    0,
     0,
     Model.BOOTSTRAP_TERM,
     {0},
     10,
-    signed_valid,
-    fun index => by simpa [Trace.shift] using stable true index,
+    coherent true,
+    protocol_valid true,
+    timing_valid true,
+    crash_valid true,
+    delivery_valid true,
+    heartbeats true none,
+    signatures,
+    confirmations true none,
+    stable true,
     live_quorum true,
-    Proofs.Liveness.reliable_suffix_fair_loss (fixture true) {0} 0 (reliable true),
-    ⟨0, Or.inr ⟨requestEntries true, rfl, by simp [requestEntries]⟩⟩,
+    by simpa using fair true,
+    submitted true,
     1,
-    ?_
+    committed
   ⟩
-  refine ⟨requestedNode true, rfl, ?_⟩
-  simpa [NodeState.committedLog, requestedNode, requestEntries, initialNode,
-    Model.initialNodeState]
-    using requested true
 
-private theorem quiet_start
-    : QuietStart (fixture true) 0 Model.BOOTSTRAP_TERM
-        environment.bounds.electionTimeout := by
-  refine ⟨⟨?_, ?_, ?_, ?_, ?_⟩, ?_⟩
-  · intro node local_ member
-    simp only [fixture, ↓reduceIte, initialState, List.mem_singleton, Prod.mk.injEq] at member
-    obtain ⟨_, rfl⟩ := member
-    decide
-  · intro node local_ member preVote
-    simp only [fixture, ↓reduceIte, initialState, List.mem_singleton, Prod.mk.injEq] at member
-    obtain ⟨_, rfl⟩ := member
-    exact absurd preVote (by decide)
-  · intro envelope member
-    simp [fixture, initialState] at member
-  · intro envelope member
-    simp [fixture, initialState] at member
-  · exact ⟨initialNode, by simp [fixture, initialState], by decide, by decide⟩
-  · intro index node state timeout
-    by_cases zero : index = 0 <;> simp [fixture, zero] at timeout
-
-private theorem timely : Timely (fixture true) 0 0 :=
-  fun packet sent _ _ => False.elim (no_packets true packet sent)
-
-private theorem matching : Matching (fixture true) 0 Model.BOOTSTRAP_TERM := by
-  intro index packet request state deliver
-  by_cases zero : index = 0 <;> simp [fixture, zero] at deliver
-
-private theorem covered : Covered (fixture true) 0 Model.BOOTSTRAP_TERM := by
-  intro index node state timeout
-  by_cases zero : index = 0 <;> simp [fixture, zero] at timeout
-
-private theorem incumbent : Incumbent (fixture true) 0 := by
-  refine ⟨fun _ => by simp [fixture], fun index state found => ?_, fun index => ?_,
-    fun index => ?_⟩
-  · cases index with
-    | zero =>
-        have same : state = initialNode := by
-          simpa [fixture, initialState, nodeState] using found.symm
-        subst state
-        decide
-    | succ index =>
-        have same : state = requestedNode true := by
-          simpa [fixture, requestedState, nodeState] using found.symm
-        subst state
-        decide
-  · by_cases zero : index = 0 <;> simp [fixture, zero]
-  · by_cases zero : index = 0 <;> simp [fixture, zero]
-
-/-- The premises of `Properties.stable_leader` have an infinite witness. It has a
-single node, so it exercises no timer or heartbeat. -/
+/-- The same infinite single-node execution satisfies the timed leadership premises.
+There are no peers, deliveries or election timeouts. -/
 theorem stable_leader_witness
-    : exists (model : LivenessModel) (trace : Trace),
-    exists (leader : NodeID) (term : Nat) (delay : Real),
-      model.Valid trace
-      /\ QuietStart trace leader term model.bounds.electionTimeout
-      /\ Timely trace leader delay
-      /\ 0 <= delay
-      /\ Matching trace leader term
-      /\ model.bounds.heartbeatInterval + delay < model.bounds.electionTimeout / 2
-      /\ Covered trace leader term
-      /\ Incumbent trace leader
-      /\ StableLeader trace leader term :=
-  ⟨
-    environment,
+    : exists (config : Finset NodeID) (nodes : List NodeID),
+        let system := Model.transitionSystem config nodes
+        exists
+        (trace : Liveness.Trace (Liveness.World Model.State) Liveness.Event) (bounds
+                                                                              : Liveness.Bounds) (start
+                                                                                                  : Nat)
+          ,
+        exists (leader : NodeID) (term : Nat) (delay : Real),
+          trace.Coherent
+          /\ trace.Valid (Liveness.protocolModel system)
+          /\ trace.Valid Liveness.timingModel
+          /\ trace.Valid Liveness.crashModel
+          /\ trace.Valid (Liveness.deliveryModel system)
+          /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
+          /\ trace.SignatureScheduling none
+          /\ trace.ConfirmationScheduling none
+          /\ trace.ElectionScheduling (some (bounds.electionTimeout / 2))
+          /\ Liveness.QuietStart trace start leader term bounds.electionTimeout
+          /\ Liveness.Timely trace start leader delay
+          /\ 0 <= delay
+          /\ Liveness.Matching trace start leader term
+          /\ bounds.heartbeatInterval + delay < bounds.electionTimeout / 2
+          /\ Liveness.Covered trace start leader term
+          /\ Liveness.Incumbent trace start leader
+          /\ Liveness.StableLeader trace start leader term := by
+  exact ⟨
+    {0},
+    [0],
     fixture true,
+    bounds,
+    0,
     0,
     Model.BOOTSTRAP_TERM,
     0,
-    signed_valid,
+    coherent true,
+    protocol_valid true,
+    timing_valid true,
+    crash_valid true,
+    delivery_valid true,
+    heartbeats true (some bounds.heartbeatInterval),
+    signatures,
+    confirmations true none,
+    elections true (bounds.electionTimeout / 2),
     quiet_start,
     timely,
     le_rfl,
     matching,
-    by norm_num [environment],
+    by norm_num [bounds],
     covered,
     incumbent,
     stable true
   ⟩
 
-/-- The premises of `Properties.commit_liveness_timed` have an infinite witness. -/
+/-- The signed execution also satisfies every timed commit-liveness premise. -/
 theorem commit_liveness_timed_witness
-    : exists (model : LivenessModel) (trace : Trace),
-    exists (leader : NodeID) (term : Nat) (participants : Finset NodeID) (delay : Real),
-    exists (request : ReqID),
-      model.Valid trace
-      /\ QuietStart trace leader term model.bounds.electionTimeout
-      /\ Timely trace leader delay
-      /\ 0 <= delay
-      /\ Matching trace leader term
-      /\ model.bounds.heartbeatInterval + delay < model.bounds.electionTimeout / 2
-      /\ Covered trace leader term
-      /\ Incumbent trace leader
-      /\ LiveQuorum trace leader participants
-      /\ FairLoss trace (insert leader participants)
-      /\ Submitted trace leader request
-      /\ exists index, RequestCommitted trace leader request index := by
-  refine ⟨
-    environment,
+    : exists (config : Finset NodeID) (nodes : List NodeID),
+        let system := Model.transitionSystem config nodes
+        exists
+        (trace : Liveness.Trace (Liveness.World Model.State) Liveness.Event) (bounds
+                                                                              : Liveness.Bounds) (start
+                                                                                                  : Nat)
+          ,
+        exists
+        (leader : NodeID) (term : Nat) (participants : Finset NodeID) (delay : Real),
+        exists (request : ReqID),
+          trace.Coherent
+          /\ trace.Valid (Liveness.protocolModel system)
+          /\ trace.Valid Liveness.timingModel
+          /\ trace.Valid Liveness.crashModel
+          /\ trace.Valid (Liveness.deliveryModel system)
+          /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
+          /\ trace.SignatureScheduling none
+          /\ trace.ConfirmationScheduling none
+          /\ trace.ElectionScheduling (some (bounds.electionTimeout / 2))
+          /\ Liveness.QuietStart trace start leader term bounds.electionTimeout
+          /\ Liveness.Timely trace start leader delay
+          /\ 0 <= delay
+          /\ Liveness.Matching trace start leader term
+          /\ bounds.heartbeatInterval + delay < bounds.electionTimeout / 2
+          /\ Liveness.Covered trace start leader term
+          /\ Liveness.Incumbent trace start leader
+          /\ Liveness.LiveQuorum trace leader participants
+          /\ Liveness.FairLoss trace (insert leader participants)
+          /\ Liveness.Submitted trace start leader request
+          /\ exists index, Liveness.RequestCommitted trace leader request index := by
+  exact ⟨
+    {0},
+    [0],
     fixture true,
+    bounds,
+    0,
     0,
     Model.BOOTSTRAP_TERM,
     {0},
     0,
     10,
-    signed_valid,
+    coherent true,
+    protocol_valid true,
+    timing_valid true,
+    crash_valid true,
+    delivery_valid true,
+    heartbeats true (some bounds.heartbeatInterval),
+    signatures,
+    confirmations true none,
+    elections true (bounds.electionTimeout / 2),
     quiet_start,
     timely,
     le_rfl,
     matching,
-    by norm_num [environment],
+    by norm_num [bounds],
     covered,
     incumbent,
     live_quorum true,
-    Proofs.Liveness.reliable_suffix_fair_loss (fixture true) {0} 0 (reliable true),
+    by simpa using fair true,
     submitted true,
     1,
-    ?_
+    committed
   ⟩
-  refine ⟨requestedNode true, rfl, ?_⟩
-  simpa [NodeState.committedLog, requestedNode, requestEntries, initialNode,
-    Model.initialNodeState]
-    using requested true
 
-/-- Even a non-Zeno, failure-free stable primary can retain a request forever without signing. -/
 private theorem unsigned_never_commits (index : Nat)
     : Not (RequestCommitted (fixture false) 0 10 index) := by
-  cases index <;>
-    simp [RequestCommitted, fixture, initialState, requestedState, nodeState,
-      NodeState.committedLog, requestedNode, initialNode, Model.initialNodeState, HasRequest]
+  rintro ⟨point, state, found, nodeFound, request⟩
+  rw [fixture_stateAt, Option.some.injEq] at found
+  subst point
+  change some (fixtureNode false index) = some state at nodeFound
+  have same := Option.some.inj nodeFound
+  subst state
+  have empty : (fixtureNode false index).committedLog = [] := by
+    cases index <;> rfl
+  rw [empty] at request
+  obtain ⟨entry, member, _⟩ := request
+  cases member
 
-private theorem unsigned_due (index : Nat) : (fixture false).SignatureDue 0 index := by
-  cases index with
-  | zero =>
-      exact ⟨
-        by simp [fixture],
-        initialNode,
-        rfl,
-        by decide,
-        by decide,
-        Or.inl (by decide)
-      ⟩
-  | succ index =>
-      exact ⟨
-        by simp [fixture],
-        requestedNode false,
-        rfl,
-        by decide,
-        by decide,
-        Or.inl (by decide)
-      ⟩
+private theorem unsigned_due (index : Nat)
+    : SignatureDue (fixtureWorld false index) 0 := by
+  refine ⟨Finset.mem_singleton_self 0, fixtureNode false index, rfl, ?_, ?_, Or.inl ?_⟩
+  all_goals cases index <;> simp only [fixtureNode] <;> decide
 
-/-- The signature deadline rejects that infinite starvation execution. -/
-private theorem unsigned_rejected : Not (environment.Valid (fixture false)) := by
-  intro valid
-  obtain ⟨index, _, cancelled | signed⟩ := valid.signatures 0 0 (unsigned_due 0)
-  · exact cancelled (unsigned_due index)
-  · by_cases zero : index = 0 <;> simp [Trace.Signs, fixture, zero, requestEntries] at signed
+/-- Signing remains due forever, and no recorded step signs. -/
+private theorem unsigned_rejected : Not ((fixture false).SignatureScheduling none) := by
+  intro scheduled
+  obtain ⟨index, point, _, found, _, outcome⟩ :=
+    scheduled 0 0 (fixtureWorld false 0) (fixture_stateAt false 0) (unsigned_due 0)
+  rcases outcome with cancelled | signed
+  · rw [fixture_stateAt, Option.some.injEq] at found
+    subst point
+    exact cancelled (unsigned_due index)
+  · obtain ⟨step, stepped, entries, action, signature⟩ := signed
+    rw [fixture_stepAt, Option.some.injEq] at stepped
+    subst step
+    cases index with
+    | zero =>
+        have same : requestEntries false = entries := by simpa [fixtureStep] using action
+        subst entries
+        exact absurd (show EntryContent.signature ∈ requestEntries false from signature)
+          (by decide)
+    | succ index => simp [fixtureStep] at action
 
-/-- A stable, reliable execution with a submitted request can still starve if signature
-scheduling is omitted. -/
+/-- Every commit-liveness premise except signature scheduling holds.
+The failure-free, reliable, non-Zeno execution submits request 10 but never signs, so no state commits it. -/
 theorem unsigned_starvation_witness
-    : exists (model : LivenessModel),
-    exists (trace : Trace),
-      trace.Valid model.initialConfiguration model.nodes
-      /\ StableLeader trace 0 Model.BOOTSTRAP_TERM
-      /\ LiveQuorum trace 0 {0}
-      /\ Reliable trace {0} 0
-      /\ Submitted trace 0 10
-      /\ (forall index, Not (RequestCommitted trace 0 10 index))
-      /\ Not (model.Valid trace) :=
-  ⟨
-    environment,
+    : exists (config : Finset NodeID) (nodes : List NodeID),
+        let system := Model.transitionSystem config nodes
+        exists
+        (trace : Liveness.Trace (Liveness.World Model.State) Liveness.Event) (start
+                                                                              : Nat),
+        exists (leader : NodeID) (term : Nat) (participants : Finset NodeID) (request
+                                                                              : ReqID),
+          trace.Coherent
+          /\ trace.Valid (Liveness.protocolModel system)
+          /\ trace.Valid Liveness.timingModel
+          /\ trace.Valid Liveness.crashModel
+          /\ trace.Valid (Liveness.deliveryModel system)
+          /\ trace.HeartbeatScheduling none
+          /\ trace.ConfirmationScheduling none
+          /\ Liveness.StableLeader trace start leader term
+          /\ Liveness.LiveQuorum trace leader participants
+          /\ Liveness.FairLoss trace (insert leader participants)
+          /\ Liveness.Submitted trace start leader request
+          /\ Not (exists index, Liveness.RequestCommitted trace leader request index)
+          /\ Liveness.Reliable trace (insert leader participants) start
+          /\ Not (trace.SignatureScheduling none) := by
+  refine ⟨
+    {0},
+    [0],
     fixture false,
-    core_valid false,
+    0,
+    0,
+    Model.BOOTSTRAP_TERM,
+    {0},
+    10,
+    coherent false,
+    protocol_valid false,
+    timing_valid false,
+    crash_valid false,
+    delivery_valid false,
+    heartbeats false none,
+    confirmations false none,
     stable false,
     live_quorum false,
-    reliable false,
+    by simpa using fair false,
     submitted false,
-    unsigned_never_commits,
+    ?_,
+    by simpa using reliable false,
     unsigned_rejected
   ⟩
+  rintro ⟨index, committed⟩
+  exact unsigned_never_commits index committed
 
 private def oldTermPrimary : NodeState :=
   { requestedNode true with currentTerm := Model.BOOTSTRAP_TERM + 1, commitIndex := 0 }
@@ -407,9 +585,10 @@ example : maxCommittableIndex oldTermPrimary.log = oldTermPrimary.log.length := 
 example : highestCommittableIndex oldTermPrimary 0 = 0 := by decide
 
 example
-    : ({ fixture true with state := fun _ => { nodes := [(0, oldTermPrimary)] } }
-        : Trace).SignatureDue
-        0 0 :=
-  ⟨by simp [fixture], oldTermPrimary, rfl, by decide, by decide, Or.inr (by decide)⟩
+    : SignatureDue
+        ({ fixtureWorld true 0 with proto := { nodes := [(0, oldTermPrimary)] } }
+          : World Model.State)
+        0 :=
+  ⟨by decide, oldTermPrimary, rfl, by decide, by decide, Or.inr (by decide)⟩
 
 end CCFRaft.Proofs.LivenessWitness

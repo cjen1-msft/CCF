@@ -56,9 +56,7 @@ structure QuietStart (trace : Trace W Event) (start : Nat) (leader : NodeID) (te
     : Prop where
   /-- The starting point is an actual point of this execution. -/
   quiet
-    : exists first,
-        trace.stateAt start = some first
-        /\ Quiet leader term (proto first)
+    : exists first, trace.stateAt start = some first /\ Quiet leader term (proto first)
   timers
     : forall first index step node state,
         trace.stateAt start = some first

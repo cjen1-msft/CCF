@@ -23,6 +23,8 @@ open CCFRaft.Liveness
 open CCFRaft.Proofs.Config
 open CCFRaft.Proofs.Safety
 open CCFRaft.Proofs.StablePrimary
+open CCFRaft.Proofs.Liveness (Admissible)
+open HasProtocol (proto)
 
 namespace CCFRaft.Proofs.Replication
 
@@ -72,20 +74,25 @@ structure View (leaderLog : List Entry) (term : Nat) (state : NodeState)
 
 section Trace
 
-variable {trace : Trace} {nodes : List NodeID}
-  (execution : trace.ValidFrom Config.INITIAL_CONFIGURATION nodes)
-  {leader : NodeID} {term : Nat} (stable : LeadsThroughout trace leader term)
+variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
+  {nodes : List NodeID} {trace : Trace W Liveness.Event}
+  (admissible
+    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
 
-include execution stable
+include admissible
 
 /-- A peer of the term, seen against the stable primary at the same index. -/
-theorem view_at {peer : NodeID} (different : Not (peer = leader)) {index : Nat}
-    {state : NodeState} (found : nodeState (trace.state index) peer = some state)
-    (current : state.currentTerm = term)
-    : View (stable.state index).log term state
-        ((stable.state index).matchIndex peer) := by
-  obtain ⟨rest, exec⟩ := history_at execution index
-  have lead := lead_at execution stable exec (stable.found index)
+theorem view_at {start : Nat} {leader : NodeID} {term : Nat}
+    (stable : StableLeader trace start leader term) {peer : NodeID}
+    (different : Not (peer = leader)) {index : Nat} (le : start <= index)
+    {leaderState state : NodeState}
+    (leaderFound : trace.nodeAt index leader = some leaderState)
+    (found : trace.nodeAt index peer = some state) (current : state.currentTerm = term)
+    : View leaderState.log term state (leaderState.matchIndex peer) := by
+  obtain ⟨point, pointFound, leaderFound⟩ := Trace.nodeAt_eq_some.mp leaderFound
+  rw [Trace.nodeAt_of_stateAt pointFound] at found
+  obtain ⟨rest, exec⟩ := history_at admissible pointFound
+  have lead := lead_at stable le pointFound exec leaderFound
   have now := now_of_found (rest := rest) found
   exact {
     matching := fun _ positive bound leaderBound same =>
@@ -102,76 +109,85 @@ theorem view_at {peer : NodeID} (different : Not (peer = leader)) {index : Nat}
 
 /-- A request of the term delivered at an index is a slice of the stable
 primary's log at that index. -/
-theorem request_at {index : Nat} {envelope : Model.Envelope}
-    (delivered : (trace.event index).delivered = some envelope)
-    {request : AppendEntriesRequest}
+theorem request_at {start : Nat} {leader : NodeID} {term : Nat}
+    (stable : StableLeader trace start leader term) {index : Nat} (le : start <= index)
+    {step : CCF.Execution.Step W Liveness.Event}
+    (stepped : trace.stepAt index = some step) {envelope : Model.Envelope}
+    (delivered : step.action.delivered = some envelope) {request : AppendEntriesRequest}
     (payload : envelope.payload = .appendEntriesRequest request)
-    (current : request.term = term)
+    (current : request.term = term) {leaderState : NodeState}
+    (leaderFound : nodeState (proto step.before) leader = some leaderState)
     : envelope.source = leader
       /\ Not (envelope.target = leader)
-      /\ request.prevLogIndex <= (stable.state index).log.length
-      /\ request.prevLogTerm = termAt (stable.state index).log request.prevLogIndex
-      /\ request.entries <+: (stable.state index).log.drop request.prevLogIndex := by
-  obtain ⟨rest, exec⟩ := history_at execution index
-  have lead := lead_at execution stable exec (stable.found index)
+      /\ request.prevLogIndex <= leaderState.log.length
+      /\ request.prevLogTerm = termAt leaderState.log request.prevLogIndex
+      /\ request.entries <+: leaderState.log.drop request.prevLogIndex := by
+  obtain ⟨rest, exec⟩ := history_at admissible (admissible.before stepped)
+  have lead := lead_at stable le (admissible.before stepped) exec leaderFound
   have queued := (Concrete.step_deliver
-    (execution.step index _ (action_of_delivered delivered))).1
+    (admissible.step stepped (action_of_delivered delivered))).1
   exact lead.request queued payload current
 
-/-- A `sendEntries` step of the stable primary sends exactly one request and moves
+/-- A `sendEntries` step sends exactly one request and moves
 the peer's frontier to the batch end. -/
-theorem send_step {index : Nat} {peer : NodeID} {endIndex : Nat}
-    (event : trace.event index = .local leader (.sendEntries peer endIndex))
-    : (stable.state index).sentIndex peer <= endIndex
-      /\ endIndex <= (stable.state index).log.length
-      /\ (stable.state (index + 1)).sentIndex peer = endIndex
-      /\ trace.Sent
-          ⟨
-            index,
-            0,
-            {
-              source := leader
-              target := peer
-              payload :=
-                .appendEntriesRequest
-                  (makeAppendEntriesRequest (stable.state index) peer endIndex)
-            }
-          ⟩ := by
-  have selected : (trace.event index).action = some (.local leader (.sendEntries peer endIndex)) := by
+theorem send_step {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
+    (stepped : trace.stepAt index = some step) {leader peer : NodeID} {endIndex : Nat}
+    (event : step.action = .local leader (.sendEntries peer endIndex))
+    {before after : NodeState}
+    (found : nodeState (proto step.before) leader = some before)
+    (found' : nodeState (proto step.after) leader = some after)
+    : before.sentIndex peer <= endIndex
+      /\ endIndex <= before.log.length
+      /\ after.sentIndex peer = endIndex
+      /\ exists packet,
+          trace.SentAt index packet
+          /\ packet.envelope
+              = {
+                source := leader
+                target := peer
+                payload :=
+                  .appendEntriesRequest (makeAppendEntriesRequest before peer endIndex)
+              } := by
+  have selected : step.action.action = some (.local leader (.sendEntries peer endIndex)) := by
     rw [event]
     rfl
-  obtain ⟨actor, localEvent, state, next, outputs, ⟨actorEq, eventEq⟩, found, ran, found', out,
+  obtain ⟨actor, localEvent, state, next, outputs, ⟨actorEq, eventEq⟩, actorFound, ran, actorFound', out,
       _⟩ :=
-    step_found (CCFRaft.Proofs.Liveness.reachable execution index)
-      (execution.step index _ selected)
+    step_found (admissible.reachable_before stepped) (admissible.step stepped selected)
   subst actorEq eventEq
-  rw [stable.state_eq found] at ran
-  rw [stable.state_eq found'] at ran
+  rw [found, Option.some.injEq] at actorFound
+  rw [found', Option.some.injEq] at actorFound'
+  subst state next
   obtain ⟨_, _, le, bound, frontier⟩ :=
-    sendEntries_guard actor (stable.state index) peer endIndex {} _ _ ran
-  obtain ⟨_, outEq, single⟩ := sendEntries_sends actor (stable.state index) peer endIndex {} _ _ ran
+    sendEntries_guard actor before peer endIndex {} _ _ ran
+  obtain ⟨_, outEq, single⟩ := sendEntries_sends actor before peer endIndex {} _ _ ran
   refine ⟨le, bound, frontier, ?_⟩
-  exact sent_of_outgoing execution selected out (by simp [outEq, single])
+  rw [outEq, single] at out
+  obtain ⟨packet, sent, envelope, -⟩ :=
+    admissible.sentAt_of_emitted stepped selected out
+      (List.mem_append_right _ (List.mem_singleton_self _))
+  exact ⟨packet, sent, envelope⟩
 
 /-- Every request of the stable primary to a peer eligible when it was sent is a
 `sendEntries` batch of the primary's log. -/
-theorem leader_request {packet : Packet}
-    (eligible : packet.envelope.target ∈ eligiblePeers (stable.state packet.sent) leader)
-    (sent : trace.Sent packet) (source : packet.envelope.source = leader)
+theorem leader_request {start : Nat} {leader : NodeID} {term : Nat}
+    (stable : StableLeader trace start leader term) {index : Nat} (le : start <= index)
+    {step : CCF.Execution.Step W Liveness.Event}
+    (stepped : trace.stepAt index = some step) {before : NodeState}
+    (found : nodeState (proto step.before) leader = some before) {packet : Packet}
+    (eligible : packet.envelope.target ∈ eligiblePeers before leader)
+    (sent : trace.SentAt index packet) (source : packet.envelope.source = leader)
     {request : AppendEntriesRequest}
     (payload : packet.envelope.payload = .appendEntriesRequest request)
     : exists endIndex,
-        trace.event packet.sent
-          = .local leader (.sendEntries packet.envelope.target endIndex)
-        /\ request
-            = makeAppendEntriesRequest (stable.state packet.sent) packet.envelope.target
-                endIndex := by
-  have found : nodeState (trace.state packet.sent) packet.envelope.source
-      = some (stable.state packet.sent) := by
+        step.action = .local leader (.sendEntries packet.envelope.target endIndex)
+        /\ request = makeAppendEntriesRequest before packet.envelope.target endIndex := by
+  have packetFound : nodeState (proto step.before) packet.envelope.source = some before := by
     rw [source]
-    exact stable.found _
-  rcases request_origin execution sent payload found
-      (stable.primary _) with ⟨endIndex, event, requestEq⟩
+    exact found
+  rcases request_origin admissible stepped sent payload packetFound
+      (stable.primary le (by rw [admissible.nodeAt_before stepped, found]))
+      with ⟨endIndex, event, requestEq⟩
       | ⟨_, _, _, _, _, aimed⟩
   · rw [source] at event
     exact ⟨endIndex, event, requestEq⟩
@@ -179,35 +195,39 @@ theorem leader_request {packet : Packet}
     exact absurd eligible aimed
 
 /-- The shape of a stable primary's request to `peer`. -/
-theorem leader_request_shape {packet : Packet}
-    (eligible : packet.envelope.target ∈ eligiblePeers (stable.state packet.sent) leader)
-    (sent : trace.Sent packet) (source : packet.envelope.source = leader)
+theorem leader_request_shape {start : Nat} {leader : NodeID} {term : Nat}
+    (stable : StableLeader trace start leader term) {index : Nat} (le : start <= index)
+    {step : CCF.Execution.Step W Liveness.Event}
+    (stepped : trace.stepAt index = some step) {before after : NodeState}
+    (found : nodeState (proto step.before) leader = some before)
+    (found' : nodeState (proto step.after) leader = some after) {packet : Packet}
+    (eligible : packet.envelope.target ∈ eligiblePeers before leader)
+    (sent : trace.SentAt index packet) (source : packet.envelope.source = leader)
     {request : AppendEntriesRequest}
     (payload : packet.envelope.payload = .appendEntriesRequest request)
     : request.term = term
-      /\ request.prevLogIndex
-          = (stable.state packet.sent).sentIndex packet.envelope.target
+      /\ request.prevLogIndex = before.sentIndex packet.envelope.target
       /\ request.prevLogIndex + request.entries.length
-          = (stable.state (packet.sent + 1)).sentIndex packet.envelope.target
-      /\ request.prevLogIndex + request.entries.length
-          <= (stable.state packet.sent).log.length := by
-  obtain ⟨endIndex, event, rfl⟩ := leader_request execution stable eligible sent source payload
-  obtain ⟨le, bound, frontier, _⟩ := send_step execution stable event
-  refine ⟨stable.current _, rfl, ?_, ?_⟩ <;>
+          = after.sentIndex packet.envelope.target
+      /\ request.prevLogIndex + request.entries.length <= before.log.length := by
+  obtain ⟨endIndex, event, rfl⟩ :=
+    leader_request admissible stable le stepped found eligible sent source payload
+  obtain ⟨sentLe, bound, frontier, _⟩ := send_step admissible stepped event found found'
+  refine ⟨stable.current le (by rw [admissible.nodeAt_before stepped, found]), rfl, ?_, ?_⟩ <;>
     simp only [makeAppendEntriesRequest, messageEntries_length bound] <;> omega
 
 /-- A node that receives a request is at least at the request's term afterwards. -/
-theorem request_term_le {index : Nat} {envelope : Model.Envelope}
-    (delivered : (trace.event index).delivered = some envelope)
+theorem request_term_le {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
+    (stepped : trace.stepAt index = some step) {envelope : Model.Envelope}
+    (delivered : step.action.delivered = some envelope)
     {request : AppendEntriesRequest}
     (payload : envelope.payload = .appendEntriesRequest request) {after : NodeState}
-    (found' : nodeState (trace.state (index + 1)) envelope.target = some after)
+    (found' : nodeState (proto step.after) envelope.target = some after)
     : request.term <= after.currentTerm := by
   have selected := action_of_delivered delivered
   obtain ⟨actor, localEvent, state, next, outputs, ⟨actorEq, eventEq⟩, _, ran, actorFound', _,
       _⟩ :=
-    step_found (CCFRaft.Proofs.Liveness.reachable execution index)
-      (execution.step index _ selected)
+    step_found (admissible.reachable_before stepped) (admissible.step stepped selected)
   subst actorEq eventEq
   rw [payload] at ran
   rw [found', Option.some.injEq] at actorFound'
@@ -217,23 +237,24 @@ theorem request_term_le {index : Nat} {envelope : Model.Envelope}
   exact received
 
 /-- Once a peer receives a request of the term, it stays at the term or newer. -/
-theorem term_after_request {index : Nat} {envelope : Model.Envelope}
-    (delivered : (trace.event index).delivered = some envelope)
+theorem term_after_request {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
+    (stepped : trace.stepAt index = some step) {envelope : Model.Envelope}
+    (delivered : step.action.delivered = some envelope)
     {request : AppendEntriesRequest}
     (payload : envelope.payload = .appendEntriesRequest request)
-    (newer : term <= request.term) {later : Nat} (lt : index < later)
+    {term : Nat} (newer : term <= request.term) {later : Nat} (lt : index < later)
+    {point : W} (pointFound : trace.stateAt later = some point)
     : exists state,
-        nodeState (trace.state later) envelope.target = some state
-        /\ term <= state.currentTerm := by
+        trace.nodeAt later envelope.target = some state /\ term <= state.currentTerm := by
   have selected := action_of_delivered delivered
   obtain ⟨actor, localEvent, state, next, outputs, ⟨actorEq, eventEq⟩, _, ran, found', _, _⟩ :=
-    step_found (CCFRaft.Proofs.Liveness.reachable execution index)
-      (execution.step index _ selected)
+    step_found (admissible.reachable_before stepped) (admissible.step stepped selected)
   subst actorEq eventEq
   rw [payload] at ran
   obtain ⟨_, _, received, _⟩ :=
     CCFRaft.Proofs.Safety.receive_ae_term envelope.target state envelope.source request {} _ _ ran
-  obtain ⟨after, found, grows⟩ := term_mono execution lt found'
+  obtain ⟨after, found, grows⟩ :=
+    term_mono admissible lt (by rw [Trace.nodeAt_succ stepped, found']) pointFound
   exact ⟨after, found, newer.trans (received.trans grows)⟩
 
 end Trace

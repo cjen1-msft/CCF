@@ -29,6 +29,8 @@ open CCF CCF.MultiNodeTransitionSystem
 open Model.Node
 open CCFRaft.Liveness
 open CCFRaft.Proofs.Safety
+open CCFRaft.Proofs.Liveness (Admissible)
+open HasProtocol (proto)
 
 /-- The node and local event that an action runs. -/
 def Acts : Model.Action -> NodeID -> Model.Node.Event -> Prop
@@ -113,57 +115,6 @@ theorem step_found {nodes : List NodeID} {before after : Model.State}
         exact Direct.nodeState_of_mem distinct
           (List.mem_map.mpr
             ⟨(other, value), Concrete.mem_of_nodeState otherFound, by simp [different]⟩)
-
-/-- Every send of the execution comes from a step satisfying the step summary. -/
-theorem sent_summary {trace : Trace} {nodes : List NodeID}
-    (valid : trace.ValidFrom Config.INITIAL_CONFIGURATION nodes) {packet : Packet}
-    (sent : trace.Sent packet)
-    : exists actor event state next sends,
-        nodeState (trace.state (packet.sent + 1)) actor = some next
-        /\ Summary actor state event next sends
-        /\ packet.envelope ∈ sends := by
-  unfold Trace.Sent at sent
-  cases selected : (trace.event packet.sent).action with
-  | none => simp [selected] at sent
-  | some action =>
-      obtain ⟨actor, event, state, next, outputs, _, _, ran, found', out, _⟩ :=
-        step_found (CCFRaft.Proofs.Liveness.reachable valid _)
-          (valid.step _ action selected)
-      obtain ⟨new, eq, holds⟩ :=
-        CCFRaft.Proofs.Safety.summary actor state event {} _ _ ran
-      simp only [selected, out, Option.bind_some] at sent
-      refine ⟨actor, event, state, next, outputs.outgoing, found', ?_,
-        List.mem_of_getElem? sent⟩
-      simpa [eq] using holds
-
-/-- A node's term never decreases along an execution, and the node stays present. -/
-theorem term_mono {trace : Trace} {nodes : List NodeID}
-    (valid : trace.ValidFrom Config.INITIAL_CONFIGURATION nodes) {node : NodeID}
-    {index later : Nat} (le : index <= later) {before : NodeState}
-    (found : nodeState (trace.state index) node = some before)
-    : exists after,
-        nodeState (trace.state later) node = some after
-        /\ before.currentTerm <= after.currentTerm := by
-  induction later, le using Nat.le_induction with
-  | base => exact ⟨before, found, le_rfl⟩
-  | succ later _ ih =>
-      obtain ⟨middle, middleFound, grows⟩ := ih
-      cases selected : (trace.event later).action with
-      | none =>
-          exact ⟨middle, by rw [valid.stutter later selected]; exact middleFound, grows⟩
-      | some action =>
-          obtain ⟨actor, event, state, next, outputs, _, actorFound, ran, actorFound', _,
-              others⟩ :=
-            step_found (CCFRaft.Proofs.Liveness.reachable valid later)
-              (valid.step later action selected)
-          by_cases same : node = actor
-          · subst same
-            rw [actorFound, Option.some.injEq] at middleFound
-            subst middleFound
-            obtain ⟨_, _, facts⟩ :=
-              CCFRaft.Proofs.Safety.summary node state event {} _ _ ran
-            exact ⟨next, actorFound', grows.trans (Summary.term_le facts)⟩
-          · exact ⟨middle, others node middle same middleFound, grows⟩
 
 end Steps
 
@@ -296,216 +247,260 @@ theorem ack_commits (self source : NodeID) (state next : NodeState)
 
 /-! ## The stable primary's peers -/
 
-section Trace
+section Recorded
 
 variable [Config.InitialConfiguration]
+  {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
+  {nodes : List NodeID} {trace : Trace W Liveness.Event}
+  (admissible
+    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
 
-/-- Every AppendEntries request a stable primary sends during the execution
-carries its term. -/
-theorem stable_requests {trace : Trace} {nodes : List NodeID}
-    (valid : trace.ValidFrom Config.INITIAL_CONFIGURATION nodes) {leader : NodeID}
-    {term : Nat} (stable : LeadsThroughout trace leader term) {packet : Packet}
-    (sent : trace.Sent packet) (source : packet.envelope.source = leader)
-    {request : AppendEntriesRequest}
+include admissible
+
+/-- Every send of the execution comes from a step satisfying the step summary. -/
+theorem sent_summary {index : Nat} {packet : Packet} (sent : trace.SentAt index packet)
+    : exists actor event state next sends,
+        trace.nodeAt (index + 1) actor = some next
+        /\ Summary actor state event next sends
+        /\ packet.envelope ∈ sends := by
+  obtain ⟨step, action, emitted, stepped, selected, out, member, -⟩ :=
+    admissible.sentAt_emitted sent
+  obtain ⟨actor, event, state, next, outputs, _, _, ran, found', out', _⟩ :=
+    step_found (admissible.reachable_before stepped) (admissible.step stepped selected)
+  obtain ⟨new, eq, holds⟩ := CCFRaft.Proofs.Safety.summary actor state event {} _ _ ran
+  rw [out', Option.some.injEq] at out
+  subst out
+  refine ⟨actor, event, state, next, outputs.outgoing, ?_, ?_, member⟩
+  · rw [Trace.nodeAt_succ stepped, found']
+  · simpa [eq] using holds
+
+/-- A node's term never decreases along an execution, and the node stays present. -/
+theorem term_mono {node : NodeID} {index later : Nat} (le : index <= later)
+    {before : NodeState} (found : trace.nodeAt index node = some before)
+    {last : W} (lastFound : trace.stateAt later = some last)
+    : exists after,
+        trace.nodeAt later node = some after
+        /\ before.currentTerm <= after.currentTerm := by
+  obtain ⟨first, firstFound, nodeFound⟩ := Trace.nodeAt_eq_some.mp found
+  obtain ⟨after, afterFound, grows⟩ :=
+    admissible.coherent.chain
+      (relation := fun first last =>
+        forall before,
+          nodeState (proto first) node = some before
+          -> exists after,
+              nodeState (proto last) node = some after
+              /\ before.currentTerm <= after.currentTerm)
+      (fun _ before found => ⟨before, found, le_rfl⟩)
+      (fun _ _ _ first second before found => by
+        obtain ⟨middle, middleFound, grows⟩ := first before found
+        obtain ⟨after, afterFound, grows'⟩ := second middle middleFound
+        exact ⟨after, afterFound, grows.trans grows'⟩)
+      (fun _ step stepped middle middleFound => by
+        cases selected : step.action.action with
+        | none =>
+            exact ⟨middle, by rw [admissible.stutter stepped selected]; exact middleFound,
+              le_rfl⟩
+        | some action =>
+            obtain ⟨actor, event, state, next, outputs, _, actorFound, ran, actorFound', _,
+                others⟩ :=
+              step_found (admissible.reachable_before stepped) (admissible.step stepped selected)
+            by_cases same : node = actor
+            · subst same
+              rw [actorFound, Option.some.injEq] at middleFound
+              subst middleFound
+              obtain ⟨_, _, facts⟩ := CCFRaft.Proofs.Safety.summary node state event {} _ _ ran
+              exact ⟨next, actorFound', Summary.term_le facts⟩
+            · exact ⟨middle, others node middle same middleFound, le_rfl⟩)
+      le firstFound lastFound before nodeFound
+  exact ⟨after, by rw [Trace.nodeAt_of_stateAt lastFound, afterFound], grows⟩
+
+/-- Every AppendEntries request a stable primary sends from `start` on carries its
+term. -/
+theorem stable_requests {start : Nat} {leader : NodeID} {term : Nat}
+    (stable : StableLeader trace start leader term) {sent : Nat} {packet : Packet}
+    (afterStart : start <= sent) (sentAt : trace.SentAt sent packet)
+    (source : packet.envelope.source = leader) {request : AppendEntriesRequest}
     (payload : packet.envelope.payload = .appendEntriesRequest request)
     : request.term = term := by
-  obtain ⟨actor, event, state, next, sends, found, facts, member⟩ := sent_summary valid sent
+  obtain ⟨actor, event, state, next, sends, found, facts, member⟩ :=
+    sent_summary admissible sentAt
   obtain ⟨sender, ok⟩ := Summary.sends facts _ member
   rw [payload] at ok
   have same : actor = leader := sender.symm.trans source
   subst same
-  obtain ⟨_, stableState, stableFound, _, stableTerm, _⟩ := stable (packet.sent + 1)
-  rw [found, Option.some.injEq] at stableFound
-  subst stableFound
-  exact ok.1.2.1.trans stableTerm
-
-end Trace
+  exact ok.1.2.1.trans (stable.current (Nat.le_succ_of_le afterStart) found)
 
 /-- A stable primary keeps sending requests in its term to a peer that stays live
 and eligible. -/
-theorem heartbeats_sent (model : LivenessModel) {trace : Trace}
-    (valid : model.FairFrom trace) {leader peer : NodeID} {term start : Nat}
-    (stable : LeadsThroughout trace leader term)
-    (live : forall index, peer ∈ trace.live index)
+theorem heartbeats_sent {bound : Option Real}
+    (heartbeats : trace.HeartbeatScheduling bound) {start : Nat} {leader peer : NodeID}
+    {term : Nat} (stable : StableLeader trace start leader term)
+    (live
+      : forall index point,
+          start <= index -> trace.stateAt index = some point -> peer ∈ HasLive.live point)
     (eligible
       : forall index state,
           start <= index
-          -> nodeState (trace.state index) leader = some state
+          -> trace.nodeAt index leader = some state
           -> peer ∈ eligiblePeers state leader)
     : InfinitelySent trace leader peer (.appendRequest term) := by
-  let _ : Config.InitialConfiguration := ⟨model.initialConfiguration⟩
-  have execution : trace.ValidFrom Config.INITIAL_CONFIGURATION model.nodes := valid.execution
-  have due : forall index, start <= index -> trace.PeerDue leader peer index := by
-    intro index afterStart
-    obtain ⟨leaderLive, state, found, primary, _, notRetired⟩ := stable index
-    exact ⟨leaderLive, live index, state, found, primary, notRetired,
-      eligible index state afterStart found⟩
+  obtain ⟨first, firstFound⟩ := stable.1
+  have due
+      : forall index point,
+          start <= index -> trace.stateAt index = some point -> PeerDue point leader peer := by
+    intro index point le found
+    obtain ⟨leaderLive, state, nodeFound, primary, _, notRetired⟩ := stable.leads le found
+    exact ⟨leaderLive, live index point le found, state, nodeFound, primary, notRetired,
+      eligible index state le (by rw [Trace.nodeAt_of_stateAt found, nodeFound])⟩
   intro cutoff
-  obtain ⟨later, after, sends⟩ :=
-    valid.heartbeats (max cutoff start) leader peer (due _ (Nat.le_max_right _ _))
-  rcases sends with stopped | ⟨state, frontier, found, event, _⟩
-  · exact (stopped (due later (le_trans (Nat.le_max_right _ _) after))).elim
-  · have selected
-        : (trace.event later).action = some (.local leader (.sendEntries peer frontier)) := by
-      rw [event]; rfl
-    obtain ⟨actor, localEvent, current, next, outputs, acts, actorFound, ran, _, out, _⟩ :=
-      step_found (CCFRaft.Proofs.Liveness.reachable execution later)
-        (execution.step later _ selected)
-    obtain ⟨same, eventEq⟩ := acts
-    subst same eventEq
-    rw [found, Option.some.injEq] at actorFound
-    subst actorFound
-    obtain ⟨new, eq, single⟩ := sendEntries_sends actor state peer frontier {} _ _ ran
-    obtain ⟨_, stableState, stableFound, _, stableTerm, _⟩ := stable later
-    rw [found, Option.some.injEq] at stableFound
-    subst stableFound
-    refine ⟨⟨later, 0,
-        {
-          source := actor
-          target := peer
-          payload :=
-            .appendEntriesRequest (makeAppendEntriesRequest state peer frontier)
-        }⟩,
-      ?_, le_trans (Nat.le_max_left _ _) after, rfl, rfl, ?_⟩
-    · simp [Trace.Sent, selected, out, eq, single]
-    · simp [Traffic.Matches, makeAppendEntriesRequest, stableTerm]
+  obtain ⟨index, step, after, stepped, state, frontier, found, action, _⟩ :=
+    (heartbeats leader peer).often firstFound due (max cutoff start)
+  have selected : step.action.action = some (.local leader (.sendEntries peer frontier)) := by
+    rw [action]; rfl
+  obtain ⟨actor, localEvent, current, next, outputs, acts, actorFound, ran, _, out, _⟩ :=
+    step_found (admissible.reachable_before stepped) (admissible.step stepped selected)
+  obtain ⟨same, eventEq⟩ := acts
+  subst same eventEq
+  rw [found, Option.some.injEq] at actorFound
+  subst actorFound
+  obtain ⟨new, eq, single⟩ := sendEntries_sends actor state peer frontier {} _ _ ran
+  rw [eq, single] at out
+  have stateTerm :=
+    stable.current (Nat.le_trans (Nat.le_max_right _ _) after)
+      (by rw [admissible.nodeAt_before stepped, found])
+  obtain ⟨packet, sent, envelope, -⟩ :=
+    admissible.sentAt_of_emitted stepped selected out
+      (List.mem_append_right _ (List.mem_singleton_self _))
+  refine ⟨index, packet, sent, Nat.le_trans (Nat.le_max_left _ _) after, ?_, ?_, ?_⟩ <;>
+    rw [envelope]
+  simp [Traffic.Matches, makeAppendEntriesRequest, stateTerm]
 
 /-- Under fair loss between a stable primary and an eligible live peer, the peer
 never holds a newer term: it would keep rejecting the primary's heartbeats with
 that term, one rejection would be delivered, and the primary would step down.
 This is what makes the fair-loss traffic classes cover every newer term. -/
-theorem peer_term_le (model : LivenessModel) {trace : Trace} (valid : model.FairFrom trace)
-    {leader peer : NodeID} {term start : Nat} {participants : Finset NodeID}
-    (stable : LeadsThroughout trace leader term) (fair : FairLoss trace participants)
+theorem peer_term_le {bound : Option Real} (heartbeats : trace.HeartbeatScheduling bound)
+    {start : Nat} {leader peer : NodeID} {term : Nat} {participants : Finset NodeID}
+    (stable : StableLeader trace start leader term) (fair : FairLoss trace participants)
     (leaderIn : leader ∈ participants) (peerIn : peer ∈ participants)
-    (live : forall index, peer ∈ trace.live index)
+    (live
+      : forall index point,
+          start <= index -> trace.stateAt index = some point -> peer ∈ HasLive.live point)
     (eligible
       : forall index state,
           start <= index
-          -> nodeState (trace.state index) leader = some state
+          -> trace.nodeAt index leader = some state
           -> peer ∈ eligiblePeers state leader)
     : forall index state,
         start <= index
-        -> nodeState (trace.state index) peer = some state
+        -> trace.nodeAt index peer = some state
         -> state.currentTerm <= term := by
-  let _ : Config.InitialConfiguration := ⟨model.initialConfiguration⟩
-  have execution : trace.ValidFrom Config.INITIAL_CONFIGURATION model.nodes := valid.execution
   intro index state _ found
   by_contra notLe
   have ahead : term < state.currentTerm := Nat.lt_of_not_le notLe
   have requests :=
-    fair leader peer _ leaderIn peerIn (heartbeats_sent model valid stable live eligible)
+    fair leader peer _ leaderIn peerIn (heartbeats_sent admissible heartbeats stable live eligible)
+  obtain ⟨stop, _, horizon⟩ := admissible.horizon start
   have rejections : InfinitelySent trace peer leader (.response (term + 1) false 0) := by
     intro cutoff
-    obtain ⟨delivery, packet, after, event, source, target, matching⟩ :=
-      requests (max cutoff index)
-    have selected : (trace.event delivery).action = some (.deliver packet.envelope) := by
-      rw [event]; rfl
-    have sent : trace.Sent packet :=
-      (execution.resolution delivery packet (by rw [event]; rfl)).1
+    obtain ⟨delivery, step, packet, after, stepped, action, source, target, matching⟩ :=
+      requests (max cutoff (max index stop))
+    have selected : step.action.action = some (.deliver packet.envelope) := by
+      rw [action]; rfl
+    obtain ⟨sent, sentAfter, _, sentAt⟩ :=
+      horizon delivery step packet (by omega) stepped (by rw [action]; rfl)
     obtain ⟨current, currentFound, grows⟩ :=
-      term_mono execution (le_trans (Nat.le_max_right _ _) after) found
+      term_mono admissible (show index <= delivery by omega) found (admissible.before stepped)
     cases payload : packet.envelope.payload with
     | appendEntriesRequest request =>
-        have requestTerm := stable_requests execution stable sent source payload
+        have requestTerm := stable_requests admissible stable sentAfter sentAt source payload
         obtain ⟨actor, localEvent, receiver, next, outputs, acts, actorFound, ran, _, out, _⟩ :=
-          step_found (CCFRaft.Proofs.Liveness.reachable execution delivery)
-            (execution.step delivery _ selected)
+          step_found (admissible.reachable_before stepped) (admissible.step stepped selected)
         obtain ⟨same, eventEq⟩ := acts
         subst same eventEq
+        rw [admissible.nodeAt_before stepped] at currentFound
         rw [target, currentFound, Option.some.injEq] at actorFound
         subst actorFound
         rw [target, source, payload] at ran
         obtain ⟨new, eq, single⟩ :=
           stale_request_sends peer leader current request (by omega) {} _ _ ran
-        refine ⟨⟨delivery, 0,
-            {
-              source := peer
-              target := leader
-              payload :=
-                .appendEntriesResponse
-                  {
-                    term := current.currentTerm
-                    success := false
-                    lastLogIndex := current.log.length
-                  }
-            }⟩,
-          ?_, le_trans (Nat.le_max_left _ _) after, rfl, rfl, ?_⟩
-        · simp [Trace.Sent, selected, out, eq, single]
-        · exact ⟨by dsimp only; omega, rfl, Nat.zero_le _⟩
+        rw [eq, single] at out
+        obtain ⟨reply, replySent, envelope, -⟩ :=
+          admissible.sentAt_of_emitted stepped selected out
+            (List.mem_append_right _ (List.mem_singleton_self _))
+        refine ⟨delivery, reply, replySent, by omega, ?_, ?_, ?_⟩ <;> rw [envelope]
+        exact ⟨by dsimp only; omega, rfl, Nat.zero_le _⟩
     | _ => rw [payload] at matching; simp [Traffic.Matches] at matching
-  obtain ⟨delivery, packet, after, event, source, target, matching⟩ :=
+  obtain ⟨delivery, step, packet, after, stepped, action, source, target, matching⟩ :=
     fair peer leader _ peerIn leaderIn rejections start
-  have selected : (trace.event delivery).action = some (.deliver packet.envelope) := by
-    rw [event]; rfl
+  have selected : step.action.action = some (.deliver packet.envelope) := by
+    rw [action]; rfl
   cases payload : packet.envelope.payload with
   | appendEntriesResponse response =>
       rw [payload] at matching
       obtain ⟨newer, _, _⟩ := matching
       obtain ⟨actor, localEvent, primary, next, outputs, acts, actorFound, ran, actorFound', _,
           _⟩ :=
-        step_found (CCFRaft.Proofs.Liveness.reachable execution delivery)
-          (execution.step delivery _ selected)
+        step_found (admissible.reachable_before stepped) (admissible.step stepped selected)
       obtain ⟨same, eventEq⟩ := acts
       subst same eventEq
       rw [target] at actorFound actorFound' ran
       rw [source, payload] at ran
-      obtain ⟨_, before, beforeFound, role, beforeTerm, _⟩ := stable delivery
-      rw [actorFound, Option.some.injEq] at beforeFound
-      subst beforeFound
+      have beforeNode : trace.nodeAt delivery leader = some primary := by
+        rw [admissible.nodeAt_before stepped, actorFound]
       have deposed :=
         newer_response_deposes leader peer primary next response outputs ran
-          (eligible delivery primary after actorFound) role (by omega)
-      obtain ⟨_, later, laterFound, _, laterTerm, _⟩ := stable (delivery + 1)
-      rw [actorFound', Option.some.injEq] at laterFound
-      subst laterFound
+          (eligible delivery primary after beforeNode) (stable.primary after beforeNode)
+          (by have := stable.current after beforeNode; omega)
+      have afterNode : trace.nodeAt (delivery + 1) leader = some next := by
+        rw [Trace.nodeAt_succ stepped, actorFound']
+      have := stable.current (Nat.le_succ_of_le after) afterNode
       omega
   | _ => rw [payload] at matching; simp [Traffic.Matches] at matching
 
 /-- The final commit step along an execution, for an acknowledgement of the
 primary's term or newer. -/
-theorem ack_commits_trace (model : LivenessModel) {trace : Trace}
-    (valid : model.FairFrom trace) {leader : NodeID} {term : Nat}
-    (stable : LeadsThroughout trace leader term) {index : Nat} {packet : Packet}
-    (event : trace.event index = .deliver packet)
-    (target : packet.envelope.target = leader) {response : AppendEntriesResponse}
+theorem ack_commits_trace {start : Nat} {leader : NodeID} {term : Nat}
+    (stable : StableLeader trace start leader term) {index : Nat}
+    (afterStart : start <= index) {step : CCF.Execution.Step W Liveness.Event}
+    (stepped : trace.stepAt index = some step) {packet : Packet}
+    (action : step.action = .deliver packet) (target : packet.envelope.target = leader)
+    {response : AppendEntriesResponse}
     (payload : packet.envelope.payload = .appendEntriesResponse response)
     (success : response.success = true) (current : term <= response.term)
-    {state : NodeState} (found : nodeState (trace.state index) leader = some state)
+    {state : NodeState} (found : trace.nodeAt index leader = some state)
     (eligible : packet.envelope.source ∈ eligiblePeers state leader) {signature : Nat}
     (ready : SignatureReady state leader signature)
     : exists after,
-        nodeState (trace.state (index + 1)) leader = some after
+        trace.nodeAt (index + 1) leader = some after
         /\ signature <= after.commitIndex := by
-  let _ : Config.InitialConfiguration := ⟨model.initialConfiguration⟩
-  have execution : trace.ValidFrom Config.INITIAL_CONFIGURATION model.nodes := valid.execution
-  have selected : (trace.event index).action = some (.deliver packet.envelope) := by
-    rw [event]; rfl
+  have selected : step.action.action = some (.deliver packet.envelope) := by
+    rw [action]; rfl
   obtain ⟨actor, localEvent, primary, next, outputs, acts, actorFound, ran, actorFound', _, _⟩ :=
-    step_found (CCFRaft.Proofs.Liveness.reachable execution index)
-      (execution.step index _ selected)
+    step_found (admissible.reachable_before stepped) (admissible.step stepped selected)
   obtain ⟨same, eventEq⟩ := acts
   subst same eventEq
   rw [target] at actorFound actorFound' ran
   rw [payload] at ran
-  rw [found, Option.some.injEq] at actorFound
-  subst actorFound
-  obtain ⟨_, stableState, stableFound, role, stableTerm, _⟩ := stable index
-  rw [found, Option.some.injEq] at stableFound
-  subst stableFound
-  have le : response.term <= state.currentTerm := by
+  have role := stable.primary afterStart found
+  have stableTerm := stable.current afterStart found
+  rw [admissible.nodeAt_before stepped, actorFound, Option.some.injEq] at found
+  subst found
+  have afterNode : trace.nodeAt (index + 1) leader = some next := by
+    rw [Trace.nodeAt_succ stepped, actorFound']
+  have le : response.term <= primary.currentTerm := by
     by_contra newer
-    have bumped := newer_response_deposes leader _ state next response outputs ran eligible role
+    have bumped := newer_response_deposes leader _ primary next response outputs ran eligible role
       (Nat.lt_of_not_le newer)
-    obtain ⟨_, later, laterFound, _, laterTerm, _⟩ := stable (index + 1)
-    rw [actorFound', Option.some.injEq] at laterFound
-    subst laterFound
+    have := stable.current (Nat.le_succ_of_le afterStart) afterNode
     omega
   exact ⟨
     next,
-    actorFound',
-    ack_commits leader _ state next response outputs ran eligible role success (by omega)
-      ready
+    afterNode,
+    ack_commits leader _ primary next response outputs ran eligible role success
+      (by omega) ready
   ⟩
+
+end Recorded
 
 end CCFRaft.Proofs.StablePrimary

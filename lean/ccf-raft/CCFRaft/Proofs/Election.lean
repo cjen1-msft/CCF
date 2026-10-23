@@ -26,11 +26,11 @@ theorem primary_eq_of_reachable [Config.InitialConfiguration]
 
 theorem election_safety
     : forall (config : Finset NodeID),
-      forall (nodes : List NodeID) (trace : CCF.Execution.Trace Model.State)
+      forall (nodes : List NodeID) (trace : CCF.Execution.Trace Model.State Model.Action)
               (state : Model.State),
       forall (left right : NodeID) (leftState rightState : NodeState),
         (trace.Valid (Model.transitionSystem config nodes)
-          /\ state ∈ trace
+          /\ state ∈ trace.states (Model.transitionSystem config nodes)
           /\ (left, leftState) ∈ state.nodes
           /\ (right, rightState) ∈ state.nodes
           /\ leftState.role = .primary

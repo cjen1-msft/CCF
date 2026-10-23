@@ -51,10 +51,9 @@ def Trace.Valid {W A : Type} (trace : Trace W A) (model : Model W A) : Prop :=
 
 /-- Eventually, at or after `index`, an existing recorded state satisfies the predicate. -/
 def Eventually {W A : Type} (trace : Trace W A) (index : Nat)
-    (predicate : Nat -> W -> Prop) : Prop :=
+    (predicate : Nat -> W -> Prop)
+    : Prop :=
   exists later point,
-    index <= later
-    /\ trace.stateAt later = some point
-    /\ predicate later point
+    index <= later /\ trace.stateAt later = some point /\ predicate later point
 
 end CCFRaft.Liveness

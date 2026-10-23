@@ -21,7 +21,8 @@ def HasRequest (log : List Entry) (request : ReqID) : Prop :=
 has it, or the client then submits it to the primary. With a primary stable from
 `start`, one submission is enough. Needed: a request that is never submitted is
 never committed. -/
-def Submitted (trace : Trace W Event) (start : Nat) (leader : NodeID) (request : ReqID) : Prop :=
+def Submitted (trace : Trace W Event) (start : Nat) (leader : NodeID) (request : ReqID)
+    : Prop :=
   exists index point,
     start <= index
     /\ trace.stateAt index = some point

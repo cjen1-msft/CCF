@@ -18,14 +18,21 @@ open Model.Node
 open CCFRaft.Proofs.Config
 
 theorem committed_logs_prefix_of_le [Config.InitialConfiguration]
-    {nodes : List Model.Node.NodeID} {trace : CCF.Execution.Trace Model.State}
+    {nodes : List Model.Node.NodeID}
+    {trace : CCF.Execution.Trace Model.State Model.Action}
     (valid : trace.Valid (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes))
     {earlierIndex laterIndex : Nat} {earlier later : Model.State}
     {earlierNode laterNode : Model.Node.NodeID}
     {earlierState laterState : Model.Node.NodeState}
     (ordered : earlierIndex <= laterIndex)
-    (earlierFound : trace.get? earlierIndex = some earlier)
-    (laterFound : trace.get? laterIndex = some later)
+    (earlierFound
+      : trace.stateAt (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes)
+          earlierIndex
+        = some earlier)
+    (laterFound
+      : trace.stateAt (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes)
+          laterIndex
+        = some later)
     (earlierMember : (earlierNode, earlierState) ∈ earlier.nodes)
     (laterMember : (laterNode, laterState) ∈ later.nodes)
     : earlierState.committedLog <+: laterState.committedLog
@@ -34,7 +41,7 @@ theorem committed_logs_prefix_of_le [Config.InitialConfiguration]
     Direct.committed_log_later valid earlierFound earlierMember (laterIndex - earlierIndex)
       later (by rwa [Nat.add_sub_cancel' ordered])
   obtain ⟨history, exec⟩ :=
-    Safety.exec_of_reachable (valid.reachable (Stream'.Seq.get?_mem laterFound))
+    Safety.exec_of_reachable (valid.reachable_stateAt laterFound)
   rcases Safety.committed_logs_comparable exec carriedMember laterMember with
     carriedFirst | laterFirst
   · exact Or.inl (grown.trans carriedFirst)
@@ -42,12 +49,12 @@ theorem committed_logs_prefix_of_le [Config.InitialConfiguration]
 
 theorem committed_logs_prefix
     : forall (config : Finset NodeID),
-      forall (nodes : List NodeID) (trace : CCF.Execution.Trace Model.State),
+      forall (nodes : List NodeID) (trace : CCF.Execution.Trace Model.State Model.Action),
       forall (stateA stateB : Model.State),
       forall (left right : NodeID) (leftState rightState : NodeState),
         (trace.Valid (Model.transitionSystem config nodes)
-          /\ stateA ∈ trace
-          /\ stateB ∈ trace
+          /\ stateA ∈ trace.states (Model.transitionSystem config nodes)
+          /\ stateB ∈ trace.states (Model.transitionSystem config nodes)
           /\ (left, leftState) ∈ stateA.nodes
           /\ (right, rightState) ∈ stateB.nodes)
         -> leftState.committedLog <+: rightState.committedLog
@@ -55,12 +62,12 @@ theorem committed_logs_prefix
   intro config nodes trace stateA stateB left right leftState rightState
     ⟨valid, memberA, memberB, leftMember, rightMember⟩
   let _ : Proofs.Config.InitialConfiguration := ⟨config⟩
-  obtain ⟨indexA, foundA⟩ := Stream'.Seq.mem_iff_exists_get?.mp memberA
-  obtain ⟨indexB, foundB⟩ := Stream'.Seq.mem_iff_exists_get?.mp memberB
+  obtain ⟨indexA, foundA⟩ := CCF.Execution.Trace.mem_states_iff.mp memberA
+  obtain ⟨indexB, foundB⟩ := CCF.Execution.Trace.mem_states_iff.mp memberB
   rcases Nat.le_total indexA indexB with ordered | ordered
   · exact Proofs.CommittedLogs.committed_logs_prefix_of_le valid ordered
-      foundA.symm foundB.symm leftMember rightMember
+      foundA foundB leftMember rightMember
   · exact (Proofs.CommittedLogs.committed_logs_prefix_of_le valid ordered
-      foundB.symm foundA.symm rightMember leftMember).symm
+      foundB foundA rightMember leftMember).symm
 
 end CCFRaft.Proofs.CommittedLogs

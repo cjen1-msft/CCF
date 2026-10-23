@@ -2,22 +2,21 @@ module
 
 public import CCFRaft.Proofs.Leadership.Quiet
 public import CCFRaft.Proofs.Leadership.Timers
-public import CCFRaft.Proofs.Replication.Run
+public import CCFRaft.Proofs.Replication.Step
 
 @[expose] public section
-
-set_option linter.unusedSectionVars false
 
 /-!
 # A stable primary from timing
 
 The primary sends every peer a heartbeat within `heartbeatInterval`, and the
-heartbeat arrives within `delay`. Each arrival that passes the peer's log check,
+heartbeat arrives within `delay`, both measured at the steps' before-times.
+Each arrival that passes the peer's log check,
 which `Matching` assumes, resets the peer's election timer, and an expired timer
 has gone at least half an election timeout without a reset.
 So if `heartbeatInterval + delay` is below half the election timeout, no tracked
-node of the term times out, and by `Quiet.step` the term stays quiet: the primary
-keeps its role.
+node of the term times out after `QuietStart`, and by `Quiet.step` the term stays
+quiet at every recorded state: the primary keeps its role.
 -/
 
 namespace CCFRaft.Proofs.Leadership
@@ -28,120 +27,153 @@ open CCFRaft.Liveness
 open CCFRaft.Proofs.Safety
 open CCFRaft.Proofs.Replication
 open CCFRaft.Proofs.StablePrimary
+open CCFRaft.Proofs.Liveness (Admissible)
+open HasProtocol (proto)
+open HasTime (time)
+open HasLive (live)
+
+private theorem local_of_internal {event : Liveness.Event} {action : Model.Action}
+    {actor : NodeID} {localEvent : Model.Node.Event} {input : Input}
+    (selected : event.action = some action) (acts : Acts action actor localEvent)
+    (internal : localEvent = .internal input)
+    : event = .local actor input := by
+  cases action with
+  | «local» node input' =>
+      obtain ⟨actorEq, eventEq⟩ := acts
+      rw [eventEq] at internal
+      cases internal
+      rw [actorEq]
+      cases event <;> simp_all [Liveness.Event.action]
+  | deliver envelope =>
+      obtain ⟨_, eventEq⟩ := acts
+      rw [eventEq] at internal
+      cases internal
 
 section Trace
 
-variable [Config.InitialConfiguration] {trace : Trace} {nodes : List NodeID}
-  (execution : trace.ValidFrom Config.INITIAL_CONFIGURATION nodes)
+variable [Config.InitialConfiguration]
+  {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
+  {nodes : List NodeID} {trace : Trace W Liveness.Event}
+  (admissible
+    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
 
-include execution
-
-/-- Crash-stop: a node live at an index was live at every earlier one. -/
-theorem live_before {node : NodeID} {earlier index : Nat} (le : earlier <= index)
-    (live : node ∈ trace.live index)
-    : node ∈ trace.live earlier := by
-  induction le with
-  | refl => exact live
-  | step _ ih => exact ih (CCFRaft.Proofs.Liveness.live_decreases execution _ live)
+include admissible
 
 theorem quiet_leader {leader : NodeID} {term index : Nat}
-    (quiet : Quiet leader term (trace.state index))
+    {point : W} (found : trace.stateAt index = some point)
+    (quiet : Quiet leader term (proto point))
     : exists state,
-        nodeState (trace.state index) leader = some state
+        nodeState (proto point) leader = some state
         /\ state.role = .primary
         /\ state.currentTerm = term := by
-  obtain ⟨_, exec⟩ := history_at execution index
+  obtain ⟨_, exec⟩ := history_at admissible found
   obtain ⟨local_, now, primary, termEq⟩ := quiet.leader
   exact ⟨local_, found_of_now exec now, primary, termEq⟩
 
-end Trace
-
 /-- While the term stays quiet, a live node the primary tracks has its election
-timer reset within `heartbeatInterval + delay` of any index. -/
-theorem reset_follows (model : LivenessModel) {trace : Trace} (valid : model.Valid trace)
-    {leader node : NodeID} {term index : Nat} {delay : Real}
-    (quiet : forall earlier, earlier <= index -> Quiet leader term (trace.state earlier))
-    (timely : Timely trace leader delay) (nonneg : 0 <= delay)
-    (matching : Matching trace leader term)
-    (incumbent : Incumbent trace leader) (live : node ∈ trace.live index)
+timer reset within `heartbeatInterval + delay` of every sufficiently early
+recorded state. Send, delivery and reset times are all step before-times. -/
+theorem reset_follows {heartbeatInterval : Real}
+    (heartbeats : trace.HeartbeatScheduling (some heartbeatInterval))
+    {start index : Nat} {leader node : NodeID} {term : Nat} {delay : Real}
+    {last : W} (lastFound : trace.stateAt index = some last)
+    (quiet
+      : forall earlier point,
+          start <= earlier
+          -> earlier <= index
+          -> trace.stateAt earlier = some point
+          -> Quiet leader term (proto point))
+    (timely : Timely trace start leader delay) (nonneg : 0 <= delay)
+    (matching : Matching trace start leader term)
+    (incumbent : Incumbent trace start leader) (alive : node ∈ live last)
     (tracked
-      : forall earlier leaderState,
-          earlier <= index
-          -> nodeState (trace.state earlier) leader = some leaderState
+      : forall earlier point leaderState,
+          start <= earlier
+          -> earlier <= index
+          -> trace.stateAt earlier = some point
+          -> nodeState (proto point) leader = some leaderState
           -> node ∈ eligiblePeers leaderState leader)
-    : forall earlier,
-        earlier <= index
-        -> trace.time earlier + (model.bounds.heartbeatInterval + delay)
-            < trace.time index
-        -> exists later,
+    : forall earlier point,
+        start <= earlier
+        -> earlier <= index
+        -> trace.stateAt earlier = some point
+        -> time point + (heartbeatInterval + delay) < time last
+        -> exists later reset,
             earlier < later
-            /\ trace.time later
-                <= trace.time earlier + (model.bounds.heartbeatInterval + delay)
-            /\ trace.ElectionReset node later := by
-  let _ : Config.InitialConfiguration := ⟨model.initialConfiguration⟩
-  have execution : trace.ValidFrom Config.INITIAL_CONFIGURATION model.nodes := valid.execution
-  have due : forall moment, moment <= index -> trace.PeerDue leader node moment := by
-    intro moment le
-    obtain ⟨state, found, primary, _⟩ := quiet_leader execution (quiet moment le)
-    exact ⟨incumbent.live moment, live_before execution le live, state, found, primary,
-      incumbent.notRetired moment state found, tracked moment state le found⟩
-  intro earlier le early
-  obtain ⟨later, after, within, sends⟩ := valid.heartbeats earlier leader node (due earlier le)
+            /\ trace.stepAt later = some reset
+            /\ time reset.before <= time point + (heartbeatInterval + delay)
+            /\ ElectionReset reset node := by
+  have due
+      : forall moment point,
+          start <= moment
+          -> moment <= index
+          -> trace.stateAt moment = some point
+          -> PeerDue point leader node := by
+    intro moment point after le recorded
+    obtain ⟨state, found, primary, _⟩ :=
+      quiet_leader admissible recorded (quiet moment point after le recorded)
+    exact ⟨incumbent.live moment point after recorded,
+      admissible.live_anti le recorded lastFound alive, state, found, primary,
+      incumbent.notRetired moment point state after recorded found,
+      tracked moment point state after le recorded found⟩
+  intro earlier point afterStart le recorded early
+  obtain ⟨later, laterPoint, after, laterFound, within, sends⟩ :=
+    heartbeats leader node earlier point recorded (due earlier point afterStart le recorded)
+  change time laterPoint <= time point + heartbeatInterval at within
   have beforeIndex : later < index := by
     by_contra notBefore
-    have := valid.clockMonotone (Nat.le_of_not_lt notBefore)
+    have := admissible.time_le (Nat.le_of_not_lt notBefore) lastFound laterFound
     linarith
-  rcases sends with stopped | ⟨state, frontier, found, event, _⟩
-  · exact (stopped (due later beforeIndex.le)).elim
+  rcases sends with stopped | ⟨sendStep, stepped, state, frontier, found, event, _⟩
+  · exact (stopped (due later laterPoint (by omega) beforeIndex.le laterFound)).elim
+  rw [admissible.before stepped, Option.some.injEq] at laterFound
+  subst laterPoint
   have stateTerm : state.currentTerm = term := by
-    obtain ⟨state', found', _, termEq⟩ := quiet_leader execution (quiet later beforeIndex.le)
+    obtain ⟨state', found', _, termEq⟩ :=
+      quiet_leader admissible (admissible.before stepped)
+        (quiet later sendStep.before (by omega) beforeIndex.le (admissible.before stepped))
     rw [found, Option.some.injEq] at found'
     rw [found']
     exact termEq
-  have selected
-      : (trace.event later).action = some (.local leader (.sendEntries node frontier)) := by
+  have selected : sendStep.action.action = some (.local leader (.sendEntries node frontier)) := by
     rw [event]; rfl
   obtain ⟨actor, localEvent, current, next, outputs, acts, actorFound, ran, _, out, _⟩ :=
-    step_found (CCFRaft.Proofs.Liveness.reachable execution later)
-      (execution.step later _ selected)
+    step_found (admissible.reachable_before stepped) (admissible.step stepped selected)
   obtain ⟨same, eventEq⟩ := acts
   subst same eventEq
   rw [found, Option.some.injEq] at actorFound
   subst actorFound
   obtain ⟨new, eq, single⟩ := sendEntries_sends actor state node frontier {} _ _ ran
-  have sent
-      : trace.Sent
-          ⟨later, 0,
-            {
-              source := actor
-              target := node
-              payload :=
-                .appendEntriesRequest (makeAppendEntriesRequest state node frontier)
-            }⟩ := by
-    simp [Trace.Sent, selected, out, eq, single]
-  obtain ⟨delivery, afterSend, deliveryTime, delivered⟩ := timely _ sent rfl ⟨_, rfl⟩
-  change later < delivery at afterSend
-  change trace.time delivery <= trace.time later + delay at deliveryTime
+  rw [eq, single] at out
+  obtain ⟨packet, sent, envelope, sentTime⟩ :=
+    admissible.sentAt_of_emitted stepped selected out
+      (List.mem_append_right _ (List.mem_singleton_self _))
+  have source : packet.envelope.source = actor := by rw [envelope]
+  have target : packet.envelope.target = node := by rw [envelope]
+  have payload : packet.envelope.payload =
+      .appendEntriesRequest (makeAppendEntriesRequest state node frontier) := by rw [envelope]
+  obtain ⟨delivery, deliveryStep, afterSend, deliveredAt, deliveryTime, delivered⟩ :=
+    timely later packet sent (by omega) source ⟨_, payload⟩
+  rw [sentTime] at deliveryTime
   have deliveryBefore : delivery < index := by
     by_contra notBefore
-    have := valid.clockMonotone (Nat.le_of_not_lt notBefore)
+    have := admissible.time_le (Nat.le_of_not_lt notBefore) lastFound
+      (admissible.before deliveredAt)
     linarith
   rcases delivered with deliverEq | crashed
-  · refine ⟨delivery, by omega, by linarith, Or.inr ?_⟩
-    have stepped := execution.step delivery _ (by rw [deliverEq]; rfl)
-    obtain ⟨target, _, targetState, _, _, targetActs, targetFound, _⟩ :=
-      step_found (CCFRaft.Proofs.Liveness.reachable execution delivery) stepped
+  · refine ⟨delivery, deliveryStep, by omega, deliveredAt, by linarith, Or.inr ?_⟩
+    have selectedDelivery : deliveryStep.action.action = some (.deliver packet.envelope) := by
+      rw [deliverEq]; rfl
+    obtain ⟨receiver, _, targetState, _, _, targetActs, targetFound, _⟩ :=
+      step_found (admissible.reachable_before deliveredAt)
+        (admissible.step deliveredAt selectedDelivery)
     obtain ⟨targetEq, _⟩ := targetActs
     rw [targetEq] at targetFound
-    refine ⟨
-      {
-        source := actor
-        target := node
-        payload := .appendEntriesRequest (makeAppendEntriesRequest state node frontier)
-      },
-      makeAppendEntriesRequest state node frontier, targetState, by rw [deliverEq]; rfl, rfl,
-      rfl, targetFound, ?_⟩
-    have le := (quiet delivery deliveryBefore.le).terms _ _ (Concrete.mem_of_nodeState targetFound)
+    refine ⟨packet.envelope,
+      makeAppendEntriesRequest state node frontier, targetState, by rw [deliverEq]; rfl, target,
+      payload, by simpa only [target] using targetFound, ?_⟩
+    have le := (quiet delivery deliveryStep.before (by omega) deliveryBefore.le
+      (admissible.before deliveredAt)).terms _ _ (Concrete.mem_of_nodeState targetFound)
     simp only [makeAppendEntriesRequest]
     rcases Nat.lt_or_ge targetState.currentTerm state.currentTerm with lt | ge
     · exact Or.inl lt
@@ -150,69 +182,114 @@ theorem reset_follows (model : LivenessModel) {trace : Trace} (valid : model.Val
     · exact Or.inl candidate
     by_cases preVote : targetState.role = .preVoteCandidate
     · exact Or.inr (Or.inl preVote)
-    exact Or.inr (Or.inr (matching delivery _ _ targetState deliverEq rfl rfl targetFound
-      (by omega) candidate preVote))
-  · exact (crashed (live_before execution deliveryBefore.le live)).elim
+    exact Or.inr (Or.inr
+      (matching delivery deliveryStep packet _ targetState (by omega) deliveredAt deliverEq
+        source payload targetFound (by omega) candidate preVote))
+  · exfalso
+    apply crashed
+    rw [target]
+    exact admissible.live_anti (by omega) (Trace.stateAt_succ_of_stepAt deliveredAt) lastFound
+      alive
 
 /-- While the term stays quiet, no tracked node of the term times out. -/
-theorem no_timeout (model : LivenessModel) {trace : Trace} (valid : model.Valid trace)
-    {leader : NodeID} {term : Nat} {delay : Real}
-    (start : QuietStart trace leader term model.bounds.electionTimeout)
-    (timely : Timely trace leader delay) (nonneg : 0 <= delay)
-    (matching : Matching trace leader term)
-    (ratio : model.bounds.heartbeatInterval + delay < model.bounds.electionTimeout / 2)
-    (covered : Covered trace leader term) (incumbent : Incumbent trace leader)
-    {index : Nat}
-    (quiet : forall earlier, earlier <= index -> Quiet leader term (trace.state earlier))
+theorem no_timeout {bounds : Bounds}
+    (heartbeats : trace.HeartbeatScheduling (some bounds.heartbeatInterval))
+    (elections : trace.ElectionScheduling (some (bounds.electionTimeout / 2)))
+    {start : Nat} {leader : NodeID} {term : Nat} {delay : Real}
+    (initial : QuietStart trace start leader term bounds.electionTimeout)
+    (timely : Timely trace start leader delay) (nonneg : 0 <= delay)
+    (matching : Matching trace start leader term)
+    (ratio : bounds.heartbeatInterval + delay < bounds.electionTimeout / 2)
+    (covered : Covered trace start leader term) (incumbent : Incumbent trace start leader)
+    {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
+    (afterStart : start <= index) (stepped : trace.stepAt index = some step)
+    (quiet
+      : forall earlier point,
+          start <= earlier
+          -> earlier <= index
+          -> trace.stateAt earlier = some point
+          -> Quiet leader term (proto point))
     {node : NodeID} {state : NodeState}
-    (event : trace.event index = .local node (.timeout .election))
+    (event : step.action = .local node (.timeout .election))
     (different : Not (node = leader))
-    (found : nodeState (trace.state index) node = some state)
+    (found : nodeState (proto step.before) node = some state)
     (termEq : state.currentTerm = term)
     : False := by
-  have live : node ∈ trace.live index :=
-    valid.execution.running index node (by rw [event]; rfl)
-  obtain ⟨reset, before, recent, isReset⟩ :=
-    recent_reset valid.clockMonotone ratio (start.timers index node state event found termEq)
-      (reset_follows model valid quiet timely nonneg matching incumbent live
-        (covered index node state event different found termEq))
-  have := valid.electionTimers index node reset event before isReset
+  have alive : node ∈ live step.before :=
+    admissible.actor_live stepped (by rw [event]; rfl)
+  obtain ⟨first, firstFound, _⟩ := initial.quiet
+  have follows := reset_follows admissible heartbeats (admissible.before stepped) quiet timely
+    nonneg matching incumbent alive
+    (covered index step node state afterStart stepped event different found termEq)
+  obtain ⟨reset, resetPoint, _, before, resetFound, recent, resetStep, resetStepped, isReset⟩ :=
+    recent_reset
+      (fun _ _ _ _ le firstFound lastFound => admissible.time_le le firstFound lastFound)
+      ratio afterStart firstFound (admissible.before stepped)
+      (initial.timers first index step node state firstFound afterStart stepped event found termEq)
+      (reset := fun later =>
+        exists reset, trace.stepAt later = some reset /\ ElectionReset reset node)
+      (fun earlier point after le recorded early => by
+        obtain ⟨later, reset, after, resetStepped, within, isReset⟩ :=
+          follows earlier point after le recorded early
+        exact ⟨later, reset.before, after, admissible.before resetStepped, within,
+          reset, resetStepped, isReset⟩)
+  have := elections reset index resetStep step node before resetStepped stepped event isReset
+  rw [admissible.before resetStepped, Option.some.injEq] at resetFound
+  rw [← resetFound] at recent
   linarith
 
-/-- The term stays quiet throughout. -/
-theorem quiet_all (model : LivenessModel) {trace : Trace} (valid : model.Valid trace)
-    {leader : NodeID} {term : Nat} {delay : Real}
-    (start : QuietStart trace leader term model.bounds.electionTimeout)
-    (timely : Timely trace leader delay) (nonneg : 0 <= delay)
-    (matching : Matching trace leader term)
-    (ratio : model.bounds.heartbeatInterval + delay < model.bounds.electionTimeout / 2)
-    (covered : Covered trace leader term) (incumbent : Incumbent trace leader)
-    : forall index, Quiet leader term (trace.state index) := by
-  let _ : Config.InitialConfiguration := ⟨model.initialConfiguration⟩
-  have execution : trace.ValidFrom Config.INITIAL_CONFIGURATION model.nodes := valid.execution
+/-- The term stays quiet at every recorded state from the quiet starting point. -/
+theorem quiet_all {bounds : Bounds}
+    (heartbeats : trace.HeartbeatScheduling (some bounds.heartbeatInterval))
+    (elections : trace.ElectionScheduling (some (bounds.electionTimeout / 2)))
+    {start : Nat} {leader : NodeID} {term : Nat} {delay : Real}
+    (initial : QuietStart trace start leader term bounds.electionTimeout)
+    (timely : Timely trace start leader delay) (nonneg : 0 <= delay)
+    (matching : Matching trace start leader term)
+    (ratio : bounds.heartbeatInterval + delay < bounds.electionTimeout / 2)
+    (covered : Covered trace start leader term) (incumbent : Incumbent trace start leader)
+    : forall index point,
+        start <= index
+        -> trace.stateAt index = some point
+        -> Quiet leader term (proto point) := by
   intro index
   induction index using Nat.strong_induction_on with
   | _ index ih =>
+      intro point afterStart recorded
+      by_cases atStart : index = start
+      · subst index
+        obtain ⟨first, firstFound, quiet⟩ := initial.quiet
+        rw [recorded, Option.some.injEq] at firstFound
+        subst first
+        exact quiet
       rcases index with _ | index
-      · exact start.quiet
+      · omega
+      obtain ⟨step, stepped, rfl⟩ := Trace.stateAt_succ_eq_some.mp recorded
+      have afterStart : start <= index := by omega
       have quiet
-          : forall earlier, earlier <= index -> Quiet leader term (trace.state earlier) :=
-        fun earlier le => ih earlier (by omega)
-      rcases selected : (trace.event index).action with _ | action
-      · rw [execution.stutter index selected]
-        exact quiet index le_rfl
-      obtain ⟨rest, c, acts, _⟩ := ctx_at execution selected
+          : forall earlier point,
+              start <= earlier
+              -> earlier <= index
+              -> trace.stateAt earlier = some point
+              -> Quiet leader term (proto point) :=
+        fun earlier point le before found => ih earlier (by omega) point le found
+      have nowQuiet := quiet index step.before afterStart le_rfl (admissible.before stepped)
+      rcases selected : step.action.action with _ | action
+      · rw [admissible.stutter stepped selected]
+        exact nowQuiet
+      obtain ⟨rest, c, acts, _⟩ := ctx_at admissible stepped selected
       have local_ : forall input, c.event = .internal input
-          -> trace.event index = .local c.actor input := by
-        intro input eventEq
-        have actionEq := acts_internal acts eventEq
-        rw [actionEq] at selected
-        exact event_of_local selected
-      refine Quiet.step c (quiet index le_rfl) (fun eventEq => ?_)
-        (fun same eventEq => incumbent.nominations index (same ▸ local_ _ eventEq))
-        (fun same eventEq => incumbent.quorumChecks index (same ▸ local_ _ eventEq))
-        fun same => incumbent.notRetired (index + 1) _
-          (found_of_now c.exec (same ▸ c.post_now))
+          -> step.action = .local c.actor input :=
+        fun _ eventEq => local_of_internal selected acts eventEq
+      refine Quiet.step c nowQuiet (fun eventEq => ?_)
+        (fun same eventEq =>
+          incumbent.nominations index step afterStart stepped (same ▸ local_ _ eventEq))
+        (fun same eventEq =>
+          incumbent.quorumChecks index step afterStart stepped (same ▸ local_ _ eventEq))
+        fun same =>
+          incumbent.notRetired (index + 1) step.after _ (by omega)
+            (Trace.stateAt_succ_of_stepAt stepped)
+            (found_of_now c.exec (same ▸ c.post_now))
       have ran
           : (startElection (Capabilities.record c.tr.actor) c.tr.pre c.tr.actor).run {}
             = some (c.tr.post, c.tr.outputs) := by
@@ -221,39 +298,44 @@ theorem quiet_all (model : LivenessModel) {trace : Trace} (valid : model.Valid t
         rw [eventEq'] at ran
         exact ran
       obtain ⟨_, _, can⟩ := startElection_guard c.tr.actor c.tr.pre {} _ _ ran
-      have preLe : c.tr.pre.currentTerm <= term :=
-        (quiet index le_rfl).terms _ _ c.pre_now
+      have preLe : c.tr.pre.currentTerm <= term := nowQuiet.terms _ _ c.pre_now
       show c.tr.pre.currentTerm < term
       by_contra notLt
       have different : Not (c.actor = leader) := by
         intro same
-        obtain ⟨local_, lead⟩ := Quiet.lead c (quiet index le_rfl)
+        obtain ⟨local_, lead⟩ := Quiet.lead c nowQuiet
         have primary : c.tr.pre.role = .primary := by
-          have now : Now (trace.state index :: rest) c.actor local_ := by
+          have now : Now (proto step.before :: rest) c.actor local_ := by
             rw [same]
             exact lead.now
           have := lead.primary
           rwa [c.now_pre now] at this
         rcases can.1 with role | role | role <;> rw [role] at primary <;> cases primary
-      exact no_timeout model valid start timely nonneg matching ratio covered incumbent
-        quiet (local_ _ eventEq) different c.tr.found (by omega)
+      exact no_timeout admissible heartbeats elections initial timely nonneg matching
+        ratio covered incumbent afterStart stepped quiet (local_ _ eventEq) different
+        c.tr.found (by omega)
 
 /-- `Properties.stable_leader`. -/
-theorem stable_leader (model : LivenessModel) {trace : Trace} {leader : NodeID}
-    {term : Nat} {delay : Real} (valid : model.Valid trace)
-    (start : QuietStart trace leader term model.bounds.electionTimeout)
-    (timely : Timely trace leader delay) (nonneg : 0 <= delay)
-    (matching : Matching trace leader term)
-    (ratio : model.bounds.heartbeatInterval + delay < model.bounds.electionTimeout / 2)
-    (covered : Covered trace leader term) (incumbent : Incumbent trace leader)
-    : LeadsThroughout trace leader term := by
-  let _ : Config.InitialConfiguration := ⟨model.initialConfiguration⟩
-  have execution : trace.ValidFrom Config.INITIAL_CONFIGURATION model.nodes := valid.execution
-  intro index
+theorem stable_leader {bounds : Bounds}
+    (heartbeats : trace.HeartbeatScheduling (some bounds.heartbeatInterval))
+    (elections : trace.ElectionScheduling (some (bounds.electionTimeout / 2)))
+    {start : Nat} {leader : NodeID} {term : Nat} {delay : Real}
+    (quiet : QuietStart trace start leader term bounds.electionTimeout)
+    (timely : Timely trace start leader delay) (nonneg : 0 <= delay)
+    (matching : Matching trace start leader term)
+    (ratio : bounds.heartbeatInterval + delay < bounds.electionTimeout / 2)
+    (covered : Covered trace start leader term) (incumbent : Incumbent trace start leader)
+    : StableLeader trace start leader term := by
+  refine ⟨?_, fun index point le recorded => ?_⟩
+  · obtain ⟨first, found, _⟩ := quiet.quiet
+    exact ⟨first, found⟩
   obtain ⟨state, found, primary, termEq⟩ :=
-    quiet_leader execution
-      (quiet_all model valid start timely nonneg matching ratio covered incumbent index)
-  exact ⟨incumbent.live index, state, found, primary, termEq,
-    incumbent.notRetired index state found⟩
+    quiet_leader admissible recorded
+      (quiet_all admissible heartbeats elections quiet timely nonneg matching ratio covered
+        incumbent index point le recorded)
+  exact ⟨point, state, recorded, incumbent.live index point le recorded, found, primary, termEq,
+    incumbent.notRetired index point state le recorded found⟩
+
+end Trace
 
 end CCFRaft.Proofs.Leadership

@@ -13,7 +13,8 @@ open HasProtocol (proto)
 Local actions and deliveries execute the supplied system; all other events stutter.
 The action type is fixed by `Event.action`, while the protocol state is generic. -/
 def protocolModel {W S : Type} [HasProtocol W S]
-    (system : CCF.TransitionSystem S Model.Action) : Model W Event where
+    (system : CCF.TransitionSystem S Model.Action)
+    : Model W Event where
   init world := system.init (proto world)
   next step :=
     match step.action.action with

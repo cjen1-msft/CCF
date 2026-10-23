@@ -28,6 +28,8 @@ open CCFRaft.Liveness
 open CCFRaft.Proofs.Config
 open CCFRaft.Proofs.Safety
 open CCFRaft.Proofs.StablePrimary
+open CCFRaft.Proofs.Liveness (Admissible)
+open HasProtocol (proto)
 
 /-! ## Handlers -/
 
@@ -190,80 +192,89 @@ theorem acts_receive {action : Model.Action} {actor : NodeID} {event : Model.Nod
 
 section Trace
 
-variable {trace : Trace} {nodes : List NodeID}
-  (execution : trace.ValidFrom Config.INITIAL_CONFIGURATION nodes)
+variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
+  {trace : Trace W Liveness.Event} {nodes : List NodeID}
 
-include execution
+/-- The stable primary at a recorded index, in any history ending there. -/
+theorem lead_at {start : Nat} {leader : NodeID} {term : Nat}
+    (stable : StableLeader trace start leader term) {index : Nat} (le : start <= index)
+    {point : W} (found : trace.stateAt index = some point) {rest : History}
+    (exec : Exec nodes (proto point :: rest)) {state : NodeState}
+    (nodeFound : nodeState (proto point) leader = some state)
+    : Lead nodes (proto point :: rest) leader term state := by
+  obtain ⟨_, state', nodeFound', primary, termEq, _⟩ := stable.leads le found
+  rw [nodeFound, Option.some.injEq] at nodeFound'
+  subst nodeFound'
+  exact ⟨exec, now_of_found nodeFound, primary, termEq⟩
 
-/-- A protocol step of the execution as a step of a safety history. -/
-theorem ctx_at {index : Nat} {action : Model.Action}
-    (selected : (trace.event index).action = some action)
+variable
+  (admissible
+    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+
+include admissible
+
+/-- A recorded protocol step as a step of a safety history. -/
+theorem ctx_at {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
+    (stepped : trace.stepAt index = some step) {action : Model.Action}
+    (selected : step.action.action = some action)
     : exists rest,
-    exists c : Ctx nodes (trace.state (index + 1)) (trace.state index) rest,
+    exists c : Ctx nodes (proto step.after) (proto step.before) rest,
       Acts action c.tr.actor c.tr.event
-      /\ outgoing (trace.state index) action = some c.tr.outputs.outgoing := by
-  obtain ⟨rest, exec⟩ := exec_of_reachable (CCFRaft.Proofs.Liveness.reachable execution index)
-  have stepped := execution.step index action selected
-  obtain ⟨tr, acts, out⟩ := transition_acts stepped
-  exact ⟨rest, ⟨.step exec stepped, tr, good_of_exec exec⟩, acts, out⟩
+      /\ outgoing (proto step.before) action = some c.tr.outputs.outgoing := by
+  obtain ⟨rest, exec⟩ := exec_of_reachable (admissible.reachable_before stepped)
+  have next := admissible.step stepped selected
+  obtain ⟨tr, acts, out⟩ := transition_acts next
+  exact ⟨rest, ⟨.step exec next, tr, good_of_exec exec⟩, acts, out⟩
 
-theorem history_at (index : Nat) : exists rest, Exec nodes (trace.state index :: rest) :=
-  exec_of_reachable (CCFRaft.Proofs.Liveness.reachable execution index)
+/-- A recorded state ends a safety history. -/
+theorem history_at {index : Nat} {point : W} (found : trace.stateAt index = some point)
+    : exists rest, Exec nodes (proto point :: rest) :=
+  exec_of_reachable (admissible.reachable found)
 
-/-- The stable primary at an index, in any history ending there. -/
-theorem lead_at {leader : NodeID} {term : Nat} (stable : LeadsThroughout trace leader term)
-    {index : Nat} {rest : History} (exec : Exec nodes (trace.state index :: rest))
-    {state : NodeState} (found : nodeState (trace.state index) leader = some state)
-    : Lead nodes (trace.state index :: rest) leader term state := by
-  obtain ⟨_, state', found', primary, termEq, _⟩ := stable index
-  rw [found, Option.some.injEq] at found'
-  subst found'
-  exact ⟨exec, now_of_found found, primary, termEq⟩
-
-/-- A node other than the stable primary, of its term on both sides of a step,
-changes its log only by accepting a request of the term from the primary. Its new
-log is the primary's log up to the end of the batch, and it acknowledges that end. -/
-theorem follower_step {leader : NodeID} {term : Nat}
-    (stable : LeadsThroughout trace leader term) {index : Nat} {peer : NodeID}
+/-- A node other than the stable primary, of its term on both sides of a recorded
+step, changes its log only by accepting a request of the term from the primary. Its
+new log is the primary's log up to the end of the batch, and it acknowledges that end. -/
+theorem follower_step {start : Nat} {leader : NodeID} {term : Nat}
+    (stable : StableLeader trace start leader term) {index : Nat} (le : start <= index)
+    {step : CCF.Execution.Step W Liveness.Event}
+    (stepped : trace.stepAt index = some step) {peer : NodeID}
     (different : Not (peer = leader)) {pre post : NodeState}
-    (preFound : nodeState (trace.state index) peer = some pre)
-    (postFound : nodeState (trace.state (index + 1)) peer = some post)
+    (preFound : nodeState (proto step.before) peer = some pre)
+    (postFound : nodeState (proto step.after) peer = some post)
     (preTerm : pre.currentTerm = term) (postTerm : post.currentTerm = term)
     (changed : Not (post.log = pre.log))
     : exists envelope request leaderState,
-        (trace.event index).delivered = some envelope
+        step.action.delivered = some envelope
         /\ envelope.source = leader
         /\ envelope.target = peer
         /\ envelope.payload = .appendEntriesRequest request
         /\ request.term = term
-        /\ nodeState (trace.state index) leader = some leaderState
+        /\ nodeState (proto step.before) leader = some leaderState
         /\ request.prevLogIndex + request.entries.length <= leaderState.log.length
         /\ post.log = leaderState.log.take (request.prevLogIndex + request.entries.length)
         /\ Not
             (pre.log.take (request.prevLogIndex + request.entries.length)
               = leaderState.log.take (request.prevLogIndex + request.entries.length))
-        /\ trace.Sent
-            ⟨
-              index,
-              0,
-              {
-                source := peer
-                target := leader
-                payload :=
-                  .appendEntriesResponse
-                    {
-                      term
-                      success := true
-                      lastLogIndex := request.prevLogIndex + request.entries.length
-                    }
-              }
-            ⟩ := by
-  cases selected : (trace.event index).action with
+        /\ exists packet,
+            trace.SentAt index packet
+            /\ packet.envelope
+                = {
+                  source := peer
+                  target := leader
+                  payload :=
+                    .appendEntriesResponse
+                      {
+                        term
+                        success := true
+                        lastLogIndex := request.prevLogIndex + request.entries.length
+                      }
+                } := by
+  cases selected : step.action.action with
   | none =>
-      rw [execution.stutter index selected, preFound, Option.some.injEq] at postFound
+      rw [admissible.stutter stepped selected, preFound, Option.some.injEq] at postFound
       exact absurd (by rw [postFound]) changed
   | some action =>
-      obtain ⟨rest, c, acts, out⟩ := ctx_at execution selected
+      obtain ⟨rest, c, acts, out⟩ := ctx_at admissible stepped selected
       have actorEq : c.tr.actor = peer := by
         by_contra other
         have kept :=
@@ -278,8 +289,8 @@ theorem follower_step {leader : NodeID} {term : Nat}
         have found := found_of_now c.exec c.post_now
         rw [show c.actor = peer from actorEq, postFound, Option.some.injEq] at found
         exact found.symm
-      obtain ⟨_, leaderState, leaderFound, _, _, _⟩ := stable index
-      have lead := lead_at execution stable c.prior leaderFound
+      obtain ⟨_, leaderState, leaderFound, _, _, _⟩ := stable.leads le (admissible.before stepped)
+      have lead := lead_at stable le (admissible.before stepped) c.prior leaderFound
       have changed' : Not (c.post.log = c.pre.log) := by
         show Not (c.tr.post.log = c.tr.pre.log)
         rw [prePre, postPost]
@@ -303,8 +314,7 @@ theorem follower_step {leader : NodeID} {term : Nat}
       | ack _ _ _ _ _ _ advance => exact absurd (Advance.facts advance).1 changed'
       | elect wins =>
           have led
-              : Led (trace.state (index + 1) :: trace.state index :: rest) c.actor
-                  term := by
+              : Led (proto step.after :: proto step.before :: rest) c.actor term := by
             rw [← postTerm']
             exact Or.inr ⟨_, _, _, _, rest, List.suffix_refl _, c.wins_elect wins⟩
           have inv := good_of_exec c.exec _ (List.suffix_refl _) (List.cons_ne_nil _ _)
@@ -364,6 +374,10 @@ theorem follower_step {leader : NodeID} {term : Nat}
               (by
                 show c.tr.post.log = c.tr.pre.log; rw [postEq]; exact awareState_log _ _)
               changed'
+          rw [outEq, sentEq] at out
+          obtain ⟨packet, sent, envelopeEq, -⟩ :=
+            admissible.sentAt_of_emitted stepped selected out
+              (List.mem_append_right _ (List.mem_singleton_self _))
           refine ⟨
             envelope,
             request,
@@ -377,10 +391,12 @@ theorem follower_step {leader : NodeID} {term : Nat}
             bound,
             postPost ▸ logEq,
             prePre ▸ differ,
+            packet,
+            sent,
             ?_
           ⟩
-          simp [Trace.Sent, selected, out, outEq, sentEq, actorEq, sourceEq, awareState_term, prePre,
-            preTerm]
+          rw [envelopeEq]
+          simp [actorEq, sourceEq, awareState_term, prePre, preTerm]
 
 end Trace
 

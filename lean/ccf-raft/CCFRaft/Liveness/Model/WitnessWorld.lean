@@ -6,13 +6,20 @@ public import CCFRaft.Liveness.Model.World
 
 namespace CCFRaft.Liveness
 
+open Model.Node
+
 /-- One closed instantiation of the open world, for witnesses only.
 Public statements quantify over any `W` with the required accessors. -/
 structure World (S : Type) where
+  /-- The protocol state. -/
   proto : S
+  /-- The absolute clock. -/
   time : Real
+  /-- The nodes that have not crashed. -/
   live : Finset NodeID
+  /-- Outstanding send occurrences. -/
   pending : List Packet
+  /-- The number of packets issued so far. -/
   issued : Nat
 
 instance {S : Type} : HasProtocol (World S) S where

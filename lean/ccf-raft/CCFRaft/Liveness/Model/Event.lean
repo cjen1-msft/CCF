@@ -14,7 +14,7 @@ structure Packet where
   /-- Sequence number issued by the network ledger; identity, not content. -/
   id : Nat
   envelope : Model.Envelope
-  /-- Absolute time in the sending step's after-state. -/
+  /-- Absolute time in the sending step's before-state, when the step happens. -/
   sentAt : Real
 
 /-- Packets are identified by their issued sequence number, not by content. -/

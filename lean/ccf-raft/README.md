@@ -3,28 +3,27 @@
 An executable Lean model of CCF's consensus implementation ([`src/consensus/aft/raft.h`](../../src/consensus/aft/raft.h)), safety property statements and a propositional timed liveness model.
 It assumes familiarity with the [CCF consensus documentation](../../doc/architecture/consensus/index.rst).
 `commit_liveness` states deterministic commit progress under a stable primary, a live quorum, fair-loss links and a submitted request; `stable_leader` states stable leadership from heartbeat, delay and election-timeout bounds, assuming a quiet start and no quorum-check step-down or failed log check; see [the liveness report](LIVENESS.md).
-The liveness trace interface is being revised; its existing proofs have not yet been adapted to the new definitions and statements.
 
 ## Source map
 
-| Area                                    | Source                                                                                                                                                             |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Node state, log entries, log queries    | [`Model/NodeState.lean`](CCFRaft/Model/NodeState.lean)                                                                                                             |
-| Configurations, quorums, retirement     | [`Model/ClusterConfig.lean`](CCFRaft/Model/ClusterConfig.lean) (`activeConfigurations`, `hasQuorum`, `NodeState.retirement`)                                       |
-| Messages                                | [`Model/Messages.lean`](CCFRaft/Model/Messages.lean)                                                                                                               |
-| Protocol policy (one node's step)       | [`Model/Node.lean`](CCFRaft/Model/Node.lean) (`Node.step`, `receive`, `act`, `highestCommittableIndex`, `eligiblePeers`)                                           |
-| Initial states and network composition  | [`Model.lean`](CCFRaft/Model.lean) (`initialNodeState`, `transitionSystem`)                                                                                        |
-| Safety and liveness theorems, witnesses | [`Properties.lean`](CCFRaft/Properties.lean)                                                                                                                       |
-| Liveness events and packet identities   | [`Liveness/Model/Event.lean`](CCFRaft/Liveness/Model/Event.lean) |
-| Recorded relational traces and models | [`Liveness/Model/Trace.lean`](CCFRaft/Liveness/Model/Trace.lean) (`Trace`, `Model`, coherence and validity) |
-| Open world accessors and witness world | [`Liveness/Model/World.lean`](CCFRaft/Liveness/Model/World.lean) (`HasProtocol`, `HasTime`, `HasLive`, `HasNetwork`), [`Liveness/Model/WitnessWorld.lean`](CCFRaft/Liveness/Model/WitnessWorld.lean) (`World`) |
-| Protocol model | [`Liveness/Model/Protocol.lean`](CCFRaft/Liveness/Model/Protocol.lean) |
-| Crash and absolute-time models | [`Liveness/Model/Crash.lean`](CCFRaft/Liveness/Model/Crash.lean), [`Liveness/Model/Timing.lean`](CCFRaft/Liveness/Model/Timing.lean) |
-| Packet ledger, delay constraint and sends | [`Liveness/Model/Delivery.lean`](CCFRaft/Liveness/Model/Delivery.lean), [`Liveness/Model/Packets.lean`](CCFRaft/Liveness/Model/Packets.lean) |
-| CCF scheduling assumptions | [`Liveness/Model/Scheduling.lean`](CCFRaft/Liveness/Model/Scheduling.lean) |
-| Public liveness import entry points | [`Liveness/Model.lean`](CCFRaft/Liveness/Model.lean), [`Liveness/Assumptions.lean`](CCFRaft/Liveness/Assumptions.lean)                                                |
-| Supporting proofs and executions        | [`Proofs/`](CCFRaft/Proofs), with the liveness proofs in [`Proofs/Replication/`](CCFRaft/Proofs/Replication) and [`Proofs/Leadership/`](CCFRaft/Proofs/Leadership) |
-| Action-trace tests and import layering  | [`Tests/CanonicalTraces.lean`](CCFRaft/Tests/CanonicalTraces.lean), [`Tests/Architecture.lean`](CCFRaft/Tests/Architecture.lean)                                   |
+| Area                                      | Source                                                                                                                                                                                                                                                 |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Node state, log entries, log queries      | [`Model/NodeState.lean`](CCFRaft/Model/NodeState.lean)                                                                                                                                                                                                 |
+| Configurations, quorums, retirement       | [`Model/ClusterConfig.lean`](CCFRaft/Model/ClusterConfig.lean) (`activeConfigurations`, `hasQuorum`, `NodeState.retirement`)                                                                                                                           |
+| Messages                                  | [`Model/Messages.lean`](CCFRaft/Model/Messages.lean)                                                                                                                                                                                                   |
+| Protocol policy (one node's step)         | [`Model/Node.lean`](CCFRaft/Model/Node.lean) (`Node.step`, `receive`, `act`, `highestCommittableIndex`, `eligiblePeers`)                                                                                                                               |
+| Initial states and network composition    | [`Model.lean`](CCFRaft/Model.lean) (`initialNodeState`, `transitionSystem`)                                                                                                                                                                            |
+| Safety and liveness theorems, witnesses   | [`Properties.lean`](CCFRaft/Properties.lean)                                                                                                                                                                                                           |
+| Liveness events and packet identities     | [`Liveness/Model/Event.lean`](CCFRaft/Liveness/Model/Event.lean)                                                                                                                                                                                       |
+| Recorded relational traces and models     | [`Liveness/Model/Trace.lean`](CCFRaft/Liveness/Model/Trace.lean) (`Trace`, `Model`, coherence and validity)                                                                                                                                            |
+| Open world accessors and witness world    | [`Liveness/Model/World.lean`](CCFRaft/Liveness/Model/World.lean) (`HasProtocol`, `HasTime`, `HasLive`, `HasNetwork`), [`Liveness/Model/WitnessWorld.lean`](CCFRaft/Liveness/Model/WitnessWorld.lean) (`World`)                                         |
+| Protocol model                            | [`Liveness/Model/Protocol.lean`](CCFRaft/Liveness/Model/Protocol.lean)                                                                                                                                                                                 |
+| Crash and absolute-time models            | [`Liveness/Model/Crash.lean`](CCFRaft/Liveness/Model/Crash.lean), [`Liveness/Model/Timing.lean`](CCFRaft/Liveness/Model/Timing.lean)                                                                                                                   |
+| Packet ledger, delay constraint and sends | [`Liveness/Model/Delivery.lean`](CCFRaft/Liveness/Model/Delivery.lean), [`Liveness/Model/Packets.lean`](CCFRaft/Liveness/Model/Packets.lean)                                                                                                           |
+| CCF scheduling assumptions                | [`Liveness/Model/Scheduling.lean`](CCFRaft/Liveness/Model/Scheduling.lean)                                                                                                                                                                             |
+| Public liveness import entry points       | [`Liveness/Model.lean`](CCFRaft/Liveness/Model.lean), [`Liveness/Assumptions.lean`](CCFRaft/Liveness/Assumptions.lean)                                                                                                                                 |
+| Supporting proofs and executions          | [`Proofs/`](CCFRaft/Proofs), with the shared liveness proof base in [`Proofs/Liveness/`](CCFRaft/Proofs/Liveness) and the liveness proofs in [`Proofs/Replication/`](CCFRaft/Proofs/Replication) and [`Proofs/Leadership/`](CCFRaft/Proofs/Leadership) |
+| Action-trace tests and import layering    | [`Tests/CanonicalTraces.lean`](CCFRaft/Tests/CanonicalTraces.lean), [`Tests/Architecture.lean`](CCFRaft/Tests/Architecture.lean)                                                                                                                       |
 
 Transition systems, safety traces, the shared `CCF.Execution.Step` record, effects and network composition come from the local [`ccf_common` package](../common/README.md).
 The relational liveness trace is local to this package; the common package is unchanged.
@@ -53,7 +52,7 @@ The timing model permits any nondecreasing absolute time, including on idle step
 The initial absolute time and live set are unrestricted.
 The crash model directly projects to the existing `crashSystem`, requiring live actors and permanently removing crashed nodes.
 Delivery requires only the receiver to be live, so a sender may crash after sending.
-The delivery model starts with an empty pending ledger and zero issued packets; it tags each actual outgoing envelope with the next sequence number and the sending step's after-time as `sentAt`.
+The delivery model starts with an empty pending ledger and zero issued packets; it tags each actual outgoing envelope with the next sequence number and the sending step's before-time as `sentAt`.
 Delivery or drop must consume an existing occurrence before this step's outputs are added.
 Equal envelopes remain distinct transmissions, and an occurrence cannot be consumed twice or after a drop.
 The optional `boundedDelayModel maxDelay` separately forbids an overdue pending packet to a live target; it permits drops and is not the stronger `Timely` delivery assumption.
@@ -72,7 +71,6 @@ Commit liveness assumes a stable primary, which `stable_leader` derives from tim
 
 ## Validation
 
-The liveness proofs and theorem bodies are currently unported, so these are the full validation commands for after that port, not checks claimed for the definitions-only rewrite.
 With the pinned Lean toolchain available, run from this directory:
 
 ```sh

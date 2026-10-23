@@ -125,18 +125,21 @@ theorem owing_of_exec {nodes : List NodeID} {history : History}
       · exact Ctx.owing_post c ih
       · exact ih node state old
 
-/-- Along an execution, a primary owes a retirement confirmation whenever it
-alone makes an uncommitted current-term signature committable. -/
-theorem confirmation_owed (model : LivenessModel) {trace : Trace}
-    (valid : model.FairFrom trace) {leader : NodeID} {index : Nat} {state : NodeState}
-    (found : MultiNodeTransitionSystem.nodeState (trace.state index) leader = some state)
+/-- Along an admissible execution, a primary owes a retirement confirmation
+whenever it alone makes an uncommitted current-term signature committable. -/
+theorem confirmation_owed {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W]
+    [HasNetwork W] {nodes : List NodeID} {trace : Trace W Liveness.Event}
+    (admissible
+      : Proofs.Liveness.Admissible
+          (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+    {leader : NodeID} {index : Nat} {state : NodeState}
+    (found : trace.nodeAt index leader = some state)
     (primary : state.role = .primary) {signature : Nat}
     (alone : AloneReady state leader signature)
     : Owed state := by
-  let _ : Config.InitialConfiguration := ⟨model.initialConfiguration⟩
-  obtain ⟨history, exec⟩ :=
-    exec_of_reachable (CCFRaft.Proofs.Liveness.reachable valid.execution index)
-  exact owing_of_exec exec leader state (Concrete.mem_of_nodeState found) primary signature
+  obtain ⟨point, pointFound, nodeFound⟩ := Trace.nodeAt_eq_some.mp found
+  obtain ⟨_, exec⟩ := exec_of_reachable (admissible.reachable pointFound)
+  exact owing_of_exec exec leader state (Concrete.mem_of_nodeState nodeFound) primary signature
     alone
 
 end CCFRaft.Proofs.Replication

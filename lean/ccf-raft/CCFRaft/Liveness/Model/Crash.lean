@@ -24,16 +24,19 @@ def crashSystem : CCF.TransitionSystem (Finset NodeID) Event where
     match event.actor with
     | some node =>
         if node ∈ live then
-          some (match event with
-            | .crash _ => live.erase node
-            | _ => live)
-        else none
+          some
+            (match event with
+              | .crash _ => live.erase node
+              | _ => live)
+        else
+          none
     | none => some (event.liveAfter live)
 
 /-- Constrain only availability, directly using the crash-stop system. -/
 def crashModel {W : Type} [HasLive W] : Model W Event where
   init world := crashSystem.init (HasLive.live world)
   next step :=
-    crashSystem.step (HasLive.live step.before) step.action = some (HasLive.live step.after)
+    crashSystem.step (HasLive.live step.before) step.action
+    = some (HasLive.live step.after)
 
 end CCFRaft.Liveness

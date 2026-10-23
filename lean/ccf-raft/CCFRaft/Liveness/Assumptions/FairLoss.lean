@@ -15,16 +15,15 @@ variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasNetwork W]
 
 /-- From `start` on, every message sent on the selected links is delivered. Not a
 premise of `Properties.commit_liveness`; it implies `FairLoss`. -/
-def Reliable (trace : Trace W Event) (participants : Finset NodeID) (start : Nat) : Prop :=
+def Reliable (trace : Trace W Event) (participants : Finset NodeID) (start : Nat)
+    : Prop :=
   forall sent packet,
     trace.SentAt sent packet
     -> start <= sent
     -> packet.envelope.source ∈ participants
     -> packet.envelope.target ∈ participants
     -> exists index step,
-        sent < index
-        /\ trace.stepAt index = some step
-        /\ step.action = .deliver packet
+        sent < index /\ trace.stepAt index = some step /\ step.action = .deliver packet
 
 /-- Traffic classes ignore changing batch ends and commit advertisements.
 Index-specific classes prevent unrelated heartbeats or old acknowledgements
@@ -54,7 +53,8 @@ def Traffic.Matches : Traffic -> Message -> Prop
   | _, _ => False
 
 /-- The source keeps sending this kind of message on the directed link. -/
-def InfinitelySent (trace : Trace W Event) (source target : NodeID) (traffic : Traffic) : Prop :=
+def InfinitelySent (trace : Trace W Event) (source target : NodeID) (traffic : Traffic)
+    : Prop :=
   forall cutoff,
     exists sent packet,
       trace.SentAt sent packet
@@ -64,7 +64,8 @@ def InfinitelySent (trace : Trace W Event) (source target : NodeID) (traffic : T
       /\ traffic.Matches packet.envelope.payload
 
 /-- Messages of this kind sent in the execution keep arriving on the directed link. -/
-def InfinitelyDelivered (trace : Trace W Event) (source target : NodeID) (traffic : Traffic)
+def InfinitelyDelivered (trace : Trace W Event) (source target : NodeID)
+    (traffic : Traffic)
     : Prop :=
   forall cutoff,
     exists index step packet,

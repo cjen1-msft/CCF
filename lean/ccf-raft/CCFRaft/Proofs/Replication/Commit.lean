@@ -2,7 +2,6 @@ module
 
 public import CCFRaft.Proofs.Replication.Peer
 public import CCFRaft.Proofs.Replication.Owing
-public import CCFRaft.Proofs.Shift
 
 @[expose] public section
 
@@ -11,14 +10,11 @@ set_option linter.unusedSectionVars false
 /-!
 # Signature commitment
 
-Signature commitment, and so `Properties.commit_liveness`.
-Take a current-term signature covering the given one. If it is never committed,
-the commit index stays below it, so the configurations at or before it that
-remain active eventually stop changing. If one of them has a member other than
-the primary, every peer of the live quorum in them acknowledges the signature,
-and the next acknowledgement commits it. Otherwise the primary alone makes the
-signature ready, so a retirement confirmation is due (`confirmation_owed`), and
-the append that eventually confirms it commits the signature.
+Take a current-term signature covering the requested position.
+If it never commits, the active configurations at or before it settle.
+Peers of a live quorum in those configurations eventually acknowledge the signature, and another acknowledgement commits it.
+If the primary alone covers them, a retirement confirmation is due and its scheduled append commits the signature instead.
+The proof uses the original recorded trace and a start index, including when the trace is finite.
 -/
 
 open CCF CCF.MultiNodeTransitionSystem
@@ -28,6 +24,9 @@ open CCFRaft.Liveness
 open CCFRaft.Proofs.Config
 open CCFRaft.Proofs.Safety
 open CCFRaft.Proofs.StablePrimary
+open CCFRaft.Proofs.Liveness (Admissible)
+open CCFRaft.Proofs.CommitLiveness (stable_log_prefix)
+open HasProtocol (proto)
 
 namespace CCFRaft.Proofs.Replication
 
@@ -212,51 +211,6 @@ theorem append_ready (self : NodeID) (before : NodeState) (contents : List Entry
 
 end Append
 
-/-- An append by the primary commits a signature that is ready for the commit scan. -/
-theorem append_commits_trace (model : LivenessModel) {trace : Trace}
-    (valid : model.FairFrom trace) {leader : NodeID} {index : Nat}
-    {entries : List EntryContent}
-    (event : trace.event index = .local leader (.append entries)) {state : NodeState}
-    (found : nodeState (trace.state index) leader = some state)
-    (frontier : state.commitIndex <= state.log.length) {signature : Nat}
-    (ready : SignatureReady state leader signature)
-    : exists after,
-        nodeState (trace.state (index + 1)) leader = some after
-        /\ signature <= after.commitIndex := by
-  let _ : Config.InitialConfiguration := ⟨model.initialConfiguration⟩
-  have execution : trace.ValidFrom Config.INITIAL_CONFIGURATION model.nodes := valid.execution
-  obtain ⟨before, after, outputs, found', ran, found''⟩ :=
-    CCFRaft.Proofs.CommitLiveness.local_step_found
-      (CCFRaft.Proofs.Liveness.reachable execution index)
-      (execution.step index _ (by rw [event]; rfl))
-  rw [found, Option.some.injEq] at found'
-  subst found'
-  exact ⟨after, found'', append_ready leader _ entries ready frontier _ _ _ ran⟩
-
-/-- A stable primary keeps making productive sends to a peer that stays live and,
-from some point on, eligible. -/
-theorem productive_sends (model : LivenessModel) {trace : Trace}
-    (valid : model.FairFrom trace) {leader peer : NodeID} {term joined : Nat}
-    (stable : LeadsThroughout trace leader term)
-    (live : forall index, peer ∈ trace.live index)
-    (eligible
-      : forall index state,
-          joined <= index
-          -> nodeState (trace.state index) leader = some state
-          -> peer ∈ eligiblePeers state leader)
-    : Often (trace.ProductiveSend leader peer) := by
-  have due : forall index, joined <= index -> trace.PeerDue leader peer index := by
-    intro index le
-    obtain ⟨leaderLive, state, found, primary, _, notRetired⟩ := stable index
-    exact ⟨leaderLive, live index, state, found, primary, notRetired,
-      eligible index state le found⟩
-  intro cutoff
-  obtain ⟨later, after, sends⟩ :=
-    valid.heartbeats (max cutoff joined) leader peer (due _ (le_max_right _ _))
-  rcases sends with stopped | productive
-  · exact (stopped (due later (by omega))).elim
-  · exact ⟨later, by omega, productive⟩
-
 /-- A majority of a configuration other than the primary alone includes another node. -/
 theorem other_member {support : Finset NodeID} {configuration : Configuration}
     {leader : NodeID} (majority : hasConfigurationMajority support configuration)
@@ -286,193 +240,225 @@ theorem other_member {support : Finset NodeID} {configuration : Configuration}
     have := Finset.card_le_card (Finset.inter_subset_right (s₁ := support) (s₂ := nodes))
     omega
 
-section Settle
+section Recorded
 
-variable [Config.InitialConfiguration] {trace : Trace} {nodes : List NodeID}
-  (execution : trace.ValidFrom Config.INITIAL_CONFIGURATION nodes)
+variable [Config.InitialConfiguration]
+  {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
+  {nodes : List NodeID} {trace : Trace W Liveness.Event}
+  (admissible
+    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
 
-include execution
+include admissible
 
-/-- While the stable primary's commit index stays within a prefix of its log, its
-active configurations settle: a fixed nonempty list of configurations within the
-prefix, followed by configurations beyond it. -/
-theorem active_settles {leader : NodeID} {term : Nat}
-    (stable : LeadsThroughout trace leader term) {signed covering : Nat}
-    (within : covering <= (stable.state signed).log.length)
-    (nonempty : configurationHistory ((stable.state signed).log.take covering) ≠ [])
+/-- An append commits a signature already ready for the commit scan. -/
+theorem append_commits_trace {leader : NodeID} {index : Nat}
+    {step : CCF.Execution.Step W Liveness.Event}
+    (stepped : trace.stepAt index = some step) {entries : List EntryContent}
+    (event : step.action = .local leader (.append entries)) {state : NodeState}
+    (found : nodeState (proto step.before) leader = some state) {signature : Nat}
+    (ready : SignatureReady state leader signature)
+    : exists after,
+        trace.nodeAt (index + 1) leader = some after
+        /\ signature <= after.commitIndex := by
+  obtain ⟨before, after, outputs, found', ran, found''⟩ :=
+    CCFRaft.Proofs.CommitLiveness.local_step_found (admissible.reachable_before stepped)
+      (admissible.step stepped (by rw [event]; rfl))
+  rw [found, Option.some.injEq] at found'
+  subst found'
+  have frontier := commit_le_length admissible (by rw [admissible.nodeAt_before stepped, found])
+  exact ⟨
+    after,
+    by rw [Trace.nodeAt_succ stepped, found''],
+    append_ready leader _ entries ready frontier _ _ _ ran
+  ⟩
+
+/-- Below a fixed log frontier, the primary's active configurations settle to a
+fixed nonempty prefix followed by configurations beyond that frontier. -/
+theorem active_settles {start : Nat} {leader : NodeID} {term : Nat}
+    (stable : StableLeader trace start leader term) {signed : Nat}
+    (afterStart : start <= signed) {state : NodeState}
+    (found : trace.nodeAt signed leader = some state) {covering : Nat}
+    (within : covering <= state.log.length)
+    (nonempty : configurationHistory (state.log.take covering) ≠ [])
     (below
-      : forall index, signed <= index -> (stable.state index).commitIndex <= covering)
-    : exists settled current,
+      : forall index state,
+          signed <= index
+          -> trace.nodeAt index leader = some state
+          -> state.commitIndex <= covering)
+    : exists settled primary current,
         signed <= settled
+        /\ trace.nodeAt settled leader = some primary
         /\ current ≠ []
         /\ (forall configuration,
               configuration ∈ current -> configuration.index <= covering)
-        /\ forall index,
+        /\ forall index state,
             settled <= index
+            -> trace.nodeAt index leader = some state
             -> exists rest,
-                (stable.state index).activeConfigurations = current ++ rest
+                state.activeConfigurations = current ++ rest
                 /\ forall configuration,
                     configuration ∈ rest -> covering < configuration.index := by
-  have split
-      : forall index, signed <= index
-        -> exists rest,
-            configurationHistory (stable.state index).log
-              = configurationHistory ((stable.state signed).log.take covering) ++ rest
-            /\ forall configuration, configuration ∈ rest -> covering < configuration.index := by
-    intro index le
+  let history := configurationHistory (state.log.take covering)
+  let count (point : W) : Nat :=
+    ((nodeState (proto point) leader).map fun state =>
+      (history.filter fun configuration => configuration.index <= state.commitIndex).length).getD 0
+  have count_eq {point : W} {state : NodeState}
+      (found : nodeState (proto point) leader = some state)
+      : count point = (history.filter fun configuration => configuration.index <= state.commitIndex).length := by
+    simp [count, found]
+  have split : forall index current,
+      signed <= index -> trace.nodeAt index leader = some current
+      -> exists rest, configurationHistory current.log = history ++ rest
+        /\ forall configuration, configuration ∈ rest -> covering < configuration.index := by
+    intro index current le found'
     obtain ⟨rest, eq, later⟩ :=
       configurationHistory_of_prefix
-        ((List.take_prefix covering _).trans (stable_prefix execution stable le))
+        ((List.take_prefix covering _).trans (stable_log_prefix admissible stable afterStart le found found'))
     rw [List.length_take_of_le within] at later
     exact ⟨rest, eq, later⟩
-  obtain ⟨settled, after, constant⟩ :=
-    eventually_const
-      (f := fun index =>
-        ((configurationHistory ((stable.state signed).log.take covering)).filter
-          fun configuration => configuration.index <= (stable.state index).commitIndex).length)
-      (start := signed)
-      (bound := (configurationHistory ((stable.state signed).log.take covering)).length)
-      (fun index _ =>
-        length_filter_index_mono _ (commit_mono execution stable (Nat.le_succ index)))
-      (fun _ _ => length_filter_le _ _)
+  obtain ⟨first, firstFound, _⟩ := Trace.nodeAt_eq_some.mp found
+  obtain ⟨settled, point, after, settledFound, constant⟩ :=
+    Trace.settles_of_monotone firstFound (measure := fun _ point => count point)
+      (fun earlier later before after le laterLe beforeFound afterFound => by
+        obtain ⟨_, old, oldFound, _⟩ := stable.leads (afterStart.trans le) beforeFound
+        obtain ⟨_, new, newFound, _⟩ := stable.leads (by omega) afterFound
+        rw [count_eq oldFound, count_eq newFound]
+        exact length_filter_index_mono history
+          (commit_mono admissible laterLe
+            (by rw [Trace.nodeAt_of_stateAt beforeFound, oldFound])
+            (by rw [Trace.nodeAt_of_stateAt afterFound, newFound])))
+      (fun index point le pointFound => by
+        obtain ⟨_, current, currentFound, _⟩ := stable.leads (afterStart.trans le) pointFound
+        rw [count_eq currentFound]
+        exact length_filter_le history current.commitIndex)
+  obtain ⟨_, primary, primaryFound, _⟩ := stable.leads (afterStart.trans after) settledFound
   refine ⟨
     settled,
-    (configurationHistory ((stable.state signed).log.take covering)).drop
-      (((configurationHistory ((stable.state signed).log.take covering)).filter
-          fun configuration =>
-            configuration.index <= (stable.state settled).commitIndex).length
-        - 1),
+    primary,
+    history.drop (count point - 1),
     after,
+    by rw [Trace.nodeAt_of_stateAt settledFound, primaryFound],
     ?_,
-    fun configuration member => ?_,
-    fun index le => ?_
+    ?_,
+    ?_
   ⟩
   · rw [ne_eq, List.drop_eq_nil_iff]
-    have := length_filter_le (configurationHistory ((stable.state signed).log.take covering))
-      (stable.state settled).commitIndex
-    have := List.length_pos_of_ne_nil nonempty
+    have := length_filter_le history primary.commitIndex
+    have : 0 < history.length := List.length_pos_of_ne_nil nonempty
+    rw [count_eq primaryFound]
     omega
-  · have := configurationHistory_index_le _ (List.mem_of_mem_drop member)
+  · intro configuration member
+    have := configurationHistory_index_le _ (List.mem_of_mem_drop member)
     rw [List.length_take] at this
     omega
-  · obtain ⟨rest, eq, later⟩ := split index (by omega)
+  · intro index current le currentFound
+    obtain ⟨last, lastFound, lastNode⟩ := Trace.nodeAt_eq_some.mp currentFound
+    obtain ⟨rest, eq, later⟩ := split index current (by omega) currentFound
     refine ⟨rest, ?_, later⟩
     unfold NodeState.activeConfigurations
-    rw [activeConfigurations_split eq later (below index (by omega)) nonempty]
-    rw [constant index le]
+    rw [activeConfigurations_split eq later (below index current (by omega) currentFound) nonempty]
+    rw [← count_eq lastNode, constant index last le lastFound]
 
-end Settle
-
-/-- `signature_commits` for a fixed quorum that is live throughout and a majority
-from the given index on. -/
-theorem signature_commits_quorum (model : LivenessModel) {trace : Trace}
-    {leader : NodeID} {term : Nat} {quorum participants : Finset NodeID}
-    (valid : model.FairFrom trace) (stable : LeadsThroughout trace leader term)
-    (alive : forall index, quorum ⊆ trace.live index) (within : quorum ⊆ participants)
-    (fair : FairLoss trace (insert leader participants))
-    {index : Nat} {state : NodeState} {signature : Nat}
+/-- A signature commits when a fixed set of live participants covers every active
+configuration from the given recorded index on. -/
+theorem signature_commits_quorum
+    {heartbeatBound signatureBound confirmationBound : Option Real}
+    (heartbeats : trace.HeartbeatScheduling heartbeatBound)
+    (signatures : trace.SignatureScheduling signatureBound)
+    (confirmations : trace.ConfirmationScheduling confirmationBound)
+    {start : Nat} {leader : NodeID} {term : Nat} {quorum participants : Finset NodeID}
+    (stable : StableLeader trace start leader term)
+    (alive
+      : forall index point,
+          trace.stateAt index = some point -> quorum ⊆ HasLive.live point)
+    (within : quorum ⊆ participants) (fair : FairLoss trace (insert leader participants))
+    {index : Nat} (afterStart : start <= index) {state : NodeState} {signature : Nat}
     (majority
       : forall later state,
           index <= later
-          -> nodeState (trace.state later) leader = some state
+          -> trace.nodeAt later leader = some state
           -> hasQuorum state.activeConfigurations quorum)
-    (found : nodeState (trace.state index) leader = some state)
+    (found : trace.nodeAt index leader = some state)
     (isSignature : isSignatureAt state.log signature = true)
     : exists later after,
         index <= later
-        /\ nodeState (trace.state later) leader = some after
+        /\ trace.nodeAt later leader = some after
         /\ signature <= after.commitIndex := by
-  let _ : Config.InitialConfiguration := ⟨model.initialConfiguration⟩
-  have execution : trace.ValidFrom Config.INITIAL_CONFIGURATION model.nodes := valid.execution
-  have stateEq := stable.state_eq found
-  subst stateEq
   obtain ⟨positive, bound⟩ := le_length_of_isSignatureAt isSignature
   obtain ⟨signed, signer, covering, le, foundSigned, covers, isCovering, coveringTerm⟩ :=
-    CCFRaft.Proofs.CommitLiveness.covering_signature model valid stable found
-      (position := (stable.state index).log.length - 1) (by omega)
-  rw [stable.state_eq foundSigned] at isCovering coveringTerm
+    CCFRaft.Proofs.CommitLiveness.covering_signature admissible signatures stable afterStart found
+      (position := state.log.length - 1) (by omega)
   have reachBound := (le_length_of_isSignatureAt isCovering).2
   by_contra never
   simp only [not_exists, not_and, not_le] at never
-  have below : forall later, signed <= later -> (stable.state later).commitIndex <= covering := by
-    intro later le'
-    have := never later _ (by omega) (stable.found later)
+  have below : forall later state,
+      signed <= later -> trace.nodeAt later leader = some state -> state.commitIndex <= covering := by
+    intro later state le' found'
+    have := never later state (by omega) found'
     omega
-  have nonempty : configurationHistory ((stable.state signed).log.take covering) ≠ [] := by
-    have sub : (stable.state index).log <+: (stable.state signed).log.take covering := by
-      have pre := List.prefix_iff_eq_take.mp (stable_prefix execution stable le)
+  have nonempty : configurationHistory (signer.log.take covering) ≠ [] := by
+    have sub : state.log <+: signer.log.take covering := by
+      have pre := List.prefix_iff_eq_take.mp (stable_log_prefix admissible stable afterStart le found foundSigned)
       rw [List.prefix_iff_eq_take, List.take_take, Nat.min_eq_left (by omega)]
       exact pre
     obtain ⟨rest, eq, _⟩ := configurationHistory_of_prefix sub
     rw [eq]
     intro empty
-    apply (majority index _ le_rfl (stable.found index)).1
+    apply (majority index state le_rfl found).1
     have := (List.append_eq_nil_iff.mp empty).1
     exact List.sublist_nil.mp (this ▸ activeConfigurations_sublist _ _)
-  obtain ⟨settled, current, after, currentNonempty, inside, shape⟩ :=
-    active_settles execution stable reachBound nonempty below
-  have eligible
-      : forall peer, Not (peer = leader) -> peer ∈ configurationMembers current
-        -> forall later, settled <= later -> peer ∈ eligiblePeers (stable.state later) leader := by
-    intro peer different member later le'
-    obtain ⟨rest, eq, _⟩ := shape later le'
+  obtain ⟨settled, primary, current, after, settledFound, currentNonempty, inside, shape⟩ :=
+    active_settles admissible stable (afterStart.trans le) foundSigned reachBound nonempty below
+  let stableAt : StableLeader trace settled leader term :=
+    stable.later (by omega) (Trace.stateAt_of_nodeAt settledFound)
+  have reachAt : covering <= primary.log.length :=
+    reachBound.trans (stable_log_prefix admissible stable (afterStart.trans le) after foundSigned settledFound).length_le
+  have eligible : forall peer, Not (peer = leader) -> peer ∈ configurationMembers current
+      -> forall later state, settled <= later -> trace.nodeAt later leader = some state
+        -> peer ∈ eligiblePeers state leader := by
+    intro peer different member later state le' found'
+    obtain ⟨rest, eq, _⟩ := shape later state le' found'
     simp only [eligiblePeers, Finset.mem_erase]
     refine ⟨different, Finset.mem_union_left _ ?_⟩
-    show peer ∈ configurationMembers (stable.state later).activeConfigurations
+    show peer ∈ configurationMembers state.activeConfigurations
     rw [eq]
     obtain ⟨configuration, inCurrent, inNodes⟩ := mem_configurationMembers_iff.mp member
     exact mem_configurationMembers (List.mem_append_left _ inCurrent) inNodes
   have leaderIn : leader ∈ insert leader participants := Finset.mem_insert_self _ _
-  have conditions
-      : forall peer, peer ∈ quorum -> Not (peer = leader)
-        -> peer ∈ configurationMembers current
-        -> peer ∈ insert leader participants
-          /\ Often (trace.ProductiveSend leader peer)
-          /\ forall later state,
-              settled <= later
-              -> nodeState (trace.state later) peer = some state
-              -> state.currentTerm <= term := by
-    intro peer peerQuorum different member
-    have eligibleAt
-        : forall later state, settled <= later
-          -> nodeState (trace.state later) leader = some state
-          -> peer ∈ eligiblePeers state leader := by
-      intro later state le' found'
-      rw [stable.state_eq found']
-      exact eligible peer different member later le'
-    have peerLive : forall later, peer ∈ trace.live later := fun later => alive later peerQuorum
-    have peerIn : peer ∈ insert leader participants :=
-      Finset.mem_insert_of_mem (within peerQuorum)
-    exact ⟨peerIn, productive_sends model valid stable peerLive eligibleAt,
-      peer_term_le model valid stable fair leaderIn peerIn peerLive eligibleAt⟩
-  have reaches
-      : forall peer, peer ∈ quorum -> Not (peer = leader)
-        -> peer ∈ configurationMembers current
-        -> exists stop, forall later,
-            stop <= later -> covering <= (stable.state later).matchIndex peer := by
-    intro peer peerQuorum different member
-    obtain ⟨peerIn, productive, termLe⟩ := conditions peer peerQuorum different member
-    exact match_reaches execution stable different (eligible peer different member) fair
-      leaderIn peerIn productive termLe reachBound
+  have peerIn (peer : NodeID) (member : peer ∈ quorum) : peer ∈ insert leader participants :=
+    Finset.mem_insert_of_mem (within member)
+  have peerLive (peer : NodeID) (member : peer ∈ quorum)
+      : forall index point, settled <= index -> trace.stateAt index = some point
+        -> peer ∈ HasLive.live point :=
+    fun index point _ found => alive index point found member
+  have reaches : forall peer, peer ∈ quorum -> Not (peer = leader)
+      -> peer ∈ configurationMembers current
+      -> exists stop, (exists point, trace.stateAt stop = some point)
+        /\ forall later state, stop <= later -> trace.nodeAt later leader = some state
+          -> covering <= state.matchIndex peer := by
+    intro peer member different inCurrent
+    obtain ⟨stop, point, _, pointFound, lower⟩ :=
+      match_reaches admissible stableAt different heartbeats (peerLive peer member)
+        (eligible peer different inCurrent) fair leaderIn (peerIn peer member)
+        (Nat.le_refl _) settledFound reachAt
+    exact ⟨stop, ⟨point, pointFound⟩, lower⟩
   classical
   by_cases shared :
     exists configuration, configuration ∈ current /\ Not (configuration.nodes = {leader})
   swap
-  · have alone
-        : forall configuration, configuration ∈ current -> configuration.nodes = {leader} := by
+  · have alone : forall configuration, configuration ∈ current -> configuration.nodes = {leader} := by
       intro configuration member
       by_contra different
       exact shared ⟨configuration, member, different⟩
-    have readyAt
-        : forall later, settled <= later
-          -> SignatureReady (stable.state later) leader covering := by
-      intro later le'
-      have grown := stable_prefix execution stable (show signed <= later by omega)
-      obtain ⟨rest, activeEq, beyond⟩ := shape later le'
+    have readyAt : forall later state,
+        settled <= later -> trace.nodeAt later leader = some state -> SignatureReady state leader covering := by
+      intro later state le' found'
+      have grown := stable_log_prefix admissible stable (afterStart.trans le) (by omega) foundSigned found'
+      obtain ⟨rest, activeEq, beyond⟩ := shape later state le' found'
       refine ⟨le_trans reachBound grown.length_le, ?_, ?_, ?_⟩
       · rw [isSignatureAt_of_prefix grown reachBound]
         exact isCovering
-      · rw [termAt_of_prefix grown reachBound, stable.current, coveringTerm]
+      · rw [termAt_of_prefix grown reachBound, stable.current (by omega) found', coveringTerm]
       · unfold NodeState.activeMembers
         rw [activeEq, filter_index_split inside beyond]
         have own : hasQuorum current {leader} :=
@@ -482,17 +468,19 @@ theorem signature_commits_quorum (model : LivenessModel) {trace : Trace}
         rw [Finset.mem_filter]
         exact ⟨mem_configurationMembers (List.mem_append_left _ member) inNodes,
           Or.inl (Finset.mem_singleton.mp single)⟩
-    have dueAt : forall later, settled <= later -> trace.ConfirmationDue leader later := by
-      intro later le'
-      obtain ⟨leaderLive, current', found', primary, _, notRetired⟩ := stable later
-      have same := stable.state_eq found'
-      subst same
-      obtain ⟨_, isSig, termEq, _⟩ := readyAt later le'
-      obtain ⟨rest, activeEq, beyond⟩ := shape later le'
+    have dueAt : forall later point, settled <= later -> trace.stateAt later = some point
+        -> ConfirmationDue point leader := by
+      intro later point le' found'
+      obtain ⟨leaderLive, state, nodeFound, primary, _, notRetired⟩ :=
+        stable.leads (by omega) found'
+      have nodeAt : trace.nodeAt later leader = some state := by
+        rw [Trace.nodeAt_of_stateAt found', nodeFound]
+      obtain ⟨_, isSig, termEq, _⟩ := readyAt later state le' nodeAt
+      obtain ⟨rest, activeEq, beyond⟩ := shape later state le' nodeAt
       obtain ⟨configuration, inCurrent⟩ := List.exists_mem_of_ne_nil _ currentNonempty
-      have uncommitted := never later _ (by omega) found'
-      refine ⟨leaderLive, _, found', primary, notRetired,
-        confirmation_owed model valid found' primary
+      have uncommitted := never later state (by omega) nodeAt
+      refine ⟨leaderLive, state, nodeFound, primary, notRetired,
+        confirmation_owed admissible nodeAt primary
           ⟨by omega, isSig, termEq, ⟨configuration, ?_, inside configuration inCurrent⟩, ?_⟩⟩
       · rw [activeEq]
         exact List.mem_append_left _ inCurrent
@@ -502,48 +490,48 @@ theorem signature_commits_quorum (model : LivenessModel) {trace : Trace}
         · exact alone other inCurrent'
         · have := beyond other inRest
           omega
-    obtain ⟨later, le', notDue | confirms⟩ :=
-      valid.confirmations settled leader (dueAt settled le_rfl)
-    · exact notDue (dueAt later le')
-    · obtain ⟨entries, event, _⟩ := confirms
-      have grown := stable_prefix execution stable (show signed <= later by omega)
-      have frontier
-          : (stable.state later).commitIndex <= (stable.state later).log.length :=
-        le_trans (below later (by omega)) (le_trans reachBound grown.length_le)
-      obtain ⟨committer, foundCommitter, committed⟩ :=
-        append_commits_trace model valid event (stable.found later) frontier (readyAt later le')
-      have := never (later + 1) committer (by omega) foundCommitter
-      omega
+    obtain ⟨point, pointFound⟩ := Trace.stateAt_of_nodeAt settledFound
+    obtain ⟨later, step, le', stepped, entries, event, _⟩ :=
+      (confirmations leader).fires pointFound dueAt
+    obtain ⟨_, state, stateFound, _⟩ :=
+      stable.leads (by omega) (admissible.before stepped)
+    have nodeAt : trace.nodeAt later leader = some state := by
+      rw [admissible.nodeAt_before stepped, stateFound]
+    obtain ⟨committer, foundCommitter, committed⟩ :=
+      append_commits_trace admissible stepped event stateFound (readyAt later state le' nodeAt)
+    have := never (later + 1) committer (by omega) foundCommitter
+    omega
   choose! stopOf stopSpec using reaches
-  obtain ⟨rest, activeEq, _⟩ := shape settled le_rfl
+  obtain ⟨rest, activeEq, _⟩ := shape settled primary le_rfl settledFound
   obtain ⟨configuration, inCurrent, notAlone⟩ := shared
-  have inActive : configuration ∈ (stable.state settled).activeConfigurations := by
+  have inActive : configuration ∈ primary.activeConfigurations := by
     rw [activeEq]
     exact List.mem_append_left _ inCurrent
   obtain ⟨witness, witnessIn, witnessNodes, witnessOther⟩ :=
-    other_member
-      (hasQuorum_majority (majority settled _ (by omega) (stable.found settled)) inActive)
-      notAlone
+    other_member (hasQuorum_majority (majority settled primary (by omega) settledFound) inActive) notAlone
   have witnessMember := mem_configurationMembers inCurrent witnessNodes
-  obtain ⟨witnessIn', productive, termLe⟩ :=
-    conditions witness witnessIn witnessOther witnessMember
-  obtain ⟨delivery, packet, deliveryLe, event, source, target, matched⟩ :=
-    fair witness leader _ witnessIn' leaderIn
-      (acks_sent execution stable witnessOther (eligible witness witnessOther witnessMember) fair
-        leaderIn witnessIn' productive termLe reachBound)
+  obtain ⟨delivery, step, packet, deliveryLe, stepped, event, source, target, matched⟩ :=
+    fair witness leader _ (peerIn witness witnessIn) leaderIn
+      (acks_sent admissible stableAt witnessOther heartbeats (peerLive witness witnessIn)
+        (eligible witness witnessOther witnessMember) fair leaderIn (peerIn witness witnessIn)
+        (Nat.le_refl _) settledFound reachAt)
       (max settled (quorum.sup stopOf))
   cases payload : packet.envelope.payload with
   | appendEntriesResponse response =>
       rw [payload] at matched
       obtain ⟨newer, success, _⟩ := matched
-      have grown := stable_prefix execution stable (show signed <= delivery by omega)
-      obtain ⟨rest, activeEq, later⟩ := shape delivery (by omega)
-      have ready : SignatureReady (stable.state delivery) leader covering := by
+      obtain ⟨_, state, stateFound, _⟩ :=
+        stable.leads (by omega) (admissible.before stepped)
+      have nodeAt : trace.nodeAt delivery leader = some state := by
+        rw [admissible.nodeAt_before stepped, stateFound]
+      have grown := stable_log_prefix admissible stable (afterStart.trans le) (by omega) foundSigned nodeAt
+      obtain ⟨rest, activeEq, later⟩ := shape delivery state (by omega) nodeAt
+      have ready : SignatureReady state leader covering := by
         refine ⟨le_trans reachBound grown.length_le, ?_, ?_, ?_⟩
         · rw [isSignatureAt_of_prefix grown reachBound]
           exact isCovering
-        · rw [termAt_of_prefix grown reachBound, stable.current, coveringTerm]
-        · have quorumAt := majority delivery _ (by omega) (stable.found delivery)
+        · rw [termAt_of_prefix grown reachBound, stable.current (by omega) nodeAt, coveringTerm]
+        · have quorumAt := majority delivery state (by omega) nodeAt
           unfold NodeState.activeMembers
           rw [activeEq] at quorumAt ⊢
           rw [filter_index_split inside later]
@@ -557,12 +545,11 @@ theorem signature_commits_quorum (model : LivenessModel) {trace : Trace}
           by_cases same : node = leader
           · exact Or.inl same
           · have := Finset.le_sup (f := stopOf) inQuorum
-            exact Or.inr (stopSpec node inQuorum same (mem_configurationMembers member inNodes)
-              delivery (by omega))
+            exact Or.inr ((stopSpec node inQuorum same (mem_configurationMembers member inNodes)).2
+              delivery state (by omega) nodeAt)
       obtain ⟨committer, foundCommitter, committed⟩ :=
-        ack_commits_trace model valid stable event target payload success newer
-          (stable.found delivery)
-          (by rw [source]; exact eligible witness witnessOther witnessMember delivery (by omega))
+        ack_commits_trace admissible stable (by omega) stepped event target payload success newer nodeAt
+          (by rw [source]; exact eligible witness witnessOther witnessMember delivery state (by omega) nodeAt)
           ready
       have := never (delivery + 1) committer (by omega) foundCommitter
       omega
@@ -570,107 +557,85 @@ theorem signature_commits_quorum (model : LivenessModel) {trace : Trace}
       rw [payload] at matched
       exact matched.elim
 
-/-- A signature in the stable primary's log is eventually committed. The premise
-does not require it to be from the primary's term. Live participants only
-decrease, so from some point on they are a fixed quorum. -/
-theorem signature_commits (model : LivenessModel) {trace : Trace} {leader : NodeID}
-    {term : Nat} {participants : Finset NodeID} (valid : model.FairFrom trace)
-    (stable : LeadsThroughout trace leader term)
+/-- A signature in the stable primary's log eventually commits, even if it is from
+an older term. Crash-stop availability leaves a fixed live quorum after some
+recorded state; this argument does not assume the recording is infinite. -/
+theorem signature_commits {heartbeatBound signatureBound confirmationBound : Option Real}
+    (heartbeats : trace.HeartbeatScheduling heartbeatBound)
+    (signatures : trace.SignatureScheduling signatureBound)
+    (confirmations : trace.ConfirmationScheduling confirmationBound) {start : Nat}
+    {leader : NodeID} {term : Nat} {participants : Finset NodeID}
+    (stable : StableLeader trace start leader term)
     (live : LiveQuorum trace leader participants)
-    (fair : FairLoss trace (insert leader participants)) {index : Nat} {state : NodeState}
-    {signature : Nat} (found : nodeState (trace.state index) leader = some state)
+    (fair : FairLoss trace (insert leader participants)) {index : Nat}
+    (afterStart : start <= index) {state : NodeState} {signature : Nat}
+    (found : trace.nodeAt index leader = some state)
     (isSignature : isSignatureAt state.log signature = true)
     : exists later after,
         index <= later
-        /\ nodeState (trace.state later) leader = some after
+        /\ trace.nodeAt later leader = some after
         /\ signature <= after.commitIndex := by
-  let _ : Config.InitialConfiguration := ⟨model.initialConfiguration⟩
-  have execution : trace.ValidFrom Config.INITIAL_CONFIGURATION model.nodes := valid.execution
-  obtain ⟨start, quorumAt⟩ := live
-  have shrinks
-      : forall first second, first <= second
-        -> trace.live second ∩ participants ⊆ trace.live first ∩ participants := by
-    intro first second le
-    induction second, le using Nat.le_induction with
-    | base => exact Finset.Subset.refl _
-    | succ second _ ih =>
-        exact (Finset.inter_subset_inter_right
-          (CCFRaft.Proofs.Liveness.live_decreases execution second)).trans ih
-  obtain ⟨stop, _, constant⟩ :=
-    eventually_const
-      (f := fun index => (trace.live 0 ∩ participants).card
-        - (trace.live index ∩ participants).card)
-      (start := 0) (bound := (trace.live 0 ∩ participants).card)
-      (fun index _ => by
-        have := Finset.card_le_card (shrinks index (index + 1) (Nat.le_succ _))
-        have := Finset.card_le_card (shrinks 0 index (Nat.zero_le _))
-        omega)
-      (fun _ _ => Nat.sub_le _ _)
-  have settledLive
-      : forall later, stop <= later
-        -> trace.live later ∩ participants = trace.live stop ∩ participants := by
-    intro later le
-    have same := constant later le
-    have := Finset.card_le_card (shrinks 0 later (Nat.zero_le _))
-    have := Finset.card_le_card (shrinks 0 stop (Nat.zero_le _))
-    exact Finset.eq_of_subset_of_card_le (shrinks stop later le) (by omega)
-  have alive : forall later, trace.live stop ∩ participants ⊆ trace.live later := by
-    intro later
+  obtain ⟨quorumFrom, quorumPoint, quorumFound, quorumAt⟩ := live
+  obtain ⟨first, firstFound, _⟩ := Trace.nodeAt_eq_some.mp found
+  have combined : exists point, trace.stateAt (max index quorumFrom) = some point := by
+    rcases Nat.le_total index quorumFrom with le | le
+    · exact ⟨quorumPoint, by rwa [Nat.max_eq_right le]⟩
+    · exact ⟨first, by rwa [Nat.max_eq_left le]⟩
+  obtain ⟨first, firstFound⟩ := combined
+  have shrinks : forall earlier later before after,
+      earlier <= later -> trace.stateAt earlier = some before -> trace.stateAt later = some after
+      -> HasLive.live after ∩ participants ⊆ HasLive.live before ∩ participants :=
+    fun _ _ _ _ le found found' =>
+      Finset.inter_subset_inter_right (admissible.live_anti le found found')
+  obtain ⟨stop, point, stopLe, stopFound, constant⟩ :=
+    Trace.settles_of_antitone firstFound
+      (measure := fun _ point => (HasLive.live point ∩ participants).card)
+      (fun earlier later before after _ le found found' =>
+        Finset.card_le_card (shrinks earlier later before after le found found'))
+  have settledLive : forall later last,
+      stop <= later -> trace.stateAt later = some last
+      -> HasLive.live last ∩ participants = HasLive.live point ∩ participants := by
+    intro later last le found'
+    exact Finset.eq_of_subset_of_card_le (shrinks stop later point last le stopFound found')
+      (by rw [constant later last le found'])
+  have alive : forall later last, trace.stateAt later = some last
+      -> HasLive.live point ∩ participants ⊆ HasLive.live last := by
+    intro later last found'
     rcases Nat.le_total later stop with le | le
-    · exact (shrinks later stop le).trans Finset.inter_subset_left
-    · rw [← settledLive later le]
+    · exact (shrinks later stop last point le found' stopFound).trans Finset.inter_subset_left
+    · rw [← settledLive later last le found']
       exact Finset.inter_subset_left
-  have stateEq := stable.state_eq found
-  subst stateEq
+  obtain ⟨primary, primaryFound⟩ := stable.found (by omega) stopFound
   have bound := (le_length_of_isSignatureAt isSignature).2
-  have grown :=
-    stable_prefix execution stable (Nat.le_max_left index (max stop start))
-  obtain ⟨later, after, le, foundAfter, committed⟩ :=
-    signature_commits_quorum model valid stable alive Finset.inter_subset_right fair
-      (index := max index (max stop start))
-      (fun later state le found => by
-        rw [← settledLive later (by omega)]
-        exact quorumAt later state (by omega) found)
-      (stable.found _) (by rw [isSignatureAt_of_prefix grown bound]; exact isSignature)
-  exact ⟨later, after, by omega, foundAfter, committed⟩
+  have grown := stable_log_prefix admissible stable afterStart (by omega) found primaryFound
+  obtain ⟨later, after, le, afterFound, committed⟩ :=
+    signature_commits_quorum admissible heartbeats signatures confirmations stable alive
+      Finset.inter_subset_right fair (by omega)
+      (fun later state le found' => by
+        obtain ⟨last, lastFound, lastNode⟩ := Trace.nodeAt_eq_some.mp found'
+        rw [← settledLive later last le lastFound]
+        exact quorumAt later last state (by omega) lastFound lastNode)
+      primaryFound (by rw [isSignatureAt_of_prefix grown bound]; exact isSignature)
+  exact ⟨later, after, by omega, afterFound, committed⟩
 
-/-- Commit liveness for a primary that is stable throughout. -/
-theorem commit_liveness_stable (model : LivenessModel) {trace : Trace} {leader : NodeID}
-    {term : Nat} {participants : Finset NodeID} {request : ReqID}
-    (valid : model.FairFrom trace) (stable : LeadsThroughout trace leader term)
+/-- `Properties.commit_liveness`: leadership need only be stable from `start`, and
+the independent scheduling constraints may be timed or untimed. -/
+theorem commit_liveness
+    {heartbeatBound signatureBound confirmationBound : Option Real}
+    (heartbeats : trace.HeartbeatScheduling heartbeatBound)
+    (signatures : trace.SignatureScheduling signatureBound)
+    (confirmations : trace.ConfirmationScheduling confirmationBound)
+    {start : Nat} {leader : NodeID} {term : Nat} {participants : Finset NodeID}
+    (stable : StableLeader trace start leader term)
     (live : LiveQuorum trace leader participants)
     (fair : FairLoss trace (insert leader participants))
-    (submitted : Submitted trace 0 leader request)
+    {request : ReqID} (submitted : Submitted trace start leader request)
     : exists index, RequestCommitted trace leader request index :=
-  CCFRaft.Proofs.CommitLiveness.request_committed model valid stable submitted
-    fun _ _ _ found isSignature _ =>
-      signature_commits model valid stable live fair found isSignature
+  CCFRaft.Proofs.CommitLiveness.request_committed admissible signatures stable submitted
+    fun _ _ _ afterStart found isSignature _ =>
+      signature_commits admissible heartbeats signatures confirmations stable live fair
+        afterStart found isSignature
 
-/-- `Properties.commit_liveness`: the primary need only be stable, and the request
-submitted, from index `start` on. The proof works on the suffix from `start`. -/
-theorem commit_liveness (model : LivenessModel) {trace : Trace} {leader : NodeID}
-    {term : Nat} {participants : Finset NodeID} {request : ReqID} {start : Nat}
-    (valid : model.Fair trace) (stable : StableLeader trace start leader term)
-    (live : LiveQuorum trace leader participants)
-    (fair : FairLoss trace (insert leader participants))
-    (submitted : Submitted trace start leader request)
-    : exists index, RequestCommitted trace leader request index := by
-  have valid := valid.fairFrom
-  obtain ⟨quorumFrom, quorumAt⟩ := live
-  obtain ⟨submittedAt, after, present⟩ := submitted
-  have same : start + (submittedAt - start) = submittedAt := by omega
-  have shifted : Submitted (trace.shift start) 0 leader request := by
-    refine ⟨submittedAt - start, Nat.zero_le _, ?_⟩
-    rcases present with ⟨state, found, has⟩ | ⟨entries, event, member⟩
-    · exact Or.inl ⟨state, by simpa only [Trace.shift, same] using found, has⟩
-    · refine Or.inr ⟨entries, ?_, member⟩
-      rw [Shift.local_shift, same]
-      exact event
-  obtain ⟨index, committed⟩ :=
-    commit_liveness_stable model (Shift.fair_shift valid start)
-      (fun index => stable (start + index) (Nat.le_add_right _ _))
-      ⟨quorumFrom, fun index state le found => quorumAt (start + index) state (by omega) found⟩
-      (Shift.fair_loss_shift valid.execution fair start) shifted
-  exact ⟨start + index, committed⟩
+end Recorded
 
 end CCFRaft.Proofs.Replication
