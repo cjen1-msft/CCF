@@ -113,6 +113,58 @@ theorem id_lt {index : Nat} {point : W} (found : trace.stateAt index = some poin
       · exact (Packet.id_mem_batch new).2)
     found packet member
 
+/-- Outstanding packets carry distinct sequence numbers. -/
+theorem ids_nodup {index : Nat} {point : W} (found : trace.stateAt index = some point)
+    : ((pending point).map Packet.id).Nodup :=
+  admissible.coherent.induction
+    (start := 0)
+    (motive := fun _ point => ((pending point).map Packet.id).Nodup)
+    (fun point found => by
+      rw [Trace.stateAt_zero, Option.some.injEq] at found
+      subst found
+      rw [admissible.delivery.init.1]
+      exact List.nodup_nil)
+    (fun _ step _ stepped held => by
+      obtain ⟨_, emitted, _, _, ledger⟩ := admissible.delivery.next stepped
+      have batchIds
+          : (Packet.batch emitted (issued step.before) (time step.before)).map Packet.id
+            = List.range' (issued step.before) emitted.length := by
+        unfold Packet.batch
+        rw [List.map_map, ← List.zipIdx_map_snd]
+        rfl
+      rw [ledger, List.map_append, List.nodup_append, batchIds]
+      refine ⟨((Event.remaining_sublist _ _).map Packet.id).nodup held, List.nodup_range',
+        fun old oldMember new newMember => ?_⟩
+      obtain ⟨packet, kept, rfl⟩ := List.mem_map.mp oldMember
+      have := admissible.id_lt (admissible.before stepped) (Event.mem_remaining kept)
+      rw [List.mem_range'_1] at newMember
+      omega)
+    index point
+    (Nat.zero_le _)
+    found
+
+/-- A packet that leaves the ledger at a step is the packet the step consumes. -/
+theorem consumed_of_left {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
+    (stepped : trace.stepAt index = some step) {packet : Packet}
+    (before : packet ∈ pending step.before) (after : Not (packet ∈ pending step.after))
+    : step.action.consumedPacket = some packet := by
+  obtain ⟨outstanding, _, _, _, ledger⟩ := admissible.delivery.next stepped
+  rw [ledger, List.mem_append, not_or] at after
+  have kept := after.1
+  unfold Event.remaining at kept
+  cases consumed : step.action.consumedPacket with
+  | none =>
+      simp only [consumed] at kept
+      exact absurd before kept
+  | some other =>
+      simp only [consumed] at kept outstanding
+      have same : other.sameIdentity packet = true := by
+        by_contra different
+        exact kept ((List.mem_eraseP_of_neg different).mpr before)
+      simp only [Packet.sameIdentity, beq_iff_eq] at same
+      rw [List.inj_on_of_nodup_map (admissible.ids_nodup (admissible.before stepped))
+        outstanding before same]
+
 /-- Every outstanding packet was sent at an earlier step. -/
 theorem pending_sent {index : Nat} {point : W} (found : trace.stateAt index = some point)
     {packet : Packet} (member : packet ∈ pending point)

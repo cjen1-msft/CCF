@@ -1,16 +1,19 @@
 module
 
 public import CCFRaft.Proofs.Liveness.Admissible
+public import CCFRaft.Proofs.Liveness.Delay
 public import CCFRaft.Proofs.Liveness.Network
 public import CCFRaft.Proofs.Liveness.Scheduling
+public import CCFRaft.Proofs.Liveness.Timers
 
 @[expose] public section
 
 /-!
 # Liveness proof base
 
-Admissible executions, the packet ledger and scheduled obligations, imported
-from `Proofs/Liveness/`, plus fair-loss links and the primary's commit scan.
+Admissible executions, the packet ledger, bounded delay, scheduled obligations
+and election deadlines, imported from `Proofs/Liveness/`, plus fair-loss links
+and the primary's commit scan.
 -/
 
 namespace CCFRaft.Proofs.Liveness

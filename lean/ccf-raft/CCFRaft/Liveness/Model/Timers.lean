@@ -30,8 +30,9 @@ variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasTime
 
 /-- Idealized real-time deadlines: a reset draws between half and all of
 `electionTimeout` after its before-time; nothing else changes the deadline.
-A node times out only once its deadline has passed. The intended implication to
-`ElectionScheduling (some (electionTimeout / 2))` remains to be proved.
+A node times out only once its deadline has passed. This implies
+`ElectionScheduling (some (electionTimeout / 2))`
+(`Proofs.Liveness.electionScheduling_of_timerModel`).
 This is not yet a refinement of CCF's elapsed-tick counter: the conservative
 lower-bound interpretation in `Bounds.electionTimeout` alone does not establish
 the upper bound or the distribution of real-time deadlines. -/

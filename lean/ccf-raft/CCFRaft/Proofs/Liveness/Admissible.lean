@@ -175,6 +175,29 @@ theorem live_step {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
       | (split_ifs at next with present; simp_all)
       | simp_all
 
+/-- Only a crash of a live node removes it from the live set. -/
+theorem crashes {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
+    (stepped : trace.stepAt index = some step) {node : NodeID}
+    (before : node ∈ live step.before) (after : Not (node ∈ live step.after))
+    : step.action = .crash node := by
+  have next := admissible.crash.next stepped
+  obtain ⟨before', event, after'⟩ := step
+  simp only [crashModel, crashSystem] at next
+  cases event with
+  | crash crashed =>
+      simp only [Liveness.Event.actor] at next
+      split_ifs at next with present
+      simp only [Option.some.injEq] at next
+      simp only [← next, Finset.mem_erase, not_and_or, not_not] at after
+      rcases after with same | absent
+      · exact congrArg Liveness.Event.crash same.symm
+      · exact absurd before absent
+  | _ =>
+      simp only [Liveness.Event.actor, Liveness.Event.liveAfter] at next
+      first
+      | (split_ifs at next with present; simp_all)
+      | simp_all
+
 /-- Crash-stop: a node live at a recorded state was live at every earlier one. -/
 theorem live_anti {earlier later : Nat} (le : earlier <= later) {first last : W}
     (firstFound : trace.stateAt earlier = some first)
