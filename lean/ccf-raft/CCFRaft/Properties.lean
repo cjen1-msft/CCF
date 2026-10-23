@@ -160,6 +160,9 @@ excludes waiting for retirement cleanup, which has no scheduling deadline.
 If at `start` no participant's log diverges from the primary's by more than
 `backlog` entries, and the primary holds or appends `request`, then `request`
 is in the primary's committed prefix within the window.
+The state-timestamped conclusion below is currently refuted by
+`Proofs.LivenessWitness.timed_commit_window_counterexample`: an on-time commit
+can advance the clock past the window in the same step.
 `signature_settles` yields the stable window after `duelling_leaders_resolve`;
 settled reconfiguration remains a separate premise. -/
 theorem commit_liveness

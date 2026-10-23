@@ -4,6 +4,7 @@ An executable Lean model of CCF's consensus implementation ([`src/consensus/aft/
 It assumes familiarity with the [CCF consensus documentation](../../doc/architecture/consensus/index.rst).
 The public liveness statements are a specification checkpoint: timed `commit_liveness` within a `StableWindow`, probabilistic `duelling_leaders_resolve` during a `GoodPeriod`, and the `signature_settles` bridge.
 All three currently contain `sorry`; their latency and probability bounds are not proved.
+A checked [counterexample](LIVENESS.md#known-gaps-in-the-windowed-statements) refutes the current state-timestamped commit conclusion.
 The earlier untimed commitment and conditional stable-leadership proofs remain internal; see [the liveness report](LIVENESS.md).
 
 ## Source map

@@ -203,7 +203,9 @@ private theorem heartbeats (signed : Bool) (bound : Option Real)
   subst point
   exact False.elim (no_peers signed index leader peer due)
 
-private theorem signatures : (fixture true).SignatureScheduling none := by
+private theorem signatures_with_deadline (bound : Option Real)
+    (onTime : Deadline bound (fixtureWorld true 0) (fixtureWorld true 0))
+    : (fixture true).SignatureScheduling bound := by
   intro leader index point found due
   rw [fixture_stateAt, Option.some.injEq] at found
   subst point
@@ -212,7 +214,7 @@ private theorem signatures : (fixture true).SignatureScheduling none := by
   subst leader
   cases index with
   | zero =>
-      refine ⟨0, fixtureWorld true 0, le_rfl, fixture_stateAt true 0, trivial, Or.inr ?_⟩
+      refine ⟨0, fixtureWorld true 0, le_rfl, fixture_stateAt true 0, onTime, Or.inr ?_⟩
       exact ⟨
         fixtureStep true 0,
         fixture_stepAt true 0,
@@ -229,6 +231,9 @@ private theorem signatures : (fixture true).SignatureScheduling none := by
             \/ maxCommittableTerm (requestedNode true).log
               ≠ (requestedNode true).currentTerm) := by decide
       exact False.elim (covered unsigned)
+
+private theorem signatures : (fixture true).SignatureScheduling none :=
+  signatures_with_deadline none trivial
 
 private theorem no_confirmations (signed : Bool) (index leader : Nat)
     : Not (ConfirmationDue (fixtureWorld signed index) leader) := by
@@ -487,6 +492,148 @@ theorem commit_liveness_timed_witness
     1,
     committed
   ⟩
+
+private noncomputable def shortBounds : Bounds where
+  heartbeatInterval := 1 / 4
+  electionTimeout := 4
+  signatureInterval := 1 / 4
+
+private theorem short_duration : commitLatency shortBounds 0 0 = 3 / 4 := by
+  norm_num [commitLatency, shortBounds]
+
+private theorem short_window_zero {index : Nat}
+    (within : Within (fixture true) 0 (commitLatency shortBounds 0 0) index)
+    : index = 0 := by
+  have limit :=
+    within.2 (fixtureWorld true 0) (fixtureWorld true index)
+      (fixture_stateAt true 0) (fixture_stateAt true index)
+  change (index : Real) <= ((0 : Nat) : Real) + commitLatency shortBounds 0 0 at limit
+  norm_num only [Nat.cast_zero, short_duration, zero_add] at limit
+  have below : (index : Real) < 1 := by linarith
+  have below : index < 1 := by exact_mod_cast below
+  omega
+
+private theorem short_window
+    : StableWindow (fixture true) 0 (commitLatency shortBounds 0 0)
+        0 Model.BOOTSTRAP_TERM {0} := by
+  refine ⟨?_, ⟨?_, ?_⟩, ?_, ?_⟩
+  · intro index point within found
+    have zero := short_window_zero within
+    subst index
+    obtain ⟨first, firstFound, quiet⟩ := quiet_start.quiet
+    rw [found, Option.some.injEq] at firstFound
+    subst first
+    exact quiet
+  · intro index point within found
+    exact (stable true).live within.1 found
+  · intro index point state within found nodeFound
+    apply (stable true).notRetired within.1
+    rw [Trace.nodeAt_of_stateAt found]
+    exact nodeFound
+  · intro index point state within found nodeFound
+    have zero := short_window_zero within
+    subst index
+    rw [fixture_stateAt, Option.some.injEq] at found
+    subst point
+    change some initialNode = some state at nodeFound
+    have same := Option.some.inj nodeFound
+    subst state
+    decide
+  · intro index step packet within stepped dropped
+    have zero := short_window_zero within
+    subst index
+    rw [fixture_stepAt, Option.some.injEq] at stepped
+    subst step
+    simp [fixtureStep] at dropped
+
+private theorem short_reconfiguration
+    : Window.ReconfigurationSettled (fixture true) 0 (commitLatency shortBounds 0 0)
+        0 := by
+  intro index point state within found nodeFound
+  have zero := short_window_zero within
+  subst index
+  rw [fixture_stateAt, Option.some.injEq] at found
+  subst point
+  change some initialNode = some state at nodeFound
+  have same := Option.some.inj nodeFound
+  subst state
+  decide
+
+private theorem initial_backlog : Backlog (fixture true) 0 0 {0} 0 := by
+  intro first leaderState follower followerState found leaderFound member followerFound
+  have zero := Finset.mem_singleton.mp member
+  subst follower
+  rw [fixture_stateAt, Option.some.injEq] at found
+  subst first
+  change some initialNode = some leaderState at leaderFound
+  change some initialNode = some followerState at followerFound
+  have leaderSame := Option.some.inj leaderFound
+  have followerSame := Option.some.inj followerFound
+  subst leaderState followerState
+  decide
+
+/-- A counterexample to the state-timestamped conclusion of timed commit liveness.
+Every premise holds with positive heartbeat and signature bounds of `1 / 4`.
+The first append commits at its before-time zero, but its after-state is recorded
+at time one, outside the `3 / 4` window. This is a clock-observation gap, not a
+failure to commit or unfinished retirement work. -/
+theorem timed_commit_window_counterexample
+    : let system := Model.transitionSystem {0} [0]
+      let bounds : Bounds :=
+        { heartbeatInterval := 1 / 4, electionTimeout := 4, signatureInterval := 1 / 4 }
+      let duration := commitLatency bounds 0 0
+      exists trace : Trace (World Model.State) Liveness.Event,
+        (trace.Coherent
+          /\ trace.Valid (protocolModel system)
+          /\ trace.Valid timingModel
+          /\ trace.Valid crashModel
+          /\ trace.Valid (deliveryModel system)
+          /\ trace.Valid (boundedDelayModel 0)
+          /\ TimeDiverges trace
+          /\ 0 <= (0 : Real)
+          /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
+          /\ trace.SignatureScheduling (some bounds.signatureInterval)
+          /\ StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0}
+          /\ Window.ReconfigurationSettled trace 0 duration 0
+          /\ Backlog trace 0 0 {0} 0
+          /\ SubmittedAt trace 0 0 10)
+        /\ RequestCommitted trace 0 10 1
+        /\ Not
+            (exists index,
+              Within trace 0 duration index /\ RequestCommitted trace 0 10 index) := by
+  refine ⟨fixture true, ?_, committed, ?_⟩
+  · refine ⟨coherent true, protocol_valid true, timing_valid true, crash_valid true,
+      delivery_valid true, ?_, ?_, by norm_num, heartbeats true _, ?_,
+      short_window, short_reconfiguration, initial_backlog, ?_⟩
+    · refine ⟨?_, ?_⟩
+      · intro packet member
+        change packet ∈ ([] : List Packet) at member
+        cases member
+      · intro index step stepped
+        rw [fixture_stepAt, Option.some.injEq] at stepped
+        subst step
+        intro packet member
+        change packet ∈ ([] : List Packet) at member
+        cases member
+    · intro limit
+      obtain ⟨index, enough⟩ := exists_nat_ge limit
+      exact ⟨index, fixtureWorld true index, fixture_stateAt true index, enough⟩
+    · apply signatures_with_deadline
+      apply le_add_of_nonneg_right
+      norm_num
+    · refine Or.inr ⟨fixtureStep true 0, requestEntries true, fixture_stepAt true 0, rfl, ?_⟩
+      decide
+  · rintro ⟨index, within, point, state, found, nodeFound, request⟩
+    have zero := short_window_zero within
+    subst index
+    rw [fixture_stateAt, Option.some.injEq] at found
+    subst point
+    change some initialNode = some state at nodeFound
+    have same := Option.some.inj nodeFound
+    subst state
+    change HasRequest [] 10 at request
+    obtain ⟨entry, member, _⟩ := request
+    cases member
 
 private theorem unsigned_never_commits (index : Nat)
     : Not (RequestCommitted (fixture false) 0 10 index) := by

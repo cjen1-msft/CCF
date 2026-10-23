@@ -3,7 +3,8 @@
 ## Recommendation and status
 
 **Specification checkpoint:** [`Properties.lean`](CCFRaft/Properties.lean) now states timed `commit_liveness`, probabilistic `duelling_leaders_resolve`, and `signature_settles`.
-These three statements contain `sorry`; their constants are provisional, and [known gaps](#known-gaps-in-the-windowed-statements) remain in the leadership statements.
+These three statements contain `sorry`; their constants are provisional.
+A checked counterexample refutes the current state-timestamped commit conclusion, and [known gaps](#known-gaps-in-the-windowed-statements) remain in the leadership statements.
 [Premises the windowed statements need](#premises-the-windowed-statements-need) records the premises added so far, each with a counterexample to its absence.
 The window assumptions are in [`Window.lean`](CCFRaft/Liveness/Assumptions/Window.lean), draws and signature commitment in [`Duel.lean`](CCFRaft/Liveness/Assumptions/Duel.lean), and explicit deadlines in [`Timers.lean`](CCFRaft/Liveness/Model/Timers.lean).
 The remainder of this report describes the earlier, still-proved internal untimed commitment and conditional leadership results; references to their old public names do not establish the new statements.
@@ -168,7 +169,12 @@ The extra settlement premise is not a consequence of `StableWindow` or `GoodPeri
 
 ## Known gaps in the windowed statements
 
-The `commit_liveness` latency formula remains provisional; the new premises do not prove its bound.
+`Proofs.LivenessWitness.timed_commit_window_counterexample` in [`Proofs/LivenessWitness.lean`](CCFRaft/Proofs/LivenessWitness.lean) refutes the exact current `commit_liveness` conclusion while satisfying every premise, including time divergence and settled reconfiguration.
+With positive heartbeat and signature intervals of `1 / 4`, zero delay and zero backlog, the window lasts `3 / 4`.
+The initialized single-node execution appends and commits the request at before-time zero, but records the resulting state at time one; the only state inside the window is the uncommitted initial state.
+This is an observation-time mismatch, not a commit failure.
+The existing `timingModel` explicitly dates an action by its before-time and allows time to elapse after it in the same step.
+The latency formula also remains provisional.
 
 - `signature_settles`: nothing bounds the participants' election timers at `start`, `StableLeader` also constrains non-participants, and a participant whose log is behind may become a pre-vote candidate, which `Quiet` forbids, even though it cannot depose the primary.
 - `duelling_leaders_resolve`: `TimerDraws` gives each participant its `k`-th draw at its own `k`-th reset, and resets need not line up into rounds across participants.
