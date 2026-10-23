@@ -23,10 +23,10 @@ variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W]
 
 /-- Abstract wall-clock bounds. -/
 structure Bounds where
-  /-- An upper bound on the real time a primary takes to send a due
-  AppendEntries. CCF sends once `request_timeout` has elapsed, checked on each
-  `periodic` tick (`raft.h`, `Aft::periodic`), so this is at least
-  `request_timeout` plus the tick interval, if the host ticks on time. -/
+  /-- An upper bound on the real time a primary takes to complete a due
+  heartbeat send pass. CCF sends once `request_timeout` has elapsed, checked on
+  each `periodic` tick (`raft.h`, `Aft::periodic`). This includes the tick delay
+  and the work of issuing every batch, not just starting the first batch. -/
   heartbeatInterval : Real
   /-- Twice a lower bound on the real time from an election-timer reset to an
   election timeout. CCF draws a timeout between half and all of its configured
@@ -71,12 +71,15 @@ def PeerDue (point : W) (leader peer : NodeID) : Prop :=
       /\ Not (state.isRetiredCommitted leader)
       /\ peer ∈ eligiblePeers state leader
 
-/-- A send must carry entries when its current frontier has a backlog. -/
+/-- The final send of a heartbeat pass reaches the primary's current log end.
+This is not a single unbounded message: CCF's `send_append_entries` splits the
+pass by batch size and term, then loops until `last_idx`. Earlier sends in the
+pass may end before the log end; the protocol's single-term guard is unchanged. -/
 def ProductiveSend (step : CCF.Execution.Step W Event) (leader peer : NodeID) : Prop :=
   exists state frontier,
     CCF.MultiNodeTransitionSystem.nodeState (proto step.before) leader = some state
     /\ step.action = .local leader (.sendEntries peer frontier)
-    /\ (state.sentIndex peer < state.log.length -> state.sentIndex peer < frontier)
+    /\ frontier = state.log.length
 
 /-- A primary sends AppendEntries from `sent_idx + 1` to every other node each
 time `request_timeout` elapses (`raft.h`, `Aft::periodic`); `eligiblePeers`
@@ -84,7 +87,9 @@ is a subset of `all_other_nodes`, from which CCF drops a node only once its
 retirement confirmation commits (`set_retired_committed`). Needed: without it a
 primary that appends a signature and then never sends again leaves a lagging
 follower, whose acknowledgement the signature needs, behind forever.
-With `some bound`, every later state past the deadline follows a productive send.
+With `some bound`, a whole send pass, including its final log-end batch, must
+complete within the deadline; a size-limited intermediate batch does not
+discharge this obligation.
 Needed: if the primary could wait longer than half an election timeout between
 heartbeats, a follower could time out and depose it. -/
 def Trace.HeartbeatScheduling (trace : Trace W Event) (bound : Option Real) : Prop :=
@@ -146,7 +151,8 @@ retires every other member of the configurations before a signature, the
 primary alone makes that signature committable, but only another append or
 acknowledgement reruns the commit scan; see `LIVENESS.md`. The cleanup request
 has no deadline. -/
-def Trace.ConfirmationScheduling (trace : Trace W Event) (bound : Option Real) : Prop :=
+def Trace.RetirementConfirmedScheduling (trace : Trace W Event) (bound : Option Real)
+    : Prop :=
   forall leader,
     Scheduled trace bound (fun point => ConfirmationDue point leader)
       (fun step => Confirms step leader)

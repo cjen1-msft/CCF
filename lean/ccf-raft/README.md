@@ -59,7 +59,9 @@ Delivery or drop must consume an existing occurrence before this step's outputs 
 Equal envelopes remain distinct transmissions, and an occurrence cannot be consumed twice or after a drop.
 The optional `boundedDelayModel maxDelay` separately forbids an overdue pending packet to a live target; it permits drops and is not the stronger `Timely` delivery assumption.
 
-`trace.HeartbeatScheduling`, `trace.SignatureScheduling`, `trace.ConfirmationScheduling` and `trace.ElectionScheduling` each take an `Option Real`: `none` requires eventual execution, `some bound` also requires it before the bound elapses (for elections, `none` is no constraint and `some minimum` forbids timeouts within `minimum` of a reset).
+`trace.HeartbeatScheduling`, `trace.SignatureScheduling`, `trace.RetirementConfirmedScheduling` and `trace.ElectionScheduling` each take an `Option Real`: `none` requires eventual execution, `some bound` also requires it before the bound elapses (for elections, `none` is no constraint and `some minimum` forbids timeouts within `minimum` of a reset).
+The heartbeat obligation ends with a send reaching the primary's current log end.
+Earlier batches may stop at size or term boundaries; the deadline covers the whole send pass, not merely its first batch.
 These are read-only predicates on the recorded trace, separate from model validity and network fairness (`FairLoss`).
 All four share `Scheduled trace bound Due Fires`, so a bounded obligation implies the unbounded one and is never vacuous on a finite or Zeno trace.
 The scheduling predicates and timing bounds are colocated in `Liveness/Model/Scheduling.lean`.
@@ -69,7 +71,9 @@ Generic `Seq.filter` and `Seq.filterMap` helpers remain in [`Liveness/Seq.lean`]
 ## Scope
 
 Node join and snapshot installation are not modeled.
-The timed commitment statement assumes a bounded stable-primary window; the probabilistic election statement and its bridge remain proof obligations.
+The timed commitment statement assumes a bounded stable-primary window and reconfiguration settled at the leader throughout that window: one active configuration and committed confirmation of every completed removal.
+Other nodes need not have learned that completion, and no retirement-cleanup deadline is imposed.
+The probabilistic election statement and its bridge remain proof obligations.
 Explicit deadlines and continuous uniform draws idealize the concrete tick-based timer; the existing conservative `Bounds.electionTimeout` interpretation is unchanged.
 `ElectionReset` accounts for represented CCF reset paths, including term adoption, regular-election starts, vote grants and quorum-check step-downs, while retaining message-handler guards and the same-term AppendEntries log-check distinction.
 
@@ -89,8 +93,9 @@ lake lint
 The three draft liveness statements currently prevent this strict check from passing; no validation settings are relaxed for this checkpoint.
 Kernel tracing reports the declarations checked during compilation; cached modules do not emit fresh compilation traces.
 CI runs this before import coverage, formatting, and linting so the initial build and its traces occur in this step.
-The build also runs two explicit action traces from an initialized network: committing a client request, and adding two nodes then electing a new primary and committing another request.
+The build also runs explicit action traces from an initialized network: committing a client request, adding two nodes then electing a new primary and committing another request, and retiring a follower through committed confirmation at the leader.
 The reconfiguration trace checks each node's ledger before delivery, after setup, after replication and commitment, after election, and after the new primary's client request.
+The retirement trace checks the new settlement predicate against pending membership changes, the lost commit trigger, and an appended but uncommitted confirmation.
 These are regression examples, not exhaustive checking.
 [`Tests/ElectionReset.lean`](CCFRaft/Tests/ElectionReset.lean) executes local protocol handlers and checks timer-reset classification for both reset and ignored/rejected-message cases.
 `lake check` runs without sandboxing here, so build-time code must be trusted.

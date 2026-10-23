@@ -242,7 +242,7 @@ private theorem no_confirmations (signed : Bool) (index leader : Nat)
     exact absurd owed (by decide)
 
 private theorem confirmations (signed : Bool) (bound : Option Real)
-    : (fixture signed).ConfirmationScheduling bound := by
+    : (fixture signed).RetirementConfirmedScheduling bound := by
   intro leader index point found due
   rw [fixture_stateAt, Option.some.injEq] at found
   subst point
@@ -335,7 +335,7 @@ theorem commit_liveness_witness
           /\ trace.Valid (Liveness.deliveryModel system)
           /\ trace.HeartbeatScheduling none
           /\ trace.SignatureScheduling none
-          /\ trace.ConfirmationScheduling none
+          /\ trace.RetirementConfirmedScheduling none
           /\ Liveness.StableLeader trace start leader term
           /\ Liveness.LiveQuorum trace leader participants
           /\ Liveness.FairLoss trace (insert leader participants)
@@ -384,7 +384,7 @@ theorem stable_leader_witness
           /\ trace.Valid (Liveness.deliveryModel system)
           /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
           /\ trace.SignatureScheduling none
-          /\ trace.ConfirmationScheduling none
+          /\ trace.RetirementConfirmedScheduling none
           /\ trace.ElectionScheduling (some (bounds.electionTimeout / 2))
           /\ Liveness.QuietStart trace start leader term bounds.electionTimeout
           /\ Liveness.Timely trace start leader delay
@@ -441,7 +441,7 @@ theorem commit_liveness_timed_witness
           /\ trace.Valid (Liveness.deliveryModel system)
           /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
           /\ trace.SignatureScheduling none
-          /\ trace.ConfirmationScheduling none
+          /\ trace.RetirementConfirmedScheduling none
           /\ trace.ElectionScheduling (some (bounds.electionTimeout / 2))
           /\ Liveness.QuietStart trace start leader term bounds.electionTimeout
           /\ Liveness.Timely trace start leader delay
@@ -543,7 +543,7 @@ theorem unsigned_starvation_witness
           /\ trace.Valid Liveness.crashModel
           /\ trace.Valid (Liveness.deliveryModel system)
           /\ trace.HeartbeatScheduling none
-          /\ trace.ConfirmationScheduling none
+          /\ trace.RetirementConfirmedScheduling none
           /\ Liveness.StableLeader trace start leader term
           /\ Liveness.LiveQuorum trace leader participants
           /\ Liveness.FairLoss trace (insert leader participants)

@@ -365,7 +365,7 @@ theorem signature_commits_quorum
     {heartbeatBound signatureBound confirmationBound : Option Real}
     (heartbeats : trace.HeartbeatScheduling heartbeatBound)
     (signatures : trace.SignatureScheduling signatureBound)
-    (confirmations : trace.ConfirmationScheduling confirmationBound)
+    (confirmations : trace.RetirementConfirmedScheduling confirmationBound)
     {start : Nat} {leader : NodeID} {term : Nat} {quorum participants : Finset NodeID}
     (stable : StableLeader trace start leader term)
     (alive
@@ -563,7 +563,7 @@ recorded state; this argument does not assume the recording is infinite. -/
 theorem signature_commits {heartbeatBound signatureBound confirmationBound : Option Real}
     (heartbeats : trace.HeartbeatScheduling heartbeatBound)
     (signatures : trace.SignatureScheduling signatureBound)
-    (confirmations : trace.ConfirmationScheduling confirmationBound) {start : Nat}
+    (confirmations : trace.RetirementConfirmedScheduling confirmationBound) {start : Nat}
     {leader : NodeID} {term : Nat} {participants : Finset NodeID}
     (stable : StableLeader trace start leader term)
     (live : LiveQuorum trace leader participants)
@@ -624,7 +624,7 @@ theorem commit_liveness
     {heartbeatBound signatureBound confirmationBound : Option Real}
     (heartbeats : trace.HeartbeatScheduling heartbeatBound)
     (signatures : trace.SignatureScheduling signatureBound)
-    (confirmations : trace.ConfirmationScheduling confirmationBound)
+    (confirmations : trace.RetirementConfirmedScheduling confirmationBound)
     {start : Nat} {leader : NodeID} {term : Nat} {participants : Finset NodeID}
     (stable : StableLeader trace start leader term)
     (live : LiveQuorum trace leader participants)

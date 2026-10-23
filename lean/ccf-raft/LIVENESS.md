@@ -3,7 +3,7 @@
 ## Recommendation and status
 
 **Specification checkpoint:** [`Properties.lean`](CCFRaft/Properties.lean) now states timed `commit_liveness`, probabilistic `duelling_leaders_resolve`, and `signature_settles`.
-These three statements contain `sorry`, and each is still believed false as stated, for the reasons in [known gaps](#known-gaps-in-the-windowed-statements); their constants are provisional.
+These three statements contain `sorry`; their constants are provisional, and [known gaps](#known-gaps-in-the-windowed-statements) remain in the leadership statements.
 [Premises the windowed statements need](#premises-the-windowed-statements-need) records the premises added so far, each with a counterexample to its absence.
 The window assumptions are in [`Window.lean`](CCFRaft/Liveness/Assumptions/Window.lean), draws and signature commitment in [`Duel.lean`](CCFRaft/Liveness/Assumptions/Duel.lean), and explicit deadlines in [`Timers.lean`](CCFRaft/Liveness/Model/Timers.lean).
 The remainder of this report describes the earlier, still-proved internal untimed commitment and conditional leadership results; references to their old public names do not establish the new statements.
@@ -71,12 +71,14 @@ Packet accounting imposes no delivery guarantee; `Timely` and `FairLoss` remain 
 The optional sixth model, `boundedDelayModel maxDelay`, constrains every pending packet to a live target by `time <= sentAt + maxDelay`, both initially and after each step.
 It stores no deadlines and no public statement assumes it; it permits dropping a packet and is weaker than an obligation to deliver it.
 
-Scheduling is stated through separate `trace.HeartbeatScheduling bound`, `trace.SignatureScheduling bound`, `trace.ConfirmationScheduling bound` and `trace.ElectionScheduling minimum` premises in [`Model/Scheduling.lean`](CCFRaft/Liveness/Model/Scheduling.lean).
+Scheduling is stated through separate `trace.HeartbeatScheduling bound`, `trace.SignatureScheduling bound`, `trace.RetirementConfirmedScheduling bound` and `trace.ElectionScheduling minimum` premises in [`Model/Scheduling.lean`](CCFRaft/Liveness/Model/Scheduling.lean).
 These encode CCF's periodic sends, signature task, retirement-confirmation handling and election timer.
 Each bound is an `Option Real`: `none` requires eventual execution, `some bound` also requires it before the bound elapses; for elections `none` is no constraint and `some minimum` forbids a timeout within `minimum` of a reset.
 Commit liveness passes `none` everywhere; stable leadership passes `some heartbeatInterval` and `some (electionTimeout / 2)`.
 Scheduling remains a read-only trace predicate, with no world variables, mutable deadline state or model composition.
-For a leader-peer pair due at index `i`, a productive send or the end of the obligation must occur from a state at or after `i` whose time is at most `time (stateAt i) + heartbeatInterval`.
+For a leader-peer pair due at index `i`, a send reaching the primary's current log end or the end of the obligation must occur from a state at or after `i` whose time is at most `time (stateAt i) + heartbeatInterval`.
+This is the end of an entire heartbeat send pass, not a requirement on each message.
+CCF splits that pass at batch-size and term boundaries, then loops until `last_idx`; the bound includes issuing all those batches.
 `Scheduled trace bound Due Fires` is the shared shape: whenever `Due` holds, it eventually ceases or `Fires` runs, from a state satisfying `Deadline bound`; with `some bound` this still implies the `none` form, so it is never vacuous on finite or Zeno traces.
 These predicates inspect recorded steps, protocol states and absolute times; scheduling obligations and deadlines do not follow merely from local model validity.
 They are distinct from the network fairness assumption `FairLoss`.
@@ -146,22 +148,28 @@ No premise requires an infinite recording: an obligation that stays due must eve
 Each premise below was added after a counterexample showed a windowed statement false without it.
 The counterexamples are prose arguments.
 
-| Premise                       | Statement                                       | Counterexample without it                                                                                                                                                                                                                                 |
-| ----------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `TimeDiverges`                | `commit_liveness`                               | The recording ends, or its clock stops, while the primary's AppendEntries are pending. Bounded delay only stops time from passing a packet's deadline, so nothing need be delivered, and nothing commits.                                                 |
-| `0 < competitors`             | `duelling_leaders_resolve`                      | With no participants, `GoodPeriod.quorum` holds when every node is crashed, and then nothing commits, yet `settleProbability` is one for any positive number of rounds.                                                                                   |
-| `0 <= heartbeatInterval`      | `duelling_leaders_resolve`                      | With one competitor in a single-node configuration, `E = 1`, `heartbeatInterval = -1`, `maxDelay = 0` and one round, `settleProbability` is 3, above any probability. Heartbeat scheduling is vacuous without peers, so the premises are satisfiable.     |
-| `GoodPeriod.participantsLive` | `duelling_leaders_resolve`                      | The adversary crashes every node at `start`, which satisfies `GoodPeriod.quorum` vacuously, and nothing commits.                                                                                                                                          |
-| `GoodPeriod.noQuorumChecks`   | `duelling_leaders_resolve`, `signature_settles` | The model does not constrain quorum checks, so every new primary of a multi-node configuration may step down before it signs. This is assumed, not derived, for the reason given for `Incumbent.quorumChecks` in [stable leadership](#stable-leadership). |
+| Premise                         | Statement                                       | Counterexample without it                                                                                                                                                                                                                                 |
+| ------------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TimeDiverges`                  | `commit_liveness`                               | The recording ends, or its clock stops, while the primary's AppendEntries are pending. Bounded delay only stops time from passing a packet's deadline, so nothing need be delivered, and nothing commits.                                                 |
+| `Window.ReconfigurationSettled` | `commit_liveness`                               | A configuration commit can leave the leader alone with a later committable signature but no event rerunning the commit scan. One active configuration is insufficient: its removed nodes may still await committed retirement confirmation.               |
+| `0 < competitors`               | `duelling_leaders_resolve`                      | With no participants, `GoodPeriod.quorum` holds when every node is crashed, and then nothing commits, yet `settleProbability` is one for any positive number of rounds.                                                                                   |
+| `0 <= heartbeatInterval`        | `duelling_leaders_resolve`                      | With one competitor in a single-node configuration, `E = 1`, `heartbeatInterval = -1`, `maxDelay = 0` and one round, `settleProbability` is 3, above any probability. Heartbeat scheduling is vacuous without peers, so the premises are satisfiable.     |
+| `GoodPeriod.participantsLive`   | `duelling_leaders_resolve`                      | The adversary crashes every node at `start`, which satisfies `GoodPeriod.quorum` vacuously, and nothing commits.                                                                                                                                          |
+| `GoodPeriod.noQuorumChecks`     | `duelling_leaders_resolve`, `signature_settles` | The model does not constrain quorum checks, so every new primary of a multi-node configuration may step down before it signs. This is assumed, not derived, for the reason given for `Incumbent.quorumChecks` in [stable leadership](#stable-leadership). |
 
 `Proofs.Liveness.Admissible.consumed_within` shows that `TimeDiverges` and bounded delay together consume every outstanding packet within `maxDelay`, unless its target crashes.
 
+The timed commitment statement separately requires reconfiguration to be settled at the leader throughout its window: exactly one active configuration and no completed removal awaiting committed confirmation.
+An appended but uncommitted confirmation is still unfinished work.
+This excludes both inherited cleanup and new pending configuration changes; it does not require followers to have learned that completion.
+The retirement trace in [`Tests/CanonicalTraces.lean`](CCFRaft/Tests/CanonicalTraces.lean) reproduces the stranded-signature state and checks that it, pending configuration changes, and uncommitted confirmations are rejected, while completion at the leader alone is accepted.
+`RetirementConfirmedScheduling none` remains unbounded for the internal eventual-commit result; the timed statement does not need a cleanup deadline because cleanup is excluded from its window.
+The extra settlement premise is not a consequence of `StableWindow` or `GoodPeriod`.
+
 ## Known gaps in the windowed statements
 
-- `commit_liveness`: `HeartbeatScheduling` lets the primary send one entry per heartbeat, and a rejection sent before the window can move its send index back as far as its match index, so catching a participant up can take a heartbeat per entry of the primary's log, which `backlog` does not bound.
-  CCF instead sends from `sent_idx + 1` to the end of its log on each heartbeat, as consecutive single-term requests (`send_append_entries`).
-- `commit_liveness`: without `ConfirmationScheduling`, [the lost commit trigger](#a-lost-commit-trigger) recurs.
-  With configurations `{L, F}` then `{L}`, a commit that retires `{L, F}` can make a later signature committable by `L` alone without rerunning the commit scan; if `F` then crashes, nothing reruns it.
+The `commit_liveness` latency formula remains provisional; the new premises do not prove its bound.
+
 - `signature_settles`: nothing bounds the participants' election timers at `start`, `StableLeader` also constrains non-participants, and a participant whose log is behind may become a pre-vote candidate, which `Quiet` forbids, even though it cannot depose the primary.
 - `duelling_leaders_resolve`: `TimerDraws` gives each participant its `k`-th draw at its own `k`-th reset, and resets need not line up into rounds across participants.
   A margin winner whose log is behind also loses its pre-votes.
@@ -205,8 +213,8 @@ Four CCF behaviors explain the premises:
   `Timely` does not bound responses, and bounding them would not suffice either.
   A follower silently ignores an AppendEntries whose `prev_idx` is below its commit index (`recv_append_entries`).
   A stale rejection, handled before the acknowledgement of a later acceptance that raised the follower's commit index, moves the primary's `sent_idx` back below that commit index.
-  The model lets the primary then advance `sent_idx` by one entry per heartbeat, so the follower can stay silent for longer than an election timeout.
-  CCF sends up to the end of its log on every heartbeat (`send_append_entries`), which would bound the silence; deriving `Incumbent.quorumChecks` needs that and a round-trip bound.
+  Completing a send pass through the log end is now required, matching CCF's `send_append_entries`.
+  Deriving `Incumbent.quorumChecks` still needs a round-trip bound and a model of the acknowledgement-age check, rather than the protocol's unconstrained step-down action.
 - Once a removed node's confirmation commits, the primary stops sending to it (`set_retired_committed`).
   If the node has not learned this, it still times out, but it then also needs a quorum of pre-votes; whether that can happen is open.
 
@@ -253,7 +261,7 @@ An execution starting just after step 4, with quorum `{L}`, would satisfy every 
 CCF avoids this.
 When a commit retires configurations, `aft::Aft::commit` calls `retired_node_cleanup`, which asks the node itself to run `set_retired_committed`.
 That transaction records `A`'s retirement, and `replicate` runs `update_commit` when there are no other active nodes.
-The liveness model mirrors this with the separate unbounded predicate `Trace.ConfirmationScheduling`: while the primary may append a retirement confirmation, it eventually does so or stops being able to.
+The liveness model mirrors this with the separate predicate `Trace.RetirementConfirmedScheduling none`: while the primary may append a retirement confirmation, it eventually does so or stops being able to.
 
 `owing_of_exec` shows this always suffices.
 The commit scan that made such a signature committable retired the other members, so their confirmations are owed.
@@ -368,7 +376,7 @@ It does **not** assume or prove that transport will eventually collect those ack
 
 Keep the bounds abstract.
 They are bounds on real time, not CCF's configuration values.
-`H` bounds the time a primary takes to send a due AppendEntries; CCF sends once `request_timeout` has elapsed, checked on each `periodic` tick, so `H` must be at least `request_timeout` plus the tick interval, if the host ticks on time.
+`H` bounds the time a primary takes to finish a due heartbeat send pass; CCF sends once `request_timeout` has elapsed, checked on each `periodic` tick, so `H` must cover `request_timeout`, the tick delay, and the work of issuing every batch through the current log end.
 `E / 2` bounds from below the time from a timer reset to a timeout; CCF draws a timeout between half and all of `election_timeout` (`restart_election_timeout`), but counts it in ticks on the node's own clock, and the first tick after a reset also counts the time before it.
 So `E` must be at most `election_timeout` minus twice the tick interval, and less if node clocks drift.
 With those choices, the timed constraints should admit every CCF execution in which the host ticks on time and the retirement cleanup request succeeds; this is argued from the code, not proved.

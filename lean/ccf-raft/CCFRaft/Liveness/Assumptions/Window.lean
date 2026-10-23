@@ -23,6 +23,16 @@ open HasProtocol (proto)
 open HasTime (time)
 open HasLive (live)
 
+/-- The local ledger has one active configuration, and every completed removal
+has a committed retirement confirmation. An uncommitted confirmation is still
+unfinished work. The sole initial configuration need not yet be committed. -/
+def ReconfigurationSettled (state : NodeState) : Prop :=
+  state.activeConfigurations.length = 1 /\ state.retirementCompletedNodes = ∅
+
+instance (state : NodeState) : Decidable (ReconfigurationSettled state) := by
+  unfold ReconfigurationSettled
+  infer_instance
+
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W]
 
 namespace Window
@@ -63,6 +73,19 @@ def LiveQuorum (trace : Trace W Event) (start : Nat) (duration : Real) (leader :
     -> trace.stateAt index = some point
     -> CCF.MultiNodeTransitionSystem.nodeState (proto point) leader = some state
     -> hasQuorum state.activeConfigurations (Inter.inter (live point) participants)
+
+/-- Reconfiguration work is finished at the leader throughout the window.
+This excludes both inherited cleanup and new pending configuration changes,
+without requiring followers to have learned that completion. It is separate
+from `StableWindow`: stable leadership alone does not finish retirement work. -/
+def ReconfigurationSettled (trace : Trace W Event) (start : Nat) (duration : Real)
+    (leader : NodeID)
+    : Prop :=
+  forall index point state,
+    Within trace start duration index
+    -> trace.stateAt index = some point
+    -> CCF.MultiNodeTransitionSystem.nodeState (proto point) leader = some state
+    -> Liveness.ReconfigurationSettled state
 
 /-- No packet between the primary and a participant is dropped in the window.
 With `boundedDelayModel maxDelay`, each is delivered within `maxDelay`. -/

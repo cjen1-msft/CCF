@@ -153,10 +153,15 @@ within `bounds.heartbeatInterval` and due signatures within
 `commitLatency bounds maxDelay backlog`: `leader` is the uncontested primary of
 `term`, stays live and unretired, every configuration active at it keeps a live
 majority among `participants`, and no packet between it and a participant is
-dropped. If at `start` no participant's log diverges from the primary's by more
-than `backlog` entries, and the primary holds or appends `request`, then
-`request` is in the primary's committed prefix within the window.
-The window is what `signature_settles` yields after `duelling_leaders_resolve`. -/
+dropped. Additionally, reconfiguration is settled at the leader throughout the
+window: one active configuration and all completed removals confirmed in its
+committed ledger. Followers need not have learned this completion. This
+excludes waiting for retirement cleanup, which has no scheduling deadline.
+If at `start` no participant's log diverges from the primary's by more than
+`backlog` entries, and the primary holds or appends `request`, then `request`
+is in the primary's committed prefix within the window.
+`signature_settles` yields the stable window after `duelling_leaders_resolve`;
+settled reconfiguration remains a separate premise. -/
 theorem commit_liveness
     : forall (config : Finset NodeID) (nodes : List NodeID),
         let system := Model.transitionSystem config nodes
@@ -178,6 +183,7 @@ theorem commit_liveness
             /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
             /\ trace.SignatureScheduling (some bounds.signatureInterval)
             /\ Liveness.StableWindow trace start duration leader term participants
+            /\ Liveness.Window.ReconfigurationSettled trace start duration leader
             /\ Liveness.Backlog trace start leader participants backlog
             /\ Liveness.SubmittedAt trace start leader request)
           -> exists index,

@@ -231,7 +231,7 @@ theorem peer_due
     eligible index state le (by rw [Trace.nodeAt_of_stateAt found, nodeFound])
   ⟩
 
-/-- Persistent heartbeat obligations produce arbitrarily late recorded productive sends. -/
+/-- Persistent heartbeat obligations produce arbitrarily late log-end sends. -/
 theorem sends_often {bound : Option Real} (heartbeats : trace.HeartbeatScheduling bound)
     (live
       : forall index point,
@@ -778,7 +778,7 @@ theorem floor_reached (regime : Regime stable peer log agreed origin)
   refine ⟨reached, point, le, reachedFound, fun index state after found => ?_⟩
   by_contra low
   obtain ⟨last, lastFound, nodeFound⟩ := Trace.nodeAt_eq_some.mp found
-  obtain ⟨d, afterD, step, stepped, before, endIndex, beforeFound, event, grows⟩ :=
+  obtain ⟨d, afterD, step, stepped, before, endIndex, beforeFound, event, reachesEnd⟩ :=
     sends_often admissible stable heartbeats live eligible reached
   obtain ⟨_, next, nextFound, _⟩ :=
     stable.leads (by have := regime.afterStart; omega) (Trace.stateAt_succ_of_stepAt stepped)
@@ -793,7 +793,6 @@ theorem floor_reached (regime : Regime stable peer log agreed origin)
   have agreement := regime.agreement d before (by omega)
     (by rw [admissible.nodeAt_before stepped, beforeFound])
   have := agree_le_right log before.log
-  have grown := grows (by omega)
   omega
 
 /-- The primary cannot keep sending batches across a fixed agreement. -/
@@ -914,7 +913,7 @@ theorem floor_strict (regime : Regime stable peer log agreed origin)
           rw [value]
           omega
         · exact absurd (eligible d before (by have := regime.afterStart; omega) beforeNode) aimed)
-  obtain ⟨d, after, step, stepped, before, endIndex, beforeFound, event, grows⟩ :=
+  obtain ⟨d, after, step, stepped, before, endIndex, beforeFound, event, reachesEnd⟩ :=
     sends_often admissible stable heartbeats live eligible index
   obtain ⟨_, next, nextFound, _⟩ :=
     stable.leads (by have := regime.afterStart; omega) (Trace.stateAt_succ_of_stepAt stepped)
@@ -925,7 +924,6 @@ theorem floor_strict (regime : Regime stable peer log agreed origin)
   have beforeNode : trace.nodeAt d leader = some before := by
     rw [admissible.nodeAt_before stepped, beforeFound]
   have := long d before (by omega) beforeNode
-  have grown' := grows (by omega)
   apply rare d packet sent (by omega)
   · rw [envelope]
   · rw [envelope]

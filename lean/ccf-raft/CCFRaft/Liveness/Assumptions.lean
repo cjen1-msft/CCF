@@ -130,10 +130,10 @@ structure Incumbent (trace : Trace W Event) (start : Nat) (leader : NodeID) : Pr
   is below its commit index (`raft.h`, `recv_append_entries`), and a stale
   rejection, sent before an acceptance that raised the follower's commit index
   and handled before that acceptance's acknowledgement, can move the primary's
-  `sent_idx` back below it. The model then lets the primary advance `sent_idx` by
-  one entry per heartbeat, so the follower can stay silent for longer than an
-  election timeout. CCF sends up to the end of its log on every heartbeat
-  (`raft.h`, `send_append_entries`), which would bound the silence. -/
+  `sent_idx` back below it. Heartbeat scheduling now requires completing the
+  send pass through the log
+  end, matching CCF's `send_append_entries`. Deriving this premise still needs
+  a round-trip bound and a model of the acknowledgement-age check. -/
   quorumChecks
     : forall index step,
         start <= index
