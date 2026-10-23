@@ -124,8 +124,9 @@ and its acknowledgement round. The timed commit proof fixes the formula. -/
 def commitLatency (bounds : Bounds) (maxDelay : Real) (backlog : Nat) : Real :=
   (backlog + 2) * (bounds.heartbeatInterval + 2 * maxDelay) + bounds.signatureInterval
 
-/-- A good period (Keidar and Shraer 2006) from index `start` for `duration`: no
-configuration change is appended, no primary is asked to hand over, every live
+/-- A good period (Keidar and Shraer 2006) from index `start` for `duration`:
+every participant stays live, no configuration change is appended, no primary is
+asked to hand over, no participant steps down on a quorum check, every live
 node's active configurations keep a live majority among `participants`, packets
 between participants are not dropped, and no packet from outside reaches a
 participant. The windowed form of the partial-synchrony premise;
@@ -133,6 +134,14 @@ participant. The windowed form of the partial-synchrony premise;
 structure GoodPeriod (trace : Trace W Event) (start : Nat) (duration : Real)
     (participants : Finset NodeID)
     : Prop where
+  /-- Needed: otherwise the adversary crashes every node at `start`, which
+  satisfies `quorum` vacuously, and nothing commits. -/
+  participantsLive
+    : forall index point node,
+        Within trace start duration index
+        -> trace.stateAt index = some point
+        -> node ∈ participants
+        -> node ∈ live point
   quorum
     : forall index point node state,
         Within trace start duration index
@@ -151,6 +160,15 @@ structure GoodPeriod (trace : Trace W Event) (start : Nat) (duration : Real)
         Within trace start duration index
         -> trace.stepAt index = some step
         -> Not (step.action = .local node .nominateSuccessor)
+  /-- Needed: the model does not constrain quorum checks, so otherwise every new
+  primary of a multi-node configuration steps down before it signs, and nothing
+  commits. Assumed, not derived, as `Incumbent.quorumChecks` explains. -/
+  noQuorumChecks
+    : forall index step node,
+        Within trace start duration index
+        -> trace.stepAt index = some step
+        -> node ∈ participants
+        -> Not (step.action = .local node (.timeout .checkQuorum))
   lossless
     : forall index step packet,
         Within trace start duration index

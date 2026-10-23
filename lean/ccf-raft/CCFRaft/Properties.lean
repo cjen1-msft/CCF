@@ -7,6 +7,7 @@ public import CCF.Execution
 
 import CCFRaft.Proofs.CommittedLogs
 import CCFRaft.Proofs.Direct.CommitFrontier
+import CCFRaft.Proofs.Duel.Probability
 import CCFRaft.Proofs.Election
 import CCFRaft.Proofs.Leadership.Stable
 import CCFRaft.Proofs.LivenessWitness
@@ -144,8 +145,9 @@ lemma committed_frontier_is_signature_witness
 
 /-- Commit liveness, timed. Take one coherent recorded relational trace. Assume
 coherence and validity of the protocol, timing, crash, delivery and bounded-delay
-models for `system := Model.transitionSystem config nodes`: every packet is
-delivered or dropped within `maxDelay`. Assume that a primary sends due heartbeats
+models for `system := Model.transitionSystem config nodes`, and an unbounded
+clock: every packet is then delivered or dropped within `maxDelay`, unless its
+target crashes first. Assume that a primary sends due heartbeats
 within `bounds.heartbeatInterval` and due signatures within
 `bounds.signatureInterval`. Take a stable window from index `start` for
 `commitLatency bounds maxDelay backlog`: `leader` is the uncontested primary of
@@ -171,6 +173,7 @@ theorem commit_liveness
             /\ trace.Valid Liveness.crashModel
             /\ trace.Valid (Liveness.deliveryModel system)
             /\ trace.Valid (Liveness.boundedDelayModel maxDelay)
+            /\ Liveness.TimeDiverges trace
             /\ 0 <= maxDelay
             /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
             /\ trace.SignatureScheduling (some bounds.signatureInterval)
@@ -189,7 +192,8 @@ for the protocol, timing, crash, delivery, bounded-delay and election-timer
 models, with the clock unbounded, due heartbeats and signatures sent within their
 bounds, due timeouts fired at once, a good period from `start` long enough for
 `rounds` rounds, and each participant's `k`-th timer reset after `start` drawing
-`draws k i`. If the lead `duelMargin` fits in half an election timeout, then the
+`draws k i`. If some participant competes, the heartbeat interval is not
+negative, and the lead `duelMargin` fits in half an election timeout, then the
 probability that some primary commits a signature of its own term within the good
 period is at least `settleProbability = 1 - (1 - marginProbability) ^ rounds`,
 where `marginProbability = (1 - 2 duelMargin / E) ^ competitors > 0`. No independence of
@@ -210,7 +214,9 @@ theorem duelling_leaders_resolve
           let duration := rounds * Liveness.roundLength bounds maxDelay
           (Function.Injective candidates
             /\ (forall node, node ∈ participants <-> exists i, candidates i = node)
+            /\ 0 < competitors
             /\ 0 <= maxDelay
+            /\ 0 <= bounds.heartbeatInterval
             /\ margin < electionTimeout / 2
             /\ (forall draws,
                   let trace := family draws
