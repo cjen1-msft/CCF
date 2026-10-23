@@ -4,7 +4,6 @@ An executable Lean model of CCF's consensus implementation ([`src/consensus/aft/
 It assumes familiarity with the [CCF consensus documentation](../../doc/architecture/consensus/index.rst).
 The public liveness statements are a specification checkpoint: timed `commit_liveness` within a `StableWindow`, probabilistic `duelling_leaders_resolve` during a `GoodPeriod`, and the `signature_settles` bridge.
 All three currently contain `sorry`; their latency and probability bounds are not proved.
-A checked [counterexample](LIVENESS.md#known-gaps-in-the-windowed-statements) refutes the current state-timestamped commit conclusion.
 The earlier untimed commitment and conditional stable-leadership proofs remain internal; see [the liveness report](LIVENESS.md).
 
 ## Source map
@@ -51,7 +50,7 @@ Scheduling adds no world variables.
 
 Each public statement conjoins coherence and validity of the protocol, timing, crash and delivery models inline; there is no bundled model predicate.
 The protocol model uses `Event.action` to execute local actions and deliveries in `system := Model.transitionSystem config nodes`; crash, drop and idle stutter in the protocol state.
-The timing model permits any nondecreasing absolute time, including on idle steps.
+The timing model permits any nondecreasing absolute time, advanced only by idle steps; every other event takes zero time.
 The initial absolute time and live set are unrestricted.
 The crash model directly projects to the existing `crashSystem`, requiring live actors and permanently removing crashed nodes.
 Delivery requires only the receiver to be live, so a sender may crash after sending.

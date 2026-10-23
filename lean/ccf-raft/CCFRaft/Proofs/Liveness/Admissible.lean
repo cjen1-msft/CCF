@@ -143,7 +143,20 @@ theorem time_le {earlier later : Nat} (le : earlier <= later) {first last : W}
     : time first <= time last :=
   admissible.coherent.chain (relation := fun first last => time first <= time last)
     (fun _ => le_rfl) (fun _ _ _ => le_trans)
-    (fun _ _ stepped => admissible.timing.next stepped) le firstFound lastFound
+    (fun _ _ stepped => (admissible.timing.next stepped).1) le firstFound lastFound
+
+/-- A step other than idle takes no time, so if it happens in a window, its
+after-state is recorded in that window too. -/
+theorem within_after {start index : Nat} {duration : Real}
+    {step : CCF.Execution.Step W Liveness.Event}
+    (within : Within trace start duration index)
+    (stepped : trace.stepAt index = some step) (busy : Not (step.action = .idle))
+    : Within trace start duration (index + 1) := by
+  refine ⟨Nat.le_succ_of_le within.1, fun first point firstFound found => ?_⟩
+  rw [Trace.stateAt_succ_of_stepAt stepped, Option.some.injEq] at found
+  subst point
+  rw [(admissible.timing.next stepped).2 busy]
+  exact within.2 first step.before firstFound (admissible.before stepped)
 
 /-- The actor of a recorded step is live before it. -/
 theorem actor_live {index : Nat} {step : CCF.Execution.Step W Liveness.Event}

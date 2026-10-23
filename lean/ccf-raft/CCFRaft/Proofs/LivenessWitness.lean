@@ -37,7 +37,7 @@ private def fixtureNode (signed : Bool) : Nat -> NodeState
 
 private def fixtureWorld (signed : Bool) (index : Nat) : World Model.State where
   proto := { nodes := [(0, fixtureNode signed index)] }
-  time := index
+  time := ((index - 1 : Nat) : Real)
   live := {0}
   pending := []
   issued := 0
@@ -48,7 +48,8 @@ private def fixtureStep (signed : Bool) (index : Nat)
   action := if index = 0 then .local 0 (.append (requestEntries signed)) else .idle
   after := fixtureWorld signed (index + 1)
 
-/-- One append followed by infinitely many idle steps, with unbounded time.
+/-- One append at time zero, which takes no time, followed by infinitely many idle
+steps that each advance time by one.
 There are no peers, hence no sends and no packet identities to advance. -/
 private def fixture (signed : Bool) : Trace (World Model.State) Liveness.Event where
   initial := fixtureWorld signed 0
@@ -113,8 +114,12 @@ private theorem timing_valid (signed : Bool) : (fixture signed).Valid timingMode
   intro index step stepped
   rw [fixture_stepAt, Option.some.injEq] at stepped
   subst step
-  change (index : Real) <= ((index + 1 : Nat) : Real)
-  exact Nat.cast_le.mpr (Nat.le_succ index)
+  cases index with
+  | zero => exact ⟨le_rfl, fun _ => rfl⟩
+  | succ index =>
+      refine ⟨?_, fun busy => by simp [fixtureStep] at busy⟩
+      change ((index + 1 - 1 : Nat) : Real) <= ((index + 1 + 1 - 1 : Nat) : Real)
+      exact Nat.cast_le.mpr (by omega)
 
 private theorem crash_valid (signed : Bool) : (fixture signed).Valid crashModel := by
   refine ⟨trivial, ?_⟩
@@ -268,28 +273,32 @@ private theorem elections (signed : Bool) (minimum : Real)
   subst step
   exact False.elim (no_timeouts signed index node timeout)
 
+private theorem quiet (index : Nat)
+    : Quiet 0 Model.BOOTSTRAP_TERM (HasProtocol.proto (fixtureWorld true index)) := by
+  change Quiet 0 Model.BOOTSTRAP_TERM { nodes := [(0, fixtureNode true index)] }
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  · intro node local_ member
+    simp only [List.mem_singleton, Prod.mk.injEq] at member
+    obtain ⟨_, rfl⟩ := member
+    cases index <;> simp only [fixtureNode] <;> decide
+  · intro node local_ member preVote
+    simp only [List.mem_singleton, Prod.mk.injEq] at member
+    obtain ⟨_, rfl⟩ := member
+    cases index <;> simp only [fixtureNode] at preVote <;> exact absurd preVote (by decide)
+  · intro envelope member
+    simp at member
+  · intro envelope member
+    simp at member
+  · refine ⟨fixtureNode true index, by simp, ?_, ?_⟩
+    all_goals cases index <;> simp only [fixtureNode] <;> decide
+
 private theorem quiet_start
     : QuietStart (fixture true) 0 0 Model.BOOTSTRAP_TERM bounds.electionTimeout := by
-  refine ⟨⟨fixtureWorld true 0, fixture_stateAt true 0, ?_⟩, ?_⟩
-  · change Quiet 0 Model.BOOTSTRAP_TERM initialState
-    refine ⟨?_, ?_, ?_, ?_, ?_⟩
-    · intro node local_ member
-      simp only [initialState, List.mem_singleton, Prod.mk.injEq] at member
-      obtain ⟨_, rfl⟩ := member
-      decide
-    · intro node local_ member preVote
-      simp only [initialState, List.mem_singleton, Prod.mk.injEq] at member
-      obtain ⟨_, rfl⟩ := member
-      exact absurd preVote (by decide)
-    · intro envelope member
-      simp [initialState] at member
-    · intro envelope member
-      simp [initialState] at member
-    · exact ⟨initialNode, by simp [initialState], by decide, rfl⟩
-  · intro _ index step node _ _ _ stepped timeout
-    rw [fixture_stepAt, Option.some.injEq] at stepped
-    subst step
-    exact False.elim (no_timeouts true index node timeout)
+  refine ⟨⟨fixtureWorld true 0, fixture_stateAt true 0, quiet 0⟩, ?_⟩
+  intro _ index step node _ _ _ stepped timeout
+  rw [fixture_stepAt, Option.some.injEq] at stepped
+  subst step
+  exact False.elim (no_timeouts true index node timeout)
 
 private theorem timely : Timely (fixture true) 0 0 0 :=
   fun index packet sent _ _ _ => False.elim (no_packets true index packet sent)
@@ -501,63 +510,43 @@ private noncomputable def shortBounds : Bounds where
 private theorem short_duration : commitLatency shortBounds 0 0 = 3 / 4 := by
   norm_num [commitLatency, shortBounds]
 
-private theorem short_window_zero {index : Nat}
-    (within : Within (fixture true) 0 (commitLatency shortBounds 0 0) index)
-    : index = 0 := by
-  have limit :=
-    within.2 (fixtureWorld true 0) (fixtureWorld true index)
-      (fixture_stateAt true 0) (fixture_stateAt true index)
-  change (index : Real) <= ((0 : Nat) : Real) + commitLatency shortBounds 0 0 at limit
-  norm_num only [Nat.cast_zero, short_duration, zero_add] at limit
-  have below : (index : Real) < 1 := by linarith
-  have below : index < 1 := by exact_mod_cast below
-  omega
-
+/-- Every fixture state is in a stable window, whatever its length. -/
 private theorem short_window
     : StableWindow (fixture true) 0 (commitLatency shortBounds 0 0)
         0 Model.BOOTSTRAP_TERM {0} := by
   refine ⟨?_, ⟨?_, ?_⟩, ?_, ?_⟩
-  · intro index point within found
-    have zero := short_window_zero within
-    subst index
-    obtain ⟨first, firstFound, quiet⟩ := quiet_start.quiet
-    rw [found, Option.some.injEq] at firstFound
-    subst first
-    exact quiet
+  · intro index point _ found
+    rw [fixture_stateAt, Option.some.injEq] at found
+    subst point
+    exact quiet index
   · intro index point within found
     exact (stable true).live within.1 found
   · intro index point state within found nodeFound
     apply (stable true).notRetired within.1
     rw [Trace.nodeAt_of_stateAt found]
     exact nodeFound
-  · intro index point state within found nodeFound
-    have zero := short_window_zero within
-    subst index
+  · intro index point state _ found nodeFound
     rw [fixture_stateAt, Option.some.injEq] at found
     subst point
-    change some initialNode = some state at nodeFound
+    change some (fixtureNode true index) = some state at nodeFound
     have same := Option.some.inj nodeFound
     subst state
-    decide
-  · intro index step packet within stepped dropped
-    have zero := short_window_zero within
-    subst index
+    cases index <;> simp only [fixtureNode, fixture_live] <;> decide
+  · intro index step packet _ stepped dropped
     rw [fixture_stepAt, Option.some.injEq] at stepped
     subst step
-    simp [fixtureStep] at dropped
+    cases index <;> simp [fixtureStep] at dropped
 
 private theorem short_reconfiguration
     : Window.ReconfigurationSettled (fixture true) 0 (commitLatency shortBounds 0 0)
         0 := by
-  intro index point state within found nodeFound
-  have zero := short_window_zero within
-  subst index
+  intro index point state _ found nodeFound
   rw [fixture_stateAt, Option.some.injEq] at found
   subst point
-  change some initialNode = some state at nodeFound
+  change some (fixtureNode true index) = some state at nodeFound
   have same := Option.some.inj nodeFound
   subst state
-  decide
+  cases index <;> simp only [fixtureNode] <;> decide
 
 private theorem initial_backlog : Backlog (fixture true) 0 0 {0} 0 := by
   intro first leaderState follower followerState found leaderFound member followerFound
@@ -572,12 +561,11 @@ private theorem initial_backlog : Backlog (fixture true) 0 0 {0} 0 := by
   subst leaderState followerState
   decide
 
-/-- A counterexample to the state-timestamped conclusion of timed commit liveness.
-Every premise holds with positive heartbeat and signature bounds of `1 / 4`.
-The first append commits at its before-time zero, but its after-state is recorded
-at time one, outside the `3 / 4` window. This is a clock-observation gap, not a
-failure to commit or unfinished retirement work. -/
-theorem timed_commit_window_counterexample
+/-- The windowed timed commit-liveness premises and conclusion hold together, with
+positive heartbeat and signature bounds of `1 / 4`.
+The first append commits request 10 at time zero. It takes no time, so its
+after-state is recorded inside the `3 / 4` window. -/
+theorem timed_commit_window_witness
     : let system := Model.transitionSystem {0} [0]
       let bounds : Bounds :=
         { heartbeatInterval := 1 / 4, electionTimeout := 4, signatureInterval := 1 / 4 }
@@ -597,11 +585,9 @@ theorem timed_commit_window_counterexample
           /\ Window.ReconfigurationSettled trace 0 duration 0
           /\ Backlog trace 0 0 {0} 0
           /\ SubmittedAt trace 0 0 10)
-        /\ RequestCommitted trace 0 10 1
-        /\ Not
-            (exists index,
-              Within trace 0 duration index /\ RequestCommitted trace 0 10 index) := by
-  refine ⟨fixture true, ?_, committed, ?_⟩
+        /\ exists index,
+            Within trace 0 duration index /\ RequestCommitted trace 0 10 index := by
+  refine ⟨fixture true, ?_, 1, ?_, committed⟩
   · refine ⟨coherent true, protocol_valid true, timing_valid true, crash_valid true,
       delivery_valid true, ?_, ?_, by norm_num, heartbeats true _, ?_,
       short_window, short_reconfiguration, initial_backlog, ?_⟩
@@ -617,23 +603,20 @@ theorem timed_commit_window_counterexample
         cases member
     · intro limit
       obtain ⟨index, enough⟩ := exists_nat_ge limit
-      exact ⟨index, fixtureWorld true index, fixture_stateAt true index, enough⟩
+      refine ⟨index + 1, fixtureWorld true (index + 1), fixture_stateAt true (index + 1), ?_⟩
+      change limit <= ((index + 1 - 1 : Nat) : Real)
+      simpa using enough
     · apply signatures_with_deadline
       apply le_add_of_nonneg_right
       norm_num
     · refine Or.inr ⟨fixtureStep true 0, requestEntries true, fixture_stepAt true 0, rfl, ?_⟩
       decide
-  · rintro ⟨index, within, point, state, found, nodeFound, request⟩
-    have zero := short_window_zero within
-    subst index
-    rw [fixture_stateAt, Option.some.injEq] at found
-    subst point
-    change some initialNode = some state at nodeFound
-    have same := Option.some.inj nodeFound
-    subst state
-    change HasRequest [] 10 at request
-    obtain ⟨entry, member, _⟩ := request
-    cases member
+  · refine ⟨Nat.zero_le 1, fun first point firstFound found => ?_⟩
+    rw [fixture_stateAt, Option.some.injEq] at firstFound found
+    subst first point
+    change ((0 : Nat) : Real) <= ((0 : Nat) : Real) + commitLatency shortBounds 0 0
+    rw [short_duration]
+    norm_num
 
 private theorem unsigned_never_commits (index : Nat)
     : Not (RequestCommitted (fixture false) 0 10 index) := by

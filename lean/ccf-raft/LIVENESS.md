@@ -3,8 +3,7 @@
 ## Recommendation and status
 
 **Specification checkpoint:** [`Properties.lean`](CCFRaft/Properties.lean) now states timed `commit_liveness`, probabilistic `duelling_leaders_resolve`, and `signature_settles`.
-These three statements contain `sorry`; their constants are provisional.
-A checked counterexample refutes the current state-timestamped commit conclusion, and [known gaps](#known-gaps-in-the-windowed-statements) remain in the leadership statements.
+These three statements contain `sorry`; their constants are provisional, and [known gaps](#known-gaps-in-the-windowed-statements) remain in the leadership statements.
 [Premises the windowed statements need](#premises-the-windowed-statements-need) records the premises added so far, each with a counterexample to its absence.
 The window assumptions are in [`Window.lean`](CCFRaft/Liveness/Assumptions/Window.lean), draws and signature commitment in [`Duel.lean`](CCFRaft/Liveness/Assumptions/Duel.lean), and explicit deadlines in [`Timers.lean`](CCFRaft/Liveness/Model/Timers.lean).
 The remainder of this report describes the earlier, still-proved internal untimed commitment and conditional leadership results; references to their old public names do not establish the new statements.
@@ -49,21 +48,21 @@ Each public statement conjoins `trace.Coherent` and validity of four models inli
 | Model                  | Initial predicate                | Next relation                                                                                                                                  |
 | ---------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `protocolModel system` | `system.init (proto w)`          | Execute `Event.action` in `system`, or preserve `proto` for crash, drop and idle.                                                              |
-| `timingModel`          | `True`                           | `time before <= time after`.                                                                                                                   |
+| `timingModel`          | `True`                           | `time before <= time after`, with equality unless the event is idle.                                                                           |
 | `crashModel`           | `crashSystem.init (live w)`      | `crashSystem.step (live before) event = some (live after)`.                                                                                    |
 | `deliveryModel system` | `pending w = [] /\ issued w = 0` | Consume an existing packet for delivery or drop, append this step's actual outgoing packets with fresh sequence numbers, and advance `issued`. |
 
 The protocol model in [`Model/Protocol.lean`](CCFRaft/Liveness/Model/Protocol.lean) preserves the existing `Event.action` mapping, including delivery of the received envelope.
 Its protocol state is generic, while its action type is `Model.Action`, as fixed by the existing `Event` vocabulary.
 The delivery model uses the concrete Raft state and its recording callback to extract outgoing envelopes.
-The timing model in [`Model/Timing.lean`](CCFRaft/Liveness/Model/Timing.lean) permits zero-time steps and any initial absolute time; every event, including idle, may advance time.
+The timing model in [`Model/Timing.lean`](CCFRaft/Liveness/Model/Timing.lean) permits any initial absolute time; only idle steps advance time, and every other event takes zero time.
 The crash model in [`Model/Crash.lean`](CCFRaft/Liveness/Model/Crash.lean) directly projects to the unchanged `crashSystem`.
 It requires live actors and permanently removes crashed nodes, with unrestricted initial availability.
 Deliveries require only a live receiver, so a sender may crash after sending; a repeated crash is disabled.
 
 The delivery model in [`Model/Delivery.lean`](CCFRaft/Liveness/Model/Delivery.lean) starts from an empty pending ledger.
 Actual outputs receive consecutive sequence numbers from `issued`, with `sentAt := time before` of the sending step.
-A step happens at its before-time, and time may elapse after it; every timing constraint compares before-times.
+A step happens at its before-time, and only an idle step lets time elapse after it; every timing constraint compares before-times.
 Delivery and drop consume an outstanding packet before this step's outputs are registered, rejecting fabrication, early consumption and reuse, including delivery after a drop.
 Equal envelopes remain distinct transmissions.
 `Trace.SentAt index packet` holds when the packet first appears in the ledger after step `index`.
@@ -149,14 +148,15 @@ No premise requires an infinite recording: an obligation that stays due must eve
 Each premise below was added after a counterexample showed a windowed statement false without it.
 The counterexamples are prose arguments.
 
-| Premise                         | Statement                                       | Counterexample without it                                                                                                                                                                                                                                 |
-| ------------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `TimeDiverges`                  | `commit_liveness`                               | The recording ends, or its clock stops, while the primary's AppendEntries are pending. Bounded delay only stops time from passing a packet's deadline, so nothing need be delivered, and nothing commits.                                                 |
-| `Window.ReconfigurationSettled` | `commit_liveness`                               | A configuration commit can leave the leader alone with a later committable signature but no event rerunning the commit scan. One active configuration is insufficient: its removed nodes may still await committed retirement confirmation.               |
-| `0 < competitors`               | `duelling_leaders_resolve`                      | With no participants, `GoodPeriod.quorum` holds when every node is crashed, and then nothing commits, yet `settleProbability` is one for any positive number of rounds.                                                                                   |
-| `0 <= heartbeatInterval`        | `duelling_leaders_resolve`                      | With one competitor in a single-node configuration, `E = 1`, `heartbeatInterval = -1`, `maxDelay = 0` and one round, `settleProbability` is 3, above any probability. Heartbeat scheduling is vacuous without peers, so the premises are satisfiable.     |
-| `GoodPeriod.participantsLive`   | `duelling_leaders_resolve`                      | The adversary crashes every node at `start`, which satisfies `GoodPeriod.quorum` vacuously, and nothing commits.                                                                                                                                          |
-| `GoodPeriod.noQuorumChecks`     | `duelling_leaders_resolve`, `signature_settles` | The model does not constrain quorum checks, so every new primary of a multi-node configuration may step down before it signs. This is assumed, not derived, for the reason given for `Incumbent.quorumChecks` in [stable leadership](#stable-leadership). |
+| Premise                         | Statement                                       | Counterexample without it                                                                                                                                                                                                                                                 |
+| ------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TimeDiverges`                  | `commit_liveness`                               | The recording ends, or its clock stops, while the primary's AppendEntries are pending. Bounded delay only stops time from passing a packet's deadline, so nothing need be delivered, and nothing commits.                                                                 |
+| Only idle steps advance time    | `commit_liveness`                               | With heartbeat and signature intervals of `1 / 4`, zero delay and zero backlog, the window lasts `3 / 4`. A single-node primary appends and commits the request at time zero in a step that also advances the clock to one, so no state in the window records the commit. |
+| `Window.ReconfigurationSettled` | `commit_liveness`                               | A configuration commit can leave the leader alone with a later committable signature but no event rerunning the commit scan. One active configuration is insufficient: its removed nodes may still await committed retirement confirmation.                               |
+| `0 < competitors`               | `duelling_leaders_resolve`                      | With no participants, `GoodPeriod.quorum` holds when every node is crashed, and then nothing commits, yet `settleProbability` is one for any positive number of rounds.                                                                                                   |
+| `0 <= heartbeatInterval`        | `duelling_leaders_resolve`                      | With one competitor in a single-node configuration, `E = 1`, `heartbeatInterval = -1`, `maxDelay = 0` and one round, `settleProbability` is 3, above any probability. Heartbeat scheduling is vacuous without peers, so the premises are satisfiable.                     |
+| `GoodPeriod.participantsLive`   | `duelling_leaders_resolve`                      | The adversary crashes every node at `start`, which satisfies `GoodPeriod.quorum` vacuously, and nothing commits.                                                                                                                                                          |
+| `GoodPeriod.noQuorumChecks`     | `duelling_leaders_resolve`, `signature_settles` | The model does not constrain quorum checks, so every new primary of a multi-node configuration may step down before it signs. This is assumed, not derived, for the reason given for `Incumbent.quorumChecks` in [stable leadership](#stable-leadership).                 |
 
 `Proofs.Liveness.Admissible.consumed_within` shows that `TimeDiverges` and bounded delay together consume every outstanding packet within `maxDelay`, unless its target crashes.
 
@@ -169,12 +169,7 @@ The extra settlement premise is not a consequence of `StableWindow` or `GoodPeri
 
 ## Known gaps in the windowed statements
 
-`Proofs.LivenessWitness.timed_commit_window_counterexample` in [`Proofs/LivenessWitness.lean`](CCFRaft/Proofs/LivenessWitness.lean) refutes the exact current `commit_liveness` conclusion while satisfying every premise, including time divergence and settled reconfiguration.
-With positive heartbeat and signature intervals of `1 / 4`, zero delay and zero backlog, the window lasts `3 / 4`.
-The initialized single-node execution appends and commits the request at before-time zero, but records the resulting state at time one; the only state inside the window is the uncommitted initial state.
-This is an observation-time mismatch, not a commit failure.
-The existing `timingModel` explicitly dates an action by its before-time and allows time to elapse after it in the same step.
-The latency formula also remains provisional.
+The `commit_liveness` latency formula remains provisional; the new premises do not prove its bound.
 
 - `signature_settles`: nothing bounds the participants' election timers at `start`, `StableLeader` also constrains non-participants, and a participant whose log is behind may become a pre-vote candidate, which `Quiet` forbids, even though it cannot depose the primary.
 - `duelling_leaders_resolve`: `TimerDraws` gives each participant its `k`-th draw at its own `k`-th reset, and resets need not line up into rounds across participants.
@@ -371,6 +366,7 @@ The scheduler must eventually append a current-term signature covering that requ
 
 [`Proofs/LivenessWitness.lean`](CCFRaft/Proofs/LivenessWitness.lean) contains an actual infinite valid one-node execution satisfying all the premises of `Properties.commit_liveness` and committing a request (`Properties.commit_liveness_witness`).
 It also witnesses the premises of `stable_leader` and `commit_liveness_timed`, with a single node, so no timer is exercised.
+`timed_commit_window_witness` satisfies the premises and conclusion of the windowed `Properties.commit_liveness` with positive heartbeat and signature bounds; its append takes no time, so the commit is recorded inside the window.
 It constructs an infinite stable, reliable execution with a submitted request that never commits because signing is omitted, proves that the signature obligation rejects it, and checks the old-term-signature case.
 These witnesses establish consistency and necessary distinctions in small cases, not multi-node commit liveness.
 The existing canonical traces continue to exercise actual multi-node commitment and reconfiguration.

@@ -29,7 +29,7 @@ theorem time_mono {W : Type} [HasTime W] {trace : Trace W Liveness.Event}
     : time first <= time last :=
   coherent.chain (relation := fun first last => time first <= time last)
     (fun _ => le_rfl) (fun _ _ _ => le_trans)
-    (fun _ _ stepped => timing.next stepped) le firstFound lastFound
+    (fun _ _ stepped => (timing.next stepped).1) le firstFound lastFound
 
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasTimers W]
   {trace : Trace W Liveness.Event}
