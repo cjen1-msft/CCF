@@ -158,9 +158,10 @@ dropped. Additionally, reconfiguration is settled at the leader throughout the
 window: one active configuration and all completed removals confirmed in its
 committed ledger. Followers need not have learned this completion. This
 excludes waiting for retirement cleanup, which has no scheduling deadline.
-If at `start` no participant's log diverges from the primary's by more than
-`backlog` entries, and the primary holds or appends `request`, then `request`
-is in the primary's committed prefix within the window.
+If at `start` every participant has adopted `term` and no participant's log
+diverges from the primary's by more than `backlog` entries, and the primary holds
+or appends `request`, then `request` is in the primary's committed prefix within
+the window.
 `signature_settles` yields the stable window after `duelling_leaders_resolve`;
 settled reconfiguration remains a separate premise. -/
 theorem commit_liveness
@@ -186,6 +187,7 @@ theorem commit_liveness
             /\ Liveness.StableWindow trace start duration leader term participants
             /\ Liveness.Window.ReconfigurationSettled trace start duration leader
             /\ Liveness.Backlog trace start leader participants backlog
+            /\ Liveness.InTermAt trace start term participants
             /\ Liveness.SubmittedAt trace start leader request)
           -> exists index,
               Liveness.Within trace start duration index

@@ -129,6 +129,29 @@ def Backlog (trace : Trace W Event) (start : Nat) (leader : NodeID)
     -> CCF.MultiNodeTransitionSystem.nodeState (proto first) follower = some followerState
     -> leaderState.log.length - agreedPrefix leaderState.log followerState.log <= backlog
 
+/-- At `start` every participant is a node that has adopted `term`. With
+`Window.LiveQuorum`, a live quorum is then in `term` throughout the window. The
+voters that elected `leader` qualify, as do nodes that acknowledged its
+AppendEntries: terms only grow, and `Window.StableLeader` caps them at `term`.
+Naming the voters instead would be too strong, since a reconfiguration in `term`
+can leave them short of a quorum of the active configuration.
+Needed: a participant behind `term` still accepts AppendEntries of an older term.
+Let `leader` and another node alternate as primary for `2 n` terms, each appending
+one entry per term, with `leader`'s entries replicated to a participant and the
+other's to nobody. A delayed AppendEntries from the other's last term can then
+replace that participant's log, which matched `leader`'s at `start`, with `n`
+entries of alternating terms. Each rejection moves the primary's probe back one
+entry, so catching it up takes `n` rounds for any `n`. -/
+def InTermAt (trace : Trace W Event) (start : Nat) (term : Nat)
+    (participants : Finset NodeID)
+    : Prop :=
+  forall follower,
+    follower ∈ participants
+    -> exists first state,
+        trace.stateAt start = some first
+        /\ CCF.MultiNodeTransitionSystem.nodeState (proto first) follower = some state
+        /\ state.currentTerm = term
+
 /-- At `start` the primary's log holds `request`, or the step at `start` appends
 it. A longer stable window may be cut down to start here. -/
 def SubmittedAt (trace : Trace W Event) (start : Nat) (leader : NodeID) (request : ReqID)

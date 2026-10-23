@@ -561,6 +561,11 @@ private theorem initial_backlog : Backlog (fixture true) 0 0 {0} 0 := by
   subst leaderState followerState
   decide
 
+private theorem initial_in_term : InTermAt (fixture true) 0 Model.BOOTSTRAP_TERM {0} := by
+  intro follower member
+  rw [Finset.mem_singleton.mp member]
+  exact ⟨fixtureWorld true 0, initialNode, fixture_stateAt true 0, rfl, by decide⟩
+
 /-- The windowed timed commit-liveness premises and conclusion hold together, with
 positive heartbeat and signature bounds of `1 / 4`.
 The first append commits request 10 at time zero. It takes no time, so its
@@ -584,13 +589,14 @@ theorem timed_commit_window_witness
           /\ StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0}
           /\ Window.ReconfigurationSettled trace 0 duration 0
           /\ Backlog trace 0 0 {0} 0
+          /\ InTermAt trace 0 Model.BOOTSTRAP_TERM {0}
           /\ SubmittedAt trace 0 0 10)
         /\ exists index,
             Within trace 0 duration index /\ RequestCommitted trace 0 10 index := by
   refine ⟨fixture true, ?_, 1, ?_, committed⟩
   · refine ⟨coherent true, protocol_valid true, timing_valid true, crash_valid true,
       delivery_valid true, ?_, ?_, by norm_num, heartbeats true _, ?_,
-      short_window, short_reconfiguration, initial_backlog, ?_⟩
+      short_window, short_reconfiguration, initial_backlog, initial_in_term, ?_⟩
     · refine ⟨?_, ?_⟩
       · intro packet member
         change packet ∈ ([] : List Packet) at member
