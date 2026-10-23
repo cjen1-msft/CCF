@@ -38,42 +38,47 @@ lemma Path.run {system : TransitionSystem State Action} {before tail after}
       obtain ⟨actions, rest⟩ := ih
       exact ⟨_, .cons step rest⟩
 
-/-- Enabled steps connect a state of a valid trace to every later state of the trace. -/
-lemma valid_path {system : TransitionSystem State Action} {trace : Execution.Trace State}
-    (valid : trace.Valid system) (start count : Nat) {before after : State}
-    (first : trace.get? start = some before)
-    (last : trace.get? (start + count) = some after)
+/-- Enabled recorded steps connect every replayed state to every later replayed state. -/
+lemma stateAt_path {system : TransitionSystem State Action}
+    {trace : Execution.Trace State Action} (start count : Nat) {before after : State}
+    (first : trace.stateAt system start = some before)
+    (last : trace.stateAt system (start + count) = some after)
     : exists tail, Path system before tail after := by
   induction count generalizing start before with
   | zero =>
       cases first.symm.trans last
       exact ⟨[], .nil _⟩
   | succ count ih =>
-      cases next : trace.get? (start + 1) with
-      | none =>
-          simp [trace.le_stable (show start + 1 <= start + (count + 1) by omega) next] at last
-      | some middle =>
-          obtain ⟨action, step⟩ := valid.2 start before middle first next
-          obtain ⟨tail, rest⟩ :=
-            ih (start + 1) next (by rwa [show start + 1 + count = start + (count + 1) by omega])
-          exact ⟨_, .cons step rest⟩
+      obtain ⟨middle, next⟩ := Execution.Trace.exists_stateAt_of_le
+        (show start + 1 <= start + (count + 1) by omega) last
+      obtain ⟨previous, _, atPrevious, _, step⟩ :=
+        Execution.Trace.stateAt_succ_eq_some.mp next
+      have same : previous = before := Option.some.inj (atPrevious.symm.trans first)
+      subst previous
+      obtain ⟨tail, rest⟩ :=
+        ih (start + 1) next (by rwa [show start + 1 + count = start + (count + 1) by omega])
+      exact ⟨_, .cons step rest⟩
 
 /-- The later of two trace positions is also a trace position. -/
-lemma max_isSome {trace : Execution.Trace State} {first second : Nat}
-    (firstIn : (trace.get? first).isSome) (secondIn : (trace.get? second).isSome)
-    : (trace.get? (max first second)).isSome := by
+lemma max_isSome {system : TransitionSystem State Action}
+    {trace : Execution.Trace State Action} {first second : Nat}
+    (firstIn : (trace.stateAt system first).isSome)
+    (secondIn : (trace.stateAt system second).isSome)
+    : (trace.stateAt system (max first second)).isSome := by
   rcases le_total first second with le | le
   · rwa [max_eq_right le]
   · rwa [max_eq_left le]
 
 /-- Finitely many trace positions all lie at or before one trace position after `start`. -/
-lemma exists_bound {α : Type} {trace : Execution.Trace State} {P : α -> Nat -> Prop}
-    {start : Nat} (startIn : (trace.get? start).isSome) (items : List α)
+lemma exists_bound {α : Type} {system : TransitionSystem State Action}
+    {trace : Execution.Trace State Action} {P : α -> Nat -> Prop}
+    {start : Nat} (startIn : (trace.stateAt system start).isSome) (items : List α)
     (indexed
       : forall item,
-          item ∈ items -> exists index, (trace.get? index).isSome /\ P item index)
+          item ∈ items
+          -> exists index, (trace.stateAt system index).isSome /\ P item index)
     : exists bound,
-        (trace.get? bound).isSome
+        (trace.stateAt system bound).isSome
         /\ start <= bound
         /\ forall item, item ∈ items -> exists index, index <= bound /\ P item index := by
   induction items with
@@ -92,5 +97,39 @@ lemma exists_bound {α : Type} {trace : Execution.Trace State} {P : α -> Nat ->
       · exact ⟨headIndex, le_max_left _ _, headHolds⟩
       · obtain ⟨index, le, holds⟩ := bounded item member
         exact ⟨index, le.trans (le_max_right _ _), holds⟩
+
+/-- Replaying a finite action trace never produces a state past the end of its action list. -/
+lemma stateAt_le_length {system : TransitionSystem State Action}
+    {initial state : State} {actions : List Action} {index : Nat}
+    (found
+      : (Execution.Trace.mk initial (Stream'.Seq.ofList actions)).stateAt system index
+        = some state)
+    : index <= actions.length := by
+  cases index with
+  | zero => exact Nat.zero_le _
+  | succ index =>
+      obtain ⟨_, _, _, recorded, _⟩ := Execution.Trace.stateAt_succ_eq_some.mp found
+      simp only [Execution.Trace.actionAt, Stream'.Seq.ofList_get?] at recorded
+      exact Nat.succ_le_of_lt (List.getElem?_eq_some_iff.mp recorded).1
+
+/-- A finite action trace is valid if it starts initialized and replays through its last action. -/
+lemma valid_of_stateAt_length {system : TransitionSystem State Action}
+    {initial final : State} {actions : List Action}
+    (initialized : system.init initial)
+    (last
+      : (Execution.Trace.mk initial (Stream'.Seq.ofList actions)).stateAt system
+          actions.length
+        = some final)
+    : (Execution.Trace.mk initial (Stream'.Seq.ofList actions)).Valid system := by
+  refine ⟨initialized, fun index action recorded => ?_⟩
+  have below : index < actions.length := by
+    exact (List.getElem?_eq_some_iff.mp (by
+      simpa only [Execution.Trace.actionAt, Stream'.Seq.ofList_get?] using recorded)).1
+  obtain ⟨after, atAfter⟩ := Execution.Trace.exists_stateAt_of_le
+    (show index + 1 <= actions.length by omega) last
+  obtain ⟨before, actual, atBefore, atAction, stepped⟩ :=
+    Execution.Trace.stateAt_succ_eq_some.mp atAfter
+  have same : actual = action := Option.some.inj (atAction.symm.trans recorded)
+  exact ⟨before, after, atBefore, same ▸ stepped⟩
 
 end DisasterRecovery.Proofs.Trace

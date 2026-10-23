@@ -51,7 +51,6 @@ The global properties quantify a `GlobalTrace`, an explicit initial state and a 
 `trace.Valid system` requires valid initialization and successful execution of every recorded action.
 State membership is stated over `trace.states system`; `trace.stateAt system i` and `trace.actionAt i` expose computed states and recorded actions.
 `Trace.NotificationAt` requires the recorded action at index `i` to be a step by `node` between computed states `i` and `i + 1` emitting a given notification.
-The public definitions and statements use this shared action-trace interface; downstream proof bodies and trace-based tests still await migration.
 
 `QuorumOpenerUnique` states that all `opening quorum` notifications in a trace originate from one node.
 

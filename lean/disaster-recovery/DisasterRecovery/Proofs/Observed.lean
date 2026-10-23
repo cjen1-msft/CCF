@@ -137,11 +137,11 @@ lemma notification_opening_state {config : Model.Config} {trace : Properties.Glo
     (notification
       : Properties.Trace.NotificationAt config trace index node (.opening kind))
     : exists after current,
-        trace.get? (index + 1) = some after
+        trace.stateAt (Model.transitionSystem config) (index + 1) = some after
         /\ (node, current) ∈ after.nodes
         /\ current.openKind = some kind := by
   obtain ⟨before, after, action, nodeBefore, nodeAfter, outputs,
-    _, atAfter, _, _, _, foundAfter, enabled, notified⟩ := notification
+    _, atAfter, _, _, _, _, foundAfter, enabled, notified⟩ := notification
   obtain ⟨recovered, _, enabled⟩ :=
     DisasterRecovery.Proofs.Local.validStep_run
       (s := ⟨node, nodeBefore, Properties.Trace.event action, nodeAfter, outputs⟩) enabled

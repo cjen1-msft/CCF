@@ -31,7 +31,8 @@ def UpToDateWithQuorum (config : Model.Config) (candidate : TxID) : Prop :=
 
 open Model.Local in
 /-- The trace contains a state in which the node has accepted gossip from itself. -/
-def ReceivedOwnGossip (config : Model.Config) (trace : GlobalTrace) (node : Location) : Prop :=
+def ReceivedOwnGossip (config : Model.Config) (trace : GlobalTrace) (node : Location)
+    : Prop :=
   exists globalState,
     globalState ∈ trace.states (Model.transitionSystem config)
     /\ exists nodeState txid,

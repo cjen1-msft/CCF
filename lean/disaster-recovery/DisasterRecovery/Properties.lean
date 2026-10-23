@@ -35,7 +35,8 @@ def QuorumOpenPreservesCommit : Prop :=
       /\ openedState ∈ trace.states (Model.transitionSystem config)
       /\ (opener, openerState) ∈ openedState.nodes
       /\ openerState.openKind = some .quorum
-      /\ (forall voter, voter ∈ openerState.votes -> ReceivedOwnGossip config trace voter))
+      /\ (forall voter,
+            voter ∈ openerState.votes -> ReceivedOwnGossip config trace voter))
     -> exists openerTxID,
         Model.recoveredTxID config opener = some openerTxID
         /\ UpToDateWithQuorum config openerTxID
