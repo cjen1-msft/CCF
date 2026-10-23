@@ -239,6 +239,13 @@ theorem duelling_leaders_resolve
                   {draws |
                     Liveness.SignatureCommitted (family draws) start duration
                   } := by
+  intro config nodes system W _ _ _ _ _ competitors rounds candidates bounds maxDelay start
+    participants family electionTimeout margin duration premises
+  obtain ⟨_, _, competes, delay, heartbeat, fits, _⟩ := premises
+  refine Proofs.Duel.settle_of_margin competes
+    (show 0 <= bounds.heartbeatInterval + 5 * maxDelay by linarith) fits ?_
+  -- Remaining: a round with a margin forces a committed signature.
+  intro draws _
   sorry
 
 /-- A primary that has committed a signature of its own term stays uncontested

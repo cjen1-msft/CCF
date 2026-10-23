@@ -209,4 +209,14 @@ theorem settle_probability {n : Nat} {m E : Real}
     _ = uniformDraws n rounds E good := by
       rw [← prob_compl_eq_one_sub good_measurable.compl, compl_compl]
 
+/-- Any event forced by every draw with a margin round has at least the settle
+probability, whatever else it depends on. -/
+theorem settle_of_margin {n rounds : Nat} {m E : Real} (hn : 0 < n) (hm : 0 ≤ m)
+    (hmE : m < E / 2) {Good : Draws n rounds → Prop}
+    (forces : ∀ draws, (∃ k, Margin (draws k) m) → Good draws)
+    : ENNReal.ofReal (settleProbability n rounds m E)
+      ≤ uniformDraws n rounds E {draws | Good draws} :=
+  (settle_probability hn (by linarith) hm (by linarith) rounds).trans
+    (measure_mono fun draws margin => forces draws margin)
+
 end CCFRaft.Proofs.Duel
