@@ -144,8 +144,9 @@ lemma committed_frontier_is_signature_witness
   exact Proofs.Witnesses.committed_frontier_is_signature_witness
 
 /-- Commit liveness, timed. Take one coherent recorded relational trace. Assume
-coherence and validity of the protocol, timing, crash, delivery and bounded-delay
-models for `system := Model.transitionSystem config nodes`, and an unbounded
+coherence and validity of the protocol, timing, crash, delivery (in order on each
+channel) and bounded-delay models for `system := Model.transitionSystem config
+nodes`, and an unbounded
 clock: every packet is then delivered or dropped within `maxDelay`, unless its
 target crashes first. Assume that a primary sends due heartbeats
 within `bounds.heartbeatInterval` and due signatures within

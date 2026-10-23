@@ -56,6 +56,7 @@ The crash model directly projects to the existing `crashSystem`, requiring live 
 Delivery requires only the receiver to be live, so a sender may crash after sending.
 The delivery model starts with an empty pending ledger and zero issued packets; it tags each actual outgoing envelope with the next sequence number and the sending step's before-time as `sentAt`.
 Delivery or drop must consume an existing occurrence before this step's outputs are added.
+Delivery is FIFO with loss on each source-target channel, as CCF's channel nonce check enforces: a delivered packet is the oldest outstanding one on its channel, while drops are unrestricted.
 Equal envelopes remain distinct transmissions, and an occurrence cannot be consumed twice or after a drop.
 The optional `boundedDelayModel maxDelay` separately forbids an overdue pending packet to a live target; it permits drops and is not the stronger `Timely` delivery assumption.
 

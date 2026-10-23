@@ -45,12 +45,12 @@ Lean has no row types or polymorphic variants, so these classes play the role of
 
 Each public statement conjoins `trace.Coherent` and validity of four models inline:
 
-| Model                  | Initial predicate                | Next relation                                                                                                                                  |
-| ---------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `protocolModel system` | `system.init (proto w)`          | Execute `Event.action` in `system`, or preserve `proto` for crash, drop and idle.                                                              |
-| `timingModel`          | `True`                           | `time before <= time after`, with equality unless the event is idle.                                                                           |
-| `crashModel`           | `crashSystem.init (live w)`      | `crashSystem.step (live before) event = some (live after)`.                                                                                    |
-| `deliveryModel system` | `pending w = [] /\ issued w = 0` | Consume an existing packet for delivery or drop, append this step's actual outgoing packets with fresh sequence numbers, and advance `issued`. |
+| Model                  | Initial predicate                | Next relation                                                                                                                                                                                                |
+| ---------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `protocolModel system` | `system.init (proto w)`          | Execute `Event.action` in `system`, or preserve `proto` for crash, drop and idle.                                                                                                                            |
+| `timingModel`          | `True`                           | `time before <= time after`, with equality unless the event is idle.                                                                                                                                         |
+| `crashModel`           | `crashSystem.init (live w)`      | `crashSystem.step (live before) event = some (live after)`.                                                                                                                                                  |
+| `deliveryModel system` | `pending w = [] /\ issued w = 0` | Consume an existing packet for delivery or drop, delivering only the oldest outstanding packet on its channel; append this step's actual outgoing packets with fresh sequence numbers, and advance `issued`. |
 
 The protocol model in [`Model/Protocol.lean`](CCFRaft/Liveness/Model/Protocol.lean) preserves the existing `Event.action` mapping, including delivery of the received envelope.
 Its protocol state is generic, while its action type is `Model.Action`, as fixed by the existing `Event` vocabulary.
@@ -64,6 +64,9 @@ The delivery model in [`Model/Delivery.lean`](CCFRaft/Liveness/Model/Delivery.le
 Actual outputs receive consecutive sequence numbers from `issued`, with `sentAt := time before` of the sending step.
 A step happens at its before-time, and only an idle step lets time elapse after it; every timing constraint compares before-times.
 Delivery and drop consume an outstanding packet before this step's outputs are registered, rejecting fabrication, early consumption and reuse, including delivery after a drop.
+Each source-target channel is FIFO with loss (`Event.InOrder`): a delivered packet is the oldest outstanding packet on its channel, and drops are unrestricted, so a packet overtakes an earlier one only if that one is lost.
+This matches CCF's node-to-node channels, whose receivers reject any nonce that is not above the last one received (`Channel::decrypt` in [`src/node/channels.h`](../../src/node/channels.h)).
+Messages lost while a channel is established or rekeyed are drops.
 Equal envelopes remain distinct transmissions.
 `Trace.SentAt index packet` holds when the packet first appears in the ledger after step `index`.
 The protocol queue retains untagged dropped envelopes, while the separate ledger prevents consuming the corresponding occurrence again.
@@ -148,15 +151,16 @@ No premise requires an infinite recording: an obligation that stays due must eve
 Each premise below was added after a counterexample showed a windowed statement false without it.
 The counterexamples are prose arguments.
 
-| Premise                         | Statement                                       | Counterexample without it                                                                                                                                                                                                                                                 |
-| ------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `TimeDiverges`                  | `commit_liveness`                               | The recording ends, or its clock stops, while the primary's AppendEntries are pending. Bounded delay only stops time from passing a packet's deadline, so nothing need be delivered, and nothing commits.                                                                 |
-| Only idle steps advance time    | `commit_liveness`                               | With heartbeat and signature intervals of `1 / 4`, zero delay and zero backlog, the window lasts `3 / 4`. A single-node primary appends and commits the request at time zero in a step that also advances the clock to one, so no state in the window records the commit. |
-| `Window.ReconfigurationSettled` | `commit_liveness`                               | A configuration commit can leave the leader alone with a later committable signature but no event rerunning the commit scan. One active configuration is insufficient: its removed nodes may still await committed retirement confirmation.                               |
-| `0 < competitors`               | `duelling_leaders_resolve`                      | With no participants, `GoodPeriod.quorum` holds when every node is crashed, and then nothing commits, yet `settleProbability` is one for any positive number of rounds.                                                                                                   |
-| `0 <= heartbeatInterval`        | `duelling_leaders_resolve`                      | With one competitor in a single-node configuration, `E = 1`, `heartbeatInterval = -1`, `maxDelay = 0` and one round, `settleProbability` is 3, above any probability. Heartbeat scheduling is vacuous without peers, so the premises are satisfiable.                     |
-| `GoodPeriod.participantsLive`   | `duelling_leaders_resolve`                      | The adversary crashes every node at `start`, which satisfies `GoodPeriod.quorum` vacuously, and nothing commits.                                                                                                                                                          |
-| `GoodPeriod.noQuorumChecks`     | `duelling_leaders_resolve`, `signature_settles` | The model does not constrain quorum checks, so every new primary of a multi-node configuration may step down before it signs. This is assumed, not derived, for the reason given for `Incumbent.quorumChecks` in [stable leadership](#stable-leadership).                 |
+| Premise                         | Statement                                       | Counterexample without it                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TimeDiverges`                  | `commit_liveness`                               | The recording ends, or its clock stops, while the primary's AppendEntries are pending. Bounded delay only stops time from passing a packet's deadline, so nothing need be delivered, and nothing commits.                                                                                                                                               |
+| Only idle steps advance time    | `commit_liveness`                               | With heartbeat and signature intervals of `1 / 4`, zero delay and zero backlog, the window lasts `3 / 4`. A single-node primary appends and commits the request at time zero in a step that also advances the clock to one, so no state in the window records the commit.                                                                               |
+| Per-channel FIFO delivery       | `commit_liveness`                               | Clients append `k` entries in zero time before the next signature, and the primary sends them to a peer with no backlog as single-entry AppendEntries that arrive in reverse order. Every batch except the earliest arrives before the entry it extends and is rejected, so the peer gains one entry per round trip, and commit latency grows with `k`. |
+| `Window.ReconfigurationSettled` | `commit_liveness`                               | A configuration commit can leave the leader alone with a later committable signature but no event rerunning the commit scan. One active configuration is insufficient: its removed nodes may still await committed retirement confirmation.                                                                                                             |
+| `0 < competitors`               | `duelling_leaders_resolve`                      | With no participants, `GoodPeriod.quorum` holds when every node is crashed, and then nothing commits, yet `settleProbability` is one for any positive number of rounds.                                                                                                                                                                                 |
+| `0 <= heartbeatInterval`        | `duelling_leaders_resolve`                      | With one competitor in a single-node configuration, `E = 1`, `heartbeatInterval = -1`, `maxDelay = 0` and one round, `settleProbability` is 3, above any probability. Heartbeat scheduling is vacuous without peers, so the premises are satisfiable.                                                                                                   |
+| `GoodPeriod.participantsLive`   | `duelling_leaders_resolve`                      | The adversary crashes every node at `start`, which satisfies `GoodPeriod.quorum` vacuously, and nothing commits.                                                                                                                                                                                                                                        |
+| `GoodPeriod.noQuorumChecks`     | `duelling_leaders_resolve`, `signature_settles` | The model does not constrain quorum checks, so every new primary of a multi-node configuration may step down before it signs. This is assumed, not derived, for the reason given for `Incumbent.quorumChecks` in [stable leadership](#stable-leadership).                                                                                               |
 
 `Proofs.Liveness.Admissible.consumed_within` shows that `TimeDiverges` and bounded delay together consume every outstanding packet within `maxDelay`, unless its target crashes.
 
@@ -304,14 +308,14 @@ An event is a local input, delivery, drop, crash or idle step.
 Actual local and delivery events use the unchanged `Model.transitionSystem.step`; other events preserve the protocol state.
 `Proofs.Liveness.Admissible.reachable` shows that every recorded protocol state is reachable in that system.
 
-The base network remains a list of envelopes with arbitrary delivery order.
+The base network remains a list of envelopes with arbitrary delivery order; the delivery model restricts deliveries to FIFO order on each channel.
 A packet is identified by the sequence number the ledger issues when the actual recording callback emits its envelope, with `sentAt` equal to that step's before-time.
 Each occurrence can resolve at most once, and cannot resolve before being sent.
 Equal message contents therefore do not identify equal transmissions.
 
 Drops are ghost events.
 The original model represents loss by never delivering an envelope, so a dropped envelope stays in that model's queue; its tagged occurrence cannot subsequently be delivered.
-No FIFO, synchronized physical clocks, finite state-space bound or executable decision procedure for trace validity is assumed.
+No synchronized physical clocks, finite state-space bound or executable decision procedure for trace validity is assumed.
 
 Crashes permanently remove an identity from the live set.
 Only live nodes can execute local actions or receive messages; a message sent before its sender crashes can still arrive.

@@ -136,14 +136,14 @@ private theorem delivery_valid (signed : Bool)
   subst step
   cases index with
   | zero =>
-      refine ⟨trivial, [], ?_, rfl, rfl⟩
+      refine ⟨trivial, trivial, [], ?_, rfl, rfl⟩
       change (do
         let _ <- (Model.transitionSystem {0} [0]).step initialState
           (.local 0 (.append (requestEntries signed)))
         outgoing initialState (.local 0 (.append (requestEntries signed)))) = some []
       rw [request_step]
       exact request_outgoing signed
-  | succ index => exact ⟨trivial, [], rfl, rfl, rfl⟩
+  | succ index => exact ⟨trivial, trivial, [], rfl, rfl, rfl⟩
 
 private theorem stable (signed : Bool)
     : StableLeader (fixture signed) 0 0 Model.BOOTSTRAP_TERM := by

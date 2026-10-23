@@ -82,7 +82,7 @@ theorem consumed_pending {index : Nat} {step : CCF.Execution.Step W Liveness.Eve
 theorem issued_step {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
     (stepped : trace.stepAt index = some step)
     : issued step.before <= issued step.after := by
-  obtain ⟨_, emitted, _, count, _⟩ := admissible.delivery.next stepped
+  obtain ⟨_, _, emitted, _, count, _⟩ := admissible.delivery.next stepped
   omega
 
 theorem issued_mono {earlier later : Nat} (le : earlier <= later) {first last : W}
@@ -104,7 +104,7 @@ theorem id_lt {index : Nat} {point : W} (found : trace.stateAt index = some poin
       rw [init.1] at member
       cases member)
     (fun step next held packet member => by
-      obtain ⟨_, emitted, _, count, ledger⟩ := next
+      obtain ⟨_, _, emitted, _, count, ledger⟩ := next
       rw [ledger, List.mem_append] at member
       rw [count]
       rcases member with kept | new
@@ -125,7 +125,7 @@ theorem ids_nodup {index : Nat} {point : W} (found : trace.stateAt index = some 
       rw [admissible.delivery.init.1]
       exact List.nodup_nil)
     (fun _ step _ stepped held => by
-      obtain ⟨_, emitted, _, _, ledger⟩ := admissible.delivery.next stepped
+      obtain ⟨_, _, emitted, _, _, ledger⟩ := admissible.delivery.next stepped
       have batchIds
           : (Packet.batch emitted (issued step.before) (time step.before)).map Packet.id
             = List.range' (issued step.before) emitted.length := by
@@ -148,7 +148,7 @@ theorem consumed_of_left {index : Nat} {step : CCF.Execution.Step W Liveness.Eve
     (stepped : trace.stepAt index = some step) {packet : Packet}
     (before : packet ∈ pending step.before) (after : Not (packet ∈ pending step.after))
     : step.action.consumedPacket = some packet := by
-  obtain ⟨outstanding, _, _, _, ledger⟩ := admissible.delivery.next stepped
+  obtain ⟨outstanding, _, _, _, _, ledger⟩ := admissible.delivery.next stepped
   rw [ledger, List.mem_append, not_or] at after
   have kept := after.1
   unfold Event.remaining at kept
@@ -202,7 +202,7 @@ theorem sentAt_emitted {index : Nat} {packet : Packet} (sent : trace.SentAt inde
         /\ packet.id < issued step.after
         /\ packet.sentAt = time step.before := by
   obtain ⟨step, stepped, member, fresh⟩ := sent
-  obtain ⟨_, emitted, produced, count, ledger⟩ := admissible.delivery.next stepped
+  obtain ⟨_, _, emitted, produced, count, ledger⟩ := admissible.delivery.next stepped
   rw [ledger, List.mem_append] at member
   rcases member with kept | new
   · exact absurd (Event.mem_remaining kept) fresh
@@ -240,7 +240,7 @@ theorem sentAt_of_emitted {index : Nat} {step : CCF.Execution.Step W Liveness.Ev
         trace.SentAt index packet
         /\ packet.envelope = envelope
         /\ packet.sentAt = time step.before := by
-  obtain ⟨_, emitted', produced, _, ledger⟩ := admissible.delivery.next stepped
+  obtain ⟨_, _, emitted', produced, _, ledger⟩ := admissible.delivery.next stepped
   have enabled := admissible.step stepped selected
   simp only [selected, enabled, out, Option.bind_eq_bind, Option.bind_some,
     Option.some.injEq] at produced
@@ -261,7 +261,7 @@ private theorem countP_after {index : Nat} {step : CCF.Execution.Step W Liveness
     : (pending step.after).countP (fun packet : Packet => packet.id < bound)
       = (step.action.remaining (pending step.before)).countP
           (fun packet : Packet => packet.id < bound) := by
-  obtain ⟨_, emitted, _, _, ledger⟩ := admissible.delivery.next stepped
+  obtain ⟨_, _, emitted, _, _, ledger⟩ := admissible.delivery.next stepped
   rw [ledger, List.countP_append, Nat.add_eq_left, List.countP_eq_zero]
   intro packet new
   have := (Packet.id_mem_batch new).1
