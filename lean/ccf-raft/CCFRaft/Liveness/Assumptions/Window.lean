@@ -33,6 +33,42 @@ instance (state : NodeState) : Decidable (ReconfigurationSettled state) := by
   unfold ReconfigurationSettled
   infer_instance
 
+/-- `Quiet` among `participants`: no participant or message between participants
+has moved past `term`, no participant is a pre-vote candidate in it, no proposal
+for it is in flight between participants, and `leader` is its primary.
+Nodes outside `participants`, such as a crashed or partitioned pre-vote
+candidate of a newer term, are unconstrained; isolation keeps them from
+reaching participants. -/
+structure QuietAmong (participants : Finset NodeID) (leader : NodeID) (term : Nat)
+    (state : Model.State)
+    : Prop where
+  terms
+    : forall node local_,
+        (node, local_) ∈ state.nodes -> node ∈ participants -> local_.currentTerm <= term
+  preVotes
+    : forall node local_,
+        (node, local_) ∈ state.nodes
+        -> node ∈ participants
+        -> local_.role = .preVoteCandidate
+        -> local_.currentTerm < term
+  messages
+    : forall envelope,
+        envelope ∈ state.network
+        -> envelope.source ∈ participants
+        -> envelope.target ∈ participants
+        -> envelope.payload.term <= term
+  proposals
+    : forall envelope,
+        envelope ∈ state.network
+        -> envelope.source ∈ participants
+        -> envelope.target ∈ participants
+        -> Not (envelope.payload = .proposeRequestVoteRequest term)
+  leader
+    : exists local_,
+        (leader, local_) ∈ state.nodes
+        /\ local_.role = .primary
+        /\ local_.currentTerm = term
+
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W]
 
 namespace Window
