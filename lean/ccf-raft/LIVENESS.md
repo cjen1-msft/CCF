@@ -291,7 +291,7 @@ For stable leadership, `Summary` records why a term rises (`term_cause`), that o
 
 ## A lagging follower deposes the primary
 
-This is a liveness weakness of CCF itself, not of the model, and the model now departs from CCF to exclude it.
+This is a liveness weakness of CCF itself, not of the model; the model now departs from CCF to exclude it.
 Two CCF behaviours combine (`src/consensus/aft/raft.h`):
 
 - `recv_append_entries` calls `restart_election_timeout` only after the `prev_term` check passes; a rejected AppendEntries leaves the follower's timer running.
@@ -299,37 +299,41 @@ Two CCF behaviours combine (`src/consensus/aft/raft.h`):
   A pre-vote is granted to any candidate of the node's term whose committable log is at least as up to date as the node's own, even by a follower that is receiving heartbeats from a live primary.
   Raft's pre-vote, and etcd's lease check, reject such a request while the node has heard from a leader within an election timeout.
 
-Worked example, three nodes `{L, f, g}`, election timeout `E = 7`, heartbeat interval `H = 1`, message delay `d = 1`:
+Worked example, three nodes `{L, f, g}`, election timeout `E = 7`, so a timer fires between 3.5 and 7 after its reset, heartbeat interval `H = 1` and message delay at most `d = 1`:
 
-1. `L` is the primary of term `t` with log length 10.
-   `f` and `g` both hold the first 8 entries; the last two AppendEntries to them were lost.
-   `f`'s election timer last reset 3 time units ago, so it fires in at most 4.
-2. `L`'s heartbeat to `f` carries `prev_idx = 10`.
-   `f` fails the `prev_term` check, replies with a NACK and does not reset its timer.
-   `L` steps back and resends from index 8; the round trip takes `2d = 2`, and each further step back costs another round trip.
-3. `f`'s timer fires before the repair completes.
+1. `L` is the primary of term `t`.
+   Its log has 10 entries, and its last signature is entry 8, so entries 9 and 10 are not yet committable.
+   `g` holds all 10 entries and accepts every heartbeat.
+   `f` holds only the first 8: the AppendEntries carrying entries 9 and 10 was lost, and `f`'s timer was last reset, at time 0, when it accepted entry 8.
+   Its timer fires at 3.5.
+2. `L` believes it sent entries 9 and 10, so its heartbeat at time 1 carries `prev_idx = 10`.
+   `f` fails the `prev_term` check at time 2, replies with a NACK and does not reset its timer.
+   The NACK reaches `L` at time 3, so the repairing AppendEntries cannot reach `f` before time 4.
+3. At 3.5 `f`'s timer fires.
    `f` becomes a pre-vote candidate of term `t` and sends `RequestPreVote` to `L` and `g`.
-4. `g` is a content follower of `L`, but `f`'s log (8 entries of the same terms) is at least as up to date as `g`'s, and pre-votes skip the `leader_id` check, so `g` grants.
+4. `g` is a content follower of `L`, but `f`'s last committable entry, 8, is also `g`'s, so `f`'s log counts as up to date, and pre-votes skip the `leader_id` check, so `g` grants.
    `f` has a pre-vote quorum `{f, g}` and becomes a candidate of term `t + 1`.
 5. `f`'s `RequestVote` of term `t + 1` reaches `g`.
    `become_aware_of_new_term` calls `become_follower`, which resets `leader_id`, so the regular vote's known-leader check passes too, and `g` grants.
-6. `f` is the primary of term `t + 1`.
-   `L`'s next message to `g` is rejected with term `t + 1`, and `L` steps down.
-   `L`'s entries 9 and 10 were not committed, since no quorum held them, so safety is intact, but a working primary was deposed by the follower it was repairing.
+6. `f` is the primary of term `t + 1`, and `L` steps down at its next message from `g`.
+   Entries 9 and 10 were never committable, so safety is intact, but a working primary was deposed by the follower it was repairing, while the quorum `{L, g}` was in sync.
 
-The steps repeat whenever a follower lags by more than the timer slack allows, so a slow or lossy link to one follower can depose primaries indefinitely.
-Nothing in the example depends on timing beyond the lag: with `E / 2 = 3.5`, a repair of two steps back already takes `2 * 2d + H + d = 6` from the last reset.
+A slow or lossy link to one follower can repeat this in every term.
 
 Where it shows up in the proofs:
 
 - `stable_leader` and the windowed `stable_window` take `Matching`, or `WindowMatching`, as a premise: every AppendEntries from the primary delivered to a participant passes the log check.
-  That premise is exactly "step 2 never happens".
+  That premise rules out step 2.
 - `duelling_leaders_resolve` hands over a primary whose voters' logs may be shorter than its own, so its first heartbeats to them can be rejected; the same mechanism then applies in the fresh window.
 
 The model's `handleRequestPreVoteRequest` now grants a pre-vote only while the node knows no primary (`primaryKnown` is false), the counterpart of `leader_id` in `raft.h`.
-A follower clears it only when its own timer fires or it adopts a new term, so `g` refuses in step 4, and `f`'s election fails.
-This is the one deliberate departure of the model from CCF; the fix in CCF is to apply the `leader_id` check at `raft.h` line 1721 to pre-votes as well.
-Until CCF changes, the results above do not cover the behaviour in the example.
+As in CCF, a node learns the primary only from an AppendEntries that passes the log check, and forgets it on its own timeout, on adopting a new term and on stepping down, so `g` refuses in step 4, and `f`'s election fails.
+The fix in CCF would be to apply the `leader_id` check at `raft.h` line 1721 to pre-votes as well.
+Until CCF changes, the results do not cover the behaviour in the example.
+
+The change does not protect a primary from a lagging quorum.
+If `g` also lacked entries 9 and 10, its timer would fire too; once both have fired, neither knows the primary, their logs are equally up to date, and each grants the other's pre-vote, so one of them deposes `L`.
+`Matching`, or a bound on catching up, is therefore still needed when a quorum lags, for example after an election whose voters' logs are behind the winner's.
 
 ## Literature
 
