@@ -106,12 +106,9 @@ private theorem window_matching (duration : Real)
   subst step
   exact False.elim (no_deliveries true index packet deliver)
 
-private theorem window_covered (duration : Real)
-    : WindowCovered (fixture true) 0 duration 0 Model.BOOTSTRAP_TERM {0} := by
-  intro index step node _ _ stepped timeout
-  rw [fixture_stepAt, Option.some.injEq] at stepped
-  subst step
-  exact False.elim (no_timeouts true index node timeout)
+private theorem latest_members : LatestMembers (fixture true) 0 0 {0} := by
+  intro _ _ node _ _ member different
+  exact absurd (Finset.mem_singleton.mp member) different
 
 private theorem stays_active (duration : Real)
     : Window.StaysActive (fixture true) 0 duration 0 := by
@@ -140,10 +137,10 @@ theorem stable_window_witness
               /\ bounds.heartbeatInterval + 0 < bounds.electionTimeout / 2
               /\ 0 ∈ ({0} : Finset NodeID)
               /\ QuietStart trace 0 0 Model.BOOTSTRAP_TERM bounds.electionTimeout
+              /\ LatestMembers trace 0 0 {0}
               /\ GoodPeriod trace 0 duration {0}
               /\ Window.StaysActive trace 0 duration 0
-              /\ WindowMatching trace 0 duration 0 Model.BOOTSTRAP_TERM {0}
-              /\ WindowCovered trace 0 duration 0 Model.BOOTSTRAP_TERM {0})
+              /\ WindowMatching trace 0 duration 0 Model.BOOTSTRAP_TERM {0})
             /\ StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0} := by
   intro windowBounds duration _
   have admissible : Liveness.Admissible (Model.transitionSystem {0} [0]) (fixture true) :=
@@ -153,11 +150,10 @@ theorem stable_window_witness
     norm_num [windowBounds]
   let _ : Config.InitialConfiguration := ⟨{0}⟩
   refine ⟨fixture true, ⟨admissible, timers_valid, bounded_valid 0, le_rfl,
-    heartbeats true _, ratio, Finset.mem_singleton_self 0, quiet_start, good duration,
-    stays_active duration, window_matching duration, window_covered duration⟩, ?_⟩
+    heartbeats true _, ratio, Finset.mem_singleton_self 0, quiet_start, latest_members,
+    good duration, stays_active duration, window_matching duration⟩, ?_⟩
   exact stable_window (bounds := windowBounds) admissible timers_valid (bounded_valid 0)
     le_rfl (heartbeats true _) ratio (Finset.mem_singleton_self 0) quiet_start
-    (good duration) (stays_active duration) (window_matching duration)
-    (window_covered duration)
+    latest_members (good duration) (stays_active duration) (window_matching duration)
 
 end CCFRaft.Proofs.Leadership
