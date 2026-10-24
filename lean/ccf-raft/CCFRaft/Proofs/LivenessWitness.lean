@@ -11,14 +11,14 @@ open Model.Node
 open CCFRaft.Liveness
 open CCF.MultiNodeTransitionSystem (nodeState)
 
-private def initialNode : NodeState := Model.initialNodeState {0} 0
+def initialNode : NodeState := Model.initialNodeState {0} 0
 
 private def initialState : Model.State := { nodes := [(0, initialNode)] }
 
-private def requestEntries (signed : Bool) : List EntryContent :=
+def requestEntries (signed : Bool) : List EntryContent :=
   [.transaction 10 {}] ++ if signed then [.signature] else []
 
-private def requestedNode (signed : Bool) : NodeState :=
+def requestedNode (signed : Bool) : NodeState :=
   {
     initialNode with
       log :=
@@ -31,18 +31,18 @@ private def requestedNode (signed : Bool) : NodeState :=
 private def requestedState (signed : Bool) : Model.State :=
   { nodes := [(0, requestedNode signed)] }
 
-private def fixtureNode (signed : Bool) : Nat -> NodeState
+def fixtureNode (signed : Bool) : Nat -> NodeState
   | 0 => initialNode
   | _ + 1 => requestedNode signed
 
-private def fixtureWorld (signed : Bool) (index : Nat) : World Model.State where
+def fixtureWorld (signed : Bool) (index : Nat) : World Model.State where
   proto := { nodes := [(0, fixtureNode signed index)] }
   time := ((index - 1 : Nat) : Real)
   live := {0}
   pending := []
   issued := 0
 
-private def fixtureStep (signed : Bool) (index : Nat)
+def fixtureStep (signed : Bool) (index : Nat)
     : CCF.Execution.Step (World Model.State) Liveness.Event where
   before := fixtureWorld signed index
   action := if index = 0 then .local 0 (.append (requestEntries signed)) else .idle
@@ -51,28 +51,28 @@ private def fixtureStep (signed : Bool) (index : Nat)
 /-- One append at time zero, which takes no time, followed by infinitely many idle
 steps that each advance time by one.
 There are no peers, hence no sends and no packet identities to advance. -/
-private def fixture (signed : Bool) : Trace (World Model.State) Liveness.Event where
+def fixture (signed : Bool) : Trace (World Model.State) Liveness.Event where
   initial := fixtureWorld signed 0
   steps := Stream'.Seq.ofStream (fixtureStep signed)
 
-private def bounds : Bounds where
+def bounds : Bounds where
   heartbeatInterval := 1
   electionTimeout := 4
   signatureInterval := 1
 
-private theorem fixture_stepAt (signed : Bool) (index : Nat)
+theorem fixture_stepAt (signed : Bool) (index : Nat)
     : (fixture signed).stepAt index = some (fixtureStep signed index) :=
   rfl
 
-private theorem fixture_stateAt (signed : Bool) (index : Nat)
+theorem fixture_stateAt (signed : Bool) (index : Nat)
     : (fixture signed).stateAt index = some (fixtureWorld signed index) := by
   cases index <;> rfl
 
-private theorem fixture_live (signed : Bool) (index : Nat)
+theorem fixture_live (signed : Bool) (index : Nat)
     : HasLive.live (fixtureWorld signed index) = {0} :=
   rfl
 
-private theorem coherent (signed : Bool) : (fixture signed).Coherent := by
+theorem coherent (signed : Bool) : (fixture signed).Coherent := by
   constructor
   · intro step stepped
     rw [fixture_stepAt, Option.some.injEq] at stepped
@@ -93,7 +93,7 @@ private theorem request_outgoing (signed : Bool)
     : outgoing initialState (.local 0 (.append (requestEntries signed))) = some [] := by
   cases signed <;> rfl
 
-private theorem protocol_valid (signed : Bool)
+theorem protocol_valid (signed : Bool)
     : (fixture signed).Valid (protocolModel (Model.transitionSystem {0} [0])) := by
   refine ⟨?_, ?_⟩
   · change (Model.transitionSystem {0} [0]).init initialState
@@ -109,7 +109,7 @@ private theorem protocol_valid (signed : Bool)
         exact request_step signed
     | succ index => rfl
 
-private theorem timing_valid (signed : Bool) : (fixture signed).Valid timingModel := by
+theorem timing_valid (signed : Bool) : (fixture signed).Valid timingModel := by
   refine ⟨trivial, ?_⟩
   intro index step stepped
   rw [fixture_stepAt, Option.some.injEq] at stepped
@@ -121,14 +121,14 @@ private theorem timing_valid (signed : Bool) : (fixture signed).Valid timingMode
       change ((index + 1 - 1 : Nat) : Real) <= ((index + 1 + 1 - 1 : Nat) : Real)
       exact Nat.cast_le.mpr (by omega)
 
-private theorem crash_valid (signed : Bool) : (fixture signed).Valid crashModel := by
+theorem crash_valid (signed : Bool) : (fixture signed).Valid crashModel := by
   refine ⟨trivial, ?_⟩
   intro index step stepped
   rw [fixture_stepAt, Option.some.injEq] at stepped
   subst step
   cases index <;> rfl
 
-private theorem delivery_valid (signed : Bool)
+theorem delivery_valid (signed : Bool)
     : (fixture signed).Valid (deliveryModel (Model.transitionSystem {0} [0])) := by
   refine ⟨⟨rfl, rfl⟩, ?_⟩
   intro index step stepped
@@ -145,7 +145,7 @@ private theorem delivery_valid (signed : Bool)
       exact request_outgoing signed
   | succ index => exact ⟨trivial, trivial, [], rfl, rfl, rfl⟩
 
-private theorem stable (signed : Bool)
+theorem stable (signed : Bool)
     : StableLeader (fixture signed) 0 0 Model.BOOTSTRAP_TERM := by
   refine ⟨⟨fixtureWorld signed 0, fixture_stateAt signed 0⟩, ?_⟩
   intro index point _ found
@@ -201,7 +201,7 @@ private theorem no_peers (signed : Bool) (index leader peer : Nat)
   subst leader peer
   simp [eligiblePeers] at eligible
 
-private theorem heartbeats (signed : Bool) (bound : Option Real)
+theorem heartbeats (signed : Bool) (bound : Option Real)
     : (fixture signed).HeartbeatScheduling bound := by
   intro leader peer index point found due
   rw [fixture_stateAt, Option.some.injEq] at found
@@ -258,11 +258,11 @@ private theorem confirmations (signed : Bool) (bound : Option Real)
   subst point
   exact False.elim (no_confirmations signed index leader due)
 
-private theorem no_deliveries (signed : Bool) (index : Nat) (packet : Packet)
+theorem no_deliveries (signed : Bool) (index : Nat) (packet : Packet)
     : Not ((fixtureStep signed index).action = .deliver packet) := by
   cases index <;> simp [fixtureStep]
 
-private theorem no_timeouts (signed : Bool) (index node : Nat)
+theorem no_timeouts (signed : Bool) (index node : Nat)
     : Not ((fixtureStep signed index).action = .local node (.timeout .election)) := by
   cases index <;> simp [fixtureStep]
 
@@ -292,7 +292,7 @@ private theorem quiet (index : Nat)
   · refine ⟨fixtureNode true index, by simp, ?_, ?_⟩
     all_goals cases index <;> simp only [fixtureNode] <;> decide
 
-private theorem quiet_start
+theorem quiet_start
     : QuietStart (fixture true) 0 0 Model.BOOTSTRAP_TERM bounds.electionTimeout := by
   refine ⟨⟨fixtureWorld true 0, fixture_stateAt true 0, quiet 0⟩, ?_⟩
   intro _ index step node _ _ _ stepped timeout
