@@ -218,6 +218,7 @@ Four CCF behaviors explain the premises:
 
 - Pre-vote does not protect a working primary.
   CCF grants pre-votes whatever leader it knows (`raft.h`, `recv_request_vote_unsafe` checks `leader_id` only for real votes), so a node of the term that times out can gather pre-votes and start the next term.
+  The model now departs from CCF here and grants a pre-vote only while the node knows no primary; see "A lagging follower deposes the primary" below.
   So no timer of the term may expire before the primary's heartbeats arrive, and every node that may time out must get heartbeats.
 - Quorum checks are not derived from timing, and could not be in this model.
   `Timely` does not bound responses, and bounding them would not suffice either.
@@ -287,6 +288,48 @@ Without this, a confirmation could follow a pending re-add and count while the n
 These proofs also tightened facts in the safety step summary:
 `Advance` records that an unchanged commit index means nothing was committable, and that a commit clears the role only when the node's retirement commits; `Kind.append` records that each appended entry passed `appendEntry`'s guards; and `AEOk` records that a request with entries carries its sender's exact commit index.
 For stable leadership, `Summary` records why a term rises (`term_cause`), that only an election timeout starts a pre-vote (`pre_vote`), and when a primary keeps its role (`role_keep`); `SendOK` records where vote proposals come from and the term a rejection carries.
+
+## A lagging follower deposes the primary
+
+This is a liveness weakness of CCF itself, not of the model, and the model now departs from CCF to exclude it.
+Two CCF behaviours combine (`src/consensus/aft/raft.h`):
+
+- `recv_append_entries` calls `restart_election_timeout` only after the `prev_term` check passes; a rejected AppendEntries leaves the follower's timer running.
+- `recv_request_vote_unsafe` applies the known-leader check (`leader_id.has_value()`) and the voted-for check to `RegularVote` only.
+  A pre-vote is granted to any candidate of the node's term whose committable log is at least as up to date as the node's own, even by a follower that is receiving heartbeats from a live primary.
+  Raft's pre-vote, and etcd's lease check, reject such a request while the node has heard from a leader within an election timeout.
+
+Worked example, three nodes `{L, f, g}`, election timeout `E = 7`, heartbeat interval `H = 1`, message delay `d = 1`:
+
+1. `L` is the primary of term `t` with log length 10.
+   `f` and `g` both hold the first 8 entries; the last two AppendEntries to them were lost.
+   `f`'s election timer last reset 3 time units ago, so it fires in at most 4.
+2. `L`'s heartbeat to `f` carries `prev_idx = 10`.
+   `f` fails the `prev_term` check, replies with a NACK and does not reset its timer.
+   `L` steps back and resends from index 8; the round trip takes `2d = 2`, and each further step back costs another round trip.
+3. `f`'s timer fires before the repair completes.
+   `f` becomes a pre-vote candidate of term `t` and sends `RequestPreVote` to `L` and `g`.
+4. `g` is a content follower of `L`, but `f`'s log (8 entries of the same terms) is at least as up to date as `g`'s, and pre-votes skip the `leader_id` check, so `g` grants.
+   `f` has a pre-vote quorum `{f, g}` and becomes a candidate of term `t + 1`.
+5. `f`'s `RequestVote` of term `t + 1` reaches `g`.
+   `become_aware_of_new_term` calls `become_follower`, which resets `leader_id`, so the regular vote's known-leader check passes too, and `g` grants.
+6. `f` is the primary of term `t + 1`.
+   `L`'s next message to `g` is rejected with term `t + 1`, and `L` steps down.
+   `L`'s entries 9 and 10 were not committed, since no quorum held them, so safety is intact, but a working primary was deposed by the follower it was repairing.
+
+The steps repeat whenever a follower lags by more than the timer slack allows, so a slow or lossy link to one follower can depose primaries indefinitely.
+Nothing in the example depends on timing beyond the lag: with `E / 2 = 3.5`, a repair of two steps back already takes `2 * 2d + H + d = 6` from the last reset.
+
+Where it shows up in the proofs:
+
+- `stable_leader` and the windowed `stable_window` take `Matching`, or `WindowMatching`, as a premise: every AppendEntries from the primary delivered to a participant passes the log check.
+  That premise is exactly "step 2 never happens".
+- `duelling_leaders_resolve` hands over a primary whose voters' logs may be shorter than its own, so its first heartbeats to them can be rejected; the same mechanism then applies in the fresh window.
+
+The model's `handleRequestPreVoteRequest` now grants a pre-vote only while the node knows no primary (`primaryKnown` is false), the counterpart of `leader_id` in `raft.h`.
+A follower clears it only when its own timer fires or it adopts a new term, so `g` refuses in step 4, and `f`'s election fails.
+This is the one deliberate departure of the model from CCF; the fix in CCF is to apply the `leader_id` check at `raft.h` line 1721 to pre-votes as well.
+Until CCF changes, the results above do not cover the behaviour in the example.
 
 ## Literature
 
