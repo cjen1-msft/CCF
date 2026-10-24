@@ -113,8 +113,16 @@ def duelMargin (bounds : Bounds) (maxDelay : Real) : Real :=
   bounds.heartbeatInterval + 5 * maxDelay
 
 /-- Provisional: an upper bound on the real time one round of a duel takes, so
-that a good period of `rounds * roundLength` contains `rounds` rounds. -/
+that a good period of `rounds * roundLength` contains `rounds` rounds: the race
+itself, then the winner's first signature (`signatureInterval`) and its
+replication to a quorum (a send pass and a round trip).
+Needed: a single-node primary that is due to sign does not reset its timer, so
+no draw constrains it, and with `signatureInterval` beyond the window nothing
+commits in it although `settleProbability` is one. -/
 def roundLength (bounds : Bounds) (maxDelay : Real) : Real :=
-  2 * bounds.electionTimeout + 4 * maxDelay
+  2 * bounds.electionTimeout
+  + bounds.signatureInterval
+  + bounds.heartbeatInterval
+  + 6 * maxDelay
 
 end CCFRaft.Liveness
