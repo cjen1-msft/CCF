@@ -47,10 +47,11 @@ structure Env (trace : Trace W Liveness.Event) (start last : Nat)
     : Prop where
   startLe : start <= last
   lastFound : exists point, trace.stateAt last = some point
+  ends : forall index step, trace.stepAt index = some step -> index < last
   mono
     : forall index later,
         index <= later -> later <= last -> clock trace index <= clock trace later
-  bounded : forall index, index <= last -> clock trace index <= stop
+  bounded : forall index, index < last -> clock trace index <= stop
   prompt
     : forall index step packet sent,
         trace.stepAt index = some step
@@ -139,14 +140,15 @@ theorem env_of_window {maxDelay heartbeat : Real}
     fun index point le le' found =>
       window.staysActive.live index point (inside index le le') found
   have stopNonneg : time first <= time first + duration := by linarith
-  refine ⟨afterStart, ⟨lastPoint, by rw [cut_stateAt_of_le le_rfl]; exact lastFound⟩, ?_, ?_, ?_,
-    ?_, ?_⟩
+  refine ⟨afterStart, ⟨lastPoint, by rw [cut_stateAt_of_le le_rfl]; exact lastFound⟩,
+    fun _ _ stepped => (stepAt_of_cut stepped).1, ?_, ?_, ?_, ?_, ?_⟩
   · intro index later le le'
     obtain ⟨a, aFound⟩ := Trace.stateAt_of_le (le.trans le') lastFound
     obtain ⟨b, bFound⟩ := Trace.stateAt_of_le le' lastFound
     rw [clockCut index a (le.trans le') aFound, clockCut later b le' bFound]
     exact timeMono le aFound bFound
-  · intro index le
+  · intro index lt
+    have le := lt.le
     obtain ⟨a, aFound⟩ := Trace.stateAt_of_le le lastFound
     rw [clockCut index a le aFound]
     rcases Nat.le_total index start with low | high
@@ -291,5 +293,64 @@ theorem env_of_window {maxDelay heartbeat : Real}
         linarith
 
 end Derive
+
+section Restrict
+
+variable {trace : Trace W Liveness.Event}
+
+theorem clock_cut {last index : Nat} (le : index <= last)
+    : clock (cut trace last) index = clock trace index := by
+  simp only [clock, cut_stateAt_of_le le]
+
+/-- The timing facts on a shorter cut that ends where the clock first passes an
+earlier deadline `bound`. -/
+theorem Env.restrict {start last : Nat} {stop delay interval : Real} {leader peer : NodeID}
+    (env : Env trace start last stop delay interval leader peer) {cutoff : Nat} {bound : Real}
+    (startLe : start <= cutoff) (le : cutoff <= last) (stopLe : bound <= stop)
+    (below : forall index, index < cutoff -> clock trace index <= bound)
+    (beyond : cutoff < last -> bound < clock trace cutoff)
+    : Env (cut trace cutoff) start cutoff bound delay interval leader peer := by
+  -- A step whose clock is within the bound is a step of the shorter cut.
+  have inside : forall index step, trace.stepAt index = some step
+      -> clock trace index <= bound -> index < cutoff := by
+    intro index step stepped clockLe
+    have lt := env.ends index step stepped
+    by_contra late
+    have := beyond (by omega)
+    have := env.mono cutoff index (by omega) lt.le
+    linarith
+  obtain ⟨lastPoint, lastFound⟩ := env.lastFound
+  obtain ⟨point, pointFound⟩ := Trace.stateAt_of_le le lastFound
+  refine ⟨startLe, ⟨point, by rw [cut_stateAt_of_le le_rfl]; exact pointFound⟩,
+    fun _ _ stepped => (stepAt_of_cut stepped).1, ?_, ?_, ?_, ?_, ?_⟩
+  · intro index later le' le''
+    rw [clock_cut (le'.trans le''), clock_cut le'']
+    exact env.mono index later le' (le''.trans le)
+  · intro index lt
+    rw [clock_cut lt.le]
+    exact below index lt
+  · intro index step packet sent stepped action sentAt
+    obtain ⟨lt, stepped⟩ := stepAt_of_cut stepped
+    obtain ⟨sentLt, _⟩ := stepAt_of_cut (Exists.choose_spec sentAt).1
+    rw [clock_cut lt.le, clock_cut sentLt.le]
+    exact env.prompt index step packet sent stepped action ((cut_sentAt sentLt).mp sentAt)
+  · intro index packet afterStart sentAt ends deadline
+    obtain ⟨sentLt, _⟩ := stepAt_of_cut (Exists.choose_spec sentAt).1
+    have sentAt := (cut_sentAt sentLt).mp sentAt
+    rw [clock_cut sentLt.le] at deadline
+    obtain ⟨later, step, after, stepped, action⟩ :=
+      env.arrives index packet afterStart sentAt ends (by linarith)
+    have := env.prompt later step packet index stepped action sentAt
+    have lt := inside later step stepped (by linarith)
+    exact ⟨later, step, after, by rw [cut_stepAt_of_lt lt]; exact stepped, action⟩
+  · intro low startLe' deadline
+    rw [clock_cut startLe] at startLe'
+    obtain ⟨index, step, batchEnds, afterStart, lower, upper, stepped, action⟩ :=
+      env.passes low startLe' (by linarith)
+    have lt := inside index step stepped (by linarith)
+    exact ⟨index, step, batchEnds, afterStart, by rw [clock_cut lt.le]; exact lower,
+      by rw [clock_cut lt.le]; exact upper, by rw [cut_stepAt_of_lt lt]; exact stepped, action⟩
+
+end Restrict
 
 end CCFRaft.Proofs.Timed
