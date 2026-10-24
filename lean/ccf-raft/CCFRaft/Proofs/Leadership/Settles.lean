@@ -77,6 +77,34 @@ def WindowCovered (trace : Trace W Liveness.Event) (start : Nat) (duration : Rea
             -> nodeState (proto earlierPoint) leader = some leaderState
             -> node ∈ eligiblePeers leaderState leader
 
+/-- `QuietStart` with a freshness `fresh` in place of half an election timeout:
+the term is quiet at `start`, and no node of the term times out before
+`fresh` after it. An election spreads the participants' timer resets over a few
+message delays, so the duel that ends in `start` can only promise some
+`fresh` below `electionTimeout / 2`. -/
+structure FreshStart (trace : Trace W Liveness.Event) (start : Nat) (leader : NodeID)
+    (term : Nat) (fresh : Real)
+    : Prop where
+  quiet
+    : exists first, trace.stateAt start = some first /\ Quiet leader term (proto first)
+  timers
+    : forall first index step node state,
+        trace.stateAt start = some first
+        -> start <= index
+        -> trace.stepAt index = some step
+        -> step.action = .local node (.timeout .election)
+        -> nodeState (proto step.before) node = some state
+        -> state.currentTerm = term
+        -> time first + fresh <= time step.before
+
+omit [HasLive W] [HasNetwork W] in
+/-- A quiet start is fresh for half an election timeout. -/
+theorem FreshStart.of_quietStart {trace : Trace W Liveness.Event} {start : Nat}
+    {leader : NodeID} {term : Nat} {electionTimeout : Real}
+    (initial : QuietStart trace start leader term electionTimeout)
+    : FreshStart trace start leader term (electionTimeout / 2) :=
+  ⟨initial.quiet, initial.timers⟩
+
 section Trace
 
 variable {system : CCF.TransitionSystem Model.State Model.Action}
@@ -330,12 +358,13 @@ theorem window_reset_follows {heartbeatInterval maxDelay : Real}
 
 /-- While `leader` leads `term` and a tracked participant stays within `term`, the
 participant does not time out in the window at least half an election timeout
-after the start. -/
+after the start, once `fresh` has passed and `fresh` exceeds the reset period. -/
 theorem window_no_timeout {bounds : Bounds} {maxDelay : Real}
     (heartbeats : trace.HeartbeatScheduling (some bounds.heartbeatInterval))
     (elections : trace.ElectionScheduling (some (bounds.electionTimeout / 2)))
     (bounded : trace.Valid (boundedDelayModel maxDelay)) (nonneg : 0 <= maxDelay)
-    (ratio : bounds.heartbeatInterval + maxDelay < bounds.electionTimeout / 2)
+    {fresh : Real} (ratio : bounds.heartbeatInterval + maxDelay < fresh)
+    (freshLe : fresh <= bounds.electionTimeout / 2)
     {start : Nat} {duration : Real} {leader node : NodeID} {term : Nat}
     {participants : Finset NodeID}
     (good : GoodPeriod trace start duration participants)
@@ -347,7 +376,7 @@ theorem window_no_timeout {bounds : Bounds} {maxDelay : Real}
     (within : Within trace start duration index)
     (event : step.action = .local node (.timeout .election))
     {first : W} (firstFound : trace.stateAt start = some first)
-    (fresh : time first + bounds.electionTimeout / 2 <= time step.before)
+    (late : time first + fresh <= time step.before)
     (leads
       : forall earlier point,
           start <= earlier
@@ -377,7 +406,7 @@ theorem window_no_timeout {bounds : Bounds} {maxDelay : Real}
   obtain ⟨reset, resetPoint, _, before, resetFound, recent, resetStep, resetStepped, isReset⟩ :=
     recent_reset
       (fun _ _ _ _ le firstFound lastFound => admissible.time_le le firstFound lastFound)
-      ratio afterStart firstFound (admissible.before stepped) fresh
+      ratio afterStart firstFound (admissible.before stepped) late
       (reset := fun later =>
         exists reset, trace.stepAt later = some reset /\ ElectionReset reset node)
       (fun earlier point after le recorded early => by
@@ -390,17 +419,18 @@ theorem window_no_timeout {bounds : Bounds} {maxDelay : Real}
   rw [← resetFound] at recent
   linarith
 
-/-- From a quiet start, the term stays quiet at every recorded state of a good
+/-- From a fresh start, the term stays quiet at every recorded state of a good
 period in which the primary stays active, its AppendEntries pass participants'
 log checks, and only tracked participants of the term time out. -/
 theorem window_quiet {bounds : Bounds} {maxDelay : Real}
     (heartbeats : trace.HeartbeatScheduling (some bounds.heartbeatInterval))
     (elections : trace.ElectionScheduling (some (bounds.electionTimeout / 2)))
     (bounded : trace.Valid (boundedDelayModel maxDelay)) (nonneg : 0 <= maxDelay)
-    (ratio : bounds.heartbeatInterval + maxDelay < bounds.electionTimeout / 2)
+    {fresh : Real} (ratio : bounds.heartbeatInterval + maxDelay < fresh)
+    (freshLe : fresh <= bounds.electionTimeout / 2)
     {start : Nat} {duration : Real} {leader : NodeID} {term : Nat}
     {participants : Finset NodeID}
-    (initial : QuietStart trace start leader term bounds.electionTimeout)
+    (initial : FreshStart trace start leader term fresh)
     (good : GoodPeriod trace start duration participants)
     (active : Window.StaysActive trace start duration leader)
     (matching : WindowMatching trace start duration leader term participants)
@@ -479,8 +509,9 @@ theorem window_quiet {bounds : Bounds} {maxDelay : Real}
         covered index step c.actor c.tr.pre indexWithin stepped timeout different c.tr.found
           (by omega)
       obtain ⟨first, firstFound, _⟩ := initial.quiet
-      exact window_no_timeout admissible heartbeats elections bounded nonneg ratio good
-        active matching leaderIn nodeIn afterStart stepped indexWithin timeout firstFound
+      exact window_no_timeout admissible heartbeats elections bounded nonneg ratio freshLe
+        good active matching leaderIn nodeIn afterStart stepped indexWithin timeout
+        firstFound
         (initial.timers first index step c.actor c.tr.pre firstFound afterStart stepped
           timeout c.tr.found (by omega))
         (fun earlier point after le found =>
@@ -490,9 +521,38 @@ theorem window_quiet {bounds : Bounds} {maxDelay : Real}
             (Concrete.mem_of_nodeState nodeFound))
         tracked
 
-/-- A stable window from a quiet start, under the proposed premises of
+/-- A stable window from a fresh start, under the proposed premises of
 `Properties.signature_settles`: the live quorum and losslessness come from the
 good period, and the election timers from the timer model. -/
+theorem stable_window_fresh [HasTimers W] {bounds : Bounds} {maxDelay : Real}
+    (timers : trace.Valid (timerModel bounds.electionTimeout))
+    (bounded : trace.Valid (boundedDelayModel maxDelay)) (nonneg : 0 <= maxDelay)
+    (heartbeats : trace.HeartbeatScheduling (some bounds.heartbeatInterval))
+    {fresh : Real} (ratio : bounds.heartbeatInterval + maxDelay < fresh)
+    (freshLe : fresh <= bounds.electionTimeout / 2)
+    {start : Nat} {duration : Real} {leader : NodeID} {term : Nat}
+    {participants : Finset NodeID} (leaderIn : leader ∈ participants)
+    (initial : FreshStart trace start leader term fresh)
+    (good : GoodPeriod trace start duration participants)
+    (active : Window.StaysActive trace start duration leader)
+    (matching : WindowMatching trace start duration leader term participants)
+    (covered : WindowCovered trace start duration leader term participants)
+    : StableWindow trace start duration leader term participants where
+  stableLeader :=
+    window_quiet admissible heartbeats
+      (Liveness.electionScheduling_of_timerModel admissible.coherent admissible.timing
+        timers)
+      bounded nonneg ratio freshLe initial good active matching covered leaderIn
+  staysActive := active
+  liveQuorum index point state within found leaderFound :=
+    good.quorum index point leader state within found
+      (active.live index point within found) leaderFound
+  lossless index step packet within stepped dropped := by
+    rintro (⟨source, target⟩ | ⟨source, target⟩)
+    · exact good.lossless index step packet within stepped dropped ⟨source ▸ leaderIn, target⟩
+    · exact good.lossless index step packet within stepped dropped ⟨source, target ▸ leaderIn⟩
+
+/-- `stable_window_fresh` from a quiet start, fresh for half an election timeout. -/
 theorem stable_window [HasTimers W] {bounds : Bounds} {maxDelay : Real}
     (timers : trace.Valid (timerModel bounds.electionTimeout))
     (bounded : trace.Valid (boundedDelayModel maxDelay)) (nonneg : 0 <= maxDelay)
@@ -505,20 +565,9 @@ theorem stable_window [HasTimers W] {bounds : Bounds} {maxDelay : Real}
     (active : Window.StaysActive trace start duration leader)
     (matching : WindowMatching trace start duration leader term participants)
     (covered : WindowCovered trace start duration leader term participants)
-    : StableWindow trace start duration leader term participants where
-  stableLeader :=
-    window_quiet admissible heartbeats
-      (Liveness.electionScheduling_of_timerModel admissible.coherent admissible.timing
-        timers)
-      bounded nonneg ratio initial good active matching covered leaderIn
-  staysActive := active
-  liveQuorum index point state within found leaderFound :=
-    good.quorum index point leader state within found
-      (active.live index point within found) leaderFound
-  lossless index step packet within stepped dropped := by
-    rintro (⟨source, target⟩ | ⟨source, target⟩)
-    · exact good.lossless index step packet within stepped dropped ⟨source ▸ leaderIn, target⟩
-    · exact good.lossless index step packet within stepped dropped ⟨source, target ▸ leaderIn⟩
+    : StableWindow trace start duration leader term participants :=
+  stable_window_fresh admissible timers bounded nonneg heartbeats ratio le_rfl leaderIn
+    (FreshStart.of_quietStart initial) good active matching covered
 
 end Recorded
 
