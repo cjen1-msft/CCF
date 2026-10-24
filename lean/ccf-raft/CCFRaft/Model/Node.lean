@@ -445,8 +445,17 @@ def handleRequestPreVoteRequest
     (source : NodeID)
     (request : RequestVoteRequest)
     : NodeEffect NodeState := do
+  -- Deliberate departure from CCF: `raft.h` (`recv_request_vote_unsafe`) applies
+  -- the known-leader check to regular votes only, so a follower that is content
+  -- with its primary still grants pre-votes. That lets one lagging follower
+  -- depose a healthy primary (LIVENESS.md, "A lagging follower deposes the
+  -- primary"). Here a node grants a pre-vote only while it knows no primary,
+  -- as in etcd's lease check.
   let voteGranted :=
-    decide (request.term = state.currentTerm /\ voteLogUpToDate state request)
+    decide
+      (request.term = state.currentTerm
+        /\ voteLogUpToDate state request
+        /\ !state.primaryKnown)
   caps.send (.requestPreVoteResponse { term := state.currentTerm, voteGranted }) source
   return state
 
