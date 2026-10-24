@@ -69,7 +69,8 @@ theorem request (keeps : Keeps first second)
 
 end Keeps
 
-theorem keeps_bumped (state : NodeState) (term : Nat) : Keeps state (bumpedState state term) :=
+theorem keeps_bumped (state : NodeState) (term : Nat)
+    : Keeps state (bumpedState state term) :=
   ⟨rfl, rfl, rfl⟩
 
 theorem sends_run {α : Type} {P : α -> List Model.Envelope -> Prop}
@@ -135,15 +136,20 @@ theorem preVoteRequest_receive (source : NodeID) (before : NodeState)
         (fun after sent =>
           Observed before request.term after
           /\ sent
-            = [{ source := self
-                 target := source
-                 payload :=
-                  .requestPreVoteResponse
-                    { term := after.currentTerm,
-                      voteGranted :=
-                        decide
-                          (request.term = after.currentTerm
-                            /\ voteLogUpToDate after request) } }])
+              = [{
+                  source := self
+                  target := source
+                  payload :=
+                    .requestPreVoteResponse
+                      {
+                        term := after.currentTerm,
+                        voteGranted :=
+                          decide
+                            (request.term = after.currentTerm
+                              /\ voteLogUpToDate after request
+                              /\ !after.primaryKnown)
+                      }
+                }])
         (receive caps self source before (.requestPreVoteRequest request)) := by
   simp only [receive]
   refine Sends.ite' (fun no => by simp at no) fun _ => ?_
@@ -165,12 +171,16 @@ theorem voteRequest_receive (source : NodeID) (before : NodeState)
                     /\ voteLogUpToDate middle request
                     /\ middle.primaryKnown = false
                     /\ (middle.votedFor = none \/ middle.votedFor = some source))
-            /\ after = (if granted then { middle with votedFor := some source } else middle)
+            /\ after
+                = (if granted then { middle with votedFor := some source } else middle)
             /\ sent
-              = [{ source := self
-                   target := source
-                   payload :=
-                    .requestVoteResponse { term := middle.currentTerm, voteGranted := granted } }])
+                = [{
+                    source := self
+                    target := source
+                    payload :=
+                      .requestVoteResponse
+                        { term := middle.currentTerm, voteGranted := granted }
+                  }])
         (receive caps self source before (.requestVoteRequest request)) := by
   simp only [receive]
   refine Sends.ite' (fun no => by simp at no) fun _ => ?_
@@ -181,26 +191,31 @@ theorem voteRequest_receive (source : NodeID) (before : NodeState)
   · exact ⟨_, _, Or.inl rfl, by simp, rfl, rfl⟩
 
 /-- What a broadcast to the other active members sends. -/
-def Broadcast (self : NodeID) (state : NodeState) (message : Message) : List Model.Envelope :=
-  ((state.activeMembers.erase self).sort).map fun target =>
-    { source := self, target, payload := message }
+def Broadcast (self : NodeID) (state : NodeState) (message : Message)
+    : List Model.Envelope :=
+  ((state.activeMembers.erase self).sort).map
+    fun target =>
+      { source := self, target, payload := message }
 
 theorem forIn_sends (message : Message) (targets : List NodeID)
     : Sends
         (fun _ sent =>
           sent = targets.map fun target => { source := self, target, payload := message })
-        (forIn targets PUnit.unit fun destination _ => do
-          (Capabilities.record self : Caps).send message destination
-          pure (ForInStep.yield PUnit.unit)) := by
+        (forIn targets PUnit.unit
+          fun destination _ => do
+            (Capabilities.record self : Caps).send message destination
+            pure (ForInStep.yield PUnit.unit)) := by
   induction targets with
   | nil => exact Sends.pure' rfl
   | cons head tail ih =>
       rw [List.forIn_cons]
       refine Sends.bind'
-        (Q := fun step sent =>
-          step = ForInStep.yield PUnit.unit
-          /\ sent = [{ source := self, target := head, payload := message }])
-        (Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ⟨rfl, by simpa using eq⟩)
+        (Q :=
+          fun step sent =>
+            step = ForInStep.yield PUnit.unit
+            /\ sent = [{ source := self, target := head, payload := message }])
+        (Sends.bind' (Sends.send _ _ _)
+          fun _ sent eq => Sends.pure' ⟨rfl, by simpa using eq⟩)
         fun step sent ⟨stepEq, eq⟩ => ?_
       subst stepEq eq
       exact Sends.mono ih fun _ later eq => by subst eq; simp
@@ -209,18 +224,21 @@ theorem broadcast_exact (state : NodeState) (message : Message)
     : Sends (fun _ sent => sent = Broadcast self state message)
         (broadcastToOthers caps self state message) := by
   unfold broadcastToOthers Broadcast
-  exact Sends.bind' (forIn_sends self message _) fun _ sent eq => Sends.pure' (by simpa using eq)
+  exact Sends.bind' (forIn_sends self message _)
+    fun _ sent eq => Sends.pure' (by simpa using eq)
 
 /-- A primary's first step: it becomes primary of the candidate's term and sends only
 AppendEntries of that term. -/
-def Wins (self : NodeID) (candidate after : NodeState) (sent : List Model.Envelope) : Prop :=
+def Wins (self : NodeID) (candidate after : NodeState) (sent : List Model.Envelope)
+    : Prop :=
   after.role = .primary
   /\ after.currentTerm = candidate.currentTerm
   /\ forall e,
       e ∈ sent
       -> e.source = self
-        /\ exists request,
-            e.payload = .appendEntriesRequest request /\ request.term = candidate.currentTerm
+          /\ exists request,
+              e.payload = .appendEntriesRequest request
+              /\ request.term = candidate.currentTerm
 
 /-- A log whose entries are all below the current term. -/
 def Below (state : NodeState) : Prop :=
@@ -256,8 +274,13 @@ theorem becomePrimary_wins (candidate : NodeState) (below : Below candidate)
     simp only [primaryBelow.no_commit self, ↓reduceIte]
   dsimp only
   rw [noAdvance]
-  refine Sends.bind' (Sends.pure' (P := fun state sent =>
-      state = primaryState candidate /\ sent = []) ⟨rfl, rfl⟩) fun leader _ ⟨eq, nil⟩ => ?_
+  refine Sends.bind'
+    (Sends.pure'
+      (P :=
+        fun state sent =>
+          state = primaryState candidate /\ sent = [])
+      ⟨rfl, rfl⟩)
+    fun leader _ ⟨eq, nil⟩ => ?_
   subst eq nil
   refine Sends.bind' (Q := fun _ later => forall e, e ∈ later -> e.source = self
       /\ exists request, e.payload = .appendEntriesRequest request
@@ -289,13 +312,14 @@ theorem electIfQuorum_elect (state : NodeState)
   · exact Sends.pure' ⟨rfl, rfl⟩
 
 /-- What `becomeCandidate` does: elect on the self-vote, then ask for votes. -/
-def Candidacy (self : NodeID) (state after : NodeState) (sent : List Model.Envelope) : Prop :=
+def Candidacy (self : NodeID) (state after : NodeState) (sent : List Model.Envelope)
+    : Prop :=
   exists won,
     Elect self (freshCandidate self state) after won
     /\ sent
-      = won
-        ++ Broadcast self (freshCandidate self state)
-            (.requestVoteRequest (makeRequestVoteRequest (freshCandidate self state)))
+        = won
+          ++ Broadcast self (freshCandidate self state)
+              (.requestVoteRequest (makeRequestVoteRequest (freshCandidate self state)))
 
 theorem becomeCandidate_candidacy (state : NodeState)
     : Sends (Candidacy self state) (becomeCandidate caps state self) := by
@@ -306,7 +330,8 @@ theorem becomeCandidate_candidacy (state : NodeState)
   exact ⟨won, elected, by simp [eq]; rfl⟩
 
 /-- What a pre-vote candidate does once its pre-votes change. -/
-def PreVoted (self : NodeID) (state after : NodeState) (sent : List Model.Envelope) : Prop :=
+def PreVoted (self : NodeID) (state after : NodeState) (sent : List Model.Envelope)
+    : Prop :=
   if hasQuorum state.activeConfigurations state.preVotesGranted then
     Candidacy self state after sent
   else
@@ -318,14 +343,14 @@ theorem startElection_outcome (state : NodeState)
         (fun after sent =>
           canStartElection state self
           /\ if hasQuorum (preVoteState self state).activeConfigurations
-              (preVoteState self state).preVotesGranted then
-              Candidacy self (preVoteState self state) after sent
-            else
-              after = preVoteState self state
-              /\ sent
-                = Broadcast self (preVoteState self state)
-                    (.requestPreVoteRequest
-                      (makeRequestVoteRequest (preVoteState self state))))
+                  (preVoteState self state).preVotesGranted then
+                Candidacy self (preVoteState self state) after sent
+              else
+                after = preVoteState self state
+                /\ sent
+                    = Broadcast self (preVoteState self state)
+                        (.requestPreVoteRequest
+                          (makeRequestVoteRequest (preVoteState self state))))
         (startElection caps state self) := by
   unfold startElection
   refine Sends.bind' Sends.guard' fun _ sent ⟨can, empty⟩ => ?_
@@ -350,14 +375,17 @@ theorem preVoteResponse_receive (source : NodeID) (before : NodeState)
           exists middle,
             Observed before response.term middle
             /\ if source ∈ eligiblePeers before self
-                /\ middle.role = .preVoteCandidate
-                /\ response.term = middle.currentTerm
-                /\ response.voteGranted = true then
-                PreVoted self
-                  { middle with preVotesGranted := insert source middle.preVotesGranted }
-                  after sent
-              else
-                after = middle /\ sent = [])
+                  /\ middle.role = .preVoteCandidate
+                  /\ response.term = middle.currentTerm
+                  /\ response.voteGranted = true then
+                  PreVoted self
+                    {
+                      middle with
+                        preVotesGranted := insert source middle.preVotesGranted
+                    }
+                    after sent
+                else
+                  after = middle /\ sent = [])
         (receive caps self source before (.requestPreVoteResponse response)) := by
   simp only [receive]
   refine Sends.ite' (fun no => ?_) fun yes => ?_
@@ -397,13 +425,14 @@ theorem voteResponse_receive (source : NodeID) (before : NodeState)
           exists middle,
             Observed before response.term middle
             /\ if source ∈ eligiblePeers before self
-                /\ middle.role = .candidate
-                /\ response.term = middle.currentTerm
-                /\ response.voteGranted = true then
-                Elect self { middle with votesGranted := insert source middle.votesGranted }
-                  after sent
-              else
-                after = middle /\ sent = [])
+                  /\ middle.role = .candidate
+                  /\ response.term = middle.currentTerm
+                  /\ response.voteGranted = true then
+                  Elect self
+                    { middle with votesGranted := insert source middle.votesGranted }
+                    after sent
+                else
+                  after = middle /\ sent = [])
         (receive caps self source before (.requestVoteResponse response)) := by
   simp only [receive]
   refine Sends.ite' (fun no => ?_) fun yes => ?_
