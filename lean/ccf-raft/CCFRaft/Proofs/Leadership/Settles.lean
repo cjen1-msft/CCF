@@ -44,24 +44,33 @@ open HasNetwork (pending)
 
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
 
-/-- `Matching` cut to the window and to participants: every AppendEntries request
-from the primary delivered in the window to a participant of `term`, other than a
-candidate or pre-vote candidate, passes the participant's log check. -/
-def WindowMatching (trace : Trace W Liveness.Event) (start : Nat) (duration : Real)
-    (leader : NodeID) (term : Nat) (participants : Finset NodeID)
+/-- `WindowMatching` at one index: an AppendEntries request from the primary
+delivered there, in the window, to another participant of `term` that is neither a
+candidate nor a pre-vote candidate, passes the participant's log check. -/
+def MatchesAt (trace : Trace W Liveness.Event) (start : Nat) (duration : Real)
+    (leader : NodeID) (term : Nat) (participants : Finset NodeID) (index : Nat)
     : Prop :=
-  forall index step packet request state,
+  forall step packet request state,
     Within trace start duration index
     -> trace.stepAt index = some step
     -> step.action = .deliver packet
     -> packet.envelope.source = leader
     -> packet.envelope.target ∈ participants
+    -> Not (packet.envelope.target = leader)
     -> packet.envelope.payload = .appendEntriesRequest request
     -> nodeState (proto step.before) packet.envelope.target = some state
     -> state.currentTerm = term
     -> Not (state.role = .candidate)
     -> Not (state.role = .preVoteCandidate)
     -> termAt state.log request.prevLogIndex = request.prevLogTerm
+
+/-- `Matching` cut to the window and to participants: every AppendEntries request
+from the primary delivered in the window to another participant of `term`, other
+than a candidate or pre-vote candidate, passes the participant's log check. -/
+def WindowMatching (trace : Trace W Liveness.Event) (start : Nat) (duration : Real)
+    (leader : NodeID) (term : Nat) (participants : Finset NodeID)
+    : Prop :=
+  forall index, MatchesAt trace start duration leader term participants index
 
 /-- At `start` every participant other than the primary is in the primary's
 latest active configuration, and so is one of its replication peers. -/
@@ -244,9 +253,13 @@ theorem window_reset_follows {heartbeatInterval maxDelay : Real}
     {participants : Finset NodeID}
     (good : GoodPeriod trace start duration participants)
     (active : Window.StaysActive trace start duration leader)
-    (matching : WindowMatching trace start duration leader term participants)
     (leaderIn : leader ∈ participants) (nodeIn : node ∈ participants)
+    (different : Not (node = leader))
     {index : Nat} {last : W} (lastFound : trace.stateAt index = some last)
+    (matching
+      : forall moment,
+          moment < index
+          -> MatchesAt trace start duration leader term participants moment)
     (within : Within trace start duration index)
     (leads
       : forall earlier point,
@@ -358,9 +371,14 @@ theorem window_reset_follows {heartbeatInterval maxDelay : Real}
   · exact Or.inr (Or.inl preVote)
   exact Or.inr
     (Or.inr
-      (matching delivery deliveryStep packet _ targetState
-        (windowed delivery (by omega) deliveryBefore.le) deliveredAt deliverEq source
-        (target ▸ nodeIn) payload targetFound (by omega) candidate preVote))
+      (matching delivery deliveryBefore deliveryStep packet _ targetState
+        (windowed delivery (by omega) deliveryBefore.le)
+        deliveredAt deliverEq source
+        (target ▸ nodeIn)
+        (by rw [target]; exact different)
+        payload targetFound
+        (by omega)
+        candidate preVote))
 
 /-- While `leader` leads `term` and a tracked participant stays within `term`, the
 participant does not time out in the window at least `fresh` after the start,
@@ -375,9 +393,13 @@ theorem window_no_timeout {bounds : Bounds} {maxDelay : Real}
     {participants : Finset NodeID}
     (good : GoodPeriod trace start duration participants)
     (active : Window.StaysActive trace start duration leader)
-    (matching : WindowMatching trace start duration leader term participants)
     (leaderIn : leader ∈ participants) (nodeIn : node ∈ participants)
+    (different : Not (node = leader))
     {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
+    (matching
+      : forall moment,
+          moment < index
+          -> MatchesAt trace start duration leader term participants moment)
     (afterStart : start <= index) (stepped : trace.stepAt index = some step)
     (within : Within trace start duration index)
     (event : step.action = .local node (.timeout .election))
@@ -408,7 +430,8 @@ theorem window_no_timeout {bounds : Bounds} {maxDelay : Real}
           -> node ∈ eligiblePeers leaderState leader)
     : False := by
   have follows := window_reset_follows admissible heartbeats bounded nonneg good active
-    matching leaderIn nodeIn (admissible.before stepped) within leads nodeTerm tracked
+    leaderIn nodeIn different (admissible.before stepped) matching within leads nodeTerm
+    tracked
   obtain ⟨reset, resetPoint, _, before, resetFound, recent, resetStep, resetStepped, isReset⟩ :=
     recent_reset
       (fun _ _ _ _ le firstFound lastFound => admissible.time_le le firstFound lastFound)
@@ -452,7 +475,7 @@ theorem quietAmong_leader {participants : Finset NodeID} {leader : NodeID}
 primary's latest configuration keeps every participant, at every recorded state
 of a good period in which the primary stays active and its AppendEntries pass
 participants' log checks. -/
-theorem window_invariant {bounds : Bounds} {maxDelay : Real}
+theorem window_invariant_before {bounds : Bounds} {maxDelay : Real}
     (heartbeats : trace.HeartbeatScheduling (some bounds.heartbeatInterval))
     (elections : trace.ElectionScheduling (some (bounds.electionTimeout / 2)))
     (bounded : trace.Valid (boundedDelayModel maxDelay)) (nonneg : 0 <= maxDelay)
@@ -464,17 +487,21 @@ theorem window_invariant {bounds : Bounds} {maxDelay : Real}
     (members : LatestMembers trace start leader participants)
     (good : GoodPeriod trace start duration participants)
     (active : Window.StaysActive trace start duration leader)
-    (matching : WindowMatching trace start duration leader term participants)
-    (leaderIn : leader ∈ participants)
+    (leaderIn : leader ∈ participants) {bound : Nat}
+    (matching
+      : forall moment,
+          moment < bound
+          -> MatchesAt trace start duration leader term participants moment)
     : forall index point,
-        Within trace start duration index
+        index <= bound
+        -> Within trace start duration index
         -> trace.stateAt index = some point
         -> QuietAmong participants leader term (proto point)
             /\ MembersAt participants leader (proto point) := by
   intro index
   induction index using Nat.strong_induction_on with
   | _ index ih =>
-      intro point within recorded
+      intro point inBound within recorded
       by_cases atStart : index = start
       · subst index
         obtain ⟨first, firstFound, quiet⟩ := initial.quiet
@@ -500,7 +527,7 @@ theorem window_invariant {bounds : Bounds} {maxDelay : Real}
               -> QuietAmong participants leader term (proto point)
                   /\ MembersAt participants leader (proto point) :=
         fun earlier point after le found =>
-          ih earlier (by omega) point (windowed earlier after le) found
+          ih earlier (by omega) point (by omega) (windowed earlier after le) found
       have indexWithin := windowed index afterStart le_rfl
       obtain ⟨nowQuiet, nowMembers⟩ :=
         earlier_ index step.before afterStart le_rfl (admissible.before stepped)
@@ -568,7 +595,8 @@ theorem window_invariant {bounds : Bounds} {maxDelay : Real}
         have timeout := local_ _ eventEq
         obtain ⟨first, firstFound, _⟩ := initial.quiet
         exact window_no_timeout admissible heartbeats elections bounded nonneg ratio freshLe
-          good active matching leaderIn actorIn afterStart stepped indexWithin timeout
+          good active leaderIn actorIn different (fun moment lt => matching moment (by omega))
+          afterStart stepped indexWithin timeout
           firstFound
           (initial.timers first index step c.actor c.tr.pre firstFound afterStart stepped
             timeout c.tr.found actorIn (by omega))
@@ -592,6 +620,31 @@ theorem window_invariant {bounds : Bounds} {maxDelay : Real}
             (isolated (same ▸ leaderIn)) plain]
           exact nowMembers c.pre (same ▸ c.tr.found) node nodeIn different
         · exact nowMembers local_ (found_of_now c.prior before) node nodeIn different
+
+/-- `window_invariant_before` for a whole window of matching requests. -/
+theorem window_invariant {bounds : Bounds} {maxDelay : Real}
+    (heartbeats : trace.HeartbeatScheduling (some bounds.heartbeatInterval))
+    (elections : trace.ElectionScheduling (some (bounds.electionTimeout / 2)))
+    (bounded : trace.Valid (boundedDelayModel maxDelay)) (nonneg : 0 <= maxDelay)
+    {fresh : Real} (ratio : bounds.heartbeatInterval + maxDelay < fresh)
+    (freshLe : fresh <= bounds.electionTimeout / 2)
+    {start : Nat} {duration : Real} {leader : NodeID} {term : Nat}
+    {participants : Finset NodeID}
+    (initial : FreshStart trace start leader term participants fresh)
+    (members : LatestMembers trace start leader participants)
+    (good : GoodPeriod trace start duration participants)
+    (active : Window.StaysActive trace start duration leader)
+    (matching : WindowMatching trace start duration leader term participants)
+    (leaderIn : leader ∈ participants)
+    : forall index point,
+        Within trace start duration index
+        -> trace.stateAt index = some point
+        -> QuietAmong participants leader term (proto point)
+            /\ MembersAt participants leader (proto point) :=
+  fun index point =>
+    window_invariant_before admissible heartbeats elections bounded nonneg ratio freshLe
+      initial members good active leaderIn (bound := index)
+      (fun moment _ => matching moment) index point le_rfl
 
 /-- From a fresh start, the term stays quiet among participants at every recorded
 state of a good period in which the primary stays active and its AppendEntries
