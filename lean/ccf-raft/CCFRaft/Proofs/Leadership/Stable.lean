@@ -124,10 +124,12 @@ theorem reset_follows {heartbeatInterval : Real}
     by_contra notBefore
     have := admissible.time_le (Nat.le_of_not_lt notBefore) lastFound laterFound
     linarith
-  rcases sends with stopped | ⟨sendStep, stepped, state, frontier, found, event, _⟩
+  rcases sends with stopped | ⟨sendStep, stepped, batchEnds, event⟩
   · exact (stopped (due later laterPoint (by omega) beforeIndex.le laterFound)).elim
   rw [admissible.before stepped, Option.some.injEq] at laterFound
   subst laterPoint
+  obtain ⟨_, _, state, found, _, notRetired, _⟩ :=
+    due later sendStep.before (by omega) beforeIndex.le (admissible.before stepped)
   have stateTerm : state.currentTerm = term := by
     obtain ⟨state', found', _, termEq⟩ :=
       quiet_leader admissible (admissible.before stepped)
@@ -135,23 +137,15 @@ theorem reset_follows {heartbeatInterval : Real}
     rw [found, Option.some.injEq] at found'
     rw [found']
     exact termEq
-  have selected : sendStep.action.action = some (.local leader (.sendEntries node frontier)) := by
-    rw [event]; rfl
-  obtain ⟨actor, localEvent, current, next, outputs, acts, actorFound, ran, _, out, _⟩ :=
-    step_found (admissible.reachable_before stepped) (admissible.step stepped selected)
-  obtain ⟨same, eventEq⟩ := acts
-  subst same eventEq
-  rw [found, Option.some.injEq] at actorFound
-  subst actorFound
-  obtain ⟨new, eq, single⟩ := sendEntries_sends actor state node frontier {} _ _ ran
-  rw [eq, single] at out
+  obtain ⟨_, _, _, pass, _⟩ := pass_step admissible stepped event found
+  obtain ⟨batch, member⟩ := passBatches_nonempty pass.valid
   obtain ⟨packet, sent, envelope, sentTime⟩ :=
-    admissible.sentAt_of_emitted stepped selected out
-      (List.mem_append_right _ (List.mem_singleton_self _))
-  have source : packet.envelope.source = actor := by rw [envelope]
-  have target : packet.envelope.target = node := by rw [envelope]
+    pass_sends admissible stepped event found notRetired member
+  have source : packet.envelope.source = leader := by simp [envelope, batchEnvelope]
+  have target : packet.envelope.target = node := by simp [envelope, batchEnvelope]
   have payload : packet.envelope.payload =
-      .appendEntriesRequest (makeAppendEntriesRequest state node frontier) := by rw [envelope]
+      .appendEntriesRequest (makeAppendEntriesRequest state batch.1 batch.2) := by
+    simp [envelope, batchEnvelope]
   obtain ⟨delivery, deliveryStep, afterSend, deliveredAt, deliveryTime, delivered⟩ :=
     timely later packet sent (by omega) source ⟨_, payload⟩
   rw [sentTime] at deliveryTime

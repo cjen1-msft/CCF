@@ -231,7 +231,7 @@ theorem peer_due
     eligible index state le (by rw [Trace.nodeAt_of_stateAt found, nodeFound])
   ⟩
 
-/-- Persistent heartbeat obligations produce arbitrarily late log-end sends. -/
+/-- Persistent heartbeat obligations produce arbitrarily late send passes. -/
 theorem sends_often {bound : Option Real} (heartbeats : trace.HeartbeatScheduling bound)
     (live
       : forall index point,
@@ -243,8 +243,7 @@ theorem sends_often {bound : Option Real} (heartbeats : trace.HeartbeatSchedulin
           -> peer ∈ eligiblePeers state leader)
     : Often
         fun index =>
-          exists step,
-            trace.stepAt index = some step /\ ProductiveSend step leader peer := by
+          exists step, trace.stepAt index = some step /\ SendPass step leader peer := by
   obtain ⟨first, found⟩ := stable.1
   intro cutoff
   obtain ⟨index, step, le, stepped, productive⟩ :=
@@ -615,11 +614,11 @@ theorem floor_step (regime : Regime stable peer log agreed origin)
   have beforeNode : trace.nodeAt index leader = some before := by
     rw [admissible.nodeAt_before stepped, found]
   rcases (leader_move admissible stable peer (regime.afterStart.trans began) stepped found found').2
-      with same | ⟨endIndex, _, le, _, value, _⟩
+      with same | ⟨_, _, _, pass, _⟩
       | ⟨envelope, response, delivered, source, target, payload, failure, value⟩
       | ⟨_, _, _, _, _, aimed⟩
   · rw [same]
-  · rw [value]
+  · have := pass.advances
     omega
   · obtain ⟨packet, event, rfl⟩ := packet_of_delivered delivered
     obtain ⟨sent, sentLate, sentBefore, sentAt⟩ := late packet event
@@ -639,12 +638,12 @@ theorem floor_step (regime : Regime stable peer log agreed origin)
     omega
   · exact absurd (eligible index before began beforeNode) aimed
 
-theorem request_matches {index endIndex threshold : Nat} (le : start <= index)
-    {state : NodeState} (found : trace.nodeAt index leader = some state)
-    (low : state.sentIndex peer < threshold) (high : threshold <= endIndex)
-    (bound : endIndex <= state.log.length)
+theorem request_matches {index threshold : Nat} (le : start <= index) {state : NodeState}
+    (found : trace.nodeAt index leader = some state) {batch : Nat × Nat}
+    (low : batch.1 < threshold) (high : threshold <= batch.2)
+    (bound : batch.2 <= state.log.length)
     : Traffic.Matches (.replication term threshold)
-        (.appendEntriesRequest (makeAppendEntriesRequest state peer endIndex)) := by
+        (.appendEntriesRequest (makeAppendEntriesRequest state batch.1 batch.2)) := by
   show term <= _ /\ _ < threshold /\ threshold <= _ + _
   simp only [makeAppendEntriesRequest, messageEntries_length bound, stable.current le found]
   omega
@@ -668,7 +667,7 @@ theorem answer (regime : Regime stable peer log agreed origin)
     (leaderFound : nodeState (proto step.before) leader = some primary)
     (floor : agreed <= before.sentIndex peer)
     : request.term = term
-      /\ request.prevLogIndex = before.sentIndex peer
+      /\ before.sentIndex peer <= request.prevLogIndex
       /\ request.prevLogIndex + request.entries.length <= before.log.length
       /\ ((agreed < request.prevLogIndex
             /\ exists w,
@@ -699,21 +698,18 @@ theorem answer (regime : Regime stable peer log agreed origin)
                             { term, success := true, lastLogIndex := agreed }
                       })) := by
   obtain ⟨sending, _, _, sendStepped, -⟩ := admissible.sentAt_emitted sentAt
-  obtain ⟨_, after, afterFound, _⟩ :=
-    stable.leads (Nat.le_succ_of_le (regime.afterStart.trans sentLate))
-      (Trace.stateAt_succ_of_stepAt sendStepped)
   have foundBefore : nodeState (proto sending.before) leader = some before := by
     rwa [admissible.nodeAt_before sendStepped] at found
-  obtain ⟨rTerm, prevEq, _, endLe⟩ :=
+  obtain ⟨rTerm, prevGe, endLe⟩ :=
     leader_request_shape admissible stable (regime.afterStart.trans sentLate) sendStepped
-      foundBefore afterFound (by rw [target]; exact eligible sent before sentLate found)
+      foundBefore (by rw [target]; exact eligible sent before sentLate found)
       sentAt source payload
-  rw [target] at prevEq
+  rw [target] at prevGe
   obtain ⟨w, sends, wTerm, wLog, out, _, detail⟩ :=
     request_outcome admissible stable different regime stepped event (by omega) target payload leaderFound
   obtain ⟨_, prevLe, prevTerm, outcome⟩ := detail source
   have selected : step.action.action = some (.deliver packet.envelope) := by rw [event]; rfl
-  refine ⟨rTerm, prevEq, endLe, ?_⟩
+  refine ⟨rTerm, prevGe, endLe, ?_⟩
   rcases outcome with ⟨above, mismatch, sendsEq⟩ | ⟨_, _⟩ | ⟨_, sendsEq⟩
   · rw [sendsEq] at out
     obtain ⟨reply, replySent, replyEnvelope, -⟩ :=
@@ -778,11 +774,12 @@ theorem floor_reached (regime : Regime stable peer log agreed origin)
   refine ⟨reached, point, le, reachedFound, fun index state after found => ?_⟩
   by_contra low
   obtain ⟨last, lastFound, nodeFound⟩ := Trace.nodeAt_eq_some.mp found
-  obtain ⟨d, afterD, step, stepped, before, endIndex, beforeFound, event, reachesEnd⟩ :=
+  obtain ⟨d, afterD, step, stepped, batchEnds, event⟩ :=
     sends_often admissible stable heartbeats live eligible reached
-  obtain ⟨_, next, nextFound, _⟩ :=
-    stable.leads (by have := regime.afterStart; omega) (Trace.stateAt_succ_of_stepAt stepped)
-  obtain ⟨_, _, frontier, _⟩ := send_step admissible stepped event beforeFound nextFound
+  obtain ⟨_, before, beforeFound, _, _, notRetired⟩ :=
+    stable.leads (by have := regime.afterStart; omega) (admissible.before stepped)
+  obtain ⟨next, _, nextFound, pass, _⟩ := pass_step admissible stepped event beforeFound
+  have frontier := (pass.complete notRetired).1
   have atIndex := constant index last after lastFound
   have atD := constant d step.before afterD (admissible.before stepped)
   have atNext := constant (d + 1) step.after (Nat.le_succ_of_le afterD)
@@ -892,44 +889,49 @@ theorem floor_strict (regime : Regime stable peer log agreed origin)
         have := floor index state (by omega) found
         omega)
       (fun d step after stepped ih next nextFound => by
-        obtain ⟨_, before, beforeFound, _⟩ :=
+        obtain ⟨_, before, beforeFound, _, _, notRetired⟩ :=
           stable.leads (by have := regime.afterStart; omega) (admissible.before stepped)
         have beforeNode : trace.nodeAt d leader = some before := by
           rw [admissible.nodeAt_before stepped, beforeFound]
         have atD := ih before beforeFound
         have atNext := floor (d + 1) next (by omega) (by rw [Trace.nodeAt_succ stepped, nextFound])
         rcases (leader_move admissible stable peer (by have := regime.afterStart; omega)
-            stepped beforeFound nextFound).2 with same | ⟨endIndex, _, _, bound, value,
-            packet, sent, envelope⟩ | ⟨_, _, _, _, _, _, _, value⟩ | ⟨_, _, _, _, _, aimed⟩
+            stepped beforeFound nextFound).2 with same | ⟨_, _, _, pass, recorded⟩
+            | ⟨_, _, _, _, _, _, _, value⟩ | ⟨_, _, _, _, _, aimed⟩
         · rw [same, atD]
         · by_contra moved
+          have := pass.bounded
+          obtain ⟨batch, member, low, high, bound⟩ :=
+            pass.crossing (position := agreed + 1) notRetired (by omega) (by omega)
+          obtain ⟨packet, sent, envelope⟩ := recorded _ member
           apply rare d packet sent (by omega)
-          · rw [envelope]
-          · rw [envelope]
+          · simp [envelope, batchEnvelope]
+          · simp [envelope, batchEnvelope]
           · rw [envelope]
             exact request_matches admissible stable different (by have := regime.afterStart; omega)
-              beforeNode (by omega) (by omega) bound
+              beforeNode low high bound
         · have := match_le_agreed admissible stable different regime (by omega) beforeNode
           rw [value]
           omega
         · exact absurd (eligible d before (by have := regime.afterStart; omega) beforeNode) aimed)
-  obtain ⟨d, after, step, stepped, before, endIndex, beforeFound, event, reachesEnd⟩ :=
+  obtain ⟨d, after, step, stepped, batchEnds, event⟩ :=
     sends_often admissible stable heartbeats live eligible index
-  obtain ⟨_, next, nextFound, _⟩ :=
-    stable.leads (by have := regime.afterStart; omega) (Trace.stateAt_succ_of_stepAt stepped)
-  obtain ⟨_, bound, frontier, packet, sent, envelope⟩ :=
-    send_step admissible stepped event beforeFound nextFound
+  obtain ⟨_, before, beforeFound, _, _, notRetired⟩ :=
+    stable.leads (by have := regime.afterStart; omega) (admissible.before stepped)
+  obtain ⟨_, _, _, pass, recorded⟩ := pass_step admissible stepped event beforeFound
   have atD := stays d step.before after (admissible.before stepped) before beforeFound
-  have atNext := stays (d + 1) step.after (by omega) (Trace.stateAt_succ_of_stepAt stepped) next nextFound
   have beforeNode : trace.nodeAt d leader = some before := by
     rw [admissible.nodeAt_before stepped, beforeFound]
   have := long d before (by omega) beforeNode
+  obtain ⟨batch, member, low, high, bound⟩ :=
+    pass.crossing (position := agreed + 1) notRetired (by omega) (by omega)
+  obtain ⟨packet, sent, envelope, -⟩ := recorded _ member
   apply rare d packet sent (by omega)
-  · rw [envelope]
-  · rw [envelope]
+  · simp [envelope, batchEnvelope]
+  · simp [envelope, batchEnvelope]
   · rw [envelope]
     exact request_matches admissible stable different (by have := regime.afterStart; omega)
-      beforeNode (by omega) (by omega) bound
+      beforeNode low high bound
 
 /-- Above the agreement every request is rejected.
 The least recurrent rejected position produces one recurrent rejection, which
@@ -979,7 +981,7 @@ theorem bucket_absurd (regime : Regime stable peer log agreed origin)
     obtain ⟨before, beforeFound⟩ :=
       stable.found (by have := regime.afterStart; omega) pointFound
     have gt := above sent before sentLate beforeFound
-    obtain ⟨rTerm, prevEq, _, outcome⟩ :=
+    obtain ⟨rTerm, _, _, outcome⟩ :=
       answer admissible stable different regime
         (fun i s after found => eligible i s (regime.afterStart.trans after) found)
         stepped event sentAt (by omega) sentBefore source target payload beforeFound leaderFound gt.le
@@ -1113,26 +1115,30 @@ theorem bucket_absurd (regime : Regime stable peer log agreed origin)
     obtain ⟨sent, sentLate, _, sentAt⟩ :=
       late' index step packet le stepped (by rw [event]; rfl)
     obtain ⟨sending, _, _, sendStepped, -⟩ := admissible.sentAt_emitted sentAt
-    obtain ⟨_, before, beforeFound, _⟩ :=
+    obtain ⟨_, before, beforeFound, _, _, notRetired⟩ :=
       stable.leads (by have := regime.afterStart; omega) (admissible.before sendStepped)
     have beforeNode : trace.nodeAt sent leader = some before := by
       rw [admissible.nodeAt_before sendStepped, beforeFound]
-    obtain ⟨endIndex, _, requestEq⟩ :=
+    obtain ⟨_, batch, sendEvent, _, member, requestEq⟩ :=
       leader_request admissible stable (by have := regime.afterStart; omega) sendStepped beforeFound
         (by rw [target]; exact eligible sent before (by have := regime.afterStart; omega) beforeNode)
         sentAt source payload
-    have prevEq : request.prevLogIndex = before.sentIndex peer := by
-      rw [requestEq, target]
+    rw [target] at sendEvent member
+    obtain ⟨after, _, afterFound, pass, _⟩ := pass_step admissible sendStepped sendEvent beforeFound
+    have frontier := (pass.complete notRetired).1
+    obtain ⟨_, ordered, bound, _⟩ := passBatches_bounds pass.valid batch member
+    have prevEq : request.prevLogIndex = batch.1 := by
+      rw [requestEq]
       rfl
     rw [labelEq stepped event payload] at labelIs
-    refine ⟨sent, by omega, sending.before, admissible.before sendStepped, ?_⟩
-    rw [sentFrontier_eq peer beforeFound]
+    refine ⟨sent + 1, by omega, sending.after, Trace.stateAt_succ_of_stepAt sendStepped, ?_⟩
+    rw [sentFrontier_eq peer afterFound]
     omega
   have batches : InfinitelySent trace leader peer (.replication term least) := by
     intro cutoff
     obtain ⟨d, le, step, stepped, below, reach⟩ :=
       recorded_crossing admissible.coherent low high (max cutoff strict)
-    obtain ⟨_, before, beforeFound, _⟩ :=
+    obtain ⟨_, before, beforeFound, _, _, notRetired⟩ :=
       stable.leads (by have := regime.afterStart; omega) (admissible.before stepped)
     obtain ⟨_, after, afterFound, _⟩ :=
       stable.leads (by have := regime.afterStart; omega) (Trace.stateAt_succ_of_stepAt stepped)
@@ -1141,12 +1147,18 @@ theorem bucket_absurd (regime : Regime stable peer log agreed origin)
     rw [sentFrontier_eq peer beforeFound] at below
     rw [sentFrontier_eq peer afterFound] at reach
     rcases (leader_move admissible stable peer (by have := regime.afterStart; omega)
-        stepped beforeFound afterFound).2 with same | ⟨endIndex, _, _, bound, value, packet, sent,
-        envelope⟩ | ⟨_, _, _, _, _, _, _, value⟩ | ⟨_, _, _, _, _, aimed⟩
+        stepped beforeFound afterFound).2 with same | ⟨_, _, _, pass, recorded⟩
+        | ⟨_, _, _, _, _, _, _, value⟩ | ⟨_, _, _, _, _, aimed⟩
     · omega
-    · refine ⟨d, packet, sent, by omega, ?_, ?_, ?_⟩ <;> rw [envelope]
-      exact request_matches admissible stable different (by have := regime.afterStart; omega)
-        beforeNode below (by omega) bound
+    · obtain ⟨batch, member, low, high, bound⟩ :=
+        pass.crossing notRetired below (reach.trans pass.bounded)
+      obtain ⟨packet, sent, envelope⟩ := recorded _ member
+      refine ⟨d, packet, sent, by omega, ?_, ?_, ?_⟩
+      · simp [envelope, batchEnvelope]
+      · simp [envelope, batchEnvelope]
+      · rw [envelope]
+        exact request_matches admissible stable different (by have := regime.afterStart; omega)
+          beforeNode low high bound
     · have := match_le_agreed admissible stable different regime (by omega) beforeNode
       omega
     · exact absurd (eligible d before (by have := regime.afterStart; omega) beforeNode) aimed

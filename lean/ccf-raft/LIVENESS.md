@@ -79,9 +79,9 @@ These encode CCF's periodic sends, signature task, retirement-confirmation handl
 Each bound is an `Option Real`: `none` requires eventual execution, `some bound` also requires it before the bound elapses; for elections `none` is no constraint and `some minimum` forbids a timeout within `minimum` of a reset.
 Commit liveness passes `none` everywhere; stable leadership passes `some heartbeatInterval` and `some (electionTimeout / 2)`.
 Scheduling remains a read-only trace predicate, with no world variables, mutable deadline state or model composition.
-For a leader-peer pair due at index `i`, a send reaching the primary's current log end or the end of the obligation must occur from a state at or after `i` whose time is at most `time (stateAt i) + heartbeatInterval`.
-This is the end of an entire heartbeat send pass, not a requirement on each message.
-CCF splits that pass at batch-size and term boundaries, then loops until `last_idx`; the bound includes issuing all those batches.
+For a leader-peer pair due at index `i`, a send pass or the end of the obligation must occur from a state at or after `i` whose time is at most `time (stateAt i) + heartbeatInterval`.
+A send pass is one `sendEntries` step, because CCF's `send_append_entries` runs under the consensus lock.
+It sends single-term batches from the peer's send frontier through the primary's current log end; CCF also caps batches at `entries_batch_size`, and the model allows any split.
 `Scheduled trace bound Due Fires` is the shared shape: whenever `Due` holds, it eventually ceases or `Fires` runs, from a state satisfying `Deadline bound`; with `some bound` this still implies the `none` form, so it is never vacuous on finite or Zeno traces.
 These predicates inspect recorded steps, protocol states and absolute times; scheduling obligations and deadlines do not follow merely from local model validity.
 They are distinct from the network fairness assumption `FairLoss`.
@@ -223,7 +223,7 @@ Four CCF behaviors explain the premises:
   `Timely` does not bound responses, and bounding them would not suffice either.
   A follower silently ignores an AppendEntries whose `prev_idx` is below its commit index (`recv_append_entries`).
   A stale rejection, handled before the acknowledgement of a later acceptance that raised the follower's commit index, moves the primary's `sent_idx` back below that commit index.
-  Completing a send pass through the log end is now required, matching CCF's `send_append_entries`.
+  A send pass is one atomic step through the log end, matching CCF's `send_append_entries`.
   Deriving `Incumbent.quorumChecks` still needs a round-trip bound and a model of the acknowledgement-age check, rather than the protocol's unconstrained step-down action.
 - Once a removed node's confirmation commits, the primary stops sending to it (`set_retired_committed`).
   If the node has not learned this, it still times out, but it then also needs a quorum of pre-votes; whether that can happen is open.
@@ -334,7 +334,7 @@ The optional `boundedDelayModel` is separate, as are these read-only scheduling 
 
 | Constraint              | What it says                                                                                                                                                                                                           | Used by           |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| Replication scheduling  | A due live primary-to-peer obligation eventually resolves; the timed variant also requires a send in `(i, j]` at each later deadline crossing, carrying entries when the frontier has a backlog.                       | both              |
+| Replication scheduling  | A due live primary-to-peer obligation eventually resolves with a send pass; the timed variant requires it within `heartbeatInterval`.                                                                                  | both              |
 | Signature scheduling    | Unsigned entries, or a latest signature from an earlier term, eventually cause a signature append, unless the obligation ceases.                                                                                       | `commit_liveness` |
 | Confirmation scheduling | An owed retirement confirmation is eventually appended, unless it ceases to be owed.                                                                                                                                   | `commit_liveness` |
 | Election lower bounds   | An election timeout cannot fire within `E / 2` of a reset classified by `ElectionReset`, including term adoption, election starts, quorum-check step-down, regular-vote grants and the qualifying AppendEntries paths. | `stable_leader`   |

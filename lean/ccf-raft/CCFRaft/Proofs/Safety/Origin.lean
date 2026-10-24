@@ -11,7 +11,7 @@ set_option linter.unusedSectionVars false
 
 A node sends AppendEntries responses only while handling an AppendEntries
 request. A primary sends AppendEntries requests only from `sendEntries`, with
-the request that `sendEntries` builds, or when a configuration change adds peers.
+the request of one batch of the pass, or when a configuration change adds peers.
 -/
 
 namespace CCFRaft.Proofs.Safety
@@ -27,9 +27,11 @@ def Origin (before : NodeState) (event : Event) (envelope : Model.Envelope) : Pr
   /\ forall request,
       envelope.payload = .appendEntriesRequest request
       -> before.role = .primary
-      -> (exists endIndex,
-            event = .internal (.sendEntries envelope.target endIndex)
-            /\ request = makeAppendEntriesRequest before envelope.target endIndex)
+      -> (exists batchEnds batch,
+            event = .internal (.sendEntries envelope.target batchEnds)
+            /\ isPass before.log (before.sentIndex envelope.target) batchEnds = true
+            /\ batch ∈ passBatches (before.sentIndex envelope.target) batchEnds
+            /\ request = makeAppendEntriesRequest before batch.1 batch.2)
           \/ exists contents content,
               event = .internal (.append contents)
               /\ content ∈ contents
@@ -179,21 +181,19 @@ theorem appendBatch_origin (before : NodeState) (contents : List EntryContent)
     exact Origin.quiet (fun _ eq => by rw [payload] at eq; cases eq)
       fun _ eq => by rw [payload] at eq; cases eq
 
-theorem sendEntries_origin (before : NodeState) (destination : NodeID) (endIndex : Nat)
+theorem sendEntries_origin (before : NodeState) (destination : NodeID)
+    (batchEnds : List Nat)
     : Sends
         (fun (_ : NodeState) sent =>
           forall e,
-            e ∈ sent -> Origin before (.internal (.sendEntries destination endIndex)) e)
-        (act caps self before (.sendEntries destination endIndex)) := by
+            e ∈ sent -> Origin before (.internal (.sendEntries destination batchEnds)) e)
+        (act caps self before (.sendEntries destination batchEnds)) := by
   simp only [act]
-  unfold sendEntries
-  refine Sends.bind' Sends.guard' fun _ sent ⟨_, empty⟩ => ?_
-  subst empty
-  refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' fun e member => ?_
-  subst eq
-  simp only [List.nil_append, List.append_nil, List.mem_singleton] at member
-  subst member
-  refine ⟨(fun _ eq => by cases eq), fun request eq _ => Or.inl ⟨endIndex, rfl, ?_⟩⟩
+  refine Sends.mono (sendEntries_pass self before destination batchEnds)
+    fun _ sent pass e member => ?_
+  obtain ⟨batch, inBatches, rfl⟩ := pass.sends e member
+  refine ⟨(fun _ eq => by cases eq),
+    fun request eq _ => Or.inl ⟨batchEnds, batch, rfl, pass.valid, inBatches, ?_⟩⟩
   cases eq
   rfl
 
@@ -367,8 +367,8 @@ theorem origin (before : NodeState) (event : Event)
   | internal input =>
       cases input with
       | append contents => exact appendBatch_origin self before contents
-      | sendEntries destination endIndex =>
-          exact sendEntries_origin self before destination endIndex
+      | sendEntries destination batchEnds =>
+          exact sendEntries_origin self before destination batchEnds
       | timeout kind =>
           cases kind with
           | election => exact startElection_origin self before

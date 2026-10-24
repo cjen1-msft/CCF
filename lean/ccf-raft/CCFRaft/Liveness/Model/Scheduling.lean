@@ -71,15 +71,11 @@ def PeerDue (point : W) (leader peer : NodeID) : Prop :=
       /\ Not (state.isRetiredCommitted leader)
       /\ peer ∈ eligiblePeers state leader
 
-/-- The final send of a heartbeat pass reaches the primary's current log end.
-This is not a single unbounded message: CCF's `send_append_entries` splits the
-pass by batch size and term, then loops until `last_idx`. Earlier sends in the
-pass may end before the log end; the protocol's single-term guard is unchanged. -/
-def ProductiveSend (step : CCF.Execution.Step W Event) (leader peer : NodeID) : Prop :=
-  exists state frontier,
-    CCF.MultiNodeTransitionSystem.nodeState (proto step.before) leader = some state
-    /\ step.action = .local leader (.sendEntries peer frontier)
-    /\ frontier = state.log.length
+/-- A send pass to `peer`. CCF's `send_append_entries` sends every batch from the
+peer's `sent_idx` to the primary's `last_idx` under the consensus lock, so the
+model's `sendEntries` is the whole pass and always reaches the log end. -/
+def SendPass (step : CCF.Execution.Step W Event) (leader peer : NodeID) : Prop :=
+  exists batchEnds, step.action = .local leader (.sendEntries peer batchEnds)
 
 /-- A primary sends AppendEntries from `sent_idx + 1` to every other node each
 time `request_timeout` elapses (`raft.h`, `Aft::periodic`); `eligiblePeers`
@@ -87,15 +83,13 @@ is a subset of `all_other_nodes`, from which CCF drops a node only once its
 retirement confirmation commits (`set_retired_committed`). Needed: without it a
 primary that appends a signature and then never sends again leaves a lagging
 follower, whose acknowledgement the signature needs, behind forever.
-With `some bound`, a whole send pass, including its final log-end batch, must
-complete within the deadline; a size-limited intermediate batch does not
-discharge this obligation.
+With `some bound`, a send pass must happen within the deadline.
 Needed: if the primary could wait longer than half an election timeout between
 heartbeats, a follower could time out and depose it. -/
 def Trace.HeartbeatScheduling (trace : Trace W Event) (bound : Option Real) : Prop :=
   forall leader peer,
     Scheduled trace bound (fun point => PeerDue point leader peer)
-      (fun step => ProductiveSend step leader peer)
+      (fun step => SendPass step leader peer)
 
 /-- Unsigned entries or a signature from an older term require a new signature. -/
 def SignatureDue (point : W) (leader : NodeID) : Prop :=

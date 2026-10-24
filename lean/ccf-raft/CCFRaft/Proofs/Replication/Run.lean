@@ -122,21 +122,13 @@ theorem leader_move {start : Nat} {leader : NodeID} {term : Nat}
             /\ response.term = term
             /\ after.matchIndex peer = max (before.matchIndex peer) response.lastLogIndex)
       /\ (after.sentIndex peer = before.sentIndex peer
-          \/ (exists endIndex,
-                step.action = .local leader (.sendEntries peer endIndex)
-                /\ before.sentIndex peer <= endIndex
-                /\ endIndex <= before.log.length
-                /\ after.sentIndex peer = endIndex
-                /\ exists packet,
-                    trace.SentAt index packet
-                    /\ packet.envelope
-                        = {
-                          source := leader
-                          target := peer
-                          payload :=
-                            .appendEntriesRequest
-                              (makeAppendEntriesRequest before peer endIndex)
-                        })
+          \/ (exists batchEnds sent,
+                step.action = .local leader (.sendEntries peer batchEnds)
+                /\ Pass leader before peer batchEnds after sent
+                /\ forall envelope,
+                    envelope ∈ sent
+                    -> exists packet,
+                        trace.SentAt index packet /\ packet.envelope = envelope)
           \/ (exists envelope response,
                 step.action.delivered = some envelope
                 /\ envelope.source = peer
@@ -196,20 +188,19 @@ theorem leader_move {start : Nat} {leader : NodeID} {term : Nat}
               termEq.trans beforeTerm,
               value
             ⟩
-      · rcases sentMove with same | ⟨endIndex, eventEq, le, bound, value⟩
+      · rcases sentMove with same | ⟨batchEnds, eventEq, _, _⟩
             | ⟨response, eventEq, failure, value⟩ | ⟨contents, content, eventEq, member, config⟩
         · exact Or.inl same
         · have actionEq := acts_internal acts eventEq
           subst actionEq
           rw [eventEq] at ran
-          obtain ⟨_, outEq, single⟩ :=
-            sendEntries_sends actor before peer endIndex {} _ _ ran
-          refine Or.inr (Or.inl ⟨endIndex, event_of_local selected, le, bound, value, ?_⟩)
-          rw [outEq, single] at out
-          obtain ⟨packet, sent, envelope, -⟩ :=
-            admissible.sentAt_of_emitted stepped selected out
-              (List.mem_append_right _ (List.mem_singleton_self _))
-          exact ⟨packet, sent, envelope⟩
+          obtain ⟨sent, outEq, pass⟩ := sendEntries_pass actor before peer batchEnds {} _ _ ran
+          rw [outEq] at out
+          refine Or.inr
+            (Or.inl ⟨batchEnds, sent, event_of_local selected, pass, fun _ member => ?_⟩)
+          obtain ⟨packet, recorded, envelope, -⟩ :=
+            admissible.sentAt_of_emitted stepped selected out (List.mem_append_right _ member)
+          exact ⟨packet, recorded, envelope⟩
         · obtain ⟨envelope, rfl, targetEq, sourceEq, payloadEq⟩ :=
             acts_receive acts eventEq
           exact Or.inr
@@ -434,8 +425,8 @@ theorem response_origin {index : Nat} {packet : Packet} (sent : trace.SentAt ind
   · rw [← targetEq]
     exact found
 
-/-- Every AppendEntries request a primary sends comes from `sendEntries`, or from
-appending a configuration change. -/
+/-- Every AppendEntries request a primary sends is a batch of a `sendEntries` pass,
+or comes from appending a configuration change. -/
 theorem request_origin {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
     (stepped : trace.stepAt index = some step) {packet : Packet}
     (sent : trace.SentAt index packet) {request : AppendEntriesRequest}
@@ -443,10 +434,12 @@ theorem request_origin {index : Nat} {step : CCF.Execution.Step W Liveness.Event
     {before : NodeState}
     (found : nodeState (proto step.before) packet.envelope.source = some before)
     (primary : before.role = .primary)
-    : (exists endIndex,
+    : (exists batchEnds batch,
         step.action
-          = .local packet.envelope.source (.sendEntries packet.envelope.target endIndex)
-        /\ request = makeAppendEntriesRequest before packet.envelope.target endIndex)
+          = .local packet.envelope.source (.sendEntries packet.envelope.target batchEnds)
+        /\ isPass before.log (before.sentIndex packet.envelope.target) batchEnds = true
+        /\ batch ∈ passBatches (before.sentIndex packet.envelope.target) batchEnds
+        /\ request = makeAppendEntriesRequest before batch.1 batch.2)
       \/ exists contents content,
           step.action = .local packet.envelope.source (.append contents)
           /\ content ∈ contents
@@ -464,11 +457,13 @@ theorem request_origin {index : Nat} {step : CCF.Execution.Step W Liveness.Event
     have := member
     rw [outEq] at this
     simpa using this
-  rcases (origins _ mem).2 request payload primary with ⟨endIndex, eventEq, requestEq⟩
+  rcases (origins _ mem).2 request payload primary
+      with ⟨batchEnds, batch, eventEq, valid, batchMem, requestEq⟩
       | ⟨contents, content, eventEq, contentMem, config⟩
   · have actionEq := acts_internal acts eventEq
     subst actionEq
-    exact Or.inl ⟨endIndex, by rw [source]; exact event_of_local selected, requestEq⟩
+    exact Or.inl ⟨batchEnds, batch, by rw [source]; exact event_of_local selected, valid,
+      batchMem, requestEq⟩
   · have actionEq := acts_internal acts eventEq
     subst actionEq
     rw [eventEq] at ran

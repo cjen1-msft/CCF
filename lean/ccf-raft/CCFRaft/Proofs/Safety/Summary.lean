@@ -2,6 +2,7 @@ module
 
 public import CCFRaft.Proofs.Safety.History
 public import CCFRaft.Proofs.Safety.Sends
+public import CCFRaft.Proofs.Safety.Pass
 public import CCFRaft.Proofs.Ledger
 public import CCFRaft.Proofs.Safety.Lists
 public import CCFRaft.Proofs.Direct.CommitFrontier
@@ -526,11 +527,8 @@ theorem becomePrimary_sends (candidate : NodeState)
     simp only [eq, List.append_nil, List.mem_singleton] at member
     subst member
     have other : Not (peer = self) := by simp [Finset.mem_sort, eligiblePeers] at member; exact member.1
-    have sentEq : leader.sentIndex peer = leader.log.length := by
-      rw [advance.sentIndex, advance.log]
-      simp [primaryState]
     refine ⟨rfl, other, _, rfl, rfl, ?_, rfl, ?_, le_rfl, ?_⟩ <;>
-      simp [makeAppendEntriesRequest, sentEq, messageEntries]
+      simp [makeAppendEntriesRequest, messageEntries]
   · intro e member
     rcases List.mem_append.mp (by simpa using member) with old | new
     · have := nominated e old
@@ -857,27 +855,27 @@ theorem nominate_summary (state : NodeState)
   rw [payload]
   exact ⟨rfl, Or.inl ⟨leader, rfl, Or.inl rfl⟩⟩
 
-theorem sendEntries_summary (state : NodeState) (destination : NodeID) (endIndex : Nat)
+theorem sendEntries_summary (state : NodeState) (destination : NodeID)
+    (batchEnds : List Nat)
     : Sends
         (fun after sent =>
-          Summary self state (.internal (.sendEntries destination endIndex)) after sent)
-        (sendEntries caps self state destination endIndex) := by
-  unfold sendEntries
-  refine Sends.bind' Sends.guard' fun _ sent ⟨⟨leader, peer, le, bound, _⟩, empty⟩ => ?_
-  subst empty
-  refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ?_
-  subst eq
-  refine quiet_summary rfl rfl rfl rfl rfl rfl rfl
-    (fun _ => Or.inl (by rw [leader]; simp)) fun e member => ?_
-  simp only [List.nil_append, List.append_nil, List.mem_singleton] at member
-  subst member
+          Summary self state (.internal (.sendEntries destination batchEnds)) after sent)
+        (sendEntries caps self state destination batchEnds) := by
+  refine Sends.mono (sendEntries_pass self state destination batchEnds)
+    fun after sent pass => ?_
   have other : Not (destination = self) := by
+    have peer := pass.eligible
     simp [eligiblePeers] at peer; exact peer.1
+  rw [pass.state]
+  refine quiet_summary rfl rfl rfl rfl rfl rfl rfl
+    (fun _ => Or.inl (by rw [pass.primary]; simp)) fun e member => ?_
+  obtain ⟨batch, inBatches, rfl⟩ := pass.sends e member
+  obtain ⟨_, ordered, bound⟩ := pass.batch_bounds inBatches
   refine ⟨
     rfl,
-    ⟨other, rfl, le.trans bound, rfl, ?_, le_rfl, fun _ => rfl⟩,
-    by simp [leader],
-    Or.inl ⟨leader, rfl⟩
+    ⟨other, rfl, ordered.trans bound, rfl, ?_, le_rfl, fun _ => rfl⟩,
+    by simp [pass.primary],
+    Or.inl ⟨pass.primary, rfl⟩
   ⟩
   exact List.take_prefix _ _
 
@@ -1561,7 +1559,7 @@ theorem appendEntry_batch (self : NodeID) (before : NodeState)
         have added := (Finset.mem_sort _).mp member
         have other : Not (peer = self) := (Finset.mem_erase.mp added).1
         refine ⟨rfl, other, _, rfl, rfl, ?_, ?_, ?_, le_rfl, ?_⟩ <;>
-          simp only [makeAppendEntriesRequest, ite_eq_left added, messageEntries] <;> simp
+          simp only [makeAppendEntriesRequest, messageEntries] <;> simp
       · have batch : BatchState self before
             { before with
                 log := before.log ++ entries
@@ -1637,8 +1635,8 @@ theorem summary (self : NodeID) (before : NodeState) (event : Event)
   | internal input =>
       cases input with
       | append contents => exact appendBatch_summary self before contents
-      | sendEntries destination endIndex =>
-          exact sendEntries_summary self before destination endIndex
+      | sendEntries destination batchEnds =>
+          exact sendEntries_summary self before destination batchEnds
       | timeout kind =>
           cases kind with
           | election => exact startElection_summary self before

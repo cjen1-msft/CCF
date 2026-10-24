@@ -31,6 +31,7 @@ open CCFRaft.Liveness
 open CCFRaft.Proofs.Safety
 open CCFRaft.Proofs.Liveness (Admissible)
 open HasProtocol (proto)
+open HasTime (time)
 
 /-- The node and local event that an action runs. -/
 def Acts : Model.Action -> NodeID -> Model.Node.Event -> Prop
@@ -119,26 +120,6 @@ theorem step_found {nodes : List NodeID} {before after : Model.State}
 end Steps
 
 /-! ## Local handlers -/
-
-/-- A heartbeat or replication attempt sends exactly its request. -/
-theorem sendEntries_sends (self : NodeID) (state : NodeState) (destination : NodeID)
-    (endIndex : Nat)
-    : Sends
-        (fun (_ : NodeState) sent =>
-          sent
-          = [{
-              source := self
-              target := destination
-              payload :=
-                .appendEntriesRequest
-                  (makeAppendEntriesRequest state destination endIndex)
-            }])
-        (sendEntries (Capabilities.record self) self state destination endIndex) := by
-  unfold sendEntries
-  refine Sends.bind' Sends.guard' fun _ sent ⟨_, empty⟩ => ?_
-  subst empty
-  refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ?_
-  simp [eq]
 
 /-- A request from an older term is rejected with the receiver's newer term. -/
 theorem stale_request_sends (self source : NodeID) (state : NodeState)
@@ -274,6 +255,52 @@ theorem sent_summary {index : Nat} {packet : Packet} (sent : trace.SentAt index 
   · rw [Trace.nodeAt_succ stepped, found']
   · simpa [eq] using holds
 
+/-- A recorded send pass: its effect on the primary, and the recorded sends of its
+batches, all at the step's before-time. -/
+theorem pass_step {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
+    (stepped : trace.stepAt index = some step) {leader peer : NodeID}
+    {batchEnds : List Nat}
+    (event : step.action = .local leader (.sendEntries peer batchEnds))
+    {before : NodeState} (found : nodeState (proto step.before) leader = some before)
+    : exists after sent,
+        nodeState (proto step.after) leader = some after
+        /\ Pass leader before peer batchEnds after sent
+        /\ forall envelope,
+            envelope ∈ sent
+            -> exists packet,
+                trace.SentAt index packet
+                /\ packet.envelope = envelope
+                /\ packet.sentAt = time step.before := by
+  have selected : step.action.action = some (.local leader (.sendEntries peer batchEnds)) := by
+    rw [event]
+    rfl
+  obtain ⟨actor, localEvent, current, next, outputs, ⟨actorEq, eventEq⟩, actorFound, ran,
+      nextFound, out, _⟩ :=
+    step_found (admissible.reachable_before stepped) (admissible.step stepped selected)
+  subst actorEq eventEq
+  rw [found, Option.some.injEq] at actorFound
+  subst actorFound
+  obtain ⟨sent, outEq, pass⟩ := sendEntries_pass actor before peer batchEnds {} _ _ ran
+  rw [outEq] at out
+  exact ⟨next, sent, nextFound, pass, fun _ member =>
+    admissible.sentAt_of_emitted stepped selected out (List.mem_append_right _ member)⟩
+
+/-- A send pass of a primary whose retirement is not committed records each of its
+batches. -/
+theorem pass_sends {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
+    (stepped : trace.stepAt index = some step) {leader peer : NodeID}
+    {batchEnds : List Nat}
+    (event : step.action = .local leader (.sendEntries peer batchEnds))
+    {before : NodeState} (found : nodeState (proto step.before) leader = some before)
+    (notRetired : Not (before.isRetiredCommitted leader)) {batch : Nat × Nat}
+    (member : batch ∈ passBatches (before.sentIndex peer) batchEnds)
+    : exists packet,
+        trace.SentAt index packet
+        /\ packet.envelope = batchEnvelope before leader peer batch
+        /\ packet.sentAt = time step.before := by
+  obtain ⟨_, _, _, pass, recorded⟩ := pass_step admissible stepped event found
+  exact recorded _ (pass.sent_of_mem notRetired member)
+
 /-- A node's term never decreases along an execution, and the node stays present. -/
 theorem term_mono {node : NodeID} {index later : Nat} (le : index <= later)
     {before : NodeState} (found : trace.nodeAt index node = some before)
@@ -353,27 +380,19 @@ theorem heartbeats_sent {bound : Option Real}
     exact ⟨leaderLive, live index point le found, state, nodeFound, primary, notRetired,
       eligible index state le (by rw [Trace.nodeAt_of_stateAt found, nodeFound])⟩
   intro cutoff
-  obtain ⟨index, step, after, stepped, state, frontier, found, action, _⟩ :=
+  obtain ⟨index, step, after, stepped, batchEnds, event⟩ :=
     (heartbeats leader peer).often firstFound due (max cutoff start)
-  have selected : step.action.action = some (.local leader (.sendEntries peer frontier)) := by
-    rw [action]; rfl
-  obtain ⟨actor, localEvent, current, next, outputs, acts, actorFound, ran, _, out, _⟩ :=
-    step_found (admissible.reachable_before stepped) (admissible.step stepped selected)
-  obtain ⟨same, eventEq⟩ := acts
-  subst same eventEq
-  rw [found, Option.some.injEq] at actorFound
-  subst actorFound
-  obtain ⟨new, eq, single⟩ := sendEntries_sends actor state peer frontier {} _ _ ran
-  rw [eq, single] at out
+  have afterStart := Nat.le_trans (Nat.le_max_right _ _) after
+  obtain ⟨_, state, found, _, _, notRetired⟩ :=
+    stable.leads afterStart (admissible.before stepped)
   have stateTerm :=
-    stable.current (Nat.le_trans (Nat.le_max_right _ _) after)
-      (by rw [admissible.nodeAt_before stepped, found])
+    stable.current afterStart (by rw [admissible.nodeAt_before stepped, found])
+  obtain ⟨_, _, _, pass, _⟩ := pass_step admissible stepped event found
+  obtain ⟨batch, member⟩ := passBatches_nonempty pass.valid
   obtain ⟨packet, sent, envelope, -⟩ :=
-    admissible.sentAt_of_emitted stepped selected out
-      (List.mem_append_right _ (List.mem_singleton_self _))
+    pass_sends admissible stepped event found notRetired member
   refine ⟨index, packet, sent, Nat.le_trans (Nat.le_max_left _ _) after, ?_, ?_, ?_⟩ <;>
-    rw [envelope]
-  simp [Traffic.Matches, makeAppendEntriesRequest, stateTerm]
+    simp [envelope, Traffic.Matches, batchEnvelope, makeAppendEntriesRequest, stateTerm]
 
 /-- Under fair loss between a stable primary and an eligible live peer, the peer
 never holds a newer term: it would keep rejecting the primary's heartbeats with

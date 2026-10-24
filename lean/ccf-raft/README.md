@@ -61,8 +61,8 @@ Equal envelopes remain distinct transmissions, and an occurrence cannot be consu
 The optional `boundedDelayModel maxDelay` separately forbids an overdue pending packet to a live target; it permits drops and is not the stronger `Timely` delivery assumption.
 
 `trace.HeartbeatScheduling`, `trace.SignatureScheduling`, `trace.RetirementConfirmedScheduling` and `trace.ElectionScheduling` each take an `Option Real`: `none` requires eventual execution, `some bound` also requires it before the bound elapses (for elections, `none` is no constraint and `some minimum` forbids timeouts within `minimum` of a reset).
-The heartbeat obligation ends with a send reaching the primary's current log end.
-Earlier batches may stop at size or term boundaries; the deadline covers the whole send pass, not merely its first batch.
+The heartbeat obligation is one send pass, a single `sendEntries` step, because CCF's `send_append_entries` runs under the consensus lock.
+A pass sends single-term batches from the peer's send frontier through the primary's current log end; CCF also caps batches at `entries_batch_size`, and the model allows any split.
 These are read-only predicates on the recorded trace, separate from model validity and network fairness (`FairLoss`).
 All four share `Scheduled trace bound Due Fires`, so a bounded obligation implies the unbounded one and is never vacuous on a finite or Zeno trace.
 The scheduling predicates and timing bounds are colocated in `Liveness/Model/Scheduling.lean`.

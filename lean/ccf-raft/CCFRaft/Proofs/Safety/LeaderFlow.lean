@@ -85,11 +85,10 @@ def Frontier (peer : NodeID) (before : NodeState) (event : Event) (after : NodeS
         /\ response.term = before.currentTerm
         /\ after.matchIndex peer = max (before.matchIndex peer) response.lastLogIndex)
   /\ (after.sentIndex peer = before.sentIndex peer
-      \/ (exists endIndex,
-            event = .internal (.sendEntries peer endIndex)
-            /\ before.sentIndex peer <= endIndex
-            /\ endIndex <= before.log.length
-            /\ after.sentIndex peer = endIndex)
+      \/ (exists batchEnds,
+            event = .internal (.sendEntries peer batchEnds)
+            /\ before.sentIndex peer <= after.sentIndex peer
+            /\ after.sentIndex peer <= before.log.length)
       \/ (exists response,
             event = .receive peer (.appendEntriesResponse response)
             /\ response.success = false
@@ -197,20 +196,19 @@ theorem appendBatch_flow (before : NodeState) (contents : List EntryContent)
   · exact Or.inl (by rw [advance.sentIndex, sent])
   · exact Or.inr (Or.inr (Or.inr ⟨contents, content, rfl, member, configured⟩))
 
-theorem sendEntries_flow (before : NodeState) (destination : NodeID) (endIndex : Nat)
+theorem sendEntries_flow (before : NodeState) (destination : NodeID)
+    (batchEnds : List Nat)
     : Sends
         (fun after (_ : List Model.Envelope) =>
-          LeaderFlow peer before (.internal (.sendEntries destination endIndex)) after)
-        (sendEntries caps self before destination endIndex) := by
-  unfold sendEntries
-  refine Sends.bind' Sends.guard' fun _ sent ⟨⟨_, _, le, bound, _⟩, empty⟩ => ?_
-  subst empty
-  refine Sends.bind' (Sends.send _ _ _)
-    fun _ _ _ => Sends.pure' fun _ _ => ⟨Or.inl rfl, ?_⟩
-  by_cases same : destination = peer
-  · subst same
-    exact Or.inr (Or.inl ⟨endIndex, rfl, le, bound, by simp⟩)
-  · exact Or.inl (Function.update_of_ne (Ne.symm same) _ _)
+          LeaderFlow peer before (.internal (.sendEntries destination batchEnds)) after)
+        (sendEntries caps self before destination batchEnds) :=
+  Sends.mono (sendEntries_pass self before destination batchEnds)
+    fun _ _ pass _ _ => by
+      refine ⟨Or.inl (by rw [pass.state]), ?_⟩
+      by_cases same : destination = peer
+      · subst same
+        exact Or.inr (Or.inl ⟨batchEnds, rfl, pass.advances, pass.bounded⟩)
+      · exact Or.inl (pass.other (Ne.symm same))
 
 theorem startElection_flow (before : NodeState) (leader : before.role = .primary)
     : Sends
@@ -366,8 +364,8 @@ theorem leader_flow (before : NodeState) (leader : before.role = .primary) (even
   | internal input =>
       cases input with
       | append contents => exact appendBatch_flow self peer before contents
-      | sendEntries destination endIndex =>
-          exact sendEntries_flow self peer before destination endIndex
+      | sendEntries destination batchEnds =>
+          exact sendEntries_flow self peer before destination batchEnds
       | timeout kind =>
           cases kind with
           | election => exact startElection_flow self peer before leader

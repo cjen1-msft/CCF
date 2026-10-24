@@ -390,16 +390,16 @@ theorem appendBatch_steady (before : NodeState) (contents : List EntryContent)
   exact Sends.mono (advanceCommit_committing self _) fun after _ committing =>
     steady_committing leader committing rfl rfl
 
-theorem sendEntries_steady (before : NodeState) (destination : NodeID) (endIndex : Nat)
+theorem sendEntries_steady (before : NodeState) (destination : NodeID)
+    (batchEnds : List Nat)
     : Sends
         (fun after (_ : List Model.Envelope) =>
-          Steady self before (.internal (.sendEntries destination endIndex)) after)
-        (sendEntries caps self before destination endIndex) := by
-  unfold sendEntries
-  refine Sends.bind' Sends.guard' fun _ sent ⟨_, empty⟩ => ?_
-  subst empty
-  exact Sends.bind' (Sends.send _ _ _) fun _ _ _ =>
-    Sends.pure' (steady_keep rfl rfl (Or.inr rfl))
+          Steady self before (.internal (.sendEntries destination batchEnds)) after)
+        (sendEntries caps self before destination batchEnds) :=
+  Sends.mono (sendEntries_pass self before destination batchEnds)
+    fun _ _ pass => by
+      rw [pass.state]
+      exact steady_keep rfl rfl (Or.inr rfl)
 
 theorem startElection_steady (before : NodeState)
     : Sends
@@ -572,8 +572,8 @@ theorem steady_step (before : NodeState) (event : Event)
   | internal input =>
       cases input with
       | append contents => exact appendBatch_steady self before contents
-      | sendEntries destination endIndex =>
-          exact sendEntries_steady self before destination endIndex
+      | sendEntries destination batchEnds =>
+          exact sendEntries_steady self before destination batchEnds
       | timeout kind =>
           cases kind with
           | election => exact startElection_steady self before
