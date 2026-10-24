@@ -165,11 +165,6 @@ def SubmittedAt (trace : Trace W Event) (start : Nat) (leader : NodeID) (request
       /\ step.action = .local leader (.append entries)
       /\ .transaction request {} ∈ entries
 
-/-- Provisional: `backlog` catch-up rounds, one replication round, a signature,
-and its acknowledgement round. The timed commit proof fixes the formula. -/
-def commitLatency (bounds : Bounds) (maxDelay : Real) (backlog : Nat) : Real :=
-  (backlog + 2) * (bounds.heartbeatInterval + 2 * maxDelay) + bounds.signatureInterval
-
 /-- A good period (Keidar and Shraer 2006) from index `start` for `duration`:
 every participant stays live, no configuration change is appended, no primary is
 asked to hand over, no participant steps down on a quorum check, every live

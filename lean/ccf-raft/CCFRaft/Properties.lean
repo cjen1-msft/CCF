@@ -143,7 +143,9 @@ lemma committed_frontier_is_signature_witness
       /\ 0 < nodeState.commitIndex := by
   exact Proofs.Witnesses.committed_frontier_is_signature_witness
 
-/-- Commit liveness, timed. Take one coherent recorded relational trace. Assume
+/-- Commit liveness, timed. For any timing bounds, maximum delay and backlog there
+is a nonnegative window length `duration`, independent of the trace, with the
+following property. Take one coherent recorded relational trace. Assume
 coherence and validity of the protocol, timing, crash, delivery (in order on each
 channel) and bounded-delay models for `system := Model.transitionSystem config
 nodes`, and an unbounded
@@ -151,48 +153,80 @@ clock: every packet is then delivered or dropped within `maxDelay`, unless its
 target crashes first. Assume that a primary sends due heartbeats
 within `bounds.heartbeatInterval` and due signatures within
 `bounds.signatureInterval`. Take a stable window from index `start` for
-`commitLatency bounds maxDelay backlog`: `leader` is the uncontested primary of
-`term`, stays live and unretired, every configuration active at it keeps a live
-majority among `participants`, and no packet between it and a participant is
-dropped. Additionally, reconfiguration is settled at the leader throughout the
+`duration`: `leader` is the uncontested primary of `term`, stays live and
+unretired, every configuration active at it keeps a live majority among
+`participants`, and no packet between it and a participant is dropped.
+Additionally, reconfiguration is settled at the leader throughout the
 window: one active configuration and all completed removals confirmed in its
 committed ledger. Followers need not have learned this completion. This
 excludes waiting for retirement cleanup, which has no scheduling deadline.
 If at `start` every participant has adopted `term` and no participant's log
 diverges from the primary's by more than `backlog` entries, and the primary holds
 or appends `request`, then `request` is in the primary's committed prefix within
-the window.
+the window. `commit_liveness_witness` meets the premises for every nonnegative
+window length, so they are satisfiable whatever `duration` is.
 `signature_settles` yields the stable window after `duelling_leaders_resolve`;
 settled reconfiguration remains a separate premise. -/
 theorem commit_liveness
     : forall (config : Finset NodeID) (nodes : List NodeID),
         let system := Model.transitionSystem config nodes
-        forall (W : Type) [Liveness.HasProtocol W Model.State] [Liveness.HasTime W]
-                [Liveness.HasLive W] [Liveness.HasNetwork W],
-        forall (trace : Liveness.Trace W Liveness.Event) (bounds : Liveness.Bounds),
-        forall (maxDelay : Real) (start backlog : Nat),
-        forall (leader : NodeID) (term : Nat) (participants : Finset NodeID)
-                (request : ReqID),
-          let duration := Liveness.commitLatency bounds maxDelay backlog
-          (trace.Coherent
-            /\ trace.Valid (Liveness.protocolModel system)
-            /\ trace.Valid Liveness.timingModel
-            /\ trace.Valid Liveness.crashModel
-            /\ trace.Valid (Liveness.deliveryModel system)
-            /\ trace.Valid (Liveness.boundedDelayModel maxDelay)
-            /\ Liveness.TimeDiverges trace
-            /\ 0 <= maxDelay
-            /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
-            /\ trace.SignatureScheduling (some bounds.signatureInterval)
-            /\ Liveness.StableWindow trace start duration leader term participants
-            /\ Liveness.Window.ReconfigurationSettled trace start duration leader
-            /\ Liveness.Backlog trace start leader participants backlog
-            /\ Liveness.InTermAt trace start term participants
-            /\ Liveness.SubmittedAt trace start leader request)
-          -> exists index,
-              Liveness.Within trace start duration index
-              /\ Liveness.RequestCommitted trace leader request index := by
+        forall (bounds : Liveness.Bounds) (maxDelay : Real) (backlog : Nat),
+          exists duration : Real,
+            0 <= duration
+            /\ forall (W : Type) [Liveness.HasProtocol W Model.State] [Liveness.HasTime W]
+                      [Liveness.HasLive W] [Liveness.HasNetwork W],
+                forall (trace : Liveness.Trace W Liveness.Event) (start : Nat),
+                forall (leader : NodeID) (term : Nat) (participants : Finset NodeID)
+                        (request : ReqID),
+                  (trace.Coherent
+                    /\ trace.Valid (Liveness.protocolModel system)
+                    /\ trace.Valid Liveness.timingModel
+                    /\ trace.Valid Liveness.crashModel
+                    /\ trace.Valid (Liveness.deliveryModel system)
+                    /\ trace.Valid (Liveness.boundedDelayModel maxDelay)
+                    /\ Liveness.TimeDiverges trace
+                    /\ 0 <= maxDelay
+                    /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
+                    /\ trace.SignatureScheduling (some bounds.signatureInterval)
+                    /\ Liveness.StableWindow trace start duration leader term participants
+                    /\ Liveness.Window.ReconfigurationSettled trace start duration leader
+                    /\ Liveness.Backlog trace start leader participants backlog
+                    /\ Liveness.InTermAt trace start term participants
+                    /\ Liveness.SubmittedAt trace start leader request)
+                  -> exists index,
+                      Liveness.Within trace start duration index
+                      /\ Liveness.RequestCommitted trace leader request index := by
   sorry
+
+/-- Witness: for every nonnegative window length, a one-node execution with
+positive heartbeat and signature bounds meets every premise of `commit_liveness`
+and commits its request within the window. -/
+lemma commit_liveness_witness
+    : let system := Model.transitionSystem {0} [0]
+      let bounds : Liveness.Bounds :=
+        { heartbeatInterval := 1 / 4, electionTimeout := 4, signatureInterval := 1 / 4 }
+      forall duration : Real,
+        0 <= duration
+        -> exists trace : Liveness.Trace (Liveness.World Model.State) Liveness.Event,
+            (trace.Coherent
+              /\ trace.Valid (Liveness.protocolModel system)
+              /\ trace.Valid Liveness.timingModel
+              /\ trace.Valid Liveness.crashModel
+              /\ trace.Valid (Liveness.deliveryModel system)
+              /\ trace.Valid (Liveness.boundedDelayModel 0)
+              /\ Liveness.TimeDiverges trace
+              /\ 0 <= (0 : Real)
+              /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
+              /\ trace.SignatureScheduling (some bounds.signatureInterval)
+              /\ Liveness.StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0}
+              /\ Liveness.Window.ReconfigurationSettled trace 0 duration 0
+              /\ Liveness.Backlog trace 0 0 {0} 0
+              /\ Liveness.InTermAt trace 0 Model.BOOTSTRAP_TERM {0}
+              /\ Liveness.SubmittedAt trace 0 0 10)
+            /\ exists index,
+                Liveness.Within trace 0 duration index
+                /\ Liveness.RequestCommitted trace 0 10 index := by
+  exact Proofs.LivenessWitness.timed_commit_window_witness
 
 /-- Duelling leaders resolve, with probability tending to one in the number of
 rounds. Sample `draws`, one uniform timeout offset per round per participant, and

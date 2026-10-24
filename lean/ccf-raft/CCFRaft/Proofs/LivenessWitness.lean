@@ -502,18 +502,9 @@ theorem commit_liveness_timed_witness
     committed
   ⟩
 
-private noncomputable def shortBounds : Bounds where
-  heartbeatInterval := 1 / 4
-  electionTimeout := 4
-  signatureInterval := 1 / 4
-
-private theorem short_duration : commitLatency shortBounds 0 0 = 3 / 4 := by
-  norm_num [commitLatency, shortBounds]
-
 /-- Every fixture state is in a stable window, whatever its length. -/
-private theorem short_window
-    : StableWindow (fixture true) 0 (commitLatency shortBounds 0 0)
-        0 Model.BOOTSTRAP_TERM {0} := by
+private theorem fixture_window (duration : Real)
+    : StableWindow (fixture true) 0 duration 0 Model.BOOTSTRAP_TERM {0} := by
   refine ⟨?_, ⟨?_, ?_⟩, ?_, ?_⟩
   · intro index point _ found
     rw [fixture_stateAt, Option.some.injEq] at found
@@ -537,9 +528,8 @@ private theorem short_window
     subst step
     cases index <;> simp [fixtureStep] at dropped
 
-private theorem short_reconfiguration
-    : Window.ReconfigurationSettled (fixture true) 0 (commitLatency shortBounds 0 0)
-        0 := by
+private theorem fixture_settled (duration : Real)
+    : Window.ReconfigurationSettled (fixture true) 0 duration 0 := by
   intro index point state _ found nodeFound
   rw [fixture_stateAt, Option.some.injEq] at found
   subst point
@@ -566,37 +556,41 @@ private theorem initial_in_term : InTermAt (fixture true) 0 Model.BOOTSTRAP_TERM
   rw [Finset.mem_singleton.mp member]
   exact ⟨fixtureWorld true 0, initialNode, fixture_stateAt true 0, rfl, by decide⟩
 
-/-- The windowed timed commit-liveness premises and conclusion hold together, with
-positive heartbeat and signature bounds of `1 / 4`.
+/-- For every nonnegative window length, the windowed timed commit-liveness
+premises and conclusion hold together, with positive heartbeat and signature
+bounds of `1 / 4`.
 The first append commits request 10 at time zero. It takes no time, so its
-after-state is recorded inside the `3 / 4` window. -/
+after-state is recorded inside the window, even one of length zero. -/
 theorem timed_commit_window_witness
     : let system := Model.transitionSystem {0} [0]
       let bounds : Bounds :=
         { heartbeatInterval := 1 / 4, electionTimeout := 4, signatureInterval := 1 / 4 }
-      let duration := commitLatency bounds 0 0
-      exists trace : Trace (World Model.State) Liveness.Event,
-        (trace.Coherent
-          /\ trace.Valid (protocolModel system)
-          /\ trace.Valid timingModel
-          /\ trace.Valid crashModel
-          /\ trace.Valid (deliveryModel system)
-          /\ trace.Valid (boundedDelayModel 0)
-          /\ TimeDiverges trace
-          /\ 0 <= (0 : Real)
-          /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
-          /\ trace.SignatureScheduling (some bounds.signatureInterval)
-          /\ StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0}
-          /\ Window.ReconfigurationSettled trace 0 duration 0
-          /\ Backlog trace 0 0 {0} 0
-          /\ InTermAt trace 0 Model.BOOTSTRAP_TERM {0}
-          /\ SubmittedAt trace 0 0 10)
-        /\ exists index,
-            Within trace 0 duration index /\ RequestCommitted trace 0 10 index := by
+      forall duration : Real,
+        0 <= duration
+        -> exists trace : Trace (World Model.State) Liveness.Event,
+            (trace.Coherent
+              /\ trace.Valid (protocolModel system)
+              /\ trace.Valid timingModel
+              /\ trace.Valid crashModel
+              /\ trace.Valid (deliveryModel system)
+              /\ trace.Valid (boundedDelayModel 0)
+              /\ TimeDiverges trace
+              /\ 0 <= (0 : Real)
+              /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
+              /\ trace.SignatureScheduling (some bounds.signatureInterval)
+              /\ StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0}
+              /\ Window.ReconfigurationSettled trace 0 duration 0
+              /\ Backlog trace 0 0 {0} 0
+              /\ InTermAt trace 0 Model.BOOTSTRAP_TERM {0}
+              /\ SubmittedAt trace 0 0 10)
+            /\ exists index,
+                Within trace 0 duration index /\ RequestCommitted trace 0 10 index := by
+  intro system bounds duration nonnegative
   refine ⟨fixture true, ?_, 1, ?_, committed⟩
   · refine ⟨coherent true, protocol_valid true, timing_valid true, crash_valid true,
       delivery_valid true, ?_, ?_, by norm_num, heartbeats true _, ?_,
-      short_window, short_reconfiguration, initial_backlog, initial_in_term, ?_⟩
+      fixture_window duration, fixture_settled duration, initial_backlog,
+      initial_in_term, ?_⟩
     · refine ⟨?_, ?_⟩
       · intro packet member
         change packet ∈ ([] : List Packet) at member
@@ -620,9 +614,8 @@ theorem timed_commit_window_witness
   · refine ⟨Nat.zero_le 1, fun first point firstFound found => ?_⟩
     rw [fixture_stateAt, Option.some.injEq] at firstFound found
     subst first point
-    change ((0 : Nat) : Real) <= ((0 : Nat) : Real) + commitLatency shortBounds 0 0
-    rw [short_duration]
-    norm_num
+    change ((0 : Nat) : Real) <= ((0 : Nat) : Real) + duration
+    simpa using nonnegative
 
 private theorem unsigned_never_commits (index : Nat)
     : Not (RequestCommitted (fixture false) 0 10 index) := by
