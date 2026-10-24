@@ -145,8 +145,15 @@ theorem delivered_within {maxDelay : Real}
     admissible.live_anti before.le exitFound lastFound targetLive
   have consumed := admissible.consumed_of_left stepped exitMember fun stillPending =>
     outside ⟨step.after, Trace.stateAt_succ_of_stepAt stepped, stillPending⟩
-  refine ⟨exit, step, by omega, before, stepped,
-    pending_deadline bounded exitFound exitMember exitLive, ?_⟩
+  refine ⟨
+    exit,
+    step,
+    by omega,
+    before,
+    stepped,
+    pending_deadline bounded exitFound exitMember exitLive,
+    ?_
+  ⟩
   cases action : step.action with
   | deliver delivered =>
       rw [action] at consumed
@@ -157,13 +164,30 @@ theorem delivered_within {maxDelay : Real}
       simp only [Event.consumedPacket, Option.some.injEq] at consumed
       subst consumed
       exact (good.lossless exit step dropped
-        (within_of_le admissible within lastFound (by omega) before.le) stepped action
-        ⟨source, target⟩).elim
+              (within_of_le admissible within lastFound (by omega) before.le) stepped
+              action ⟨source, target⟩).elim
   | _ =>
       rw [action] at consumed
       simp [Event.consumedPacket] at consumed
 
 end Trace
+
+private theorem local_of_internal {event : Liveness.Event} {action : Model.Action}
+    {actor : NodeID} {localEvent : Model.Node.Event} {input : Input}
+    (selected : event.action = some action) (acts : Acts action actor localEvent)
+    (internal : localEvent = .internal input)
+    : event = .local actor input := by
+  cases action with
+  | «local» node input' =>
+      obtain ⟨actorEq, eventEq⟩ := acts
+      rw [eventEq] at internal
+      cases internal
+      rw [actorEq]
+      cases event <;> simp_all [Liveness.Event.action]
+  | deliver envelope =>
+      obtain ⟨_, eventEq⟩ := acts
+      rw [eventEq] at internal
+      cases internal
 
 section Recorded
 
@@ -298,10 +322,203 @@ theorem window_reset_follows {heartbeatInterval maxDelay : Real}
   · exact Or.inl candidate
   by_cases preVote : targetState.role = .preVoteCandidate
   · exact Or.inr (Or.inl preVote)
-  exact Or.inr (Or.inr
-    (matching delivery deliveryStep packet _ targetState
-      (windowed delivery (by omega) deliveryBefore.le) deliveredAt deliverEq source
-      (target ▸ nodeIn) payload targetFound (by omega) candidate preVote))
+  exact Or.inr
+    (Or.inr
+      (matching delivery deliveryStep packet _ targetState
+        (windowed delivery (by omega) deliveryBefore.le) deliveredAt deliverEq source
+        (target ▸ nodeIn) payload targetFound (by omega) candidate preVote))
+
+/-- While `leader` leads `term` and a tracked participant stays within `term`, the
+participant does not time out in the window at least half an election timeout
+after the start. -/
+theorem window_no_timeout {bounds : Bounds} {maxDelay : Real}
+    (heartbeats : trace.HeartbeatScheduling (some bounds.heartbeatInterval))
+    (elections : trace.ElectionScheduling (some (bounds.electionTimeout / 2)))
+    (bounded : trace.Valid (boundedDelayModel maxDelay)) (nonneg : 0 <= maxDelay)
+    (ratio : bounds.heartbeatInterval + maxDelay < bounds.electionTimeout / 2)
+    {start : Nat} {duration : Real} {leader node : NodeID} {term : Nat}
+    {participants : Finset NodeID}
+    (good : GoodPeriod trace start duration participants)
+    (active : Window.StaysActive trace start duration leader)
+    (matching : WindowMatching trace start duration leader term participants)
+    (leaderIn : leader ∈ participants) (nodeIn : node ∈ participants)
+    {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
+    (afterStart : start <= index) (stepped : trace.stepAt index = some step)
+    (within : Within trace start duration index)
+    (event : step.action = .local node (.timeout .election))
+    {first : W} (firstFound : trace.stateAt start = some first)
+    (fresh : time first + bounds.electionTimeout / 2 <= time step.before)
+    (leads
+      : forall earlier point,
+          start <= earlier
+          -> earlier <= index
+          -> trace.stateAt earlier = some point
+          -> exists state,
+              nodeState (proto point) leader = some state
+              /\ state.role = .primary
+              /\ state.currentTerm = term)
+    (nodeTerm
+      : forall earlier point state,
+          start <= earlier
+          -> earlier <= index
+          -> trace.stateAt earlier = some point
+          -> nodeState (proto point) node = some state
+          -> state.currentTerm <= term)
+    (tracked
+      : forall earlier point leaderState,
+          start <= earlier
+          -> earlier <= index
+          -> trace.stateAt earlier = some point
+          -> nodeState (proto point) leader = some leaderState
+          -> node ∈ eligiblePeers leaderState leader)
+    : False := by
+  have follows := window_reset_follows admissible heartbeats bounded nonneg good active
+    matching leaderIn nodeIn (admissible.before stepped) within leads nodeTerm tracked
+  obtain ⟨reset, resetPoint, _, before, resetFound, recent, resetStep, resetStepped, isReset⟩ :=
+    recent_reset
+      (fun _ _ _ _ le firstFound lastFound => admissible.time_le le firstFound lastFound)
+      ratio afterStart firstFound (admissible.before stepped) fresh
+      (reset := fun later =>
+        exists reset, trace.stepAt later = some reset /\ ElectionReset reset node)
+      (fun earlier point after le recorded early => by
+        obtain ⟨later, reset, after, resetStepped, inTime, isReset⟩ :=
+          follows earlier point after le recorded early
+        exact ⟨later, reset.before, after, admissible.before resetStepped, inTime,
+          reset, resetStepped, isReset⟩)
+  have := elections reset index resetStep step node before resetStepped stepped event isReset
+  rw [admissible.before resetStepped, Option.some.injEq] at resetFound
+  rw [← resetFound] at recent
+  linarith
+
+/-- From a quiet start, the term stays quiet at every recorded state of a good
+period in which the primary stays active, its AppendEntries pass participants'
+log checks, and only tracked participants of the term time out. -/
+theorem window_quiet {bounds : Bounds} {maxDelay : Real}
+    (heartbeats : trace.HeartbeatScheduling (some bounds.heartbeatInterval))
+    (elections : trace.ElectionScheduling (some (bounds.electionTimeout / 2)))
+    (bounded : trace.Valid (boundedDelayModel maxDelay)) (nonneg : 0 <= maxDelay)
+    (ratio : bounds.heartbeatInterval + maxDelay < bounds.electionTimeout / 2)
+    {start : Nat} {duration : Real} {leader : NodeID} {term : Nat}
+    {participants : Finset NodeID}
+    (initial : QuietStart trace start leader term bounds.electionTimeout)
+    (good : GoodPeriod trace start duration participants)
+    (active : Window.StaysActive trace start duration leader)
+    (matching : WindowMatching trace start duration leader term participants)
+    (covered : WindowCovered trace start duration leader term participants)
+    (leaderIn : leader ∈ participants)
+    : Window.StableLeader trace start duration leader term := by
+  intro index
+  induction index using Nat.strong_induction_on with
+  | _ index ih =>
+      intro point within recorded
+      by_cases atStart : index = start
+      · subst index
+        obtain ⟨first, firstFound, quiet⟩ := initial.quiet
+        rw [recorded, Option.some.injEq] at firstFound
+        subst first
+        exact quiet
+      rcases index with _ | index
+      · exact absurd (Nat.le_zero.mp within.1) (Ne.symm atStart)
+      obtain ⟨step, stepped, rfl⟩ := Trace.stateAt_succ_eq_some.mp recorded
+      have afterStart : start <= index := by have := within.1; omega
+      have windowed
+          : forall earlier, start <= earlier -> earlier <= index
+              -> Within trace start duration earlier :=
+        fun earlier after le => within_of_le admissible within recorded after (by omega)
+      have quiet
+          : forall earlier point,
+              start <= earlier
+              -> earlier <= index
+              -> trace.stateAt earlier = some point
+              -> Quiet leader term (proto point) :=
+        fun earlier point after le found =>
+          ih earlier (by omega) point (windowed earlier after le) found
+      have indexWithin := windowed index afterStart le_rfl
+      have nowQuiet := quiet index step.before afterStart le_rfl (admissible.before stepped)
+      rcases selected : step.action.action with _ | action
+      · rw [admissible.stutter stepped selected]
+        exact nowQuiet
+      obtain ⟨rest, c, acts, _⟩ := ctx_at admissible stepped selected
+      have local_ : forall input, c.event = .internal input
+          -> step.action = .local c.actor input :=
+        fun _ eventEq => local_of_internal selected acts eventEq
+      refine Quiet.step c nowQuiet (fun eventEq => ?_)
+        (fun same eventEq =>
+          good.noNominations index step leader indexWithin stepped
+            (same ▸ local_ _ eventEq))
+        (fun same eventEq =>
+          good.noQuorumChecks index step leader indexWithin stepped leaderIn
+            (same ▸ local_ _ eventEq))
+        fun same =>
+          active.notRetired (index + 1) step.after _ within
+            (Trace.stateAt_succ_of_stepAt stepped)
+            (found_of_now c.exec (same ▸ c.post_now))
+      have ran
+          : (startElection (Capabilities.record c.tr.actor) c.tr.pre c.tr.actor).run {}
+            = some (c.tr.post, c.tr.outputs) := by
+        have ran := c.tr.ran
+        have eventEq' : c.tr.event = .internal (.timeout .election) := eventEq
+        rw [eventEq'] at ran
+        exact ran
+      obtain ⟨_, _, can⟩ := startElection_guard c.tr.actor c.tr.pre {} _ _ ran
+      have preLe : c.tr.pre.currentTerm <= term := nowQuiet.terms _ _ c.pre_now
+      show c.tr.pre.currentTerm < term
+      by_contra notLt
+      have different : Not (c.actor = leader) := by
+        intro same
+        obtain ⟨local_, lead⟩ := Quiet.lead c nowQuiet
+        have primary : c.tr.pre.role = .primary := by
+          have now : Now (proto step.before :: rest) c.actor local_ := by
+            rw [same]
+            exact lead.now
+          have := lead.primary
+          rwa [c.now_pre now] at this
+        rcases can.1 with role | role | role <;> rw [role] at primary <;> cases primary
+      have timeout := local_ _ eventEq
+      obtain ⟨nodeIn, tracked⟩ :=
+        covered index step c.actor c.tr.pre indexWithin stepped timeout different c.tr.found
+          (by omega)
+      obtain ⟨first, firstFound, _⟩ := initial.quiet
+      exact window_no_timeout admissible heartbeats elections bounded nonneg ratio good
+        active matching leaderIn nodeIn afterStart stepped indexWithin timeout firstFound
+        (initial.timers first index step c.actor c.tr.pre firstFound afterStart stepped
+          timeout c.tr.found (by omega))
+        (fun earlier point after le found =>
+          quiet_leader admissible found (quiet earlier point after le found))
+        (fun earlier point state after le found nodeFound =>
+          (quiet earlier point after le found).terms _ _
+            (Concrete.mem_of_nodeState nodeFound))
+        tracked
+
+/-- A stable window from a quiet start, under the proposed premises of
+`Properties.signature_settles`: the live quorum and losslessness come from the
+good period, and the election timers from the timer model. -/
+theorem stable_window [HasTimers W] {bounds : Bounds} {maxDelay : Real}
+    (timers : trace.Valid (timerModel bounds.electionTimeout))
+    (bounded : trace.Valid (boundedDelayModel maxDelay)) (nonneg : 0 <= maxDelay)
+    (heartbeats : trace.HeartbeatScheduling (some bounds.heartbeatInterval))
+    (ratio : bounds.heartbeatInterval + maxDelay < bounds.electionTimeout / 2)
+    {start : Nat} {duration : Real} {leader : NodeID} {term : Nat}
+    {participants : Finset NodeID} (leaderIn : leader ∈ participants)
+    (initial : QuietStart trace start leader term bounds.electionTimeout)
+    (good : GoodPeriod trace start duration participants)
+    (active : Window.StaysActive trace start duration leader)
+    (matching : WindowMatching trace start duration leader term participants)
+    (covered : WindowCovered trace start duration leader term participants)
+    : StableWindow trace start duration leader term participants where
+  stableLeader :=
+    window_quiet admissible heartbeats
+      (Liveness.electionScheduling_of_timerModel admissible.coherent admissible.timing
+        timers)
+      bounded nonneg ratio initial good active matching covered leaderIn
+  staysActive := active
+  liveQuorum index point state within found leaderFound :=
+    good.quorum index point leader state within found
+      (active.live index point within found) leaderFound
+  lossless index step packet within stepped dropped := by
+    rintro (⟨source, target⟩ | ⟨source, target⟩)
+    · exact good.lossless index step packet within stepped dropped ⟨source ▸ leaderIn, target⟩
+    · exact good.lossless index step packet within stepped dropped ⟨source, target ▸ leaderIn⟩
 
 end Recorded
 
