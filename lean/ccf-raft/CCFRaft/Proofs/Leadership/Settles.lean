@@ -357,8 +357,8 @@ theorem window_reset_follows {heartbeatInterval maxDelay : Real}
         (target ▸ nodeIn) payload targetFound (by omega) candidate preVote))
 
 /-- While `leader` leads `term` and a tracked participant stays within `term`, the
-participant does not time out in the window at least half an election timeout
-after the start, once `fresh` has passed and `fresh` exceeds the reset period. -/
+participant does not time out in the window at least `fresh` after the start,
+where `fresh` exceeds the reset period and is at most half an election timeout. -/
 theorem window_no_timeout {bounds : Bounds} {maxDelay : Real}
     (heartbeats : trace.HeartbeatScheduling (some bounds.heartbeatInterval))
     (elections : trace.ElectionScheduling (some (bounds.electionTimeout / 2)))
