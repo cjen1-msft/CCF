@@ -249,7 +249,7 @@ theorem step_facts {self : NodeID} {pre post : NodeState} {event : Model.Node.Ev
 omit [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W] in
 /-- A participant's term stays at the quiet term. -/
 theorem term_settles {participants : Finset NodeID} {leader : NodeID} {term : Nat}
-    {state : Model.State} (quiet : QuietAmong participants leader term state)
+    {state : Model.State} (quiet : QuietTerm participants leader term state)
     {node : NodeID} (nodeIn : node ∈ participants) {pre post : NodeState}
     (found : nodeState state node = some post) (preTerm : pre.currentTerm = term)
     (le : pre.currentTerm <= post.currentTerm)
@@ -357,7 +357,7 @@ theorem matches_at {start : Nat} {duration : Real} {leader : NodeID} {term : Nat
     {participants : Finset NodeID} {index : Nat}
     {step : CCF.Execution.Step W Liveness.Event}
     (stepped : trace.stepAt index = some step)
-    (quiet : QuietAmong participants leader term (proto step.before))
+    (quiet : QuietTerm participants leader term (proto step.before))
     (sync
       : forall peer,
           peer ∈ participants
@@ -373,7 +373,7 @@ theorem matches_at {start : Nat} {duration : Real} {leader : NodeID} {term : Nat
   rw [sync.found, Option.some.injEq] at found
   subst found
   obtain ⟨leaderState', leaderFound, primary, leaderTerm⟩ :=
-    quietAmong_leader admissible (admissible.before stepped) quiet
+    quietTerm_leader admissible (admissible.before stepped) quiet
   rw [sync.leaderFound, Option.some.injEq] at leaderFound
   subst leaderFound
   obtain ⟨_, prev, prevTerm, _⟩ :=
@@ -510,8 +510,8 @@ theorem sync_step {start : Nat} {duration : Real} {leader : NodeID} {term : Nat}
     (good : GoodPeriod trace start duration participants)
     (active : Window.StaysActive trace start duration leader)
     (leaderIn : leader ∈ participants)
-    (quiet : QuietAmong participants leader term (proto step.before))
-    (quiet' : QuietAmong participants leader term (proto step.after)) {peer : NodeID}
+    (quiet : QuietTerm participants leader term (proto step.before))
+    (quiet' : QuietTerm participants leader term (proto step.after)) {peer : NodeID}
     (peerIn : peer ∈ participants) (different : Not (peer = leader))
     {leaderState state : NodeState}
     (sync : InSyncWith leader term peer step.before leaderState state)
@@ -519,9 +519,9 @@ theorem sync_step {start : Nat} {duration : Real} {leader : NodeID} {term : Nat}
         InSyncWith leader term peer step.after leaderState' state' := by
   obtain ⟨emitted, ledger, silent, out⟩ := ledger_step admissible stepped
   obtain ⟨leaderState', leaderFound', primary', leaderTerm'⟩ :=
-    quietAmong_leader admissible (Trace.stateAt_succ_of_stepAt stepped) quiet'
+    quietTerm_leader admissible (Trace.stateAt_succ_of_stepAt stepped) quiet'
   obtain ⟨leaderState_, leaderFound_, primary_, leaderTerm_⟩ :=
-    quietAmong_leader admissible (admissible.before stepped) quiet
+    quietTerm_leader admissible (admissible.before stepped) quiet
   have same_ : leaderState_ = leaderState := by
     rw [sync.leaderFound, Option.some.injEq] at leaderFound_
     exact leaderFound_.symm
@@ -915,7 +915,7 @@ theorem window_matching_of_inSync {bounds : Bounds} {maxDelay : Real}
           · intro step packet request state within stepped
             have found := admissible.before stepped
             exact matches_at admissible stepped
-              (quietAt moment earlier moment step.before le_rfl within found)
+              (quietAt moment earlier moment step.before le_rfl within found).quietTerm
               (syncAt step.before within found) step packet request state within stepped
         refine ⟨matching, fun point within found peer peerIn different => ?_⟩
         by_cases atStart : index + 1 = start
@@ -930,8 +930,10 @@ theorem window_matching_of_inSync {bounds : Bounds} {maxDelay : Real}
         obtain ⟨_, _, syncPeer⟩ := syncAt step.before within' before peer peerIn different
         exact sync_step admissible stepped within' good active leaderIn
           (quietAt (index + 1) matching index step.before (Nat.le_succ index) within'
-            before)
-          (quietAt (index + 1) matching (index + 1) step.after le_rfl within found) peerIn
+            before).quietTerm
+          (quietAt (index + 1) matching (index + 1) step.after le_rfl within
+            found).quietTerm
+          peerIn
           different syncPeer
   exact fun index => (claim (index + 1)).1 index (Nat.lt_succ_self index)
 

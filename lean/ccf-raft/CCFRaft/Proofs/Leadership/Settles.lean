@@ -209,10 +209,10 @@ theorem window_reset_follows {heartbeatInterval maxDelay : Real}
     (leaderIn : leader ∈ participants) (nodeIn : node ∈ participants)
     (different : Not (node = leader))
     {index : Nat} {last : W} (lastFound : trace.stateAt index = some last)
+    {peers : Finset NodeID} (synced : node ∈ peers)
     (matching
       : forall moment,
-          moment < index
-          -> MatchesAt trace start duration leader term participants moment)
+          moment < index -> MatchesAt trace start duration leader term peers moment)
     (within : Within trace start duration index)
     (leads
       : forall earlier point,
@@ -327,7 +327,7 @@ theorem window_reset_follows {heartbeatInterval maxDelay : Real}
       (matching delivery deliveryBefore deliveryStep packet _ targetState
         (windowed delivery (by omega) deliveryBefore.le)
         deliveredAt deliverEq source
-        (target ▸ nodeIn)
+        (target ▸ synced)
         (by rw [target]; exact different)
         payload targetFound
         (by omega)
@@ -349,10 +349,10 @@ theorem window_no_timeout {bounds : Bounds} {maxDelay : Real}
     (leaderIn : leader ∈ participants) (nodeIn : node ∈ participants)
     (different : Not (node = leader))
     {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
+    {peers : Finset NodeID} (synced : node ∈ peers)
     (matching
       : forall moment,
-          moment < index
-          -> MatchesAt trace start duration leader term participants moment)
+          moment < index -> MatchesAt trace start duration leader term peers moment)
     (afterStart : start <= index) (stepped : trace.stepAt index = some step)
     (within : Within trace start duration index)
     (event : step.action = .local node (.timeout .election))
@@ -383,7 +383,7 @@ theorem window_no_timeout {bounds : Bounds} {maxDelay : Real}
           -> node ∈ eligiblePeers leaderState leader)
     : False := by
   have follows := window_reset_follows admissible heartbeats bounded nonneg good active
-    leaderIn nodeIn different (admissible.before stepped) matching within leads nodeTerm
+    leaderIn nodeIn different (admissible.before stepped) synced matching within leads nodeTerm
     tracked
   obtain ⟨reset, resetPoint, _, before, resetFound, recent, resetStep, resetStepped, isReset⟩ :=
     recent_reset
@@ -412,10 +412,10 @@ def MembersAt (participants : Finset NodeID) (leader : NodeID) (state : Model.St
         -> Not (node = leader)
         -> node ∈ latestConfigurationMembers (configurationHistory local_.log)
 
-/-- The primary of a term quiet among participants, at a recorded state. -/
-theorem quietAmong_leader {participants : Finset NodeID} {leader : NodeID}
+/-- The primary of a quiet term, at a recorded state. -/
+theorem quietTerm_leader {participants : Finset NodeID} {leader : NodeID}
     {term index : Nat} {point : W} (found : trace.stateAt index = some point)
-    (quiet : QuietAmong participants leader term (proto point))
+    (quiet : QuietTerm participants leader term (proto point))
     : exists state,
         nodeState (proto point) leader = some state
         /\ state.role = .primary
@@ -423,6 +423,16 @@ theorem quietAmong_leader {participants : Finset NodeID} {leader : NodeID}
   obtain ⟨_, exec⟩ := history_at admissible found
   obtain ⟨local_, now, primary, termEq⟩ := quiet.leader
   exact ⟨local_, found_of_now exec now, primary, termEq⟩
+
+/-- The primary of a term quiet among participants, at a recorded state. -/
+theorem quietAmong_leader {participants : Finset NodeID} {leader : NodeID}
+    {term index : Nat} {point : W} (found : trace.stateAt index = some point)
+    (quiet : QuietAmong participants leader term (proto point))
+    : exists state,
+        nodeState (proto point) leader = some state
+        /\ state.role = .primary
+        /\ state.currentTerm = term :=
+  quietTerm_leader admissible found quiet.quietTerm
 
 /-- From a fresh start, the term stays quiet among participants, and the
 primary's latest configuration keeps every participant, at every recorded state
@@ -606,8 +616,9 @@ theorem window_invariant_before {bounds : Bounds} {maxDelay : Real}
     (fun index step node _ first afterStart lt within stepped timeout _ nodeIn different _
         firstFound late earlier_ =>
       window_no_timeout admissible heartbeats elections bounded nonneg ratio freshLe good
-        active leaderIn nodeIn different (fun moment before => matching moment (by omega))
-        afterStart stepped within timeout firstFound late
+        active leaderIn nodeIn different nodeIn
+        (fun moment before => matching moment (by omega)) afterStart stepped within
+        timeout firstFound late
         (fun earlier point after le found =>
           quietAmong_leader admissible found (earlier_ earlier point after le found).1)
         (fun earlier point state after le found nodeFound =>
