@@ -167,6 +167,15 @@ structure RoundSetup [Config.InitialConfiguration] (nodes : List NodeID)
   round : RoundStart trace participants c term
   period : GoodPeriod trace start duration participants
   matching : Window.Matching trace start duration participants
+  /-- No participant's retirement commits in the window. Under `Membership`, a
+  live participant can become retired-committed only through the model's latch
+  across a remove-then-re-add of the node; a rejoined CCF node starts afresh and
+  a retired CCF node shuts down. Without this premise a round can fail: a voter
+  whose log holds its own committed-elsewhere retirement confirmation above its
+  commit index retires on the winner's first AppendEntries (role none, no
+  primaryKnown), leaving no settled quorum; a winner retiring this way also
+  nominates a successor after its win, breaking the quiet term. -/
+  active : Window.AnchorActive trace start duration participants
   startLe : start <= c
   covers
     : forall origin point,
