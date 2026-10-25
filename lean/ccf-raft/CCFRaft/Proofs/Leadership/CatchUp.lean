@@ -38,9 +38,11 @@ open HasProtocol (proto)
 open HasTime (time)
 open HasLive (live)
 open HasNetwork (pending)
-open CCFRaft.Proofs.Timed (Env clock cut peer_acks ackBound env_of_window window_end stable_cut
-  participant_term cut_sentAt stepAt_of_cut stateAt_of_cut cut_stateAt_of_le cut_nodeAt clock_eq
-  agreedPrefix_eq)
+open CCFRaft.Proofs.Timed (
+  Env clock cut peer_acks ackBound env_of_window window_end stable_cut participant_term
+    cut_sentAt stepAt_of_cut stateAt_of_cut cut_stateAt_of_le cut_nodeAt clock_eq
+    agreedPrefix_eq
+  )
 
 /-- The time within which a participant acknowledges at least the primary's log
 at a given point, if its log lagged by at most `backlog` entries at the start of
@@ -66,7 +68,8 @@ delivery takes at most `delay`. The trace and its clock are abstract so that thi
 applies to a cut of a recording. -/
 theorem ack_sent_within {trace : Trace W Liveness.Event} {clock : Nat -> Real}
     {start last : Nat} {stop delay interval bound : Real} {peer : NodeID}
-    (mono : forall index later, index <= later -> later <= last -> clock index <= clock later)
+    (mono
+      : forall index later, index <= later -> later <= last -> clock index <= clock later)
     (ends : forall index step, trace.stepAt index = some step -> index < last)
     (prompt
       : forall index step packet sent,
@@ -143,7 +146,8 @@ theorem reset_of_ack {index : Nat} {packet : Packet} (sent : trace.SentAt index 
     {response : AppendEntriesResponse}
     (payload : packet.envelope.payload = .appendEntriesResponse response)
     (success : response.success = true)
-    : exists step, trace.stepAt index = some step /\ ElectionReset step packet.envelope.source := by
+    : exists step,
+        trace.stepAt index = some step /\ ElectionReset step packet.envelope.source := by
   obtain ⟨step, action, actor, event, state, next, outputs, stepped, selected, acts, found, ran,
       _, member, source⟩ := sent_step admissible sent
   obtain ⟨_, eq, holds⟩ := CCFRaft.Proofs.Safety.summary actor state event {} _ _ ran
@@ -183,11 +187,12 @@ enough point of the window does not time out at least `fresh` after the start,
 where `fresh` exceeds `gap` and is at most half an election timeout. -/
 theorem no_timeout_of_acks {bounds : Bounds}
     (elections : trace.ElectionScheduling (some (bounds.electionTimeout / 2)))
-    {gap fresh : Real} (ratio : gap < fresh) (freshLe : fresh <= bounds.electionTimeout / 2)
-    {start index : Nat} {step : CCF.Execution.Step W Liveness.Event} {node : NodeID}
+    {gap fresh : Real} (ratio : gap < fresh)
+    (freshLe : fresh <= bounds.electionTimeout / 2) {start index : Nat}
+    {step : CCF.Execution.Step W Liveness.Event} {node : NodeID}
     (afterStart : start <= index) (stepped : trace.stepAt index = some step)
-    (event : step.action = .local node (.timeout .election))
-    {first : W} (firstFound : trace.stateAt start = some first)
+    (event : step.action = .local node (.timeout .election)) {first : W}
+    (firstFound : trace.stateAt start = some first)
     (late : time first + fresh <= time step.before)
     (acks
       : forall earlier point,
@@ -223,7 +228,6 @@ theorem no_timeout_of_acks {bounds : Bounds}
   rw [← resetFound] at recent
   linarith
 
-
 /-- A participant that acknowledges the primary within `ackBound` sends a
 successful acknowledgement within `maxDelay + interval + ackBound` after every
 point before its timeout. The window is cut strictly before the timeout, where the
@@ -256,16 +260,18 @@ theorem acks_before_timeout {heartbeatInterval maxDelay : Real}
         -> earlier <= index
         -> trace.stateAt earlier = some point
         -> time point
-            + (maxDelay + max heartbeatInterval 0
-              + ackBound maxDelay (max heartbeatInterval 0) backlog)
+              + (maxDelay
+                  + max heartbeatInterval 0
+                  + ackBound maxDelay (max heartbeatInterval 0) backlog)
             < time step.before
         -> exists sent sender reply response,
             earlier < sent
             /\ trace.stepAt sent = some sender
             /\ time sender.before
                 <= time point
-                  + (maxDelay + max heartbeatInterval 0
-                    + ackBound maxDelay (max heartbeatInterval 0) backlog)
+                    + (maxDelay
+                        + max heartbeatInterval 0
+                        + ackBound maxDelay (max heartbeatInterval 0) backlog)
             /\ trace.SentAt sent reply
             /\ reply.envelope.source = node
             /\ reply.envelope.payload = .appendEntriesResponse response
@@ -377,8 +383,19 @@ theorem acks_before_timeout {heartbeatInterval maxDelay : Real}
   obtain ⟨sentLt, senderStepped'⟩ := stepAt_of_cut senderStepped
   have senderClock : clock (cut trace last) sent = time sender.before :=
     clock_eq (by rw [cut_stateAt_of_le sentLt.le]; exact admissible.before senderStepped')
-  refine ⟨sent, sender, reply, response, after, senderStepped', ?_, (cut_sentAt sentLt).mp sentAt,
-    source, payload, success⟩
+  refine ⟨
+    sent,
+    sender,
+    reply,
+    response,
+    after,
+    senderStepped',
+    ?_,
+    (cut_sentAt sentLt).mp sentAt,
+    source,
+    payload,
+    success
+  ⟩
   rw [senderClock, earlierClock] at sentClock
   exact sentClock
 
@@ -414,7 +431,8 @@ theorem stable_window_catchup [HasTimers W] {bounds : Bounds} {maxDelay : Real}
     {backlog : Nat} {fresh : Real}
     (ratio
       : repair maxDelay (max bounds.heartbeatInterval 0) backlog
-          + max bounds.heartbeatInterval 0 + maxDelay
+          + max bounds.heartbeatInterval 0
+          + maxDelay
         < fresh)
     (freshLe : fresh <= bounds.electionTimeout / 2)
     {start : Nat} {duration : Real} {leader : NodeID} {term : Nat}
@@ -434,14 +452,16 @@ theorem stable_window_catchup [HasTimers W] {bounds : Bounds} {maxDelay : Real}
             + ackBound maxDelay (max bounds.heartbeatInterval 0) backlog
           < fresh := by
       rw [← repair_eq]; linarith
-    exact (window_invariant_core admissible initial members good active leaderIn (bound := index)
-      (fun _ _ _ _ _ afterStart _ within' stepped timeout _ nodeIn different _ firstFound late
-          invariant =>
-        no_timeout_of_acks admissible elections gapLt freshLe afterStart stepped timeout
-          firstFound late
-          (acks_before_timeout admissible diverges bounded nonneg heartbeats good active inTerm
-            behind leaderIn nodeIn different stepped within' firstFound invariant))
-      index point le_rfl within found).1
+    exact (window_invariant_core admissible initial members good active leaderIn
+            (bound := index)
+            (fun _ _ _ _ _ afterStart _ within' stepped timeout _ nodeIn different _
+                firstFound late invariant =>
+              no_timeout_of_acks admissible elections gapLt freshLe afterStart stepped
+                timeout firstFound late
+                (acks_before_timeout admissible diverges bounded nonneg heartbeats good
+                  active inTerm behind leaderIn nodeIn different stepped within'
+                  firstFound invariant))
+            index point le_rfl within found).1
   staysActive := active
   liveQuorum index point state within found leaderFound :=
     good.quorum index point leader state within found
