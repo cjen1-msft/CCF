@@ -304,8 +304,9 @@ theorem log_source
             exact (isRequest ⟨request, this.2⟩).elim
         | elect wins => exact elect wins
 
-/-- Clauses two and three of `Blocks` for the threshold `k`. -/
-def AboveBlocked (participants anchor : Finset NodeID) (k : Nat) (state : Model.State)
+/-- Clauses two and three of `Configured` for the threshold `k`. -/
+def AboveConfigured (P : Finset NodeID -> Prop) (participants : Finset NodeID) (k : Nat)
+    (state : Model.State)
     : Prop :=
   (forall holder held,
     (holder, held) ∈ state.nodes
@@ -313,7 +314,7 @@ def AboveBlocked (participants anchor : Finset NodeID) (k : Nat) (state : Model.
     -> forall configuration,
         configuration ∈ configurationHistory held.log
         -> k < configuration.index
-        -> Blocked anchor configuration.nodes)
+        -> P configuration.nodes)
   /\ (forall envelope request,
         envelope ∈ state.network
         -> envelope.source ∈ participants
@@ -322,12 +323,12 @@ def AboveBlocked (participants anchor : Finset NodeID) (k : Nat) (state : Model.
         -> forall configuration,
             configuration ∈ configurationHistory request.entries
             -> k < request.prevLogIndex + configuration.index
-            -> Blocked anchor configuration.nodes)
+            -> P configuration.nodes)
 
-theorem AboveBlocked.mono {participants anchor : Finset NodeID} {k k' : Nat}
-    {state : Model.State} (above : AboveBlocked participants anchor k state)
+theorem AboveConfigured.mono {P : Finset NodeID -> Prop} {participants : Finset NodeID}
+    {k k' : Nat} {state : Model.State} (above : AboveConfigured P participants k state)
     (le : k <= k')
-    : AboveBlocked participants anchor k' state :=
+    : AboveConfigured P participants k' state :=
   ⟨
     fun holder held now holderIn configuration member high =>
       above.1 holder held now holderIn configuration member (by omega),
@@ -336,7 +337,7 @@ theorem AboveBlocked.mono {participants anchor : Finset NodeID} {k k' : Nat}
         (by omega)
   ⟩
 
-variable {participants anchor : Finset NodeID}
+variable {P : Finset NodeID -> Prop} {participants : Finset NodeID}
   (isolated
     : c.actor ∈ participants
       -> forall source message,
@@ -348,9 +349,9 @@ variable {participants anchor : Finset NodeID}
 
 include isolated plain
 
-/-- A step among participants keeps every configuration above `k` blocked. -/
-theorem AboveBlocked.step {k : Nat} (above : AboveBlocked participants anchor k before)
-    : AboveBlocked participants anchor k after := by
+/-- A step among participants keeps every configuration above `k` satisfying `P`. -/
+theorem AboveConfigured.step {k : Nat} (above : AboveConfigured P participants k before)
+    : AboveConfigured P participants k after := by
   have held
       : forall holder held,
           (holder, held) ∈ after.nodes
@@ -358,7 +359,7 @@ theorem AboveBlocked.step {k : Nat} (above : AboveBlocked participants anchor k 
           -> forall configuration,
               configuration ∈ configurationHistory held.log
               -> k < configuration.index
-              -> Blocked anchor configuration.nodes := by
+              -> P configuration.nodes := by
     intro holder held now holderIn configuration member high
     rcases c.now_after now with ⟨same, rfl⟩ | ⟨_, old⟩
     · have actorIn : c.actor ∈ participants := same ▸ holderIn
@@ -384,15 +385,15 @@ theorem AboveBlocked.step {k : Nat} (above : AboveBlocked participants anchor k 
     rw [← nodesEq]
     exact held c.actor c.post c.post_now (sourceEq ▸ sourceIn) placed placedIn (by omega)
 
-/-- A step among participants keeps every quorum they can count blocked by the
-anchor, when it appends no configuration. -/
-theorem Blocks.step (blocks : Blocks participants anchor before)
-    : Blocks participants anchor after := by
+/-- A step among participants keeps every configuration they can count votes in
+satisfying `P`, when it appends no configuration. -/
+theorem Configured.step (blocks : Configured P participants before)
+    : Configured P participants after := by
   intro node local_ now nodeIn
   rcases c.now_after now with ⟨same, rfl⟩ | ⟨_, old⟩
   · have actorIn : c.actor ∈ participants := same ▸ nodeIn
     obtain ⟨active, above, sent⟩ := blocks c.actor c.pre c.pre_now actorIn
-    have aboveAfter := AboveBlocked.step c isolated plain (k := c.pre.commitIndex)
+    have aboveAfter := AboveConfigured.step c isolated plain (k := c.pre.commitIndex)
       ⟨above, sent⟩
     have extends_ := CCFRaft.Proofs.Direct.extends_step c.tr.ran
     have commitLe : c.pre.commitIndex <= c.post.commitIndex := extends_.1
@@ -408,9 +409,15 @@ theorem Blocks.step (blocks : Blocks participants anchor before)
         ((activeConfigurations_sublist _ _).subset member) high
     · exact active configuration old
   · obtain ⟨active, above, sent⟩ := blocks node local_ old nodeIn
-    have aboveAfter := AboveBlocked.step c isolated plain (k := local_.commitIndex)
+    have aboveAfter := AboveConfigured.step c isolated plain (k := local_.commitIndex)
       ⟨above, sent⟩
     exact ⟨active, aboveAfter.1, aboveAfter.2⟩
+
+/-- A step among participants keeps every quorum they can count blocked by the
+anchor, when it appends no configuration. -/
+theorem Blocks.step {anchor : Finset NodeID} (blocks : Blocks participants anchor before)
+    : Blocks participants anchor after :=
+  Configured.step c isolated plain blocks
 
 end Step
 

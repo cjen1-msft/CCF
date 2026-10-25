@@ -73,12 +73,54 @@ structure Anchor (participants anchor : Finset NodeID) (leader : NodeID) (term :
         -> local_.currentTerm = term
         -> Disjoint local_.preVotesGranted anchor
 
-/-- Every configuration a participant can count votes in has each majority
-meeting `anchor`: every configuration active at a participant, and every
+/-- Every configuration a participant can count votes in has a node set
+satisfying `P`: every configuration active at a participant, and every
 configuration above a participant's commit index in a participant's log or in an
 AppendEntries in flight between participants. A configuration becomes active at
 a participant only as an entry landing above its commit index, which only grows,
-so the form is inductive without a safety invariant.
+so the form is inductive without a safety invariant. -/
+def Configured (P : Finset NodeID -> Prop) (participants : Finset NodeID)
+    (state : Model.State)
+    : Prop :=
+  forall node local_,
+    (node, local_) ∈ state.nodes
+    -> node ∈ participants
+    -> (forall configuration,
+          configuration ∈ local_.activeConfigurations -> P configuration.nodes)
+        /\ (forall holder held,
+              (holder, held) ∈ state.nodes
+              -> holder ∈ participants
+              -> forall configuration,
+                  configuration ∈ configurationHistory held.log
+                  -> local_.commitIndex < configuration.index
+                  -> P configuration.nodes)
+        /\ (forall envelope request,
+              envelope ∈ state.network
+              -> envelope.source ∈ participants
+              -> envelope.target ∈ participants
+              -> envelope.payload = .appendEntriesRequest request
+              -> forall configuration,
+                  configuration ∈ configurationHistory request.entries
+                  -> local_.commitIndex < request.prevLogIndex + configuration.index
+                  -> P configuration.nodes)
+
+/-- `Configured` is monotone in its predicate. -/
+theorem Configured.mono {P Q : Finset NodeID -> Prop} {participants : Finset NodeID}
+    {state : Model.State} (configured : Configured P participants state)
+    (implies : forall nodes, P nodes -> Q nodes)
+    : Configured Q participants state := by
+  intro node local_ member nodeIn
+  obtain ⟨active, held, sent⟩ := configured node local_ member nodeIn
+  exact ⟨
+    fun configuration found => implies _ (active configuration found),
+    fun holder held' now holderIn configuration found high =>
+      implies _ (held holder held' now holderIn configuration found high),
+    fun envelope request queued sourceIn targetIn payload configuration found high =>
+      implies _ (sent envelope request queued sourceIn targetIn payload configuration found high)
+  ⟩
+
+/-- Every configuration a participant can count votes in (`Configured`) has each
+majority meeting `anchor`.
 
 Needed in this form. Narrower, over active configurations only, is false: a
 configuration inactive at the primary, above a laggard's commit index, becomes
@@ -91,28 +133,77 @@ for a step, since `hasQuorum` needs a majority in every configuration, but only
 the all-configurations form stays inductive; with log matching only the
 primary's log would matter. -/
 def Blocks (participants anchor : Finset NodeID) (state : Model.State) : Prop :=
-  forall node local_,
-    (node, local_) ∈ state.nodes
-    -> node ∈ participants
-    -> (forall configuration,
-          configuration ∈ local_.activeConfigurations
-          -> Blocked anchor configuration.nodes)
-        /\ (forall holder held,
-              (holder, held) ∈ state.nodes
-              -> holder ∈ participants
-              -> forall configuration,
-                  configuration ∈ configurationHistory held.log
-                  -> local_.commitIndex < configuration.index
-                  -> Blocked anchor configuration.nodes)
-        /\ (forall envelope request,
-              envelope ∈ state.network
-              -> envelope.source ∈ participants
-              -> envelope.target ∈ participants
-              -> envelope.payload = .appendEntriesRequest request
-              -> forall configuration,
-                  configuration ∈ configurationHistory request.entries
-                  -> local_.commitIndex < request.prevLogIndex + configuration.index
-                  -> Blocked anchor configuration.nodes)
+  Configured (Blocked anchor) participants state
+
+/-- Every configuration a participant can count votes in (`Configured`) has the
+nodes `members`.
+
+Needed for a duel, where membership must not differ between views. A primary
+sends heartbeats only to the members of its own active configurations, while
+`canStartElection` checks a participant's own signed active configurations. With
+participants `{1, 2, 3}`, a primary `1` that has committed a configuration
+`{1, 2}`, and a lagging `3` still holding the earlier signed configuration
+`{1, 2, 3}` above its commit index, `1` never sends to `3`, so `3` times out and
+campaigns. -/
+def Membership (participants members : Finset NodeID) (state : Model.State) : Prop :=
+  Configured (fun nodes => nodes = members) participants state
+
+/-- A fixed membership with a majority in the anchor blocks every countable
+quorum. -/
+theorem Membership.blocks {participants members anchor : Finset NodeID}
+    {state : Model.State} (membership : Membership participants members state)
+    (majority : 2 * (members \ anchor).card <= members.card)
+    : Blocks participants anchor state :=
+  Configured.mono membership
+    fun nodes eq => by
+      rw [eq]
+      exact majority
+
+/-- Under a fixed membership, every participant's latest active configuration is
+the membership, unless it has none. -/
+theorem Membership.latest {participants members : Finset NodeID} {state : Model.State}
+    (membership : Membership participants members state) {node : NodeID}
+    {local_ : NodeState} (member : (node, local_) ∈ state.nodes)
+    (nodeIn : node ∈ participants)
+    : local_.activeConfigurations = []
+      \/ latestConfigurationMembers local_.activeConfigurations = members := by
+  obtain ⟨active, _, _⟩ := membership node local_ member nodeIn
+  unfold latestConfigurationMembers
+  cases last : local_.activeConfigurations.getLast? with
+  | none => exact Or.inl (List.getLast?_eq_none_iff.mp last)
+  | some configuration =>
+      exact Or.inr (active configuration (List.mem_of_getLast? last))
+
+private theorem foldl_union_same {members : Finset NodeID}
+    : forall (configurations : List Configuration) (nodes : Finset NodeID),
+        (forall configuration,
+          configuration ∈ configurations -> configuration.nodes = members)
+        -> Not (configurations = [])
+        -> configurations.foldl (fun nodes configuration => nodes ∪ configuration.nodes)
+              nodes
+            = nodes ∪ members
+  | [], _, _, empty => absurd rfl empty
+  | configuration :: rest, nodes, same, _ => by
+      rw [List.foldl_cons, same configuration List.mem_cons_self]
+      by_cases restEmpty : rest = []
+      · subst restEmpty
+        rfl
+      · rw [foldl_union_same rest _ (fun c found => same c (List.mem_cons_of_mem _ found))
+          restEmpty, Finset.union_assoc, Finset.union_self]
+
+/-- Under a fixed membership, every participant's active members are the
+membership, unless it has no active configuration. -/
+theorem Membership.activeMembers {participants members : Finset NodeID}
+    {state : Model.State} (membership : Membership participants members state)
+    {node : NodeID} {local_ : NodeState} (member : (node, local_) ∈ state.nodes)
+    (nodeIn : node ∈ participants)
+    : local_.activeConfigurations = [] \/ local_.activeMembers = members := by
+  obtain ⟨active, _, _⟩ := membership node local_ member nodeIn
+  by_cases empty : local_.activeConfigurations = []
+  · exact Or.inl empty
+  refine Or.inr ?_
+  unfold NodeState.activeMembers configurationMembers
+  rw [foldl_union_same _ _ active empty, Finset.empty_union]
 
 variable {W : Type} [HasProtocol W Model.State] [HasTime W]
 

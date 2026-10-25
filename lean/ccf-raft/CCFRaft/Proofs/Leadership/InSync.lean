@@ -366,7 +366,7 @@ theorem matches_at {start : Nat} {duration : Real} {leader : NodeID} {term : Nat
               InSyncWith leader term peer step.before leaderState state)
     : MatchesAt trace start duration leader term participants index := by
   intro step' packet request state _ stepped' delivered source targetIn different payload
-    found _ _ _
+    found _ _ _ _
   rw [stepped, Option.some.injEq] at stepped'
   subst stepped'
   obtain ⟨leaderState, peerState, sync⟩ := sync _ targetIn different
