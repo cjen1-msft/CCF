@@ -294,6 +294,32 @@ theorem noNack_after {step : CCF.Execution.Step W Liveness.Event}
   · obtain ⟨ordinal, found, _, _⟩ := Packet.mem_batch.mp fresh
     exact new _ (List.mem_of_getElem? found)
 
+/-- What a node step sends: its summary, and where its AppendEntries traffic comes
+from. -/
+theorem step_facts {self : NodeID} {pre post : NodeState} {event : Model.Node.Event}
+    {outputs}
+    (ran
+      : (Model.Node.step (Capabilities.record self) self pre event).run {}
+        = some (post, outputs))
+    : Summary self pre event post outputs.outgoing
+      /\ forall envelope, envelope ∈ outputs.outgoing -> Origin pre event envelope := by
+  obtain ⟨_, eq, holds⟩ := CCFRaft.Proofs.Safety.summary self pre event {} _ _ ran
+  obtain ⟨_, eq', origins⟩ := CCFRaft.Proofs.Safety.origin self pre event {} _ _ ran
+  refine ⟨by simpa [eq] using holds, fun envelope member => origins envelope ?_⟩
+  rw [eq'] at member
+  simpa using member
+
+omit [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W] in
+/-- A participant's term stays at the quiet term. -/
+theorem term_settles {participants : Finset NodeID} {leader : NodeID} {term : Nat}
+    {state : Model.State} (quiet : QuietAmong participants leader term state)
+    {node : NodeID} (nodeIn : node ∈ participants) {pre post : NodeState}
+    (found : nodeState state node = some post) (preTerm : pre.currentTerm = term)
+    (le : pre.currentTerm <= post.currentTerm)
+    : post.currentTerm = term := by
+  have := quiet.terms node post (Concrete.mem_of_nodeState found) nodeIn
+  omega
+
 section Recorded
 
 variable [Config.InitialConfiguration] {nodes : List NodeID}
@@ -501,6 +527,499 @@ theorem peer_log {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
           · rw [packetEnvelope, ← targetEq]
             exact actorEq
           · rw [packetEnvelope, envelopePayload]
+
+/-- A step that consumes and emits no request from the primary to `peer` and no
+rejection from `peer`, keeps the primary's log and `sentIndex` for `peer` and
+`peer`'s log and term, keeps `peer` in sync. -/
+theorem sync_keep {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
+    (stepped : trace.stepAt index = some step) {emitted : List Model.Envelope}
+    (ledger
+      : pending step.after
+        = step.action.remaining (pending step.before)
+          ++ Packet.batch emitted (issued step.before) (time step.before))
+    {leader : NodeID} {term : Nat} {peer : NodeID} {leaderState state : NodeState}
+    (sync : InSyncWith leader term peer step.before leaderState state)
+    {leaderState' state' : NodeState}
+    (leaderFound : nodeState (proto step.after) leader = some leaderState')
+    (found : nodeState (proto step.after) peer = some state')
+    (skip
+      : forall packet,
+          step.action.consumedPacket = some packet
+          -> requestFor leader peer packet.envelope = none)
+    (quietSends
+      : forall envelope,
+          envelope ∈ emitted
+          -> requestFor leader peer envelope = none /\ Not (Nack peer leader envelope))
+    (sent : leaderState'.sentIndex peer = leaderState.sentIndex peer)
+    (grows : leaderState.log <+: leaderState'.log) (log : state'.log = state.log)
+    (current : state'.currentTerm = term)
+    : InSyncWith leader term peer step.after leaderState' state' := by
+  refine ⟨leaderFound, found, current, ?_, ?_, ?_⟩
+  · rw [log]
+    exact sync.prefix_.trans grows
+  · have none_ : emitted.filterMap (requestFor leader peer) = [] :=
+      List.filterMap_eq_nil_iff.mpr fun envelope member => (quietSends envelope member).1
+    rw [queued_after admissible stepped ledger skip, none_, List.append_nil, log, sent]
+    exact sync.chain
+  · exact noNack_after ledger sync.noNack fun envelope member => (quietSends envelope member).2
+
+/-- A participant other than the primary stays in sync with it across a step of
+the window in which the term stays quiet among participants. -/
+theorem sync_step {start : Nat} {duration : Real} {leader : NodeID} {term : Nat}
+    {participants : Finset NodeID} {index : Nat}
+    {step : CCF.Execution.Step W Liveness.Event}
+    (stepped : trace.stepAt index = some step)
+    (within : Within trace start duration index)
+    (good : GoodPeriod trace start duration participants)
+    (active : Window.StaysActive trace start duration leader)
+    (leaderIn : leader ∈ participants)
+    (quiet : QuietAmong participants leader term (proto step.before))
+    (quiet' : QuietAmong participants leader term (proto step.after)) {peer : NodeID}
+    (peerIn : peer ∈ participants) (different : Not (peer = leader))
+    {leaderState state : NodeState}
+    (sync : InSyncWith leader term peer step.before leaderState state)
+    : exists leaderState' state',
+        InSyncWith leader term peer step.after leaderState' state' := by
+  obtain ⟨emitted, ledger, silent, out⟩ := ledger_step admissible stepped
+  obtain ⟨leaderState', leaderFound', primary', leaderTerm'⟩ :=
+    quietAmong_leader admissible (Trace.stateAt_succ_of_stepAt stepped) quiet'
+  obtain ⟨leaderState_, leaderFound_, primary_, leaderTerm_⟩ :=
+    quietAmong_leader admissible (admissible.before stepped) quiet
+  have same_ : leaderState_ = leaderState := by
+    rw [sync.leaderFound, Option.some.injEq] at leaderFound_
+    exact leaderFound_.symm
+  have primary : leaderState.role = .primary := same_ ▸ primary_
+  have leaderTerm : leaderState.currentTerm = term := same_ ▸ leaderTerm_
+  have stutterCase
+      : step.action.action = none
+        -> (forall packet,
+              step.action.consumedPacket = some packet
+              -> requestFor leader peer packet.envelope = none)
+        -> exists leaderState' state',
+            InSyncWith leader term peer step.after leaderState' state' := by
+    intro selected skip
+    have same := admissible.stutter stepped selected
+    have empty := silent selected
+    subst empty
+    exact ⟨leaderState, state,
+      sync_keep admissible stepped ledger sync (by rw [same]; exact sync.leaderFound)
+        (by rw [same]; exact sync.found) skip (fun _ member => by cases member) rfl
+        (List.prefix_refl _) rfl sync.current⟩
+  cases eventEq : step.action with
+  | crash node =>
+      exact stutterCase
+        (by rw [eventEq]; rfl)
+        (by rw [eventEq]; intro _ consumed; simp [Event.consumedPacket] at consumed)
+  | idle =>
+      exact stutterCase
+        (by rw [eventEq]; rfl)
+        (by rw [eventEq]; intro _ consumed; simp [Event.consumedPacket] at consumed)
+  | drop packet =>
+      refine stutterCase (by rw [eventEq]; rfl) ?_
+      rw [eventEq]
+      intro dropped consumed
+      simp only [Event.consumedPacket, Option.some.injEq] at consumed
+      subst consumed
+      cases found : requestFor leader peer packet.envelope with
+      | none => rfl
+      | some request =>
+          obtain ⟨source, target, _⟩ := requestFor_some found
+          exact absurd ⟨by rw [source]; exact leaderIn, by rw [target]; exact peerIn⟩
+            (good.lossless index step packet within stepped eventEq)
+  | «local» node input =>
+      have selected : step.action.action = some (.local node input) := by
+        rw [eventEq]
+        rfl
+      obtain ⟨actor, event, pre, post, outputs, acts, actorFound, ran, actorFound', outEq,
+          others⟩ :=
+        step_found (admissible.reachable_before stepped) (admissible.step stepped selected)
+      obtain ⟨actorEq, eventEq'⟩ := acts
+      subst eventEq'
+      have emittedEq : outputs.outgoing = emitted := by
+        have := out _ selected
+        rw [outEq, Option.some.injEq] at this
+        exact this
+      subst emittedEq
+      obtain ⟨facts, origins⟩ := step_facts ran
+      have skip
+          : forall packet,
+              step.action.consumedPacket = some packet
+              -> requestFor leader peer packet.envelope = none := by
+        rw [eventEq]
+        intro _ consumed
+        simp [Event.consumedPacket] at consumed
+      rw [← actorEq] at eventEq
+      by_cases isLeader : actor = leader
+      · subst isLeader
+        rw [sync.leaderFound, Option.some.injEq] at actorFound
+        rw [leaderFound', Option.some.injEq] at actorFound'
+        subst actorFound actorFound'
+        have peerKept := others peer state different sync.found
+        by_cases toPeer : exists ends, input = .sendEntries peer ends
+        · obtain ⟨ends, rfl⟩ := toPeer
+          obtain ⟨sent, sentEq, pass⟩ := sendEntries_pass actor leaderState peer ends {} _ _ ran
+          have sentEq' : outputs.outgoing = sent := by simpa using sentEq
+          have notRetired :=
+            active.notRetired index step.before leaderState within (admissible.before stepped)
+              sync.leaderFound
+          obtain ⟨sentIndexEq, sentList⟩ := pass.complete notRetired
+          have logEq : leaderState'.log = leaderState.log := by rw [pass.state]
+          refine ⟨leaderState', state, leaderFound', peerKept, sync.current,
+            by rw [logEq]; exact sync.prefix_, ?_, ?_⟩
+          · rw [queued_after admissible stepped ledger skip, sentEq', sentList, requests_pass,
+              sentIndexEq]
+            exact Chain.append sync.chain (chain_pass leaderState leaderTerm pass.valid)
+          · refine noNack_after ledger sync.noNack fun envelope member nack => ?_
+            exact different (nack.1.symm.trans (Summary.sends facts envelope member).1)
+        · obtain ⟨_, _, flow⟩ := leader_flow actor peer leaderState primary (.internal input) {} _ _ ran
+          obtain ⟨_, sentMove⟩ := flow primary' (leaderTerm'.trans leaderTerm.symm)
+          have sentSame : leaderState'.sentIndex peer = leaderState.sentIndex peer := by
+            rcases sentMove with same | ⟨ends, inputEq, _⟩ | ⟨_, inputEq, _⟩
+                | ⟨contents, content, inputEq, member, config⟩
+            · exact same
+            · cases inputEq
+              exact absurd ⟨ends, rfl⟩ toPeer
+            · cases inputEq
+            · cases inputEq
+              exact absurd
+                (good.noReconfiguration index step actor contents within stepped eventEq content
+                  member) config
+          obtain ⟨rest, c, _, _⟩ := ctx_at admissible stepped selected
+          have grows :=
+            CCFRaft.Proofs.CommitLiveness.primary_log_prefix c.prior c.exec
+              (List.suffix_cons _ _) sync.leaderFound leaderFound' primary primary'
+              (leaderTerm.trans leaderTerm'.symm)
+          refine ⟨
+            leaderState',
+            state,
+            sync_keep admissible stepped ledger sync leaderFound' peerKept skip
+              (fun envelope member => ⟨?_, fun nack => ?_⟩) sentSame grows rfl
+              sync.current
+          ⟩
+          · cases found : requestFor actor peer envelope with
+            | none => rfl
+            | some request =>
+                obtain ⟨_, target, payload⟩ := requestFor_some found
+                rcases (origins envelope member).2 request payload primary
+                    with ⟨ends, _, inputEq, _⟩ | ⟨contents, content, inputEq, contentIn, config⟩
+                · cases inputEq
+                  rw [target] at toPeer
+                  exact absurd ⟨ends, rfl⟩ toPeer
+                · cases inputEq
+                  exact absurd
+                    (good.noReconfiguration index step actor contents within stepped eventEq
+                      content contentIn) config
+          · exact different (nack.1.symm.trans (Summary.sends facts envelope member).1)
+      · have leaderKept := others leader leaderState (fun h => isLeader h.symm) sync.leaderFound
+        by_cases isPeer : actor = peer
+        · subst isPeer
+          rw [sync.found, Option.some.injEq] at actorFound
+          subst actorFound
+          have current := term_settles quiet' peerIn actorFound' sync.current (Summary.term_le facts)
+          have logSame : post.log = state.log := by
+            by_contra changed
+            obtain ⟨_, _, delivered, _⟩ :=
+              peer_log admissible stepped sync.leaderFound primary leaderTerm different sync.found
+                actorFound' sync.current current changed
+            rw [eventEq] at delivered
+            cases delivered
+          refine ⟨leaderState, post,
+            sync_keep admissible stepped ledger sync leaderKept actorFound' skip
+              (fun envelope member => ⟨requestFor_source ?_, fun nack => ?_⟩) rfl
+              (List.prefix_refl _) logSame current⟩
+          · rw [(Summary.sends facts envelope member).1]
+            exact isLeader
+          · obtain ⟨_, _, response, payload, _⟩ := nack
+            obtain ⟨_, _, inputEq⟩ := (origins envelope member).1 response payload
+            cases inputEq
+        · have peerKept := others peer state (fun h => isPeer h.symm) sync.found
+          refine ⟨leaderState, state,
+            sync_keep admissible stepped ledger sync leaderKept peerKept skip
+              (fun envelope member => ⟨requestFor_source ?_, fun nack => ?_⟩) rfl
+              (List.prefix_refl _) rfl sync.current⟩
+          · rw [(Summary.sends facts envelope member).1]
+            exact isLeader
+          · exact isPeer ((Summary.sends facts envelope member).1.symm.trans nack.1)
+  | deliver packet =>
+      have selected : step.action.action = some (.deliver packet.envelope) := by
+        rw [eventEq]
+        rfl
+      have delivered : step.action.delivered = some packet.envelope := by
+        rw [eventEq]
+        rfl
+      have member : packet ∈ pending step.before :=
+        admissible.consumed_pending stepped (by rw [eventEq]; rfl)
+      obtain ⟨actor, event, pre, post, outputs, acts, actorFound, ran, actorFound', outEq,
+          others⟩ :=
+        step_found (admissible.reachable_before stepped) (admissible.step stepped selected)
+      obtain ⟨actorEq, eventEq'⟩ := acts
+      subst eventEq' actorEq
+      have emittedEq : outputs.outgoing = emitted := by
+        have := out _ selected
+        rw [outEq, Option.some.injEq] at this
+        exact this
+      subst emittedEq
+      obtain ⟨facts, origins⟩ := step_facts ran
+      have skipOf
+          : Not (packet.envelope.target = peer)
+            -> forall other,
+                step.action.consumedPacket = some other
+                -> requestFor leader peer other.envelope = none := by
+        intro notPeer other consumed
+        rw [eventEq] at consumed
+        simp only [Event.consumedPacket, Option.some.injEq] at consumed
+        subst consumed
+        exact requestFor_target notPeer
+      by_cases toLeader : packet.envelope.target = leader
+      · rw [toLeader, sync.leaderFound, Option.some.injEq] at actorFound
+        rw [toLeader, leaderFound', Option.some.injEq] at actorFound'
+        subst actorFound actorFound'
+        have peerKept := others peer state (fun h => different (h.trans toLeader)) sync.found
+        obtain ⟨_, _, flow⟩ :=
+          leader_flow packet.envelope.target peer leaderState primary _ {} _ _ ran
+        obtain ⟨_, sentMove⟩ := flow primary' (leaderTerm'.trans leaderTerm.symm)
+        have sentSame : leaderState'.sentIndex peer = leaderState.sentIndex peer := by
+          rcases sentMove with same | ⟨_, inputEq, _⟩ | ⟨response, inputEq, failure, _⟩
+              | ⟨_, _, inputEq, _⟩
+          · exact same
+          · cases inputEq
+          · injection inputEq with sourceEq payloadEq
+            exact absurd ⟨sourceEq, toLeader, response, payloadEq, failure⟩
+              (sync.noNack packet member)
+          · cases inputEq
+        obtain ⟨rest, c, _, _⟩ := ctx_at admissible stepped selected
+        have grows :=
+          CCFRaft.Proofs.CommitLiveness.primary_log_prefix c.prior c.exec
+            (List.suffix_cons _ _) sync.leaderFound leaderFound' primary primary'
+            (leaderTerm.trans leaderTerm'.symm)
+        refine ⟨leaderState', state,
+          sync_keep admissible stepped ledger sync leaderFound' peerKept
+            (skipOf fun h => different (h.symm.trans toLeader))
+            (fun envelope member => ⟨?_, fun nack => ?_⟩) sentSame grows rfl sync.current⟩
+        · cases found : requestFor leader peer envelope with
+          | none => rfl
+          | some request =>
+              obtain ⟨_, _, payload⟩ := requestFor_some found
+              rcases (origins envelope member).2 request payload primary
+                  with ⟨_, _, inputEq, _⟩ | ⟨_, _, inputEq, _⟩
+              · cases inputEq
+              · cases inputEq
+        · exact different (nack.1.symm.trans ((Summary.sends facts envelope member).1.trans toLeader))
+      by_cases toPeer : packet.envelope.target = peer
+      · rw [toPeer, sync.found, Option.some.injEq] at actorFound
+        subst actorFound
+        have leaderKept :=
+          others leader leaderState (fun h => different (toPeer.symm.trans h.symm))
+            sync.leaderFound
+        have targetIn : packet.envelope.target ∈ participants := by
+          rw [toPeer]
+          exact peerIn
+        have sourceIn := good.isolated index step packet.envelope within stepped delivered targetIn
+        have inNetwork := (Concrete.step_deliver (admissible.step stepped selected)).1
+        have peerFound : nodeState (proto step.before) packet.envelope.target = some state := by
+          rw [toPeer]
+          exact sync.found
+        cases found : requestFor leader peer packet.envelope with
+        | some request =>
+            obtain ⟨_, _, payload⟩ := requestFor_some found
+            obtain ⟨requestTerm, prev, prevTerm, extends_, rest⟩ :=
+              head_request admissible stepped sync primary leaderTerm eventEq found
+            obtain ⟨after, sends, afterFound, aeStep, sendsEq⟩ :=
+              receive_step admissible stepped delivered payload peerFound
+                (by rw [requestTerm, sync.current])
+            have sendsEq' : sends = outputs.outgoing := by
+              rw [sendsEq, Option.some.injEq] at outEq
+              exact outEq
+            have commitLe :=
+              commit_le_length admissible (node := peer)
+                (by rw [admissible.nodeAt_before stepped, sync.found])
+            rcases aeStep with ⟨reject, _, _⟩ | ⟨_, _, ignore, _, _⟩
+                | ⟨_, _, _, _, afterTerm, _, afterLog, _, _, _, sent⟩
+            · exfalso
+              rcases reject with lower | mismatch
+              · rw [awareState_term, sync.current, requestTerm] at lower
+                exact lt_irrefl _ lower
+              · exact mismatch
+                  ⟨by rw [awareState_log, prev], by rw [awareState_log, prev, prevTerm]⟩
+            · exfalso
+              rcases ignore with lower | ⟨conflict, _⟩
+              · rw [awareState_commit, prev] at lower
+                omega
+              · rw [awareState_log, conflictIndex_end prev] at conflict
+                simp at conflict
+            · rw [awareState_log, acceptLog_end prev] at afterLog
+              have none_ : sends.filterMap (requestFor leader peer) = [] := by
+                rw [sent]
+                simp [requestFor]
+              refine ⟨leaderState, after, leaderKept, by rw [← toPeer]; exact afterFound,
+                by rw [afterTerm, awareState_term, sync.current], by rw [afterLog]; exact extends_,
+                ?_, ?_⟩
+              · rw [ledger, queued_append, queued_batch, ← sendsEq', none_, List.append_nil,
+                  afterLog, List.length_append]
+                exact rest
+              · refine noNack_after ledger sync.noNack fun envelope member nack => ?_
+                rw [← sendsEq', sent] at member
+                obtain ⟨_, _, response, payload, failure⟩ := nack
+                rw [List.mem_singleton.mp member] at payload
+                simp only [Message.appendEntriesResponse.injEq] at payload
+                subst payload
+                simp at failure
+        | none =>
+            have current :=
+              term_settles quiet' peerIn (by rw [← toPeer]; exact actorFound') sync.current
+                (Summary.term_le facts)
+            have logSame : post.log = state.log := by
+              by_contra changed
+              obtain ⟨other, request, delivered', source, target, payload⟩ :=
+                peer_log admissible stepped sync.leaderFound primary leaderTerm different
+                  sync.found (by rw [← toPeer]; exact actorFound') sync.current current changed
+              rw [eventEq] at delivered'
+              injection delivered' with otherEq
+              subst otherEq
+              rw [requestFor_of source target payload] at found
+              cases found
+            refine ⟨
+              leaderState,
+              post,
+              sync_keep admissible stepped ledger sync leaderKept
+                (by rw [← toPeer]; exact actorFound') (fun other consumed => ?_)
+                (fun envelope member => ⟨requestFor_source ?_, fun nack => ?_⟩) rfl
+                (List.prefix_refl _) logSame current
+            ⟩
+            · rw [eventEq] at consumed
+              simp only [Event.consumedPacket, Option.some.injEq] at consumed
+              subst consumed
+              exact found
+            · rw [(Summary.sends facts envelope member).1, toPeer]
+              exact different
+            · obtain ⟨_, nackTarget, response, payload, _⟩ := nack
+              obtain ⟨_, request, inputEq⟩ := (origins envelope member).1 response payload
+              injection inputEq with sourceEq payloadEq
+              have le : request.term <= state.currentTerm := by
+                have := quiet.messages packet.envelope inNetwork sourceIn targetIn
+                rw [payloadEq] at this
+                rw [sync.current]
+                exact this
+              obtain ⟨_, sends, _, aeStep, sendsEq⟩ :=
+                receive_step admissible stepped delivered payloadEq peerFound le
+              rw [sendsEq, Option.some.injEq] at outEq
+              have back := aeStep_target aeStep (by rw [outEq]; exact member)
+              rw [requestFor_of (back.symm.trans nackTarget) toPeer payloadEq] at found
+              cases found
+      · have leaderKept :=
+          others leader leaderState (fun h => toLeader h.symm) sync.leaderFound
+        have peerKept := others peer state (fun h => toPeer h.symm) sync.found
+        refine ⟨leaderState, state,
+          sync_keep admissible stepped ledger sync leaderKept peerKept (skipOf toPeer)
+            (fun envelope member => ⟨requestFor_source ?_, fun nack => ?_⟩) rfl
+            (List.prefix_refl _) rfl sync.current⟩
+        · rw [(Summary.sends facts envelope member).1]
+          exact toLeader
+        · exact toPeer ((Summary.sends facts envelope member).1.symm.trans nack.1)
+
+/-- From a fresh start with every participant in sync with the primary, the
+primary's AppendEntries in the window pass participants' log checks. -/
+theorem window_matching_of_inSync {bounds : Bounds} {maxDelay : Real}
+    (heartbeats : trace.HeartbeatScheduling (some bounds.heartbeatInterval))
+    (elections : trace.ElectionScheduling (some (bounds.electionTimeout / 2)))
+    (bounded : trace.Valid (boundedDelayModel maxDelay)) (nonneg : 0 <= maxDelay)
+    {fresh : Real} (ratio : bounds.heartbeatInterval + maxDelay < fresh)
+    (freshLe : fresh <= bounds.electionTimeout / 2)
+    {start : Nat} {duration : Real} {leader : NodeID} {term : Nat}
+    {participants : Finset NodeID}
+    (initial : FreshStart trace start leader term participants fresh)
+    (members : LatestMembers trace start leader participants)
+    (good : GoodPeriod trace start duration participants)
+    (active : Window.StaysActive trace start duration leader)
+    (leaderIn : leader ∈ participants)
+    (sync : InSync trace start leader term participants)
+    : WindowMatching trace start duration leader term participants := by
+  have quietAt
+      : forall bound,
+          (forall moment,
+            moment < bound -> MatchesAt trace start duration leader term participants moment)
+          -> forall index point,
+              index <= bound
+              -> Within trace start duration index
+              -> trace.stateAt index = some point
+              -> QuietAmong participants leader term (proto point) :=
+    fun bound matching index point le within found =>
+      (window_invariant_before admissible heartbeats elections bounded nonneg ratio freshLe
+        initial members good active leaderIn (bound := bound) matching index point le within
+        found).1
+  have claim
+      : forall index,
+          (forall moment,
+            moment < index -> MatchesAt trace start duration leader term participants moment)
+          /\ forall point,
+              Within trace start duration index
+              -> trace.stateAt index = some point
+              -> forall peer,
+                  peer ∈ participants
+                  -> Not (peer = leader)
+                  -> exists leaderState state,
+                      InSyncWith leader term peer point leaderState state := by
+    intro index
+    induction index with
+    | zero =>
+        refine ⟨fun _ lt => absurd lt (Nat.not_lt_zero _), fun point within found => ?_⟩
+        have atStart : start = 0 := Nat.le_zero.mp within.1
+        subst atStart
+        exact fun peer => sync point peer found
+    | succ index ih =>
+        obtain ⟨earlier, syncAt⟩ := ih
+        have matching
+            : forall moment,
+                moment < index + 1
+                -> MatchesAt trace start duration leader term participants moment := by
+          intro moment lt
+          rcases Nat.lt_succ_iff_lt_or_eq.mp lt with lt | rfl
+          · exact earlier moment lt
+          · intro step packet request state within stepped
+            have found := admissible.before stepped
+            exact matches_at admissible stepped
+              (quietAt moment earlier moment step.before le_rfl within found)
+              (syncAt step.before within found) step packet request state within stepped
+        refine ⟨matching, fun point within found peer peerIn different => ?_⟩
+        by_cases atStart : index + 1 = start
+        · rw [atStart] at found
+          exact sync point peer found peerIn different
+        obtain ⟨step, stepped, rfl⟩ := Trace.stateAt_succ_eq_some.mp found
+        have afterStart : start <= index := by
+          have := within.1
+          omega
+        have within' := within_of_le admissible within found afterStart (Nat.le_succ index)
+        have before := admissible.before stepped
+        obtain ⟨_, _, syncPeer⟩ := syncAt step.before within' before peer peerIn different
+        exact sync_step admissible stepped within' good active leaderIn
+          (quietAt (index + 1) matching index step.before (Nat.le_succ index) within'
+            before)
+          (quietAt (index + 1) matching (index + 1) step.after le_rfl within found) peerIn
+          different syncPeer
+  exact fun index => (claim (index + 1)).1 index (Nat.lt_succ_self index)
+
+/-- `stable_window_fresh` with every participant in sync with the primary at the
+start in place of `WindowMatching`. -/
+theorem stable_window_inSync [HasTimers W] {bounds : Bounds} {maxDelay : Real}
+    (timers : trace.Valid (timerModel bounds.electionTimeout))
+    (bounded : trace.Valid (boundedDelayModel maxDelay)) (nonneg : 0 <= maxDelay)
+    (heartbeats : trace.HeartbeatScheduling (some bounds.heartbeatInterval))
+    {fresh : Real} (ratio : bounds.heartbeatInterval + maxDelay < fresh)
+    (freshLe : fresh <= bounds.electionTimeout / 2)
+    {start : Nat} {duration : Real} {leader : NodeID} {term : Nat}
+    {participants : Finset NodeID} (leaderIn : leader ∈ participants)
+    (initial : FreshStart trace start leader term participants fresh)
+    (members : LatestMembers trace start leader participants)
+    (good : GoodPeriod trace start duration participants)
+    (active : Window.StaysActive trace start duration leader)
+    (sync : InSync trace start leader term participants)
+    : StableWindow trace start duration leader term participants :=
+  stable_window_fresh admissible timers bounded nonneg heartbeats ratio freshLe leaderIn
+    initial members good active
+    (window_matching_of_inSync admissible heartbeats
+      (Liveness.electionScheduling_of_timerModel admissible.coherent admissible.timing
+        timers)
+      bounded nonneg ratio freshLe initial members good active leaderIn sync)
 
 end Recorded
 
