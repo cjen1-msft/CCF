@@ -167,6 +167,51 @@ theorem reset_of_ack {index : Nat} {packet : Packet} (sent : trace.SentAt index 
           · exact Or.inr ⟨by omega, Or.inr (Or.inr check)⟩
       | _ => simp [delivered, Liveness.Event.action] at selected
 
+/-- A node that sends a successful acknowledgement within `gap` after every early
+enough point of the window does not time out at least `fresh` after the start,
+where `fresh` exceeds `gap` and is at most half an election timeout. -/
+theorem no_timeout_of_acks {bounds : Bounds}
+    (elections : trace.ElectionScheduling (some (bounds.electionTimeout / 2)))
+    {gap fresh : Real} (ratio : gap < fresh) (freshLe : fresh <= bounds.electionTimeout / 2)
+    {start index : Nat} {step : CCF.Execution.Step W Liveness.Event} {node : NodeID}
+    (afterStart : start <= index) (stepped : trace.stepAt index = some step)
+    (event : step.action = .local node (.timeout .election))
+    {first : W} (firstFound : trace.stateAt start = some first)
+    (late : time first + fresh <= time step.before)
+    (acks
+      : forall earlier point,
+          start <= earlier
+          -> earlier <= index
+          -> trace.stateAt earlier = some point
+          -> time point + gap < time step.before
+          -> exists sent sender reply response,
+              earlier < sent
+              /\ trace.stepAt sent = some sender
+              /\ time sender.before <= time point + gap
+              /\ trace.SentAt sent reply
+              /\ reply.envelope.source = node
+              /\ reply.envelope.payload = .appendEntriesResponse response
+              /\ response.success = true)
+    : False := by
+  obtain ⟨reset, resetPoint, _, before, resetFound, recent, resetStep, resetStepped, isReset⟩ :=
+    recent_reset
+      (fun _ _ _ _ le firstFound lastFound => admissible.time_le le firstFound lastFound)
+      ratio afterStart firstFound (admissible.before stepped) late
+      (reset := fun later =>
+        exists reset, trace.stepAt later = some reset /\ ElectionReset reset node)
+      (fun earlier point after le recorded early => by
+        obtain ⟨sent, sender, reply, response, after, senderStepped, inTime, sentAt, source,
+            payload, success⟩ := acks earlier point after le recorded early
+        obtain ⟨reset, resetStepped, isReset⟩ := reset_of_ack admissible sentAt payload success
+        rw [senderStepped, Option.some.injEq] at resetStepped
+        subst reset
+        exact ⟨sent, sender.before, after, admissible.before senderStepped, inTime,
+          sender, senderStepped, source ▸ isReset⟩)
+  have := elections reset index resetStep step node before resetStepped stepped event isReset
+  rw [admissible.before resetStepped, Option.some.injEq] at resetFound
+  rw [← resetFound] at recent
+  linarith
+
 end Recorded
 
 end CCFRaft.Proofs.Leadership
