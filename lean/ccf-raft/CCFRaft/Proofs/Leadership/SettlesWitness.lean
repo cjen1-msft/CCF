@@ -1,6 +1,7 @@
 module
 
 public import CCFRaft.Proofs.Leadership.Settles
+public import CCFRaft.Proofs.Leadership.InSync
 public import CCFRaft.Proofs.LivenessWitness
 
 @[expose] public section
@@ -9,7 +10,8 @@ public import CCFRaft.Proofs.LivenessWitness
 # The stable-window premises are satisfiable
 
 The single-node execution of `Proofs.LivenessWitness` meets every premise of
-`Leadership.stable_window`, and hence its conclusion, for every window length.
+`Leadership.stable_window` and of `Leadership.stable_window_inSync`, and hence
+their conclusion, for every window length.
 The world carries a constant election deadline of zero: the execution has no
 deliveries and no election timeouts, so no timer is ever reset and no timeout
 needs its deadline to have passed.
@@ -106,6 +108,10 @@ private theorem window_matching (duration : Real)
   subst step
   exact False.elim (no_deliveries true index packet deliver)
 
+private theorem in_sync : InSync (fixture true) 0 0 Model.BOOTSTRAP_TERM {0} := by
+  intro _ peer _ member different
+  exact absurd (Finset.mem_singleton.mp member) different
+
 private theorem latest_members : LatestMembers (fixture true) 0 0 {0} := by
   intro _ _ node _ _ member different
   exact absurd (Finset.mem_singleton.mp member) different
@@ -155,5 +161,48 @@ theorem stable_window_witness
   exact stable_window (bounds := windowBounds) admissible timers_valid (bounded_valid 0)
     le_rfl (heartbeats true _) ratio (Finset.mem_singleton_self 0) quiet_start
     latest_members (good duration) (stays_active duration) (window_matching duration)
+
+/-- For every nonnegative window length, the premises of `stable_window_inSync`
+and its conclusion hold together on one admissible execution, with heartbeat
+interval 1, election timeout 4, freshness 2 and no message delay. -/
+theorem stable_window_inSync_witness
+    : let bounds : Bounds :=
+        { heartbeatInterval := 1, electionTimeout := 4, signatureInterval := 1 }
+      forall duration : Real,
+        0 <= duration
+        -> exists trace : Trace (World Model.State) Liveness.Event,
+            (Liveness.Admissible (Model.transitionSystem {0} [0]) trace
+              /\ trace.Valid (timerModel bounds.electionTimeout)
+              /\ trace.Valid (boundedDelayModel 0)
+              /\ 0 <= (0 : Real)
+              /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
+              /\ bounds.heartbeatInterval + 0 < 2
+              /\ 2 <= bounds.electionTimeout / 2
+              /\ 0 ∈ ({0} : Finset NodeID)
+              /\ FreshStart trace 0 0 Model.BOOTSTRAP_TERM {0} 2
+              /\ LatestMembers trace 0 0 {0}
+              /\ GoodPeriod trace 0 duration {0}
+              /\ Window.StaysActive trace 0 duration 0
+              /\ InSync trace 0 0 Model.BOOTSTRAP_TERM {0})
+            /\ StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0} := by
+  intro windowBounds duration _
+  have admissible : Liveness.Admissible (Model.transitionSystem {0} [0]) (fixture true) :=
+    ⟨coherent true, protocol_valid true, timing_valid true, crash_valid true,
+      delivery_valid true⟩
+  have ratio : windowBounds.heartbeatInterval + 0 < 2 := by norm_num [windowBounds]
+  have freshLe : (2 : Real) <= windowBounds.electionTimeout / 2 := by norm_num [windowBounds]
+  have fresh : FreshStart (fixture true) 0 0 Model.BOOTSTRAP_TERM {0} 2 := by
+    have half : LivenessWitness.bounds.electionTimeout / 2 = (2 : Real) := by
+      norm_num [LivenessWitness.bounds]
+    have := FreshStart.of_quietStart quiet_start {0}
+    rwa [half] at this
+  let _ : Config.InitialConfiguration := ⟨{0}⟩
+  refine ⟨fixture true, ⟨admissible, timers_valid, bounded_valid 0, le_rfl,
+    heartbeats true _, ratio, freshLe, Finset.mem_singleton_self 0, fresh, latest_members,
+    good duration, stays_active duration, in_sync⟩, ?_⟩
+  exact stable_window_inSync (bounds := windowBounds) admissible timers_valid
+    (bounded_valid 0) le_rfl (heartbeats true _) ratio freshLe
+    (Finset.mem_singleton_self 0) fresh latest_members (good duration)
+    (stays_active duration) in_sync
 
 end CCFRaft.Proofs.Leadership

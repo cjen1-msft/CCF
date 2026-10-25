@@ -7,6 +7,7 @@ public import CCFRaft.Liveness.Assumptions.FairLoss
 public import CCFRaft.Liveness.Assumptions.Submitted
 public import CCFRaft.Liveness.Assumptions.Duel
 public import CCFRaft.Liveness.Assumptions.Window
+public import CCFRaft.Liveness.Assumptions.Settles
 
 @[expose] public section
 
