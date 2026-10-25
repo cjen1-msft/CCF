@@ -93,14 +93,40 @@ structure Race (trace : Trace W Liveness.Event) (electionTimeout maxDelay : Real
         -> node ∈ participants
         -> nodeState (proto point) node = some state
         -> state.currentTerm <= term /\ state.role ≠ .primary
-  /-- Nothing in flight between participants can change a role or grant anything. -/
+  /-- Nothing in flight between participants can change a role or grant anything,
+  except hopeless participants' pre-vote traffic: their requests, carrying their
+  current log, and grants to them from their pre-voters. -/
   inert
     : forall point packet,
         trace.stateAt first = some point
         -> packet ∈ pending point
         -> packet.envelope.source ∈ participants
         -> packet.envelope.target ∈ participants
-        -> packet.envelope.payload.term <= term /\ Inert packet.envelope.payload
+        -> packet.envelope.payload.term <= term
+            /\ (Inert packet.envelope.payload
+                \/ (packet.envelope.source ≠ winner
+                    /\ Hopeless participants point packet.envelope.source
+                    /\ exists requestTerm requester,
+                        nodeState (proto point) packet.envelope.source = some requester
+                        /\ packet.envelope.payload
+                            = .requestPreVoteRequest
+                                {
+                                  makeRequestVoteRequest requester with
+                                    term := requestTerm
+                                }
+                        /\ requestTerm <= term)
+                \/ (packet.envelope.target ≠ winner
+                    /\ Hopeless participants point packet.envelope.target
+                    /\ (exists grantTerm,
+                          packet.envelope.payload
+                            = .requestPreVoteResponse
+                                { term := grantTerm, voteGranted := true }
+                          /\ grantTerm <= term)
+                    /\ forall requester,
+                        nodeState (proto point) packet.envelope.target = some requester
+                        -> packet.envelope.source
+                            ∈ PreVoters participants point packet.envelope.target
+                                requester))
   /-- The margin: every other participant that could win a pre-vote quorum has its
   timer more than four delays away. Hopeless participants may time out. -/
   margin

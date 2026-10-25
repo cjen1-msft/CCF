@@ -1224,9 +1224,11 @@ theorem common_origin : s.Common s.origin term where
       s.race.settled s.origin node state s.originFound member found
     exact ⟨⟨state, found, Keeps.refl _, id⟩, notPrimary, termLe, fun eq => by omega⟩
   packets packet member source target := by
-    obtain ⟨termLe, inert⟩ :=
+    obtain ⟨termLe, inert | request | grant⟩ :=
       s.race.inert s.origin packet s.originFound member source target
-    exact ⟨termLe, Or.inl inert⟩
+    · exact ⟨termLe, Or.inl inert⟩
+    · exact ⟨termLe, Or.inr (Or.inr (Or.inr (Or.inl request)))⟩
+    · exact ⟨termLe, Or.inr (Or.inr (Or.inr (Or.inr grant)))⟩
 
 theorem within_first : Within trace s.start s.duration first := by
   refine ⟨s.startLe, fun start point startFound found => ?_⟩
