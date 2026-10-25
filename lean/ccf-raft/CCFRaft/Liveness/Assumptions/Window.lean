@@ -164,8 +164,10 @@ false`, and the model's pre-vote handler grants without checking the role, so a
 retired anchor node can complete a lagging participant's pre-vote quorum. With
 `GoodPeriod.noReconfiguration`, this happens in the model only through
 configurations already in the log that remove a node and then re-add it, a
-rejoin. CCF never re-adds a retired node ID, so it cannot happen there; deriving
-it needs an invariant over the ledger's configuration history. -/
+rejoin. In CCF a node's ID is the digest of a signing key it generates at
+start (`compute_node_id_from_kp`, node_state.h), so a retired node does not
+rejoin under its old ID. Deriving it needs an invariant over the ledger's
+configuration history. -/
 def AnchorActive (trace : Trace W Event) (start : Nat) (duration : Real)
     (anchor : Finset NodeID)
     : Prop :=

@@ -31,8 +31,9 @@ instance (anchor nodes : Finset NodeID) : Decidable (Blocked anchor nodes) := by
   infer_instance
 
 /-- `anchor` is a quorum of the primary's configurations among `participants`
-whose nodes know the primary in `term`, and whose pre-votes no participant has
-counted or can still count in `term`. -/
+that contains the primary itself (`leaderIn`), whose nodes know the primary in
+`term`, and whose pre-votes no participant has counted or can still count in
+`term`. -/
 structure Anchor (participants anchor : Finset NodeID) (leader : NodeID) (term : Nat)
     (state : Model.State)
     : Prop where
