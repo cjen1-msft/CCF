@@ -46,6 +46,77 @@ def repair (delay interval : Real) (backlog : Nat) : Real :=
 
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
 
+omit [HasProtocol W Model.State] [HasTime W] [HasLive W] in
+/-- If the peer acknowledges within `bound` of every point, then within
+`delay + interval + bound` after every point it sends a successful acknowledgement.
+The primary passes within `interval` of a delay after the point, and the
+acknowledgement delivered after that pass was sent after the point, because
+delivery takes at most `delay`. The trace and its clock are abstract so that this
+applies to a cut of a recording. -/
+theorem ack_sent_within {trace : Trace W Liveness.Event} {clock : Nat -> Real}
+    {start last : Nat} {stop delay interval bound : Real} {peer : NodeID}
+    (mono : forall index later, index <= later -> later <= last -> clock index <= clock later)
+    (ends : forall index step, trace.stepAt index = some step -> index < last)
+    (prompt
+      : forall index step packet sent,
+          trace.stepAt index = some step
+          -> step.action = .deliver packet
+          -> trace.SentAt sent packet
+          -> clock index <= clock sent + delay)
+    (sentOf
+      : forall index step packet,
+          trace.stepAt index = some step
+          -> step.action = .deliver packet
+          -> exists sent, sent < index /\ trace.SentAt sent packet)
+    (passes
+      : forall moment : Real,
+          clock start <= moment
+          -> moment + interval <= stop
+          -> exists index step,
+              start <= index
+              /\ moment < clock index
+              /\ clock index <= moment + interval
+              /\ trace.stepAt index = some step)
+    (acks
+      : forall base,
+          start <= base
+          -> base <= last
+          -> clock base + bound <= stop
+          -> exists later step reply response,
+              base < later
+              /\ clock later <= clock base + bound
+              /\ trace.stepAt later = some step
+              /\ step.action = .deliver reply
+              /\ reply.envelope.source = peer
+              /\ reply.envelope.payload = .appendEntriesResponse response
+              /\ response.success = true)
+    (delayNonneg : 0 <= delay) (boundNonneg : 0 <= bound) {index : Nat}
+    (startLe : start <= index) (indexLe : index <= last)
+    (timely : clock index + (delay + interval + bound) <= stop)
+    : exists sent reply response,
+        index < sent
+        /\ clock sent <= clock index + (delay + interval + bound)
+        /\ trace.SentAt sent reply
+        /\ reply.envelope.source = peer
+        /\ reply.envelope.payload = .appendEntriesResponse response
+        /\ response.success = true := by
+  have startClock := mono start index startLe indexLe
+  obtain ⟨base, baseStep, baseStart, baseAfter, baseBefore, baseStepped⟩ :=
+    passes (clock index + delay) (by linarith) (by linarith)
+  have baseLt := ends base baseStep baseStepped
+  obtain ⟨later, step, reply, response, after, laterClock, stepped, delivers, source, payload,
+      success⟩ := acks base baseStart baseLt.le (by linarith)
+  have laterLt := ends later step stepped
+  obtain ⟨sent, sentLt, sentAt⟩ := sentOf later step reply stepped delivers
+  have arrival := prompt later step reply sent stepped delivers sentAt
+  have baseLe := mono base later after.le laterLt.le
+  have sentLe := mono sent later sentLt.le laterLt.le
+  have indexLt : index < sent := by
+    by_contra early
+    have := mono sent index (by omega) indexLe
+    linarith
+  exact ⟨sent, reply, response, indexLt, by linarith, sentAt, source, payload, success⟩
+
 section Recorded
 
 variable [Config.InitialConfiguration] {nodes : List NodeID}
