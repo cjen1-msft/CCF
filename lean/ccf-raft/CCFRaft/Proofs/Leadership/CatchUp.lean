@@ -49,6 +49,12 @@ two rounds of rejection and retry per lagging entry. -/
 def repair (delay interval : Real) (backlog : Nat) : Real :=
   6 * delay + 4 * interval + 2 * ((backlog : Real) + 1) * (2 * delay + interval)
 
+theorem repair_eq (delay interval : Real) (backlog : Nat)
+    : repair delay interval backlog = ackBound delay interval backlog := by
+  unfold repair ackBound
+  push_cast
+  ring
+
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
 
 omit [HasProtocol W Model.State] [HasTime W] [HasLive W] in
@@ -375,6 +381,75 @@ theorem acks_before_timeout {heartbeatInterval maxDelay : Real}
     source, payload, success⟩
   rw [senderClock, earlierClock] at sentClock
   exact sentClock
+
+/-- A stable window while participants catch up: `stable_window_inSync` with the
+log-check premise replaced by `InTermAt` and `Backlog`. Every participant's
+election timer is reset by its own successful acknowledgements, which the primary's
+repair produces within `repair` of every point, so no participant times out while
+`fresh` exceeds `repair + heartbeatInterval + maxDelay`.
+
+Each new premise is needed.
+- `InTermAt`: let `leader` and another node alternate as primary for `2 n` terms,
+  with `leader`'s entries replicated to a participant behind `term`. A delayed
+  AppendEntries from the other primary's last term rewrites that participant's
+  log into `n` entries of alternating terms, so with backlog 0 at `start` repair
+  still takes `n` rounds, and for large `n` the participant times out.
+- `Backlog`: with participants `{L, f, g}`, let `L`'s log hold terms
+  `2, 4, ..., 2 n` above the agreed prefix and `f` and `g` both hold
+  `1, 3, ..., 2 n - 1`, which alternation reaches. Each rejection moves `L` down
+  one block, so repair takes `n` rounds of `2 maxDelay + heartbeatInterval`. For
+  large `n`, `f` and `g` time out, lose the primary, grant each other pre-votes
+  since their logs are equal, and one reaches `term + 1`.
+- `ratio`, beyond `stable_window_inSync`'s `heartbeatInterval + maxDelay < fresh`:
+  let `f` and `g` each lack `L`'s last entry. The first heartbeat is rejected at
+  up to `heartbeatInterval + maxDelay`, the rejection lands `maxDelay` later, and
+  the retry goes out within `heartbeatInterval` and lands `maxDelay` after that.
+  The first reset can come as late as `2 heartbeatInterval + 3 maxDelay`, so with
+  `fresh` at most that, both time out and depose `L`. -/
+theorem stable_window_catchup [HasTimers W] {bounds : Bounds} {maxDelay : Real}
+    (timers : trace.Valid (timerModel bounds.electionTimeout))
+    (bounded : trace.Valid (boundedDelayModel maxDelay)) (diverges : TimeDiverges trace)
+    (nonneg : 0 <= maxDelay)
+    (heartbeats : trace.HeartbeatScheduling (some bounds.heartbeatInterval))
+    {backlog : Nat} {fresh : Real}
+    (ratio
+      : repair maxDelay (max bounds.heartbeatInterval 0) backlog
+          + max bounds.heartbeatInterval 0 + maxDelay
+        < fresh)
+    (freshLe : fresh <= bounds.electionTimeout / 2)
+    {start : Nat} {duration : Real} {leader : NodeID} {term : Nat}
+    {participants : Finset NodeID} (leaderIn : leader ∈ participants)
+    (initial : FreshStart trace start leader term participants fresh)
+    (members : LatestMembers trace start leader participants)
+    (good : GoodPeriod trace start duration participants)
+    (active : Window.StaysActive trace start duration leader)
+    (inTerm : InTermAt trace start term participants)
+    (behind : Backlog trace start leader participants backlog)
+    : StableWindow trace start duration leader term participants where
+  stableLeader index point within found := by
+    have elections :=
+      Liveness.electionScheduling_of_timerModel admissible.coherent admissible.timing timers
+    have gapLt
+        : maxDelay + max bounds.heartbeatInterval 0
+            + ackBound maxDelay (max bounds.heartbeatInterval 0) backlog
+          < fresh := by
+      rw [← repair_eq]; linarith
+    exact (window_invariant_core admissible initial members good active leaderIn (bound := index)
+      (fun _ _ _ _ _ afterStart _ within' stepped timeout _ nodeIn different _ firstFound late
+          invariant =>
+        no_timeout_of_acks admissible elections gapLt freshLe afterStart stepped timeout
+          firstFound late
+          (acks_before_timeout admissible diverges bounded nonneg heartbeats good active inTerm
+            behind leaderIn nodeIn different stepped within' firstFound invariant))
+      index point le_rfl within found).1
+  staysActive := active
+  liveQuorum index point state within found leaderFound :=
+    good.quorum index point leader state within found
+      (active.live index point within found) leaderFound
+  lossless index step packet within stepped dropped := by
+    rintro (⟨source, target⟩ | ⟨source, target⟩)
+    · exact good.lossless index step packet within stepped dropped ⟨source ▸ leaderIn, target⟩
+    · exact good.lossless index step packet within stepped dropped ⟨source, target ▸ leaderIn⟩
 
 end Recorded
 
