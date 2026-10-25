@@ -1,6 +1,7 @@
 module
 
 public import CCFRaft.Proofs.Duel.Support
+public import CCFRaft.Proofs.Leadership.Settles
 public import CCFRaft.Liveness.Model.WitnessWorld
 public import Mathlib.Probability.ProductMeasure
 
@@ -14,7 +15,10 @@ DRAFT FOR REVIEW, NOT IMPORTED BY `Properties`; every proof is `sorry`.
 CCF's `restart_election_timeout` (`raft.h`) draws a fresh uniform offset at every
 reset. Here a sample is one offset per participant reset, consumed in trace order
 from index 0. CCF's `start_ticking` sets a full election timeout without a draw at
-node start; that is out of scope, so the initial deadlines are the policy's.
+node start; that is out of scope, so the initial deadlines are the policy's. It also
+matters mid-run: a node joining a configuration starts ticking in
+`execute_append_entries_sync` (`raft.h`), after the draw in `recv_append_entries`,
+so CCF gives it exactly `E` where the model draws.
 
 A `Policy` chooses the next event and every other nondeterministic part of the next
 world from the recorded prefix; `run` builds the recording, overwriting the deadline
@@ -22,9 +26,14 @@ of each participant reset with `time + sample j`. The policy sees earlier draws
 only through the deadlines in the prefix, so the `j`-th draw is independent of the
 prefix before the `j`-th reset by construction; no non-anticipation premise.
 
-`Borel` is a premise, not a lemma: an arbitrary policy may branch on a
-non-measurable set of past deadlines, and then neither the event nor any lower
-bound on its measure is meaningful.
+`Borel` is the standard measurable-scheduler assumption. It is a premise, not a
+lemma: an arbitrary policy may branch on a non-measurable set of past deadlines,
+and then neither the event nor any lower bound on its measure is meaningful. Any
+policy that decides by Borel tests on the reals it sees satisfies it.
+
+The event is a handoff to `Proofs.Leadership.stable_window_fresh`: a fresh start
+of a participant primary within the window. A committed signature would also need
+the winner to repair its voters' logs, which takes time growing with the backlog.
 -/
 
 namespace CCFRaft.Proofs.Duel.Adaptive
@@ -176,20 +185,6 @@ def Borel (participants : Finset NodeID) (policy : Policy) : Prop :=
 
 /-! ## Premises -/
 
-/-- No idle step jumps a live non-primary node's clock past its deadline: CE-D.
-Pending user decision; an explicit premise until then. -/
-def NoOvershoot {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W]
-    [HasTimers W] (trace : Trace W Liveness.Event)
-    : Prop :=
-  forall index step node state,
-    trace.stepAt index = some step
-    -> step.action = .idle
-    -> node ∈ live step.before
-    -> nodeState (proto step.before) node = some state
-    -> state.role ≠ .primary
-    -> time step.before < deadline step.before node
-    -> time step.after <= deadline step.before node
-
 /-- The premises of `duelling_leaders_resolve` for one recording. -/
 def Premises (system : CCF.TransitionSystem Model.State Model.Action) (bounds : Bounds)
     (maxDelay : Real) (start : Nat) (duration : Real) (participants : Finset NodeID)
@@ -206,18 +201,35 @@ def Premises (system : CCF.TransitionSystem Model.State Model.Action) (bounds : 
   /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
   /\ trace.SignatureScheduling (some bounds.signatureInterval)
   /\ trace.TimeoutScheduling (some 0)
-  /\ NoOvershoot trace
   /\ GoodPeriod trace start duration participants
 
 /-! ## The statement -/
 
-/-- The event is measurable for a Borel policy: it is a countable union, over the
-index, leader and term, of conditions on one recorded step. -/
-theorem measurableSet_committed {participants : Finset NodeID} {policy : Policy}
-    (borel : Borel participants policy) (start : Nat) (duration : Real)
+/-- The length of one duel round: no signature interval or replication, since the
+event is a fresh start rather than a commit. Provisional until (c) is proved. -/
+def duelRound (bounds : Bounds) (maxDelay : Real) : Real :=
+  2 * bounds.electionTimeout + bounds.heartbeatInterval + 6 * maxDelay
+
+/-- The freshness `race_won` gives the winner's start. -/
+noncomputable def duelFresh (bounds : Bounds) (maxDelay : Real) : Real :=
+  bounds.electionTimeout / 2 - 2 * maxDelay
+
+/-- Some participant primary starts freshly within the window. -/
+def Handoff (trace : Trace DuelWorld Liveness.Event) (start : Nat) (duration : Real)
+    (participants : Finset NodeID) (fresh : Real)
+    : Prop :=
+  exists index leader term,
+    Within trace start duration index
+    /\ leader ∈ participants
+    /\ Leadership.FreshStart trace index leader term participants fresh
+
+/-- The event is measurable for a Borel policy: it is a countable combination,
+over indices, leaders and terms, of conditions on finitely many recorded steps. -/
+theorem measurableSet_handoff {participants : Finset NodeID} {policy : Policy}
+    (borel : Borel participants policy) (start : Nat) (duration fresh : Real)
     : MeasurableSet
         {sample |
-          SignatureCommitted (run participants policy sample) start duration
+          Handoff (run participants policy sample) start duration participants fresh
         } := by
   sorry
 
@@ -229,7 +241,7 @@ theorem duelling_leaders_resolve (config : Finset NodeID) (nodes : List NodeID)
     : let system := Model.transitionSystem config nodes
       let electionTimeout := bounds.electionTimeout
       let margin := duelMargin bounds maxDelay
-      let duration := rounds * roundLength bounds maxDelay
+      let duration := rounds * duelRound bounds maxDelay
       0 < participants.card
       -> 0 <= maxDelay
       -> 0 <= bounds.heartbeatInterval
@@ -243,7 +255,8 @@ theorem duelling_leaders_resolve (config : Finset NodeID) (nodes : List NodeID)
             (settleProbability participants.card rounds margin electionTimeout)
           <= sampleMeasure electionTimeout
               {sample |
-                SignatureCommitted (run participants policy sample) start duration
+                Handoff (run participants policy sample) start duration participants
+                  (duelFresh bounds maxDelay)
               } := by
   sorry
 
