@@ -188,37 +188,6 @@ def Borel (participants : Finset NodeID) (policy : Policy) : Prop :=
 
 /-! ## Premises -/
 
-/-- Interim. Every AppendEntries delivered in the window to another participant
-whose log check runs passes it: the receiver is not behind the request's term
-(an older request fails the term check before the log is read), and is neither a
-candidate nor a pre-vote candidate (which step down before the check).
-Needed: a primary of `T` with two participants whose logs diverge from it by a
-backlog longer than the window can repair. A rejected AppendEntries does not
-reset a follower's timer, so each laggard keeps timing out, and a quorum of
-fresh participants exists only while both laggards are between a revert and
-their next timeout. That happens in each election timeout with a probability
-bounded away from one independently of `E / d`, while `settleProbability` tends
-to one as `E / d` grows.
-This premise will go once the start condition is rebuilt around an anchor
-quorum: nodes of the term that know the primary refuse pre-votes, and every
-pre-vote quorum meets the anchor, so laggards outside it may time out but
-cannot win. -/
-def DuelMatching (trace : Trace DuelWorld Liveness.Event) (start : Nat) (duration : Real)
-    (participants : Finset NodeID)
-    : Prop :=
-  forall index step packet request state,
-    Within trace start duration index
-    -> trace.stepAt index = some step
-    -> step.action = .deliver packet
-    -> packet.envelope.target ∈ participants
-    -> Not (packet.envelope.target = packet.envelope.source)
-    -> packet.envelope.payload = .appendEntriesRequest request
-    -> nodeState (proto step.before) packet.envelope.target = some state
-    -> state.currentTerm <= request.term
-    -> Not (state.role = .candidate)
-    -> Not (state.role = .preVoteCandidate)
-    -> termAt state.log request.prevLogIndex = request.prevLogTerm
-
 /-- The premises of `duelling_leaders_resolve` for one recording. -/
 def Premises (system : CCF.TransitionSystem Model.State Model.Action) (bounds : Bounds)
     (maxDelay : Real) (start : Nat) (duration : Real) (participants : Finset NodeID)
@@ -236,7 +205,7 @@ def Premises (system : CCF.TransitionSystem Model.State Model.Action) (bounds : 
   /\ trace.SignatureScheduling (some bounds.signatureInterval)
   /\ trace.TimeoutScheduling (some 0)
   /\ GoodPeriod trace start duration participants
-  /\ DuelMatching trace start duration participants
+  /\ Window.Matching trace start duration participants
 
 /-! ## The statement -/
 
