@@ -230,4 +230,18 @@ structure AnchoredStart (trace : Trace W Event) (start : Nat) (leader : NodeID)
         -> state.currentTerm = term
         -> time first + fresh <= time step.before
 
+/-- An anchored start with a longer fresh period is one with any shorter one. -/
+theorem AnchoredStart.mono_fresh {trace : Trace W Event} {start : Nat} {leader : NodeID}
+    {term : Nat} {participants anchor : Finset NodeID} {fresh shorter : Real}
+    (anchored : AnchoredStart trace start leader term participants anchor fresh)
+    (le : shorter <= fresh)
+    : AnchoredStart trace start leader term participants anchor shorter :=
+  ⟨
+    anchored.quiet,
+    fun first index step node state found after stepped timeout local_ member termEq =>
+      le_trans (add_le_add_right le _)
+        (anchored.timers first index step node state found after stepped timeout local_
+          member termEq)
+  ⟩
+
 end CCFRaft.Liveness
