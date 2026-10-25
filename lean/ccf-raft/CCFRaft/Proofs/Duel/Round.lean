@@ -79,7 +79,10 @@ theorem RoundSetup.packets
     (member : packet ∈ pending point) (source : packet.envelope.source ∈ participants)
     (target : packet.envelope.target ∈ participants)
     : packet.envelope.payload.term <= term + 1
-      /\ (packet.envelope.payload.term <= term -> packet.sentAt <= time origin + maxDelay)
+      /\ (packet.envelope.payload.term <= term
+          -> (forall response,
+                Not (packet.envelope.payload = .appendEntriesResponse response))
+          -> packet.sentAt <= time origin + maxDelay)
       /\ (forall request,
             packet.envelope.payload = .requestVoteRequest request
             -> packet.sentAt <= time origin + maxDelay)
