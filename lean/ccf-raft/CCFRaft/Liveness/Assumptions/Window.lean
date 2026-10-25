@@ -158,14 +158,16 @@ structure StaysActive (trace : Trace W Event) (start : Nat) (duration : Real)
         -> CCF.MultiNodeTransitionSystem.nodeState (proto point) leader = some state
         -> Not (state.isRetiredCommitted leader)
 
-/-- Throughout the window no node of `anchor` has its retirement committed.
-Assumed, not derived. Needed: a retired-committed node has `primaryKnown =
-false`, and the model's pre-vote handler grants without checking the role, so a
-retired anchor node can complete a lagging participant's pre-vote quorum. With
-`GoodPeriod.noReconfiguration`, this happens in the model only through
-configurations already in the log that remove a node and then re-add it, a
-rejoin. CCF never re-adds a retired node ID, so it cannot happen there; deriving
-it needs an invariant over the ledger's configuration history. -/
+/-- Throughout the window no anchor node has its retirement committed. Assumed,
+not derived. A node whose retirement commits knows no primary (`recordCommit`)
+and grants pre-votes, since the pre-vote handler does not check the role, so a
+retired anchor node can complete a lagging participant's pre-vote quorum; a
+retired primary also steps down (CCF's `become_retired`). Under
+`GoodPeriod.noReconfiguration`, another anchor node, being in the primary's
+latest configuration, retires in the window only through configurations already
+in the log that remove it and later re-add it. CCF allows such a rejoin: once a
+retirement is confirmed the node ID can be reused, as the checks that would
+refuse it no longer have the information. -/
 def AnchorActive (trace : Trace W Event) (start : Nat) (duration : Real)
     (anchor : Finset NodeID)
     : Prop :=
