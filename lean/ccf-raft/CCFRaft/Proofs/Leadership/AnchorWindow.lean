@@ -54,7 +54,8 @@ theorem AnchorInv.tracked {participants anchor : Finset NodeID} {leader : NodeID
   rw [latest_active] at member
   exact eligible_of_latest member different
 
-private theorem anchor_local_of_internal {event : Liveness.Event} {action : Model.Action}
+/-- An internal event of a selected action is a local step of its actor. -/
+theorem anchor_local_of_internal {event : Liveness.Event} {action : Model.Action}
     {actor : NodeID} {localEvent : Model.Node.Event} {input : Input}
     (selected : event.action = some action) (acts : Acts action actor localEvent)
     (internal : localEvent = .internal input)

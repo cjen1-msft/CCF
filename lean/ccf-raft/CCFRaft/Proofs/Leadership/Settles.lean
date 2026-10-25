@@ -45,9 +45,10 @@ open HasNetwork (pending)
 
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
 
-/-- `WindowMatching` at one index: an AppendEntries request from the primary
-delivered there, in the window, to another participant of `term` that is neither a
-candidate nor a pre-vote candidate, passes the participant's log check. -/
+/-- `WindowMatching` at one index: an AppendEntries request of at least `term`
+from the primary delivered there, in the window, to another participant of `term`
+that is neither a candidate nor a pre-vote candidate, passes the participant's
+log check. -/
 def MatchesAt (trace : Trace W Liveness.Event) (start : Nat) (duration : Real)
     (leader : NodeID) (term : Nat) (participants : Finset NodeID) (index : Nat)
     : Prop :=
@@ -61,6 +62,7 @@ def MatchesAt (trace : Trace W Liveness.Event) (start : Nat) (duration : Real)
     -> packet.envelope.payload = .appendEntriesRequest request
     -> nodeState (proto step.before) packet.envelope.target = some state
     -> state.currentTerm = term
+    -> term <= request.term
     -> Not (state.role = .candidate)
     -> Not (state.role = .preVoteCandidate)
     -> termAt state.log request.prevLogIndex = request.prevLogTerm
@@ -72,6 +74,30 @@ def WindowMatching (trace : Trace W Liveness.Event) (start : Nat) (duration : Re
     (leader : NodeID) (term : Nat) (participants : Finset NodeID)
     : Prop :=
   forall index, MatchesAt trace start duration leader term participants index
+
+omit [HasLive W] [HasNetwork W] in
+/-- Generic window matching gives `MatchesAt` at every moment, for any primary
+and term. -/
+theorem Window.Matching.matchesAt {trace : Trace W Liveness.Event} {start : Nat}
+    {duration : Real} {participants : Finset NodeID}
+    (matching : Window.Matching trace start duration participants) (leader : NodeID)
+    (term : Nat) (index : Nat)
+    : MatchesAt trace start duration leader term participants index := by
+  intro step packet request state within stepped delivered source targetIn different payload
+    found stateTerm termLe
+  exact matching index step packet request state within stepped delivered targetIn
+    (by rw [source]; exact different)
+    payload found
+    (by omega)
+
+omit [HasLive W] [HasNetwork W] in
+/-- Generic window matching gives `WindowMatching` for any primary and term. -/
+theorem Window.Matching.windowMatching {trace : Trace W Liveness.Event} {start : Nat}
+    {duration : Real} {participants : Finset NodeID}
+    (matching : Window.Matching trace start duration participants) (leader : NodeID)
+    (term : Nat)
+    : WindowMatching trace start duration leader term participants :=
+  Window.Matching.matchesAt matching leader term
 
 section Trace
 
@@ -331,6 +357,7 @@ theorem window_reset_follows {heartbeatInterval maxDelay : Real}
         (by rw [target]; exact different)
         payload targetFound
         (by omega)
+        (by simp only [makeAppendEntriesRequest]; omega)
         candidate preVote))
 
 /-- While `leader` leads `term` and a tracked participant stays within `term`, the
