@@ -33,19 +33,68 @@ instance (state : NodeState) : Decidable (ReconfigurationSettled state) := by
   unfold ReconfigurationSettled
   infer_instance
 
+/-- `Quiet` among `participants`: no participant or message between participants
+has moved past `term`, no participant is a pre-vote candidate in it, no proposal
+for it is in flight between participants, and `leader` is its primary.
+Nodes outside `participants`, such as a crashed or partitioned pre-vote
+candidate of a newer term, are unconstrained; isolation keeps them from
+reaching participants. -/
+structure QuietAmong (participants : Finset NodeID) (leader : NodeID) (term : Nat)
+    (state : Model.State)
+    : Prop where
+  terms
+    : forall node local_,
+        (node, local_) ∈ state.nodes -> node ∈ participants -> local_.currentTerm <= term
+  preVotes
+    : forall node local_,
+        (node, local_) ∈ state.nodes
+        -> node ∈ participants
+        -> local_.role = .preVoteCandidate
+        -> local_.currentTerm < term
+  messages
+    : forall envelope,
+        envelope ∈ state.network
+        -> envelope.source ∈ participants
+        -> envelope.target ∈ participants
+        -> envelope.payload.term <= term
+  proposals
+    : forall envelope,
+        envelope ∈ state.network
+        -> envelope.source ∈ participants
+        -> envelope.target ∈ participants
+        -> Not (envelope.payload = .proposeRequestVoteRequest term)
+  leader
+    : exists local_,
+        (leader, local_) ∈ state.nodes
+        /\ local_.role = .primary
+        /\ local_.currentTerm = term
+
+/-- A term quiet everywhere is quiet among any participants. -/
+theorem Quiet.among {leader : NodeID} {term : Nat} {state : Model.State}
+    (quiet : Quiet leader term state) (participants : Finset NodeID)
+    : QuietAmong participants leader term state :=
+  ⟨
+    fun node local_ member _ => quiet.terms node local_ member,
+    fun node local_ member _ => quiet.preVotes node local_ member,
+    fun envelope member _ _ => quiet.messages envelope member,
+    fun envelope member _ _ => quiet.proposals envelope member,
+    quiet.leader
+  ⟩
+
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W]
 
 namespace Window
 
 /-- Throughout the window `leader` is the primary of `term`, and `term` is the
-newest term: no node, pre-vote candidate, message or proposal has moved past it. -/
+newest term among `participants`: no participant, participant pre-vote
+candidate, or message or proposal between participants has moved past it. -/
 def StableLeader (trace : Trace W Event) (start : Nat) (duration : Real) (leader : NodeID)
-    (term : Nat)
+    (term : Nat) (participants : Finset NodeID)
     : Prop :=
   forall index point,
     Within trace start duration index
     -> trace.stateAt index = some point
-    -> Quiet leader term (proto point)
+    -> QuietAmong participants leader term (proto point)
 
 /-- Throughout the window the primary is live and its retirement has not committed. -/
 structure StaysActive (trace : Trace W Event) (start : Nat) (duration : Real)
@@ -108,7 +157,7 @@ majority among `participants`, and exchanges packets with them without loss. -/
 structure StableWindow (trace : Trace W Event) (start : Nat) (duration : Real)
     (leader : NodeID) (term : Nat) (participants : Finset NodeID)
     : Prop where
-  stableLeader : Window.StableLeader trace start duration leader term
+  stableLeader : Window.StableLeader trace start duration leader term participants
   staysActive : Window.StaysActive trace start duration leader
   liveQuorum : Window.LiveQuorum trace start duration leader participants
   lossless : Window.Lossless trace start duration leader participants
