@@ -31,10 +31,13 @@ open CCFRaft.Proofs.Liveness (Admissible)
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
   [HasTimers W]
 
+omit [HasTime W] [HasLive W] [HasNetwork W] [HasTimers W] in
 /-- The packets the race may have in flight: inert ones, the winner's requests to
-others, and grants to the winner. -/
-def Allowed (winner : NodeID) (base : RequestVoteRequest) (term : Nat)
-    (envelope : Model.Envelope)
+others, grants to the winner, a hopeless node's pre-vote requests of at most `term`
+carrying its log at `origin`, and pre-vote grants of at most `term` to a hopeless node
+from one of its pre-voters. -/
+def Allowed (participants : Finset NodeID) (origin : W) (winner : NodeID)
+    (base : RequestVoteRequest) (term : Nat) (envelope : Model.Envelope)
     : Prop :=
   Inert envelope.payload
   \/ (envelope.source = winner
@@ -45,6 +48,60 @@ def Allowed (winner : NodeID) (base : RequestVoteRequest) (term : Nat)
       /\ (envelope.payload = .requestPreVoteResponse { term := term, voteGranted := true }
           \/ envelope.payload
               = .requestVoteResponse { term := term + 1, voteGranted := true }))
+  \/ (envelope.source ≠ winner
+      /\ Hopeless participants origin envelope.source
+      /\ exists requestTerm requester,
+          nodeState (proto origin) envelope.source = some requester
+          /\ envelope.payload
+              = .requestPreVoteRequest
+                  { makeRequestVoteRequest requester with term := requestTerm }
+          /\ requestTerm <= term)
+  \/ (envelope.target ≠ winner
+      /\ Hopeless participants origin envelope.target
+      /\ (exists grantTerm,
+            envelope.payload
+              = .requestPreVoteResponse { term := grantTerm, voteGranted := true }
+            /\ grantTerm <= term)
+      /\ forall requester,
+          nodeState (proto origin) envelope.target = some requester
+          -> envelope.source ∈ PreVoters participants origin envelope.target requester)
+
+omit [HasTime W] [HasLive W] [HasNetwork W] [HasTimers W] in
+/-- A hopeless node at most `term` has only pre-votes from its pre-voters. -/
+def Bounded (participants : Finset NodeID) (origin : W) (term : Nat) (node : NodeID)
+    (state : NodeState)
+    : Prop :=
+  Hopeless participants origin node
+  -> state.currentTerm <= term
+  -> forall initial,
+      nodeState (proto origin) node = some initial
+      -> state.preVotesGranted ⊆ PreVoters participants origin node initial
+
+omit [HasTime W] [HasLive W] [HasNetwork W] [HasTimers W] in
+/-- A hopeless node whose configurations are kept has no quorum among its pre-voters. -/
+theorem Hopeless.not_quorum {participants : Finset NodeID} {origin : W} {node : NodeID}
+    {initial state : NodeState} {voters : Finset NodeID}
+    (hopeless : Hopeless participants origin node)
+    (found : nodeState (proto origin) node = some initial) (keeps : Keeps initial state)
+    (sub : voters ⊆ PreVoters participants origin node initial)
+    : Not (hasQuorum state.activeConfigurations voters) := by
+  obtain ⟨hopelessState, hopelessFound, noQuorum⟩ := hopeless
+  rw [found, Option.some.injEq] at hopelessFound
+  subst hopelessFound
+  intro quorum
+  rw [keeps.configurations] at quorum
+  exact noQuorum (hasQuorum_mono quorum sub)
+
+omit [HasTime W] [HasLive W] [HasNetwork W] [HasTimers W] in
+theorem Bounded.observed {participants : Finset NodeID} {origin : W}
+    {term observedTerm : Nat} {node : NodeID} {before after : NodeState}
+    (bounded : Bounded participants origin term node before)
+    (observed : Observed before observedTerm after)
+    : Bounded participants origin term node after := by
+  rcases observed with rfl | ⟨_, rfl⟩
+  · exact bounded
+  · intro _ _ _ _
+    simp [bumpedState]
 
 /-- A voter has granted, or the request sent at `sent` or its grant is in flight. -/
 def Progress (point : W) (winner voter : NodeID) (granted : Finset NodeID)
@@ -120,30 +177,42 @@ variable [Config.InitialConfiguration] {nodes : List NodeID}
   {winner : NodeID} {term : Nat}
   (s : Setup nodes trace electionTimeout maxDelay participants first winner term)
 
-/-- No other participant times out before this. -/
+/-- No other participant that could win a pre-vote quorum times out before this. -/
 def margin : Real := time s.origin + 4 * maxDelay
 
 /-- The winner's requests, but for their term. -/
 def base : RequestVoteRequest := makeRequestVoteRequest s.initial
 
 /-- What the race keeps of the other participants and the packets between
-participants. -/
+participants. Only a participant hopeless at `origin` and not yet in `term + 1` may time
+out. -/
 structure Common (point : W) (cap : Nat) : Prop where
   deadlines
-    : forall node, node ∈ participants -> node ≠ winner -> s.margin < deadline point node
+    : forall node state,
+        node ∈ participants
+        -> node ≠ winner
+        -> nodeState (proto point) node = some state
+        -> (Hopeless participants s.origin node -> state.currentTerm = term + 1)
+        -> s.margin < deadline point node
   nodes
     : forall node state,
         node ∈ participants
         -> node ≠ winner
         -> nodeState (proto point) node = some state
         -> Other s.origin winner term cap node state
+  granted
+    : forall node state,
+        node ∈ participants
+        -> node ≠ winner
+        -> nodeState (proto point) node = some state
+        -> Bounded participants s.origin term node state
   packets
     : forall packet,
         packet ∈ pending point
         -> packet.envelope.source ∈ participants
         -> packet.envelope.target ∈ participants
         -> packet.envelope.payload.term <= cap
-            /\ Allowed winner s.base term packet.envelope
+            /\ Allowed participants s.origin winner s.base term packet.envelope
 
 /-- The pre-vote phase: the winner collects pre-votes of `term`. -/
 def Polling (point : W) : Prop :=
@@ -250,17 +319,46 @@ theorem participants_live {index : Nat} {point : W}
     : node ∈ live point :=
   s.period.participantsLive index point node within found member
 
+theorem margin_reset {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
+    (le : first <= index) (stepped : trace.stepAt index = some step) {node : NodeID}
+    (reset : ElectionReset step node)
+    : s.margin < deadline step.after node := by
+  have timeLe := s.admissible.time_le le s.originFound (s.admissible.before stepped)
+  unfold margin
+  linarith [(((s.timers.next stepped) node).1 reset).1, s.ratio]
+
 theorem margin_after {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
     (le : first <= index) (stepped : trace.stepAt index = some step) {node : NodeID}
     (before : s.margin < deadline step.before node)
     : s.margin < deadline step.after node := by
-  have timeLe := s.admissible.time_le le s.originFound (s.admissible.before stepped)
-  have rule := (s.timers.next stepped) node
-  unfold margin at *
   by_cases reset : ElectionReset step node
-  · linarith [(rule.1 reset).1, s.ratio]
-  · rw [rule.2.1 reset]
+  · exact s.margin_reset le stepped reset
+  · rw [((s.timers.next stepped) node).2.1 reset]
     exact before
+
+/-- Every step keeps `Common.deadlines`: a node whose term rises is reset. -/
+theorem deadlines_after {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
+    (le : first <= index) (stepped : trace.stepAt index = some step)
+    (before
+      : forall node state,
+          node ∈ participants
+          -> node ≠ winner
+          -> nodeState (proto step.before) node = some state
+          -> (Hopeless participants s.origin node -> state.currentTerm = term + 1)
+          -> s.margin < deadline step.before node)
+    : forall node state,
+        node ∈ participants
+        -> node ≠ winner
+        -> nodeState (proto step.after) node = some state
+        -> (Hopeless participants s.origin node -> state.currentTerm = term + 1)
+        -> s.margin < deadline step.after node := by
+  intro node state member ne found top
+  obtain ⟨previous, previousFound, termLe⟩ := node_before s.admissible stepped found
+  by_cases lt : previous.currentTerm < state.currentTerm
+  · exact s.margin_reset le stepped
+      (reset_of_term_lt s.admissible stepped previousFound found lt)
+  · exact s.margin_after le stepped (before node previous member ne previousFound
+      fun hopeless => by have := top hopeless; omega)
 
 theorem kept {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
     (stepped : trace.stepAt index = some step) {packet : Packet}
@@ -300,6 +398,7 @@ theorem progress_time {point : W} {index : Nat} (found : trace.stateAt index = s
 theorem Common.mono {point : W} (common : s.Common point term)
     : s.Common point (term + 1) where
   deadlines := common.deadlines
+  granted := common.granted
   nodes node state member ne found := by
     obtain ⟨a, b, c, d⟩ := common.nodes node state member ne found
     exact ⟨a, b, by omega, d⟩

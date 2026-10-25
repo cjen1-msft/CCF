@@ -119,10 +119,13 @@ theorem Common.env {index : Nat} {step : CCF.Execution.Step W Liveness.Event} {c
     (le : first <= index) (stepped : trace.stepAt index = some step)
     (selected : step.action.action = none) (common : s.Common step.before cap)
     : s.Common step.after cap where
-  deadlines node member ne := s.margin_after le stepped (common.deadlines node member ne)
+  deadlines := s.deadlines_after le stepped common.deadlines
   nodes node state member ne found := by
     rw [s.admissible.stutter stepped selected] at found
     exact common.nodes node state member ne found
+  granted node state member ne found := by
+    rw [s.admissible.stutter stepped selected] at found
+    exact common.granted node state member ne found
   packets packet member source target :=
     common.packets packet (s.pending_env stepped selected member) source target
 
@@ -164,7 +167,8 @@ theorem foreign_step {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
     fun node member eq => outside ((eq.trans actorEq) ▸ member)
   refine ⟨
     ⟨
-      fun node member ne => s.margin_after le stepped (common.deadlines node member ne),
+      s.deadlines_after le stepped common.deadlines,
+      ?_,
       ?_,
       ?_
     ⟩,
@@ -174,6 +178,9 @@ theorem foreign_step {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
   · intro node state member ne found
     rw [others node (notActor node member)] at found
     exact common.nodes node state member ne found
+  · intro node state member ne found
+    rw [others node (notActor node member)] at found
+    exact common.granted node state member ne found
   · intro packet member source target
     rcases pending_after_cases ledger member with old | ⟨new, _⟩
     · exact common.packets packet old source target
@@ -244,9 +251,10 @@ theorem deliver_other {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
     simpa [event, Liveness.Event.consumedPacket] using this
   obtain ⟨termLe, allowed⟩ := common.packets packet member sourceIn inside
   have otherBefore := common.nodes _ pre inside ne preFound
-  obtain ⟨otherAfter, outs⟩ := other_receive otherBefore ne rfl allowed termLe ran
-  refine ⟨⟨fun node member' ne' => s.margin_after le stepped
-      (common.deadlines node member' ne'), ?_, ?_⟩,
+  obtain ⟨otherAfter, boundedAfter, outs⟩ :=
+    other_receive otherBefore (common.granted _ pre inside ne preFound) inside ne rfl allowed
+      termLe ran
+  refine ⟨⟨s.deadlines_after le stepped common.deadlines, ?_, ?_, ?_⟩,
     (others winner ne.symm), ?_⟩
   · intro node state member' ne' found
     by_cases same : node = packet.envelope.target
@@ -255,6 +263,13 @@ theorem deliver_other {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
       exact found ▸ otherAfter
     · rw [others node same] at found
       exact common.nodes node state member' ne' found
+  · intro node state member' ne' found
+    by_cases same : node = packet.envelope.target
+    · subst same
+      rw [postFound, Option.some.injEq] at found
+      exact found ▸ boundedAfter
+    · rw [others node same] at found
+      exact common.granted node state member' ne' found
   · intro packet' member' source' target'
     rcases pending_after_cases ledger member' with old | ⟨new, _⟩
     · exact common.packets packet' old source' target'
@@ -303,13 +318,17 @@ theorem Common.winner_step {index : Nat} {step : CCF.Execution.Step W Liveness.E
               (time step.before))
     (outs
       : forall e,
-          e ∈ outputs.outgoing -> e.payload.term <= cap /\ Allowed winner s.base term e)
+          e ∈ outputs.outgoing
+          -> e.payload.term <= cap /\ Allowed participants s.origin winner s.base term e)
     (common : s.Common step.before cap)
     : s.Common step.after cap where
-  deadlines node member ne := s.margin_after le stepped (common.deadlines node member ne)
+  deadlines := s.deadlines_after le stepped common.deadlines
   nodes node state member ne found := by
     rw [others node ne] at found
     exact common.nodes node state member ne found
+  granted node state member ne found := by
+    rw [others node ne] at found
+    exact common.granted node state member ne found
   packets packet member source target := by
     rcases pending_after_cases ledger member with old | ⟨new, _⟩
     · exact common.packets packet old source target
@@ -392,7 +411,8 @@ theorem won_at {candidateIndex index : Nat} {candidatePoint : W}
     rcases pending_after_cases ledger member with old | ⟨new, _⟩
     · obtain ⟨termLe, allowed⟩ := common.packets packet old source target
       refine ⟨termLe, fun eq => ?_⟩
-      rcases allowed with inert | ⟨_, _, pre | vote⟩ | ⟨_, pre | vote⟩ <;>
+      rcases allowed with inert | ⟨_, _, pre | vote⟩ | ⟨_, pre | vote⟩
+        | ⟨_, _, _, _, _, request, _⟩ | ⟨_, _, ⟨_, grant, _⟩, _⟩ <;>
         rw [eq] at * <;> simp_all [Inert]
     · exact outs _ new
   · intro leaderPoint later step' node state found le' stepped' member timeout nodeFound
@@ -449,7 +469,7 @@ theorem candidacy_step {index : Nat} {step : CCF.Execution.Step W Liveness.Event
     simp [freshCandidate, candidateTerm, base]
   have broadcastFacts : forall e, e ∈ Broadcast winner (freshCandidate winner candidate)
         (.requestVoteRequest (makeRequestVoteRequest (freshCandidate winner candidate)))
-      -> e.payload.term <= term + 1 /\ Allowed winner s.base term e := by
+      -> e.payload.term <= term + 1 /\ Allowed participants s.origin winner s.base term e := by
     intro e member
     obtain ⟨target, targetIn, rfl⟩ := mem_broadcast.mp member
     refine ⟨by simp [requestEq, Message.term], Or.inr (Or.inl ⟨rfl, ?_, Or.inr ?_⟩)⟩
@@ -476,7 +496,8 @@ theorem candidacy_step {index : Nat} {step : CCF.Execution.Step W Liveness.Event
       simp [payloadEq, Message.term, requestTerm, freshCandidate, candidateTerm]
     · obtain ⟨termLe, allowed⟩ := broadcastFacts e fromBroadcast
       refine ⟨termLe, fun eq => ?_⟩
-      rcases allowed with inert | ⟨_, _, pv | v⟩ | ⟨_, pv | v⟩ <;>
+      rcases allowed with inert | ⟨_, _, pv | v⟩ | ⟨_, pv | v⟩
+        | ⟨_, _, _, _, _, request, _⟩ | ⟨_, _, ⟨_, grant, _⟩, _⟩ <;>
         rw [eq] at * <;> simp_all [Inert]
   · rename_i cond
     obtain ⟨postEq, wonNil⟩ := elect
@@ -503,38 +524,114 @@ theorem candidacy_step {index : Nat} {step : CCF.Execution.Step W Liveness.Event
       obtain ⟨packet, member', envEq, sentAt⟩ := pending_of_sent ledger sentMem
       exact Or.inr ⟨packet, member', Or.inl ⟨envEq, sentAt⟩⟩
 
-/-- No node acts on its own while the race runs: only a primary acts on anything but
-an election timeout, and no timer is due before the margin. -/
-theorem no_local {index : Nat} {step : CCF.Execution.Step W Liveness.Event} {cap : Nat}
+/-- A local step while the race runs: only a primary acts on anything but an election
+timeout, and no timer but a hopeless participant's is due before the margin. A hopeless
+participant's timeout starts a pre-vote that cannot reach a quorum. -/
+theorem local_step {index : Nat} {step : CCF.Execution.Step W Liveness.Event} {cap : Nat}
+    (le : first <= index) (within : Within trace s.start s.duration index)
     (stepped : trace.stepAt index = some step) {node : NodeID} {input : Input}
-    (event : step.action = .local node input) (member : node ∈ participants)
+    (event : step.action = .local node input) (capLe : cap <= term + 1)
     (common : s.Common step.before cap) (timeLe : time step.before <= s.margin)
     (winnerDeadline : s.margin < deadline step.before winner)
     (winnerRole
       : forall state,
           nodeState (proto step.before) winner = some state -> state.role ≠ .primary)
-    : False := by
-  by_cases timeout : input = .timeout .election
-  · subst timeout
-    have due := ((s.timers.next stepped) node).2.2 event
-    by_cases same : node = winner
-    · subst same
-      linarith
-    · linarith [common.deadlines node member same]
-  · have selected : step.action.action = some (.local node input) := by
-      simp [event, Liveness.Event.action]
-    obtain ⟨actor, pre, _, _, preFound, _, _, ran, _⟩ :=
-      protocol_view s.admissible stepped selected
+    {granted : Finset NodeID} {request response : Message} {sent : Real}
+    : s.Common step.after cap
+      /\ nodeState (proto step.after) winner = nodeState (proto step.before) winner
+      /\ forall voter,
+          voter ∈ s.voters
+          -> voter ≠ winner
+          -> Progress step.before winner voter granted request response sent maxDelay
+          -> Progress step.after winner voter granted request response sent maxDelay := by
+  have selected : step.action.action = some (.local node input) := by
+    simp [event, Liveness.Event.action]
+  by_cases inside : node ∈ participants
+  swap
+  · exact s.foreign_step le within stepped selected (by simp [event, Liveness.Event.actor])
+      inside common
+  obtain ⟨actor, pre, post, outputs, preFound, postFound, others, ran, ledger⟩ :=
+    protocol_view s.admissible stepped selected
+  obtain ⟨ran, actorEq⟩ : (act (CCF.Capabilities.record node) node pre input).run {}
+      = some (post, outputs) /\ actor = node := by
     rcases ran with ⟨input', eq, ran⟩ | ⟨_, eq, _⟩
     · rw [event, Liveness.Event.local.injEq] at eq
       obtain ⟨rfl, rfl⟩ := eq
-      have primary := act_primary node timeout ran
-      by_cases same : node = winner
-      · subst same
-        exact winnerRole pre preFound primary
-      · exact (common.nodes node pre member same preFound).2.1 primary
+      exact ⟨ran, rfl⟩
     · rw [event] at eq
       cases eq
+  rw [actorEq] at preFound postFound others
+  have timeout : input = .timeout .election := by
+    by_contra timeout
+    have primary := act_primary node timeout ran
+    by_cases same : node = winner
+    · subst same
+      exact winnerRole pre preFound primary
+    · exact (common.nodes node pre inside same preFound).2.1 primary
+  subst timeout
+  have due := ((s.timers.next stepped) node).2.2 event
+  have same : node ≠ winner := by
+    rintro rfl
+    linarith
+  obtain ⟨hopeless, termNe⟩
+      : Hopeless participants s.origin node /\ pre.currentTerm ≠ term + 1 := by
+    by_contra notHopeless
+    have := common.deadlines node pre inside same preFound fun hopeless => by
+      by_contra termNe
+      exact notHopeless ⟨hopeless, termNe⟩
+    linarith
+  obtain ⟨⟨initial, initialFound, keeps, _⟩, _, capBound, _⟩ :=
+    common.nodes node pre inside same preFound
+  have keeps' : Keeps initial (preVoteState node pre) := keeps.trans (keeps_preVote _ _)
+  have sub : (preVoteState node pre).preVotesGranted
+      ⊆ PreVoters participants s.origin node initial := by
+    simp only [preVoteState, Finset.singleton_subset_iff, PreVoters]
+    exact Finset.mem_insert_self _ _
+  simp only [act] at ran
+  obtain ⟨_, outcome⟩ := sends_run (startElection_outcome node pre) ran
+  split at outcome
+  · rename_i quorum
+    exact absurd quorum (Hopeless.not_quorum hopeless initialFound keeps' sub)
+  obtain ⟨postEq, sentEq⟩ := outcome
+  subst post
+  have requestEq := keeps'.request
+  refine ⟨⟨s.deadlines_after le stepped common.deadlines, ?_, ?_, ?_⟩,
+    others winner (fun eq => same eq.symm), ?_⟩
+  · intro node' state member ne found
+    by_cases eq : node' = node
+    · subst eq
+      rw [postFound, Option.some.injEq] at found
+      subst found
+      exact ⟨⟨initial, initialFound, keeps', fun _ => rfl⟩, by simp [preVoteState],
+        capBound, fun eq => absurd eq termNe⟩
+    · rw [others node' eq] at found
+      exact common.nodes node' state member ne found
+  · intro node' state member ne found
+    by_cases eq : node' = node
+    · subst eq
+      rw [postFound, Option.some.injEq] at found
+      subst found
+      intro _ _ other otherFound
+      rw [initialFound, Option.some.injEq] at otherFound
+      subst otherFound
+      exact sub
+    · rw [others node' eq] at found
+      exact common.granted node' state member ne found
+  · intro packet member source target
+    rcases pending_after_cases ledger member with old | ⟨new, _⟩
+    · exact common.packets packet old source target
+    rw [sentEq] at new
+    obtain ⟨target, _, envEq⟩ := mem_broadcast.mp new
+    rw [envEq]
+    refine ⟨capBound,
+      Or.inr (Or.inr (Or.inr (Or.inl ⟨same, hopeless, pre.currentTerm, initial, initialFound,
+        by rw [requestEq]; rfl, by omega⟩)))⟩
+  · intro voter voterIn voterNe progress
+    have voterPart := (s.voterFacts voter voterIn voterNe).1
+    exact progress.keep (Finset.Subset.refl _) fun packet member tracked =>
+      s.tracked_kept within stepped voterPart member tracked fun eq => by
+        rw [event] at eq
+        cases eq
 
 /-- A delivery to the winner keeps a voter's progress, if the voter's own grant is
 counted. -/
@@ -634,20 +731,23 @@ theorem polling_winner {index : Nat} {step : CCF.Execution.Step W Liveness.Event
   have deadlineAfter := s.margin_after le stepped deadlineGt
   have busy : Not (step.action = .idle) := by rw [event]; simp
   -- The winner unchanged, having sent nothing.
-  have stay : post = pre -> outputs.outgoing = []
+  have stay : post = pre
+      -> (forall e, e ∈ outputs.outgoing
+          -> e.payload.term <= term /\ Allowed participants s.origin winner s.base term e)
       -> (forall voter, voter ∈ s.voters -> voter ≠ winner
           -> packet.envelope
               = ⟨voter, winner, .requestPreVoteResponse { term := term, voteGranted := true }⟩
           -> voter ∈ pre.preVotesGranted)
       -> s.Common step.after term /\ s.Polling step.after := by
-    intro postEq sentNil got
+    intro postEq outs got
     subst post
-    refine ⟨Common.winner_step s le stepped others ledger (by simp [sentNil]) common,
+    refine ⟨Common.winner_step s le stepped others ledger outs common,
       deadlineAfter, pre, postFound, role, termEq, keeps, selfIn, noQuorum,
       fun voter voterIn voterNe => s.progress_winner within stepped event target voterIn
         voterNe (progress voter voterIn voterNe) (Finset.Subset.refl _)
         (got voter voterIn voterNe)⟩
-  rcases allowed with inert | ⟨_, targetNe, _⟩ | ⟨_, grant | grant⟩
+  rcases allowed with inert | ⟨_, targetNe, _⟩ | ⟨_, grant | grant⟩ | request
+    | ⟨targetNe, _⟩
   · obtain ⟨sentNil, observed⟩ :=
       sends_run (inert_receive winner packet.envelope.source pre packet.envelope.payload inert
         (by rw [role]; simp)) ran
@@ -655,7 +755,7 @@ theorem polling_winner {index : Nat} {step : CCF.Execution.Step W Liveness.Event
       rcases observed with rfl | ⟨lt, _⟩
       · rfl
       · omega
-    refine Or.inl (stay postEq sentNil fun voter _ _ envEq => ?_)
+    refine Or.inl (stay postEq (by simp [sentNil]) fun voter _ _ envEq => ?_)
     rw [envEq] at inert
     simp [Inert] at inert
   · exact absurd target targetNe
@@ -692,13 +792,26 @@ theorem polling_winner {index : Nat} {step : CCF.Execution.Step W Liveness.Event
         exact Finset.mem_insert_self _ _
     · rename_i cond
       obtain ⟨postEq, sentNil⟩ := outcome
-      refine Or.inl (stay postEq sentNil fun voter voterIn voterNe envEq => ?_)
+      refine Or.inl (stay postEq (by simp [sentNil]) fun voter voterIn voterNe envEq => ?_)
       exfalso
       apply cond
       rw [envEq]
       exact ⟨eligible voter voterIn voterNe, role, termEq.symm, rfl⟩
   · rw [grant] at termLe
     simp [Message.term] at termLe
+  · obtain ⟨_, _, _, _, _, payloadEq, _⟩ := id request
+    obtain ⟨le', observed, outs⟩ :=
+      hopeless_request s.winnerIn s.initialFound keeps request ran
+    have postEq : post = pre := by
+      rcases observed with rfl | ⟨lt, _⟩
+      · rfl
+      · omega
+    refine Or.inl (stay postEq (fun e member => ?_) fun voter _ _ envEq => ?_)
+    · obtain ⟨_, termEq', allowed⟩ := outs e member
+      exact ⟨by rw [termEq', postEq, termEq], allowed⟩
+    · have := congrArg (fun e : Model.Envelope => e.payload) envEq
+      simp [payloadEq] at this
+  · exact absurd target targetNe
 
 /-- A delivery to the winner while it collects votes. -/
 theorem voting_winner {index candidateIndex : Nat} {candidatePoint : W}
@@ -734,20 +847,23 @@ theorem voting_winner {index candidateIndex : Nat} {candidatePoint : W}
   obtain ⟨termLe, allowed⟩ := common.packets packet member sourceIn targetIn
   have deadlineAfter := s.margin_after le stepped deadlineGt
   have busy : Not (step.action = .idle) := by rw [event]; simp
-  have stay : post = pre -> outputs.outgoing = []
+  have stay : post = pre
+      -> (forall e, e ∈ outputs.outgoing
+          -> e.payload.term <= term + 1 /\ Allowed participants s.origin winner s.base term e)
       -> (forall voter, voter ∈ s.voters -> voter ≠ winner
           -> packet.envelope
               = ⟨voter, winner, .requestVoteResponse { term := term + 1, voteGranted := true }⟩
           -> voter ∈ pre.votesGranted)
       -> s.Common step.after (term + 1) /\ s.Voting step.after (time candidatePoint) := by
-    intro postEq sentNil got
+    intro postEq outs got
     subst post
-    exact ⟨Common.winner_step s le stepped others ledger (by simp [sentNil]) common,
+    exact ⟨Common.winner_step s le stepped others ledger outs common,
       deadlineAfter, pre, postFound, role, termEq, keeps, selfIn, noQuorum,
       fun voter voterIn voterNe => s.progress_winner within stepped event target voterIn
         voterNe (progress voter voterIn voterNe) (Finset.Subset.refl _)
         (got voter voterIn voterNe)⟩
-  rcases allowed with inert | ⟨_, targetNe, _⟩ | ⟨_, grant | grant⟩
+  rcases allowed with inert | ⟨_, targetNe, _⟩ | ⟨_, grant | grant⟩ | request
+    | ⟨targetNe, _⟩
   · obtain ⟨sentNil, observed⟩ :=
       sends_run (inert_receive winner packet.envelope.source pre packet.envelope.payload inert
         (by rw [role]; simp)) ran
@@ -755,7 +871,7 @@ theorem voting_winner {index candidateIndex : Nat} {candidatePoint : W}
       rcases observed with rfl | ⟨lt, _⟩
       · rfl
       · omega
-    refine Or.inl (stay postEq sentNil fun voter _ _ envEq => ?_)
+    refine Or.inl (stay postEq (by simp [sentNil]) fun voter _ _ envEq => ?_)
     rw [envEq] at inert
     simp [Inert] at inert
   · exact absurd target targetNe
@@ -772,7 +888,7 @@ theorem voting_winner {index candidateIndex : Nat} {candidatePoint : W}
     · rename_i cond
       exact absurd cond.2.1 (by rw [role]; simp)
     obtain ⟨postEq, sentNil⟩ := outcome
-    refine Or.inl (stay postEq sentNil fun voter _ _ envEq => ?_)
+    refine Or.inl (stay postEq (by simp [sentNil]) fun voter _ _ envEq => ?_)
     have payloadEq := congrArg (fun e : Model.Envelope => e.payload) envEq
     rw [grant] at payloadEq
     simp at payloadEq
@@ -814,13 +930,26 @@ theorem voting_winner {index candidateIndex : Nat} {candidatePoint : W}
         exact Finset.mem_insert_self _ _
     · rename_i cond
       obtain ⟨postEq, sentNil⟩ := outcome
-      refine Or.inl (stay postEq sentNil fun voter voterIn voterNe envEq => ?_)
+      refine Or.inl (stay postEq (by simp [sentNil]) fun voter voterIn voterNe envEq => ?_)
       exfalso
       apply cond
       rw [envEq]
       refine ⟨?_, role, termEq.symm, rfl⟩
       rw [keeps.peers]
       exact (s.voterFacts voter voterIn voterNe).2.2.1
+  · obtain ⟨_, _, _, _, _, payloadEq, _⟩ := id request
+    obtain ⟨le', observed, outs⟩ :=
+      hopeless_request s.winnerIn s.initialFound keeps request ran
+    have postEq : post = pre := by
+      rcases observed with rfl | ⟨lt, _⟩
+      · rfl
+      · omega
+    refine Or.inl (stay postEq (fun e member => ?_) fun voter _ _ envEq => ?_)
+    · obtain ⟨_, termEq', allowed⟩ := outs e member
+      exact ⟨by rw [termEq', postEq, termEq], allowed⟩
+    · have := congrArg (fun e : Model.Envelope => e.payload) envEq
+      simp [payloadEq] at this
+  · exact absurd target targetNe
 
 theorem alive_after {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
     (within : Within trace s.start s.duration index)
@@ -942,20 +1071,17 @@ theorem running_step {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
       simp
     cases event : step.action with
     | «local» node input =>
-        by_cases inside : node ∈ participants
-        · exact (s.no_local stepped event inside common
-            (by unfold margin; linarith [s.nonnegative]) polling.1 role).elim
-        obtain ⟨deadlineGt, state, stateFound, role, termEq, keeps, selfIn, noQuorum,
-          progress⟩ := polling
+        obtain ⟨deadlineGt, state, stateFound, winnerRole, termEq, keeps, selfIn, noQuorum,
+          progress⟩ := id polling
         obtain ⟨common', winnerSame, progress'⟩ :=
-          s.foreign_step le within stepped (action := .local node input)
-            (by simp [event, Liveness.Event.action]) (by simp [event, Liveness.Event.actor])
-            inside common (granted := state.preVotesGranted)
+          s.local_step le within stepped event (by omega) common
+            (by unfold margin; linarith [s.nonnegative]) deadlineGt role
+            (granted := state.preVotesGranted)
             (request := .requestPreVoteRequest { s.base with term := term })
             (response := .requestPreVoteResponse { term := term, voteGranted := true })
             (sent := time s.origin)
         exact Or.inl (s.running_polling le within stepped common' ⟨s.margin_after le stepped
-          deadlineGt, state, winnerSame ▸ stateFound, role, termEq, keeps, selfIn, noQuorum,
+          deadlineGt, state, winnerSame ▸ stateFound, winnerRole, termEq, keeps, selfIn, noQuorum,
           fun voter voterIn voterNe =>
             progress' voter voterIn voterNe (progress voter voterIn voterNe)⟩)
     | deliver packet =>
@@ -1013,21 +1139,18 @@ theorem running_step {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
       simp
     cases event : step.action with
     | «local» node input =>
-        by_cases inside : node ∈ participants
-        · exact (s.no_local stepped event inside common
-            (by unfold margin; linarith [s.nonnegative]) voting.1 role).elim
-        obtain ⟨deadlineGt, state, stateFound, role, termEq, keeps, selfIn, noQuorum,
-          progress⟩ := voting
+        obtain ⟨deadlineGt, state, stateFound, winnerRole, termEq, keeps, selfIn, noQuorum,
+          progress⟩ := id voting
         obtain ⟨common', winnerSame, progress'⟩ :=
-          s.foreign_step le within stepped (action := .local node input)
-            (by simp [event, Liveness.Event.action]) (by simp [event, Liveness.Event.actor])
-            inside common (granted := state.votesGranted)
+          s.local_step le within stepped event (le_refl _) common
+            (by unfold margin; linarith [s.nonnegative]) deadlineGt role
+            (granted := state.votesGranted)
             (request := .requestVoteRequest { s.base with term := term + 1 })
             (response := .requestVoteResponse { term := term + 1, voteGranted := true })
             (sent := time candidatePoint)
         exact Or.inl (s.running_voting le within stepped firstLe candidateLe
           candidateFound candidateTime low common' ⟨s.margin_after le stepped deadlineGt,
-            state, winnerSame ▸ stateFound, role, termEq, keeps, selfIn, noQuorum,
+            state, winnerSame ▸ stateFound, winnerRole, termEq, keeps, selfIn, noQuorum,
             fun voter voterIn voterNe =>
               progress' voter voterIn voterNe (progress voter voterIn voterNe)⟩)
     | deliver packet =>
@@ -1084,7 +1207,18 @@ theorem low_of_common {point : W} (common : s.Common point term) {state : NodeSt
   · exact (common.nodes node state' member same nodeFound).2.2.1
 
 theorem common_origin : s.Common s.origin term where
-  deadlines node member ne := s.race.margin s.origin node s.originFound member ne
+  deadlines node state member ne found high :=
+    s.race.margin s.origin node s.originFound member ne
+      fun hopeless => by
+        have := (s.race.settled s.origin node state s.originFound member found).1
+        have := high hopeless
+        omega
+  granted node state _ _ found _ _ initial initialFound := by
+    rw [found, Option.some.injEq] at initialFound
+    subst initialFound
+    intro voter member
+    unfold PreVoters
+    exact Finset.mem_insert_of_mem (Finset.mem_union_left _ member)
   nodes node state member _ found := by
     obtain ⟨termLe, notPrimary⟩ :=
       s.race.settled s.origin node state s.originFound member found
@@ -1159,7 +1293,7 @@ theorem base_step {step : CCF.Execution.Step W Liveness.Event}
       rw [keeps.request]
       simp [preVoteState, s.initialTerm, base]
     have outs : forall e, e ∈ outputs.outgoing
-        -> e.payload.term <= term /\ Allowed winner s.base term e := by
+        -> e.payload.term <= term /\ Allowed participants s.origin winner s.base term e := by
       intro e member
       rw [sentEq] at member
       obtain ⟨target, targetIn, rfl⟩ := mem_broadcast.mp member

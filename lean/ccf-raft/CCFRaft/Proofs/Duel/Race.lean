@@ -14,15 +14,17 @@ NOT IMPORTED BY `Properties`. Part (b) of the duel: a race with a margin ends in
 fresh quiet start for a live primary.
 
 At index `first`, participant `winner` of term `term` times out. Nothing that can
-change a role is in flight between participants, every other participant's deadline is
-more than `4 * maxDelay` away, and a quorum of participants would grant `winner` its
+change a role is in flight between participants, every other participant that could win
+a pre-vote quorum has its deadline more than `4 * maxDelay` away, and a quorum of
+participants would grant `winner` its
 pre-vote and vote. Then by `time first + 4 * maxDelay` the winner is a live primary
 of `term + 1`, no participant or packet between participants is past `term + 1`, and
 no participant of `term + 1` times out before `electionTimeout / 2 - 2 * maxDelay`
 after that index (`FreshStart` with `fresh = electionTimeout / 2 - 2 * maxDelay`).
 
 Nodes outside the participants are unconstrained: the good period keeps their packets
-from reaching participants, so they never disturb the race.
+from reaching participants, so they never disturb the race. Hopeless participants, which
+cannot gather a pre-vote quorum, may time out, but their pre-votes never reach a quorum.
 
 The no-overshoot rule is not needed here: while a packet to a live node is pending,
 `boundedDelayModel` already stops time from jumping past its delivery bound, and the
@@ -46,6 +48,29 @@ open CCFRaft.Proofs.Liveness (Admissible)
 
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
   [HasTimers W]
+
+omit [HasTime W] [HasLive W] [HasNetwork W] [HasTimers W] in
+open Classical in
+/-- Who could grant `node`'s pre-vote at `point`: itself, its recorded pre-votes, and
+every participant whose log its requests cover. -/
+def PreVoters (participants : Finset NodeID) (point : W) (node : NodeID)
+    (state : NodeState)
+    : Finset NodeID :=
+  insert node
+    (state.preVotesGranted
+      ∪ participants.filter
+          fun voter =>
+            exists voterState,
+              nodeState (proto point) voter = some voterState
+              /\ voteLogUpToDate voterState (makeRequestVoteRequest state))
+
+omit [HasTime W] [HasLive W] [HasNetwork W] [HasTimers W] in
+/-- `node` cannot gather a pre-vote quorum. -/
+def Hopeless (participants : Finset NodeID) (point : W) (node : NodeID) : Prop :=
+  exists state,
+    nodeState (proto point) node = some state
+    /\ Not
+        (hasQuorum state.activeConfigurations (PreVoters participants point node state))
 
 /-- The state at `first`, when `winner` of `term` times out, from which it wins. -/
 structure Race (trace : Trace W Liveness.Event) (electionTimeout maxDelay : Real)
@@ -76,12 +101,14 @@ structure Race (trace : Trace W Liveness.Event) (electionTimeout maxDelay : Real
         -> packet.envelope.source ∈ participants
         -> packet.envelope.target ∈ participants
         -> packet.envelope.payload.term <= term /\ Inert packet.envelope.payload
-  /-- The margin: every other participant's timer is more than four delays away. -/
+  /-- The margin: every other participant that could win a pre-vote quorum has its
+  timer more than four delays away. Hopeless participants may time out. -/
   margin
     : forall point node,
         trace.stateAt first = some point
         -> node ∈ participants
         -> node ≠ winner
+        -> Not (Hopeless participants point node)
         -> time point + 4 * maxDelay < deadline point node
   /-- A quorum of the winner's configurations would grant it: up to date, and
   knowing no primary, since a node that knows one refuses pre-votes. -/

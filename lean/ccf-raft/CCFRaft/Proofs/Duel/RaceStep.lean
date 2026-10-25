@@ -85,46 +85,115 @@ theorem pending_of_sent {outputs : CCF.Outputs NodeID Message Notification}
   exact Or.inr (Packet.mem_batch.mpr ⟨ordinal, found, rfl, rfl⟩)
 
 omit [HasTime W] [HasLive W] [HasNetwork W] [HasTimers W] in
-/-- A node other than the winner, receiving an allowed packet, keeps what the race
+/-- Observing a term of at most `cap` keeps what the race keeps of a node. -/
+theorem Other.observed {origin : W} {winner node : NodeID} {term cap observedTerm : Nat}
+    {before after : NodeState} (other : Other origin winner term cap node before)
+    (observed : Observed before observedTerm after) (le : observedTerm <= cap)
+    : Other origin winner term cap node after := by
+  obtain ⟨⟨initial, initialFound, keeps, pkKeep⟩, notPrimary, capBound, top⟩ := other
+  rcases observed with rfl | ⟨_, rfl⟩
+  · exact ⟨⟨initial, initialFound, keeps, pkKeep⟩, notPrimary, capBound, top⟩
+  · exact ⟨⟨initial, initialFound, keeps.trans (keeps_bumped _ _), fun _ => rfl⟩,
+      by simp [bumpedState], by simp only [bumpedState]; omega,
+      fun _ => by simp [bumpedState]⟩
+
+omit [HasTime W] [HasLive W] [HasNetwork W] [HasTimers W] in
+/-- A participant other than the winner, receiving a hopeless node's pre-vote request,
+at most observes its term, and replies with an allowed response. -/
+theorem hopeless_request {participants : Finset NodeID} {origin : W}
+    {winner node : NodeID} {term : Nat} {base : RequestVoteRequest}
+    {before after : NodeState} {envelope : Model.Envelope}
+    {outputs : CCF.Outputs NodeID Message Notification} {initial : NodeState}
+    (member : node ∈ participants)
+    (initialFound : nodeState (proto origin) node = some initial)
+    (keeps : Keeps initial before)
+    (request
+      : envelope.source ≠ winner
+        /\ Hopeless participants origin envelope.source
+        /\ exists requestTerm requester,
+            nodeState (proto origin) envelope.source = some requester
+            /\ envelope.payload
+                = .requestPreVoteRequest
+                    { makeRequestVoteRequest requester with term := requestTerm }
+            /\ requestTerm <= term)
+    (ran
+      : (receive (CCF.Capabilities.record node) node envelope.source before
+          envelope.payload).run
+          {}
+        = some (after, outputs))
+    : envelope.payload.term <= term
+      /\ Observed before envelope.payload.term after
+      /\ forall e,
+          e ∈ outputs.outgoing
+          -> e.source = node
+              /\ e.payload.term = after.currentTerm
+              /\ Allowed participants origin winner base term e := by
+  obtain ⟨sourceNe, hopeless, requestTerm, requester, requesterFound, payloadEq, le⟩ :=
+    request
+  rw [payloadEq] at ran ⊢
+  obtain ⟨observed, _, sentEq⟩ :=
+    sends_run (preVoteRequest_receive node envelope.source before _) ran
+  refine ⟨le, observed, fun e sent => ?_⟩
+  rw [sentEq, List.mem_singleton] at sent
+  subst sent
+  refine ⟨rfl, rfl, ?_⟩
+  by_cases granted
+      : requestTerm = after.currentTerm
+        /\ voteLogUpToDate after { makeRequestVoteRequest requester with term := requestTerm }
+        /\ !after.primaryKnown
+  · refine Or.inr (Or.inr (Or.inr (Or.inr ⟨sourceNe, hopeless, ⟨requestTerm, ?_, le⟩, ?_⟩)))
+    · have grantedEq := granted.1
+      rw [← grantedEq]
+      simp [granted]
+    · intro other otherFound
+      rw [requesterFound, Option.some.injEq] at otherFound
+      subst otherFound
+      have upToDate := ((keeps.trans observed.keeps).upToDate _).mp granted.2.1
+      unfold PreVoters
+      exact Finset.mem_insert_of_mem (Finset.mem_union_right _
+        (Finset.mem_filter.mpr ⟨member, initial, initialFound, upToDate_term.mp upToDate⟩))
+  · refine Or.inl ?_
+    simp only [Inert]
+    simpa using granted
+
+omit [HasTime W] [HasLive W] [HasNetwork W] [HasTimers W] in
+/-- A participant other than the winner, receiving an allowed packet, keeps what the race
 keeps of it, and its replies are allowed. -/
-theorem other_receive {origin : W} {winner node : NodeID} {term cap : Nat}
-    {base : RequestVoteRequest} {before after : NodeState} {envelope : Model.Envelope}
-    {outputs : CCF.Outputs NodeID Message Notification}
+theorem other_receive {participants : Finset NodeID} {origin : W} {winner node : NodeID}
+    {term cap : Nat} {base : RequestVoteRequest} {before after : NodeState}
+    {envelope : Model.Envelope} {outputs : CCF.Outputs NodeID Message Notification}
     (other : Other origin winner term cap node before)
-    (ne : node ≠ winner) (targetEq : envelope.target = node)
-    (allowed : Allowed winner base term envelope) (termLe : envelope.payload.term <= cap)
+    (bounded : Bounded participants origin term node before)
+    (member : node ∈ participants) (ne : node ≠ winner)
+    (targetEq : envelope.target = node)
+    (allowed : Allowed participants origin winner base term envelope)
+    (termLe : envelope.payload.term <= cap)
     (ran
       : (receive (CCF.Capabilities.record node) node envelope.source before
           envelope.payload).run
           {}
         = some (after, outputs))
     : Other origin winner term cap node after
+      /\ Bounded participants origin term node after
       /\ forall e,
           e ∈ outputs.outgoing
-          -> e.source = node /\ e.payload.term <= cap /\ Allowed winner base term e := by
+          -> e.source = node
+              /\ e.payload.term <= cap
+              /\ Allowed participants origin winner base term e := by
+  have otherCopy := other
   obtain ⟨⟨initial, initialFound, keeps, pkKeep⟩, notPrimary, capBound, top⟩ := other
-  rcases allowed with inert | ⟨sourceEq, _, pre | vote⟩ | ⟨targetW, _⟩
+  rcases allowed with inert | ⟨sourceEq, _, pre | vote⟩ | ⟨targetW, _⟩ | request
+    | ⟨_, hopeless, ⟨grantTerm, payloadEq, grantLe⟩, preVoter⟩
   · obtain ⟨sentNil, observed⟩ :=
       sends_run (inert_receive node envelope.source before envelope.payload inert notPrimary)
         ran
-    refine ⟨?_, by simp [sentNil]⟩
-    rcases observed with rfl | ⟨lt, rfl⟩
-    · exact ⟨⟨initial, initialFound, keeps, pkKeep⟩, notPrimary, capBound, top⟩
-    · exact ⟨⟨initial, initialFound, keeps.trans (keeps_bumped _ _), fun _ => rfl⟩,
-        by simp [bumpedState], by simp only [bumpedState]; omega,
-        fun _ => by simp [bumpedState]⟩
+    exact ⟨otherCopy.observed observed termLe, bounded.observed observed, by simp [sentNil]⟩
   · rw [pre] at ran termLe
     obtain ⟨observed, _, sentEq⟩ :=
       sends_run (preVoteRequest_receive node envelope.source before _) ran
-    have afterOther : Other origin winner term cap node after := by
-      rcases observed with rfl | ⟨lt, rfl⟩
-      · exact ⟨⟨initial, initialFound, keeps, pkKeep⟩, notPrimary, capBound, top⟩
-      · refine ⟨⟨initial, initialFound, keeps.trans (keeps_bumped _ _), fun _ => rfl⟩,
-          by simp [bumpedState], ?_, fun h => ?_⟩
-        · simp only [bumpedState, Message.term] at termLe ⊢
-          exact termLe
-        · simp [bumpedState] at h
-    refine ⟨afterOther, fun e member => ?_⟩
+    have afterOther : Other origin winner term cap node after :=
+      otherCopy.observed observed termLe
+    refine ⟨afterOther, bounded.observed observed, fun e member => ?_⟩
     rw [sentEq, List.mem_singleton] at member
     subst member
     refine ⟨rfl, afterOther.2.2.1, ?_⟩
@@ -132,7 +201,7 @@ theorem other_receive {origin : W} {winner node : NodeID} {term cap : Nat}
         : term = after.currentTerm /\ voteLogUpToDate after { base with term := term }
             /\ !after.primaryKnown
     · have grantedEq := granted.1
-      refine Or.inr (Or.inr ⟨sourceEq, Or.inl ?_⟩)
+      refine Or.inr (Or.inr (Or.inl ⟨sourceEq, Or.inl ?_⟩))
       rw [← grantedEq]
       simp [granted]
     · refine Or.inl ?_
@@ -141,13 +210,8 @@ theorem other_receive {origin : W} {winner node : NodeID} {term cap : Nat}
   · rw [vote] at ran termLe
     obtain ⟨middle, granted, observed, _, grantedIff, afterEq, sentEq⟩ :=
       sends_run (voteRequest_receive node envelope.source before _) ran
-    have middleOther : Other origin winner term cap node middle := by
-      rcases observed with rfl | ⟨lt, rfl⟩
-      · exact ⟨⟨initial, initialFound, keeps, pkKeep⟩, notPrimary, capBound, top⟩
-      · refine ⟨⟨initial, initialFound, keeps.trans (keeps_bumped _ _), fun _ => rfl⟩,
-          by simp [bumpedState], ?_, fun _ => by simp [bumpedState]⟩
-        simp only [bumpedState, Message.term] at termLe ⊢
-        exact termLe
+    have middleOther : Other origin winner term cap node middle :=
+      otherCopy.observed observed termLe
     have afterOther : Other origin winner term cap node after := by
       subst afterEq
       cases granted
@@ -156,17 +220,58 @@ theorem other_receive {origin : W} {winner node : NodeID} {term cap : Nat}
         refine ⟨⟨i, f, k, p⟩, r, c, fun h => ?_⟩
         obtain ⟨follower, pk, _⟩ := t h
         exact ⟨follower, pk, Or.inr (by simp [sourceEq])⟩
-    refine ⟨afterOther, fun e member => ?_⟩
+    have afterBounded : Bounded participants origin term node after := by
+      have middleBounded := bounded.observed observed
+      subst afterEq
+      cases granted
+      · exact middleBounded
+      · exact middleBounded
+    refine ⟨afterOther, afterBounded, fun e member => ?_⟩
     rw [sentEq, List.mem_singleton] at member
     subst member
     refine ⟨rfl, middleOther.2.2.1, ?_⟩
     cases granted
     · exact Or.inl (by simp [Inert])
     · have := (grantedIff.mp rfl).1
-      refine Or.inr (Or.inr ⟨sourceEq, Or.inr ?_⟩)
+      refine Or.inr (Or.inr (Or.inl ⟨sourceEq, Or.inr ?_⟩))
       simp only at this ⊢
       rw [← this]
   · exact absurd (targetW ▸ targetEq).symm ne
+  · obtain ⟨le, observed, outs⟩ := hopeless_request member initialFound keeps request ran
+    exact ⟨otherCopy.observed observed (by omega), bounded.observed observed,
+      fun e sent => by have := outs e sent; exact ⟨this.1, by
+        rw [this.2.1]; exact (otherCopy.observed observed (by omega)).2.2.1, this.2.2⟩⟩
+  · rw [targetEq] at hopeless preVoter
+    rw [payloadEq] at ran termLe
+    simp only [Message.term] at termLe
+    obtain ⟨middle, observed, outcome⟩ :=
+      sends_run (preVoteResponse_receive node envelope.source before _) ran
+    split at outcome
+    · rename_i condition
+      obtain ⟨_, role, termEq, _⟩ := condition
+      have middleEq : middle = before := by
+        rcases observed with rfl | ⟨_, rfl⟩
+        · rfl
+        · simp [bumpedState] at role
+      subst middleEq
+      have sub
+          : insert envelope.source middle.preVotesGranted
+            ⊆ PreVoters participants origin node initial :=
+        Finset.insert_subset (preVoter initial initialFound)
+          (bounded hopeless (by simp only at termEq; omega) initial initialFound)
+      unfold PreVoted at outcome
+      split at outcome
+      · rename_i quorum
+        exact absurd quorum (Hopeless.not_quorum hopeless initialFound keeps sub)
+      · obtain ⟨rfl, sentNil⟩ := outcome
+        exact ⟨⟨⟨initial, initialFound, keeps, pkKeep⟩, notPrimary, capBound, top⟩,
+          fun _ _ other otherFound => by
+            rw [initialFound, Option.some.injEq] at otherFound
+            subst otherFound
+            exact sub, by simp [sentNil]⟩
+    · obtain ⟨rfl, sentNil⟩ := outcome
+      exact ⟨otherCopy.observed observed (by omega), bounded.observed observed,
+        by simp [sentNil]⟩
 
 omit [HasTime W] [HasLive W] [HasNetwork W] [HasTimers W] in
 /-- A capable voter grants the winner's pre-vote request. -/
