@@ -1,0 +1,58 @@
+module
+
+public import CCFRaft.Proofs.Duel.Round
+public import CCFRaft.Proofs.Duel.Elected
+
+@[expose] public section
+
+/-!
+# The duel round
+
+NOT IMPORTED BY `Properties`. Public statement (i): one duel round reaches an
+anchored start or the next round, and with a margin an anchored start.
+-/
+
+namespace CCFRaft.Proofs.Duel.Round
+
+open CCFRaft.Liveness
+open Model.Node
+open HasProtocol (proto)
+open HasTime (time)
+open HasTimers (deadline)
+open CCF.MultiNodeTransitionSystem (nodeState)
+
+variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
+  [HasTimers W] [Config.InitialConfiguration] {nodes : List NodeID}
+  {trace : Trace W Liveness.Event} {electionTimeout maxDelay jump : Real} {start : Nat}
+  {duration : Real} {participants members : Finset NodeID} {c term : Nat}
+
+/-! ## The round -/
+
+/-- (i) One duel round. From a round start at `c`, the run reaches an anchored start,
+or the next round start, within a round length plus the overshoot. If no step of the
+round overshoots and the round keeps a margin of `4 * maxDelay`, it reaches an
+anchored start within a round length and four delays. -/
+theorem duel_round
+    (setup
+      : RoundSetup nodes trace electionTimeout maxDelay jump start duration participants
+          members c term)
+    : HandoffBy trace participants c (roundLength electionTimeout maxDelay + jump)
+        (electionTimeout / 2 - 4 * maxDelay)
+      \/ exists next origin point,
+          c < next
+          /\ trace.stateAt c = some origin
+          /\ trace.stateAt next = some point
+          /\ time point <= time origin + roundLength electionTimeout maxDelay + jump
+          /\ RoundStart trace participants next (term + 1)
+          /\ (RoundMargin trace participants c term (4 * maxDelay)
+              -> (forall index step node,
+                    c <= index
+                    -> index < next
+                    -> trace.stepAt index = some step
+                    -> NoOvershoot (some 0) step node)
+              -> HandoffBy trace participants c
+                  (roundLength electionTimeout maxDelay + 4 * maxDelay)
+                  (electionTimeout / 2 - 4 * maxDelay)) := by
+  sorry
+
+end CCFRaft.Proofs.Duel.Round
