@@ -58,6 +58,8 @@ theorem RoundSetup.handoff_of_elected
           -> packet.envelope.target ∈ participants
           -> packet.envelope.payload.term <= term + 1
               /\ (packet.envelope.payload.term <= term
+                  -> (forall response,
+                        Not (packet.envelope.payload = .appendEntriesResponse response))
                   -> packet.sentAt <= time origin + maxDelay)
               /\ (forall request,
                     packet.envelope.payload = .requestVoteRequest request
