@@ -161,6 +161,7 @@ The counterexamples are prose arguments.
 | `0 < competitors`               | `duelling_leaders_resolve`                      | With no participants, `GoodPeriod.quorum` holds when every node is crashed, and then nothing commits, yet `settleProbability` is one for any positive number of rounds.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `0 <= heartbeatInterval`        | `duelling_leaders_resolve`                      | With one competitor in a single-node configuration, `E = 1`, `heartbeatInterval = -1`, `maxDelay = 0` and one round, `settleProbability` is 3, above any probability. Heartbeat scheduling is vacuous without peers, so the premises are satisfiable.                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `GoodPeriod.participantsLive`   | `duelling_leaders_resolve`                      | The adversary crashes every node at `start`, which satisfies `GoodPeriod.quorum` vacuously, and nothing commits.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `NoOvershoot`                   | `duelling_leaders_resolve`                      | `Scheduled` counts only from the first recorded point at which a node is due. One idle step can carry the clock past every participant's deadline, so all of them become due at the same point and time out together, however far apart their draws were; repeated every round, no candidate ever gets a head start.                                                                                                                                                                                                                                                                                                                                     |
 | `GoodPeriod.noQuorumChecks`     | `duelling_leaders_resolve`, `signature_settles` | The model does not constrain quorum checks, so every new primary of a multi-node configuration may step down before it signs. This is assumed, not derived, for the reason given for `Incumbent.quorumChecks` in [stable leadership](#stable-leadership).                                                                                                                                                                                                                                                                                                                                                                                                |
 
 `Proofs.Liveness.Admissible.consumed_within` shows that `TimeDiverges` and bounded delay together consume every outstanding packet within `maxDelay`, unless its target crashes.
@@ -218,6 +219,7 @@ Four CCF behaviors explain the premises:
 
 - Pre-vote does not protect a working primary.
   CCF grants pre-votes whatever leader it knows (`raft.h`, `recv_request_vote_unsafe` checks `leader_id` only for real votes), so a node of the term that times out can gather pre-votes and start the next term.
+  The model now departs from CCF here and grants a pre-vote only while the node knows no primary; see "A lagging follower deposes the primary" below.
   So no timer of the term may expire before the primary's heartbeats arrive, and every node that may time out must get heartbeats.
 - Quorum checks are not derived from timing, and could not be in this model.
   `Timely` does not bound responses, and bounding them would not suffice either.
@@ -287,6 +289,52 @@ Without this, a confirmation could follow a pending re-add and count while the n
 These proofs also tightened facts in the safety step summary:
 `Advance` records that an unchanged commit index means nothing was committable, and that a commit clears the role only when the node's retirement commits; `Kind.append` records that each appended entry passed `appendEntry`'s guards; and `AEOk` records that a request with entries carries its sender's exact commit index.
 For stable leadership, `Summary` records why a term rises (`term_cause`), that only an election timeout starts a pre-vote (`pre_vote`), and when a primary keeps its role (`role_keep`); `SendOK` records where vote proposals come from and the term a rejection carries.
+
+## A lagging follower deposes the primary
+
+This is a liveness weakness of CCF itself, not of the model; the model now departs from CCF to exclude it.
+Two CCF behaviours combine (`src/consensus/aft/raft.h`):
+
+- `recv_append_entries` calls `restart_election_timeout` only after the `prev_term` check passes; a rejected AppendEntries leaves the follower's timer running.
+- `recv_request_vote_unsafe` applies the known-leader check (`leader_id.has_value()`) and the voted-for check to `RegularVote` only.
+  A pre-vote is granted to any candidate of the node's term whose committable log is at least as up to date as the node's own, even by a follower that is receiving heartbeats from a live primary.
+  Raft's pre-vote, and etcd's lease check, reject such a request while the node has heard from a leader within an election timeout.
+
+Worked example, three nodes `{L, f, g}`, election timeout `E = 7`, so a timer fires between 3.5 and 7 after its reset, heartbeat interval `H = 1` and message delay at most `d = 1`:
+
+1. `L` is the primary of term `t`.
+   Its log has 10 entries, and its last signature is entry 8, so entries 9 and 10 are not yet committable.
+   `g` holds all 10 entries and accepts every heartbeat.
+   `f` holds only the first 8: the AppendEntries carrying entries 9 and 10 was lost, and `f`'s timer was last reset, at time 0, when it accepted entry 8.
+   Its timer fires at 3.5.
+2. `L` believes it sent entries 9 and 10, so its heartbeat at time 1 carries `prev_idx = 10`.
+   `f` fails the `prev_term` check at time 2, replies with a NACK and does not reset its timer.
+   The NACK reaches `L` at time 3, so the repairing AppendEntries cannot reach `f` before time 4.
+3. At 3.5 `f`'s timer fires.
+   `f` becomes a pre-vote candidate of term `t` and sends `RequestPreVote` to `L` and `g`.
+4. `g` is a content follower of `L`, but `f`'s last committable entry, 8, is also `g`'s, so `f`'s log counts as up to date, and pre-votes skip the `leader_id` check, so `g` grants.
+   `f` has a pre-vote quorum `{f, g}` and becomes a candidate of term `t + 1`.
+5. `f`'s `RequestVote` of term `t + 1` reaches `g`.
+   `become_aware_of_new_term` calls `become_follower`, which resets `leader_id`, so the regular vote's known-leader check passes too, and `g` grants.
+6. `f` is the primary of term `t + 1`, and `L` steps down at its next message from `g`.
+   Entries 9 and 10 were never committable, so safety is intact, but a working primary was deposed by the follower it was repairing, while the quorum `{L, g}` was in sync.
+
+A slow or lossy link to one follower can repeat this in every term.
+
+Where it shows up in the proofs:
+
+- `stable_leader` and the windowed `stable_window` take `Matching`, or `WindowMatching`, as a premise: every AppendEntries from the primary delivered to a participant passes the log check.
+  That premise rules out step 2.
+- `duelling_leaders_resolve` hands over a primary whose voters' logs may be shorter than its own, so its first heartbeats to them can be rejected; the same mechanism then applies in the fresh window.
+
+The model's `handleRequestPreVoteRequest` now grants a pre-vote only while the node knows no primary (`primaryKnown` is false), the counterpart of `leader_id` in `raft.h`.
+As in CCF, a node learns the primary only from an AppendEntries that passes the log check, and forgets it on its own timeout, on adopting a new term and on stepping down, so `g` refuses in step 4, and `f`'s election fails.
+The fix in CCF would be to apply the `leader_id` check at `raft.h` line 1721 to pre-votes as well.
+Until CCF changes, the results do not cover the behaviour in the example.
+
+The change does not protect a primary from a lagging quorum.
+If `g` also lacked entries 9 and 10, its timer would fire too; once both have fired, neither knows the primary, their logs are equally up to date, and each grants the other's pre-vote, so one of them deposes `L`.
+`Matching`, or a bound on catching up, is therefore still needed when a quorum lags, for example after an election whose voters' logs are behind the winner's.
 
 ## Literature
 

@@ -48,21 +48,44 @@ def timerModel (electionTimeout : Real) : Model W Event where
       /\ (step.action = .local node (.timeout .election)
           -> deadline step.before node <= time step.before)
 
-/-- A live node other than a primary whose deadline has passed. -/
+/-- A live node whose deadline has passed and which may start an election.
+`startElection` runs only under `canStartElection`
+(`Proofs.Leadership.startElection_guard`), so a node that cannot time out is
+never due: only a halted clock could discharge its obligation. -/
 def TimeoutDue (point : W) (node : NodeID) : Prop :=
   node ∈ live point
   /\ deadline point node <= time point
   /\ exists state,
       CCF.MultiNodeTransitionSystem.nodeState (proto point) node = some state
-      /\ Not (state.role = .primary)
+      /\ canStartElection state node
 
-/-- A node whose deadline has passed times out, within the optional bound.
-CCF checks on each `periodic` tick; `some 0` fires at the first recorded point
-past the deadline, and the tick is accounted for in `Bounds.electionTimeout`. -/
+/-- A step that starts before the deadline of a live node that may start an
+election ends at most `bound` past that deadline: the node is not paused for
+longer than `bound` past its timeout. `none` allows any overshoot. -/
+def NoOvershoot (bound : Option Real) (step : CCF.Execution.Step W Event) (node : NodeID)
+    : Prop :=
+  match bound with
+  | none => True
+  | some bound =>
+      node ∈ live step.before
+      -> (exists state,
+            CCF.MultiNodeTransitionSystem.nodeState (proto step.before) node = some state
+            /\ canStartElection state node)
+      -> time step.before < deadline step.before node
+      -> time step.after <= deadline step.before node + bound
+
+/-- A node whose deadline has passed times out, within the optional bound, and
+no step carries the clock more than the bound past its deadline.
+CCF checks on each `periodic` tick; `some 0` fires at the deadline itself, and
+the tick is accounted for in `Bounds.electionTimeout`.
+Needed (`NoOvershoot`): `Scheduled` counts only from the first recorded point at
+which a node is due, so one idle step past every pending deadline would make
+every node time out at once, whatever the draws. -/
 def Trace.TimeoutScheduling (trace : Trace W Event) (bound : Option Real) : Prop :=
   forall node,
     Scheduled trace bound (fun point => TimeoutDue point node)
       (fun step => step.action = .local node (.timeout .election))
+    /\ forall index step, trace.stepAt index = some step -> NoOvershoot bound step node
 
 /-- The clock is unbounded along the recording: the execution neither stops nor
 stalls. Needed: nothing else obliges a cluster without a primary to keep going. -/
