@@ -36,7 +36,8 @@ def cut (trace : Trace W A) (last : Nat) : Trace W A :=
   ⟨trace.initial, Stream'.Seq.ofList (trace.steps.take last)⟩
 
 theorem cut_stepAt (trace : Trace W A) (last index : Nat)
-    : (cut trace last).stepAt index = if index < last then trace.stepAt index else none := by
+    : (cut trace last).stepAt index
+      = if index < last then trace.stepAt index else none := by
   simp only [cut, Trace.stepAt, Stream'.Seq.ofList_get?, Stream'.Seq.getElem?_take]
 
 theorem cut_stepAt_of_lt {trace : Trace W A} {last index : Nat} (lt : index < last)

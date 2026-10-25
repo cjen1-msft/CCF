@@ -12,6 +12,7 @@ import CCFRaft.Proofs.Election
 import CCFRaft.Proofs.Leadership.Stable
 import CCFRaft.Proofs.LivenessWitness
 import CCFRaft.Proofs.Replication.Commit
+import CCFRaft.Proofs.Timed.Commit
 import CCFRaft.Proofs.Witnesses
 
 @[expose] public section
@@ -196,7 +197,7 @@ theorem commit_liveness
                   -> exists index,
                       Liveness.Within trace start duration index
                       /\ Liveness.RequestCommitted trace leader request index := by
-  sorry
+  exact Proofs.Timed.commit_liveness_timed
 
 /-- Witness: for every nonnegative window length, a one-node execution with
 positive heartbeat and signature bounds meets every premise of `commit_liveness`

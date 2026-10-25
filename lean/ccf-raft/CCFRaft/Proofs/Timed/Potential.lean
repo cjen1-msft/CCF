@@ -29,17 +29,19 @@ def blocks (log : List Entry) (agreed index : Nat) : Nat :=
 /-- Rounds a probe at `index` may still take: two per term block above the
 agreement, one fewer inside the follower's log, and none at or below the agreement. -/
 def rounds (follower log : List Entry) (agreed index : Nat) : Nat :=
-  if index <= agreed then 0
-  else 2 * blocks log agreed index - (if index <= follower.length then 1 else 0)
+  if index <= agreed then
+    0
+  else
+    2 * blocks log agreed index - (if index <= follower.length then 1 else 0)
 
 section Rounds
 
-variable [CCFRaft.Proofs.Config.InitialConfiguration] {follower log : List Entry} {agreed : Nat}
+variable [CCFRaft.Proofs.Config.InitialConfiguration] {follower log : List Entry}
+  {agreed : Nat}
 
 theorem blocks_mono {low high : Nat} (le : low <= high)
     : blocks log agreed low <= blocks log agreed high :=
-  Finset.card_le_card
-    (Finset.image_subset_image (Finset.Ioc_subset_Ioc_right le))
+  Finset.card_le_card (Finset.image_subset_image (Finset.Ioc_subset_Ioc_right le))
 
 theorem blocks_pos {index : Nat} (lt : agreed < index) : 0 < blocks log agreed index :=
   Finset.card_pos.mpr
@@ -47,8 +49,8 @@ theorem blocks_pos {index : Nat} (lt : agreed < index) : 0 < blocks log agreed i
 
 /-- A lower position whose term is below a higher one's misses that term's block. -/
 theorem blocks_lt (sorted : log.Pairwise fun first second => first.term <= second.term)
-    {low high : Nat} (above : agreed < high) (lowLt : low < high) (bound : high <= log.length)
-    (lower : termAt log low < termAt log high)
+    {low high : Nat} (above : agreed < high) (lowLt : low < high)
+    (bound : high <= log.length) (lower : termAt log low < termAt log high)
     : blocks log agreed low < blocks log agreed high := by
   refine Finset.card_lt_card
     ((Finset.ssubset_iff_of_subset
@@ -86,8 +88,9 @@ theorem rounds_le (index : Nat)
     omega
 
 /-- A lower position with a lower term needs fewer rounds. -/
-theorem rounds_lt_of_term (sorted : log.Pairwise fun first second => first.term <= second.term)
-    {low high : Nat} (above : agreed < high) (lowLt : low < high) (bound : high <= log.length)
+theorem rounds_lt_of_term
+    (sorted : log.Pairwise fun first second => first.term <= second.term) {low high : Nat}
+    (above : agreed < high) (lowLt : low < high) (bound : high <= log.length)
     (lower : termAt log low < termAt log high)
     : rounds follower log agreed low < rounds follower log agreed high := by
   have positive := blocks_pos (log := log) above

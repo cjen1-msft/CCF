@@ -94,13 +94,18 @@ theorem env_of_window {maxDelay heartbeat : Real}
     (bounded : trace.Valid (boundedDelayModel maxDelay)) (diverges : TimeDiverges trace)
     (heartbeats : trace.HeartbeatScheduling (some heartbeat)) {start last : Nat}
     {duration : Real} (nonneg : 0 <= duration) {leader : NodeID} {term : Nat}
-    {participants : Finset NodeID} (window : StableWindow trace start duration leader term participants)
+    {participants : Finset NodeID}
+    (window : StableWindow trace start duration leader term participants)
     {first lastPoint : W} (firstFound : trace.stateAt start = some first)
     (afterStart : start <= last) (lastFound : trace.stateAt last = some lastPoint)
-    (inside : forall index, start <= index -> index <= last -> Within trace start duration index)
+    (inside
+      : forall index,
+          start <= index -> index <= last -> Within trace start duration index)
     (beyond
       : forall index point,
-          last < index -> trace.stateAt index = some point -> time first + duration < time point)
+          last < index
+          -> trace.stateAt index = some point
+          -> time first + duration < time point)
     {peer : NodeID} (peerMember : peer ∈ participants) (peerLive : peer ∈ live lastPoint)
     (eligible
       : forall index state,
@@ -108,8 +113,8 @@ theorem env_of_window {maxDelay heartbeat : Real}
           -> index <= last
           -> trace.nodeAt index leader = some state
           -> peer ∈ eligiblePeers state leader)
-    : Env (cut trace last) start last (time first + duration) maxDelay (max heartbeat 0) leader
-        peer := by
+    : Env (cut trace last) start last (time first + duration) maxDelay (max heartbeat 0)
+        leader peer := by
   have timeMono := fun {earlier later : Nat} (le : earlier <= later) {a b : W}
       (found : trace.stateAt earlier = some a) (found' : trace.stateAt later = some b) =>
     Proofs.Liveness.time_mono admissible.coherent admissible.timing le found found'
@@ -140,8 +145,16 @@ theorem env_of_window {maxDelay heartbeat : Real}
     fun index point le le' found =>
       window.staysActive.live index point (inside index le le') found
   have stopNonneg : time first <= time first + duration := by linarith
-  refine ⟨afterStart, ⟨lastPoint, by rw [cut_stateAt_of_le le_rfl]; exact lastFound⟩,
-    fun _ _ stepped => (stepAt_of_cut stepped).1, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨
+    afterStart,
+    ⟨lastPoint, by rw [cut_stateAt_of_le le_rfl]; exact lastFound⟩,
+    fun _ _ stepped => (stepAt_of_cut stepped).1,
+    ?_,
+    ?_,
+    ?_,
+    ?_,
+    ?_
+  ⟩
   · intro index later le le'
     obtain ⟨a, aFound⟩ := Trace.stateAt_of_le (le.trans le') lastFound
     obtain ⟨b, bFound⟩ := Trace.stateAt_of_le le' lastFound
@@ -195,13 +208,22 @@ theorem env_of_window {maxDelay heartbeat : Real}
           simp only [Event.consumedPacket, Option.some.injEq] at consumed
           subst delivered
           have lt := busyIn later step stepped (by rw [action]; simp) within
-          exact ⟨later, step, by omega, by rw [cut_stepAt_of_lt lt]; exact stepped, action⟩
+          exact ⟨
+            later,
+            step,
+            by omega,
+            by rw [cut_stepAt_of_lt lt]; exact stepped,
+            action
+          ⟩
       | drop dropped =>
           rw [action] at consumed
           simp only [Event.consumedPacket, Option.some.injEq] at consumed
           subst dropped
-          exact absurd (Or.imp (fun h => ⟨h.1, h.2 ▸ peerMember⟩) (fun h => ⟨h.1 ▸ peerMember, h.2⟩) link)
-            (window.lossless later step packet (inside later (by omega) laterLe) stepped action)
+          exact absurd
+            (Or.imp (fun h => ⟨h.1, h.2 ▸ peerMember⟩) (fun h => ⟨h.1 ▸ peerMember, h.2⟩)
+              link)
+            (window.lossless later step packet (inside later (by omega) laterLe) stepped
+              action)
       | _ => simp [action, Event.consumedPacket] at consumed
     · have lt := busyIn later step stepped (by rw [crashed]; simp) within
       have afterLater := Trace.stateAt_succ_of_stepAt stepped
@@ -304,9 +326,10 @@ theorem clock_cut {last index : Nat} (le : index <= last)
 
 /-- The timing facts on a shorter cut that ends where the clock first passes an
 earlier deadline `bound`. -/
-theorem Env.restrict {start last : Nat} {stop delay interval : Real} {leader peer : NodeID}
-    (env : Env trace start last stop delay interval leader peer) {cutoff : Nat} {bound : Real}
-    (startLe : start <= cutoff) (le : cutoff <= last) (stopLe : bound <= stop)
+theorem Env.restrict {start last : Nat} {stop delay interval : Real}
+    {leader peer : NodeID} (env : Env trace start last stop delay interval leader peer)
+    {cutoff : Nat} {bound : Real} (startLe : start <= cutoff) (le : cutoff <= last)
+    (stopLe : bound <= stop)
     (below : forall index, index < cutoff -> clock trace index <= bound)
     (beyond : cutoff < last -> bound < clock trace cutoff)
     : Env (cut trace cutoff) start cutoff bound delay interval leader peer := by
@@ -321,8 +344,16 @@ theorem Env.restrict {start last : Nat} {stop delay interval : Real} {leader pee
     linarith
   obtain ⟨lastPoint, lastFound⟩ := env.lastFound
   obtain ⟨point, pointFound⟩ := Trace.stateAt_of_le le lastFound
-  refine ⟨startLe, ⟨point, by rw [cut_stateAt_of_le le_rfl]; exact pointFound⟩,
-    fun _ _ stepped => (stepAt_of_cut stepped).1, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨
+    startLe,
+    ⟨point, by rw [cut_stateAt_of_le le_rfl]; exact pointFound⟩,
+    fun _ _ stepped => (stepAt_of_cut stepped).1,
+    ?_,
+    ?_,
+    ?_,
+    ?_,
+    ?_
+  ⟩
   · intro index later le' le''
     rw [clock_cut (le'.trans le''), clock_cut le'']
     exact env.mono index later le' (le''.trans le)

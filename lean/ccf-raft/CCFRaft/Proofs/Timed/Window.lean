@@ -38,9 +38,11 @@ theorem window_end {trace : Trace W Liveness.Event} (coherent : trace.Coherent)
     : exists last point,
         start <= last
         /\ trace.stateAt last = some point
-        /\ (forall index, start <= index -> index <= last -> Within trace start duration index)
+        /\ (forall index,
+              start <= index -> index <= last -> Within trace start duration index)
         /\ forall index point,
-            last < index -> trace.stateAt index = some point
+            last < index
+            -> trace.stateAt index = some point
             -> time first + duration < time point := by
   classical
   let Past (index : Nat) : Prop :=
@@ -65,7 +67,14 @@ theorem window_end {trace : Trace W Liveness.Event} (coherent : trace.Coherent)
       linarith
     · exact lt
   obtain ⟨point, found⟩ := Trace.stateAt_of_le (Nat.sub_le past 1) pastFound
-  refine ⟨past - 1, point, by omega, found, fun index after le => ?_, fun index later lt found => ?_⟩
+  refine ⟨
+    past - 1,
+    point,
+    by omega,
+    found,
+    fun index after le => ?_,
+    fun index later lt found => ?_
+  ⟩
   · refine ⟨after, fun first' point' firstFound' found' => ?_⟩
     rw [firstFound, Option.some.injEq] at firstFound'
     subst firstFound'
@@ -87,18 +96,29 @@ include admissible
 theorem stable_cut {start last : Nat} {duration : Real} {leader : NodeID} {term : Nat}
     (stable : Window.StableLeader trace start duration leader term)
     (active : Window.StaysActive trace start duration leader) (afterStart : start <= last)
-    (inside : forall index, start <= index -> index <= last -> Within trace start duration index)
+    (inside
+      : forall index,
+          start <= index -> index <= last -> Within trace start duration index)
     {first : W} (firstFound : trace.stateAt start = some first)
     : StableLeader (cut trace last) start leader term := by
-  refine ⟨⟨first, by rw [cut_stateAt_of_le afterStart]; exact firstFound⟩,
-    fun index point le found => ?_⟩
+  refine ⟨
+    ⟨first, by rw [cut_stateAt_of_le afterStart]; exact firstFound⟩,
+    fun index point le found => ?_
+  ⟩
   obtain ⟨below, found⟩ := stateAt_of_cut found
   have within := inside index le below
   obtain ⟨state, nodeFound, primary, termEq⟩ :=
     quiet_leader admissible found (stable index point within found)
-  exact ⟨point, state, by rw [cut_stateAt_of_le below]; exact found,
-    active.live index point within found, nodeFound, primary, termEq,
-    active.notRetired index point state within found nodeFound⟩
+  exact ⟨
+    point,
+    state,
+    by rw [cut_stateAt_of_le below]; exact found,
+    active.live index point within found,
+    nodeFound,
+    primary,
+    termEq,
+    active.notRetired index point state within found nodeFound
+  ⟩
 
 /-- A participant in the term at `start` stays in it, and present, throughout the
 window. -/
@@ -107,8 +127,10 @@ theorem participant_term {start : Nat} {duration : Real} {leader : NodeID} {term
     (stable : Window.StableLeader trace start duration leader term)
     (inTerm : InTermAt trace start term participants) {node : NodeID}
     (member : node ∈ participants) {index : Nat} {point : W}
-    (within : Within trace start duration index) (found : trace.stateAt index = some point)
-    : exists state, nodeState (proto point) node = some state /\ state.currentTerm = term := by
+    (within : Within trace start duration index)
+    (found : trace.stateAt index = some point)
+    : exists state,
+        nodeState (proto point) node = some state /\ state.currentTerm = term := by
   obtain ⟨first, initial, firstFound, initialFound, initialTerm⟩ := inTerm node member
   obtain ⟨state, stateFound, grows⟩ :=
     Proofs.StablePrimary.term_mono admissible within.1
