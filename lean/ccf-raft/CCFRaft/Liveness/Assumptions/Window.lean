@@ -236,7 +236,7 @@ primary's probe back past a whole term of its log (CCF's
 `find_highest_possible_match`), so catching a participant up takes at most two
 rounds per such term, plus two for the entries the primary appends in its own
 term. A log `n` entries beyond the common prefix spans at most `n` terms. -/
-def Backlog (trace : Trace W Event) (start : Nat) (leader : NodeID)
+def BacklogTerms (trace : Trace W Event) (start : Nat) (leader : NodeID)
     (participants : Finset NodeID) (backlog : Nat)
     : Prop :=
   forall first leaderState follower followerState,

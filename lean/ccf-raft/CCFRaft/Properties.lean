@@ -195,7 +195,7 @@ theorem commit_liveness
                     /\ trace.SignatureScheduling (some bounds.signatureInterval)
                     /\ Liveness.StableWindow trace start duration leader term participants
                     /\ Liveness.Window.ReconfigurationSettled trace start duration leader
-                    /\ Liveness.Backlog trace start leader participants backlog
+                    /\ Liveness.BacklogTerms trace start leader participants backlog
                     /\ Liveness.InTermAt trace start term participants
                     /\ Liveness.SubmittedAt trace start leader request)
                   -> exists index,
@@ -225,7 +225,7 @@ lemma commit_liveness_witness
               /\ trace.SignatureScheduling (some bounds.signatureInterval)
               /\ Liveness.StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0}
               /\ Liveness.Window.ReconfigurationSettled trace 0 duration 0
-              /\ Liveness.Backlog trace 0 0 {0} 0
+              /\ Liveness.BacklogTerms trace 0 0 {0} 0
               /\ Liveness.InTermAt trace 0 Model.BOOTSTRAP_TERM {0}
               /\ Liveness.SubmittedAt trace 0 0 10)
             /\ exists index,
@@ -435,7 +435,7 @@ theorem signature_settles_catchup
             /\ Liveness.FreshStart trace start leader term participants fresh
             /\ Liveness.LatestMembers trace start leader participants
             /\ Liveness.InTermAt trace start term participants
-            /\ Liveness.Backlog trace start leader participants backlog
+            /\ Liveness.BacklogTerms trace start leader participants backlog
             /\ Liveness.GoodPeriod trace start duration participants
             /\ Liveness.Window.StaysActive trace start duration leader)
           -> Liveness.StableWindow trace start duration leader term participants := by
@@ -482,7 +482,7 @@ lemma signature_settles_catchup_witness
               /\ Liveness.FreshStart trace 0 0 Model.BOOTSTRAP_TERM {0} 2
               /\ Liveness.LatestMembers trace 0 0 {0}
               /\ Liveness.InTermAt trace 0 Model.BOOTSTRAP_TERM {0}
-              /\ Liveness.Backlog trace 0 0 {0} 0
+              /\ Liveness.BacklogTerms trace 0 0 {0} 0
               /\ Liveness.GoodPeriod trace 0 duration {0}
               /\ Liveness.Window.StaysActive trace 0 duration 0)
             /\ Liveness.StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0} := by

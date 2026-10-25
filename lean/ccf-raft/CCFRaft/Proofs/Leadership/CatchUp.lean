@@ -242,7 +242,7 @@ theorem acks_before_timeout {heartbeatInterval maxDelay : Real}
     (good : GoodPeriod trace start duration participants)
     (active : Window.StaysActive trace start duration leader)
     (inTerm : InTermAt trace start term participants)
-    (behind : Backlog trace start leader participants backlog)
+    (behind : BacklogTerms trace start leader participants backlog)
     (leaderIn : leader ∈ participants) (nodeIn : node ∈ participants)
     (different : Not (node = leader))
     {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
@@ -401,7 +401,7 @@ theorem acks_before_timeout {heartbeatInterval maxDelay : Real}
   exact sentClock
 
 /-- A stable window while participants catch up: `stable_window_inSync` with the
-log-check premise replaced by `InTermAt` and `Backlog`. Every participant's
+log-check premise replaced by `InTermAt` and `BacklogTerms`. Every participant's
 election timer is reset by its own successful acknowledgements, which the primary's
 repair produces within `repair` of every point, so no participant times out while
 `fresh` exceeds `repair + heartbeatInterval + maxDelay`.
@@ -412,7 +412,7 @@ Each new premise is needed.
   AppendEntries from the other primary's last term rewrites that participant's
   log into `n` entries of alternating terms, so with backlog 0 at `start` repair
   still takes `n` rounds, and for large `n` the participant times out.
-- `Backlog`: with participants `{L, f, g}`, let `L`'s log hold terms
+- `BacklogTerms`: with participants `{L, f, g}`, let `L`'s log hold terms
   `2, 4, ..., 2 n` above the agreed prefix and `f` and `g` both hold
   `1, 3, ..., 2 n - 1`, which alternation reaches. Each rejection moves `L` down
   one block, so repair takes `n` rounds of `2 maxDelay + heartbeatInterval`. For
@@ -443,7 +443,7 @@ theorem stable_window_catchup [HasTimers W] {bounds : Bounds} {maxDelay : Real}
     (good : GoodPeriod trace start duration participants)
     (active : Window.StaysActive trace start duration leader)
     (inTerm : InTermAt trace start term participants)
-    (behind : Backlog trace start leader participants backlog)
+    (behind : BacklogTerms trace start leader participants backlog)
     : StableWindow trace start duration leader term participants where
   stableLeader index point within found := by
     have elections :=
