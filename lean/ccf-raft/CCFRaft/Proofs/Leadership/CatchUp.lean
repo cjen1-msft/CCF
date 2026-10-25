@@ -3,6 +3,8 @@ module
 public import CCFRaft.Proofs.Leadership.Settles
 public import CCFRaft.Proofs.Leadership.Timers
 public import CCFRaft.Proofs.Replication.Run
+public import CCFRaft.Proofs.Timed.Acks
+public import CCFRaft.Proofs.Timed.Window
 
 @[expose] public section
 
@@ -36,6 +38,9 @@ open HasProtocol (proto)
 open HasTime (time)
 open HasLive (live)
 open HasNetwork (pending)
+open CCFRaft.Proofs.Timed (Env clock cut peer_acks ackBound env_of_window window_end stable_cut
+  participant_term cut_sentAt stepAt_of_cut stateAt_of_cut cut_stateAt_of_le cut_nodeAt clock_eq
+  agreedPrefix_eq)
 
 /-- The time within which a participant acknowledges at least the primary's log
 at a given point, if its log lagged by at most `backlog` entries at the start of
@@ -211,6 +216,165 @@ theorem no_timeout_of_acks {bounds : Bounds}
   rw [admissible.before resetStepped, Option.some.injEq] at resetFound
   rw [← resetFound] at recent
   linarith
+
+
+/-- A participant that acknowledges the primary within `ackBound` sends a
+successful acknowledgement within `maxDelay + interval + ackBound` after every
+point before its timeout. The window is cut strictly before the timeout, where the
+invariant prefix gives a stable window for `peer_acks`. -/
+theorem acks_before_timeout {heartbeatInterval maxDelay : Real}
+    (diverges : TimeDiverges trace)
+    (bounded : trace.Valid (boundedDelayModel maxDelay)) (nonneg : 0 <= maxDelay)
+    (heartbeats : trace.HeartbeatScheduling (some heartbeatInterval))
+    {start : Nat} {duration : Real} {leader node : NodeID} {term backlog : Nat}
+    {participants : Finset NodeID}
+    (good : GoodPeriod trace start duration participants)
+    (active : Window.StaysActive trace start duration leader)
+    (inTerm : InTermAt trace start term participants)
+    (behind : Backlog trace start leader participants backlog)
+    (leaderIn : leader ∈ participants) (nodeIn : node ∈ participants)
+    (different : Not (node = leader))
+    {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
+    (stepped : trace.stepAt index = some step)
+    (within : Within trace start duration index)
+    {first : W} (firstFound : trace.stateAt start = some first)
+    (invariant
+      : forall earlier point,
+          start <= earlier
+          -> earlier <= index
+          -> trace.stateAt earlier = some point
+          -> QuietAmong participants leader term (proto point)
+              /\ MembersAt participants leader (proto point))
+    : forall earlier point,
+        start <= earlier
+        -> earlier <= index
+        -> trace.stateAt earlier = some point
+        -> time point
+            + (maxDelay + max heartbeatInterval 0
+              + ackBound maxDelay (max heartbeatInterval 0) backlog)
+            < time step.before
+        -> exists sent sender reply response,
+            earlier < sent
+            /\ trace.stepAt sent = some sender
+            /\ time sender.before
+                <= time point
+                  + (maxDelay + max heartbeatInterval 0
+                    + ackBound maxDelay (max heartbeatInterval 0) backlog)
+            /\ trace.SentAt sent reply
+            /\ reply.envelope.source = node
+            /\ reply.envelope.payload = .appendEntriesResponse response
+            /\ response.success = true := by
+  intro earlier point afterStart le recorded early
+  set interval := max heartbeatInterval 0 with intervalEq
+  have intervalNonneg : 0 <= interval := le_max_right _ _
+  set bound := ackBound maxDelay interval backlog with boundEq
+  have boundNonneg : 0 <= bound := by
+    rw [boundEq]; unfold ackBound; positivity
+  set gap := maxDelay + interval + bound with gapEq
+  have indexFound := admissible.before stepped
+  set stop := (time point + gap + time step.before) / 2 with stopEq
+  have firstLe := admissible.time_le afterStart firstFound recorded
+  set duration' := stop - time first with durationEq
+  have durationNonneg : 0 <= duration' := by rw [durationEq, stopEq]; linarith
+  -- A state of the shorter window precedes the timeout.
+  have below : forall moment point', Within trace start duration' moment
+      -> trace.stateAt moment = some point' -> moment < index := by
+    intro moment point' inside found
+    have := inside.2 first point' firstFound found
+    by_contra late
+    have := admissible.time_le (Nat.le_of_not_lt late) indexFound found
+    rw [durationEq, stopEq] at *
+    linarith
+  have widen : forall moment point', Within trace start duration' moment
+      -> trace.stateAt moment = some point' -> Within trace start duration moment :=
+    fun moment point' inside found =>
+      within_of_le admissible within indexFound inside.1 (below moment point' inside found).le
+  have window : StableWindow trace start duration' leader term participants := {
+    stableLeader := fun moment point' inside found =>
+      (invariant moment point' inside.1 (below moment point' inside found).le found).1
+    staysActive := ⟨
+      fun moment point' inside found => active.live moment point' (widen _ _ inside found) found,
+      fun moment point' state inside found nodeFound =>
+        active.notRetired moment point' state (widen _ _ inside found) found nodeFound⟩
+    liveQuorum := fun moment point' state inside found leaderFound =>
+      good.quorum moment point' leader state (widen _ _ inside found) found
+        (active.live moment point' (widen _ _ inside found) found) leaderFound
+    lossless := fun moment step' packet inside stepped' dropped => by
+      have inside' := widen _ _ inside (admissible.before stepped')
+      rintro (⟨source, target⟩ | ⟨source, target⟩)
+      · exact good.lossless moment step' packet inside' stepped' dropped ⟨source ▸ leaderIn, target⟩
+      · exact good.lossless moment step' packet inside' stepped' dropped ⟨source, target ▸ leaderIn⟩
+  }
+  have gapNonneg : 0 <= gap := by rw [gapEq]; linarith
+  obtain ⟨last, lastPoint, startLe, lastFound, inside, beyond⟩ :=
+    window_end admissible.coherent admissible.timing diverges durationNonneg firstFound
+  have earlierLe : earlier <= last := by
+    by_contra late
+    have := beyond earlier point (by omega) recorded
+    rw [durationEq, stopEq] at this
+    linarith
+  have stable :=
+    stable_cut admissible window.stableLeader window.staysActive startLe inside firstFound
+  have eligibleAt : forall moment state, start <= moment -> moment <= last
+      -> trace.nodeAt moment leader = some state -> node ∈ eligiblePeers state leader := by
+    intro moment state after le' found
+    obtain ⟨point', pointFound, nodeFound⟩ := Trace.nodeAt_eq_some.mp found
+    have lastBelow := below last lastPoint (inside last startLe le_rfl) lastFound
+    exact eligible_of_latest
+      ((invariant moment point' after (by omega) pointFound).2 state nodeFound node nodeIn
+        different)
+      different
+  have env :=
+    env_of_window admissible bounded diverges heartbeats durationNonneg window firstFound startLe
+      lastFound inside beyond nodeIn
+      (good.participantsLive last lastPoint node (widen _ _ (inside last startLe le_rfl) lastFound)
+        lastFound nodeIn)
+      eligibleAt
+  have cutAdmissible := Proofs.Timed.Admissible.cut admissible last
+  have acks := fun base (startLe' : start <= base) (baseLe : base <= last) timely =>
+    peer_acks cutAdmissible stable different env
+      (fun moment point' after le' found =>
+        participant_term admissible window.stableLeader inTerm nodeIn (inside moment after le')
+          (stateAt_of_cut found).2)
+      (fun moment state after found => by
+        obtain ⟨le', found'⟩ := cut_nodeAt found
+        exact eligibleAt moment state after le' found')
+      nonneg intervalNonneg (backlog := backlog)
+      (fun other primary otherFound primaryFound => by
+        rw [Proofs.Timed.cut_nodeAt_of_le startLe] at otherFound primaryFound
+        obtain ⟨point', pointFound, primaryNode⟩ := Trace.nodeAt_eq_some.mp primaryFound
+        obtain ⟨point'', pointFound', otherNode⟩ := Trace.nodeAt_eq_some.mp otherFound
+        rw [pointFound, Option.some.injEq] at pointFound'
+        subst pointFound'
+        have := behind point' primary node other pointFound primaryNode nodeIn otherNode
+        rwa [agreedPrefix_eq] at this)
+      startLe' baseLe timely
+  have earlierClock : clock (cut trace last) earlier = time point :=
+    clock_eq (by rw [cut_stateAt_of_le earlierLe]; exact recorded)
+  obtain ⟨sent, reply, response, after, sentClock, sentAt, source, payload, success⟩ :=
+    ack_sent_within (trace := cut trace last) (clock := clock (cut trace last))
+      (stop := time first + duration') (bound := bound) (peer := node)
+      env.mono env.ends env.prompt
+      (fun moment step' packet stepped' delivers =>
+        cutAdmissible.consumed_sent stepped' (by rw [delivers]; rfl))
+      (fun moment low high => by
+        obtain ⟨found, step', _, a, b, c, d, _⟩ := env.passes moment low high
+        exact ⟨found, step', a, b, c, d⟩)
+      (fun base startLe' baseLe timely => by
+        obtain ⟨later, step', reply, acked, lt, clockLe, stepped', delivers, envelope, _⟩ :=
+          acks base startLe' baseLe timely
+        exact ⟨later, step', reply, { term, success := true, lastLogIndex := acked }, lt,
+          clockLe, stepped', delivers, by simp [envelope], by simp [envelope], rfl⟩)
+      nonneg boundNonneg afterStart earlierLe
+      (by rw [earlierClock, durationEq, stopEq]; linarith)
+  obtain ⟨sender, senderStepped, _⟩ := id sentAt
+  obtain ⟨sentLt, senderStepped'⟩ := stepAt_of_cut senderStepped
+  have senderClock : clock (cut trace last) sent = time sender.before :=
+    clock_eq (by rw [cut_stateAt_of_le sentLt.le]; exact admissible.before senderStepped')
+  refine ⟨sent, sender, reply, response, after, senderStepped', ?_, (cut_sentAt sentLt).mp sentAt,
+    source, payload, success⟩
+  rw [senderClock, earlierClock] at sentClock
+  exact sentClock
 
 end Recorded
 
