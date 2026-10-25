@@ -111,3 +111,11 @@ The shared `check-imports` command rejects modules missing from that import clos
 `Proofs/Witnesses.lean` and `Proofs/LivenessWitness.lean` supply concrete executions checked by the kernel.
 
 To list the safety-invariant declarations used by the exported theorems, run `lake env lean scripts/invariant-dependencies.lean`.
+
+## Future work
+
+- Per-node clocks with bounded drift, instead of the one global `time`.
+- Explicit `periodic` ticks, with a proof that CCF's tick-driven timer meets `timerModel` rather than an assumption that it does.
+- Tighter catch-up freshness constants: `signature_settles_catchup` needs `ackBound d H' b + H' + d < fresh`, but the known counterexample shows only that `fresh` must exceed `2 H + 3 d`.
+- Multi-node witnesses for `signature_settles` and `duelling_leaders_resolve`, for example manual liveness traces alongside [`Tests/CanonicalTraces.lean`](CCFRaft/Tests/CanonicalTraces.lean).
+- One end-to-end statement composing `duelling_leaders_resolve`, `signature_settles_catchup` and `commit_liveness`.
