@@ -8,8 +8,8 @@ public import CCFRaft.Proofs.Duel.Race
 # Running the race
 
 NOT IMPORTED BY `Properties`. The invariant behind `race_won`: until the winner of
-the race is primary, every step keeps the other live nodes and the packets to live
-nodes in a small set of shapes, the winner's tally only grows, and every voter still
+the race is primary, every step keeps the other participants and the packets between
+participants in a small set of shapes, the winner's tally only grows, and every voter still
 missing from it has its request or its grant in flight.
 -/
 
@@ -120,26 +120,28 @@ variable [Config.InitialConfiguration] {nodes : List NodeID}
   {winner : NodeID} {term : Nat}
   (s : Setup nodes trace electionTimeout maxDelay participants first winner term)
 
-/-- No other live node times out before this. -/
+/-- No other participant times out before this. -/
 def margin : Real := time s.origin + 4 * maxDelay
 
 /-- The winner's requests, but for their term. -/
 def base : RequestVoteRequest := makeRequestVoteRequest s.initial
 
-/-- What the race keeps of the other live nodes and the packets to live nodes. -/
+/-- What the race keeps of the other participants and the packets between
+participants. -/
 structure Common (point : W) (cap : Nat) : Prop where
   deadlines
-    : forall node, node ∈ live point -> node ≠ winner -> s.margin < deadline point node
+    : forall node, node ∈ participants -> node ≠ winner -> s.margin < deadline point node
   nodes
     : forall node state,
-        node ∈ live point
+        node ∈ participants
         -> node ≠ winner
         -> nodeState (proto point) node = some state
         -> Other s.origin winner term cap node state
   packets
     : forall packet,
         packet ∈ pending point
-        -> packet.envelope.target ∈ live point
+        -> packet.envelope.source ∈ participants
+        -> packet.envelope.target ∈ participants
         -> packet.envelope.payload.term <= cap
             /\ Allowed winner s.base term packet.envelope
 
@@ -194,7 +196,7 @@ def Running (index : Nat) : Prop :=
             /\ trace.stateAt candidateIndex = some candidatePoint
             /\ time candidatePoint <= time s.origin + 2 * maxDelay
             /\ (forall node state,
-                  node ∈ live candidatePoint
+                  node ∈ participants
                   -> nodeState (proto candidatePoint) node = some state
                   -> state.currentTerm <= term)
             /\ s.Common point (term + 1)
@@ -298,11 +300,11 @@ theorem progress_time {point : W} {index : Nat} (found : trace.stateAt index = s
 theorem Common.mono {point : W} (common : s.Common point term)
     : s.Common point (term + 1) where
   deadlines := common.deadlines
-  nodes node state alive ne found := by
-    obtain ⟨a, b, c, d⟩ := common.nodes node state alive ne found
+  nodes node state member ne found := by
+    obtain ⟨a, b, c, d⟩ := common.nodes node state member ne found
     exact ⟨a, b, by omega, d⟩
-  packets packet member alive := by
-    obtain ⟨le, allowed⟩ := common.packets packet member alive
+  packets packet member source target := by
+    obtain ⟨le, allowed⟩ := common.packets packet member source target
     exact ⟨by omega, allowed⟩
 
 end Setup

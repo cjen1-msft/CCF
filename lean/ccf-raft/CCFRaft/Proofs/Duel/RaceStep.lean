@@ -8,7 +8,8 @@ public import CCFRaft.Proofs.Duel.RaceRun
 # One step of the race
 
 NOT IMPORTED BY `Properties`. Helpers for `race_won`: how a step changes the winner,
-the other live nodes and the packets to live nodes while the race is running.
+the other participants and the packets between participants while the race is
+running.
 -/
 
 namespace CCFRaft.Proofs.Duel.Racing

@@ -14,12 +14,15 @@ NOT IMPORTED BY `Properties`. Part (b) of the duel: a race with a margin ends in
 fresh quiet start for a live primary.
 
 At index `first`, participant `winner` of term `term` times out. Nothing that can
-change a role is in flight to a live node, every other live node's deadline is more
-than `4 * maxDelay` away, and a quorum of participants would grant `winner` its
+change a role is in flight between participants, every other participant's deadline is
+more than `4 * maxDelay` away, and a quorum of participants would grant `winner` its
 pre-vote and vote. Then by `time first + 4 * maxDelay` the winner is a live primary
-of `term + 1`, no live node or packet to a live node is past `term + 1`, and no node
-of `term + 1` times out before `electionTimeout / 2 - 2 * maxDelay` after that
-index (`FreshStart` with `fresh = electionTimeout / 2 - 2 * maxDelay`).
+of `term + 1`, no participant or packet between participants is past `term + 1`, and
+no participant of `term + 1` times out before `electionTimeout / 2 - 2 * maxDelay`
+after that index (`FreshStart` with `fresh = electionTimeout / 2 - 2 * maxDelay`).
+
+Nodes outside the participants are unconstrained: the good period keeps their packets
+from reaching participants, so they never disturb the race.
 
 The no-overshoot rule is not needed here: while a packet to a live node is pending,
 `boundedDelayModel` already stops time from jumping past its delivery bound, and the
@@ -58,25 +61,26 @@ structure Race (trace : Trace W Liveness.Event) (electionTimeout maxDelay : Real
         -> winner ∈ participants
             /\ exists state,
                 nodeState (proto point) winner = some state /\ state.currentTerm = term
-  /-- No live node is past `term` or primary. -/
+  /-- No participant is past `term` or primary. -/
   settled
     : forall point node state,
         trace.stateAt first = some point
-        -> node ∈ live point
+        -> node ∈ participants
         -> nodeState (proto point) node = some state
         -> state.currentTerm <= term /\ state.role ≠ .primary
-  /-- Nothing in flight to a live node can change a role or grant anything. -/
+  /-- Nothing in flight between participants can change a role or grant anything. -/
   inert
     : forall point packet,
         trace.stateAt first = some point
         -> packet ∈ pending point
-        -> packet.envelope.target ∈ live point
+        -> packet.envelope.source ∈ participants
+        -> packet.envelope.target ∈ participants
         -> packet.envelope.payload.term <= term /\ Inert packet.envelope.payload
-  /-- The margin: every other live node's timer is more than four delays away. -/
+  /-- The margin: every other participant's timer is more than four delays away. -/
   margin
     : forall point node,
         trace.stateAt first = some point
-        -> node ∈ live point
+        -> node ∈ participants
         -> node ≠ winner
         -> time point + 4 * maxDelay < deadline point node
   /-- A quorum of the winner's configurations would grant it: up to date, and
@@ -107,10 +111,11 @@ structure Race (trace : Trace W Liveness.Event) (electionTimeout maxDelay : Real
             /\ trace.stateAt start = some origin
             /\ time point + 4 * maxDelay <= time origin + duration
 
-/-- The fresh quiet start a race ends in, as raw facts about live nodes so that a
-`Quiet` over all nodes or over participants can be assembled from it. -/
+/-- The fresh quiet start a race ends in, as raw facts about participants so that a
+`Quiet` over participants can be assembled from it. -/
 structure Won (trace : Trace W Liveness.Event) (electionTimeout maxDelay : Real)
-    (first leaderIndex : Nat) (winner : NodeID) (term : Nat)
+    (participants : Finset NodeID) (first leaderIndex : Nat) (winner : NodeID)
+    (term : Nat)
     : Prop where
   found
     : exists origin point,
@@ -126,7 +131,7 @@ structure Won (trace : Trace W Liveness.Event) (electionTimeout maxDelay : Real)
   nodes
     : forall point node state,
         trace.stateAt leaderIndex = some point
-        -> node ∈ live point
+        -> node ∈ participants
         -> nodeState (proto point) node = some state
         -> state.currentTerm <= term + 1
             /\ (state.role = .preVoteCandidate -> state.currentTerm < term + 1)
@@ -134,15 +139,18 @@ structure Won (trace : Trace W Liveness.Event) (electionTimeout maxDelay : Real)
     : forall point packet,
         trace.stateAt leaderIndex = some point
         -> packet ∈ pending point
-        -> packet.envelope.target ∈ live point
+        -> packet.envelope.source ∈ participants
+        -> packet.envelope.target ∈ participants
         -> packet.envelope.payload.term <= term + 1
             /\ packet.envelope.payload ≠ .proposeRequestVoteRequest (term + 1)
-  /-- `FreshStart.timers` with `fresh = electionTimeout / 2 - 2 * maxDelay`. -/
+  /-- `FreshStart.timers` with `fresh = electionTimeout / 2 - 2 * maxDelay`, for
+  participants. -/
   timers
     : forall leaderPoint index step node state,
         trace.stateAt leaderIndex = some leaderPoint
         -> leaderIndex <= index
         -> trace.stepAt index = some step
+        -> node ∈ participants
         -> step.action = .local node (.timeout .election)
         -> nodeState (proto step.before) node = some state
         -> state.currentTerm = term + 1
@@ -233,20 +241,21 @@ theorem reset_of_term_lt {index : Nat} {step : CCF.Execution.Step W Liveness.Eve
     subst this
     omega
 
-/-- Once every live node is at most `term`, a live node of `term + 1` was reset
+/-- Once every node of `members` is at most `term`, a member of `term + 1` was reset
 since, so its deadline is half an election timeout past that point. -/
 theorem term_fresh {electionTimeout : Real}
-    (timers : trace.Valid (timerModel electionTimeout)) {term : Nat} {first : Nat}
-    {origin : W} (originFound : trace.stateAt first = some origin)
+    (timers : trace.Valid (timerModel electionTimeout)) {members : Finset NodeID}
+    {term : Nat} {first : Nat} {origin : W}
+    (originFound : trace.stateAt first = some origin)
     (low
       : forall node state,
-          node ∈ live origin
+          node ∈ members
           -> nodeState (proto origin) node = some state
           -> state.currentTerm <= term)
     : forall index point node state,
         first <= index
         -> trace.stateAt index = some point
-        -> node ∈ live point
+        -> node ∈ members
         -> nodeState (proto point) node = some state
         -> state.currentTerm = term + 1
         -> time origin + electionTimeout / 2 <= deadline point node := by
@@ -275,13 +284,11 @@ theorem term_fresh {electionTimeout : Real}
       by_cases reset : ElectionReset step node
       · linarith [(rule.1 reset).1]
       rw [rule.2.1 reset]
-      have wasLive : node ∈ live step.before :=
-        admissible.live_anti (Nat.le_succ index) beforeFound found alive
       obtain ⟨before, nodeBefore, termLe⟩ := node_before admissible stepped nodeFound
       have : before.currentTerm = term + 1 := by
         by_contra ne
         exact reset (reset_of_term_lt admissible stepped nodeBefore nodeFound (by omega))
-      exact ih step.before node before (by omega) beforeFound wasLive nodeBefore this
+      exact ih step.before node before (by omega) beforeFound alive nodeBefore this
 
 omit [HasTimers W] in
 /-- A protocol step, seen as one node's handler run and the packets it adds. -/
