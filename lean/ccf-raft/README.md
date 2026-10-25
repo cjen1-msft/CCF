@@ -2,8 +2,8 @@
 
 An executable Lean model of CCF's consensus implementation ([`src/consensus/aft/raft.h`](../../src/consensus/aft/raft.h)), safety property statements and a propositional timed liveness model.
 It assumes familiarity with the [CCF consensus documentation](../../doc/architecture/consensus/index.rst).
-The public liveness statements are a specification checkpoint: timed `commit_liveness` within a `StableWindow`, probabilistic `duelling_leaders_resolve` during a `GoodPeriod`, and the `signature_settles` bridge.
-`commit_liveness` is proved, with an explicit window, in [`CCFRaft/Proofs/Timed`](CCFRaft/Proofs/Timed); the other two currently contain `sorry`, and the probability bound is not proved.
+The public liveness statements are a specification checkpoint: timed `commit_liveness` within a `StableWindow`, probabilistic `duelling_leaders_resolve` during a `GoodPeriod`, and the `signature_settles` and `signature_settles_catchup` bridges.
+`commit_liveness` is proved, with an explicit window, in [`CCFRaft/Proofs/Timed`](CCFRaft/Proofs/Timed), and the bridges in [`CCFRaft/Proofs/Leadership`](CCFRaft/Proofs/Leadership); `duelling_leaders_resolve` currently contains `sorry`.
 The earlier untimed commitment and conditional stable-leadership proofs remain internal; see [the liveness report](LIVENESS.md).
 
 ## Source map
@@ -31,7 +31,7 @@ Transition systems, safety traces, the shared `CCF.Execution.Step` record, effec
 The relational liveness trace is local to this package; the common package is unchanged.
 Liveness model components live under `Liveness/Model/` and are reexported by `Liveness/Model.lean`.
 Short, single-declaration assumptions are defined directly in [`Liveness/Assumptions.lean`](CCFRaft/Liveness/Assumptions.lean).
-Separate assumption modules are reserved for related groups of declarations or definitions exceeding 80 lines: [`StableLeader.lean`](CCFRaft/Liveness/Assumptions/StableLeader.lean), [`QuietStart.lean`](CCFRaft/Liveness/Assumptions/QuietStart.lean), [`FairLoss.lean`](CCFRaft/Liveness/Assumptions/FairLoss.lean), and [`Submitted.lean`](CCFRaft/Liveness/Assumptions/Submitted.lean).
+Separate assumption modules are reserved for related groups of declarations or definitions exceeding 80 lines: [`StableLeader.lean`](CCFRaft/Liveness/Assumptions/StableLeader.lean), [`QuietStart.lean`](CCFRaft/Liveness/Assumptions/QuietStart.lean), [`FairLoss.lean`](CCFRaft/Liveness/Assumptions/FairLoss.lean), [`Submitted.lean`](CCFRaft/Liveness/Assumptions/Submitted.lean), and [`Settles.lean`](CCFRaft/Liveness/Assumptions/Settles.lean).
 Each node reads membership, quorums and retirement from its own ledger; there is no model-wide configuration after initialization.
 Initialization takes a nonempty initial voting membership, whose smallest member starts as primary with the genesis configuration transaction.
 Base actions are local inputs (including timeouts) or delivery of a queued message; the base protocol has no clock.
@@ -74,7 +74,7 @@ Generic `Seq.filter` and `Seq.filterMap` helpers remain in [`Liveness/Seq.lean`]
 Node join and snapshot installation are not modeled.
 The timed commitment statement assumes a bounded stable-primary window and reconfiguration settled at the leader throughout that window: one active configuration and committed confirmation of every completed removal.
 Other nodes need not have learned that completion, and no retirement-cleanup deadline is imposed.
-The probabilistic election statement and its bridge remain proof obligations.
+The probabilistic election statement remains a proof obligation.
 Explicit deadlines and continuous uniform draws idealize the concrete tick-based timer; the existing conservative `Bounds.electionTimeout` interpretation is unchanged.
 `ElectionReset` accounts for represented CCF reset paths, including term adoption, regular-election starts, vote grants and quorum-check step-downs, while retaining message-handler guards and the same-term AppendEntries log-check distinction.
 
@@ -91,7 +91,7 @@ lake lint
 ```
 
 `lake check` builds the default target with compiler warnings, including `sorry`, treated as errors, before separately replaying the compiled proofs in Lean's kernel and rejecting nonstandard axioms.
-The three draft liveness statements currently prevent this strict check from passing; no validation settings are relaxed for this checkpoint.
+The draft `duelling_leaders_resolve` statement currently prevents this strict check from passing; no validation settings are relaxed for this checkpoint.
 Kernel tracing reports the declarations checked during compilation; cached modules do not emit fresh compilation traces.
 CI runs this before import coverage, formatting, and linting so the initial build and its traces occur in this step.
 The build also runs explicit action traces from an initialized network: committing a client request, adding two nodes then electing a new primary and committing another request, and retiring a follower through committed confirmation at the leader.
