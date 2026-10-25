@@ -18,7 +18,7 @@ timer, so the window premise `WindowMatching` fails. Timer resets come instead
 from acknowledgements: a participant sends a successful AppendEntries response
 only from a step that accepts a request, and accepting passes the log check,
 which resets its timer (`reset_of_ack`). The primary's repair of a participant
-lagging by at most `backlog` entries ends in such an acknowledgement within
+whose unagreed suffix spans at most `backlog` terms ends in such an acknowledgement within
 `repair maxDelay heartbeatInterval backlog`, so every participant's timer is
 reset within `repair + heartbeatInterval + maxDelay` of every point of the
 window (`reset_within`), and `recent_reset` rules out timeouts while the
@@ -45,9 +45,10 @@ open CCFRaft.Proofs.Timed (
   )
 
 /-- The time within which a participant acknowledges at least the primary's log
-at a given point, if its log lagged by at most `backlog` entries at the start of
-the window: a few delays and heartbeat intervals for stale traffic to drain, and
-two rounds of rejection and retry per lagging entry. -/
+at a given point, if the primary's log beyond their common prefix spanned at most
+`backlog` terms at the start of the window: a few delays and heartbeat intervals
+for stale traffic to drain, and two rounds of rejection and retry per such term,
+plus two for the primary's own new entries. -/
 def repair (delay interval : Real) (backlog : Nat) : Real :=
   6 * delay + 4 * interval + 2 * ((backlog : Real) + 1) * (2 * delay + interval)
 

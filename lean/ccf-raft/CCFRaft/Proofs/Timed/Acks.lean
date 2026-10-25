@@ -15,7 +15,8 @@ A live peer of the term acknowledges at least the primary's log at a given point
 within a bounded time. More than a delay after that point, either the peer's log
 changes, and the accepting pass chains to an acknowledgement, or it stays fixed
 long enough for the probes to reach the agreement. The primary's log beyond the
-start of the window is of its own term, so the backlog bounds the rounds left.
+start of the window is of its own term, so the terms of its log beyond the
+agreement at the start bound the rounds left.
 -/
 
 namespace CCFRaft.Proofs.Timed
@@ -57,11 +58,37 @@ theorem stable_restrict {start : Nat} {leader : NodeID} {term : Nat}
 
 end Restrict
 
+/-- The blocks above `agreed` are the distinct terms of the log beyond it. -/
+theorem blocks_drop (log : List Entry) (agreed : Nat)
+    : blocks log agreed log.length
+      = ((log.drop agreed).map Entry.term).toFinset.card := by
+  unfold blocks
+  congr 1
+  ext value
+  simp only [Finset.mem_image, Finset.mem_Ioc, List.mem_toFinset, List.mem_map]
+  constructor
+  · rintro ⟨k, ⟨lo, hi⟩, rfl⟩
+    refine ⟨log[k - 1], ?_, (termAt_eq (by omega) hi).symm⟩
+    rw [List.mem_iff_getElem]
+    exact ⟨k - 1 - agreed, by simp; omega, by simp only [List.getElem_drop]; congr 1; omega⟩
+  · rintro ⟨entry, member, rfl⟩
+    obtain ⟨i, lt, rfl⟩ := List.mem_iff_getElem.mp member
+    simp only [List.length_drop] at lt
+    refine ⟨agreed + i + 1, ⟨by omega, by omega⟩, ?_⟩
+    rw [termAt_eq (by omega) (by omega), List.getElem_drop]
+    congr 1
+
+/-- Raising the agreement leaves no more blocks. -/
+theorem blocks_anti {log : List Entry} {agreed agreed' index : Nat}
+    (le : agreed <= agreed')
+    : blocks log agreed' index <= blocks log agreed index :=
+  Finset.card_le_card (Finset.image_subset_image (Finset.Ioc_subset_Ioc_left le))
+
 /-- An extension of one term adds at most one block. -/
 theorem blocks_append {log extension : List Entry} {agreed index t : Nat}
     (terms : forall entry, entry ∈ extension -> entry.term = t)
     (bound : index <= (log ++ extension).length)
-    : blocks (log ++ extension) agreed index <= (log.length - agreed) + 1 := by
+    : blocks (log ++ extension) agreed index <= blocks log agreed log.length + 1 := by
   unfold blocks
   calc
     ((Finset.Ioc agreed index).image (termAt (log ++ extension))).card
@@ -79,11 +106,13 @@ theorem blocks_append {log extension : List Entry} {agreed index t : Nat}
         exact terms _ (List.getElem_mem _)
     _ <= ((Finset.Ioc agreed log.length).image (termAt (log ++ extension))).card + 1 :=
       (Finset.card_union_le _ _).trans (by simp)
-    _ <= (log.length - agreed) + 1 := by
-      have := Finset.card_image_le (s := Finset.Ioc agreed log.length)
-        (f := termAt (log ++ extension))
-      simp only [Nat.card_Ioc] at this
-      omega
+    _ = ((Finset.Ioc agreed log.length).image (termAt log)).card + 1 := by
+      congr 2
+      apply Finset.image_congr
+      intro k member
+      simp only [Finset.coe_Ioc, Set.mem_Ioc] at member
+      rw [termAt_eq (by omega) (by simp; omega), termAt_eq (by omega) member.2,
+        List.getElem_append_left]
 
 /-- The time within which a peer acknowledges. -/
 def ackBound (delay interval : Real) (backlog : Nat) : Real :=
@@ -120,7 +149,9 @@ theorem peer_acks {backlog : Nat}
       : forall other primary,
           trace.nodeAt start peer = some other
           -> trace.nodeAt start leader = some primary
-          -> primary.log.length - agree other.log primary.log <= backlog)
+          -> ((primary.log.drop (agree other.log primary.log)).map
+                Entry.term).toFinset.card
+              <= backlog)
     {base : Nat} (startLe : start <= base) (baseLe : base <= last)
     (timely : clock trace base + ackBound delay interval backlog <= stop)
     : exists later step reply acked,
@@ -292,7 +323,8 @@ theorem peer_acks {backlog : Nat}
         (agreed := agree other.log primary.log) position
       rw [extended] at le this ⊢
       have := blocks_append (agreed := agree other.log primary.log) extensionTerms le
-      have : agree peerInitial.log initial.log <= agree other.log primary.log := grown
+      have := blocks_anti (log := initial.log) (index := initial.log.length) grown
+      have := blocks_drop initial.log (agree peerInitial.log initial.log)
       omega
     have late : clock (cut trace cutoff) origin + delay < clock (cut trace cutoff) first := by
       rw [clock_cut (by omega), clock_cut (by omega)]

@@ -166,8 +166,12 @@ structure StableWindow (trace : Trace W Event) (start : Nat) (duration : Real)
 def agreedPrefix (leaderLog followerLog : List Entry) : Nat :=
   ((leaderLog.zip followerLog).takeWhile fun pair => decide (pair.1 = pair.2)).length
 
-/-- At `start` no participant's log diverges from the primary's by more than
-`backlog` entries. Catching a participant up takes at most `backlog` rounds. -/
+/-- At `start`, for every participant, the primary's log beyond their common
+prefix spans at most `backlog` distinct terms (terms, not entries). A rejected AppendEntries moves the
+primary's probe back past a whole term of its log (CCF's
+`find_highest_possible_match`), so catching a participant up takes at most two
+rounds per such term, plus two for the entries the primary appends in its own
+term. A log `n` entries beyond the common prefix spans at most `n` terms. -/
 def Backlog (trace : Trace W Event) (start : Nat) (leader : NodeID)
     (participants : Finset NodeID) (backlog : Nat)
     : Prop :=
@@ -176,7 +180,9 @@ def Backlog (trace : Trace W Event) (start : Nat) (leader : NodeID)
     -> CCF.MultiNodeTransitionSystem.nodeState (proto first) leader = some leaderState
     -> follower ∈ participants
     -> CCF.MultiNodeTransitionSystem.nodeState (proto first) follower = some followerState
-    -> leaderState.log.length - agreedPrefix leaderState.log followerState.log <= backlog
+    -> ((leaderState.log.drop (agreedPrefix leaderState.log followerState.log)).map
+          Entry.term).toFinset.card
+        <= backlog
 
 /-- At `start` every participant is a node that has adopted `term`. With
 `Window.LiveQuorum`, a live quorum is then in `term` throughout the window. The
