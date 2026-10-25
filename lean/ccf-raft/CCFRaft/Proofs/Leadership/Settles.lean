@@ -4,7 +4,7 @@ public import CCFRaft.Proofs.Leadership.Stable
 public import CCFRaft.Proofs.Leadership.Membership
 public import CCFRaft.Proofs.Liveness.Delay
 public import CCFRaft.Proofs.Liveness.Timers
-public import CCFRaft.Liveness.Assumptions.Window
+public import CCFRaft.Liveness.Assumptions.Settles
 
 @[expose] public section
 
@@ -24,8 +24,9 @@ The primary tracks every participant because each is in its latest
 configuration at the start, and a primary of a quiet term appending no
 configuration keeps its latest configuration (`QuietAmong.history_keep`).
 
-`WindowMatching`, the windowed form of `Matching`, and `LatestMembers` are
-proposed as premises of `Properties.signature_settles`.
+`WindowMatching` is the windowed form of `Matching`. The start premises
+`FreshStart` and `LatestMembers` of `Properties.signature_settles` are in
+`Liveness/Assumptions/Settles.lean`.
 -/
 
 namespace CCFRaft.Proofs.Leadership
@@ -71,54 +72,6 @@ def WindowMatching (trace : Trace W Liveness.Event) (start : Nat) (duration : Re
     (leader : NodeID) (term : Nat) (participants : Finset NodeID)
     : Prop :=
   forall index, MatchesAt trace start duration leader term participants index
-
-/-- At `start` every participant other than the primary is in the primary's
-latest active configuration, and so is one of its replication peers. -/
-def LatestMembers (trace : Trace W Liveness.Event) (start : Nat) (leader : NodeID)
-    (participants : Finset NodeID)
-    : Prop :=
-  forall first state node,
-    trace.stateAt start = some first
-    -> nodeState (proto first) leader = some state
-    -> node ∈ participants
-    -> Not (node = leader)
-    -> node ∈ latestConfigurationMembers state.activeConfigurations
-
-/-- `QuietStart` among `participants`, with a freshness `fresh` in place of half
-an election timeout: the term is quiet among participants at `start`, and no
-participant of the term times out before `fresh` after it. An election spreads
-the participants' timer resets over a few message delays, so the duel that ends
-in `start` can only promise some `fresh` below `electionTimeout / 2`. -/
-structure FreshStart (trace : Trace W Liveness.Event) (start : Nat) (leader : NodeID)
-    (term : Nat) (participants : Finset NodeID) (fresh : Real)
-    : Prop where
-  quiet
-    : exists first,
-        trace.stateAt start = some first
-        /\ QuietAmong participants leader term (proto first)
-  timers
-    : forall first index step node state,
-        trace.stateAt start = some first
-        -> start <= index
-        -> trace.stepAt index = some step
-        -> step.action = .local node (.timeout .election)
-        -> nodeState (proto step.before) node = some state
-        -> node ∈ participants
-        -> state.currentTerm = term
-        -> time first + fresh <= time step.before
-
-omit [HasLive W] [HasNetwork W] in
-/-- A quiet start is fresh for half an election timeout among any participants. -/
-theorem FreshStart.of_quietStart {trace : Trace W Liveness.Event} {start : Nat}
-    {leader : NodeID} {term : Nat} {electionTimeout : Real}
-    (initial : QuietStart trace start leader term electionTimeout)
-    (participants : Finset NodeID)
-    : FreshStart trace start leader term participants (electionTimeout / 2) := by
-  obtain ⟨first, found, quiet⟩ := initial.quiet
-  exact ⟨⟨first, found, quiet.among participants⟩,
-    fun first index step node state found afterStart stepped event nodeFound _ current =>
-      initial.timers first index step node state found afterStart stepped event nodeFound
-        current⟩
 
 section Trace
 

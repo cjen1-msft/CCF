@@ -9,6 +9,10 @@ import CCFRaft.Proofs.CommittedLogs
 import CCFRaft.Proofs.Direct.CommitFrontier
 import CCFRaft.Proofs.Duel.Probability
 import CCFRaft.Proofs.Election
+import CCFRaft.Proofs.Leadership.CatchUp
+import CCFRaft.Proofs.Leadership.CatchUpWitness
+import CCFRaft.Proofs.Leadership.InSync
+import CCFRaft.Proofs.Leadership.SettlesWitness
 import CCFRaft.Proofs.Leadership.Stable
 import CCFRaft.Proofs.LivenessWitness
 import CCFRaft.Proofs.Replication.Commit
@@ -166,8 +170,8 @@ diverges from the primary's by more than `backlog` entries, and the primary hold
 or appends `request`, then `request` is in the primary's committed prefix within
 the window. `commit_liveness_witness` meets the premises for every nonnegative
 window length, so they are satisfiable whatever `duration` is.
-`signature_settles` yields the stable window after `duelling_leaders_resolve`;
-settled reconfiguration remains a separate premise. -/
+`signature_settles` and `signature_settles_catchup` yield the stable window from a
+fresh start; settled reconfiguration remains a separate premise. -/
 theorem commit_liveness
     : forall (config : Finset NodeID) (nodes : List NodeID),
         let system := Model.transitionSystem config nodes
@@ -292,17 +296,25 @@ theorem duelling_leaders_resolve
   intro draws _
   sorry
 
-/-- A primary that has committed a signature of its own term stays uncontested
-while the good period lasts and it stays live: the bridge from
-`duelling_leaders_resolve` to the window `commit_liveness` consumes. Needs
-heartbeats to reset every follower before its timer can fire. -/
+/-- A fresh primary stays uncontested while the good period lasts and it stays
+live, when every other participant is in sync with it: the bridge from
+`duelling_leaders_resolve` to the window `commit_liveness` consumes, in the common
+case. At `start` the term is quiet among `participants`, no participant of it
+times out for `fresh`, and every other participant is in the primary's latest
+configuration, at the term, and in sync with the primary: its log is a prefix of
+the primary's, no rejection from it is in flight, and the primary's requests in
+flight to it chain from the end of its log. Then every heartbeat passes every
+participant's log check, so each participant's election timer is reset within
+`heartbeatInterval + maxDelay`, before `fresh` runs out, and none times out in
+the window. Each premise is needed; `LIVENESS.md` gives the counterexamples.
+`signature_settles_catchup` drops the sync premise for a larger `fresh`. -/
 theorem signature_settles
     : forall (config : Finset NodeID) (nodes : List NodeID),
         let system := Model.transitionSystem config nodes
         forall (W : Type) [Liveness.HasProtocol W Model.State] [Liveness.HasTime W]
                 [Liveness.HasLive W] [Liveness.HasNetwork W] [Liveness.HasTimers W],
         forall (trace : Liveness.Trace W Liveness.Event) (bounds : Liveness.Bounds),
-        forall (maxDelay duration : Real) (start : Nat) (point : W),
+        forall (maxDelay fresh duration : Real) (start : Nat),
         forall (leader : NodeID) (term : Nat) (participants : Finset NodeID),
           (trace.Coherent
             /\ trace.Valid (Liveness.protocolModel system)
@@ -313,13 +325,159 @@ theorem signature_settles
             /\ trace.Valid (Liveness.timerModel bounds.electionTimeout)
             /\ 0 <= maxDelay
             /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
-            /\ bounds.heartbeatInterval + maxDelay < bounds.electionTimeout / 2
+            /\ bounds.heartbeatInterval + maxDelay < fresh
+            /\ fresh <= bounds.electionTimeout / 2
             /\ leader ∈ participants
-            /\ trace.stateAt start = some point
-            /\ Liveness.SignedPrimary point leader term
+            /\ Liveness.FreshStart trace start leader term participants fresh
+            /\ Liveness.LatestMembers trace start leader participants
+            /\ Liveness.InSync trace start leader term participants
             /\ Liveness.GoodPeriod trace start duration participants
             /\ Liveness.Window.StaysActive trace start duration leader)
           -> Liveness.StableWindow trace start duration leader term participants := by
-  sorry
+  intro config nodes system W _ _ _ _ _ trace bounds maxDelay fresh duration start leader term
+    participants ⟨coherent, protocol, timing, crash, delivery, bounded, timers, nonneg,
+      heartbeats, ratio, freshLe, leaderIn, initial, members, sync, good, active⟩
+  let _ : Proofs.Config.InitialConfiguration := ⟨config⟩
+  exact Proofs.Leadership.stable_window_inSync (nodes := nodes)
+    ⟨coherent, protocol, timing, crash, delivery⟩ timers bounded nonneg heartbeats ratio
+    freshLe leaderIn initial members good active sync
+
+/-- Witness: for every nonnegative window length, a one-node execution with
+heartbeat interval 1, election timeout 4 and freshness 2 meets every premise of
+`signature_settles` and has a stable window. It resets no timer and times out no
+node, so every election deadline stays at 0. -/
+lemma signature_settles_witness
+    : let system := Model.transitionSystem {0} [0]
+      let bounds : Liveness.Bounds :=
+        { heartbeatInterval := 1, electionTimeout := 4, signatureInterval := 1 }
+      letI : Liveness.HasTimers (Liveness.World Model.State) := ⟨fun _ _ => 0⟩
+      forall duration : Real,
+        0 <= duration
+        -> exists trace : Liveness.Trace (Liveness.World Model.State) Liveness.Event,
+            (trace.Coherent
+              /\ trace.Valid (Liveness.protocolModel system)
+              /\ trace.Valid Liveness.timingModel
+              /\ trace.Valid Liveness.crashModel
+              /\ trace.Valid (Liveness.deliveryModel system)
+              /\ trace.Valid (Liveness.boundedDelayModel 0)
+              /\ trace.Valid (Liveness.timerModel bounds.electionTimeout)
+              /\ 0 <= (0 : Real)
+              /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
+              /\ bounds.heartbeatInterval + 0 < 2
+              /\ 2 <= bounds.electionTimeout / 2
+              /\ 0 ∈ ({0} : Finset NodeID)
+              /\ Liveness.FreshStart trace 0 0 Model.BOOTSTRAP_TERM {0} 2
+              /\ Liveness.LatestMembers trace 0 0 {0}
+              /\ Liveness.InSync trace 0 0 Model.BOOTSTRAP_TERM {0}
+              /\ Liveness.GoodPeriod trace 0 duration {0}
+              /\ Liveness.Window.StaysActive trace 0 duration 0)
+            /\ Liveness.StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0} := by
+  intro system bounds duration nonneg
+  obtain ⟨trace, ⟨admissible, timers, bounded, delay, heartbeats, ratio, freshLe, leaderIn,
+      fresh, members, good, active, sync⟩, stable⟩ :=
+    Proofs.Leadership.stable_window_inSync_witness duration nonneg
+  exact ⟨trace, ⟨admissible.coherent, admissible.protocol, admissible.timing,
+    admissible.crash, admissible.delivery, bounded, timers, delay, heartbeats, ratio, freshLe,
+    leaderIn, fresh, members, sync, good, active⟩, stable⟩
+
+/-- `signature_settles` while participants catch up: every participant is at the
+term and at most `backlog` entries behind the primary at `start`, with no premise
+on the messages in flight. A participant's election timer is reset only by an
+AppendEntries that passes its log check, so a lagging participant is reset only
+once the primary has repaired its log. From any point, the primary's next
+heartbeat goes out within `interval`, the heartbeat interval if positive, and
+reaches every participant within `maxDelay`; the repair it starts is acknowledged
+within `6 maxDelay + 4 interval + 2 (backlog + 1) (2 maxDelay + interval)`, the
+round bound of `commit_liveness`. So with `fresh` above their sum no participant
+times out in the window. Each premise is needed; `LIVENESS.md` gives the
+counterexamples, including one with `fresh` at `2 interval + 3 maxDelay`. -/
+theorem signature_settles_catchup
+    : forall (config : Finset NodeID) (nodes : List NodeID),
+        let system := Model.transitionSystem config nodes
+        forall (W : Type) [Liveness.HasProtocol W Model.State] [Liveness.HasTime W]
+                [Liveness.HasLive W] [Liveness.HasNetwork W] [Liveness.HasTimers W],
+        forall (trace : Liveness.Trace W Liveness.Event) (bounds : Liveness.Bounds),
+        forall (maxDelay fresh duration : Real) (backlog start : Nat),
+        forall (leader : NodeID) (term : Nat) (participants : Finset NodeID),
+          let interval := max bounds.heartbeatInterval 0
+          (trace.Coherent
+            /\ trace.Valid (Liveness.protocolModel system)
+            /\ trace.Valid Liveness.timingModel
+            /\ trace.Valid Liveness.crashModel
+            /\ trace.Valid (Liveness.deliveryModel system)
+            /\ trace.Valid (Liveness.boundedDelayModel maxDelay)
+            /\ trace.Valid (Liveness.timerModel bounds.electionTimeout)
+            /\ Liveness.TimeDiverges trace
+            /\ 0 <= maxDelay
+            /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
+            /\ 6 * maxDelay
+                  + 4 * interval
+                  + 2 * ((backlog : Real) + 1) * (2 * maxDelay + interval)
+                  + interval
+                  + maxDelay
+                < fresh
+            /\ fresh <= bounds.electionTimeout / 2
+            /\ leader ∈ participants
+            /\ Liveness.FreshStart trace start leader term participants fresh
+            /\ Liveness.LatestMembers trace start leader participants
+            /\ Liveness.InTermAt trace start term participants
+            /\ Liveness.Backlog trace start leader participants backlog
+            /\ Liveness.GoodPeriod trace start duration participants
+            /\ Liveness.Window.StaysActive trace start duration leader)
+          -> Liveness.StableWindow trace start duration leader term participants := by
+  intro config nodes system W _ _ _ _ _ trace bounds maxDelay fresh duration backlog start leader
+    term participants interval ⟨coherent, protocol, timing, crash, delivery, bounded, timers,
+      diverges, nonneg, heartbeats, ratio, freshLe, leaderIn, initial, members, inTerm, behind,
+      good, active⟩
+  let _ : Proofs.Config.InitialConfiguration := ⟨config⟩
+  exact Proofs.Leadership.stable_window_catchup (nodes := nodes)
+    ⟨coherent, protocol, timing, crash, delivery⟩ timers bounded diverges nonneg heartbeats
+    ratio freshLe leaderIn initial members good active inTerm behind
+
+/-- Witness: for every nonnegative window length, a one-node execution with
+heartbeat interval `1 / 10`, election timeout 4, freshness 2 and backlog 0 meets
+every premise of `signature_settles_catchup` and has a stable window. It resets no
+timer and times out no node, so every election deadline stays at 0. -/
+lemma signature_settles_catchup_witness
+    : let system := Model.transitionSystem {0} [0]
+      let bounds : Liveness.Bounds :=
+        { heartbeatInterval := 1 / 10, electionTimeout := 4, signatureInterval := 1 }
+      let interval := max bounds.heartbeatInterval 0
+      letI : Liveness.HasTimers (Liveness.World Model.State) := ⟨fun _ _ => 0⟩
+      forall duration : Real,
+        0 <= duration
+        -> exists trace : Liveness.Trace (Liveness.World Model.State) Liveness.Event,
+            (trace.Coherent
+              /\ trace.Valid (Liveness.protocolModel system)
+              /\ trace.Valid Liveness.timingModel
+              /\ trace.Valid Liveness.crashModel
+              /\ trace.Valid (Liveness.deliveryModel system)
+              /\ trace.Valid (Liveness.boundedDelayModel 0)
+              /\ trace.Valid (Liveness.timerModel bounds.electionTimeout)
+              /\ Liveness.TimeDiverges trace
+              /\ 0 <= (0 : Real)
+              /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
+              /\ 6 * 0
+                    + 4 * interval
+                    + 2 * (((0 : Nat) : Real) + 1) * (2 * 0 + interval)
+                    + interval
+                    + 0
+                  < 2
+              /\ 2 <= bounds.electionTimeout / 2
+              /\ 0 ∈ ({0} : Finset NodeID)
+              /\ Liveness.FreshStart trace 0 0 Model.BOOTSTRAP_TERM {0} 2
+              /\ Liveness.LatestMembers trace 0 0 {0}
+              /\ Liveness.InTermAt trace 0 Model.BOOTSTRAP_TERM {0}
+              /\ Liveness.Backlog trace 0 0 {0} 0
+              /\ Liveness.GoodPeriod trace 0 duration {0}
+              /\ Liveness.Window.StaysActive trace 0 duration 0)
+            /\ Liveness.StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0} := by
+  intro system bounds interval duration nonneg
+  obtain ⟨trace, ⟨admissible, timers, bounded, diverges, delay, heartbeats, ratio, freshLe,
+      leaderIn, fresh, members, good, active, inTerm, behind⟩, stable⟩ :=
+    Proofs.Leadership.CatchUpWitness.stable_window_catchup_witness duration nonneg
+  exact ⟨trace, ⟨admissible.coherent, admissible.protocol, admissible.timing,
+    admissible.crash, admissible.delivery, bounded, timers, diverges, delay, heartbeats, ratio,
+    freshLe, leaderIn, fresh, members, inTerm, behind, good, active⟩, stable⟩
 
 end CCFRaft.Properties
