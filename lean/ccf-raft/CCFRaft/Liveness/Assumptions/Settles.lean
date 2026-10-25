@@ -116,7 +116,7 @@ structure InSyncWith (leader : NodeID) (term : Nat) (peer : NodeID) (point : W)
   from the old log, and the next of those requests then fails its log check. -/
   current : state.currentTerm = term
   prefix_ : state.log <+: leaderState.log
-  chain
+  inflightChain
     : Chain term state.log.length (queued leader peer (pending point))
         (leaderState.sentIndex peer)
   /-- Needed: the primary handles a rejection of any term by rewinding its

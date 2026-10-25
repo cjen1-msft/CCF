@@ -329,7 +329,7 @@ theorem head_request {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
           (queued leader peer (step.action.remaining (pending step.before)))
           (leaderState.sentIndex peer) := by
   obtain ⟨front, back, split, remaining, others⟩ := admissible.delivered_split stepped delivered
-  have chain := sync.chain
+  have chain := sync.inflightChain
   rw [split, queued_split others, found] at chain
   simp only [Option.toList_some, List.singleton_append] at chain
   obtain ⟨requestTerm, prev, rest⟩ := chain
@@ -497,7 +497,7 @@ theorem sync_keep {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
   · have none_ : emitted.filterMap (requestFor leader peer) = [] :=
       List.filterMap_eq_nil_iff.mpr fun envelope member => (quietSends envelope member).1
     rw [queued_after admissible stepped ledger skip, none_, List.append_nil, log, sent]
-    exact sync.chain
+    exact sync.inflightChain
   · exact noNack_after ledger sync.noNack fun envelope member => (quietSends envelope member).2
 
 /-- A participant other than the primary stays in sync with it across a step of
@@ -605,7 +605,7 @@ theorem sync_step {start : Nat} {duration : Real} {leader : NodeID} {term : Nat}
             by rw [logEq]; exact sync.prefix_, ?_, ?_⟩
           · rw [queued_after admissible stepped ledger skip, sentEq', sentList, requests_pass,
               sentIndexEq]
-            exact Chain.append sync.chain (chain_pass leaderState leaderTerm pass.valid)
+            exact Chain.append sync.inflightChain (chain_pass leaderState leaderTerm pass.valid)
           · refine noNack_after ledger sync.noNack fun envelope member nack => ?_
             exact different (nack.1.symm.trans (Summary.sends facts envelope member).1)
         · obtain ⟨_, _, flow⟩ := leader_flow actor peer leaderState primary (.internal input) {} _ _ ran
