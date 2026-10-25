@@ -232,9 +232,13 @@ structure StableWindow (trace : Trace W Event) (start : Nat) (duration : Real)
 def agreedPrefix (leaderLog followerLog : List Entry) : Nat :=
   ((leaderLog.zip followerLog).takeWhile fun pair => decide (pair.1 = pair.2)).length
 
-/-- At `start` no participant's log diverges from the primary's by more than
-`backlog` entries. Catching a participant up takes at most `backlog` rounds. -/
-def Backlog (trace : Trace W Event) (start : Nat) (leader : NodeID)
+/-- At `start`, for every participant, the primary's log beyond their common
+prefix spans at most `backlog` distinct terms (terms, not entries). A rejected AppendEntries moves the
+primary's probe back past a whole term of its log (CCF's
+`find_highest_possible_match`), so catching a participant up takes at most two
+rounds per such term, plus two for the entries the primary appends in its own
+term. A log `n` entries beyond the common prefix spans at most `n` terms. -/
+def BacklogTerms (trace : Trace W Event) (start : Nat) (leader : NodeID)
     (participants : Finset NodeID) (backlog : Nat)
     : Prop :=
   forall first leaderState follower followerState,
@@ -242,7 +246,9 @@ def Backlog (trace : Trace W Event) (start : Nat) (leader : NodeID)
     -> CCF.MultiNodeTransitionSystem.nodeState (proto first) leader = some leaderState
     -> follower ∈ participants
     -> CCF.MultiNodeTransitionSystem.nodeState (proto first) follower = some followerState
-    -> leaderState.log.length - agreedPrefix leaderState.log followerState.log <= backlog
+    -> ((leaderState.log.drop (agreedPrefix leaderState.log followerState.log)).map
+          Entry.term).toFinset.card
+        <= backlog
 
 /-- At `start` every participant is a node that has adopted `term`. With
 `Window.LiveQuorum`, a live quorum is then in `term` throughout the window. The
@@ -305,6 +311,11 @@ structure GoodPeriod (trace : Trace W Event) (start : Nat) (duration : Real)
         -> node ∈ live point
         -> CCF.MultiNodeTransitionSystem.nodeState (proto point) node = some state
         -> hasQuorum state.activeConfigurations (Inter.inter (live point) participants)
+  /-- Essential: the theorems are about windows with fixed membership. The
+  commit argument fixes one configuration for the whole window, whereas a
+  change in flight needs joint quorums, and committing the primary's own
+  removal makes it step down (`become_retired` in CCF). Liveness across a
+  reconfiguration is a different property. -/
   noReconfiguration
     : forall index step node entries,
         Within trace start duration index
@@ -333,6 +344,13 @@ structure GoodPeriod (trace : Trace W Event) (start : Nat) (duration : Real)
         -> Not
             (packet.envelope.source ∈ participants
               /\ packet.envelope.target ∈ participants)
+  /-- Needed: nodes outside `participants` are unconstrained, so their terms,
+  logs and timers are arbitrary. One at a later term deposes the primary when
+  one of its messages arrives (`observeTerm`), for example a node that became a
+  candidate for a later term before `start` and then lost contact. CCF behaves
+  the same: its AppendEntries and vote handlers, pre-votes included, adopt the
+  later term (`become_aware_of_new_term`). This is the windowed form of "the
+  rest of the network is partitioned off". Narrowing it is not attempted. -/
   isolated
     : forall index step envelope,
         Within trace start duration index

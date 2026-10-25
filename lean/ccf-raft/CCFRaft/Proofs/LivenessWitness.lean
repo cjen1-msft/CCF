@@ -538,7 +538,7 @@ private theorem fixture_settled (duration : Real)
   subst state
   cases index <;> simp only [fixtureNode] <;> decide
 
-private theorem initial_backlog : Backlog (fixture true) 0 0 {0} 0 := by
+private theorem initial_backlog : BacklogTerms (fixture true) 0 0 {0} 0 := by
   intro first leaderState follower followerState found leaderFound member followerFound
   have zero := Finset.mem_singleton.mp member
   subst follower
@@ -580,7 +580,7 @@ theorem timed_commit_window_witness
               /\ trace.SignatureScheduling (some bounds.signatureInterval)
               /\ StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0}
               /\ Window.ReconfigurationSettled trace 0 duration 0
-              /\ Backlog trace 0 0 {0} 0
+              /\ BacklogTerms trace 0 0 {0} 0
               /\ InTermAt trace 0 Model.BOOTSTRAP_TERM {0}
               /\ SubmittedAt trace 0 0 10)
             /\ exists index,

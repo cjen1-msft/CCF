@@ -12,7 +12,7 @@ stable window from a fresh start: the term is quiet among participants and no
 participant of it times out for a while (`FreshStart`), and the primary tracks
 every participant (`LatestMembers`). The common case adds that every participant
 is in sync with the primary (`InSync`); the catch-up case bounds its backlog
-instead (`Backlog`, `InTermAt`).
+instead (`BacklogTerms`, `InTermAt`).
 -/
 
 namespace CCFRaft.Liveness

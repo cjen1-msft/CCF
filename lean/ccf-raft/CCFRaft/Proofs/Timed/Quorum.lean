@@ -103,7 +103,9 @@ theorem quorum_commits {start last : Nat} {stop delay interval : Real} {leader :
           -> forall other primary,
               trace.nodeAt start peer = some other
               -> trace.nodeAt start leader = some primary
-              -> primary.log.length - agree other.log primary.log <= backlog)
+              -> ((primary.log.drop (agree other.log primary.log)).map
+                    Entry.term).toFinset.card
+                  <= backlog)
     (nonneg : 0 <= delay) (intervalNonneg : 0 <= interval)
     (lastFound : exists point, trace.stateAt last = some point) {signed : Nat}
     (startLe : start <= signed) (signedLe : signed <= last) {state : NodeState}

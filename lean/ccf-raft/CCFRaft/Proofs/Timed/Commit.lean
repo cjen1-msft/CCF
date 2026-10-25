@@ -78,7 +78,7 @@ theorem commit_liveness_timed
                     /\ trace.SignatureScheduling (some bounds.signatureInterval)
                     /\ Liveness.StableWindow trace start duration leader term participants
                     /\ Liveness.Window.ReconfigurationSettled trace start duration leader
-                    /\ Liveness.Backlog trace start leader participants backlog
+                    /\ Liveness.BacklogTerms trace start leader participants backlog
                     /\ Liveness.InTermAt trace start term participants
                     /\ Liveness.SubmittedAt trace start leader request)
                   -> exists index,
