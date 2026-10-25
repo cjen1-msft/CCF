@@ -391,31 +391,32 @@ lemma signature_settles_witness
     admissible.crash, admissible.delivery, bounded, timers, delay, heartbeats, ratio, freshLe,
     anchored, sync, good, active⟩, stable, quiet⟩
 
-/-- `signature_settles` while participants catch up: at `start` every participant
-is at the term, and the primary's log beyond its common prefix with each
-participant spans at most `backlog` distinct terms, with no premise on the
-messages in flight. A participant's election timer is reset only by an
-AppendEntries that passes its log check, so a lagging participant is reset only
+/-- `signature_settles` while the anchor catches up: at `start` the anchor anchors
+the term as in `signature_settles`, and the primary's log beyond its common prefix
+with each anchor node spans at most `backlog` distinct terms, with no premise on
+the messages in flight. An anchor node's election timer is reset only by an
+AppendEntries that passes its log check, so a lagging anchor node is reset only
 once the primary has repaired its log. From any point, the primary's next
 heartbeat goes out within `interval`, the heartbeat interval if positive, and
-reaches every participant within `maxDelay`; the repair it starts is acknowledged
+reaches every anchor node within `maxDelay`; the repair it starts is acknowledged
 within `6 maxDelay + 4 interval + 2 (backlog + 1) (2 maxDelay + interval)`, the
-round bound of `commit_liveness`. So with `fresh` above their sum no participant
-times out in the window. Each premise is needed; `LIVENESS.md` gives the
-counterexamples, including one with `fresh` at `2 interval + 3 maxDelay`.
+round bound of `commit_liveness`. So with `fresh` above their sum no anchor node
+times out in the window, and, as in `signature_settles`, no participant moves past
+the term. Each premise is needed; `LIVENESS.md` gives the counterexamples,
+including one with `fresh` at `2 interval + 3 maxDelay`.
 
-Reading the ratio: `fresh` is how long after `start` no participant times out, at
+Reading the ratio: `fresh` is how long after `start` no anchor node times out, at
 most half an election timeout. In that time the primary must repair every lagging
-participant and get an acknowledgement back, or the participant times out and
-starts an election. Each rejection moves the primary's probe back past a whole
-term of its log (the retry hint), so a participant whose unagreed suffix spans
-`backlog` terms is repaired within two round trips per term, plus two for the
-primary's own new entries. Each round trip costs at most `2 maxDelay + interval`.
-A fixed overhead of `7 maxDelay + 5 interval`, for stale traffic to drain and the
-next heartbeat to go out and arrive, gives the left-hand side, so the premise just
-says repair time < `fresh`. The in-sync bridge `signature_settles` needs only one
-heartbeat round: `interval + maxDelay < fresh`. The constants are worst-case sums
-along the proof, not tight. -/
+anchor node and get an acknowledgement back, or the node times out and starts an
+election. Each rejection moves the primary's probe back past a whole term of its
+log (the retry hint), so a node whose unagreed suffix spans `backlog` terms is
+repaired within two round trips per term, plus two for the primary's own new
+entries. Each round trip costs at most `2 maxDelay + interval`. A fixed overhead
+of `7 maxDelay + 5 interval`, for stale traffic to drain and the next heartbeat to
+go out and arrive, gives the left-hand side, so the premise just says repair time
+< `fresh`. The in-sync bridge `signature_settles` needs only one heartbeat round:
+`interval + maxDelay < fresh`. The constants are worst-case sums along the proof,
+not tight. -/
 theorem signature_settles_catchup
     : forall (config : Finset NodeID) (nodes : List NodeID),
         let system := Model.transitionSystem config nodes
@@ -423,7 +424,7 @@ theorem signature_settles_catchup
                 [Liveness.HasLive W] [Liveness.HasNetwork W] [Liveness.HasTimers W],
         forall (trace : Liveness.Trace W Liveness.Event) (bounds : Liveness.Bounds),
         forall (maxDelay fresh duration : Real) (backlog start : Nat),
-        forall (leader : NodeID) (term : Nat) (participants : Finset NodeID),
+        forall (leader : NodeID) (term : Nat) (participants anchor : Finset NodeID),
           let interval := max bounds.heartbeatInterval 0
           (trace.Coherent
             /\ trace.Valid (Liveness.protocolModel system)
@@ -442,27 +443,26 @@ theorem signature_settles_catchup
                   + maxDelay
                 < fresh
             /\ fresh <= bounds.electionTimeout / 2
-            /\ leader ∈ participants
-            /\ Liveness.FreshStart trace start leader term participants fresh
-            /\ Liveness.LatestMembers trace start leader participants
-            /\ Liveness.InTermAt trace start term participants
-            /\ Liveness.BacklogTerms trace start leader participants backlog
+            /\ Liveness.AnchoredStart trace start leader term participants anchor fresh
+            /\ Liveness.BacklogTerms trace start leader anchor backlog
             /\ Liveness.GoodPeriod trace start duration participants
-            /\ Liveness.Window.StaysActive trace start duration leader)
-          -> Liveness.StableWindow trace start duration leader term participants := by
+            /\ Liveness.Window.AnchorActive trace start duration anchor)
+          -> Liveness.StableWindow trace start duration leader term anchor
+              /\ Liveness.Window.StableTerm trace start duration leader term
+                  participants := by
   intro config nodes system W _ _ _ _ _ trace bounds maxDelay fresh duration backlog start leader
-    term participants interval ⟨coherent, protocol, timing, crash, delivery, bounded, timers,
-      diverges, nonneg, heartbeats, ratio, freshLe, leaderIn, initial, members, inTerm, behind,
-      good, active⟩
+    term participants anchor interval ⟨coherent, protocol, timing, crash, delivery, bounded,
+      timers, diverges, nonneg, heartbeats, ratio, freshLe, initial, behind, good, active⟩
   let _ : Proofs.Config.InitialConfiguration := ⟨config⟩
-  exact Proofs.Leadership.stable_window_catchup (nodes := nodes)
+  exact Proofs.Leadership.stable_window_catchup_anchored (nodes := nodes)
     ⟨coherent, protocol, timing, crash, delivery⟩ timers bounded diverges nonneg heartbeats
-    ratio freshLe leaderIn initial members good active inTerm behind
+    ratio freshLe initial good active behind
 
 /-- Witness: for every nonnegative window length, a one-node execution with
-heartbeat interval `1 / 10`, election timeout 4, freshness 2 and backlog 0 meets
-every premise of `signature_settles_catchup` and has a stable window. It resets no
-timer and times out no node, so every election deadline stays at 0. -/
+heartbeat interval `1 / 10`, election timeout 4, freshness 2 and backlog 0, whose
+node is both the participants and the anchor, meets every premise of
+`signature_settles_catchup` and has its conclusion. It resets no timer and times
+out no node, so every election deadline stays at 0. -/
 lemma signature_settles_catchup_witness
     : let system := Model.transitionSystem {0} [0]
       let bounds : Liveness.Bounds :=
@@ -489,20 +489,19 @@ lemma signature_settles_catchup_witness
                     + 0
                   < 2
               /\ 2 <= bounds.electionTimeout / 2
-              /\ 0 ∈ ({0} : Finset NodeID)
-              /\ Liveness.FreshStart trace 0 0 Model.BOOTSTRAP_TERM {0} 2
-              /\ Liveness.LatestMembers trace 0 0 {0}
-              /\ Liveness.InTermAt trace 0 Model.BOOTSTRAP_TERM {0}
+              /\ Liveness.AnchoredStart trace 0 0 Model.BOOTSTRAP_TERM {0} {0} 2
               /\ Liveness.BacklogTerms trace 0 0 {0} 0
               /\ Liveness.GoodPeriod trace 0 duration {0}
-              /\ Liveness.Window.StaysActive trace 0 duration 0)
-            /\ Liveness.StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0} := by
+              /\ Liveness.Window.AnchorActive trace 0 duration {0})
+            /\ Liveness.StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0}
+            /\ Liveness.Window.StableTerm trace 0 duration 0 Model.BOOTSTRAP_TERM
+                {0} := by
   intro system bounds interval duration nonneg
   obtain ⟨trace, ⟨admissible, timers, bounded, diverges, delay, heartbeats, ratio, freshLe,
-      leaderIn, fresh, members, good, active, inTerm, behind⟩, stable⟩ :=
-    Proofs.Leadership.CatchUpWitness.stable_window_catchup_witness duration nonneg
+      anchored, good, active, behind⟩, stable, quiet⟩ :=
+    Proofs.Leadership.CatchUpWitness.stable_window_catchup_anchored_witness duration nonneg
   exact ⟨trace, ⟨admissible.coherent, admissible.protocol, admissible.timing,
     admissible.crash, admissible.delivery, bounded, timers, diverges, delay, heartbeats, ratio,
-    freshLe, leaderIn, fresh, members, inTerm, behind, good, active⟩, stable⟩
+    freshLe, anchored, behind, good, active⟩, stable, quiet⟩
 
 end CCFRaft.Properties
