@@ -108,7 +108,7 @@ private theorem stays_active (duration : Real)
     rw [Trace.nodeAt_of_stateAt found]
     exact nodeFound
 
-private theorem initial_backlog : Backlog (fixture true) 0 0 {0} 0 := by
+private theorem initial_backlog : BacklogTerms (fixture true) 0 0 {0} 0 := by
   intro first leaderState follower followerState found leaderFound member followerFound
   have zero := Finset.mem_singleton.mp member
   subst follower
@@ -160,7 +160,7 @@ theorem stable_window_catchup_witness
               /\ GoodPeriod trace 0 duration {0}
               /\ Window.StaysActive trace 0 duration 0
               /\ InTermAt trace 0 Model.BOOTSTRAP_TERM {0}
-              /\ Backlog trace 0 0 {0} 0)
+              /\ BacklogTerms trace 0 0 {0} 0)
             /\ StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0} := by
   intro windowBounds duration _
   have admissible : Liveness.Admissible (Model.transitionSystem {0} [0]) (fixture true) :=

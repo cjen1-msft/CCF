@@ -166,9 +166,9 @@ Additionally, reconfiguration is settled at the leader throughout the
 window: one active configuration and all completed removals confirmed in its
 committed ledger. Followers need not have learned this completion. This
 excludes waiting for retirement cleanup, which has no scheduling deadline.
-If at `start` every participant has adopted `term` and no participant's log
-diverges from the primary's by more than `backlog` entries, and the primary holds
-or appends `request`, then `request` is in the primary's committed prefix within
+If at `start` every participant has adopted `term`, the primary's log beyond its
+common prefix with each participant spans at most `backlog` distinct terms, and
+the primary holds or appends `request`, then `request` is in the primary's committed prefix within
 the window. `commit_liveness_witness` meets the premises for every nonnegative
 window length, so they are satisfiable whatever `duration` is.
 `signature_settles` and `signature_settles_catchup` yield the stable window from a
@@ -196,7 +196,7 @@ theorem commit_liveness
                     /\ trace.SignatureScheduling (some bounds.signatureInterval)
                     /\ Liveness.StableWindow trace start duration leader term participants
                     /\ Liveness.Window.ReconfigurationSettled trace start duration leader
-                    /\ Liveness.Backlog trace start leader participants backlog
+                    /\ Liveness.BacklogTerms trace start leader participants backlog
                     /\ Liveness.InTermAt trace start term participants
                     /\ Liveness.SubmittedAt trace start leader request)
                   -> exists index,
@@ -226,7 +226,7 @@ lemma commit_liveness_witness
               /\ trace.SignatureScheduling (some bounds.signatureInterval)
               /\ Liveness.StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0}
               /\ Liveness.Window.ReconfigurationSettled trace 0 duration 0
-              /\ Liveness.Backlog trace 0 0 {0} 0
+              /\ Liveness.BacklogTerms trace 0 0 {0} 0
               /\ Liveness.InTermAt trace 0 Model.BOOTSTRAP_TERM {0}
               /\ Liveness.SubmittedAt trace 0 0 10)
             /\ exists index,
@@ -383,9 +383,10 @@ lemma signature_settles_witness
     admissible.crash, admissible.delivery, bounded, timers, delay, heartbeats, ratio, freshLe,
     leaderIn, fresh, members, sync, good, active⟩, stable⟩
 
-/-- `signature_settles` while participants catch up: every participant is at the
-term and at most `backlog` entries behind the primary at `start`, with no premise
-on the messages in flight. A participant's election timer is reset only by an
+/-- `signature_settles` while participants catch up: at `start` every participant
+is at the term, and the primary's log beyond its common prefix with each
+participant spans at most `backlog` distinct terms, with no premise on the
+messages in flight. A participant's election timer is reset only by an
 AppendEntries that passes its log check, so a lagging participant is reset only
 once the primary has repaired its log. From any point, the primary's next
 heartbeat goes out within `interval`, the heartbeat interval if positive, and
@@ -393,7 +394,20 @@ reaches every participant within `maxDelay`; the repair it starts is acknowledge
 within `6 maxDelay + 4 interval + 2 (backlog + 1) (2 maxDelay + interval)`, the
 round bound of `commit_liveness`. So with `fresh` above their sum no participant
 times out in the window. Each premise is needed; `LIVENESS.md` gives the
-counterexamples, including one with `fresh` at `2 interval + 3 maxDelay`. -/
+counterexamples, including one with `fresh` at `2 interval + 3 maxDelay`.
+
+Reading the ratio: `fresh` is how long after `start` no participant times out, at
+most half an election timeout. In that time the primary must repair every lagging
+participant and get an acknowledgement back, or the participant times out and
+starts an election. Each rejection moves the primary's probe back past a whole
+term of its log (the retry hint), so a participant whose unagreed suffix spans
+`backlog` terms is repaired within two round trips per term, plus two for the
+primary's own new entries. Each round trip costs at most `2 maxDelay + interval`.
+A fixed overhead of `7 maxDelay + 5 interval`, for stale traffic to drain and the
+next heartbeat to go out and arrive, gives the left-hand side, so the premise just
+says repair time < `fresh`. The in-sync bridge `signature_settles` needs only one
+heartbeat round: `interval + maxDelay < fresh`. The constants are worst-case sums
+along the proof, not tight. -/
 theorem signature_settles_catchup
     : forall (config : Finset NodeID) (nodes : List NodeID),
         let system := Model.transitionSystem config nodes
@@ -424,7 +438,7 @@ theorem signature_settles_catchup
             /\ Liveness.FreshStart trace start leader term participants fresh
             /\ Liveness.LatestMembers trace start leader participants
             /\ Liveness.InTermAt trace start term participants
-            /\ Liveness.Backlog trace start leader participants backlog
+            /\ Liveness.BacklogTerms trace start leader participants backlog
             /\ Liveness.GoodPeriod trace start duration participants
             /\ Liveness.Window.StaysActive trace start duration leader)
           -> Liveness.StableWindow trace start duration leader term participants := by
@@ -471,7 +485,7 @@ lemma signature_settles_catchup_witness
               /\ Liveness.FreshStart trace 0 0 Model.BOOTSTRAP_TERM {0} 2
               /\ Liveness.LatestMembers trace 0 0 {0}
               /\ Liveness.InTermAt trace 0 Model.BOOTSTRAP_TERM {0}
-              /\ Liveness.Backlog trace 0 0 {0} 0
+              /\ Liveness.BacklogTerms trace 0 0 {0} 0
               /\ Liveness.GoodPeriod trace 0 duration {0}
               /\ Liveness.Window.StaysActive trace 0 duration 0)
             /\ Liveness.StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0} := by

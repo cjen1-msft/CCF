@@ -12,7 +12,7 @@ stable window from a fresh start: the term is quiet among participants and no
 participant of it times out for a while (`FreshStart`), and the primary tracks
 every participant (`LatestMembers`). The common case adds that every participant
 is in sync with the primary (`InSync`); the catch-up case bounds its backlog
-instead (`Backlog`, `InTermAt`).
+instead (`BacklogTerms`, `InTermAt`).
 -/
 
 namespace CCFRaft.Liveness
@@ -116,7 +116,7 @@ structure InSyncWith (leader : NodeID) (term : Nat) (peer : NodeID) (point : W)
   from the old log, and the next of those requests then fails its log check. -/
   current : state.currentTerm = term
   prefix_ : state.log <+: leaderState.log
-  chain
+  inflightChain
     : Chain term state.log.length (queued leader peer (pending point))
         (leaderState.sentIndex peer)
   /-- Needed: the primary handles a rejection of any term by rewinding its
