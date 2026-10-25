@@ -8,6 +8,7 @@ public import CCFRaft.Liveness.Assumptions.Submitted
 public import CCFRaft.Liveness.Assumptions.Duel
 public import CCFRaft.Liveness.Assumptions.Window
 public import CCFRaft.Liveness.Assumptions.Settles
+public import CCFRaft.Liveness.Assumptions.Anchor
 
 @[expose] public section
 
