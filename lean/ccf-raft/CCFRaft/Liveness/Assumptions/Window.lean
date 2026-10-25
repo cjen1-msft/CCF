@@ -239,6 +239,11 @@ structure GoodPeriod (trace : Trace W Event) (start : Nat) (duration : Real)
         -> node ∈ live point
         -> CCF.MultiNodeTransitionSystem.nodeState (proto point) node = some state
         -> hasQuorum state.activeConfigurations (Inter.inter (live point) participants)
+  /-- Essential: the theorems are about windows with fixed membership. The
+  commit argument fixes one configuration for the whole window, whereas a
+  change in flight needs joint quorums, and committing the primary's own
+  removal makes it step down (`become_retired` in CCF). Liveness across a
+  reconfiguration is a different property. -/
   noReconfiguration
     : forall index step node entries,
         Within trace start duration index
@@ -267,6 +272,13 @@ structure GoodPeriod (trace : Trace W Event) (start : Nat) (duration : Real)
         -> Not
             (packet.envelope.source ∈ participants
               /\ packet.envelope.target ∈ participants)
+  /-- Needed: nodes outside `participants` are unconstrained, so their terms,
+  logs and timers are arbitrary. One at a later term deposes the primary when
+  one of its messages arrives (`observeTerm`), for example a node that became a
+  candidate for a later term before `start` and then lost contact. CCF behaves
+  the same: its AppendEntries and vote handlers, pre-votes included, adopt the
+  later term (`become_aware_of_new_term`). This is the windowed form of "the
+  rest of the network is partitioned off". Narrowing it is not attempted. -/
   isolated
     : forall index step envelope,
         Within trace start duration index

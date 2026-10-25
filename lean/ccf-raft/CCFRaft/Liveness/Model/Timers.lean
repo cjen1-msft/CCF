@@ -33,9 +33,40 @@ variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasTime
 A node times out only once its deadline has passed. This implies
 `ElectionScheduling (some (electionTimeout / 2))`
 (`Proofs.Liveness.electionScheduling_of_timerModel`).
-This is not yet a refinement of CCF's elapsed-tick counter: the conservative
-lower-bound interpretation in `Bounds.electionTimeout` alone does not establish
-the upper bound or the distribution of real-time deadlines. -/
+
+Risk: this is a precondition about CCF's host driver, not a refinement of it.
+CCF keeps no real-time deadline. `restart_election_timeout` (`raft.h`) sets
+`timeout_elapsed` to a whole number of milliseconds drawn uniformly from
+`[0, election_timeout / 2]`. `periodic` runs every `tick_interval` on the node's
+own job-board clock, adds the time since its last run, and starts an election
+once `timeout_elapsed >= election_timeout`, if the node is `ticking` and its
+retirement is not committed. The differences:
+- Ticks. A timeout fires at a tick, so up to a tick after the ideal deadline,
+  and later still if ticks run late under load. The first tick after a reset
+  also counts the time before the reset, so a timeout can also fire up to a
+  tick early. `Bounds.electionTimeout` absorbs the early side. The late side is
+  unbounded in CCF but capped at `electionTimeout` here.
+- Clocks. Deadlines here are on the one global `time`, whereas each CCF node
+  measures elapsed time on its own clock, so drift moves real deadlines.
+- Gating. CCF never times out before `start_ticking`, which runs the first time
+  the node appends a signature while it is in its latest configuration, and
+  stays on. `canStartElection` instead checks membership of a signed active
+  configuration at each timeout. The two are close but not the same, and the
+  difference is not modelled.
+- Resets. Becoming primary zeroes `timeout_elapsed`, which then counts towards
+  the heartbeat `request_timeout`, not an election. Here a primary keeps a stale
+  deadline, which is harmless: a primary cannot time out, and in both every way
+  out of primary either draws afresh (`become_follower`, on a later term or a
+  failed quorum check) or commits the node's retirement, after which it never
+  times out. `start_ticking` also zeroes it, without a draw, so until its next
+  reset a newly ticking node is due after the full `election_timeout`: the top
+  of the range, not a uniform draw.
+Why the risk is accepted: the properties are about the protocol, not the
+driver. Outside the duel only the lower end is used, through
+`ElectionScheduling`, which CCF meets once `Bounds.electionTimeout` allows for
+ticks and drift. Only the duel uses the upper end and the draw distribution, so
+only the duel is exposed to late ticks, drift and the `start_ticking` reset.
+Per-node clocks are future work (`README.md`). -/
 def timerModel (electionTimeout : Real) : Model W Event where
   init _ := True
   next step :=
