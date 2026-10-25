@@ -135,6 +135,7 @@ theorem preVoteRequest_receive (source : NodeID) (before : NodeState)
     : Sends
         (fun after sent =>
           Observed before request.term after
+          /\ request.term <= after.currentTerm
           /\ sent
               = [{
                   source := self
@@ -154,10 +155,10 @@ theorem preVoteRequest_receive (source : NodeID) (before : NodeState)
   simp only [receive]
   refine Sends.ite' (fun no => by simp at no) fun _ => ?_
   rcases observe_bumping before (message := .requestPreVoteRequest request) trivial
-    with ⟨bump, eq⟩ | ⟨_, eq⟩ <;> rw [eq] <;> simp only [handleRequestPreVoteRequest] <;>
+    with ⟨bump, eq⟩ | ⟨le, eq⟩ <;> rw [eq] <;> simp only [handleRequestPreVoteRequest] <;>
     refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ?_ <;> subst eq
-  · exact ⟨Or.inr ⟨bump, rfl⟩, rfl⟩
-  · exact ⟨Or.inl rfl, rfl⟩
+  · exact ⟨Or.inr ⟨bump, rfl⟩, by simp [bumpedState, Message.term], rfl⟩
+  · exact ⟨Or.inl rfl, le, rfl⟩
 
 /-- A vote request is answered; a grant records the vote. -/
 theorem voteRequest_receive (source : NodeID) (before : NodeState)
@@ -166,6 +167,7 @@ theorem voteRequest_receive (source : NodeID) (before : NodeState)
         (fun after sent =>
           exists middle granted,
             Observed before request.term middle
+            /\ request.term <= middle.currentTerm
             /\ (granted = true
                 <-> request.term = middle.currentTerm
                     /\ voteLogUpToDate middle request
@@ -185,10 +187,11 @@ theorem voteRequest_receive (source : NodeID) (before : NodeState)
   simp only [receive]
   refine Sends.ite' (fun no => by simp at no) fun _ => ?_
   rcases observe_bumping before (message := .requestVoteRequest request) trivial
-    with ⟨bump, eq⟩ | ⟨_, eq⟩ <;> rw [eq] <;> simp only [handleRequestVoteRequest] <;>
+    with ⟨bump, eq⟩ | ⟨le, eq⟩ <;> rw [eq] <;> simp only [handleRequestVoteRequest] <;>
     refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ?_ <;> subst eq
-  · exact ⟨_, _, Or.inr ⟨bump, rfl⟩, by simp [Message.term], rfl, rfl⟩
-  · exact ⟨_, _, Or.inl rfl, by simp, rfl, rfl⟩
+  · exact ⟨_, _, Or.inr ⟨bump, rfl⟩, by simp [bumpedState],
+      by simp [Message.term], rfl, rfl⟩
+  · exact ⟨_, _, Or.inl rfl, le, by simp, rfl, rfl⟩
 
 /-- What a broadcast to the other active members sends. -/
 def Broadcast (self : NodeID) (state : NodeState) (message : Message)
