@@ -1,5 +1,6 @@
 module
 
+public import CCFRaft.Proofs.Leadership.AnchorWindow
 public import CCFRaft.Proofs.Leadership.Settles
 public import CCFRaft.Proofs.Leadership.Timers
 public import CCFRaft.Proofs.Replication.Run
@@ -229,33 +230,70 @@ theorem no_timeout_of_acks {bounds : Bounds}
   rw [← resetFound] at recent
   linarith
 
-/-- A participant that acknowledges the primary within `ackBound` sends a
+/-- A participant in the term at `start` is in it at a later recorded state at
+which the term is quiet among participants. -/
+theorem current_of_inTerm {start : Nat} {leader : NodeID} {term : Nat}
+    {participants : Finset NodeID} (inTerm : InTermAt trace start term participants)
+    {node : NodeID} (nodeIn : node ∈ participants) {index : Nat} {point : W}
+    (afterStart : start <= index) (found : trace.stateAt index = some point)
+    (quiet : QuietAmong participants leader term (proto point))
+    : exists state,
+        nodeState (proto point) node = some state /\ state.currentTerm = term := by
+  obtain ⟨first, initial, firstFound, initialFound, initialTerm⟩ := inTerm node nodeIn
+  obtain ⟨state, stateFound, grows⟩ :=
+    Proofs.StablePrimary.term_mono admissible afterStart
+      (by rw [Trace.nodeAt_of_stateAt firstFound, initialFound]) found
+  rw [Trace.nodeAt_of_stateAt found] at stateFound
+  have upper := quiet.terms node state (Proofs.Concrete.mem_of_nodeState stateFound) nodeIn
+  exact ⟨state, stateFound, by omega⟩
+
+/-- A node of `peers` that acknowledges the primary within `ackBound` sends a
 successful acknowledgement within `maxDelay + interval + ackBound` after every
 point before its timeout. The window is cut strictly before the timeout, where the
-invariant prefix gives a stable window for `peer_acks`. -/
+facts about the prefix give a stable window over `peers` for `peer_acks`. -/
 theorem acks_before_timeout {heartbeatInterval maxDelay : Real}
     (diverges : TimeDiverges trace)
     (bounded : trace.Valid (boundedDelayModel maxDelay)) (nonneg : 0 <= maxDelay)
     (heartbeats : trace.HeartbeatScheduling (some heartbeatInterval))
     {start : Nat} {duration : Real} {leader node : NodeID} {term backlog : Nat}
-    {participants : Finset NodeID}
+    {participants peers : Finset NodeID}
     (good : GoodPeriod trace start duration participants)
     (active : Window.StaysActive trace start duration leader)
-    (inTerm : InTermAt trace start term participants)
-    (behind : BacklogTerms trace start leader participants backlog)
-    (leaderIn : leader ∈ participants) (nodeIn : node ∈ participants)
+    (behind : BacklogTerms trace start leader peers backlog)
+    (subset : peers ⊆ participants)
+    (leaderIn : leader ∈ peers) (nodeIn : node ∈ peers)
     (different : Not (node = leader))
     {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
     (stepped : trace.stepAt index = some step)
     (within : Within trace start duration index)
     {first : W} (firstFound : trace.stateAt start = some first)
-    (invariant
+    (quiet
       : forall earlier point,
           start <= earlier
           -> earlier <= index
           -> trace.stateAt earlier = some point
-          -> QuietAmong participants leader term (proto point)
-              /\ MembersAt participants leader (proto point))
+          -> QuietAmong peers leader term (proto point))
+    (quorum
+      : forall earlier point state,
+          start <= earlier
+          -> earlier <= index
+          -> trace.stateAt earlier = some point
+          -> nodeState (proto point) leader = some state
+          -> hasQuorum state.activeConfigurations (Inter.inter (live point) peers))
+    (tracked
+      : forall earlier point state,
+          start <= earlier
+          -> earlier <= index
+          -> trace.stateAt earlier = some point
+          -> nodeState (proto point) leader = some state
+          -> node ∈ eligiblePeers state leader)
+    (current
+      : forall earlier point,
+          start <= earlier
+          -> earlier <= index
+          -> trace.stateAt earlier = some point
+          -> exists state,
+              nodeState (proto point) node = some state /\ state.currentTerm = term)
     : forall earlier point,
         start <= earlier
         -> earlier <= index
@@ -302,21 +340,23 @@ theorem acks_before_timeout {heartbeatInterval maxDelay : Real}
       -> trace.stateAt moment = some point' -> Within trace start duration moment :=
     fun moment point' inside found =>
       within_of_le admissible within indexFound inside.1 (below moment point' inside found).le
-  have window : StableWindow trace start duration' leader term participants := {
+  have window : StableWindow trace start duration' leader term peers := {
     stableLeader := fun moment point' inside found =>
-      (invariant moment point' inside.1 (below moment point' inside found).le found).1
+      quiet moment point' inside.1 (below moment point' inside found).le found
     staysActive := ⟨
       fun moment point' inside found => active.live moment point' (widen _ _ inside found) found,
       fun moment point' state inside found nodeFound =>
         active.notRetired moment point' state (widen _ _ inside found) found nodeFound⟩
     liveQuorum := fun moment point' state inside found leaderFound =>
-      good.quorum moment point' leader state (widen _ _ inside found) found
-        (active.live moment point' (widen _ _ inside found) found) leaderFound
+      quorum moment point' state inside.1 (below moment point' inside found).le found
+        leaderFound
     lossless := fun moment step' packet inside stepped' dropped => by
       have inside' := widen _ _ inside (admissible.before stepped')
       rintro (⟨source, target⟩ | ⟨source, target⟩)
-      · exact good.lossless moment step' packet inside' stepped' dropped ⟨source ▸ leaderIn, target⟩
-      · exact good.lossless moment step' packet inside' stepped' dropped ⟨source, target ▸ leaderIn⟩
+      · exact good.lossless moment step' packet inside' stepped' dropped
+          ⟨source ▸ subset leaderIn, subset target⟩
+      · exact good.lossless moment step' packet inside' stepped' dropped
+          ⟨subset source, target ▸ subset leaderIn⟩
   }
   have gapNonneg : 0 <= gap := by rw [gapEq]; linarith
   obtain ⟨last, lastPoint, startLe, lastFound, inside, beyond⟩ :=
@@ -333,22 +373,20 @@ theorem acks_before_timeout {heartbeatInterval maxDelay : Real}
     intro moment state after le' found
     obtain ⟨point', pointFound, nodeFound⟩ := Trace.nodeAt_eq_some.mp found
     have lastBelow := below last lastPoint (inside last startLe le_rfl) lastFound
-    exact eligible_of_latest
-      ((invariant moment point' after (by omega) pointFound).2 state nodeFound node nodeIn
-        different)
-      different
+    exact tracked moment point' state after (by omega) pointFound nodeFound
   have env :=
     env_of_window admissible bounded diverges heartbeats durationNonneg window firstFound startLe
       lastFound inside beyond nodeIn
       (good.participantsLive last lastPoint node (widen _ _ (inside last startLe le_rfl) lastFound)
-        lastFound nodeIn)
+        lastFound (subset nodeIn))
       eligibleAt
   have cutAdmissible := Proofs.Timed.Admissible.cut admissible last
   have acks := fun base (startLe' : start <= base) (baseLe : base <= last) timely =>
     peer_acks cutAdmissible stable different env
-      (fun moment point' after le' found =>
-        participant_term admissible window.stableLeader inTerm nodeIn (inside moment after le')
-          (stateAt_of_cut found).2)
+      (fun moment point' after le' found => by
+        obtain ⟨le'', found⟩ := stateAt_of_cut found
+        have lastBelow := below last lastPoint (inside last startLe le_rfl) lastFound
+        exact current moment point' after (by omega) found)
       (fun moment state after found => by
         obtain ⟨le', found'⟩ := cut_nodeAt found
         exact eligibleAt moment state after le' found')
@@ -455,13 +493,28 @@ theorem stable_window_catchup [HasTimers W] {bounds : Bounds} {maxDelay : Real}
       rw [← repair_eq]; linarith
     exact (window_invariant_core admissible initial members good active leaderIn
             (bound := index)
-            (fun _ _ _ _ _ afterStart _ within' stepped timeout _ nodeIn different _
+            (fun _ _ node _ _ afterStart _ within' stepped timeout _ nodeIn different _
                 firstFound late invariant =>
               no_timeout_of_acks admissible elections gapLt freshLe afterStart stepped
                 timeout firstFound late
                 (acks_before_timeout admissible diverges bounded nonneg heartbeats good
-                  active inTerm behind leaderIn nodeIn different stepped within'
-                  firstFound invariant))
+                  active behind subset_rfl leaderIn nodeIn different stepped within'
+                  firstFound
+                  (fun earlier point after le found =>
+                    (invariant earlier point after le found).1)
+                  (fun earlier point state after le found leaderFound =>
+                    have inside := within_of_le admissible within'
+                      (admissible.before stepped) after le
+                    good.quorum earlier point leader state inside found
+                      (active.live earlier point inside found) leaderFound)
+                  (fun earlier point state after le found leaderFound =>
+                    eligible_of_latest
+                      ((invariant earlier point after le found).2 state leaderFound node
+                        nodeIn different)
+                      different)
+                  (fun earlier point after le found =>
+                    current_of_inTerm admissible inTerm nodeIn after found
+                      (invariant earlier point after le found).1)))
             index point le_rfl within found).1
   staysActive := active
   liveQuorum index point state within found leaderFound :=
@@ -471,6 +524,107 @@ theorem stable_window_catchup [HasTimers W] {bounds : Bounds} {maxDelay : Real}
     rintro (⟨source, target⟩ | ⟨source, target⟩)
     · exact good.lossless index step packet within stepped dropped ⟨source ▸ leaderIn, target⟩
     · exact good.lossless index step packet within stepped dropped ⟨source, target ▸ leaderIn⟩
+
+/-- `stable_window_catchup` on an anchored start: a stable window over the anchor,
+in which the term also stays quiet over all participants, while anchor nodes catch
+up. `stable_window_anchored` with `InSync` replaced by `BacklogTerms` over the
+anchor. No `InTermAt` premise is needed, since the anchored start puts every
+anchor node in the term. Every anchor node's election timer is reset by its own
+successful acknowledgements, which the primary's repair produces within `repair`
+of every point, so no anchor node times out while `fresh` exceeds
+`repair + heartbeatInterval + maxDelay`.
+
+Each premise beyond `stable_window_anchored`'s is needed.
+- `BacklogTerms`: with anchor `{L, f, g}`, let `L`'s log hold terms
+  `2, 4, ..., 2 n` above the agreed prefix and `f` and `g` both hold
+  `1, 3, ..., 2 n - 1`, which alternation reaches. Each rejection moves `L` down
+  one block, so repair takes `n` rounds of `2 maxDelay + heartbeatInterval`. For
+  large `n`, `f` and `g` time out, lose the primary, grant each other pre-votes
+  since their logs are equal, and one reaches `term + 1`.
+- `ratio`, beyond `stable_window_anchored`'s `heartbeatInterval + maxDelay < fresh`:
+  let `f` and `g` each lack `L`'s last entry. The first heartbeat is rejected at
+  up to `heartbeatInterval + maxDelay`, the rejection lands `maxDelay` later, and
+  the retry goes out within `heartbeatInterval` and lands `maxDelay` after that.
+  The first reset can come as late as `2 heartbeatInterval + 3 maxDelay`, so with
+  `fresh` at most that, both time out and depose `L`.
+- `diverges`: the acknowledgement bound is cut strictly before a timeout, which
+  needs the trace to reach every time. -/
+theorem stable_window_catchup_anchored [HasTimers W] {bounds : Bounds} {maxDelay : Real}
+    (timers : trace.Valid (timerModel bounds.electionTimeout))
+    (bounded : trace.Valid (boundedDelayModel maxDelay)) (diverges : TimeDiverges trace)
+    (nonneg : 0 <= maxDelay)
+    (heartbeats : trace.HeartbeatScheduling (some bounds.heartbeatInterval))
+    {backlog : Nat} {fresh : Real}
+    (ratio
+      : repair maxDelay (max bounds.heartbeatInterval 0) backlog
+          + max bounds.heartbeatInterval 0
+          + maxDelay
+        < fresh)
+    (freshLe : fresh <= bounds.electionTimeout / 2)
+    {start : Nat} {duration : Real} {leader : NodeID} {term : Nat}
+    {participants anchor : Finset NodeID}
+    (initial : AnchoredStart trace start leader term participants anchor fresh)
+    (good : GoodPeriod trace start duration participants)
+    (active : Window.AnchorActive trace start duration anchor)
+    (behind : BacklogTerms trace start leader anchor backlog)
+    : StableWindow trace start duration leader term anchor
+      /\ Window.StableTerm trace start duration leader term participants := by
+  have elections :=
+    Liveness.electionScheduling_of_timerModel admissible.coherent admissible.timing timers
+  have gapLt
+      : maxDelay + max bounds.heartbeatInterval 0
+          + ackBound maxDelay (max bounds.heartbeatInterval 0) backlog
+        < fresh := by
+    rw [← repair_eq]; linarith
+  obtain ⟨_, _, _, anchored, _⟩ := initial.quiet
+  have staysActive :=
+    Window.AnchorActive.staysActive active good anchored.leaderIn anchored.subset
+  have inv
+      : forall index point,
+          Within trace start duration index
+          -> trace.stateAt index = some point
+          -> AnchorInv participants anchor leader term (proto point) :=
+    fun index point =>
+      anchor_invariant_core admissible initial good active (bound := index)
+        (fun _ _ node _ _ afterStart _ within' stepped timeout _ nodeIn different _
+            firstFound late invariant =>
+          have inside {earlier : Nat} (after : start <= earlier) (le : earlier <= _) :=
+            within_of_le admissible within' (admissible.before stepped) after le
+          no_timeout_of_acks admissible elections gapLt freshLe afterStart stepped timeout
+            firstFound late
+            (acks_before_timeout admissible diverges bounded nonneg heartbeats good
+              staysActive behind anchored.subset anchored.leaderIn nodeIn different stepped
+              within' firstFound
+              (fun earlier point after le found =>
+                (invariant earlier point after le found).quietAmong admissible found)
+              (fun earlier point _ after le found leaderFound =>
+                (invariant earlier point after le found).liveQuorum good (inside after le)
+                  found leaderFound)
+              (fun earlier point _ after le found leaderFound =>
+                (invariant earlier point after le found).tracked nodeIn different
+                  leaderFound)
+              (fun earlier point after le found => by
+                obtain ⟨_, exec⟩ := history_at admissible found
+                obtain ⟨local_, now, termEq, _⟩ :=
+                  (invariant earlier point after le found).anchored.settled node nodeIn
+                exact ⟨local_, found_of_now exec now, termEq⟩)))
+        index point le_rfl
+  refine ⟨
+    {
+      stableLeader := fun index point within found =>
+        (inv index point within found).quietAmong admissible found
+      staysActive := staysActive
+      liveQuorum := fun index point _ within found leaderFound =>
+        (inv index point within found).liveQuorum good within found leaderFound
+      lossless := fun index step packet within stepped dropped => by
+        rintro (⟨source, target⟩ | ⟨source, target⟩)
+        · exact good.lossless index step packet within stepped dropped
+            ⟨source ▸ anchored.subset anchored.leaderIn, anchored.subset target⟩
+        · exact good.lossless index step packet within stepped dropped
+            ⟨anchored.subset source, target ▸ anchored.subset anchored.leaderIn⟩
+    },
+    fun index point within found => (inv index point within found).quiet
+  ⟩
 
 end Recorded
 
