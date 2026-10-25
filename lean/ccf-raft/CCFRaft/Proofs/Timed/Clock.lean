@@ -27,7 +27,7 @@ open HasTime (time)
 open HasLive (live)
 open HasNetwork (pending)
 open CCFRaft.Proofs.Liveness (Admissible)
-open CCFRaft.Proofs.Leadership (quiet_leader)
+open CCFRaft.Proofs.Leadership (quietAmong_leader)
 
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
 
@@ -268,7 +268,7 @@ theorem env_of_window {maxDelay heartbeat : Real}
     have due : PeerDue point leader peer := by
       have within := inside (past - 1) (by omega) pointIn
       obtain ⟨state, nodeFound, primary, _⟩ :=
-        quiet_leader admissible found (window.stableLeader _ point within found)
+        quietAmong_leader admissible found (window.stableLeader _ point within found)
       exact ⟨leaderLiveAt _ point (by omega) pointIn found, peerLiveAt _ point pointIn found,
         state, nodeFound, primary,
         window.staysActive.notRetired _ point state within found nodeFound,
@@ -285,7 +285,7 @@ theorem env_of_window {maxDelay heartbeat : Real}
       apply notDue
       have within := inside later (by omega) laterIn
       obtain ⟨state, nodeFound, primary, _⟩ :=
-        quiet_leader admissible laterFound (window.stableLeader _ laterPoint within laterFound)
+        quietAmong_leader admissible laterFound (window.stableLeader _ laterPoint within laterFound)
       exact ⟨leaderLiveAt _ laterPoint (by omega) laterIn laterFound,
         peerLiveAt _ laterPoint laterIn laterFound, state, nodeFound, primary,
         window.staysActive.notRetired _ laterPoint state within laterFound nodeFound,

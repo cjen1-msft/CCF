@@ -1,6 +1,7 @@
 module
 
 public import CCFRaft.Proofs.Timed.Cut
+public import CCFRaft.Proofs.Leadership.Settles
 
 @[expose] public section
 
@@ -25,7 +26,7 @@ open HasTime (time)
 open HasLive (live)
 open HasNetwork (pending)
 open CCFRaft.Proofs.Liveness (Admissible)
-open CCFRaft.Proofs.Leadership (quiet_leader)
+open CCFRaft.Proofs.Leadership (quietAmong_leader)
 
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
 
@@ -94,7 +95,8 @@ include admissible
 /-- Cut at a recorded index inside the window, the window's primary is stable from
 `start` in the untimed sense. -/
 theorem stable_cut {start last : Nat} {duration : Real} {leader : NodeID} {term : Nat}
-    (stable : Window.StableLeader trace start duration leader term)
+    {participants : Finset NodeID}
+    (stable : Window.StableLeader trace start duration leader term participants)
     (active : Window.StaysActive trace start duration leader) (afterStart : start <= last)
     (inside
       : forall index,
@@ -108,7 +110,7 @@ theorem stable_cut {start last : Nat} {duration : Real} {leader : NodeID} {term 
   obtain ⟨below, found⟩ := stateAt_of_cut found
   have within := inside index le below
   obtain ⟨state, nodeFound, primary, termEq⟩ :=
-    quiet_leader admissible found (stable index point within found)
+    quietAmong_leader admissible found (stable index point within found)
   exact ⟨
     point,
     state,
@@ -124,7 +126,7 @@ theorem stable_cut {start last : Nat} {duration : Real} {leader : NodeID} {term 
 window. -/
 theorem participant_term {start : Nat} {duration : Real} {leader : NodeID} {term : Nat}
     {participants : Finset NodeID}
-    (stable : Window.StableLeader trace start duration leader term)
+    (stable : Window.StableLeader trace start duration leader term participants)
     (inTerm : InTermAt trace start term participants) {node : NodeID}
     (member : node ∈ participants) {index : Nat} {point : W}
     (within : Within trace start duration index)
@@ -137,7 +139,7 @@ theorem participant_term {start : Nat} {duration : Real} {leader : NodeID} {term
       (by rw [Trace.nodeAt_of_stateAt firstFound, initialFound]) found
   rw [Trace.nodeAt_of_stateAt found] at stateFound
   have upper := (stable index point within found).terms node state
-    (Proofs.Concrete.mem_of_nodeState stateFound)
+    (Proofs.Concrete.mem_of_nodeState stateFound) member
   exact ⟨state, stateFound, by omega⟩
 
 end CCFRaft.Proofs.Timed
