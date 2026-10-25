@@ -215,6 +215,31 @@ def Lossless (trace : Trace W Event) (start : Nat) (duration : Real) (leader : N
         ((packet.envelope.source = leader /\ packet.envelope.target ∈ participants)
           \/ (packet.envelope.source ∈ participants /\ packet.envelope.target = leader))
 
+/-- Every AppendEntries request delivered in the window from one node to another
+participant, whose term is at least the participant's and that finds it neither a
+candidate nor a pre-vote candidate, passes the participant's log check.
+
+An interim premise. The anchor stops lagging participants from deposing the
+primary only once its quorum has settled (`primaryKnown`), and settling the
+quorum of a newly elected primary still needs its AppendEntries to match, or else
+`InSync` or a repair bound at the start. -/
+def Matching (trace : Trace W Event) (start : Nat) (duration : Real)
+    (participants : Finset NodeID)
+    : Prop :=
+  forall index step packet request state,
+    Within trace start duration index
+    -> trace.stepAt index = some step
+    -> step.action = .deliver packet
+    -> packet.envelope.target ∈ participants
+    -> Not (packet.envelope.target = packet.envelope.source)
+    -> packet.envelope.payload = .appendEntriesRequest request
+    -> CCF.MultiNodeTransitionSystem.nodeState (proto step.before) packet.envelope.target
+        = some state
+    -> state.currentTerm <= request.term
+    -> Not (state.role = .candidate)
+    -> Not (state.role = .preVoteCandidate)
+    -> termAt state.log request.prevLogIndex = request.prevLogTerm
+
 end Window
 
 /-- A window of real time, from index `start` for `duration`, in which `leader`

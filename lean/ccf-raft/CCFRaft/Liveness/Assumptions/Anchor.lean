@@ -174,6 +174,37 @@ theorem Membership.latest {participants members : Finset NodeID} {state : Model.
   | some configuration =>
       exact Or.inr (active configuration (List.mem_of_getLast? last))
 
+private theorem foldl_union_same {members : Finset NodeID}
+    : forall (configurations : List Configuration) (nodes : Finset NodeID),
+        (forall configuration,
+          configuration ∈ configurations -> configuration.nodes = members)
+        -> Not (configurations = [])
+        -> configurations.foldl (fun nodes configuration => nodes ∪ configuration.nodes)
+              nodes
+            = nodes ∪ members
+  | [], _, _, empty => absurd rfl empty
+  | configuration :: rest, nodes, same, _ => by
+      rw [List.foldl_cons, same configuration List.mem_cons_self]
+      by_cases restEmpty : rest = []
+      · subst restEmpty
+        rfl
+      · rw [foldl_union_same rest _ (fun c found => same c (List.mem_cons_of_mem _ found))
+          restEmpty, Finset.union_assoc, Finset.union_self]
+
+/-- Under a fixed membership, every participant's active members are the
+membership, unless it has no active configuration. -/
+theorem Membership.activeMembers {participants members : Finset NodeID}
+    {state : Model.State} (membership : Membership participants members state)
+    {node : NodeID} {local_ : NodeState} (member : (node, local_) ∈ state.nodes)
+    (nodeIn : node ∈ participants)
+    : local_.activeConfigurations = [] \/ local_.activeMembers = members := by
+  obtain ⟨active, _, _⟩ := membership node local_ member nodeIn
+  by_cases empty : local_.activeConfigurations = []
+  · exact Or.inl empty
+  refine Or.inr ?_
+  unfold NodeState.activeMembers configurationMembers
+  rw [foldl_union_same _ _ active empty, Finset.empty_union]
+
 variable {W : Type} [HasProtocol W Model.State] [HasTime W]
 
 /-- An anchored start: at `start` the term is quiet among participants without
