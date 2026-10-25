@@ -192,7 +192,7 @@ def NoGrant (envelope : Model.Envelope) : Prop :=
   forall response, Not (envelope.payload = .requestPreVoteResponse response)
 
 /-- What one local step does to the facts an anchor relies on. -/
-structure AnchorStep (self : NodeID) (before : NodeState) (event : Event)
+structure AnchorStep (actor : NodeID) (before : NodeState) (event : Event)
     (after : NodeState) (sent : List Model.Envelope)
     : Prop where
   /-- A primary does not time out. -/
@@ -210,13 +210,13 @@ structure AnchorStep (self : NodeID) (before : NodeState) (event : Event)
   keep
     : before.primaryKnown = true
       -> (before.role = .follower \/ before.role = .primary)
-      -> Latched self before after \/ Exempt before event
+      -> Latched actor before after \/ Exempt before event
   /-- A pre-vote is counted only from the node itself on a timeout, or from a
   granted response of the current term. -/
   counts
     : forall voter,
         voter ∈ after.preVotesGranted
-        -> (event = .internal (.timeout .election) /\ voter = self)
+        -> (event = .internal (.timeout .election) /\ voter = actor)
             \/ (Not (event = .internal (.timeout .election))
                 /\ voter ∈ before.preVotesGranted)
             \/ exists response,
@@ -227,7 +227,7 @@ structure AnchorStep (self : NodeID) (before : NodeState) (event : Event)
   fresh
     : before.currentTerm < after.currentTerm -> Not (Raised before event)
       -> (event = .internal (.timeout .election)
-            -> hasQuorum before.activeConfigurations {self})
+            -> hasQuorum before.activeConfigurations {actor})
           /\ forall source response,
               event = .receive source (.requestPreVoteResponse response)
               -> response.term = before.currentTerm
