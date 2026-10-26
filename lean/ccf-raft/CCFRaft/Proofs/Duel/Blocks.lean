@@ -27,7 +27,8 @@ namespace Attempts
 variable {margin : Real} {width K : Nat}
 
 /-- The rounds of `attempts` from `offset` on, as rounds from zero. -/
-def shift (attempts : Attempts margin width K) (offset : Nat) : Attempts margin width K where
+def shift (attempts : Attempts margin width K) (offset : Nat)
+    : Attempts margin width K where
   relevant k := attempts.relevant (offset + k)
   relevant_measurable k := attempts.relevant_measurable (offset + k)
   centres k := attempts.centres (offset + k)

@@ -301,56 +301,60 @@ theorem duelling_leaders_resolve
             /\ (forall node, node ∈ participants -> node ∈ nodes)
             /\ forall sample : Liveness.Sample,
                 (forall j, sample j ∈ Set.Icc (electionTimeout / 2) electionTimeout)
-                -> let trace := Liveness.run participants policy sample
-                  trace.Coherent
-                  /\ trace.Valid (Liveness.protocolModel system)
-                  /\ trace.Valid Liveness.timingModel
-                  /\ trace.Valid Liveness.crashModel
-                  /\ trace.Valid (Liveness.deliveryModel system)
-                  /\ trace.Valid (Liveness.boundedDelayModel maxDelay)
-                  /\ trace.Valid (Liveness.timerModel electionTimeout)
-                  /\ Liveness.TimeDiverges trace
-                  /\ trace.HeartbeatScheduling (some heartbeat)
-                  /\ (forall node,
-                      node ∈ participants
-                      -> Liveness.Scheduled trace (some 0)
-                          (fun point => Liveness.TimeoutDue point node)
-                          (fun step => step.action = .local node (.timeout .election)))
-                  /\ (exists bad : Finset Nat,
-                      bad.card <= overshoots
-                      /\ forall index step node,
+                ->  let trace := Liveness.run participants policy sample
+                    trace.Coherent
+                    /\ trace.Valid (Liveness.protocolModel system)
+                    /\ trace.Valid Liveness.timingModel
+                    /\ trace.Valid Liveness.crashModel
+                    /\ trace.Valid (Liveness.deliveryModel system)
+                    /\ trace.Valid (Liveness.boundedDelayModel maxDelay)
+                    /\ trace.Valid (Liveness.timerModel electionTimeout)
+                    /\ Liveness.TimeDiverges trace
+                    /\ trace.HeartbeatScheduling (some heartbeat)
+                    /\ (forall node,
                           node ∈ participants
-                          -> Liveness.Within trace start duration index
-                          -> trace.stepAt index = some step
-                          -> Liveness.NoOvershoot (some (if index ∈ bad then jump else 0))
-                              step node)
-                  /\ Liveness.GoodPeriod trace start duration participants
-                  /\ Liveness.Window.Matching trace start duration participants
-                  /\ Liveness.Window.AnchorActive trace start duration participants
-                  /\ forall point,
-                      trace.stateAt start = some point
-                      -> Liveness.Membership participants members
-                          (Liveness.HasProtocol.proto point)
-                        /\ Liveness.ConfigurationCommitted participants
-                          (Liveness.HasProtocol.proto point)
-                        /\ Liveness.HasRole participants (Liveness.HasProtocol.proto point))
+                          -> Liveness.Scheduled trace (some 0)
+                              (fun point => Liveness.TimeoutDue point node)
+                              (fun step =>
+                                step.action = .local node (.timeout .election)))
+                    /\ (exists bad : Finset Nat,
+                          bad.card <= overshoots
+                          /\ forall index step node,
+                              node ∈ participants
+                              -> Liveness.Within trace start duration index
+                              -> trace.stepAt index = some step
+                              -> Liveness.NoOvershoot
+                                  (some (if index ∈ bad then jump else 0)) step node)
+                    /\ Liveness.GoodPeriod trace start duration participants
+                    /\ Liveness.Window.Matching trace start duration participants
+                    /\ Liveness.Window.AnchorActive trace start duration participants
+                    /\ forall point,
+                        trace.stateAt start = some point
+                        -> Liveness.Membership participants members
+                              (Liveness.HasProtocol.proto point)
+                            /\ Liveness.ConfigurationCommitted participants
+                                (Liveness.HasProtocol.proto point)
+                            /\ Liveness.HasRole participants
+                                (Liveness.HasProtocol.proto point))
           -> MeasureTheory.Measure.infinitePi (fun _ => law)
-              {sample |
-                Not
-                  (Liveness.HandoffBy (Liveness.run participants policy sample) participants
-                    start duration fresh)
-              }
-            <= ENNReal.ofReal
-                ((overshoots + 1)
-                  * Liveness.roundFailure rho (participants.card - 1)
-                      (2 * participants.card) ^ rounds) := by
+                {sample |
+                  Not
+                    (Liveness.HandoffBy (Liveness.run participants policy sample)
+                      participants start duration fresh)
+                }
+              <= ENNReal.ofReal
+                  ((overshoots + 1)
+                    * Liveness.roundFailure rho (participants.card - 1)
+                        (2 * participants.card)
+                      ^ rounds) := by
   intro config nodes system policy law bounds maxDelay jump rho fresh overshoots rounds start
     participants members electionTimeout heartbeat handover initial duration
     ⟨isLaw, borel, nonnegative, jumpNonnegative, heartbeatNonnegative, ratio, handoverRatio,
       freshLe, freshHandover, subset, nonempty, present, runs⟩
   let _ : Proofs.Config.InitialConfiguration := ⟨config⟩
   exact Proofs.Duel.Resolve.duelling_leaders_resolve (nodes := nodes) (initial := initial)
-    (overshoots := overshoots) isLaw borel freshLe fun sample support => by
+    (overshoots := overshoots) isLaw borel freshLe
+    fun sample support => by
       obtain ⟨coherent, protocol, timing, crash, delivery, delay, timers, diverges, heartbeats,
         firing, overshoot, period, matching, active, atStart⟩ := runs sample support
       have admissible : Proofs.Liveness.Admissible system (Liveness.run participants policy sample) :=
@@ -368,9 +372,9 @@ theorem duelling_leaders_resolve
           (atStart first found).2.2 node state (Proofs.Witnesses.mem_of_nodeState located) member
       have long := Proofs.Duel.Resolve.initial_le_window (initial := initial)
         (overshoots := overshoots) (rounds := rounds) nonnegative jumpNonnegative ratio
-      exact Proofs.Duel.Resolve.setup_of_init admissible delay timers diverges firing overshoot
-        nonnegative jumpNonnegative ratio long (by positivity) period matching active
-        membership subset configured roled nonempty present
+      exact Proofs.Duel.Resolve.setup_of_init admissible delay timers diverges firing
+        overshoot nonnegative jumpNonnegative ratio long (by positivity) period matching
+        active membership subset configured roled nonempty present
         (Proofs.Leadership.init_incumbent admissible delay timers diverges heartbeats
           nonnegative heartbeatNonnegative handoverRatio freshHandover long period active
           matching membership subset roled)
@@ -407,56 +411,89 @@ lemma duelling_leaders_resolve_witness
             /\ (forall node, node ∈ ({0} : Finset NodeID) -> node ∈ [0])
             /\ forall sample : Liveness.Sample,
                 (forall j, sample j ∈ Set.Icc (electionTimeout / 2) electionTimeout)
-                -> let trace := Liveness.run {0} policy sample
-                  trace.Coherent
-                  /\ trace.Valid (Liveness.protocolModel system)
-                  /\ trace.Valid Liveness.timingModel
-                  /\ trace.Valid Liveness.crashModel
-                  /\ trace.Valid (Liveness.deliveryModel system)
-                  /\ trace.Valid (Liveness.boundedDelayModel 0)
-                  /\ trace.Valid (Liveness.timerModel electionTimeout)
-                  /\ Liveness.TimeDiverges trace
-                  /\ trace.HeartbeatScheduling (some heartbeat)
-                  /\ (forall node,
-                      node ∈ ({0} : Finset NodeID)
-                      -> Liveness.Scheduled trace (some 0)
-                          (fun point => Liveness.TimeoutDue point node)
-                          (fun step => step.action = .local node (.timeout .election)))
-                  /\ (exists bad : Finset Nat,
-                      bad.card <= 0
-                      /\ forall index step node,
+                ->  let trace := Liveness.run {0} policy sample
+                    trace.Coherent
+                    /\ trace.Valid (Liveness.protocolModel system)
+                    /\ trace.Valid Liveness.timingModel
+                    /\ trace.Valid Liveness.crashModel
+                    /\ trace.Valid (Liveness.deliveryModel system)
+                    /\ trace.Valid (Liveness.boundedDelayModel 0)
+                    /\ trace.Valid (Liveness.timerModel electionTimeout)
+                    /\ Liveness.TimeDiverges trace
+                    /\ trace.HeartbeatScheduling (some heartbeat)
+                    /\ (forall node,
                           node ∈ ({0} : Finset NodeID)
-                          -> Liveness.Within trace 1 duration index
-                          -> trace.stepAt index = some step
-                          -> Liveness.NoOvershoot (some (if index ∈ bad then 0 else 0))
-                              step node)
-                  /\ Liveness.GoodPeriod trace 1 duration {0}
-                  /\ Liveness.Window.Matching trace 1 duration {0}
-                  /\ Liveness.Window.AnchorActive trace 1 duration {0}
-                  /\ forall point,
-                      trace.stateAt 1 = some point
-                      -> Liveness.Membership {0} {0} (Liveness.HasProtocol.proto point)
-                        /\ Liveness.ConfigurationCommitted {0} (Liveness.HasProtocol.proto point)
-                        /\ Liveness.HasRole {0} (Liveness.HasProtocol.proto point))
+                          -> Liveness.Scheduled trace (some 0)
+                              (fun point => Liveness.TimeoutDue point node)
+                              (fun step =>
+                                step.action = .local node (.timeout .election)))
+                    /\ (exists bad : Finset Nat,
+                          bad.card <= 0
+                          /\ forall index step node,
+                              node ∈ ({0} : Finset NodeID)
+                              -> Liveness.Within trace 1 duration index
+                              -> trace.stepAt index = some step
+                              -> Liveness.NoOvershoot
+                                  (some (if index ∈ bad then 0 else 0)) step node)
+                    /\ Liveness.GoodPeriod trace 1 duration {0}
+                    /\ Liveness.Window.Matching trace 1 duration {0}
+                    /\ Liveness.Window.AnchorActive trace 1 duration {0}
+                    /\ forall point,
+                        trace.stateAt 1 = some point
+                        -> Liveness.Membership {0} {0} (Liveness.HasProtocol.proto point)
+                            /\ Liveness.ConfigurationCommitted {0}
+                                (Liveness.HasProtocol.proto point)
+                            /\ Liveness.HasRole {0} (Liveness.HasProtocol.proto point))
           /\ forall sample : Liveness.Sample,
               Liveness.HandoffBy (Liveness.run {0} policy sample) {0} 1 duration 1 := by
   intro system bounds rounds electionTimeout heartbeat handover initial duration
   have durationNonnegative : 0 <= duration := by
     simp only [duration, initial, handover, heartbeat, electionTimeout, bounds]
     positivity
-  refine ⟨policy, law, ⟨law_valid, borel, le_rfl, le_rfl, by norm_num [heartbeat, bounds],
-    by norm_num [electionTimeout, bounds], by norm_num [handover, heartbeat, electionTimeout, bounds],
-    by norm_num [electionTimeout, bounds], by norm_num [handover, heartbeat, electionTimeout, bounds],
-    subset_refl _, Finset.singleton_nonempty 0, by simp, fun sample _ => ?_⟩,
-    fun sample => handoff_one sample 1 duration durationNonnegative⟩
+  refine ⟨
+    policy,
+    law,
+    ⟨
+      law_valid,
+      borel,
+      le_rfl,
+      le_rfl,
+      by norm_num [heartbeat, bounds],
+      by norm_num [electionTimeout, bounds],
+      by norm_num [handover, heartbeat, electionTimeout, bounds],
+      by norm_num [electionTimeout, bounds],
+      by norm_num [handover, heartbeat, electionTimeout, bounds],
+      subset_refl _,
+      Finset.singleton_nonempty 0,
+      by simp,
+      fun sample _ => ?_
+    ⟩,
+    fun sample => handoff_one sample 1 duration durationNonnegative
+  ⟩
   intro trace
   obtain ⟨coherent, protocol, timing, crash, delivery⟩ := admissible_unfolded sample
-  exact ⟨coherent, protocol, timing, crash, delivery, bounded_delay sample, timers sample,
-    diverges sample, heartbeats sample heartbeat, firing sample,
-    overshoot sample 1 duration 0 0, good_period sample 1 duration, matching sample 1 duration,
+  exact ⟨
+    coherent,
+    protocol,
+    timing,
+    crash,
+    delivery,
+    bounded_delay sample,
+    timers sample,
+    diverges sample,
+    heartbeats sample heartbeat,
+    firing sample,
+    overshoot sample 1 duration 0 0,
+    good_period sample 1 duration,
+    matching sample 1 duration,
     anchor_active sample 1 duration,
-    fun point found => ⟨membership_one sample point found, configured_one sample point found,
-      has_role sample 1 point found⟩⟩
+    fun point found =>
+      ⟨
+        membership_one sample point found,
+        configured_one sample point found,
+        has_role sample 1 point found
+      ⟩
+  ⟩
 
 /-- A fresh primary stays uncontested while the good period lasts, when a quorum
 of participants, the anchor, knows it and is in sync with it: the bridge from

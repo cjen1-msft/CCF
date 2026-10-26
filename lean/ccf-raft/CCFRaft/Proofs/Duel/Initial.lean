@@ -60,7 +60,8 @@ theorem setup_of_init [Config.InitialConfiguration] {nodes : List NodeID}
     (active : Window.AnchorActive trace start duration participants)
     (membership
       : forall point,
-          trace.stateAt start = some point -> Membership participants members (proto point))
+          trace.stateAt start = some point
+          -> Membership participants members (proto point))
     (subset : participants ⊆ members)
     (configured
       : forall point,
@@ -105,9 +106,10 @@ theorem setup_of_init [Config.InitialConfiguration] {nodes : List NodeID}
     obtain ⟨bad, _, holds⟩ := overshoot
     exact init_of_incumbent admissible delay timers diverges firing
       (fun index step node member within stepped =>
-        noOvershoot_mono (by split_ifs <;> linarith) (holds index step node member within stepped))
-      nonnegative jumpNonnegative (by linarith) (by linarith) boundNonnegative period active
-      membership subset configured roled nonempty present incumbent
+        noOvershoot_mono (by split_ifs <;> linarith)
+          (holds index step node member within stepped))
+      nonnegative jumpNonnegative (by linarith) (by linarith) boundNonnegative period
+      active membership subset configured roled nonempty present incumbent
   period := period
   matching := matching
   active := active

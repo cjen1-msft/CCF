@@ -440,9 +440,19 @@ theorem anchored_start_one (sample : Sample) (fresh : Real)
 /-- The handoff is already present at index one, for every freshness and bound. -/
 theorem handoff_one (sample : Sample) (fresh bound : Real) (nonnegative : 0 <= bound)
     : HandoffBy (run {0} policy sample) {0} 1 bound fresh :=
-  ⟨1, 0, Model.BOOTSTRAP_TERM, {0}, lift (fixtureWorld true 1), lift (fixtureWorld true 1),
-    le_rfl, run_stateAt sample 1, run_stateAt sample 1, le_add_of_nonneg_right nonnegative,
-    anchored_start_one sample fresh⟩
+  ⟨
+    1,
+    0,
+    Model.BOOTSTRAP_TERM,
+    {0},
+    lift (fixtureWorld true 1),
+    lift (fixtureWorld true 1),
+    le_rfl,
+    run_stateAt sample 1,
+    run_stateAt sample 1,
+    le_add_of_nonneg_right nonnegative,
+    anchored_start_one sample fresh
+  ⟩
 
 /-- With no replication peers, every heartbeat interval is sufficient. -/
 theorem heartbeats (sample : Sample) (interval : Real)
