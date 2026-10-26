@@ -272,7 +272,7 @@ theorem acks_before_timeout {heartbeatInterval maxDelay : Real}
           start <= earlier
           -> earlier <= index
           -> trace.stateAt earlier = some point
-          -> QuietAmong peers leader term (proto point))
+          -> QuietAmong peers leader term (proto point) /\ NoProposals peers term point)
     (quorum
       : forall earlier point state,
           start <= earlier
@@ -514,7 +514,7 @@ theorem stable_window_catchup [HasTimers W] {bounds : Bounds} {maxDelay : Real}
                       different)
                   (fun earlier point after le found =>
                     current_of_inTerm admissible inTerm nodeIn after found
-                      (invariant earlier point after le found).1)))
+                      (invariant earlier point after le found).1.1)))
             index point le_rfl within found).1
   staysActive := active
   liveQuorum index point state within found leaderFound :=
@@ -576,14 +576,15 @@ theorem stable_window_catchup_anchored [HasTimers W] {bounds : Bounds} {maxDelay
           + ackBound maxDelay (max bounds.heartbeatInterval 0) backlog
         < fresh := by
     rw [← repair_eq]; linarith
-  obtain ⟨_, _, _, anchored, _⟩ := initial.quiet
+  obtain ⟨_, _, _, _, anchored, _⟩ := initial.quiet
   have staysActive :=
     Window.AnchorActive.staysActive active good anchored.leaderIn anchored.subset
   have inv
       : forall index point,
           Within trace start duration index
           -> trace.stateAt index = some point
-          -> AnchorInv participants anchor leader term (proto point) :=
+          -> AnchorInv participants anchor leader term (proto point)
+              /\ NoProposals participants term point :=
     fun index point =>
       anchor_invariant_core admissible initial good active (bound := index)
         (fun _ _ node _ _ afterStart _ within' stepped timeout _ nodeIn different _
@@ -596,26 +597,29 @@ theorem stable_window_catchup_anchored [HasTimers W] {bounds : Bounds} {maxDelay
               staysActive behind anchored.subset anchored.leaderIn nodeIn different stepped
               within' firstFound
               (fun earlier point after le found =>
-                (invariant earlier point after le found).quietAmong admissible found)
+                ⟨(invariant earlier point after le found).1.quietAmong admissible found,
+                  NoProposals.mono (invariant earlier point after le found).2
+                    anchored.subset⟩)
               (fun earlier point _ after le found leaderFound =>
-                (invariant earlier point after le found).liveQuorum good (inside after le)
+                (invariant earlier point after le found).1.liveQuorum good (inside after le)
                   found leaderFound)
               (fun earlier point _ after le found leaderFound =>
-                (invariant earlier point after le found).tracked nodeIn different
+                (invariant earlier point after le found).1.tracked nodeIn different
                   leaderFound)
               (fun earlier point after le found => by
                 obtain ⟨_, exec⟩ := history_at admissible found
                 obtain ⟨local_, now, termEq, _⟩ :=
-                  (invariant earlier point after le found).anchored.settled node nodeIn
+                  (invariant earlier point after le found).1.anchored.settled node nodeIn
                 exact ⟨local_, found_of_now exec now, termEq⟩)))
         index point le_rfl
   refine ⟨
     {
       stableLeader := fun index point within found =>
-        (inv index point within found).quietAmong admissible found
+        ⟨(inv index point within found).1.quietAmong admissible found,
+          NoProposals.mono (inv index point within found).2 anchored.subset⟩
       staysActive := staysActive
       liveQuorum := fun index point _ within found leaderFound =>
-        (inv index point within found).liveQuorum good within found leaderFound
+        (inv index point within found).1.liveQuorum good within found leaderFound
       lossless := fun index step packet within stepped dropped => by
         rintro (⟨source, target⟩ | ⟨source, target⟩)
         · exact good.lossless index step packet within stepped dropped
@@ -623,7 +627,8 @@ theorem stable_window_catchup_anchored [HasTimers W] {bounds : Bounds} {maxDelay
         · exact good.lossless index step packet within stepped dropped
             ⟨anchored.subset source, target ▸ anchored.subset anchored.leaderIn⟩
     },
-    fun index point within found => (inv index point within found).quiet
+    fun index point within found =>
+      ⟨(inv index point within found).1.quiet, (inv index point within found).2⟩
   ⟩
 
 end Recorded

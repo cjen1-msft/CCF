@@ -5,6 +5,8 @@ public import CCFRaft.Proofs.Leadership.Membership
 public import CCFRaft.Proofs.Liveness.Delay
 public import CCFRaft.Proofs.Liveness.Timers
 public import CCFRaft.Liveness.Assumptions.Settles
+public import CCFRaft.Proofs.Leadership.NoProposals
+public import CCFRaft.Proofs.Liveness.PendingNetwork
 
 @[expose] public section
 
@@ -491,14 +493,16 @@ theorem window_invariant_core
                 start <= earlier
                 -> earlier <= index
                 -> trace.stateAt earlier = some point
-                -> QuietAmong participants leader term (proto point)
+                -> (QuietAmong participants leader term (proto point)
+                      /\ NoProposals participants term point)
                     /\ MembersAt participants leader (proto point))
           -> False)
     : forall index point,
         index <= bound
         -> Within trace start duration index
         -> trace.stateAt index = some point
-        -> QuietAmong participants leader term (proto point)
+        -> (QuietAmong participants leader term (proto point)
+              /\ NoProposals participants term point)
             /\ MembersAt participants leader (proto point) := by
   intro index
   induction index using Nat.strong_induction_on with
@@ -526,17 +530,19 @@ theorem window_invariant_core
               start <= earlier
               -> earlier <= index
               -> trace.stateAt earlier = some point
-              -> QuietAmong participants leader term (proto point)
+              -> (QuietAmong participants leader term (proto point)
+                    /\ NoProposals participants term point)
                   /\ MembersAt participants leader (proto point) :=
         fun earlier point after le found =>
           ih earlier (by omega) point (by omega) (windowed earlier after le) found
       have indexWithin := windowed index afterStart le_rfl
-      obtain ⟨nowQuiet, nowMembers⟩ :=
+      obtain ⟨⟨nowQuiet, nowNone⟩, nowMembers⟩ :=
         earlier_ index step.before afterStart le_rfl (admissible.before stepped)
       rcases selected : step.action.action with _ | action
-      · rw [admissible.stutter stepped selected]
-        exact ⟨nowQuiet, nowMembers⟩
-      obtain ⟨rest, c, acts, _⟩ := ctx_at admissible stepped selected
+      · have kept := NoProposals.stutter admissible stepped selected nowNone
+        rw [admissible.stutter stepped selected]
+        exact ⟨⟨nowQuiet, kept⟩, nowMembers⟩
+      obtain ⟨rest, c, acts, out⟩ := ctx_at admissible stepped selected
       have local_ : forall input, c.event = .internal input
           -> step.action = .local c.actor input :=
         fun _ eventEq => local_of_internal selected acts eventEq
@@ -562,18 +568,12 @@ theorem window_invariant_core
         fun contents eventEq =>
           good.noReconfiguration index step c.actor contents indexWithin stepped
             (local_ _ eventEq)
-      refine ⟨QuietAmong.step c nowQuiet leaderIn (fun actorIn eventEq => ?_) isolated
-        (fun same eventEq =>
-          good.noNominations index step leader indexWithin stepped
-            (same ▸ local_ _ eventEq))
-        (fun same eventEq =>
-          good.noQuorumChecks index step leader indexWithin stepped leaderIn
-            (same ▸ local_ _ eventEq))
-        (fun same =>
-          active.notRetired (index + 1) step.after _ within
-            (Trace.stateAt_succ_of_stepAt stepped)
-            (found_of_now c.exec (same ▸ c.post_now))), ?_⟩
-      · have ran
+      have timeout
+          : c.actor ∈ participants
+            -> c.event = .internal (.timeout .election)
+            -> c.pre.currentTerm < term := by
+        intro actorIn eventEq
+        have ran
             : (startElection (Capabilities.record c.tr.actor) c.tr.pre c.tr.actor).run {}
               = some (c.tr.post, c.tr.outputs) := by
           have ran := c.tr.ran
@@ -601,6 +601,36 @@ theorem window_invariant_core
           (initial.timers first index step c.actor c.tr.pre firstFound afterStart stepped
             timeout c.tr.found actorIn (by omega))
           earlier_
+      have proposed
+          : c.actor ∈ participants
+            -> forall source, Not (c.event = .receive source (.proposeRequestVoteRequest term)) :=
+        fun actorIn source eventEq =>
+          NoProposals.not_received admissible stepped selected acts nowNone actorIn eventEq
+            (isolated actorIn _ _ eventEq)
+      have member : c.actor = leader -> Not (c.post.isRetiredCommitted leader) := fun same =>
+        active.notRetired (index + 1) step.after _ within
+          (Trace.stateAt_succ_of_stepAt stepped)
+          (found_of_now c.exec (same ▸ c.post_now))
+      refine ⟨
+        ⟨
+          QuietAmong.step c nowQuiet leaderIn timeout isolated proposed
+            (fun same eventEq =>
+              good.noQuorumChecks index step leader indexWithin stepped leaderIn
+                (same ▸ local_ _ eventEq))
+            member,
+          NoProposals.after_sent admissible stepped selected out nowNone
+            fun envelope sent sourceIn _ =>
+              QuietAmong.no_proposal c nowQuiet leaderIn
+                (fun eventEq =>
+                  timeout ((Summary.sends c.sum envelope sent).1 ▸ sourceIn) eventEq)
+                isolated proposed
+                (fun same eventEq =>
+                  good.noNominations index step leader indexWithin stepped
+                    (same ▸ local_ _ eventEq))
+                member sent
+        ⟩,
+        ?_
+      ⟩
       · intro local_ found node nodeIn different
         have now : Now (proto step.after :: proto step.before :: rest) leader local_ :=
           now_of_found found
@@ -637,7 +667,8 @@ theorem window_invariant_before {bounds : Bounds} {maxDelay : Real}
         index <= bound
         -> Within trace start duration index
         -> trace.stateAt index = some point
-        -> QuietAmong participants leader term (proto point)
+        -> (QuietAmong participants leader term (proto point)
+              /\ NoProposals participants term point)
             /\ MembersAt participants leader (proto point) :=
   window_invariant_core admissible initial members good active leaderIn
     (fun index step node _ first afterStart lt within stepped timeout _ nodeIn different _
@@ -647,9 +678,9 @@ theorem window_invariant_before {bounds : Bounds} {maxDelay : Real}
         (fun moment before => matching moment (by omega)) afterStart stepped within
         timeout firstFound late
         (fun earlier point after le found =>
-          quietAmong_leader admissible found (earlier_ earlier point after le found).1)
+          quietAmong_leader admissible found (earlier_ earlier point after le found).1.1)
         (fun earlier point state after le found nodeFound =>
-          (earlier_ earlier point after le found).1.terms _ _
+          (earlier_ earlier point after le found).1.1.terms _ _
             (Concrete.mem_of_nodeState nodeFound) nodeIn)
         (fun earlier point leaderState after le found leaderFound =>
           eligible_of_latest
@@ -675,7 +706,8 @@ theorem window_invariant {bounds : Bounds} {maxDelay : Real}
     : forall index point,
         Within trace start duration index
         -> trace.stateAt index = some point
-        -> QuietAmong participants leader term (proto point)
+        -> (QuietAmong participants leader term (proto point)
+              /\ NoProposals participants term point)
             /\ MembersAt participants leader (proto point) :=
   fun index point =>
     window_invariant_before admissible heartbeats elections bounded nonneg ratio freshLe
@@ -751,7 +783,10 @@ theorem stable_window [HasTimers W] {bounds : Bounds} {maxDelay : Real}
     (matching : WindowMatching trace start duration leader term participants)
     : StableWindow trace start duration leader term participants :=
   stable_window_fresh admissible timers bounded nonneg heartbeats ratio le_rfl leaderIn
-    (FreshStart.of_quietStart initial participants) members good active matching
+    (FreshStart.of_quietStart initial participants
+      fun found member =>
+        admissible.pending_mem_network found member)
+    members good active matching
 
 end Recorded
 

@@ -30,7 +30,7 @@ variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetw
 
 /-! ## Steps of the composition -/
 
-omit [HasLive W] [HasNetwork W] [HasTimers W] [Config.InitialConfiguration] in
+omit [HasLive W] [HasTimers W] [Config.InitialConfiguration] in
 /-- A handoff within `later` of an index at most `bound` after `c` is a handoff within
 `bound + later` of `c`. -/
 theorem HandoffBy.shift {next : Nat} {origin nextPoint : W} {bound later fresh : Real}
@@ -57,7 +57,7 @@ theorem HandoffBy.shift {next : Nat} {origin nextPoint : W} {bound later fresh :
     anchored
   ⟩
 
-omit [HasLive W] [HasNetwork W] [HasTimers W] [Config.InitialConfiguration] in
+omit [HasLive W] [HasTimers W] [Config.InitialConfiguration] in
 theorem HandoffBy.mono {bound larger fresh : Real} (le : bound <= larger)
     (handoff : HandoffBy trace participants c bound fresh)
     : HandoffBy trace participants c larger fresh := by

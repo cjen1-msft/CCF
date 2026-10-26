@@ -57,8 +57,9 @@ theorem anchor_invariant_before {bounds : Bounds} {maxDelay : Real}
         index <= bound
         -> Within trace start duration index
         -> trace.stateAt index = some point
-        -> AnchorInv participants anchor leader term (proto point) := by
-  obtain ⟨_, _, _, anchored, _⟩ := initial.quiet
+        -> AnchorInv participants anchor leader term (proto point)
+            /\ NoProposals participants term point := by
+  obtain ⟨_, _, _, _, anchored, _⟩ := initial.quiet
   have staysActive :=
     Window.AnchorActive.staysActive active good anchored.leaderIn anchored.subset
   exact anchor_invariant_core admissible initial good active
@@ -69,12 +70,12 @@ theorem anchor_invariant_before {bounds : Bounds} {maxDelay : Real}
         nodeIn (fun moment before => matching moment (by omega)) afterStart stepped within
         timeout firstFound late
         (fun earlier point after le found =>
-          AnchorInv.leads admissible found (earlier_ earlier point after le found))
+          AnchorInv.leads admissible found (earlier_ earlier point after le found).1)
         (fun earlier point state after le found nodeFound =>
-          (earlier_ earlier point after le found).quiet.terms _ _
+          (earlier_ earlier point after le found).1.quiet.terms _ _
             (Concrete.mem_of_nodeState nodeFound) (anchored.subset nodeIn))
         (fun earlier point _ after le found leaderFound =>
-          AnchorInv.tracked (earlier_ earlier point after le found) nodeIn different
+          AnchorInv.tracked (earlier_ earlier point after le found).1 nodeIn different
             leaderFound))
 
 /-- From an anchored start with every anchor node in sync with the primary, the
@@ -92,7 +93,7 @@ theorem window_matching_anchored {bounds : Bounds} {maxDelay : Real}
     (active : Window.AnchorActive trace start duration anchor)
     (sync : InSync trace start leader term anchor)
     : WindowMatching trace start duration leader term anchor := by
-  obtain ⟨_, _, _, anchored, _⟩ := initial.quiet
+  obtain ⟨_, _, _, _, anchored, _⟩ := initial.quiet
   have staysActive :=
     Window.AnchorActive.staysActive active good anchored.leaderIn anchored.subset
   have invAt := fun bound matching =>
@@ -129,7 +130,7 @@ theorem window_matching_anchored {bounds : Bounds} {maxDelay : Real}
           · intro step packet request state within stepped
             have found := admissible.before stepped
             exact matches_at admissible stepped
-              ((invAt moment earlier moment step.before le_rfl within found).quietAmong
+              ((invAt moment earlier moment step.before le_rfl within found).1.quietAmong
                 admissible found).quietTerm
               (syncAt step.before within found) step packet request state within stepped
         refine ⟨matching, fun point within found peer peerIn different => ?_⟩
@@ -146,8 +147,8 @@ theorem window_matching_anchored {bounds : Bounds} {maxDelay : Real}
         exact sync_step admissible stepped within' good staysActive
           (anchored.subset anchored.leaderIn)
           (invAt (index + 1) matching index step.before (Nat.le_succ index) within'
-            before).quiet
-          (invAt (index + 1) matching (index + 1) step.after le_rfl within found).quiet
+            before).1.quiet
+          (invAt (index + 1) matching (index + 1) step.after le_rfl within found).1.quiet
           (anchored.subset peerIn) different syncPeer
   exact fun index => (claim (index + 1)).1 index (Nat.lt_succ_self index)
 
@@ -177,20 +178,22 @@ theorem stable_window_anchored [HasTimers W] {bounds : Bounds} {maxDelay : Real}
       : forall index point,
           Within trace start duration index
           -> trace.stateAt index = some point
-          -> AnchorInv participants anchor leader term (proto point) :=
+          -> AnchorInv participants anchor leader term (proto point)
+              /\ NoProposals participants term point :=
     fun index point =>
       anchor_invariant_before admissible heartbeats elections bounded nonneg ratio freshLe
         initial good active (bound := index) (fun moment _ => matching moment) index point
         le_rfl
-  obtain ⟨_, _, _, anchored, _⟩ := initial.quiet
+  obtain ⟨_, _, _, _, anchored, _⟩ := initial.quiet
   refine ⟨
     {
       stableLeader := fun index point within found =>
-        (inv index point within found).quietAmong admissible found
+        ⟨(inv index point within found).1.quietAmong admissible found,
+          NoProposals.mono (inv index point within found).2 anchored.subset⟩
       staysActive :=
         Window.AnchorActive.staysActive active good anchored.leaderIn anchored.subset
       liveQuorum := fun index point _ within found leaderFound =>
-        (inv index point within found).liveQuorum good within found leaderFound
+        (inv index point within found).1.liveQuorum good within found leaderFound
       lossless := fun index step packet within stepped dropped => by
         rintro (⟨source, target⟩ | ⟨source, target⟩)
         · exact good.lossless index step packet within stepped dropped
@@ -198,7 +201,8 @@ theorem stable_window_anchored [HasTimers W] {bounds : Bounds} {maxDelay : Real}
         · exact good.lossless index step packet within stepped dropped
             ⟨anchored.subset source, target ▸ anchored.subset anchored.leaderIn⟩
     },
-    fun index point within found => (inv index point within found).quiet
+    fun index point within found =>
+      ⟨(inv index point within found).1.quiet, (inv index point within found).2⟩
   ⟩
 
 end Recorded

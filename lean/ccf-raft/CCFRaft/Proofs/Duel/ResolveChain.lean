@@ -134,7 +134,7 @@ theorem noOvershoot_mono {step : CCF.Execution.Step W Liveness.Event} {node : No
   intro live can early
   exact (holds live can early).trans (by linarith)
 
-omit [HasLive W] [HasNetwork W] [HasTimers W] in
+omit [HasLive W] [HasTimers W] in
 /-- A handoff after `c` is a handoff after `start`, with the bound measured from it. -/
 theorem HandoffBy.shift {trace : Trace W Liveness.Event} {participants : Finset NodeID}
     {start c : Nat} {bound bound' fresh : Real} {origin point : W} (le : start <= c)
@@ -161,7 +161,7 @@ theorem HandoffBy.shift {trace : Trace W Liveness.Event} {participants : Finset 
     anchored
   ⟩
 
-omit [HasLive W] [HasNetwork W] [HasTimers W] in
+omit [HasLive W] [HasTimers W] in
 theorem HandoffBy.mono_fresh {trace : Trace W Liveness.Event}
     {participants : Finset NodeID} {c : Nat} {bound fresh shorter : Real}
     (le : shorter <= fresh) (handoff : HandoffBy trace participants c bound fresh)

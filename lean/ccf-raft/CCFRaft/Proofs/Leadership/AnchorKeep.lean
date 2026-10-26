@@ -111,6 +111,9 @@ variable {nodes : List NodeID} {after before : Model.State} {rest : History}
     : c.actor ∈ anchor
       -> c.event = .internal (.timeout .election)
       -> c.pre.currentTerm < term)
+  (proposed
+    : c.actor ∈ participants
+      -> forall source, Not (c.event = .receive source (.proposeRequestVoteRequest term)))
 
 include c quiet
 
@@ -133,10 +136,12 @@ theorem QuietTerm.not_raised (actorIn : c.actor ∈ participants)
   rw [payload] at this
   omega
 
-/-- A participant receives no granted pre-vote of the term from the anchor. -/
+/-- A participant outside the anchor receives no granted pre-vote of the term
+from it. -/
 theorem Anchor.no_grant_received
     (anchored : Anchor participants anchor leader term before)
-    (actorIn : c.actor ∈ participants) {source : NodeID} {response : RequestVoteResponse}
+    (actorIn : c.actor ∈ participants \ anchor) {source : NodeID}
+    {response : RequestVoteResponse}
     (eventEq : c.event = .receive source (.requestPreVoteResponse response))
     (termEq : response.term = term) (granted : response.voteGranted = true)
     : source ∉ anchor := by
@@ -197,7 +202,26 @@ theorem QuietTerm.history_keep (leaderIn : leader ∈ participants)
       show configurationHistory c.tr.post.log = _
       rw [kept]
 
-include anchored blocked isolated timeout
+/-- An anchor node is settled in the term before the step. -/
+theorem Anchor.pre_settled (anchored : Anchor participants anchor leader term before)
+    (actorIn : c.actor ∈ anchor)
+    : c.pre.currentTerm = term
+      /\ c.pre.primaryKnown = true
+      /\ (c.pre.role = .follower \/ c.pre.role = .primary) := by
+  obtain ⟨local_, now, termEq, known, role⟩ := anchored.settled _ actorIn
+  have localEq : local_ = c.pre := c.now_pre now
+  subst localEq
+  exact ⟨termEq, known, role⟩
+
+/-- A pre-vote candidate is outside the anchor. -/
+theorem Anchor.pre_outside (anchored : Anchor participants anchor leader term before)
+    (actorIn : c.actor ∈ participants) (preVote : c.pre.role = .preVoteCandidate)
+    : c.actor ∈ participants \ anchor := by
+  refine Finset.mem_sdiff.mpr ⟨actorIn, fun inAnchor => ?_⟩
+  obtain ⟨_, _, role⟩ := Anchor.pre_settled c quiet anchored inAnchor
+  rcases role with role | role <;> rw [role] at preVote <;> cases preVote
+
+include anchored blocked isolated timeout proposed
 
 /-- A participant's term after its step stays within the term. -/
 theorem Anchor.post_term (actorIn : c.actor ∈ participants)
@@ -221,28 +245,17 @@ theorem Anchor.post_term (actorIn : c.actor ∈ participants)
       obtain ⟨voter, voterIn, inAnchor⟩ := quorum_meets quorum
         (blocked _ _ c.pre_now actorIn)
       rcases Finset.mem_insert.mp voterIn with rfl | old
-      · exact Anchor.no_grant_received c quiet anchored actorIn eventEq
+      · exact Anchor.no_grant_received c quiet anchored
+          (Anchor.pre_outside c quiet anchored actorIn preVote) eventEq
           (termEq.trans preTerm) granted inAnchor
       · exact Finset.disjoint_left.mp
           (anchored.notCounted _ _ c.pre_now actorIn preVote preTerm) old inAnchor
-    · obtain ⟨envelope, pending, sourceEq, targetEq, payload⟩ := c.received eventEq
-      exact quiet.proposals envelope pending (sourceEq ▸ isolated actorIn _ _ eventEq)
-        (targetEq ▸ actorIn) (by rw [payload, preTerm])
+    · exact proposed actorIn source (preTerm ▸ eventEq)
   · obtain ⟨envelope, pending, sourceEq, targetEq, payload⟩ := c.received eq
     have := quiet.messages envelope pending (sourceEq ▸ isolated actorIn _ _ eq)
       (targetEq ▸ actorIn)
     rw [payload] at this
     omega
-
-/-- An anchor node is settled in the term before the step. -/
-theorem Anchor.pre_settled (actorIn : c.actor ∈ anchor)
-    : c.pre.currentTerm = term
-      /\ c.pre.primaryKnown = true
-      /\ (c.pre.role = .follower \/ c.pre.role = .primary) := by
-  obtain ⟨local_, now, termEq, known, role⟩ := anchored.settled _ actorIn
-  have localEq : local_ = c.pre := c.now_pre now
-  subst localEq
-  exact ⟨termEq, known, role⟩
 
 /-- Only the primary can propose a vote in the term, and it does not. -/
 theorem QuietTerm.no_proposal
@@ -268,7 +281,7 @@ theorem QuietTerm.no_proposal
     · exact nominate same eventEq
     · exact retired actorIn retired'
   · obtain ⟨candidate, campaign, _, _, postTerm, _⟩ := Wins.facts wins
-    have bound := Anchor.post_term c quiet anchored blocked isolated timeout
+    have bound := Anchor.post_term c quiet anchored blocked isolated timeout proposed
       (anchored.subset actorIn)
     rcases campaign.2.2.2 with ⟨_, freshTerm, _⟩ | kept
     · have := lead.term
@@ -279,21 +292,19 @@ theorem QuietTerm.no_proposal
       cases this
 
 /-- A step keeps the term quiet among participants when every message a
-participant receives comes from a participant, no anchor node times out in the
-term, fails a quorum check or retires, and the primary nominates no successor. -/
+participant receives comes from a participant and is no proposal for the term,
+and no anchor node times out in the term, fails a quorum check or retires. -/
 theorem QuietTerm.step
-    (nominate : c.actor = leader -> Not (c.event = .internal .nominateSuccessor))
     (check : c.actor ∈ anchor -> Not (c.event = .internal (.timeout .checkQuorum)))
     (retired : c.actor ∈ anchor -> Not (c.post.isRetiredCommitted c.actor))
     : QuietTerm participants leader term after := by
   have postLe : c.actor ∈ participants -> c.post.currentTerm <= term := fun actorIn =>
-    Anchor.post_term c quiet anchored blocked isolated timeout actorIn
+    Anchor.post_term c quiet anchored blocked isolated timeout proposed actorIn
   have inv : Inv (after :: before :: rest) :=
     good_of_exec c.exec _ (List.suffix_refl _) (List.cons_ne_nil _ _)
   have leaderIn : leader ∈ participants := anchored.subset anchored.leaderIn
   refine ⟨
     fun node local_ now nodeIn => ?_,
-    fun envelope queued sourceIn targetIn => ?_,
     fun envelope queued sourceIn targetIn => ?_,
     ?_
   ⟩
@@ -339,10 +350,6 @@ theorem QuietTerm.step
           have := ok.1
           simp only [Message.term]
           omega
-  · rcases c.tr.mem_network queued with old | new
-    · exact quiet.proposals envelope old sourceIn targetIn
-    · exact QuietTerm.no_proposal c quiet anchored blocked isolated timeout nominate retired
-        new
   · obtain ⟨local_, lead⟩ := QuietTerm.lead c quiet
     by_cases same : c.actor = leader
     · have pre : local_ = c.pre := c.now_pre (same ▸ lead.now)
@@ -376,7 +383,7 @@ theorem Anchor.step
     : Anchor participants anchor leader term after := by
   have actorStep := LocalTransition.anchorStep c.tr
   have postLe : c.actor ∈ participants -> c.post.currentTerm <= term := fun actorIn =>
-    Anchor.post_term c quiet anchored blocked isolated timeout actorIn
+    Anchor.post_term c quiet anchored blocked isolated timeout proposed actorIn
   have leaderIn : leader ∈ participants := anchored.subset anchored.leaderIn
   have history : c.actor = leader
       -> configurationHistory c.post.log = configurationHistory c.pre.log := fun same =>
@@ -420,16 +427,13 @@ theorem Anchor.step
           omega
         · exact (check nodeIn eventEq).elim
         · exact (notRaised up).elim
-        · obtain ⟨envelope, pending, sourceEq, targetEq, payload⟩ := c.received eventEq
-          exact (quiet.proposals envelope pending (sourceEq ▸ isolated actorIn _ _ eventEq)
-            (targetEq ▸ actorIn) (by rw [payload, termEq])).elim
+        · exact (proposed actorIn source (termEq ▸ eventEq)).elim
     · exact ⟨local_, c.now_other same now, termEq, known, role⟩
   · rcases c.tr.mem_network queued with old | new
     · exact anchored.noGrants envelope old sourceIn targetIn payload
     · obtain ⟨sourceEq, _⟩ := Summary.sends c.sum envelope new
       have actorIn : c.actor ∈ anchor := sourceEq ▸ sourceIn
-      obtain ⟨preTerm, known, _⟩ := Anchor.pre_settled c quiet anchored blocked isolated
-        timeout actorIn
+      obtain ⟨preTerm, known, _⟩ := Anchor.pre_settled c quiet anchored actorIn
       rcases actorStep.grants envelope new _ payload rfl with unknown | up
       · rw [known] at unknown
         cases unknown
@@ -448,7 +452,13 @@ theorem Anchor.step
         · exact Finset.disjoint_left.mp
             (anchored.notCounted _ _ c.pre_now actorIn prePreVote preTerm) old inAnchor
         · exact notTimeout eventEq
-      · exact Anchor.no_grant_received c quiet anchored actorIn eventEq
+      · have actorOut : c.actor ∈ participants \ anchor := by
+          rcases cause with prePreVote | eventEq'
+          · exact Anchor.pre_outside c quiet anchored actorIn prePreVote
+          · refine Finset.mem_sdiff.mpr ⟨actorIn, fun inAnchor' => ?_⟩
+            have := timeout inAnchor' eventEq'
+            omega
+        exact Anchor.no_grant_received c quiet anchored actorOut eventEq
           (responseTerm.trans preTerm) granted inAnchor
     · exact anchored.notCounted _ _ old nodeIn preVote termEq
 

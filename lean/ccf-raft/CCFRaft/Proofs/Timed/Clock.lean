@@ -268,7 +268,7 @@ theorem env_of_window {maxDelay heartbeat : Real}
     have due : PeerDue point leader peer := by
       have within := inside (past - 1) (by omega) pointIn
       obtain ⟨state, nodeFound, primary, _⟩ :=
-        quietAmong_leader admissible found (window.stableLeader _ point within found)
+        quietAmong_leader admissible found (window.stableLeader _ point within found).1
       exact ⟨leaderLiveAt _ point (by omega) pointIn found, peerLiveAt _ point pointIn found,
         state, nodeFound, primary,
         window.staysActive.notRetired _ point state within found nodeFound,
@@ -285,7 +285,7 @@ theorem env_of_window {maxDelay heartbeat : Real}
       apply notDue
       have within := inside later (by omega) laterIn
       obtain ⟨state, nodeFound, primary, _⟩ :=
-        quietAmong_leader admissible laterFound (window.stableLeader _ laterPoint within laterFound)
+        quietAmong_leader admissible laterFound (window.stableLeader _ laterPoint within laterFound).1
       exact ⟨leaderLiveAt _ laterPoint (by omega) laterIn laterFound,
         peerLiveAt _ laterPoint laterIn laterFound, state, nodeFound, primary,
         window.staysActive.notRetired _ laterPoint state within laterFound nodeFound,

@@ -15,9 +15,10 @@ actor's state and sends only from its actor, so a step of a non-participant
 cannot break a clause about participants. A participant moves past the term only
 by an election timeout in it, a pre-vote candidacy in it, or a message from past
 it or a proposal for it; when every message a participant receives comes from a
-participant, the last two are ruled out by the clauses about messages between
-participants. Election safety, already proven, still shows that only the primary
-can propose a vote in the term.
+participant, the first is ruled out by the clause about messages between
+participants, and the second is a premise of the step, discharged over the packet
+ledger (`NoProposals`). Election safety, already proven, still shows that only
+the primary can propose a vote in the term.
 -/
 
 namespace CCFRaft.Proofs.Leadership
@@ -50,6 +51,8 @@ theorem QuietAmong.post_term (actorIn : c.actor ∈ participants)
     (timeout : c.event = .internal (.timeout .election) -> c.pre.currentTerm < term)
     (isolated
       : forall source message, c.event = .receive source message -> source ∈ participants)
+    (proposed
+      : forall source, Not (c.event = .receive source (.proposeRequestVoteRequest term)))
     : c.post.currentTerm <= term := by
   have preLe := quiet.terms _ _ c.pre_now actorIn
   rcases Summary.term_cause c.sum with le | ⟨eq, cause⟩ | ⟨source, message, eq, le⟩
@@ -59,10 +62,8 @@ theorem QuietAmong.post_term (actorIn : c.actor ∈ participants)
       omega
     · have := quiet.preVotes _ _ c.pre_now actorIn pre
       omega
-    · obtain ⟨envelope, pending, sourceEq, targetEq, payload⟩ := c.received eventEq
-      have different : Not (c.pre.currentTerm = term) := fun same =>
-        quiet.proposals envelope pending (sourceEq ▸ isolated _ _ eventEq)
-          (targetEq ▸ actorIn) (by rw [payload, same])
+    · have different : Not (c.pre.currentTerm = term) := fun same =>
+        proposed source (same ▸ eventEq)
       omega
   · obtain ⟨envelope, pending, sourceEq, targetEq, payload⟩ := c.received eq
     have := quiet.messages envelope pending (sourceEq ▸ isolated _ _ eq) (targetEq ▸ actorIn)
@@ -78,6 +79,10 @@ theorem QuietAmong.no_proposal
       : c.actor ∈ participants
         -> forall source message,
             c.event = .receive source message -> source ∈ participants)
+    (proposed
+      : c.actor ∈ participants
+        -> forall source,
+            Not (c.event = .receive source (.proposeRequestVoteRequest term)))
     (nominate : c.actor = leader -> Not (c.event = .internal .nominateSuccessor))
     (member : c.actor = leader -> Not (c.post.isRetiredCommitted leader))
     {envelope : Model.Envelope} (sent : envelope ∈ c.sent)
@@ -101,6 +106,7 @@ theorem QuietAmong.no_proposal
     · exact member same (same ▸ retired)
   · obtain ⟨candidate, campaign, _, _, postTerm, _⟩ := Wins.facts wins
     have bound := QuietAmong.post_term c quiet actorIn timeout (isolated actorIn)
+      (proposed actorIn)
     rcases campaign.2.2.2 with ⟨_, freshTerm, _⟩ | kept
     · have := lead.term
       rw [pre] at this
@@ -110,9 +116,9 @@ theorem QuietAmong.no_proposal
       cases this
 
 /-- A step keeps a state quiet among participants if every message a participant
-receives comes from a participant, and the step is not an election timeout of a
-participant in the term, nor the primary nominating a successor, retiring, or
-failing its quorum check. -/
+receives comes from a participant and is no proposal for the term, and the step
+is not an election timeout of a participant in the term, nor the primary
+retiring or failing its quorum check. -/
 theorem QuietAmong.step
     (timeout
       : c.actor ∈ participants
@@ -122,18 +128,21 @@ theorem QuietAmong.step
       : c.actor ∈ participants
         -> forall source message,
             c.event = .receive source message -> source ∈ participants)
-    (nominate : c.actor = leader -> Not (c.event = .internal .nominateSuccessor))
+    (proposed
+      : c.actor ∈ participants
+        -> forall source,
+            Not (c.event = .receive source (.proposeRequestVoteRequest term)))
     (check : c.actor = leader -> Not (c.event = .internal (.timeout .checkQuorum)))
     (member : c.actor = leader -> Not (c.post.isRetiredCommitted leader))
     : QuietAmong participants leader term after := by
   have postLe : c.actor ∈ participants -> c.post.currentTerm <= term := fun actorIn =>
     QuietAmong.post_term c quiet actorIn (timeout actorIn) (isolated actorIn)
+      (proposed actorIn)
   have inv : Inv (after :: before :: rest) :=
     good_of_exec c.exec _ (List.suffix_refl _) (List.cons_ne_nil _ _)
   refine ⟨
     fun node local_ now nodeIn => ?_,
     fun node local_ now nodeIn preVote => ?_,
-    fun envelope queued sourceIn targetIn => ?_,
     fun envelope queued sourceIn targetIn => ?_,
     ?_
   ⟩
@@ -187,13 +196,6 @@ theorem QuietAmong.step
           have := ok.1
           simp only [Message.term]
           omega
-  · rcases c.tr.mem_network queued with old | new
-    · exact quiet.proposals envelope old sourceIn targetIn
-    · exact QuietAmong.no_proposal c quiet leaderIn (fun eventEq => timeout
-        (by
-          obtain ⟨sourceEq, _⟩ := Summary.sends c.sum envelope new
-          exact sourceEq ▸ sourceIn)
-        eventEq) isolated nominate member new
   · obtain ⟨local_, lead⟩ := QuietAmong.lead c quiet
     by_cases same : c.actor = leader
     · have pre : local_ = c.pre := c.now_pre (same ▸ lead.now)

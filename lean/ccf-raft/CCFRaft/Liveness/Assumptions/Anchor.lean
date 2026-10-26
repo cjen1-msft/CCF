@@ -59,11 +59,17 @@ structure Anchor (participants anchor : Finset NodeID) (leader : NodeID) (term :
             /\ local_.currentTerm = term
             /\ local_.primaryKnown = true
             /\ (local_.role = .follower \/ local_.role = .primary)
+  /-- No anchor node's granted pre-vote of `term` is in flight to a participant
+  outside the anchor. Only those targets: a dropped envelope stays in the
+  network for ever, so a grant from `2` to `3` dropped before the start would
+  otherwise rule out every anchored start (CE-I3). Anchor nodes are settled, so
+  they are never pre-vote candidates of `term` and a grant to one is never
+  counted. -/
   noGrants
     : forall envelope,
         envelope ∈ state.network
         -> envelope.source ∈ anchor
-        -> envelope.target ∈ participants
+        -> envelope.target ∈ participants \ anchor
         -> Not (envelope.payload = .requestPreVoteResponse { term, voteGranted := true })
   notCounted
     : forall node local_,
@@ -223,11 +229,25 @@ def ConfigurationCommitted (participants : Finset NodeID) (state : Model.State) 
         configuration ∈ configurationHistory local_.log
         /\ configuration.index <= local_.commitIndex
 
-variable {W : Type} [HasProtocol W Model.State] [HasTime W]
+/-- Every participant has a role.
+
+Needed for an election from an arbitrary start (CE-I5). The model lets a
+participant have role `none` without its retirement committed: free append
+metadata can log a retirement confirmation before the configuration that removes
+the node, and that configuration is later truncated. Such a node never times out,
+since `canStartElection` needs a follower, pre-vote candidate or candidate, so if
+it holds the most up-to-date log no participant wins an election. CCF is
+unaffected: there `None` is permanent and reached only once the removal commits. -/
+def HasRole (participants : Finset NodeID) (state : Model.State) : Prop :=
+  forall node local_,
+    (node, local_) ∈ state.nodes -> node ∈ participants -> Not (local_.role = .none)
+
+variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasNetwork W]
 
 /-- An anchored start: at `start` the term is quiet among participants without
-the pre-vote clause, `anchor` anchors it and blocks every quorum participants can
-count, and no anchor node of the term times out before `fresh` after it. -/
+the pre-vote clause, with no outstanding proposal for it, `anchor`
+anchors it and blocks every quorum participants can count, and no anchor node of
+the term times out before `fresh` after it. -/
 structure AnchoredStart (trace : Trace W Event) (start : Nat) (leader : NodeID)
     (term : Nat) (participants anchor : Finset NodeID) (fresh : Real)
     : Prop where
@@ -235,6 +255,7 @@ structure AnchoredStart (trace : Trace W Event) (start : Nat) (leader : NodeID)
     : exists first,
         trace.stateAt start = some first
         /\ QuietTerm participants leader term (proto first)
+        /\ NoProposals participants term first
         /\ Anchor participants anchor leader term (proto first)
         /\ Blocks participants anchor (proto first)
   timers

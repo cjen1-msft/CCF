@@ -34,8 +34,9 @@ instance (state : NodeState) : Decidable (ReconfigurationSettled state) := by
   infer_instance
 
 /-- `Quiet` among `participants`: no participant or message between participants
-has moved past `term`, no participant is a pre-vote candidate in it, no proposal
-for it is in flight between participants, and `leader` is its primary.
+has moved past `term`, no participant is a pre-vote candidate in it, and
+`leader` is its primary. Outstanding proposals are excluded separately, over the
+packet ledger (`NoProposals`).
 Nodes outside `participants`, such as a crashed or partitioned pre-vote
 candidate of a newer term, are unconstrained; isolation keeps them from
 reaching participants. -/
@@ -57,12 +58,6 @@ structure QuietAmong (participants : Finset NodeID) (leader : NodeID) (term : Na
         -> envelope.source ∈ participants
         -> envelope.target ∈ participants
         -> envelope.payload.term <= term
-  proposals
-    : forall envelope,
-        envelope ∈ state.network
-        -> envelope.source ∈ participants
-        -> envelope.target ∈ participants
-        -> Not (envelope.payload = .proposeRequestVoteRequest term)
   leader
     : exists local_,
         (leader, local_) ∈ state.nodes
@@ -70,8 +65,7 @@ structure QuietAmong (participants : Finset NodeID) (leader : NodeID) (term : Na
         /\ local_.currentTerm = term
 
 /-- `QuietAmong` without its pre-vote clause: no participant or message between
-participants has moved past `term`, no proposal for it is in flight between
-participants, and `leader` is its primary. Participants may be pre-vote
+participants has moved past `term`, and `leader` is its primary. Participants may be pre-vote
 candidates of `term`; an anchor (`Liveness.Anchor`) keeps them from winning. -/
 structure QuietTerm (participants : Finset NodeID) (leader : NodeID) (term : Nat)
     (state : Model.State)
@@ -85,12 +79,6 @@ structure QuietTerm (participants : Finset NodeID) (leader : NodeID) (term : Nat
         -> envelope.source ∈ participants
         -> envelope.target ∈ participants
         -> envelope.payload.term <= term
-  proposals
-    : forall envelope,
-        envelope ∈ state.network
-        -> envelope.source ∈ participants
-        -> envelope.target ∈ participants
-        -> Not (envelope.payload = .proposeRequestVoteRequest term)
   leader
     : exists local_,
         (leader, local_) ∈ state.nodes
@@ -101,7 +89,7 @@ structure QuietTerm (participants : Finset NodeID) (leader : NodeID) (term : Nat
 theorem QuietAmong.quietTerm {participants : Finset NodeID} {leader : NodeID} {term : Nat}
     {state : Model.State} (quiet : QuietAmong participants leader term state)
     : QuietTerm participants leader term state :=
-  ⟨quiet.terms, quiet.messages, quiet.proposals, quiet.leader⟩
+  ⟨quiet.terms, quiet.messages, quiet.leader⟩
 
 /-- A term quiet everywhere is quiet among any participants. -/
 theorem Quiet.among {leader : NodeID} {term : Nat} {state : Model.State}
@@ -111,36 +99,51 @@ theorem Quiet.among {leader : NodeID} {term : Nat} {state : Model.State}
     fun node local_ member _ => quiet.terms node local_ member,
     fun node local_ member _ => quiet.preVotes node local_ member,
     fun envelope member _ _ => quiet.messages envelope member,
-    fun envelope member _ _ => quiet.proposals envelope member,
     quiet.leader
   ⟩
 
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W]
+
+/-- No outstanding packet between participants proposes a vote in `term`.
+
+Over the packet ledger, not the protocol network. A drop is an environment
+event that leaves the protocol state alone, so a dropped envelope stays in the
+network for ever but can never be delivered. Over the network, a proposal for
+`term` dropped before the start would rule out every quiet window (CE-I4). -/
+def NoProposals [HasNetwork W] (participants : Finset NodeID) (term : Nat) (point : W)
+    : Prop :=
+  forall packet,
+    packet ∈ HasNetwork.pending point
+    -> packet.envelope.source ∈ participants
+    -> packet.envelope.target ∈ participants
+    -> Not (packet.envelope.payload = .proposeRequestVoteRequest term)
 
 namespace Window
 
 /-- Throughout the window `leader` is the primary of `term`, and `term` is the
 newest term among `participants`: no participant, participant pre-vote
 candidate, or message or proposal between participants has moved past it. -/
-def StableLeader (trace : Trace W Event) (start : Nat) (duration : Real) (leader : NodeID)
-    (term : Nat) (participants : Finset NodeID)
+def StableLeader [HasNetwork W] (trace : Trace W Event) (start : Nat) (duration : Real)
+    (leader : NodeID) (term : Nat) (participants : Finset NodeID)
     : Prop :=
   forall index point,
     Within trace start duration index
     -> trace.stateAt index = some point
     -> QuietAmong participants leader term (proto point)
+        /\ NoProposals participants term point
 
 /-- `StableLeader` without the pre-vote clause: throughout the window `leader` is
 the primary of `term`, and no participant, or message or proposal between
 participants, has moved past it. Participants outside an anchor may be pre-vote
 candidates of `term`. -/
-def StableTerm (trace : Trace W Event) (start : Nat) (duration : Real) (leader : NodeID)
-    (term : Nat) (participants : Finset NodeID)
+def StableTerm [HasNetwork W] (trace : Trace W Event) (start : Nat) (duration : Real)
+    (leader : NodeID) (term : Nat) (participants : Finset NodeID)
     : Prop :=
   forall index point,
     Within trace start duration index
     -> trace.stateAt index = some point
     -> QuietTerm participants leader term (proto point)
+        /\ NoProposals participants term point
 
 /-- Throughout the window the primary is live and its retirement has not committed. -/
 structure StaysActive (trace : Trace W Event) (start : Nat) (duration : Real)
@@ -245,8 +248,8 @@ end Window
 /-- A window of real time, from index `start` for `duration`, in which `leader`
 is the uncontested primary of `term`, stays live and unretired, keeps a live
 majority among `participants`, and exchanges packets with them without loss. -/
-structure StableWindow (trace : Trace W Event) (start : Nat) (duration : Real)
-    (leader : NodeID) (term : Nat) (participants : Finset NodeID)
+structure StableWindow [HasNetwork W] (trace : Trace W Event) (start : Nat)
+    (duration : Real) (leader : NodeID) (term : Nat) (participants : Finset NodeID)
     : Prop where
   stableLeader : Window.StableLeader trace start duration leader term participants
   staysActive : Window.StaysActive trace start duration leader

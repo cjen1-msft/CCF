@@ -883,7 +883,7 @@ theorem window_matching_of_inSync {bounds : Bounds} {maxDelay : Real}
     fun bound matching index point le within found =>
       (window_invariant_before admissible heartbeats elections bounded nonneg ratio freshLe
         initial members good active leaderIn (bound := bound) matching index point le within
-        found).1
+        found).1.1
   have claim
       : forall index,
           (forall moment,

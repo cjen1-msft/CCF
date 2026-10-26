@@ -110,9 +110,9 @@ variable {nodes : List NodeID}
 
 include admissible
 
-/-- From an anchored start, the term stays quiet among participants, the anchor
-keeps knowing the primary, and every quorum a participant can count stays blocked
-by the anchor, at every recorded state of a good period in which no anchor node
+/-- From an anchored start, the term stays quiet among participants with no
+proposal for it outstanding between them, the anchor keeps knowing the primary,
+and every quorum a participant can count stays blocked by the anchor, at every recorded state of a good period in which no anchor node
 retires, provided no anchor node other than the primary times out in the term at
 least `fresh` after the start while the invariant has held so far. Earlier
 timeouts are excluded by `AnchoredStart.timers`. -/
@@ -139,23 +139,25 @@ theorem anchor_invariant_core
                 start <= earlier
                 -> earlier <= index
                 -> trace.stateAt earlier = some point
-                -> AnchorInv participants anchor leader term (proto point))
+                -> AnchorInv participants anchor leader term (proto point)
+                    /\ NoProposals participants term point)
           -> False)
     : forall index point,
         index <= bound
         -> Within trace start duration index
         -> trace.stateAt index = some point
-        -> AnchorInv participants anchor leader term (proto point) := by
+        -> AnchorInv participants anchor leader term (proto point)
+            /\ NoProposals participants term point := by
   intro index
   induction index using Nat.strong_induction_on with
   | _ index ih =>
       intro point inBound within recorded
       by_cases atStart : index = start
       · subst index
-        obtain ⟨first, firstFound, quiet, anchored, blocks⟩ := initial.quiet
+        obtain ⟨first, firstFound, quiet, none_, anchored, blocks⟩ := initial.quiet
         rw [recorded, Option.some.injEq] at firstFound
         subst first
-        exact ⟨quiet, anchored, blocks⟩
+        exact ⟨⟨quiet, anchored, blocks⟩, none_⟩
       rcases index with _ | index
       · exact absurd (Nat.le_zero.mp within.1) (Ne.symm atStart)
       obtain ⟨step, stepped, rfl⟩ := Trace.stateAt_succ_eq_some.mp recorded
@@ -169,15 +171,18 @@ theorem anchor_invariant_core
               start <= earlier
               -> earlier <= index
               -> trace.stateAt earlier = some point
-              -> AnchorInv participants anchor leader term (proto point) :=
+              -> AnchorInv participants anchor leader term (proto point)
+                  /\ NoProposals participants term point :=
         fun earlier point after le found =>
           ih earlier (by omega) point (by omega) (windowed earlier after le) found
       have indexWithin := windowed index afterStart le_rfl
-      have now := earlier_ index step.before afterStart le_rfl (admissible.before stepped)
+      obtain ⟨now, nowNone⟩ :=
+        ih index (by omega) step.before (by omega) indexWithin (admissible.before stepped)
       rcases selected : step.action.action with _ | action
-      · rw [admissible.stutter stepped selected]
-        exact now
-      obtain ⟨rest, c, acts, _⟩ := ctx_at admissible stepped selected
+      · have kept := NoProposals.stutter admissible stepped selected nowNone
+        rw [admissible.stutter stepped selected]
+        exact ⟨now, kept⟩
+      obtain ⟨rest, c, acts, out⟩ := ctx_at admissible stepped selected
       have local_ : forall input, c.event = .internal input
           -> step.action = .local c.actor input :=
         fun _ eventEq => anchor_local_of_internal selected acts eventEq
@@ -254,14 +259,28 @@ theorem anchor_invariant_core
         fun actorIn =>
           active (index + 1) step.after c.actor c.post within
             (Trace.stateAt_succ_of_stepAt stepped) actorIn (found_of_now c.exec c.post_now)
+      have proposed
+          : c.actor ∈ participants
+            -> forall source, Not (c.event = .receive source (.proposeRequestVoteRequest term)) :=
+        fun actorIn source eventEq =>
+          NoProposals.not_received admissible stepped selected acts nowNone actorIn eventEq
+            (isolated actorIn _ _ eventEq)
       exact ⟨
-        QuietTerm.step c now.quiet now.anchored blocked isolated timeout
-          (fun same eventEq =>
-            good.noNominations index step leader indexWithin stepped
-              (same ▸ local_ _ eventEq))
-          check retired,
-        Anchor.step c now.quiet now.anchored blocked isolated timeout check retired plain,
-        Blocks.step c isolated plain now.blocks
+        ⟨
+          QuietTerm.step c now.quiet now.anchored blocked isolated timeout proposed check
+            retired,
+          Anchor.step c now.quiet now.anchored blocked isolated timeout proposed check
+            retired plain,
+          Blocks.step c isolated plain now.blocks
+        ⟩,
+        NoProposals.after_sent admissible stepped selected out nowNone
+          fun _ sent _ _ =>
+            QuietTerm.no_proposal c now.quiet now.anchored blocked isolated timeout
+              proposed
+              (fun same eventEq =>
+                good.noNominations index step leader indexWithin stepped
+                  (same ▸ local_ _ eventEq))
+              retired sent
       ⟩
 
 /-- An anchor node is no pre-vote candidate, so the term is quiet among the
@@ -277,9 +296,6 @@ theorem AnchorInv.quietAmong {participants anchor : Finset NodeID} {leader : Nod
     fun node local_ member nodeIn role => ?_,
     fun envelope member sourceIn targetIn =>
       inv.quiet.messages envelope member (inv.anchored.subset sourceIn)
-        (inv.anchored.subset targetIn),
-    fun envelope member sourceIn targetIn =>
-      inv.quiet.proposals envelope member (inv.anchored.subset sourceIn)
         (inv.anchored.subset targetIn),
     inv.quiet.leader
   ⟩

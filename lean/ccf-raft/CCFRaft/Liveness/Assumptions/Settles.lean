@@ -68,8 +68,9 @@ def LatestMembers (trace : Trace W Liveness.Event) (start : Nat) (leader : NodeI
     -> node ∈ latestConfigurationMembers state.activeConfigurations
 
 /-- `QuietStart` among `participants`, with a freshness `fresh` in place of half
-an election timeout: the term is quiet among participants at `start`, and no
-participant of the term times out before `fresh` after it. An election spreads
+an election timeout: the term is quiet among participants at `start`, with no
+proposal for it outstanding between them, and no participant of the term times
+out before `fresh` after it. An election spreads
 the participants' timer resets over a few message delays, so the duel that ends
 in `start` can only promise some `fresh` below `electionTimeout / 2`. -/
 structure FreshStart (trace : Trace W Liveness.Event) (start : Nat) (leader : NodeID)
@@ -79,6 +80,7 @@ structure FreshStart (trace : Trace W Liveness.Event) (start : Nat) (leader : No
     : exists first,
         trace.stateAt start = some first
         /\ QuietAmong participants leader term (proto first)
+        /\ NoProposals participants term first
   timers
     : forall first index step node state,
         trace.stateAt start = some first
@@ -90,15 +92,22 @@ structure FreshStart (trace : Trace W Liveness.Event) (start : Nat) (leader : No
         -> state.currentTerm = term
         -> time first + fresh <= time step.before
 
-omit [HasLive W] [HasNetwork W] in
-/-- A quiet start is fresh for half an election timeout among any participants. -/
+omit [HasLive W] in
+/-- A quiet start is fresh for half an election timeout among any participants,
+when every outstanding packet is in the network. -/
 theorem FreshStart.of_quietStart {trace : Trace W Liveness.Event} {start : Nat}
     {leader : NodeID} {term : Nat} {electionTimeout : Real}
     (initial : QuietStart trace start leader term electionTimeout)
     (participants : Finset NodeID)
+    (inNetwork
+      : forall {first : W} {packet : Packet},
+          trace.stateAt start = some first
+          -> packet ∈ HasNetwork.pending first
+          -> packet.envelope ∈ (proto first).network)
     : FreshStart trace start leader term participants (electionTimeout / 2) := by
   obtain ⟨first, found, quiet⟩ := initial.quiet
-  exact ⟨⟨first, found, quiet.among participants⟩,
+  exact ⟨⟨first, found, quiet.among participants,
+      fun packet member _ _ => quiet.proposals _ (inNetwork found member)⟩,
     fun first index step node state found afterStart stepped event nodeFound _ current =>
       initial.timers first index step node state found afterStart stepped event nodeFound
         current⟩

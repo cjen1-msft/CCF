@@ -227,9 +227,8 @@ theorem RoundShort.handoff_settle
   refine ⟨stop, ctx.actor, term + 1, anchor, origin, crossing.before,
     stopLe, originFound, stopFound, near, ?_⟩
   constructor
-  · refine ⟨crossing.before, stopFound, ?_, ?_, stopMembership.blocks blocked⟩
-    · refine ⟨?_, ?_, Elected.no_proposals setup originFound stopLe stopFound stopEarly,
-        endLeader, now_of_found (rest := endRest) endLeaderFound,
+  · refine ⟨crossing.before, stopFound, ?_, ?_, ?_, stopMembership.blocks blocked⟩
+    · refine ⟨?_, ?_, endLeader, now_of_found (rest := endRest) endLeaderFound,
         endLeaderRole, endLeaderTerm⟩
       · intro node local_ now member
         exact (capped stop crossing.before stopLe stopFound stopEarly).2 stop crossing.before
@@ -237,6 +236,9 @@ theorem RoundShort.handoff_settle
       · intro e queued sourceIn _
         exact Elected.capped_messages setup stopFound
           (capped stop crossing.before stopLe stopFound stopEarly) e queued sourceIn
+    · intro packet queued sourceIn targetIn
+      exact Elected.no_proposals setup originFound stopLe stopFound stopEarly packet.envelope
+        (setup.admissible.pending_mem_network stopFound queued) sourceIn targetIn
     · refine ⟨anchorSubset, anchorLeader, ?_, ?_, settled, ?_, ?_⟩
       · intro local_ now
         exact quorumFor local_.activeConfigurations (nonemptyAtStop ctx.actor local_ member now)
@@ -247,7 +249,7 @@ theorem RoundShort.handoff_settle
         · rw [latest]
           exact setup.subset (anchorSubset nodeIn)
       · intro e queued sourceIn targetIn
-        exact noGrants e queued (anchorSubset sourceIn) targetIn
+        exact noGrants e queued (anchorSubset sourceIn) (Finset.mem_sdiff.mp targetIn).1
       · intro node local_ now member role te
         exact (Elected.no_pre_vote setup originFound stop crossing.before node local_
           stopLe stopFound (by linarith [setup.ratio]) member (found_of_now endExec now) te role).elim
