@@ -9,8 +9,8 @@ public import CCFRaft.Proofs.Leadership.SettlesWitness
 # The catch-up window premises are satisfiable
 
 The single-node execution of `Proofs.LivenessWitness` meets every premise of
-`Leadership.stable_window_catchup`, and hence its conclusion, for every window
-length. The fixture lemmas below copy private ones from `SettlesWitness` and
+`Leadership.stable_window_catchup` and `Leadership.stable_window_catchup_anchored`,
+and hence their conclusions, for every window length. The fixture lemmas below copy private ones from `SettlesWitness` and
 `LivenessWitness`.
 -/
 
@@ -184,5 +184,100 @@ theorem stable_window_catchup_witness
     (bounded_valid 0) diverges le_rfl (heartbeats true _) ratio freshLe
     (Finset.mem_singleton_self 0) fresh latest_members (good duration)
     (stays_active duration) initial_in_term initial_backlog
+
+private theorem anchored_start
+    : AnchoredStart (fixture true) 0 0 Model.BOOTSTRAP_TERM {0} {0} 2 := by
+  have quiet := (quiet_start.quiet)
+  obtain ⟨first, found, quiet⟩ := quiet
+  rw [fixture_stateAt, Option.some.injEq] at found
+  subst first
+  refine ⟨
+    ⟨fixtureWorld true 0, fixture_stateAt true 0, (quiet.among {0}).quietTerm, ?_, ?_⟩,
+    ?_
+  ⟩
+  · change Anchor {0} {0} 0 Model.BOOTSTRAP_TERM { nodes := [(0, initialNode)] }
+    refine ⟨subset_refl _, Finset.mem_singleton_self 0, ?_, ?_, ?_, ?_, ?_⟩
+    · intro local_ member
+      simp only [List.mem_singleton, Prod.mk.injEq, true_and] at member
+      subst local_
+      decide +kernel
+    · intro _ _ node member different
+      exact absurd (Finset.mem_singleton.mp member) different
+    · intro node member
+      rw [Finset.mem_singleton.mp member]
+      exact ⟨initialNode, by simp, by decide +kernel, by decide +kernel,
+        Or.inr (by decide +kernel)⟩
+    · intro envelope member
+      simp at member
+    · intro node local_ member _ role
+      simp only [List.mem_singleton, Prod.mk.injEq] at member
+      obtain ⟨_, rfl⟩ := member
+      exact absurd role (by decide +kernel)
+  · change Blocks {0} {0} { nodes := [(0, initialNode)] }
+    intro node local_ member _
+    simp only [List.mem_singleton, Prod.mk.injEq] at member
+    obtain ⟨_, rfl⟩ := member
+    refine ⟨?_, fun holder held member' _ => ?_, fun envelope _ member' => ?_⟩
+    · decide +kernel
+    · simp only [List.mem_singleton, Prod.mk.injEq] at member'
+      obtain ⟨_, rfl⟩ := member'
+      intro configuration history _
+      revert configuration
+      decide +kernel
+    · simp at member'
+  · intro _ index step node _ _ _ stepped timeout
+    rw [fixture_stepAt, Option.some.injEq] at stepped
+    subst step
+    exact False.elim (no_timeouts true index node timeout)
+
+private theorem anchor_active (duration : Real)
+    : Window.AnchorActive (fixture true) 0 duration {0} := by
+  intro index point node state within found member nodeFound
+  rw [Finset.mem_singleton.mp member] at nodeFound ⊢
+  exact (stays_active duration).notRetired index point state within found nodeFound
+
+/-- For every nonnegative window length, the premises of
+`stable_window_catchup_anchored` and its conclusion hold together on one admissible
+execution, with heartbeat interval `1 / 10`, election timeout 4, freshness 2,
+backlog 0, no message delay, and the single node as participants and anchor. -/
+theorem stable_window_catchup_anchored_witness
+    : let bounds : Bounds :=
+        { heartbeatInterval := 1 / 10, electionTimeout := 4, signatureInterval := 1 }
+      forall duration : Real,
+        0 <= duration
+        -> exists trace : Trace (World Model.State) Liveness.Event,
+            (Liveness.Admissible (Model.transitionSystem {0} [0]) trace
+              /\ trace.Valid (timerModel bounds.electionTimeout)
+              /\ trace.Valid (boundedDelayModel 0)
+              /\ TimeDiverges trace
+              /\ 0 <= (0 : Real)
+              /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
+              /\ repair 0 (max bounds.heartbeatInterval 0) 0
+                    + max bounds.heartbeatInterval 0
+                    + 0
+                  < 2
+              /\ 2 <= bounds.electionTimeout / 2
+              /\ AnchoredStart trace 0 0 Model.BOOTSTRAP_TERM {0} {0} 2
+              /\ GoodPeriod trace 0 duration {0}
+              /\ Window.AnchorActive trace 0 duration {0}
+              /\ BacklogTerms trace 0 0 {0} 0)
+            /\ StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0}
+            /\ Window.StableTerm trace 0 duration 0 Model.BOOTSTRAP_TERM {0} := by
+  intro windowBounds duration _
+  have admissible : Liveness.Admissible (Model.transitionSystem {0} [0]) (fixture true) :=
+    ⟨coherent true, protocol_valid true, timing_valid true, crash_valid true,
+      delivery_valid true⟩
+  have ratio
+      : repair 0 (max windowBounds.heartbeatInterval 0) 0
+          + max windowBounds.heartbeatInterval 0 + 0 < 2 := by
+    norm_num [windowBounds, repair]
+  have freshLe : (2 : Real) <= windowBounds.electionTimeout / 2 := by norm_num [windowBounds]
+  let _ : Config.InitialConfiguration := ⟨{0}⟩
+  refine ⟨fixture true, ⟨admissible, timers_valid, bounded_valid 0, diverges, le_rfl,
+    heartbeats true _, ratio, freshLe, anchored_start, good duration,
+    anchor_active duration, initial_backlog⟩, ?_⟩
+  exact stable_window_catchup_anchored (bounds := windowBounds) admissible timers_valid
+    (bounded_valid 0) diverges le_rfl (heartbeats true _) ratio freshLe anchored_start
+    (good duration) (anchor_active duration) initial_backlog
 
 end CCFRaft.Proofs.Leadership.CatchUpWitness
