@@ -269,8 +269,9 @@ anchors its term among `participants` by `start + duration`
 Within `initial` of `start` a primary anchors its term or a round starts, and a
 round of `E + 4 * maxDelay` ends the duel unless the draws of its competitors fall
 within `4 * maxDelay` of each other. `signature_settles` then keeps the primary for
-the rest of the good period when `bounds.heartbeatInterval + maxDelay < fresh`.
-Each premise is needed; `LIVENESS.md` gives the counterexamples. -/
+the rest of the good period when the anchor is also in sync and
+`bounds.heartbeatInterval + maxDelay < fresh`. `LIVENESS.md` gives, for each
+premise, a counterexample without it or the reason it is assumed. -/
 theorem duelling_leaders_resolve
     : forall (config : Finset NodeID) (nodes : List NodeID),
         let system := Model.transitionSystem config nodes

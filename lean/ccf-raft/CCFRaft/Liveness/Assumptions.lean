@@ -16,7 +16,7 @@ public import CCFRaft.Liveness.Assumptions.Round
 /-!
 Assumptions of the liveness theorems about an execution: a stable primary, a
 live quorum, fair-loss links and a submitted request, and the premises from which
-`Properties.stable_leader` derives a stable primary.
+`Proofs.Leadership.stable_leader` derives a stable primary.
 Short, single-declaration assumptions are defined here.
 Larger groups of related declarations are imported from `Liveness/Assumptions/`.
 Unlike the scheduling constraints, these are not

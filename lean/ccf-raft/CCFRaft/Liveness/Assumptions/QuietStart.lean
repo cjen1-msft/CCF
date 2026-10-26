@@ -15,8 +15,8 @@ variable {W : Type} [HasProtocol W Model.State] [HasTime W]
 
 /-! ## Premises of a stable primary
 
-`Properties.stable_leader` derives `StableLeader` from timing. Each premise rules
-out a way to depose the primary that the timing bounds do not.
+`Proofs.Leadership.stable_leader` derives `StableLeader` from timing. Each premise
+rules out a way to depose the primary that the timing bounds do not.
 -/
 
 /-- No node or message has moved past `term`, no node is a pre-vote candidate in

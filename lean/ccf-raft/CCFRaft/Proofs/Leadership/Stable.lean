@@ -312,7 +312,10 @@ theorem quiet_all {bounds : Bounds}
         ratio covered incumbent afterStart stepped quiet (local_ _ eventEq) different
         c.tr.found (by omega)
 
-/-- `Properties.stable_leader`. -/
+/-- Untimed stable leadership: `leader` stays the primary of `term` from `start`,
+given bounded heartbeat and election scheduling, a quiet start, timely and
+matching AppendEntries from the primary, `H + delay < E / 2`, and the `Covered`
+and `Incumbent` premises of `Liveness/Assumptions.lean`. -/
 theorem stable_leader {bounds : Bounds}
     (heartbeats : trace.HeartbeatScheduling (some bounds.heartbeatInterval))
     (elections : trace.ElectionScheduling (some (bounds.electionTimeout / 2)))

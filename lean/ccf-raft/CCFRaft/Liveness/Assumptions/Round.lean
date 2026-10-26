@@ -50,7 +50,8 @@ structure RoundStart (trace : Trace W Event) (participants : Finset NodeID) (c t
 
 variable [HasTime W] in
 /-- An anchored start at an index from `c` no later than `bound` after it: the
-duel's goal, from which `Leadership.stable_window_anchored` keeps the leader. -/
+duel's goal, from which `Leadership.stable_window_anchored` keeps the leader when
+the anchor is also in sync (`InSync`). -/
 def HandoffBy (trace : Trace W Event) (participants : Finset NodeID) (c : Nat)
     (bound fresh : Real)
     : Prop :=

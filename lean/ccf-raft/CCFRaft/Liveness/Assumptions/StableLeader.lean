@@ -29,8 +29,8 @@ abbrev Leads (trace : Trace W Event) (index : Nat) (leader : NodeID) (term : Nat
 Other primaries, for example a partitioned primary of an older term, are allowed.
 Needed: nodes can keep timing out and electing a new primary, each deposed before
 its first signature is acknowledged. CCF makes this unlikely, not impossible, with
-randomized election timeouts. `Properties.stable_leader` derives it from timing
-when the primary is the newest at `start`, under further assumptions. -/
+randomized election timeouts. `Proofs.Leadership.stable_leader` derives it from
+timing when the primary is the newest at `start`, under further assumptions. -/
 def StableLeader (trace : Trace W Event) (start : Nat) (leader : NodeID) (term : Nat)
     : Prop :=
   (exists point, trace.stateAt start = some point)

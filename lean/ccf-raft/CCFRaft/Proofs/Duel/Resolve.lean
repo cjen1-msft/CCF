@@ -32,8 +32,8 @@ Regime. For the uniform law `rho = 4 * margin / electionTimeout` with
 `margin = 4 * maxDelay` (`Rounds.uniform_law`), so `q = 32 * n * (n - 1) * maxDelay /
 electionTimeout`, which is below one only when `maxDelay` is small against
 `electionTimeout / n ^ 2`: at CCF's default `electionTimeout = 5000ms` and `n = 5`,
-only up to `maxDelay` of about 7ms. CCF's whole-millisecond law has a similar `rho`
-(`Rounds.ccf_law`).
+only for `maxDelay` below about 7.8ms. CCF's whole-millisecond law has a similar
+`rho` (`Rounds.ccf_law`), and needs `maxDelay` below about 7.7ms.
 -/
 
 namespace CCFRaft.Proofs.Duel.Resolve
