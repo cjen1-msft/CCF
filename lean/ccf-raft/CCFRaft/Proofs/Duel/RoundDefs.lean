@@ -3,6 +3,7 @@ module
 public import CCFRaft.Proofs.Duel.RaceWon
 public import CCFRaft.Liveness.Assumptions.Anchor
 public import CCFRaft.Liveness.Assumptions.Window
+public import CCFRaft.Liveness.Assumptions.Round
 
 @[expose] public section
 
@@ -49,32 +50,6 @@ variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetw
   [HasTimers W]
 
 /-! ## Definitions -/
-
-omit [HasTimers W] in
-/-- A round of `term + 1` starts at `c`: every participant and every packet between
-participants is at most `term`, and step `c` moves a participant past `term`. -/
-structure RoundStart (trace : Trace W Liveness.Event) (participants : Finset NodeID)
-    (c term : Nat)
-    : Prop where
-  low
-    : forall point node state,
-        trace.stateAt c = some point
-        -> node ∈ participants
-        -> nodeState (proto point) node = some state
-        -> state.currentTerm <= term
-  messages
-    : forall point packet,
-        trace.stateAt c = some point
-        -> packet ∈ pending point
-        -> packet.envelope.source ∈ participants
-        -> packet.envelope.target ∈ participants
-        -> packet.envelope.payload.term <= term
-  raise
-    : exists step node state,
-        trace.stepAt c = some step
-        /\ node ∈ participants
-        /\ nodeState (proto step.after) node = some state
-        /\ term < state.currentTerm
 
 omit [HasTimers W] in
 /-- `index` is in the round of `term + 1` started at `c`: no participant has moved
@@ -154,11 +129,13 @@ structure RoundSetup [Config.InitialConfiguration] (nodes : List NodeID)
   diverges : TimeDiverges trace
   firing
     : forall node,
-        Scheduled trace (some 0) (fun point => TimeoutDue point node)
-          (fun step => step.action = .local node (.timeout .election))
+        node ∈ participants
+        -> Scheduled trace (some 0) (fun point => TimeoutDue point node)
+            (fun step => step.action = .local node (.timeout .election))
   overshoot
     : forall index step node,
-        Within trace start duration index
+        node ∈ participants
+        -> Within trace start duration index
         -> trace.stepAt index = some step
         -> NoOvershoot (some jump) step node
   nonnegative : 0 <= maxDelay

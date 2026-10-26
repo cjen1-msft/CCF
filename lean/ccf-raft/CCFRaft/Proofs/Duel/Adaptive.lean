@@ -1,16 +1,16 @@
 module
 
 public import CCFRaft.Proofs.Duel.Support
-public import CCFRaft.Liveness.Assumptions.Settles
 public import CCFRaft.Liveness.Model.WitnessWorld
 public import Mathlib.Probability.ProductMeasure
 
 @[expose] public section
 
 /-!
-# Draft: duelling leaders against a scheduling policy
+# Duelling leaders against a scheduling policy
 
-DRAFT FOR REVIEW, NOT IMPORTED BY `Properties`; every proof is `sorry`.
+NOT IMPORTED BY `Properties`. The policy model of the duel; the statement is in
+`Duel.Resolve`.
 
 CCF's `restart_election_timeout` (`raft.h`) draws a fresh uniform offset at every
 reset. Here a sample is one offset per participant reset, consumed in trace order
@@ -28,12 +28,8 @@ prefix before the `j`-th reset by construction; no non-anticipation premise.
 
 `Borel` is the standard measurable-scheduler assumption. It is a premise, not a
 lemma: an arbitrary policy may branch on a non-measurable set of past deadlines,
-and then neither the event nor any lower bound on its measure is meaningful. Any
+and then neither the event nor any bound on its measure is meaningful. Any
 policy that decides by Borel tests on the reals it sees satisfies it.
-
-The event is a handoff to the stable-leader window, `Liveness.FreshStart`: a fresh start
-of a participant primary within the window. A committed signature would also need
-the winner to repair its voters' logs, which takes time growing with the backlog.
 -/
 
 namespace CCFRaft.Proofs.Duel.Adaptive
@@ -185,83 +181,5 @@ def Borel (participants : Finset NodeID) (policy : Policy) : Prop :=
   forall index,
     Measurable[MeasurableSpace.pi, stepSpace]
       fun sample => (run participants policy sample).stepAt index
-
-/-! ## Premises -/
-
-/-- The premises of `duelling_leaders_resolve` for one recording. -/
-def Premises (system : CCF.TransitionSystem Model.State Model.Action) (bounds : Bounds)
-    (maxDelay : Real) (start : Nat) (duration : Real) (participants : Finset NodeID)
-    (trace : Trace DuelWorld Liveness.Event)
-    : Prop :=
-  trace.Coherent
-  /\ trace.Valid (protocolModel system)
-  /\ trace.Valid timingModel
-  /\ trace.Valid crashModel
-  /\ trace.Valid (deliveryModel system)
-  /\ trace.Valid (boundedDelayModel maxDelay)
-  /\ trace.Valid (timerModel bounds.electionTimeout)
-  /\ TimeDiverges trace
-  /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
-  /\ trace.SignatureScheduling (some bounds.signatureInterval)
-  /\ trace.TimeoutScheduling (some 0)
-  /\ GoodPeriod trace start duration participants
-  /\ Window.Matching trace start duration participants
-
-/-! ## The statement -/
-
-/-- The length of one duel round: no signature interval or replication, since the
-event is a fresh start rather than a commit. Provisional until (c) is proved. -/
-def duelRound (bounds : Bounds) (maxDelay : Real) : Real :=
-  2 * bounds.electionTimeout + bounds.heartbeatInterval + 6 * maxDelay
-
-/-- The freshness `race_won` gives the winner's start. -/
-noncomputable def duelFresh (bounds : Bounds) (maxDelay : Real) : Real :=
-  bounds.electionTimeout / 2 - 2 * maxDelay
-
-/-- Some participant primary starts freshly within the window. -/
-def Handoff (trace : Trace DuelWorld Liveness.Event) (start : Nat) (duration : Real)
-    (participants : Finset NodeID) (fresh : Real)
-    : Prop :=
-  exists index leader term,
-    Within trace start duration index
-    /\ leader ∈ participants
-    /\ Liveness.FreshStart trace index leader term participants fresh
-
-/-- The event is measurable for a Borel policy: it is a countable combination,
-over indices, leaders and terms, of conditions on finitely many recorded steps. -/
-theorem measurableSet_handoff {participants : Finset NodeID} {policy : Policy}
-    (borel : Borel participants policy) (start : Nat) (duration fresh : Real)
-    : MeasurableSet
-        {sample |
-          Handoff (run participants policy sample) start duration participants fresh
-        } := by
-  sorry
-
-/-- Duelling leaders resolve against any Borel policy that meets the premises for
-every sample in the support. -/
-theorem duelling_leaders_resolve (config : Finset NodeID) (nodes : List NodeID)
-    (bounds : Bounds) (maxDelay : Real) (start rounds : Nat)
-    (participants : Finset NodeID) (policy : Policy)
-    : let system := Model.transitionSystem config nodes
-      let electionTimeout := bounds.electionTimeout
-      let margin := duelMargin bounds maxDelay
-      let duration := rounds * duelRound bounds maxDelay
-      0 < participants.card
-      -> 0 <= maxDelay
-      -> 0 <= bounds.heartbeatInterval
-      -> margin < electionTimeout / 2
-      -> Borel participants policy
-      -> (forall sample,
-            (forall j, sample j ∈ Icc (electionTimeout / 2) electionTimeout)
-            -> Premises system bounds maxDelay start duration participants
-                (run participants policy sample))
-      -> ENNReal.ofReal
-            (settleProbability participants.card rounds margin electionTimeout)
-          <= sampleMeasure electionTimeout
-              {sample |
-                Handoff (run participants policy sample) start duration participants
-                  (duelFresh bounds maxDelay)
-              } := by
-  sorry
 
 end CCFRaft.Proofs.Duel.Adaptive
