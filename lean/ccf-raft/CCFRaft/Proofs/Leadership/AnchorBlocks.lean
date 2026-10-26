@@ -183,6 +183,7 @@ theorem receive_ae_any (source : NodeID) (before : NodeState)
         (fun after sent =>
           exists aware : NodeState,
             aware.log = before.log
+            /\ before.currentTerm <= aware.currentTerm
             /\ AEStep self source (awareState aware request) request after sent)
         (receive caps self source before (.appendEntriesRequest request)) := by
   simp only [receive]
@@ -192,8 +193,16 @@ theorem receive_ae_any (source : NodeID) (before : NodeState)
       with ⟨_, eq⟩ | ⟨le, eq⟩ <;> rw [eq]
     · simp [bumpedState, Message.term]
     · exact le
+  have grows : before.currentTerm
+      <= (observeTerm before (.appendEntriesRequest request)).currentTerm := by
+    rcases observe_bumping before (message := .appendEntriesRequest request) trivial
+      with ⟨lt, eq⟩ | ⟨_, eq⟩
+    · rw [eq]
+      simp only [bumpedState, Message.term] at lt ⊢
+      exact lt.le
+    · rw [eq]
   exact Sends.mono (aeStep self source _ request le) fun _ _ step =>
-    ⟨_, Concrete.observeTerm_log _ _, step⟩
+    ⟨_, Concrete.observeTerm_log _ _, grows, step⟩
 
 end Handlers
 
@@ -217,6 +226,7 @@ theorem log_source
     : c.pre.log[i]? = some entry
       \/ exists source request,
           c.event = .receive source (.appendEntriesRequest request)
+          /\ c.pre.currentTerm <= request.term
           /\ request.prevLogIndex <= i
           /\ request.entries[i - request.prevLogIndex]? = some entry := by
   have prefixed : c.post.log <+: c.pre.log -> c.pre.log[i]? = some entry := fun sub =>
@@ -264,12 +274,12 @@ theorem log_source
       by_cases isRequest : exists request, message = .appendEntriesRequest request
       · obtain ⟨request, rfl⟩ := isRequest
         simp only [Model.Node.step] at ran
-        obtain ⟨_, _, aware, awareLog, step⟩ :=
+        obtain ⟨_, _, aware, awareLog, grows, step⟩ :=
           receive_ae_any c.tr.actor source c.tr.pre request _ _ _ ran
         have log' := awareState_log aware request
         rw [awareLog] at log'
         rcases step with ⟨_, postEq, _⟩ | ⟨_, _, _, postEq, _⟩
-            | ⟨_, matches_, _, _, _, _, logEq, _⟩
+            | ⟨termEq, matches_, _, _, _, _, logEq, _⟩
         · refine Or.inl (prefixed ?_)
           show c.tr.post.log <+: _
           rw [postEq, log']
@@ -287,7 +297,9 @@ theorem log_source
             exact found
           rcases acceptLog_source prev found' with old | ⟨le, get⟩
           · exact Or.inl old
-          · exact Or.inr ⟨source, request, eventEq, le, get⟩
+          · refine Or.inr ⟨source, request, eventEq, ?_, le, get⟩
+            rw [termEq, awareState_term]
+            exact grows
       · refine Or.inl ?_
         cases Summary.kind c.sum with
         | same log _ => exact prefixed (log ▸ List.prefix_refl _)
@@ -320,6 +332,9 @@ def AboveConfigured (P : Finset NodeID -> Prop) (participants : Finset NodeID) (
         -> envelope.source ∈ participants
         -> envelope.target ∈ participants
         -> envelope.payload = .appendEntriesRequest request
+        -> (forall receiver,
+              (envelope.target, receiver) ∈ state.nodes
+              -> receiver.currentTerm <= request.term)
         -> forall configuration,
             configuration ∈ configurationHistory request.entries
             -> k < request.prevLogIndex + configuration.index
@@ -332,9 +347,10 @@ theorem AboveConfigured.mono {P : Finset NodeID -> Prop} {participants : Finset 
   ⟨
     fun holder held now holderIn configuration member high =>
       above.1 holder held now holderIn configuration member (by omega),
-    fun envelope request queued sourceIn targetIn payload configuration member high =>
-      above.2 envelope request queued sourceIn targetIn payload configuration member
-        (by omega)
+    fun envelope request queued sourceIn targetIn payload current configuration member
+        high =>
+      above.2 envelope request queued sourceIn targetIn payload current configuration
+        member (by omega)
   ⟩
 
 variable {P : Finset NodeID -> Prop} {participants : Finset NodeID}
@@ -365,20 +381,38 @@ theorem AboveConfigured.step {k : Nat} (above : AboveConfigured P participants k
     · have actorIn : c.actor ∈ participants := same ▸ holderIn
       obtain ⟨i, entry, get, some, indexEq⟩ := mem_history_iff.mp member
       rcases log_source c plain get (by simp [some])
-          with old | ⟨source, request, eventEq, le, get'⟩
+          with old | ⟨source, request, eventEq, accepted, le, get'⟩
       · exact above.1 c.actor c.pre c.pre_now actorIn configuration
           (mem_history_iff.mpr ⟨i, entry, old, some, indexEq⟩) high
       · obtain ⟨envelope, pending, sourceEq, targetEq, payload⟩ := c.received eventEq
         exact above.2 envelope request pending (sourceEq ▸ isolated actorIn _ _ eventEq)
           (targetEq ▸ actorIn) payload
+          (fun receiver member' => by
+            rw [targetEq] at member'
+            rw [c.now_pre member']
+            exact accepted)
           { index := i - request.prevLogIndex + 1, nodes := configuration.nodes }
           (mem_history_iff.mpr ⟨i - request.prevLogIndex, entry, get', some, rfl⟩)
           (by dsimp only; omega)
     · exact above.1 holder held old holderIn configuration member high
-  refine ⟨held, fun envelope request queued sourceIn targetIn payload configuration member
-    high => ?_⟩
+  refine ⟨
+    held,
+    fun envelope request queued sourceIn targetIn payload current configuration
+        member high =>
+      ?_
+  ⟩
   rcases c.tr.mem_network queued with old | new
-  · exact above.2 envelope request old sourceIn targetIn payload configuration member high
+  · -- Terms only grow, so the target was at or below the request's term before.
+    have current' : forall receiver,
+        (envelope.target, receiver) ∈ before.nodes -> receiver.currentTerm <= request.term := by
+      intro receiver member'
+      by_cases same : envelope.target = c.actor
+      · rw [same] at member' current
+        rw [c.now_pre member']
+        exact c.term_le.trans (current c.post c.post_now)
+      · exact current receiver (c.now_other same member')
+    exact above.2 envelope request old sourceIn targetIn payload current' configuration member
+      high
   · obtain ⟨sourceEq, ok⟩ := Summary.sends c.sum envelope new
     simp only [payload] at ok
     obtain ⟨placed, placedIn, nodesEq, indexEq⟩ := history_of_entries ok.1.2.2.2.2.1 member
