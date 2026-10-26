@@ -2,6 +2,7 @@ module
 
 public import CCFRaft.Proofs.Duel.Adaptive
 public import CCFRaft.Proofs.Duel.Attempts
+public import CCFRaft.Liveness.Assumptions.Round
 
 @[expose] public section
 
@@ -11,7 +12,8 @@ public import CCFRaft.Proofs.Duel.Attempts
 NOT IMPORTED BY `Properties`. The draws of `Adaptive.run` that `Attempts` counts.
 
 Rounds are cut at raises: steps that lift the highest term among the participants.
-Round `k` runs from the `k + 1`-th raise from `start` up to the next one. A draw is
+Counting from the first round start at or after `start`, round `k` runs from the
+`k + 1`-th raise up to the next one. A draw is
 relevant to round `k` when a participant's reset in round `k` into the round's term
 consumes it, and the participant has reset into that term at most once before in
 the round. Its centres are the other participants' deadlines, less the reset time.
@@ -47,14 +49,27 @@ def Raises (trace : Trace W Liveness.Event) (participants : Finset NodeID) (inde
     trace.stepAt index = some step
     /\ maxTerm participants step.before < maxTerm participants step.after
 
+/-- `first` is the first round start at or after `start`. -/
+def FirstRound (trace : Trace W Liveness.Event) (participants : Finset NodeID)
+    (start first : Nat)
+    : Prop :=
+  start <= first
+  /\ (exists term, RoundStart trace participants first term)
+  /\ forall index,
+      start <= index
+      -> index < first
+      -> Not (exists term, RoundStart trace participants index term)
+
 open Classical in
-/-- Step `index` is in round `k` from `start`: it is at or after the `k + 1`-th raise
-from `start`, and before the next. -/
+/-- Step `index` is in round `k` from `start`: counting from the first round start at
+or after `start`, it is at or after the `k + 1`-th raise, and before the next. -/
 def InRound (trace : Trace W Liveness.Event) (participants : Finset NodeID)
     (start k index : Nat)
     : Prop :=
-  start <= index
-  /\ ((Finset.Icc start index).filter (Raises trace participants)).card = k + 1
+  exists first,
+    FirstRound trace participants start first
+    /\ first <= index
+    /\ ((Finset.Icc first index).filter (Raises trace participants)).card = k + 1
 
 open Classical in
 /-- The participant resets among the steps before `index`: the index of the draw
