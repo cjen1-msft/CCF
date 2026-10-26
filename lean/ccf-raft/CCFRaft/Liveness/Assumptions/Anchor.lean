@@ -84,7 +84,16 @@ satisfying `P`: every configuration active at a participant, and every
 configuration above a participant's commit index in a participant's log or in an
 AppendEntries in flight between participants. A configuration becomes active at
 a participant only as an entry landing above its commit index, which only grows,
-so the form is inductive without a safety invariant. -/
+so the form is inductive without a safety invariant.
+
+The third clause covers only AppendEntries whose target is at or below the
+request's term. A dropped envelope stays in the network for ever, and a stale
+one is rejected on delivery without touching the log, while terms only grow
+(CE-I7). With participants `{1, 2, 3}`, a primary `1` of term `1` appends a
+configuration `{1, 4, 5}` at index `k` and sends it to `2`, but the envelope is
+dropped; `2` is elected in term `2` and truncates `k` at `1`, and nobody commits
+past `k`. Without the guard the dropped envelope would falsify `Membership` and
+`Blocks` for ever. -/
 def Configured (P : Finset NodeID -> Prop) (participants : Finset NodeID)
     (state : Model.State)
     : Prop :=
@@ -105,6 +114,9 @@ def Configured (P : Finset NodeID -> Prop) (participants : Finset NodeID)
               -> envelope.source ∈ participants
               -> envelope.target ∈ participants
               -> envelope.payload = .appendEntriesRequest request
+              -> (forall receiver,
+                    (envelope.target, receiver) ∈ state.nodes
+                    -> receiver.currentTerm <= request.term)
               -> forall configuration,
                   configuration ∈ configurationHistory request.entries
                   -> local_.commitIndex < request.prevLogIndex + configuration.index
@@ -121,8 +133,10 @@ theorem Configured.mono {P Q : Finset NodeID -> Prop} {participants : Finset Nod
     fun configuration found => implies _ (active configuration found),
     fun holder held' now holderIn configuration found high =>
       implies _ (held holder held' now holderIn configuration found high),
-    fun envelope request queued sourceIn targetIn payload configuration found high =>
-      implies _ (sent envelope request queued sourceIn targetIn payload configuration found high)
+    fun envelope request queued sourceIn targetIn payload current configuration found high =>
+      implies _
+        (sent envelope request queued sourceIn targetIn payload current configuration found
+          high)
   ⟩
 
 /-- Every configuration a participant can count votes in (`Configured`) has each
