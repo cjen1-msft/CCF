@@ -60,6 +60,27 @@ noncomputable def settleProbability (competitors rounds : Nat)
     : Real :=
   1 - (1 - marginProbability competitors margin electionTimeout) ^ rounds
 
+/-- What the duel needs of the remaining-time law: a probability measure on
+`[E / 2, E]` that puts at most `rho` on any interval of radius `margin`.
+
+The continuous uniform law on `[E / 2, E]` satisfies it with
+`rho = 4 * margin / E` (`Rounds.uniform_law`). CCF's actual draw, the remaining
+time uniform on the whole milliseconds `{E / 2, ..., E}` (`raft.h`
+`restart_election_timeout`), satisfies it with
+`rho = (2 * margin + 1) / (E / 2 + 1)` (`Rounds.ccf_law`), which at the duel's
+`margin = 4 * maxDelay` is `(8 * maxDelay + 1) / (E / 2 + 1)`: an interval of width
+`8 * maxDelay` holds at most `floor (8 * maxDelay) + 1` whole milliseconds. So the
+statement covers CCF's discrete draw, not only a continuous idealisation. -/
+structure Law (E margin rho : Real) (law : MeasureTheory.Measure Real) : Prop where
+  probability : MeasureTheory.IsProbabilityMeasure law
+  support : law (Set.Icc (E / 2) E)ᶜ = 0
+  nonnegative : 0 <= rho
+  concentrated : forall x, law (Set.Icc (x - margin) (x + margin)) <= ENNReal.ofReal rho
+
+/-- One round fails with probability at most this, given the earlier rounds. -/
+noncomputable def roundFailure (rho : Real) (width K : Nat) : Real :=
+  K * width * rho
+
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasTimers W]
 
 /-- Index `index` is the `count`-th election-timer reset of `node` at or after
@@ -113,8 +134,16 @@ def duelMargin (bounds : Bounds) (maxDelay : Real) : Real :=
   bounds.heartbeatInterval + 5 * maxDelay
 
 /-- Provisional: an upper bound on the real time one round of a duel takes, so
-that a good period of `rounds * roundLength` contains `rounds` rounds. -/
+that a good period of `rounds * roundLength` contains `rounds` rounds: the race
+itself, then the winner's first signature (`signatureInterval`) and its
+replication to a quorum (a send pass and a round trip).
+Needed: a single-node primary that is due to sign does not reset its timer, so
+no draw constrains it, and with `signatureInterval` beyond the window nothing
+commits in it although `settleProbability` is one. -/
 def roundLength (bounds : Bounds) (maxDelay : Real) : Real :=
-  2 * bounds.electionTimeout + 4 * maxDelay
+  2 * bounds.electionTimeout
+  + bounds.signatureInterval
+  + bounds.heartbeatInterval
+  + 6 * maxDelay
 
 end CCFRaft.Liveness

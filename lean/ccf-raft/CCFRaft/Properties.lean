@@ -8,6 +8,7 @@ public import CCF.Execution
 import CCFRaft.Proofs.CommittedLogs
 import CCFRaft.Proofs.Direct.CommitFrontier
 import CCFRaft.Proofs.Duel.Probability
+import CCFRaft.Proofs.Duel.Support
 import CCFRaft.Proofs.Election
 import CCFRaft.Proofs.Leadership.AnchorSync
 import CCFRaft.Proofs.Leadership.CatchUp
@@ -236,7 +237,8 @@ lemma commit_liveness_witness
 
 /-- Duelling leaders resolve, with probability tending to one in the number of
 rounds. Sample `draws`, one uniform timeout offset per round per participant, and
-let the adversary choose any execution `family draws` around it: coherent, valid
+let the adversary choose, for each sample with every draw in `[E / 2, E]` (almost
+every sample), any execution `family draws` around it: coherent, valid
 for the protocol, timing, crash, delivery, bounded-delay and election-timer
 models, with the clock unbounded, due heartbeats and signatures sent within their
 bounds, due timeouts fired at once, a good period from `start` long enough for
@@ -268,20 +270,21 @@ theorem duelling_leaders_resolve
             /\ 0 <= bounds.heartbeatInterval
             /\ margin < electionTimeout / 2
             /\ (forall draws,
-                  let trace := family draws
-                  trace.Coherent
-                  /\ trace.Valid (Liveness.protocolModel system)
-                  /\ trace.Valid Liveness.timingModel
-                  /\ trace.Valid Liveness.crashModel
-                  /\ trace.Valid (Liveness.deliveryModel system)
-                  /\ trace.Valid (Liveness.boundedDelayModel maxDelay)
-                  /\ trace.Valid (Liveness.timerModel electionTimeout)
-                  /\ Liveness.TimeDiverges trace
-                  /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
-                  /\ trace.SignatureScheduling (some bounds.signatureInterval)
-                  /\ trace.TimeoutScheduling (some 0)
-                  /\ Liveness.GoodPeriod trace start duration participants
-                  /\ Liveness.TimerDraws trace candidates draws start))
+                  (forall k i, draws k i ∈ Set.Icc (electionTimeout / 2) electionTimeout)
+                  ->  let trace := family draws
+                      trace.Coherent
+                      /\ trace.Valid (Liveness.protocolModel system)
+                      /\ trace.Valid Liveness.timingModel
+                      /\ trace.Valid Liveness.crashModel
+                      /\ trace.Valid (Liveness.deliveryModel system)
+                      /\ trace.Valid (Liveness.boundedDelayModel maxDelay)
+                      /\ trace.Valid (Liveness.timerModel electionTimeout)
+                      /\ Liveness.TimeDiverges trace
+                      /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
+                      /\ trace.SignatureScheduling (some bounds.signatureInterval)
+                      /\ trace.TimeoutScheduling (some 0)
+                      /\ Liveness.GoodPeriod trace start duration participants
+                      /\ Liveness.TimerDraws trace candidates draws start))
           -> ENNReal.ofReal
                 (Liveness.settleProbability competitors rounds margin electionTimeout)
               <= Liveness.uniformDraws competitors rounds electionTimeout
@@ -291,10 +294,10 @@ theorem duelling_leaders_resolve
   intro config nodes system W _ _ _ _ _ competitors rounds candidates bounds maxDelay start
     participants family electionTimeout margin duration premises
   obtain ⟨_, _, competes, delay, heartbeat, fits, _⟩ := premises
-  refine Proofs.Duel.settle_of_margin competes
+  refine Proofs.Duel.settle_of_margin_support competes
     (show 0 <= bounds.heartbeatInterval + 5 * maxDelay by linarith) fits ?_
   -- Remaining: a round with a margin forces a committed signature.
-  intro draws _
+  intro draws _ _
   sorry
 
 /-- A fresh primary stays uncontested while the good period lasts, when a quorum
