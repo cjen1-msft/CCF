@@ -47,7 +47,6 @@ variable [Config.InitialConfiguration]
 
 include admissible
 
-set_option linter.unusedVariables false in
 /-- A primary of the top term within the INIT span hands over within
 `incumbentBound`, or a round starts by then. -/
 theorem init_incumbent {electionTimeout maxDelay jump heartbeat duration fresh : Real}
@@ -70,17 +69,12 @@ theorem init_incumbent {electionTimeout maxDelay jump heartbeat duration fresh :
           trace.stateAt start = some first
           -> Membership participants members (proto first))
     (subset : participants ⊆ members)
-    (configured
-      : forall first,
-          trace.stateAt start = some first
-          -> ConfigurationCommitted participants (proto first))
     (roled
       : forall first node state,
           trace.stateAt start = some first
           -> node ∈ participants
           -> nodeState (proto first) node = some state
           -> Not (state.role = .none))
-    (present : forall node, node ∈ participants -> node ∈ nodes)
     : forall index point leader state term,
         Within trace start (initRaiseLength electionTimeout maxDelay jump) index
         -> Low trace participants index term

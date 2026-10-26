@@ -2,18 +2,20 @@ module
 
 public import CCFRaft.Model
 public import CCFRaft.Liveness.Assumptions
+public import CCFRaft.Liveness.Model.Policy
 public import CCFRaft.Liveness.Seq
 public import CCF.Execution
 
 import CCFRaft.Proofs.CommittedLogs
 import CCFRaft.Proofs.Direct.CommitFrontier
-import CCFRaft.Proofs.Duel.Probability
-import CCFRaft.Proofs.Duel.Support
+import CCFRaft.Proofs.Duel.Initial
+import CCFRaft.Proofs.Duel.Witness
 import CCFRaft.Proofs.Election
 import CCFRaft.Proofs.Leadership.AnchorSync
 import CCFRaft.Proofs.Leadership.CatchUp
 import CCFRaft.Proofs.Leadership.CatchUpWitness
 import CCFRaft.Proofs.Leadership.InSync
+import CCFRaft.Proofs.Leadership.InitIncumbent
 import CCFRaft.Proofs.Leadership.SettlesWitness
 import CCFRaft.Proofs.Leadership.Stable
 import CCFRaft.Proofs.LivenessWitness
@@ -235,70 +237,225 @@ lemma commit_liveness_witness
                 /\ Liveness.RequestCommitted trace 0 10 index := by
   exact Proofs.LivenessWitness.timed_commit_window_witness
 
-/-- Duelling leaders resolve, with probability tending to one in the number of
-rounds. Sample `draws`, one uniform timeout offset per round per participant, and
-let the adversary choose, for each sample with every draw in `[E / 2, E]` (almost
-every sample), any execution `family draws` around it: coherent, valid
-for the protocol, timing, crash, delivery, bounded-delay and election-timer
-models, with the clock unbounded, due heartbeats and signatures sent within their
-bounds, due timeouts fired at once, a good period from `start` long enough for
-`rounds` rounds, and each participant's `k`-th timer reset after `start` drawing
-`draws k i`. If some participant competes, the heartbeat interval is not
-negative, and the lead `duelMargin` fits in half an election timeout, then the
-probability that some primary commits a signature of its own term within the good
-period is at least `settleProbability = 1 - (1 - marginProbability) ^ rounds`,
-where `marginProbability = (1 - 2 duelMargin / E) ^ competitors > 0`. No independence of
-the adversary from the draws is assumed: each round's margin event forces the
-outcome pointwise. -/
+/-- Duelling leaders resolve: from a good period, the probability that no primary
+anchors its term in time decays geometrically in the number of rounds.
+
+The randomness is the election-timeout draw. `Liveness.run participants policy
+sample` is the execution a scheduler `policy` produces against `sample`, a stream
+of offsets: each election-timer reset of a participant takes the next offset and
+sets the node's deadline that far after the reset. The scheduler chooses
+everything else, including deliveries, drops, crashes, requests and the timers of
+non-participants. It sees past deadlines but not future offsets, and its steps
+depend measurably on the sample (`Liveness.Borel`). The offsets are independent
+draws from `law`, a probability law on `[E / 2, E]`, `E = bounds.electionTimeout`,
+that puts at most `rho` on any interval of radius `4 * maxDelay`
+(`Liveness.Law`). CCF's discrete draw meets it with
+`rho = (8 * maxDelay + 1) / (E / 2 + 1)`.
+
+Assume, for every sample in the support, that the run is coherent, that the
+protocol, timing, crash, delivery, bounded-delay and timer models hold, that time
+diverges, and that a primary sends due heartbeats within
+`bounds.heartbeatInterval`. A participant whose deadline has passed times out
+before time advances, and in the window the clock passes a participant's pending
+deadline at no more than `overshoots` steps, each time by at most `jump`. Take a
+good period from `start` for `duration` among `participants`, in which the logs
+match where AppendEntries are delivered between participants and no
+participant's retirement commits. At `start` the participants count votes only
+in configurations with nodes `members`, each has a committed configuration, and
+each has a role (`Liveness.HasRole`). Then the probability that no primary
+anchors its term among `participants` by `start + duration`
+(`Liveness.HandoffBy`), with `fresh` left on every anchor timer, is at most
+`(overshoots + 1) * (2 n (n - 1) rho) ^ rounds`, `n` the number of participants.
+Within `initial` of `start` a primary anchors its term or a round starts, and a
+round of `E + 4 * maxDelay` ends the duel unless the draws of its competitors fall
+within `4 * maxDelay` of each other. `signature_settles` then keeps the primary for
+the rest of the good period when `bounds.heartbeatInterval + maxDelay < fresh`.
+Each premise is needed; `LIVENESS.md` gives the counterexamples. -/
 theorem duelling_leaders_resolve
     : forall (config : Finset NodeID) (nodes : List NodeID),
         let system := Model.transitionSystem config nodes
-        forall (W : Type) [Liveness.HasProtocol W Model.State] [Liveness.HasTime W]
-                [Liveness.HasLive W] [Liveness.HasNetwork W] [Liveness.HasTimers W],
-        forall (competitors rounds : Nat) (candidates : Fin competitors -> NodeID),
-        forall (bounds : Liveness.Bounds) (maxDelay : Real) (start : Nat),
-        forall (participants : Finset NodeID),
-        forall (family
-                : Liveness.Draws competitors rounds -> Liveness.Trace W Liveness.Event),
+        forall (policy : Liveness.Policy) (law : MeasureTheory.Measure Real),
+        forall (bounds : Liveness.Bounds) (maxDelay jump rho fresh : Real),
+        forall (overshoots rounds start : Nat) (participants members : Finset NodeID),
           let electionTimeout := bounds.electionTimeout
-          let margin := Liveness.duelMargin bounds maxDelay
-          let duration := rounds * Liveness.roundLength bounds maxDelay
-          (Function.Injective candidates
-            /\ (forall node, node ∈ participants <-> exists i, candidates i = node)
-            /\ 0 < competitors
+          let heartbeat := bounds.heartbeatInterval
+          let handover := 2 * (heartbeat + maxDelay) + maxDelay
+          let initial := 3 * electionTimeout + 3 * jump + 5 * maxDelay + handover
+          let duration :=
+            initial
+            + (overshoots + 1) * rounds * (electionTimeout + 4 * maxDelay)
+            + (overshoots + 1) * jump
+            + 4 * maxDelay
+          (Liveness.Law electionTimeout (4 * maxDelay) rho law
+            /\ Liveness.Borel participants policy
             /\ 0 <= maxDelay
-            /\ 0 <= bounds.heartbeatInterval
-            /\ margin < electionTimeout / 2
-            /\ (forall draws,
-                  (forall k i, draws k i ∈ Set.Icc (electionTimeout / 2) electionTimeout)
-                  ->  let trace := family draws
-                      trace.Coherent
-                      /\ trace.Valid (Liveness.protocolModel system)
-                      /\ trace.Valid Liveness.timingModel
-                      /\ trace.Valid Liveness.crashModel
-                      /\ trace.Valid (Liveness.deliveryModel system)
-                      /\ trace.Valid (Liveness.boundedDelayModel maxDelay)
-                      /\ trace.Valid (Liveness.timerModel electionTimeout)
-                      /\ Liveness.TimeDiverges trace
-                      /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
-                      /\ trace.SignatureScheduling (some bounds.signatureInterval)
-                      /\ trace.TimeoutScheduling (some 0)
-                      /\ Liveness.GoodPeriod trace start duration participants
-                      /\ Liveness.TimerDraws trace candidates draws start))
-          -> ENNReal.ofReal
-                (Liveness.settleProbability competitors rounds margin electionTimeout)
-              <= Liveness.uniformDraws competitors rounds electionTimeout
-                  {draws |
-                    Liveness.SignatureCommitted (family draws) start duration
-                  } := by
-  intro config nodes system W _ _ _ _ _ competitors rounds candidates bounds maxDelay start
-    participants family electionTimeout margin duration premises
-  obtain ⟨_, _, competes, delay, heartbeat, fits, _⟩ := premises
-  refine Proofs.Duel.settle_of_margin_support competes
-    (show 0 <= bounds.heartbeatInterval + 5 * maxDelay by linarith) fits ?_
-  -- Remaining: a round with a margin forces a committed signature.
-  intro draws _ _
-  sorry
+            /\ 0 <= jump
+            /\ 0 <= heartbeat
+            /\ 4 * maxDelay < electionTimeout / 2
+            /\ handover < electionTimeout / 2
+            /\ fresh <= electionTimeout / 2 - 4 * maxDelay
+            /\ fresh <= electionTimeout / 2 - handover
+            /\ participants ⊆ members
+            /\ participants.Nonempty
+            /\ (forall node, node ∈ participants -> node ∈ nodes)
+            /\ forall sample : Liveness.Sample,
+                (forall j, sample j ∈ Set.Icc (electionTimeout / 2) electionTimeout)
+                -> let trace := Liveness.run participants policy sample
+                  trace.Coherent
+                  /\ trace.Valid (Liveness.protocolModel system)
+                  /\ trace.Valid Liveness.timingModel
+                  /\ trace.Valid Liveness.crashModel
+                  /\ trace.Valid (Liveness.deliveryModel system)
+                  /\ trace.Valid (Liveness.boundedDelayModel maxDelay)
+                  /\ trace.Valid (Liveness.timerModel electionTimeout)
+                  /\ Liveness.TimeDiverges trace
+                  /\ trace.HeartbeatScheduling (some heartbeat)
+                  /\ (forall node,
+                      node ∈ participants
+                      -> Liveness.Scheduled trace (some 0)
+                          (fun point => Liveness.TimeoutDue point node)
+                          (fun step => step.action = .local node (.timeout .election)))
+                  /\ (exists bad : Finset Nat,
+                      bad.card <= overshoots
+                      /\ forall index step node,
+                          node ∈ participants
+                          -> Liveness.Within trace start duration index
+                          -> trace.stepAt index = some step
+                          -> Liveness.NoOvershoot (some (if index ∈ bad then jump else 0))
+                              step node)
+                  /\ Liveness.GoodPeriod trace start duration participants
+                  /\ Liveness.Window.Matching trace start duration participants
+                  /\ Liveness.Window.AnchorActive trace start duration participants
+                  /\ forall point,
+                      trace.stateAt start = some point
+                      -> Liveness.Membership participants members
+                          (Liveness.HasProtocol.proto point)
+                        /\ Liveness.ConfigurationCommitted participants
+                          (Liveness.HasProtocol.proto point)
+                        /\ Liveness.HasRole participants (Liveness.HasProtocol.proto point))
+          -> MeasureTheory.Measure.infinitePi (fun _ => law)
+              {sample |
+                Not
+                  (Liveness.HandoffBy (Liveness.run participants policy sample) participants
+                    start duration fresh)
+              }
+            <= ENNReal.ofReal
+                ((overshoots + 1)
+                  * Liveness.roundFailure rho (participants.card - 1)
+                      (2 * participants.card) ^ rounds) := by
+  intro config nodes system policy law bounds maxDelay jump rho fresh overshoots rounds start
+    participants members electionTimeout heartbeat handover initial duration
+    ⟨isLaw, borel, nonnegative, jumpNonnegative, heartbeatNonnegative, ratio, handoverRatio,
+      freshLe, freshHandover, subset, nonempty, present, runs⟩
+  let _ : Proofs.Config.InitialConfiguration := ⟨config⟩
+  exact Proofs.Duel.Resolve.duelling_leaders_resolve (nodes := nodes) (initial := initial)
+    (overshoots := overshoots) isLaw borel freshLe fun sample support => by
+      obtain ⟨coherent, protocol, timing, crash, delivery, delay, timers, diverges, heartbeats,
+        firing, overshoot, period, matching, active, atStart⟩ := runs sample support
+      have admissible : Proofs.Liveness.Admissible system (Liveness.run participants policy sample) :=
+        ⟨coherent, protocol, timing, crash, delivery⟩
+      have membership := fun point found => (atStart point found).1
+      have configured := fun point found => (atStart point found).2.1
+      have roled
+          : forall first node state,
+              (Liveness.run participants policy sample).stateAt start = some first
+              -> node ∈ participants
+              -> CCF.MultiNodeTransitionSystem.nodeState (Liveness.HasProtocol.proto first) node
+                  = some state
+              -> Not (state.role = .none) :=
+        fun first node state found member located =>
+          (atStart first found).2.2 node state (Proofs.Witnesses.mem_of_nodeState located) member
+      have long := Proofs.Duel.Resolve.initial_le_window (initial := initial)
+        (overshoots := overshoots) (rounds := rounds) nonnegative jumpNonnegative ratio
+      exact Proofs.Duel.Resolve.setup_of_init admissible delay timers diverges firing overshoot
+        nonnegative jumpNonnegative ratio long (by positivity) period matching active
+        membership subset configured roled nonempty present
+        (Proofs.Leadership.init_incumbent admissible delay timers diverges heartbeats
+          nonnegative heartbeatNonnegative handoverRatio freshHandover long period active
+          matching membership subset roled)
+
+open Proofs.Duel.Witness in
+/-- Witness: for any number of rounds, a one-node service whose node is primary
+throughout meets every premise of `duelling_leaders_resolve` from index one, with
+election timeout 4, heartbeat interval 1/2, no delay, jump or overshoots, the
+uniform law on `[2, 4]` and freshness 1, and every run hands off. The run resets
+no timer, so it exercises the premises, not the rounds. -/
+lemma duelling_leaders_resolve_witness
+    : let system := Model.transitionSystem {0} [0]
+      let bounds : Liveness.Bounds :=
+        { heartbeatInterval := 1 / 2, electionTimeout := 4, signatureInterval := 1 }
+      forall rounds : Nat,
+        let electionTimeout := bounds.electionTimeout
+        let heartbeat := bounds.heartbeatInterval
+        let handover := 2 * (heartbeat + 0) + 0
+        let initial := 3 * electionTimeout + 3 * 0 + 5 * 0 + handover
+        let duration :=
+          initial + (0 + 1) * rounds * (electionTimeout + 4 * 0) + (0 + 1) * 0 + 4 * 0
+        exists (policy : Liveness.Policy) (law : MeasureTheory.Measure Real),
+          (Liveness.Law electionTimeout (4 * 0) 0 law
+            /\ Liveness.Borel {0} policy
+            /\ 0 <= (0 : Real)
+            /\ 0 <= (0 : Real)
+            /\ 0 <= heartbeat
+            /\ 4 * 0 < electionTimeout / 2
+            /\ handover < electionTimeout / 2
+            /\ 1 <= electionTimeout / 2 - 4 * 0
+            /\ 1 <= electionTimeout / 2 - handover
+            /\ ({0} : Finset NodeID) ⊆ {0}
+            /\ ({0} : Finset NodeID).Nonempty
+            /\ (forall node, node ∈ ({0} : Finset NodeID) -> node ∈ [0])
+            /\ forall sample : Liveness.Sample,
+                (forall j, sample j ∈ Set.Icc (electionTimeout / 2) electionTimeout)
+                -> let trace := Liveness.run {0} policy sample
+                  trace.Coherent
+                  /\ trace.Valid (Liveness.protocolModel system)
+                  /\ trace.Valid Liveness.timingModel
+                  /\ trace.Valid Liveness.crashModel
+                  /\ trace.Valid (Liveness.deliveryModel system)
+                  /\ trace.Valid (Liveness.boundedDelayModel 0)
+                  /\ trace.Valid (Liveness.timerModel electionTimeout)
+                  /\ Liveness.TimeDiverges trace
+                  /\ trace.HeartbeatScheduling (some heartbeat)
+                  /\ (forall node,
+                      node ∈ ({0} : Finset NodeID)
+                      -> Liveness.Scheduled trace (some 0)
+                          (fun point => Liveness.TimeoutDue point node)
+                          (fun step => step.action = .local node (.timeout .election)))
+                  /\ (exists bad : Finset Nat,
+                      bad.card <= 0
+                      /\ forall index step node,
+                          node ∈ ({0} : Finset NodeID)
+                          -> Liveness.Within trace 1 duration index
+                          -> trace.stepAt index = some step
+                          -> Liveness.NoOvershoot (some (if index ∈ bad then 0 else 0))
+                              step node)
+                  /\ Liveness.GoodPeriod trace 1 duration {0}
+                  /\ Liveness.Window.Matching trace 1 duration {0}
+                  /\ Liveness.Window.AnchorActive trace 1 duration {0}
+                  /\ forall point,
+                      trace.stateAt 1 = some point
+                      -> Liveness.Membership {0} {0} (Liveness.HasProtocol.proto point)
+                        /\ Liveness.ConfigurationCommitted {0} (Liveness.HasProtocol.proto point)
+                        /\ Liveness.HasRole {0} (Liveness.HasProtocol.proto point))
+          /\ forall sample : Liveness.Sample,
+              Liveness.HandoffBy (Liveness.run {0} policy sample) {0} 1 duration 1 := by
+  intro system bounds rounds electionTimeout heartbeat handover initial duration
+  have durationNonnegative : 0 <= duration := by
+    simp only [duration, initial, handover, heartbeat, electionTimeout, bounds]
+    positivity
+  refine ⟨policy, law, ⟨law_valid, borel, le_rfl, le_rfl, by norm_num [heartbeat, bounds],
+    by norm_num [electionTimeout, bounds], by norm_num [handover, heartbeat, electionTimeout, bounds],
+    by norm_num [electionTimeout, bounds], by norm_num [handover, heartbeat, electionTimeout, bounds],
+    subset_refl _, Finset.singleton_nonempty 0, by simp, fun sample _ => ?_⟩,
+    fun sample => handoff_one sample 1 duration durationNonnegative⟩
+  intro trace
+  obtain ⟨coherent, protocol, timing, crash, delivery⟩ := admissible_unfolded sample
+  exact ⟨coherent, protocol, timing, crash, delivery, bounded_delay sample, timers sample,
+    diverges sample, heartbeats sample heartbeat, firing sample,
+    overshoot sample 1 duration 0 0, good_period sample 1 duration, matching sample 1 duration,
+    anchor_active sample 1 duration,
+    fun point found => ⟨membership_one sample point found, configured_one sample point found,
+      has_role sample 1 point found⟩⟩
 
 /-- A fresh primary stays uncontested while the good period lasts, when a quorum
 of participants, the anchor, knows it and is in sync with it: the bridge from
