@@ -59,11 +59,17 @@ structure Anchor (participants anchor : Finset NodeID) (leader : NodeID) (term :
             /\ local_.currentTerm = term
             /\ local_.primaryKnown = true
             /\ (local_.role = .follower \/ local_.role = .primary)
+  /-- No anchor node's granted pre-vote of `term` is in flight to a participant
+  outside the anchor. Only those targets: a dropped envelope stays in the
+  network for ever, so a grant from `2` to `3` dropped before the start would
+  otherwise rule out every anchored start (CE-I3). Anchor nodes are settled, so
+  they are never pre-vote candidates of `term` and a grant to one is never
+  counted. -/
   noGrants
     : forall envelope,
         envelope ∈ state.network
         -> envelope.source ∈ anchor
-        -> envelope.target ∈ participants
+        -> envelope.target ∈ participants \ anchor
         -> Not (envelope.payload = .requestPreVoteResponse { term, voteGranted := true })
   notCounted
     : forall node local_,
@@ -222,18 +228,70 @@ def ConfigurationCommitted (participants : Finset NodeID) (state : Model.State) 
         configuration ∈ configurationHistory local_.log
         /\ configuration.index <= local_.commitIndex
 
-variable {W : Type} [HasProtocol W Model.State] [HasTime W]
+/-- Every participant has a role.
+
+Needed for an election from an arbitrary start (CE-I5). The model lets a
+participant have role `none` without its retirement committed: free append
+metadata can log a retirement confirmation before the configuration that removes
+the node, and that configuration is later truncated. Such a node never times out,
+since `canStartElection` needs a follower, pre-vote candidate or candidate, so if
+it holds the most up-to-date log no participant wins an election. CCF is
+unaffected: there `None` is permanent and reached only once the removal commits. -/
+def HasRole (participants : Finset NodeID) (state : Model.State) : Prop :=
+  forall node local_,
+    (node, local_) ∈ state.nodes -> node ∈ participants -> Not (local_.role = .none)
+
+/-- `QuietTerm` without its proposals clause: no participant or message between
+participants has moved past `term`, and `leader` is its primary. -/
+structure QuietCore (participants : Finset NodeID) (leader : NodeID) (term : Nat)
+    (state : Model.State)
+    : Prop where
+  terms
+    : forall node local_,
+        (node, local_) ∈ state.nodes -> node ∈ participants -> local_.currentTerm <= term
+  messages
+    : forall envelope,
+        envelope ∈ state.network
+        -> envelope.source ∈ participants
+        -> envelope.target ∈ participants
+        -> envelope.payload.term <= term
+  leader
+    : exists local_,
+        (leader, local_) ∈ state.nodes
+        /\ local_.role = .primary
+        /\ local_.currentTerm = term
+
+/-- A quiet term without its pre-vote clause has a quiet core. -/
+theorem QuietTerm.core {participants : Finset NodeID} {leader : NodeID} {term : Nat}
+    {state : Model.State} (quiet : QuietTerm participants leader term state)
+    : QuietCore participants leader term state :=
+  ⟨quiet.terms, quiet.messages, quiet.leader⟩
+
+variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasNetwork W]
+
+/-- No outstanding packet between participants proposes a vote in `term`. Over
+the packet ledger, not the protocol network: a dropped envelope stays in the
+network for ever, so a proposal dropped before the start would otherwise rule
+out every anchored start (CE-I4). -/
+def NoProposals (participants : Finset NodeID) (term : Nat) (point : W) : Prop :=
+  forall packet,
+    packet ∈ HasNetwork.pending point
+    -> packet.envelope.source ∈ participants
+    -> packet.envelope.target ∈ participants
+    -> Not (packet.envelope.payload = .proposeRequestVoteRequest term)
 
 /-- An anchored start: at `start` the term is quiet among participants without
-the pre-vote clause, `anchor` anchors it and blocks every quorum participants can
-count, and no anchor node of the term times out before `fresh` after it. -/
+the pre-vote clause (`QuietCore`, with no outstanding proposal for it), `anchor`
+anchors it and blocks every quorum participants can count, and no anchor node of
+the term times out before `fresh` after it. -/
 structure AnchoredStart (trace : Trace W Event) (start : Nat) (leader : NodeID)
     (term : Nat) (participants anchor : Finset NodeID) (fresh : Real)
     : Prop where
   quiet
     : exists first,
         trace.stateAt start = some first
-        /\ QuietTerm participants leader term (proto first)
+        /\ QuietCore participants leader term (proto first)
+        /\ NoProposals participants term first
         /\ Anchor participants anchor leader term (proto first)
         /\ Blocks participants anchor (proto first)
   timers
