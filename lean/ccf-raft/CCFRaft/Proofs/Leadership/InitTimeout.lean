@@ -296,6 +296,7 @@ theorem resets_after {electionTimeout jump limit : Real} (nonneg : 0 <= jump)
       : forall later step,
           index <= later
           -> trace.stepAt later = some step
+          -> time step.before < limit + electionTimeout
           -> NoOvershoot (some jump) step node)
     (ready
       : forall later laterPoint,
@@ -344,7 +345,8 @@ theorem resets_after {electionTimeout jump limit : Real} (nonneg : 0 <= jump)
     max_le (by linarith) (by linarith)
   obtain ⟨later, fired, le, firedAt, firedTime, fires⟩ :=
     resets_by admissible nonneg timers diverges firing (admissible.before stepped)
-      (fun later step' le stepped' _ => overshoot later step' (by omega) stepped')
+      (fun later step' le stepped' before =>
+        overshoot later step' (by omega) stepped' (by linarith))
       fun later laterPoint le laterFound inBound =>
         ready later laterPoint (by omega) laterFound (inBound.trans bound)
   have notPrevious : Not (later = previous) := by
