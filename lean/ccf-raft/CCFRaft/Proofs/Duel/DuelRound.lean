@@ -48,7 +48,8 @@ theorem duel_round
           /\ time point <= time origin + roundLength electionTimeout maxDelay + jump
           /\ RoundStart trace participants next (term + 1)
           /\ ((forall index step node,
-                c <= index
+                node ∈ participants
+                -> c <= index
                 -> index < next
                 -> trace.stepAt index = some step
                 -> NoOvershoot (some 0) step node)

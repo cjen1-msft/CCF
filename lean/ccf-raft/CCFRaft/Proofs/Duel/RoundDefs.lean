@@ -129,11 +129,13 @@ structure RoundSetup [Config.InitialConfiguration] (nodes : List NodeID)
   diverges : TimeDiverges trace
   firing
     : forall node,
-        Scheduled trace (some 0) (fun point => TimeoutDue point node)
-          (fun step => step.action = .local node (.timeout .election))
+        node ∈ participants
+        -> Scheduled trace (some 0) (fun point => TimeoutDue point node)
+            (fun step => step.action = .local node (.timeout .election))
   overshoot
     : forall index step node,
-        Within trace start duration index
+        node ∈ participants
+        -> Within trace start duration index
         -> trace.stepAt index = some step
         -> NoOvershoot (some jump) step node
   nonnegative : 0 <= maxDelay
