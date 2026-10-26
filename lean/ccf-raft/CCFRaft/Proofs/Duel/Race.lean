@@ -229,8 +229,7 @@ section Trace
 
 variable [Config.InitialConfiguration] {nodes : List NodeID}
   {trace : Trace W Liveness.Event}
-  (admissible
-    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace)
 
 include admissible
 
@@ -403,8 +402,9 @@ theorem protocol_view {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
             exact Or.inr ⟨packet, rfl, actorEq.symm, ran⟩
         | _ => simp [event, Liveness.Event.action] at selected
   · obtain ⟨_, _, emitted, emittedEq, _, ledger⟩ := admissible.delivery.next stepped
-    simp only [selected, admissible.step stepped selected, out, Option.bind_eq_bind,
-      Option.bind_some, Option.some.injEq] at emittedEq
+    simp only [selected, out, Option.bind_eq_bind, Option.bind_eq_some_iff,
+      Option.some.injEq] at emittedEq
+    obtain ⟨_, _, emittedEq⟩ := emittedEq
     rw [ledger, emittedEq]
 
 end Trace

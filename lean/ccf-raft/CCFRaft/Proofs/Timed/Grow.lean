@@ -45,8 +45,7 @@ theorem agreedPrefix_eq (leaderLog followerLog : List Entry)
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
   [Proofs.Config.InitialConfiguration] {nodes : List NodeID}
   {trace : Trace W Liveness.Event}
-  (admissible
-    : Admissible (Model.transitionSystem Proofs.Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Proofs.Config.INITIAL_CONFIGURATION nodes trace)
   {start : Nat} {leader : NodeID} {term : Nat}
   (stable : StableLeader trace start leader term)
 

@@ -46,8 +46,7 @@ structure Setup [Config.InitialConfiguration] (nodes : List NodeID)
     (trace : Trace W Liveness.Event) (initial electionTimeout maxDelay jump fresh : Real)
     (overshoots start : Nat) (duration : Real) (participants members : Finset NodeID)
     : Prop where
-  admissible
-    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace
+  admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace
   delay : trace.Valid (boundedDelayModel maxDelay)
   timers : trace.Valid (timerModel electionTimeout)
   diverges : TimeDiverges trace
@@ -175,8 +174,7 @@ section Admissible
 
 variable [Config.InitialConfiguration] {nodes : List NodeID}
   {trace : Trace W Liveness.Event}
-  (admissible
-    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace)
 
 include admissible
 

@@ -26,20 +26,19 @@ open CCFRaft.Model (initialNodeState)
 
 section Runs
 
-variable {State Action : Type}
-
 /-- The final state of choosing each action from the current state, when every
 chosen action is enabled. -/
-def run (system : TransitionSystem State Action) (start : State)
-    : List (State -> Action) -> Option State
+def run (system : TransitionSystem) (start : system.State)
+    : List (system.State -> system.Action) -> Option system.State
   | [] => some start
   | choose :: rest =>
       (system.step start (choose start)).bind fun next => run system next rest
 
 /-- Each prefix of a finished run finishes, and its next choice is enabled. -/
-theorem run_take_step {system : TransitionSystem State Action} {start final : State}
-    {choices : List (State -> Action)} (finished : run system start choices = some final)
-    {index : Nat} (bounded : index < choices.length)
+theorem run_take_step {system : TransitionSystem} {start final : system.State}
+    {choices : List (system.State -> system.Action)}
+    (finished : run system start choices = some final) {index : Nat}
+    (bounded : index < choices.length)
     : exists before after,
         run system start (choices.take index) = some before
         /\ run system start (choices.take (index + 1)) = some after
@@ -68,9 +67,9 @@ theorem run_take_step {system : TransitionSystem State Action} {start final : St
 The states of running `stem` from `start` and then repeating `cycle` forever.
 The default `start` is never used when the runs finish.
 -/
-def lasso (system : TransitionSystem State Action) (start : State)
-    (stem cycle : List (State -> Action)) (index : Nat)
-    : State :=
+def lasso (system : TransitionSystem) (start : system.State)
+    (stem cycle : List (system.State -> system.Action)) (index : Nat)
+    : system.State :=
   if index < stem.length then
     (run system start (stem.take index)).getD start
   else
@@ -79,9 +78,10 @@ def lasso (system : TransitionSystem State Action) (start : State)
       start
 
 /-- The choice at an index, applied to the corresponding lasso state. -/
-def lassoAction (system : TransitionSystem State Action) (start : State)
-    (stem cycle : List (State -> Action)) (nonempty : cycle ≠ []) (index : Nat)
-    : Action :=
+def lassoAction (system : TransitionSystem) (start : system.State)
+    (stem cycle : List (system.State -> system.Action)) (nonempty : cycle ≠ [])
+    (index : Nat)
+    : system.Action :=
   if inStem : index < stem.length then
     stem[index] (lasso system start stem cycle index)
   else
@@ -90,16 +90,16 @@ def lassoAction (system : TransitionSystem State Action) (start : State)
       (lasso system start stem cycle index)
 
 /-- The lasso's initial state and infinite sequence of chosen actions. -/
-def lassoTrace (system : TransitionSystem State Action) (start : State)
-    (stem cycle : List (State -> Action)) (nonempty : cycle ≠ [])
-    : Trace State Action :=
+def lassoTrace (system : TransitionSystem) (start : system.State)
+    (stem cycle : List (system.State -> system.Action)) (nonempty : cycle ≠ [])
+    : Trace system.State system.Action :=
   {
     initial := start
     actions := Stream'.Seq.ofStream (lassoAction system start stem cycle nonempty)
   }
 
-private theorem lasso_step {system : TransitionSystem State Action} {start final : State}
-    {stem cycle : List (State -> Action)}
+private theorem lasso_step {system : TransitionSystem} {start final : system.State}
+    {stem cycle : List (system.State -> system.Action)}
     (stemRun : run system start stem = some final)
     (cycleRun : run system final cycle = some final) (nonempty : cycle ≠ []) (index : Nat)
     : system.step (lasso system start stem cycle index)
@@ -143,8 +143,8 @@ private theorem lasso_step {system : TransitionSystem State Action} {start final
       subst second
       exact enabled
 
-private theorem lassoTrace_stateAt {system : TransitionSystem State Action}
-    {start final : State} {stem cycle : List (State -> Action)}
+private theorem lassoTrace_stateAt {system : TransitionSystem}
+    {start final : system.State} {stem cycle : List (system.State -> system.Action)}
     (stemRun : run system start stem = some final)
     (cycleRun : run system final cycle = some final) (nonempty : cycle ≠ []) (index : Nat)
     : (lassoTrace system start stem cycle nonempty).stateAt system index
@@ -158,8 +158,8 @@ private theorem lassoTrace_stateAt {system : TransitionSystem State Action}
       exact lasso_step stemRun cycleRun nonempty index
 
 /-- A finished stem followed by a nonempty cycle back to its final state is a valid infinite action trace. -/
-theorem lasso_valid {system : TransitionSystem State Action} {start final : State}
-    {stem cycle : List (State -> Action)} (initialized : system.init start)
+theorem lasso_valid {system : TransitionSystem} {start final : system.State}
+    {stem cycle : List (system.State -> system.Action)} (initialized : system.init start)
     (stemRun : run system start stem = some final)
     (cycleRun : run system final cycle = some final) (nonempty : cycle ≠ [])
     : (lassoTrace system start stem cycle nonempty).Valid system := by
@@ -170,8 +170,9 @@ theorem lasso_valid {system : TransitionSystem State Action} {start final : Stat
     lasso_step stemRun cycleRun nonempty index⟩
 
 /-- Every state reached by a prefix of the stem occurs in the lasso. -/
-theorem lasso_mem {system : TransitionSystem State Action} {start final state : State}
-    {stem cycle : List (State -> Action)} (stemRun : run system start stem = some final)
+theorem lasso_mem {system : TransitionSystem} {start final state : system.State}
+    {stem cycle : List (system.State -> system.Action)}
+    (stemRun : run system start stem = some final)
     (cycleRun : run system final cycle = some final) (nonempty : cycle ≠ [])
     {index : Nat} (bounded : index <= stem.length)
     (reached : run system start (stem.take index) = some state)
@@ -294,7 +295,7 @@ elab "kernel_rfl" : tactic => closeMainGoalUsing `kernel_rfl fun target _ => do
 
 section Election
 
-def electionSystem := CCFRaft.Model.transitionSystem {0, 1, 2} [0, 1, 2]
+abbrev electionSystem := CCFRaft.Model.transitionSystem {0, 1, 2} [0, 1, 2]
 
 def electionStart := start {0, 1, 2} [0, 1, 2]
 
@@ -360,7 +361,7 @@ end Election
 
 section Commit
 
-def commitSystem := CCFRaft.Model.transitionSystem {0, 1} [0, 1]
+abbrev commitSystem := CCFRaft.Model.transitionSystem {0, 1} [0, 1]
 
 def commitStart := start {0, 1} [0, 1]
 
@@ -437,7 +438,7 @@ end Commit
 
 section Single
 
-def singleSystem := CCFRaft.Model.transitionSystem {0} [0]
+abbrev singleSystem := CCFRaft.Model.transitionSystem {0} [0]
 
 def singleStart := start {0} [0]
 

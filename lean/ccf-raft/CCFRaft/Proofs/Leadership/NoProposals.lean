@@ -28,8 +28,7 @@ variable [Config.InitialConfiguration]
   {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
   {trace : Trace W Liveness.Event} {nodes : List NodeID}
   (admissible
-    : CCFRaft.Proofs.Liveness.Admissible
-        (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+    : CCFRaft.Proofs.Liveness.Admissible Config.INITIAL_CONFIGURATION nodes trace)
   {participants : Finset NodeID} {term : Nat}
 
 /-- No proposal is outstanding between fewer participants. -/

@@ -323,9 +323,9 @@ theorem priorResets_succ {trace : Trace W Liveness.Event} {c index : Nat} {node 
     simp only [r, ↓reduceIte]
     omega
 
-theorem count_ledger {system : CCF.TransitionSystem Model.State Model.Action}
+theorem count_ledger {config : Finset NodeID} {nodes : List NodeID}
     {trace : Trace W Liveness.Event}
-    (admissible : CCFRaft.Proofs.Liveness.Admissible system trace) {index : Nat}
+    (admissible : CCFRaft.Proofs.Liveness.Admissible config nodes trace) {index : Nat}
     {step : CCF.Execution.Step W Liveness.Event}
     (stepped : trace.stepAt index = some step) {emitted : List Model.Envelope}
     (ledger

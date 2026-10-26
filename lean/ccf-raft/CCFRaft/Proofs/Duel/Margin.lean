@@ -60,8 +60,7 @@ section Admissible
 
 variable [Config.InitialConfiguration] {nodes : List NodeID}
   {trace : Trace W Liveness.Event}
-  (admissible
-    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace)
 
 include admissible
 
@@ -179,8 +178,7 @@ theorem margin_of_far [Config.InitialConfiguration] {nodes : List NodeID}
     {participants : Finset NodeID} {policy : Policy} {start : Nat} {sample : Sample}
     {electionTimeout margin : Real}
     (admissible
-      : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes)
-          (run participants policy sample))
+      : Admissible Config.INITIAL_CONFIGURATION nodes (run participants policy sample))
     (timers : (run participants policy sample).Valid (timerModel electionTimeout))
     {k c term : Nat}
     (roundAt : RoundAt (run participants policy sample) participants start k c term)

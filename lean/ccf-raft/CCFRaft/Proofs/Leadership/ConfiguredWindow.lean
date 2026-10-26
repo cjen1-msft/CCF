@@ -26,8 +26,7 @@ open HasProtocol (proto)
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
   [Config.InitialConfiguration] {nodes : List NodeID}
   {trace : Trace W Liveness.Event}
-  (admissible
-    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace)
 
 include admissible
 

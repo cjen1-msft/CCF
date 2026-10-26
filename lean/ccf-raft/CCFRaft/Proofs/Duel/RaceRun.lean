@@ -134,8 +134,7 @@ def Other (origin : W) (winner : NodeID) (term cap : Nat) (node : NodeID)
 structure Setup [Config.InitialConfiguration] (nodes : List NodeID)
     (trace : Trace W Liveness.Event) (electionTimeout maxDelay : Real)
     (participants : Finset NodeID) (first : Nat) (winner : NodeID) (term : Nat) where
-  admissible
-    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace
+  admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace
   delay : trace.Valid (boundedDelayModel maxDelay)
   timers : trace.Valid (timerModel electionTimeout)
   nonnegative : 0 <= maxDelay

@@ -15,14 +15,15 @@ packet is the first outstanding packet of its channel.
 namespace CCFRaft.Proofs.Liveness.Admissible
 
 open CCFRaft.Liveness
+open Model.Node (NodeID)
 open HasProtocol (proto)
 open HasTime (time)
 open HasNetwork (pending issued)
 
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
-  {system : CCF.TransitionSystem Model.State Model.Action}
+  {config : Finset NodeID} {nodes : List NodeID}
   {trace : Trace W Liveness.Event}
-  (admissible : Admissible system trace)
+  (admissible : Admissible config nodes trace)
 
 include admissible
 

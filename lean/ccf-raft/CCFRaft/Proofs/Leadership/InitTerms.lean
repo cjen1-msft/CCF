@@ -80,8 +80,7 @@ section Trace
 
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
   {trace : Trace W Liveness.Event} {nodes : List NodeID}
-  (admissible
-    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace)
 
 include admissible
 
@@ -127,8 +126,7 @@ def Low (trace : Trace W Liveness.Event) (participants : Finset NodeID) (c term 
     -> state.currentTerm <= term
 
 variable {trace : Trace W Liveness.Event} {nodes : List NodeID}
-  (admissible
-    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace)
   {participants : Finset NodeID}
 
 include admissible

@@ -208,8 +208,7 @@ theorem lead_at {start : Nat} {leader : NodeID} {term : Nat}
   exact ⟨exec, now_of_found nodeFound, primary, termEq⟩
 
 variable
-  (admissible
-    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace)
 
 include admissible
 

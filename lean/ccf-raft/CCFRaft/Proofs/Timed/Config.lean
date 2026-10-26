@@ -29,8 +29,7 @@ open CCFRaft.Proofs.CommitLiveness (stable_log_prefix)
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
   [Proofs.Config.InitialConfiguration] {nodes : List NodeID}
   {trace : Trace W Liveness.Event}
-  (admissible
-    : Admissible (Model.transitionSystem Proofs.Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Proofs.Config.INITIAL_CONFIGURATION nodes trace)
 
 theorem last_of_drop {l : List Configuration} {n : Nat} {configuration : Configuration}
     (eq : l.drop n = [configuration])

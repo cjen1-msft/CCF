@@ -53,8 +53,7 @@ private theorem removeOne_eq_erase {α : Type} [BEq α] (value : α) (items : Li
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
   [Config.InitialConfiguration] {nodes : List NodeID}
   {trace : Trace W Liveness.Event}
-  (admissible
-    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace)
 
 include admissible
 
@@ -85,8 +84,9 @@ theorem pending_subperm {index : Nat} {point : W}
           have out : outgoing (proto step.before) (.local node input) =
               some outputs.outgoing := by
             simp [outgoing, nodeFound, Model.Node.step, ran]
-          simp only [selected, enabled, out, Option.bind_eq_bind, Option.bind_some,
+          simp only [selected, out, Option.bind_eq_bind, Option.bind_eq_some_iff,
             Option.some.injEq] at produced
+          obtain ⟨_, _, produced⟩ := produced
           rw [← produced, after]
           simpa [event, Event.remaining, Event.consumedPacket]
             using held.append (List.Subperm.refl outputs.outgoing)
@@ -99,8 +99,9 @@ theorem pending_subperm {index : Nat} {point : W}
           have out : outgoing (proto step.before) (.deliver packet.envelope) =
               some outputs.outgoing := by
             simp [outgoing, nodeFound, Model.Node.step, ran]
-          simp only [selected, enabled, out, Option.bind_eq_bind, Option.bind_some,
+          simp only [selected, out, Option.bind_eq_bind, Option.bind_eq_some_iff,
             Option.some.injEq] at produced
+          obtain ⟨_, _, produced⟩ := produced
           have member : packet ∈ pending step.before :=
             admissible.consumed_pending stepped (by simp [event, Event.consumedPacket])
           have perm := (remaining_perm

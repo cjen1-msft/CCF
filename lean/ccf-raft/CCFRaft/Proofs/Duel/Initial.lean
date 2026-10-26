@@ -33,8 +33,7 @@ theorem setup_of_init [Config.InitialConfiguration] {nodes : List NodeID}
     {trace : Trace W Liveness.Event}
     {electionTimeout maxDelay jump fresh bound duration : Real} {overshoots start : Nat}
     {participants members : Finset NodeID}
-    (admissible
-      : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+    (admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace)
     (delay : trace.Valid (boundedDelayModel maxDelay))
     (timers : trace.Valid (timerModel electionTimeout))
     (diverges : TimeDiverges trace)

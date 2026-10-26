@@ -198,8 +198,7 @@ open HasProtocol (proto)
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
   [HasTimers W]
   {trace : Trace W Liveness.Event} {nodes : List NodeID}
-  (admissible
-    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace)
 
 /-- A node-local input comes from the corresponding recorded local event. -/
 theorem internal_event {step : Execution.Step W Liveness.Event} {action : Model.Action}

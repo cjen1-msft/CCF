@@ -103,8 +103,8 @@ theorem Window.Matching.windowMatching {trace : Trace W Liveness.Event} {start :
 
 section Trace
 
-variable {system : CCF.TransitionSystem Model.State Model.Action}
-  {trace : Trace W Liveness.Event} (admissible : Admissible system trace)
+variable {config : Finset NodeID} {nodes : List NodeID}
+  {trace : Trace W Liveness.Event} (admissible : Admissible config nodes trace)
 
 include admissible
 
@@ -217,8 +217,7 @@ section Recorded
 
 variable [Config.InitialConfiguration] {nodes : List NodeID}
   {trace : Trace W Liveness.Event}
-  (admissible
-    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace)
 
 include admissible
 

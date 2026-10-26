@@ -141,7 +141,7 @@ theorem law_valid : Law E (4 * maxDelay) rho law := by
 /-- Lifting the fixture preserves all five admissibility obligations. -/
 theorem admissible (sample : Sample)
     : CCFRaft.Proofs.Liveness.Admissible
-        (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes)
+        Config.INITIAL_CONFIGURATION nodes
         (run {0} policy sample) := by
   refine ⟨?_, ?_, ?_, ?_, ?_⟩
   · constructor
@@ -177,12 +177,11 @@ theorem admissible (sample : Sample)
 /-- Admissibility in the conjunction form used by `Properties`. -/
 theorem admissible_unfolded (sample : Sample)
     : let trace := run {0} policy sample
-      let system := Model.transitionSystem Config.INITIAL_CONFIGURATION nodes
       trace.Coherent
-      /\ trace.Valid (protocolModel system)
+      /\ trace.Valid (protocolModel Config.INITIAL_CONFIGURATION nodes)
       /\ trace.Valid timingModel
       /\ trace.Valid crashModel
-      /\ trace.Valid (deliveryModel system) :=
+      /\ trace.Valid (deliveryModel Config.INITIAL_CONFIGURATION nodes) :=
   ⟨
     (admissible sample).coherent,
     (admissible sample).protocol,

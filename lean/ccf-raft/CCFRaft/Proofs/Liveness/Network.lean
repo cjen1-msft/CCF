@@ -64,9 +64,9 @@ open HasTime (time)
 open HasNetwork (pending issued)
 
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
-  {system : CCF.TransitionSystem Model.State Model.Action}
+  {config : Finset NodeID} {nodes : List NodeID}
   {trace : Trace W Liveness.Event}
-  (admissible : Admissible system trace)
+  (admissible : Admissible config nodes trace)
 
 include admissible
 
@@ -241,10 +241,9 @@ theorem sentAt_of_emitted {index : Nat} {step : CCF.Execution.Step W Liveness.Ev
         /\ packet.envelope = envelope
         /\ packet.sentAt = time step.before := by
   obtain ⟨_, _, emitted', produced, _, ledger⟩ := admissible.delivery.next stepped
-  have enabled := admissible.step stepped selected
-  simp only [selected, enabled, out, Option.bind_eq_bind, Option.bind_some,
+  simp only [selected, out, Option.bind_eq_bind, Option.bind_eq_some_iff,
     Option.some.injEq] at produced
-  subst produced
+  obtain ⟨_, _, rfl⟩ := produced
   obtain ⟨ordinal, found⟩ := List.mem_iff_getElem?.mp member
   refine ⟨⟨issued step.before + ordinal, envelope, time step.before⟩,
     ⟨step, stepped, ?_, fun old => ?_⟩, rfl, rfl⟩

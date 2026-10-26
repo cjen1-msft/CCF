@@ -38,7 +38,9 @@ theorem keys_eq {nodes : List NodeID} {state : Model.State}
     (reachable
       : (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes).Reachable state)
     : state.nodes.map Prod.fst = nodes := by
-  induction reachable with
+  induction reachable
+    using @TransitionSystem.Reachable.rec
+      (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) with
   | initial initialized => exact initialized.2.1
   | @step before after action _ stepped ih =>
       cases action with
@@ -57,8 +59,7 @@ variable [Config.InitialConfiguration]
   {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
   [HasTimers W]
   {trace : Trace W Liveness.Event} {nodes : List NodeID}
-  (admissible
-    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace)
 
 include admissible
 

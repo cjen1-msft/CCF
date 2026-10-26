@@ -7,18 +7,20 @@ public import CCFRaft.Liveness.Model.World
 
 namespace CCFRaft.Liveness
 
+open Model.Node (NodeID)
 open HasProtocol (proto)
 
-/-- Lift the protocol through its world projection.
-Local actions and deliveries execute the supplied system; all other events stutter.
-The action type is fixed by `Event.action`, while the protocol state is generic. -/
-def protocolModel {W S : Type} [HasProtocol W S]
-    (system : CCF.TransitionSystem S Model.Action)
+/-- Lift `Model.transitionSystem config nodes` through the world's protocol projection.
+Local actions and deliveries execute a step of that system; all other events stutter. -/
+def protocolModel {W : Type} [HasProtocol W Model.State]
+    (config : Finset NodeID) (nodes : List NodeID)
     : Model W Event where
-  init world := system.init (proto world)
+  init world := (Model.transitionSystem config nodes).init (proto world)
   next step :=
     match step.action.action with
-    | some action => system.step (proto step.before) action = some (proto step.after)
+    | some action =>
+        (Model.transitionSystem config nodes).step (proto step.before) action
+        = some (proto step.after)
     | none => proto step.after = proto step.before
 
 /-- Re-run the same recording callback used by the network to identify sends. -/

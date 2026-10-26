@@ -24,8 +24,7 @@ variable [Config.InitialConfiguration]
   {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
   [HasTimers W]
   {trace : Trace W Liveness.Event} {nodes : List NodeID}
-  (admissible
-    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace)
   {start : Nat} {duration heartbeat maxDelay : Real}
   {participants members : Finset NodeID}
   {leader : NodeID} {term : Nat}

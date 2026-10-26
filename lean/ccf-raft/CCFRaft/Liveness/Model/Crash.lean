@@ -18,7 +18,9 @@ def Event.liveAfter (event : Event) (live : Finset NodeID) : Finset NodeID :=
 
 /-- Actors must be live, and crashes permanently remove them.
 The initial live set is unrestricted. -/
-def crashSystem : CCF.TransitionSystem (Finset NodeID) Event where
+abbrev crashSystem : CCF.TransitionSystem where
+  State := Finset NodeID
+  Action := Event
   init _ := True
   step live event :=
     match event.actor with

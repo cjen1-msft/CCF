@@ -418,8 +418,7 @@ theorem electionReset_of_reset {step : CCF.Execution.Step W Liveness.Event}
   | idle => simp [hact, Liveness.Event.action] at selected
 
 variable
-  (admissible
-    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace)
 
 include admissible
 

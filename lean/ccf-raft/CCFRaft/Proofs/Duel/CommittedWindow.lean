@@ -29,8 +29,7 @@ set_option linter.unusedVariables false in
 /-- `ConfigurationCommitted` at the start of a good period holds at every recorded
 state of it. -/
 theorem ConfigurationCommitted.window
-    (admissible
-      : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+    (admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace)
     {start : Nat} {duration : Real} {participants : Finset NodeID}
     (good : GoodPeriod trace start duration participants)
     (initial

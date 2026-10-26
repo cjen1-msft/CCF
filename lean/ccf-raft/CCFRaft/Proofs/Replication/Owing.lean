@@ -129,9 +129,7 @@ theorem owing_of_exec {nodes : List NodeID} {history : History}
 whenever it alone makes an uncommitted current-term signature committable. -/
 theorem confirmation_owed {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W]
     [HasNetwork W] {nodes : List NodeID} {trace : Trace W Liveness.Event}
-    (admissible
-      : Proofs.Liveness.Admissible
-          (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+    (admissible : Proofs.Liveness.Admissible Config.INITIAL_CONFIGURATION nodes trace)
     {leader : NodeID} {index : Nat} {state : NodeState}
     (found : trace.nodeAt index leader = some state)
     (primary : state.role = .primary) {signature : Nat}

@@ -20,6 +20,14 @@ A disabled action therefore invalidates the trace rather than silently truncatin
 A finite recording of `n` enabled actions has `n + 1` derived states; a zero-action trace retains its initial state.
 `Trace.Valid.reachable_stateAt`, `Trace.Valid.reachable` and `reachable_iff_trace` relate valid traces to reachable states by replay.
 
+## Transition systems
+
+`CCF.TransitionSystem` bundles the `State` and `Action` types with the initial-state predicate `init` and the partial transition function `step`.
+Define a model as `system : TransitionSystem`, setting `State` and `Action` in the structure rather than supplying type parameters.
+Use `abbrev` for concrete systems so Lean can unfold their bundled types during typeclass inference.
+Generic helpers use `system.State` and `system.Action`, while `system.Reachable state` and `Execution.Run system start actions final` describe executions.
+Traces keep their type parameters, as `Execution.Trace system.State system.Action`; the replay functions take the system first, so `Execution.Trace.Valid system trace` is also written `trace.Valid system`.
+
 ## Import coverage
 
 After `lake build`, run `lake exe check-imports` from any package using `ccf_common`.

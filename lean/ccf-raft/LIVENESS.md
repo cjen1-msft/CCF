@@ -26,8 +26,8 @@ The untimed commit assumptions are `StableLeader` in [`StableLeader.lean`](CCFRa
 It records an initial world and each step's before-state, event and after-state, reusing `CCF.Execution.Step W Event`.
 It does not enumerate executions.
 
-Properties quantify `config` and `nodes` explicitly and bind `system := Model.transitionSystem config nodes` once.
-Their single trace has type `Liveness.Trace W Liveness.Event` for any `W` with the required accessor instances, independent of `system`.
+Properties quantify `config` and `nodes` explicitly and pass them to the protocol and delivery models, which execute `Model.transitionSystem config nodes`.
+Their single trace has type `Liveness.Trace W Liveness.Event` for any `W` with the required accessor instances, independent of `config` and `nodes`.
 `duelling_leaders_resolve` instead fixes `W := DuelWorld`, which also holds each node's pending election deadline, since its trace is `Liveness.run participants policy sample`.
 `Trace.Coherent` connects the first step to the initial world and each after-state to the next before-state.
 `trace.stepAt i` and `trace.actionAt i` directly read recorded values, and `trace.stateAt 0` is the initial world while `trace.stateAt (i + 1)` is step `i`'s after-state.
@@ -46,17 +46,17 @@ Models are generic in the world and request only the accessors they inspect.
 Lean has no row types or polymorphic variants, so these classes play the role of an open record; the closed `World S` in [`Model/WitnessWorld.lean`](CCFRaft/Liveness/Model/WitnessWorld.lean) is used only by witnesses.
 `HasNetwork` exposes the pending ledger and the count of issued packets; there is no scheduler deadline or last-send variable.
 
-Each public statement conjoins `trace.Coherent` and validity of four models inline:
+Each public statement conjoins `trace.Coherent` and validity of four models inline, where `system` is `Model.transitionSystem config nodes`:
 
-| Model                  | Initial predicate                | Next relation                                                                                                                                                                                                |
-| ---------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `protocolModel system` | `system.init (proto w)`          | Execute `Event.action` in `system`, or preserve `proto` for crash, drop and idle.                                                                                                                            |
-| `timingModel`          | `True`                           | `time before <= time after`, with equality unless the event is idle.                                                                                                                                         |
-| `crashModel`           | `crashSystem.init (live w)`      | `crashSystem.step (live before) event = some (live after)`.                                                                                                                                                  |
-| `deliveryModel system` | `pending w = [] /\ issued w = 0` | Consume an existing packet for delivery or drop, delivering only the oldest outstanding packet on its channel; append this step's actual outgoing packets with fresh sequence numbers, and advance `issued`. |
+| Model                        | Initial predicate                | Next relation                                                                                                                                                                                                |
+| ---------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `protocolModel config nodes` | `system.init (proto w)`          | Execute `Event.action` in `system`, or preserve `proto` for crash, drop and idle.                                                                                                                            |
+| `timingModel`                | `True`                           | `time before <= time after`, with equality unless the event is idle.                                                                                                                                         |
+| `crashModel`                 | `crashSystem.init (live w)`      | `crashSystem.step (live before) event = some (live after)`.                                                                                                                                                  |
+| `deliveryModel config nodes` | `pending w = [] /\ issued w = 0` | Consume an existing packet for delivery or drop, delivering only the oldest outstanding packet on its channel; append this step's actual outgoing packets with fresh sequence numbers, and advance `issued`. |
 
 The protocol model in [`Model/Protocol.lean`](CCFRaft/Liveness/Model/Protocol.lean) preserves the existing `Event.action` mapping, including delivery of the received envelope.
-Its protocol state is generic, while its action type is `Model.Action`, as fixed by the existing `Event` vocabulary.
+Its protocol state is `Model.State`, and its action type is `Model.Action`, as fixed by the existing `Event` vocabulary.
 The delivery model uses the concrete Raft state and its recording callback to extract outgoing envelopes.
 The timing model in [`Model/Timing.lean`](CCFRaft/Liveness/Model/Timing.lean) permits any initial absolute time; only idle steps advance time, and every other event takes zero time.
 The crash model in [`Model/Crash.lean`](CCFRaft/Liveness/Model/Crash.lean) directly projects to the unchanged `crashSystem`.
@@ -156,7 +156,7 @@ Proved, reusing the safety invariant from [`Proofs/Safety`](CCFRaft/Proofs/Safet
 `peer_term_le` discharges the newer-term case that would otherwise block catch-up.
 
 The proofs share a base in [`Proofs/Liveness/`](CCFRaft/Proofs/Liveness).
-`Admissible system trace` bundles coherence and the four base model validities; its lemmas give each recorded step's protocol transition or stutter, live actors, packet provenance and reachability.
+`Admissible config nodes trace` bundles coherence and the four base model validities; its lemmas give each recorded step's protocol transition or stutter, live actors, packet provenance and reachability.
 `StableLeader` and `Submitted` are indexed by the explicit `start`, so each argument runs on the recording from that index rather than on a shifted suffix.
 No premise requires an infinite recording: an obligation that stays due must eventually fire, so a primary that stays due to send heartbeats keeps the recording going (`Scheduled.recorded`, `Scheduled.often`).
 

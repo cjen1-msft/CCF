@@ -55,13 +55,13 @@ theorem exists_exit {holds : Nat -> Prop} {first last : Nat} (le : first <= last
         exact ⟨index, after, Nat.lt_succ_of_lt before, inside, outside⟩
 
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
-  {system : CCF.TransitionSystem Model.State Model.Action}
+  {config : Finset NodeID} {nodes : List NodeID}
   {trace : Trace W Liveness.Event}
 
 /-- Under bounded delay and a diverging clock, a packet outstanding to a live
 target is consumed, or the target crashes, at a step that happens no later than
 `maxDelay` after the packet was sent. -/
-theorem Admissible.consumed_within (admissible : Admissible system trace)
+theorem Admissible.consumed_within (admissible : Admissible config nodes trace)
     {maxDelay : Real} (bounded : trace.Valid (boundedDelayModel maxDelay))
     (diverges : TimeDiverges trace) {index : Nat} {point : W}
     (found : trace.stateAt index = some point) {packet : Packet}

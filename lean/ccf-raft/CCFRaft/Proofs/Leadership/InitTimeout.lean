@@ -27,7 +27,7 @@ open HasLive (live)
 open HasTimers (deadline)
 
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
-  [HasTimers W] {system : CCF.TransitionSystem Model.State Model.Action}
+  [HasTimers W] {config : Finset NodeID} {nodes : List NodeID}
   {trace : Trace W Liveness.Event}
 
 /-- A live node that may start an election. -/
@@ -49,7 +49,7 @@ def ResetsBy (trace : Trace W Liveness.Event) (index : Nat) (node : NodeID) (bou
 
 section Trace
 
-variable (admissible : Admissible system trace)
+variable (admissible : Admissible config nodes trace)
 
 include admissible
 

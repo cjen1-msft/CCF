@@ -25,8 +25,7 @@ open HasNetwork (pending)
 variable [Config.InitialConfiguration]
   {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
   {trace : Trace W Liveness.Event} {nodes : List NodeID}
-  (admissible
-    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace)
 
 include admissible
 

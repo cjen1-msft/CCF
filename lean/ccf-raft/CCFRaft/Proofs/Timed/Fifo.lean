@@ -27,8 +27,8 @@ variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetw
 
 section General
 
-variable {system : CCF.TransitionSystem Model.State Model.Action}
-  {trace : Trace W Liveness.Event} (admissible : Admissible system trace)
+variable {config : Finset NodeID} {nodes : List NodeID}
+  {trace : Trace W Liveness.Event} (admissible : Admissible config nodes trace)
 
 include admissible
 
@@ -128,8 +128,7 @@ section Pass
 
 variable [Proofs.Config.InitialConfiguration] {nodes : List NodeID}
   {trace : Trace W Liveness.Event}
-  (admissible
-    : Admissible (Model.transitionSystem Proofs.Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Proofs.Config.INITIAL_CONFIGURATION nodes trace)
 
 include admissible
 
@@ -175,9 +174,9 @@ theorem pass_packets {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
   rw [outEq] at out
   have sentEq := (pass.complete notRetired).2
   obtain ⟨_, _, emitted, produced, _, ledger⟩ := admissible.delivery.next stepped
-  simp only [selected, admissible.step stepped selected, out, Option.bind_eq_bind,
-    Option.bind_some, Option.some.injEq] at produced
-  subst produced
+  simp only [selected, out, Option.bind_eq_bind, Option.bind_eq_some_iff,
+    Option.some.injEq] at produced
+  obtain ⟨_, _, rfl⟩ := produced
   refine ⟨issued step.before, fun position bound => ?_, fun packet sentAt => ?_⟩
   rotate_left
   · obtain ⟨step', stepped', member, fresh⟩ := sentAt

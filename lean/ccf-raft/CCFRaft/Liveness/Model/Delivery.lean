@@ -6,6 +6,7 @@ public import CCFRaft.Liveness.Model.Protocol
 
 namespace CCFRaft.Liveness
 
+open Model.Node (NodeID)
 open HasProtocol (proto)
 open HasTime (time)
 open HasLive (live)
@@ -48,9 +49,10 @@ def Packet.batch (emitted : List Model.Envelope) (first : Nat) (sentAt : Real)
 The ledger starts empty with no packets issued; consumption precedes registration
 of this step's outputs, and delivery is in order on each channel (`Event.InOrder`).
 Each output receives the next sequence number and the before-time of its sending step.
-The supplied system checks that a protocol action producing outputs is enabled. -/
+`Model.transitionSystem config nodes` checks that a protocol action producing outputs is
+enabled. -/
 def deliveryModel {W : Type} [HasProtocol W Model.State] [HasTime W] [HasNetwork W]
-    (system : CCF.TransitionSystem Model.State Model.Action)
+    (config : Finset NodeID) (nodes : List NodeID)
     : Model W Event where
   init world := pending world = [] /\ issued world = 0
   next step :=
@@ -61,7 +63,8 @@ def deliveryModel {W : Type} [HasProtocol W Model.State] [HasTime W] [HasNetwork
     /\ exists emitted,
         (match step.action.action with
           | some action => do
-              let _ <- system.step (proto step.before) action
+              let _ <- (Model.transitionSystem config nodes).step (proto step.before)
+                        action
               outgoing (proto step.before) action
           | none => some [])
           = some emitted

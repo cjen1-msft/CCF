@@ -114,7 +114,6 @@ private theorem replayed (index : Fin expectedStates.length)
       fin_cases index <;>
         dsimp [Execution.Trace.actionAt, trace, actions, expectedStates]
       all_goals
-        dsimp only [Model.transitionSystem, MultiNodeTransitionSystem.lift]
         simp [MultiNodeTransitionSystem.next, MultiNodeTransitionSystem.nodeState,
           Model.protocol, Model.recoveredTxID, Model.receive, step, guard,
           initial, Tests.initial, config, snapshot, s1, s2, s3, s4, s5, s6, s7, s8, s9,

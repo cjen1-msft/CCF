@@ -94,11 +94,10 @@ private theorem request_outgoing (signed : Bool)
   cases signed <;> rfl
 
 theorem protocol_valid (signed : Bool)
-    : (fixture signed).Valid (protocolModel (Model.transitionSystem {0} [0])) := by
+    : (fixture signed).Valid (protocolModel {0} [0]) := by
   refine ⟨?_, ?_⟩
   · change (Model.transitionSystem {0} [0]).init initialState
-    simp [initialState, Model.transitionSystem, CCF.MultiNodeTransitionSystem.lift,
-      Model.protocol, initialNode]
+    simp [initialState, Model.protocol, initialNode]
   · intro index step stepped
     rw [fixture_stepAt, Option.some.injEq] at stepped
     subst step
@@ -129,7 +128,7 @@ theorem crash_valid (signed : Bool) : (fixture signed).Valid crashModel := by
   cases index <;> rfl
 
 theorem delivery_valid (signed : Bool)
-    : (fixture signed).Valid (deliveryModel (Model.transitionSystem {0} [0])) := by
+    : (fixture signed).Valid (deliveryModel {0} [0]) := by
   refine ⟨⟨rfl, rfl⟩, ?_⟩
   intro index step stepped
   rw [fixture_stepAt, Option.some.injEq] at stepped
@@ -336,25 +335,23 @@ private theorem incumbent : Incumbent (fixture true) 0 0 := by
 Its first append includes request 10 and a signature, committing both immediately. -/
 theorem commit_liveness_witness
     : exists (config : Finset NodeID) (nodes : List NodeID),
-        let system := Model.transitionSystem config nodes
-        exists
-        (trace : Liveness.Trace (Liveness.World Model.State) Liveness.Event) (start
-                                                                              : Nat),
-        exists (leader : NodeID) (term : Nat) (participants : Finset NodeID) (request
-                                                                              : ReqID),
-          trace.Coherent
-          /\ trace.Valid (Liveness.protocolModel system)
-          /\ trace.Valid Liveness.timingModel
-          /\ trace.Valid Liveness.crashModel
-          /\ trace.Valid (Liveness.deliveryModel system)
-          /\ trace.HeartbeatScheduling none
-          /\ trace.SignatureScheduling none
-          /\ trace.RetirementConfirmedScheduling none
-          /\ Liveness.StableLeader trace start leader term
-          /\ Liveness.LiveQuorum trace leader participants
-          /\ Liveness.FairLoss trace (insert leader participants)
-          /\ Liveness.Submitted trace start leader request
-          /\ exists index, Liveness.RequestCommitted trace leader request index := by
+    exists
+    (trace : Liveness.Trace (Liveness.World Model.State) Liveness.Event) (start : Nat),
+    exists (leader : NodeID) (term : Nat) (participants : Finset NodeID) (request
+                                                                          : ReqID),
+      trace.Coherent
+      /\ trace.Valid (Liveness.protocolModel config nodes)
+      /\ trace.Valid Liveness.timingModel
+      /\ trace.Valid Liveness.crashModel
+      /\ trace.Valid (Liveness.deliveryModel config nodes)
+      /\ trace.HeartbeatScheduling none
+      /\ trace.SignatureScheduling none
+      /\ trace.RetirementConfirmedScheduling none
+      /\ Liveness.StableLeader trace start leader term
+      /\ Liveness.LiveQuorum trace leader participants
+      /\ Liveness.FairLoss trace (insert leader participants)
+      /\ Liveness.Submitted trace start leader request
+      /\ exists index, Liveness.RequestCommitted trace leader request index := by
   exact ⟨
     {0},
     [0],
@@ -384,30 +381,29 @@ theorem commit_liveness_witness
 There are no peers, deliveries or election timeouts. -/
 theorem stable_leader_witness
     : exists (config : Finset NodeID) (nodes : List NodeID),
-        let system := Model.transitionSystem config nodes
-        exists
-        (trace : Liveness.Trace (Liveness.World Model.State) Liveness.Event) (bounds
-                                                                              : Liveness.Bounds) (start
-                                                                                                  : Nat)
-          ,
-        exists (leader : NodeID) (term : Nat) (delay : Real),
-          trace.Coherent
-          /\ trace.Valid (Liveness.protocolModel system)
-          /\ trace.Valid Liveness.timingModel
-          /\ trace.Valid Liveness.crashModel
-          /\ trace.Valid (Liveness.deliveryModel system)
-          /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
-          /\ trace.SignatureScheduling none
-          /\ trace.RetirementConfirmedScheduling none
-          /\ trace.ElectionScheduling (some (bounds.electionTimeout / 2))
-          /\ Liveness.QuietStart trace start leader term bounds.electionTimeout
-          /\ Liveness.Timely trace start leader delay
-          /\ 0 <= delay
-          /\ Liveness.Matching trace start leader term
-          /\ bounds.heartbeatInterval + delay < bounds.electionTimeout / 2
-          /\ Liveness.Covered trace start leader term
-          /\ Liveness.Incumbent trace start leader
-          /\ Liveness.StableLeader trace start leader term := by
+    exists
+    (trace : Liveness.Trace (Liveness.World Model.State) Liveness.Event) (bounds
+                                                                          : Liveness.Bounds) (start
+                                                                                              : Nat)
+      ,
+    exists (leader : NodeID) (term : Nat) (delay : Real),
+      trace.Coherent
+      /\ trace.Valid (Liveness.protocolModel config nodes)
+      /\ trace.Valid Liveness.timingModel
+      /\ trace.Valid Liveness.crashModel
+      /\ trace.Valid (Liveness.deliveryModel config nodes)
+      /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
+      /\ trace.SignatureScheduling none
+      /\ trace.RetirementConfirmedScheduling none
+      /\ trace.ElectionScheduling (some (bounds.electionTimeout / 2))
+      /\ Liveness.QuietStart trace start leader term bounds.electionTimeout
+      /\ Liveness.Timely trace start leader delay
+      /\ 0 <= delay
+      /\ Liveness.Matching trace start leader term
+      /\ bounds.heartbeatInterval + delay < bounds.electionTimeout / 2
+      /\ Liveness.Covered trace start leader term
+      /\ Liveness.Incumbent trace start leader
+      /\ Liveness.StableLeader trace start leader term := by
   exact ⟨
     {0},
     [0],
@@ -439,35 +435,34 @@ theorem stable_leader_witness
 /-- The signed execution also satisfies every timed commit-liveness premise. -/
 theorem commit_liveness_timed_witness
     : exists (config : Finset NodeID) (nodes : List NodeID),
-        let system := Model.transitionSystem config nodes
-        exists
-        (trace : Liveness.Trace (Liveness.World Model.State) Liveness.Event) (bounds
-                                                                              : Liveness.Bounds) (start
-                                                                                                  : Nat)
-          ,
-        exists
-        (leader : NodeID) (term : Nat) (participants : Finset NodeID) (delay : Real),
-        exists (request : ReqID),
-          trace.Coherent
-          /\ trace.Valid (Liveness.protocolModel system)
-          /\ trace.Valid Liveness.timingModel
-          /\ trace.Valid Liveness.crashModel
-          /\ trace.Valid (Liveness.deliveryModel system)
-          /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
-          /\ trace.SignatureScheduling none
-          /\ trace.RetirementConfirmedScheduling none
-          /\ trace.ElectionScheduling (some (bounds.electionTimeout / 2))
-          /\ Liveness.QuietStart trace start leader term bounds.electionTimeout
-          /\ Liveness.Timely trace start leader delay
-          /\ 0 <= delay
-          /\ Liveness.Matching trace start leader term
-          /\ bounds.heartbeatInterval + delay < bounds.electionTimeout / 2
-          /\ Liveness.Covered trace start leader term
-          /\ Liveness.Incumbent trace start leader
-          /\ Liveness.LiveQuorum trace leader participants
-          /\ Liveness.FairLoss trace (insert leader participants)
-          /\ Liveness.Submitted trace start leader request
-          /\ exists index, Liveness.RequestCommitted trace leader request index := by
+    exists
+    (trace : Liveness.Trace (Liveness.World Model.State) Liveness.Event) (bounds
+                                                                          : Liveness.Bounds) (start
+                                                                                              : Nat)
+      ,
+    exists
+    (leader : NodeID) (term : Nat) (participants : Finset NodeID) (delay : Real),
+    exists (request : ReqID),
+      trace.Coherent
+      /\ trace.Valid (Liveness.protocolModel config nodes)
+      /\ trace.Valid Liveness.timingModel
+      /\ trace.Valid Liveness.crashModel
+      /\ trace.Valid (Liveness.deliveryModel config nodes)
+      /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
+      /\ trace.SignatureScheduling none
+      /\ trace.RetirementConfirmedScheduling none
+      /\ trace.ElectionScheduling (some (bounds.electionTimeout / 2))
+      /\ Liveness.QuietStart trace start leader term bounds.electionTimeout
+      /\ Liveness.Timely trace start leader delay
+      /\ 0 <= delay
+      /\ Liveness.Matching trace start leader term
+      /\ bounds.heartbeatInterval + delay < bounds.electionTimeout / 2
+      /\ Liveness.Covered trace start leader term
+      /\ Liveness.Incumbent trace start leader
+      /\ Liveness.LiveQuorum trace leader participants
+      /\ Liveness.FairLoss trace (insert leader participants)
+      /\ Liveness.Submitted trace start leader request
+      /\ exists index, Liveness.RequestCommitted trace leader request index := by
   exact ⟨
     {0},
     [0],
@@ -562,17 +557,16 @@ bounds of `1 / 4`.
 The first append commits request 10 at time zero. It takes no time, so its
 after-state is recorded inside the window, even one of length zero. -/
 theorem timed_commit_window_witness
-    : let system := Model.transitionSystem {0} [0]
-      let bounds : Bounds :=
+    : let bounds : Bounds :=
         { heartbeatInterval := 1 / 4, electionTimeout := 4, signatureInterval := 1 / 4 }
       forall duration : Real,
         0 <= duration
         -> exists trace : Trace (World Model.State) Liveness.Event,
             (trace.Coherent
-              /\ trace.Valid (protocolModel system)
+              /\ trace.Valid (protocolModel {0} [0])
               /\ trace.Valid timingModel
               /\ trace.Valid crashModel
-              /\ trace.Valid (deliveryModel system)
+              /\ trace.Valid (deliveryModel {0} [0])
               /\ trace.Valid (boundedDelayModel 0)
               /\ TimeDiverges trace
               /\ 0 <= (0 : Real)
@@ -585,7 +579,7 @@ theorem timed_commit_window_witness
               /\ SubmittedAt trace 0 0 10)
             /\ exists index,
                 Within trace 0 duration index /\ RequestCommitted trace 0 10 index := by
-  intro system bounds duration nonnegative
+  intro bounds duration nonnegative
   refine ⟨fixture true, ?_, 1, ?_, committed⟩
   · refine ⟨coherent true, protocol_valid true, timing_valid true, crash_valid true,
       delivery_valid true, ?_, ?_, by norm_num, heartbeats true _, ?_,
@@ -660,26 +654,24 @@ private theorem unsigned_rejected : Not ((fixture false).SignatureScheduling non
 The failure-free, reliable, non-Zeno execution submits request 10 but never signs, so no state commits it. -/
 theorem unsigned_starvation_witness
     : exists (config : Finset NodeID) (nodes : List NodeID),
-        let system := Model.transitionSystem config nodes
-        exists
-        (trace : Liveness.Trace (Liveness.World Model.State) Liveness.Event) (start
-                                                                              : Nat),
-        exists (leader : NodeID) (term : Nat) (participants : Finset NodeID) (request
-                                                                              : ReqID),
-          trace.Coherent
-          /\ trace.Valid (Liveness.protocolModel system)
-          /\ trace.Valid Liveness.timingModel
-          /\ trace.Valid Liveness.crashModel
-          /\ trace.Valid (Liveness.deliveryModel system)
-          /\ trace.HeartbeatScheduling none
-          /\ trace.RetirementConfirmedScheduling none
-          /\ Liveness.StableLeader trace start leader term
-          /\ Liveness.LiveQuorum trace leader participants
-          /\ Liveness.FairLoss trace (insert leader participants)
-          /\ Liveness.Submitted trace start leader request
-          /\ Not (exists index, Liveness.RequestCommitted trace leader request index)
-          /\ Liveness.Reliable trace (insert leader participants) start
-          /\ Not (trace.SignatureScheduling none) := by
+    exists
+    (trace : Liveness.Trace (Liveness.World Model.State) Liveness.Event) (start : Nat),
+    exists (leader : NodeID) (term : Nat) (participants : Finset NodeID) (request
+                                                                          : ReqID),
+      trace.Coherent
+      /\ trace.Valid (Liveness.protocolModel config nodes)
+      /\ trace.Valid Liveness.timingModel
+      /\ trace.Valid Liveness.crashModel
+      /\ trace.Valid (Liveness.deliveryModel config nodes)
+      /\ trace.HeartbeatScheduling none
+      /\ trace.RetirementConfirmedScheduling none
+      /\ Liveness.StableLeader trace start leader term
+      /\ Liveness.LiveQuorum trace leader participants
+      /\ Liveness.FairLoss trace (insert leader participants)
+      /\ Liveness.Submitted trace start leader request
+      /\ Not (exists index, Liveness.RequestCommitted trace leader request index)
+      /\ Liveness.Reliable trace (insert leader participants) start
+      /\ Not (trace.SignatureScheduling none) := by
   refine ⟨
     {0},
     [0],

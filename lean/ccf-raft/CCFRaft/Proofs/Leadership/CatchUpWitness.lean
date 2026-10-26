@@ -143,7 +143,7 @@ theorem stable_window_catchup_witness
       forall duration : Real,
         0 <= duration
         -> exists trace : Trace (World Model.State) Liveness.Event,
-            (Liveness.Admissible (Model.transitionSystem {0} [0]) trace
+            (Liveness.Admissible {0} [0] trace
               /\ trace.Valid (timerModel bounds.electionTimeout)
               /\ trace.Valid (boundedDelayModel 0)
               /\ TimeDiverges trace
@@ -163,7 +163,7 @@ theorem stable_window_catchup_witness
               /\ BacklogTerms trace 0 0 {0} 0)
             /\ StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0} := by
   intro windowBounds duration _
-  have admissible : Liveness.Admissible (Model.transitionSystem {0} [0]) (fixture true) :=
+  have admissible : Liveness.Admissible {0} [0] (fixture true) :=
     ⟨coherent true, protocol_valid true, timing_valid true, crash_valid true,
       delivery_valid true⟩
   have ratio
@@ -251,7 +251,7 @@ theorem stable_window_catchup_anchored_witness
       forall duration : Real,
         0 <= duration
         -> exists trace : Trace (World Model.State) Liveness.Event,
-            (Liveness.Admissible (Model.transitionSystem {0} [0]) trace
+            (Liveness.Admissible {0} [0] trace
               /\ trace.Valid (timerModel bounds.electionTimeout)
               /\ trace.Valid (boundedDelayModel 0)
               /\ TimeDiverges trace
@@ -269,7 +269,7 @@ theorem stable_window_catchup_anchored_witness
             /\ StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0}
             /\ Window.StableTerm trace 0 duration 0 Model.BOOTSTRAP_TERM {0} := by
   intro windowBounds duration _
-  have admissible : Liveness.Admissible (Model.transitionSystem {0} [0]) (fixture true) :=
+  have admissible : Liveness.Admissible {0} [0] (fixture true) :=
     ⟨coherent true, protocol_valid true, timing_valid true, crash_valid true,
       delivery_valid true⟩
   have ratio

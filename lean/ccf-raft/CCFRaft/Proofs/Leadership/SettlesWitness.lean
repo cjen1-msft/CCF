@@ -137,7 +137,7 @@ theorem stable_window_witness
       forall duration : Real,
         0 <= duration
         -> exists trace : Trace (World Model.State) Liveness.Event,
-            (Liveness.Admissible (Model.transitionSystem {0} [0]) trace
+            (Liveness.Admissible {0} [0] trace
               /\ trace.Valid (timerModel bounds.electionTimeout)
               /\ trace.Valid (boundedDelayModel 0)
               /\ 0 <= (0 : Real)
@@ -151,7 +151,7 @@ theorem stable_window_witness
               /\ WindowMatching trace 0 duration 0 Model.BOOTSTRAP_TERM {0})
             /\ StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0} := by
   intro windowBounds duration _
-  have admissible : Liveness.Admissible (Model.transitionSystem {0} [0]) (fixture true) :=
+  have admissible : Liveness.Admissible {0} [0] (fixture true) :=
     ⟨coherent true, protocol_valid true, timing_valid true, crash_valid true,
       delivery_valid true⟩
   have ratio : windowBounds.heartbeatInterval + 0 < windowBounds.electionTimeout / 2 := by
@@ -173,7 +173,7 @@ theorem stable_window_inSync_witness
       forall duration : Real,
         0 <= duration
         -> exists trace : Trace (World Model.State) Liveness.Event,
-            (Liveness.Admissible (Model.transitionSystem {0} [0]) trace
+            (Liveness.Admissible {0} [0] trace
               /\ trace.Valid (timerModel bounds.electionTimeout)
               /\ trace.Valid (boundedDelayModel 0)
               /\ 0 <= (0 : Real)
@@ -188,7 +188,7 @@ theorem stable_window_inSync_witness
               /\ InSync trace 0 0 Model.BOOTSTRAP_TERM {0})
             /\ StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0} := by
   intro windowBounds duration _
-  have admissible : Liveness.Admissible (Model.transitionSystem {0} [0]) (fixture true) :=
+  have admissible : Liveness.Admissible {0} [0] (fixture true) :=
     ⟨coherent true, protocol_valid true, timing_valid true, crash_valid true,
       delivery_valid true⟩
   have ratio : windowBounds.heartbeatInterval + 0 < 2 := by norm_num [windowBounds]
@@ -273,7 +273,7 @@ theorem stable_window_anchored_witness
       forall duration : Real,
         0 <= duration
         -> exists trace : Trace (World Model.State) Liveness.Event,
-            (Liveness.Admissible (Model.transitionSystem {0} [0]) trace
+            (Liveness.Admissible {0} [0] trace
               /\ trace.Valid (timerModel bounds.electionTimeout)
               /\ trace.Valid (boundedDelayModel 0)
               /\ 0 <= (0 : Real)
@@ -287,7 +287,7 @@ theorem stable_window_anchored_witness
             /\ StableWindow trace 0 duration 0 Model.BOOTSTRAP_TERM {0}
             /\ Window.StableTerm trace 0 duration 0 Model.BOOTSTRAP_TERM {0} := by
   intro windowBounds duration _
-  have admissible : Liveness.Admissible (Model.transitionSystem {0} [0]) (fixture true) :=
+  have admissible : Liveness.Admissible {0} [0] (fixture true) :=
     ⟨coherent true, protocol_valid true, timing_valid true, crash_valid true,
       delivery_valid true⟩
   have ratio : windowBounds.heartbeatInterval + 0 < 2 := by norm_num [windowBounds]

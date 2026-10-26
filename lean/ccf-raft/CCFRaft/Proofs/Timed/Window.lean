@@ -87,8 +87,7 @@ theorem window_end {trace : Trace W Liveness.Event} (coherent : trace.Coherent)
 
 variable [Proofs.Config.InitialConfiguration] {nodes : List NodeID}
   {trace : Trace W Liveness.Event}
-  (admissible
-    : Admissible (Model.transitionSystem Proofs.Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Proofs.Config.INITIAL_CONFIGURATION nodes trace)
 
 include admissible
 

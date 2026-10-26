@@ -185,8 +185,7 @@ theorem signed_of_not_due {start : Nat} {leader : NodeID} {term : Nat}
   rwa [covered.1] at this
 
 variable [Config.InitialConfiguration] {nodes : List NodeID}
-  (admissible
-    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace)
 
 include admissible
 

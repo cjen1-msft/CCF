@@ -106,9 +106,10 @@ theorem cut_sentAt {trace : Trace W Liveness.Event} {last index : Nat} (lt : ind
     : (cut trace last).SentAt index packet <-> trace.SentAt index packet := by
   simp only [Trace.SentAt, cut_stepAt_of_lt lt]
 
-theorem Admissible.cut {system : CCF.TransitionSystem Model.State Model.Action}
-    {trace : Trace W Liveness.Event} (admissible : Admissible system trace) (last : Nat)
-    : Admissible system (cut trace last) :=
+theorem Admissible.cut {config : Finset NodeID} {nodes : List NodeID}
+    {trace : Trace W Liveness.Event} (admissible : Admissible config nodes trace)
+    (last : Nat)
+    : Admissible config nodes (cut trace last) :=
   ⟨
     Coherent.cut admissible.coherent last,
     Valid.cut admissible.protocol last,

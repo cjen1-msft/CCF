@@ -50,7 +50,7 @@ Lean has no row types, so the open world is spelled as typeclass constraints; th
 Scheduling adds no world variables.
 
 Each public statement conjoins coherence and validity of the protocol, timing, crash and delivery models inline; there is no bundled model predicate.
-The protocol model uses `Event.action` to execute local actions and deliveries in `system := Model.transitionSystem config nodes`; crash, drop and idle stutter in the protocol state.
+The protocol model `protocolModel config nodes` uses `Event.action` to execute local actions and deliveries in `Model.transitionSystem config nodes`; crash, drop and idle stutter in the protocol state.
 The timing model permits any nondecreasing absolute time, advanced only by idle steps; every other event takes zero time.
 The initial absolute time and live set are unrestricted.
 The crash model directly projects to the existing `crashSystem`, requiring live actors and permanently removing crashed nodes.
@@ -106,6 +106,7 @@ The shared `check-imports` command rejects modules missing from that import clos
 ## Proofs
 
 `Properties.lean` contains the full theorem and witness-lemma statements, with one-line proof links into `Proofs/`.
+Import `CCFRaft.Properties` and use `CCFRaft.Properties.<name>` for these declarations.
 `Proofs/Direct/` establishes node-local commit invariants; `Proofs/Safety/` establishes the cross-node history invariant used for election safety and committed-log comparability.
 `Proofs/Replication/` and `Proofs/Timed/` prove commit liveness from that invariant, `Proofs/Leadership/` proves stable leadership, the bridges and the duel's initial phase, and `Proofs/Duel/` proves `duelling_leaders_resolve`; see [the liveness report](LIVENESS.md).
 `Proofs/Witnesses.lean` and `Proofs/LivenessWitness.lean` supply concrete executions checked by the kernel.

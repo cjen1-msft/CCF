@@ -121,8 +121,7 @@ def ackBound (delay interval : Real) (backlog : Nat) : Real :=
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
   [Proofs.Config.InitialConfiguration] {nodes : List NodeID}
   {trace : Trace W Liveness.Event}
-  (admissible
-    : Admissible (Model.transitionSystem Proofs.Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Proofs.Config.INITIAL_CONFIGURATION nodes trace)
   {start last : Nat} {stop delay interval : Real} {leader : NodeID} {term : Nat}
   (stable : StableLeader trace start leader term)
   {peer : NodeID} (different : Not (peer = leader))

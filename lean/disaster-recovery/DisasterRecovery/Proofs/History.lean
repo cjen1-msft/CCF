@@ -29,7 +29,8 @@ lemma trace_lifts {config : Model.Config} {before after : Model.State} {tail}
         Decoration config ghost tail final
         /\ Execution.Global.Reachable config final
         /\ erase final = after := by
-  induction path generalizing ghost with
+  induction path
+    using @Trace.Path.rec (Model.transitionSystem config) generalizing ghost with
   | nil => exact ⟨ghost, .nil _, reachable, linked⟩
   | @cons before middle after tail action step _ ih =>
       obtain ⟨ghostAction, ghostMiddle, _, ghostStep, middleEq⟩ :=
@@ -69,7 +70,7 @@ theorem history_correspondence {config : Model.Config} (trace : Properties.Globa
   obtain ⟨last, found⟩ := Option.isSome_iff_exists.mp inTrace
   obtain ⟨initial, init, linked⟩ := model_initial_lifts config trace.initial valid.init
   obtain ⟨tail, path⟩ := Trace.stateAt_path 0 bound
-    (CCF.Execution.Trace.stateAt_zero trace _) (by simpa using found)
+    (CCF.Execution.Trace.stateAt_zero _ trace) (by simpa using found)
   obtain ⟨final, _, reachable, finalEq⟩ := trace_lifts path initial (.initial init) linked
   refine ⟨final, reachable, fun i state le atI => ?_⟩
   obtain ⟨suffix, rest⟩ :=

@@ -110,8 +110,7 @@ structure RoundBase [Config.InitialConfiguration] (nodes : List NodeID)
     (trace : Trace W Liveness.Event) (electionTimeout maxDelay jump : Real)
     (start : Nat) (duration : Real) (participants members : Finset NodeID) (c term : Nat)
     : Prop where
-  admissible
-    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace
+  admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace
   delay : trace.Valid (boundedDelayModel maxDelay)
   timers : trace.Valid (timerModel electionTimeout)
   diverges : TimeDiverges trace

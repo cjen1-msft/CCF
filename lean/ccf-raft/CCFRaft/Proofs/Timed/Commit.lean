@@ -57,34 +57,33 @@ theorem committed_of_prefix {state after : NodeState} {signature : Nat} {request
 
 theorem commit_liveness_timed
     : forall (config : Finset NodeID) (nodes : List NodeID),
-        let system := Model.transitionSystem config nodes
-        forall (bounds : Liveness.Bounds) (maxDelay : Real) (backlog : Nat),
-          exists duration : Real,
-            0 <= duration
-            /\ forall (W : Type) [Liveness.HasProtocol W Model.State] [Liveness.HasTime W]
-                      [Liveness.HasLive W] [Liveness.HasNetwork W],
-                forall (trace : Liveness.Trace W Liveness.Event) (start : Nat),
-                forall (leader : NodeID) (term : Nat) (participants : Finset NodeID)
-                        (request : ReqID),
-                  (trace.Coherent
-                    /\ trace.Valid (Liveness.protocolModel system)
-                    /\ trace.Valid Liveness.timingModel
-                    /\ trace.Valid Liveness.crashModel
-                    /\ trace.Valid (Liveness.deliveryModel system)
-                    /\ trace.Valid (Liveness.boundedDelayModel maxDelay)
-                    /\ Liveness.TimeDiverges trace
-                    /\ 0 <= maxDelay
-                    /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
-                    /\ trace.SignatureScheduling (some bounds.signatureInterval)
-                    /\ Liveness.StableWindow trace start duration leader term participants
-                    /\ Liveness.Window.ReconfigurationSettled trace start duration leader
-                    /\ Liveness.BacklogTerms trace start leader participants backlog
-                    /\ Liveness.InTermAt trace start term participants
-                    /\ Liveness.SubmittedAt trace start leader request)
-                  -> exists index,
-                      Liveness.Within trace start duration index
-                      /\ Liveness.RequestCommitted trace leader request index := by
-  intro config nodes system bounds maxDelay backlog
+      forall (bounds : Liveness.Bounds) (maxDelay : Real) (backlog : Nat),
+        exists duration : Real,
+          0 <= duration
+          /\ forall (W : Type) [Liveness.HasProtocol W Model.State] [Liveness.HasTime W]
+                    [Liveness.HasLive W] [Liveness.HasNetwork W],
+              forall (trace : Liveness.Trace W Liveness.Event) (start : Nat),
+              forall (leader : NodeID) (term : Nat) (participants : Finset NodeID)
+                      (request : ReqID),
+                (trace.Coherent
+                  /\ trace.Valid (Liveness.protocolModel config nodes)
+                  /\ trace.Valid Liveness.timingModel
+                  /\ trace.Valid Liveness.crashModel
+                  /\ trace.Valid (Liveness.deliveryModel config nodes)
+                  /\ trace.Valid (Liveness.boundedDelayModel maxDelay)
+                  /\ Liveness.TimeDiverges trace
+                  /\ 0 <= maxDelay
+                  /\ trace.HeartbeatScheduling (some bounds.heartbeatInterval)
+                  /\ trace.SignatureScheduling (some bounds.signatureInterval)
+                  /\ Liveness.StableWindow trace start duration leader term participants
+                  /\ Liveness.Window.ReconfigurationSettled trace start duration leader
+                  /\ Liveness.BacklogTerms trace start leader participants backlog
+                  /\ Liveness.InTermAt trace start term participants
+                  /\ Liveness.SubmittedAt trace start leader request)
+                -> exists index,
+                    Liveness.Within trace start duration index
+                    /\ Liveness.RequestCommitted trace leader request index := by
+  intro config nodes bounds maxDelay backlog
   refine ⟨
     commitDuration bounds maxDelay backlog,
     commitDuration_nonneg bounds maxDelay backlog,
@@ -95,7 +94,7 @@ theorem commit_liveness_timed
       signing, window, settled, backlogs, inTerm, submitted⟩
   let _ : Proofs.Config.InitialConfiguration := ⟨config⟩
   have admissible
-      : Admissible (Model.transitionSystem Proofs.Config.INITIAL_CONFIGURATION nodes) trace :=
+      : Admissible Proofs.Config.INITIAL_CONFIGURATION nodes trace :=
     ⟨coherent, protocol, timing, crash, delivery⟩
   have nonneg := commitDuration_nonneg bounds maxDelay backlog
   set duration := commitDuration bounds maxDelay backlog with durationEq

@@ -67,21 +67,22 @@ open HasLive (live)
 
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
 
-/-- The recorded executions of `system` that the liveness theorems consider. -/
-structure Admissible (system : CCF.TransitionSystem Model.State Model.Action)
+/-- The recorded executions of `Model.transitionSystem config nodes` that the liveness
+theorems consider. -/
+structure Admissible (config : Finset NodeID) (nodes : List NodeID)
     (trace : Trace W Liveness.Event)
     : Prop where
   coherent : trace.Coherent
-  protocol : trace.Valid (protocolModel system)
+  protocol : trace.Valid (protocolModel config nodes)
   timing : trace.Valid timingModel
   crash : trace.Valid crashModel
-  delivery : trace.Valid (deliveryModel system)
+  delivery : trace.Valid (deliveryModel config nodes)
 
 namespace Admissible
 
-variable {system : CCF.TransitionSystem Model.State Model.Action}
+variable {config : Finset NodeID} {nodes : List NodeID}
   {trace : Trace W Liveness.Event}
-  (admissible : Admissible system trace)
+  (admissible : Admissible config nodes trace)
 
 include admissible
 
@@ -94,7 +95,8 @@ theorem before {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
 theorem step {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
     {action : Model.Action} (stepped : trace.stepAt index = some step)
     (selected : step.action.action = some action)
-    : system.step (proto step.before) action = some (proto step.after) := by
+    : (Model.transitionSystem config nodes).step (proto step.before) action
+      = some (proto step.after) := by
   have next := admissible.protocol.next stepped
   simp only [protocolModel, selected] at next
   exact next
@@ -109,9 +111,10 @@ theorem stutter {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
 
 /-- Environment events do not introduce new protocol states. -/
 theorem reachable {index : Nat} {point : W} (found : trace.stateAt index = some point)
-    : system.Reachable (proto point) :=
+    : (Model.transitionSystem config nodes).Reachable (proto point) :=
   admissible.protocol.invariant admissible.coherent
-    (invariant := fun point => system.Reachable (proto point))
+    (invariant :=
+      fun point => (Model.transitionSystem config nodes).Reachable (proto point))
     (fun _ init => .initial init)
     (fun step next held => by
       cases selected : step.action.action with
@@ -133,7 +136,7 @@ theorem nodeAt_before {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
 
 theorem reachable_before {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
     (stepped : trace.stepAt index = some step)
-    : system.Reachable (proto step.before) :=
+    : (Model.transitionSystem config nodes).Reachable (proto step.before) :=
   admissible.reachable (admissible.before stepped)
 
 /-- Time never runs backwards along the recording. -/

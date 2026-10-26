@@ -1375,8 +1375,7 @@ variable [Config.InitialConfiguration] {nodes : List NodeID}
 omit [HasTimers W] in
 /-- A recorded election timeout runs under `canStartElection`. -/
 theorem timeout_can
-    (admissible
-      : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+    (admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace)
     {index : Nat} {step : CCF.Execution.Step W Liveness.Event}
     (stepped : trace.stepAt index = some step) {node : NodeID}
     (event : step.action = .local node (.timeout .election))
@@ -1401,8 +1400,7 @@ message delays, and the win is fresh for half an election timeout less two delay
 the margin. -/
 theorem race_won {electionTimeout maxDelay : Real} {participants : Finset NodeID}
     {first : Nat} {winner : NodeID} {term : Nat}
-    (admissible
-      : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+    (admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace)
     (delay : trace.Valid (boundedDelayModel maxDelay))
     (timers : trace.Valid (timerModel electionTimeout)) (diverges : TimeDiverges trace)
     (nonnegative : 0 <= maxDelay) (ratio : 4 * maxDelay < electionTimeout / 2)

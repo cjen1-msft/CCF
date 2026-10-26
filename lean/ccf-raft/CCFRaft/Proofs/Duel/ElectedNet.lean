@@ -34,7 +34,9 @@ theorem network_terms {nodes : List NodeID} {state : Model.State}
         -> exists sender,
             (envelope.source, sender) ∈ state.nodes
             /\ envelope.payload.term <= sender.currentTerm := by
-  induction reachable with
+  induction reachable
+    using @TransitionSystem.Reachable.rec
+      (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) with
   | initial initialized =>
       intro envelope member
       rw [initialized.2.2.2.1] at member

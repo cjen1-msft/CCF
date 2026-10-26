@@ -71,8 +71,8 @@ theorem passBatches_entries {log : List Entry} {previousIndex : Nat}
 
 section Network
 
-variable {system : CCF.TransitionSystem Model.State Model.Action}
-  {trace : Trace W Liveness.Event} (admissible : Admissible system trace)
+variable {config : Finset NodeID} {nodes : List NodeID}
+  {trace : Trace W Liveness.Event} (admissible : Admissible config nodes trace)
 
 include admissible
 
@@ -133,8 +133,7 @@ end Network
 
 variable [Proofs.Config.InitialConfiguration] {nodes : List NodeID}
   {trace : Trace W Liveness.Event}
-  (admissible
-    : Admissible (Model.transitionSystem Proofs.Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Proofs.Config.INITIAL_CONFIGURATION nodes trace)
   {start last : Nat} {stop delay interval : Real} {leader : NodeID} {term : Nat}
   (stable : StableLeader trace start leader term)
   {peer : NodeID} (different : Not (peer = leader))

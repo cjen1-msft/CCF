@@ -199,8 +199,7 @@ variable [Config.InitialConfiguration] [HasTime W] [HasLive W] [HasNetwork W]
 section Peer
 
 variable {nodes : List NodeID} {trace : Trace W Liveness.Event}
-  (admissible
-    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace)
   {start : Nat} {leader : NodeID} {term : Nat}
   (stable : StableLeader trace start leader term)
   {peer : NodeID}

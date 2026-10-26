@@ -54,8 +54,7 @@ section Trace
 variable [Config.InitialConfiguration]
   {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
   {nodes : List NodeID} {trace : Trace W Liveness.Event}
-  (admissible
-    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
+  (admissible : Admissible Config.INITIAL_CONFIGURATION nodes trace)
 
 include admissible
 
