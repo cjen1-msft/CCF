@@ -7,8 +7,6 @@ public import CCFRaft.Proofs.Leadership.InitRaiseConverge
 set_option linter.unusedSectionVars false
 
 /-!
-NOT IMPORTED BY `Properties`.
-
 Regular vote requests flush after every participant adopts the top term.
 -/
 

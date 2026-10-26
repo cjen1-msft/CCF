@@ -10,8 +10,7 @@ public import CCFRaft.Liveness.Model.Timers
 /-!
 # The deterministic race lemma
 
-NOT IMPORTED BY `Properties`. Part (b) of the duel: a race with a margin ends in a
-fresh quiet start for a live primary.
+A race with a margin ends in a fresh quiet start for a live primary.
 
 At index `first`, participant `winner` of term `term` times out. Nothing that can
 change a role is in flight between participants, every other participant that could win

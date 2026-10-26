@@ -12,8 +12,6 @@ set_option linter.unusedSectionVars false
 /-!
 # Without a primary, the top term is raised
 
-NOT IMPORTED BY `Properties`.
-
 INIT's branch without a primary. At `start` every participant is at or below
 `term` and one is at it, and in the window no participant is primary at `term`.
 Then a participant moves past `term` within `initRaiseLength`, and the first such

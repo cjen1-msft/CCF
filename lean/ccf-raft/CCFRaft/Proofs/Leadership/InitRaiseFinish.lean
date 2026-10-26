@@ -7,8 +7,6 @@ public import CCFRaft.Proofs.Leadership.InitRaiseQuorum
 set_option linter.unusedSectionVars false
 
 /-!
-NOT IMPORTED BY `Properties`.
-
 The best cleared participant completes a pre-vote before its next timeout.
 -/
 

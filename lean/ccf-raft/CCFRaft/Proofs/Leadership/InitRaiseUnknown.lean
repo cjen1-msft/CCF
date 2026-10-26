@@ -7,8 +7,6 @@ public import CCFRaft.Proofs.Leadership.InitRaiseReset
 set_option linter.unusedSectionVars false
 
 /-!
-NOT IMPORTED BY `Properties`.
-
 After a timeout, a participant stays unaware of a primary once current-term
 AppendEntries have flushed.
 -/

@@ -7,13 +7,13 @@ public import CCFRaft.Proofs.Duel.Round
 /-!
 # The leaderless round: definitions
 
-NOT IMPORTED BY `Properties`. The definitions for the round's leaderless case. When
-no participant becomes primary of `term + 1`, the round freezes once every
-participant has adopted `term + 1`: logs, commit indices and configurations stay put,
-nobody knows a primary, and the only live traffic of `term + 1` between participants
-is pre-vote polling of participants that timed out. Whether a participant can gather a
-pre-vote quorum is then fixed, so the first participant that can and times out either
-raises the next round within two delays or, with a margin, wins a race.
+The definitions for the round's leaderless case. When no participant becomes primary
+of `term + 1`, the round freezes once every participant has adopted `term + 1`: logs,
+commit indices and configurations stay put, nobody knows a primary, and the only live
+traffic of `term + 1` between participants is pre-vote polling of participants that
+timed out. Whether a participant can gather a pre-vote quorum is then fixed, so the
+first participant that can and times out either raises the next round within two
+delays or, with a margin, wins a race.
 -/
 
 namespace CCFRaft.Proofs.Duel.Round

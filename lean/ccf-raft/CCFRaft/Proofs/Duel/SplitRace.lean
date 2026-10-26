@@ -9,12 +9,11 @@ public import CCFRaft.Proofs.Duel.ElectedVoters
 /-!
 # The leaderless round: the race
 
-NOT IMPORTED BY `Properties`. A raise of a leaderless round needs a pre-vote quorum,
-so some participant that can gather one timed out first. With no overshoot its
-timeout is at its deadline, and with a margin every other such participant's
-deadline is more than four delays later: each was last reset at most its second
-time in the round, and only by adoption, a vote, or its own timeouts. That is a
-`Racing.Race`.
+A raise of a leaderless round needs a pre-vote quorum, so some participant that can
+gather one timed out first. With no overshoot its timeout is at its deadline, and
+with a margin every other such participant's deadline is more than four delays later:
+each was last reset at most its second time in the round, and only by adoption, a
+vote, or its own timeouts. That is a `Racing.Race`.
 -/
 
 namespace CCFRaft.Proofs.Duel.Round

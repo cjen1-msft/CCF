@@ -8,8 +8,6 @@ public import CCFRaft.Proofs.Leadership.InitRaiseTime
 set_option linter.unusedSectionVars false
 
 /-!
-NOT IMPORTED BY `Properties`.
-
 Old AppendEntries requests flush within one network delay in INIT.
 -/
 

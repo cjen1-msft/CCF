@@ -7,8 +7,6 @@ public import CCFRaft.Proofs.Leadership.InitRaiseBest
 set_option linter.unusedSectionVars false
 
 /-!
-NOT IMPORTED BY `Properties`.
-
 Pre-votes accumulate while a capped participant cannot time out or receive
 current-term AppendEntries.
 -/

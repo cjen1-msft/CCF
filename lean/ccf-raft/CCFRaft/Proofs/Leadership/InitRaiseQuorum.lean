@@ -7,8 +7,6 @@ public import CCFRaft.Proofs.Leadership.InitRaisePolling
 set_option linter.unusedSectionVars false
 
 /-!
-NOT IMPORTED BY `Properties`.
-
 A polling node cannot remain capped once every participant's granted response
 has arrived.
 -/

@@ -8,8 +8,6 @@ public import CCFRaft.Proofs.Leadership.FirstReset
 set_option linter.unusedSectionVars false
 
 /-!
-NOT IMPORTED BY `Properties`.
-
 Local transition facts for INIT without a primary.
 -/
 

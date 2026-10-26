@@ -9,9 +9,8 @@ public import CCFRaft.Proofs.Duel.Blocks
 /-!
 # Duelling leaders resolve
 
-NOT IMPORTED BY `Properties`. Public statement (ii): against any measurable
-scheduling policy, a run that starts a round reaches an anchored start within a
-bounded window, except on a set of draws of small measure.
+Against any measurable scheduling policy, a run that starts a round reaches an
+anchored start within a bounded window, except on a set of draws of small measure.
 
 The policy sees every draw as soon as it is made (through the deadline it sets),
 and may use it to schedule everything after; this is stronger than any physical
@@ -103,12 +102,13 @@ theorem forces_handoff [Config.InitialConfiguration] {nodes : List NodeID}
     exact ⟨k, kLt, fun c term roundAt =>
       margin_of_far setup.admissible setup.timers roundAt far⟩
 
-/-- (ii) Duelling leaders resolve. Against a measurable policy, if every run with
-draws in `[electionTimeout / 2, electionTimeout]` reaches an anchored start or a round
-start within `initial` of `start`, and meets the window's premises, the runs without an anchored start in the window have
-measure at most `(overshoots + 1) * q ^ rounds`. The set need not be measurable;
-the bound is on its outer measure, so a measurable set of runs with an anchored
-start has measure at least `1 - (overshoots + 1) * q ^ rounds`. -/
+/-- Duelling leaders resolve. Against a measurable policy, if every run with draws in
+`[electionTimeout / 2, electionTimeout]` reaches an anchored start or a round start
+within `initial` of `start`, and meets the window's premises, the runs without an
+anchored start in the window have measure at most `(overshoots + 1) * q ^ rounds`.
+The set need not be measurable; the bound is on its outer measure, so a measurable
+set of runs with an anchored start has measure at least
+`1 - (overshoots + 1) * q ^ rounds`. -/
 theorem duelling_leaders_resolve [Config.InitialConfiguration] {nodes : List NodeID}
     {initial electionTimeout maxDelay jump rho fresh : Real} {law : Measure Real}
     {overshoots rounds start : Nat} {participants members : Finset NodeID}

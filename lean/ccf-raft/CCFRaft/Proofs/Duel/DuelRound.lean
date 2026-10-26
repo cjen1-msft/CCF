@@ -9,8 +9,8 @@ public import CCFRaft.Proofs.Duel.CommittedWindow
 /-!
 # The duel round
 
-NOT IMPORTED BY `Properties`. Public statement (i): one duel round reaches an
-anchored start or the next round, and with a margin an anchored start.
+One duel round reaches an anchored start or the next round, and with a margin an
+anchored start.
 -/
 
 namespace CCFRaft.Proofs.Duel.Round
@@ -385,7 +385,7 @@ end Steps
 
 /-! ## The round -/
 
-/-- (i) One duel round. From a round start at `c`, the run reaches an anchored start,
+/-- One duel round. From a round start at `c`, the run reaches an anchored start,
 or the next round start, within a round length plus the overshoot. The next round
 start is the first step after `c` that moves a participant past `term + 1`. If no
 step of the round overshoots, the next round starts within a round length; if the

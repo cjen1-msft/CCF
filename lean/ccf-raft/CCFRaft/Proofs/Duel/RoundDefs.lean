@@ -10,8 +10,8 @@ public import CCFRaft.Liveness.Assumptions.Round
 /-!
 # One duel round: definitions
 
-NOT IMPORTED BY `Properties`. The definitions of the deterministic step of the duel;
-the lemmas are in `Duel.Round`.
+The definitions of the deterministic step of the duel; the lemmas are in
+`Duel.Round`.
 
 A round of term `term + 1` starts at a raise: at index `c` every participant, and
 every packet between participants, is at most `term`, and step `c` moves a

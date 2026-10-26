@@ -11,11 +11,11 @@ public import CCFRaft.Proofs.StablePrimary
 /-!
 # Chaining duel rounds
 
-NOT IMPORTED BY `Properties`. The deterministic part of `Resolve`: from a round start
-within the initial phase, rounds follow one another (`Round.duel_round`), each within
-a round length plus any overshoot. If at most `overshoots` steps overshoot, and each
-of `overshoots + 1` blocks of `rounds` rounds has a round that keeps its margin, some
-such round has no overshoot and ends in an anchored start (`chain`).
+The deterministic part of `Resolve`: from a round start within the initial phase,
+rounds follow one another (`Round.duel_round`), each within a round length plus any
+overshoot. If at most `overshoots` steps overshoot, and each of `overshoots + 1`
+blocks of `rounds` rounds has a round that keeps its margin, some such round has no
+overshoot and ends in an anchored start (`chain`).
 -/
 
 namespace CCFRaft.Proofs.Duel.Resolve

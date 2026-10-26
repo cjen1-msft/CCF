@@ -10,9 +10,9 @@ public import CCFRaft.Proofs.Safety.Commit
 /-!
 # Message terms in flight
 
-NOT IMPORTED BY `Properties`. A message in the protocol's network, delivered or
-not, carries at most its sender's current term. The network keeps dropped
-messages, so this bounds old traffic that the packet ledger no longer records.
+A message in the protocol's network, delivered or not, carries at most its sender's
+current term. The network keeps dropped messages, so this bounds old traffic that the
+packet ledger no longer records.
 -/
 
 namespace CCFRaft.Proofs.Duel.Elected

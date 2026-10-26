@@ -9,9 +9,8 @@ set_option linter.unusedSectionVars false
 /-!
 # One duel round: trace facts
 
-NOT IMPORTED BY `Properties`. Trace facts for `Duel.Round`: packet delays, the
-window, a step as one handler run, and the raiser's vote requests reaching every
-participant.
+Trace facts for `Duel.Round`: packet delays, the window, a step as one handler run,
+and the raiser's vote requests reaching every participant.
 -/
 
 namespace CCFRaft.Proofs.Duel.Round

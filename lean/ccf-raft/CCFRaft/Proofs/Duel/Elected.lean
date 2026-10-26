@@ -7,13 +7,12 @@ public import CCFRaft.Proofs.Duel.ElectedAnchor
 /-!
 # The elected case of a duel round
 
-NOT IMPORTED BY `Properties`. A primary of `term + 1` elected early in a round
-settles its voters into an anchored start by four delays after the round starts.
-The facts about the round's caps and packets (`Round.RoundBase.capped_from` and
-`Round.RoundBase.packets`) are hypotheses here, proved in `Duel.Round`.
-Only the packet bound on granted pre-vote responses is needed here; adoption
-is proved for the voters rather than required of every participant. The proof
-looks only at the round's first four delays (`RoundShort`).
+A primary of `term + 1` elected early in a round settles its voters into an anchored
+start by four delays after the round starts. The facts about the round's caps and
+packets (`Round.RoundBase.capped_from` and `Round.RoundBase.packets`) are hypotheses
+here, proved in `Duel.Round`. Only the packet bound on granted pre-vote responses is
+needed here; adoption is proved for the voters rather than required of every
+participant. The proof looks only at the round's first four delays (`RoundShort`).
 -/
 
 namespace CCFRaft.Proofs.Duel.Round

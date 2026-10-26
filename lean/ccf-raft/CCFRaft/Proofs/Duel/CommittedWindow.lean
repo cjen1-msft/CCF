@@ -8,8 +8,8 @@ public import CCFRaft.Proofs.Leadership.InitEligible
 /-!
 # A committed configuration persists in a good window
 
-NOT IMPORTED BY `Properties`. `ConfigurationCommitted` through a good window: the
-committed prefix of a log only grows (`Leadership.committed_later`).
+`ConfigurationCommitted` through a good window: the committed prefix of a log only
+grows (`Leadership.committed_later`).
 -/
 
 namespace CCFRaft.Proofs.Duel

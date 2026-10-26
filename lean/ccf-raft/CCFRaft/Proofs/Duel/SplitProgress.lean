@@ -9,12 +9,12 @@ public import CCFRaft.Proofs.Leadership.FirstReset
 /-!
 # The leaderless round: progress
 
-NOT IMPORTED BY `Properties`. In a leaderless round a participant that can gather a
-pre-vote quorum and times out raises the next round within two delays: its requests
-arrive within one delay, every participant its log covers grants, and the grants
-arrive within another. A participant with a longest log can gather one, and its
-timer fires within an election timeout of its last reset, so a leaderless round ends
-within a round length plus the overshoot.
+In a leaderless round a participant that can gather a pre-vote quorum and times out
+raises the next round within two delays: its requests arrive within one delay, every
+participant its log covers grants, and the grants arrive within another. A
+participant with a longest log can gather one, and its timer fires within an election
+timeout of its last reset, so a leaderless round ends within a round length plus the
+overshoot.
 -/
 
 namespace CCFRaft.Proofs.Duel.Round

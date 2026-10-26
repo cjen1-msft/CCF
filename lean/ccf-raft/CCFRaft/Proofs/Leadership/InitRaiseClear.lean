@@ -7,8 +7,6 @@ public import CCFRaft.Proofs.Leadership.InitRaiseUnknown
 set_option linter.unusedSectionVars false
 
 /-!
-NOT IMPORTED BY `Properties`.
-
 Every participant clears its primary knowledge within one election interval
 after non-timeout resets stop.
 -/

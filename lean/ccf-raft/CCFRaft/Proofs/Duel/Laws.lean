@@ -12,11 +12,11 @@ public import Mathlib.Tactic.Ring
 /-!
 # Remaining-time laws
 
-NOT IMPORTED BY `Properties`. Two instances of `Liveness.Law`: the continuous uniform
-law on `[E / 2, E]`, and CCF's integer-millisecond law. `restart_election_timeout`
-(raft.h) draws `timeout_elapsed` with `uniform_int_distribution(0, E / 2)`, so the
-remaining time is uniform over the `E / 2 + 1` integers of `[E / 2, E]`, in
-milliseconds. The tick offset is a separate timer-model gap and is left out.
+Two instances of `Liveness.Law`: the continuous uniform law on `[E / 2, E]`, and
+CCF's integer-millisecond law. `restart_election_timeout` (raft.h) draws
+`timeout_elapsed` with `uniform_int_distribution(0, E / 2)`, so the remaining time is
+uniform over the `E / 2 + 1` integers of `[E / 2, E]`, in milliseconds. The tick
+offset is a separate timer-model gap and is left out.
 -/
 
 namespace CCFRaft.Proofs.Duel.Rounds

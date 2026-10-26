@@ -8,7 +8,7 @@ public import Mathlib.Probability.Independence.InfinitePi
 /-!
 # The attempts interface
 
-NOT IMPORTED BY `Properties`. Part (c) of the duel, for any remaining-time `Law`.
+The probabilistic part of the duel, for any remaining-time `Law`.
 
 The deterministic part of the duel supplies `Attempts`; `failed_bound` bounds the
 probability that its first `n` rounds all fail. Whether a draw is relevant to

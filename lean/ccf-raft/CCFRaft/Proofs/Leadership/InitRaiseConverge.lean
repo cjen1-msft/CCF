@@ -8,8 +8,6 @@ public import CCFRaft.Proofs.Leadership.InitRaiseVotes
 set_option linter.unusedSectionVars false
 
 /-!
-NOT IMPORTED BY `Properties`.
-
 Election activity disseminates the top term to every participant.
 -/
 

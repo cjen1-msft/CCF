@@ -9,10 +9,10 @@ set_option linter.unusedSectionVars false
 /-!
 # One duel round: what a step sends
 
-NOT IMPORTED BY `Properties`. Handler facts for `Duel.Round`: a pre-vote request
-comes only from an election timeout, in the sender's term; a granted pre-vote
-response answers a pre-vote request of its term; and a vote proposal comes only
-from a nomination or from a step that leaves its sender retired-committed.
+Handler facts for `Duel.Round`: a pre-vote request comes only from an election
+timeout, in the sender's term; a granted pre-vote response answers a pre-vote request
+of its term; and a vote proposal comes only from a nomination or from a step that
+leaves its sender retired-committed.
 -/
 
 namespace CCFRaft.Proofs.Duel.Round

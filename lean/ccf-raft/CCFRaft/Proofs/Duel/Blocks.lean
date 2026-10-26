@@ -7,14 +7,14 @@ public import CCFRaft.Proofs.Duel.Attempts
 /-!
 # Blocks of attempts
 
-NOT IMPORTED BY `Properties`. The union bound behind the finitely-many-overshoots
-form of the duel. The rounds are cut into `blocks` blocks of `rounds` rounds. If
-every block has a round whose relevant draws all keep the margin, the event holds.
-Each block fails with probability at most `roundFailure ^ rounds` (`failed_bound`
-on the block's rounds), so the event fails on a set of measure at most
-`blocks * roundFailure ^ rounds` (`blocks_bound`). The event need not be
-measurable: the bound is on the outer measure of its complement, so a measurable
-subset of the event has measure at least `1 - blocks * roundFailure ^ rounds`.
+The union bound behind the finitely-many-overshoots form of the duel. The rounds are
+cut into `blocks` blocks of `rounds` rounds. If every block has a round whose
+relevant draws all keep the margin, the event holds. Each block fails with
+probability at most `roundFailure ^ rounds` (`failed_bound` on the block's rounds),
+so the event fails on a set of measure at most `blocks * roundFailure ^ rounds`
+(`blocks_bound`). The event need not be measurable: the bound is on the outer measure
+of its complement, so a measurable subset of the event has measure at least
+`1 - blocks * roundFailure ^ rounds`.
 -/
 
 namespace CCFRaft.Proofs.Duel.Rounds

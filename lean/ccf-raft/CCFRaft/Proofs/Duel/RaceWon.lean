@@ -7,9 +7,8 @@ public import CCFRaft.Proofs.Duel.RaceStep
 /-!
 # The race is won
 
-NOT IMPORTED BY `Properties`. Part (b) of the duel, `race_won`: the invariant
-`Setup.Running` holds at every step until the winner is primary, and it cannot last
-past `4 * maxDelay` after the race starts.
+`race_won`: the invariant `Setup.Running` holds at every step until the winner is
+primary, and it cannot last past `4 * maxDelay` after the race starts.
 -/
 
 namespace CCFRaft.Proofs.Duel.Racing

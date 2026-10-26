@@ -7,8 +7,6 @@ public import CCFRaft.Proofs.Leadership.InitRaiseNode
 set_option linter.unusedSectionVars false
 
 /-!
-NOT IMPORTED BY `Properties`.
-
 A regular election request is part of a complete broadcast.
 -/
 

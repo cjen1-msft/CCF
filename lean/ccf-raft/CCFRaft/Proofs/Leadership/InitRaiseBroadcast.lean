@@ -7,8 +7,6 @@ public import CCFRaft.Proofs.Leadership.InitRaiseFlush
 set_option linter.unusedSectionVars false
 
 /-!
-NOT IMPORTED BY `Properties`.
-
 The first election activity in the top term must occur promptly.
 -/
 

@@ -7,10 +7,10 @@ public import CCFRaft.Proofs.Duel.Race
 /-!
 # Running the race
 
-NOT IMPORTED BY `Properties`. The invariant behind `race_won`: until the winner of
-the race is primary, every step keeps the other participants and the packets between
-participants in a small set of shapes, the winner's tally only grows, and every voter still
-missing from it has its request or its grant in flight.
+The invariant behind `race_won`: until the winner of the race is primary, every step
+keeps the other participants and the packets between participants in a small set of
+shapes, the winner's tally only grows, and every voter still missing from it has its
+request or its grant in flight.
 -/
 
 namespace CCFRaft.Proofs.Duel.Racing

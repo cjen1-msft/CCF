@@ -9,8 +9,6 @@ public import CCFRaft.Proofs.Liveness.Delay
 set_option linter.unusedSectionVars false
 
 /-!
-NOT IMPORTED BY `Properties`.
-
 Time boundaries and election deadline bounds used by the INIT argument.
 -/
 

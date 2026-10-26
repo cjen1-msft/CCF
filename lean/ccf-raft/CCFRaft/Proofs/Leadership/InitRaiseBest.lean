@@ -8,8 +8,6 @@ public import CCFRaft.Proofs.Direct.CommitFrontier
 set_option linter.unusedSectionVars false
 
 /-!
-NOT IMPORTED BY `Properties`.
-
 A finite nonempty set of participants has a log whose pre-vote every other
 participant's log permits.
 -/

@@ -7,13 +7,12 @@ public import CCFRaft.Proofs.Duel.ResolveChain
 /-!
 # Margins from draws
 
-NOT IMPORTED BY `Properties`. A round of the run keeps its margin
-(`Round.RoundMargin`) when every relevant draw of the round keeps the margin from
-its centres (`margin_of_far`): each of a participant's first two resets into the
-round's term is a relevant reset (`relevantReset_of_reset`), its new deadline is the
-time plus its draw (`Adaptive.run_deadline`), and every other participant's
-deadline, which the reset leaves alone, is the time plus one of its centres
-(`Adaptive.centre_of_relevant`).
+A round of the run keeps its margin (`Round.RoundMargin`) when every relevant draw of
+the round keeps the margin from its centres (`margin_of_far`): each of a
+participant's first two resets into the round's term is a relevant reset
+(`relevantReset_of_reset`), its new deadline is the time plus its draw
+(`Adaptive.run_deadline`), and every other participant's deadline, which the reset
+leaves alone, is the time plus one of its centres (`Adaptive.centre_of_relevant`).
 -/
 
 namespace CCFRaft.Proofs.Duel.Resolve

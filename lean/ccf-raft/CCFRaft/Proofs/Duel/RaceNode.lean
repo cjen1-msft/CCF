@@ -7,8 +7,8 @@ public import CCFRaft.Proofs.Replication.Step
 /-!
 # The race, one node step at a time
 
-NOT IMPORTED BY `Properties`. The exact effect of each step a node can take
-during a race (`Proofs.Duel.Race`): what it becomes and what it sends.
+The exact effect of each step a node can take during a race (`Proofs.Duel.Race`):
+what it becomes and what it sends.
 -/
 
 namespace CCFRaft.Proofs.Duel.Racing

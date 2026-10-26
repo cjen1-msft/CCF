@@ -9,8 +9,6 @@ import all Init.Control.State
 @[expose] public section
 
 /-!
-NOT IMPORTED BY `Properties`.
-
 The packet ledger contains at most the copies of each envelope in the protocol network.
 Drops remove only ledger entries; deliveries remove one occurrence from both lists.
 -/

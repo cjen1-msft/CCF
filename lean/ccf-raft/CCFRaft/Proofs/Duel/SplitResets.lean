@@ -9,10 +9,10 @@ set_option linter.unusedSectionVars false
 /-!
 # The leaderless round: resets without timeouts
 
-NOT IMPORTED BY `Properties`. A participant that does not time out in `term + 1` is
-reset into `term + 1` at most twice in the round: when it adopts `term + 1`, and
-when it grants its one vote of `term + 1`. A candidate of `term + 1` asks each
-participant once, and a delivery consumes its packet.
+A participant that does not time out in `term + 1` is reset into `term + 1` at most
+twice in the round: when it adopts `term + 1`, and when it grants its one vote of
+`term + 1`. A candidate of `term + 1` asks each participant once, and a delivery
+consumes its packet.
 -/
 
 namespace CCFRaft.Proofs.Duel.Round

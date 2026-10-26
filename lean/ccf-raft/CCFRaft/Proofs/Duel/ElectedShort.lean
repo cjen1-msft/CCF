@@ -8,10 +8,9 @@ public import CCFRaft.Proofs.Duel.Round
 /-!
 # The elected case with a short window
 
-NOT IMPORTED BY `Properties`. The elected case of a duel round when the window is
-known to cover only the round's first four delays: a primary of `term + 1` by
-`time c + 4 * maxDelay` hands off by then. The round's caps and packet bounds are
-derived within that horizon.
+The elected case of a duel round when the window is known to cover only the round's
+first four delays: a primary of `term + 1` by `time c + 4 * maxDelay` hands off by
+then. The round's caps and packet bounds are derived within that horizon.
 -/
 
 namespace CCFRaft.Proofs.Duel.Round

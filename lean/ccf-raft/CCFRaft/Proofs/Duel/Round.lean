@@ -7,7 +7,7 @@ public import CCFRaft.Proofs.Duel.RoundInv
 /-!
 # One duel round
 
-NOT IMPORTED BY `Properties`. The deterministic step of the duel.
+The deterministic step of the duel.
 
 A round of term `term + 1` starts at a raise: at index `c` every participant, and
 every packet between participants, is at most `term`, and step `c` moves a

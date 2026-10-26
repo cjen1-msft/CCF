@@ -11,10 +11,9 @@ set_option linter.unusedSectionVars false
 /-!
 # The leaderless round: the frozen invariant
 
-NOT IMPORTED BY `Properties`. Once every participant has adopted `term + 1`, and as
-long as no participant is primary of `term + 1`, the round is `Frozen`, the
-participants' logs and configurations stay put, and a participant's timer is reset
-only by its own timeouts.
+Once every participant has adopted `term + 1`, and as long as no participant is
+primary of `term + 1`, the round is `Frozen`, the participants' logs and
+configurations stay put, and a participant's timer is reset only by its own timeouts.
 -/
 
 namespace CCFRaft.Proofs.Duel.Round
