@@ -53,17 +53,15 @@ noncomputable def roundFailureOf (rho : Real) (participants : Finset NodeID) : R
   roundFailure rho (participants.card - 1) (2 * participants.card)
 
 /-- The relevant draws of the run's rounds, as `Rounds.Attempts`. -/
-noncomputable def attemptsOf {E margin : Real} {participants : Finset NodeID}
-    {policy : Policy} (borel : Borel participants policy) (start total : Nat)
-    : Rounds.Attempts E margin (participants.card - 1) total (2 * participants.card)
-        univ where
+noncomputable def attemptsOf {margin : Real} {participants : Finset NodeID}
+    {policy : Policy} (borel : Borel participants policy) (start : Nat)
+    : Rounds.Attempts margin (participants.card - 1) (2 * participants.card) where
   relevant := Relevant participants policy start
   relevant_measurable := relevant_measurable borel
   centres := centres participants policy start
   centres_measurable := centres_measurable borel
   ordered _ _ _ _ _ lt relevant relevant' := relevant_ordered lt relevant relevant'
   bounded := relevant_bounded
-  forces _ _ _ := mem_univ _
 
 /-- Every block having a round whose relevant draws keep the margin forces an anchored
 start in the window. -/
@@ -86,15 +84,12 @@ theorem forces_handoff [Config.InitialConfiguration] {nodes : List NodeID}
               -> exists k,
                   k < rounds
                   /\ forall j,
-                      (attemptsOf (E := electionTimeout) (margin := 4 * maxDelay) borel
-                        start ((overshoots + 1) * rounds)).relevant
+                      (attemptsOf (margin := 4 * maxDelay) borel start).relevant
                         (b * rounds + k) j sample
                       -> forall i,
                           4 * maxDelay
                           < |sample j
-                              - (attemptsOf (E := electionTimeout)
-                                  (margin := 4 * maxDelay) borel start
-                                  ((overshoots + 1) * rounds)).centres
+                              - (attemptsOf (margin := 4 * maxDelay) borel start).centres
                                   (b * rounds + k) j sample i|)
         -> sample
             ∈ {sample |
@@ -136,7 +131,7 @@ theorem duelling_leaders_resolve [Config.InitialConfiguration] {nodes : List Nod
         }
       <= ENNReal.ofReal
           ((overshoots + 1) * roundFailureOf rho participants ^ rounds) := by
-  have bound := Rounds.blocks_bound isLaw (attemptsOf borel start _)
+  have bound := Rounds.blocks_bound isLaw (attemptsOf borel start)
     (forces_handoff borel freshLe setup)
   have q0 : 0 <= roundFailureOf rho participants := by
     have := isLaw.nonnegative
@@ -147,33 +142,5 @@ theorem duelling_leaders_resolve [Config.InitialConfiguration] {nodes : List Nod
   convert bound using 2
   · rfl
   · norm_cast
-
-/-- (ii), as a lower bound on the outer measure of the runs with an anchored start. -/
-theorem duelling_leaders_resolve_lower [Config.InitialConfiguration] {nodes : List NodeID}
-    {initial electionTimeout maxDelay jump rho fresh : Real} {law : Measure Real}
-    {overshoots rounds start : Nat} {participants members : Finset NodeID}
-    {policy : Policy}
-    (isLaw : Law electionTimeout (4 * maxDelay) rho law)
-    (borel : Borel participants policy)
-    (freshLe : fresh <= electionTimeout / 2 - 4 * maxDelay)
-    (setup
-      : forall sample : Sample,
-          (forall j, sample j ∈ Icc (electionTimeout / 2) electionTimeout)
-          -> Setup nodes (run participants policy sample) initial electionTimeout
-              maxDelay jump fresh overshoots start
-              (window initial electionTimeout maxDelay jump overshoots rounds)
-              participants members)
-    : ENNReal.ofReal (1 - (overshoots + 1) * roundFailureOf rho participants ^ rounds)
-      <= Measure.infinitePi (fun _ => law)
-          {sample |
-            HandoffBy (run participants policy sample) participants start
-              (window initial electionTimeout maxDelay jump overshoots rounds) fresh
-          } := by
-  have bound := Rounds.blocks_bound_lower isLaw (attemptsOf borel start _)
-    (forces_handoff borel freshLe setup)
-  unfold roundFailureOf
-  convert bound using 3
-  push_cast
-  rfl
 
 end CCFRaft.Proofs.Duel.Resolve

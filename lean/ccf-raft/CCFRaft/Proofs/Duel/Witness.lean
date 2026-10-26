@@ -138,17 +138,6 @@ theorem law_valid : Law E (4 * maxDelay) rho law := by
     using (Rounds.uniform_law (E := E) (margin := 4 * maxDelay)
             (by norm_num [E, bounds]) (by norm_num [maxDelay]))
 
-/-- The concrete bounds admit freshness two and positive scheduling intervals. -/
-theorem parameter_bounds
-    : 0 < E
-      /\ 0 <= maxDelay
-      /\ 4 * maxDelay < E / 2
-      /\ bounds.heartbeatInterval + maxDelay < 2
-      /\ (2 : Real) <= E / 2 - 4 * maxDelay
-      /\ 0 < bounds.heartbeatInterval
-      /\ 0 < bounds.signatureInterval := by
-  norm_num [E, maxDelay, bounds]
-
 /-- Lifting the fixture preserves all five admissibility obligations. -/
 theorem admissible (sample : Sample)
     : CCFRaft.Proofs.Liveness.Admissible
@@ -466,32 +455,5 @@ theorem heartbeats (sample : Sample) (interval : Real)
   have peerZero : peer = 0 := Finset.mem_singleton.mp peerLive
   subst leader peer
   simp [eligiblePeers] at eligible
-
-/-- The initial append signs immediately, within the signature interval one. -/
-theorem signatures (sample : Sample)
-    : (run {0} policy sample).SignatureScheduling (some bounds.signatureInterval) := by
-  intro leader index point found due
-  rw [run_stateAt, Option.some.injEq] at found
-  subst point
-  obtain ⟨leaderLive, state, nodeFound, _, _, unsigned⟩ := due
-  have leaderZero : leader = 0 := Finset.mem_singleton.mp leaderLive
-  subst leader
-  cases index with
-  | zero =>
-      refine ⟨0, lift (fixtureWorld true 0), le_rfl, run_stateAt sample 0, ?_, Or.inr ?_⟩
-      · exact le_add_of_nonneg_right (by norm_num [bounds])
-      · exact ⟨liftStep (fixtureStep true 0), run_stepAt sample 0,
-          requestEntries true, rfl,
-          show EntryContent.signature ∈ requestEntries true by decide +kernel⟩
-  | succ index =>
-      change some (requestedNode true) = some state at nodeFound
-      have same := Option.some.inj nodeFound
-      subst state
-      have covered
-          : Not (maxCommittableIndex (requestedNode true).log < (requestedNode true).log.length
-              \/ maxCommittableTerm (requestedNode true).log
-                ≠ (requestedNode true).currentTerm) := by
-        decide +kernel
-      exact False.elim (covered unsigned)
 
 end CCFRaft.Proofs.Duel.Witness

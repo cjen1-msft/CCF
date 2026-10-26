@@ -8,14 +8,12 @@ public import CCFRaft.Proofs.Liveness.Network
 set_option linter.unusedSectionVars false
 
 /-!
-# No node sends to itself
+# A node's own actions send to other nodes
 
-Every envelope a node sends names it as the source and goes to another node,
-except a reply, which goes back to the source of the received message. A
-broadcast skips its sender, AppendEntries go to eligible peers, and a nominated
-successor is an eligible peer. So no packet of an admissible execution is
-addressed to its sender: none is at the start, and a reply goes back to the
-sender of a packet that was not addressed to its own sender.
+Every envelope a node's own action (an append, a send pass, a timeout or a
+nomination) emits names the node as the source and goes to another node
+(`act_off`): a broadcast skips its sender, AppendEntries go to eligible peers, and
+a nominated successor is an eligible peer.
 -/
 
 namespace CCFRaft.Proofs.Leadership
@@ -31,22 +29,7 @@ open HasNetwork (pending)
 abbrev Off (self : NodeID) (sent : List Model.Envelope) : Prop :=
   forall e, e ∈ sent -> e.source = self /\ Not (e.target = self)
 
-/-- Every envelope of `sent` is from `self`, to another node or back to `source`. -/
-abbrev Toward (self source : NodeID) (sent : List Model.Envelope) : Prop :=
-  forall e, e ∈ sent -> e.source = self /\ (Not (e.target = self) \/ e.target = source)
-
 theorem off_nil (self : NodeID) : Off self [] := fun _ member => by cases member
-
-theorem toward_nil (self source : NodeID) : Toward self source [] :=
-  fun _ member => by
-    cases member
-
-theorem toward_back {self source : NodeID} {payload : Message}
-    : Toward self source [{ source := self, target := source, payload }] := by
-  intro e member
-  rw [List.mem_singleton] at member
-  subst member
-  exact ⟨rfl, Or.inr rfl⟩
 
 theorem off_append {self : NodeID} {first second : List Model.Envelope}
     (left : Off self first) (right : Off self second)
@@ -55,12 +38,6 @@ theorem off_append {self : NodeID} {first second : List Model.Envelope}
   rcases List.mem_append.mp member with old | new
   · exact left e old
   · exact right e new
-
-theorem Off.toward {self source : NodeID} {sent : List Model.Envelope}
-    (off : Off self sent)
-    : Toward self source sent :=
-  fun e member =>
-    ⟨(off e member).1, Or.inl (off e member).2⟩
 
 /-- A fold that keeps or replaces its accumulator by an item ends with the
 initial value or an item. -/
@@ -247,134 +224,6 @@ theorem act_off (state : NodeState) (input : Input)
       | checkQuorum => exact checkQuorum_off self state
   | nominateSuccessor => exact nominate_off self state
 
-theorem appendEntriesRequest_toward (source : NodeID) (state : NodeState)
-    (request : AppendEntriesRequest)
-    : Sends (fun _ sent => Toward self source sent)
-        (handleAppendEntriesRequest caps self source state request) := by
-  unfold handleAppendEntriesRequest
-  dsimp only
-  repeat'
-    first
-    | exact Sends.pure' (toward_nil self source)
-    | exact Sends.bind' (Sends.send _ _ _) fun _ sent eq =>
-        Sends.pure' (by rw [eq, List.append_nil]; exact toward_back)
-    | split
-
-theorem receive_toward (source : NodeID) (state : NodeState) (message : Message)
-    : Sends (fun _ sent => Toward self source sent)
-        (receive caps self source state message) := by
-  simp only [receive]
-  refine Sends.ite' (fun _ => Sends.pure' (toward_nil self source)) fun _ => ?_
-  have lift := fun {α : Type} {m : NodeEffect α}
-      (off : Sends (fun _ sent => Off self sent) m) =>
-    Sends.mono off fun _ _ (done : Off self _) => done.toward (source := source)
-  cases message with
-  | appendEntriesRequest request =>
-      exact appendEntriesRequest_toward self source _ request
-  | requestVoteRequest request =>
-      simp only [handleRequestVoteRequest]
-      exact Sends.bind' (Sends.send _ _ _)
-        fun _ sent eq =>
-          Sends.pure' (by rw [eq, List.append_nil]; exact toward_back)
-  | requestPreVoteRequest request =>
-      simp only [handleRequestPreVoteRequest]
-      exact Sends.bind' (Sends.send _ _ _)
-        fun _ sent eq =>
-          Sends.pure' (by rw [eq, List.append_nil]; exact toward_back)
-  | _ =>
-      simp only [handleAppendEntriesResponse, handleRequestVoteResponse,
-        handleRequestPreVoteResponse, handleProposeRequestVoteRequest]
-      repeat'
-        first
-        | exact lift (advanceCommit_off self _)
-        | exact lift (electIfQuorum_off self _)
-        | exact lift (becomeCandidate_off self _)
-        | exact Sends.pure' (toward_nil self source)
-        | refine Sends.ite' (fun _ => ?_) fun _ => ?_
-
 end Effects
-
-/-- Every envelope a protocol action emits is from its actor, to another node or
-back to the source of the delivered envelope. -/
-theorem outgoing_away {state : Model.State} {action : Model.Action}
-    {emitted : List Model.Envelope} (out : outgoing state action = some emitted)
-    {e : Model.Envelope} (member : e ∈ emitted)
-    : match action with
-      | .local node _ => e.source = node /\ Not (e.target = node)
-      | .deliver envelope =>
-          e.source = envelope.target
-          /\ (Not (e.target = envelope.target) \/ e.target = envelope.source) := by
-  unfold outgoing at out
-  cases action with
-  | «local» node input =>
-      simp only [Option.bind_eq_bind, Option.bind_eq_some_iff] at out
-      obtain ⟨before, _, pair, ran, eq⟩ := out
-      obtain ⟨_, effects⟩ := pair
-      simp only [Option.pure_def, Option.some.injEq] at eq
-      subst eq
-      obtain ⟨new, outEq, off⟩ := act_off node before input {} _ _ ran
-      simp only [List.nil_append] at outEq
-      exact off e (outEq ▸ member)
-  | deliver envelope =>
-      simp only [Option.bind_eq_bind, Option.bind_eq_some_iff] at out
-      obtain ⟨before, _, pair, ran, eq⟩ := out
-      obtain ⟨_, effects⟩ := pair
-      simp only [Option.pure_def, Option.some.injEq] at eq
-      subst eq
-      obtain ⟨new, outEq, toward⟩ :=
-        receive_toward envelope.target envelope.source before envelope.payload {} _ _ ran
-      simp only [List.nil_append] at outEq
-      exact toward e (outEq ▸ member)
-
-section Trace
-
-variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetwork W]
-  {system : CCF.TransitionSystem Model.State Model.Action}
-  {trace : Trace W Liveness.Event}
-
-/-- No outstanding packet of an admissible execution is addressed to its sender. -/
-theorem pending_not_self (admissible : CCFRaft.Proofs.Liveness.Admissible system trace)
-    : forall {index : Nat} {point : W},
-        trace.stateAt index = some point
-        -> forall packet,
-            packet ∈ pending point
-            -> Not (packet.envelope.target = packet.envelope.source)
-  | 0, point, found, packet, member => by
-      rw [Trace.stateAt_zero, Option.some.injEq] at found
-      subst found
-      rw [admissible.delivery.init.1] at member
-      cases member
-  | index + 1, point, found, packet, member => by
-      obtain ⟨step, stepped, rfl⟩ := Trace.stateAt_succ_eq_some.mp found
-      by_cases old : packet ∈ pending step.before
-      · exact pending_not_self admissible (admissible.before stepped) packet old
-      obtain ⟨step', action, emitted, stepped', selected, out, emits, _⟩ :=
-        admissible.sentAt_emitted ⟨step, stepped, member, old⟩
-      rw [stepped, Option.some.injEq] at stepped'
-      subst stepped'
-      have away := outgoing_away out emits
-      cases action with
-      | «local» node input =>
-          obtain ⟨source, other⟩ := away
-          rw [source]
-          exact other
-      | deliver envelope =>
-          obtain ⟨source, other⟩ := away
-          intro same
-          rw [source] at same
-          rcases other with other | back
-          · exact other same
-          · cases event : step.action with
-            | deliver delivered =>
-                rw [event] at selected
-                simp only [Event.action, Option.some.injEq] at selected
-                cases selected
-                have consumed := admissible.consumed_pending stepped
-                  (packet := delivered) (by rw [event]; rfl)
-                exact pending_not_self admissible (admissible.before stepped) _ consumed
-                  (same.symm.trans back)
-            | _ => rw [event] at selected; simp [Event.action] at selected
-
-end Trace
 
 end CCFRaft.Proofs.Leadership

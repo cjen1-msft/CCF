@@ -318,19 +318,6 @@ theorem AnchorInv.leads {participants anchor : Finset NodeID} {leader : NodeID}
   obtain ⟨local_, now, primary, termEq⟩ := inv.quiet.leader
   exact ⟨local_, found_of_now exec now, primary, termEq⟩
 
-/-- An anchor node is in `term` at a recorded state. -/
-theorem AnchorInv.anchorTerm {participants anchor : Finset NodeID} {leader : NodeID}
-    {term index : Nat} {point : W} (found : trace.stateAt index = some point)
-    (inv : AnchorInv participants anchor leader term (proto point)) {node : NodeID}
-    (nodeIn : node ∈ anchor) {state : NodeState}
-    (nodeFound : nodeState (proto point) node = some state)
-    : state.currentTerm = term := by
-  obtain ⟨_, exec⟩ := history_at admissible found
-  obtain ⟨settled, now, termEq, _⟩ := inv.anchored.settled node nodeIn
-  rw [found_of_now exec now, Option.some.injEq] at nodeFound
-  rw [← nodeFound]
-  exact termEq
-
 end Recorded
 
 end CCFRaft.Proofs.Leadership

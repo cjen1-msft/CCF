@@ -131,21 +131,6 @@ variable {trace : Trace W Liveness.Event} {nodes : List NodeID}
     : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace)
   {participants : Finset NodeID}
 
-/-- Every recorded index has a term bounding all participants. -/
-theorem low_exists (c : Nat) : exists term, Low trace participants c term := by
-  cases found : trace.stateAt c with
-  | none => exact ⟨0, fun point _ _ found' => by rw [found] at found'; cases found'⟩
-  | some point =>
-      refine ⟨participants.sup fun node =>
-        ((nodeState (proto point) node).map NodeState.currentTerm).getD 0, ?_⟩
-      intro point' node state found' member nodeFound
-      rw [found, Option.some.injEq] at found'
-      subst found'
-      have := Finset.le_sup (f := fun node =>
-        ((nodeState (proto point) node).map NodeState.currentTerm).getD 0) member
-      simp only [nodeFound, Option.map_some, Option.getD_some] at this
-      exact this
-
 include admissible
 
 /-- A step that moves a participant past a term bounding every participant starts

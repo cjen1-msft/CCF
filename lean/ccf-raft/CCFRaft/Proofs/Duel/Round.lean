@@ -488,27 +488,6 @@ theorem RoundBase.capped_from
         exact terms node state nodeIn nodeFound
       · exact capped.2 earlier point node state first (by omega) found nodeIn nodeFound
 
-/-- No participant moves past `term + 1` before half an election timeout into the
-round: that needs a timeout in `term + 1`. -/
-theorem RoundSetup.capped
-    (setup
-      : RoundSetup nodes trace electionTimeout maxDelay jump start duration participants
-          members c term)
-    {origin : W} (originFound : trace.stateAt c = some origin)
-    : forall index point,
-        c <= index
-        -> trace.stateAt index = some point
-        -> time point < time origin + electionTimeout / 2
-        -> Capped trace participants c term index :=
-  fun index point le found early =>
-    (setup.toRoundBase.capped_from originFound
-      ((setup.inside originFound).mono
-        (by
-          unfold roundLength
-          linarith [setup.nonnegative, setup.jumpNonnegative, setup.timeout_pos]))
-      (by linarith [setup.ratio, setup.nonnegative])
-      index point le found early early.le).1
-
 /-- The step that makes a participant primary of `term + 1` in the round happens by
 `time c + 3 * maxDelay`: it is a fresh campaign, before every participant has
 adopted `term + 1`, or it counts a vote of `term + 1`, sent by `time c + 2 *

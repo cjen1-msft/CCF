@@ -10,14 +10,15 @@ public import Mathlib.Probability.Independence.InfinitePi
 
 NOT IMPORTED BY `Properties`. Part (c) of the duel, for any remaining-time `Law`.
 
-The deterministic part of the duel supplies `Attempts`; `attempts_bound` turns it
-into a probability. Whether a draw is relevant to round `k`, and the deadlines it
-must avoid, are decided by the draws before it, so an adaptive re-draw is just
-another relevant draw. Every relevant draw then lands within `margin` of one of
-`width` known centres with probability at most `width * rho` given everything
-before it, and a round with at most `K` relevant draws fails with probability at
-most `K * width * rho` given everything before it. Only Fubini on
-`Measure.infinitePi` is used: no stopping times or strong Markov property.
+The deterministic part of the duel supplies `Attempts`; `failed_bound` bounds the
+probability that its first `n` rounds all fail. Whether a draw is relevant to
+round `k`, and the deadlines it must avoid, are decided by the draws before it, so
+an adaptive re-draw is just another relevant draw. Every relevant draw then lands
+within `margin` of one of `width` known centres with probability at most
+`width * rho` given everything before it, and a round with at most `K` relevant
+draws fails with probability at most `K * width * rho` given everything before it.
+Only Fubini on `Measure.infinitePi` is used: no stopping times or strong Markov
+property.
 -/
 
 namespace CCFRaft.Proofs.Duel.Rounds
@@ -37,9 +38,9 @@ set_option warn.classDefReducibility false in
 def revealed (j : Nat) : MeasurableSpace Sample :=
   MeasurableSpace.comap (front j) MeasurableSpace.pi
 
-/-- Rounds of predictable relevant draws. If every relevant draw of some round
-keeps more than `margin` from its centres, the event holds. -/
-structure Attempts (E margin : Real) (width rounds K : Nat) (Good : Set Sample) where
+/-- Rounds of predictable relevant draws. A round fails when one of its relevant
+draws lands within `margin` of one of its centres. -/
+structure Attempts (margin : Real) (width K : Nat) where
   /-- Draw `j` is relevant to round `k`. -/
   relevant : Nat -> Nat -> Sample -> Prop
   relevant_measurable
@@ -58,15 +59,6 @@ structure Attempts (E margin : Real) (width rounds K : Nat) (Good : Set Sample) 
     : forall k sample,
         exists draws : Finset Nat,
           draws.card <= K /\ forall j, relevant k j sample -> j ∈ draws
-  forces
-    : forall sample,
-        (forall j, sample j ∈ Icc (E / 2) E)
-        -> (exists k,
-              k < rounds
-              /\ forall j,
-                  relevant k j sample
-                  -> forall i, margin < |sample j - centres k j sample i|)
-        -> sample ∈ Good
 
 section Bound
 
@@ -152,8 +144,7 @@ end Bound
 
 namespace Attempts
 
-variable {E margin : Real} {width rounds K : Nat} {Good : Set Sample}
-  (attempts : Attempts E margin width rounds K Good)
+variable {margin : Real} {width K : Nat} (attempts : Attempts margin width K)
 
 /-- Draw `j` is relevant to round `k` and lands within `margin` of a centre. -/
 def Close (k j : Nat) : Set Sample :=
@@ -343,57 +334,5 @@ theorem failed_bound (n : Nat)
         _ = _ := (pow_succ' _ _).symm
 
 end Attempts
-
-theorem attempts_bound {E margin rho : Real} {law : Measure Real} {width rounds K : Nat}
-    {Good : Set Sample} (isLaw : Law E margin rho law)
-    (attempts : Attempts E margin width rounds K Good)
-    : ENNReal.ofReal (1 - roundFailure rho width K ^ rounds)
-      <= Measure.infinitePi (fun _ => law) Good := by
-  have := isLaw.probability
-  set mu := Measure.infinitePi fun _ : Nat => law
-  let Support : Set Sample := {sample | forall j, sample j ∈ Icc (E / 2) E}
-  have supportNull : mu Supportᶜ = 0 := by
-    have : Supportᶜ = ⋃ j, (fun sample : Sample => sample j) ⁻¹' (Icc (E / 2) E)ᶜ := by
-      ext
-      simp [Support]
-    rw [this]
-    refine measure_iUnion_null fun j => ?_
-    rw [← Measure.map_apply (measurable_pi_apply j) measurableSet_Icc.compl,
-      Measure.infinitePi_map_eval]
-    exact isLaw.support
-  have sub : Support ∩ (attempts.Failed rounds)ᶜ ⊆ Good := by
-    rintro sample ⟨support, notFailed⟩
-    refine attempts.forces sample support ?_
-    by_contra none
-    push Not at none
-    apply notFailed
-    simp only [Attempts.Failed, mem_iInter, Finset.mem_range]
-    intro k lt
-    obtain ⟨j, relevant, i, close⟩ := none k lt
-    exact mem_iUnion.mpr ⟨j, relevant, mem_iUnion.mpr ⟨i, close⟩⟩
-  have q0 : 0 <= roundFailure rho width K := by
-    have := isLaw.nonnegative
-    unfold roundFailure
-    positivity
-  calc
-    ENNReal.ofReal (1 - roundFailure rho width K ^ rounds)
-        = 1 - ENNReal.ofReal (roundFailure rho width K) ^ rounds := by
-      rw [ENNReal.ofReal_sub _ (pow_nonneg q0 _), ENNReal.ofReal_one, ENNReal.ofReal_pow q0]
-    _ <= 1 - mu (attempts.Failed rounds) :=
-      tsub_le_tsub_left (attempts.failed_bound isLaw.concentrated rounds) 1
-    _ <= mu (Support ∩ (attempts.Failed rounds)ᶜ) := by
-      rw [← prob_compl_eq_one_sub (attempts.failed_measurable rounds)]
-      calc
-        mu (attempts.Failed rounds)ᶜ
-            <= mu ((Support ∩ (attempts.Failed rounds)ᶜ) ∪ Supportᶜ) :=
-          measure_mono
-            fun sample member => by
-              by_cases inSupport : sample ∈ Support
-              · exact Or.inl ⟨inSupport, member⟩
-              · exact Or.inr inSupport
-        _ <= mu (Support ∩ (attempts.Failed rounds)ᶜ) + mu Supportᶜ :=
-          measure_union_le _ _
-        _ = _ := by rw [supportNull, add_zero]
-    _ <= mu Good := measure_mono sub
 
 end CCFRaft.Proofs.Duel.Rounds

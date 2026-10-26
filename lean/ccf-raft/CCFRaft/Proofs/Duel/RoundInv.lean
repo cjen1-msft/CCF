@@ -567,16 +567,6 @@ theorem RoundSetup.inside {origin : W} (originFound : trace.stateAt c = some ori
   have covers := setup.covers first origin firstFound originFound
   linarith [setup.nonnegative]
 
-theorem RoundSetup.within_of_time {origin : W}
-    (originFound : trace.stateAt c = some origin) {index : Nat} {point : W}
-    (le : c <= index) (found : trace.stateAt index = some point)
-    (timeLe : time point <= time origin + electionTimeout / 2)
-    : Within trace start duration index :=
-  setup.inside originFound index point le found
-    (by
-      unfold roundLength
-      linarith [setup.nonnegative, setup.jumpNonnegative, setup.timeout_pos])
-
 end Covered
 
 /-- A round whose window is known to cover only its first four delays. -/
@@ -590,24 +580,5 @@ structure RoundShort [Config.InitialConfiguration] (nodes : List NodeID)
     : forall origin,
         trace.stateAt c = some origin
         -> Inside trace start duration c origin (4 * maxDelay)
-
-/-- A round covering its whole length covers its first four delays. -/
-theorem RoundSetup.short [Config.InitialConfiguration] {nodes : List NodeID}
-    {trace : Trace W Liveness.Event} {electionTimeout maxDelay jump : Real} {start : Nat}
-    {duration : Real} {participants members : Finset NodeID} {c term : Nat}
-    (setup
-      : RoundSetup nodes trace electionTimeout maxDelay jump start duration participants
-          members c term)
-    : RoundShort nodes trace electionTimeout maxDelay jump start duration participants
-        members c term :=
-  {
-    setup.toRoundBase with
-      inside :=
-        fun origin originFound =>
-          (setup.inside originFound).mono
-            (by
-              unfold roundLength
-              linarith [setup.nonnegative, setup.jumpNonnegative, setup.timeout_pos])
-  }
 
 end CCFRaft.Proofs.Duel.Round

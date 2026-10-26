@@ -57,13 +57,6 @@ theorem getElem?_of_prefix {α : Type} {small large : List α} (sub : small <+: 
   rw [List.getElem?_append_left (List.getElem?_eq_some_iff.mp found).1]
   exact found
 
-/-- A configuration of a log's prefix is one of the log. -/
-theorem history_of_prefix {small large : List Entry} (sub : small <+: large)
-    {configuration : Configuration} (member : configuration ∈ configurationHistory small)
-    : configuration ∈ configurationHistory large := by
-  obtain ⟨i, entry, get, some, indexEq⟩ := mem_history_iff.mp member
-  exact mem_history_iff.mpr ⟨i, entry, getElem?_of_prefix sub get, some, indexEq⟩
-
 /-- A configuration of entries placed after `offset` in a log is one of the log,
 at its index shifted by `offset`. -/
 theorem history_of_entries {log entries : List Entry} {offset : Nat}
