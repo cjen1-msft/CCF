@@ -477,6 +477,71 @@ theorem reached_start {origin : W} (originFound : trace.stateAt c = some origin)
     le_of_eq sentEq
   ⟩
 
+theorem within_of_bound {origin : W} (originFound : trace.stateAt c = some origin)
+    {index : Nat} {point : W} (le : c <= index) (found : trace.stateAt index = some point)
+    (timeLe : time point <= time origin + roundLength electionTimeout maxDelay + jump)
+    : Within trace start duration index := by
+  refine ⟨le_trans setup.startLe le, fun first last firstFound lastFound => ?_⟩
+  rw [found, Option.some.injEq] at lastFound
+  subst lastFound
+  have covers := setup.covers first origin firstFound originFound
+  linarith [setup.nonnegative]
+
+/-! ## Candidates of `term + 1` hold no quorum -/
+
+/-- In the window, a participant candidate of `term + 1` holds no quorum of votes: it
+would have been promoted on the step that completed it. -/
+theorem no_quorum {origin : W} (originFound : trace.stateAt c = some origin)
+    : forall index point node state,
+        c <= index
+        -> (forall earlier,
+              c <= earlier -> earlier <= index -> Within trace start duration earlier)
+        -> trace.stateAt index = some point
+        -> node ∈ participants
+        -> nodeState (proto point) node = some state
+        -> state.role = .candidate
+        -> state.currentTerm = term + 1
+        -> Not (hasQuorum state.activeConfigurations state.votesGranted) := by
+  intro index
+  induction index with
+  | zero =>
+      intro point node state le _ found nodeIn nodeFound _ termEq
+      have : c = 0 := by omega
+      subst this
+      have := setup.round.low point node state found nodeIn nodeFound
+      omega
+  | succ index ih =>
+      intro point node state le within found nodeIn nodeFound role termEq quorum
+      by_cases atStart : c = index + 1
+      · subst atStart
+        have := setup.round.low point node state found nodeIn nodeFound
+        omega
+      obtain ⟨step, stepped, rfl⟩ := Trace.stateAt_succ_eq_some.mp found
+      have beforeFound := setup.admissible.before stepped
+      have down : forall earlier, c <= earlier -> earlier <= index
+          -> Within trace start duration earlier :=
+        fun earlier first last => within earlier first (by omega)
+      rcases selected : step.action.action with _ | action
+      · rw [setup.admissible.stutter stepped selected] at nodeFound
+        exact ih step.before node state (by omega) down beforeFound nodeIn nodeFound role
+          termEq quorum
+      obtain ⟨actor, pre, post, event, outputs, preFound, postFound, others, _, ran, _⟩ :=
+        setup.view stepped selected
+      by_cases actorEq : node = actor
+      swap
+      · rw [others node actorEq] at nodeFound
+        exact ih step.before node state (by omega) down beforeFound nodeIn nodeFound role
+          termEq quorum
+      subst actorEq
+      rw [postFound, Option.some.injEq] at nodeFound
+      subst nodeFound
+      rcases Racing.sends_run (hold_sends node pre event) ran role quorum with
+        retired | ⟨preRole, preTerm, preQuorum⟩
+      · exact setup.active (index + 1) step.after node post (within (index + 1) (by omega) le_rfl)
+          found nodeIn postFound retired
+      · exact ih step.before node pre (by omega) down beforeFound nodeIn preFound preRole
+          (by omega) preQuorum
+
 end RoundSetup
 
 end Lemmas

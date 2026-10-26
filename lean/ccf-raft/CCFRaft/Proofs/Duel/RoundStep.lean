@@ -404,6 +404,159 @@ theorem raise_sends (before : NodeState) (event : Event)
         · exact Or.inr ⟨request, by omega, sends⟩
         · exact Or.inl message
 
+/-- A step that leaves its node a candidate holding a quorum of votes either left it
+retired-committed, or kept a candidacy of the same term that already held one:
+`electIfQuorum` promotes every other candidate with a quorum. -/
+def Hold (self : NodeID) (before : NodeState) (_ : Event) (after : NodeState)
+    (_ : List Model.Envelope)
+    : Prop :=
+  after.role = .candidate
+  -> hasQuorum after.activeConfigurations after.votesGranted
+  -> after.isRetiredCommitted self
+      \/ (before.role = .candidate
+          /\ before.currentTerm = after.currentTerm
+          /\ hasQuorum before.activeConfigurations before.votesGranted)
+
+theorem Hold.same {before : NodeState} {event : Event} {sent : List Model.Envelope}
+    : Hold self before event before sent :=
+  fun role quorum => Or.inr ⟨role, rfl, quorum⟩
+
+theorem electIfQuorum_retired (state : NodeState)
+    : Sends
+        (fun after _ =>
+          after.role = .candidate
+          -> hasQuorum after.activeConfigurations after.votesGranted
+          -> after.isRetiredCommitted self)
+        (electIfQuorum caps self state) := by
+  unfold electIfQuorum
+  refine Sends.ite'
+    (fun _ => Sends.mono (becomePrimary_sends self state) fun after _ ⟨advance, _⟩ role _ => ?_)
+    fun cond => Sends.pure' fun role quorum => ?_
+  · rcases advance with ⟨rfl, _⟩ | ⟨_, _, _, _, _, _, _, _, roleEq | ⟨none, _⟩⟩
+    · simp [primaryState] at role
+    · rw [roleEq] at role
+      simp [primaryState] at role
+    · rw [none] at role
+      cases role
+  · by_contra retired
+    exact cond ⟨role, quorum, retired⟩
+
+theorem becomeCandidate_retired (state : NodeState)
+    : Sends
+        (fun after _ =>
+          after.role = .candidate
+          -> hasQuorum after.activeConfigurations after.votesGranted
+          -> after.isRetiredCommitted self)
+        (becomeCandidate caps state self) := by
+  unfold becomeCandidate
+  refine Sends.bind' (electIfQuorum_retired self _) fun _ _ held => ?_
+  exact Sends.bind' (broadcast_sends self _ _) fun _ _ _ => Sends.pure' held
+
+theorem hold_generic (before : NodeState) (event : Event)
+    (fresh : Not (FreshCause before event))
+    (notVote
+      : forall source response,
+          Not (event = .receive source (.requestVoteResponse response)))
+    : Sends (Hold self before event) (Model.Node.step caps self before event) :=
+  Sends.mono (summary self before event)
+    fun after _ sum role quorum => by
+      obtain ⟨_, logEq, commitEq, campaign⟩ := Summary.candidate sum role
+      rcases campaign with ⟨_, _, _, _, cause⟩ | ⟨preRole, termEq, _, votes⟩
+      · exact absurd cause fresh
+      · refine Or.inr ⟨preRole, termEq.symm, ?_⟩
+        have configs : after.activeConfigurations = before.activeConfigurations := by
+          simp [NodeState.activeConfigurations, logEq, commitEq]
+        rw [configs] at quorum
+        refine StablePrimary.hasQuorum_mono quorum fun voter member => ?_
+        rcases votes voter member with old | ⟨response, eq, _⟩
+        · exact old
+        · exact absurd eq (notVote voter response)
+
+/-- Every step's candidate quorum has a `Hold` cause. -/
+theorem hold_sends (before : NodeState) (event : Event)
+    : Sends (Hold self before event) (Model.Node.step caps self before event) := by
+  cases event with
+  | internal input =>
+      cases input with
+      | timeout kind =>
+          cases kind with
+          | election =>
+              simp only [Model.Node.step, act]
+              unfold startElection
+              refine Sends.bind' Sends.guard' fun _ _ ⟨_, empty⟩ => ?_
+              subst empty
+              unfold becomePreVoteCandidate
+              refine Sends.ite'
+                (fun _ => Sends.mono (becomeCandidate_retired self _)
+                  fun _ _ held role quorum => Or.inl (held role quorum))
+                fun _ => ?_
+              exact Sends.bind' (broadcast_sends self _ _) fun _ _ _ =>
+                Sends.pure' fun role _ => by simp at role
+          | checkQuorum =>
+              exact hold_generic self before _ (by simp [FreshCause])
+                fun _ _ eq => by cases eq
+      | _ =>
+          exact hold_generic self before _ (by simp [FreshCause])
+            fun _ _ eq => by cases eq
+  | receive source message =>
+      cases message with
+      | requestVoteResponse response =>
+          simp only [Model.Node.step, receive]
+          refine Sends.ite' (fun _ => Sends.pure' (Hold.same self)) fun _ => ?_
+          have observed
+              : Racing.Observed before response.term
+                  (observeTerm before (.requestVoteResponse response)) := by
+            rcases observe_bumping before (message := .requestVoteResponse response) trivial
+              with ⟨bump, eq⟩ | ⟨_, eq⟩ <;> rw [eq]
+            · exact Or.inr ⟨bump, rfl⟩
+            · exact Or.inl rfl
+          generalize observeTerm before (.requestVoteResponse response) = middle at observed ⊢
+          simp only [handleRequestVoteResponse]
+          refine Sends.ite'
+            (fun _ => Sends.mono (electIfQuorum_retired self _)
+              fun _ _ held role quorum => Or.inl (held role quorum))
+            fun _ => Sends.pure' ?_
+          rcases observed with rfl | ⟨_, rfl⟩
+          · exact Hold.same self
+          · intro role
+            simp [bumpedState] at role
+      | requestPreVoteResponse response =>
+          simp only [Model.Node.step, receive]
+          refine Sends.ite' (fun _ => Sends.pure' (Hold.same self)) fun _ => ?_
+          have observed
+              : Racing.Observed before response.term
+                  (observeTerm before (.requestPreVoteResponse response)) := by
+            rcases observe_bumping before (message := .requestPreVoteResponse response) trivial
+              with ⟨bump, eq⟩ | ⟨_, eq⟩ <;> rw [eq]
+            · exact Or.inr ⟨bump, rfl⟩
+            · exact Or.inl rfl
+          generalize observeTerm before (.requestPreVoteResponse response) = middle at observed ⊢
+          simp only [handleRequestPreVoteResponse]
+          refine Sends.ite' (fun cond => ?_) fun _ => Sends.pure' ?_
+          · refine Sends.ite'
+              (fun _ => Sends.mono (becomeCandidate_retired self _)
+                fun _ _ held role quorum => Or.inl (held role quorum))
+              fun _ => Sends.pure' fun role _ => ?_
+            have preVote := cond.1
+            simp only at role
+            rw [role] at preVote
+            cases preVote
+          · rcases observed with rfl | ⟨_, rfl⟩
+            · exact Hold.same self
+            · intro role
+              simp [bumpedState] at role
+      | proposeRequestVoteRequest term =>
+          simp only [Model.Node.step, receive]
+          refine Sends.ite' (fun _ => Sends.pure' (Hold.same self)) fun _ => ?_
+          simp only [observeTerm, handleProposeRequestVoteRequest]
+          exact Sends.ite'
+            (fun _ => Sends.mono (becomeCandidate_retired self _)
+              fun _ _ held role quorum => Or.inl (held role quorum))
+            fun _ => Sends.pure' (Hold.same self)
+      | _ =>
+          exact hold_generic self before _ (by simp [FreshCause])
+            fun _ _ eq => by cases eq
+
 end Steps
 
 end CCFRaft.Proofs.Duel.Round
