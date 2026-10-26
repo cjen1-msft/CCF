@@ -1,6 +1,7 @@
 module
 
 public import CCFRaft.Liveness.Model
+public import CCFRaft.Liveness.Assumptions.Anchor
 
 @[expose] public section
 
@@ -18,6 +19,7 @@ namespace CCFRaft.Liveness
 open Model.Node
 open HasProtocol (proto)
 open HasNetwork (pending)
+open HasTime (time)
 open CCF.MultiNodeTransitionSystem (nodeState)
 
 variable {W : Type} [HasProtocol W Model.State] [HasNetwork W]
@@ -45,5 +47,19 @@ structure RoundStart (trace : Trace W Event) (participants : Finset NodeID) (c t
         /\ node ∈ participants
         /\ nodeState (proto step.after) node = some state
         /\ term < state.currentTerm
+
+variable [HasTime W] in
+omit [HasNetwork W] in
+/-- An anchored start at an index from `c` no later than `bound` after it: the
+duel's goal, from which `Leadership.stable_window_anchored` keeps the leader. -/
+def HandoffBy (trace : Trace W Event) (participants : Finset NodeID) (c : Nat)
+    (bound fresh : Real)
+    : Prop :=
+  exists index leader term anchor origin point,
+    c <= index
+    /\ trace.stateAt c = some origin
+    /\ trace.stateAt index = some point
+    /\ time point <= time origin + bound
+    /\ AnchoredStart trace index leader term participants anchor fresh
 
 end CCFRaft.Liveness
