@@ -1,6 +1,7 @@
 module
 
-public import CCFRaft.Proofs.Duel.Adaptive
+public import CCFRaft.Liveness.Model.Policy
+public import Mathlib.Probability.ProductMeasure
 public import CCFRaft.Proofs.Duel.Attempts
 public import CCFRaft.Liveness.Assumptions.Round
 

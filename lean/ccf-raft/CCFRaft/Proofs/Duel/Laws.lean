@@ -1,7 +1,11 @@
 module
 
 public import CCFRaft.Proofs.Duel.Attempts
-public import CCFRaft.Proofs.Duel.Probability
+public import Mathlib.Topology.Instances.ENNReal.Lemmas
+public import Mathlib.Tactic.FieldSimp
+public import Mathlib.Tactic.Linarith
+public import Mathlib.Tactic.Positivity
+public import Mathlib.Tactic.Ring
 
 @[expose] public section
 
@@ -20,6 +24,18 @@ namespace CCFRaft.Proofs.Duel.Rounds
 open MeasureTheory Set
 open CCFRaft.Liveness (uniform Law)
 open scoped Classical
+
+/-- The timeout distribution has total mass one when its interval has positive length. -/
+theorem uniform_isProbabilityMeasure {E : Real} (hE : 0 < E)
+    : IsProbabilityMeasure (uniform E) := by
+  constructor
+  simp only [uniform, Measure.smul_apply, Measure.restrict_apply_univ,
+    Real.volume_Icc]
+  change ENNReal.ofReal (2 / E) * ENNReal.ofReal (E - E / 2) = 1
+  rw [← ENNReal.ofReal_mul (by positivity), ← ENNReal.ofReal_one]
+  congr 1
+  field_simp
+  ring
 
 /-- The continuous uniform law puts at most `4 * margin / E` on an interval of
 radius `margin`. -/

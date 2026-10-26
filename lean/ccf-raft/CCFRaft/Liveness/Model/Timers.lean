@@ -10,7 +10,8 @@ public import CCFRaft.Liveness.Model.Scheduling
 `ElectionScheduling` constrains timeouts only through the recorded resets. To
 reason about the random draw itself, the world carries each node's pending
 deadline: a reset draws it, and a node times out only once it has passed.
-`Liveness.TimerDraws` pins the draws to a sample of a product measure.
+In the duel, `Liveness.run` takes the `j`-th participant reset's draw from a
+sample (`Liveness.Sample`) of independent draws.
 -/
 
 namespace CCFRaft.Liveness
