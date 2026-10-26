@@ -1,0 +1,150 @@
+module
+
+public import CCFRaft.Proofs.Duel.DuelRound
+public import CCFRaft.Proofs.Duel.Relevance
+public import CCFRaft.Proofs.Duel.Blocks
+
+@[expose] public section
+
+/-!
+# Duelling leaders resolve
+
+NOT IMPORTED BY `Properties`. Public statement (ii): against any measurable
+scheduling policy, a run that starts a round reaches an anchored start within a
+bounded window, except on a set of draws of small measure.
+
+The policy sees every draw as soon as it is made (through the deadline it sets),
+and may use it to schedule everything after; this is stronger than any physical
+adversary. Each draw is independent of what the policy saw before it, so each
+relevant draw of a round (a participant's first or second reset into the round's
+term) lands within `4 * maxDelay` of another participant's deadline with probability
+at most `(n - 1) * rho` given the past, where `n` is the number of participants. A
+round has at most `2 * n` relevant draws, so it fails with probability at most
+`q = 2 * n * (n - 1) * rho`. A round that does not fail, and none of whose steps
+overshoots a deadline, ends in an anchored start (`Round.duel_round`).
+
+At most `overshoots` steps of the window overshoot a deadline, each by at most
+`jump`. Cutting the rounds into `overshoots + 1` blocks of `rounds` rounds, some
+block has no overshoot, and all its rounds fail with probability at most
+`q ^ rounds`; so the run fails on a set of measure at most
+`(overshoots + 1) * q ^ rounds`.
+
+Regime. For the uniform law `rho = 4 * margin / electionTimeout` with
+`margin = 4 * maxDelay` (`Rounds.uniform_law`), so `q = 32 * n * (n - 1) * maxDelay /
+electionTimeout`, which is below one only when `maxDelay` is small against
+`electionTimeout / n ^ 2`: at CCF's default `electionTimeout = 5000ms` and `n = 5`,
+only up to `maxDelay` of about 7ms. CCF's whole-millisecond law has a similar `rho`
+(`Rounds.ccf_law`).
+-/
+
+namespace CCFRaft.Proofs.Duel.Resolve
+
+open CCFRaft.Liveness MeasureTheory Set
+open CCFRaft.Proofs.Duel.Adaptive
+open CCFRaft.Proofs.Duel.Rounds (Law roundFailure)
+open CCFRaft.Proofs.Duel.Round (HandoffBy roundLength)
+open Model.Node
+open HasProtocol (proto)
+open HasTime (time)
+open CCFRaft.Proofs.Liveness (Admissible)
+
+/-- The window: `(overshoots + 1) * rounds` round lengths, an overshoot per block,
+and four delays for the last round's handoff. -/
+def window (electionTimeout maxDelay jump : Real) (overshoots rounds : Nat) : Real :=
+  (overshoots + 1) * rounds * roundLength electionTimeout maxDelay
+  + (overshoots + 1) * jump
+  + 4 * maxDelay
+
+/-- One round's failure probability with `n` participants: `2 * n` relevant draws,
+each within the margin of one of `n - 1` deadlines with probability at most `rho`. -/
+noncomputable def roundFailureOf (rho : Real) (participants : Finset NodeID) : Real :=
+  roundFailure rho (participants.card - 1) (2 * participants.card)
+
+/-- Everything the duel needs of one run, over the window from `start`. -/
+structure Setup [Config.InitialConfiguration] (nodes : List NodeID)
+    (trace : Trace DuelWorld Liveness.Event) (electionTimeout maxDelay jump : Real)
+    (overshoots start : Nat) (duration : Real) (participants members : Finset NodeID)
+    : Prop where
+  admissible
+    : Admissible (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) trace
+  delay : trace.Valid (boundedDelayModel maxDelay)
+  timers : trace.Valid (timerModel electionTimeout)
+  diverges : TimeDiverges trace
+  firing
+    : forall node,
+        Scheduled trace (some 0) (fun point => TimeoutDue point node)
+          (fun step => step.action = .local node (.timeout .election))
+  /-- At most `overshoots` steps of the window overshoot a deadline, each by at most
+  `jump`. -/
+  overshoot
+    : exists bad : Finset Nat,
+        bad.card <= overshoots
+        /\ forall index step node,
+            Within trace start duration index
+            -> trace.stepAt index = some step
+            -> NoOvershoot (some (if index ∈ bad then jump else 0)) step node
+  nonnegative : 0 <= maxDelay
+  jumpNonnegative : 0 <= jump
+  ratio : 4 * maxDelay < electionTimeout / 2
+  round : exists term, RoundStart trace participants start term
+  period : GoodPeriod trace start duration participants
+  matching : Window.Matching trace start duration participants
+  /-- As `Round.RoundSetup.active`. -/
+  active : Window.AnchorActive trace start duration participants
+  membership
+    : forall point,
+        trace.stateAt start = some point -> Membership participants members (proto point)
+  subset : participants ⊆ members
+
+/-- (ii) Duelling leaders resolve. Against a measurable policy, if every run with
+draws in `[electionTimeout / 2, electionTimeout]` starts a round at `start` and meets
+the window's premises, the runs without an anchored start in the window have
+measure at most `(overshoots + 1) * q ^ rounds`. The set need not be measurable;
+the bound is on its outer measure, so a measurable set of runs with an anchored
+start has measure at least `1 - (overshoots + 1) * q ^ rounds`. -/
+theorem duelling_leaders_resolve [Config.InitialConfiguration] {nodes : List NodeID}
+    {electionTimeout maxDelay jump rho fresh : Real} {law : Measure Real}
+    {overshoots rounds start : Nat} {participants members : Finset NodeID}
+    {policy : Policy}
+    (isLaw : Law electionTimeout (4 * maxDelay) rho law)
+    (borel : Borel participants policy)
+    (freshLe : fresh <= electionTimeout / 2 - 4 * maxDelay)
+    (setup
+      : forall sample : Sample,
+          (forall j, sample j ∈ Icc (electionTimeout / 2) electionTimeout)
+          -> Setup nodes (run participants policy sample) electionTimeout maxDelay jump
+              overshoots start (window electionTimeout maxDelay jump overshoots rounds)
+              participants members)
+    : Measure.infinitePi (fun _ => law)
+        {sample |
+          Not
+            (HandoffBy (run participants policy sample) participants start
+              (window electionTimeout maxDelay jump overshoots rounds) fresh)
+        }
+      <= ENNReal.ofReal
+          ((overshoots + 1) * roundFailureOf rho participants ^ rounds) := by
+  sorry
+
+/-- (ii), as a lower bound on the outer measure of the runs with an anchored start. -/
+theorem duelling_leaders_resolve_lower [Config.InitialConfiguration] {nodes : List NodeID}
+    {electionTimeout maxDelay jump rho fresh : Real} {law : Measure Real}
+    {overshoots rounds start : Nat} {participants members : Finset NodeID}
+    {policy : Policy}
+    (isLaw : Law electionTimeout (4 * maxDelay) rho law)
+    (borel : Borel participants policy)
+    (freshLe : fresh <= electionTimeout / 2 - 4 * maxDelay)
+    (setup
+      : forall sample : Sample,
+          (forall j, sample j ∈ Icc (electionTimeout / 2) electionTimeout)
+          -> Setup nodes (run participants policy sample) electionTimeout maxDelay jump
+              overshoots start (window electionTimeout maxDelay jump overshoots rounds)
+              participants members)
+    : ENNReal.ofReal (1 - (overshoots + 1) * roundFailureOf rho participants ^ rounds)
+      <= Measure.infinitePi (fun _ => law)
+          {sample |
+            HandoffBy (run participants policy sample) participants start
+              (window electionTimeout maxDelay jump overshoots rounds) fresh
+          } := by
+  sorry
+
+end CCFRaft.Proofs.Duel.Resolve
