@@ -21,6 +21,7 @@ lower bound on the event's outer measure.
 namespace CCFRaft.Proofs.Duel.Rounds
 
 open MeasureTheory ProbabilityTheory Set
+open CCFRaft.Liveness (Law roundFailure)
 
 namespace Attempts
 

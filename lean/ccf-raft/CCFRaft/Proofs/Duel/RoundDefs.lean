@@ -100,18 +100,6 @@ def RoundMargin (trace : Trace W Liveness.Event) (participants : Finset NodeID)
         -> other ≠ node
         -> margin < |deadline step.after node - deadline step.after other|
 
-omit [HasLive W] [HasNetwork W] [HasTimers W] in
-/-- An anchored start at an index from `c` no later than `bound` after it. -/
-def HandoffBy (trace : Trace W Liveness.Event) (participants : Finset NodeID) (c : Nat)
-    (bound fresh : Real)
-    : Prop :=
-  exists index leader term anchor origin point,
-    c <= index
-    /\ trace.stateAt c = some origin
-    /\ trace.stateAt index = some point
-    /\ time point <= time origin + bound
-    /\ AnchoredStart trace index leader term participants anchor fresh
-
 /-- The round's length without overshoot. -/
 def roundLength (electionTimeout maxDelay : Real) : Real :=
   electionTimeout + 4 * maxDelay

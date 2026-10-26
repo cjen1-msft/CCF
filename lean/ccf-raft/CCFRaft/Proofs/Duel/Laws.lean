@@ -8,7 +8,7 @@ public import CCFRaft.Proofs.Duel.Probability
 /-!
 # Remaining-time laws
 
-NOT IMPORTED BY `Properties`. Two instances of `Rounds.Law`: the continuous uniform
+NOT IMPORTED BY `Properties`. Two instances of `Liveness.Law`: the continuous uniform
 law on `[E / 2, E]`, and CCF's integer-millisecond law. `restart_election_timeout`
 (raft.h) draws `timeout_elapsed` with `uniform_int_distribution(0, E / 2)`, so the
 remaining time is uniform over the `E / 2 + 1` integers of `[E / 2, E]`, in
@@ -18,7 +18,7 @@ milliseconds. The tick offset is a separate timer-model gap and is left out.
 namespace CCFRaft.Proofs.Duel.Rounds
 
 open MeasureTheory Set
-open CCFRaft.Liveness (uniform)
+open CCFRaft.Liveness (uniform Law)
 open scoped Classical
 
 /-- The continuous uniform law puts at most `4 * margin / E` on an interval of

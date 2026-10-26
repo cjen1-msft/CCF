@@ -41,8 +41,7 @@ namespace CCFRaft.Proofs.Duel.Resolve
 
 open CCFRaft.Liveness MeasureTheory Set
 open CCFRaft.Proofs.Duel.Adaptive
-open CCFRaft.Proofs.Duel.Rounds (Law roundFailure)
-open CCFRaft.Proofs.Duel.Round (HandoffBy roundLength)
+open CCFRaft.Proofs.Duel.Round (roundLength)
 open Model.Node
 open HasProtocol (proto)
 open HasTime (time)

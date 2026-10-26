@@ -23,9 +23,9 @@ most `K * width * rho` given everything before it. Only Fubini on
 namespace CCFRaft.Proofs.Duel.Rounds
 
 open MeasureTheory ProbabilityTheory Set
-open CCFRaft.Liveness (uniform)
+open CCFRaft.Liveness (uniform Law roundFailure)
 
-/-- `Adaptive.Sample`: the offset drawn by the `j`-th participant reset. -/
+/-- `Liveness.Sample`: the offset drawn by the `j`-th participant reset. -/
 abbrev Sample := Nat -> Real
 
 /-- The draws before `j`, as a point of a finite product. -/
@@ -67,18 +67,6 @@ structure Attempts (E margin : Real) (width rounds K : Nat) (Good : Set Sample) 
                   relevant k j sample
                   -> forall i, margin < |sample j - centres k j sample i|)
         -> sample ∈ Good
-
-/-- What the duel needs of the remaining-time law: a probability measure on
-`[E / 2, E]` that puts at most `rho` on any interval of radius `margin`. -/
-structure Law (E margin rho : Real) (law : Measure Real) : Prop where
-  probability : IsProbabilityMeasure law
-  support : law (Icc (E / 2) E)ᶜ = 0
-  nonnegative : 0 <= rho
-  concentrated : forall x, law (Icc (x - margin) (x + margin)) <= ENNReal.ofReal rho
-
-/-- One round fails with probability at most this, given the earlier rounds. -/
-noncomputable def roundFailure (rho : Real) (width K : Nat) : Real :=
-  K * width * rho
 
 section Bound
 

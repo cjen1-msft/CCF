@@ -21,7 +21,7 @@ namespace CCFRaft.Proofs.Duel.Resolve
 
 open CCFRaft.Liveness
 open CCFRaft.Proofs.Duel.Adaptive (InRound FirstRound Raises maxTerm)
-open CCFRaft.Proofs.Duel.Round (HandoffBy RoundMargin RoundSetup Capped roundLength)
+open CCFRaft.Proofs.Duel.Round (RoundMargin RoundSetup Capped roundLength)
 open CCF.MultiNodeTransitionSystem (nodeState)
 open Model.Node
 open HasProtocol (proto)

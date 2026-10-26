@@ -9,7 +9,7 @@ public import CCFRaft.Liveness.Assumptions.Round
 /-!
 # Relevant draws of a policy run
 
-NOT IMPORTED BY `Properties`. The draws of `Adaptive.run` that `Attempts` counts.
+NOT IMPORTED BY `Properties`. The draws of `Liveness.run` that `Attempts` counts.
 
 Rounds are cut at raises: steps that lift the highest term among the participants.
 Counting from the first round start at or after `start`, round `k` runs from the

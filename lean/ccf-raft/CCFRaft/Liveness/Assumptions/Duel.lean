@@ -60,6 +60,27 @@ noncomputable def settleProbability (competitors rounds : Nat)
     : Real :=
   1 - (1 - marginProbability competitors margin electionTimeout) ^ rounds
 
+/-- What the duel needs of the remaining-time law: a probability measure on
+`[E / 2, E]` that puts at most `rho` on any interval of radius `margin`.
+
+The continuous uniform law on `[E / 2, E]` satisfies it with
+`rho = 4 * margin / E` (`Rounds.uniform_law`). CCF's actual draw, the remaining
+time uniform on the whole milliseconds `{E / 2, ..., E}` (`raft.h`
+`restart_election_timeout`), satisfies it with
+`rho = (2 * margin + 1) / (E / 2 + 1)` (`Rounds.ccf_law`), which at the duel's
+`margin = 4 * maxDelay` is `(8 * maxDelay + 1) / (E / 2 + 1)`: an interval of width
+`8 * maxDelay` holds at most `floor (8 * maxDelay) + 1` whole milliseconds. So the
+statement covers CCF's discrete draw, not only a continuous idealisation. -/
+structure Law (E margin rho : Real) (law : MeasureTheory.Measure Real) : Prop where
+  probability : MeasureTheory.IsProbabilityMeasure law
+  support : law (Set.Icc (E / 2) E)ᶜ = 0
+  nonnegative : 0 <= rho
+  concentrated : forall x, law (Set.Icc (x - margin) (x + margin)) <= ENNReal.ofReal rho
+
+/-- One round fails with probability at most this, given the earlier rounds. -/
+noncomputable def roundFailure (rho : Real) (width K : Nat) : Real :=
+  K * width * rho
+
 variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasTimers W]
 
 /-- Index `index` is the `count`-th election-timer reset of `node` at or after
