@@ -1,6 +1,6 @@
 module
 
-public import CCFRaft.Proofs.Duel.ResolveChain
+public import CCFRaft.Proofs.Duel.Margin
 public import CCFRaft.Proofs.Duel.Relevance
 public import CCFRaft.Proofs.Duel.Blocks
 
@@ -53,6 +53,62 @@ each within the margin of one of `n - 1` deadlines with probability at most `rho
 noncomputable def roundFailureOf (rho : Real) (participants : Finset NodeID) : Real :=
   roundFailure rho (participants.card - 1) (2 * participants.card)
 
+/-- The relevant draws of the run's rounds, as `Rounds.Attempts`. -/
+noncomputable def attemptsOf {E margin : Real} {participants : Finset NodeID}
+    {policy : Policy} (borel : Borel participants policy) (start total : Nat)
+    : Rounds.Attempts E margin (participants.card - 1) total (2 * participants.card)
+        univ where
+  relevant := Relevant participants policy start
+  relevant_measurable := relevant_measurable borel
+  centres := centres participants policy start
+  centres_measurable := centres_measurable borel
+  ordered _ _ _ _ _ lt relevant relevant' := relevant_ordered lt relevant relevant'
+  bounded := relevant_bounded
+  forces _ _ _ := mem_univ _
+
+/-- Every block having a round whose relevant draws keep the margin forces an anchored
+start in the window. -/
+theorem forces_handoff [Config.InitialConfiguration] {nodes : List NodeID}
+    {initial electionTimeout maxDelay jump fresh : Real}
+    {overshoots rounds start : Nat} {participants members : Finset NodeID}
+    {policy : Policy} (borel : Borel participants policy)
+    (freshLe : fresh <= electionTimeout / 2 - 4 * maxDelay)
+    (setup
+      : forall sample : Sample,
+          (forall j, sample j ∈ Icc (electionTimeout / 2) electionTimeout)
+          -> Setup nodes (run participants policy sample) initial electionTimeout
+              maxDelay jump fresh overshoots start
+              (window initial electionTimeout maxDelay jump overshoots rounds)
+              participants members)
+    : forall sample,
+        (forall j, sample j ∈ Icc (electionTimeout / 2) electionTimeout)
+        -> (forall b,
+              b < overshoots + 1
+              -> exists k,
+                  k < rounds
+                  /\ forall j,
+                      (attemptsOf (E := electionTimeout) (margin := 4 * maxDelay) borel
+                        start ((overshoots + 1) * rounds)).relevant
+                        (b * rounds + k) j sample
+                      -> forall i,
+                          4 * maxDelay
+                          < |sample j
+                              - (attemptsOf (E := electionTimeout)
+                                  (margin := 4 * maxDelay) borel start
+                                  ((overshoots + 1) * rounds)).centres
+                                  (b * rounds + k) j sample i|)
+        -> sample
+            ∈ {sample |
+                HandoffBy (run participants policy sample) participants start
+                  (window initial electionTimeout maxDelay jump overshoots rounds) fresh
+              } := by
+  intro sample support blocks
+  have setup := setup sample support
+  exact chain setup freshLe fun b below => by
+    obtain ⟨k, kLt, far⟩ := blocks b below
+    exact ⟨k, kLt, fun c term roundAt =>
+      margin_of_far setup.admissible setup.timers roundAt far⟩
+
 /-- (ii) Duelling leaders resolve. Against a measurable policy, if every run with
 draws in `[electionTimeout / 2, electionTimeout]` reaches an anchored start or a round
 start within `initial` of `start`, and meets the window's premises, the runs without an anchored start in the window have
@@ -81,7 +137,17 @@ theorem duelling_leaders_resolve [Config.InitialConfiguration] {nodes : List Nod
         }
       <= ENNReal.ofReal
           ((overshoots + 1) * roundFailureOf rho participants ^ rounds) := by
-  sorry
+  have bound := Rounds.blocks_bound isLaw (attemptsOf borel start _)
+    (forces_handoff borel freshLe setup)
+  have q0 : 0 <= roundFailureOf rho participants := by
+    have := isLaw.nonnegative
+    simp only [roundFailureOf, roundFailure]
+    positivity
+  rw [ENNReal.ofReal_mul (by positivity), ENNReal.ofReal_pow q0]
+  unfold roundFailureOf
+  convert bound using 2
+  · rfl
+  · norm_cast
 
 /-- (ii), as a lower bound on the outer measure of the runs with an anchored start. -/
 theorem duelling_leaders_resolve_lower [Config.InitialConfiguration] {nodes : List NodeID}
@@ -104,6 +170,11 @@ theorem duelling_leaders_resolve_lower [Config.InitialConfiguration] {nodes : Li
             HandoffBy (run participants policy sample) participants start
               (window initial electionTimeout maxDelay jump overshoots rounds) fresh
           } := by
-  sorry
+  have bound := Rounds.blocks_bound_lower isLaw (attemptsOf borel start _)
+    (forces_handoff borel freshLe setup)
+  unfold roundFailureOf
+  convert bound using 3
+  push_cast
+  rfl
 
 end CCFRaft.Proofs.Duel.Resolve
