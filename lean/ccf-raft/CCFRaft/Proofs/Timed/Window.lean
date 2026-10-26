@@ -110,7 +110,7 @@ theorem stable_cut {start last : Nat} {duration : Real} {leader : NodeID} {term 
   obtain ⟨below, found⟩ := stateAt_of_cut found
   have within := inside index le below
   obtain ⟨state, nodeFound, primary, termEq⟩ :=
-    quietAmong_leader admissible found (stable index point within found)
+    quietAmong_leader admissible found (stable index point within found).1
   exact ⟨
     point,
     state,
@@ -138,7 +138,7 @@ theorem participant_term {start : Nat} {duration : Real} {leader : NodeID} {term
     Proofs.StablePrimary.term_mono admissible within.1
       (by rw [Trace.nodeAt_of_stateAt firstFound, initialFound]) found
   rw [Trace.nodeAt_of_stateAt found] at stateFound
-  have upper := (stable index point within found).terms node state
+  have upper := (stable index point within found).1.terms node state
     (Proofs.Concrete.mem_of_nodeState stateFound) member
   exact ⟨state, stateFound, by omega⟩
 

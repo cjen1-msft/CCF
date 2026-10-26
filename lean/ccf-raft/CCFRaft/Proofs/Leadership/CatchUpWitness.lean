@@ -175,6 +175,10 @@ theorem stable_window_catchup_witness
     have half : LivenessWitness.bounds.electionTimeout / 2 = (2 : Real) := by
       norm_num [LivenessWitness.bounds]
     have := FreshStart.of_quietStart quiet_start {0}
+      (fun found member => by
+        rw [fixture_stateAt, Option.some.injEq] at found
+        subst found
+        cases member)
     rwa [half] at this
   let _ : Config.InitialConfiguration := ⟨{0}⟩
   refine ⟨fixture true, ⟨admissible, timers_valid, bounded_valid 0, diverges, le_rfl,
@@ -192,7 +196,8 @@ private theorem anchored_start
   rw [fixture_stateAt, Option.some.injEq] at found
   subst first
   refine ⟨
-    ⟨fixtureWorld true 0, fixture_stateAt true 0, (quiet.among {0}).quietTerm, ?_, ?_⟩,
+    ⟨fixtureWorld true 0, fixture_stateAt true 0, (quiet.among {0}).quietTerm,
+      (fun _ member => by cases member), ?_, ?_⟩,
     ?_
   ⟩
   · change Anchor {0} {0} 0 Model.BOOTSTRAP_TERM { nodes := [(0, initialNode)] }

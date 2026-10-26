@@ -509,7 +509,7 @@ private theorem fixture_window (duration : Real)
   · intro index point _ found
     rw [fixture_stateAt, Option.some.injEq] at found
     subst point
-    exact (quiet index).among {0}
+    exact ⟨(quiet index).among {0}, fun _ member => by cases member⟩
   · intro index point within found
     exact (stable true).live within.1 found
   · intro index point state within found nodeFound
