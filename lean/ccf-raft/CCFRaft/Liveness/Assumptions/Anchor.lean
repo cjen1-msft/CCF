@@ -209,11 +209,12 @@ theorem Membership.activeMembers {participants members : Finset NodeID}
 
 Needed for an election from an arbitrary start. A node campaigns only from a
 signed active configuration, and a log with no committed configuration may have
-none. With participants `{1, 2, 3}`, the bootstrap primary `1` replicates its
-unsigned configuration `{1, 2, 3}` to `2` and `3` and crashes. Their
-`maxCommittableIndex` is 0, so `signedActiveConfigurations` is empty and neither
-can ever start an election, while no primary remains to sign. CCF agrees: a node
-with no signed active configuration cannot campaign either. -/
+none. The bootstrap primary `1` replicates its unsigned configuration
+`{1, 2, 3}` to `2` and `3` and crashes, and the participants are `{2, 3}`, a
+majority, so `GoodPeriod.quorum` holds. Their `maxCommittableIndex` is 0, so
+`signedActiveConfigurations` is empty and neither can ever start an election,
+while no primary remains to sign. CCF agrees: a node with no signed active
+configuration cannot campaign either. -/
 def ConfigurationCommitted (participants : Finset NodeID) (state : Model.State) : Prop :=
   forall node local_,
     (node, local_) ∈ state.nodes
