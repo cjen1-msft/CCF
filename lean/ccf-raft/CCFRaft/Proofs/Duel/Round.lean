@@ -55,12 +55,13 @@ variable [Config.InitialConfiguration] {nodes : List NodeID}
 /-! ## The round's packets and terms -/
 
 /-- By `time c + maxDelay` every participant has adopted `term + 1`. -/
-theorem RoundSetup.adopted
+theorem RoundBase.adopted
     (setup
-      : RoundSetup nodes trace electionTimeout maxDelay jump start duration participants
+      : RoundBase nodes trace electionTimeout maxDelay jump start duration participants
           members c term)
     {index : Nat} {origin point : W} (capped : Capped trace participants c term index)
     (originFound : trace.stateAt c = some origin)
+    (inside : Inside trace start duration c origin maxDelay)
     (found : trace.stateAt index = some point)
     (late : time origin + maxDelay < time point)
     : forall node state,
@@ -68,7 +69,7 @@ theorem RoundSetup.adopted
         -> nodeState (proto point) node = some state
         -> state.currentTerm = term + 1 := by
   intro node state nodeIn nodeFound
-  obtain ⟨step, stepped, reached⟩ := setup.reached_start originFound
+  obtain ⟨step, stepped, reached⟩ := setup.reached_start originFound inside
   have upper := capped.2 index point node state capped.1 le_rfl found nodeIn nodeFound
   have next : c + 1 <= index := by
     by_contra small
@@ -77,7 +78,7 @@ theorem RoundSetup.adopted
     rw [originFound, Option.some.injEq] at found
     subst found
     linarith [setup.nonnegative]
-  rcases setup.reached_from originFound nodeIn (Nat.le_succ c)
+  rcases setup.reached_from inside nodeIn (Nat.le_succ c)
       (Trace.stateAt_succ_of_stepAt stepped) (reached node nodeIn) index point next found with
     high | ⟨packet, _, member, alive, _, targetEq, _, _, sentLe⟩
   · have := high state nodeFound
@@ -85,9 +86,9 @@ theorem RoundSetup.adopted
   · have := setup.delay_at found member (targetEq ▸ alive)
     linarith
 
-theorem RoundSetup.packets_base
+theorem RoundBase.packets_base
     (setup
-      : RoundSetup nodes trace electionTimeout maxDelay jump start duration participants
+      : RoundBase nodes trace electionTimeout maxDelay jump start duration participants
           members c term)
     {origin : W} (originFound : trace.stateAt c = some origin) {packet : Packet}
     (member : packet ∈ pending origin) (source : packet.envelope.source ∈ participants)
@@ -112,11 +113,12 @@ theorem RoundSetup.packets_base
   · rw [payload] at low
     simp [Message.term] at low
 
-theorem RoundSetup.packets_step
+theorem RoundBase.packets_step
     (setup
-      : RoundSetup nodes trace electionTimeout maxDelay jump start duration participants
+      : RoundBase nodes trace electionTimeout maxDelay jump start duration participants
           members c term)
-    {origin : W} (originFound : trace.stateAt c = some origin) {index : Nat}
+    {origin : W} (originFound : trace.stateAt c = some origin)
+    (inside : Inside trace start duration c origin maxDelay) {index : Nat}
     {step : CCF.Execution.Step W Liveness.Event} (le : c <= index)
     (stepped : trace.stepAt index = some step)
     (capped : Capped trace participants c term (index + 1))
@@ -150,7 +152,8 @@ theorem RoundSetup.packets_step
   have termLe := Summary.term_le sum
   have adopted : time origin + maxDelay < time step.before -> pre.currentTerm = term + 1 :=
     fun late =>
-      setup.adopted (capped.down le (Nat.le_succ index)) originFound beforeFound late actor pre
+      setup.adopted (capped.down le (Nat.le_succ index)) originFound inside beforeFound late
+        actor pre
         actorIn preFound
   obtain ⟨payloadLe, payloadEq⟩ := sendOK_terms ok (setup.log_le afterFound postFound)
   have := setup.nonnegative
@@ -195,12 +198,13 @@ theorem RoundSetup.packets_step
     linarith [setup.sent_le beforeFound consumed]
 
 /-- What a packet between participants in the round can be, by when it was sent. -/
-theorem RoundSetup.packets
+theorem RoundBase.packets
     (setup
-      : RoundSetup nodes trace electionTimeout maxDelay jump start duration participants
+      : RoundBase nodes trace electionTimeout maxDelay jump start duration participants
           members c term)
     {index : Nat} {origin point : W} (capped : Capped trace participants c term index)
     (originFound : trace.stateAt c = some origin)
+    (inside : Inside trace start duration c origin maxDelay)
     (found : trace.stateAt index = some point) {packet : Packet}
     (member : packet ∈ pending point) (source : packet.envelope.source ∈ participants)
     (target : packet.envelope.target ∈ participants)
@@ -252,8 +256,47 @@ theorem RoundSetup.packets
         exact fun packet member source target =>
           setup.packets_base originFound member source target
       obtain ⟨step, stepped, rfl⟩ := Trace.stateAt_succ_eq_some.mp earlierFound
-      exact setup.packets_step originFound (by omega) stepped (capped.down le bound)
+      exact setup.packets_step originFound inside (by omega) stepped
+        (capped.down le bound)
         (ih step.before (by omega) (by omega) (setup.admissible.before stepped))
+
+/-- `RoundBase.adopted` with the window covering the round. -/
+theorem RoundSetup.adopted
+    (setup
+      : RoundSetup nodes trace electionTimeout maxDelay jump start duration participants
+          members c term)
+    {index : Nat} {origin point : W} (capped : Capped trace participants c term index)
+    (originFound : trace.stateAt c = some origin)
+    (found : trace.stateAt index = some point)
+    (late : time origin + maxDelay < time point)
+    : forall node state,
+        node ∈ participants
+        -> nodeState (proto point) node = some state
+        -> state.currentTerm = term + 1 :=
+  setup.toRoundBase.adopted capped originFound
+    ((setup.inside originFound).mono
+      (by
+        unfold roundLength
+        linarith [setup.nonnegative, setup.jumpNonnegative, setup.timeout_pos]))
+    found late
+
+/-- `RoundBase.packets` with the window covering the round. -/
+theorem RoundSetup.packets
+    (setup
+      : RoundSetup nodes trace electionTimeout maxDelay jump start duration participants
+          members c term)
+    {index : Nat} {origin point : W} (capped : Capped trace participants c term index)
+    (originFound : trace.stateAt c = some origin)
+    (found : trace.stateAt index = some point) {packet : Packet}
+    (member : packet ∈ pending point) (source : packet.envelope.source ∈ participants)
+    (target : packet.envelope.target ∈ participants)
+    : Shape term (time origin) electionTimeout maxDelay packet :=
+  setup.toRoundBase.packets capped originFound
+    ((setup.inside originFound).mono
+      (by
+        unfold roundLength
+        linarith [setup.nonnegative, setup.jumpNonnegative, setup.timeout_pos]))
+    found member source target
 
 omit [HasTime W] [HasLive W] [HasTimers W] in
 /-- No vote proposal of `term + 1` is pending between participants. -/
@@ -266,15 +309,18 @@ def NoProposal (participants : Finset NodeID) (term : Nat) (point : W) : Prop :=
 
 /-- A step early in the round keeps every participant at most `term + 1`, and sends no
 vote proposal between participants. -/
-theorem RoundSetup.capped_step
+theorem RoundBase.capped_step
     (setup
-      : RoundSetup nodes trace electionTimeout maxDelay jump start duration participants
+      : RoundBase nodes trace electionTimeout maxDelay jump start duration participants
           members c term)
-    {origin : W} (originFound : trace.stateAt c = some origin) {index : Nat}
+    {origin : W} (originFound : trace.stateAt c = some origin) {bound : Real}
+    (inside : Inside trace start duration c origin bound) (enough : maxDelay <= bound)
+    {index : Nat}
     {step : CCF.Execution.Step W Liveness.Event} (le : c <= index)
     (stepped : trace.stepAt index = some step)
     (capped : Capped trace participants c term index)
     (early : time step.after < time origin + electionTimeout / 2)
+    (bounded : time step.after <= time origin + bound)
     (quiet : NoProposal participants term step.before)
     : (forall node state,
         node ∈ participants
@@ -284,9 +330,8 @@ theorem RoundSetup.capped_step
   have beforeFound := setup.admissible.before stepped
   have afterFound := Trace.stateAt_succ_of_stepAt stepped
   have timeLe := (setup.admissible.timing.next stepped).1
-  have within := setup.within_of_time originFound le beforeFound (by linarith)
-  have withinAfter :=
-    setup.within_of_time originFound (Nat.le_succ_of_le le) afterFound (by linarith)
+  have within := inside index step.before le beforeFound (by linarith)
+  have withinAfter := inside (index + 1) step.after (Nat.le_succ_of_le le) afterFound bounded
   have isolated
       : forall packet,
           step.action = .deliver packet
@@ -302,7 +347,7 @@ theorem RoundSetup.capped_step
           -> packet.envelope.target ∈ participants
           -> Shape term (time origin) electionTimeout maxDelay packet :=
     fun packet member sourceIn targetIn =>
-      setup.packets capped originFound beforeFound member sourceIn targetIn
+      setup.packets capped originFound (inside.mono enough) beforeFound member sourceIn targetIn
   rcases selected : step.action.action with _ | action
   · have same := setup.admissible.stutter stepped selected
     refine ⟨fun node state nodeIn found => ?_, fun packet member => ?_⟩
@@ -383,15 +428,17 @@ theorem RoundSetup.capped_step
     · exact setup.active (index + 1) step.after actor post withinAfter afterFound actorIn
         postFound retired
 
-theorem RoundSetup.capped_from
+theorem RoundBase.capped_from
     (setup
-      : RoundSetup nodes trace electionTimeout maxDelay jump start duration participants
+      : RoundBase nodes trace electionTimeout maxDelay jump start duration participants
           members c term)
-    {origin : W} (originFound : trace.stateAt c = some origin)
+    {origin : W} (originFound : trace.stateAt c = some origin) {bound : Real}
+    (inside : Inside trace start duration c origin bound) (enough : maxDelay <= bound)
     : forall index point,
         c <= index
         -> trace.stateAt index = some point
         -> time point < time origin + electionTimeout / 2
+        -> time point <= time origin + bound
         -> Capped trace participants c term index
             /\ NoProposal participants term point := by
   have base
@@ -410,14 +457,14 @@ theorem RoundSetup.capped_from
   intro index
   induction index with
   | zero =>
-      intro point le found _
+      intro point le found _ _
       have : c = 0 := by omega
       subst this
       rw [originFound, Option.some.injEq] at found
       subst found
       exact base
   | succ index ih =>
-      intro point le found early
+      intro point le found early bounded
       by_cases atStart : c = index + 1
       · subst atStart
         rw [originFound, Option.some.injEq] at found
@@ -425,11 +472,13 @@ theorem RoundSetup.capped_from
         exact base
       obtain ⟨step, stepped, rfl⟩ := Trace.stateAt_succ_eq_some.mp found
       have beforeFound := setup.admissible.before stepped
+      have timeLe := (setup.admissible.timing.next stepped).1
       obtain ⟨capped, quiet⟩ :=
-        ih step.before (by omega) beforeFound
-          (lt_of_le_of_lt (setup.admissible.timing.next stepped).1 early)
+        ih step.before (by omega) beforeFound (lt_of_le_of_lt timeLe early)
+          (le_trans timeLe bounded)
       obtain ⟨terms, quietAfter⟩ :=
-        setup.capped_step originFound (by omega) stepped capped early quiet
+        setup.capped_step originFound inside enough (by omega) stepped capped early bounded
+          quiet
       refine ⟨⟨le, fun earlier point node state first last found nodeIn nodeFound => ?_⟩,
         quietAfter⟩
       by_cases atEnd : earlier = index + 1
@@ -452,23 +501,28 @@ theorem RoundSetup.capped
         -> time point < time origin + electionTimeout / 2
         -> Capped trace participants c term index :=
   fun index point le found early =>
-    (setup.capped_from originFound index point le found early).1
+    (setup.toRoundBase.capped_from originFound
+      ((setup.inside originFound).mono
+        (by
+          unfold roundLength
+          linarith [setup.nonnegative, setup.jumpNonnegative, setup.timeout_pos]))
+      (by linarith [setup.ratio, setup.nonnegative])
+      index point le found early early.le).1
 
 /-- The step that makes a participant primary of `term + 1` in the round happens by
 `time c + 3 * maxDelay`: it is a fresh campaign, before every participant has
 adopted `term + 1`, or it counts a vote of `term + 1`, sent by `time c + 2 *
 maxDelay`. -/
-theorem RoundSetup.wins_early
+theorem RoundBase.wins_early
     (setup
-      : RoundSetup nodes trace electionTimeout maxDelay jump start duration participants
+      : RoundBase nodes trace electionTimeout maxDelay jump start duration participants
           members c term)
-    {origin : W} (originFound : trace.stateAt c = some origin) {index : Nat}
-    {step : CCF.Execution.Step W Liveness.Event} (le : c <= index)
+    {origin : W} (originFound : trace.stateAt c = some origin) {bound : Real}
+    (inside : Inside trace start duration c origin bound) (enough : maxDelay <= bound)
+    {index : Nat} {step : CCF.Execution.Step W Liveness.Event} (le : c <= index)
     (stepped : trace.stepAt index = some step)
     (capped : Capped trace participants c term index)
-    (within
-      : forall earlier,
-          c <= earlier -> earlier <= index -> Within trace start duration earlier)
+    (bounded : time step.before <= time origin + bound)
     {leader : NodeID} (member : leader ∈ participants) {pre post : NodeState}
     {event : Model.Node.Event}
     (cause
@@ -483,6 +537,14 @@ theorem RoundSetup.wins_early
   obtain ⟨candidate, ⟨_, logEq, commitEq, campaign⟩, quorum, advance⟩ := wins
   have beforeFound := setup.admissible.before stepped
   have := setup.nonnegative
+  have within
+      : forall earlier, c <= earlier -> earlier <= index
+          -> Within trace start duration earlier := by
+    intro earlier first last
+    obtain ⟨earlierPoint, earlierFound⟩ := Trace.stateAt_of_le last beforeFound
+    refine inside earlier earlierPoint first earlierFound ?_
+    have := setup.admissible.time_le last earlierFound beforeFound
+    linarith
   have candidateTerm : candidate.currentTerm = term + 1 := by
     rcases advance with ⟨rfl, _⟩ | ⟨_, advanceTerm, _⟩
     · simpa [primaryState] using termEq
@@ -490,7 +552,8 @@ theorem RoundSetup.wins_early
       simp [primaryState]
   rcases campaign with ⟨_, freshTerm, _⟩ | ⟨preRole, keptTerm, _, votes⟩
   · by_contra late
-    have := setup.adopted capped originFound beforeFound (by linarith) leader pre member preFound
+    have := setup.adopted capped originFound (inside.mono enough) beforeFound (by linarith)
+      leader pre member preFound
     omega
   · by_cases old : forall voter, voter ∈ candidate.votesGranted -> voter ∈ pre.votesGranted
     · exfalso
@@ -509,7 +572,8 @@ theorem RoundSetup.wins_early
       setup.period.isolated index step packet.envelope (within index le le_rfl) stepped
         (by simp [delivery, Liveness.Event.delivered]) (targetEq ▸ member)
     have shape :=
-      setup.packets capped originFound beforeFound consumed sourceIn (targetEq ▸ member)
+      setup.packets capped originFound (inside.mono enough) beforeFound consumed sourceIn
+        (targetEq ▸ member)
     have sentLe := shape.2.2.2.1 (by
       rw [payload]
       obtain ⟨t, g⟩ := response
@@ -522,16 +586,17 @@ theorem RoundSetup.wins_early
     have := setup.delay_at beforeFound consumed alive
     linarith
 
-theorem RoundSetup.elected_from
+theorem RoundBase.elected_from
     (setup
-      : RoundSetup nodes trace electionTimeout maxDelay jump start duration participants
+      : RoundBase nodes trace electionTimeout maxDelay jump start duration participants
           members c term)
-    {origin : W} (originFound : trace.stateAt c = some origin) {leader : NodeID}
-    (member : leader ∈ participants)
+    {origin : W} (originFound : trace.stateAt c = some origin) {bound : Real}
+    (inside : Inside trace start duration c origin bound) (enough : maxDelay <= bound)
+    {leader : NodeID} (member : leader ∈ participants)
     : forall index point state,
         Capped trace participants c term index
         -> trace.stateAt index = some point
-        -> time point <= time origin + roundLength electionTimeout maxDelay + jump
+        -> time point <= time origin + bound
         -> nodeState (proto point) leader = some state
         -> state.role = .primary
         -> state.currentTerm = term + 1
@@ -594,18 +659,9 @@ theorem RoundSetup.elected_from
       have sum := Racing.sends_run (summary leader pre event) ran
       rcases Summary.leader sum primary with ⟨prePrimary, preTerm⟩ | wins
       · exact earlier pre preFound prePrimary (by omega)
-      have within
-          : forall earlier, c <= earlier -> earlier <= index
-              -> Within trace start duration earlier := by
-        intro earlier first last
-        obtain ⟨earlierPoint, earlierFound⟩ :=
-          Trace.stateAt_of_le (Nat.le_succ_of_le last) found
-        refine setup.within_of_bound originFound first earlierFound ?_
-        have := setup.admissible.time_le (Nat.le_succ_of_le last) earlierFound found
-        linarith
       have early :=
-        setup.wins_early originFound le stepped (capped.down le (Nat.le_succ index)) within
-          member cause preFound termEq wins
+        setup.wins_early originFound inside enough le stepped
+          (capped.down le (Nat.le_succ index)) (by linarith) member cause preFound termEq wins
       have busy : Not (step.action = .idle) := fun idle => by
         rw [idle] at selected
         simp [Liveness.Event.action] at selected
@@ -651,10 +707,22 @@ theorem RoundSetup.elected_early
         /\ electedState.currentTerm = term + 1 := by
   obtain ⟨origin, originFound⟩ := Trace.stateAt_of_le capped.1 found
   obtain ⟨elected, electedPoint, electedState, first, last, electedFound, rest⟩ :=
-    setup.elected_from originFound member index point state capped found
-      (timeLe origin originFound) leaderFound primary termEq
-  exact ⟨elected, origin, electedPoint, electedState, first, last, originFound, electedFound,
-    rest⟩
+    setup.toRoundBase.elected_from originFound (setup.inside originFound)
+      (by unfold roundLength; linarith [setup.nonnegative, setup.jumpNonnegative,
+        setup.timeout_pos])
+      member index point state capped found
+      (by linarith [timeLe origin originFound]) leaderFound primary termEq
+  exact ⟨
+    elected,
+    origin,
+    electedPoint,
+    electedState,
+    first,
+    last,
+    originFound,
+    electedFound,
+    rest
+  ⟩
 
 end Lemmas
 

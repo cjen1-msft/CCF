@@ -1,6 +1,6 @@
 module
 
-public import CCFRaft.Proofs.Duel.RoundDefs
+public import CCFRaft.Proofs.Duel.RoundInv
 public import CCFRaft.Proofs.Duel.ElectedNet
 public import CCFRaft.Proofs.Duel.ElectedNode
 public import CCFRaft.Proofs.Leadership.ConfiguredWindow
@@ -26,27 +26,21 @@ variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W]
   [HasNetwork W] [HasTimers W] [Config.InitialConfiguration] {nodes : List NodeID}
   {trace : Trace W Liveness.Event} {E d jump duration : Real} {start c term : Nat}
   {participants members : Finset NodeID}
-  (setup : RoundSetup nodes trace E d jump start duration participants members c term)
+  (setup : RoundShort nodes trace E d jump start duration participants members c term)
   {origin : W} (originFound : trace.stateAt c = some origin)
 
 include setup originFound
 
-/-- The first half-timeout after the round starts is inside the good period. -/
+/-- The first four delays after the round starts are inside the good period. -/
 theorem within {index : Nat} {point : W} (le : c <= index)
     (found : trace.stateAt index = some point)
-    (early : time point <= time origin + E / 2)
-    : Within trace start duration index := by
-  refine ⟨setup.startLe.trans le, ?_⟩
-  intro first last firstFound lastFound
-  rw [found, Option.some.injEq] at lastFound
-  subst last
-  have cover := setup.covers first origin firstFound originFound
-  unfold Round.roundLength at cover
-  linarith [setup.ratio, setup.nonnegative, setup.jumpNonnegative]
+    (early : time point <= time origin + 4 * d)
+    : Within trace start duration index :=
+  setup.inside origin originFound index point le found early
 
-/-- Restrict the good period to the round's first half-timeout. -/
-theorem good : GoodPeriod trace c (E / 2) participants := by
-  have inside : forall index, Within trace c (E / 2) index
+/-- Restrict the good period to the round's first four delays. -/
+theorem good : GoodPeriod trace c (4 * d) participants := by
+  have inside : forall index, Within trace c (4 * d) index
       -> Within trace start duration index := by
     intro index bounded
     refine ⟨setup.startLe.trans bounded.1, ?_⟩
@@ -67,7 +61,7 @@ theorem good : GoodPeriod trace c (E / 2) participants := by
 /-- Fixed membership propagates from the round start, not the window start. -/
 theorem membership {index : Nat} {point : W} (le : c <= index)
     (found : trace.stateAt index = some point)
-    (early : time point <= time origin + E / 2)
+    (early : time point <= time origin + 4 * d)
     : Liveness.Membership participants members (proto point) := by
   apply Leadership.Membership.window setup.admissible (good setup originFound)
     setup.membership index point ?_ found
@@ -177,7 +171,7 @@ theorem network_since {P : Model.Envelope -> Prop}
                 (ctx : Ctx nodes (proto step.after) (proto step.before) rest),
           c <= index
           -> trace.stepAt index = some step
-          -> time step.after < time origin + E / 2
+          -> time step.after <= time origin + 4 * d
           -> step.action.action = some action
           -> StablePrimary.Acts action ctx.actor ctx.event
           -> outgoing (proto step.before) action = some ctx.tr.outputs.outgoing
@@ -189,7 +183,7 @@ theorem network_since {P : Model.Envelope -> Prop}
     : forall index point,
         c <= index
         -> trace.stateAt index = some point
-        -> time point < time origin + E / 2
+        -> time point <= time origin + 4 * d
         -> forall e,
             e ∈ (proto point).network
             -> e.source ∈ participants
@@ -214,8 +208,8 @@ theorem network_since {P : Model.Envelope -> Prop}
         exact initial e (termLe.trans
           (setup.round.low point e.source sender found sourceIn (found_of_now exec now)))
       obtain ⟨step, stepped, rfl⟩ := Trace.stateAt_succ_eq_some.mp found
-      have earlyBefore : time step.before < time origin + E / 2 :=
-        lt_of_le_of_lt (setup.admissible.timing.next stepped).1 early
+      have earlyBefore : time step.before <= time origin + 4 * d :=
+        le_trans (setup.admissible.timing.next stepped).1 early
       rcases selected : step.action.action with _ | action
       · rw [setup.admissible.stutter stepped selected] at queued
         exact ih step.before (by omega) (setup.admissible.before stepped) earlyBefore
@@ -230,7 +224,7 @@ theorem network_since {P : Model.Envelope -> Prop}
 /-- No proposal of the newly elected term is in flight during settling. -/
 theorem no_proposals {index : Nat} {point : W}
     (le : c <= index) (found : trace.stateAt index = some point)
-    (early : time point < time origin + E / 2)
+    (early : time point <= time origin + 4 * d)
     : forall e,
         e ∈ (proto point).network
         -> e.source ∈ participants
@@ -249,11 +243,11 @@ theorem no_proposals {index : Nat} {point : W}
       nomination | retired
     · exact setup.period.noNominations index step ctx.actor
         (within setup originFound le (setup.admissible.before stepped)
-          (le_trans (setup.admissible.timing.next stepped).1 early.le))
+          (le_trans (setup.admissible.timing.next stepped).1 early))
         stepped (Racing.local_of_internal selected acts nomination)
     · exact setup.active (index + 1) step.after ctx.actor ctx.post
         (within setup originFound (Nat.le_succ_of_le le)
-          (Trace.stateAt_succ_of_stepAt stepped) early.le)
+          (Trace.stateAt_succ_of_stepAt stepped) early)
         (Trace.stateAt_succ_of_stepAt stepped) actorIn
         (found_of_now ctx.exec ctx.post_now) retired
 
@@ -278,13 +272,13 @@ theorem no_exempt {index : Nat} {step : Execution.Step W Liveness.Event}
     {action : Model.Action} {rest : History}
     (ctx : Ctx nodes (proto step.after) (proto step.before) rest)
     (le : c <= index) (stepped : trace.stepAt index = some step)
-    (early : time step.before < time origin + E / 2)
+    (early : time step.before <= time origin + 4 * d)
     (selected : step.action.action = some action)
     (acts : StablePrimary.Acts action ctx.actor ctx.event)
     (cap : Capped trace participants c term index)
     (member : ctx.actor ∈ participants) (termEq : ctx.pre.currentTerm = term + 1)
     : Not (Leadership.Exempt ctx.pre ctx.event) := by
-  have bounded := within setup originFound le (setup.admissible.before stepped) early.le
+  have bounded := within setup originFound le (setup.admissible.before stepped) early
   have sourceIn : forall source message, ctx.event = .receive source message
       -> source ∈ participants := by
     intro source message eventEq
@@ -293,7 +287,8 @@ theorem no_exempt {index : Nat} {step : Execution.Step W Liveness.Event}
     exact sourceEq ▸ setup.period.isolated index step envelope bounded stepped
       (delivered_of_action selected) (targetEq ▸ member)
   rintro (timeout | check | ⟨source, message, eventEq, raised⟩ | ⟨source, eventEq⟩)
-  · exact no_timeout setup originFound le stepped early member ctx.tr.found termEq
+  · exact no_timeout setup originFound le stepped (by linarith [setup.ratio]) member
+      ctx.tr.found termEq
       (Racing.local_of_internal selected acts timeout)
   · exact setup.period.noQuorumChecks index step ctx.actor bounded stepped member
       (Racing.local_of_internal selected acts check)

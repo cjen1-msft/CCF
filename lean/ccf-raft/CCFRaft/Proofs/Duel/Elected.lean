@@ -9,10 +9,11 @@ public import CCFRaft.Proofs.Duel.ElectedAnchor
 
 NOT IMPORTED BY `Properties`. A primary of `term + 1` elected early in a round
 settles its voters into an anchored start by four delays after the round starts.
-The facts about the round's terms and packets (`Round.RoundSetup.adopted` and
-`Round.RoundSetup.packets`) are hypotheses here, proved in `Duel.Round`.
+The facts about the round's caps and packets (`Round.RoundBase.capped_from` and
+`Round.RoundBase.packets`) are hypotheses here, proved in `Duel.Round`.
 Only the packet bound on granted pre-vote responses is needed here; adoption
-is proved for the voters rather than required of every participant.
+is proved for the voters rather than required of every participant. The proof
+looks only at the round's first four delays (`RoundShort`).
 -/
 
 namespace CCFRaft.Proofs.Duel.Round
@@ -36,54 +37,31 @@ variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W] [HasNetw
 
 /-! ## The elected case -/
 
-set_option linter.unusedVariables false in
 /-- An election of `term + 1` early in the round settles its voters into an anchored
-start by `time c + 4 * maxDelay`. The anchor contains the primary and its voters. -/
-theorem RoundSetup.handoff_of_elected
+start by `time c + 4 * maxDelay`. The anchor contains the primary and its voters.
+Only the round's first four delays need be in the window. -/
+theorem RoundShort.handoff_settle
     (setup
-      : RoundSetup nodes trace electionTimeout maxDelay jump start duration participants
+      : RoundShort nodes trace electionTimeout maxDelay jump start duration participants
           members c term)
     {index : Nat} {origin point : W} {leader : NodeID} {state : NodeState}
     (originFound : trace.stateAt c = some origin)
-    (adopted
-      : forall index point,
-          Capped trace participants c term index
-          -> trace.stateAt index = some point
-          -> time origin + maxDelay < time point
-          -> forall node state,
-              node ∈ participants
-              -> nodeState (proto point) node = some state
-              -> state.currentTerm = term + 1)
-    (packets
+    (lateGrants
       : forall index point packet,
-          Capped trace participants c term index
+          c <= index
           -> trace.stateAt index = some point
+          -> time point <= time origin + 4 * maxDelay
           -> packet ∈ pending point
           -> packet.envelope.source ∈ participants
           -> packet.envelope.target ∈ participants
-          -> packet.envelope.payload.term <= term + 1
-              /\ (packet.envelope.payload.term <= term
-                  -> (forall response,
-                        Not (packet.envelope.payload = .appendEntriesResponse response))
-                  -> packet.sentAt <= time origin + maxDelay)
-              /\ (forall request,
-                    packet.envelope.payload = .requestVoteRequest request
-                    -> packet.sentAt <= time origin + maxDelay)
-              /\ (packet.envelope.payload
-                    = .requestVoteResponse { term := term + 1, voteGranted := true }
-                  -> packet.sentAt <= time origin + 2 * maxDelay)
-              /\ (forall request,
-                    packet.envelope.payload = .requestPreVoteRequest request
-                    -> request.term = term + 1
-                    -> time origin + electionTimeout / 2 <= packet.sentAt)
-              /\ (packet.envelope.payload
-                    = .requestPreVoteResponse { term := term + 1, voteGranted := true }
-                  -> time origin + electionTimeout / 2 <= packet.sentAt))
+          -> packet.envelope.payload
+              = .requestPreVoteResponse { term := term + 1, voteGranted := true }
+          -> time origin + electionTimeout / 2 <= packet.sentAt)
     (capped
       : forall index point,
           c <= index
           -> trace.stateAt index = some point
-          -> time point < time origin + electionTimeout / 2
+          -> time point <= time origin + 4 * maxDelay
           -> Capped trace participants c term index)
     (indexLe : c <= index)
     (found : trace.stateAt index = some point)
@@ -103,14 +81,14 @@ theorem RoundSetup.handoff_of_elected
     (setup.admissible.time_le (by omega : win + 1 <= index) winAfter found).trans early
   have beforeEarly : time step.before <= time origin + 3 * maxDelay :=
     (setup.admissible.timing.next stepped).1.trans afterEarly
-  have afterHalf : time step.after < time origin + electionTimeout / 2 := by
-    linarith [setup.ratio, setup.nonnegative]
-  have beforeHalf : time step.before < time origin + electionTimeout / 2 :=
-    lt_of_le_of_lt (setup.admissible.timing.next stepped).1 afterHalf
+  have afterShort : time step.after <= time origin + 4 * maxDelay := by
+    linarith [setup.nonnegative]
+  have beforeShort : time step.before <= time origin + 4 * maxDelay := by
+    linarith [setup.nonnegative]
   have postFound := found_of_now ctx.exec ctx.post_now
-  have winMembership := Elected.membership setup originFound winLe winBefore beforeHalf.le
-  have postMembership := Elected.membership setup originFound (by omega) winAfter afterHalf.le
-  have postWithin := Elected.within setup originFound (by omega) winAfter afterHalf.le
+  have winMembership := Elected.membership setup originFound winLe winBefore beforeShort
+  have postMembership := Elected.membership setup originFound (by omega) winAfter afterShort
+  have postWithin := Elected.within setup originFound (by omega) winAfter afterShort
   have postNonempty := (setup.period.quorum (win + 1) step.after ctx.actor ctx.post postWithin
     winAfter (setup.period.participantsLive (win + 1) step.after ctx.actor postWithin winAfter member)
     postFound).1
@@ -122,10 +100,10 @@ theorem RoundSetup.handoff_of_elected
     Wins.facts won
   have candidateHigh : candidate.currentTerm = term + 1 := candidateTerm.symm.trans winTerm
   have votersIn : candidate.votesGranted ⊆ participants :=
-    Elected.campaign_subset setup originFound ctx winLe stepped beforeHalf selected acts member
+    Elected.campaign_subset setup originFound ctx winLe stepped beforeShort selected acts member
       campaign candidateHigh
       (fun role te => Elected.candidate_subset setup originFound win step.before ctx.actor ctx.pre
-        winLe winBefore beforeHalf member ctx.tr.found te role)
+        winLe winBefore beforeShort member ctx.tr.found te role)
   have voters : forall node, node ∈ candidate.votesGranted
       -> exists voter, nodeState (proto step.after) node = some voter
         /\ voter.currentTerm = term + 1 /\ voter.votedFor = some ctx.actor := by
@@ -134,7 +112,7 @@ theorem RoundSetup.handoff_of_elected
     rw [candidateHigh] at granted
     obtain ⟨voter, now, high, vote⟩ := Elected.granted_current ctx.exec granted
       (fun voter now =>
-        (capped (win + 1) step.after (by omega) winAfter afterHalf).2
+        (capped (win + 1) step.after (by omega) winAfter afterShort).2
           (win + 1) step.after node voter (by omega) le_rfl winAfter (votersIn nodeIn)
           (found_of_now ctx.exec now))
     exact ⟨voter, found_of_now ctx.exec now, high, vote⟩
@@ -154,10 +132,10 @@ theorem RoundSetup.handoff_of_elected
       (Trace.stateAt_succ_of_stepAt crossed) winAfter
     linarith [setup.nonnegative]
   have horizon : forall i p, i <= stop -> trace.stateAt i = some p
-      -> time p < time origin + electionTimeout / 2 := by
+      -> time p <= time origin + 4 * maxDelay := by
     intro i p le pf
     have order := setup.admissible.time_le le pf stopFound
-    linarith [setup.ratio]
+    linarith
   have stopEarly := horizon stop crossing.before le_rfl stopFound
   have leaderAt := Elected.known_kept setup originFound capped (by omega : c <= win + 1)
     winAfter member postFound winTerm winKnown (Or.inr winPrimary)
@@ -175,8 +153,8 @@ theorem RoundSetup.handoff_of_elected
   have votersSubset : candidate.votesGranted ⊆ anchor := Finset.subset_insert _ _
   obtain ⟨blocked, quorumFor⟩ := Elected.fixed_quorum quorum
     (winMembership ctx.actor ctx.pre ctx.pre_now member).1 votersSubset
-  have stopWithin := Elected.within setup originFound stopLe stopFound stopEarly.le
-  have stopMembership := Elected.membership setup originFound stopLe stopFound stopEarly.le
+  have stopWithin := Elected.within setup originFound stopLe stopFound stopEarly
+  have stopMembership := Elected.membership setup originFound stopLe stopFound stopEarly
   have nonemptyAtStop : forall node local_, node ∈ participants
       -> (node, local_) ∈ (proto crossing.before).nodes
       -> local_.activeConfigurations ≠ [] := by
@@ -245,10 +223,7 @@ theorem RoundSetup.handoff_of_elected
         (Or.inl acceptedRole) stop crossing.before (by omega) stopFound stopEarly
     exact ⟨last, now_of_found (rest := endRest) lastFound,
       lastTerm, lastKnown, Or.inl (lastRole.trans acceptedRole)⟩
-  have noGrants := Elected.no_grants setup originFound
-    (fun i p packet le pf early pending sourceIn targetIn payload =>
-      (packets i p packet (capped i p le pf early) pf pending sourceIn targetIn).2.2.2.2.2 payload)
-    stopLe stopFound stopEarly
+  have noGrants := Elected.no_grants setup originFound lateGrants stopLe stopFound stopEarly
   refine ⟨stop, ctx.actor, term + 1, anchor, origin, crossing.before,
     stopLe, originFound, stopFound, near, ?_⟩
   constructor
@@ -275,7 +250,7 @@ theorem RoundSetup.handoff_of_elected
         exact noGrants e queued (anchorSubset sourceIn) targetIn
       · intro node local_ now member role te
         exact (Elected.no_pre_vote setup originFound stop crossing.before node local_
-          stopLe stopFound stopEarly member (found_of_now endExec now) te role).elim
+          stopLe stopFound (by linarith [setup.ratio]) member (found_of_now endExec now) te role).elim
   · intro first i later node local_ firstFound le stepped timeout nodeFound nodeIn te
     rw [stopFound, Option.some.injEq] at firstFound
     subst first
@@ -285,5 +260,70 @@ theorem RoundSetup.handoff_of_elected
       (anchorSubset nodeIn) nodeFound te
     have due := ((setup.timers.next stepped) node).2.2 timeout
     linarith
+
+set_option linter.unusedVariables false in
+/-- An election of `term + 1` early in the round settles its voters into an anchored
+start by `time c + 4 * maxDelay`. The anchor contains the primary and its voters. -/
+theorem RoundSetup.handoff_of_elected
+    (setup
+      : RoundSetup nodes trace electionTimeout maxDelay jump start duration participants
+          members c term)
+    {index : Nat} {origin point : W} {leader : NodeID} {state : NodeState}
+    (originFound : trace.stateAt c = some origin)
+    (adopted
+      : forall index point,
+          Capped trace participants c term index
+          -> trace.stateAt index = some point
+          -> time origin + maxDelay < time point
+          -> forall node state,
+              node ∈ participants
+              -> nodeState (proto point) node = some state
+              -> state.currentTerm = term + 1)
+    (packets
+      : forall index point packet,
+          Capped trace participants c term index
+          -> trace.stateAt index = some point
+          -> packet ∈ pending point
+          -> packet.envelope.source ∈ participants
+          -> packet.envelope.target ∈ participants
+          -> packet.envelope.payload.term <= term + 1
+              /\ (packet.envelope.payload.term <= term
+                  -> (forall response,
+                        Not (packet.envelope.payload = .appendEntriesResponse response))
+                  -> packet.sentAt <= time origin + maxDelay)
+              /\ (forall request,
+                    packet.envelope.payload = .requestVoteRequest request
+                    -> packet.sentAt <= time origin + maxDelay)
+              /\ (packet.envelope.payload
+                    = .requestVoteResponse { term := term + 1, voteGranted := true }
+                  -> packet.sentAt <= time origin + 2 * maxDelay)
+              /\ (forall request,
+                    packet.envelope.payload = .requestPreVoteRequest request
+                    -> request.term = term + 1
+                    -> time origin + electionTimeout / 2 <= packet.sentAt)
+              /\ (packet.envelope.payload
+                    = .requestPreVoteResponse { term := term + 1, voteGranted := true }
+                  -> time origin + electionTimeout / 2 <= packet.sentAt))
+    (capped
+      : forall index point,
+          c <= index
+          -> trace.stateAt index = some point
+          -> time point < time origin + electionTimeout / 2
+          -> Capped trace participants c term index)
+    (indexLe : c <= index)
+    (found : trace.stateAt index = some point)
+    (early : time point <= time origin + 3 * maxDelay) (member : leader ∈ participants)
+    (leaderFound : nodeState (proto point) leader = some state)
+    (primary : state.role = .primary) (termEq : state.currentTerm = term + 1)
+    : HandoffBy trace participants c (4 * maxDelay)
+        (electionTimeout / 2 - 4 * maxDelay) := by
+  have := setup.nonnegative
+  exact setup.short.handoff_settle originFound
+    (fun i p packet le pf bounded pending sourceIn targetIn payload =>
+      (packets i p packet (capped i p le pf (by linarith [setup.ratio])) pf pending
+        sourceIn targetIn).2.2.2.2.2
+        payload)
+    (fun i p le pf bounded => capped i p le pf (by linarith [setup.ratio]))
+    indexLe found early member leaderFound primary termEq
 
 end CCFRaft.Proofs.Duel.Round

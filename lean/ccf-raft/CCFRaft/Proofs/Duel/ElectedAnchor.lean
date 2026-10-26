@@ -52,7 +52,7 @@ variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W]
   [HasNetwork W] [HasTimers W] [Config.InitialConfiguration] {nodes : List NodeID}
   {trace : Trace W Liveness.Event} {E d jump duration : Real} {start c term : Nat}
   {participants members : Finset NodeID}
-  (setup : RoundSetup nodes trace E d jump start duration participants members c term)
+  (setup : RoundShort nodes trace E d jump start duration participants members c term)
   {origin : W} (originFound : trace.stateAt c = some origin)
 
 include setup originFound
@@ -62,7 +62,7 @@ theorem voter_follower {index : Nat} {point : W} {rest : History}
     {leader node : NodeID} {primary voter : NodeState}
     (lead : Lead nodes (proto point :: rest) leader (term + 1) primary)
     (le : c <= index) (found : trace.stateAt index = some point)
-    (early : time point < time origin + E / 2) (member : node ∈ participants)
+    (early : time point <= time origin + 4 * d) (member : node ∈ participants)
     (different : node ≠ leader)
     (voterFound : nodeState (proto point) node = some voter)
     (termEq : voter.currentTerm = term + 1) (vote : voter.votedFor = some leader)
@@ -70,7 +70,8 @@ theorem voter_follower {index : Nat} {point : W} {rest : History}
   have now : Now (proto point :: rest) node voter := now_of_found voterFound
   have none := no_none setup originFound index point node voter le found early member
     voterFound termEq
-  have preVote := no_pre_vote setup originFound index point node voter le found early member
+  have preVote := no_pre_vote setup originFound index point node voter le found
+    (by linarith [setup.ratio]) member
     voterFound termEq
   have candidate : Not (voter.role = .candidate) := by
     intro role
@@ -90,7 +91,7 @@ theorem heartbeat_accepted {index : Nat} {step : Execution.Step W Liveness.Event
     {packet : Packet} {request : AppendEntriesRequest} {voter : NodeState}
     (le : c <= index) (stepped : trace.stepAt index = some step)
     (delivery : step.action = .deliver packet)
-    (early : time step.after < time origin + E / 2)
+    (early : time step.after <= time origin + 4 * d)
     (member : packet.envelope.target ∈ participants)
     (different : packet.envelope.target ≠ packet.envelope.source)
     (payload : packet.envelope.payload = .appendEntriesRequest request)
@@ -124,7 +125,7 @@ theorem heartbeat_accepted {index : Nat} {step : Execution.Step W Liveness.Event
     ⟨ctx.prior, now_of_found primaryFound, primaryRole, primaryTerm⟩
   have requestOk := lead.request queued payloadEq requestTerm
   have bounded := within setup originFound le (setup.admissible.before stepped)
-    (le_trans (setup.admissible.timing.next stepped).1 early.le)
+    (le_trans (setup.admissible.timing.next stepped).1 early)
   have matching := setup.matching index step packet request ctx.pre bounded stepped delivery
     member different payload voterFound (by omega) (by simp [role]) (by simp [role])
   have bound : request.prevLogIndex <= ctx.pre.log.length := by
@@ -142,7 +143,7 @@ theorem heartbeat_accepted {index : Nat} {step : Execution.Step W Liveness.Event
   · exact ⟨ctx.post, actorEq ▸ postFound, termEq.trans requestTerm, known, role⟩
   · exact (setup.active (index + 1) step.after ctx.actor ctx.post
       (within setup originFound (Nat.le_succ_of_le le)
-        (Trace.stateAt_succ_of_stepAt stepped) early.le)
+        (Trace.stateAt_succ_of_stepAt stepped) early)
       (Trace.stateAt_succ_of_stepAt stepped) (actorEq ▸ member) postFound retired).elim
 
 end CCFRaft.Proofs.Duel.Elected

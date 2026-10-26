@@ -104,9 +104,9 @@ def RoundMargin (trace : Trace W Liveness.Event) (participants : Finset NodeID)
 def roundLength (electionTimeout maxDelay : Real) : Real :=
   electionTimeout + 4 * maxDelay
 
-/-- Everything a round uses. Timer firing is at the deadline; a step may overshoot
-a deadline by at most `jump`. -/
-structure RoundSetup [Config.InitialConfiguration] (nodes : List NodeID)
+/-- Everything a round uses except how far the window reaches past the round start.
+Timer firing is at the deadline; a step may overshoot a deadline by at most `jump`. -/
+structure RoundBase [Config.InitialConfiguration] (nodes : List NodeID)
     (trace : Trace W Liveness.Event) (electionTimeout maxDelay jump : Real)
     (start : Nat) (duration : Real) (participants members : Finset NodeID) (c term : Nat)
     : Prop where
@@ -142,15 +142,30 @@ structure RoundSetup [Config.InitialConfiguration] (nodes : List NodeID)
   nominates a successor after its win, breaking the quiet term. -/
   active : Window.AnchorActive trace start duration participants
   startLe : start <= c
+  membership
+    : forall point,
+        trace.stateAt c = some point -> Membership participants members (proto point)
+  subset : participants ⊆ members
+  /-- Every participant's log holds a configuration at or below its commit index, so
+  the participants can campaign from a signed configuration of `members`. Without it
+  a round can stall: participants whose only configuration is unsigned never time out,
+  and a candidate behind their logs never wins. -/
+  configured
+    : forall point,
+        trace.stateAt c = some point -> ConfigurationCommitted participants (proto point)
+
+/-- Everything a round uses: the base, with the window covering the whole round. -/
+structure RoundSetup [Config.InitialConfiguration] (nodes : List NodeID)
+    (trace : Trace W Liveness.Event) (electionTimeout maxDelay jump : Real)
+    (start : Nat) (duration : Real) (participants members : Finset NodeID) (c term : Nat)
+    : Prop
+    extends RoundBase nodes trace electionTimeout maxDelay jump start duration
+              participants members c term where
   covers
     : forall origin point,
         trace.stateAt start = some origin
         -> trace.stateAt c = some point
         -> time point + roundLength electionTimeout maxDelay + jump + 4 * maxDelay
             <= time origin + duration
-  membership
-    : forall point,
-        trace.stateAt c = some point -> Membership participants members (proto point)
-  subset : participants ⊆ members
 
 end CCFRaft.Proofs.Duel.Round

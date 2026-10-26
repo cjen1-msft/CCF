@@ -71,7 +71,7 @@ variable {W : Type} [HasProtocol W Model.State] [HasTime W] [HasLive W]
   [HasNetwork W] [HasTimers W] {nodes : List NodeID}
   {trace : Trace W Liveness.Event} {E d jump duration : Real} {start c term : Nat}
   {participants members : Finset NodeID}
-  (setup : RoundSetup nodes trace E d jump start duration participants members c term)
+  (setup : RoundShort nodes trace E d jump start duration participants members c term)
   {origin : W} (originFound : trace.stateAt c = some origin)
 
 include setup originFound
@@ -81,7 +81,7 @@ theorem no_none
     : forall index point node state,
         c <= index
         -> trace.stateAt index = some point
-        -> time point < time origin + E / 2
+        -> time point <= time origin + 4 * d
         -> node ∈ participants
         -> nodeState (proto point) node = some state
         -> state.currentTerm = term + 1
@@ -102,8 +102,8 @@ theorem no_none
         omega
       obtain ⟨step, stepped, rfl⟩ := Trace.stateAt_succ_eq_some.mp found
       have beforeFound := setup.admissible.before stepped
-      have earlyBefore : time step.before < time origin + E / 2 :=
-        lt_of_le_of_lt (setup.admissible.timing.next stepped).1 early
+      have earlyBefore : time step.before <= time origin + 4 * d :=
+        le_trans (setup.admissible.timing.next stepped).1 early
       rcases selected : step.action.action with _ | action
       · rw [setup.admissible.stutter stepped selected] at nodeFound
         exact ih step.before node state (by omega) beforeFound earlyBefore member
@@ -117,7 +117,7 @@ theorem no_none
         · exact ih step.before ctx.actor ctx.pre (by omega) beforeFound earlyBefore
             member ctx.tr.found (sameTerm ▸ termEq) priorRole
         · exact setup.active (index + 1) step.after ctx.actor ctx.post
-            (within setup originFound le (Trace.stateAt_succ_of_stepAt stepped) early.le)
+            (within setup originFound le (Trace.stateAt_succ_of_stepAt stepped) early)
             (Trace.stateAt_succ_of_stepAt stepped) member nodeFound retired
       · exact ih step.before node state (by omega) beforeFound earlyBefore member
           (found_of_now ctx.prior previous) termEq role
@@ -127,7 +127,7 @@ theorem campaign_subset {index : Nat} {step : Execution.Step W Liveness.Event}
     {action : Model.Action} {rest : History}
     (ctx : Ctx nodes (proto step.after) (proto step.before) rest)
     (le : c <= index) (stepped : trace.stepAt index = some step)
-    (early : time step.before < time origin + E / 2)
+    (early : time step.before <= time origin + 4 * d)
     (selected : step.action.action = some action)
     (acts : StablePrimary.Acts action ctx.actor ctx.event)
     (member : ctx.actor ∈ participants) {candidate : NodeState}
@@ -146,7 +146,7 @@ theorem campaign_subset {index : Nat} {step : Execution.Step W Liveness.Event}
     · obtain ⟨e, actionEq, targetEq, sourceEq, _⟩ := acts_receive acts eventEq
       subst action
       exact sourceEq ▸ setup.period.isolated index step e
-        (within setup originFound le (setup.admissible.before stepped) early.le)
+        (within setup originFound le (setup.admissible.before stepped) early)
         stepped (delivered_of_action selected) (targetEq ▸ member)
 
 /-- Every vote counted by a participant's new-term candidacy is from the period. -/
@@ -154,7 +154,7 @@ theorem candidate_subset
     : forall index point node state,
         c <= index
         -> trace.stateAt index = some point
-        -> time point < time origin + E / 2
+        -> time point <= time origin + 4 * d
         -> node ∈ participants
         -> nodeState (proto point) node = some state
         -> state.currentTerm = term + 1
@@ -176,8 +176,8 @@ theorem candidate_subset
         omega
       obtain ⟨step, stepped, rfl⟩ := Trace.stateAt_succ_eq_some.mp found
       have beforeFound := setup.admissible.before stepped
-      have earlyBefore : time step.before < time origin + E / 2 :=
-        lt_of_le_of_lt (setup.admissible.timing.next stepped).1 early
+      have earlyBefore : time step.before <= time origin + 4 * d :=
+        le_trans (setup.admissible.timing.next stepped).1 early
       rcases selected : step.action.action with _ | action
       · rw [setup.admissible.stutter stepped selected] at nodeFound
         exact ih step.before node state (by omega) beforeFound earlyBefore member

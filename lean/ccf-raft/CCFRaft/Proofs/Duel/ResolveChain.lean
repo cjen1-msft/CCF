@@ -2,6 +2,7 @@ module
 
 public import CCFRaft.Proofs.Duel.DuelRound
 public import CCFRaft.Proofs.Duel.Relevance
+public import CCFRaft.Proofs.Duel.CommittedWindow
 public import CCFRaft.Proofs.Leadership.ConfiguredWindow
 public import CCFRaft.Proofs.StablePrimary
 
@@ -86,6 +87,11 @@ structure Setup [Config.InitialConfiguration] (nodes : List NodeID)
     : forall point,
         trace.stateAt start = some point -> Membership participants members (proto point)
   subset : participants ⊆ members
+  /-- As `Round.RoundSetup.configured`, at the start. -/
+  configured
+    : forall point,
+        trace.stateAt start = some point
+        -> ConfigurationCommitted participants (proto point)
 
 /-- `c` starts round `k`, of `term + 1`, counting from the first round start at or
 after `start`. -/
@@ -294,17 +300,13 @@ theorem Setup.roundSetup {initial electionTimeout maxDelay jump fresh duration :
     covers := ?_
     membership := ?_
     subset := setup.subset
+    configured := ?_
   }
   · intro index step node member within stepped
     refine noOvershoot_mono ?_ (overshoot index step node member within stepped)
     split_ifs
     · exact le_rfl
     · exact setup.jumpNonnegative
-  · intro origin' point' originFound' found'
-    rw [originFound, Option.some.injEq] at originFound'
-    rw [found, Option.some.injEq] at found'
-    subst originFound' found'
-    exact fits
   · intro point' found'
     refine Leadership.Membership.window admissible setup.period setup.membership c point'
       ⟨startLe, fun origin' point'' originFound' found'' => ?_⟩ found'
@@ -312,6 +314,18 @@ theorem Setup.roundSetup {initial electionTimeout maxDelay jump fresh duration :
     rw [found, Option.some.injEq] at found''
     subst originFound' found''
     linarith
+  · intro point' found'
+    refine ConfigurationCommitted.window admissible setup.period setup.configured c point'
+      ⟨startLe, fun origin' point'' originFound' found'' => ?_⟩ found'
+    rw [originFound, Option.some.injEq] at originFound'
+    rw [found, Option.some.injEq] at found''
+    subst originFound' found''
+    linarith
+  · intro origin' point' originFound' found'
+    rw [originFound, Option.some.injEq] at originFound'
+    rw [found, Option.some.injEq] at found'
+    subst originFound' found'
+    exact fits
 
 end Admissible
 
