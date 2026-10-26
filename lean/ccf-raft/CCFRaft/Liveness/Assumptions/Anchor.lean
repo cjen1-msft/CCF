@@ -205,6 +205,23 @@ theorem Membership.activeMembers {participants members : Finset NodeID}
   unfold NodeState.activeMembers configurationMembers
   rw [foldl_union_same _ _ active empty, Finset.empty_union]
 
+/-- Every participant's log holds a configuration at or below its commit index.
+
+Needed for an election from an arbitrary start. A node campaigns only from a
+signed active configuration, and a log with no committed configuration may have
+none. With participants `{1, 2, 3}`, the bootstrap primary `1` replicates its
+unsigned configuration `{1, 2, 3}` to `2` and `3` and crashes. Their
+`maxCommittableIndex` is 0, so `signedActiveConfigurations` is empty and neither
+can ever start an election, while no primary remains to sign. CCF agrees: a node
+with no signed active configuration cannot campaign either. -/
+def ConfigurationCommitted (participants : Finset NodeID) (state : Model.State) : Prop :=
+  forall node local_,
+    (node, local_) ∈ state.nodes
+    -> node ∈ participants
+    -> exists configuration,
+        configuration ∈ configurationHistory local_.log
+        /\ configuration.index <= local_.commitIndex
+
 variable {W : Type} [HasProtocol W Model.State] [HasTime W]
 
 /-- An anchored start: at `start` the term is quiet among participants without
