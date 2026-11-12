@@ -4909,9 +4909,9 @@ private theorem SnapOK.mono (suffix : history <:+ later) {entries : List Entry}
 private theorem Backed.mono (suffix : history <:+ later) {log : List Entry}
     {commit term : Nat} (backed : Backed history log commit term)
     : Backed later log commit term := by
-  rcases backed with zero | ⟨earlier, part, committed, le, within⟩
-  · exact Or.inl zero
-  · exact Or.inr ⟨earlier, part, committed.mono suffix, le, within⟩
+  split_rel backed := (rcases backed with zero | ⟨earlier, part, committed, le, within⟩) with
+  | inl => exact Or.inl zero
+  | inr => exact Or.inr ⟨earlier, part, committed.mono suffix, le, within⟩
 
 private theorem Backed.weaken {log : List Entry} {commit term term' : Nat}
     (backed : Backed history log commit term) (le : term <= term')
