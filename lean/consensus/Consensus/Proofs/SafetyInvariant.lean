@@ -2088,17 +2088,21 @@ private theorem Exec.suffix {nodes : List NodeID} {history : List Model.State}
     (exec : Exec nodes history) {earlier : List Model.State}
     (suffix : earlier <:+ history) (nonempty : Not (earlier = []))
     : Exec nodes earlier := by
-  induction exec with
-  | initial initialized =>
-      rcases List.suffix_cons_iff.mp suffix with same | inner
-      · rw [same]
+  split_rel exec := (induction exec) with
+  | initial =>
+      rename_i initialized
+      split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp suffix with same | inner) with
+      | inl =>
+        rw [same]
         exact .initial initialized
-      · exact absurd (List.eq_nil_of_suffix_nil inner) nonempty
-  | step prior stepped ih =>
-      rcases List.suffix_cons_iff.mp suffix with same | inner
-      · rw [same]
+      | inr => exact absurd (List.eq_nil_of_suffix_nil inner) nonempty
+  | step =>
+      rename_i prior stepped ih
+      split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp suffix with same | inner) with
+      | inl =>
+        rw [same]
         exact .step prior stepped
-      · exact ih inner
+      | inr => exact ih inner
 
 private theorem Exec.keys {nodes : List NodeID} {history : List Model.State}
     (exec : Exec nodes history) {state : Model.State} (member : state ∈ history)
