@@ -1196,7 +1196,19 @@ private theorem observeTerm_log (state : NodeState) (message : Model.Node.Messag
 private theorem observeTerm_commitIndex (state : NodeState) (message : Model.Node.Message)
     : (Model.Node.observeTerm state message).commitIndex = state.commitIndex := by
   unfold Model.Node.observeTerm Model.Node.updateTerm
-  split <;> (try split) <;> (try split) <;> rfl
+  split_rel message := (split) with
+  | proposeRequestVoteRequest => rfl
+  | appendEntriesResponse =>
+    split_rel primary := (split) with
+    | pos =>
+      split_rel newer := (split) with
+      | pos => rfl
+      | neg => rfl
+    | neg => rfl
+  | other =>
+    split_rel newer := (split) with
+    | pos => rfl
+    | neg => rfl
 
 @[simp]
 private theorem run_failure {σ α : Type} (s : σ)
