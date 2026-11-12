@@ -5718,11 +5718,14 @@ private theorem now_after {node : NodeID} {state : NodeState}
 private theorem seen_after {node : NodeID} {state : NodeState}
     (seen : Seen (after :: before :: rest) node state)
     : Seen (before :: rest) node state \/ (node = c.actor /\ state = c.post) := by
-  rcases seen.cons with now | old
-  · rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨_, now⟩
-    · exact Or.inr ⟨rfl, rfl⟩
-    · exact Or.inl now.seen
-  · exact Or.inl old
+  split_rel cons := (rcases seen.cons with now | old) with
+  | inl =>
+    split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨_, now⟩) with
+    | inl =>
+      subst nodeEq stateEq
+      exact Or.inr ⟨rfl, rfl⟩
+    | inr => exact Or.inl now.seen
+  | inr => exact Or.inl old
 
 private theorem pre_seen : Seen (before :: rest) c.actor c.pre := c.pre_now.seen
 
