@@ -5820,9 +5820,11 @@ private theorem Advance.facts {self : NodeID} {middle state : NodeState}
     : state.log = middle.log
       /\ state.currentTerm = middle.currentTerm
       /\ (state.role = middle.role \/ state.role = .none) := by
-  rcases advance with rfl | ⟨log, term, _, _, _, _, _, _, role⟩
-  · exact ⟨rfl, rfl, Or.inl rfl⟩
-  · exact ⟨log, term, role⟩
+  split_rel advance := (rcases advance with same | ⟨log, term, _, _, _, _, _, _, role⟩) with
+  | inl =>
+    subst same
+    exact ⟨rfl, rfl, Or.inl rfl⟩
+  | inr => exact ⟨log, term, role⟩
 
 private theorem makeRequestVoteRequest_eq (state : NodeState)
     : makeRequestVoteRequest state = vals state.currentTerm state.log state.commitIndex :=
