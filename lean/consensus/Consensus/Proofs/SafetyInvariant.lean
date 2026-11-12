@@ -6880,26 +6880,31 @@ private theorem keep_log (sameTerm : c.post.currentTerm = c.pre.currentTerm)
 /-- Every leader log is nonempty: an elected log holds its quorum's configuration. -/
 private theorem leader_logs : LeaderLogs (after :: before :: rest) := by
   intro node state now role
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨_, old⟩
-  · rcases Summary.leader c.sum role with ⟨preRole, termEq⟩ | wins
-    · have keep := c.keep_log termEq (by rw [preRole]; simp)
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    split_rel leader := (rcases Summary.leader c.sum role with ⟨preRole, termEq⟩ | wins) with
+    | inl =>
+      have keep := c.keep_log termEq (by rw [preRole]; simp)
         (c.inv.leader_led c.actor c.pre c.pre_now preRole)
       have nonempty := c.inv.leader_logs c.actor c.pre c.pre_now preRole
       intro empty
       rw [empty] at keep
       exact nonempty (List.prefix_nil.mp keep)
-    · obtain ⟨candidate, campaign, quorum, logEq, _⟩ := Wins.facts wins
+    | inr =>
+      obtain ⟨candidate, campaign, quorum, logEq, _⟩ := Wins.facts wins
       have ⟨_, candidateLog, _, _⟩ := campaign
       have nonempty := hasQuorum_nonempty quorum
       rw [logEq]
       simp only [primaryState, lastCommittableIndex]
-      split
-      · rw [candidateLog]
+      split_rel commit := (split) with
+      | pos =>
+        rw [candidateLog]
         simp only [ne_eq, List.take_eq_nil_iff, not_or]
         exact ⟨Nat.ne_of_gt (Nat.lt_of_lt_of_le ‹candidate.commitIndex > 0› (Nat.le_max_left _ _)),
           nonempty⟩
-      · rwa [candidateLog]
-  · exact c.inv.leader_logs node state old role
+      | neg => rwa [candidateLog]
+  | inr => exact c.inv.leader_logs node state old role
 
 /-- An earlier leadership of the actor in its new term continues. -/
 private theorem old_led_actor (led : Led (before :: rest) c.actor c.post.currentTerm)
