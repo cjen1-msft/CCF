@@ -7370,8 +7370,10 @@ private theorem accept_backed {source : NodeID} {request : AppendEntriesRequest}
 
 private theorem commit_backed : CommitBacked (after :: before :: rest) := by
   intro node state now
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨different, old⟩
-  · have strong : Backed (after :: before :: rest) c.post.log c.post.commitIndex
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨different, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    have strong : Backed (after :: before :: rest) c.post.log c.post.commitIndex
           c.post.currentTerm
         -> (exists term, Backed (after :: before :: rest) c.post.log c.post.commitIndex term)
           /\ (Not (c.post.role = .candidate)
@@ -7379,14 +7381,16 @@ private theorem commit_backed : CommitBacked (after :: before :: rest) := by
               -> Backed (after :: before :: rest) c.post.log c.post.commitIndex
                   c.post.currentTerm) :=
       fun backed => ⟨⟨_, backed⟩, fun _ _ => backed⟩
-    cases Summary.kind c.sum with
-    | same log commit =>
+    split_rel kind := (cases Summary.kind c.sum) with
+    | same =>
+        rename_i log commit
         have agree : c.post.log.take c.pre.commitIndex = c.pre.log.take c.pre.commitIndex := by
           rw [log]
         refine ⟨?_, fun _ led => c.keep_backed agree commit led⟩
         rw [commit]
         exact c.pre_backed_any agree
-    | append entries sent leader _ advance =>
+    | append =>
+        rename_i entries sent leader _ advance
         have logEq : c.post.log = c.pre.log ++ entries := (Advance.facts advance).1
         have termEq : c.post.currentTerm = c.pre.currentTerm := (Advance.facts advance).2.1
         refine strong
@@ -7402,7 +7406,8 @@ private theorem commit_backed : CommitBacked (after :: before :: rest) := by
           dsimp only
           rw [logEq, List.take_append_of_le_length bound]
           exact sub
-    | ack source response received leader success responseTerm advance =>
+    | ack =>
+        rename_i source response received leader success responseTerm advance
         have logEq : c.post.log = c.pre.log := (Advance.facts advance).1
         have termEq : c.post.currentTerm = c.pre.currentTerm := (Advance.facts advance).2.1
         refine strong
@@ -7416,23 +7421,31 @@ private theorem commit_backed : CommitBacked (after :: before :: rest) := by
         · intro voter different positive
           dsimp only at positive ⊢
           rw [logEq, termEq]
-          by_cases fromSource : voter = source
-          · subst fromSource
+          split_rel fromSource := (by_cases fromSource : voter = source) with
+          | pos =>
+            subst fromSource
             rw [Function.update_self] at positive ⊢
-            rcases Std.max_eq_or (a := c.pre.matchIndex voter) (b := response.lastLogIndex) with
-              choice | choice <;> rw [choice] at positive ⊢
-            · obtain ⟨acker, seen, ackerTerm, _, sub⟩ := c.match_pre leader different positive
+            split_rel max_eq_or :=
+                (rcases Std.max_eq_or (a := c.pre.matchIndex voter) (b := response.lastLogIndex) with
+                  choice | choice) with
+            | inl =>
+              rw [choice] at positive ⊢
+              obtain ⟨acker, seen, ackerTerm, _, sub⟩ := c.match_pre leader different positive
               exact ⟨acker, seen, ackerTerm, sub⟩
-            · obtain ⟨envelope, ok, sourceEq, _, payload⟩ := c.received_ok received
+            | inr =>
+              rw [choice] at positive ⊢
+              obtain ⟨envelope, ok, sourceEq, _, payload⟩ := c.received_ok received
               simp only [MessageOK, payload] at ok
               have acked := ok success
               rw [sourceEq, responseTerm] at acked
               obtain ⟨acker, seen, ackerTerm, _, sub⟩ := c.acked_pre leader acked
               exact ⟨acker, seen, ackerTerm, sub⟩
-          · rw [Function.update_of_ne fromSource] at positive ⊢
+          | neg =>
+            rw [Function.update_of_ne fromSource] at positive ⊢
             obtain ⟨acker, seen, ackerTerm, _, sub⟩ := c.match_pre leader different positive
             exact ⟨acker, seen, ackerTerm, sub⟩
-    | accept source request received accepted =>
+    | accept =>
+        rename_i source request received accepted
         refine ⟨c.accept_backed received accepted, fun _ led => ?_⟩
         exfalso
         obtain ⟨earlier, _, suffix, canon, aeok, _⟩ := c.accept_shape received accepted
@@ -7440,14 +7453,16 @@ private theorem commit_backed : CommitBacked (after :: before :: rest) := by
           c.election_safety source c.actor request.term
             (canon.2.2.2.mono (suffix.trans c.suffix_tail)) (by rw [accepted.1]; exact led)
         exact aeok.1 this.symm
-    | elect wins =>
+    | elect =>
+        rename_i wins
         have elect := c.wins_elect wins
         have winning := (c.electStep elect).2.2.2.2.2.2.1
         obtain ⟨candidate, ⟨_, candidateLog, candidateCommit, _⟩, _, advance⟩ := wins
         have committable : c.pre.commitIndex <= maxCommittableIndex c.pre.log := by
-          rcases Nat.eq_zero_or_pos c.pre.commitIndex with zero | positive
-          · exact Nat.le_trans (Nat.le_of_eq zero) (Nat.zero_le _)
-          · exact signatureIndex_le_maxCommittableIndex
+          split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos c.pre.commitIndex with zero | positive) with
+          | inl => exact Nat.le_trans (Nat.le_of_eq zero) (Nat.zero_le _)
+          | inr =>
+            exact signatureIndex_le_maxCommittableIndex
               ((c.pre_seen.frontier c.prior).2 positive)
         have agree : c.post.log.take c.pre.commitIndex = c.pre.log.take c.pre.commitIndex := by
           rw [take_eq_of_prefix winning
@@ -7461,7 +7476,8 @@ private theorem commit_backed : CommitBacked (after :: before :: rest) := by
             elect).weaken (Nat.sub_le _ _)).transfer agree
         · intro voter _ positive
           exact absurd positive (Nat.lt_irrefl 0)
-    | install entries initialized positive signature _ log commit _ role =>
+    | install =>
+        rename_i entries initialized positive signature _ log commit _ role
         obtain ⟨_, _, _, term, part, committed, inPart⟩ :=
           c.snap_available initialized positive signature
         refine ⟨⟨term, Or.inr ⟨term, part, committed.mono c.suffix_tail, Nat.le.refl, ?_⟩⟩,
@@ -7469,13 +7485,19 @@ private theorem commit_backed : CommitBacked (after :: before :: rest) := by
         · rw [log, commit, List.take_length]
           exact inPart
         · exfalso
-          rcases c.led_after led with old | ⟨_, _, step⟩
-          · have two := old.two_le
-            rcases c.inv.led_cur c.actor c.pre _ c.pre_now old with lt | ⟨same, _⟩ <;>
-              have := c.term_le <;> omega
-          · rcases (c.electStep step).2.2.2.2.2.1 with elected | elected <;>
-              simp [role] at elected
-  · obtain ⟨⟨term, backed⟩, strong⟩ := c.inv.commit_backed node state old
+          split_rel led_after := (rcases c.led_after led with old | ⟨_, _, step⟩) with
+          | inl =>
+            have two := old.two_le
+            split_rel led_cur :=
+                (rcases c.inv.led_cur c.actor c.pre _ c.pre_now old with lt | ⟨same, _⟩) with
+            | inl => have := c.term_le; omega
+            | inr => have := c.term_le; omega
+          | inr =>
+            split_rel electStep := (rcases (c.electStep step).2.2.2.2.2.1 with elected | elected) with
+            | inl => simp [role] at elected
+            | inr => simp [role] at elected
+  | inr =>
+    obtain ⟨⟨term, backed⟩, strong⟩ := c.inv.commit_backed node state old
     exact ⟨⟨term, backed.mono c.suffix_tail⟩,
       fun role led => (strong role (c.led_other different led)).mono c.suffix_tail⟩
 
