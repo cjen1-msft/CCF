@@ -1,0 +1,5 @@
+theorem	axioms
+Consensus.Properties.committed_logs_prefix	Classical.choice Quot.sound propext
+Consensus.Properties.election_safety	Classical.choice Quot.sound propext
+Consensus.Properties.single_node_committed_log_monotonic	Classical.choice Quot.sound propext
+Consensus.Properties.committed_frontier_is_signature	Classical.choice Quot.sound propext
