@@ -3098,8 +3098,8 @@ private theorem Keeps.nominateSuccessor (state : NodeState)
   unfold Model.Node.nominateSuccessor
   refine Keeps.seq' fun _ => ?_
   split_rel successor := (split) with
-  | pos => exact Keeps.seq' fun _ => Keeps.pure' rfl
-  | neg => exact Keeps.pure' rfl
+  | some => exact Keeps.seq' fun _ => Keeps.pure' rfl
+  | none => exact Keeps.pure' rfl
 
 private theorem CommitFrontier.act {state : NodeState}
     (frontier : CommitFrontier state) (input : Input)
