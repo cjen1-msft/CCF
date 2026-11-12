@@ -4228,8 +4228,9 @@ private theorem initAsBackup_summary (before : NodeState) (entries : List Entry)
   refine Sends.bind' Sends.guard' fun _ sent ⟨⟨fresh, signed⟩, empty⟩ => Sends.pure' ?_
   subst empty
   obtain ⟨none, zero, emptyLog, noCommit⟩ := fresh
-  rcases Nat.eq_zero_or_pos entries.length with length | positive
-  · have nil : entries = [] := List.eq_nil_of_length_eq_zero length
+  split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos entries.length with length | positive) with
+  | inl =>
+    have nil : entries = [] := List.eq_nil_of_length_eq_zero length
     subst nil
     refine ⟨
       by simp [becomeAwareOfNewTerm, zero, termAt, entryAt?],
@@ -4242,15 +4243,17 @@ private theorem initAsBackup_summary (before : NodeState) (entries : List Entry)
         (by simp [becomeAwareOfNewTerm, noCommit]),
       by simp
     ⟩
-    rcases active with engaged | bumping
-    · exact (engaged.2 ⟨by simp [becomeAwareOfNewTerm], by simp [becomeAwareOfNewTerm,
+    split_rel active := (rcases active with engaged | bumping) with
+    | inl => exact (engaged.2 ⟨by simp [becomeAwareOfNewTerm], by simp [becomeAwareOfNewTerm,
         termAt, entryAt?], by simp [becomeAwareOfNewTerm]⟩).elim
-    · exact no_bumping_sends bumping
-  · have signature : isSignatureAt entries entries.length = true := by
-      rcases signed with nil | signature
-      · subst nil
+    | inr => exact no_bumping_sends bumping
+  | inr =>
+    have signature : isSignatureAt entries entries.length = true := by
+      split_rel signed := (rcases signed with nil | signature) with
+      | inl =>
+        subst nil
         simp at positive
-      · exact signature
+      | inr => exact signature
     refine ⟨by simp [becomeAwareOfNewTerm, zero], fun same voted eq => ?_,
       fun _ => Or.inr (Or.inr (Or.inr ⟨entries, rfl, positive, signature,
         by simp [becomeAwareOfNewTerm]⟩)),
@@ -4259,9 +4262,9 @@ private theorem initAsBackup_summary (before : NodeState) (entries : List Entry)
       Kind.install entries rfl positive signature ⟨none, zero, emptyLog, noCommit⟩
         (by simp [becomeAwareOfNewTerm]) (by simp [becomeAwareOfNewTerm])
         (by simp [becomeAwareOfNewTerm]) (by simp [becomeAwareOfNewTerm]), by simp⟩
-    by_cases termZero : termAt entries entries.length = 0
-    · simpa [becomeAwareOfNewTerm, zero, termZero] using eq
-    · simp [becomeAwareOfNewTerm, zero, termZero] at same
+    split_rel termZero := (by_cases termZero : termAt entries entries.length = 0) with
+    | pos => simpa [becomeAwareOfNewTerm, zero, termZero] using eq
+    | neg => simp [becomeAwareOfNewTerm, zero, termZero] at same
 
 private theorem elect_result {before candidate after : NodeState}
     {sent : List Model.Envelope}
