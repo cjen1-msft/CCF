@@ -5855,15 +5855,22 @@ private theorem electStep {node : NodeID} {term commit : Nat} {log : List Entry}
       /\ 3 <= term := by
   obtain ⟨candidate, leader, candidateMem, leaderMem, logEq, commitEq, _, termCase, leaderTerm,
     leaderRole, winning, three, _⟩ := step
-  rcases c.now_after leaderMem with ⟨rfl, rfl⟩ | ⟨different, old⟩
-  · have := c.now_pre candidateMem
+  split_rel now_after :=
+      (rcases c.now_after leaderMem with ⟨nodeEq, stateEq⟩ | ⟨different, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    have := c.now_pre candidateMem
     subst this
     exact ⟨rfl, logEq, commitEq, termCase, leaderTerm, leaderRole, winning, three⟩
-  · have := now_unique c.prior old candidateMem
+  | inr =>
+    have := now_unique c.prior old candidateMem
     subst this
-    rcases termCase with lt | ⟨_, role⟩
-    · exact absurd leaderTerm (Nat.ne_of_lt lt)
-    · rcases leaderRole with role' | role' <;> rw [role'] at role <;> cases role
+    split_rel termCase := (rcases termCase with lt | ⟨_, role⟩) with
+    | inl => exact absurd leaderTerm (Nat.ne_of_lt lt)
+    | inr =>
+      split_rel leaderRole := (rcases leaderRole with role' | role') with
+      | inl => rw [role'] at role <;> cases role
+      | inr => rw [role'] at role <;> cases role
 
 private theorem led_after {node : NodeID} {term : Nat}
     (led : Led (after :: before :: rest) node term)
