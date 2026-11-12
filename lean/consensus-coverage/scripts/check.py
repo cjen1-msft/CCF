@@ -90,15 +90,39 @@ def read_tsv(path: Path):
     return [dict(zip(head, line.split("\t"))) for line in lines[1:] if line]
 
 
-def build(ws: Path) -> list[str]:
+MESSAGE = re.compile(r"^(error|warning|info): (/\S+\.lean:\d+:\d+: .*)$")
+OTHER = re.compile(r"^(error|warning|info|trace):|^\S*\s*\[\d+/\d+\]|^Build |^Some required")
+
+
+def messages(text: str) -> list[str]:
+    """The Lean messages in lake's output, each with its continuation lines (goals, ...)."""
+    found, current = [], None
+    for line in text.splitlines():
+        m = MESSAGE.match(line)
+        if m:
+            current = [f"{m[1]}: {m[2].replace(str(ROOT) + '/', '')}"]
+            found.append(current)
+        elif OTHER.match(line):
+            current = None
+        elif current is not None:
+            current.append(line)
+    # `-Dtrace.Kernel=true` reports every declaration: not useful here
+    return ["\n".join(block) for block in found if "[Kernel]" not in block[0]]
+
+
+def build(ws: Path) -> tuple[bool, list[str]]:
+    """Build; return success and the Lean messages (errors, and infos such as `trace_state`)."""
     env = dict(os.environ, LEAN_NUM_THREADS=str(threads()))
+    found = []
     for target in [["-d", str(ws / "consensus"), "build", "Consensus"],
                    ["-d", str(ws / "relevance"), "build", "Relevance"]]:
         out = run(["nice", "lake", *target], env=env)
+        found += messages(out.stdout)
         if out.returncode != 0:
-            errors = [l for l in out.stdout.splitlines() if "error" in l.lower()]
-            return errors[:40] or out.stdout.splitlines()[-40:]
-    return []
+            if not found:
+                found = out.stdout.splitlines()[-40:]
+            return False, found
+    return True, found
 
 
 def facts(ws: Path, mode: str, out: Path, module="", first="", last="") -> str:
@@ -207,10 +231,13 @@ def main() -> None:
     out = ws / "check" / mode
     failures = []
     print(f"== Build (workspace {ws})")
-    errors = build(ws)
-    if errors:
-        print("\n".join(errors))
-        print("RESULT: FAIL (the build failed; fix the errors above, or restore the theorem)")
+    ok, found = build(ws)
+    text = "\n".join(found).splitlines()
+    if len(text) > 200:
+        text = text[:200] + [f"... ({len(text) - 200} more lines)"]
+    print("\n".join(text) or "", end="\n" if text else "")
+    if not ok:
+        print("RESULT: FAIL (the build failed; fix the first error above, or restore the theorem)")
         sys.exit(1)
     print("ok")
     if mode == "baseline":

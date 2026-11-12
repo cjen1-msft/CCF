@@ -1175,7 +1175,19 @@ private theorem mem_of_nodeState {concrete : Model.State} {node : NodeID}
 private theorem observeTerm_log (state : NodeState) (message : Model.Node.Message)
     : (Model.Node.observeTerm state message).log = state.log := by
   unfold Model.Node.observeTerm Model.Node.updateTerm
-  split <;> (try split) <;> (try split) <;> rfl
+  split_rel message := (split) with
+  | proposeRequestVoteRequest => rfl
+  | appendEntriesResponse =>
+    split_rel primary := (split) with
+    | pos =>
+      split_rel newer := (split) with
+      | pos => rfl
+      | neg => rfl
+    | neg => rfl
+  | other =>
+    split_rel newer := (split) with
+    | pos => rfl
+    | neg => rfl
 
 private theorem observeTerm_commitIndex (state : NodeState) (message : Model.Node.Message)
     : (Model.Node.observeTerm state message).commitIndex = state.commitIndex := by
@@ -1245,9 +1257,10 @@ private theorem entryAt_of_prefix
   rcases isPrefix with ⟨suffix, rightEq⟩
   rw [← rightEq]
   unfold entryAt? at found ⊢
-  by_cases zero : index = 0
-  · simp [zero] at found
-  · simp only [zero, ↓reduceIte] at found ⊢
+  split_rel zero := (by_cases zero : index = 0) with
+  | pos => simp [zero] at found
+  | neg =>
+    simp only [zero, ↓reduceIte] at found ⊢
     have within : index - 1 < left.length := by
       rw [List.getElem?_eq_some_iff] at found
       exact found.1
@@ -1805,9 +1818,10 @@ private theorem bind' {Q : α -> Prop} {P : β -> Prop}
     : Keeps P (m >>= f) := by
   intro outputs result after ran
   simp only [StateT.run_bind] at ran
-  cases ranFirst : m.run outputs with
+  split_rel ranFirst := (cases ranFirst : m.run outputs) with
   | none => simp [ranFirst] at ran
-  | some pair =>
+  | some =>
+      rename_i pair
       obtain ⟨value, middle⟩ := pair
       simp only [ranFirst] at ran
       exact rest value (first _ _ _ ranFirst) _ _ _ ran
@@ -4690,32 +4704,48 @@ private theorem appendBatch_summary (self : NodeID) (state : NodeState)
 private theorem summary (self : NodeID) (before : NodeState) (event : Event)
     : Sends (fun after sent => Summary self before event after sent)
         (Model.Node.step (Capabilities.record self) self before event) := by
-  cases event with
-  | internal input =>
-      cases input with
-      | append contents => exact appendBatch_summary self before contents
-      | sendEntries destination endIndex =>
+  split_rel event := (cases event) with
+  | internal =>
+      rename_i input
+      split_rel input := (cases input) with
+      | append =>
+          rename_i contents
+          exact appendBatch_summary self before contents
+      | sendEntries =>
+          rename_i destination endIndex
           exact sendEntries_summary self before destination endIndex
-      | timeout kind =>
-          cases kind with
+      | timeout =>
+          rename_i kind
+          split_rel kind := (cases kind) with
           | election => exact startElection_summary self before
           | checkQuorum => exact checkQuorum_summary self before _
       | nominateSuccessor => exact nominate_summary self before
-      | initAsBackup entries => exact initAsBackup_summary self before entries
-  | receive source message =>
-      cases message with
-      | appendEntriesRequest request =>
+      | initAsBackup =>
+          rename_i entries
+          exact initAsBackup_summary self before entries
+  | receive =>
+      rename_i source message
+      split_rel message := (cases message) with
+      | appendEntriesRequest =>
+          rename_i request
           exact appendEntriesRequest_summary self before source request
-      | appendEntriesResponse response =>
+      | appendEntriesResponse =>
+          rename_i response
           exact appendEntriesResponse_summary self before source response
-      | requestVoteRequest request => exact voteRequest_summary self before source request
-      | requestVoteResponse response =>
+      | requestVoteRequest =>
+          rename_i request
+          exact voteRequest_summary self before source request
+      | requestVoteResponse =>
+          rename_i response
           exact voteResponse_summary self before source response
-      | requestPreVoteRequest request =>
+      | requestPreVoteRequest =>
+          rename_i request
           exact preVoteRequest_summary self before source request
-      | requestPreVoteResponse response =>
+      | requestPreVoteResponse =>
+          rename_i response
           exact preVoteResponse_summary self before source response
-      | proposeRequestVoteRequest term =>
+      | proposeRequestVoteRequest =>
+          rename_i term
           exact proposeVote_summary self before source term
 
 private theorem LocalTransition.summary {before after : Model.State}
@@ -5785,7 +5815,8 @@ private theorem accept_shape {source : NodeID} {request : AppendEntriesRequest}
     fun _ positive left right same =>
       log_matching c.anchors c.monos c.pre_seen senderSeen positive left right same
   have prevAgree : c.pre.log.take request.prevLogIndex = sender.log.take request.prevLogIndex := by
-    split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos request.prevLogIndex with zero | positive) with
+    split_rel eq_zero_or_pos :=
+        (rcases Nat.eq_zero_or_pos request.prevLogIndex with zero | positive) with
     | inl => rw [zero, List.take_zero, List.take_zero]
     | inr => exact match' _ positive followerBound prevBound (termEq.trans prevTerm)
   have shape := acceptLog_eq followerBound prevBound prevAgree entries match'
@@ -5819,30 +5850,41 @@ private theorem post_log
             /\ CanonNow earlier source sender c.post.currentTerm
             /\ n <= sender.log.length
             /\ c.post.log = sender.log.take n) := by
-  cases Summary.kind c.sum with
-  | same log _ =>
+  split_rel kind := (cases Summary.kind c.sum) with
+  | same =>
+      rename_i log _
       rw [log]
       exact Or.inl (List.prefix_refl _)
-  | append entries sent leader terms advance =>
+  | append =>
+      rename_i entries sent leader terms advance
       obtain ⟨log, term, role⟩ := Advance.facts advance
       refine Or.inr (Or.inl ⟨entries, log, terms, leader, term, ?_⟩)
-      rcases role with role | role <;> rw [role] <;> simp [leader]
-  | ack _ _ _ _ _ _ advance =>
+      split_rel role := (rcases role with role | role) with
+      | inl => rw [role] <;> simp [leader]
+      | inr => rw [role] <;> simp
+  | ack =>
+      rename_i _ _ _ _ _ _ advance
       obtain ⟨log, _, _⟩ := Advance.facts advance
       rw [log]
       exact Or.inl (List.prefix_refl _)
-  | accept source request eq accepted =>
-      obtain ⟨earlier, sender, suffix, canon, _, bound, _, same | ⟨fresh, _⟩, _⟩ :=
-        c.accept_shape eq accepted
-      · rw [same]
+  | accept =>
+      rename_i source request eq accepted
+      split_rel accept_shape :=
+          (obtain ⟨earlier, sender, suffix, canon, _, bound, _, same | ⟨fresh, _⟩, _⟩ :=
+            c.accept_shape eq accepted) with
+      | inl =>
+        rw [same]
         exact Or.inl (List.prefix_refl _)
-      · rw [accepted.1] at canon
+      | inr =>
+        rw [accepted.1] at canon
         exact Or.inr (Or.inr ⟨earlier, source, sender, _, suffix, canon, bound, fresh⟩)
-  | elect wins =>
+  | elect =>
+      rename_i wins
       obtain ⟨_, ⟨_, candidateLog, _⟩, _, log, _⟩ := Wins.facts wins
       rw [log, ← candidateLog]
       exact Or.inl (primaryState_log_prefix _)
-  | install entries initialized positive signature _ log _ term _ =>
+  | install =>
+      rename_i entries initialized positive signature _ log _ term _
       obtain ⟨_, _, ⟨leaderLog, ⟨earlier, suffix, source, sender, canon, senderLog⟩, inLog⟩, _⟩ :=
         c.snap_available initialized positive signature
       refine Or.inr (Or.inr ⟨earlier, source, sender, entries.length, suffix, ?_, ?_, ?_⟩)
@@ -6016,11 +6058,14 @@ private theorem campaign_three {candidate : NodeState}
     : 3 <= candidate.currentTerm
       /\ (c.pre.currentTerm < candidate.currentTerm
           \/ (c.pre.currentTerm = candidate.currentTerm /\ c.pre.role = .candidate)) := by
-  obtain ⟨_, _, _, ⟨active, freshTerm, _⟩ | ⟨preRole, sameTerm, _⟩⟩ := campaign
-  · have := c.pre_two active
+  split_rel campaign :=
+      (obtain ⟨_, _, _, ⟨active, freshTerm, _⟩ | ⟨preRole, sameTerm, _⟩⟩ := campaign) with
+  | inl =>
+    have := c.pre_two active
     exact ⟨Nat.le_trans (Nat.add_le_add_right this 1) (Nat.le_of_eq freshTerm.symm),
       Or.inl (Nat.lt_of_lt_of_le (Nat.lt_add_one _) (Nat.le_of_eq freshTerm.symm))⟩
-  · have := (c.inv.candidate c.actor c.pre c.pre_now preRole).1
+  | inr =>
+    have := (c.inv.candidate c.actor c.pre c.pre_now preRole).1
     exact ⟨Nat.le_trans this (Nat.le_of_eq sameTerm.symm), Or.inr ⟨sameTerm.symm, preRole⟩⟩
 
 /-- Winning an election records it in the extended history. -/
@@ -7698,20 +7743,27 @@ private theorem committed_logs_comparable {nodes : List NodeID} {history : Histo
     exact leftNow
   have inv := good _ (List.suffix_refl _) nonempty
   unfold NodeState.committedLog
-  obtain ⟨_, zero | ⟨_, part, committed, _, within⟩⟩ :=
-    (inv.commit_backed left leftState leftNow).1
-  · left
+  split_rel left_backed :=
+      (obtain ⟨_, zero | ⟨_, part, committed, _, within⟩⟩ :=
+        (inv.commit_backed left leftState leftNow).1) with
+  | inl =>
+    left
     rw [zero, List.take_zero]
     exact List.nil_prefix
-  obtain ⟨_, zero | ⟨_, part', committed', _, within'⟩⟩ :=
-    (inv.commit_backed right rightState rightNow).1
-  · right
-    rw [zero, List.take_zero]
-    exact List.nil_prefix
-  rcases committed_comparable inv.completeness (good.everywhere Inv.canon_mono) committed
-      committed' with sub | sub
-  · exact comparable_of_prefix (within.trans sub) within'
-  · exact comparable_of_prefix within (within'.trans sub)
+  | inr =>
+    split_rel right_backed :=
+        (obtain ⟨_, zero | ⟨_, part', committed', _, within'⟩⟩ :=
+          (inv.commit_backed right rightState rightNow).1) with
+    | inl =>
+      right
+      rw [zero, List.take_zero]
+      exact List.nil_prefix
+    | inr =>
+      split_rel committed_comparable :=
+          (rcases committed_comparable inv.completeness (good.everywhere Inv.canon_mono)
+            committed committed' with sub | sub) with
+      | inl => exact comparable_of_prefix (within.trans sub) within'
+      | inr => exact comparable_of_prefix within (within'.trans sub)
 
 end Consensus.Proofs.Safety
 
