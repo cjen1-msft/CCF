@@ -2581,16 +2581,19 @@ private theorem getElem_le_of_lt_length_filter {configurations : List Configurat
             fun configuration => configuration.index <= bound).length)
     : (configurations[i]'(Nat.lt_of_lt_of_le lt (List.length_filter_le _ _))).index
       <= bound := by
-  induction configurations generalizing i with
+  split_rel configurations := (induction configurations generalizing i) with
   | nil => simp at lt
-  | cons head tail ih =>
+  | cons =>
+      rename_i head tail ih
       rw [List.pairwise_cons] at sorted
-      by_cases within : head.index <= bound
-      · rw [List.filter_cons_of_pos (by simpa using within)] at lt
-        rcases i with _ | i
-        · exact within
-        · exact ih sorted.2 (by simpa using lt)
-      · have empty : (tail.filter fun configuration => configuration.index <= bound) = [] := by
+      split_rel within := (by_cases within : head.index <= bound) with
+      | pos =>
+        rw [List.filter_cons_of_pos (by simpa using within)] at lt
+        split_rel i := (rcases i with _ | i) with
+        | inl => exact within
+        | inr => exact ih sorted.2 (by simpa using lt)
+      | neg =>
+        have empty : (tail.filter fun configuration => configuration.index <= bound) = [] := by
           refine List.filter_eq_nil_iff.mpr fun configuration member => ?_
           have := sorted.1 configuration member
           simp
