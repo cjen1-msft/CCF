@@ -4021,9 +4021,9 @@ private theorem quiet_summary {self : NodeID} {before after : NodeState}
     Kind.same log commit,
     sends
   ⟩
-  rcases either with engaged | bumping
-  · exact Or.inl (by simpa only [Engaged, role, term, log] using engaged)
-  · exact active bumping
+  split_rel either := (rcases either with engaged | bumping) with
+  | inl => exact Or.inl (by simpa only [Engaged, role, term, log] using engaged)
+  | inr => exact active bumping
 
 /-- No envelope in an empty send list is a term-bumping message. -/
 private theorem no_bumping_sends {P : Prop}
