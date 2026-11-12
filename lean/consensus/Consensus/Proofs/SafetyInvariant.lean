@@ -4328,13 +4328,14 @@ private theorem observe_response (before : NodeState) (response : AppendEntriesR
             = bumpedState before response.term)
       \/ ((before.role = .primary -> response.term <= before.currentTerm)
           /\ observeTerm before (.appendEntriesResponse response) = before) := by
-  by_cases leader : before.role = .primary
-  · by_cases bump : before.currentTerm < response.term
-    · exact Or.inl ⟨leader, bump, by
+  split_rel leader := (by_cases leader : before.role = .primary) with
+  | pos =>
+    split_rel bump := (by_cases bump : before.currentTerm < response.term) with
+    | pos => exact Or.inl ⟨leader, bump, by
         simp [observeTerm, updateTerm, becomeAwareOfNewTerm, leader, bump, bumpedState,
           Nat.ne_of_lt bump]⟩
-    · exact Or.inr ⟨fun _ => Nat.not_lt.mp bump, by simp [observeTerm, updateTerm, bump]⟩
-  · exact Or.inr ⟨fun yes => (leader yes).elim, by simp [observeTerm, leader]⟩
+    | neg => exact Or.inr ⟨fun _ => Nat.not_lt.mp bump, by simp [observeTerm, updateTerm, bump]⟩
+  | neg => exact Or.inr ⟨fun yes => (leader yes).elim, by simp [observeTerm, leader]⟩
 
 private theorem appendEntriesResponse_summary (before : NodeState) (source : NodeID)
     (response : AppendEntriesResponse)
