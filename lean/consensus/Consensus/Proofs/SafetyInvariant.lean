@@ -1968,9 +1968,9 @@ private theorem ite' {P : α -> List (Envelope Node Message) -> Prop} {c : Prop}
     [Decidable c] {m n : Effect Node Message Notification α} (yes : c -> Sends P m)
     (no : Not c -> Sends P n)
     : Sends P (if c then m else n) := by
-  split
-  · exact yes ‹_›
-  · exact no ‹_›
+  split_rel condition := (split) with
+  | pos => exact yes ‹_›
+  | neg => exact no ‹_›
 
 private theorem guard' {c : Prop} [Decidable c]
     : Sends (Node := Node) (Message := Message) (Notification := Notification)
