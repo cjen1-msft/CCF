@@ -1292,10 +1292,11 @@ private theorem isSignatureAtTrue
     : Exists
         fun entry =>
           entryAt? log index = some entry /\ entry.content = .signature := by
-  cases found : entryAt? log index with
+  split_rel found := (cases found : entryAt? log index) with
   | none =>
       simp [isSignatureAt, found] at signature
-  | some entry =>
+  | some =>
+      rename_i entry
       refine ⟨entry, rfl, ?_⟩
       simpa [isSignatureAt, found] using signature
 
