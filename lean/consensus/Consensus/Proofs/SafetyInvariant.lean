@@ -3383,10 +3383,11 @@ private theorem Extends.becomePrimary (state : NodeState)
               else state.log).length
           matchIndex := fun _ => 0
       } := by
-    split
-    · exact Extends.of_prefix (by unfold lastCommittableIndex; exact Nat.le_max_left _ _)
+    split_rel committed := (split) with
+    | pos =>
+      exact Extends.of_prefix (by unfold lastCommittableIndex; exact Nat.le_max_left _ _)
         (List.prefix_refl _) Nat.le.refl
-    · exact Extends.of_log rfl rfl
+    | neg => exact Extends.of_log rfl rfl
   exact Keeps.bind' (Extends.advanced caps self _) fun _ kept =>
     Keeps.seq' fun _ => Keeps.pure' (promoted.trans kept)
 
