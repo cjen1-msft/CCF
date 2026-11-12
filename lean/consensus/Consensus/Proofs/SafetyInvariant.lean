@@ -7567,23 +7567,32 @@ private theorem persist_pre {part : List Entry}
 
 private theorem persist : Persist (after :: before :: rest) := by
   intro node state earlier index now seen signature
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨different, old⟩
-  · rcases c.seen_after seen with oldSeen | ⟨_, rfl⟩
-    · rcases c.inv.persist c.actor c.pre earlier index c.pre_now oldSeen signature with
-        inPre | ⟨later, log, lt, le, canon, missing⟩
-      · have termEq : termAt (earlier.log.take index) (earlier.log.take index).length
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨different, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    split_rel seen_after := (rcases c.seen_after seen with oldSeen | ⟨same, stateEq⟩) with
+    | inl =>
+      split_rel persist :=
+          (rcases c.inv.persist c.actor c.pre earlier index c.pre_now oldSeen signature with
+            inPre | ⟨later, log, lt, le, canon, missing⟩) with
+      | inl =>
+        have termEq : termAt (earlier.log.take index) (earlier.log.take index).length
             = termAt earlier.log index := by
           rw [List.length_take, Nat.min_eq_left (signature_bound signature),
             termAt_take Nat.le.refl]
         rw [← termEq]
         exact c.persist_pre (take_signature signature) inPre
-      · exact Or.inr ⟨later, log, lt, Nat.le_trans le c.term_le, canon.mono c.suffix_tail, missing⟩
-    · exact Or.inl (List.take_prefix _ _)
-  · rcases c.seen_after seen with oldSeen | ⟨same, _⟩
-    · rcases c.inv.persist node state earlier index old oldSeen signature with sub | bad
-      · exact Or.inl sub
-      · exact Or.inr (bad.mono c.suffix_tail)
-    · exact (different same).elim
+      | inr => exact Or.inr ⟨later, log, lt, Nat.le_trans le c.term_le, canon.mono c.suffix_tail, missing⟩
+    | inr =>
+      subst stateEq
+      exact Or.inl (List.take_prefix _ _)
+  | inr =>
+    split_rel seen_after := (rcases c.seen_after seen with oldSeen | ⟨same, _⟩) with
+    | inl =>
+      split_rel persist := (rcases c.inv.persist node state earlier index old oldSeen signature with sub | bad) with
+      | inl => exact Or.inl sub
+      | inr => exact Or.inr (bad.mono c.suffix_tail)
+    | inr => exact (different same).elim
 
 private theorem match_ack : MatchAck (after :: before :: rest) := by
   intro node state peer now leader different positive
