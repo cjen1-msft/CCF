@@ -6831,12 +6831,15 @@ private theorem new_old_unique {node other : NodeID} {term commit : Nat}
 
 private theorem election_safety : ElectionSafety (after :: before :: rest) := by
   intro node other term left right
-  rcases c.led_after left with left | ⟨_, _, leftStep⟩ <;>
-    rcases c.led_after right with right | ⟨_, _, rightStep⟩
-  · exact c.inv.election_safety node other term left right
-  · exact (c.new_old_unique rightStep left).symm
-  · exact c.new_old_unique leftStep right
-  · exact (c.electStep leftStep).1.trans (c.electStep rightStep).1.symm
+  split_rel led_after := (rcases c.led_after left with left | ⟨_, _, leftStep⟩) with
+  | inl =>
+    split_rel led_after := (rcases c.led_after right with right | ⟨_, _, rightStep⟩) with
+    | inl => exact c.inv.election_safety node other term left right
+    | inr => exact (c.new_old_unique rightStep left).symm
+  | inr =>
+    split_rel led_after := (rcases c.led_after right with right | ⟨_, _, rightStep⟩) with
+    | inl => exact c.new_old_unique leftStep right
+    | inr => exact (c.electStep leftStep).1.trans (c.electStep rightStep).1.symm
 
 /-- A leader continuing in its term keeps its log. -/
 private theorem keep_log (sameTerm : c.post.currentTerm = c.pre.currentTerm)
