@@ -2685,21 +2685,23 @@ private theorem activeConfigurations_overlap {left right : List Entry}
   have leftBound := length_filter_le common leftCommit
   have rightBound := length_filter_le common rightCommit
   have last : common.length - 1 < common.length := Nat.sub_one_lt (Nat.ne_of_gt commonPos)
-  rcases Nat.le_total leftCommit rightCommit with ordered | ordered
-  · have mono := length_filter_index_mono common ordered
+  split_rel le_total := (rcases Nat.le_total leftCommit rightCommit with ordered | ordered) with
+  | inl =>
+    have mono := length_filter_index_mono common ordered
     have chosenLt := Nat.lt_of_le_of_lt (Nat.sub_le_sub_right rightBound 1) last
     refine ⟨common[_ - 1]'chosenLt, inDrop chosenLt leftEq (Nat.sub_le_sub_right mono 1),
       inDrop chosenLt rightEq Nat.le.refl, ?_⟩
-    rcases chosen_bound sorted rightCommit commonPos with within | first
-    · exact Or.inl (Nat.le_trans within (Nat.le_max_right _ _))
-    · exact Or.inr first
-  · have mono := length_filter_index_mono common ordered
+    split_rel chosen_bound := (rcases chosen_bound sorted rightCommit commonPos with within | first) with
+    | inl => exact Or.inl (Nat.le_trans within (Nat.le_max_right _ _))
+    | inr => exact Or.inr first
+  | inr =>
+    have mono := length_filter_index_mono common ordered
     have chosenLt := Nat.lt_of_le_of_lt (Nat.sub_le_sub_right leftBound 1) last
     refine ⟨common[_ - 1]'chosenLt, inDrop chosenLt leftEq Nat.le.refl,
       inDrop chosenLt rightEq (Nat.sub_le_sub_right mono 1), ?_⟩
-    rcases chosen_bound sorted leftCommit commonPos with within | first
-    · exact Or.inl (Nat.le_trans within (Nat.le_max_left _ _))
-    · exact Or.inr first
+    split_rel chosen_bound := (rcases chosen_bound sorted leftCommit commonPos with within | first) with
+    | inl => exact Or.inl (Nat.le_trans within (Nat.le_max_left _ _))
+    | inr => exact Or.inr first
 
 /-- Two strict majorities of one configuration share a member. -/
 private theorem majorities_intersect {configuration : Configuration}
