@@ -5334,9 +5334,11 @@ private theorem Led.two_le {history : History} {node : NodeID} {term : Nat}
 private theorem Led.elected {history : History} {node : NodeID} {term : Nat}
     (led : Led history node term) (above : 2 < term)
     : exists log commit, Elected history node term log commit := by
-  rcases led with ⟨rfl, -⟩ | elected
-  · exact absurd above (by decide)
-  · exact elected
+  split_rel led := (rcases led with ⟨same, -⟩ | elected) with
+  | inl =>
+    subst same
+    exact absurd above (by decide)
+  | inr => exact elected
 
 /-- Logs of leaders of one term form a chain. -/
 private theorem canon_chain {history : History} (mono : Everywhere CanonMono history)
