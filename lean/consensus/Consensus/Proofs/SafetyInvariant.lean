@@ -7022,33 +7022,41 @@ private theorem new_in_elected {leader : NodeID} {state : NodeState}
         intro later' log' above below canon
         obtain ⟨earlier, earlierSuffix, node', state', ⟨now', term', role', led'⟩, rfl⟩ :=
           canon
-        rcases Nat.lt_or_eq_of_le below with lower | rfl
-        · obtain ⟨log'', commit'', elected''⟩ := led'.elected (Nat.lt_of_le_of_lt two above)
+        split_rel lt_or_eq_of_le := (rcases Nat.lt_or_eq_of_le below with lower | same) with
+        | inl =>
+          obtain ⟨log'', commit'', elected''⟩ := led'.elected (Nat.lt_of_le_of_lt two above)
           have inLog := ih later' lower node' log'' commit''
             ((elected''.mono earlierSuffix).mono electInner) above
           obtain ⟨_, _, rfl⟩ := now'.nonempty
           have clause := c.monos _ (earlierSuffix.trans innerH) (List.cons_ne_nil _ _)
           exact (prefix_committable inLog partSignature).trans
             ((clause node' state' now' role' (term' ▸ led')).2 log'' commit'' (term' ▸ elected''))
-        · exfalso
+        | inr =>
+          subst same
+          exfalso
           have ledInner : Led (b :: r) node' later' := led'.mono earlierSuffix
           have := safety node' node later' (ledInner.mono electInner)
             (Or.inr ⟨log, commit, a, b, r, electSuffix, elect⟩)
           subst this
-          rcases c.all Inv.led_cur _ innerH (List.cons_ne_nil _ _) node' candidate later'
-              candidateMem ledInner with lt' | ⟨eq, notCandidate⟩
-          · rcases termCase with lt'' | ⟨eq'', _⟩
-            · exact Nat.lt_irrefl _ (Nat.lt_trans lt' lt'')
-            · exact Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt' (Nat.le_of_eq eq''))
-          · rcases termCase with lt'' | ⟨_, isCandidate⟩
-            · exact Nat.lt_irrefl _ (Nat.lt_of_le_of_lt (Nat.le_of_eq eq) lt'')
-            · exact notCandidate isCandidate
+          split_rel led_cur :=
+              (rcases c.all Inv.led_cur _ innerH (List.cons_ne_nil _ _) node' candidate later'
+                candidateMem ledInner with lt' | ⟨eq, notCandidate⟩) with
+          | inl =>
+            split_rel termCase := (rcases termCase with lt'' | ⟨eq'', _⟩) with
+            | inl => exact Nat.lt_irrefl _ (Nat.lt_trans lt' lt'')
+            | inr => exact Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt' (Nat.le_of_eq eq''))
+          | inr =>
+            split_rel termCase := (rcases termCase with lt'' | ⟨_, isCandidate⟩) with
+            | inl => exact Nat.lt_irrefl _ (Nat.lt_of_le_of_lt (Nat.le_of_eq eq) lt'')
+            | inr => exact notCandidate isCandidate
       have low : commit <= base -> state.log.take base <+: log := by
         intro _
-        rcases backing with zero | ⟨_, part, committed, below, inPart⟩
-        · rw [zero, List.take_zero]
+        split_rel backing := (rcases backing with zero | ⟨_, part, committed, below, inPart⟩) with
+        | inl =>
+          rw [zero, List.take_zero]
           exact List.nil_prefix
-        · exact inPart.trans (c.old_complete committed
+        | inr =>
+          exact inPart.trans (c.old_complete committed
             ⟨a, b, r, electSuffix, elect⟩ (Nat.lt_of_le_of_lt below lt))
       have high
           : base < commit
@@ -7056,38 +7064,49 @@ private theorem new_in_elected {leader : NodeID} {state : NodeState}
                 log.take commit <+: part
                 /\ (state.log.take index <+: part \/ part <+: state.log.take index) := by
         intro above
-        rcases c.elect_backed a b r node later log commit electSuffix elect with
-          zero | ⟨earlier, part, committed, below, inPart⟩
-        · exact (Nat.not_lt_zero base (zero ▸ above)).elim
-        refine ⟨part, inPart, ?_⟩
-        obtain ⟨current', past', leader', state', _, index', suffix', ⟨⟨now', term', role', led'⟩,
-          _⟩, rfl, _⟩ :=
-          committed.shape
-        have canon' : Canon (after :: before :: rest) earlier state'.log :=
-          ⟨_, suffix'.trans electInner, leader', state', ⟨now', term', role', led'⟩, rfl⟩
-        have leaderCanon : Canon (after :: before :: rest) state.currentTerm state.log :=
-          ⟨_, List.suffix_refl _, leader, state, ⟨leaderNow, rfl, leaderRole, leaderLed⟩,
-            rfl⟩
-        rcases Nat.lt_trichotomy earlier state.currentTerm with lower | rfl | higher
-        · obtain ⟨log'', commit'', elected''⟩ := leaderLed.elected
-            (Nat.lt_of_le_of_lt (committed.signature).2.2 lower)
-          have inLog := c.old_complete (committed.mono innerH) elected'' lower
-          have inLeader := (prefix_committable inLog (committed.signature).1).trans
-            ((c.canon_mono leader state leaderNow leaderRole (leaderLed)).2 log''
-              commit'' elected'')
-          exact comparable_of_prefix (List.take_prefix _ _) inLeader
-        · rcases canon_chain canonMonos leaderCanon canon' with sub | sub
-          · exact comparable_of_prefix ((List.take_prefix _ _).trans sub)
-              (List.take_prefix _ _)
-          · exact comparable_of_prefix (List.take_prefix _ _)
-              ((List.take_prefix _ _).trans sub)
-        · have := clean earlier state'.log higher (Nat.le_trans below (Nat.sub_le _ _))
-            ⟨_, suffix', leader', state', ⟨now', term', role', led'⟩, rfl⟩
-          exact comparable_of_prefix this (List.take_prefix _ _)
-      rcases agree_or_contained baseLe indexLe frontier low high with
-        done | ⟨k, agree, baseLe', commitLe⟩
-      · exact done
-      · exact core (List.suffix_refl _) c.termMonos canonMonos c.sortedAll c.rootedAll
+        split_rel elect_backed :=
+            (rcases c.elect_backed a b r node later log commit electSuffix elect with
+              zero | ⟨earlier, part, committed, below, inPart⟩) with
+        | inl => exact (Nat.not_lt_zero base (zero ▸ above)).elim
+        | inr =>
+          refine ⟨part, inPart, ?_⟩
+          obtain ⟨current', past', leader', state', _, index', suffix', ⟨⟨now', term', role', led'⟩,
+            _⟩, rfl, _⟩ :=
+            committed.shape
+          have canon' : Canon (after :: before :: rest) earlier state'.log :=
+            ⟨_, suffix'.trans electInner, leader', state', ⟨now', term', role', led'⟩, rfl⟩
+          have leaderCanon : Canon (after :: before :: rest) state.currentTerm state.log :=
+            ⟨_, List.suffix_refl _, leader, state, ⟨leaderNow, rfl, leaderRole, leaderLed⟩,
+              rfl⟩
+          split_rel lt_trichotomy :=
+              (rcases Nat.lt_trichotomy earlier state.currentTerm with lower | same | higher) with
+          | inl =>
+            obtain ⟨log'', commit'', elected''⟩ := leaderLed.elected
+              (Nat.lt_of_le_of_lt (committed.signature).2.2 lower)
+            have inLog := c.old_complete (committed.mono innerH) elected'' lower
+            have inLeader := (prefix_committable inLog (committed.signature).1).trans
+              ((c.canon_mono leader state leaderNow leaderRole (leaderLed)).2 log''
+                commit'' elected'')
+            exact comparable_of_prefix (List.take_prefix _ _) inLeader
+          | inr_inl =>
+            subst same
+            split_rel canon_chain := (rcases canon_chain canonMonos leaderCanon canon' with sub | sub) with
+            | inl =>
+              exact comparable_of_prefix ((List.take_prefix _ _).trans sub)
+                (List.take_prefix _ _)
+            | inr =>
+              exact comparable_of_prefix (List.take_prefix _ _)
+                ((List.take_prefix _ _).trans sub)
+          | inr_inr =>
+            have := clean earlier state'.log higher (Nat.le_trans below (Nat.sub_le _ _))
+              ⟨_, suffix', leader', state', ⟨now', term', role', led'⟩, rfl⟩
+            exact comparable_of_prefix this (List.take_prefix _ _)
+      split_rel agree_or_contained :=
+          (rcases agree_or_contained baseLe indexLe frontier low high with
+            done | ⟨k, agree, baseLe', commitLe⟩) with
+      | inl => exact done
+      | inr =>
+        exact core (List.suffix_refl _) c.termMonos canonMonos c.sortedAll c.rootedAll
           (List.suffix_refl _)
           ⟨⟨leaderNow, rfl, leaderRole, leaderLed⟩, baseLe, indexLe, signature, ‹_›⟩
           electSuffix electInner elect ((c.all Inv.persist).suffix innerH)
