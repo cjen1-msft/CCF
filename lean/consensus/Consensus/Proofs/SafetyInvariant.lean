@@ -1720,10 +1720,11 @@ private theorem handleAppendEntiresFromPrimary_eq (self : NodeID) (state : NodeS
     congr 2
     exact Nat.le_antisymm (Nat.max_le.mpr ⟨upper, Nat.le_max_right _ _⟩)
       (Nat.max_le.mpr ⟨Nat.le_trans lower (Nat.le_max_left _ _), Nat.le_max_right _ _⟩)
-  · rcases roleCase' with same | none
-    · rw [same]
+  · split_rel roleCase' := (rcases roleCase' with same | none) with
+    | inl =>
+      rw [same]
       exact roleCase
-    · exact Or.inr none
+    | inr => exact Or.inr none
 
 /-- A rollback point lies after the request's previous index. -/
 private theorem firstTermConflictIndex_ge {state : NodeState}
