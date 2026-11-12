@@ -3097,9 +3097,9 @@ private theorem Keeps.nominateSuccessor (state : NodeState)
         (Model.Node.nominateSuccessor caps state self) := by
   unfold Model.Node.nominateSuccessor
   refine Keeps.seq' fun _ => ?_
-  split
-  · exact Keeps.seq' fun _ => Keeps.pure' rfl
-  · exact Keeps.pure' rfl
+  split_rel successor := (split) with
+  | pos => exact Keeps.seq' fun _ => Keeps.pure' rfl
+  | neg => exact Keeps.pure' rfl
 
 private theorem CommitFrontier.act {state : NodeState}
     (frontier : CommitFrontier state) (input : Input)
