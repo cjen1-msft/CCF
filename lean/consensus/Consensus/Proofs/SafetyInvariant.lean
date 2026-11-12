@@ -2914,10 +2914,13 @@ private theorem CommitFrontier.advance {state : NodeState}
   refine ⟨Nat.max_le.mpr ⟨extends_.1, maxCommittableIndexUpTo_le_length log bound⟩,
     fun positive => ?_⟩
   simp only at positive ⊢
-  rcases Nat.le_total state.commitIndex (maxCommittableIndexUpTo log bound) with le | le
-  · rw [Nat.max_eq_right le] at positive ⊢
+  split_rel le_total :=
+      (rcases Nat.le_total state.commitIndex (maxCommittableIndexUpTo log bound) with le | le) with
+  | inl =>
+    rw [Nat.max_eq_right le] at positive ⊢
     exact maxCommittableIndexUpToPositiveIsSignature positive
-  · rw [Nat.max_eq_left le] at positive ⊢
+  | inr =>
+    rw [Nat.max_eq_left le] at positive ⊢
     exact extends_.2 positive
 
 private theorem foldl_select_max (P : Nat -> Prop) [DecidablePred P] (values : List Nat)
