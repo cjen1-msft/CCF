@@ -2205,9 +2205,9 @@ private theorem LocalTransition.mem_network {before after : Model.State}
     (member : envelope ∈ after.network)
     : envelope ∈ before.network \/ envelope ∈ transition.outputs.outgoing := by
   rw [transition.networkEq] at member
-  rcases List.mem_append.mp member with old | new
-  · exact Or.inl (transition.pendingSub _ old)
-  · exact Or.inr new
+  split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
+  | inl => exact Or.inl (transition.pendingSub _ old)
+  | inr => exact Or.inr new
 
 /-- Two entries of one reachable state for the same node agree. -/
 private theorem state_unique {state : Model.State}
