@@ -4955,9 +4955,11 @@ private theorem Seen.cons {current : Model.State} {rest : History}
     {node : NodeID} {state : NodeState} (seen : Seen (current :: rest) node state)
     : (node, state) ∈ current.nodes \/ Seen rest node state := by
   obtain ⟨state', member, mem⟩ := seen
-  rcases List.mem_cons.mp member with rfl | inner
-  · exact Or.inl mem
-  · exact Or.inr ⟨state', inner, mem⟩
+  split_rel mem_cons := (rcases List.mem_cons.mp member with same | inner) with
+  | inl =>
+    subst same
+    exact Or.inl mem
+  | inr => exact Or.inr ⟨state', inner, mem⟩
 
 /-- Two suffixes of one list are comparable. -/
 private theorem suffix_comparable {α : Type} {first second whole : List α}
