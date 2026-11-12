@@ -4007,10 +4007,17 @@ private theorem becomeCandidate_result (state : NodeState)
 private theorem canStartElection_engaged {state : NodeState} {self : NodeID}
     (can : canStartElection state self)
     : Engaged state := by
-  refine ⟨by rcases can.1 with eq | eq | eq <;> rw [eq] <;> simp, fun ⟨_, _, empty⟩ => ?_⟩
-  rcases can.2.1 with member | member <;>
+  refine ⟨by
+    split_rel can := (rcases can.1 with eq | eq | eq) with
+    | inl => rw [eq] <;> simp
+    | inr_inl => rw [eq] <;> simp
+    | inr_inr => rw [eq] <;> simp, fun ⟨_, _, empty⟩ => ?_⟩
+  split_rel can := (rcases can.2.1 with member | member) with
+  | inl =>
     simp [empty, NodeState.signedActiveConfigurations, NodeState.activeConfigurations,
-      activeConfigurations, configurationHistory, configurationMembers,
+      activeConfigurations, configurationHistory, configurationMembers] at member
+  | inr =>
+    simp [empty, configurationHistory, configurationMembers,
       NodeState.retirementCompletedNodes, NodeState.committedLog] at member
 
 private theorem fresh_campaign {self : NodeID} {before state : NodeState}
