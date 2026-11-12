@@ -4321,12 +4321,19 @@ private theorem preVoteResponse_summary (before : NodeState) (source : NodeID)
     (fun _ =>
       Sends.pure' (quiet_summary rfl rfl rfl rfl rfl rfl rfl no_bumping_sends (by simp)))
     fun _ => ?_
-  rcases observe_bumping before (message := .requestPreVoteResponse response) trivial
-    with ⟨bump, eq⟩ | ⟨le, eq⟩ <;> rw [eq] <;> simp only [handleRequestPreVoteResponse]
-  · refine Sends.ite' (fun won => absurd won.1 (by simp [bumpedState])) fun _ =>
+  split_rel observe_bumping :=
+      (rcases observe_bumping before (message := .requestPreVoteResponse response) trivial
+        with ⟨bump, eq⟩ | ⟨le, eq⟩) with
+  | inl =>
+    rw [eq]
+    simp only [handleRequestPreVoteResponse]
+    refine Sends.ite' (fun won => absurd won.1 (by simp [bumpedState])) fun _ =>
       Sends.pure' (bumped_summary bump (by simp [bumpedState]) (by simp [bumpedState])
         ⟨source, _, rfl, trivial, Nat.le.refl⟩ (Kind.same rfl rfl) (by simp))
-  · refine Sends.ite' (fun won => ?_) fun _ =>
+  | inr =>
+    rw [eq]
+    simp only [handleRequestPreVoteResponse]
+    refine Sends.ite' (fun won => ?_) fun _ =>
       Sends.pure' (quiet_summary rfl rfl rfl rfl rfl rfl rfl
         no_bumping_sends (by simp))
     have engaged : Engaged before := by simp [Engaged, won.1]
