@@ -5265,14 +5265,20 @@ private theorem termAt_mono {log : List Entry}
     (sorted : log.Pairwise fun first second => first.term <= second.term) {i j : Nat}
     (le : i <= j) (bound : j <= log.length)
     : termAt log i <= termAt log j := by
-  rcases Nat.eq_zero_or_pos i with rfl | positive
-  · rw [termAt_zero]
+  split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos i with zero | positive) with
+  | inl =>
+    subst zero
+    rw [termAt_zero]
     exact Nat.zero_le _
-  rw [termAt_eq positive (Nat.le_trans le bound), termAt_eq (Nat.lt_of_lt_of_le positive le) bound]
-  rcases Nat.eq_or_lt_of_le le with rfl | lt
-  · exact Nat.le.refl
-  · exact List.pairwise_iff_getElem.mp sorted _ _ _ _
-      (Nat.sub_lt_sub_right (Nat.succ_le_of_lt positive) lt)
+  | inr =>
+    rw [termAt_eq positive (Nat.le_trans le bound), termAt_eq (Nat.lt_of_lt_of_le positive le) bound]
+    split_rel eq_or_lt_of_le := (rcases Nat.eq_or_lt_of_le le with same | lt) with
+    | inl =>
+      subst same
+      exact Nat.le.refl
+    | inr =>
+      exact List.pairwise_iff_getElem.mp sorted _ _ _ _
+        (Nat.sub_lt_sub_right (Nat.succ_le_of_lt positive) lt)
 
 private theorem termAt_le_of_mem {log : List Entry} {bound : Nat}
     (terms : forall entry, entry ∈ log -> entry.term <= bound) (index : Nat)
