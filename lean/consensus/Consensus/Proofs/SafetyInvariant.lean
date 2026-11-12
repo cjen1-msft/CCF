@@ -2314,8 +2314,8 @@ private theorem acceptLog_eq {follower sender : List Entry}
     rw [List.take_add, ← batchEq]
   unfold acceptLog
   simp only
-  split
-  · -- A conflicting term: the follower keeps only the agreeing prefix.
+  split_rel conflict := (split) with
+  | some => -- A conflicting term: the follower keeps only the agreeing prefix.
     rename_i index conflict
     unfold conflictIndex at conflict
     obtain ⟨pair, found, indexEq⟩ := Option.map_eq_some_iff.mp conflict
@@ -2345,10 +2345,12 @@ private theorem acceptLog_eq {follower sender : List Entry}
       rw [Nat.add_right_comm, Nat.add_sub_cancel]
     simp only [keptEq]
     have keptAgree : follower.take (prev + offset) = sender.take (prev + offset) := by
-      rcases Nat.eq_zero_or_pos offset with zero | positive
-      · simp only [zero, Nat.add_zero]
+      split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos offset with zero | positive) with
+      | inl =>
+        simp only [zero, Nat.add_zero]
         exact prevAgree
-      · have pos : 0 < prev + offset := Nat.lt_of_lt_of_le positive (Nat.le_add_left _ _)
+      | inr =>
+        have pos : 0 < prev + offset := Nat.lt_of_lt_of_le positive (Nat.le_add_left _ _)
         apply aligned _ pos (Nat.le_of_lt offFollower) (Nat.le_of_lt offSender)
         rw [termAt_eq pos (Nat.le_of_lt offFollower), termAt_eq pos (Nat.le_of_lt offSender)]
         have := prefixTerms (offset - 1) (Nat.sub_lt positive Nat.one_pos)
@@ -2375,7 +2377,7 @@ private theorem acceptLog_eq {follower sender : List Entry}
       rw [entryEq, senderEntry] at different
       exact different rfl
     simp [differ]
-  · -- No conflicting term: the overlap agrees, so the follower log is extended.
+  | none => -- No conflicting term: the overlap agrees, so the follower log is extended.
     rename_i noConflict
     unfold conflictIndex at noConflict
     have notFound := Option.map_eq_none_iff.mp noConflict
@@ -2398,12 +2400,15 @@ private theorem acceptLog_eq {follower sender : List Entry}
       congr 1
       rw [List.getElem_of_eq batchEq]
       simp
-    by_cases long : prev + batch.length <= follower.length
-    · have agree : follower.take (prev + batch.length) = sender.take (prev + batch.length) := by
-        rcases Nat.eq_zero_or_pos batch.length with empty | nonempty
-        · simp only [empty, Nat.add_zero]
+    split_rel long := (by_cases long : prev + batch.length <= follower.length) with
+    | pos =>
+      have agree : follower.take (prev + batch.length) = sender.take (prev + batch.length) := by
+        split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos batch.length with empty | nonempty) with
+        | inl =>
+          simp only [empty, Nat.add_zero]
           exact prevAgree
-        · have pos : 0 < prev + batch.length := Nat.lt_of_lt_of_le nonempty (Nat.le_add_left _ _)
+        | inr =>
+          have pos : 0 < prev + batch.length := Nat.lt_of_lt_of_le nonempty (Nat.le_add_left _ _)
           have last := Nat.sub_lt nonempty Nat.one_pos
           apply aligned _ pos long batchBound
           rw [termAt_eq pos long, termAt_eq pos batchBound]
@@ -2412,12 +2417,15 @@ private theorem acceptLog_eq {follower sender : List Entry}
           simpa only [(Nat.add_sub_assoc nonempty prev).symm] using this
       rw [ite_eq_left agree, ← agree, List.take_append_drop,
         List.drop_eq_nil_of_le (Nat.le_sub_of_add_le' long), List.append_nil]
-    · have agree : follower = sender.take follower.length := by
-        rcases Nat.eq_or_lt_of_le prevBound with same | ahead
-        · rw [← same]
+    | neg =>
+      have agree : follower = sender.take follower.length := by
+        split_rel eq_or_lt_of_le := (rcases Nat.eq_or_lt_of_le prevBound with same | ahead) with
+        | inl =>
+          rw [← same]
           have := prevAgree
           rwa [List.take_of_length_le (Nat.le_of_eq same.symm)] at this
-        · have pos : 0 < follower.length := Nat.lt_of_le_of_lt (Nat.zero_le _) ahead
+        | inr =>
+          have pos : 0 < follower.length := Nat.lt_of_le_of_lt (Nat.zero_le _) ahead
           have fs : follower.length <= sender.length :=
             Nat.le_of_lt (Nat.lt_of_lt_of_le (Nat.lt_of_not_le long) batchBound)
           have := aligned follower.length pos Nat.le.refl fs (by
