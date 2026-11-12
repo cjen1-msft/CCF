@@ -105,6 +105,53 @@ inductive Level where
 def Level.str : Level → String
   | .step => "step" | .state => "state" | .other => "other"
 
+/-- A unit of the shared walk (`Config.shared`): a theorem's proof, or field `field` of the
+constructor `ctor` application that a theorem's proof reduces to. -/
+structure WalkUnit where
+  decl : Name
+  field : Option Nat := none
+  ctor : Name := .anonymous
+  deriving BEq, Hashable, Inhabited, Repr
+
+def WalkUnit.str (u : WalkUnit) : String :=
+  match u.field with | none => u.decl.toString | some i => s!"{u.decl}.{i + 1}"
+
+/-- One clause obligation of the state pattern's structure at a step: the clause premises (local
+hypotheses, at the post-state) and the same premises at the pre-state. In the shared walk of a
+lemma the pre-state is the root's, so `premS` is read later (`deferred`) from the instance
+binders `xs`, the field's index and the constructor application. -/
+structure Clause where
+  name : Name
+  prems : Array Expr
+  premS : Array Expr
+  xs : Array Expr := #[]
+  idx : Nat := 0
+  ctor : Name := .anonymous
+  ctorLevels : List Lean.Level := []
+  ctorArgs : Array Expr := #[]
+  deferred : Bool := false
+  deriving Inhabited
+
+/-- Where a branch or call site of the shared walk is: its unit, the local context, the
+conditions of the enclosing branches of the unit (and, for a branch, its own), the clause
+obligation of the unit it lies under, whether a data binder outside a splitter is on the way
+from the unit's start, and the `let`-bound proofs whose values are being walked. -/
+structure SharedAt where
+  unit : WalkUnit
+  lctx : LocalContext
+  conds : Array Expr
+  clause : Option Clause
+  bound : Bool
+  walking : Array FVarId
+  deriving Inhabited
+
+/-- A call site of the shared walk: the callee unit and its arguments. -/
+structure SiteRec where
+  at_ : SharedAt
+  callee : WalkUnit
+  args : Array Expr
+  deriving Inhabited
+
 structure BranchRec where
   root : Name
   level : Level
@@ -125,6 +172,8 @@ structure BranchRec where
   role : String := "-"
   /-- The tie-back lemmas generated for this occurrence (see `TieRec`). -/
   tie : Option Nat := none
+  /-- Shared walk: where the branch is. -/
+  shared : Option SharedAt := none
   deriving Inhabited
 
 /-- What a branch lemma is about: its name, the numbers of its binders (root binders, closed
@@ -193,13 +242,8 @@ structure Config where
   postOf : Option Expr := none
   /-- Theorems that turn a hypothesis of theirs into the state pattern (see `Generate.lean`). -/
   derive : Array Name := #[]
-
-/-- One clause obligation of the state pattern's structure at a step: the clause premises (local
-hypotheses, at the post-state) and the same premises at the pre-state. -/
-structure Clause where
-  name : Name
-  prems : Array Expr
-  premS : Array Expr
+  /-- Walk every theorem once (shared lemma cases) instead of once per call path. -/
+  shared : Bool := false
 
 /-- The telescope of the current branch: the closed variables (in context order) and the
 hypotheses (their types, and the terms that prove them here: `let`-bound facts, then the
@@ -234,6 +278,9 @@ structure Ctx where
   walking : Array FVarId := #[]
   /-- The local variables in scope at the enclosing recorded split. -/
   atSplit : Std.HashSet FVarId := {}
+  /-- Shared walk: the unit being walked, and whether it is a lemma (not a root). -/
+  unit : Option WalkUnit := none
+  lemmaUnit : Bool := false
 
 structure St where
   region : Bool := false
@@ -260,6 +307,11 @@ structure St where
   /-- The telescope of each branch and the statement of its branch lemma (computed before its
   body is walked, so that nested branches can refer to it). -/
   teles : Std.HashMap Nat (Tele × Option (Expr × Nat)) := {}
+  /-- Shared walk: call sites, and units still to walk. -/
+  sites : Array SiteRec := #[]
+  pending : Array WalkUnit := #[]
+  /-- Shared walk: the units walked, with their parameters (`none`: no proof to walk). -/
+  units : Array (WalkUnit × Option (Array Expr)) := #[]
 
 abbrev M := ReaderT Ctx (StateRefT St MetaM)
 
@@ -701,7 +753,8 @@ def withCalls : List Name → M α → M α
 /-- The theorem in scope that `c` names, with its proof, if it may be inlined here. -/
 def inlinable? (c : Name) (us : List Lean.Level) : M (Option Expr) := do
   unless ← inScope c do return none
-  if (← read).stop.contains c || (← get).inProgress.contains c then return none
+  if (← read).stop.contains c then return none
+  if (← read).unit.isNone && (← get).inProgress.contains c then return none
   let some ci := (← getEnv).find? c | return none
   unless ci matches .thmInfo _ do return none
   let some v := ci.value? (allowOpaque := true) | return none
@@ -747,6 +800,45 @@ def mkLetRebuilt (x : Expr) (r : Expr) : M Expr := do
 def withWalking (id : FVarId) (k : M α) : M α := do
   let id ← resolveAlias id
   withReader (fun c => { c with walking := c.walking.push id }) k
+
+/-- The number of leading `fun` binders of `v` (through `mdata`) and the body under them. -/
+partial def peelLams (v : Expr) (n : Nat := 0) : Nat × Expr :=
+  match v with
+  | .lam _ _ b _ => peelLams b (n + 1)
+  | .mdata _ b => peelLams b n
+  | _ => (n, v)
+
+/-- Run `k` on the leading `fun` binders of `v` (through `mdata`) as local variables and the
+body under them. -/
+partial def withLams (v : Expr) (k : Array Expr → Expr → M α) (acc : Array Expr := #[]) : M α :=
+  match v with
+  | .lam n t b bi => withLocalDecl n bi t fun x => withLams (b.instantiate1 x) k (acc.push x)
+  | .mdata _ b => withLams b k acc
+  | _ => k acc v
+
+/-- Where the shared walk is, with the conditions `conds` added to the enclosing ones. -/
+def sharedAt (conds : Array Expr) : M SharedAt := do
+  let ctx ← read
+  return { unit := ctx.unit.getD default, lctx := ← getLCtx, conds := (← get).condStack ++ conds,
+           clause := ctx.clause, bound := !ctx.bound.isEmpty, walking := ctx.walking }
+
+/-- Shared walk: the theorem in scope at the head of `e` (through `let`-bound proofs), with its
+proof and arguments, when `e` reduces through it to an application of constructor `ctor`. -/
+partial def siteCtor? (ctor : Name) (arity : Nat) (e : Expr) :
+    M (Option (Name × Expr × Array Expr)) := do
+  let e := zetaHead e
+  let args := e.getAppArgs
+  match e.getAppFn.consumeMData with
+  | .const c us =>
+    let some v ← inlinable? c us | return none
+    unless args.size == (peelLams v).1 do return none
+    let some _ ← resolveCtor ctor arity (v.beta args) #[c] | return none
+    return some (c, v, args)
+  | .fvar id =>
+    let some v ← deferredValue? id | return none
+    markUsed id
+    siteCtor? ctor arity (mkAppN v args)
+  | _ => return none
 
 mutual
 
@@ -818,8 +910,15 @@ partial def walkArgs (args : Array Expr) : M (Array Expr) := args.mapM walk
 partial def reduceProj (ctor : Name) (i : Nat) (b : Expr) (extra : Array Expr)
     (rebuild : Expr → Array Expr → Expr) : M Expr := do
   let cv ← getConstInfoCtor ctor
-  match ← resolveCtor ctor (cv.numParams + cv.numFields) b #[] with
+  let arity := cv.numParams + cv.numFields
+  if (← read).unit.isSome then
+    if let some (c, v, args) ← siteCtor? ctor arity b then
+      recordSite { decl := c, field := some i, ctor } v (args ++ extra)
+      return rebuild b extra
+  match ← resolveCtor ctor arity b #[] with
   | some (labels, app, viaAlias) =>
+    if (← read).unit.isSome && !labels.isEmpty then
+      return rebuild (← walk b) (← walkArgs extra)
     let field := app.getAppArgs[cv.numParams + i]!
     if viaAlias then
       discard <| (withCalls labels.toList (walk (mkAppN field extra).headBeta))
@@ -832,9 +931,12 @@ partial def walkObligations (c : Name) (us : List Lean.Level) (args : Array Expr
   let ctx ← read
   let cv ← getConstInfoCtor c
   let np := cv.numParams
-  let some pre := ctx.pre | return mkAppN (mkConst c us) (← walkArgs args)
+  let deferred := ctx.pre.isNone
+  if deferred && !ctx.lemmaUnit then return mkAppN (mkConst c us) (← walkArgs args)
   let params := args.extract 0 np
-  let paramsS := (← stateAt ctx.cfg.statePat pre).getAppArgs
+  let paramsS ← match ctx.pre with
+    | some pre => pure (← stateAt ctx.cfg.statePat pre).getAppArgs
+    | none => pure params
   let ty := cv.type.instantiateLevelParams cv.levelParams us
   let mut tT ← instantiateForall ty params
   let mut tS ← instantiateForall ty paramsS
@@ -851,8 +953,10 @@ partial def walkObligations (c : Name) (us : List Lean.Level) (args : Array Expr
         return ← walk field
       let xs := ys.extract 0 nd
       let prems := ys.extract nd ys.size
-      let premS ← premisesAt fS xs prems
-      let r ← withReader (fun c => { c with clause := some { name, prems, premS } })
+      let premS ← if deferred then pure #[] else premisesAt fS xs prems
+      let cl : Clause := { name, prems, premS, xs, idx := k, ctor := c, ctorLevels := us,
+                           ctorArgs := args, deferred }
+      let r ← withReader (fun c => { c with clause := some cl })
         (walk (mkAppN field ys).headBeta)
       mkLambdaFVars ys r
     fields := fields.push field'
@@ -918,7 +1022,8 @@ partial def walkApp (e : Expr) : M Expr := do
           (args.extract (pinfo.numParams + 1) args.size)
           fun b' extra' => mkAppN f ((args.extract 0 pinfo.numParams).push b' ++ extra')
     let ctx ← read
-    if ctx.level == .step && ctx.clause.isNone && ctx.cfg.stateCtor == some c then
+    if (ctx.level == .step || ctx.lemmaUnit) && ctx.clause.isNone &&
+        ctx.cfg.stateCtor == some c then
       let cv ← getConstInfoCtor c
       if args.size == cv.numParams + cv.numFields then
         return ← walkObligations c us args
@@ -933,6 +1038,9 @@ partial def walkApp (e : Expr) : M Expr := do
             return mkAppN f (← walkArgs args)
           | some v =>
             let v := v.instantiateLevelParams ci.levelParams us
+            if (← read).unit.isSome then
+              recordSite { decl := c } v args
+              return mkAppN f args
             -- proof arguments are walked where the callee uses them
             for a in args do
               unless ← (try isProof a catch _ => pure false) do discard <| walk a
@@ -948,6 +1056,20 @@ partial def walkApp (e : Expr) : M Expr := do
         modify fun st => { st with unrecorded := st.unrecorded.push rec_ }
     return mkAppN f (← walkArgs args)
   | _ => return mkAppN (← walk f) (← walkArgs args)
+
+/-- Shared walk: record a call of unit `callee` (proof `v`) with `args` at this point. Data
+arguments are walked here; a proof argument is walked here when the callee's proof uses it (or,
+for a field, when it is an argument of the field). -/
+partial def recordSite (callee : WalkUnit) (v : Expr) (args : Array Expr) : M Unit := do
+  let (n, body) := peelLams v
+  for (a, i) in args.zipIdx do
+    if ← (try isProof a catch _ => pure false) then
+      let used := if i < n then body.hasLooseBVar (n - 1 - i) else callee.field.isSome
+      if used then discard <| walk a
+    else discard <| walk a
+  let at_ ← sharedAt #[]
+  modify fun st => { st with sites := st.sites.push { at_, callee, args },
+                             pending := st.pending.push callee }
 
 /-- Walk `v` (the proof of theorem `c`) applied to `args`, binding parameters by `let`. -/
 partial def inline (c : Name) (v : Expr) (args : Array Expr) : M Expr :=
@@ -1110,16 +1232,26 @@ partial def walkBranch (f α tag dead p : Expr) : M Expr := do
   let condStrs ← conds.mapM fun c => do oneLine (← inferType c)
   let id := st.branches.size
   let ctx ← read
+  let sharedHere ← if ctx.unit.isSome then some <$> sharedAt conds else pure none
   let rec_ : BranchRec := {
     root := ctx.root, level := ctx.level, path := st.path, decl := ← curDecl,
     split := st.splits[splitId]!.name, tag, dead, splitId,
     parent := st.stack.back?, conds := condStrs,
-    clause := (ctx.clause.map (·.name.toString)).getD "-" }
+    clause := (ctx.clause.map (·.name.toString)).getD "-",
+    shared := sharedHere }
   set { st with branches := st.branches.push rec_ }
   modify fun s => { s with splits := s.splits.modify splitId fun r =>
     { r with branches := r.branches.push id } }
-  -- predicate: conditions of all enclosing branches (still in scope) and this one
   let outer := (← get).condStack
+  -- shared walk of a lemma: the predicate is computed from the call sites (`Shared.lean`)
+  if ctx.lemmaUnit then
+    modify fun s => { s with
+      branches := s.branches.modify id fun b => { b with role := "shared" },
+      region := false, stack := s.stack.push id, condStack := s.condStack ++ conds }
+    let body' ← try walk body finally
+      modify fun s => { s with region := st.region, stack := st.stack, condStack := outer }
+    return mkApp4 f α (mkStrLit tag) deadE (condApps.foldr (·.app ·) body')
+  -- predicate: conditions of all enclosing branches (still in scope) and this one
   let compute (cs extra : Array Expr) : M (Option (Expr × Tele)) := do
     try closePred cs extra catch ex => do
       logWarning m!"relevance: predicate of {tag} ill-typed: {ex.toMessageData}"
@@ -1166,7 +1298,7 @@ partial def walkBranch (f α tag dead p : Expr) : M Expr := do
     modify fun s => { s with region := st.region, stack := st.stack, condStack := outer }
   let rebuiltMark := mkApp4 f α (mkStrLit tag) deadE (condApps.foldr (·.app ·) body')
   let ns := ctx.cfg.ns
-  if ns.isAnonymous then return rebuiltMark
+  if ns.isAnonymous || ctx.unit.isSome then return rebuiltMark
   let some (_, extra) := lemmaConds | return rebuiltMark
   let some tele := tele? | return rebuiltMark
   -- frame lemma: the clause instance held before the step
@@ -1192,6 +1324,26 @@ partial def walkBranch (f α tag dead p : Expr) : M Expr := do
   return out
 
 end
+
+/-- Shared walk of lemma unit `u` with context `ctx`: its parameters (for a field unit, the
+theorem's and then the field's) as local variables. Returns the parameters, or `none` when the
+unit has no proof or its proof does not reduce to the constructor. -/
+def walkUnit (ctx : Ctx) (u : WalkUnit) : M (Option (Array Expr)) := do
+  let some ci := (← getEnv).find? u.decl | return none
+  let some v := ci.value? (allowOpaque := true) | return none
+  let v := v.instantiateLevelParams ci.levelParams (ci.levelParams.map mkLevelParam)
+  withReader (fun _ => { ctx with root := u.decl, unit := some u, lemmaUnit := true }) do
+  withCall u.decl do
+  withLams v fun ps body => do
+    match u.field with
+    | none => discard <| walk body; return some ps
+    | some i =>
+      let cv ← getConstInfoCtor u.ctor
+      let some (labels, app, _) ← resolveCtor u.ctor (cv.numParams + cv.numFields) body #[] |
+        return none
+      let field := app.getAppArgs[cv.numParams + i]!
+      withCalls labels.toList <| withLams field fun qs fb => do
+        discard <| walk fb; return some (ps ++ qs)
 
 
 end Relevance

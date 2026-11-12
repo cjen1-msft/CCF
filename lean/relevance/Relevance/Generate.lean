@@ -168,6 +168,9 @@ structure Result where
   ties : Array TieRec := #[]
   /-- Per walked step-level or state-level root: the re-derived theorem, or the error. -/
   rederived : Array (Name × Except String Name) := #[]
+  /-- Shared walk: call sites and units (see `Config.shared`). -/
+  sites : Array SiteRec := #[]
+  units : Array (WalkUnit × Option (Array Expr)) := #[]
   deriving Inhabited
 
 /-- Walk every root; returns all records. -/
@@ -220,12 +223,15 @@ def analyse (cfg : Config) (roots : Array Name) : MetaM Result := do
       let (lvl, keep) ← classify cfg xs (!derivation.contains root)
       let pre ← if lvl == .step then pure (← stepEnds cfg ps keep).1 else pure none
       let ctx : Ctx := { cfg, root, level := lvl, keep, pattern := ps, pre, rootBinders := xs,
-                         stop := (if lvl == .other then tops else #[]) ++ cfg.derive }
+                         stop := (if lvl == .other then tops else #[]) ++ cfg.derive,
+                         unit := if cfg.shared then some { decl := root } else none }
       let st := { st with path := #[], calls := {}, inProgress := #[], stack := #[],
                           condStack := #[], region := false }
       let (e, st) ← ((walk (v.beta xs)).run ctx).run st
+      let st := if cfg.shared then { st with units := st.units.push ({ decl := root }, some xs) }
+        else st
       -- the root proved again by the rebuilt term, in which branches are calls of their lemmas
-      if lvl == .other || cfg.ns.isAnonymous then return (st, none)
+      if lvl == .other || cfg.ns.isAnonymous || cfg.shared then return (st, none)
       let name := cfg.ns ++ Name.mkSimple s!"rederive_{root.components.getLast!}"
       let r ← try
           let value ← mkLambdaFVars xs e
@@ -234,9 +240,22 @@ def analyse (cfg : Config) (roots : Array Name) : MetaM Result := do
       return (st, some (root, r.map fun () => name))
     st := st'
     if let some x := rd then rederived := rederived.push x
+  -- shared walk: every lemma unit reached from a call site, once
+  if cfg.shared then
+    let ctx : Ctx := { cfg, root := .anonymous, level := .other, stop := cfg.derive }
+    let mut i := 0
+    while i < st.pending.size do
+      let u := st.pending[i]!
+      i := i + 1
+      if st.units.any (·.1 == u) then continue
+      let st0 := { st with path := #[], calls := {}, inProgress := #[], stack := #[],
+                           condStack := #[], region := false }
+      let (ps, st') ← ((walkUnit ctx u).run ctx).run st0
+      st := { st' with units := st'.units.push (u, ps) }
   return { res with branches := st.branches, splits := st.splits,
                     unrecorded := st.unrecorded, noValue := st.noValue,
-                    unusedHaves := st.unusedHaves, ties := st.ties, rederived }
+                    unusedHaves := st.unusedHaves, ties := st.ties, rederived,
+                    sites := st.sites, units := st.units }
 
 /-- Per split occurrence: whether it counts and why. -/
 def counts (r : Result) (s : SplitRec) : Bool × String :=
@@ -489,8 +508,27 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
       return (c.find? (·.getAppFn == head)).isSome
     unless ok do
       throwError "relevance_generate: the conclusion of {d} does not mention the state pattern"
-  let cfg : Config := { scope, package, stepPat, statePat, stateCtor, ns, preOf, postOf, derive }
+  let shared := match args.get? "shared" with
+    | some s => s.isIdent && s.getId == `true
+    | none => false
+  let cfg : Config := { scope, package, stepPat, statePat, stateCtor, ns, preOf, postOf, derive,
+                        shared }
   let r ← liftTermElabM <| analyse cfg roots
+  if shared then
+    let counted (b : BranchRec) := !b.dead && (counts r r.splits[b.splitId]!).1
+    let walked := r.units.filter (·.2.isSome)
+    let roots := r.units.filter fun (u, _) => r.branches.any fun b =>
+      b.shared.any (·.unit == u) && b.role != "shared"
+    let text ← liftTermElabM <| table r
+    liftCoreM <| addAndCompile <| .defnDecl {
+      name := ns ++ `table, levelParams := [], type := mkConst ``String, value := mkStrLit text,
+      hints := .abbrev, safety := .safe }
+    logInfo m!"relevance (shared): {r.units.size} units ({walked.size} walked, \
+      {r.units.size - walked.size} without a proof to walk), {r.sites.size} call sites; \
+      {r.splits.size} split occurrences, {r.branches.size} branch occurrences \
+      ({(r.branches.filter counted).size} counted); {r.unrecorded.size} unrecorded splits \
+      ({(r.unrecorded.filter (!·.internal)).size} protocol); {roots.size} root units with branches"
+    return
   let counted (b : BranchRec) := !b.dead && (counts r r.splits[b.splitId]!).1
   let live (lvl : Level) := r.branches.filter fun b => b.level == lvl && counted b
   let stateItems (bs : Array BranchRec) : Array (String × String × Expr) :=
