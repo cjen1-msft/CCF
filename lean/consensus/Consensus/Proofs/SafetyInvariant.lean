@@ -5819,12 +5819,14 @@ private theorem post_two
       : Engaged c.post \/ exists envelope, envelope ∈ c.sent /\ Bumping envelope.payload)
     : 2 <= c.post.currentTerm := by
   have le := c.term_le
-  rcases Summary.active c.sum active with role | two | ⟨source, message, eq, bumping, bound⟩
-      | ⟨entries, stash, positive, signature, termEq⟩
-  · exact Nat.le_trans (c.pre_two role) le
-  · exact Nat.le_trans two le
-  · exact Nat.le_trans (c.received_term eq bumping) bound
-  · obtain ⟨_, _, ⟨_, ⟨_, _, _, _, ⟨_, _, _, led⟩, _⟩, _⟩, _⟩ := c.snap_available stash positive signature
+  split_rel active :=
+      (rcases Summary.active c.sum active with role | two | ⟨source, message, eq, bumping, bound⟩
+        | ⟨entries, stash, positive, signature, termEq⟩) with
+  | inl => exact Nat.le_trans (c.pre_two role) le
+  | inr_inl => exact Nat.le_trans two le
+  | inr_inr_inl => exact Nat.le_trans (c.received_term eq bumping) bound
+  | inr_inr_inr =>
+    obtain ⟨_, _, ⟨_, ⟨_, _, _, _, ⟨_, _, _, led⟩, _⟩, _⟩, _⟩ := c.snap_available stash positive signature
     rw [termEq]
     exact led.two_le
 
