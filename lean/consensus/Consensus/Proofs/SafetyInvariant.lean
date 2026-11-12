@@ -5415,33 +5415,43 @@ private theorem vote_unique {nodes : List NodeID} {history : History}
     obtain ⟨granting, granted, grantingMem, grantedMem, _, grantedTerm, grantedVote, _⟩ := step
     obtain ⟨granting', granted', grantingMem', grantedMem', grantingTerm', grantedTerm',
       grantedVote', _⟩ := step'
-    rcases List.suffix_cons_iff.mp within with same | inner
-    · cases same
+    split_rel mp := (rcases List.suffix_cons_iff.mp within with same | inner) with
+    | inl =>
+      cases same
       have := state_unique (exec.keys (suffix'.subset List.mem_cons_self)) grantedMem
         grantedMem'
       subst this
       rw [grantedVote] at grantedVote'
       exact Option.some.inj grantedVote'
-    · have tail : b' :: r' <:+ history := (List.suffix_cons _ _).trans suffix'
+    | inr =>
+      have tail : b' :: r' <:+ history := (List.suffix_cons _ _).trans suffix'
       have seen : Seen (b' :: r') voter granted := ⟨a, inner.subset List.mem_cons_self, grantedMem⟩
-      rcases record _ tail (List.cons_ne_nil _ _) voter granting' granted early grantingMem'
-          seen grantedVote with lt | ⟨termEq, keep⟩
-      · exact (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt
+      split_rel record :=
+          (rcases record _ tail (List.cons_ne_nil _ _) voter granting' granted early grantingMem'
+            seen grantedVote with lt | ⟨termEq, keep⟩) with
+      | inl =>
+        exact (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt
           (Nat.le_trans grantingTerm' (Nat.le_of_eq grantedTerm.symm)))).elim
-      · have seen' : Seen (a' :: b' :: r') voter granting' :=
+      | inr =>
+        have seen' : Seen (a' :: b' :: r') voter granting' :=
           ⟨b', List.mem_cons_of_mem _ List.mem_cons_self, grantingMem'⟩
-        rcases record _ suffix' (List.cons_ne_nil _ _) voter granted' granting' early grantedMem'
-            seen' keep with lt | ⟨_, final⟩
-        · exact (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt
+        split_rel record :=
+            (rcases record _ suffix' (List.cons_ne_nil _ _) voter granted' granting' early grantedMem'
+              seen' keep with lt | ⟨_, final⟩) with
+        | inl =>
+          exact (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt
             (Nat.le_of_eq (grantedTerm'.trans (grantedTerm.symm.trans termEq))))).elim
-        · rw [final] at grantedVote'
+        | inr =>
+          rw [final] at grantedVote'
           exact Option.some.inj grantedVote'
   obtain ⟨a, b, r, suffix, step, seen⟩ := left
   obtain ⟨a', b', r', suffix', step', seen'⟩ := right
-  rcases suffix_comparable suffix suffix' with within | within
-  · exact ordered ⟨a, b, r, suffix, step, seen⟩ ⟨a', b', r', suffix', step', seen'⟩ a b r a' b'
+  split_rel suffix_comparable := (rcases suffix_comparable suffix suffix' with within | within) with
+  | inl =>
+    exact ordered ⟨a, b, r, suffix, step, seen⟩ ⟨a', b', r', suffix', step', seen'⟩ a b r a' b'
       r' suffix suffix' step step' within
-  · exact (ordered ⟨a', b', r', suffix', step', seen'⟩ ⟨a, b, r, suffix, step, seen⟩ a' b' r' a
+  | inr =>
+    exact (ordered ⟨a', b', r', suffix', step', seen'⟩ ⟨a, b, r, suffix, step, seen⟩ a' b' r' a
       b r suffix' suffix step' step within).symm
 
 /-- The commit step behind a committed part, with its backing. -/
