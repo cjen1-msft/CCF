@@ -4257,9 +4257,11 @@ private theorem elect_result {before candidate after : NodeState}
             /\ Advance self (primaryState candidate) after
             /\ forall e, e ∈ sent -> LeaderStart self candidate.currentTerm after e))
     : CampaignResult self before candidate after sent := by
-  rcases elected with ⟨rfl, rfl⟩ | ⟨_, quorum, advance, started⟩
-  · exact Or.inl ⟨rfl, by simp⟩
-  · exact Or.inr ⟨quorum, advance, fun e member => Or.inl (started e member)⟩
+  split_rel elected := (rcases elected with ⟨stateEq, sentEq⟩ | ⟨_, quorum, advance, started⟩) with
+  | inl =>
+    subst stateEq sentEq
+    exact Or.inl ⟨rfl, by simp⟩
+  | inr => exact Or.inr ⟨quorum, advance, fun e member => Or.inl (started e member)⟩
 
 private theorem voteResponse_summary (before : NodeState) (source : NodeID)
     (response : RequestVoteResponse)
