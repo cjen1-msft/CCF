@@ -4965,9 +4965,9 @@ private theorem Seen.cons {current : Model.State} {rest : History}
 private theorem suffix_comparable {α : Type} {first second whole : List α}
     (left : first <:+ whole) (right : second <:+ whole)
     : first <:+ second \/ second <:+ first := by
-  rcases Nat.le_total first.length second.length with le | le
-  · exact Or.inl (List.suffix_of_suffix_length_le left right le)
-  · exact Or.inr (List.suffix_of_suffix_length_le right left le)
+  split_rel le_total := (rcases Nat.le_total first.length second.length with le | le) with
+  | inl => exact Or.inl (List.suffix_of_suffix_length_le left right le)
+  | inr => exact Or.inr (List.suffix_of_suffix_length_le right left le)
 
 end Consensus.Proofs.Safety
 
