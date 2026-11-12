@@ -5466,15 +5466,19 @@ private theorem Committed.shape {history : History} {term : Nat}
                 Committed rest earlier part'
                 /\ earlier <= term
                 /\ state.log.take base <+: part') := by
-  induction committed with
-  | fresh step => exact ⟨_, _, _, _, _, _, List.suffix_refl _, step, rfl, Or.inl rfl⟩
-  | chained step backing le within =>
-      exact ⟨_, _, _, _, _, _, List.suffix_refl _, step, rfl,
-        Or.inr ⟨_, _, backing, le, within⟩⟩
-  | past _ ih =>
-      obtain ⟨current, rest, leader, state, base, index, suffix, step, eq, backing⟩ := ih
-      exact ⟨current, rest, leader, state, base, index, suffix.trans (List.suffix_cons _ _),
-        step, eq, backing⟩
+  split_rel committed := (induction committed) with
+  | fresh =>
+    rename_i step
+    exact ⟨_, _, _, _, _, _, List.suffix_refl _, step, rfl, Or.inl rfl⟩
+  | chained =>
+    rename_i step backing le within _
+    exact ⟨_, _, _, _, _, _, List.suffix_refl _, step, rfl,
+      Or.inr ⟨_, _, backing, le, within⟩⟩
+  | past =>
+    rename_i _ ih
+    obtain ⟨current, rest, leader, state, base, index, suffix, step, eq, backing⟩ := ih
+    exact ⟨current, rest, leader, state, base, index, suffix.trans (List.suffix_cons _ _),
+      step, eq, backing⟩
 
 private theorem Committed.signature {history : History} {term : Nat}
     {part : List Entry} (committed : Committed history term part)
