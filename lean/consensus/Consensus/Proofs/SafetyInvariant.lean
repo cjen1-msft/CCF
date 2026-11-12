@@ -5216,9 +5216,11 @@ variable {nodes : List NodeID}
 private theorem Now.nonempty {history : History} {node : NodeID}
     {state : NodeState} (now : Now history node state)
     : exists current rest, history = current :: rest := by
-  cases history with
+  split_rel history := (cases history) with
   | nil => exact absurd now id
-  | cons current rest => exact ⟨current, rest, rfl⟩
+  | cons =>
+    rename_i current rest
+    exact ⟨current, rest, rfl⟩
 
 private theorem now_unique {history : History} (exec : Exec nodes history) {node : NodeID}
     {first second : NodeState} (left : Now history node first)
