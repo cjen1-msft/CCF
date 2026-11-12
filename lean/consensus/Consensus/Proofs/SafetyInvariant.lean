@@ -5042,19 +5042,29 @@ private theorem inv_initial : Inv [initial] := by
   constructor
   · intro node state now entry member
     rw [stateOf now] at member ⊢
-    by_cases leader : node = INITIAL_PRIMARY
-    · subst leader
+    split_rel leader := (by_cases leader : node = INITIAL_PRIMARY) with
+    | pos =>
+      subst leader
       simp_all [initialLocal]
-    · simp [initialLocal, leader] at member
+    | neg => simp [initialLocal, leader] at member
   · intro node state now
     rw [stateOf now]
     unfold initialLocal
-    split <;> simp
+    split_rel primary := (split) with
+    | pos => simp
+    | neg => simp
   · intro node state now active
     rw [stateOf now] at active ⊢
     simp only [Engaged, initialLocal] at active ⊢
-    by_cases primary : node = INITIAL_PRIMARY <;> by_cases member : node ∈ INITIAL_CONFIGURATION
-      <;> simp_all [BOOTSTRAP_TERM]
+    split_rel primary := (by_cases primary : node = INITIAL_PRIMARY) with
+    | pos =>
+      split_rel member := (by_cases member : node ∈ INITIAL_CONFIGURATION) with
+      | pos => simp_all [BOOTSTRAP_TERM]
+      | neg => simp_all [BOOTSTRAP_TERM]
+    | neg =>
+      split_rel member := (by_cases member : node ∈ INITIAL_CONFIGURATION) with
+      | pos => simp_all [BOOTSTRAP_TERM]
+      | neg => simp_all
   · intro node state earlier now seen
     rw [stateOf now, initial_seen initialized seen]
     exact Nat.le_refl _
@@ -5069,16 +5079,27 @@ private theorem inv_initial : Inv [initial] := by
   · intro node state now leader
     left
     rw [stateOf now] at leader ⊢
-    by_cases isLeader : node = INITIAL_PRIMARY
-    · subst isLeader
+    split_rel isLeader := (by_cases isLeader : node = INITIAL_PRIMARY) with
+    | pos =>
+      subst isLeader
       simp [initialLocal, leaderMem]
-    · simp only [initialLocal, isLeader, ite_false] at leader
-      split at leader <;> cases leader
+    | neg =>
+      simp only [initialLocal, isLeader, ite_false] at leader
+      split_rel leader := (split at leader) with
+      | pos => cases leader
+      | neg => cases leader
   · intro node state now candidate
     rw [stateOf now] at candidate
     simp only [initialLocal] at candidate
-    by_cases primary : node = INITIAL_PRIMARY <;> by_cases member : node ∈ INITIAL_CONFIGURATION
-      <;> simp [primary, member] at candidate
+    split_rel primary := (by_cases primary : node = INITIAL_PRIMARY) with
+    | pos =>
+      split_rel member := (by_cases member : node ∈ INITIAL_CONFIGURATION) with
+      | pos => simp [primary] at candidate
+      | neg => simp [primary] at candidate
+    | neg =>
+      split_rel member := (by_cases member : node ∈ INITIAL_CONFIGURATION) with
+      | pos => simp [primary, member] at candidate
+      | neg => simp [primary, member] at candidate
   · intro after before rest node term log commit suffix
     have := suffix.length_le
     simp at this
@@ -5091,8 +5112,9 @@ private theorem inv_initial : Inv [initial] := by
     exact List.prefix_refl _
   · intro node state index now positive bound
     rw [stateOf now] at bound ⊢
-    by_cases isLeader : node = INITIAL_PRIMARY
-    · subst isLeader
+    split_rel isLeader := (by_cases isLeader : node = INITIAL_PRIMARY) with
+    | pos =>
+      subst isLeader
       have one : index = 1 := by
         simp [initialLocal] at bound
         exact Nat.le_antisymm bound (Nat.succ_le_of_lt positive)
@@ -5107,7 +5129,8 @@ private theorem inv_initial : Inv [initial] := by
       · rw [stateOf now]
         exact bound
       · rw [stateOf now]
-    · simp [initialLocal, isLeader] at bound
+    | neg =>
+      simp [initialLocal, isLeader] at bound
       exact absurd (Nat.lt_of_lt_of_le positive (Nat.le_of_eq bound)) (Nat.lt_irrefl 0)
   · intro term part node later log commit _ elected
     exact absurd elected not_elected_single
@@ -5127,17 +5150,22 @@ private theorem inv_initial : Inv [initial] := by
     simp [Pending, initialized.2.2.2.1] at pending
   · intro node state now
     rw [stateOf now]
-    by_cases isLeader : node = INITIAL_PRIMARY
-    · subst isLeader
+    split_rel isLeader := (by_cases isLeader : node = INITIAL_PRIMARY) with
+    | pos =>
+      subst isLeader
       exact Or.inr (by simp [initialLocal])
-    · exact Or.inl (by simp [initialLocal, isLeader])
+    | neg => exact Or.inl (by simp [initialLocal, isLeader])
   · intro node state now leader
     rw [stateOf now] at leader ⊢
-    by_cases isLeader : node = INITIAL_PRIMARY
-    · subst isLeader
+    split_rel isLeader := (by_cases isLeader : node = INITIAL_PRIMARY) with
+    | pos =>
+      subst isLeader
       simp [initialLocal]
-    · simp only [initialLocal, isLeader, ite_false] at leader
-      split at leader <;> cases leader
+    | neg =>
+      simp only [initialLocal, isLeader, ite_false] at leader
+      split_rel leader := (split at leader) with
+      | pos => cases leader
+      | neg => cases leader
 
 end Initial
 end Consensus.Proofs.Safety
