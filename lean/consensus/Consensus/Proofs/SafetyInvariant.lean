@@ -5984,17 +5984,21 @@ private theorem post_log
 /-- Every log stays empty or rooted at the bootstrap configuration. -/
 private theorem rooted : RootedLogs (after :: before :: rest) := by
   intro node state now
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨_, old⟩
-  · have preRooted := c.inv.rooted c.actor c.pre c.pre_now
-    rcases c.post_log with sub | ⟨entries, log, _, leader, _, _⟩
-        | ⟨earlier, source, sender, n, suffix, canon, _, log⟩
-    · exact preRooted.prefix sub
-    · rw [log]
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    have preRooted := c.inv.rooted c.actor c.pre c.pre_now
+    split_rel post_log := (rcases c.post_log with sub | ⟨entries, log, _, leader, _, _⟩
+        | ⟨earlier, source, sender, n, suffix, canon, _, log⟩) with
+    | inl => exact preRooted.prefix sub
+    | inr_inl =>
+      rw [log]
       exact preRooted.append (c.inv.leader_logs c.actor c.pre c.pre_now leader) entries
-    · rw [log]
+    | inr_inr =>
+      rw [log]
       obtain ⟨_, _, rfl⟩ := canon.1.nonempty
       exact (c.all Inv.rooted _ suffix (List.cons_ne_nil _ _) source sender canon.1).take n
-  · exact c.inv.rooted node state old
+  | inr => exact c.inv.rooted node state old
 
 private theorem terms : Terms (after :: before :: rest) := by
   intro node state now entry mem
