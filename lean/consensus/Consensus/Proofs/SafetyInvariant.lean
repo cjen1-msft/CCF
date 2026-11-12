@@ -3463,35 +3463,45 @@ private theorem Extends.receive (state : NodeState) (source : NodeID) (message :
   dsimp only
   generalize observeTerm state message = current at observedExtends ⊢
   refine Keeps.mono (P := Extends current) ?_ fun _ next => observedExtends.trans next
-  cases message with
-  | appendEntriesRequest request =>
+  split_rel message := (cases message) with
+  | appendEntriesRequest =>
+      rename_i request
       exact Extends.handleAppendEntriesRequest caps source
-  | appendEntriesResponse response =>
+  | appendEntriesResponse =>
+      rename_i response
       unfold Model.Node.handleAppendEntriesResponse
       refine Keeps.ite' (fun _ => Keeps.pure' (Extends.refl _)) fun _ => ?_
       refine Keeps.ite' (fun _ => ?_) fun _ => Keeps.pure' (Extends.of_log rfl rfl)
       refine Keeps.ite' (fun _ => ?_) fun _ => Keeps.pure' (Extends.refl _)
       exact (Extends.advanced caps self _).mono fun _ next =>
         (Extends.of_log rfl rfl).trans next
-  | requestVoteRequest request =>
+  | requestVoteRequest =>
+      rename_i request
       unfold Model.Node.handleRequestVoteRequest
-      exact Keeps.seq' fun _ => Keeps.pure' (by split <;> exact Extends.of_log rfl rfl)
-  | requestVoteResponse response =>
+      exact Keeps.seq' fun _ => Keeps.pure' (by
+        split_rel vote := (split) with
+        | pos => exact Extends.of_log rfl rfl
+        | neg => exact Extends.of_log rfl rfl)
+  | requestVoteResponse =>
+      rename_i response
       unfold Model.Node.handleRequestVoteResponse
       refine Keeps.ite' (fun _ => ?_) fun _ => Keeps.pure' (Extends.refl _)
       exact (Extends.electIfQuorum caps self _).mono fun _ next =>
         (Extends.of_log rfl rfl).trans next
-  | requestPreVoteRequest request =>
+  | requestPreVoteRequest =>
+      rename_i request
       unfold Model.Node.handleRequestPreVoteRequest
       exact Keeps.seq' fun _ => Keeps.pure' (Extends.refl _)
-  | requestPreVoteResponse response =>
+  | requestPreVoteResponse =>
+      rename_i response
       unfold Model.Node.handleRequestPreVoteResponse
       refine Keeps.ite' (fun _ => ?_) fun _ => Keeps.pure' (Extends.refl _)
       dsimp only
       refine Keeps.ite' (fun _ => ?_) fun _ => Keeps.pure' (Extends.of_log rfl rfl)
       exact (Extends.becomeCandidate caps self _).mono fun _ next =>
         (Extends.of_log rfl rfl).trans next
-  | proposeRequestVoteRequest term =>
+  | proposeRequestVoteRequest =>
+      rename_i term
       unfold Model.Node.handleProposeRequestVoteRequest
       exact Keeps.ite' (fun _ => Extends.becomeCandidate caps self current)
         fun _ => Keeps.pure' (Extends.refl _)
