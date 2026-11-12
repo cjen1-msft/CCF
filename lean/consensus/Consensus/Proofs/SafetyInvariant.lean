@@ -4874,9 +4874,9 @@ private theorem Elected.mono (suffix : history <:+ later) {node : NodeID}
 private theorem Led.mono (suffix : history <:+ later) {node : NodeID} {term : Nat}
     (led : Led history node term)
     : Led later node term := by
-  rcases led with bootstrap | ⟨log, commit, elected⟩
-  · exact Or.inl bootstrap
-  · exact Or.inr ⟨log, commit, elected.mono suffix⟩
+  split_rel led := (rcases led with bootstrap | ⟨log, commit, elected⟩) with
+  | inl => exact Or.inl bootstrap
+  | inr => exact Or.inr ⟨log, commit, elected.mono suffix⟩
 
 private theorem Canon.mono (suffix : history <:+ later) {term : Nat}
     {log : List Entry} (canon : Canon history term log)
