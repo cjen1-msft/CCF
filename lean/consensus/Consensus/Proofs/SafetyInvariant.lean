@@ -5293,9 +5293,11 @@ private theorem termAt_le_of_mem {log : List Entry} {bound : Nat}
 private theorem signature_pos {log : List Entry} {index : Nat}
     (signature : isSignatureAt log index = true)
     : 0 < index := by
-  rcases Nat.eq_zero_or_pos index with rfl | positive
-  · simp [isSignatureAt, entryAt?] at signature
-  · exact positive
+  split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos index with zero | positive) with
+  | inl =>
+    subst zero
+    simp [isSignatureAt, entryAt?] at signature
+  | inr => exact positive
 
 private theorem signature_bound {log : List Entry} {index : Nat}
     (signature : isSignatureAt log index = true)
