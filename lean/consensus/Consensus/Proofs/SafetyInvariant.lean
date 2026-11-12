@@ -6086,18 +6086,19 @@ private theorem led_after {node : NodeID} {term : Nat}
     (led : Led (after :: before :: rest) node term)
     : Led (before :: rest) node term
       \/ exists log commit, ElectStep after before rest node term log commit := by
-  rcases led with bootstrap | ⟨log, commit, elected⟩
-  · exact Or.inl (Or.inl bootstrap)
-  · rcases c.elected_after elected with old | step
-    · exact Or.inl (Or.inr ⟨log, commit, old⟩)
-    · exact Or.inr ⟨log, commit, step⟩
+  split_rel led := (rcases led with bootstrap | ⟨log, commit, elected⟩) with
+  | inl => exact Or.inl (Or.inl bootstrap)
+  | inr =>
+    split_rel elected_after := (rcases c.elected_after elected with old | step) with
+    | inl => exact Or.inl (Or.inr ⟨log, commit, old⟩)
+    | inr => exact Or.inr ⟨log, commit, step⟩
 
 private theorem led_other {node : NodeID} {term : Nat} (different : Not (node = c.actor))
     (led : Led (after :: before :: rest) node term)
     : Led (before :: rest) node term := by
-  rcases c.led_after led with old | ⟨_, _, step⟩
-  · exact old
-  · exact absurd (c.electStep step).1 different
+  split_rel led_after := (rcases c.led_after led with old | ⟨_, _, step⟩) with
+  | inl => exact old
+  | inr => exact absurd (c.electStep step).1 different
 
 private theorem canon_after {term : Nat} {log : List Entry}
     (canon : Canon (after :: before :: rest) term log)
@@ -6105,9 +6106,11 @@ private theorem canon_after {term : Nat} {log : List Entry}
       \/ exists node state,
           CanonNow (after :: before :: rest) node state term /\ state.log = log := by
   obtain ⟨earlier, suffix, rest'⟩ := canon
-  rcases List.suffix_cons_iff.mp suffix with rfl | inner
-  · exact Or.inr rest'
-  · exact Or.inl ⟨earlier, inner, rest'⟩
+  split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp suffix with same | inner) with
+  | inl =>
+    subst same
+    exact Or.inr rest'
+  | inr => exact Or.inl ⟨earlier, inner, rest'⟩
 
 end Consensus.Proofs.Safety.Ctx
 
@@ -6124,9 +6127,11 @@ private theorem Advance.facts {self : NodeID} {middle state : NodeState}
     : state.log = middle.log
       /\ state.currentTerm = middle.currentTerm
       /\ (state.role = middle.role \/ state.role = .none) := by
-  rcases advance with rfl | ⟨log, term, _, _, _, _, _, _, role⟩
-  · exact ⟨rfl, rfl, Or.inl rfl⟩
-  · exact ⟨log, term, role⟩
+  split_rel advance := (rcases advance with same | ⟨log, term, _, _, _, _, _, _, role⟩) with
+  | inl =>
+    subst same
+    exact ⟨rfl, rfl, Or.inl rfl⟩
+  | inr => exact ⟨log, term, role⟩
 
 private theorem makeRequestVoteRequest_eq (state : NodeState)
     : makeRequestVoteRequest state = vals state.currentTerm state.log state.commitIndex :=
@@ -6141,9 +6146,9 @@ private theorem vals_upToDate {state : NodeState} (term : Nat)
       <= termAt state.log (max state.commitIndex (maxCommittableIndex state.log)) :=
     termAt_mono sorted (Nat.le_max_right _ _)
       (Nat.max_le.mpr ⟨frontier, maxCommittableIndexBounded state.log⟩)
-  rcases Nat.lt_or_eq_of_le mono with lt | eq
-  · exact Or.inl lt
-  · exact Or.inr ⟨eq.symm, Nat.le_max_right _ _⟩
+  split_rel lt_or_eq_of_le := (rcases Nat.lt_or_eq_of_le mono with lt | eq) with
+  | inl => exact Or.inl lt
+  | inr => exact Or.inr ⟨eq.symm, Nat.le_max_right _ _⟩
 
 end Consensus.Proofs.Safety
 
@@ -6286,17 +6291,21 @@ private theorem post_log
 /-- Every log stays empty or rooted at the bootstrap configuration. -/
 private theorem rooted : RootedLogs (after :: before :: rest) := by
   intro node state now
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨_, old⟩
-  · have preRooted := c.inv.rooted c.actor c.pre c.pre_now
-    rcases c.post_log with sub | ⟨entries, log, _, leader, _, _⟩
-        | ⟨earlier, source, sender, n, suffix, canon, _, log⟩
-    · exact preRooted.prefix sub
-    · rw [log]
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    have preRooted := c.inv.rooted c.actor c.pre c.pre_now
+    split_rel post_log := (rcases c.post_log with sub | ⟨entries, log, _, leader, _, _⟩
+        | ⟨earlier, source, sender, n, suffix, canon, _, log⟩) with
+    | inl => exact preRooted.prefix sub
+    | inr_inl =>
+      rw [log]
       exact preRooted.append (c.inv.leader_logs c.actor c.pre c.pre_now leader) entries
-    · rw [log]
+    | inr_inr =>
+      rw [log]
       obtain ⟨_, _, rfl⟩ := canon.1.nonempty
       exact (c.all Inv.rooted _ suffix (List.cons_ne_nil _ _) source sender canon.1).take n
-  · exact c.inv.rooted node state old
+  | inr => exact c.inv.rooted node state old
 
 private theorem terms : Terms (after :: before :: rest) := by
   intro node state now entry mem
@@ -6326,12 +6335,15 @@ private theorem terms : Terms (after :: before :: rest) := by
 
 private theorem sorted : Sorted (after :: before :: rest) := by
   intro node state now
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨_, old⟩
-  · have preTerms := c.inv.terms c.actor c.pre c.pre_now
-    rcases c.post_log with sub | ⟨entries, log, terms, _, _, _⟩
-        | ⟨earlier, source, sender, n, suffix, canon, _, log⟩
-    · exact c.pre_sorted.sublist sub.sublist
-    · rw [log, List.pairwise_append]
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    have preTerms := c.inv.terms c.actor c.pre c.pre_now
+    split_rel post_log := (rcases c.post_log with sub | ⟨entries, log, terms, _, _, _⟩
+        | ⟨earlier, source, sender, n, suffix, canon, _, log⟩) with
+    | inl => exact c.pre_sorted.sublist sub.sublist
+    | inr_inl =>
+      rw [log, List.pairwise_append]
       refine ⟨c.pre_sorted, ?_, ?_⟩
       · exact List.pairwise_of_forall_mem_list fun first firstMem second secondMem => by
           rw [terms first firstMem, terms second secondMem]
@@ -6339,27 +6351,35 @@ private theorem sorted : Sorted (after :: before :: rest) := by
       · intro first firstMem second secondMem
         rw [terms second secondMem]
         exact preTerms first firstMem
-    · rw [log]
+    | inr_inr =>
+      rw [log]
       obtain ⟨_, _, rfl⟩ := canon.1.nonempty
       exact (c.all Inv.sorted _ suffix (List.cons_ne_nil _ _) source sender canon.1).sublist
         (List.take_sublist _ _)
-  · exact c.inv.sorted node state old
+  | inr => exact c.inv.sorted node state old
 
 private theorem active : Active (after :: before :: rest) := by
   intro node state now role
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨_, old⟩
-  · exact c.post_two (Or.inl role)
-  · exact c.inv.active node state old role
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    exact c.post_two (Or.inl role)
+  | inr => exact c.inv.active node state old role
 
 private theorem term_mono : TermMono (after :: before :: rest) := by
   intro node state earlier now seen
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨different, old⟩
-  · rcases c.seen_after seen with seen | ⟨_, rfl⟩
-    · exact Nat.le_trans (c.inv.term_mono c.actor c.pre earlier c.pre_now seen) c.term_le
-    · exact Nat.le.refl
-  · rcases c.seen_after seen with seen | ⟨same, _⟩
-    · exact c.inv.term_mono node state earlier old seen
-    · exact absurd same different
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨different, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    split_rel seen_after := (rcases c.seen_after seen with seen | ⟨same, stateEq⟩) with
+    | inl => exact Nat.le_trans (c.inv.term_mono c.actor c.pre earlier c.pre_now seen) c.term_le
+    | inr =>
+      subst stateEq
+      exact Nat.le.refl
+  | inr =>
+    split_rel seen_after := (rcases c.seen_after seen with seen | ⟨same, other⟩) with
+    | inl => exact c.inv.term_mono node state earlier old seen
+    | inr => exact absurd same different
 
 private theorem vote_record : VoteRecord (after :: before :: rest) := by
   intro node state earlier candidate now seen voted
@@ -6418,19 +6438,24 @@ private theorem campaign_votes {candidate : NodeState}
         voter ∈ candidate.votesGranted
         -> Granted (after :: before :: rest) voter c.actor candidate.currentTerm
             (vals candidate.currentTerm c.pre.log c.pre.commitIndex) := by
-  obtain ⟨_, _, _, ⟨_, freshTerm, freshVote, freshVotes⟩
-    | ⟨preRole, sameTerm, _, more⟩⟩ := campaign
-  · intro voter mem
+  split_rel campaign :=
+      (obtain ⟨_, _, _, ⟨_, freshTerm, freshVote, freshVotes⟩
+        | ⟨preRole, sameTerm, _, more⟩⟩ := campaign) with
+  | inl =>
+    intro voter mem
     rw [freshVotes, Finset.mem_singleton] at mem
     subst mem
     exact c.self_granted (Nat.le_trans (Nat.le_succ _) (Nat.le_of_eq freshTerm.symm)) termEq
       (votedEq.trans freshVote)
-  · intro voter mem
+  | inr =>
+    intro voter mem
     rw [sameTerm]
-    rcases more voter mem with old | ⟨response, eq, responseTerm, granted⟩
-    · exact ((c.inv.candidate c.actor c.pre c.pre_now preRole).2.2.1 voter old).mono
+    split_rel more := (rcases more voter mem with old | ⟨response, eq, responseTerm, granted⟩) with
+    | inl =>
+      exact ((c.inv.candidate c.actor c.pre c.pre_now preRole).2.2.1 voter old).mono
         c.suffix_tail
-    · obtain ⟨envelope, ok, sourceEq, targetEq, payload⟩ := c.received_ok eq
+    | inr =>
+      obtain ⟨envelope, ok, sourceEq, targetEq, payload⟩ := c.received_ok eq
       simp only [MessageOK, payload] at ok
       obtain ⟨request, granted', _, forNow⟩ := ok granted
       rw [targetEq] at forNow
@@ -6484,12 +6509,14 @@ private theorem wins_elect (wins : Wins c.actor c.pre c.event c.post)
     exact termCase
   · rw [logEq]
     simp only [primaryState]
-    split
-    · rw [candidateLog]
+    split_rel committed := (split) with
+    | pos =>
+      rw [candidateLog]
       exact take_prefix_take _ (by
         simp only [lastCommittableIndex, candidateLog]
         exact Nat.le_max_right _ _)
-    · rw [candidateLog]
+    | neg =>
+      rw [candidateLog]
       exact List.take_prefix _ _
   · intro voter mem
     rw [termEq]
@@ -6497,30 +6524,44 @@ private theorem wins_elect (wins : Wins c.actor c.pre c.event c.post)
 
 private theorem led_cur : LedCur (after :: before :: rest) := by
   intro node state term now led
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨different, old⟩
-  · rcases c.led_after led with led | ⟨_, _, step⟩
-    · have le := c.term_le
-      rcases c.inv.led_cur c.actor c.pre term c.pre_now led with lt | ⟨termEq, role⟩
-      · exact Or.inl (Nat.lt_of_lt_of_le lt le)
-      · rcases Nat.lt_or_eq_of_le le with lt | same
-        · exact Or.inl (Nat.lt_of_le_of_lt (Nat.le_of_eq termEq) lt)
-        · refine Or.inr ⟨termEq.trans same, fun candidate => ?_⟩
-          obtain ⟨_, _, _, ⟨_, fresh, _⟩ | ⟨preRole, _⟩⟩ := Summary.candidate c.sum candidate
-          · exact Nat.succ_ne_self _ (fresh.symm.trans same.symm)
-          · exact role preRole
-    · obtain ⟨_, _, _, _, termEq, role, _⟩ := c.electStep step
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨different, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    split_rel led_after := (rcases c.led_after led with led | ⟨_, _, step⟩) with
+    | inl =>
+      have le := c.term_le
+      split_rel led_cur :=
+          (rcases c.inv.led_cur c.actor c.pre term c.pre_now led with lt | ⟨termEq, role⟩) with
+      | inl => exact Or.inl (Nat.lt_of_lt_of_le lt le)
+      | inr =>
+        split_rel lt_or_eq_of_le := (rcases Nat.lt_or_eq_of_le le with lt | same) with
+        | inl => exact Or.inl (Nat.lt_of_le_of_lt (Nat.le_of_eq termEq) lt)
+        | inr =>
+          refine Or.inr ⟨termEq.trans same, fun candidate => ?_⟩
+          split_rel candidate :=
+              (obtain ⟨_, _, _, ⟨_, fresh, _⟩ | ⟨preRole, _⟩⟩ :=
+                Summary.candidate c.sum candidate) with
+          | inl => exact Nat.succ_ne_self _ (fresh.symm.trans same.symm)
+          | inr => exact role preRole
+    | inr =>
+      obtain ⟨_, _, _, _, termEq, role, _⟩ := c.electStep step
       refine Or.inr ⟨termEq.symm, ?_⟩
-      rcases role with role | role <;> rw [role] <;> simp
-  · exact c.inv.led_cur node state term old (c.led_other different led)
+      split_rel role := (rcases role with role | role) with
+      | inl => rw [role] <;> simp
+      | inr => rw [role] <;> simp
+  | inr => exact c.inv.led_cur node state term old (c.led_other different led)
 
 private theorem leader_led : LeaderLed (after :: before :: rest) := by
   intro node state now role
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨_, old⟩
-  · rcases Summary.leader c.sum role with ⟨preRole, termEq⟩ | wins
-    · rw [termEq]
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    split_rel leader := (rcases Summary.leader c.sum role with ⟨preRole, termEq⟩ | wins) with
+    | inl =>
+      rw [termEq]
       exact (c.inv.leader_led c.actor c.pre c.pre_now preRole).mono c.suffix_tail
-    · exact Or.inr ⟨_, _, after, before, rest, List.suffix_refl _, c.wins_elect wins⟩
-  · exact (c.inv.leader_led node state old role).mono c.suffix_tail
+    | inr => exact Or.inr ⟨_, _, after, before, rest, List.suffix_refl _, c.wins_elect wins⟩
+  | inr => exact (c.inv.leader_led node state old role).mono c.suffix_tail
 
 /--
 A candidate whose committed prefix a commit step of its term or later covers,
@@ -6584,51 +6625,57 @@ private theorem doomed_absurd {term commit : Nat} {log : List Entry}
       -> termAt state.log index = late /\ isSignatureAt state.log index = true := by
     intro history state good now seen bound
     have inv := good _ (List.suffix_refl _) (fun empty => by simp [empty, Now] at now)
-    rcases inv.persist voter state acker index now seen ackSignature with inLog
-        | ⟨later, _, lt, laterLe, _, _⟩
-    · refine ⟨?_, isSignatureAt_of_prefix inLog (isSignatureAt_take_of_le Nat.le.refl ackSignature)⟩
+    split_rel persist := (rcases inv.persist voter state acker index now seen ackSignature with inLog
+        | ⟨later, _, lt, laterLe, _, _⟩) with
+    | inl =>
+      refine ⟨?_, isSignatureAt_of_prefix inLog (isSignatureAt_take_of_le Nat.le.refl ackSignature)⟩
       rw [termAt_of_prefix inLog bound', termAt_take Nat.le.refl, ackTerm]
-    · rw [ackTerm] at lt
+    | inr =>
+      rw [ackTerm] at lt
       omega
-  by_cases self : voter = c.actor
-  · subst self
+  split_rel self := (by_cases self : voter = c.actor) with
+  | pos =>
+    subst self
     have seen := ackerSeen.mono suffix
     have mono := c.inv.term_mono c.actor c.pre acker c.pre_now seen
     rw [ackerTerm] at mono
     have preLe : c.pre.currentTerm <= term := by
-      rcases termCase with lt | ⟨same, _⟩
-      · exact Nat.le_of_lt lt
-      · exact Nat.le_of_eq same
+      split_rel termCase := (rcases termCase with lt | ⟨same, other⟩) with
+      | inl => exact Nat.le_of_lt lt
+      | inr => exact Nat.le_of_eq same
     obtain ⟨atIndex, _⟩ := keeps _ c.pre c.good c.pre_now seen (Nat.le_trans preLe le)
     rw [preLog] at atIndex
     have := lowTerm index
     omega
-  obtain ⟨a', b', r', grantSuffix, ⟨granting, _, grantingMem, _, grantingLe, _, _, upToDate⟩,
-    seenOr⟩ := granted voter inVoters
-  have tail : b' :: r' <:+ before :: rest := by
-    rcases List.suffix_cons_iff.mp grantSuffix with same | inner
-    · simp only [List.cons.injEq] at same
-      obtain ⟨_, rfl, rfl⟩ := same
-      exact List.suffix_refl _
-    · exact (List.suffix_cons _ _).trans inner
-  rcases seenOr with same | candidateSeen
-  · exact self same
-  have ordered := order _ tail candidateSeen
-  have good : Good (b' :: r') := fun earlier within nonempty =>
-    c.good earlier (within.trans tail) nonempty
-  have seen := ackerSeen.mono ordered
-  have grantInv := good _ (List.suffix_refl _) (List.cons_ne_nil _ _)
-  have mono := grantInv.term_mono voter granting acker grantingMem seen
-  rw [ackerTerm] at mono
-  obtain ⟨atIndex, signed⟩ := keeps _ granting good grantingMem seen
-    (Nat.le_trans grantingLe le)
-  have committable : late <= maxCommittableTerm granting.log := by
-    rw [← atIndex]
-    exact termAt_mono (grantInv.sorted voter granting grantingMem)
-      (signatureIndex_le_maxCommittableIndex signed) (maxCommittableIndexBounded _)
-  have requestTerm := lowTerm (max commit (maxCommittableIndex log))
-  simp only [voteLogUpToDate, vals] at upToDate
-  omega
+  | neg =>
+    obtain ⟨a', b', r', grantSuffix, ⟨granting, _, grantingMem, _, grantingLe, _, _, upToDate⟩,
+      seenOr⟩ := granted voter inVoters
+    have tail : b' :: r' <:+ before :: rest := by
+      split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp grantSuffix with same | inner) with
+      | inl =>
+        simp only [List.cons.injEq] at same
+        obtain ⟨_, rfl, rfl⟩ := same
+        exact List.suffix_refl _
+      | inr => exact (List.suffix_cons _ _).trans inner
+    split_rel seenOr := (rcases seenOr with same | candidateSeen) with
+    | inl => exact self same
+    | inr =>
+      have ordered := order _ tail candidateSeen
+      have good : Good (b' :: r') := fun earlier within nonempty =>
+        c.good earlier (within.trans tail) nonempty
+      have seen := ackerSeen.mono ordered
+      have grantInv := good _ (List.suffix_refl _) (List.cons_ne_nil _ _)
+      have mono := grantInv.term_mono voter granting acker grantingMem seen
+      rw [ackerTerm] at mono
+      obtain ⟨atIndex, signed⟩ := keeps _ granting good grantingMem seen
+        (Nat.le_trans grantingLe le)
+      have committable : late <= maxCommittableTerm granting.log := by
+        rw [← atIndex]
+        exact termAt_mono (grantInv.sorted voter granting grantingMem)
+          (signatureIndex_le_maxCommittableIndex signed) (maxCommittableIndexBounded _)
+      have requestTerm := lowTerm (max commit (maxCommittableIndex log))
+      simp only [voteLogUpToDate, vals] at upToDate
+      omega
 
 /-- The actor's committed prefix is committed no later than `bound`, or a later
 commit step covers it from a base within it. -/
@@ -6641,9 +6688,9 @@ private theorem pre_split (bound : Nat)
           /\ base <= c.pre.commitIndex
           /\ c.pre.log.take c.pre.commitIndex <+: leaderState.log.take index := by
   obtain ⟨⟨_, backed⟩, _⟩ := c.inv.commit_backed c.actor c.pre c.pre_now
-  rcases backed with zero | ⟨_, _, committed, _, within⟩
-  · exact Or.inl (Or.inl zero)
-  · exact backing_split committed within c.frontier_pre
+  split_rel backed := (rcases backed with zero | ⟨_, _, committed, _, within⟩) with
+  | inl => exact Or.inl (Or.inl zero)
+  | inr => exact backing_split committed within c.frontier_pre
 
 /-- The actor's earlier states have terms at most its current one. -/
 private theorem pre_terms {earlier : History} (suffix : earlier <:+ before :: rest)
@@ -6657,72 +6704,92 @@ private theorem campaign_backed {state : NodeState} (logEq : state.log = c.pre.l
     (termEq : state.currentTerm = c.pre.currentTerm + 1)
     : Backed (after :: before :: rest) state.log state.commitIndex (state.currentTerm - 1)
       \/ Doomed (after :: before :: rest) c.actor state := by
-  rcases c.pre_split c.pre.currentTerm with backed
+  split_rel pre_split := (rcases c.pre_split c.pre.currentTerm with backed
       | ⟨current, past, leader, leaderState, late, base, index, suffix, step, lt, baseLe,
-        within⟩
-  · left
+        within⟩) with
+  | inl =>
+    left
     rw [logEq, commitEq, termEq, Nat.add_sub_cancel]
     exact backed.mono c.suffix_tail
-  · refine Or.inr ⟨current, past, leader, leaderState, late, base, index,
+  | inr =>
+    refine Or.inr ⟨current, past, leader, leaderState, late, base, index,
       suffix.trans c.suffix_tail, step, by omega, by omega, by rw [logEq, commitEq]; exact within,
       fun earlier inner seen => ?_⟩
-    rcases List.suffix_cons_iff.mp inner with rfl | inner
-    · exact suffix.trans c.suffix_tail
-    · obtain ⟨other, seenOther, otherTerm⟩ := seen
+    split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp inner with same | inner) with
+    | inl =>
+      subst same
+      exact suffix.trans c.suffix_tail
+    | inr =>
+      obtain ⟨other, seenOther, otherTerm⟩ := seen
       have := c.pre_terms inner seenOther
       omega
 
 private theorem candidate : Candidate (after :: before :: rest) := by
   intro node state now role
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨_, old⟩
-  · have campaign := Summary.candidate c.sum role
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    have campaign := Summary.candidate c.sum role
     have ⟨_, logEq, commitEq, kind⟩ := campaign
     obtain ⟨three, _⟩ := c.campaign_three campaign
     refine ⟨three, ?_, ?_, ?_, ?_⟩
-    · rcases kind with ⟨_, _, voted, _⟩ | ⟨preRole, _, voted, _⟩
-      · exact voted
-      · have own := (c.inv.candidate c.actor c.pre c.pre_now preRole).2.1
-        rcases voted with voted | none
-        · rw [voted, own]
-        · rw [own] at none
+    · split_rel kind := (rcases kind with ⟨_, _, voted, _⟩ | ⟨preRole, _, voted, _⟩) with
+      | inl => exact voted
+      | inr =>
+        have own := (c.inv.candidate c.actor c.pre c.pre_now preRole).2.1
+        split_rel voted := (rcases voted with voted | none) with
+        | inl => rw [voted, own]
+        | inr =>
+          rw [own] at none
           cases none
     · intro voter mem
       rw [logEq, commitEq]
       exact c.campaign_votes campaign rfl rfl voter mem
-    · rcases kind with ⟨_, fresh, _⟩ | ⟨preRole, same, _⟩
-      · exact c.campaign_backed logEq commitEq fresh
-      · rcases (c.inv.candidate c.actor c.pre c.pre_now preRole).2.2.2.1 with backed | doomed
-        · left
+    · split_rel kind := (rcases kind with ⟨_, fresh, _⟩ | ⟨preRole, same, _⟩) with
+      | inl => exact c.campaign_backed logEq commitEq fresh
+      | inr =>
+        split_rel candidate :=
+            (rcases (c.inv.candidate c.actor c.pre c.pre_now preRole).2.2.2.1 with
+              backed | doomed) with
+        | inl =>
+          left
           rw [logEq, commitEq, same]
           exact backed.mono c.suffix_tail
-        · exact Or.inr (Doomed.cons' doomed logEq commitEq same)
+        | inr => exact Or.inr (Doomed.cons' doomed logEq commitEq same)
     · intro entry member
       rw [logEq] at member
-      rcases kind with ⟨_, fresh, _⟩ | ⟨preRole, same, _⟩
-      · have := c.inv.terms c.actor c.pre c.pre_now entry member
+      split_rel kind := (rcases kind with ⟨_, fresh, _⟩ | ⟨preRole, same, _⟩) with
+      | inl =>
+        have := c.inv.terms c.actor c.pre c.pre_now entry member
         omega
-      · rw [same]
+      | inr =>
+        rw [same]
         exact (c.inv.candidate c.actor c.pre c.pre_now preRole).2.2.2.2 entry member
-  · obtain ⟨three, voted, votes, backed, low⟩ := c.inv.candidate node state old role
+  | inr =>
+    obtain ⟨three, voted, votes, backed, low⟩ := c.inv.candidate node state old role
     refine ⟨three, voted, fun voter mem => (votes voter mem).mono c.suffix_tail, ?_, low⟩
-    rcases backed with backed | doomed
-    · exact Or.inl (backed.mono c.suffix_tail)
-    · exact Or.inr (Doomed.cons' doomed rfl rfl rfl)
+    split_rel backed := (rcases backed with backed | doomed) with
+    | inl => exact Or.inl (backed.mono c.suffix_tail)
+    | inr => exact Or.inr (Doomed.cons' doomed rfl rfl rfl)
 
 private theorem elect_backed : ElectBacked (after :: before :: rest) := by
   intro a b r node term log commit suffix step
-  rcases List.suffix_cons_iff.mp suffix with same | inner
-  · simp only [List.cons.injEq] at same
+  split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp suffix with same | inner) with
+  | inl =>
+    simp only [List.cons.injEq] at same
     obtain ⟨rfl, rfl, rfl⟩ := same
     have ⟨actorEq, logEq, commitEq, termCase, _, _, _, three⟩ := c.electStep step
     subst actorEq
-    rcases termCase with lt | ⟨same, preRole⟩
-    · rcases c.pre_split (term - 1) with backed
+    split_rel termCase := (rcases termCase with lt | ⟨same, preRole⟩) with
+    | inl =>
+      split_rel pre_split := (rcases c.pre_split (term - 1) with backed
           | ⟨current, past, leader, leaderState, late, base, index, inner, commitStep, below,
-            baseLe, within⟩
-      · rw [← logEq, ← commitEq]
+            baseLe, within⟩) with
+      | inl =>
+        rw [← logEq, ← commitEq]
         exact backed
-      · exfalso
+      | inr =>
+        exfalso
         refine c.doomed_absurd step ?_ inner commitStep (by omega) (by omega)
           (by rw [← logEq, ← commitEq]; exact within) ?_
         · intro entry member
@@ -6733,13 +6800,16 @@ private theorem elect_backed : ElectBacked (after :: before :: rest) := by
           obtain ⟨other, seenOther, otherTerm⟩ := seen
           have := c.pre_terms earlierSuffix seenOther
           omega
-    · obtain ⟨_, _, _, backed, low⟩ := c.inv.candidate c.actor c.pre c.pre_now preRole
-      rcases backed with backed
+    | inr =>
+      obtain ⟨_, _, _, backed, low⟩ := c.inv.candidate c.actor c.pre c.pre_now preRole
+      split_rel backed := (rcases backed with backed
           | ⟨current, past, leader, leaderState, late, base, index, inner, commitStep, le,
-            baseLe, within, order⟩
-      · rw [← logEq, ← commitEq, ← same]
+            baseLe, within, order⟩) with
+      | inl =>
+        rw [← logEq, ← commitEq, ← same]
         exact backed
-      · exfalso
+      | inr =>
+        exfalso
         refine c.doomed_absurd step ?_ inner commitStep (by omega) (by omega)
           (by rw [← logEq, ← commitEq]; exact within)
           fun earlier earlierSuffix seen => order earlier earlierSuffix ?_
@@ -6749,7 +6819,7 @@ private theorem elect_backed : ElectBacked (after :: before :: rest) := by
           omega
         · obtain ⟨other, seenOther, otherTerm⟩ := seen
           exact ⟨other, seenOther, otherTerm.trans same.symm⟩
-  · exact c.inv.elect_backed a b r node term log commit inner step
+  | inr => exact c.inv.elect_backed a b r node term log commit inner step
 
 end Consensus.Proofs.Safety.Ctx
 
@@ -6765,10 +6835,11 @@ variable [Config.InitialConfiguration]
 private theorem suffix_of_cons_suffix {α : Type} {x y : α} {first second : List α}
     (suffix : x :: first <:+ y :: second)
     : first <:+ second := by
-  rcases List.suffix_cons_iff.mp suffix with same | inner
-  · rw [(List.cons.inj same).2]
+  split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp suffix with same | inner) with
+  | inl =>
+    rw [(List.cons.inj same).2]
     exact List.suffix_refl _
-  · exact (List.suffix_cons _ _).trans inner
+  | inr => exact (List.suffix_cons _ _).trans inner
 
 /-- A state with a lower term than one at `a` was seen before `a`. -/
 private theorem seen_split {history : History} (termMono : Everywhere TermMono history)
@@ -6784,11 +6855,12 @@ private theorem seen_split {history : History} (termMono : Everywhere TermMono h
     have := termMono _ earlierSuffix (List.cons_ne_nil _ _) node state granted now
       ⟨a, within.subset List.mem_cons_self, mem⟩
     exact Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt this)
-  rcases suffix_comparable earlierSuffix suffix with inner | outer
-  · rcases List.suffix_cons_iff.mp inner with same | inner
-    · exact (late (same ▸ List.suffix_refl _)).elim
-    · exact now.seen.mono inner
-  · exact (late outer).elim
+  split_rel suffix_comparable := (rcases suffix_comparable earlierSuffix suffix with inner | outer) with
+  | inl =>
+    split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp inner with same | inner) with
+    | inl => exact (late (same ▸ List.suffix_refl _)).elim
+    | inr => exact now.seen.mono inner
+  | inr => exact (late outer).elim
 
 /-- Prefix of a list of known length. -/
 private theorem take_of_prefix_length {α : Type} {small large : List α} {n : Nat}
