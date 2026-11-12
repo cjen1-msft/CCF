@@ -5793,9 +5793,9 @@ private theorem snap_of_committed {node : NodeID} {state : NodeState}
     · rw [agree]
       exact List.take_prefix _ _
   · obtain ⟨⟨_, backed⟩, _⟩ := c.inv.commit_backed node state now
-    rcases backed with zero | ⟨term, part, committed, _, inPart⟩
-    · omega
-    · exact ⟨term, part, committed, (take_prefix_take _ le).trans inPart⟩
+    split_rel backed := (rcases backed with zero | ⟨term, part, committed, _, inPart⟩) with
+    | inl => omega
+    | inr => exact ⟨term, part, committed, (take_prefix_take _ le).trans inPart⟩
 
 /-- A node initializes from a committed, signed prefix of a leader log. -/
 private theorem snap_available {entries : List Entry}
