@@ -6419,40 +6419,51 @@ private theorem campaign_backed {state : NodeState} (logEq : state.log = c.pre.l
 
 private theorem candidate : Candidate (after :: before :: rest) := by
   intro node state now role
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨_, old⟩
-  · have campaign := Summary.candidate c.sum role
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    have campaign := Summary.candidate c.sum role
     have ⟨_, logEq, commitEq, kind⟩ := campaign
     obtain ⟨three, _⟩ := c.campaign_three campaign
     refine ⟨three, ?_, ?_, ?_, ?_⟩
-    · rcases kind with ⟨_, _, voted, _⟩ | ⟨preRole, _, voted, _⟩
-      · exact voted
-      · have own := (c.inv.candidate c.actor c.pre c.pre_now preRole).2.1
-        rcases voted with voted | none
-        · rw [voted, own]
-        · rw [own] at none
+    · split_rel kind := (rcases kind with ⟨_, _, voted, _⟩ | ⟨preRole, _, voted, _⟩) with
+      | inl => exact voted
+      | inr =>
+        have own := (c.inv.candidate c.actor c.pre c.pre_now preRole).2.1
+        split_rel voted := (rcases voted with voted | none) with
+        | inl => rw [voted, own]
+        | inr =>
+          rw [own] at none
           cases none
     · intro voter mem
       rw [logEq, commitEq]
       exact c.campaign_votes campaign rfl rfl voter mem
-    · rcases kind with ⟨_, fresh, _⟩ | ⟨preRole, same, _⟩
-      · exact c.campaign_backed logEq commitEq fresh
-      · rcases (c.inv.candidate c.actor c.pre c.pre_now preRole).2.2.2.1 with backed | doomed
-        · left
+    · split_rel kind := (rcases kind with ⟨_, fresh, _⟩ | ⟨preRole, same, _⟩) with
+      | inl => exact c.campaign_backed logEq commitEq fresh
+      | inr =>
+        split_rel candidate :=
+            (rcases (c.inv.candidate c.actor c.pre c.pre_now preRole).2.2.2.1 with
+              backed | doomed) with
+        | inl =>
+          left
           rw [logEq, commitEq, same]
           exact backed.mono c.suffix_tail
-        · exact Or.inr (Doomed.cons' doomed logEq commitEq same)
+        | inr => exact Or.inr (Doomed.cons' doomed logEq commitEq same)
     · intro entry member
       rw [logEq] at member
-      rcases kind with ⟨_, fresh, _⟩ | ⟨preRole, same, _⟩
-      · have := c.inv.terms c.actor c.pre c.pre_now entry member
+      split_rel kind := (rcases kind with ⟨_, fresh, _⟩ | ⟨preRole, same, _⟩) with
+      | inl =>
+        have := c.inv.terms c.actor c.pre c.pre_now entry member
         omega
-      · rw [same]
+      | inr =>
+        rw [same]
         exact (c.inv.candidate c.actor c.pre c.pre_now preRole).2.2.2.2 entry member
-  · obtain ⟨three, voted, votes, backed, low⟩ := c.inv.candidate node state old role
+  | inr =>
+    obtain ⟨three, voted, votes, backed, low⟩ := c.inv.candidate node state old role
     refine ⟨three, voted, fun voter mem => (votes voter mem).mono c.suffix_tail, ?_, low⟩
-    rcases backed with backed | doomed
-    · exact Or.inl (backed.mono c.suffix_tail)
-    · exact Or.inr (Doomed.cons' doomed rfl rfl rfl)
+    split_rel backed := (rcases backed with backed | doomed) with
+    | inl => exact Or.inl (backed.mono c.suffix_tail)
+    | inr => exact Or.inr (Doomed.cons' doomed rfl rfl rfl)
 
 private theorem elect_backed : ElectBacked (after :: before :: rest) := by
   intro a b r node term log commit suffix step
