@@ -7148,10 +7148,11 @@ private theorem post_led
       : (c.pre.role = .primary /\ c.post.currentTerm = c.pre.currentTerm)
         \/ Wins c.actor c.pre c.event c.post)
     : Led (after :: before :: rest) c.actor c.post.currentTerm := by
-  rcases origin with ⟨leader, termEq⟩ | wins
-  · rw [termEq]
+  split_rel origin := (rcases origin with ⟨leader, termEq⟩ | wins) with
+  | inl =>
+    rw [termEq]
     exact (c.pre_led leader).mono c.suffix_tail
-  · exact Or.inr ⟨_, _, after, before, rest, List.suffix_refl _, c.wins_elect wins⟩
+  | inr => exact Or.inr ⟨_, _, after, before, rest, List.suffix_refl _, c.wins_elect wins⟩
 
 /-- An acknowledgement of a leader's term holds a prefix of the leader's log. -/
 private theorem acked_pre (leader : c.pre.role = .primary) {voter : NodeID} {index : Nat}
