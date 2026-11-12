@@ -1540,12 +1540,14 @@ private theorem configurationHistory_filterMap (index : Nat) (log : List Entry)
           entry.content.metadata.configuration.map
             (fun nodes => ({ index, nodes } : Configuration)))
       = configurationsInLogFrom index log := by
-  induction log generalizing index with
+  split_rel log := (induction log generalizing index) with
   | nil => rfl
-  | cons entry entries ih =>
+  | cons =>
+      rename_i entry entries ih
       rcases entry with ⟨term, content⟩
-      cases h : content.metadata.configuration <;>
-        simp [configurationsInLogFrom, h, ih]
+      split_rel h := (cases h : content.metadata.configuration) with
+      | none => simp [configurationsInLogFrom, h, ih]
+      | some => simp [configurationsInLogFrom, h, ih]
 
 @[simp]
 private theorem activeConfigurations_eq (state : NodeState)
