@@ -3572,15 +3572,18 @@ private theorem present_after_step {nodes : List NodeID} {before after : Model.S
   have present : forall {actor : NodeID} {value : NodeState},
       exists afterState, (node, afterState) ∈ replaceNode before.nodes actor value := by
     intro actor value
-    by_cases same : node = actor
-    · subst same
+    split_rel same := (by_cases same : node = actor) with
+    | pos =>
+      subst same
       exact ⟨value, List.mem_map.mpr ⟨_, member, by simp⟩⟩
-    · exact ⟨beforeState, List.mem_map.mpr ⟨_, member, by simp [same]⟩⟩
-  cases action with
-  | «local» actor input =>
+    | neg => exact ⟨beforeState, List.mem_map.mpr ⟨_, member, by simp [same]⟩⟩
+  split_rel action := (cases action) with
+  | «local» =>
+      rename_i actor input
       obtain ⟨_, _, _, _, _, rfl⟩ := step_local stepped
       exact present
-  | deliver envelope =>
+  | deliver =>
+      rename_i envelope
       obtain ⟨_, _, _, _, _, _, rfl⟩ := step_deliver stepped
       exact present
 
