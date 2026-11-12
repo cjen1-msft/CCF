@@ -7916,10 +7916,11 @@ private theorem committed_logs_prefix_of_le [Config.InitialConfiguration]
       later (by rwa [Nat.add_sub_cancel' ordered])
   obtain ⟨history, exec⟩ :=
     Safety.exec_of_reachable (trace.reachable (CCF.Execution.Trace.stateAt_mem laterFound))
-  rcases Safety.committed_logs_comparable exec carriedMember laterMember with
-    carriedFirst | laterFirst
-  · exact Or.inl (grown.trans carriedFirst)
-  · exact List.prefix_or_prefix_of_prefix grown laterFirst
+  split_rel committed_logs_comparable :=
+      (rcases Safety.committed_logs_comparable exec carriedMember laterMember with
+        carriedFirst | laterFirst) with
+  | inl => exact Or.inl (grown.trans carriedFirst)
+  | inr => exact List.prefix_or_prefix_of_prefix grown laterFirst
 
 public theorem committed_logs_prefix
     : forall (config : Finset NodeID),
