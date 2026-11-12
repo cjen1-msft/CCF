@@ -6894,9 +6894,9 @@ private theorem leader_logs : LeaderLogs (after :: before :: rest) := by
 private theorem old_led_actor (led : Led (before :: rest) c.actor c.post.currentTerm)
     : c.pre.currentTerm = c.post.currentTerm /\ Not (c.pre.role = .candidate) := by
   have le := c.term_le
-  rcases c.inv.led_cur c.actor c.pre _ c.pre_now led with lt | ⟨eq, role⟩
-  · exact (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt le)).elim
-  · exact ⟨eq.symm, role⟩
+  split_rel led_cur := (rcases c.inv.led_cur c.actor c.pre _ c.pre_now led with lt | ⟨eq, role⟩) with
+  | inl => exact (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt le)).elim
+  | inr => exact ⟨eq.symm, role⟩
 
 private theorem canon_mono : CanonMono (after :: before :: rest) := by
   have safety := c.election_safety
