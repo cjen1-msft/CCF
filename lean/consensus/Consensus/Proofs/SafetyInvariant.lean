@@ -1752,15 +1752,18 @@ private theorem NodeInvariant.reachable {P : NodeID -> NodeState -> Prop}
     (reachable
       : (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes).Reachable state)
     : forall node local_, (node, local_) ∈ state.nodes -> P node local_ := by
-  induction reachable
-    using @TransitionSystem.Reachable.rec
-      (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) with
-  | initial initialized =>
+  split_rel reachable :=
+      (induction reachable
+        using @TransitionSystem.Reachable.rec
+          (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes)) with
+  | initial =>
+      rename_i initialized
       intro node local_ member
       have initial : local_ = initialNodeState Config.INITIAL_CONFIGURATION node := initialized.2.2.2.2 (node, local_) member
       subst initial
       exact invariant.initial node
-  | @step before after action _ stepped ih =>
+  | step =>
+      rename_i before after action _ stepped ih
       have preserved : forall {actor : NodeID} {old : NodeState}
           {event : Model.Node.Event} {new outputs},
           nodeState before actor = some old ->
@@ -1770,15 +1773,26 @@ private theorem NodeInvariant.reachable {P : NodeID -> NodeState -> Prop}
             (node, local_) ∈ replaceNode before.nodes actor new ->
             P node local_ := by
         intro actor old event new outputs found acted node local_ member
-        rcases mem_replaceNode member with ⟨rfl, rfl⟩ | ⟨_, listed⟩
-        · exact invariant.step _ _ _ _ _ (ih _ _ (mem_of_nodeState found)) acted
-        · exact ih _ _ listed
-      cases action with
-      | «local» actor input =>
+        split_rel mem_replaceNode :=
+            (rcases mem_replaceNode member with ⟨nodeEq, stateEq⟩ | ⟨other, listed⟩) with
+        | inl =>
+          subst nodeEq stateEq
+          exact invariant.step _ _ _ _ _ (ih _ _ (mem_of_nodeState found)) acted
+        | inr => exact ih _ _ listed
+      split_rel action := (cases action) with
+      | «local» =>
+          rename_i actor input
           obtain ⟨old, new, outputs, found, acted, rfl⟩ := step_local stepped
           exact preserved (event := .internal input) found
-            (by cases input <;> exact acted)
-      | deliver envelope =>
+            (by
+              split_rel input := (cases input) with
+              | append => exact acted
+              | sendEntries => exact acted
+              | timeout => exact acted
+              | nominateSuccessor => exact acted
+              | initAsBackup => exact acted)
+      | deliver =>
+          rename_i envelope
           obtain ⟨_, old, new, outputs, found, received, rfl⟩ := step_deliver stepped
           exact preserved (event := .receive envelope.source envelope.payload) found received
 
