@@ -3104,8 +3104,9 @@ private theorem Keeps.nominateSuccessor (state : NodeState)
 private theorem CommitFrontier.act {state : NodeState}
     (frontier : CommitFrontier state) (input : Input)
     : Keeps CommitFrontier (Model.Node.act caps self state input) := by
-  cases input with
-  | append entries =>
+  split_rel input := (cases input) with
+  | append =>
+      rename_i entries
       unfold Model.Node.act Model.Node.appendBatch
       exact Keeps.seq' fun _ => Keeps.bind'
         (Keeps.foldlM' (fun current entry kept =>
@@ -3117,11 +3118,13 @@ private theorem CommitFrontier.act {state : NodeState}
               entry.flushes appended frontier)
           entries state frontier)
         fun _ kept => kept.advanced self caps
-  | sendEntries destination endIndex =>
+  | sendEntries =>
+      rename_i destination endIndex
       unfold Model.Node.act Model.Node.sendEntries
       exact Keeps.seq' fun _ => Keeps.seq' fun _ => Keeps.pure' frontier.withSent
-  | timeout kind =>
-      cases kind with
+  | timeout =>
+      rename_i kind
+      split_rel kind := (cases kind) with
       | election =>
           unfold Model.Node.act Model.Node.startElection
           exact Keeps.seq' fun _ => frontier.becomePreVoteCandidate caps self
@@ -3130,15 +3133,17 @@ private theorem CommitFrontier.act {state : NodeState}
           exact Keeps.seq' fun _ => Keeps.pure' (frontier.of_log rfl rfl)
   | nominateSuccessor =>
       exact (Keeps.nominateSuccessor caps self state).mono fun _ same => same ▸ frontier
-  | initAsBackup entries =>
+  | initAsBackup =>
+      rename_i entries
       unfold Model.Node.act Model.Node.initAsBackup
       refine Keeps.bind' Keeps.guard'
         fun _ ⟨_, signed⟩ =>
           Keeps.pure' ⟨by simp [becomeAwareOfNewTerm], fun positive => ?_⟩
-      rcases signed with empty | signature
-      · subst empty
+      split_rel signed := (rcases signed with empty | signature) with
+      | inl =>
+        subst empty
         simp [becomeAwareOfNewTerm] at positive
-      · simpa [becomeAwareOfNewTerm] using signature
+      | inr => simpa [becomeAwareOfNewTerm] using signature
 
 private theorem CommitFrontier.receive {state : NodeState}
     (frontier : CommitFrontier state) (source : NodeID) (message : Message)
