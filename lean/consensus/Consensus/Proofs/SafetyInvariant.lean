@@ -6763,15 +6763,19 @@ private theorem old_in_new {node : NodeID} {later commit : Nat} {log : List Entr
     (committed : Committed history term part) (suffix : history <:+ before :: rest)
     (lt : term < later)
     : part <+: log := by
-  induction committed with
-  | fresh step =>
-      exact c.old_step_in_new elect suffix step (Committed.fresh step) lt
-        fun _ => by rw [List.take_zero]; exact List.nil_prefix
-  | chained step backing le within ih =>
-      exact c.old_step_in_new elect suffix step (Committed.chained step backing le within)
-        lt fun _ => within.trans (ih ((List.suffix_cons _ _).trans suffix)
-          (Nat.lt_of_le_of_lt le lt))
-  | past _ ih => exact ih ((List.suffix_cons _ _).trans suffix) lt
+  split_rel committed := (induction committed) with
+  | fresh =>
+    rename_i step
+    exact c.old_step_in_new elect suffix step (Committed.fresh step) lt
+      fun _ => by rw [List.take_zero]; exact List.nil_prefix
+  | chained =>
+    rename_i step backing le within ih
+    exact c.old_step_in_new elect suffix step (Committed.chained step backing le within)
+      lt fun _ => within.trans (ih ((List.suffix_cons _ _).trans suffix)
+        (Nat.lt_of_le_of_lt le lt))
+  | past =>
+    rename_i _ ih
+    exact ih ((List.suffix_cons _ _).trans suffix) lt
 
 /-- A part committed before the step is in every later elected log. -/
 private theorem old_complete {term later commit : Nat} {node : NodeID}
