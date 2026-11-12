@@ -5779,11 +5779,12 @@ private theorem led_after {node : NodeID} {term : Nat}
     (led : Led (after :: before :: rest) node term)
     : Led (before :: rest) node term
       \/ exists log commit, ElectStep after before rest node term log commit := by
-  rcases led with bootstrap | ⟨log, commit, elected⟩
-  · exact Or.inl (Or.inl bootstrap)
-  · rcases c.elected_after elected with old | step
-    · exact Or.inl (Or.inr ⟨log, commit, old⟩)
-    · exact Or.inr ⟨log, commit, step⟩
+  split_rel led := (rcases led with bootstrap | ⟨log, commit, elected⟩) with
+  | inl => exact Or.inl (Or.inl bootstrap)
+  | inr =>
+    split_rel elected_after := (rcases c.elected_after elected with old | step) with
+    | inl => exact Or.inl (Or.inr ⟨log, commit, old⟩)
+    | inr => exact Or.inr ⟨log, commit, step⟩
 
 private theorem led_other {node : NodeID} {term : Nat} (different : Not (node = c.actor))
     (led : Led (after :: before :: rest) node term)
