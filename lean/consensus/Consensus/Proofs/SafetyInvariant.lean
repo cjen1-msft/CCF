@@ -2730,13 +2730,14 @@ private theorem hasQuorum_majority {configurations : List Configuration}
 private theorem Rooted.prefix {root : Entry} {small large : List Entry}
     (rooted : Rooted root large) (sub : small <+: large)
     : Rooted root small := by
-  rcases small with _ | ⟨first, rest⟩
-  · exact Or.inl rfl
-  · refine Or.inr ?_
+  split_rel small := (rcases small with _ | ⟨first, rest⟩) with
+  | inl => exact Or.inl rfl
+  | inr =>
+    refine Or.inr ?_
     obtain ⟨suffix, rfl⟩ := sub
-    rcases rooted with empty | head
-    · simp at empty
-    · simpa using head
+    split_rel rooted := (rcases rooted with empty | head) with
+    | inl => simp at empty
+    | inr => simpa using head
 
 private theorem Rooted.take {root : Entry} {log : List Entry} (rooted : Rooted root log)
     (n : Nat)
