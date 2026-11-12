@@ -6528,10 +6528,11 @@ variable [Config.InitialConfiguration]
 private theorem suffix_of_cons_suffix {α : Type} {x y : α} {first second : List α}
     (suffix : x :: first <:+ y :: second)
     : first <:+ second := by
-  rcases List.suffix_cons_iff.mp suffix with same | inner
-  · rw [(List.cons.inj same).2]
+  split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp suffix with same | inner) with
+  | inl =>
+    rw [(List.cons.inj same).2]
     exact List.suffix_refl _
-  · exact (List.suffix_cons _ _).trans inner
+  | inr => exact (List.suffix_cons _ _).trans inner
 
 /-- A state with a lower term than one at `a` was seen before `a`. -/
 private theorem seen_split {history : History} (termMono : Everywhere TermMono history)
