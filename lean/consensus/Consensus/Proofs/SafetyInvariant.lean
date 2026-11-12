@@ -2788,10 +2788,11 @@ private theorem rooted_overlap {root : Entry}
   have leftHead := leftRooted.head leftNonempty
   have rightHead := rightRooted.head rightNonempty
   have agree' : left.take (max k 1) = right.take (max k 1) := by
-    rcases Nat.eq_zero_or_pos k with zero | positive
-    · subst zero
+    split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos k with zero | positive) with
+    | inl =>
+      subst zero
       simp [leftHead, rightHead]
-    · rwa [Nat.max_eq_left positive]
+    | inr => rwa [Nat.max_eq_left positive]
   have rooted : (right.take (max k 1)).take 1 = [root] := by
     rw [List.take_take, Nat.min_eq_left (Nat.le_max_right _ _), rightHead]
   obtain ⟨configuration, leftMember, rightMember, bound⟩ :=
@@ -2799,9 +2800,10 @@ private theorem rooted_overlap {root : Entry}
       (Nat.le_trans rightLe (Nat.le_max_left _ _))
       (configurationHistory_ne_nil rooted configured)
   refine ⟨configuration, leftMember, rightMember, ?_⟩
-  rcases bound with within | first
-  · exact Nat.le_trans within (Nat.le_max_left _ _)
-  · obtain ⟨rest, eq, _⟩ := configurationHistory_split (right.take (max k 1)) 1
+  split_rel bound := (rcases bound with within | first) with
+  | inl => exact Nat.le_trans within (Nat.le_max_left _ _)
+  | inr =>
+    obtain ⟨rest, eq, _⟩ := configurationHistory_split (right.take (max k 1)) 1
     obtain ⟨nodes, some⟩ := Option.isSome_iff_exists.mp configured
     have genesis : ({ index := 1, nodes } : Configuration)
         ∈ configurationHistory (right.take (max k 1)) := by
