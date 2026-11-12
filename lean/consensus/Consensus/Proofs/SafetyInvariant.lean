@@ -2262,9 +2262,10 @@ private theorem termAt_zero (log : List Entry) : termAt log 0 = 0 := by
 private theorem termAt_take {log : List Entry} {index n : Nat} (le : index <= n)
     : termAt (log.take n) index = termAt log index := by
   unfold termAt entryAt?
-  split
-  · rfl
-  · rename_i nonzero
+  split_rel zero := (split) with
+  | pos => rfl
+  | neg =>
+    rename_i nonzero
     rw [List.getElem?_take_of_lt (Nat.lt_of_lt_of_le (Nat.sub_one_lt nonzero) le)]
 
 private theorem termAt_of_prefix {small large : List Entry} {index : Nat}
