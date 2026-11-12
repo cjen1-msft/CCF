@@ -7551,27 +7551,33 @@ private theorem persist_pre {part : List Entry}
     : part <+: c.post.log
       \/ Bad (after :: before :: rest) part (termAt part part.length)
           c.post.currentTerm := by
-  cases Summary.kind c.sum with
-  | same log _ =>
+  split_rel kind := (cases Summary.kind c.sum) with
+  | same =>
+      rename_i log _
       left
       rw [log]
       exact inPre
-  | append _ _ _ _ advance =>
+  | append =>
+      rename_i _ _ _ _ advance
       left
       rw [(Advance.facts advance).1]
       exact inPre.trans (List.prefix_append _ _)
-  | ack _ _ _ _ _ _ advance =>
+  | ack =>
+      rename_i _ _ _ _ _ _ advance
       left
       rw [(Advance.facts advance).1]
       exact inPre
-  | accept _ _ received accepted =>
+  | accept =>
+      rename_i _ _ received accepted
       exact c.accept_persist received accepted signature inPre
-  | elect wins =>
+  | elect =>
+      rename_i wins
       left
       have winning : c.pre.log.take (maxCommittableIndex c.pre.log) <+: c.post.log :=
         (c.electStep (c.wins_elect wins)).2.2.2.2.2.2.1
       exact (prefix_committable inPre signature).trans winning
-  | install _ _ _ _ fresh _ _ _ _ =>
+  | install =>
+      rename_i _ _ _ _ fresh _ _ _ _
       rw [fresh.2.2.1, List.prefix_nil] at inPre
       subst inPre
       simp [isSignatureAt, entryAt?] at signature
