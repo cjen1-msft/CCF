@@ -2945,25 +2945,29 @@ private theorem CommitFrontier.handleAppendEntriesRequest
   have stepped : CommitFrontier (if request.term = state.currentTerm /\
       (state.role = .candidate \/ state.role = .preVoteCandidate) then
         becomeAwareOfNewTerm state request.term else state) := by
-    split
-    · exact frontier.of_log rfl rfl
-    · exact frontier
+    split_rel stepDown := (split) with
+    | pos => exact frontier.of_log rfl rfl
+    | neg => exact frontier
   generalize (if request.term = state.currentTerm /\
       (state.role = .candidate \/ state.role = .preVoteCandidate) then
         becomeAwareOfNewTerm state request.term else state) = current
     at stepped
   refine Keeps.ite' (fun _ => by
     dsimp only
-    split <;> exact Keeps.seq' fun _ => Keeps.pure' stepped) fun _ => ?_
+    split_rel stepDown := (split) with
+    | pos => exact Keeps.seq' fun _ => Keeps.pure' stepped
+    | neg => exact Keeps.seq' fun _ => Keeps.pure' stepped) fun _ => ?_
   dsimp only
   refine Keeps.ite' (fun _ => Keeps.pure' (stepped.of_log rfl rfl)) fun notBefore => ?_
   have within : current.commitIndex <= request.prevLogIndex :=
     Nat.le_of_not_lt fun lt => notBefore (Or.inl lt)
-  split
-  · exact Keeps.seq' fun _ => Keeps.pure'
+  split_rel conflict := (split) with
+  | none =>
+    exact Keeps.seq' fun _ => Keeps.pure'
       (CommitFrontier.of_log stepped (after := { current with primaryKnown := true }) rfl
         rfl).fromLeader
-  · rename_i index conflict
+  | some =>
+    rename_i index conflict
     have := Ledger.firstTermConflictIndex_ge conflict
     exact Keeps.seq' fun _ => Keeps.pure'
       (CommitFrontier.of_log (stepped.keep (count := index - 1)
