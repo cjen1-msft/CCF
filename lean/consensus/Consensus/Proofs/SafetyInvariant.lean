@@ -2073,11 +2073,13 @@ private theorem Exec.reachable {nodes : List NodeID} {state : Model.State}
     {history : List Model.State} (exec : Exec nodes (state :: history))
     : (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes).Reachable state := by
   generalize equal : state :: history = states at exec
-  induction exec generalizing state history with
-  | initial initialized =>
+  split_rel exec := (induction exec generalizing state history) with
+  | initial =>
+      rename_i initialized
       cases equal
       exact .initial initialized
-  | step prior stepped ih =>
+  | step =>
+      rename_i prior stepped ih
       cases equal
       exact .step (ih rfl) stepped
 
