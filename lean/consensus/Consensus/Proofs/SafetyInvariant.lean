@@ -2008,20 +2008,24 @@ private theorem forIn' {β : Type} {items : List γ} {init : β}
       : forall item value,
           item ∈ items -> Sends (fun _ sent => forall e, e ∈ sent -> R e) (f item value))
     : Sends (fun _ sent => forall e, e ∈ sent -> R e) (forIn items init f) := by
-  induction items generalizing init with
+  split_rel items := (induction items generalizing init) with
   | nil =>
       simpa using pure' (P := fun (_ : β) sent => forall e, e ∈ sent -> R e) (by simp)
-  | cons head tail ih =>
+  | cons =>
+      rename_i head tail ih
       rw [List.forIn_cons]
       refine bind' (each head init List.mem_cons_self) fun step sent first => ?_
-      cases step with
-      | done value => exact pure' fun e member => first e (by simpa using member)
-      | yield value =>
+      split_rel step := (cases step) with
+      | done =>
+          rename_i value
+          exact pure' fun e member => first e (by simpa using member)
+      | yield =>
+          rename_i value
           refine mono (ih fun item value member => each item value (List.mem_cons_of_mem _ member))
             fun _ later rest e member => ?_
-          rcases List.mem_append.mp member with old | new
-          · exact first e old
-          · exact rest e new
+          split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
+          | inl => exact first e old
+          | inr => exact rest e new
 
 /-- A fold that keeps `I` of its accumulator and everything sent so far. -/
 private theorem foldlM' {I : α -> List (Envelope Node Message) -> Prop}
