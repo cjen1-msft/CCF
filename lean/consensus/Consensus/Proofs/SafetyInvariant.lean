@@ -5252,19 +5252,29 @@ private theorem inv_initial : Inv [initial] := by
   constructor
   · intro node state now entry member
     rw [stateOf now] at member ⊢
-    by_cases leader : node = INITIAL_PRIMARY
-    · subst leader
+    split_rel leader := (by_cases leader : node = INITIAL_PRIMARY) with
+    | pos =>
+      subst leader
       simp_all [initialLocal]
-    · simp [initialLocal, leader] at member
+    | neg => simp [initialLocal, leader] at member
   · intro node state now
     rw [stateOf now]
     unfold initialLocal
-    split <;> simp
+    split_rel primary := (split) with
+    | pos => simp
+    | neg => simp
   · intro node state now active
     rw [stateOf now] at active ⊢
     simp only [Engaged, initialLocal] at active ⊢
-    by_cases primary : node = INITIAL_PRIMARY <;> by_cases member : node ∈ INITIAL_CONFIGURATION
-      <;> simp_all [BOOTSTRAP_TERM]
+    split_rel primary := (by_cases primary : node = INITIAL_PRIMARY) with
+    | pos =>
+      split_rel member := (by_cases member : node ∈ INITIAL_CONFIGURATION) with
+      | pos => simp_all [BOOTSTRAP_TERM]
+      | neg => simp_all [BOOTSTRAP_TERM]
+    | neg =>
+      split_rel member := (by_cases member : node ∈ INITIAL_CONFIGURATION) with
+      | pos => simp_all [BOOTSTRAP_TERM]
+      | neg => simp_all
   · intro node state earlier now seen
     rw [stateOf now, initial_seen initialized seen]
     exact Nat.le_refl _
@@ -5279,16 +5289,27 @@ private theorem inv_initial : Inv [initial] := by
   · intro node state now leader
     left
     rw [stateOf now] at leader ⊢
-    by_cases isLeader : node = INITIAL_PRIMARY
-    · subst isLeader
+    split_rel isLeader := (by_cases isLeader : node = INITIAL_PRIMARY) with
+    | pos =>
+      subst isLeader
       simp [initialLocal, leaderMem]
-    · simp only [initialLocal, isLeader, ite_false] at leader
-      split at leader <;> cases leader
+    | neg =>
+      simp only [initialLocal, isLeader, ite_false] at leader
+      split_rel leader := (split at leader) with
+      | pos => cases leader
+      | neg => cases leader
   · intro node state now candidate
     rw [stateOf now] at candidate
     simp only [initialLocal] at candidate
-    by_cases primary : node = INITIAL_PRIMARY <;> by_cases member : node ∈ INITIAL_CONFIGURATION
-      <;> simp [primary, member] at candidate
+    split_rel primary := (by_cases primary : node = INITIAL_PRIMARY) with
+    | pos =>
+      split_rel member := (by_cases member : node ∈ INITIAL_CONFIGURATION) with
+      | pos => simp [primary] at candidate
+      | neg => simp [primary] at candidate
+    | neg =>
+      split_rel member := (by_cases member : node ∈ INITIAL_CONFIGURATION) with
+      | pos => simp [primary, member] at candidate
+      | neg => simp [primary, member] at candidate
   · intro after before rest node term log commit suffix
     have := suffix.length_le
     simp at this
@@ -5301,8 +5322,9 @@ private theorem inv_initial : Inv [initial] := by
     exact List.prefix_refl _
   · intro node state index now positive bound
     rw [stateOf now] at bound ⊢
-    by_cases isLeader : node = INITIAL_PRIMARY
-    · subst isLeader
+    split_rel isLeader := (by_cases isLeader : node = INITIAL_PRIMARY) with
+    | pos =>
+      subst isLeader
       have one : index = 1 := by
         simp [initialLocal] at bound
         exact Nat.le_antisymm bound (Nat.succ_le_of_lt positive)
@@ -5317,7 +5339,8 @@ private theorem inv_initial : Inv [initial] := by
       · rw [stateOf now]
         exact bound
       · rw [stateOf now]
-    · simp [initialLocal, isLeader] at bound
+    | neg =>
+      simp [initialLocal, isLeader] at bound
       exact absurd (Nat.lt_of_lt_of_le positive (Nat.le_of_eq bound)) (Nat.lt_irrefl 0)
   · intro term part node later log commit _ elected
     exact absurd elected not_elected_single
@@ -5337,17 +5360,22 @@ private theorem inv_initial : Inv [initial] := by
     simp [Pending, initialized.2.2.2.1] at pending
   · intro node state now
     rw [stateOf now]
-    by_cases isLeader : node = INITIAL_PRIMARY
-    · subst isLeader
+    split_rel isLeader := (by_cases isLeader : node = INITIAL_PRIMARY) with
+    | pos =>
+      subst isLeader
       exact Or.inr (by simp [initialLocal])
-    · exact Or.inl (by simp [initialLocal, isLeader])
+    | neg => exact Or.inl (by simp [initialLocal, isLeader])
   · intro node state now leader
     rw [stateOf now] at leader ⊢
-    by_cases isLeader : node = INITIAL_PRIMARY
-    · subst isLeader
+    split_rel isLeader := (by_cases isLeader : node = INITIAL_PRIMARY) with
+    | pos =>
+      subst isLeader
       simp [initialLocal]
-    · simp only [initialLocal, isLeader, ite_false] at leader
-      split at leader <;> cases leader
+    | neg =>
+      simp only [initialLocal, isLeader, ite_false] at leader
+      split_rel leader := (split at leader) with
+      | pos => cases leader
+      | neg => cases leader
 
 end Initial
 end Consensus.Proofs.Safety
@@ -5366,9 +5394,11 @@ private theorem Everywhere.cons {current : Model.State}
     (old : Everywhere clause history) (now : clause (current :: history))
     : Everywhere clause (current :: history) := by
   intro earlier suffix nonempty
-  rcases List.suffix_cons_iff.mp suffix with rfl | inner
-  · exact now
-  · exact old earlier inner nonempty
+  split_rel mp := (rcases List.suffix_cons_iff.mp suffix with same | inner) with
+  | inl =>
+    subst same
+    exact now
+  | inr => exact old earlier inner nonempty
 
 private theorem Everywhere.suffix (all : Everywhere clause history) {earlier : History}
     (suffix : earlier <:+ history)
@@ -5396,9 +5426,11 @@ variable {nodes : List NodeID}
 private theorem Now.nonempty {history : History} {node : NodeID}
     {state : NodeState} (now : Now history node state)
     : exists current rest, history = current :: rest := by
-  cases history with
+  split_rel history := (cases history) with
   | nil => exact absurd now id
-  | cons current rest => exact ⟨current, rest, rfl⟩
+  | cons =>
+    rename_i current rest
+    exact ⟨current, rest, rfl⟩
 
 private theorem now_unique {history : History} (exec : Exec nodes history) {node : NodeID}
     {first second : NodeState} (left : Now history node first)
@@ -5443,29 +5475,39 @@ private theorem termAt_mono {log : List Entry}
     (sorted : log.Pairwise fun first second => first.term <= second.term) {i j : Nat}
     (le : i <= j) (bound : j <= log.length)
     : termAt log i <= termAt log j := by
-  rcases Nat.eq_zero_or_pos i with rfl | positive
-  · rw [termAt_zero]
+  split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos i with zero | positive) with
+  | inl =>
+    subst zero
+    rw [termAt_zero]
     exact Nat.zero_le _
-  rw [termAt_eq positive (Nat.le_trans le bound), termAt_eq (Nat.lt_of_lt_of_le positive le) bound]
-  rcases Nat.eq_or_lt_of_le le with rfl | lt
-  · exact Nat.le.refl
-  · exact List.pairwise_iff_getElem.mp sorted _ _ _ _
-      (Nat.sub_lt_sub_right (Nat.succ_le_of_lt positive) lt)
+  | inr =>
+    rw [termAt_eq positive (Nat.le_trans le bound), termAt_eq (Nat.lt_of_lt_of_le positive le) bound]
+    split_rel eq_or_lt_of_le := (rcases Nat.eq_or_lt_of_le le with same | lt) with
+    | inl =>
+      subst same
+      exact Nat.le.refl
+    | inr =>
+      exact List.pairwise_iff_getElem.mp sorted _ _ _ _
+        (Nat.sub_lt_sub_right (Nat.succ_le_of_lt positive) lt)
 
 private theorem termAt_le_of_mem {log : List Entry} {bound : Nat}
     (terms : forall entry, entry ∈ log -> entry.term <= bound) (index : Nat)
     : termAt log index <= bound := by
   unfold termAt
-  cases found : entryAt? log index with
+  split_rel found := (cases found : entryAt? log index) with
   | none => exact Nat.zero_le _
-  | some entry => exact terms entry (entryAt_mem found)
+  | some =>
+    rename_i entry
+    exact terms entry (entryAt_mem found)
 
 private theorem signature_pos {log : List Entry} {index : Nat}
     (signature : isSignatureAt log index = true)
     : 0 < index := by
-  rcases Nat.eq_zero_or_pos index with rfl | positive
-  · simp [isSignatureAt, entryAt?] at signature
-  · exact positive
+  split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos index with zero | positive) with
+  | inl =>
+    subst zero
+    simp [isSignatureAt, entryAt?] at signature
+  | inr => exact positive
 
 private theorem signature_bound {log : List Entry} {index : Nat}
     (signature : isSignatureAt log index = true)
@@ -5491,17 +5533,22 @@ private theorem take_signature {log : List Entry} {index : Nat}
 private theorem Led.two_le {history : History} {node : NodeID} {term : Nat}
     (led : Led history node term)
     : 2 <= term := by
-  rcases led with ⟨rfl, -⟩ | ⟨log, commit, after, before, rest, -, candidate, leader, -, -, -,
-    -, -, -, -, -, -, three, -⟩
-  · decide
-  · exact Nat.le_trans (Nat.le_succ 2) three
+  split_rel led :=
+      (rcases led with ⟨same, -⟩ | ⟨log, commit, after, before, rest, -, candidate, leader, -, -, -,
+        -, -, -, -, -, -, three, -⟩) with
+  | inl =>
+    subst same
+    decide
+  | inr => exact Nat.le_trans (Nat.le_succ 2) three
 
 private theorem Led.elected {history : History} {node : NodeID} {term : Nat}
     (led : Led history node term) (above : 2 < term)
     : exists log commit, Elected history node term log commit := by
-  rcases led with ⟨rfl, -⟩ | elected
-  · exact absurd above (by decide)
-  · exact elected
+  split_rel led := (rcases led with ⟨same, -⟩ | elected) with
+  | inl =>
+    subst same
+    exact absurd above (by decide)
+  | inr => exact elected
 
 /-- Logs of leaders of one term form a chain. -/
 private theorem canon_chain {history : History} (mono : Everywhere CanonMono history)
@@ -5528,10 +5575,12 @@ private theorem canon_chain {history : History} (mono : Everywhere CanonMono his
     rw [outerTerm]
     exact ⟨inner, within, innerNode, innerState, ⟨innerNow, innerTerm, innerRole, innerLed⟩,
       rfl⟩
-  rcases suffix_comparable earlySuffix lateSuffix with within | within
-  · exact Or.inl (contains within lateSuffix earlyNow earlyTerm earlyRole earlyLed lateNow
+  split_rel suffix_comparable := (rcases suffix_comparable earlySuffix lateSuffix with within | within) with
+  | inl =>
+    exact Or.inl (contains within lateSuffix earlyNow earlyTerm earlyRole earlyLed lateNow
       lateTerm lateRole lateLed)
-  · exact Or.inr (contains within earlySuffix lateNow lateTerm lateRole lateLed earlyNow
+  | inr =>
+    exact Or.inr (contains within earlySuffix lateNow lateTerm lateRole lateLed earlyNow
       earlyTerm earlyRole earlyLed)
 
 /-- Two seen logs agreeing on the term at `index` agree up to `index`. -/
@@ -5576,33 +5625,43 @@ private theorem vote_unique {nodes : List NodeID} {history : History}
     obtain ⟨granting, granted, grantingMem, grantedMem, _, grantedTerm, grantedVote, _⟩ := step
     obtain ⟨granting', granted', grantingMem', grantedMem', grantingTerm', grantedTerm',
       grantedVote', _⟩ := step'
-    rcases List.suffix_cons_iff.mp within with same | inner
-    · cases same
+    split_rel mp := (rcases List.suffix_cons_iff.mp within with same | inner) with
+    | inl =>
+      cases same
       have := state_unique (exec.keys (suffix'.subset List.mem_cons_self)) grantedMem
         grantedMem'
       subst this
       rw [grantedVote] at grantedVote'
       exact Option.some.inj grantedVote'
-    · have tail : b' :: r' <:+ history := (List.suffix_cons _ _).trans suffix'
+    | inr =>
+      have tail : b' :: r' <:+ history := (List.suffix_cons _ _).trans suffix'
       have seen : Seen (b' :: r') voter granted := ⟨a, inner.subset List.mem_cons_self, grantedMem⟩
-      rcases record _ tail (List.cons_ne_nil _ _) voter granting' granted early grantingMem'
-          seen grantedVote with lt | ⟨termEq, keep⟩
-      · exact (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt
+      split_rel record :=
+          (rcases record _ tail (List.cons_ne_nil _ _) voter granting' granted early grantingMem'
+            seen grantedVote with lt | ⟨termEq, keep⟩) with
+      | inl =>
+        exact (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt
           (Nat.le_trans grantingTerm' (Nat.le_of_eq grantedTerm.symm)))).elim
-      · have seen' : Seen (a' :: b' :: r') voter granting' :=
+      | inr =>
+        have seen' : Seen (a' :: b' :: r') voter granting' :=
           ⟨b', List.mem_cons_of_mem _ List.mem_cons_self, grantingMem'⟩
-        rcases record _ suffix' (List.cons_ne_nil _ _) voter granted' granting' early grantedMem'
-            seen' keep with lt | ⟨_, final⟩
-        · exact (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt
+        split_rel record :=
+            (rcases record _ suffix' (List.cons_ne_nil _ _) voter granted' granting' early grantedMem'
+              seen' keep with lt | ⟨_, final⟩) with
+        | inl =>
+          exact (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt
             (Nat.le_of_eq (grantedTerm'.trans (grantedTerm.symm.trans termEq))))).elim
-        · rw [final] at grantedVote'
+        | inr =>
+          rw [final] at grantedVote'
           exact Option.some.inj grantedVote'
   obtain ⟨a, b, r, suffix, step, seen⟩ := left
   obtain ⟨a', b', r', suffix', step', seen'⟩ := right
-  rcases suffix_comparable suffix suffix' with within | within
-  · exact ordered ⟨a, b, r, suffix, step, seen⟩ ⟨a', b', r', suffix', step', seen'⟩ a b r a' b'
+  split_rel suffix_comparable := (rcases suffix_comparable suffix suffix' with within | within) with
+  | inl =>
+    exact ordered ⟨a, b, r, suffix, step, seen⟩ ⟨a', b', r', suffix', step', seen'⟩ a b r a' b'
       r' suffix suffix' step step' within
-  · exact (ordered ⟨a', b', r', suffix', step', seen'⟩ ⟨a, b, r, suffix, step, seen⟩ a' b' r' a
+  | inr =>
+    exact (ordered ⟨a', b', r', suffix', step', seen'⟩ ⟨a, b, r, suffix, step, seen⟩ a' b' r' a
       b r suffix' suffix step' step within).symm
 
 /-- The commit step behind a committed part, with its backing. -/
@@ -5617,15 +5676,19 @@ private theorem Committed.shape {history : History} {term : Nat}
                 Committed rest earlier part'
                 /\ earlier <= term
                 /\ state.log.take base <+: part') := by
-  induction committed with
-  | fresh step => exact ⟨_, _, _, _, _, _, List.suffix_refl _, step, rfl, Or.inl rfl⟩
-  | chained step backing le within =>
-      exact ⟨_, _, _, _, _, _, List.suffix_refl _, step, rfl,
-        Or.inr ⟨_, _, backing, le, within⟩⟩
-  | past _ ih =>
-      obtain ⟨current, rest, leader, state, base, index, suffix, step, eq, backing⟩ := ih
-      exact ⟨current, rest, leader, state, base, index, suffix.trans (List.suffix_cons _ _),
-        step, eq, backing⟩
+  split_rel committed := (induction committed) with
+  | fresh =>
+    rename_i step
+    exact ⟨_, _, _, _, _, _, List.suffix_refl _, step, rfl, Or.inl rfl⟩
+  | chained =>
+    rename_i step backing le within _
+    exact ⟨_, _, _, _, _, _, List.suffix_refl _, step, rfl,
+      Or.inr ⟨_, _, backing, le, within⟩⟩
+  | past =>
+    rename_i _ ih
+    obtain ⟨current, rest, leader, state, base, index, suffix, step, eq, backing⟩ := ih
+    exact ⟨current, rest, leader, state, base, index, suffix.trans (List.suffix_cons _ _),
+      step, eq, backing⟩
 
 private theorem Committed.signature {history : History} {term : Nat}
     {part : List Entry} (committed : Committed history term part)
@@ -5669,19 +5732,22 @@ private theorem committed_comparable {history : History}
       rfl, _⟩ := committed'.shape
     have canon' : Canon history term' state.log :=
       ⟨_, suffix, leader, state, ⟨now, termEq, role, led⟩, rfl⟩
-    rcases Nat.eq_or_lt_of_le le with rfl | lt
-    · obtain ⟨current₀, rest₀, leader₀, state₀, _, index₀, suffix₀,
+    split_rel eq_or_lt_of_le := (rcases Nat.eq_or_lt_of_le le with same | lt) with
+    | inl =>
+      subst same
+      obtain ⟨current₀, rest₀, leader₀, state₀, _, index₀, suffix₀,
         ⟨⟨now₀, termEq₀, role₀, led₀⟩, _⟩, rfl, _⟩ := committed.shape
       have canon : Canon history term state₀.log :=
         ⟨_, suffix₀, leader₀, state₀, ⟨now₀, termEq₀, role₀, led₀⟩, rfl⟩
-      rcases canon_chain mono canon canon' with sub | sub
-      · exact comparable_of_prefix ((List.take_prefix _ _).trans sub) (List.take_prefix _ _)
-      · exact comparable_of_prefix (List.take_prefix _ _) ((List.take_prefix _ _).trans sub)
-    · exact comparable_of_prefix (committed_in_canon complete mono committed canon' lt)
+      split_rel canon_chain := (rcases canon_chain mono canon canon' with sub | sub) with
+      | inl => exact comparable_of_prefix ((List.take_prefix _ _).trans sub) (List.take_prefix _ _)
+      | inr => exact comparable_of_prefix (List.take_prefix _ _) ((List.take_prefix _ _).trans sub)
+    | inr =>
+      exact comparable_of_prefix (committed_in_canon complete mono committed canon' lt)
         (List.take_prefix _ _)
-  rcases Nat.le_total first second with le | le
-  · exact inCanon leftCommitted rightCommitted le
-  · exact (inCanon rightCommitted leftCommitted le).symm
+  split_rel le_total := (rcases Nat.le_total first second with le | le) with
+  | inl => exact inCanon leftCommitted rightCommitted le
+  | inr => exact (inCanon rightCommitted leftCommitted le).symm
 
 /--
 A committed prefix is committed no later than `bound`, or a commit step of a
@@ -5700,37 +5766,46 @@ private theorem backing_split {history : History} {log : List Entry}
           /\ log.take commit <+: leaderState.log.take index := by
   have lengthEq : (log.take commit).length = commit := List.length_take_of_le length
   revert within
-  induction committed with
-  | @fresh current rest leader state term index step =>
+  split_rel committed := (induction committed) with
+  | fresh =>
+      rename_i current rest leader state term index step
       intro within
-      by_cases low : term <= bound
-      · exact Or.inl (Or.inr ⟨term, _, .fresh step, low, within⟩)
-      · exact Or.inr ⟨current, rest, leader, state, term, 0, index, List.suffix_refl _, step,
+      split_rel low := (by_cases low : term <= bound) with
+      | pos => exact Or.inl (Or.inr ⟨term, _, .fresh step, low, within⟩)
+      | neg =>
+        exact Or.inr ⟨current, rest, leader, state, term, 0, index, List.suffix_refl _, step,
           Nat.lt_of_not_le low, Nat.zero_le _, within⟩
-  | @chained current rest leader state term base index earlier part' step backing le
-      inBacking ih =>
+  | chained =>
+      rename_i current rest leader state term base index earlier part' step backing le
+        inBacking ih
       intro within
-      by_cases low : term <= bound
-      · exact Or.inl (Or.inr ⟨term, _, .chained step backing le inBacking, low, within⟩)
-      by_cases baseLe : base <= commit
-      · exact Or.inr ⟨current, rest, leader, state, term, base, index, List.suffix_refl _,
-          step, Nat.lt_of_not_le low, baseLe, within⟩
-      have commitIndex : commit <= index := Nat.le_trans (Nat.le_of_lt (Nat.lt_of_not_le baseLe))
-        step.2.1
-      have short : log.take commit <+: state.log.take base := by
-        have eq := List.prefix_iff_eq_take.mp within
-        rw [lengthEq, List.take_take, Nat.min_eq_left commitIndex] at eq
-        rw [eq]
-        exact take_prefix_take _ (Nat.le_of_lt (Nat.lt_of_not_le baseLe))
-      rcases ih (short.trans inBacking) with backed
-          | ⟨c', p', l', s', t', b', i', suffix, rest'⟩
-      · exact Or.inl (backed.mono (List.suffix_cons _ _))
-      · exact Or.inr ⟨c', p', l', s', t', b', i', suffix.trans (List.suffix_cons _ _), rest'⟩
-  | @past current rest term part old ih =>
+      split_rel low := (by_cases low : term <= bound) with
+      | pos => exact Or.inl (Or.inr ⟨term, _, .chained step backing le inBacking, low, within⟩)
+      | neg =>
+        split_rel baseLe := (by_cases baseLe : base <= commit) with
+        | pos =>
+          exact Or.inr ⟨current, rest, leader, state, term, base, index, List.suffix_refl _,
+            step, Nat.lt_of_not_le low, baseLe, within⟩
+        | neg =>
+          have commitIndex : commit <= index := Nat.le_trans (Nat.le_of_lt (Nat.lt_of_not_le baseLe))
+            step.2.1
+          have short : log.take commit <+: state.log.take base := by
+            have eq := List.prefix_iff_eq_take.mp within
+            rw [lengthEq, List.take_take, Nat.min_eq_left commitIndex] at eq
+            rw [eq]
+            exact take_prefix_take _ (Nat.le_of_lt (Nat.lt_of_not_le baseLe))
+          split_rel ih :=
+              (rcases ih (short.trans inBacking) with backed
+                | ⟨c', p', l', s', t', b', i', suffix, rest'⟩) with
+          | inl => exact Or.inl (backed.mono (List.suffix_cons _ _))
+          | inr =>
+            exact Or.inr ⟨c', p', l', s', t', b', i', suffix.trans (List.suffix_cons _ _), rest'⟩
+  | past =>
+      rename_i current rest term part old ih
       intro within
-      rcases ih within with backed | ⟨c', p', l', s', t', b', i', suffix, rest'⟩
-      · exact Or.inl (backed.mono (List.suffix_cons _ _))
-      · exact Or.inr ⟨c', p', l', s', t', b', i', suffix.trans (List.suffix_cons _ _), rest'⟩
+      split_rel ih := (rcases ih within with backed | ⟨c', p', l', s', t', b', i', suffix, rest'⟩) with
+      | inl => exact Or.inl (backed.mono (List.suffix_cons _ _))
+      | inr => exact Or.inr ⟨c', p', l', s', t', b', i', suffix.trans (List.suffix_cons _ _), rest'⟩
 
 private theorem Doomed.cons' {history : History} {current : Model.State} {node : NodeID}
     {state state' : NodeState} (doomed : Doomed history node state)
@@ -5754,17 +5829,20 @@ private theorem Doomed.cons' {history : History} {current : Model.State} {node :
     by rw [logEq, commitEq]; exact within,
     fun earlier inner seen => ?_
   ⟩
-  rcases List.suffix_cons_iff.mp inner with rfl | inner
-  · exact suffix.trans (List.suffix_cons _ _)
-  · obtain ⟨other, seenOther, otherTerm⟩ := seen
+  split_rel mp := (rcases List.suffix_cons_iff.mp inner with same | inner) with
+  | inl =>
+    subst same
+    exact suffix.trans (List.suffix_cons _ _)
+  | inr =>
+    obtain ⟨other, seenOther, otherTerm⟩ := seen
     exact order earlier inner ⟨other, seenOther, otherTerm.trans termEq⟩
 
 private theorem primaryState_log_prefix (state : NodeState)
     : (primaryState state).log <+: state.log := by
   simp only [primaryState]
-  split
-  · exact List.take_prefix _ _
-  · exact List.prefix_refl _
+  split_rel commit := (split) with
+  | pos => exact List.take_prefix _ _
+  | neg => exact List.prefix_refl _
 
 /-- The facts of a won election used by the safety proof. -/
 private theorem Wins.facts {self : NodeID} {before' : NodeState} {event : Event}
@@ -5789,12 +5867,15 @@ private theorem Wins.facts {self : NodeID} {before' : NodeState} {event : Event}
       rfl
     rw [← this]
     exact quorum
-  rcases advance with rfl | ⟨log, term, voted, matchEq, _, _, lt, _, role⟩
-  · exact ⟨rfl, rfl, rfl, fun _ => rfl, Or.inl rfl, Nat.le.refl⟩
-  · refine ⟨log, term, voted, fun peer => by rw [matchEq]; rfl, ?_, ?_⟩
-    · rcases role with role | role
-      · exact Or.inl role
-      · exact Or.inr role
+  split_rel advance := (rcases advance with same | ⟨log, term, voted, matchEq, _, _, lt, _, role⟩) with
+  | inl =>
+    subst same
+    exact ⟨rfl, rfl, rfl, fun _ => rfl, Or.inl rfl, Nat.le.refl⟩
+  | inr =>
+    refine ⟨log, term, voted, fun peer => by rw [matchEq]; rfl, ?_, ?_⟩
+    · split_rel role := (rcases role with role | role) with
+      | inl => exact Or.inl role
+      | inr => exact Or.inr role
     · exact Nat.le_of_lt lt
 
 end Consensus.Proofs.Safety
@@ -5847,11 +5928,14 @@ private theorem now_after {node : NodeID} {state : NodeState}
 private theorem seen_after {node : NodeID} {state : NodeState}
     (seen : Seen (after :: before :: rest) node state)
     : Seen (before :: rest) node state \/ (node = c.actor /\ state = c.post) := by
-  rcases seen.cons with now | old
-  · rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨_, now⟩
-    · exact Or.inr ⟨rfl, rfl⟩
-    · exact Or.inl now.seen
-  · exact Or.inl old
+  split_rel cons := (rcases seen.cons with now | old) with
+  | inl =>
+    split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨_, now⟩) with
+    | inl =>
+      subst nodeEq stateEq
+      exact Or.inr ⟨rfl, rfl⟩
+    | inr => exact Or.inl now.seen
+  | inr => exact Or.inl old
 
 private theorem pre_seen : Seen (before :: rest) c.actor c.pre := c.pre_now.seen
 
@@ -5868,11 +5952,14 @@ private theorem received {source : NodeID} {message : Message}
         /\ envelope.source = source
         /\ envelope.target = c.actor
         /\ envelope.payload = message := by
-  rcases c.tr.source with ⟨input, internal, _⟩ | ⟨envelope, queued, target, receive, _⟩
-  · have : c.tr.event = _ := eq
+  split_rel source :=
+      (rcases c.tr.source with ⟨input, internal, _⟩ | ⟨envelope, queued, target, receive, _⟩) with
+  | inl =>
+    have : c.tr.event = _ := eq
     rw [internal] at this
     cases this
-  · have : c.tr.event = _ := eq
+  | inr =>
+    have : c.tr.event = _ := eq
     rw [receive] at this
     cases this
     exact ⟨envelope, queued, rfl, target, rfl⟩
@@ -5916,9 +6003,9 @@ private theorem snap_of_committed {node : NodeID} {state : NodeState}
     · rw [agree]
       exact List.take_prefix _ _
   · obtain ⟨⟨_, backed⟩, _⟩ := c.inv.commit_backed node state now
-    rcases backed with zero | ⟨term, part, committed, _, inPart⟩
-    · omega
-    · exact ⟨term, part, committed, (take_prefix_take _ le).trans inPart⟩
+    split_rel backed := (rcases backed with zero | ⟨term, part, committed, _, inPart⟩) with
+    | inl => omega
+    | inr => exact ⟨term, part, committed, (take_prefix_take _ le).trans inPart⟩
 
 /-- A node initializes from a committed, signed prefix of a leader log. -/
 private theorem snap_available {entries : List Entry}
@@ -5942,12 +6029,14 @@ private theorem post_two
       : Engaged c.post \/ exists envelope, envelope ∈ c.sent /\ Bumping envelope.payload)
     : 2 <= c.post.currentTerm := by
   have le := c.term_le
-  rcases Summary.active c.sum active with role | two | ⟨source, message, eq, bumping, bound⟩
-      | ⟨entries, stash, positive, signature, termEq⟩
-  · exact Nat.le_trans (c.pre_two role) le
-  · exact Nat.le_trans two le
-  · exact Nat.le_trans (c.received_term eq bumping) bound
-  · obtain ⟨_, _, ⟨_, ⟨_, _, _, _, ⟨_, _, _, led⟩, _⟩, _⟩, _⟩ := c.snap_available stash positive signature
+  split_rel active :=
+      (rcases Summary.active c.sum active with role | two | ⟨source, message, eq, bumping, bound⟩
+        | ⟨entries, stash, positive, signature, termEq⟩) with
+  | inl => exact Nat.le_trans (c.pre_two role) le
+  | inr_inl => exact Nat.le_trans two le
+  | inr_inr_inl => exact Nat.le_trans (c.received_term eq bumping) bound
+  | inr_inr_inr =>
+    obtain ⟨_, _, ⟨_, ⟨_, _, _, _, ⟨_, _, _, led⟩, _⟩, _⟩, _⟩ := c.snap_available stash positive signature
     rw [termEq]
     exact led.two_le
 
@@ -5956,10 +6045,11 @@ private theorem elected_after {node : NodeID} {term commit : Nat} {log : List En
     : Elected (before :: rest) node term log commit
       \/ ElectStep after before rest node term log commit := by
   obtain ⟨a, b, r, suffix, step⟩ := elected
-  rcases List.suffix_cons_iff.mp suffix with same | inner
-  · cases same
+  split_rel mp := (rcases List.suffix_cons_iff.mp suffix with same | inner) with
+  | inl =>
+    cases same
     exact Or.inr step
-  · exact Or.inl ⟨a, b, r, inner, step⟩
+  | inr => exact Or.inl ⟨a, b, r, inner, step⟩
 
 /-- A new election is the actor's, campaigning with its state before the step. -/
 private theorem electStep {node : NodeID} {term commit : Nat} {log : List Entry}
@@ -5975,15 +6065,22 @@ private theorem electStep {node : NodeID} {term commit : Nat} {log : List Entry}
       /\ 3 <= term := by
   obtain ⟨candidate, leader, candidateMem, leaderMem, logEq, commitEq, _, termCase, leaderTerm,
     leaderRole, winning, three, _⟩ := step
-  rcases c.now_after leaderMem with ⟨rfl, rfl⟩ | ⟨different, old⟩
-  · have := c.now_pre candidateMem
+  split_rel now_after :=
+      (rcases c.now_after leaderMem with ⟨nodeEq, stateEq⟩ | ⟨different, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    have := c.now_pre candidateMem
     subst this
     exact ⟨rfl, logEq, commitEq, termCase, leaderTerm, leaderRole, winning, three⟩
-  · have := now_unique c.prior old candidateMem
+  | inr =>
+    have := now_unique c.prior old candidateMem
     subst this
-    rcases termCase with lt | ⟨_, role⟩
-    · exact absurd leaderTerm (Nat.ne_of_lt lt)
-    · rcases leaderRole with role' | role' <;> rw [role'] at role <;> cases role
+    split_rel termCase := (rcases termCase with lt | ⟨_, role⟩) with
+    | inl => exact absurd leaderTerm (Nat.ne_of_lt lt)
+    | inr =>
+      split_rel leaderRole := (rcases leaderRole with role' | role') with
+      | inl => rw [role'] at role <;> cases role
+      | inr => rw [role'] at role <;> cases role
 
 private theorem led_after {node : NodeID} {term : Nat}
     (led : Led (after :: before :: rest) node term)
