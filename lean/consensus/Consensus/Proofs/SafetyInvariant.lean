@@ -1410,37 +1410,41 @@ private theorem signatureIndex_le_maxCommittableIndex
       forall (values : List Nat) (best : Nat),
         best <= values.foldl choose best := by
     intro values
-    induction values with
+    split_rel values := (induction values) with
     | nil =>
         intro best
         exact Nat.le.refl
-    | cons head tail inductionHypothesis =>
+    | cons =>
+        rename_i head tail inductionHypothesis
         intro best
         apply Nat.le_trans (m := choose best head)
         · simp only [choose]
-          split
-          · exact Nat.le_max_left _ _
-          · exact Nat.le.refl
+          split_rel signature := (split) with
+          | pos => exact Nat.le_max_left _ _
+          | neg => exact Nat.le.refl
         · exact inductionHypothesis (choose best head)
   have foldContains :
       forall (values : List Nat) (best : Nat),
         index ∈ values ->
           index <= values.foldl choose best := by
     intro values
-    induction values with
+    split_rel values := (induction values) with
     | nil =>
         simp
-    | cons head tail inductionHypothesis =>
+    | cons =>
+        rename_i head tail inductionHypothesis
         intro best member
         simp only [List.foldl_cons]
-        rcases List.mem_cons.mp member with headEq | tailMember
-        · subst head
+        split_rel mem_cons := (rcases List.mem_cons.mp member with headEq | tailMember) with
+        | inl =>
+          subst head
           have selected :
               choose best index = max best index := by
             simp [choose, signature]
           rw [selected]
           exact Nat.le_trans (Nat.le_max_right best index) (foldAboveStart tail (max best index))
-        · exact
+        | inr =>
+          exact
             inductionHypothesis
               (choose best head) tailMember
   change index <= candidates.foldl choose 0
