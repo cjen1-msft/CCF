@@ -5035,10 +5035,13 @@ private theorem initial_canon {term : Nat} {log : List Entry}
     (canon : Canon [initial] term log)
     : term = BOOTSTRAP_TERM /\ log = (initialLocal INITIAL_PRIMARY).log := by
   obtain ⟨earlier, suffix, node, state, ⟨now, termEq, -, led⟩, rfl⟩ := canon
-  rcases List.suffix_cons_iff.mp suffix with rfl | inner
-  · obtain ⟨bootstrap, rfl⟩ := led_single led
+  split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp suffix with same | inner) with
+  | inl =>
+    subst same
+    obtain ⟨bootstrap, rfl⟩ := led_single led
     exact ⟨bootstrap, by rw [initial_state initialized now]⟩
-  · rw [List.eq_nil_of_suffix_nil inner] at now
+  | inr =>
+    rw [List.eq_nil_of_suffix_nil inner] at now
     exact absurd now id
 
 private theorem inv_initial : Inv [initial] := by
