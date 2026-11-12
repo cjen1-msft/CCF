@@ -3691,7 +3691,11 @@ private theorem Advance.term {self : NodeID} {middle state : NodeState}
 private theorem Advance.votedFor {self : NodeID} {middle state : NodeState}
     (advance : Advance self middle state)
     : state.votedFor = middle.votedFor := by
-  rcases advance with rfl | h <;> grind
+  split_rel advance := (rcases advance with same | h) with
+  | inl =>
+    subst same
+    grind
+  | inr => grind
 
 private theorem Advance.matchIndex {self : NodeID} {middle state : NodeState}
     (advance : Advance self middle state)
