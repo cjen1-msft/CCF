@@ -14,15 +14,30 @@ proof with `import all`:
       (step := fun {n : Nat} (s : State n) (a : Action n) (t : State n) => step s a = some t)
       (state := fun {n : Nat} (s : State n) => Invariant s)
 
-The two patterns are the only model-specific input. The explicit binders of `step` are the step
-(pre-state, action, post-state); those of `state` are the state; the other binders are parameters.
+The two patterns are the only model-specific input. The binders of `step` are the step's
+variables: by default its first explicit binder is the pre-state and its last the post-state.
+The last explicit binder of `state` is the state; its other binders are parameters. Optional
+arguments:
+
+- `(pre := fun xs => e)` and `(post := fun xs => e)`, over the same binders as `step`: the
+  pre-state and post-state as terms of the step's variables (for a step on histories, for
+  example, `before :: rest` and `after :: before :: rest`);
+- `(derive := [D₁, …])`: theorems whose last explicit hypothesis is something the state pattern
+  follows from (an execution, a reachability proof); the conclusion of each must mention the
+  state pattern's head.
 
 Levels. The theorems in scope used by the roots (transitively) are classified by their header.
 A theorem is step-level when one of its hypotheses matches the `step` pattern; state-level when one
-matches the `state` pattern, none matches `step`, and exactly one binder has the state's type;
-other otherwise. The walked roots are the step-level and state-level theorems not used by another
-step-level or state-level theorem, and the given roots of level other (which do not inline the
-former).
+matches the `state` pattern, none matches `step`, and exactly one binder has the state's type, or
+when none matches either pattern and one of its hypotheses matches the last explicit hypothesis
+of a theorem `D` of `derive` with exactly one of the matched variables able to play the state
+(`D` and the theorems it uses excepted); other otherwise. The walked roots are the step-level and
+state-level theorems not used by another step-level or state-level theorem, and the given roots
+of level other (which do not inline the former). The theorems of `derive` are never inlined.
+
+A clause (a field of the state pattern's structure) that is a definition rather than a `∀` is
+unfolded at its head to read its instance binders and premises; conditions nested deeper (a
+`match` with implications inside) are not premises, and stay case splits of the proof.
 
 A split counts when at least two of its branches are live (not closed by contradiction) and no
 live branch's script closes every other live branch (the replay test of `split_rel`).
@@ -37,7 +52,8 @@ Generated:
 - `Ns.creates`: the step makes some instance of some clause of the state pattern's structure new
   (its premises hold after the step and not before);
 - `Ns.table`: a TSV of every recorded split branch, every unrecorded split and every clause;
-- `Ns.branch_<i>` and `Ns.frame_<i>`: the branch and frame lemmas of `Walk.lean`;
+- `Ns.branch_<i>`, `Ns.frame_<i>`, `Ns.cond_<i>` and `Ns.conv_<i>`: the branch, frame,
+  split-condition and converse lemmas of `Walk.lean`;
 - `Ns.telescope_<i>`, for every branch occurrence of a step or state class: the class predicate
   (`Ns.step_<name>` or `Ns.state_<name>`) is, by `Iff.refl`, the closure of the branch lemma's
   telescope (with the negated pre-state premises of an `effect` branch);
@@ -69,8 +85,57 @@ def matchPat (pat hyp : Expr) : MetaM (Option (Array Expr)) := do
   saved.restore
   return none
 
-/-- The theorem's level and, for step and state levels, the root binders matched by the pattern. -/
-def classify (cfg : Config) (xs : Array Expr) : MetaM (Level × Array Expr) := do
+/-- The state pattern's binders, as root fvars, when the fvar `sv` plays its state (its last
+explicit binder): the other binders are found by unification and instance synthesis. -/
+def stateBinders (statePat sv : Expr) : MetaM (Option (Array Expr)) := do
+  let saved ← saveState
+  let (ms, bis, _) ← lambdaMetaTelescope statePat
+  let some k := (List.range ms.size).reverse.find? (bis[·]! == .default) | return none
+  let ok ← try
+      if ← withReducible (isDefEq (← inferType ms[k]!) (← inferType sv)) then
+        isDefEq ms[k]! sv
+      else pure false
+    catch _ => pure false
+  let mut out := none
+  if ok then
+    for (m, bi) in ms.zip bis do
+      if bi.isInstImplicit && !(← m.mvarId!.isAssigned) then
+        if let .some inst ← trySynthInstance (← inferType m) then
+          discard <| isDefEq m inst
+    let vs ← ms.mapM instantiateMVars
+    if vs.all (·.isFVar) && (vs.map (·.fvarId!)).toList.eraseDups.length == vs.size then
+      out := some vs
+  saved.restore
+  return out
+
+/-- The binders of the state pattern when a hypothesis among `xs` is the last explicit
+proposition hypothesis of a theorem of `cfg.derive` and exactly one of the root variables it is
+matched with can play the state. -/
+def derivedState (cfg : Config) (xs : Array Expr) : MetaM (Option (Array Expr)) := do
+  for d in cfg.derive do
+    let ci ← getConstInfo d
+    for x in xs do
+      let saved ← saveState
+      let (ms, bis, _) ← forallMetaTelescope ci.type
+      let mut hyp := none
+      for i in (List.range ms.size).reverse do
+        if bis[i]! == .default && (← isProp (← inferType ms[i]!)) then hyp := some i; break
+      let some i := hyp | do saved.restore; continue
+      let ok ← try withReducible (isDefEq (← inferType ms[i]!) (← inferType x)) catch _ => pure false
+      let mut found := #[]
+      if ok then
+        let vs ← (ms.extract 0 i).mapM instantiateMVars
+        for v in vs.toList.eraseDups do
+          unless v.isFVar && xs.contains v do continue
+          if let some keep ← stateBinders cfg.statePat v then found := found.push keep
+      saved.restore
+      if let #[keep] := found then return some keep
+  return none
+
+/-- The theorem's level and, for step and state levels, the root binders matched by the pattern.
+With `derived`, a theorem with a hypothesis that a theorem of `cfg.derive` turns into the state
+pattern is state-level too. -/
+def classify (cfg : Config) (xs : Array Expr) (derived := true) : MetaM (Level × Array Expr) := do
   for x in xs do
     if let some vs ← matchPat cfg.stepPat (← inferType x) then return (.step, vs)
   for x in xs do
@@ -81,6 +146,8 @@ def classify (cfg : Config) (xs : Array Expr) : MetaM (Level × Array Expr) := d
       for y in xs do
         if ← withReducible (isDefEq (← inferType y) sty) then count := count + 1
       if count == 1 then return (.state, vs)
+  if derived then
+    if let some vs ← derivedState cfg xs then return (.state, vs)
   return (.other, #[])
 
 def theoremsUsed (cfg : Config) (c : Name) : CoreM (Array Name) := do
@@ -117,10 +184,20 @@ def analyse (cfg : Config) (roots : Array Name) : MetaM Result := do
     let us ← theoremsUsed cfg c
     uses := uses.insert c us
     todo := todo ++ us
+  -- the theorems that derive the state pattern, and those they use, are not state-level by it
+  let mut derivation : Std.HashSet Name := {}
+  todo := cfg.derive
+  while !todo.isEmpty do
+    let c := todo.back!
+    todo := todo.pop
+    if derivation.contains c then continue
+    derivation := derivation.insert c
+    todo := todo ++ (← theoremsUsed cfg c)
   let mut levels : Std.HashMap Name Level := {}
   for c in seen do
     let ci ← getConstInfo c
-    let lvl ← forallTelescope ci.type fun xs _ => return (← classify cfg xs).1
+    let lvl ← forallTelescope ci.type fun xs _ =>
+      return (← classify cfg xs (!derivation.contains c)).1
     levels := levels.insert c lvl
   let isTop (c : Name) : Bool := match levels.get? c with
     | some .other | none => false
@@ -140,12 +217,10 @@ def analyse (cfg : Config) (roots : Array Name) : MetaM Result := do
       | .step => cfg.stepPat
       | _ => cfg.statePat
     let (st', rd) ← lambdaTelescope pat fun ps _ => forallTelescope ci.type fun xs _ => do
-      let (lvl, keep) ← classify cfg xs
-      let firstExplicit ← (List.range ps.size).findM? fun i => do
-        return (← ps[i]!.fvarId!.getBinderInfo) == .default
-      let pre := if lvl == .step then firstExplicit.bind (keep[·]?) else none
+      let (lvl, keep) ← classify cfg xs (!derivation.contains root)
+      let pre ← if lvl == .step then pure (← stepEnds cfg ps keep).1 else pure none
       let ctx : Ctx := { cfg, root, level := lvl, keep, pattern := ps, pre, rootBinders := xs,
-                         stop := if lvl == .other then tops else #[] }
+                         stop := (if lvl == .other then tops else #[]) ++ cfg.derive }
       let st := { st with path := #[], calls := {}, inProgress := #[], stack := #[],
                           condStack := #[], region := false }
       let (e, st) ← ((walk (v.beta xs)).run ctx).run st
@@ -183,7 +258,7 @@ def table (r : Result) (classOf : Array String := #[])
     let s := r.splits[b.splitId]!
     let (c, why) := counts r s
     let tie := (r.ties.filter (·.branch == idx)).toList.map fun t => match t.name with
-      | some n => s!"{n.components.getLast!}{if t.fallback != "" then s!" (by the original term; rebuilt term {t.fallback})" else ""}"
+      | some n => s!"{n.components.getLast!}{if t.fallback != "" then s!" (by the original term; rebuilt term {t.fallback})" else ""}{if t.context.isEmpty then "" else s!" ({if t.kind == "cond" then "split conditions" else "other hypotheses"}: {"; ".intercalate t.context.toList})"}"
       | none => s!"{t.kind} lemma not proved: {t.error}"
     rows := rows.push <| "\t".intercalate [
       "branch", b.root.toString, b.level.str, "/".intercalate b.path.toList, b.decl.toString,
@@ -266,11 +341,7 @@ and its numbers of data binders and premises (a clause without premises has no n
 def mkCreates (cfg : Config) : MetaM (Option Expr × Array (String × Nat × Nat)) := do
   let some ctor := cfg.stateCtor | return (none, #[])
   lambdaTelescope cfg.stepPat fun ps _ => do
-    let mut es := #[]
-    for p in ps do
-      if (← p.fvarId!.getBinderInfo) == .default then es := es.push p
-    let some pre := es[0]? | return (none, #[])
-    let post := es.back!
+    let (some pre, some post) ← stepEnds cfg ps ps | return (none, #[])
     let tyT ← stateAt cfg.statePat post
     let tyS ← stateAt cfg.statePat pre
     let cv ← getConstInfoCtor ctor
@@ -395,7 +466,30 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
     let some c := body.getAppFn.constName? | return none
     let env ← getEnv
     return if isStructure env c then some (getStructureCtor env c).name else none
-  let cfg : Config := { scope, package, stepPat, statePat, stateCtor, ns }
+  -- the pre-state and post-state as terms over the step pattern's binders
+  let endOf (k : String) : CommandElabM (Option Expr) := do
+    let some s := args.get? k | return none
+    let f ← elabPat s
+    liftTermElabM <| lambdaTelescope stepPat fun ps _ => do
+      unless (← lambdaTelescope f fun qs _ => pure qs.size) == ps.size do
+        throwError "relevance_generate: ({k} := ...) must bind the step pattern's binders"
+      let e := f.beta ps
+      check e
+      discard <| stateAt statePat e
+    return some f
+  let preOf ← endOf "pre"
+  let postOf ← endOf "post"
+  -- theorems that turn a hypothesis into the state pattern
+  let derive ← match args.get? "derive" with
+    | none => pure #[]
+    | some s => (idents s).mapM fun n => liftCoreM <| realizeGlobalConstNoOverload (mkIdent n)
+  for d in derive do
+    let head := ← liftTermElabM <| lambdaTelescope statePat fun _ body => pure body.getAppFn
+    let ok ← liftTermElabM <| forallTelescopeReducing (← getConstInfo d).type fun _ c =>
+      return (c.find? (·.getAppFn == head)).isSome
+    unless ok do
+      throwError "relevance_generate: the conclusion of {d} does not mention the state pattern"
+  let cfg : Config := { scope, package, stepPat, statePat, stateCtor, ns, preOf, postOf, derive }
   let r ← liftTermElabM <| analyse cfg roots
   let counted (b : BranchRec) := !b.dead && (counts r r.splits[b.splitId]!).1
   let live (lvl : Level) := r.branches.filter fun b => b.level == lvl && counted b
@@ -472,6 +566,13 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
   let l2ok := l2.filter (·.name.isSome)
   let l4 := r.ties.filter (·.kind == "frame")
   let l4ok := l4.filter (·.name.isSome)
+  let lc := r.ties.filter (·.kind == "cond")
+  let lv := r.ties.filter (·.kind == "conv")
+  let withContext := lv.filter (!·.context.isEmpty)
+  let noOwn := lc.filter fun t => t.name.isSome && t.context.isEmpty
+  let ctxCount (what : String) : Nat :=
+    lv.foldl (fun n t => n + (t.context.filter (·.startsWith s!"[{what}]")).size) 0
+  let stmtDiff := r.ties.filter (·.kind == "statement")
   for t in r.ties do
     if t.name.isNone then
       logWarning m!"relevance: {t.kind} lemma of {branchDoc r.branches[t.branch]!} not proved: {t.error}"
@@ -521,7 +622,11 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
     {usesMarked.size} branch lemmas using a marked theorem \
     [{", ".intercalate (usesMarked.toList.map fun (n, cs) =>
       s!"{n.getString!} ({", ".intercalate (cs.toList.map toString)})")}]; frame lemmas \
-    {l4ok.size}/{l4.size}; covering lemmas not generated"
+    {l4ok.size}/{l4.size}; split-condition lemmas {(lc.filter (·.name.isSome)).size}/{l2.size} \
+    ({noOwn.size} of them for branches that the split leaves no hypothesis in), converse lemmas {(lv.filter (·.name.isSome)).size}/{l2.size} ({withContext.size} of them using \
+    hypotheses in scope that are not split conditions: {ctxCount "clause premise"} clause \
+    premises and {ctxCount "binder"} other binders of the proof), statements computed before the body that differ {stmtDiff.size}; covering \
+    lemmas not generated"
   let stepLive := r.branches.filter fun b => b.level == .step && !b.dead
   let cnt (role : String) := (stepLive.filter (·.role == role)).size
   logInfo m!"relevance: {r.splits.size} split occurrences, {r.branches.size} branch \

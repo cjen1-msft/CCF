@@ -2,6 +2,7 @@ module
 
 public meta import Lean
 public import Relevance.Split
+public import Relevance.Chain
 
 /-!
 # Walking proof terms for recorded splits
@@ -55,8 +56,8 @@ branch (a branch does not assume the proof it is part of). `let` variables (inli
 ## Tie-back
 
 When the configuration names a namespace `Ns`, the walk also returns the walked term rebuilt, and
-for every branch of a step-level or state-level root adds two kinds of theorem, each checked by the
-kernel when it is added:
+for every branch of a step-level or state-level root adds four kinds of theorem, each checked by
+the kernel when it is added:
 
 - `Ns.branch_<i>` (branch `i`, numbered in walk order): for all the root's binders, the closed
   variables of the branch's predicate and its hypotheses (the conjuncts of the predicate before
@@ -66,6 +67,25 @@ kernel when it is added:
   rebuilt one does not close over the telescope.
 - `Ns.frame_<i>`, for a `frame` branch: under the same telescope, the clause premises at the
   pre-state, proved by the local hypotheses that witness them.
+- `Ns.cond_<i>` (the telescope holds what the split introduces): under the same telescope, the
+  closure of the parent branch's telescope (read from the parent's branch lemma, omitted at the
+  outermost branch) and each hypothesis that the split's eliminators leave in the branch, at the
+  type that the eliminator gives it (`Chain.lean`). The proof is the telescope's own variables,
+  so the kernel checks that the telescope keeps every such hypothesis at a type definitionally
+  equal to the eliminator's, and that the parent's telescope is contained in it.
+- `Ns.conv_<i>` (the telescope holds nothing else): for the binders in scope at the branch,
+  with the eliminator's types for the split's binders, the closure of the branch's telescope
+  (read from its branch lemma). The proof closes the telescope with its own variables and terms;
+  `let`-bound proofs stay `let`s, so they are checked by their values. The hypotheses it takes
+  besides the root binders, the split's binders and the parent's telescope are listed in the
+  table (clause premises, and other binders of the proof outside the split, such as the
+  equations of an earlier `cases` or `injection`).
+
+Before a branch's body is walked, the statement of its branch lemma is computed from its
+telescope, so that the lemmas of nested branches can read it; the statement of the lemma that is
+added is checked to be the same. The eliminator chain of a branch is matched to the branch by its
+position among the split's branches and checked by its branch marker's tag and by the names of
+the local variables that the walk introduces between the split marker and the branch marker.
 
 In the rebuilt term every branch with a lemma is replaced by a call of it, theorems in scope are
 `let`-bound applications of their proofs, and a `let`-bound proof walked at a use takes the value
@@ -128,6 +148,11 @@ structure TieRec where
   factored : Bool := false
   /-- Why the rebuilt body was not used, if it was not. -/
   fallback : String := ""
+  /-- For a split-condition lemma: the hypotheses that the split's eliminators leave in the
+  branch. For a converse lemma: the hypotheses it takes besides the root binders, the split's own
+  binders and the parent branch's telescope, each marked `[clause premise]` or `[binder]` (another
+  binder of the proof outside the split). -/
+  context : Array String := #[]
   deriving Inhabited
 
 structure SplitRec where
@@ -162,6 +187,12 @@ structure Config where
   stateCtor : Option Name := none
   /-- Namespace of the generated tie-back lemmas; none are generated when anonymous. -/
   ns : Name := .anonymous
+  /-- The pre-state and post-state of a step, as lambdas over the step pattern's binders; by
+  default its first and last explicit binders. -/
+  preOf : Option Expr := none
+  postOf : Option Expr := none
+  /-- Theorems that turn a hypothesis of theirs into the state pattern (see `Generate.lean`). -/
+  derive : Array Name := #[]
 
 /-- One clause obligation of the state pattern's structure at a step: the clause premises (local
 hypotheses, at the post-state) and the same premises at the pre-state. -/
@@ -169,6 +200,15 @@ structure Clause where
   name : Name
   prems : Array Expr
   premS : Array Expr
+
+/-- The telescope of the current branch: the closed variables (in context order) and the
+hypotheses (their types, and the terms that prove them here: `let`-bound facts, then the
+conditions that are not closed variables). -/
+structure Tele where
+  closed : Array FVarId := #[]
+  hypArgs : Array Expr := #[]
+  hypTys : Array Expr := #[]
+  deriving Inhabited
 
 structure Ctx where
   cfg : Config
@@ -192,6 +232,8 @@ structure Ctx where
   /-- `let`-bound proofs whose values are being walked at a use: a branch inside such a value
   does not take the proof itself as a hypothesis. -/
   walking : Array FVarId := #[]
+  /-- The local variables in scope at the enclosing recorded split. -/
+  atSplit : Std.HashSet FVarId := {}
 
 structure St where
   region : Bool := false
@@ -213,6 +255,11 @@ structure St where
   ties : Array TieRec := #[]
   /-- Rebuilt values of `let`-bound proofs, from their uses. -/
   rebuiltLets : Std.HashMap FVarId Expr := {}
+  /-- The eliminator chains of each recorded split (by split id), in the order of its branches. -/
+  chains : Std.HashMap Nat (Array Chain) := {}
+  /-- The telescope of each branch and the statement of its branch lemma (computed before its
+  body is walked, so that nested branches can refer to it). -/
+  teles : Std.HashMap Nat (Tele × Option (Expr × Nat)) := {}
 
 abbrev M := ReaderT Ctx (StateRefT St MetaM)
 
@@ -276,14 +323,6 @@ def splitOn? (c : Name) (args : Array Expr) : MetaM (Option (Expr × Expr)) := d
       pure (iv.numParams + 1 + iv.numIndices)
   let some m := args[majorIdx]? | return none
   return some (← inferType m, m)
-
-/-- The telescope of the current branch: the closed variables (in context order) and the
-hypotheses (their types, and the terms that prove them here: `let`-bound facts, then the
-conditions that are not closed variables). -/
-structure Tele where
-  closed : Array FVarId := #[]
-  hypArgs : Array Expr := #[]
-  hypTys : Array Expr := #[]
 
 def zetaAll (e : Expr) : MetaM Expr := do zetaReduce (← instantiateMVars e)
 
@@ -495,6 +534,73 @@ def addTheorem (name : Name) (type value : Expr) : MetaM (Except String Unit) :=
     setEnv env
     return .error (← ex.toMessageData.toString)
 
+/-- `closeBody closed hyps` with its proof: each closed variable is its own witness and `prfs`
+prove `hyps`. -/
+def closeProof (closed : Array Expr) (hyps prfs : Array Expr) : MetaM Expr := do
+  let mut body : Expr := mkConst ``True
+  let mut prf : Expr := mkConst ``True.intro
+  let conj (p h body prf : Expr) : Expr × Expr :=
+    if body.isConstOf ``True then (p, h) else (mkAnd p body, mkApp4 (mkConst ``And.intro) p body h prf)
+  for (p, h) in (hyps.zip prfs).reverse do
+    (body, prf) := conj p h body prf
+  for x in closed.reverse do
+    let ty ← zetaAll (← inferType x)
+    if (← isProp ty) && !body.containsFVar x.fvarId! then
+      (body, prf) := conj ty x body prf
+    else
+      let lam ← mkLambdaFVars #[x] body
+      let lam := lam.updateLambdaE! ty lam.bindingBody!
+      let u ← getLevel ty
+      prf := mkApp4 (mkConst ``Exists.intro [u]) ty lam x prf
+      body := mkApp2 (mkConst ``Exists [u]) ty lam
+  return prf
+
+/-- The closure of a branch lemma's telescope at the given root binders: `∃ rest, hyps`, read
+from the lemma's statement `∀ roots rest hyps, goal`. -/
+def closureAt (stmt : Expr) (roots : Array Expr) (nRest nHyps : Nat) : MetaM Expr := do
+  let ty ← instantiateForall stmt roots
+  forallBoundedTelescope ty (some (nRest + nHyps)) fun bs _ => do
+    if bs.size != nRest + nHyps then throwError "the statement has too few binders"
+    let hyps ← (bs.extract nRest bs.size).mapM inferType
+    closeBody (bs.extract 0 nRest) hyps
+
+/-- Abstract `value : type` over the root binders and every local variable that it needs, the
+variables of `retype` with the given types; `let`s stay `let`s (so a `let`-bound proof is checked
+by its value). Returns the statement, the proof and the binders. -/
+def abstractFree (roots : Array Expr) (retype : Array (FVarId × Expr))
+    (type value : Expr) : MetaM (Except String (Expr × Expr × Array Expr)) := do
+  let lctx ← getLCtx
+  let mut lctx' := lctx
+  for (id, ty) in retype do
+    lctx' := lctx'.modifyLocalDecl id (·.setType ty)
+  withLCtx lctx' (← getLocalInstances) do
+    let mut need : Std.HashSet FVarId := roots.foldl (fun s x => s.insert x.fvarId!) {}
+    let mut work := (collectFVars (collectFVars {} value) type).fvarIds
+    while !work.isEmpty do
+      let f := work.back!
+      work := work.pop
+      if need.contains f then continue
+      need := need.insert f
+      let some d := lctx'.find? f | continue
+      work := work ++ (collectFVars {} d.type).fvarIds
+      if let some v := d.value? (allowNondep := true) then work := work ++ (collectFVars {} v).fvarIds
+    let ordered := lctx'.foldl (init := #[]) fun acc d =>
+      if need.contains d.fvarId then acc.push d.toExpr else acc
+    let mut lctx'' := lctx'
+    for x in ordered do
+      let d := lctx'.get! x.fvarId!
+      unless d.isLet (allowNondep := true) do
+        lctx'' := lctx''.modifyLocalDecl x.fvarId! (·.setType (← zetaAll d.type))
+    withLCtx lctx'' (← getLocalInstances) do
+      let binders ← ordered.filterM fun x => return !(← x.fvarId!.getDecl).isLet (allowNondep := true)
+      let value ← mkLambdaFVars ordered value (usedLetOnly := true)
+      let type ← mkForallFVars binders type
+      let free := (collectFVars (collectFVars {} value) type).fvarIds
+      unless free.isEmpty do
+        let names := free.map fun f => ((lctx.find? f).map (·.userName.toString)).getD "?"
+        return .error s!"uses variables that are not in scope: {names.toList}"
+      return .ok (type, value, binders)
+
 /-- Strip `mdata` and `let`s (instantiating their values) at the head, and beta-reduce. -/
 partial def zetaHead (e : Expr) : Expr :=
   match e with
@@ -502,17 +608,36 @@ partial def zetaHead (e : Expr) : Expr :=
   | .letE _ _ v b _ => zetaHead (b.instantiate1 v)
   | _ => if e.getAppFn.isLambda then zetaHead e.headBeta else e
 
+/-- The pre-state and post-state of the step whose step-pattern binders `ps` take the values
+`args`. -/
+def stepEnds (cfg : Config) (ps args : Array Expr) : MetaM (Option Expr × Option Expr) := do
+  let mut es := #[]
+  for (p, a) in ps.zip args do
+    if (← p.fvarId!.getBinderInfo) == .default then es := es.push a
+  let pre := match cfg.preOf with | some f => some (f.beta args) | none => es[0]?
+  let post := match cfg.postOf with | some f => some (f.beta args) | none => es.back?
+  return (pre, post)
+
+/-- A clause statement that is not a `∀`, with its head definition unfolded until it is one. -/
+partial def unfoldHead (ty : Expr) : MetaM Expr := do
+  let ty ← whnfCore ty
+  if ty.isForall then return ty
+  match ← unfoldDefinition? ty with
+  | some ty => unfoldHead ty
+  | none => return ty
+
 /-- Read a clause statement as `∀ x, P → Q`: the number of leading data binders and of the
-leading proposition binders that follow them. -/
-def clauseShape (ty : Expr) : MetaM (Nat × Nat) := forallTelescope ty fun bs _ => do
-  let mut nd := 0
-  let mut np := 0
-  for b in bs do
-    let p ← isProp (← inferType b)
-    if np == 0 && !p then nd := nd + 1
-    else if p then np := np + 1
-    else break
-  return (nd, np)
+leading proposition binders that follow them. A clause that is a definition is unfolded first. -/
+def clauseShape (ty : Expr) : MetaM (Nat × Nat) := do
+  forallTelescope (← unfoldHead ty) fun bs _ => do
+    let mut nd := 0
+    let mut np := 0
+    for b in bs do
+      let p ← isProp (← inferType b)
+      if np == 0 && !p then nd := nd + 1
+      else if p then np := np + 1
+      else break
+    return (nd, np)
 
 /-- The state pattern's body at the state `st` (its last explicit binder); the other binders are
 found by unification and instance synthesis. -/
@@ -530,7 +655,7 @@ def stateAt (statePat st : Expr) : MetaM Expr := do
 
 /-- The premises of a clause statement `fieldS` (at some state) for the instance `xs`. -/
 def premisesAt (fieldS : Expr) (xs prems : Array Expr) : MetaM (Array Expr) := do
-  let mut e ← instantiateForall fieldS xs
+  let mut e ← instantiateForall (← unfoldHead fieldS) xs
   let mut out := #[]
   for h in prems do
     let e' ← whnfCore e
@@ -846,8 +971,14 @@ partial def walkSplit (name coveredBy p : Expr) : M Expr := do
   let rec_ : SplitRec := {
     root := (← read).root, level := (← read).level, path := st.path, decl := ← curDecl, name,
     coveredBy := (strLit? coveredBy).getD "", refutation }
-  set { st with region := true, curSplit := id, splits := st.splits.push rec_ }
-  try walk p finally modify fun s => { s with region := st.region, curSplit := st.curSplit }
+  let chains ← try elimChains p catch ex => do
+    pure #[{ tag := "?", error := s!"{← ex.toMessageData.toString}" }]
+  set { st with
+    region := true, curSplit := id, splits := st.splits.push rec_
+    chains := st.chains.insert id chains }
+  let atSplit := (← getLCtx).foldl (init := {}) fun s d => s.insert d.fvarId
+  try withReader (fun c => { c with atSplit }) (walk p)
+  finally modify fun s => { s with region := st.region, curSplit := st.curSplit }
 
 /-- Generate a lemma `∀ root binders, ∀ telescope, goal` proved by `body`; record it. -/
 partial def tieLemma (branch : Nat) (kind : String) (name : Name) (tele : Tele)
@@ -881,6 +1012,86 @@ partial def tieLemma (branch : Nat) (kind : String) (name : Name) (tele : Tele)
         return some (name, args)
   modify fun s => { s with ties := s.ties.push { branch, kind, error := err } }
   return none
+
+/-- The split-condition lemma `cond_<id>` and the converse lemma `conv_<id>` of branch `id`, the
+`pos`-th branch of split `splitId`, whose telescope is `tele` and whose branch lemma has
+statement `stmt` (with its number of closed variables that are not root binders).
+
+`cond_<id>`: under the branch lemma's binders, the closure of the parent branch's telescope (read
+from the parent's branch lemma statement) and each hypothesis that the split's eliminators leave
+in the branch, at the type the eliminator gives it. `conv_<id>`: from the hypotheses in scope at
+the branch, with the eliminators' types for the split's binders, the closure of the branch's
+telescope (read from its branch lemma statement). -/
+partial def tieConditions (id splitId pos : Nat) (tag : String) (tele : Tele)
+    (stmt : Option (Expr × Nat)) : M Unit := do
+  let ctx ← read
+  let st ← get
+  let ns := ctx.cfg.ns
+  let fail (kind err : String) : M Unit :=
+    modify fun s => { s with ties := s.ties.push { branch := id, kind, error := err } }
+  let failBoth (err : String) : M Unit := do fail "cond" err; fail "conv" err
+  let some ch := ((st.chains.get? splitId).getD #[])[pos]? | failBoth "no eliminator chain"
+  unless ch.error.isEmpty do return ← failBoth s!"eliminator chain not read: {ch.error}"
+  unless ch.tag == tag do return ← failBoth s!"the eliminator chain is that of {ch.tag}"
+  let lctx ← getLCtx
+  let fvs := lctx.foldl (init := #[]) fun acc d =>
+    if ctx.atSplit.contains d.fvarId || d.isImplementationDetail then acc else acc.push d.toExpr
+  let names := fvs.map fun x => (lctx.get! x.fvarId!).userName
+  unless names == ch.binders.map (·.name) do
+    return ← failBoth s!"the branch's local variables {names.toList} are not the eliminator \
+      chain's binders {(ch.binders.map (·.name)).toList}"
+  let tys := ch.binders.mapIdx fun j b => b.type.instantiateRev (fvs.extract 0 j)
+  let own := (List.range fvs.size).toArray.filter fun j =>
+    let b := ch.binders[j]!
+    b.isProp && !b.consumed && !b.isLet
+  let roots := ctx.rootBinders
+  let rootIds := roots.map (·.fvarId!)
+  let restOf (t : Tele) := (t.closed.filter (!rootIds.contains ·)).map mkFVar
+  -- the parent's telescope, as its branch lemma states it
+  let parent ← match st.stack.back? with
+    | none => pure (some none)
+    | some par => match st.teles.get? par with
+      | some (pt, some (pstmt, pnRest)) =>
+        let cl ← closureAt pstmt roots pnRest pt.hypArgs.size
+        pure (some (some (cl, ← closeProof (restOf pt) pt.hypTys pt.hypArgs, pt)))
+      | _ => pure none
+  match parent with
+  | none => fail "cond" "the parent branch has no branch lemma statement"
+  | some par =>
+    let ps := (par.map (·.1)).toArray ++ own.map (tys[·]!)
+    let hs := (par.map (·.2.1)).toArray ++ own.map (fvs[·]!)
+    if (← tieLemma id "cond" (ns ++ Name.mkSimple s!"cond_{id}") tele (mkAndN ps)
+        #[(mkAndIntroN ps hs, false)] #[]).isSome then
+      let context ← own.mapM fun j => do
+        return s!"{ch.binders[j]!.name.eraseMacroScopes} : {← oneLine tys[j]!}"
+      modify fun s => { s with ties := s.ties.modify (s.ties.size - 1) ({ · with context }) }
+  -- the converse
+  let some (stmt, nRest) := stmt | return ← fail "conv" "the branch lemma has no statement"
+  let cl ← closureAt stmt roots nRest tele.hypArgs.size
+  let prf ← closeProof (restOf tele) tele.hypTys tele.hypArgs
+  let retype := ((List.range fvs.size).toArray.filter (!ch.binders[·]!.isLet)).map fun j =>
+    (fvs[j]!.fvarId!, tys[j]!)
+  match ← abstractFree roots retype cl prf with
+  | .error e => fail "conv" e
+  | .ok (type, value, binders) =>
+    let name := ns ++ Name.mkSimple s!"conv_{id}"
+    match ← addTheorem name type value with
+    | .error e => fail "conv" s!"kernel: {e}"
+    | .ok () =>
+      let known : Std.HashSet FVarId := (rootIds ++ fvs.map (·.fvarId!)).foldl (·.insert ·) {}
+      let parentIds : Std.HashSet FVarId := match parent with
+        | some (some (_, _, pt)) => pt.closed.foldl (·.insert ·) <|
+          pt.hypArgs.foldl (fun s a => if let .fvar f := a then s.insert f else s) {}
+        | _ => {}
+      let context ← (binders.filter fun x =>
+          !known.contains x.fvarId! && !parentIds.contains x.fvarId!).filterMapM fun x => do
+        let d := lctx.get! x.fvarId!
+        if !(← isProp d.type) then return none
+        let what :=
+          if ctx.clause.any (·.prems.any (· == x)) then "clause premise" else "binder"
+        return some s!"[{what}] {d.userName.eraseMacroScopes} : {← oneLine d.type}"
+      let r : TieRec := { branch := id, kind := "conv", name := some name, nRoots := roots.size, context }
+      modify fun s => { s with ties := s.ties.push r }
 
 partial def walkBranch (f α tag dead p : Expr) : M Expr := do
   let st ← get
@@ -937,6 +1148,17 @@ partial def walkBranch (f α tag dead p : Expr) : M Expr := do
   let predStr ← match pred with
     | some (e, _) => oneLine e
     | none => pure "-"
+  -- the telescope and the statement of the branch lemma, before the body is walked
+  let tele? ← match lemmaConds, pred with
+    | none, _ => pure none
+    | some _, some (_, t) => pure (some t)
+    | some (cs, extra), none => some <$> (try teleOf cs extra catch _ => pure {})
+  let stmt ← match tele? with
+    | some t => match ← abstractTele t α (mkConst ``True.intro) with
+      | .ok (ty, _, _, nRest) => pure (some (ty, nRest))
+      | .error _ => pure none
+    | none => pure none
+  if let some t := tele? then modify fun s => { s with teles := s.teles.insert id (t, stmt) }
   modify fun s => { s with
     branches := s.branches.modify id fun b => { b with pred := pred.map (·.1), predStr, role },
     region := false, stack := s.stack.push id, condStack := s.condStack ++ conds }
@@ -945,10 +1167,8 @@ partial def walkBranch (f α tag dead p : Expr) : M Expr := do
   let rebuiltMark := mkApp4 f α (mkStrLit tag) deadE (condApps.foldr (·.app ·) body')
   let ns := ctx.cfg.ns
   if ns.isAnonymous then return rebuiltMark
-  let some (cs, extra) := lemmaConds | return rebuiltMark
-  let tele ← match pred with
-    | some (_, t) => pure t
-    | none => try teleOf cs extra catch _ => pure {}
+  let some (_, extra) := lemmaConds | return rebuiltMark
+  let some tele := tele? | return rebuiltMark
   -- frame lemma: the clause instance held before the step
   if let some (premS, ws) := frame then
     discard <| tieLemma id "frame" (ns ++ Name.mkSimple s!"frame_{id}") tele
@@ -957,14 +1177,19 @@ partial def walkBranch (f α tag dead p : Expr) : M Expr := do
   -- original body
   let bodies := if body' == body then #[(body, false)] else #[(body', true), (body, false)]
   let extraL := if pred.isSome && role == "effect" then extra else #[]
-  match ← tieLemma id "branch" (ns ++ Name.mkSimple s!"branch_{id}") tele α bodies
+  let out ← match ← tieLemma id "branch" (ns ++ Name.mkSimple s!"branch_{id}") tele α bodies
       extraL with
-  | some (name, args) =>
-    let k := (← get).ties.size - 1
-    modify fun s => { s with branches := s.branches.modify id fun b => { b with tie := some k } }
-    let ci ← getConstInfo name
-    return mkAppN (mkConst name (ci.levelParams.map mkLevelParam)) args
-  | none => return rebuiltMark
+    | some (name, args) =>
+      let k := (← get).ties.size - 1
+      modify fun s => { s with branches := s.branches.modify id fun b => { b with tie := some k } }
+      let ci ← getConstInfo name
+      unless stmt.any (·.1 == ci.type) do
+        let err := "the branch lemma's statement differs from the one computed before its body"
+        modify fun s => { s with ties := s.ties.push { branch := id, kind := "statement", error := err } }
+      pure (mkAppN (mkConst name (ci.levelParams.map mkLevelParam)) args)
+    | none => pure rebuiltMark
+  tieConditions id splitId st.splits[splitId]!.branches.size tag tele stmt
+  return out
 
 end
 

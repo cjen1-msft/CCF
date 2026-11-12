@@ -69,7 +69,7 @@ end Proof
 end RelevanceTests.Toy
 
 /--
-info: tie-back: statement = telescope 5/5 class occurrences; branch lemmas 8/8 branch occurrences (4/4 step-own, 1/1 effect, 1/1 frame, 0/0 unattributed, 2/2 state; 2 of them calling nested branch lemmas, 0 proved by the original sub-term because the rebuilt one failed); re-derived roots 2/2 (RelevanceTests.Toy.Proof.at_or_below, RelevanceTests.Toy.Proof.inv_step), using 8 branch lemmas; left in these proofs: 0 branch markers, 0 branch lemmas using a marked theorem []; frame lemmas 1/1; covering lemmas not generated
+info: tie-back: statement = telescope 5/5 class occurrences; branch lemmas 8/8 branch occurrences (4/4 step-own, 1/1 effect, 1/1 frame, 0/0 unattributed, 2/2 state; 2 of them calling nested branch lemmas, 0 proved by the original sub-term because the rebuilt one failed); re-derived roots 2/2 (RelevanceTests.Toy.Proof.at_or_below, RelevanceTests.Toy.Proof.inv_step), using 8 branch lemmas; left in these proofs: 0 branch markers, 0 branch lemmas using a marked theorem []; frame lemmas 1/1; split-condition lemmas 8/8 (0 of them for branches that the split leaves no hypothesis in), converse lemmas 8/8 (4 of them using hypotheses in scope that are not split conditions: 2 clause premises and 10 other binders of the proof), statements computed before the body that differ 0; covering lemmas not generated
 ---
 info: relevance: 4 split occurrences, 8 branch occurrences; live step-level branch occurrences: 3 step-own, 1 effect, 1 frame, 0 unattributed; 3 step classes, 2 state classes; clauses without premises: []; unused haves: 0; 0 unrecorded splits (0 protocol)
 -/
