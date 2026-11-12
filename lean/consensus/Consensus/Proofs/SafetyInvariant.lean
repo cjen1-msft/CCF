@@ -3993,12 +3993,15 @@ private theorem becomeCandidate_result (state : NodeState)
   refine Sends.mono (becomeCandidate_sends self state) fun next sent done => ?_
   have lt : before.currentTerm < (freshCandidate self state).currentTerm := by
     simp [freshCandidate, term]
-  rcases done with ⟨rfl, requests⟩ | ⟨quorum, advance, started⟩
-  · exact Or.inl ⟨rfl, fun e member => ⟨(requests e member).1, (requests e member).2, lt⟩⟩
-  · refine Or.inr ⟨by simpa [freshCandidate] using quorum, advance, fun e member => ?_⟩
-    rcases started e member with start | ⟨source, payload⟩
-    · exact Or.inl start
-    · exact Or.inr ⟨source, payload, lt⟩
+  split_rel done := (rcases done with ⟨same, requests⟩ | ⟨quorum, advance, started⟩) with
+  | inl =>
+    subst same
+    exact Or.inl ⟨rfl, fun e member => ⟨(requests e member).1, (requests e member).2, lt⟩⟩
+  | inr =>
+    refine Or.inr ⟨by simpa [freshCandidate] using quorum, advance, fun e member => ?_⟩
+    split_rel started := (rcases started e member with start | ⟨source, payload⟩) with
+    | inl => exact Or.inl start
+    | inr => exact Or.inr ⟨source, payload, lt⟩
 
 /-- A node that can start an election has a ledger, so it is engaged. -/
 private theorem canStartElection_engaged {state : NodeState} {self : NodeID}
