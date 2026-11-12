@@ -29,6 +29,34 @@ import twins  # noqa: E402
 PRIORITY = ("Ctx.", "summary", "election_safety", "committed_logs", "primary_eq_of_reachable",
             "inv_of_reachable", "leader_led")
 ALONE = 40
+GUIDE = "/root/.cache/paxos-bisim/research/proof-relevance/ccf/marking-guide.md"
+WORKER = """You are a marking worker for a Lean 4 proof. You work alone and cannot ask questions.
+First read this guide in full, then follow it literally: {guide}
+
+Your chunk: `{k}`. File: `lean/consensus/Consensus/Proofs/{stem}.lean`, from theorem `{first}`
+(line {lo}) to theorem `{last}` (ends line {hi}); line numbers at the start commit. Theorems
+with unmarked splits (number of splits as compiled):
+""".replace("{guide}", GUIDE)
+AFTER = """
+Set up once (creates your worktree and branch; the checker makes your own build directory
+`/root/.cache/ccf-consensus-coverage/ws-<hash>/` from the worktree path on its first run):
+
+    git -C /workspaces/ccf-consensus-coverage worktree add -b consensus-mark-{k} /workspaces/ccf-mark-{k} consensus-proof-coverage
+
+Edit files only in `/workspaces/ccf-mark-{k}`. Run every command from there.
+Check (after every one to three splits; it builds the proof first):
+
+    cd /workspaces/ccf-mark-{k} && python3 lean/consensus-coverage/scripts/check.py chunk {k}
+
+Commit (only after a `RESULT: PASS`):
+
+    cd /workspaces/ccf-mark-{k} && git commit -qam "mark <theorem name>"
+
+Never push. Never touch another worktree or `/workspaces/CCF`. Do not write files to /tmp.
+Do not run `lake update` or `lake clean`. When finished, reply with the hand-back note of
+section 10 of the guide; in "guide problems", quote the guide sentence that was unclear or
+wrong and say what happened.
+"""
 
 
 def identical_twins() -> set[str]:
@@ -102,7 +130,10 @@ def main() -> None:
                                        len(g), ",".join(notes) or "-"])))
         md += [f"## Chunk {k}: {stem}.lean lines {g[0][0]}-{g[-1][1]}, {len(g)} theorems, "
                f"{splits} splits" + (f" ({', '.join(notes)})" if notes else ""), ""]
+        md += WORKER.format(k=k, stem=stem, first=check.short(g[0][2]), last=check.short(g[-1][2]),
+                            lo=g[0][0], hi=g[-1][1]).split("\n")
         md += [f"- `{check.short(r[2])}` (line {r[0]}): {r[3]}" for r in g] + [""]
+        md += AFTER.format(k=k).split("\n")
     md += ["## Not in any chunk: Direct.lean twins (copied by `twins.py --apply`)", ""]
     md += [f"- `{check.short(n)}`: {c}" for n, c in sorted(skipped)] + [""]
     (check.MARKING / "chunks.tsv").write_text("\n".join(tsv) + "\n")

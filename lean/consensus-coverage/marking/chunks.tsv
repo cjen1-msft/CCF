@@ -1,9 +1,9 @@
 chunk	file	first	last	start_line	end_line	splits	theorems	notes
-1	SafetyInvariant	Consensus.Proofs.Safety.campaign_summary	Consensus.Proofs.Safety.appendBatch_summary	3768	4727	63	18	classes
-2	SafetyInvariant	Consensus.Proofs.Safety.Led.mono	Consensus.Proofs.Safety.Ctx.post_two	4816	5687	61	28	classes
-3	SafetyInvariant	Consensus.Proofs.Safety.Ctx.elected_after	Consensus.Proofs.Safety.seen_split	5689	6429	58	22	classes
-4	SafetyInvariant	Consensus.Proofs.Safety.core	Consensus.Proofs.Safety.Ctx.anchor	6438	6930	58	12	classes
-5	SafetyInvariant	Consensus.Proofs.Safety.Ctx.new_in_elected	Consensus.Proofs.CommittedLogs.committed_logs_prefix	6932	7889	64	19	classes
-6	SafetyInvariant	Consensus.Proofs.Concrete.mem_replaceNode	Consensus.Proofs.Safety.acceptLog_eq	1143	2358	63	31	-
-7	SafetyInvariant	Consensus.Proofs.Safety.configurationHistory_split	Consensus.Proofs.Safety.becomeCandidate_sends	2375	3756	61	31	-
-8	Direct	Consensus.Proofs.Direct.Keeps.guard'	Consensus.Proofs.Direct.Keeps.foldlM'	783	831	4	4	-
+1	SafetyInvariant	Consensus.Proofs.Direct.CommitFrontier.handleAppendEntriesRequest	Consensus.Proofs.Safety.quiet_summary	2940	3931	57	22	classes
+2	SafetyInvariant	Consensus.Proofs.Safety.observe_bumping	Consensus.Proofs.Safety.initial_canon	3963	5035	54	24	classes
+3	SafetyInvariant	Consensus.Proofs.Safety.inv_initial	Consensus.Proofs.Safety.Ctx.electStep	5037	5776	57	22	classes
+4	SafetyInvariant	Consensus.Proofs.Safety.Ctx.led_after	Consensus.Proofs.Safety.seen_split	5778	6484	54	20	classes
+5	SafetyInvariant	Consensus.Proofs.Safety.core	Consensus.Proofs.Safety.Ctx.anchor	6493	6985	58	12	classes
+6	SafetyInvariant	Consensus.Proofs.Safety.Ctx.new_in_elected	Consensus.Proofs.CommittedLogs.committed_logs_prefix	6987	7944	64	19	classes
+7	SafetyInvariant	Consensus.Proofs.Direct.keys_nodup	Consensus.Proofs.Direct.foldl_select_max_pos	1799	2893	56	30	-
+8	Direct	Consensus.Proofs.Direct.Keeps.guard'	Consensus.Proofs.Direct.Keeps.foldlM'	833	881	4	4	-
