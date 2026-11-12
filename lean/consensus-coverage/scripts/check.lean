@@ -178,15 +178,17 @@ def run : MetaM Unit := do
   let cfg : Relevance.Config := { scope := `ConsensusCheck.Nothing, package := #[`Consensus],
                                   stepPat := mkConst ``Never, statePat := mkConst ``Never }
   let r ← Relevance.analyse cfg roots
-  let mut w := #["row\tdecl\tname\ttag\tflag\ttext"]
+  let modOf (c : Name) : Name :=
+    (env.getModuleIdxFor? c).map (env.header.moduleNames[·]!) |>.getD .anonymous
+  let mut w := #["row\tmodule\tdecl\tname\ttag\tflag\ttext"]
   for u in r.unrecorded do
-    w := w.push s!"unmarked\t{userName u.decl}\t{u.head}\t{← arity u.head}\t\
+    w := w.push s!"unmarked\t{modOf u.decl}\t{userName u.decl}\t{u.head}\t{← arity u.head}\t\
       {if u.internal then "internal" else "protocol"}\t{clean (u.cond.take 400).toString}"
   for s in r.splits do
-    w := w.push s!"split\t{userName s.decl}\t{s.name}\t{s.branches.size}\t\
+    w := w.push s!"split\t{modOf s.decl}\t{userName s.decl}\t{s.name}\t{s.branches.size}\t\
       {if s.coveredBy == "" then "-" else s.coveredBy}\t-"
   for b in r.branches do
-    w := w.push s!"branch\t{userName b.decl}\t{b.split}\t{b.tag}\t\
+    w := w.push s!"branch\t{modOf b.decl}\t{userName b.decl}\t{b.split}\t{b.tag}\t\
       {if b.dead then "dead" else "live"}\t{clean (" ; ".intercalate b.conds.toList)}"
   IO.FS.writeFile (out / "walk.tsv") ("\n".intercalate w.toList ++ "\n")
 
