@@ -1628,7 +1628,7 @@ private theorem fromLeader_loop (self : NodeID) (limit : Nat) (entries : List En
           /\ commitIndex
               <= max state.commitIndex
                   (maxCommittableIndexUpTo (state.log ++ entries) limit) := by
-  induction entries with
+  split_rel entries := (induction entries) with
   | nil =>
       intro state
       exact ⟨
@@ -1641,14 +1641,16 @@ private theorem fromLeader_loop (self : NodeID) (limit : Nat) (entries : List En
         Nat.le.refl,
         Nat.le_max_left _ _
       ⟩
-  | cons entry entries ih =>
+  | cons =>
+      rename_i entry entries ih
       intro state
       simp only [List.foldl_cons]
       have mono :=
         maxCommittableIndexUpTo_mono (List.prefix_append (state.log ++ [entry]) entries) limit
       simp only [List.append_assoc, List.cons_append, List.nil_append] at mono
-      by_cases signature : entry.content.isSignature
-      · simp only [signature, ↓reduceIte]
+      split_rel signature := (by_cases signature : entry.content.isSignature) with
+      | pos =>
+        simp only [signature, ↓reduceIte]
         obtain ⟨retired₀, role₀, known₀, eq₀, roleCase₀⟩ :=
           NodeState.recordCommit_eq self { state with log := state.log ++ [entry] }
             (max state.commitIndex
@@ -1661,11 +1663,13 @@ private theorem fromLeader_loop (self : NodeID) (limit : Nat) (entries : List En
           Nat.le_trans (Nat.le_max_left _ _) lower,
           Nat.le_trans upper (Nat.max_le.mpr ⟨Nat.max_le.mpr ⟨Nat.le_max_left _ _,
             Nat.le_trans mono (Nat.le_max_right _ _)⟩, Nat.le_max_right _ _⟩)⟩
-        rcases roleCase with same | none
-        · rw [same]
+        split_rel roleCase := (rcases roleCase with same | none) with
+        | inl =>
+          rw [same]
           exact roleCase₀
-        · exact Or.inr none
-      · simp only [signature, Bool.false_eq_true, ↓reduceIte]
+        | inr => exact Or.inr none
+      | neg =>
+        simp only [signature, Bool.false_eq_true, ↓reduceIte]
         obtain ⟨commitIndex, retired, role, known, eq, roleCase, lower, upper⟩ := ih _
         rw [eq]
         simp only [List.append_assoc, List.cons_append, List.nil_append] at lower upper roleCase ⊢
