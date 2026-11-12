@@ -4916,9 +4916,9 @@ private theorem Backed.mono (suffix : history <:+ later) {log : List Entry}
 private theorem Backed.weaken {log : List Entry} {commit term term' : Nat}
     (backed : Backed history log commit term) (le : term <= term')
     : Backed history log commit term' := by
-  rcases backed with zero | ⟨earlier, part, committed, le', within⟩
-  · exact Or.inl zero
-  · exact Or.inr ⟨earlier, part, committed, Nat.le_trans le' le, within⟩
+  split_rel backed := (rcases backed with zero | ⟨earlier, part, committed, le', within⟩) with
+  | inl => exact Or.inl zero
+  | inr => exact Or.inr ⟨earlier, part, committed, Nat.le_trans le' le, within⟩
 
 private theorem Acked.mono (suffix : history <:+ later) {voter : NodeID}
     {term index : Nat} (acked : Acked history voter term index)
