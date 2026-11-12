@@ -3537,21 +3537,26 @@ private theorem committed_log_step {nodes : List NodeID} {before after : Model.S
       -> (node, afterState) ∈ replaceNode before.nodes actor new
       -> beforeState.committedLog <+: afterState.committedLog := by
     intro actor old new found grown member
-    rcases mem_replaceNode member with ⟨rfl, rfl⟩ | ⟨_, listed⟩
-    · have same : beforeState = old :=
+    split_rel mem_replaceNode := (rcases mem_replaceNode member with ⟨nodeEq, stateEq⟩ | ⟨other, listed⟩) with
+    | inl =>
+      subst nodeEq stateEq
+      have same : beforeState = old :=
         Option.some.inj ((nodeState_of_mem distinct beforeMember).symm.trans found)
       subst same
       exact grown.committedLog
-    · have same : afterState = beforeState :=
+    | inr =>
+      have same : afterState = beforeState :=
         Option.some.inj
           ((nodeState_of_mem distinct listed).symm.trans (nodeState_of_mem distinct beforeMember))
       subst same
       exact List.prefix_refl _
-  cases action with
-  | «local» actor input =>
+  split_rel action := (cases action) with
+  | «local» =>
+      rename_i actor input
       obtain ⟨old, new, outputs, found, acted, rfl⟩ := step_local stepped
       exact extended found (Extends.act _ actor old input _ _ _ acted) afterMember
-  | deliver envelope =>
+  | deliver =>
+      rename_i envelope
       obtain ⟨_, old, new, outputs, found, received, rfl⟩ := step_deliver stepped
       exact extended found (Extends.receive _ _ old _ _ _ _ _ received) afterMember
 
