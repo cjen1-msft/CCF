@@ -4795,29 +4795,37 @@ private theorem appendBatch_summary (self : NodeID) (state : NodeState)
   have term : after.currentTerm = state.currentTerm := by rw [advance.term, eq]
   have log : after.log = appended.log := advance.log
   have role : after.role = .primary \/ after.role = .none := by
-    rcases advance.role with r | r
-    · rw [r, eq]; exact Or.inl leader
-    · exact Or.inr r
+    split_rel role := (rcases advance.role with r | r) with
+    | inl => rw [r, eq]; exact Or.inl leader
+    | inr => exact Or.inr r
   have commit : state.commitIndex <= after.commitIndex := by
     have := advance.commit_le; rw [eq] at this; exact this
   refine ⟨
     Nat.le_of_eq term.symm,
     fun _ voted votedEq => by rw [advance.votedFor, eq]; exact votedEq,
     fun _ => Or.inl (by simp [Engaged, leader]),
-    fun c => by rcases role with r | r <;> simp [r] at c,
+    fun c => by
+      split_rel role := (rcases role with r | r) with
+      | inl => simp [r] at c
+      | inr => simp [r] at c,
     fun _ => Or.inl ⟨leader, term⟩,
     fun _ _ _ peer => Or.inl (by rw [advance.matchIndex, eq]),
     Kind.append entries sentIndex leader terms (eq ▸ advance),
     fun e member => ?_
   ⟩
-  rcases List.mem_append.mp (by simpa using member) with old | new
-  · have from_ : AEFrom self after.currentTerm after.commitIndex after.log e :=
+  split_rel mem_append := (rcases List.mem_append.mp (by simpa using member) with old | new) with
+  | inl =>
+    have from_ : AEFrom self after.currentTerm after.commitIndex after.log e :=
       term ▸ (beats e old).extend (log ▸ List.prefix_refl _) commit
     obtain ⟨request, payload, ok⟩ := from_.ok
     refine ⟨from_.1, ?_⟩
     rw [payload]
-    exact ⟨ok, by rcases role with r | r <;> simp [r], Or.inl ⟨leader, term⟩⟩
-  · obtain ⟨source, payload⟩ := nominated e new
+    exact ⟨ok, by
+      split_rel role := (rcases role with r | r) with
+      | inl => simp [r]
+      | inr => simp [r], Or.inl ⟨leader, term⟩⟩
+  | inr =>
+    obtain ⟨source, payload⟩ := nominated e new
     refine ⟨source, ?_⟩
     rw [payload]
     show appended.currentTerm = after.currentTerm
