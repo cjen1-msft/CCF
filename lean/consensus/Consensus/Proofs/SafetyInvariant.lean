@@ -4667,18 +4667,32 @@ private theorem appendEntriesRequest_summary (self : NodeID) (before : NodeState
         (receive (Capabilities.record self) self source before
           (.appendEntriesRequest request)) := by
   simp only [receive]
-  rcases observe_bumping before (message := .appendEntriesRequest request) trivial
-    with ⟨bump, eq⟩ | ⟨le, eq⟩ <;> rw [eq]
-  · refine Sends.mono (aeReply self source _ request (Nat.le.refl)) fun after sent reply => ?_
+  split_rel observe_bumping :=
+      (rcases observe_bumping before (message := .appendEntriesRequest request) trivial
+        with ⟨bump, eq⟩ | ⟨le, eq⟩) with
+  | inl =>
+    rw [eq]
+    refine Sends.mono (aeReply self source _ request (Nat.le.refl)) fun after sent reply => ?_
     obtain ⟨kind, sends⟩ := aeReply_summary (before := before) (z := bumpedState before request.term) rfl rfl
       (Nat.le_of_lt bump) reply
     obtain ⟨term, _, _, role, _, _⟩ := reply
     have follower : after.role = .follower \/ after.role = .none := by
-      rcases role with eq | eq | eq <;> rw [eq] <;> simp [bumpedState]
-    exact bumped_summary (term ▸ bump) (by rcases follower with f | f <;> simp [f])
-      (by rcases follower with f | f <;> simp [f])
+      split_rel role := (rcases role with eq | eq | eq) with
+      | inl => rw [eq] <;> simp [bumpedState]
+      | inr_inl => rw [eq] <;> simp
+      | inr_inr => rw [eq] <;> simp
+    exact bumped_summary (term ▸ bump) (by
+      split_rel follower := (rcases follower with f | f) with
+      | inl => simp [f]
+      | inr => simp [f])
+      (by
+        split_rel follower := (rcases follower with f | f) with
+        | inl => simp [f]
+        | inr => simp [f])
       ⟨source, _, rfl, trivial, term ▸ Nat.le.refl⟩ kind sends
-  · refine Sends.mono (aeReply self source _ request le) fun after sent reply => ?_
+  | inr =>
+    rw [eq]
+    refine Sends.mono (aeReply self source _ request le) fun after sent reply => ?_
     obtain ⟨kind, sends⟩ := aeReply_summary (before := before) rfl rfl Nat.le.refl reply
     obtain ⟨term, voted, matchEq, role, cand, _⟩ := reply
     refine ⟨Nat.le_of_eq term.symm, fun _ voted' eq => voted ▸ eq,
@@ -4687,10 +4701,10 @@ private theorem appendEntriesRequest_summary (self : NodeID) (before : NodeState
     · have eq := cand c
       rw [eq] at c ⊢
       exact ⟨c, rfl, rfl, Or.inr ⟨c, rfl, Or.inl rfl, fun voter member => Or.inl member⟩⟩
-    · rcases role with eq | eq | eq
-      · exact Or.inl ⟨eq ▸ leader, term⟩
-      · rw [eq] at leader; cases leader
-      · rw [eq] at leader; cases leader
+    · split_rel role := (rcases role with eq | eq | eq) with
+      | inl => exact Or.inl ⟨eq ▸ leader, term⟩
+      | inr_inl => rw [eq] at leader; cases leader
+      | inr_inr => rw [eq] at leader; cases leader
 
 private theorem BatchState.push {self : NodeID} {before state : NodeState}
     {sent : List Model.Envelope} (batch : BatchState self before state sent)
