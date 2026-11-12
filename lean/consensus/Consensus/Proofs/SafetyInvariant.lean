@@ -5839,9 +5839,9 @@ private theorem vals_upToDate {state : NodeState} (term : Nat)
       <= termAt state.log (max state.commitIndex (maxCommittableIndex state.log)) :=
     termAt_mono sorted (Nat.le_max_right _ _)
       (Nat.max_le.mpr ⟨frontier, maxCommittableIndexBounded state.log⟩)
-  rcases Nat.lt_or_eq_of_le mono with lt | eq
-  · exact Or.inl lt
-  · exact Or.inr ⟨eq.symm, Nat.le_max_right _ _⟩
+  split_rel lt_or_eq_of_le := (rcases Nat.lt_or_eq_of_le mono with lt | eq) with
+  | inl => exact Or.inl lt
+  | inr => exact Or.inr ⟨eq.symm, Nat.le_max_right _ _⟩
 
 end Consensus.Proofs.Safety
 
