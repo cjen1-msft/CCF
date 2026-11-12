@@ -5556,37 +5556,46 @@ private theorem backing_split {history : History} {log : List Entry}
           /\ log.take commit <+: leaderState.log.take index := by
   have lengthEq : (log.take commit).length = commit := List.length_take_of_le length
   revert within
-  induction committed with
-  | @fresh current rest leader state term index step =>
+  split_rel committed := (induction committed) with
+  | fresh =>
+      rename_i current rest leader state term index step
       intro within
-      by_cases low : term <= bound
-      · exact Or.inl (Or.inr ⟨term, _, .fresh step, low, within⟩)
-      · exact Or.inr ⟨current, rest, leader, state, term, 0, index, List.suffix_refl _, step,
+      split_rel low := (by_cases low : term <= bound) with
+      | pos => exact Or.inl (Or.inr ⟨term, _, .fresh step, low, within⟩)
+      | neg =>
+        exact Or.inr ⟨current, rest, leader, state, term, 0, index, List.suffix_refl _, step,
           Nat.lt_of_not_le low, Nat.zero_le _, within⟩
-  | @chained current rest leader state term base index earlier part' step backing le
-      inBacking ih =>
+  | chained =>
+      rename_i current rest leader state term base index earlier part' step backing le
+        inBacking ih
       intro within
-      by_cases low : term <= bound
-      · exact Or.inl (Or.inr ⟨term, _, .chained step backing le inBacking, low, within⟩)
-      by_cases baseLe : base <= commit
-      · exact Or.inr ⟨current, rest, leader, state, term, base, index, List.suffix_refl _,
-          step, Nat.lt_of_not_le low, baseLe, within⟩
-      have commitIndex : commit <= index := Nat.le_trans (Nat.le_of_lt (Nat.lt_of_not_le baseLe))
-        step.2.1
-      have short : log.take commit <+: state.log.take base := by
-        have eq := List.prefix_iff_eq_take.mp within
-        rw [lengthEq, List.take_take, Nat.min_eq_left commitIndex] at eq
-        rw [eq]
-        exact take_prefix_take _ (Nat.le_of_lt (Nat.lt_of_not_le baseLe))
-      rcases ih (short.trans inBacking) with backed
-          | ⟨c', p', l', s', t', b', i', suffix, rest'⟩
-      · exact Or.inl (backed.mono (List.suffix_cons _ _))
-      · exact Or.inr ⟨c', p', l', s', t', b', i', suffix.trans (List.suffix_cons _ _), rest'⟩
-  | @past current rest term part old ih =>
+      split_rel low := (by_cases low : term <= bound) with
+      | pos => exact Or.inl (Or.inr ⟨term, _, .chained step backing le inBacking, low, within⟩)
+      | neg =>
+        split_rel baseLe := (by_cases baseLe : base <= commit) with
+        | pos =>
+          exact Or.inr ⟨current, rest, leader, state, term, base, index, List.suffix_refl _,
+            step, Nat.lt_of_not_le low, baseLe, within⟩
+        | neg =>
+          have commitIndex : commit <= index := Nat.le_trans (Nat.le_of_lt (Nat.lt_of_not_le baseLe))
+            step.2.1
+          have short : log.take commit <+: state.log.take base := by
+            have eq := List.prefix_iff_eq_take.mp within
+            rw [lengthEq, List.take_take, Nat.min_eq_left commitIndex] at eq
+            rw [eq]
+            exact take_prefix_take _ (Nat.le_of_lt (Nat.lt_of_not_le baseLe))
+          split_rel ih :=
+              (rcases ih (short.trans inBacking) with backed
+                | ⟨c', p', l', s', t', b', i', suffix, rest'⟩) with
+          | inl => exact Or.inl (backed.mono (List.suffix_cons _ _))
+          | inr =>
+            exact Or.inr ⟨c', p', l', s', t', b', i', suffix.trans (List.suffix_cons _ _), rest'⟩
+  | past =>
+      rename_i current rest term part old ih
       intro within
-      rcases ih within with backed | ⟨c', p', l', s', t', b', i', suffix, rest'⟩
-      · exact Or.inl (backed.mono (List.suffix_cons _ _))
-      · exact Or.inr ⟨c', p', l', s', t', b', i', suffix.trans (List.suffix_cons _ _), rest'⟩
+      split_rel ih := (rcases ih within with backed | ⟨c', p', l', s', t', b', i', suffix, rest'⟩) with
+      | inl => exact Or.inl (backed.mono (List.suffix_cons _ _))
+      | inr => exact Or.inr ⟨c', p', l', s', t', b', i', suffix.trans (List.suffix_cons _ _), rest'⟩
 
 private theorem Doomed.cons' {history : History} {current : Model.State} {node : NodeID}
     {state state' : NodeState} (doomed : Doomed history node state)
