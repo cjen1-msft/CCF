@@ -5742,11 +5742,14 @@ private theorem received {source : NodeID} {message : Message}
         /\ envelope.source = source
         /\ envelope.target = c.actor
         /\ envelope.payload = message := by
-  rcases c.tr.source with ⟨input, internal, _⟩ | ⟨envelope, queued, target, receive, _⟩
-  · have : c.tr.event = _ := eq
+  split_rel source :=
+      (rcases c.tr.source with ⟨input, internal, _⟩ | ⟨envelope, queued, target, receive, _⟩) with
+  | inl =>
+    have : c.tr.event = _ := eq
     rw [internal] at this
     cases this
-  · have : c.tr.event = _ := eq
+  | inr =>
+    have : c.tr.event = _ := eq
     rw [receive] at this
     cases this
     exact ⟨envelope, queued, rfl, target, rfl⟩
