@@ -6318,51 +6318,57 @@ private theorem doomed_absurd {term commit : Nat} {log : List Entry}
       -> termAt state.log index = late /\ isSignatureAt state.log index = true := by
     intro history state good now seen bound
     have inv := good _ (List.suffix_refl _) (fun empty => by simp [empty, Now] at now)
-    rcases inv.persist voter state acker index now seen ackSignature with inLog
-        | ⟨later, _, lt, laterLe, _, _⟩
-    · refine ⟨?_, isSignatureAt_of_prefix inLog (isSignatureAt_take_of_le Nat.le.refl ackSignature)⟩
+    split_rel persist := (rcases inv.persist voter state acker index now seen ackSignature with inLog
+        | ⟨later, _, lt, laterLe, _, _⟩) with
+    | inl =>
+      refine ⟨?_, isSignatureAt_of_prefix inLog (isSignatureAt_take_of_le Nat.le.refl ackSignature)⟩
       rw [termAt_of_prefix inLog bound', termAt_take Nat.le.refl, ackTerm]
-    · rw [ackTerm] at lt
+    | inr =>
+      rw [ackTerm] at lt
       omega
-  by_cases self : voter = c.actor
-  · subst self
+  split_rel self := (by_cases self : voter = c.actor) with
+  | pos =>
+    subst self
     have seen := ackerSeen.mono suffix
     have mono := c.inv.term_mono c.actor c.pre acker c.pre_now seen
     rw [ackerTerm] at mono
     have preLe : c.pre.currentTerm <= term := by
-      rcases termCase with lt | ⟨same, _⟩
-      · exact Nat.le_of_lt lt
-      · exact Nat.le_of_eq same
+      split_rel termCase := (rcases termCase with lt | ⟨same, other⟩) with
+      | inl => exact Nat.le_of_lt lt
+      | inr => exact Nat.le_of_eq same
     obtain ⟨atIndex, _⟩ := keeps _ c.pre c.good c.pre_now seen (Nat.le_trans preLe le)
     rw [preLog] at atIndex
     have := lowTerm index
     omega
-  obtain ⟨a', b', r', grantSuffix, ⟨granting, _, grantingMem, _, grantingLe, _, _, upToDate⟩,
-    seenOr⟩ := granted voter inVoters
-  have tail : b' :: r' <:+ before :: rest := by
-    rcases List.suffix_cons_iff.mp grantSuffix with same | inner
-    · simp only [List.cons.injEq] at same
-      obtain ⟨_, rfl, rfl⟩ := same
-      exact List.suffix_refl _
-    · exact (List.suffix_cons _ _).trans inner
-  rcases seenOr with same | candidateSeen
-  · exact self same
-  have ordered := order _ tail candidateSeen
-  have good : Good (b' :: r') := fun earlier within nonempty =>
-    c.good earlier (within.trans tail) nonempty
-  have seen := ackerSeen.mono ordered
-  have grantInv := good _ (List.suffix_refl _) (List.cons_ne_nil _ _)
-  have mono := grantInv.term_mono voter granting acker grantingMem seen
-  rw [ackerTerm] at mono
-  obtain ⟨atIndex, signed⟩ := keeps _ granting good grantingMem seen
-    (Nat.le_trans grantingLe le)
-  have committable : late <= maxCommittableTerm granting.log := by
-    rw [← atIndex]
-    exact termAt_mono (grantInv.sorted voter granting grantingMem)
-      (signatureIndex_le_maxCommittableIndex signed) (maxCommittableIndexBounded _)
-  have requestTerm := lowTerm (max commit (maxCommittableIndex log))
-  simp only [voteLogUpToDate, vals] at upToDate
-  omega
+  | neg =>
+    obtain ⟨a', b', r', grantSuffix, ⟨granting, _, grantingMem, _, grantingLe, _, _, upToDate⟩,
+      seenOr⟩ := granted voter inVoters
+    have tail : b' :: r' <:+ before :: rest := by
+      split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp grantSuffix with same | inner) with
+      | inl =>
+        simp only [List.cons.injEq] at same
+        obtain ⟨_, rfl, rfl⟩ := same
+        exact List.suffix_refl _
+      | inr => exact (List.suffix_cons _ _).trans inner
+    split_rel seenOr := (rcases seenOr with same | candidateSeen) with
+    | inl => exact self same
+    | inr =>
+      have ordered := order _ tail candidateSeen
+      have good : Good (b' :: r') := fun earlier within nonempty =>
+        c.good earlier (within.trans tail) nonempty
+      have seen := ackerSeen.mono ordered
+      have grantInv := good _ (List.suffix_refl _) (List.cons_ne_nil _ _)
+      have mono := grantInv.term_mono voter granting acker grantingMem seen
+      rw [ackerTerm] at mono
+      obtain ⟨atIndex, signed⟩ := keeps _ granting good grantingMem seen
+        (Nat.le_trans grantingLe le)
+      have committable : late <= maxCommittableTerm granting.log := by
+        rw [← atIndex]
+        exact termAt_mono (grantInv.sorted voter granting grantingMem)
+          (signatureIndex_le_maxCommittableIndex signed) (maxCommittableIndexBounded _)
+      have requestTerm := lowTerm (max commit (maxCommittableIndex log))
+      simp only [voteLogUpToDate, vals] at upToDate
+      omega
 
 /-- The actor's committed prefix is committed no later than `bound`, or a later
 commit step covers it from a base within it. -/
