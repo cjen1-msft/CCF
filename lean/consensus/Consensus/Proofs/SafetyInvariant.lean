@@ -4666,9 +4666,9 @@ private theorem BatchState.push {self : NodeID} {before state : NodeState}
     fun e member => (beats e member).extend (List.prefix_append _ _) Nat.le.refl
   ⟩
   intro entry member
-  rcases List.mem_append.mp member with old | new
-  · exact terms entry old
-  · simp at new; rw [new]
+  split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
+  | inl => exact terms entry old
+  | inr => simp at new; rw [new]
 
 private theorem appendEntry_batch (self : NodeID) (before : NodeState)
     (state : NodeState) (sent : List Model.Envelope)
