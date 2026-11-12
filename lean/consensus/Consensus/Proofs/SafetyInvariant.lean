@@ -6743,14 +6743,17 @@ private theorem old_step_in_new {node : NodeID} {later commit : Nat} {log : List
           log.take commit <+: part
           /\ (state.log.take index <+: part \/ part <+: state.log.take index) := by
     intro above
-    rcases c.elect_backed after before rest node later log commit (List.suffix_refl _) elect with
-      zero | ⟨_, part, committedE, _, inPart⟩
-    · exact (Nat.not_lt_zero base (zero ▸ above)).elim
-    · exact ⟨part, inPart, committed_comparable c.inv.completeness c.monos committedH committedE⟩
-  rcases agree_or_contained step.2.1 step.2.2.1 frontier low high with
-    done | ⟨k, agree, baseLe, commitLe⟩
-  · exact done
-  · exact core c.suffix_tail c.termMonos c.monos (c.all Inv.sorted) (c.all Inv.rooted) suffix
+    split_rel elect_backed :=
+        (rcases c.elect_backed after before rest node later log commit (List.suffix_refl _) elect with
+          zero | ⟨_, part, committedE, _, inPart⟩) with
+    | inl => exact (Nat.not_lt_zero base (zero ▸ above)).elim
+    | inr => exact ⟨part, inPart, committed_comparable c.inv.completeness c.monos committedH committedE⟩
+  split_rel agree_or_contained :=
+      (rcases agree_or_contained step.2.1 step.2.2.1 frontier low high with
+        done | ⟨k, agree, baseLe, commitLe⟩) with
+  | inl => exact done
+  | inr =>
+    exact core c.suffix_tail c.termMonos c.monos (c.all Inv.sorted) (c.all Inv.rooted) suffix
       step
       (List.suffix_refl _) (List.suffix_refl _) elect (c.all Inv.persist) c.anchors
       (c.all Inv.terms) lt agree baseLe commitLe
