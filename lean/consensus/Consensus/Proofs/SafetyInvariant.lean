@@ -6061,13 +6061,18 @@ private theorem active : Active (after :: before :: rest) := by
 
 private theorem term_mono : TermMono (after :: before :: rest) := by
   intro node state earlier now seen
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨different, old⟩
-  · rcases c.seen_after seen with seen | ⟨_, rfl⟩
-    · exact Nat.le_trans (c.inv.term_mono c.actor c.pre earlier c.pre_now seen) c.term_le
-    · exact Nat.le.refl
-  · rcases c.seen_after seen with seen | ⟨same, _⟩
-    · exact c.inv.term_mono node state earlier old seen
-    · exact absurd same different
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨different, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    split_rel seen_after := (rcases c.seen_after seen with seen | ⟨same, stateEq⟩) with
+    | inl => exact Nat.le_trans (c.inv.term_mono c.actor c.pre earlier c.pre_now seen) c.term_le
+    | inr =>
+      subst stateEq
+      exact Nat.le.refl
+  | inr =>
+    split_rel seen_after := (rcases c.seen_after seen with seen | ⟨same, other⟩) with
+    | inl => exact c.inv.term_mono node state earlier old seen
+    | inr => exact absurd same different
 
 private theorem vote_record : VoteRecord (after :: before :: rest) := by
   intro node state earlier candidate now seen voted
