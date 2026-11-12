@@ -834,9 +834,10 @@ private theorem guard' {c : Prop} [Decidable c]
     : Keeps (Node := Node) (Message := Message) (Notification := Notification)
         (fun _ => c) (guard c) := by
   intro outputs _ after ran
-  by_cases holds : c
-  · exact holds
-  · simp [guard, holds] at ran
+  split_rel holds := (by_cases holds : c) with
+  | pos => exact holds
+  | neg =>
+    simp [guard, holds] at ran
     cases ran
 
 private theorem bind' {Q : α -> Prop} {P : β -> Prop}
@@ -845,12 +846,13 @@ private theorem bind' {Q : α -> Prop} {P : β -> Prop}
     : Keeps P (m >>= f) := by
   intro outputs result after ran
   simp only [StateT.run_bind] at ran
-  cases ranFirst : m.run outputs with
+  split_rel ranFirst := (cases ranFirst : m.run outputs) with
   | none => simp [ranFirst] at ran
-  | some pair =>
-      obtain ⟨value, middle⟩ := pair
-      simp only [ranFirst] at ran
-      exact rest value (first _ _ _ ranFirst) _ _ _ ran
+  | some =>
+    rename_i pair
+    obtain ⟨value, middle⟩ := pair
+    simp only [ranFirst] at ran
+    exact rest value (first _ _ _ ranFirst) _ _ _ ran
 
 private theorem seq' {P : β -> Prop} {m : Effect Node Message Notification α}
     {f : α -> Effect Node Message Notification β}
@@ -867,9 +869,9 @@ private theorem ite' {P : α -> Prop} {c : Prop} [Decidable c]
     {m n : Effect Node Message Notification α}
     (yes : c -> Keeps P m) (no : Not c -> Keeps P n)
     : Keeps P (if c then m else n) := by
-  split
-  · exact yes ‹_›
-  · exact no ‹_›
+  split_rel condition := (split) with
+  | pos => exact yes ‹_›
+  | neg => exact no ‹_›
 
 private theorem foldlM' {γ : Type} {P : α -> Prop}
     {f : α -> γ -> Effect Node Message Notification α}
