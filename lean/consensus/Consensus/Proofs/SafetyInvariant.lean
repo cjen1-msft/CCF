@@ -2135,8 +2135,9 @@ private theorem LocalTransition.ofStep {nodes : List NodeID} {before after : Mod
       : (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes).step before action
         = some after)
     : Nonempty (LocalTransition before after) := by
-  cases action with
-  | «local» actor input =>
+  split_rel action := (cases action) with
+  | «local» =>
+      rename_i actor input
       have available : forall entries, input = .initAsBackup entries
           -> Model.committedPrefixOf before entries = true := by
         intro entries rfl
@@ -2151,14 +2152,21 @@ private theorem LocalTransition.ofStep {nodes : List NodeID} {before after : Mod
               outputs,
               pending := before.network
               found
-              ran := by cases input <;> exact ran
+              ran := by
+                split_rel input := (cases input) with
+                | append => exact ran
+                | sendEntries => exact ran
+                | timeout => exact ran
+                | nominateSuccessor => exact ran
+                | initAsBackup => exact ran
               nodesEq := rfl
               networkEq := rfl
               pendingSub := fun _ member => member
               source := Or.inl ⟨input, rfl, rfl⟩
               available := fun entries eq => available entries (Event.internal.inj eq)
             }⟩
-  | deliver envelope =>
+  | deliver =>
+      rename_i envelope
       obtain ⟨queued, pre, post, outputs, found, ran, rfl⟩ := step_deliver stepped
       exact ⟨{
         actor := envelope.target, pre, post
