@@ -869,9 +869,9 @@ private theorem ite' {P : α -> Prop} {c : Prop} [Decidable c]
     {m n : Effect Node Message Notification α}
     (yes : c -> Keeps P m) (no : Not c -> Keeps P n)
     : Keeps P (if c then m else n) := by
-  split
-  · exact yes ‹_›
-  · exact no ‹_›
+  split_rel condition := (split) with
+  | pos => exact yes ‹_›
+  | neg => exact no ‹_›
 
 private theorem foldlM' {γ : Type} {P : α -> Prop}
     {f : α -> γ -> Effect Node Message Notification α}
