@@ -153,9 +153,12 @@ def compare_decls(now: Path) -> list[str]:
 def added_lines(base: str, paths: list[str]):
     diff = run(["git", "diff", "-U0", base, "--", *paths]).stdout
     file, hunks, added = None, [], []
+    old = None
     for line in diff.splitlines():
-        if line.startswith("+++ "):
-            file = line[6:] if line.startswith("+++ b/") else None
+        if line.startswith("--- "):
+            old = line[6:] if line.startswith("--- a/") else None
+        elif line.startswith("+++ "):
+            file = line[6:] if line.startswith("+++ b/") else old
         elif line.startswith("@@") and file:
             m = re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
             start, count = int(m.group(1)), int(m.group(2) or "1")
@@ -166,9 +169,11 @@ def added_lines(base: str, paths: list[str]):
 
 
 def text_problems(base: str, chunk_file=None, lo=0, hi=0) -> list[str]:
-    hunks, added = added_lines(base, ["lean/consensus"])
+    hunks, added = added_lines(base, ["." if chunk_file else "lean/consensus"])
     problems = []
     for file, text in added:
+        if not file.startswith("lean/consensus/"):
+            continue
         for pat in FORBIDDEN:
             if re.search(pat, text):
                 problems.append(f"forbidden in added line of {file}: {text.strip()}")
