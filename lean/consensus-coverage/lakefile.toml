@@ -1,0 +1,13 @@
+name = "consensus_coverage"
+version = "0.1.0"
+moreLeanArgs = ["-DwarningAsError=true"]
+
+[[require]]
+name = "consensus"
+path = "../consensus"
+copy = false
+
+[[require]]
+name = "relevance"
+path = "../relevance"
+copy = false
