@@ -2491,9 +2491,10 @@ private theorem configurationHistory_split (log : List Entry) (k : Nat)
     rw [List.zipIdx_append, List.filterMap_append]
   · intro configuration member
     have := mem_history_filterMap member
-    by_cases short : log.length <= k
-    · simp [List.drop_eq_nil_of_le short] at member
-    · simp at this
+    split_rel short := (by_cases short : log.length <= k) with
+    | pos => simp [List.drop_eq_nil_of_le short] at member
+    | neg =>
+      simp at this
       rw [Nat.min_eq_left (Nat.le_of_lt (Nat.lt_of_not_le short))] at this
       exact Nat.le_trans (Nat.le_of_eq (Nat.add_comm k 1)) this.1
 
