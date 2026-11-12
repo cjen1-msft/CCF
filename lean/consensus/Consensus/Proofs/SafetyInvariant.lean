@@ -6779,9 +6779,9 @@ private theorem old_complete {term later commit : Nat} {node : NodeID}
     (elected : Elected (after :: before :: rest) node later log commit)
     (lt : term < later)
     : part <+: log := by
-  rcases c.elected_after elected with old | step
-  · exact c.inv.completeness term part node later log commit committed old lt
-  · exact c.old_in_new step committed (List.suffix_refl _) lt
+  split_rel elected_after := (rcases c.elected_after elected with old | step) with
+  | inl => exact c.inv.completeness term part node later log commit committed old lt
+  | inr => exact c.old_in_new step committed (List.suffix_refl _) lt
 
 private theorem new_old_unique {node other : NodeID} {term commit : Nat}
     {log : List Entry}
