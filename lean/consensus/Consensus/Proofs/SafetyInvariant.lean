@@ -6846,28 +6846,36 @@ private theorem keep_log (sameTerm : c.post.currentTerm = c.pre.currentTerm)
     (role : Not (c.pre.role = .candidate))
     (led : Led (before :: rest) c.actor c.pre.currentTerm)
     : c.pre.log <+: c.post.log := by
-  cases Summary.kind c.sum with
-  | same log _ => rw [log]; exact List.prefix_refl _
-  | append _ _ _ _ advance =>
-      rw [(Advance.facts advance).1]
-      exact List.prefix_append _ _
-  | ack _ _ _ _ _ _ advance => rw [(Advance.facts advance).1]; exact List.prefix_refl _
-  | accept source request eq accepted =>
-      exfalso
-      obtain ⟨earlier, _, suffix, canon, aeok, _⟩ := c.accept_shape eq accepted
-      have : source = c.actor :=
-        c.inv.election_safety source c.actor request.term (canon.2.2.2.mono suffix)
-          (by rw [accepted.1, sameTerm]; exact led)
-      exact aeok.1 this.symm
-  | elect wins =>
-      have ⟨_, _, _, termCase, _⟩ := c.electStep (c.wins_elect wins)
-      rcases termCase with lt | ⟨_, candidate⟩
-      · exact (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt (Nat.le_of_eq sameTerm))).elim
-      · exact (role candidate).elim
-  | install _ _ _ _ fresh _ _ _ _ =>
-      have := led.two_le
-      rw [fresh.2.1] at this
-      omega
+  split_rel kind := (cases Summary.kind c.sum) with
+  | same =>
+    rename_i log _
+    rw [log]; exact List.prefix_refl _
+  | append =>
+    rename_i _ _ _ _ advance
+    rw [(Advance.facts advance).1]
+    exact List.prefix_append _ _
+  | ack =>
+    rename_i _ _ _ _ _ _ advance
+    rw [(Advance.facts advance).1]; exact List.prefix_refl _
+  | accept =>
+    rename_i source request eq accepted
+    exfalso
+    obtain ⟨earlier, _, suffix, canon, aeok, _⟩ := c.accept_shape eq accepted
+    have : source = c.actor :=
+      c.inv.election_safety source c.actor request.term (canon.2.2.2.mono suffix)
+        (by rw [accepted.1, sameTerm]; exact led)
+    exact aeok.1 this.symm
+  | elect =>
+    rename_i wins
+    have ⟨_, _, _, termCase, _⟩ := c.electStep (c.wins_elect wins)
+    split_rel termCase := (rcases termCase with lt | ⟨_, candidate⟩) with
+    | inl => exact (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt (Nat.le_of_eq sameTerm))).elim
+    | inr => exact (role candidate).elim
+  | install =>
+    rename_i _ _ _ _ fresh _ _ _ _
+    have := led.two_le
+    rw [fresh.2.1] at this
+    omega
 
 /-- Every leader log is nonempty: an elected log holds its quorum's configuration. -/
 private theorem leader_logs : LeaderLogs (after :: before :: rest) := by
