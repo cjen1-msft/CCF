@@ -1874,9 +1874,9 @@ private theorem guard' {c : Prop} [Decidable c]
     : Keeps (Node := Node) (Message := Message) (Notification := Notification)
         (fun _ => c) (guard c) := by
   intro outputs _ after ran
-  by_cases holds : c
-  · exact holds
-  · simp [guard, holds] at ran
+  split_rel holds := (by_cases holds : c) with
+  | pos => exact holds
+  | neg => simp [guard, holds] at ran
 
 private theorem bind' {Q : α -> Prop} {P : β -> Prop}
     {m : Effect Node Message Notification α} {f : α -> Effect Node Message Notification β}
