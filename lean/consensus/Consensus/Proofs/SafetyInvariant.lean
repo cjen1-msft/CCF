@@ -3217,11 +3217,13 @@ private theorem commitFrontier_invariant [Config.InitialConfiguration]
     ?_
   ⟩
   intro self state event after outputs frontier stepped
-  cases event with
-  | internal input =>
+  split_rel event := (cases event) with
+  | internal =>
+      rename_i input
       simp only [Model.Node.step] at stepped
       exact frontier.act _ self _ _ _ _ stepped
-  | receive source message =>
+  | receive =>
+      rename_i source message
       simp only [Model.Node.step] at stepped
       exact frontier.receive _ self source message _ _ _ stepped
 
