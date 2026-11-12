@@ -1976,11 +1976,12 @@ private theorem guard' {c : Prop} [Decidable c]
     : Sends (Node := Node) (Message := Message) (Notification := Notification)
         (fun _ sent => c /\ sent = []) (guard c) := by
   intro outputs _ after ran
-  by_cases holds : c
-  · simp [guard, holds] at ran
+  split_rel holds := (by_cases holds : c) with
+  | pos =>
+    simp [guard, holds] at ran
     obtain ⟨_, rfl⟩ := ran
     exact ⟨[], by simp, holds, rfl⟩
-  · simp [guard, holds] at ran
+  | neg => simp [guard, holds] at ran
 
 private theorem guard_bind {P : α -> List (Envelope Node Message) -> Prop} {c : Prop}
     [Decidable c] {m : Effect Node Message Notification α} (rest : c -> Sends P m)
