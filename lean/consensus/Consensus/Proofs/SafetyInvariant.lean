@@ -4384,16 +4384,22 @@ private theorem appendEntriesResponse_summary (before : NodeState) (source : Nod
     (fun _ =>
       Sends.pure' (quiet_summary rfl rfl rfl rfl rfl rfl rfl no_bumping_sends (by simp)))
     fun _ => ?_
-  rcases observe_response before response with ⟨leader, bump, eq⟩ | ⟨le, eq⟩ <;> rw [eq] <;>
+  split_rel observe_response :=
+      (rcases observe_response before response with ⟨leader, bump, eq⟩ | ⟨le, eq⟩) with
+  | inl =>
+    rw [eq]
     simp only [handleAppendEntriesResponse]
-  · refine Sends.ite' (fun _ => Sends.pure' ?_) fun notFollower => absurd notFollower
+    refine Sends.ite' (fun _ => Sends.pure' ?_) fun notFollower => absurd notFollower
       (by simp [bumpedState])
     refine ⟨Nat.le_of_lt bump,
       fun same => (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le bump (Nat.le_of_eq same))).elim,
       fun _ => Or.inl (by simp [Engaged, leader]), fun c => by simp [bumpedState] at c,
       fun c => by simp [bumpedState] at c, fun c => by simp [bumpedState] at c,
       Kind.same rfl rfl, by simp⟩
-  · have quiet := fun (after : NodeState) (role : after.role = before.role)
+  | inr =>
+    rw [eq]
+    simp only [handleAppendEntriesResponse]
+    have quiet := fun (after : NodeState) (role : after.role = before.role)
         (term : after.currentTerm = before.currentTerm) (log : after.log = before.log)
         (commit : after.commitIndex = before.commitIndex)
         (voted : after.votedFor = before.votedFor)
@@ -4410,20 +4416,23 @@ private theorem appendEntriesResponse_summary (before : NodeState) (source : Nod
     refine Sends.ite' (fun term => ?_) fun _ => Sends.pure' (quiet before rfl rfl rfl rfl rfl rfl rfl)
     refine Sends.mono (advanceCommit_sends self _) fun after sent ⟨advance, nominated⟩ => ?_
     have notCandidate : Not (after.role = .candidate) := by
-      rcases advance.role with eq | eq <;> rw [eq] <;> simp [leader]
+      split_rel role := (rcases advance.role with eq | eq) with
+      | inl => rw [eq] <;> simp [leader]
+      | inr => rw [eq] <;> simp
     refine ⟨Nat.le_of_eq advance.term.symm, fun _ voted eq => by rw [advance.votedFor]; exact eq,
       fun _ => Or.inl (by simp [Engaged, leader]), fun c => (notCandidate c).elim,
       fun _ => Or.inl ⟨leader, advance.term⟩, fun _ _ _ peer => ?_,
       Kind.ack source response rfl leader success term advance, fun e member => ?_⟩
     · rw [advance.matchIndex]
-      by_cases same : peer = source
-      · subst same
+      split_rel same := (by_cases same : peer = source) with
+      | pos =>
+        subst same
         simp only [Function.update_self]
-        rcases Std.max_eq_or (a := before.matchIndex peer) (b := response.lastLogIndex) with eq | eq <;>
-          rw [eq]
-        · exact Or.inl rfl
-        · exact Or.inr ⟨response, rfl, success, term, rfl⟩
-      · exact Or.inl (by simp [Function.update, same])
+        split_rel max_eq_or :=
+            (rcases Std.max_eq_or (a := before.matchIndex peer) (b := response.lastLogIndex) with eq | eq) with
+        | inl => rw [eq]; exact Or.inl rfl
+        | inr => rw [eq]; exact Or.inr ⟨response, rfl, success, term, rfl⟩
+      | neg => exact Or.inl (by simp [Function.update, same])
     · obtain ⟨source', payload⟩ := nominated e member
       refine ⟨source', ?_⟩
       rw [payload]
