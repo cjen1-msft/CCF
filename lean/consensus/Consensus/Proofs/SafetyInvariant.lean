@@ -2757,9 +2757,9 @@ private theorem Rooted.append {root : Entry} {log : List Entry} (rooted : Rooted
 private theorem Rooted.head {root : Entry} {log : List Entry} (rooted : Rooted root log)
     (nonempty : log ≠ [])
     : log.take 1 = [root] := by
-  rcases rooted with empty | head
-  · exact absurd empty nonempty
-  · exact head
+  split_rel rooted := (rcases rooted with empty | head) with
+  | inl => exact absurd empty nonempty
+  | inr => exact head
 
 private theorem hasQuorum_nonempty {log : List Entry} {commit : Nat}
     {voters : Finset NodeID} (quorum : hasQuorum (activeConfigurations log commit) voters)
