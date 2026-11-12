@@ -6988,8 +6988,10 @@ private theorem canonMonos : Everywhere CanonMono (after :: before :: rest) :=
 
 private theorem anchor : Anchor (after :: before :: rest) := by
   intro node state index now positive bound
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨_, old⟩
-  · have viaPre : c.pre.log <+: c.post.log \/ c.post.log <+: c.pre.log
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    have viaPre : c.pre.log <+: c.post.log \/ c.post.log <+: c.pre.log
         -> index <= c.pre.log.length
         -> exists log,
             Canon (after :: before :: rest) (termAt c.post.log index) log
@@ -7003,12 +7005,15 @@ private theorem anchor : Anchor (after :: before :: rest) := by
         rw [← termAt_take (n := index) Nat.le.refl, ← same, termAt_take Nat.le.refl]
       rw [termSame, ← same]
       exact ⟨log, canon.mono c.suffix_tail, length, take⟩
-    rcases c.post_log with sub | ⟨entries, log, terms, leader, term, notCandidate⟩
-        | ⟨earlier, source, sender, n, suffix, canon, _, log⟩
-    · exact viaPre (Or.inr sub) (Nat.le_trans bound sub.length_le)
-    · rcases (Nat.lt_or_ge c.pre.log.length index).symm with within | above
-      · exact viaPre (Or.inl (log ▸ List.prefix_append _ _)) within
-      · have termEq : termAt c.post.log index = c.post.currentTerm := by
+    split_rel post_log :=
+        (rcases c.post_log with sub | ⟨entries, log, terms, leader, term, notCandidate⟩
+          | ⟨earlier, source, sender, n, suffix, canon, _, log⟩) with
+    | inl => exact viaPre (Or.inr sub) (Nat.le_trans bound sub.length_le)
+    | inr_inl =>
+      split_rel lt_or_ge := (rcases (Nat.lt_or_ge c.pre.log.length index).symm with within | above) with
+      | inl => exact viaPre (Or.inl (log ▸ List.prefix_append _ _)) within
+      | inr =>
+        have termEq : termAt c.post.log index = c.post.currentTerm := by
           rw [log] at bound ⊢
           obtain ⟨entry, mem, eq⟩ := termAt_append_right above bound
           rw [eq, terms entry mem, term]
@@ -7018,7 +7023,8 @@ private theorem anchor : Anchor (after :: before :: rest) := by
           ⟨c.post_now, rfl, notCandidate, ?_⟩, rfl⟩
         rw [term]
         exact (c.inv.leader_led c.actor c.pre c.pre_now leader).mono c.suffix_tail
-    · rw [log] at bound ⊢
+    | inr_inr =>
+      rw [log] at bound ⊢
       have short : index <= n := Nat.le_trans bound (List.length_take_le _ _)
       obtain ⟨_, _, rfl⟩ := canon.1.nonempty
       obtain ⟨anchored, anchoredCanon, length, take⟩ :=
@@ -7028,7 +7034,8 @@ private theorem anchor : Anchor (after :: before :: rest) := by
       · rw [termAt_take short]
         exact anchoredCanon.mono (suffix.trans c.suffix_tail)
       · rw [List.take_take, Nat.min_eq_left short, take]
-  · obtain ⟨log, canon, length, take⟩ := c.inv.anchor node state index old positive bound
+  | inr =>
+    obtain ⟨log, canon, length, take⟩ := c.inv.anchor node state index old positive bound
     exact ⟨log, canon.mono c.suffix_tail, length, take⟩
 
 /-- A part committed at the step is in every later elected log. -/
