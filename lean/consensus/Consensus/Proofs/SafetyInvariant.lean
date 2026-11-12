@@ -5657,12 +5657,15 @@ private theorem Wins.facts {self : NodeID} {before' : NodeState} {event : Event}
       rfl
     rw [← this]
     exact quorum
-  rcases advance with rfl | ⟨log, term, voted, matchEq, _, _, lt, _, role⟩
-  · exact ⟨rfl, rfl, rfl, fun _ => rfl, Or.inl rfl, Nat.le.refl⟩
-  · refine ⟨log, term, voted, fun peer => by rw [matchEq]; rfl, ?_, ?_⟩
-    · rcases role with role | role
-      · exact Or.inl role
-      · exact Or.inr role
+  split_rel advance := (rcases advance with same | ⟨log, term, voted, matchEq, _, _, lt, _, role⟩) with
+  | inl =>
+    subst same
+    exact ⟨rfl, rfl, rfl, fun _ => rfl, Or.inl rfl, Nat.le.refl⟩
+  | inr =>
+    refine ⟨log, term, voted, fun peer => by rw [matchEq]; rfl, ?_, ?_⟩
+    · split_rel role := (rcases role with role | role) with
+      | inl => exact Or.inl role
+      | inr => exact Or.inr role
     · exact Nat.le_of_lt lt
 
 end Consensus.Proofs.Safety
