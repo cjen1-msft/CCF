@@ -7710,9 +7710,9 @@ private theorem new_message {envelope : Model.Envelope} (new : envelope ∈ c.se
 
 private theorem messages : Messages (after :: before :: rest) := by
   intro envelope pending
-  rcases c.tr.mem_network pending with old | new
-  · exact c.old_message (c.inv.messages envelope old)
-  · exact c.new_message new
+  split_rel mem_network := (rcases c.tr.mem_network pending with old | new) with
+  | inl => exact c.old_message (c.inv.messages envelope old)
+  | inr => exact c.new_message new
 
 private theorem message_terms : MessageTerms (after :: before :: rest) := by
   intro envelope pending bumping
