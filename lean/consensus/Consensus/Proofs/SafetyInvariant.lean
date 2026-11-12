@@ -6801,37 +6801,46 @@ private theorem new_old_unique {node other : NodeID} {term commit : Nat}
     : node = other := by
   have ⟨candidate, _, candidateMem, _, candidateLog, _, frontier, _, _, _, _, three, voters,
     quorum, granted⟩ := elect
-  rcases led with ⟨rfl, _⟩ | ⟨log', commit', a, b, r, suffix, elect'⟩
-  · simp [BOOTSTRAP_TERM] at three
-  have ⟨candidate', _, candidateMem', _, candidateLog', _, frontier', _, _, _, _, _, voters',
-    quorum', granted'⟩ := elect'
-  have agreement : exists k, log.take k = log'.take k /\ commit <= k /\ commit' <= k := by
-    rcases Nat.le_total commit' commit with le | le
-    · refine ⟨commit, ?_, Nat.le.refl, le⟩
-      rcases c.elect_backed after before rest node term log commit (List.suffix_refl _) elect with
-        zero | ⟨_, part, committed, below, inPart⟩
-      · rw [zero, List.take_zero, List.take_zero]
-      · have := c.inv.completeness _ part other term log' commit' committed
-          ⟨a, b, r, suffix, elect'⟩
-          (Nat.lt_of_le_of_lt below (Nat.sub_lt (Nat.lt_of_lt_of_le (Nat.zero_lt_succ 2) three)
-            Nat.one_pos))
-        exact take_of_prefix_length (inPart.trans this) (List.length_take_of_le frontier)
-    · refine ⟨commit', ?_, le, Nat.le.refl⟩
-      rcases c.inv.elect_backed a b r other term log' commit' suffix elect' with
-        zero | ⟨_, part, committed, below, inPart⟩
-      · rw [zero, List.take_zero, List.take_zero]
-      · have := c.old_in_new elect committed ((List.suffix_cons _ _).trans suffix)
-          (Nat.lt_of_le_of_lt below (Nat.sub_lt (Nat.lt_of_lt_of_le (Nat.zero_lt_succ 2) three)
-            Nat.one_pos))
-        exact (take_of_prefix_length (inPart.trans this) (List.length_take_of_le frontier')).symm
-  obtain ⟨k, agree, le, le'⟩ := agreement
-  obtain ⟨voter, mem, mem'⟩ := quorums_intersect GENESIS_configured
-    (candidateLog ▸ c.inv.rooted node candidate candidateMem)
-    (candidateLog' ▸ c.all Inv.rooted _ ((List.suffix_cons _ _).trans suffix)
-      (List.cons_ne_nil _ _) other candidate' candidateMem')
-    agree le le' quorum quorum'
-  exact vote_unique c.exec c.votes (granted voter mem)
-    ((granted' voter mem').mono (suffix.trans c.suffix_tail))
+  split_rel led := (rcases led with ⟨same, other⟩ | ⟨log', commit', a, b, r, suffix, elect'⟩) with
+  | inl =>
+    subst same
+    simp [BOOTSTRAP_TERM] at three
+  | inr =>
+    have ⟨candidate', _, candidateMem', _, candidateLog', _, frontier', _, _, _, _, _, voters',
+      quorum', granted'⟩ := elect'
+    have agreement : exists k, log.take k = log'.take k /\ commit <= k /\ commit' <= k := by
+      split_rel le_total := (rcases Nat.le_total commit' commit with le | le) with
+      | inl =>
+        refine ⟨commit, ?_, Nat.le.refl, le⟩
+        split_rel elect_backed :=
+            (rcases c.elect_backed after before rest node term log commit (List.suffix_refl _) elect with
+              zero | ⟨_, part, committed, below, inPart⟩) with
+        | inl => rw [zero, List.take_zero, List.take_zero]
+        | inr =>
+          have := c.inv.completeness _ part other term log' commit' committed
+            ⟨a, b, r, suffix, elect'⟩
+            (Nat.lt_of_le_of_lt below (Nat.sub_lt (Nat.lt_of_lt_of_le (Nat.zero_lt_succ 2) three)
+              Nat.one_pos))
+          exact take_of_prefix_length (inPart.trans this) (List.length_take_of_le frontier)
+      | inr =>
+        refine ⟨commit', ?_, le, Nat.le.refl⟩
+        split_rel elect_backed :=
+            (rcases c.inv.elect_backed a b r other term log' commit' suffix elect' with
+              zero | ⟨_, part, committed, below, inPart⟩) with
+        | inl => rw [zero, List.take_zero, List.take_zero]
+        | inr =>
+          have := c.old_in_new elect committed ((List.suffix_cons _ _).trans suffix)
+            (Nat.lt_of_le_of_lt below (Nat.sub_lt (Nat.lt_of_lt_of_le (Nat.zero_lt_succ 2) three)
+              Nat.one_pos))
+          exact (take_of_prefix_length (inPart.trans this) (List.length_take_of_le frontier')).symm
+    obtain ⟨k, agree, le, le'⟩ := agreement
+    obtain ⟨voter, mem, mem'⟩ := quorums_intersect GENESIS_configured
+      (candidateLog ▸ c.inv.rooted node candidate candidateMem)
+      (candidateLog' ▸ c.all Inv.rooted _ ((List.suffix_cons _ _).trans suffix)
+        (List.cons_ne_nil _ _) other candidate' candidateMem')
+      agree le le' quorum quorum'
+    exact vote_unique c.exec c.votes (granted voter mem)
+      ((granted' voter mem').mono (suffix.trans c.suffix_tail))
 
 private theorem election_safety : ElectionSafety (after :: before :: rest) := by
   intro node other term left right
