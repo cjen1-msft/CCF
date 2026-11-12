@@ -3882,14 +3882,18 @@ private theorem becomeCandidate_sends (state : NodeState)
     fun next sent elected => ?_
   refine Sends.bind' (broadcast_sends self _ _) fun _ later requests => Sends.pure' ?_
   simp only [List.append_nil]
-  rcases elected with ⟨rfl, rfl⟩ | ⟨_, quorum, advance, started⟩
-  · exact Or.inl ⟨rfl, fun e member => by
+  split_rel elected := (rcases elected with ⟨nextEq, sentEq⟩ | ⟨_, quorum, advance, started⟩) with
+  | inl =>
+    subst nextEq sentEq
+    exact Or.inl ⟨rfl, fun e member => by
       have := requests e (by simpa using member)
       exact ⟨this.1, this.2.2⟩⟩
-  · refine Or.inr ⟨by simpa [freshCandidate] using quorum, advance, fun e member => ?_⟩
-    rcases List.mem_append.mp member with old | new
-    · exact Or.inl (by simpa [freshCandidate] using started e old)
-    · have := requests e new
+  | inr =>
+    refine Or.inr ⟨by simpa [freshCandidate] using quorum, advance, fun e member => ?_⟩
+    split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
+    | inl => exact Or.inl (by simpa [freshCandidate] using started e old)
+    | inr =>
+      have := requests e new
       exact Or.inr ⟨this.1, this.2.2⟩
 
 end Effects
