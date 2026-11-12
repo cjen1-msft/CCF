@@ -5799,9 +5799,11 @@ private theorem canon_after {term : Nat} {log : List Entry}
       \/ exists node state,
           CanonNow (after :: before :: rest) node state term /\ state.log = log := by
   obtain ⟨earlier, suffix, rest'⟩ := canon
-  rcases List.suffix_cons_iff.mp suffix with rfl | inner
-  · exact Or.inr rest'
-  · exact Or.inl ⟨earlier, inner, rest'⟩
+  split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp suffix with same | inner) with
+  | inl =>
+    subst same
+    exact Or.inr rest'
+  | inr => exact Or.inl ⟨earlier, inner, rest'⟩
 
 end Consensus.Proofs.Safety.Ctx
 
