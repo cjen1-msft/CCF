@@ -5789,9 +5789,9 @@ private theorem led_after {node : NodeID} {term : Nat}
 private theorem led_other {node : NodeID} {term : Nat} (different : Not (node = c.actor))
     (led : Led (after :: before :: rest) node term)
     : Led (before :: rest) node term := by
-  rcases c.led_after led with old | ⟨_, _, step⟩
-  · exact old
-  · exact absurd (c.electStep step).1 different
+  split_rel led_after := (rcases c.led_after led with old | ⟨_, _, step⟩) with
+  | inl => exact old
+  | inr => exact absurd (c.electStep step).1 different
 
 private theorem canon_after {term : Nat} {log : List Entry}
     (canon : Canon (after :: before :: rest) term log)
