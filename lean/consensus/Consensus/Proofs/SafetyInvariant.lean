@@ -1800,16 +1800,22 @@ private theorem keys_nodup {nodes : List NodeID} {state : Model.State}
     (reachable
       : (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes).Reachable state)
     : (state.nodes.map Prod.fst).Nodup := by
-  induction reachable
-    using @TransitionSystem.Reachable.rec
-      (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) with
-  | initial initialized => exact initialized.2.2.1
-  | @step before after action _ stepped ih =>
-      cases action with
-      | «local» actor input =>
+  split_rel reachable :=
+      (induction reachable using
+        (@TransitionSystem.Reachable.rec
+          (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes))) with
+  | initial =>
+      rename_i initialized
+      exact initialized.2.2.1
+  | step =>
+      rename_i before after action _ stepped ih
+      split_rel action := (cases action) with
+      | «local» =>
+          rename_i actor input
           obtain ⟨_, _, _, _, _, rfl⟩ := step_local stepped
           simpa [replaceNode_keys] using ih
-      | deliver envelope =>
+      | deliver =>
+          rename_i envelope
           obtain ⟨_, _, _, _, _, _, rfl⟩ := step_deliver stepped
           simpa [replaceNode_keys] using ih
 
