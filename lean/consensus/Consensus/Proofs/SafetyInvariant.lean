@@ -1823,21 +1823,26 @@ private theorem find_of_mem {entries : List (NodeID × NodeState)} {node : NodeI
     {local_ : NodeState} (distinct : (entries.map Prod.fst).Nodup)
     (member : (node, local_) ∈ entries)
     : entries.find? (fun entry => entry.1 == node) = some (node, local_) := by
-  induction entries with
+  split_rel entries := (induction entries) with
   | nil => simp at member
-  | cons head tail ih =>
+  | cons =>
+      rename_i head tail ih
       obtain ⟨key, value⟩ := head
       simp only [List.map_cons, List.nodup_cons] at distinct
-      by_cases here : key = node
-      · subst here
-        rcases List.mem_cons.mp member with same | later
-        · rw [same]
+      split_rel here := (by_cases here : key = node) with
+      | pos =>
+        subst here
+        split_rel mem_cons := (rcases List.mem_cons.mp member with same | later) with
+        | inl =>
+          rw [same]
           simp
-        · exact absurd (List.mem_map.mpr ⟨_, later, rfl⟩) distinct.1
-      · rcases List.mem_cons.mp member with same | later
-        · simp only [Prod.mk.injEq] at same
+        | inr => exact absurd (List.mem_map.mpr ⟨_, later, rfl⟩) distinct.1
+      | neg =>
+        split_rel mem_cons := (rcases List.mem_cons.mp member with same | later) with
+        | inl =>
+          simp only [Prod.mk.injEq] at same
           exact absurd same.1.symm here
-        · simp [here, ih distinct.2 later]
+        | inr => simp [here, ih distinct.2 later]
 
 private theorem nodeState_of_mem {state : Model.State} {node : NodeID}
     {local_ : NodeState} (distinct : (state.nodes.map Prod.fst).Nodup)
