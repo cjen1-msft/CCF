@@ -5365,10 +5365,12 @@ private theorem canon_chain {history : History} (mono : Everywhere CanonMono his
     rw [outerTerm]
     exact ⟨inner, within, innerNode, innerState, ⟨innerNow, innerTerm, innerRole, innerLed⟩,
       rfl⟩
-  rcases suffix_comparable earlySuffix lateSuffix with within | within
-  · exact Or.inl (contains within lateSuffix earlyNow earlyTerm earlyRole earlyLed lateNow
+  split_rel suffix_comparable := (rcases suffix_comparable earlySuffix lateSuffix with within | within) with
+  | inl =>
+    exact Or.inl (contains within lateSuffix earlyNow earlyTerm earlyRole earlyLed lateNow
       lateTerm lateRole lateLed)
-  · exact Or.inr (contains within earlySuffix lateNow lateTerm lateRole lateLed earlyNow
+  | inr =>
+    exact Or.inr (contains within earlySuffix lateNow lateTerm lateRole lateLed earlyNow
       earlyTerm earlyRole earlyLed)
 
 /-- Two seen logs agreeing on the term at `index` agree up to `index`. -/
