@@ -4129,9 +4129,12 @@ private theorem voteRequest_summary (before : NodeState) (source : NodeID)
         (receive (Capabilities.record self : Caps) self source before
           (.requestVoteRequest request)) := by
   simp only [receive]
-  rcases observe_bumping before (message := .requestVoteRequest request) trivial
-    with ⟨bump, eq⟩ | ⟨le, eq⟩ <;> rw [eq]
-  · simp only [handleRequestVoteRequest]
+  split_rel observe_bumping :=
+      (rcases observe_bumping before (message := .requestVoteRequest request) trivial
+        with ⟨bump, eq⟩ | ⟨le, eq⟩) with
+  | inl =>
+    rw [eq]
+    simp only [handleRequestVoteRequest]
     refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ?_
     subst eq
     have active : exists source' message,
@@ -4139,18 +4142,26 @@ private theorem voteRequest_summary (before : NodeState) (source : NodeID)
           = (Event.receive source' message : Event)
         /\ Bumping message /\ message.term <= (bumpedState before request.term).currentTerm :=
       ⟨source, _, rfl, trivial, Nat.le.refl⟩
-    split <;> rename_i granted <;> simp only [decide_eq_true_eq] at granted
-    · refine bumped_summary bump (by simp [bumpedState]) (by simp [bumpedState]) active
+    split_rel granted := (split) with
+    | pos =>
+      rename_i granted
+      simp only [decide_eq_true_eq] at granted
+      refine bumped_summary bump (by simp [bumpedState]) (by simp [bumpedState]) active
         (Kind.same rfl rfl) fun e member => ?_
       simp at member
       subst member
       exact ⟨rfl, rfl, fun _ => ⟨request, rfl, granted.1, granted.2.1, rfl⟩⟩
-    · refine bumped_summary bump (by simp [bumpedState]) (by simp [bumpedState]) active
+    | neg =>
+      rename_i granted
+      simp only [decide_eq_true_eq] at granted
+      refine bumped_summary bump (by simp [bumpedState]) (by simp [bumpedState]) active
         (Kind.same rfl rfl) fun e member => ?_
       simp at member
       subst member
       exact ⟨rfl, rfl, fun yes => by simp_all⟩
-  · simp only [handleRequestVoteRequest]
+  | inr =>
+    rw [eq]
+    simp only [handleRequestVoteRequest]
     refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ?_
     subst eq
     have active : exists source' message,
@@ -4158,22 +4169,28 @@ private theorem voteRequest_summary (before : NodeState) (source : NodeID)
           = (Event.receive source' message : Event)
         /\ Bumping message /\ message.term <= before.currentTerm :=
       ⟨source, _, rfl, trivial, le⟩
-    split <;> rename_i granted <;> simp only [decide_eq_true_eq] at granted
-    · refine ⟨Nat.le.refl, fun _ voted votedEq => ?_, fun _ => Or.inr (Or.inr (Or.inl active)),
+    split_rel granted := (split) with
+    | pos =>
+      rename_i granted
+      simp only [decide_eq_true_eq] at granted
+      refine ⟨Nat.le.refl, fun _ voted votedEq => ?_, fun _ => Or.inr (Or.inr (Or.inl active)),
         fun candidate => ⟨candidate, rfl, rfl, Or.inr ⟨candidate, rfl, ?_,
           fun voter member => Or.inl member⟩⟩,
         fun leader => Or.inl ⟨leader, rfl⟩, fun _ _ _ _ => Or.inl rfl, Kind.same rfl rfl,
         fun e member => ?_⟩
-      · rcases granted.2.2.2 with none | some
-        · rw [none] at votedEq; cases votedEq
-        · rw [some] at votedEq; exact votedEq
-      · rcases granted.2.2.2 with none | some
-        · exact Or.inr none
-        · exact Or.inl some.symm
+      · split_rel granted := (rcases granted.2.2.2 with none | some) with
+        | inl => rw [none] at votedEq; cases votedEq
+        | inr => rw [some] at votedEq; exact votedEq
+      · split_rel granted := (rcases granted.2.2.2 with none | some) with
+        | inl => exact Or.inr none
+        | inr => exact Or.inl some.symm
       · simp at member
         subst member
         exact ⟨rfl, rfl, fun _ => ⟨request, rfl, granted.1, granted.2.1, rfl⟩⟩
-    · refine quiet_summary rfl rfl rfl rfl rfl rfl rfl
+    | neg =>
+      rename_i granted
+      simp only [decide_eq_true_eq] at granted
+      refine quiet_summary rfl rfl rfl rfl rfl rfl rfl
         (fun _ => Or.inr (Or.inr (Or.inl active))) fun e member => ?_
       simp at member
       subst member
