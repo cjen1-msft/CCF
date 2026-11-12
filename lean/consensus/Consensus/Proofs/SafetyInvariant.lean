@@ -2246,9 +2246,9 @@ private theorem take_eq_take_of_comparable {α : Type} {left right : List α} {n
     (comparable : left <+: right \/ right <+: left)
     (leftBound : n <= left.length) (rightBound : n <= right.length)
     : left.take n = right.take n := by
-  rcases comparable with sub | sub
-  · exact (take_eq_of_prefix sub leftBound).symm
-  · exact take_eq_of_prefix sub rightBound
+  split_rel comparable := (rcases comparable with sub | sub) with
+  | inl => exact (take_eq_of_prefix sub leftBound).symm
+  | inr => exact take_eq_of_prefix sub rightBound
 
 private theorem termAt_eq {log : List Entry} {index : Nat} (positive : 0 < index)
     (bound : index <= log.length)
