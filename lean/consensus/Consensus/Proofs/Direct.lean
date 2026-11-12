@@ -846,12 +846,13 @@ private theorem bind' {Q : α -> Prop} {P : β -> Prop}
     : Keeps P (m >>= f) := by
   intro outputs result after ran
   simp only [StateT.run_bind] at ran
-  cases ranFirst : m.run outputs with
+  split_rel ranFirst := (cases ranFirst : m.run outputs) with
   | none => simp [ranFirst] at ran
-  | some pair =>
-      obtain ⟨value, middle⟩ := pair
-      simp only [ranFirst] at ran
-      exact rest value (first _ _ _ ranFirst) _ _ _ ran
+  | some =>
+    rename_i pair
+    obtain ⟨value, middle⟩ := pair
+    simp only [ranFirst] at ran
+    exact rest value (first _ _ _ ranFirst) _ _ _ ran
 
 private theorem seq' {P : β -> Prop} {m : Effect Node Message Notification α}
     {f : α -> Effect Node Message Notification β}
