@@ -7189,58 +7189,68 @@ private theorem advance_backed {middle : NodeState}
               /\ c.post.log.take (middle.matchIndex voter) <+: acker.log)
     : Backed (after :: before :: rest) c.post.log c.post.commitIndex
         c.post.currentTerm := by
-  rcases advance with same | ⟨log, term, _, _, _, _, lt, eq, postRole⟩
-  · subst same
+  split_rel advance :=
+      (rcases advance with same | ⟨log, term, _, _, _, _, lt, eq, postRole⟩) with
+  | inl =>
+    subst same
     exact old.mono c.suffix_tail
-  have ahead : middle.commitIndex < highestCommittableIndex middle c.actor :=
-    eq ▸ lt
-  obtain ⟨bound, signature, termEq, quorum⟩ := highestCommittableIndex_spec middle c.actor ahead
-  obtain ⟨voters, quorum, members⟩
-      : exists voters,
-          hasQuorum
-            (middle.activeConfigurations.filter
-              fun configuration =>
-                configuration.index <= highestCommittableIndex middle c.actor)
-            voters
-          /\ forall voter, voter ∈ voters
-              -> voter = c.actor
-                  \/ middle.matchIndex voter >= highestCommittableIndex middle
-                      c.actor :=
-    ⟨_, quorum, fun _ mem => (Finset.mem_filter.mp mem).2⟩
-  have notCandidate : Not (c.post.role = .candidate) := by
-    rcases postRole with postRole | postRole <;> rw [postRole]
-    · rw [role]
-      intro h
-      cases h
-    · intro h
-      cases h
-  have step : CommitStep (after :: before :: rest) c.actor c.post c.post.currentTerm
-      middle.commitIndex c.post.commitIndex := by
-    refine ⟨⟨c.post_now, rfl, notCandidate, led⟩, Nat.le_of_lt lt, ?_, ?_, ?_, voters, ?_, ?_⟩
-    · rw [log, eq]
-      exact bound
-    · rw [log, eq]
-      exact signature
-    · rw [log, eq, termEq, term]
-    · rw [log, eq]
-      exact quorum
-    · intro voter mem
-      by_cases self : voter = c.actor
-      · subst self
-        exact ⟨c.post, c.post_seen, rfl, List.take_prefix _ _⟩
-      · have ge := (members voter mem).resolve_left self
-        obtain ⟨acker, seen, ackerTerm, sub⟩ :=
-          acks voter self (Nat.lt_of_le_of_lt (Nat.zero_le _) (Nat.lt_of_lt_of_le ahead ge))
-        exact ⟨acker, seen, ackerTerm,
-          (take_prefix_take _ (Nat.le_trans (Nat.le_of_eq eq) ge)).trans sub⟩
-  have committed
-      : Committed (after :: before :: rest) c.post.currentTerm
-          (c.post.log.take c.post.commitIndex) := by
-    rcases old with zero | ⟨earlier, part, backing, le, within⟩
-    · rw [zero] at step
-      exact .fresh step
-    · exact .chained step backing le within
-  exact Or.inr ⟨_, _, committed, Nat.le.refl, List.prefix_refl _⟩
+  | inr =>
+    have ahead : middle.commitIndex < highestCommittableIndex middle c.actor :=
+      eq ▸ lt
+    obtain ⟨bound, signature, termEq, quorum⟩ := highestCommittableIndex_spec middle c.actor ahead
+    obtain ⟨voters, quorum, members⟩
+        : exists voters,
+            hasQuorum
+              (middle.activeConfigurations.filter
+                fun configuration =>
+                  configuration.index <= highestCommittableIndex middle c.actor)
+              voters
+            /\ forall voter, voter ∈ voters
+                -> voter = c.actor
+                    \/ middle.matchIndex voter >= highestCommittableIndex middle
+                        c.actor :=
+      ⟨_, quorum, fun _ mem => (Finset.mem_filter.mp mem).2⟩
+    have notCandidate : Not (c.post.role = .candidate) := by
+      split_rel postRole := (rcases postRole with postRole | postRole) with
+      | inl =>
+        rw [postRole]
+        rw [role]
+        intro h
+        cases h
+      | inr =>
+        rw [postRole]
+        intro h
+        cases h
+    have step : CommitStep (after :: before :: rest) c.actor c.post c.post.currentTerm
+        middle.commitIndex c.post.commitIndex := by
+      refine ⟨⟨c.post_now, rfl, notCandidate, led⟩, Nat.le_of_lt lt, ?_, ?_, ?_, voters, ?_, ?_⟩
+      · rw [log, eq]
+        exact bound
+      · rw [log, eq]
+        exact signature
+      · rw [log, eq, termEq, term]
+      · rw [log, eq]
+        exact quorum
+      · intro voter mem
+        split_rel self := (by_cases self : voter = c.actor) with
+        | pos =>
+          subst self
+          exact ⟨c.post, c.post_seen, rfl, List.take_prefix _ _⟩
+        | neg =>
+          have ge := (members voter mem).resolve_left self
+          obtain ⟨acker, seen, ackerTerm, sub⟩ :=
+            acks voter self (Nat.lt_of_le_of_lt (Nat.zero_le _) (Nat.lt_of_lt_of_le ahead ge))
+          exact ⟨acker, seen, ackerTerm,
+            (take_prefix_take _ (Nat.le_trans (Nat.le_of_eq eq) ge)).trans sub⟩
+    have committed
+        : Committed (after :: before :: rest) c.post.currentTerm
+            (c.post.log.take c.post.commitIndex) := by
+      split_rel old := (rcases old with zero | ⟨earlier, part, backing, le, within⟩) with
+      | inl =>
+        rw [zero] at step
+        exact .fresh step
+      | inr => exact .chained step backing le within
+    exact Or.inr ⟨_, _, committed, Nat.le.refl, List.prefix_refl _⟩
 
 private theorem pre_backed
     (agree : c.post.log.take c.pre.commitIndex = c.pre.log.take c.pre.commitIndex)
