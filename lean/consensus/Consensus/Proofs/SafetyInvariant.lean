@@ -6246,12 +6246,15 @@ private theorem led_cur : LedCur (after :: before :: rest) := by
 
 private theorem leader_led : LeaderLed (after :: before :: rest) := by
   intro node state now role
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨_, old⟩
-  · rcases Summary.leader c.sum role with ⟨preRole, termEq⟩ | wins
-    · rw [termEq]
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    split_rel leader := (rcases Summary.leader c.sum role with ⟨preRole, termEq⟩ | wins) with
+    | inl =>
+      rw [termEq]
       exact (c.inv.leader_led c.actor c.pre c.pre_now preRole).mono c.suffix_tail
-    · exact Or.inr ⟨_, _, after, before, rest, List.suffix_refl _, c.wins_elect wins⟩
-  · exact (c.inv.leader_led node state old role).mono c.suffix_tail
+    | inr => exact Or.inr ⟨_, _, after, before, rest, List.suffix_refl _, c.wins_elect wins⟩
+  | inr => exact (c.inv.leader_led node state old role).mono c.suffix_tail
 
 /--
 A candidate whose committed prefix a commit step of its term or later covers,
