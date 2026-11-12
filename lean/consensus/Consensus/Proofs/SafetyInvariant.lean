@@ -1946,9 +1946,10 @@ private theorem bind' {Q : α -> List (Envelope Node Message) -> Prop}
     : Sends P (m >>= f) := by
   intro outputs result after ran
   simp only [StateT.run_bind] at ran
-  cases ranFirst : m.run outputs with
+  split_rel ranFirst := (cases ranFirst : m.run outputs) with
   | none => simp [ranFirst] at ran
-  | some pair =>
+  | some =>
+      rename_i pair
       obtain ⟨value, middle⟩ := pair
       simp only [ranFirst] at ran
       obtain ⟨sent, sentEq, holds⟩ := first _ _ _ ranFirst
