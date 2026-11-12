@@ -6131,19 +6131,24 @@ private theorem campaign_votes {candidate : NodeState}
         voter ∈ candidate.votesGranted
         -> Granted (after :: before :: rest) voter c.actor candidate.currentTerm
             (vals candidate.currentTerm c.pre.log c.pre.commitIndex) := by
-  obtain ⟨_, _, _, ⟨_, freshTerm, freshVote, freshVotes⟩
-    | ⟨preRole, sameTerm, _, more⟩⟩ := campaign
-  · intro voter mem
+  split_rel campaign :=
+      (obtain ⟨_, _, _, ⟨_, freshTerm, freshVote, freshVotes⟩
+        | ⟨preRole, sameTerm, _, more⟩⟩ := campaign) with
+  | inl =>
+    intro voter mem
     rw [freshVotes, Finset.mem_singleton] at mem
     subst mem
     exact c.self_granted (Nat.le_trans (Nat.le_succ _) (Nat.le_of_eq freshTerm.symm)) termEq
       (votedEq.trans freshVote)
-  · intro voter mem
+  | inr =>
+    intro voter mem
     rw [sameTerm]
-    rcases more voter mem with old | ⟨response, eq, responseTerm, granted⟩
-    · exact ((c.inv.candidate c.actor c.pre c.pre_now preRole).2.2.1 voter old).mono
+    split_rel more := (rcases more voter mem with old | ⟨response, eq, responseTerm, granted⟩) with
+    | inl =>
+      exact ((c.inv.candidate c.actor c.pre c.pre_now preRole).2.2.1 voter old).mono
         c.suffix_tail
-    · obtain ⟨envelope, ok, sourceEq, targetEq, payload⟩ := c.received_ok eq
+    | inr =>
+      obtain ⟨envelope, ok, sourceEq, targetEq, payload⟩ := c.received_ok eq
       simp only [MessageOK, payload] at ok
       obtain ⟨request, granted', _, forNow⟩ := ok granted
       rw [targetEq] at forNow
