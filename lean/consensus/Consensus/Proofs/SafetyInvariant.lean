@@ -2747,9 +2747,10 @@ private theorem Rooted.take {root : Entry} {log : List Entry} (rooted : Rooted r
 private theorem Rooted.append {root : Entry} {log : List Entry} (rooted : Rooted root log)
     (nonempty : log ≠ []) (entries : List Entry)
     : Rooted root (log ++ entries) := by
-  rcases rooted with empty | head
-  · exact absurd empty nonempty
-  · refine Or.inr ?_
+  split_rel rooted := (rcases rooted with empty | head) with
+  | inl => exact absurd empty nonempty
+  | inr =>
+    refine Or.inr ?_
     have := List.length_pos_iff.mpr nonempty
     rw [List.take_append_of_le_length (Nat.succ_le_of_lt this), head]
 
