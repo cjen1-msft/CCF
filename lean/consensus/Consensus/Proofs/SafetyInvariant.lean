@@ -6661,15 +6661,17 @@ private theorem agree_or_contained {α : Type} {state log : List α}
             /\ (state.take index <+: part \/ part <+: state.take index))
     : state.take index <+: log
       \/ exists k, state.take k = log.take k /\ base <= k /\ commit <= k := by
-  rcases (Nat.lt_or_ge base commit).symm with le | lt
-  · exact Or.inr ⟨base, take_of_prefix_length (low le)
+  split_rel lt_or_ge := (rcases (Nat.lt_or_ge base commit).symm with le | lt) with
+  | inl => exact Or.inr ⟨base, take_of_prefix_length (low le)
       (List.length_take_of_le (Nat.le_trans baseLe indexLe)), Nat.le.refl, le⟩
-  · obtain ⟨part, inPart, comparable⟩ := high lt
+  | inr =>
+    obtain ⟨part, inPart, comparable⟩ := high lt
     have commitLength : (log.take commit).length = commit := List.length_take_of_le frontier
     have partLong : commit <= part.length := commitLength ▸ inPart.length_le
     have indexLength : (state.take index).length = index := List.length_take_of_le indexLe
-    rcases (Nat.lt_or_ge index commit).symm with le | short
-    · refine Or.inr ⟨commit, ?_, Nat.le_of_lt lt, Nat.le.refl⟩
+    split_rel lt_or_ge := (rcases (Nat.lt_or_ge index commit).symm with le | short) with
+    | inl =>
+      refine Or.inr ⟨commit, ?_, Nat.le_of_lt lt, Nat.le.refl⟩
       calc
         state.take commit = (state.take index).take commit := by
           rw [List.take_take, Nat.min_eq_left le]
@@ -6679,16 +6681,18 @@ private theorem agree_or_contained {α : Type} {state log : List α}
         _ = log.take commit := by
           rw [take_eq_of_prefix inPart (Nat.le_of_eq commitLength.symm), List.take_take,
             Nat.min_self]
-    · left
+    | inr =>
+      left
       have sub : state.take index <+: part := by
-        rcases comparable with sub | sub
-        · exact sub
-        · exact (Nat.lt_irrefl index (Nat.lt_of_lt_of_le short (Nat.le_trans partLong
+        split_rel comparable := (rcases comparable with sub | sub) with
+        | inl => exact sub
+        | inr => exact (Nat.lt_irrefl index (Nat.lt_of_lt_of_le short (Nat.le_trans partLong
             (Nat.le_trans sub.length_le (Nat.le_of_eq indexLength))))).elim
       have : state.take index <+: log.take commit := by
-        rcases List.prefix_or_prefix_of_prefix sub inPart with inner | outer
-        · exact inner
-        · exact (Nat.lt_irrefl index (Nat.lt_of_lt_of_le short
+        split_rel prefix_or_prefix_of_prefix :=
+            (rcases List.prefix_or_prefix_of_prefix sub inPart with inner | outer) with
+        | inl => exact inner
+        | inr => exact (Nat.lt_irrefl index (Nat.lt_of_lt_of_le short
             (Nat.le_trans (Nat.le_of_eq commitLength.symm)
               (Nat.le_trans outer.length_le (Nat.le_of_eq indexLength))))).elim
       exact this.trans (List.take_prefix _ _)
