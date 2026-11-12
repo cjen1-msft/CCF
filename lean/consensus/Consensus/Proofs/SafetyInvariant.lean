@@ -5027,9 +5027,9 @@ omit initialized in
 private theorem led_single {current : Model.State} {node : NodeID} {term : Nat}
     (led : Led [current] node term)
     : term = BOOTSTRAP_TERM /\ node = INITIAL_PRIMARY := by
-  rcases led with bootstrap | ⟨log, commit, elected⟩
-  · exact bootstrap
-  · exact absurd elected not_elected_single
+  split_rel led := (rcases led with bootstrap | ⟨log, commit, elected⟩) with
+  | inl => exact bootstrap
+  | inr => exact absurd elected not_elected_single
 
 private theorem initial_canon {term : Nat} {log : List Entry}
     (canon : Canon [initial] term log)
