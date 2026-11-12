@@ -3965,13 +3965,28 @@ private theorem observe_bumping (before : NodeState) {message : Message}
     : (before.currentTerm < message.term
         /\ observeTerm before message = bumpedState before message.term)
       \/ (message.term <= before.currentTerm /\ observeTerm before message = before) := by
-  by_cases bump : before.currentTerm < message.term
-  · refine Or.inl ⟨bump, ?_⟩
+  split_rel bump := (by_cases bump : before.currentTerm < message.term) with
+  | pos =>
+    refine Or.inl ⟨bump, ?_⟩
     have ne := Nat.ne_of_lt bump
-    cases message <;>
-      simp_all [Bumping, observeTerm, updateTerm, becomeAwareOfNewTerm, bumpedState]
-  · refine Or.inr ⟨Nat.not_lt.mp bump, ?_⟩
-    cases message <;> simp_all [Bumping, observeTerm, updateTerm, Nat.not_lt_of_le]
+    split_rel message := (cases message) with
+    | appendEntriesRequest => simp_all [Bumping, observeTerm, updateTerm, becomeAwareOfNewTerm, bumpedState]
+    | appendEntriesResponse => simp_all [Bumping]
+    | requestVoteRequest => simp_all [Bumping, observeTerm, updateTerm, becomeAwareOfNewTerm, bumpedState]
+    | requestVoteResponse => simp_all [Bumping, observeTerm, updateTerm, becomeAwareOfNewTerm, bumpedState]
+    | requestPreVoteRequest => simp_all [Bumping, observeTerm, updateTerm, becomeAwareOfNewTerm, bumpedState]
+    | requestPreVoteResponse => simp_all [Bumping, observeTerm, updateTerm, becomeAwareOfNewTerm, bumpedState]
+    | proposeRequestVoteRequest => simp_all [Bumping]
+  | neg =>
+    refine Or.inr ⟨Nat.not_lt.mp bump, ?_⟩
+    split_rel message := (cases message) with
+    | appendEntriesRequest => simp_all [Bumping, observeTerm, updateTerm, Nat.not_lt_of_le]
+    | appendEntriesResponse => simp_all [Bumping]
+    | requestVoteRequest => simp_all [Bumping, observeTerm, updateTerm, Nat.not_lt_of_le]
+    | requestVoteResponse => simp_all [Bumping, observeTerm, updateTerm, Nat.not_lt_of_le]
+    | requestPreVoteRequest => simp_all [Bumping, observeTerm, updateTerm, Nat.not_lt_of_le]
+    | requestPreVoteResponse => simp_all [Bumping, observeTerm, updateTerm, Nat.not_lt_of_le]
+    | proposeRequestVoteRequest => simp_all [Bumping]
 
 end Consensus.Proofs.Safety
 
