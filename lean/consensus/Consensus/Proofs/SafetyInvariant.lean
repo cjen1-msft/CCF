@@ -6521,119 +6521,129 @@ private theorem core {small large : History} (within : small <:+ large)
   obtain ⟨candidate, _, candidateMem, _, candidateLog, _, frontier, termCase, _, _, _, _,
     voters, voteQuorum, granted⟩ := elect
   -- An elector committed through `index` already agrees on the committed part.
-  by_cases covered : index <= commit
-  · have agreeIndex : state.log.take index = log.take index := by
+  split_rel covered := (by_cases covered : index <= commit) with
+  | pos =>
+    have agreeIndex : state.log.take index = log.take index := by
       have := congrArg (List.take index) agree
       rwa [List.take_take, List.take_take, Nat.min_eq_left (Nat.le_trans covered commitLe)] at this
     rw [agreeIndex]
     exact List.take_prefix _ _
-  obtain ⟨voter, ackMem, voteMem⟩ :=
-    quorums_intersect_bounded GENESIS_configured
-      (rooted _ commitSuffix (List.cons_ne_nil _ _) leader state leaderNow)
-      (candidateLog ▸ rooted _ electInner (List.cons_ne_nil _ _) node candidate candidateMem)
-      agree baseLe commitLe baseIndex (Nat.le_of_lt (Nat.lt_of_not_le covered))
-      (Nat.lt_of_le_of_lt (Nat.zero_le _) (Nat.lt_of_not_le covered)) ackQuorum voteQuorum
-  obtain ⟨acker, ackerSeen, ackerTerm, ackerLog⟩ := acked voter ackMem
-  obtain ⟨a', b', r', grantSuffix, ⟨granting, grantedState, grantingMem, grantedMem,
-    grantingTerm, grantedTerm, _, upToDate⟩, _⟩ := granted voter voteMem
-  have innerB : b' :: r' <:+ b :: r := suffix_of_cons_suffix grantSuffix
-  have ackerB : Seen (b' :: r') voter acker :=
-    seen_split termMono (grantSuffix.trans electSuffix) grantedMem
-      (ackerSeen.mono (commitSuffix.trans within)) (by rw [ackerTerm, grantedTerm]; exact lt)
-  -- The committed part and its signature.
-  have partLength : (state.log.take index).length = index := by
-    rw [List.length_take, Nat.min_eq_left indexLe]
-  have partSignature : isSignatureAt (state.log.take index) index = true :=
-    isSignatureAt_take_of_le Nat.le.refl signature
-  have partTerm : termAt (state.log.take index) index = term := by
-    rw [termAt_take Nat.le.refl, termAtIndex]
-  have ackerTake : acker.log.take index = state.log.take index :=
-    (take_of_prefix_length ackerLog partLength).symm
-  have ackerTerm' : termAt acker.log index = term := by
-    rw [termAt_of_prefix ackerLog (Nat.le_of_eq partLength.symm), partTerm]
-  -- The granting state holds the part.
-  have inGranting : state.log.take index <+: granting.log := by
-    rcases persist _ innerB (List.cons_ne_nil _ _) voter granting acker index grantingMem ackerB
-        (isSignatureAt_of_prefix ackerLog partSignature) with sub | bad
-    · rw [ackerTake] at sub
-      exact sub
-    · obtain ⟨later', log', above, below, canon, missing⟩ := bad
-      rw [ackerTake, ackerTerm'] at *
-      exact absurd (clean later' log' above (Nat.le_trans below grantingTerm) (canon.mono innerB))
-        missing
-  have grantingSorted := sorted _ (innerB.trans electInner) (List.cons_ne_nil _ _) voter granting
-    grantingMem
-  have grantingSignature : isSignatureAt granting.log index = true :=
-    isSignatureAt_of_prefix inGranting partSignature
-  have maxGe : index <= maxCommittableIndex granting.log :=
-    signatureIndex_le_maxCommittableIndex grantingSignature
-  have maxTermGe : term <= maxCommittableTerm granting.log := by
-    have := termAt_mono grantingSorted maxGe (maxCommittableIndexBounded granting.log)
-    rw [termAt_of_prefix inGranting (Nat.le_of_eq partLength.symm), partTerm] at this
-    exact this
-  -- The election's last committable position.
-  simp only [voteLogUpToDate, vals] at upToDate
-  generalize jEq : max commit (maxCommittableIndex log) = j at upToDate ⊢
-  have two : 2 <= term := by
-    have := leaderLed.two_le
-    exact this
-  have jBound : j <= log.length := jEq ▸ Nat.max_le.mpr ⟨frontier, maxCommittableIndexBounded log⟩
-  have termGe : term <= termAt log j :=
-    upToDate.elim (fun gt => Nat.le_trans maxTermGe (Nat.le_of_lt gt))
-      (fun eq => Nat.le_trans maxTermGe (Nat.le_of_eq eq.1.symm))
-  have jPos : 0 < j := by
-    rcases Nat.eq_zero_or_pos j with zero | positive
-    · rw [zero, termAt_zero] at termGe
-      exact (Nat.not_succ_le_zero 1 (Nat.le_trans two termGe)).elim
-    · exact positive
-  obtain ⟨anchored, canon, anchoredLength, anchoredTake⟩ :=
-    anchor _ (List.suffix_refl _) (List.cons_ne_nil _ _) node candidate j candidateMem jPos
-      (candidateLog ▸ jBound)
-  rw [candidateLog] at canon anchoredTake
-  have viaAnchor : index <= j -> index <= anchored.length
-      -> state.log.take index = anchored.take index
-      -> state.log.take index <+: log := by
-    intro le _ same
-    have : log.take index = anchored.take index := by
-      have := congrArg (List.take index) anchoredTake
-      simp only [List.take_take, Nat.min_eq_left le] at this
+  | neg =>
+    obtain ⟨voter, ackMem, voteMem⟩ :=
+      quorums_intersect_bounded GENESIS_configured
+        (rooted _ commitSuffix (List.cons_ne_nil _ _) leader state leaderNow)
+        (candidateLog ▸ rooted _ electInner (List.cons_ne_nil _ _) node candidate candidateMem)
+        agree baseLe commitLe baseIndex (Nat.le_of_lt (Nat.lt_of_not_le covered))
+        (Nat.lt_of_le_of_lt (Nat.zero_le _) (Nat.lt_of_not_le covered)) ackQuorum voteQuorum
+    obtain ⟨acker, ackerSeen, ackerTerm, ackerLog⟩ := acked voter ackMem
+    obtain ⟨a', b', r', grantSuffix, ⟨granting, grantedState, grantingMem, grantedMem,
+      grantingTerm, grantedTerm, _, upToDate⟩, _⟩ := granted voter voteMem
+    have innerB : b' :: r' <:+ b :: r := suffix_of_cons_suffix grantSuffix
+    have ackerB : Seen (b' :: r') voter acker :=
+      seen_split termMono (grantSuffix.trans electSuffix) grantedMem
+        (ackerSeen.mono (commitSuffix.trans within)) (by rw [ackerTerm, grantedTerm]; exact lt)
+    -- The committed part and its signature.
+    have partLength : (state.log.take index).length = index := by
+      rw [List.length_take, Nat.min_eq_left indexLe]
+    have partSignature : isSignatureAt (state.log.take index) index = true :=
+      isSignatureAt_take_of_le Nat.le.refl signature
+    have partTerm : termAt (state.log.take index) index = term := by
+      rw [termAt_take Nat.le.refl, termAtIndex]
+    have ackerTake : acker.log.take index = state.log.take index :=
+      (take_of_prefix_length ackerLog partLength).symm
+    have ackerTerm' : termAt acker.log index = term := by
+      rw [termAt_of_prefix ackerLog (Nat.le_of_eq partLength.symm), partTerm]
+    -- The granting state holds the part.
+    have inGranting : state.log.take index <+: granting.log := by
+      split_rel persist :=
+          (rcases persist _ innerB (List.cons_ne_nil _ _) voter granting acker index grantingMem ackerB
+            (isSignatureAt_of_prefix ackerLog partSignature) with sub | bad) with
+      | inl =>
+        rw [ackerTake] at sub
+        exact sub
+      | inr =>
+        obtain ⟨later', log', above, below, canon, missing⟩ := bad
+        rw [ackerTake, ackerTerm'] at *
+        exact absurd (clean later' log' above (Nat.le_trans below grantingTerm) (canon.mono innerB))
+          missing
+    have grantingSorted := sorted _ (innerB.trans electInner) (List.cons_ne_nil _ _) voter granting
+      grantingMem
+    have grantingSignature : isSignatureAt granting.log index = true :=
+      isSignatureAt_of_prefix inGranting partSignature
+    have maxGe : index <= maxCommittableIndex granting.log :=
+      signatureIndex_le_maxCommittableIndex grantingSignature
+    have maxTermGe : term <= maxCommittableTerm granting.log := by
+      have := termAt_mono grantingSorted maxGe (maxCommittableIndexBounded granting.log)
+      rw [termAt_of_prefix inGranting (Nat.le_of_eq partLength.symm), partTerm] at this
       exact this
-    rw [same, ← this]
-    exact List.take_prefix _ _
-  rcases Nat.lt_or_eq_of_le termGe with above | same
-  · have bound : termAt log j <= later := by
-      have := termAt_le_of_mem
-        (terms _ (List.suffix_refl _) (List.cons_ne_nil _ _) node candidate candidateMem) j
-      rw [candidateLog] at this
-      rcases termCase with lt' | ⟨eq, _⟩
-      · exact Nat.le_of_lt (Nat.lt_of_le_of_lt this lt')
-      · exact Nat.le_trans this (Nat.le_of_eq eq)
-    have sub := clean _ anchored above bound canon
-    rcases Nat.lt_or_ge j index with short | long
-    · exfalso
-      have leaderSorted := sorted _ commitSuffix (List.cons_ne_nil _ _) leader state leaderNow
-      have partSorted := leaderSorted.sublist (List.take_sublist index state.log)
-      have mono := termAt_mono partSorted (Nat.le_of_lt short) (Nat.le_of_eq partLength.symm)
-      have atJ : termAt (state.log.take index) j = termAt log j := by
-        rw [← termAt_of_prefix sub (Nat.le_of_lt (Nat.lt_of_lt_of_eq short partLength.symm)),
-          ← termAt_take (n := j) Nat.le.refl, ← anchoredTake,
-          termAt_take Nat.le.refl]
-      rw [atJ, partTerm] at mono
-      exact Nat.lt_irrefl _ (Nat.lt_of_lt_of_le above mono)
-    · exact viaAnchor long (Nat.le_trans long anchoredLength)
-        (take_of_prefix_length sub partLength)
-  · have indexLeJ : index <= j := by
-      rcases upToDate with gt | ⟨_, ge⟩
-      · exact (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le gt (by rw [← same]; exact maxTermGe))).elim
-      · exact Nat.le_trans maxGe ge
-    rw [← same] at canon
-    have leaderCanon : Canon small term state.log :=
-      ⟨current :: past, commitSuffix, leader, state,
-        ⟨leaderNow, leaderTerm, leaderRole, leaderLed⟩, rfl⟩
-    have comparable := canon_chain canonMono (canon.mono electInner) leaderCanon
-    have anchoredIndex := Nat.le_trans indexLeJ anchoredLength
-    exact viaAnchor indexLeJ anchoredIndex
-      (take_eq_take_of_comparable comparable anchoredIndex indexLe).symm
+    -- The election's last committable position.
+    simp only [voteLogUpToDate, vals] at upToDate
+    generalize jEq : max commit (maxCommittableIndex log) = j at upToDate ⊢
+    have two : 2 <= term := by
+      have := leaderLed.two_le
+      exact this
+    have jBound : j <= log.length := jEq ▸ Nat.max_le.mpr ⟨frontier, maxCommittableIndexBounded log⟩
+    have termGe : term <= termAt log j :=
+      upToDate.elim (fun gt => Nat.le_trans maxTermGe (Nat.le_of_lt gt))
+        (fun eq => Nat.le_trans maxTermGe (Nat.le_of_eq eq.1.symm))
+    have jPos : 0 < j := by
+      split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos j with zero | positive) with
+      | inl =>
+        rw [zero, termAt_zero] at termGe
+        exact (Nat.not_succ_le_zero 1 (Nat.le_trans two termGe)).elim
+      | inr => exact positive
+    obtain ⟨anchored, canon, anchoredLength, anchoredTake⟩ :=
+      anchor _ (List.suffix_refl _) (List.cons_ne_nil _ _) node candidate j candidateMem jPos
+        (candidateLog ▸ jBound)
+    rw [candidateLog] at canon anchoredTake
+    have viaAnchor : index <= j -> index <= anchored.length
+        -> state.log.take index = anchored.take index
+        -> state.log.take index <+: log := by
+      intro le _ same
+      have : log.take index = anchored.take index := by
+        have := congrArg (List.take index) anchoredTake
+        simp only [List.take_take, Nat.min_eq_left le] at this
+        exact this
+      rw [same, ← this]
+      exact List.take_prefix _ _
+    split_rel lt_or_eq_of_le := (rcases Nat.lt_or_eq_of_le termGe with above | same) with
+    | inl =>
+      have bound : termAt log j <= later := by
+        have := termAt_le_of_mem
+          (terms _ (List.suffix_refl _) (List.cons_ne_nil _ _) node candidate candidateMem) j
+        rw [candidateLog] at this
+        split_rel termCase := (rcases termCase with lt' | ⟨eq, _⟩) with
+        | inl => exact Nat.le_of_lt (Nat.lt_of_le_of_lt this lt')
+        | inr => exact Nat.le_trans this (Nat.le_of_eq eq)
+      have sub := clean _ anchored above bound canon
+      split_rel lt_or_ge := (rcases Nat.lt_or_ge j index with short | long) with
+      | inl =>
+        exfalso
+        have leaderSorted := sorted _ commitSuffix (List.cons_ne_nil _ _) leader state leaderNow
+        have partSorted := leaderSorted.sublist (List.take_sublist index state.log)
+        have mono := termAt_mono partSorted (Nat.le_of_lt short) (Nat.le_of_eq partLength.symm)
+        have atJ : termAt (state.log.take index) j = termAt log j := by
+          rw [← termAt_of_prefix sub (Nat.le_of_lt (Nat.lt_of_lt_of_eq short partLength.symm)),
+            ← termAt_take (n := j) Nat.le.refl, ← anchoredTake,
+            termAt_take Nat.le.refl]
+        rw [atJ, partTerm] at mono
+        exact Nat.lt_irrefl _ (Nat.lt_of_lt_of_le above mono)
+      | inr =>
+        exact viaAnchor long (Nat.le_trans long anchoredLength)
+          (take_of_prefix_length sub partLength)
+    | inr =>
+      have indexLeJ : index <= j := by
+        split_rel upToDate := (rcases upToDate with gt | ⟨_, ge⟩) with
+        | inl => exact (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le gt (by rw [← same]; exact maxTermGe))).elim
+        | inr => exact Nat.le_trans maxGe ge
+      rw [← same] at canon
+      have leaderCanon : Canon small term state.log :=
+        ⟨current :: past, commitSuffix, leader, state,
+          ⟨leaderNow, leaderTerm, leaderRole, leaderLed⟩, rfl⟩
+      have comparable := canon_chain canonMono (canon.mono electInner) leaderCanon
+      have anchoredIndex := Nat.le_trans indexLeJ anchoredLength
+      exact viaAnchor indexLeJ anchoredIndex
+        (take_eq_take_of_comparable comparable anchoredIndex indexLe).symm
 
 end Consensus.Proofs.Safety
 
