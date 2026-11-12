@@ -6938,8 +6938,10 @@ private theorem canon_mono : CanonMono (after :: before :: rest) := by
     subst this
     rw [now_unique c.exec now' now]
     exact List.prefix_refl _
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨different, old⟩
-  · have fromOld : Led (before :: rest) c.actor c.post.currentTerm
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨different, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    have fromOld : Led (before :: rest) c.actor c.post.currentTerm
         -> c.pre.log <+: c.post.log /\ CanonMono (before :: rest)
             /\ c.pre.currentTerm = c.post.currentTerm
             /\ Not (c.pre.role = .candidate) := by
@@ -6947,8 +6949,10 @@ private theorem canon_mono : CanonMono (after :: before :: rest) := by
       obtain ⟨eq, preRole⟩ := c.old_led_actor oldLed
       exact ⟨c.keep_log eq.symm preRole (eq ▸ oldLed), c.inv.canon_mono, eq, preRole⟩
     refine ⟨fun log canon => ?_, fun log commit elected => ?_⟩
-    · rcases c.canon_after canon with canon | ⟨node', state', canonNow, rfl⟩
-      · have oldLed : Led (before :: rest) c.actor c.post.currentTerm := by
+    · split_rel canon_after :=
+          (rcases c.canon_after canon with canon | ⟨node', state', canonNow, logEq⟩) with
+      | inl =>
+        have oldLed : Led (before :: rest) c.actor c.post.currentTerm := by
           obtain ⟨earlier, suffix, node', state', ⟨_, _, _, led'⟩, _⟩ := canon
           have := safety node' c.actor _ ((led'.mono suffix).mono c.suffix_tail) led
           subst this
@@ -6956,21 +6960,28 @@ private theorem canon_mono : CanonMono (after :: before :: rest) := by
         obtain ⟨keep, mono, eq, preRole⟩ := fromOld oldLed
         rw [← eq] at canon oldLed
         exact ((mono c.actor c.pre c.pre_now preRole oldLed).1 _ canon).trans keep
-      · exact current node' state' canonNow
-    · rcases c.elected_after elected with old | step
-      · obtain ⟨keep, mono, eq, preRole⟩ := fromOld (Or.inr ⟨log, commit, old⟩)
+      | inr =>
+        subst logEq
+        exact current node' state' canonNow
+    · split_rel elected_after := (rcases c.elected_after elected with old | step) with
+      | inl =>
+        obtain ⟨keep, mono, eq, preRole⟩ := fromOld (Or.inr ⟨log, commit, old⟩)
         rw [← eq] at old
         exact ((mono c.actor c.pre c.pre_now preRole (Or.inr ⟨log, commit, old⟩)).2 log commit
           old).trans keep
-      · exact (c.electStep step).2.2.2.2.2.2.1
-  · have oldLed := c.led_other different led
+      | inr => exact (c.electStep step).2.2.2.2.2.2.1
+  | inr =>
+    have oldLed := c.led_other different led
     refine ⟨fun log canon => ?_, fun log commit elected => ?_⟩
-    · rcases c.canon_after canon with canon | ⟨node', state', canonNow, rfl⟩
-      · exact (c.inv.canon_mono node state old role oldLed).1 log canon
-      · exact current node' state' canonNow
-    · rcases c.elected_after elected with old' | step
-      · exact (c.inv.canon_mono node state old role oldLed).2 log commit old'
-      · exact absurd (c.electStep step).1 different
+    · split_rel canon_after :=
+          (rcases c.canon_after canon with canon | ⟨node', state', canonNow, logEq⟩) with
+      | inl => exact (c.inv.canon_mono node state old role oldLed).1 log canon
+      | inr =>
+        subst logEq
+        exact current node' state' canonNow
+    · split_rel elected_after := (rcases c.elected_after elected with old' | step) with
+      | inl => exact (c.inv.canon_mono node state old role oldLed).2 log commit old'
+      | inr => exact absurd (c.electStep step).1 different
 
 private theorem canonMonos : Everywhere CanonMono (after :: before :: rest) :=
   c.monos.cons c.canon_mono
