@@ -4291,20 +4291,29 @@ private theorem voteResponse_summary (before : NodeState) (source : NodeID)
     (fun _ =>
       Sends.pure' (quiet_summary rfl rfl rfl rfl rfl rfl rfl no_bumping_sends (by simp)))
     fun _ => ?_
-  rcases observe_bumping before (message := .requestVoteResponse response) trivial
-    with ⟨bump, eq⟩ | ⟨le, eq⟩ <;> rw [eq] <;> simp only [handleRequestVoteResponse]
-  · refine Sends.ite' (fun won => absurd won.1 (by simp [bumpedState])) fun _ =>
+  split_rel observe_bumping :=
+      (rcases observe_bumping before (message := .requestVoteResponse response) trivial
+        with ⟨bump, eq⟩ | ⟨le, eq⟩) with
+  | inl =>
+    rw [eq]
+    simp only [handleRequestVoteResponse]
+    refine Sends.ite' (fun won => absurd won.1 (by simp [bumpedState])) fun _ =>
       Sends.pure' (bumped_summary bump (by simp [bumpedState]) (by simp [bumpedState])
         ⟨source, _, rfl, trivial, Nat.le.refl⟩ (Kind.same rfl rfl) (by simp))
-  · refine Sends.ite' (fun won => ?_) fun _ =>
+  | inr =>
+    rw [eq]
+    simp only [handleRequestVoteResponse]
+    refine Sends.ite' (fun won => ?_) fun _ =>
       Sends.pure' (quiet_summary rfl rfl rfl rfl rfl rfl rfl
         no_bumping_sends (by simp))
     have campaign : Campaign self before (.receive source (.requestVoteResponse response))
         { before with votesGranted := insert source before.votesGranted } := by
       refine ⟨won.1, rfl, rfl, Or.inr ⟨won.1, rfl, Or.inl rfl, fun voter member => ?_⟩⟩
-      rcases Finset.mem_insert.mp member with rfl | old
-      · exact Or.inr ⟨response, rfl, won.2.1, won.2.2⟩
-      · exact Or.inl old
+      split_rel mem_insert := (rcases Finset.mem_insert.mp member with same | old) with
+      | inl =>
+        subst same
+        exact Or.inr ⟨response, rfl, won.2.1, won.2.2⟩
+      | inr => exact Or.inl old
     exact Sends.mono (electIfQuorum_sends self _) fun after sent elected =>
       campaign_summary campaign (elect_result self elected)
 
