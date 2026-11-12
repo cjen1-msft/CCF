@@ -2057,11 +2057,15 @@ private theorem exec_of_reachable {nodes : List NodeID} {state : Model.State}
     (reachable
       : (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes).Reachable state)
     : exists history, Exec nodes (state :: history) := by
-  induction reachable
-    using @TransitionSystem.Reachable.rec
-      (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) with
-  | initial initialized => exact ⟨[], .initial initialized⟩
-  | step _ stepped ih =>
+  split_rel reachable :=
+      (induction reachable using
+        (@TransitionSystem.Reachable.rec
+          (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes))) with
+  | initial =>
+      rename_i initialized
+      exact ⟨[], .initial initialized⟩
+  | step =>
+      rename_i _ stepped ih
       obtain ⟨history, prior⟩ := ih
       exact ⟨_, .step prior stepped⟩
 
