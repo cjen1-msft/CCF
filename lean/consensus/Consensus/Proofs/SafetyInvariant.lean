@@ -2115,15 +2115,19 @@ private theorem Exec.keys {nodes : List NodeID} {history : List Model.State}
 private theorem mem_removeOne {α : Type} [BEq α] {value item : α} {items : List α}
     (member : item ∈ removeOne value items)
     : item ∈ items := by
-  induction items with
+  split_rel items := (induction items) with
   | nil => simp [removeOne] at member
-  | cons head tail ih =>
+  | cons =>
+      rename_i head tail ih
       simp only [removeOne] at member
-      split at member
-      · exact List.mem_cons_of_mem _ member
-      · rcases List.mem_cons.mp member with rfl | later
-        · exact List.mem_cons_self
-        · exact List.mem_cons_of_mem _ (ih later)
+      split_rel member := (split at member) with
+      | pos => exact List.mem_cons_of_mem _ member
+      | neg =>
+        split_rel mem_cons := (rcases List.mem_cons.mp member with same | later) with
+        | inl =>
+          subst same
+          exact List.mem_cons_self
+        | inr => exact List.mem_cons_of_mem _ (ih later)
 
 private theorem LocalTransition.ofStep {nodes : List NodeID} {before after : Model.State}
     {action : Model.Action}
