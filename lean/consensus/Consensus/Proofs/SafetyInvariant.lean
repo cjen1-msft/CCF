@@ -4378,28 +4378,47 @@ private theorem aeReply (self source : NodeID) (z : NodeState)
       /\ (z.role = Role.candidate \/ z.role = Role.preVoteCandidate) then
     becomeAwareOfNewTerm z r.term else z) = w
   have wTerm : w.currentTerm = z.currentTerm := by
-    rw [← hw]; split
-    · rename_i h; simp [becomeAwareOfNewTerm, h.1]
-    · rfl
-  have wLog : w.log = z.log := by rw [← hw]; split <;> rfl
-  have wCommit : w.commitIndex = z.commitIndex := by rw [← hw]; split <;> rfl
+    rw [← hw]
+    split_rel stepDown := (split) with
+    | pos => rename_i h; simp [becomeAwareOfNewTerm, h.1]
+    | neg => rfl
+  have wLog : w.log = z.log := by
+    rw [← hw]
+    split_rel stepDown := (split) with
+    | pos => rfl
+    | neg => rfl
+  have wCommit : w.commitIndex = z.commitIndex := by
+    rw [← hw]
+    split_rel stepDown := (split) with
+    | pos => rfl
+    | neg => rfl
   have wVoted : w.votedFor = z.votedFor := by
-    rw [← hw]; split
-    · rename_i h; simp [becomeAwareOfNewTerm, h.1]
-    · rfl
-  have wMatch : w.matchIndex = z.matchIndex := by rw [← hw]; split <;> rfl
+    rw [← hw]
+    split_rel stepDown := (split) with
+    | pos => rename_i h; simp [becomeAwareOfNewTerm, h.1]
+    | neg => rfl
+  have wMatch : w.matchIndex = z.matchIndex := by
+    rw [← hw]
+    split_rel stepDown := (split) with
+    | pos => rfl
+    | neg => rfl
   have wRole : w.role = z.role \/ w.role = .follower := by
-    rw [← hw]; split <;> simp [becomeAwareOfNewTerm]
+    rw [← hw]
+    split_rel stepDown := (split) with
+    | pos => simp [becomeAwareOfNewTerm]
+    | neg => simp
   have wCand : w.role = .candidate -> w = z := by
-    rw [← hw]; split
-    · simp [becomeAwareOfNewTerm]
-    · intro _; rfl
+    rw [← hw]
+    split_rel stepDown := (split) with
+    | pos => simp [becomeAwareOfNewTerm]
+    | neg => intro _; rfl
   have wSame : r.term = z.currentTerm -> Not (w.role = .candidate) := by
     intro same
     rw [← hw]
-    split
-    · simp [becomeAwareOfNewTerm]
-    · rename_i keep
+    split_rel stepDown := (split) with
+    | pos => simp [becomeAwareOfNewTerm]
+    | neg =>
+      rename_i keep
       intro role
       exact keep ⟨same, by simp [role]⟩
   have common := fun (after : NodeState) (sent : List Model.Envelope)
@@ -4422,13 +4441,17 @@ private theorem aeReply (self source : NodeID) (z : NodeState)
       (cand : after.role = .candidate -> after = w) =>
     (⟨term.trans wTerm, voted.trans wVoted, matchEq.trans wMatch,
       by
-        rcases role with role | role <;> rw [role]
-        · rcases wRole with r | r <;> simp [*]
-        · simp [*],
+        split_rel role := (rcases role with role | role) with
+        | inl =>
+          rw [role]
+          split_rel wRole := (rcases wRole with r | r) with
+          | inl => simp [*]
+          | inr => simp [*]
+        | inr => rw [role]; simp [*],
       fun c => (cand c).trans (wCand (by
-        rcases role with role | role <;> rw [role] at c
-        · exact c
-        · cases c)), rest⟩
+        split_rel role := (rcases role with role | role) with
+        | inl => rw [role] at c; exact c
+        | inr => rw [role] at c; cases c)), rest⟩
       : AEReply self source z r after sent)
   refine Sends.ite' (fun reject => ?_) fun accept => ?_
   · have nack : forall payload, (exists response, payload = Message.appendEntriesResponse response
@@ -4482,9 +4505,9 @@ private theorem aeReply (self source : NodeID) (z : NodeState)
     subst eq
     refine common _ _ (Or.inr ⟨same, commitLe, matches_, ?_, ?_, _, rfl, rfl, rfl, ?_⟩)
       (term.trans vTerm) (voted.trans vVoted) (matchEq.trans vMatch) (vRole ▸ role) fun c => by
-        rcases role with role | role <;> rw [role] at c
-        · exact (notCand (vRole ▸ c)).elim
-        · cases c
+        split_rel role := (rcases role with role | role) with
+        | inl => rw [role] at c; exact (notCand (vRole ▸ c)).elim
+        | inr => rw [role] at c; cases c
     · rw [log, vLog]
       rfl
     · rw [commit, vCommit, wCommit]
@@ -4493,11 +4516,13 @@ private theorem aeReply (self source : NodeID) (z : NodeState)
       = conflictIndex z.log r := by
     rw [firstTermConflictIndex_eq]
     simp only [wLog]
-  split
-  · rename_i heq
+  split_rel conflict := (split) with
+  | none =>
+    rename_i heq
     rw [conflictEq] at heq
     exact tail _ (by simp only [heq]; exact wLog) rfl rfl rfl rfl rfl
-  · rename_i index heq
+  | some =>
+    rename_i index heq
     rw [conflictEq] at heq
     exact tail _ (by simp only [heq, wLog]) rfl rfl rfl rfl rfl
 
