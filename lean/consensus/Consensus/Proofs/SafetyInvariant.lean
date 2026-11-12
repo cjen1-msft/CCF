@@ -5835,10 +5835,11 @@ private theorem elected_after {node : NodeID} {term commit : Nat} {log : List En
     : Elected (before :: rest) node term log commit
       \/ ElectStep after before rest node term log commit := by
   obtain ⟨a, b, r, suffix, step⟩ := elected
-  rcases List.suffix_cons_iff.mp suffix with same | inner
-  · cases same
+  split_rel mp := (rcases List.suffix_cons_iff.mp suffix with same | inner) with
+  | inl =>
+    cases same
     exact Or.inr step
-  · exact Or.inl ⟨a, b, r, inner, step⟩
+  | inr => exact Or.inl ⟨a, b, r, inner, step⟩
 
 /-- A new election is the actor's, campaigning with its state before the step. -/
 private theorem electStep {node : NodeID} {term commit : Nat} {log : List Entry}
