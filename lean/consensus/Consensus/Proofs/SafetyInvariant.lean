@@ -3027,11 +3027,12 @@ private theorem CommitFrontier.promotedLog {state : NodeState}
               else
                 state.log
         } := by
-  split
-  · have kept := frontier.keep (count := lastCommittableIndex state)
+  split_rel committed := (split) with
+  | pos =>
+    have kept := frontier.keep (count := lastCommittableIndex state)
       (by unfold lastCommittableIndex; exact Nat.le_max_left _ _) (suffix := [])
     exact kept.of_log (by simp) rfl
-  · exact frontier.of_log rfl rfl
+  | neg => exact frontier.of_log rfl rfl
 
 end Consensus.Proofs.Direct
 
