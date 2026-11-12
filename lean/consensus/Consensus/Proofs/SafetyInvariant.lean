@@ -5630,9 +5630,9 @@ private theorem Doomed.cons' {history : History} {current : Model.State} {node :
 private theorem primaryState_log_prefix (state : NodeState)
     : (primaryState state).log <+: state.log := by
   simp only [primaryState]
-  split
-  · exact List.take_prefix _ _
-  · exact List.prefix_refl _
+  split_rel commit := (split) with
+  | pos => exact List.take_prefix _ _
+  | neg => exact List.prefix_refl _
 
 /-- The facts of a won election used by the safety proof. -/
 private theorem Wins.facts {self : NodeID} {before' : NodeState} {event : Event}
