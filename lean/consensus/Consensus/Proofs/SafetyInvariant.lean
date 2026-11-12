@@ -6028,12 +6028,15 @@ private theorem terms : Terms (after :: before :: rest) := by
 
 private theorem sorted : Sorted (after :: before :: rest) := by
   intro node state now
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨_, old⟩
-  · have preTerms := c.inv.terms c.actor c.pre c.pre_now
-    rcases c.post_log with sub | ⟨entries, log, terms, _, _, _⟩
-        | ⟨earlier, source, sender, n, suffix, canon, _, log⟩
-    · exact c.pre_sorted.sublist sub.sublist
-    · rw [log, List.pairwise_append]
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    have preTerms := c.inv.terms c.actor c.pre c.pre_now
+    split_rel post_log := (rcases c.post_log with sub | ⟨entries, log, terms, _, _, _⟩
+        | ⟨earlier, source, sender, n, suffix, canon, _, log⟩) with
+    | inl => exact c.pre_sorted.sublist sub.sublist
+    | inr_inl =>
+      rw [log, List.pairwise_append]
       refine ⟨c.pre_sorted, ?_, ?_⟩
       · exact List.pairwise_of_forall_mem_list fun first firstMem second secondMem => by
           rw [terms first firstMem, terms second secondMem]
@@ -6041,11 +6044,12 @@ private theorem sorted : Sorted (after :: before :: rest) := by
       · intro first firstMem second secondMem
         rw [terms second secondMem]
         exact preTerms first firstMem
-    · rw [log]
+    | inr_inr =>
+      rw [log]
       obtain ⟨_, _, rfl⟩ := canon.1.nonempty
       exact (c.all Inv.sorted _ suffix (List.cons_ne_nil _ _) source sender canon.1).sublist
         (List.take_sublist _ _)
-  · exact c.inv.sorted node state old
+  | inr => exact c.inv.sorted node state old
 
 private theorem active : Active (after :: before :: rest) := by
   intro node state now role
