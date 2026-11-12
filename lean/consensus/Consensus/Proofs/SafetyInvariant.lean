@@ -1800,16 +1800,22 @@ private theorem keys_nodup {nodes : List NodeID} {state : Model.State}
     (reachable
       : (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes).Reachable state)
     : (state.nodes.map Prod.fst).Nodup := by
-  induction reachable
-    using @TransitionSystem.Reachable.rec
-      (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) with
-  | initial initialized => exact initialized.2.2.1
-  | @step before after action _ stepped ih =>
-      cases action with
-      | «local» actor input =>
+  split_rel reachable :=
+      (induction reachable using
+        (@TransitionSystem.Reachable.rec
+          (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes))) with
+  | initial =>
+      rename_i initialized
+      exact initialized.2.2.1
+  | step =>
+      rename_i before after action _ stepped ih
+      split_rel action := (cases action) with
+      | «local» =>
+          rename_i actor input
           obtain ⟨_, _, _, _, _, rfl⟩ := step_local stepped
           simpa [replaceNode_keys] using ih
-      | deliver envelope =>
+      | deliver =>
+          rename_i envelope
           obtain ⟨_, _, _, _, _, _, rfl⟩ := step_deliver stepped
           simpa [replaceNode_keys] using ih
 
@@ -1817,21 +1823,26 @@ private theorem find_of_mem {entries : List (NodeID × NodeState)} {node : NodeI
     {local_ : NodeState} (distinct : (entries.map Prod.fst).Nodup)
     (member : (node, local_) ∈ entries)
     : entries.find? (fun entry => entry.1 == node) = some (node, local_) := by
-  induction entries with
+  split_rel entries := (induction entries) with
   | nil => simp at member
-  | cons head tail ih =>
+  | cons =>
+      rename_i head tail ih
       obtain ⟨key, value⟩ := head
       simp only [List.map_cons, List.nodup_cons] at distinct
-      by_cases here : key = node
-      · subst here
-        rcases List.mem_cons.mp member with same | later
-        · rw [same]
+      split_rel here := (by_cases here : key = node) with
+      | pos =>
+        subst here
+        split_rel mem_cons := (rcases List.mem_cons.mp member with same | later) with
+        | inl =>
+          rw [same]
           simp
-        · exact absurd (List.mem_map.mpr ⟨_, later, rfl⟩) distinct.1
-      · rcases List.mem_cons.mp member with same | later
-        · simp only [Prod.mk.injEq] at same
+        | inr => exact absurd (List.mem_map.mpr ⟨_, later, rfl⟩) distinct.1
+      | neg =>
+        split_rel mem_cons := (rcases List.mem_cons.mp member with same | later) with
+        | inl =>
+          simp only [Prod.mk.injEq] at same
           exact absurd same.1.symm here
-        · simp [here, ih distinct.2 later]
+        | inr => simp [here, ih distinct.2 later]
 
 private theorem nodeState_of_mem {state : Model.State} {node : NodeID}
     {local_ : NodeState} (distinct : (state.nodes.map Prod.fst).Nodup)
@@ -1863,9 +1874,9 @@ private theorem guard' {c : Prop} [Decidable c]
     : Keeps (Node := Node) (Message := Message) (Notification := Notification)
         (fun _ => c) (guard c) := by
   intro outputs _ after ran
-  by_cases holds : c
-  · exact holds
-  · simp [guard, holds] at ran
+  split_rel holds := (by_cases holds : c) with
+  | pos => exact holds
+  | neg => simp [guard, holds] at ran
 
 private theorem bind' {Q : α -> Prop} {P : β -> Prop}
     {m : Effect Node Message Notification α} {f : α -> Effect Node Message Notification β}
@@ -1896,9 +1907,9 @@ private theorem ite' {P : α -> Prop} {c : Prop} [Decidable c]
     {m n : Effect Node Message Notification α}
     (yes : c -> Keeps P m) (no : Not c -> Keeps P n)
     : Keeps P (if c then m else n) := by
-  split
-  · exact yes ‹_›
-  · exact no ‹_›
+  split_rel condition := (split) with
+  | pos => exact yes ‹_›
+  | neg => exact no ‹_›
 
 private theorem foldlM' {γ : Type} {P : α -> Prop}
     {f : α -> γ -> Effect Node Message Notification α}
@@ -1935,9 +1946,10 @@ private theorem bind' {Q : α -> List (Envelope Node Message) -> Prop}
     : Sends P (m >>= f) := by
   intro outputs result after ran
   simp only [StateT.run_bind] at ran
-  cases ranFirst : m.run outputs with
+  split_rel ranFirst := (cases ranFirst : m.run outputs) with
   | none => simp [ranFirst] at ran
-  | some pair =>
+  | some =>
+      rename_i pair
       obtain ⟨value, middle⟩ := pair
       simp only [ranFirst] at ran
       obtain ⟨sent, sentEq, holds⟩ := first _ _ _ ranFirst
@@ -1956,19 +1968,20 @@ private theorem ite' {P : α -> List (Envelope Node Message) -> Prop} {c : Prop}
     [Decidable c] {m n : Effect Node Message Notification α} (yes : c -> Sends P m)
     (no : Not c -> Sends P n)
     : Sends P (if c then m else n) := by
-  split
-  · exact yes ‹_›
-  · exact no ‹_›
+  split_rel condition := (split) with
+  | pos => exact yes ‹_›
+  | neg => exact no ‹_›
 
 private theorem guard' {c : Prop} [Decidable c]
     : Sends (Node := Node) (Message := Message) (Notification := Notification)
         (fun _ sent => c /\ sent = []) (guard c) := by
   intro outputs _ after ran
-  by_cases holds : c
-  · simp [guard, holds] at ran
+  split_rel holds := (by_cases holds : c) with
+  | pos =>
+    simp [guard, holds] at ran
     obtain ⟨_, rfl⟩ := ran
     exact ⟨[], by simp, holds, rfl⟩
-  · simp [guard, holds] at ran
+  | neg => simp [guard, holds] at ran
 
 private theorem guard_bind {P : α -> List (Envelope Node Message) -> Prop} {c : Prop}
     [Decidable c] {m : Effect Node Message Notification α} (rest : c -> Sends P m)
@@ -1995,20 +2008,24 @@ private theorem forIn' {β : Type} {items : List γ} {init : β}
       : forall item value,
           item ∈ items -> Sends (fun _ sent => forall e, e ∈ sent -> R e) (f item value))
     : Sends (fun _ sent => forall e, e ∈ sent -> R e) (forIn items init f) := by
-  induction items generalizing init with
+  split_rel items := (induction items generalizing init) with
   | nil =>
       simpa using pure' (P := fun (_ : β) sent => forall e, e ∈ sent -> R e) (by simp)
-  | cons head tail ih =>
+  | cons =>
+      rename_i head tail ih
       rw [List.forIn_cons]
       refine bind' (each head init List.mem_cons_self) fun step sent first => ?_
-      cases step with
-      | done value => exact pure' fun e member => first e (by simpa using member)
-      | yield value =>
+      split_rel step := (cases step) with
+      | done =>
+          rename_i value
+          exact pure' fun e member => first e (by simpa using member)
+      | yield =>
+          rename_i value
           refine mono (ih fun item value member => each item value (List.mem_cons_of_mem _ member))
             fun _ later rest e member => ?_
-          rcases List.mem_append.mp member with old | new
-          · exact first e old
-          · exact rest e new
+          split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
+          | inl => exact first e old
+          | inr => exact rest e new
 
 /-- A fold that keeps `I` of its accumulator and everything sent so far. -/
 private theorem foldlM' {I : α -> List (Envelope Node Message) -> Prop}
@@ -2040,11 +2057,15 @@ private theorem exec_of_reachable {nodes : List NodeID} {state : Model.State}
     (reachable
       : (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes).Reachable state)
     : exists history, Exec nodes (state :: history) := by
-  induction reachable
-    using @TransitionSystem.Reachable.rec
-      (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) with
-  | initial initialized => exact ⟨[], .initial initialized⟩
-  | step _ stepped ih =>
+  split_rel reachable :=
+      (induction reachable using
+        (@TransitionSystem.Reachable.rec
+          (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes))) with
+  | initial =>
+      rename_i initialized
+      exact ⟨[], .initial initialized⟩
+  | step =>
+      rename_i _ stepped ih
       obtain ⟨history, prior⟩ := ih
       exact ⟨_, .step prior stepped⟩
 
@@ -2052,11 +2073,13 @@ private theorem Exec.reachable {nodes : List NodeID} {state : Model.State}
     {history : List Model.State} (exec : Exec nodes (state :: history))
     : (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes).Reachable state := by
   generalize equal : state :: history = states at exec
-  induction exec generalizing state history with
-  | initial initialized =>
+  split_rel exec := (induction exec generalizing state history) with
+  | initial =>
+      rename_i initialized
       cases equal
       exact .initial initialized
-  | step prior stepped ih =>
+  | step =>
+      rename_i prior stepped ih
       cases equal
       exact .step (ih rfl) stepped
 
@@ -2065,17 +2088,21 @@ private theorem Exec.suffix {nodes : List NodeID} {history : List Model.State}
     (exec : Exec nodes history) {earlier : List Model.State}
     (suffix : earlier <:+ history) (nonempty : Not (earlier = []))
     : Exec nodes earlier := by
-  induction exec with
-  | initial initialized =>
-      rcases List.suffix_cons_iff.mp suffix with same | inner
-      · rw [same]
+  split_rel exec := (induction exec) with
+  | initial =>
+      rename_i initialized
+      split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp suffix with same | inner) with
+      | inl =>
+        rw [same]
         exact .initial initialized
-      · exact absurd (List.eq_nil_of_suffix_nil inner) nonempty
-  | step prior stepped ih =>
-      rcases List.suffix_cons_iff.mp suffix with same | inner
-      · rw [same]
+      | inr => exact absurd (List.eq_nil_of_suffix_nil inner) nonempty
+  | step =>
+      rename_i prior stepped ih
+      split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp suffix with same | inner) with
+      | inl =>
+        rw [same]
         exact .step prior stepped
-      · exact ih inner
+      | inr => exact ih inner
 
 private theorem Exec.keys {nodes : List NodeID} {history : List Model.State}
     (exec : Exec nodes history) {state : Model.State} (member : state ∈ history)
@@ -2088,15 +2115,19 @@ private theorem Exec.keys {nodes : List NodeID} {history : List Model.State}
 private theorem mem_removeOne {α : Type} [BEq α] {value item : α} {items : List α}
     (member : item ∈ removeOne value items)
     : item ∈ items := by
-  induction items with
+  split_rel items := (induction items) with
   | nil => simp [removeOne] at member
-  | cons head tail ih =>
+  | cons =>
+      rename_i head tail ih
       simp only [removeOne] at member
-      split at member
-      · exact List.mem_cons_of_mem _ member
-      · rcases List.mem_cons.mp member with rfl | later
-        · exact List.mem_cons_self
-        · exact List.mem_cons_of_mem _ (ih later)
+      split_rel member := (split at member) with
+      | pos => exact List.mem_cons_of_mem _ member
+      | neg =>
+        split_rel mem_cons := (rcases List.mem_cons.mp member with same | later) with
+        | inl =>
+          subst same
+          exact List.mem_cons_self
+        | inr => exact List.mem_cons_of_mem _ (ih later)
 
 private theorem LocalTransition.ofStep {nodes : List NodeID} {before after : Model.State}
     {action : Model.Action}
@@ -2104,8 +2135,9 @@ private theorem LocalTransition.ofStep {nodes : List NodeID} {before after : Mod
       : (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes).step before action
         = some after)
     : Nonempty (LocalTransition before after) := by
-  cases action with
-  | «local» actor input =>
+  split_rel action := (cases action) with
+  | «local» =>
+      rename_i actor input
       have available : forall entries, input = .initAsBackup entries
           -> Model.committedPrefixOf before entries = true := by
         intro entries rfl
@@ -2120,14 +2152,21 @@ private theorem LocalTransition.ofStep {nodes : List NodeID} {before after : Mod
               outputs,
               pending := before.network
               found
-              ran := by cases input <;> exact ran
+              ran := by
+                split_rel input := (cases input) with
+                | append => exact ran
+                | sendEntries => exact ran
+                | timeout => exact ran
+                | nominateSuccessor => exact ran
+                | initAsBackup => exact ran
               nodesEq := rfl
               networkEq := rfl
               pendingSub := fun _ member => member
               source := Or.inl ⟨input, rfl, rfl⟩
               available := fun entries eq => available entries (Event.internal.inj eq)
             }⟩
-  | deliver envelope =>
+  | deliver =>
+      rename_i envelope
       obtain ⟨queued, pre, post, outputs, found, ran, rfl⟩ := step_deliver stepped
       exact ⟨{
         actor := envelope.target, pre, post
@@ -2166,9 +2205,9 @@ private theorem LocalTransition.mem_network {before after : Model.State}
     (member : envelope ∈ after.network)
     : envelope ∈ before.network \/ envelope ∈ transition.outputs.outgoing := by
   rw [transition.networkEq] at member
-  rcases List.mem_append.mp member with old | new
-  · exact Or.inl (transition.pendingSub _ old)
-  · exact Or.inr new
+  split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
+  | inl => exact Or.inl (transition.pendingSub _ old)
+  | inr => exact Or.inr new
 
 /-- Two entries of one reachable state for the same node agree. -/
 private theorem state_unique {state : Model.State}
@@ -2207,9 +2246,9 @@ private theorem take_eq_take_of_comparable {α : Type} {left right : List α} {n
     (comparable : left <+: right \/ right <+: left)
     (leftBound : n <= left.length) (rightBound : n <= right.length)
     : left.take n = right.take n := by
-  rcases comparable with sub | sub
-  · exact (take_eq_of_prefix sub leftBound).symm
-  · exact take_eq_of_prefix sub rightBound
+  split_rel comparable := (rcases comparable with sub | sub) with
+  | inl => exact (take_eq_of_prefix sub leftBound).symm
+  | inr => exact take_eq_of_prefix sub rightBound
 
 private theorem termAt_eq {log : List Entry} {index : Nat} (positive : 0 < index)
     (bound : index <= log.length)
@@ -2223,9 +2262,10 @@ private theorem termAt_zero (log : List Entry) : termAt log 0 = 0 := by
 private theorem termAt_take {log : List Entry} {index n : Nat} (le : index <= n)
     : termAt (log.take n) index = termAt log index := by
   unfold termAt entryAt?
-  split
-  · rfl
-  · rename_i nonzero
+  split_rel zero := (split) with
+  | pos => rfl
+  | neg =>
+    rename_i nonzero
     rw [List.getElem?_take_of_lt (Nat.lt_of_lt_of_le (Nat.sub_one_lt nonzero) le)]
 
 private theorem termAt_of_prefix {small large : List Entry} {index : Nat}
@@ -2274,8 +2314,8 @@ private theorem acceptLog_eq {follower sender : List Entry}
     rw [List.take_add, ← batchEq]
   unfold acceptLog
   simp only
-  split
-  · -- A conflicting term: the follower keeps only the agreeing prefix.
+  split_rel conflict := (split) with
+  | some => -- A conflicting term: the follower keeps only the agreeing prefix.
     rename_i index conflict
     unfold conflictIndex at conflict
     obtain ⟨pair, found, indexEq⟩ := Option.map_eq_some_iff.mp conflict
@@ -2305,10 +2345,12 @@ private theorem acceptLog_eq {follower sender : List Entry}
       rw [Nat.add_right_comm, Nat.add_sub_cancel]
     simp only [keptEq]
     have keptAgree : follower.take (prev + offset) = sender.take (prev + offset) := by
-      rcases Nat.eq_zero_or_pos offset with zero | positive
-      · simp only [zero, Nat.add_zero]
+      split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos offset with zero | positive) with
+      | inl =>
+        simp only [zero, Nat.add_zero]
         exact prevAgree
-      · have pos : 0 < prev + offset := Nat.lt_of_lt_of_le positive (Nat.le_add_left _ _)
+      | inr =>
+        have pos : 0 < prev + offset := Nat.lt_of_lt_of_le positive (Nat.le_add_left _ _)
         apply aligned _ pos (Nat.le_of_lt offFollower) (Nat.le_of_lt offSender)
         rw [termAt_eq pos (Nat.le_of_lt offFollower), termAt_eq pos (Nat.le_of_lt offSender)]
         have := prefixTerms (offset - 1) (Nat.sub_lt positive Nat.one_pos)
@@ -2335,7 +2377,7 @@ private theorem acceptLog_eq {follower sender : List Entry}
       rw [entryEq, senderEntry] at different
       exact different rfl
     simp [differ]
-  · -- No conflicting term: the overlap agrees, so the follower log is extended.
+  | none => -- No conflicting term: the overlap agrees, so the follower log is extended.
     rename_i noConflict
     unfold conflictIndex at noConflict
     have notFound := Option.map_eq_none_iff.mp noConflict
@@ -2358,12 +2400,15 @@ private theorem acceptLog_eq {follower sender : List Entry}
       congr 1
       rw [List.getElem_of_eq batchEq]
       simp
-    by_cases long : prev + batch.length <= follower.length
-    · have agree : follower.take (prev + batch.length) = sender.take (prev + batch.length) := by
-        rcases Nat.eq_zero_or_pos batch.length with empty | nonempty
-        · simp only [empty, Nat.add_zero]
+    split_rel long := (by_cases long : prev + batch.length <= follower.length) with
+    | pos =>
+      have agree : follower.take (prev + batch.length) = sender.take (prev + batch.length) := by
+        split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos batch.length with empty | nonempty) with
+        | inl =>
+          simp only [empty, Nat.add_zero]
           exact prevAgree
-        · have pos : 0 < prev + batch.length := Nat.lt_of_lt_of_le nonempty (Nat.le_add_left _ _)
+        | inr =>
+          have pos : 0 < prev + batch.length := Nat.lt_of_lt_of_le nonempty (Nat.le_add_left _ _)
           have last := Nat.sub_lt nonempty Nat.one_pos
           apply aligned _ pos long batchBound
           rw [termAt_eq pos long, termAt_eq pos batchBound]
@@ -2372,12 +2417,15 @@ private theorem acceptLog_eq {follower sender : List Entry}
           simpa only [(Nat.add_sub_assoc nonempty prev).symm] using this
       rw [ite_eq_left agree, ← agree, List.take_append_drop,
         List.drop_eq_nil_of_le (Nat.le_sub_of_add_le' long), List.append_nil]
-    · have agree : follower = sender.take follower.length := by
-        rcases Nat.eq_or_lt_of_le prevBound with same | ahead
-        · rw [← same]
+    | neg =>
+      have agree : follower = sender.take follower.length := by
+        split_rel eq_or_lt_of_le := (rcases Nat.eq_or_lt_of_le prevBound with same | ahead) with
+        | inl =>
+          rw [← same]
           have := prevAgree
           rwa [List.take_of_length_le (Nat.le_of_eq same.symm)] at this
-        · have pos : 0 < follower.length := Nat.lt_of_le_of_lt (Nat.zero_le _) ahead
+        | inr =>
+          have pos : 0 < follower.length := Nat.lt_of_le_of_lt (Nat.zero_le _) ahead
           have fs : follower.length <= sender.length :=
             Nat.le_of_lt (Nat.lt_of_lt_of_le (Nat.lt_of_not_le long) batchBound)
           have := aligned follower.length pos Nat.le.refl fs (by
@@ -2443,9 +2491,10 @@ private theorem configurationHistory_split (log : List Entry) (k : Nat)
     rw [List.zipIdx_append, List.filterMap_append]
   · intro configuration member
     have := mem_history_filterMap member
-    by_cases short : log.length <= k
-    · simp [List.drop_eq_nil_of_le short] at member
-    · simp at this
+    split_rel short := (by_cases short : log.length <= k) with
+    | pos => simp [List.drop_eq_nil_of_le short] at member
+    | neg =>
+      simp at this
       rw [Nat.min_eq_left (Nat.le_of_lt (Nat.lt_of_not_le short))] at this
       exact Nat.le_trans (Nat.le_of_eq (Nat.add_comm k 1)) this.1
 
@@ -2532,16 +2581,19 @@ private theorem getElem_le_of_lt_length_filter {configurations : List Configurat
             fun configuration => configuration.index <= bound).length)
     : (configurations[i]'(Nat.lt_of_lt_of_le lt (List.length_filter_le _ _))).index
       <= bound := by
-  induction configurations generalizing i with
+  split_rel configurations := (induction configurations generalizing i) with
   | nil => simp at lt
-  | cons head tail ih =>
+  | cons =>
+      rename_i head tail ih
       rw [List.pairwise_cons] at sorted
-      by_cases within : head.index <= bound
-      · rw [List.filter_cons_of_pos (by simpa using within)] at lt
-        rcases i with _ | i
-        · exact within
-        · exact ih sorted.2 (by simpa using lt)
-      · have empty : (tail.filter fun configuration => configuration.index <= bound) = [] := by
+      split_rel within := (by_cases within : head.index <= bound) with
+      | pos =>
+        rw [List.filter_cons_of_pos (by simpa using within)] at lt
+        split_rel i := (rcases i with _ | i) with
+        | inl => exact within
+        | inr => exact ih sorted.2 (by simpa using lt)
+      | neg =>
+        have empty : (tail.filter fun configuration => configuration.index <= bound) = [] := by
           refine List.filter_eq_nil_iff.mpr fun configuration member => ?_
           have := sorted.1 configuration member
           simp
@@ -2567,16 +2619,20 @@ private theorem chosen_bound {configurations : List Configuration}
       chosen.index <= bound
       \/ forall other, other ∈ configurations -> chosen.index <= other.index := by
   intro chosen
-  by_cases counted : 0 < (configurations.filter
-      fun configuration => configuration.index <= bound).length
-  · exact Or.inl (getElem_le_of_lt_length_filter sorted (Nat.sub_one_lt (Nat.ne_of_gt counted)))
-  · refine Or.inr fun other member => ?_
-    rcases configurations with _ | ⟨head, tail⟩
-    · simp at positive
-    · simp only [chosen, Nat.eq_zero_of_not_pos counted, Nat.zero_sub, List.getElem_cons_zero]
-      rcases List.mem_cons.mp member with rfl | later
-      · exact Nat.le.refl
-      · exact Nat.le_of_lt ((List.pairwise_cons.mp sorted).1 other later)
+  split_rel counted := (by_cases counted : 0 < (configurations.filter
+      fun configuration => configuration.index <= bound).length) with
+  | pos => exact Or.inl (getElem_le_of_lt_length_filter sorted (Nat.sub_one_lt (Nat.ne_of_gt counted)))
+  | neg =>
+    refine Or.inr fun other member => ?_
+    split_rel configurations := (rcases configurations with _ | ⟨head, tail⟩) with
+    | inl => simp at positive
+    | inr =>
+      simp only [chosen, Nat.eq_zero_of_not_pos counted, Nat.zero_sub, List.getElem_cons_zero]
+      split_rel mem_cons := (rcases List.mem_cons.mp member with same | later) with
+      | inl =>
+        subst same
+        exact Nat.le.refl
+      | inr => exact Nat.le_of_lt ((List.pairwise_cons.mp sorted).1 other later)
 
 /--
 Two logs agreeing up to `k`, with commit indices at most `k` and a configuration
@@ -2629,21 +2685,23 @@ private theorem activeConfigurations_overlap {left right : List Entry}
   have leftBound := length_filter_le common leftCommit
   have rightBound := length_filter_le common rightCommit
   have last : common.length - 1 < common.length := Nat.sub_one_lt (Nat.ne_of_gt commonPos)
-  rcases Nat.le_total leftCommit rightCommit with ordered | ordered
-  · have mono := length_filter_index_mono common ordered
+  split_rel le_total := (rcases Nat.le_total leftCommit rightCommit with ordered | ordered) with
+  | inl =>
+    have mono := length_filter_index_mono common ordered
     have chosenLt := Nat.lt_of_le_of_lt (Nat.sub_le_sub_right rightBound 1) last
     refine ⟨common[_ - 1]'chosenLt, inDrop chosenLt leftEq (Nat.sub_le_sub_right mono 1),
       inDrop chosenLt rightEq Nat.le.refl, ?_⟩
-    rcases chosen_bound sorted rightCommit commonPos with within | first
-    · exact Or.inl (Nat.le_trans within (Nat.le_max_right _ _))
-    · exact Or.inr first
-  · have mono := length_filter_index_mono common ordered
+    split_rel chosen_bound := (rcases chosen_bound sorted rightCommit commonPos with within | first) with
+    | inl => exact Or.inl (Nat.le_trans within (Nat.le_max_right _ _))
+    | inr => exact Or.inr first
+  | inr =>
+    have mono := length_filter_index_mono common ordered
     have chosenLt := Nat.lt_of_le_of_lt (Nat.sub_le_sub_right leftBound 1) last
     refine ⟨common[_ - 1]'chosenLt, inDrop chosenLt leftEq Nat.le.refl,
       inDrop chosenLt rightEq (Nat.sub_le_sub_right mono 1), ?_⟩
-    rcases chosen_bound sorted leftCommit commonPos with within | first
-    · exact Or.inl (Nat.le_trans within (Nat.le_max_left _ _))
-    · exact Or.inr first
+    split_rel chosen_bound := (rcases chosen_bound sorted leftCommit commonPos with within | first) with
+    | inl => exact Or.inl (Nat.le_trans within (Nat.le_max_left _ _))
+    | inr => exact Or.inr first
 
 /-- Two strict majorities of one configuration share a member. -/
 private theorem majorities_intersect {configuration : Configuration}
@@ -2672,13 +2730,14 @@ private theorem hasQuorum_majority {configurations : List Configuration}
 private theorem Rooted.prefix {root : Entry} {small large : List Entry}
     (rooted : Rooted root large) (sub : small <+: large)
     : Rooted root small := by
-  rcases small with _ | ⟨first, rest⟩
-  · exact Or.inl rfl
-  · refine Or.inr ?_
+  split_rel small := (rcases small with _ | ⟨first, rest⟩) with
+  | inl => exact Or.inl rfl
+  | inr =>
+    refine Or.inr ?_
     obtain ⟨suffix, rfl⟩ := sub
-    rcases rooted with empty | head
-    · simp at empty
-    · simpa using head
+    split_rel rooted := (rcases rooted with empty | head) with
+    | inl => simp at empty
+    | inr => simpa using head
 
 private theorem Rooted.take {root : Entry} {log : List Entry} (rooted : Rooted root log)
     (n : Nat)
@@ -2688,18 +2747,19 @@ private theorem Rooted.take {root : Entry} {log : List Entry} (rooted : Rooted r
 private theorem Rooted.append {root : Entry} {log : List Entry} (rooted : Rooted root log)
     (nonempty : log ≠ []) (entries : List Entry)
     : Rooted root (log ++ entries) := by
-  rcases rooted with empty | head
-  · exact absurd empty nonempty
-  · refine Or.inr ?_
+  split_rel rooted := (rcases rooted with empty | head) with
+  | inl => exact absurd empty nonempty
+  | inr =>
+    refine Or.inr ?_
     have := List.length_pos_iff.mpr nonempty
     rw [List.take_append_of_le_length (Nat.succ_le_of_lt this), head]
 
 private theorem Rooted.head {root : Entry} {log : List Entry} (rooted : Rooted root log)
     (nonempty : log ≠ [])
     : log.take 1 = [root] := by
-  rcases rooted with empty | head
-  · exact absurd empty nonempty
-  · exact head
+  split_rel rooted := (rcases rooted with empty | head) with
+  | inl => exact absurd empty nonempty
+  | inr => exact head
 
 private theorem hasQuorum_nonempty {log : List Entry} {commit : Nat}
     {voters : Finset NodeID} (quorum : hasQuorum (activeConfigurations log commit) voters)
@@ -2728,10 +2788,11 @@ private theorem rooted_overlap {root : Entry}
   have leftHead := leftRooted.head leftNonempty
   have rightHead := rightRooted.head rightNonempty
   have agree' : left.take (max k 1) = right.take (max k 1) := by
-    rcases Nat.eq_zero_or_pos k with zero | positive
-    · subst zero
+    split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos k with zero | positive) with
+    | inl =>
+      subst zero
       simp [leftHead, rightHead]
-    · rwa [Nat.max_eq_left positive]
+    | inr => rwa [Nat.max_eq_left positive]
   have rooted : (right.take (max k 1)).take 1 = [root] := by
     rw [List.take_take, Nat.min_eq_left (Nat.le_max_right _ _), rightHead]
   obtain ⟨configuration, leftMember, rightMember, bound⟩ :=
@@ -2739,9 +2800,10 @@ private theorem rooted_overlap {root : Entry}
       (Nat.le_trans rightLe (Nat.le_max_left _ _))
       (configurationHistory_ne_nil rooted configured)
   refine ⟨configuration, leftMember, rightMember, ?_⟩
-  rcases bound with within | first
-  · exact Nat.le_trans within (Nat.le_max_left _ _)
-  · obtain ⟨rest, eq, _⟩ := configurationHistory_split (right.take (max k 1)) 1
+  split_rel bound := (rcases bound with within | first) with
+  | inl => exact Nat.le_trans within (Nat.le_max_left _ _)
+  | inr =>
+    obtain ⟨rest, eq, _⟩ := configurationHistory_split (right.take (max k 1)) 1
     obtain ⟨nodes, some⟩ := Option.isSome_iff_exists.mp configured
     have genesis : ({ index := 1, nodes } : Configuration)
         ∈ configurationHistory (right.take (max k 1)) := by
@@ -2852,10 +2914,13 @@ private theorem CommitFrontier.advance {state : NodeState}
   refine ⟨Nat.max_le.mpr ⟨extends_.1, maxCommittableIndexUpTo_le_length log bound⟩,
     fun positive => ?_⟩
   simp only at positive ⊢
-  rcases Nat.le_total state.commitIndex (maxCommittableIndexUpTo log bound) with le | le
-  · rw [Nat.max_eq_right le] at positive ⊢
+  split_rel le_total :=
+      (rcases Nat.le_total state.commitIndex (maxCommittableIndexUpTo log bound) with le | le) with
+  | inl =>
+    rw [Nat.max_eq_right le] at positive ⊢
     exact maxCommittableIndexUpToPositiveIsSignature positive
-  · rw [Nat.max_eq_left le] at positive ⊢
+  | inr =>
+    rw [Nat.max_eq_left le] at positive ⊢
     exact extends_.2 positive
 
 private theorem foldl_select_max (P : Nat -> Prop) [DecidablePred P] (values : List Nat)
@@ -2865,20 +2930,25 @@ private theorem foldl_select_max (P : Nat -> Prop) [DecidablePred P] (values : L
       \/ P
           (values.foldl (fun best index => if P index then max best index else best)
             init) := by
-  induction values generalizing init with
+  split_rel values := (induction values generalizing init) with
   | nil => exact Or.inl rfl
-  | cons head tail ih =>
+  | cons =>
+      rename_i head tail ih
       simp only [List.foldl_cons]
-      rcases ih (if P head then max init head else init) with same | holds
-      · rw [same]
-        by_cases chosen : P head
-        · rcases Nat.le_total init head with le | le
-          · right
+      split_rel ih := (rcases ih (if P head then max init head else init) with same | holds) with
+      | inl =>
+        rw [same]
+        split_rel chosen := (by_cases chosen : P head) with
+        | pos =>
+          split_rel le_total := (rcases Nat.le_total init head with le | le) with
+          | inl =>
+            right
             simp [chosen, Nat.max_eq_right le]
-          · left
+          | inr =>
+            left
             simp [chosen, Nat.max_eq_left le]
-        · simp [chosen]
-      · exact Or.inr holds
+        | neg => simp [chosen]
+      | inr => exact Or.inr holds
 
 private theorem foldl_select_max_pos (P : Nat -> Prop) [DecidablePred P]
     (values : List Nat)
@@ -2887,10 +2957,11 @@ private theorem foldl_select_max_pos (P : Nat -> Prop) [DecidablePred P]
     : P
         (values.foldl (fun best index => if P index then max best index else best)
           0) := by
-  rcases foldl_select_max P values 0 with zero | holds
-  · rw [zero] at positive
+  split_rel foldl_select_max := (rcases foldl_select_max P values 0 with zero | holds) with
+  | inl =>
+    rw [zero] at positive
     exact absurd positive (Nat.lt_irrefl 0)
-  · exact holds
+  | inr => exact holds
 
 private theorem highestCommittableIndex_signature (state : NodeState) (self : NodeID)
     (positive : 0 < highestCommittableIndex state self)
