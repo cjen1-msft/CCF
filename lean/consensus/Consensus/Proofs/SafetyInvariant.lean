@@ -6381,9 +6381,9 @@ private theorem pre_split (bound : Nat)
           /\ base <= c.pre.commitIndex
           /\ c.pre.log.take c.pre.commitIndex <+: leaderState.log.take index := by
   obtain ⟨⟨_, backed⟩, _⟩ := c.inv.commit_backed c.actor c.pre c.pre_now
-  rcases backed with zero | ⟨_, _, committed, _, within⟩
-  · exact Or.inl (Or.inl zero)
-  · exact backing_split committed within c.frontier_pre
+  split_rel backed := (rcases backed with zero | ⟨_, _, committed, _, within⟩) with
+  | inl => exact Or.inl (Or.inl zero)
+  | inr => exact backing_split committed within c.frontier_pre
 
 /-- The actor's earlier states have terms at most its current one. -/
 private theorem pre_terms {earlier : History} (suffix : earlier <:+ before :: rest)
