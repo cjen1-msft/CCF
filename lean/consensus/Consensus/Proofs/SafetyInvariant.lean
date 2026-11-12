@@ -5323,10 +5323,13 @@ private theorem take_signature {log : List Entry} {index : Nat}
 private theorem Led.two_le {history : History} {node : NodeID} {term : Nat}
     (led : Led history node term)
     : 2 <= term := by
-  rcases led with ⟨rfl, -⟩ | ⟨log, commit, after, before, rest, -, candidate, leader, -, -, -,
-    -, -, -, -, -, -, three, -⟩
-  · decide
-  · exact Nat.le_trans (Nat.le_succ 2) three
+  split_rel led :=
+      (rcases led with ⟨same, -⟩ | ⟨log, commit, after, before, rest, -, candidate, leader, -, -, -,
+        -, -, -, -, -, -, three, -⟩) with
+  | inl =>
+    subst same
+    decide
+  | inr => exact Nat.le_trans (Nat.le_succ 2) three
 
 private theorem Led.elected {history : History} {node : NodeID} {term : Nat}
     (led : Led history node term) (above : 2 < term)
