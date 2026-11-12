@@ -7481,57 +7481,68 @@ private theorem accept_persist {source : NodeID} {request : AppendEntriesRequest
           c.post.currentTerm := by
   obtain ⟨earlier, sender, suffix, canon, _, batchBound, _, shape, _⟩ :=
     c.accept_shape received accepted
-  rcases shape with same | ⟨fresh, differ⟩
-  · left
+  split_rel shape := (rcases shape with same | ⟨fresh, differ⟩) with
+  | inl =>
+    left
     rw [same]
     exact inPre
-  have requestTerm : request.term = c.post.currentTerm := accepted.1
-  have senderCanon : Canon (before :: rest) c.post.currentTerm sender.log := by
-    rw [← requestTerm]
-    exact ⟨earlier, suffix, source, sender, canon, rfl⟩
-  generalize request.prevLogIndex + request.entries.length = n at batchBound fresh differ
-  -- A part agreeing with the sender beyond the batch end contradicts the truncation.
-  have beyond : n < part.length -> Not (part.take n = sender.log.take n) := by
-    intro long agree
-    apply differ
-    rw [← agree]
-    exact take_eq_of_prefix inPre (Nat.le_of_lt long)
-  by_cases inSender : part <+: sender.log
-  · rcases (Nat.lt_or_ge n part.length).symm with short | long
-    · left
-      have := take_prefix_take sender.log short
-      rw [← List.prefix_iff_eq_take.mp inSender] at this
-      rw [fresh]
-      exact this
-    · exact (beyond long (take_eq_of_prefix inSender (Nat.le_of_lt long)).symm).elim
-  · have positive := signature_pos signature
-    have termLe : termAt part part.length <= c.post.currentTerm :=
-      Nat.le_trans (termAt_le_of_mem (fun entry mem => c.inv.terms c.actor c.pre c.pre_now entry
-        (inPre.subset mem)) _) c.term_le
-    rcases Nat.lt_or_ge (termAt part part.length) c.post.currentTerm with lower | upper
-    · exact Or.inr ⟨c.post.currentTerm, sender.log, lower, Nat.le.refl,
-        senderCanon.mono c.suffix_tail, inSender⟩
-    · exfalso
-      obtain ⟨log, logCanon, length, take⟩ :=
-        c.inv.anchor c.actor c.pre part.length c.pre_now positive inPre.length_le
-      have partEq : c.pre.log.take part.length = part :=
-        (List.prefix_iff_eq_take.mp inPre).symm
-      have termEq : termAt c.pre.log part.length = c.post.currentTerm := by
-        have := termAt_take (log := c.pre.log) (Nat.le_refl part.length)
-        rw [partEq] at this
-        exact this.symm.trans (Nat.le_antisymm termLe upper)
-      rw [termEq] at logCanon
-      have partLog : part = log.take part.length := partEq.symm.trans take
-      have comparable := canon_chain c.monos logCanon senderCanon
-      rcases (Nat.lt_or_ge sender.log.length part.length).symm with fits | long
-      · apply inSender
-        rw [partLog, take_eq_take_of_comparable comparable length fits]
-        exact List.take_prefix _ _
-      · have short := Nat.lt_of_le_of_lt batchBound long
-        apply beyond short
-        rw [partLog, List.take_take, Nat.min_eq_left (Nat.le_of_lt short)]
-        exact take_eq_take_of_comparable comparable
-          (Nat.le_trans batchBound (Nat.le_trans (Nat.le_of_lt long) length)) batchBound
+  | inr =>
+    have requestTerm : request.term = c.post.currentTerm := accepted.1
+    have senderCanon : Canon (before :: rest) c.post.currentTerm sender.log := by
+      rw [← requestTerm]
+      exact ⟨earlier, suffix, source, sender, canon, rfl⟩
+    generalize request.prevLogIndex + request.entries.length = n at batchBound fresh differ
+    -- A part agreeing with the sender beyond the batch end contradicts the truncation.
+    have beyond : n < part.length -> Not (part.take n = sender.log.take n) := by
+      intro long agree
+      apply differ
+      rw [← agree]
+      exact take_eq_of_prefix inPre (Nat.le_of_lt long)
+    split_rel inSender := (by_cases inSender : part <+: sender.log) with
+    | pos =>
+      split_rel lt_or_ge := (rcases (Nat.lt_or_ge n part.length).symm with short | long) with
+      | inl =>
+        left
+        have := take_prefix_take sender.log short
+        rw [← List.prefix_iff_eq_take.mp inSender] at this
+        rw [fresh]
+        exact this
+      | inr => exact (beyond long (take_eq_of_prefix inSender (Nat.le_of_lt long)).symm).elim
+    | neg =>
+      have positive := signature_pos signature
+      have termLe : termAt part part.length <= c.post.currentTerm :=
+        Nat.le_trans (termAt_le_of_mem (fun entry mem => c.inv.terms c.actor c.pre c.pre_now entry
+          (inPre.subset mem)) _) c.term_le
+      split_rel lt_or_ge :=
+          (rcases Nat.lt_or_ge (termAt part part.length) c.post.currentTerm with lower | upper) with
+      | inl =>
+        exact Or.inr ⟨c.post.currentTerm, sender.log, lower, Nat.le.refl,
+          senderCanon.mono c.suffix_tail, inSender⟩
+      | inr =>
+        exfalso
+        obtain ⟨log, logCanon, length, take⟩ :=
+          c.inv.anchor c.actor c.pre part.length c.pre_now positive inPre.length_le
+        have partEq : c.pre.log.take part.length = part :=
+          (List.prefix_iff_eq_take.mp inPre).symm
+        have termEq : termAt c.pre.log part.length = c.post.currentTerm := by
+          have := termAt_take (log := c.pre.log) (Nat.le_refl part.length)
+          rw [partEq] at this
+          exact this.symm.trans (Nat.le_antisymm termLe upper)
+        rw [termEq] at logCanon
+        have partLog : part = log.take part.length := partEq.symm.trans take
+        have comparable := canon_chain c.monos logCanon senderCanon
+        split_rel lt_or_ge :=
+            (rcases (Nat.lt_or_ge sender.log.length part.length).symm with fits | long) with
+        | inl =>
+          apply inSender
+          rw [partLog, take_eq_take_of_comparable comparable length fits]
+          exact List.take_prefix _ _
+        | inr =>
+          have short := Nat.lt_of_le_of_lt batchBound long
+          apply beyond short
+          rw [partLog, List.take_take, Nat.min_eq_left (Nat.le_of_lt short)]
+          exact take_eq_take_of_comparable comparable
+            (Nat.le_trans batchBound (Nat.le_trans (Nat.le_of_lt long) length)) batchBound
 
 /-- A signed prefix of the actor's log survives the step, unless a leader log
 of a later term lacks it. -/
