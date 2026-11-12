@@ -7939,10 +7939,12 @@ public theorem committed_logs_prefix
   let _ : Proofs.Config.InitialConfiguration := ⟨config⟩
   obtain ⟨indexA, foundA⟩ := CCF.Execution.Trace.mem_iff_exists_stateAt.mp memberA
   obtain ⟨indexB, foundB⟩ := CCF.Execution.Trace.mem_iff_exists_stateAt.mp memberB
-  rcases Nat.le_total indexA indexB with ordered | ordered
-  · exact Proofs.CommittedLogs.committed_logs_prefix_of_le ordered
+  split_rel le_total := (rcases Nat.le_total indexA indexB with ordered | ordered) with
+  | inl =>
+    exact Proofs.CommittedLogs.committed_logs_prefix_of_le ordered
       foundA.symm foundB.symm leftMember rightMember
-  · exact (Proofs.CommittedLogs.committed_logs_prefix_of_le ordered
+  | inr =>
+    exact (Proofs.CommittedLogs.committed_logs_prefix_of_le ordered
       foundB.symm foundA.symm rightMember leftMember).symm
 
 end Consensus.Proofs.CommittedLogs
