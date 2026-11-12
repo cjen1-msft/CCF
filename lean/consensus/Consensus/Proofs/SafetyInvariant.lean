@@ -7628,22 +7628,27 @@ private theorem rv_stable {node : NodeID} {term : Nat} {request : RequestVoteReq
         -> state.currentTerm = term
         -> makeRequestVoteRequest state = request := by
   intro state now role termEq
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨_, old⟩
-  · obtain ⟨_, logEq, commitEq, ⟨_, freshTerm, _⟩ | ⟨preRole, sameTerm, _⟩⟩ :=
-      Summary.candidate c.sum role
-    · obtain ⟨earlier, earlierSeen, earlierTerm⟩ := seen
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    split_rel candidate :=
+        (obtain ⟨_, logEq, commitEq, ⟨_, freshTerm, _⟩ | ⟨preRole, sameTerm, _⟩⟩ :=
+          Summary.candidate c.sum role) with
+    | inl =>
+      obtain ⟨earlier, earlierSeen, earlierTerm⟩ := seen
       have := c.inv.term_mono c.actor c.pre earlier c.pre_now earlierSeen
       exact absurd (Nat.le_trans
         (Nat.le_of_eq (earlierTerm.trans (termEq.symm.trans freshTerm)).symm) this)
         (Nat.not_succ_le_self _)
-    · have preTerm : c.pre.currentTerm = term := by
+    | inr =>
+      have preTerm : c.pre.currentTerm = term := by
         rw [← sameTerm]
         exact termEq
       have := stable c.pre c.pre_now preRole preTerm
       rw [makeRequestVoteRequest_eq] at this ⊢
       rw [logEq, commitEq, sameTerm]
       exact this
-  · exact stable state old role termEq
+  | inr => exact stable state old role termEq
 
 private theorem seen_term {node : NodeID} {term : Nat}
     (seen : exists state, Seen (before :: rest) node state /\ state.currentTerm = term)
