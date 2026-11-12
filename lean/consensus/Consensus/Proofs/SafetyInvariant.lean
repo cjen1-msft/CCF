@@ -7716,33 +7716,34 @@ private theorem messages : Messages (after :: before :: rest) := by
 
 private theorem message_terms : MessageTerms (after :: before :: rest) := by
   intro envelope pending bumping
-  rcases c.tr.mem_network pending with old | new
-  · exact c.inv.message_terms envelope old bumping
-  · have two := c.post_two (Or.inr ⟨envelope, new, bumping⟩)
+  split_rel mem_network := (rcases c.tr.mem_network pending with old | new) with
+  | inl => exact c.inv.message_terms envelope old bumping
+  | inr =>
+    have two := c.post_two (Or.inr ⟨envelope, new, bumping⟩)
     obtain ⟨_, ok⟩ := Summary.sends c.sum envelope new
-    cases h : envelope.payload with
-    | appendEntriesRequest request =>
+    split_rel h := (cases h : envelope.payload) with
+    | appendEntriesRequest =>
         simp only [h] at ok
         simp only [Message.term]
         exact Nat.le_trans two (Nat.le_of_eq ok.1.2.1.symm)
-    | appendEntriesResponse _ =>
+    | appendEntriesResponse =>
         rw [h] at bumping
         exact bumping.elim
-    | requestVoteRequest request =>
+    | requestVoteRequest =>
         simp only [h] at ok
         simp only [Message.term]
         exact Nat.le_trans two (Nat.le_of_eq ok.1.symm)
-    | requestVoteResponse response =>
+    | requestVoteResponse =>
         simp only [h] at ok
         simp only [Message.term]
         exact Nat.le_trans two (Nat.le_of_eq ok.1.symm)
-    | requestPreVoteRequest request =>
+    | requestPreVoteRequest =>
         simp only [h, Message.term] at ok ⊢
         exact Nat.le_trans two (Nat.le_of_eq ok.symm)
-    | requestPreVoteResponse response =>
+    | requestPreVoteResponse =>
         simp only [h, Message.term] at ok ⊢
         exact Nat.le_trans two (Nat.le_of_eq ok.symm)
-    | proposeRequestVoteRequest _ =>
+    | proposeRequestVoteRequest =>
         rw [h] at bumping
         exact bumping.elim
 
