@@ -7310,14 +7310,18 @@ private theorem accept_backed {source : NodeID} {request : AppendEntriesRequest}
     c.accept_shape received accepted
   obtain ⟨requestTerm, _, commitLe, _, _, _, commitEq⟩ := accepted
   rw [commitEq]
-  rcases Std.max_eq_or (a := c.pre.commitIndex)
-      (b := maxCommittableIndexUpTo c.post.log
-        (min request.primaryCommit (request.prevLogIndex + request.entries.length))) with
-    choice | choice <;> rw [choice]
-  · refine c.pre_backed_any ?_
-    rcases shape with same | ⟨fresh, _⟩
-    · rw [same]
-    · rw [fresh]
+  split_rel max_eq_or :=
+      (rcases Std.max_eq_or (a := c.pre.commitIndex)
+        (b := maxCommittableIndexUpTo c.post.log
+          (min request.primaryCommit (request.prevLogIndex + request.entries.length))) with
+        choice | choice) with
+  | inl =>
+    rw [choice]
+    refine c.pre_backed_any ?_
+    split_rel shape := (rcases shape with same | ⟨fresh, _⟩) with
+    | inl => rw [same]
+    | inr =>
+      rw [fresh]
       calc
         (sender.log.take (request.prevLogIndex + request.entries.length)).take
               c.pre.commitIndex
@@ -7329,17 +7333,22 @@ private theorem accept_backed {source : NodeID} {request : AppendEntriesRequest}
           rw [prevAgree]
         _ = c.pre.log.take c.pre.commitIndex := by
           rw [List.take_take, Nat.min_eq_left commitLe]
-  · have kLe := maxCommittableIndexUpTo_le c.post.log
+  | inr =>
+    rw [choice]
+    have kLe := maxCommittableIndexUpTo_le c.post.log
       (min request.primaryCommit (request.prevLogIndex + request.entries.length))
     have lcLe := aeok.2.2.2.2.2
     have senderTerm := canon.2.1
     obtain ⟨_, _, rfl⟩ := canon.1.nonempty
-    rcases (c.all Inv.commit_backed _ suffix (List.cons_ne_nil _ _) source sender canon.1).2
-        canon.2.2.1 (by rw [senderTerm]; exact canon.2.2.2) with
-      zero | ⟨earlier', part, committed, le, within⟩
-    · exact ⟨0, Or.inl (Nat.eq_zero_of_le_zero (Nat.le_trans kLe
+    split_rel commit_backed :=
+        (rcases (c.all Inv.commit_backed _ suffix (List.cons_ne_nil _ _) source sender canon.1).2
+          canon.2.2.1 (by rw [senderTerm]; exact canon.2.2.2) with
+          zero | ⟨earlier', part, committed, le, within⟩) with
+    | inl =>
+      exact ⟨0, Or.inl (Nat.eq_zero_of_le_zero (Nat.le_trans kLe
         (Nat.le_trans (Nat.min_le_left _ _) (Nat.le_trans lcLe (Nat.le_of_eq zero)))))⟩
-    · refine ⟨c.post.currentTerm, Or.inr
+    | inr =>
+      refine ⟨c.post.currentTerm, Or.inr
         ⟨earlier', part, committed.mono (suffix.trans c.suffix_tail),
           Nat.le_trans le (Nat.le_of_eq (senderTerm.trans requestTerm)), ?_⟩⟩
       generalize maxCommittableIndexUpTo c.post.log
