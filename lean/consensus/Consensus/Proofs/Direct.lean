@@ -130,11 +130,12 @@ private theorem step_next
         = some after)
     : next (Model.protocol Config.INITIAL_CONFIGURATION) before action = some after := by
   simp only [Model.transitionSystem, Model.networkStep] at stepped
-  split at stepped
-  · split at stepped
-    · exact stepped
-    · cases stepped
-  · exact stepped
+  split_rel stepped := (split at stepped) with
+  | pos =>
+    split_rel stepped := (split at stepped) with
+    | pos => exact stepped
+    | neg => cases stepped
+  | neg => exact stepped
 
 private theorem step_local
     {nodes : List NodeID} {before after : Model.State}
@@ -224,7 +225,19 @@ private theorem mem_of_nodeState {concrete : Model.State} {node : NodeID}
 private theorem observeTerm_log (state : NodeState) (message : Model.Node.Message)
     : (Model.Node.observeTerm state message).log = state.log := by
   unfold Model.Node.observeTerm Model.Node.updateTerm
-  split <;> (try split) <;> (try split) <;> rfl
+  split_rel message := (split) with
+  | proposeRequestVoteRequest => rfl
+  | appendEntriesResponse =>
+    split_rel primary := (split) with
+    | pos =>
+      split_rel newer := (split) with
+      | pos => rfl
+      | neg => rfl
+    | neg => rfl
+  | other =>
+    split_rel newer := (split) with
+    | pos => rfl
+    | neg => rfl
 
 private theorem observeTerm_commitIndex (state : NodeState) (message : Model.Node.Message)
     : (Model.Node.observeTerm state message).commitIndex = state.commitIndex := by
@@ -242,7 +255,9 @@ open Consensus.Model.Node
 @[simp]
 private theorem EntryContent.isSignature_eq_true {content : EntryContent}
     : content.isSignature = true <-> content = .signature := by
-  cases content <;> simp [EntryContent.isSignature]
+  split_rel content := (cases content) with
+  | transaction => simp [EntryContent.isSignature]
+  | signature => simp [EntryContent.isSignature]
 
 /-- A successful one-based lookup proves the index lies within the log. -/
 private theorem entryAtSomeIndexBound
@@ -252,9 +267,10 @@ private theorem entryAtSomeIndexBound
     (found : entryAt? log index = some entry)
     : index <= log.length := by
   unfold entryAt? at found
-  split at found
-  · simp_all
-  · rename_i indexNotZero
+  split_rel found := (split at found) with
+  | pos => simp_all
+  | neg =>
+    rename_i indexNotZero
     rw [List.getElem?_eq_some_iff] at found
     rcases found with ⟨within, _⟩
     rw [← Nat.sub_add_cancel (Nat.pos_of_ne_zero indexNotZero)]
@@ -271,9 +287,10 @@ private theorem entryAt_of_prefix
   rcases isPrefix with ⟨suffix, rightEq⟩
   rw [← rightEq]
   unfold entryAt? at found ⊢
-  by_cases zero : index = 0
-  · simp [zero] at found
-  · simp only [zero, ↓reduceIte] at found ⊢
+  split_rel zero := (by_cases zero : index = 0) with
+  | pos => simp [zero] at found
+  | neg =>
+    simp only [zero, ↓reduceIte] at found ⊢
     have within : index - 1 < left.length := by
       rw [List.getElem?_eq_some_iff] at found
       exact found.1
@@ -316,20 +333,21 @@ private theorem maxCommittableIndexBounded (log : List Entry)
         best <= log.length ->
         values.foldl choose best <= log.length := by
     intro values
-    induction values with
+    split_rel values := (induction values) with
     | nil =>
         intro best _ bestBound
         exact bestBound
-    | cons head tail inductionHypothesis =>
+    | cons =>
+        rename_i head tail inductionHypothesis
         intro best valuesBound bestBound
         apply inductionHypothesis
         · intro index member
           exact valuesBound index (by simp [member])
         · have headBound := valuesBound head (by simp)
           simp only [choose]
-          split
-          · exact Nat.max_le.mpr ⟨bestBound, headBound⟩
-          · exact bestBound
+          split_rel signature := (split) with
+          | pos => exact Nat.max_le.mpr ⟨bestBound, headBound⟩
+          | neg => exact bestBound
   change candidates.foldl choose 0 <= log.length
   exact foldBounded candidates 0 allBounded (Nat.zero_le _)
 
@@ -514,9 +532,9 @@ private theorem NodeState.recordCommit_eq (node : NodeID) (state : NodeState)
         /\ (role = state.role \/ role = .none) := by
   unfold NodeState.recordCommit
   dsimp only
-  split
-  · exact ⟨_, _, _, rfl, Or.inr rfl⟩
-  · exact ⟨_, _, _, rfl, Or.inl rfl⟩
+  split_rel retire := (split) with
+  | pos => exact ⟨_, _, _, rfl, Or.inr rfl⟩
+  | neg => exact ⟨_, _, _, rfl, Or.inl rfl⟩
 
 @[simp]
 private theorem NodeState.recordCommit_log (node : NodeID) (state : NodeState)
