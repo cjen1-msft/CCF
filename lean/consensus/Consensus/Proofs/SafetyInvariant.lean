@@ -6202,12 +6202,14 @@ private theorem wins_elect (wins : Wins c.actor c.pre c.event c.post)
     exact termCase
   · rw [logEq]
     simp only [primaryState]
-    split
-    · rw [candidateLog]
+    split_rel committed := (split) with
+    | pos =>
+      rw [candidateLog]
       exact take_prefix_take _ (by
         simp only [lastCommittableIndex, candidateLog]
         exact Nat.le_max_right _ _)
-    · rw [candidateLog]
+    | neg =>
+      rw [candidateLog]
       exact List.take_prefix _ _
   · intro voter mem
     rw [termEq]
