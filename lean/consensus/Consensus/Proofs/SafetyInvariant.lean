@@ -5619,9 +5619,12 @@ private theorem Doomed.cons' {history : History} {current : Model.State} {node :
     by rw [logEq, commitEq]; exact within,
     fun earlier inner seen => ?_
   ⟩
-  rcases List.suffix_cons_iff.mp inner with rfl | inner
-  · exact suffix.trans (List.suffix_cons _ _)
-  · obtain ⟨other, seenOther, otherTerm⟩ := seen
+  split_rel mp := (rcases List.suffix_cons_iff.mp inner with same | inner) with
+  | inl =>
+    subst same
+    exact suffix.trans (List.suffix_cons _ _)
+  | inr =>
+    obtain ⟨other, seenOther, otherTerm⟩ := seen
     exact order earlier inner ⟨other, seenOther, otherTerm.trans termEq⟩
 
 private theorem primaryState_log_prefix (state : NodeState)
