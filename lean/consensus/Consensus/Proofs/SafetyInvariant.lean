@@ -7633,26 +7633,26 @@ private theorem seen_term {node : NodeID} {term : Nat}
 private theorem old_message {envelope : Model.Envelope}
     (ok : MessageOK (before :: rest) envelope)
     : MessageOK (after :: before :: rest) envelope := by
-  cases h : envelope.payload with
-  | appendEntriesRequest request =>
+  split_rel h := (cases h : envelope.payload) with
+  | appendEntriesRequest =>
       simp only [MessageOK, h] at ok ⊢
       obtain ⟨earlier, suffix, rest'⟩ := ok
       exact ⟨earlier, suffix.trans c.suffix_tail, rest'⟩
-  | appendEntriesResponse response =>
+  | appendEntriesResponse =>
       simp only [MessageOK, h] at ok ⊢
       exact fun success => (ok success).mono c.suffix_tail
-  | requestVoteRequest request =>
+  | requestVoteRequest =>
       simp only [MessageOK, h] at ok ⊢
       obtain ⟨seen, stable⟩ := ok
       exact ⟨c.seen_term seen, c.rv_stable seen stable⟩
-  | requestVoteResponse response =>
+  | requestVoteResponse =>
       simp only [MessageOK, h] at ok ⊢
       intro granted
       obtain ⟨request, grantedBy, seen, stable⟩ := ok granted
       exact ⟨request, grantedBy.mono c.suffix_tail, c.seen_term seen, c.rv_stable seen stable⟩
-  | requestPreVoteRequest _ => simp only [MessageOK, h]
-  | requestPreVoteResponse _ => simp only [MessageOK, h]
-  | proposeRequestVoteRequest _ => simp only [MessageOK, h]
+  | requestPreVoteRequest => simp only [MessageOK, h]
+  | requestPreVoteResponse => simp only [MessageOK, h]
+  | proposeRequestVoteRequest => simp only [MessageOK, h]
 
 private theorem new_message {envelope : Model.Envelope} (new : envelope ∈ c.sent)
     : MessageOK (after :: before :: rest) envelope := by
