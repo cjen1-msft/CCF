@@ -7587,24 +7587,31 @@ private theorem persist : Persist (after :: before :: rest) := by
 
 private theorem match_ack : MatchAck (after :: before :: rest) := by
   intro node state peer now leader different positive
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨_, old⟩
-  · rcases Summary.leader c.sum leader with ⟨preLeader, termEq⟩ | wins
-    · rw [termEq]
-      rcases Summary.matchIndex c.sum leader preLeader termEq peer with
-        same | ⟨response, received, success, responseTerm, matchEq⟩
-      · rw [same] at positive ⊢
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    split_rel leader := (rcases Summary.leader c.sum leader with ⟨preLeader, termEq⟩ | wins) with
+    | inl =>
+      rw [termEq]
+      split_rel matchIndex :=
+          (rcases Summary.matchIndex c.sum leader preLeader termEq peer with
+            same | ⟨response, received, success, responseTerm, matchEq⟩) with
+      | inl =>
+        rw [same] at positive ⊢
         exact (c.inv.match_ack c.actor c.pre peer c.pre_now preLeader different
           positive).mono c.suffix_tail
-      · rw [matchEq]
+      | inr =>
+        rw [matchEq]
         obtain ⟨envelope, ok, sourceEq, _, payload⟩ := c.received_ok received
         simp only [MessageOK, payload] at ok
         have acked := ok success
         rw [sourceEq, responseTerm] at acked
         exact acked.mono c.suffix_tail
-    · obtain ⟨_, _, _, _, _, _, zero, _⟩ := Wins.facts wins
+    | inr =>
+      obtain ⟨_, _, _, _, _, _, zero, _⟩ := Wins.facts wins
       rw [zero] at positive
       exact absurd positive (Nat.lt_irrefl 0)
-  · exact (c.inv.match_ack node state peer old leader different positive).mono c.suffix_tail
+  | inr => exact (c.inv.match_ack node state peer old leader different positive).mono c.suffix_tail
 
 /-- Vote requests recorded for a candidacy stay accurate while it lasts. -/
 private theorem rv_stable {node : NodeID} {term : Nat} {request : RequestVoteRequest}
