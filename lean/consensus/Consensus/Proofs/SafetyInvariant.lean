@@ -5522,19 +5522,22 @@ private theorem committed_comparable {history : History}
       rfl, _⟩ := committed'.shape
     have canon' : Canon history term' state.log :=
       ⟨_, suffix, leader, state, ⟨now, termEq, role, led⟩, rfl⟩
-    rcases Nat.eq_or_lt_of_le le with rfl | lt
-    · obtain ⟨current₀, rest₀, leader₀, state₀, _, index₀, suffix₀,
+    split_rel eq_or_lt_of_le := (rcases Nat.eq_or_lt_of_le le with same | lt) with
+    | inl =>
+      subst same
+      obtain ⟨current₀, rest₀, leader₀, state₀, _, index₀, suffix₀,
         ⟨⟨now₀, termEq₀, role₀, led₀⟩, _⟩, rfl, _⟩ := committed.shape
       have canon : Canon history term state₀.log :=
         ⟨_, suffix₀, leader₀, state₀, ⟨now₀, termEq₀, role₀, led₀⟩, rfl⟩
-      rcases canon_chain mono canon canon' with sub | sub
-      · exact comparable_of_prefix ((List.take_prefix _ _).trans sub) (List.take_prefix _ _)
-      · exact comparable_of_prefix (List.take_prefix _ _) ((List.take_prefix _ _).trans sub)
-    · exact comparable_of_prefix (committed_in_canon complete mono committed canon' lt)
+      split_rel canon_chain := (rcases canon_chain mono canon canon' with sub | sub) with
+      | inl => exact comparable_of_prefix ((List.take_prefix _ _).trans sub) (List.take_prefix _ _)
+      | inr => exact comparable_of_prefix (List.take_prefix _ _) ((List.take_prefix _ _).trans sub)
+    | inr =>
+      exact comparable_of_prefix (committed_in_canon complete mono committed canon' lt)
         (List.take_prefix _ _)
-  rcases Nat.le_total first second with le | le
-  · exact inCanon leftCommitted rightCommitted le
-  · exact (inCanon rightCommitted leftCommitted le).symm
+  split_rel le_total := (rcases Nat.le_total first second with le | le) with
+  | inl => exact inCanon leftCommitted rightCommitted le
+  | inr => exact (inCanon rightCommitted leftCommitted le).symm
 
 /--
 A committed prefix is committed no later than `bound`, or a commit step of a
