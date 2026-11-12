@@ -7,4 +7,3 @@ chunk	file	first	last	start_line	end_line	splits	theorems	notes
 6	SafetyInvariant	Consensus.Proofs.Concrete.mem_replaceNode	Consensus.Proofs.Safety.acceptLog_eq	1143	2358	63	31	-
 7	SafetyInvariant	Consensus.Proofs.Safety.configurationHistory_split	Consensus.Proofs.Safety.becomeCandidate_sends	2375	3756	61	31	-
 8	Direct	Consensus.Proofs.Direct.Keeps.guard'	Consensus.Proofs.Direct.Keeps.foldlM'	783	831	4	4	-
-pilot	SafetyInvariant	Consensus.Proofs.Concrete.mem_replaceNode	Consensus.Proofs.Direct.NodeInvariant.reachable	1143	1742	27	12	pilot
