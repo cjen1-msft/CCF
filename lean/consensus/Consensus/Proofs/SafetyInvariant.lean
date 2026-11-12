@@ -1147,10 +1147,12 @@ private theorem mem_replaceNode {nodes : List (NodeID × NodeState)} {node membe
       \/ (Not (member = node) /\ (member, state) ∈ nodes) := by
   simp only [replaceNode, List.mem_map] at found
   obtain ⟨⟨key, old⟩, listed, same⟩ := found
-  by_cases here : key = node
-  · simp only [here, beq_self_eq_true, ite_true, Prod.mk.injEq] at same
+  split_rel here := (by_cases here : key = node) with
+  | pos =>
+    simp only [here, beq_self_eq_true, ite_true, Prod.mk.injEq] at same
     exact Or.inl ⟨same.1.symm, same.2.symm⟩
-  · have different : (key == node) = false := by simpa using here
+  | neg =>
+    have different : (key == node) = false := by simpa using here
     simp only [different, Bool.false_eq_true, ite_false, Prod.mk.injEq] at same
     obtain ⟨rfl, rfl⟩ := same
     exact Or.inr ⟨here, listed⟩
