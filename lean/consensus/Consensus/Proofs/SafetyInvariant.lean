@@ -6467,18 +6467,22 @@ private theorem candidate : Candidate (after :: before :: rest) := by
 
 private theorem elect_backed : ElectBacked (after :: before :: rest) := by
   intro a b r node term log commit suffix step
-  rcases List.suffix_cons_iff.mp suffix with same | inner
-  · simp only [List.cons.injEq] at same
+  split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp suffix with same | inner) with
+  | inl =>
+    simp only [List.cons.injEq] at same
     obtain ⟨rfl, rfl, rfl⟩ := same
     have ⟨actorEq, logEq, commitEq, termCase, _, _, _, three⟩ := c.electStep step
     subst actorEq
-    rcases termCase with lt | ⟨same, preRole⟩
-    · rcases c.pre_split (term - 1) with backed
+    split_rel termCase := (rcases termCase with lt | ⟨same, preRole⟩) with
+    | inl =>
+      split_rel pre_split := (rcases c.pre_split (term - 1) with backed
           | ⟨current, past, leader, leaderState, late, base, index, inner, commitStep, below,
-            baseLe, within⟩
-      · rw [← logEq, ← commitEq]
+            baseLe, within⟩) with
+      | inl =>
+        rw [← logEq, ← commitEq]
         exact backed
-      · exfalso
+      | inr =>
+        exfalso
         refine c.doomed_absurd step ?_ inner commitStep (by omega) (by omega)
           (by rw [← logEq, ← commitEq]; exact within) ?_
         · intro entry member
@@ -6489,13 +6493,16 @@ private theorem elect_backed : ElectBacked (after :: before :: rest) := by
           obtain ⟨other, seenOther, otherTerm⟩ := seen
           have := c.pre_terms earlierSuffix seenOther
           omega
-    · obtain ⟨_, _, _, backed, low⟩ := c.inv.candidate c.actor c.pre c.pre_now preRole
-      rcases backed with backed
+    | inr =>
+      obtain ⟨_, _, _, backed, low⟩ := c.inv.candidate c.actor c.pre c.pre_now preRole
+      split_rel backed := (rcases backed with backed
           | ⟨current, past, leader, leaderState, late, base, index, inner, commitStep, le,
-            baseLe, within, order⟩
-      · rw [← logEq, ← commitEq, ← same]
+            baseLe, within, order⟩) with
+      | inl =>
+        rw [← logEq, ← commitEq, ← same]
         exact backed
-      · exfalso
+      | inr =>
+        exfalso
         refine c.doomed_absurd step ?_ inner commitStep (by omega) (by omega)
           (by rw [← logEq, ← commitEq]; exact within)
           fun earlier earlierSuffix seen => order earlier earlierSuffix ?_
@@ -6505,7 +6512,7 @@ private theorem elect_backed : ElectBacked (after :: before :: rest) := by
           omega
         · obtain ⟨other, seenOther, otherTerm⟩ := seen
           exact ⟨other, seenOther, otherTerm.trans same.symm⟩
-  · exact c.inv.elect_backed a b r node term log commit inner step
+  | inr => exact c.inv.elect_backed a b r node term log commit inner step
 
 end Consensus.Proofs.Safety.Ctx
 
