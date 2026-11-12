@@ -3600,18 +3600,20 @@ private theorem committed_log_later {nodes : List NodeID}
             (node, laterState) ∈ later.nodes
             /\ firstState.committedLog <+: laterState.committedLog := by
   intro offset
-  induction offset with
+  split_rel offset := (induction offset) with
   | zero =>
       intro later atLater
       rw [Nat.add_zero, found] at atLater
       cases atLater
       exact ⟨firstState, member, List.prefix_refl _⟩
-  | succ offset ih =>
+  | succ =>
+      rename_i offset ih
       intro later atLater
       rw [← Nat.add_assoc] at atLater
-      cases atMiddle : trace.stateAt (index + offset) with
+      split_rel atMiddle := (cases atMiddle : trace.stateAt (index + offset)) with
       | none => simp [trace.states.le_stable (Nat.le_succ _) atMiddle] at atLater
-      | some middle =>
+      | some =>
+          rename_i middle
           obtain ⟨middleState, middleMember, prefixed⟩ := ih middle atMiddle
           obtain ⟨action, stepped⟩ := trace.step (index + offset) middle later atMiddle atLater
           obtain ⟨laterState, laterMember⟩ := present_after_step stepped middleMember
