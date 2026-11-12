@@ -2930,20 +2930,25 @@ private theorem foldl_select_max (P : Nat -> Prop) [DecidablePred P] (values : L
       \/ P
           (values.foldl (fun best index => if P index then max best index else best)
             init) := by
-  induction values generalizing init with
+  split_rel values := (induction values generalizing init) with
   | nil => exact Or.inl rfl
-  | cons head tail ih =>
+  | cons =>
+      rename_i head tail ih
       simp only [List.foldl_cons]
-      rcases ih (if P head then max init head else init) with same | holds
-      · rw [same]
-        by_cases chosen : P head
-        · rcases Nat.le_total init head with le | le
-          · right
+      split_rel ih := (rcases ih (if P head then max init head else init) with same | holds) with
+      | inl =>
+        rw [same]
+        split_rel chosen := (by_cases chosen : P head) with
+        | pos =>
+          split_rel le_total := (rcases Nat.le_total init head with le | le) with
+          | inl =>
+            right
             simp [chosen, Nat.max_eq_right le]
-          · left
+          | inr =>
+            left
             simp [chosen, Nat.max_eq_left le]
-        · simp [chosen]
-      · exact Or.inr holds
+        | neg => simp [chosen]
+      | inr => exact Or.inr holds
 
 private theorem foldl_select_max_pos (P : Nat -> Prop) [DecidablePred P]
     (values : List Nat)
