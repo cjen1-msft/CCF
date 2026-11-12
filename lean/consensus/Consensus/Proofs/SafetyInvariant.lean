@@ -6397,18 +6397,23 @@ private theorem campaign_backed {state : NodeState} (logEq : state.log = c.pre.l
     (termEq : state.currentTerm = c.pre.currentTerm + 1)
     : Backed (after :: before :: rest) state.log state.commitIndex (state.currentTerm - 1)
       \/ Doomed (after :: before :: rest) c.actor state := by
-  rcases c.pre_split c.pre.currentTerm with backed
+  split_rel pre_split := (rcases c.pre_split c.pre.currentTerm with backed
       | ⟨current, past, leader, leaderState, late, base, index, suffix, step, lt, baseLe,
-        within⟩
-  · left
+        within⟩) with
+  | inl =>
+    left
     rw [logEq, commitEq, termEq, Nat.add_sub_cancel]
     exact backed.mono c.suffix_tail
-  · refine Or.inr ⟨current, past, leader, leaderState, late, base, index,
+  | inr =>
+    refine Or.inr ⟨current, past, leader, leaderState, late, base, index,
       suffix.trans c.suffix_tail, step, by omega, by omega, by rw [logEq, commitEq]; exact within,
       fun earlier inner seen => ?_⟩
-    rcases List.suffix_cons_iff.mp inner with rfl | inner
-    · exact suffix.trans c.suffix_tail
-    · obtain ⟨other, seenOther, otherTerm⟩ := seen
+    split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp inner with same | inner) with
+    | inl =>
+      subst same
+      exact suffix.trans c.suffix_tail
+    | inr =>
+      obtain ⟨other, seenOther, otherTerm⟩ := seen
       have := c.pre_terms inner seenOther
       omega
 
