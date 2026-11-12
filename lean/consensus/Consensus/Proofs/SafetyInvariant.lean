@@ -6053,9 +6053,11 @@ private theorem sorted : Sorted (after :: before :: rest) := by
 
 private theorem active : Active (after :: before :: rest) := by
   intro node state now role
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨_, old⟩
-  · exact c.post_two (Or.inl role)
-  · exact c.inv.active node state old role
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    exact c.post_two (Or.inl role)
+  | inr => exact c.inv.active node state old role
 
 private theorem term_mono : TermMono (after :: before :: rest) := by
   intro node state earlier now seen
