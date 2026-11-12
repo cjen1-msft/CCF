@@ -7265,12 +7265,17 @@ private theorem keep_backed
     : Backed (after :: before :: rest) c.post.log c.post.commitIndex
         c.post.currentTerm := by
   rw [commitEq]
-  rcases c.led_after led with old | ⟨log, commit, step⟩
-  · rcases c.inv.led_cur c.actor c.pre c.post.currentTerm c.pre_now old with lt | ⟨same, preRole⟩
-    · exact absurd c.term_le (Nat.not_le.mpr lt)
-    · rw [same] at old
+  split_rel led_after := (rcases c.led_after led with old | ⟨log, commit, step⟩) with
+  | inl =>
+    split_rel led_cur :=
+        (rcases c.inv.led_cur c.actor c.pre c.post.currentTerm c.pre_now old with
+          lt | ⟨same, preRole⟩) with
+    | inl => exact absurd c.term_le (Nat.not_le.mpr lt)
+    | inr =>
+      rw [same] at old
       exact (c.pre_backed agree preRole old).mono c.suffix_tail
-  · have ⟨_, logEq, commitEq', _⟩ := c.electStep step
+  | inr =>
+    have ⟨_, logEq, commitEq', _⟩ := c.electStep step
     have backed := c.elect_backed after before rest c.actor _ log commit (List.suffix_refl _) step
     rw [← logEq, ← commitEq'] at backed
     exact ((backed.weaken (Nat.sub_le _ _)).transfer agree).mono c.suffix_tail
