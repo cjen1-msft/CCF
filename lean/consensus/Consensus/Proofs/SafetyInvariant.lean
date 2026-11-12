@@ -6548,11 +6548,12 @@ private theorem seen_split {history : History} (termMono : Everywhere TermMono h
     have := termMono _ earlierSuffix (List.cons_ne_nil _ _) node state granted now
       ⟨a, within.subset List.mem_cons_self, mem⟩
     exact Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt this)
-  rcases suffix_comparable earlierSuffix suffix with inner | outer
-  · rcases List.suffix_cons_iff.mp inner with same | inner
-    · exact (late (same ▸ List.suffix_refl _)).elim
-    · exact now.seen.mono inner
-  · exact (late outer).elim
+  split_rel suffix_comparable := (rcases suffix_comparable earlierSuffix suffix with inner | outer) with
+  | inl =>
+    split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp inner with same | inner) with
+    | inl => exact (late (same ▸ List.suffix_refl _)).elim
+    | inr => exact now.seen.mono inner
+  | inr => exact (late outer).elim
 
 /-- Prefix of a list of known length. -/
 private theorem take_of_prefix_length {α : Type} {small large : List α} {n : Nat}
