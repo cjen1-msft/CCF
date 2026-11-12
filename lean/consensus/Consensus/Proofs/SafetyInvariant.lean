@@ -4598,16 +4598,20 @@ private theorem aeReply_summary {self source : NodeID} {before z after : NodeSta
           -> SendOK self before (.receive source (.appendEntriesRequest request)) after
               e := by
   obtain ⟨term, _, _, _, _, rest⟩ := reply
-  rcases rest with ⟨log', commit', nacks⟩ | ⟨same, commitLe, matches_, accepted, committed, e,
-    rfl, source', _, payload⟩
-  · refine ⟨Kind.same (log'.trans log) (commit'.trans commit), fun e member => ?_⟩
+  split_rel rest :=
+      (rcases rest with ⟨log', commit', nacks⟩ | ⟨same, commitLe, matches_, accepted, committed, e,
+        sentEq, source', _, payload⟩) with
+  | inl =>
+    refine ⟨Kind.same (log'.trans log) (commit'.trans commit), fun e member => ?_⟩
     obtain ⟨source', response, payload, failed⟩ := nacks e member
     refine ⟨source', ?_⟩
     rw [payload]
     intro success
     rw [failed] at success
     cases success
-  · have acceptedBy : Accepted before request after := by
+  | inr =>
+    subst sentEq
+    have acceptedBy : Accepted before request after := by
       unfold appendEntryMatchesLog at matches_
       rw [log] at matches_
       refine ⟨same.trans term.symm, same ▸ termLe, commit ▸ commitLe, matches_.1, matches_.2,
