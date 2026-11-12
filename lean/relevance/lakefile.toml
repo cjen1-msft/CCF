@@ -1,0 +1,12 @@
+name = "relevance"
+version = "0.1.0"
+moreLeanArgs = ["-DwarningAsError=true"]
+defaultTargets = ["Relevance"]
+
+[[require]]
+name = "ccf_common"
+path = "../common"
+copy = false
+
+[[lean_lib]]
+name = "Relevance"

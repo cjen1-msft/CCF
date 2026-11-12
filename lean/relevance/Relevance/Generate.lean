@@ -1,0 +1,543 @@
+module
+
+public meta import Lean
+public import Relevance.Walk
+
+/-!
+# Generating the step signature and state context from the recorded splits
+
+Nothing here mentions a particular model. A model author writes, in a module that imports the
+proof with `import all`:
+
+    relevance_generate Ns
+      (scope := Pkg.Proof) (package := [Pkg]) (roots := [Pkg.Proof.main₁, Pkg.Proof.main₂])
+      (step := fun {n : Nat} (s : State n) (a : Action n) (t : State n) => step s a = some t)
+      (state := fun {n : Nat} (s : State n) => Invariant s)
+
+The two patterns are the only model-specific input. The explicit binders of `step` are the step
+(pre-state, action, post-state); those of `state` are the state; the other binders are parameters.
+
+Levels. The theorems in scope used by the roots (transitively) are classified by their header.
+A theorem is step-level when one of its hypotheses matches the `step` pattern; state-level when one
+matches the `state` pattern, none matches `step`, and exactly one binder has the state's type;
+other otherwise. The walked roots are the step-level and state-level theorems not used by another
+step-level or state-level theorem, and the given roots of level other (which do not inline the
+former).
+
+A split counts when at least two of its branches are live (not closed by contradiction) and no
+live branch's script closes every other live branch (the replay test of `split_rel`).
+
+Generated:
+
+- `Ns.StepBranch`: one constructor per distinct predicate of a live `step-own` or `effect` branch
+  of a counting split under a step-level root (see `Walk.lean` for the roles), with one predicate
+  definition `Ns.step_<name>` per constructor and the set `Ns.sig`;
+- `Ns.StateBranch`: one constructor per live branch of a counting split under a state-level root,
+  with `Ns.state_<name>` and the set `Ns.ctx`;
+- `Ns.creates`: the step makes some instance of some clause of the state pattern's structure new
+  (its premises hold after the step and not before);
+- `Ns.table`: a TSV of every recorded split branch, every unrecorded split and every clause;
+- `Ns.branch_<i>` and `Ns.frame_<i>`: the branch and frame lemmas of `Walk.lean`;
+- `Ns.telescope_<i>`, for every branch occurrence of a step or state class: the class predicate
+  (`Ns.step_<name>` or `Ns.state_<name>`) is, by `Iff.refl`, the closure of the branch lemma's
+  telescope (with the negated pre-state premises of an `effect` branch);
+- `Ns.rederive_<root>`, for every walked root: the root's statement, proved by its rebuilt proof
+  term, in which every branch is a call of its branch lemma.
+
+The elaborator logs two summary lines: the tie-back (lemmas generated, of all, and what the
+re-derived proofs still take from the marked-up proof: branch markers and theorems containing
+markers), and the relevance line ending in the number of unrecorded splits.
+
+`unfold_ns Ns` (a tactic) delta-expands every constant whose name starts with `Ns` in the goal.
+-/
+
+public meta section
+
+open Lean Elab Command Meta
+
+namespace Relevance
+
+/-- The root fvars matched by the explicit-or-not binders of `pat`, if `hyp` matches its body. -/
+def matchPat (pat hyp : Expr) : MetaM (Option (Array Expr)) := do
+  let saved ← saveState
+  let (ms, _, body) ← lambdaMetaTelescope pat
+  let ok ← try withReducible (isDefEq body hyp) catch _ => pure false
+  if ok then
+    let vs ← ms.mapM instantiateMVars
+    if vs.all (·.isFVar) && (vs.map (·.fvarId!)).toList.eraseDups.length == vs.size then
+      return some vs
+  saved.restore
+  return none
+
+/-- The theorem's level and, for step and state levels, the root binders matched by the pattern. -/
+def classify (cfg : Config) (xs : Array Expr) : MetaM (Level × Array Expr) := do
+  for x in xs do
+    if let some vs ← matchPat cfg.stepPat (← inferType x) then return (.step, vs)
+  for x in xs do
+    if let some vs ← matchPat cfg.statePat (← inferType x) then
+      let some sv := vs.back? | continue
+      let sty ← inferType sv
+      let mut count := 0
+      for y in xs do
+        if ← withReducible (isDefEq (← inferType y) sty) then count := count + 1
+      if count == 1 then return (.state, vs)
+  return (.other, #[])
+
+def theoremsUsed (cfg : Config) (c : Name) : CoreM (Array Name) := do
+  let some ci := (← getEnv).find? c | return #[]
+  let some v := ci.value? (allowOpaque := true) | return #[]
+  let env ← getEnv
+  return v.getUsedConstants.filter fun d =>
+    cfg.scope.isPrefixOf ((privateToUserName? d).getD d) &&
+      (env.find? d matches some (.thmInfo _))
+
+structure Result where
+  branches : Array BranchRec := #[]
+  splits : Array SplitRec := #[]
+  unrecorded : Array Unrecorded := #[]
+  noValue : Array Name := #[]
+  levels : Array (Name × Level × Bool) := #[]
+  unusedHaves : Array (Name × String) := #[]
+  ties : Array TieRec := #[]
+  /-- Per walked step-level or state-level root: the re-derived theorem, or the error. -/
+  rederived : Array (Name × Except String Name) := #[]
+  deriving Inhabited
+
+/-- Walk every root; returns all records. -/
+def analyse (cfg : Config) (roots : Array Name) : MetaM Result := do
+  -- closure of the given roots over theorems in scope
+  let mut seen : Array Name := #[]
+  let mut todo := roots
+  let mut uses : Std.HashMap Name (Array Name) := {}
+  while !todo.isEmpty do
+    let c := todo.back!
+    todo := todo.pop
+    if seen.contains c then continue
+    seen := seen.push c
+    let us ← theoremsUsed cfg c
+    uses := uses.insert c us
+    todo := todo ++ us
+  let mut levels : Std.HashMap Name Level := {}
+  for c in seen do
+    let ci ← getConstInfo c
+    let lvl ← forallTelescope ci.type fun xs _ => return (← classify cfg xs).1
+    levels := levels.insert c lvl
+  let isTop (c : Name) : Bool := match levels.get? c with
+    | some .other | none => false
+    | _ => !seen.any fun d =>
+        d != c && (levels.get? d matches some .step | some .state) && (uses.getD d #[]).contains c
+  let tops := seen.filter isTop
+  let others := roots.filter fun c => levels.get? c matches some .other
+  let mut res : Result := {}
+  for c in seen do
+    res := { res with levels := res.levels.push (c, levels.getD c .other, tops.contains c) }
+  let mut st : St := {}
+  let mut rederived := #[]
+  for root in tops ++ others do
+    let ci ← getConstInfo root
+    let some v := ci.value? (allowOpaque := true) | throwError "relevance: no proof for {root}"
+    let pat := match levels.getD root .other with
+      | .step => cfg.stepPat
+      | _ => cfg.statePat
+    let (st', rd) ← lambdaTelescope pat fun ps _ => forallTelescope ci.type fun xs _ => do
+      let (lvl, keep) ← classify cfg xs
+      let firstExplicit ← (List.range ps.size).findM? fun i => do
+        return (← ps[i]!.fvarId!.getBinderInfo) == .default
+      let pre := if lvl == .step then firstExplicit.bind (keep[·]?) else none
+      let ctx : Ctx := { cfg, root, level := lvl, keep, pattern := ps, pre, rootBinders := xs,
+                         stop := if lvl == .other then tops else #[] }
+      let st := { st with path := #[], calls := {}, inProgress := #[], stack := #[],
+                          condStack := #[], region := false }
+      let (e, st) ← ((walk (v.beta xs)).run ctx).run st
+      -- the root proved again by the rebuilt term, in which branches are calls of their lemmas
+      if lvl == .other || cfg.ns.isAnonymous then return (st, none)
+      let name := cfg.ns ++ Name.mkSimple s!"rederive_{root.components.getLast!}"
+      let r ← try
+          let value ← mkLambdaFVars xs e
+          pure (← addTheorem name ci.type value)
+        catch ex => pure (.error (← ex.toMessageData.toString))
+      return (st, some (root, r.map fun () => name))
+    st := st'
+    if let some x := rd then rederived := rederived.push x
+  return { res with branches := st.branches, splits := st.splits,
+                    unrecorded := st.unrecorded, noValue := st.noValue,
+                    unusedHaves := st.unusedHaves, ties := st.ties, rederived }
+
+/-- Per split occurrence: whether it counts and why. -/
+def counts (r : Result) (s : SplitRec) : Bool × String :=
+  let bs := s.branches.map (r.branches[·]!)
+  let live := bs.filter (!·.dead)
+  let refut := if s.refutation then "inside a refutation; " else ""
+  if live.size < 2 then (false, s!"{refut}{live.size} live branch(es)")
+  else if s.coveredBy != "" then
+    (false, s!"{refut}redundant: the script of {s.coveredBy} closes every live branch")
+  else (true, s!"{refut}{live.size} live branches, no script closes the others")
+
+def sanitize (s : String) : String :=
+  String.ofList (s.toList.map fun c => if c.isAlphanum then c else '_')
+
+def table (r : Result) (classOf : Array String := #[])
+    (clauses : Array String := #[]) : MetaM String := do
+  let mut rows := #["kind\troot\tlevel\tcall_path\tdecl\tsplit\tbranch\tlive\tcounts\twhy\tconditions\tpredicate\tclause\trole\tclass\ttie_back"]
+  for (b, idx) in r.branches.zipIdx do
+    let s := r.splits[b.splitId]!
+    let (c, why) := counts r s
+    let tie := (r.ties.filter (·.branch == idx)).toList.map fun t => match t.name with
+      | some n => s!"{n.components.getLast!}{if t.fallback != "" then s!" (by the original term; rebuilt term {t.fallback})" else ""}"
+      | none => s!"{t.kind} lemma not proved: {t.error}"
+    rows := rows.push <| "\t".intercalate [
+      "branch", b.root.toString, b.level.str, "/".intercalate b.path.toList, b.decl.toString,
+      b.split, b.tag, if b.dead then "dead" else "live", toString c, why,
+      " ∧ ".intercalate b.conds.toList, b.predStr, b.clause, b.role, (classOf[idx]?).getD "-",
+      if tie.isEmpty then "-" else "; ".intercalate tie]
+  for u in r.unrecorded do
+    rows := rows.push <| "\t".intercalate [
+      "unrecorded", u.root.toString, "-", "/".intercalate u.path.toList, u.decl.toString,
+      u.head.toString, u.major, "-", "-",
+      if u.internal then "internal to automation" else "protocol", u.cond, "-"]
+  for (c, l, top) in r.levels do
+    rows := rows.push s!"theorem\t{c}\t{l.str}\t-\t{c}\t-\t-\t-\t-\t{if top then "walked as root" else "inlined"}\t-\t-"
+  for c in r.noValue do
+    rows := rows.push s!"no_value\t{c}\t-\t-\t{c}\t-\t-\t-\t-\tproof not available\t-\t-"
+  for (c, n) in r.unusedHaves do
+    rows := rows.push s!"unused_have\t{c}\t-\t-\t{c}\t-\t{n}\t-\t-\thave never used: its branches are not walked\t-\t-"
+  for c in clauses do
+    rows := rows.push s!"clause\t{c}"
+  return "\n".intercalate rows.toList ++ "\n"
+
+def uniqueNames (bases : Array String) : Array String := Id.run do
+  let mut names : Array String := #[]
+  for base in bases do
+    let mut nm := base
+    let mut k := 2
+    while names.contains nm do
+      nm := s!"{base}_{k}"
+      k := k + 1
+    names := names.push nm
+  return names
+
+/-- Declare `ns.ty` with one constructor per item (name, doc, predicate), a predicate definition
+per constructor and `ns.set`. -/
+def generate (ns ty setName : Name) (prefix_ : String) (items : Array (String × String × Expr)) :
+    CommandElabM Unit := do
+  let tyName := ns ++ ty
+  let ctorLines := items.map fun (n, d, _) => s!"  /-- {d} -/\n  | {n}"
+  let src := s!"inductive {tyName} : Type where\n{"\n".intercalate ctorLines.toList}\n  deriving DecidableEq, Repr"
+  let env ← getEnv
+  match Parser.runParserCategory env `command src with
+  | .error e => throwError "relevance_generate: {e}\n{src}"
+  | .ok stx => elabCommand stx
+  -- predicates
+  let mut preds : Array Name := #[]
+  for (n, _, p) in items do
+    let declName := ns ++ Name.mkSimple s!"{prefix_}_{n}"
+    let ty ← liftTermElabM do inferType p
+    let lps := (collectLevelParams {} p).params.toList
+    liftCoreM <| addDecl <| .defnDecl {
+      name := declName, levelParams := lps, type := ty, value := p,
+      hints := .abbrev, safety := .safe }
+    preds := preds.push declName
+  -- the set: fun xs b => casesOn b (pred₁ xs) …
+  let some (_, _, p0) := items[0]? | return
+  let v ← liftTermElabM do
+    lambdaTelescope p0 fun xs _ => do
+      withLocalDeclD `b (mkConst tyName) fun bv => do
+        let motive ← mkLambdaFVars #[bv] (mkSort Level.zero)
+        let minors ← preds.mapM fun pn => do
+          let ci ← getConstInfo pn
+          return mkAppN (mkConst pn (ci.levelParams.map mkLevelParam)) xs
+        let body := mkAppN (mkConst (tyName ++ `casesOn) [Level.one]) (#[motive, bv] ++ minors)
+        let v ← mkLambdaFVars (xs.push bv) body
+        check v
+        return v
+  let tyv ← liftTermElabM do inferType v
+  let lps := (collectLevelParams {} v).params.toList
+  liftCoreM <| addDecl <| .defnDecl {
+    name := ns ++ setName, levelParams := lps, type := tyv, value := v,
+    hints := .abbrev, safety := .safe }
+
+def branchDoc (b : BranchRec) : String :=
+  let cl := if b.clause == "-" then "" else s!"clause {b.clause}, "
+  s!"{b.root} / {"/".intercalate b.path.toList} : {cl}split {b.split}, branch {b.tag}"
+
+/-- `creates`: over the step pattern's binders, the disjunction over the clauses of the
+state pattern's structure of `∃ x, P(post, x) ∧ ¬ P(pre, x)`. Also returns, per clause, its name
+and its numbers of data binders and premises (a clause without premises has no new instances). -/
+def mkCreates (cfg : Config) : MetaM (Option Expr × Array (String × Nat × Nat)) := do
+  let some ctor := cfg.stateCtor | return (none, #[])
+  lambdaTelescope cfg.stepPat fun ps _ => do
+    let mut es := #[]
+    for p in ps do
+      if (← p.fvarId!.getBinderInfo) == .default then es := es.push p
+    let some pre := es[0]? | return (none, #[])
+    let post := es.back!
+    let tyT ← stateAt cfg.statePat post
+    let tyS ← stateAt cfg.statePat pre
+    let cv ← getConstInfoCtor ctor
+    let ty := cv.type.instantiateLevelParams cv.levelParams tyT.getAppFn.constLevels!
+    let mut tT ← instantiateForall ty tyT.getAppArgs
+    let mut tS ← instantiateForall ty tyS.getAppArgs
+    let names := (getStructureInfo? (← getEnv) cv.induct).map (·.fieldNames) |>.getD #[]
+    let mut disj := #[]
+    let mut shapes := #[]
+    for k in [0:cv.numFields] do
+      let fT := tT.bindingDomain!
+      let fS := tS.bindingDomain!
+      let name := (names[k]?.map (·.toString)).getD s!"field{k}"
+      let (nd, npr) ← clauseShape fT
+      shapes := shapes.push (name, nd, npr)
+      if npr > 0 then
+        let d ← forallBoundedTelescope fT (some (nd + npr)) fun ys _ => do
+          let xs := ys.extract 0 nd
+          let prems := ys.extract nd ys.size
+          let premT ← prems.mapM inferType
+          let premS ← premisesAt fS xs prems
+          let mut body := mkAnd (mkAndN premT) (mkNot (mkAndN premS))
+          for x in xs.reverse do
+            let xty ← inferType x
+            body := mkApp2 (mkConst ``Exists [← getLevel xty]) xty (← mkLambdaFVars #[x] body)
+          return body
+        disj := disj.push d
+      if tT.bindingBody!.hasLooseBVars || tS.bindingBody!.hasLooseBVars then
+        throwError "relevance: clause {name} is used by a later clause's statement"
+      tT := tT.bindingBody!
+      tS := tS.bindingBody!
+    let v ← mkLambdaFVars ps (mkOrN disj)
+    check v
+    return (some v, shapes)
+
+/-- `∀ pattern, cls pattern ↔ ∃ closed, hyps ∧ extra`, where the right side is rebuilt from the
+binders of the branch lemma of `tie` (its closed variables and hypotheses), proved by `Iff.rfl`:
+the class statement is the closure of that lemma's telescope. -/
+def telescopeLemma (name cls : Name) (tie : TieRec) : MetaM (Except String Unit) := do
+  let some lemma := tie.name | return .error "no branch lemma"
+  let ci ← getConstInfo cls
+  let some pv := ci.value? | return .error "class has no definition"
+  let lci ← getConstInfo lemma
+  let lhsC := mkConst cls (ci.levelParams.map mkLevelParam)
+  let n := tie.nRoots + tie.nRest + tie.nHyps
+  lambdaTelescope pv fun ps _ => do
+    let rhs? ← forallBoundedTelescope lci.type (some n) fun bs _ => do
+      if bs.size != n then return none
+      let closed := tie.closedPos.map (bs[·]!)
+      let hyps ← (bs.extract (tie.nRoots + tie.nRest) n).mapM inferType
+      let extra ← tie.extra.mapM (instantiateLambda · (bs.extract 0 (tie.nRoots + tie.nRest)))
+      let body ← closeBody closed (hyps ++ extra)
+      let lam ← mkLambdaFVars (tie.keptPos.map (bs[·]!)) body
+      let rhs := lam.beta ps
+      if rhs.hasAnyFVar (fun f => bs.any (·.fvarId! == f)) then return none
+      return some rhs
+    let some rhs := rhs? | return .error "the closure mentions a root binder that is not kept"
+    let lhs := mkAppN lhsC ps
+    let type ← mkForallFVars ps (mkIff lhs rhs)
+    let value ← mkLambdaFVars ps (mkApp (mkConst ``Iff.refl) lhs)
+    addTheorem name type value
+
+/-- The theorems reached from `roots` through generated lemmas (names under `ns`). -/
+def reachedLemmas (ns : Name) (roots : Array Name) : CoreM (Std.HashSet Name) := do
+  let mut seen : Std.HashSet Name := {}
+  let mut todo := roots
+  while !todo.isEmpty do
+    let c := todo.back!
+    todo := todo.pop
+    if seen.contains c then continue
+    seen := seen.insert c
+    let some ci := (← getEnv).find? c | continue
+    let some v := ci.value? (allowOpaque := true) | continue
+    todo := todo ++ v.getUsedConstants.filter (ns.isPrefixOf ·)
+  return seen
+
+/-- Number of distinct recorded-branch markers in `e`. -/
+def countMarks (e : Expr) : Nat := Id.run do
+  let mut n := 0
+  let mut seen : Std.HashSet Expr := {}
+  let mut todo := #[e]
+  while !todo.isEmpty do
+    let x := todo.back!
+    todo := todo.pop
+    if seen.contains x then continue
+    seen := seen.insert x
+    if x.isAppOf ``branchMark then n := n + 1
+    match x with
+    | .app f a => todo := todo.push f |>.push a
+    | .lam _ t b _ | .forallE _ t b _ => todo := todo.push t |>.push b
+    | .letE _ t v b _ => todo := todo.push t |>.push v |>.push b
+    | .mdata _ b | .proj _ _ b => todo := todo.push b
+    | _ => pure ()
+  return n
+
+syntax relArg := " (" ident " := " term ")"
+syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* : command
+
+@[command_elab relevanceGenerate] def elabRelevanceGenerate : CommandElab := fun stx => do
+  let ns := stx[1].getId
+  let mut args : Std.HashMap String Syntax := {}
+  for a in stx[2].getArgs do
+    args := args.insert a[1].getId.toString a[3]
+  let get (k : String) : CommandElabM Syntax := do
+    let some v := args.get? k | throwError "relevance_generate: missing ({k} := ...)"
+    return v
+  let idents (s : Syntax) : Array Name :=
+    (s.getArgs.foldl (init := #[]) fun acc a => acc ++ a.getSepArgs.filterMap fun x =>
+      if x.isIdent then some x.getId else none)
+  let scope := (← get "scope").getId
+  let package := idents (← get "package")
+  let roots ← (idents (← get "roots")).mapM fun n => liftCoreM <| realizeGlobalConstNoOverload (mkIdent n)
+  let elabPat (s : Syntax) : CommandElabM Expr := liftTermElabM do
+    let e ← Term.elabTerm s none
+    Term.synthesizeSyntheticMVarsNoPostponing
+    let e ← instantiateMVars e
+    if e.hasMVar then throwError "relevance_generate: pattern has metavariables"
+    return e
+  let stepPat ← elabPat (← get "step")
+  let statePat ← elabPat (← get "state")
+  let stateCtor ← liftTermElabM <| lambdaTelescope statePat fun _ body => do
+    let some c := body.getAppFn.constName? | return none
+    let env ← getEnv
+    return if isStructure env c then some (getStructureCtor env c).name else none
+  let cfg : Config := { scope, package, stepPat, statePat, stateCtor, ns }
+  let r ← liftTermElabM <| analyse cfg roots
+  let counted (b : BranchRec) := !b.dead && (counts r r.splits[b.splitId]!).1
+  let live (lvl : Level) := r.branches.filter fun b => b.level == lvl && counted b
+  let stateItems (bs : Array BranchRec) : Array (String × String × Expr) :=
+    let names := uniqueNames (bs.map fun b => sanitize s!"{b.decl.components.getLast!}_{b.split}_{b.tag}")
+    (names.zip bs).map fun (n, b) => (n, branchDoc b, b.pred.getD (mkConst ``True))
+  for b in (live .step) ++ (live .state) do
+    if b.pred.isNone && (b.role == "step-own" || b.role == "effect" || b.role == "state") then
+      throwError "relevance_generate: branch {branchDoc b} has no predicate"
+  let prot := r.unrecorded.filter (!·.internal)
+  -- one step class per distinct predicate
+  let mut reps : Array (Expr × Array Nat) := #[]
+  let mut classIdx : Array (Option Nat) := Array.replicate r.branches.size none
+  for (b, idx) in r.branches.zipIdx do
+    unless b.level == .step && counted b && (b.role == "step-own" || b.role == "effect") do continue
+    let some p := b.pred | continue
+    let mut found := none
+    for (q, k) in reps.zipIdx do
+      if p == q.1 then found := some k; break
+      let eq : Bool ← liftTermElabM (do try withReducible (isDefEq p q.1) catch _ => pure false)
+      if eq then
+        found := some k; break
+    match found with
+    | some k =>
+      classIdx := classIdx.set! idx (some k)
+      reps := reps.modify k fun (q, os) => (q, os.push idx)
+    | none =>
+      classIdx := classIdx.set! idx (some reps.size)
+      reps := reps.push (p, #[idx])
+  let bases := reps.map fun (_, os) =>
+    let b := r.branches[os[0]!]!
+    let cl := if b.clause == "-" then "" else s!"{b.clause}_"
+    sanitize s!"{cl}{b.decl.components.getLast!}_{b.split}_{b.tag}"
+  let names := uniqueNames bases
+  let items := (names.zip reps).map fun (n, (p, os)) =>
+    let occ := os.map fun i => branchDoc r.branches[i]!
+    (n, s!"{os.size} occurrence(s): " ++ "; ".intercalate occ.toList, p)
+  generate ns `StepBranch `sig "step" items
+  generate ns `StateBranch `ctx "state" (stateItems (live .state))
+  let (creates, shapes) ← liftTermElabM <| mkCreates cfg
+  if let some v := creates then
+    let tyv ← liftTermElabM do inferType v
+    liftCoreM <| addDecl <| .defnDecl {
+      name := ns ++ `creates, levelParams := (collectLevelParams {} v).params.toList, type := tyv,
+      value := v, hints := .abbrev, safety := .safe }
+  let classOf := classIdx.map fun o => (o.map (names[·]!)).getD "-"
+  let clauseRows := shapes.map fun (n, nd, np) =>
+    s!"{n}\t{nd} data binder(s)\t{np} premise(s){if np == 0 then "\tno premises: no new instances" else ""}"
+  let text ← liftTermElabM <| table r classOf clauseRows
+  liftCoreM <| addAndCompile <| .defnDecl {
+    name := ns ++ `table, levelParams := [], type := mkConst ``String, value := mkStrLit text,
+    hints := .abbrev, safety := .safe }
+  -- tie-back: the class statement of each occurrence is the closure of its branch lemma
+  let stateNames := uniqueNames ((live .state).map fun b =>
+    sanitize s!"{b.decl.components.getLast!}_{b.split}_{b.tag}")
+  let mut clsOf : Array (Nat × Name) := #[]
+  for idx in [0:r.branches.size] do
+    if let some k := classIdx[idx]! then
+      clsOf := clsOf.push (idx, ns ++ Name.mkSimple s!"step_{names[k]!}")
+  let stateIdx := (r.branches.zipIdx.filter fun (b, _) => b.level == .state && counted b).map (·.2)
+  for (idx, n) in stateIdx.zip stateNames do
+    clsOf := clsOf.push (idx, ns ++ Name.mkSimple s!"state_{n}")
+  let mut l1ok : Nat := 0
+  let mut l1err : Array String := #[]
+  for (idx, cls) in clsOf do
+    let b := r.branches[idx]!
+    let some k := b.tie | l1err := l1err.push s!"{branchDoc b}: no branch lemma"; continue
+    match ← liftTermElabM <| telescopeLemma (ns ++ Name.mkSimple s!"telescope_{idx}") cls r.ties[k]! with
+    | .ok () => l1ok := l1ok + 1
+    | .error e => l1err := l1err.push s!"{branchDoc b}: {e}"
+  for e in l1err do logWarning m!"relevance: statement = telescope not proved: {e}"
+  let walked := r.branches.filter (·.level != .other)
+  let l2 := r.ties.filter (·.kind == "branch")
+  let l2ok := l2.filter (·.name.isSome)
+  let l4 := r.ties.filter (·.kind == "frame")
+  let l4ok := l4.filter (·.name.isSome)
+  for t in r.ties do
+    if t.name.isNone then
+      logWarning m!"relevance: {t.kind} lemma of {branchDoc r.branches[t.branch]!} not proved: {t.error}"
+  let roots := r.rederived.filterMap fun (_, x) => match x with | .ok n => some n | _ => none
+  for (root, x) in r.rederived do
+    if let .error e := x then logWarning m!"relevance: {root} not re-derived: {e}"
+  let reached ← liftCoreM <| reachedLemmas ns roots
+  let placed := l2ok.filter fun t => reached.contains t.name.get!
+  -- what the re-derived proofs still take from the marked-up proof: branch markers left in
+  -- them, and the theorems with markers that they use
+  let valueOf (n : Name) : CoreM (Option Expr) := do
+    return (← getEnv).find? n >>= (·.value? (allowOpaque := true))
+  let isBranchLemma (n : Name) : Bool :=
+    n.getPrefix == ns && (n.getString!.startsWith "branch_")
+  let mut residual : Nat := 0
+  let mut nested : Nat := 0
+  let mut marked : Std.HashMap Name Bool := {}
+  let mut usesMarked : Array (Name × Array Name) := #[]
+  for n in roots ++ reached.toArray.qsort (·.toString < ·.toString) do
+    if !roots.contains n && !isBranchLemma n then continue
+    let some v ← liftCoreM (valueOf n) | continue
+    residual := residual + countMarks v
+    let used := v.getUsedConstants
+    if isBranchLemma n && used.any fun c => c != n && isBranchLemma c then nested := nested + 1
+    let mut hits := #[]
+    for c in used do
+      if ns.isPrefixOf c || !scope.isPrefixOf c then continue
+      let m ← match marked.get? c with
+        | some m => pure m
+        | none => do
+          let m := ((← liftCoreM (valueOf c)).map countMarks).getD 0 > 0
+          marked := marked.insert c m
+          pure m
+      if m then hits := hits.push c
+    unless hits.isEmpty || roots.contains n do usesMarked := usesMarked.push (n, hits)
+  let byRole (role : String) : String :=
+    let all := l2.filter fun t => r.branches[t.branch]!.role == role
+    s!"{(all.filter (·.name.isSome)).size}/{all.size} {role}"
+  let roles := ["step-own", "effect", "frame", "unattributed", "state"].map byRole
+  logInfo m!"tie-back: statement = telescope {l1ok}/{clsOf.size} class occurrences; branch \
+    lemmas {l2ok.size}/{walked.size} branch occurrences ({", ".intercalate roles}; \
+    {nested} of them calling nested branch lemmas, \
+    {(l2ok.filter (·.fallback != "")).size} proved by the original sub-term because the rebuilt \
+    one failed); re-derived roots \
+    {roots.size}/{r.rederived.size} ({", ".intercalate (r.rederived.toList.map (·.1.toString))}), \
+    using {placed.size} branch lemmas; left in these proofs: {residual} branch markers, \
+    {usesMarked.size} branch lemmas using a marked theorem \
+    [{", ".intercalate (usesMarked.toList.map fun (n, cs) =>
+      s!"{n.getString!} ({", ".intercalate (cs.toList.map toString)})")}]; frame lemmas \
+    {l4ok.size}/{l4.size}; covering lemmas not generated"
+  let stepLive := r.branches.filter fun b => b.level == .step && !b.dead
+  let cnt (role : String) := (stepLive.filter (·.role == role)).size
+  logInfo m!"relevance: {r.splits.size} split occurrences, {r.branches.size} branch \
+    occurrences; live step-level branch occurrences: {cnt "step-own"} step-own, {cnt "effect"} \
+    effect, {cnt "frame"} frame, {cnt "unattributed"} unattributed; {reps.size} step classes, \
+    {(live .state).size} state classes; clauses without premises: \
+    {(shapes.filter (·.2.2 == 0)).map (·.1)}; unused haves: {r.unusedHaves.size}; \
+    {r.unrecorded.size} unrecorded splits ({prot.size} protocol)"
+
+elab "unfold_ns " ns:ident : tactic => do
+  let p := ns.getId.eraseMacroScopes
+  Tactic.liftMetaTactic1 fun g => do
+    let ty ← instantiateMVars (← g.getType)
+    let ty ← deltaExpand ty (p.isPrefixOf ·)
+    g.change (← Core.betaReduce ty)
+
+end Relevance
+
+end
