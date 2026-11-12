@@ -4724,9 +4724,10 @@ private theorem sendEntries_batch (self : NodeID) (before state : NodeState)
   obtain ⟨⟨entries, sentIndex, rfl, terms⟩, packets⟩ := batch
   refine ⟨⟨entries, _, rfl, terms⟩, fun e member => ?_⟩
   simp only [List.append_nil] at member
-  rcases List.mem_append.mp member with old | new
-  · exact packets e old
-  · simp only [eq, List.mem_singleton] at new
+  split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
+  | inl => exact packets e old
+  | inr =>
+    simp only [eq, List.mem_singleton] at new
     subst e
     have other : Not (destination = self) := (Finset.mem_erase.mp peer).1
     exact ⟨rfl, other, _, rfl, rfl, Nat.le_trans le bound, rfl, List.take_prefix _ _, Nat.le.refl⟩
