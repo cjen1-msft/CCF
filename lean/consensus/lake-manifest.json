@@ -23,6 +23,16 @@
       "dir": "../common",
       "copy": false,
       "configFile": "lakefile.toml"
+    },
+    {
+      "type": "path",
+      "scope": "",
+      "name": "relevance",
+      "manifestFile": "lake-manifest.json",
+      "inherited": false,
+      "dir": "../relevance",
+      "copy": false,
+      "configFile": "lakefile.toml"
     }
   ],
   "name": "consensus",

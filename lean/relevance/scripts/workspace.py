@@ -3,7 +3,7 @@
 # Licensed under the Apache 2.0 License.
 """Write an out-of-tree Lake workspace for Lean packages of this checkout.
 
-Usage: workspace.py [PACKAGE ...]   (default: common consensus)
+Usage: workspace.py [PACKAGE ...]   (default: consensus; path requirements are added)
 
 For each package directory under `lean/`, the workspace gets a directory with a copy of the
 package's `lakefile.toml` whose `srcDir` points back at the checkout, whose path requirements
@@ -112,7 +112,14 @@ def write_package(package: str) -> None:
 
 
 def main() -> None:
-    for package in sys.argv[1:] or ["common", "consensus"]:
+    packages = sys.argv[1:] or ["consensus"]
+    # every package needs its path requirements in the workspace too
+    for package in list(packages):
+        config = tomllib.loads((LEAN / package / "lakefile.toml").read_text())
+        for _, relative, _ in closure(LEAN / package, config):
+            if str(relative) not in packages:
+                packages.append(str(relative))
+    for package in packages:
         write_package(package)
     print(WORKSPACE)
 

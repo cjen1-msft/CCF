@@ -11,6 +11,11 @@ path = "../common"
 copy = false
 
 [[require]]
+name = "relevance"
+path = "../relevance"
+copy = false
+
+[[require]]
 name = "leanfmt"
 git = "https://github.com/duckki/leanfmt.git"
 rev = "65d69c8dc2dfd0aa69fd4132d48f38b7af9a57ef" # v0.4.5

@@ -6,6 +6,7 @@ import all Init.Control.State
 
 public import CCF.Proofs.Execution
 public import CCF.Proofs.Finset
+import Relevance.Split
 
 namespace Consensus.Proofs.Config
 
