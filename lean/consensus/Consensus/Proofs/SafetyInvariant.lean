@@ -1490,15 +1490,18 @@ private theorem isSignatureAt_take_of_le
     : isSignatureAt (log.take count) index = true := by
   rcases isSignatureAtTrue signature with ⟨entry, found, content⟩
   have taken : entryAt? (log.take count) index = some entry := by
-    by_cases zero : index = 0
-    · subst index
+    split_rel zero := (by_cases zero : index = 0) with
+    | pos =>
+      subst index
       simp [entryAt?] at found
-    · unfold entryAt? at found ⊢
+    | neg =>
+      unfold entryAt? at found ⊢
       simp only [zero, ↓reduceIte] at found ⊢
       rw [List.getElem?_take]
-      split
-      · exact found
-      · rename_i outside
+      split_rel within := (split) with
+      | pos => exact found
+      | neg =>
+        rename_i outside
         exact absurd (Nat.lt_of_lt_of_le (Nat.sub_one_lt zero) within) outside
   simp [isSignatureAt, taken, content]
 
