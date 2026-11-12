@@ -7118,9 +7118,9 @@ private theorem Backed.transfer {history : History} {log log' : List Entry}
     {commit term : Nat} (backed : Backed history log commit term)
     (agree : log'.take commit = log.take commit)
     : Backed history log' commit term := by
-  rcases backed with zero | ⟨earlier, part, committed, le, within⟩
-  · exact Or.inl zero
-  · exact Or.inr ⟨earlier, part, committed, le, agree ▸ within⟩
+  split_rel backed := (rcases backed with zero | ⟨earlier, part, committed, le, within⟩) with
+  | inl => exact Or.inl zero
+  | inr => exact Or.inr ⟨earlier, part, committed, le, agree ▸ within⟩
 
 private theorem maxCommittableIndexUpTo_le (log : List Entry) (frontier : Nat)
     : maxCommittableIndexUpTo log frontier <= frontier :=
