@@ -4596,9 +4596,10 @@ private theorem appendEntry_batch (self : NodeID) (before : NodeState)
     | refine Sends.ite' (fun _ => ?_) fun _ => ?_
     | refine Sends.guard_bind fun _ => ?_
   all_goals
-    split
-    · exact Sends.pure' (by simpa using batch.push content)
-    · rename_i nodes _
+    split_rel peers := (split) with
+    | none => exact Sends.pure' (by simpa using batch.push content)
+    | some =>
+      rename_i nodes _
       refine Sends.guard_bind fun _ => ?_
       obtain ⟨⟨entries, sentIndex, rfl, terms⟩, beats⟩ := batch
       refine Sends.bind'
@@ -4621,9 +4622,9 @@ private theorem appendEntry_batch (self : NodeID) (before : NodeState)
                   then (before.log ++ entries).length else sentIndex peer }
             (sent ++ later) :=
           ⟨⟨entries, _, rfl, terms⟩, fun e member => by
-            rcases List.mem_append.mp member with old | new
-            · exact beats e old
-            · exact sentBeats e new⟩
+            split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
+            | inl => exact beats e old
+            | inr => exact sentBeats e new⟩
         simpa using batch.push content
 
 private theorem sendEntries_batch (self : NodeID) (before state : NodeState)
