@@ -71,7 +71,7 @@ def write_package(package: str) -> None:
     (target / "lean-toolchain").write_text((source / "lean-toolchain").read_text())
     manifest = {
         "version": "1.3.0",
-        "packagesDir": str(WORKSPACE / "packages"),
+        "packagesDir": ".lake/packages",
         "packages": [
             {
                 "type": "path",
