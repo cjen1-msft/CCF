@@ -3154,32 +3154,43 @@ private theorem CommitFrontier.receive {state : NodeState}
   refine Keeps.ite' (fun _ => Keeps.pure' frontier) fun _ => ?_
   dsimp only
   generalize observeTerm state message = current at observed ⊢
-  cases message with
-  | appendEntriesRequest request => exact observed.handleAppendEntriesRequest caps source
-  | appendEntriesResponse response =>
+  split_rel message := (cases message) with
+  | appendEntriesRequest =>
+      rename_i request
+      exact observed.handleAppendEntriesRequest caps source
+  | appendEntriesResponse =>
+      rename_i response
       unfold Model.Node.handleAppendEntriesResponse
       refine Keeps.ite' (fun _ => Keeps.pure' observed) fun _ => ?_
       refine Keeps.ite' (fun _ => ?_) fun _ => Keeps.pure' (observed.of_log rfl rfl)
       refine Keeps.ite' (fun _ => CommitFrontier.advanced self ?_ caps)
         fun _ => Keeps.pure' observed
       exact observed.of_log rfl rfl
-  | requestVoteRequest request =>
+  | requestVoteRequest =>
+      rename_i request
       unfold Model.Node.handleRequestVoteRequest
-      exact Keeps.seq' fun _ => Keeps.pure' (by split <;> exact observed.of_log rfl rfl)
-  | requestVoteResponse response =>
+      exact Keeps.seq' fun _ => Keeps.pure' (by
+        split_rel vote := (split) with
+        | pos => exact observed.of_log rfl rfl
+        | neg => exact observed.of_log rfl rfl)
+  | requestVoteResponse =>
+      rename_i response
       unfold Model.Node.handleRequestVoteResponse
       exact Keeps.ite' (fun _ => CommitFrontier.electIfQuorum caps self (observed.of_log rfl rfl))
         fun _ => Keeps.pure' observed
-  | requestPreVoteRequest request =>
+  | requestPreVoteRequest =>
+      rename_i request
       unfold Model.Node.handleRequestPreVoteRequest
       exact Keeps.seq' fun _ => Keeps.pure' observed
-  | requestPreVoteResponse response =>
+  | requestPreVoteResponse =>
+      rename_i response
       unfold Model.Node.handleRequestPreVoteResponse
       refine Keeps.ite' (fun _ => ?_) fun _ => Keeps.pure' observed
       dsimp only
       exact Keeps.ite' (fun _ => CommitFrontier.becomeCandidate caps self (observed.of_log rfl rfl))
         fun _ => Keeps.pure' (observed.of_log rfl rfl)
-  | proposeRequestVoteRequest term =>
+  | proposeRequestVoteRequest =>
+      rename_i term
       unfold Model.Node.handleProposeRequestVoteRequest
       exact Keeps.ite' (fun _ => CommitFrontier.becomeCandidate caps self observed)
         fun _ => Keeps.pure' observed
