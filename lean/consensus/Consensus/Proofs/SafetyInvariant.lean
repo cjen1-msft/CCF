@@ -1163,7 +1163,9 @@ private theorem replaceNode_keys (nodes : List (NodeID × NodeState)) (node : No
   simp only [replaceNode, List.map_map]
   congr 1
   funext entry
-  by_cases here : entry.1 = node <;> simp [here]
+  split_rel here := (by_cases here : entry.1 = node) with
+  | pos => simp [here]
+  | neg => simp [here]
 
 private theorem mem_of_nodeState {concrete : Model.State} {node : NodeID}
     {state : NodeState} (found : nodeState concrete node = some state)
