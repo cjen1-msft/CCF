@@ -2619,16 +2619,20 @@ private theorem chosen_bound {configurations : List Configuration}
       chosen.index <= bound
       \/ forall other, other ∈ configurations -> chosen.index <= other.index := by
   intro chosen
-  by_cases counted : 0 < (configurations.filter
-      fun configuration => configuration.index <= bound).length
-  · exact Or.inl (getElem_le_of_lt_length_filter sorted (Nat.sub_one_lt (Nat.ne_of_gt counted)))
-  · refine Or.inr fun other member => ?_
-    rcases configurations with _ | ⟨head, tail⟩
-    · simp at positive
-    · simp only [chosen, Nat.eq_zero_of_not_pos counted, Nat.zero_sub, List.getElem_cons_zero]
-      rcases List.mem_cons.mp member with rfl | later
-      · exact Nat.le.refl
-      · exact Nat.le_of_lt ((List.pairwise_cons.mp sorted).1 other later)
+  split_rel counted := (by_cases counted : 0 < (configurations.filter
+      fun configuration => configuration.index <= bound).length) with
+  | pos => exact Or.inl (getElem_le_of_lt_length_filter sorted (Nat.sub_one_lt (Nat.ne_of_gt counted)))
+  | neg =>
+    refine Or.inr fun other member => ?_
+    split_rel configurations := (rcases configurations with _ | ⟨head, tail⟩) with
+    | inl => simp at positive
+    | inr =>
+      simp only [chosen, Nat.eq_zero_of_not_pos counted, Nat.zero_sub, List.getElem_cons_zero]
+      split_rel mem_cons := (rcases List.mem_cons.mp member with same | later) with
+      | inl =>
+        subst same
+        exact Nat.le.refl
+      | inr => exact Nat.le_of_lt ((List.pairwise_cons.mp sorted).1 other later)
 
 /--
 Two logs agreeing up to `k`, with commit indices at most `k` and a configuration
