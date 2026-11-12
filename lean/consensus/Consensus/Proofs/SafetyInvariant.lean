@@ -4173,17 +4173,25 @@ private theorem preVoteRequest_summary (before : NodeState) (source : NodeID)
         (receive (Capabilities.record self : Caps) self source before
           (.requestPreVoteRequest request)) := by
   simp only [receive]
-  rcases observe_bumping before (message := .requestPreVoteRequest request) trivial
-    with ⟨bump, eq⟩ | ⟨le, eq⟩ <;> rw [eq] <;>
-    simp only [handleRequestPreVoteRequest] <;>
-    refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ?_ <;>
+  split_rel observe_bumping :=
+      (rcases observe_bumping before (message := .requestPreVoteRequest request) trivial
+        with ⟨bump, eq⟩ | ⟨le, eq⟩) with
+  | inl =>
+    rw [eq]
+    simp only [handleRequestPreVoteRequest]
+    refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ?_
     subst eq
-  · refine bumped_summary bump (by simp [bumpedState]) (by simp [bumpedState])
+    refine bumped_summary bump (by simp [bumpedState]) (by simp [bumpedState])
       ⟨source, _, rfl, trivial, Nat.le.refl⟩ (Kind.same rfl rfl) fun e member => ?_
     simp only [List.mem_singleton, List.append_nil] at member
     subst member
     exact ⟨rfl, rfl⟩
-  · refine quiet_summary rfl rfl rfl rfl rfl rfl rfl
+  | inr =>
+    rw [eq]
+    simp only [handleRequestPreVoteRequest]
+    refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ?_
+    subst eq
+    refine quiet_summary rfl rfl rfl rfl rfl rfl rfl
       (fun _ => Or.inr (Or.inr (Or.inl ⟨source, _, rfl, trivial, le⟩))) fun e member => ?_
     simp only [List.mem_singleton, List.append_nil] at member
     subst member
