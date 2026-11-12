@@ -5184,9 +5184,11 @@ private theorem Everywhere.cons {current : Model.State}
     (old : Everywhere clause history) (now : clause (current :: history))
     : Everywhere clause (current :: history) := by
   intro earlier suffix nonempty
-  rcases List.suffix_cons_iff.mp suffix with rfl | inner
-  · exact now
-  · exact old earlier inner nonempty
+  split_rel mp := (rcases List.suffix_cons_iff.mp suffix with same | inner) with
+  | inl =>
+    subst same
+    exact now
+  | inr => exact old earlier inner nonempty
 
 private theorem Everywhere.suffix (all : Everywhere clause history) {earlier : History}
     (suffix : earlier <:+ history)
