@@ -1255,9 +1255,10 @@ private theorem entryAt_mem
     (found : entryAt? log index = some entry)
     : entry ∈ log := by
   unfold entryAt? at found
-  split at found
-  · simp_all
-  · rw [List.getElem?_eq_some_iff] at found
+  split_rel found := (split at found) with
+  | pos => simp_all
+  | neg =>
+    rw [List.getElem?_eq_some_iff] at found
     rcases found with ⟨within, value⟩
     rw [← value]
     exact List.getElem_mem within
