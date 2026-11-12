@@ -7657,8 +7657,8 @@ private theorem old_message {envelope : Model.Envelope}
 private theorem new_message {envelope : Model.Envelope} (new : envelope ∈ c.sent)
     : MessageOK (after :: before :: rest) envelope := by
   obtain ⟨sourceEq, ok⟩ := Summary.sends c.sum envelope new
-  cases h : envelope.payload with
-  | appendEntriesRequest request =>
+  split_rel h := (cases h : envelope.payload) with
+  | appendEntriesRequest =>
       simp only [h] at ok
       simp only [MessageOK, h]
       rw [sourceEq]
@@ -7667,7 +7667,7 @@ private theorem new_message {envelope : Model.Envelope} (new : envelope ∈ c.se
         ⟨c.post_now, aeok.2.1.symm, notCandidate, ?_⟩, aeok⟩
       rw [aeok.2.1]
       exact c.post_led origin
-  | appendEntriesResponse response =>
+  | appendEntriesResponse =>
       simp only [h] at ok
       simp only [MessageOK, h]
       intro success
@@ -7681,7 +7681,7 @@ private theorem new_message {envelope : Model.Envelope} (new : envelope ∈ c.se
         exact canon
       · rw [← postTake]
         exact List.take_prefix _ _
-  | requestVoteRequest request =>
+  | requestVoteRequest =>
       simp only [h] at ok
       simp only [MessageOK, h]
       rw [sourceEq]
@@ -7689,7 +7689,7 @@ private theorem new_message {envelope : Model.Envelope} (new : envelope ∈ c.se
       refine ⟨⟨c.post, c.post_seen, termEq.symm⟩, fun state now role _ => ?_⟩
       rw [c.now_post now] at role ⊢
       exact stable role
-  | requestVoteResponse response =>
+  | requestVoteResponse =>
       simp only [h] at ok
       simp only [MessageOK, h]
       obtain ⟨termEq, grants⟩ := ok
@@ -7704,9 +7704,9 @@ private theorem new_message {envelope : Model.Envelope} (new : envelope ∈ c.se
       rw [sourceEq]
       exact ⟨after, before, rest, List.suffix_refl _, ⟨c.pre, c.post, c.tr.pre_mem,
         c.tr.post_mem, c.term_le, rfl, voted, upToDate⟩, Or.inr seen⟩
-  | requestPreVoteRequest _ => simp only [MessageOK, h]
-  | requestPreVoteResponse _ => simp only [MessageOK, h]
-  | proposeRequestVoteRequest _ => simp only [MessageOK, h]
+  | requestPreVoteRequest => simp only [MessageOK, h]
+  | requestPreVoteResponse => simp only [MessageOK, h]
+  | proposeRequestVoteRequest => simp only [MessageOK, h]
 
 private theorem messages : Messages (after :: before :: rest) := by
   intro envelope pending
