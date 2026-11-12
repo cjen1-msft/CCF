@@ -3836,10 +3836,11 @@ private theorem becomePrimary_sends (candidate : NodeState)
     refine ⟨rfl, other, _, rfl, rfl, ?_, rfl, ?_, Nat.le.refl⟩ <;>
       simp [makeAppendEntriesRequest, sentEq, messageEntries]
   · intro e member
-    rcases List.mem_append.mp (by simpa using member) with old | new
-    · have := nominated e old
+    split_rel mem_append := (rcases List.mem_append.mp (by simpa using member) with old | new) with
+    | inl =>
+      have := nominated e old
       exact Or.inl ⟨this.1, by simpa [primaryState] using this.2⟩
-    · exact Or.inr (beats e new)
+    | inr => exact Or.inr (beats e new)
 
 private theorem electIfQuorum_sends (candidate : NodeState)
     : Sends
