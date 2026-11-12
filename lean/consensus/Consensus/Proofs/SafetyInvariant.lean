@@ -3912,30 +3912,33 @@ private theorem campaign_summary {self : NodeID} {before candidate after : NodeS
     (result : CampaignResult self before candidate after sent)
     : Summary self before event after sent := by
   have termLe : before.currentTerm <= candidate.currentTerm := by
-    rcases campaign.2.2.2 with fresh | kept
-    · exact Nat.le_trans (Nat.le_succ _) (Nat.le_of_eq fresh.2.1.symm)
-    · exact Nat.le_of_eq kept.2.1.symm
+    split_rel campaign := (rcases campaign.2.2.2 with fresh | kept) with
+    | inl => exact Nat.le_trans (Nat.le_succ _) (Nat.le_of_eq fresh.2.1.symm)
+    | inr => exact Nat.le_of_eq kept.2.1.symm
   have engaged : Engaged before := by
-    rcases campaign.2.2.2 with fresh | kept
-    · exact fresh.1
-    · simp [Engaged, kept.1]
+    split_rel campaign := (rcases campaign.2.2.2 with fresh | kept) with
+    | inl => exact fresh.1
+    | inr => simp [Engaged, kept.1]
   have notLeaderKeep : before.role = .primary -> candidate.currentTerm = before.currentTerm
       -> False := by
     intro leader same
-    rcases campaign.2.2.2 with fresh | kept
-    · exact Nat.succ_ne_self _ (fresh.2.1.symm.trans same)
-    · rw [kept.1] at leader; cases leader
+    split_rel campaign := (rcases campaign.2.2.2 with fresh | kept) with
+    | inl => exact Nat.succ_ne_self _ (fresh.2.1.symm.trans same)
+    | inr => rw [kept.1] at leader; cases leader
   have voteKeep : candidate.currentTerm = before.currentTerm -> forall voted,
       before.votedFor = some voted -> candidate.votedFor = some voted := by
     intro same voted votedEq
-    rcases campaign.2.2.2 with fresh | kept
-    · exact (Nat.succ_ne_self _ (fresh.2.1.symm.trans same)).elim
-    · rcases kept.2.2.1 with eq | none
-      · rw [eq]; exact votedEq
-      · rw [none] at votedEq; cases votedEq
+    split_rel campaign := (rcases campaign.2.2.2 with fresh | kept) with
+    | inl => exact (Nat.succ_ne_self _ (fresh.2.1.symm.trans same)).elim
+    | inr =>
+      split_rel kept := (rcases kept.2.2.1 with eq | none) with
+      | inl => rw [eq]; exact votedEq
+      | inr => rw [none] at votedEq; cases votedEq
   unfold CampaignResult at result
-  rcases result with ⟨rfl, requests⟩ | ⟨quorum, advance, started⟩
-  · refine ⟨termLe, voteKeep, fun _ => Or.inl engaged, fun _ => campaign,
+  split_rel result := (rcases result with ⟨afterEq, requests⟩ | ⟨quorum, advance, started⟩) with
+  | inl =>
+    subst afterEq
+    refine ⟨termLe, voteKeep, fun _ => Or.inl engaged, fun _ => campaign,
       fun leader => (by rw [campaign.1] at leader; cases leader),
       fun _ leader same => (notLeaderKeep leader same).elim,
       Kind.same campaign.2.1 campaign.2.2.1, fun e member => ?_⟩
@@ -3943,28 +3946,34 @@ private theorem campaign_summary {self : NodeID} {before candidate after : NodeS
     refine ⟨source, ?_⟩
     rw [payload]
     exact ⟨rfl, lt, fun _ => rfl⟩
-  · replace advance : Advance self (primaryState candidate) after :=
+  | inr =>
+    replace advance : Advance self (primaryState candidate) after :=
       advance
     have termEq : after.currentTerm = candidate.currentTerm := by
       rw [advance.term]; rfl
     have elected : Wins self before event after := ⟨candidate, campaign, quorum, advance⟩
     have notCandidate : Not (after.role = .candidate) := by
-      rcases advance.role with eq | eq <;> rw [eq] <;> simp [primaryState]
+      split_rel role := (rcases advance.role with eq | eq) with
+      | inl => rw [eq] <;> simp [primaryState]
+      | inr => rw [eq] <;> simp
     refine ⟨termEq ▸ termLe, fun same voted votedEq => ?_, fun _ => Or.inl engaged,
       fun candidate' => (notCandidate candidate').elim, fun _ => Or.inr elected,
       fun _ leader same => (notLeaderKeep leader (termEq ▸ same)).elim,
       Kind.elect elected, fun e member => ?_⟩
     · rw [advance.votedFor]
       exact voteKeep (termEq ▸ same) voted votedEq
-    · rcases started e member with (⟨source, payload⟩ | beat) | ⟨source, payload, lt⟩
-      · refine ⟨source, ?_⟩
+    · split_rel started := (rcases started e member with (⟨source, payload⟩ | beat) | ⟨source, payload, lt⟩) with
+      | inl =>
+        refine ⟨source, ?_⟩
         rw [payload]
         exact termEq.symm
-      · obtain ⟨request, payload, ok⟩ := beat.ok
+      | inr_inl =>
+        obtain ⟨request, payload, ok⟩ := beat.ok
         refine ⟨beat.1, ?_⟩
         rw [payload]
         exact ⟨ok, notCandidate, Or.inr elected⟩
-      · refine ⟨source, ?_⟩
+      | inr_inr =>
+        refine ⟨source, ?_⟩
         rw [payload]
         exact ⟨termEq.symm, termEq ▸ lt, fun c => (notCandidate c).elim⟩
 
