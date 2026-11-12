@@ -3709,7 +3709,11 @@ private theorem Advance.matchIndex {self : NodeID} {middle state : NodeState}
 private theorem Advance.sentIndex {self : NodeID} {middle state : NodeState}
     (advance : Advance self middle state)
     : state.sentIndex = middle.sentIndex := by
-  rcases advance with rfl | h <;> grind
+  split_rel advance := (rcases advance with same | h) with
+  | inl =>
+    subst same
+    grind
+  | inr => grind
 
 private theorem Advance.votesGranted {self : NodeID} {middle state : NodeState}
     (advance : Advance self middle state)
