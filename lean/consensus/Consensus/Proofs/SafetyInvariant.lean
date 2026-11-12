@@ -4887,9 +4887,11 @@ private theorem Canon.mono (suffix : history <:+ later) {term : Nat}
 private theorem Committed.append {term : Nat} {part : List Entry}
     (committed : Committed history term part) (front : History)
     : Committed (front ++ history) term part := by
-  induction front with
+  split_rel front := (induction front) with
   | nil => exact committed
-  | cons _ _ ih => exact .past ih
+  | cons =>
+    rename_i _ _ ih
+    exact .past ih
 
 private theorem Committed.mono (suffix : history <:+ later) {term : Nat}
     {part : List Entry} (committed : Committed history term part)
