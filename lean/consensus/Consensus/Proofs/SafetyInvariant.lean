@@ -6217,21 +6217,32 @@ private theorem wins_elect (wins : Wins c.actor c.pre c.event c.post)
 
 private theorem led_cur : LedCur (after :: before :: rest) := by
   intro node state term now led
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨different, old⟩
-  · rcases c.led_after led with led | ⟨_, _, step⟩
-    · have le := c.term_le
-      rcases c.inv.led_cur c.actor c.pre term c.pre_now led with lt | ⟨termEq, role⟩
-      · exact Or.inl (Nat.lt_of_lt_of_le lt le)
-      · rcases Nat.lt_or_eq_of_le le with lt | same
-        · exact Or.inl (Nat.lt_of_le_of_lt (Nat.le_of_eq termEq) lt)
-        · refine Or.inr ⟨termEq.trans same, fun candidate => ?_⟩
-          obtain ⟨_, _, _, ⟨_, fresh, _⟩ | ⟨preRole, _⟩⟩ := Summary.candidate c.sum candidate
-          · exact Nat.succ_ne_self _ (fresh.symm.trans same.symm)
-          · exact role preRole
-    · obtain ⟨_, _, _, _, termEq, role, _⟩ := c.electStep step
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨different, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    split_rel led_after := (rcases c.led_after led with led | ⟨_, _, step⟩) with
+    | inl =>
+      have le := c.term_le
+      split_rel led_cur :=
+          (rcases c.inv.led_cur c.actor c.pre term c.pre_now led with lt | ⟨termEq, role⟩) with
+      | inl => exact Or.inl (Nat.lt_of_lt_of_le lt le)
+      | inr =>
+        split_rel lt_or_eq_of_le := (rcases Nat.lt_or_eq_of_le le with lt | same) with
+        | inl => exact Or.inl (Nat.lt_of_le_of_lt (Nat.le_of_eq termEq) lt)
+        | inr =>
+          refine Or.inr ⟨termEq.trans same, fun candidate => ?_⟩
+          split_rel candidate :=
+              (obtain ⟨_, _, _, ⟨_, fresh, _⟩ | ⟨preRole, _⟩⟩ :=
+                Summary.candidate c.sum candidate) with
+          | inl => exact Nat.succ_ne_self _ (fresh.symm.trans same.symm)
+          | inr => exact role preRole
+    | inr =>
+      obtain ⟨_, _, _, _, termEq, role, _⟩ := c.electStep step
       refine Or.inr ⟨termEq.symm, ?_⟩
-      rcases role with role | role <;> rw [role] <;> simp
-  · exact c.inv.led_cur node state term old (c.led_other different led)
+      split_rel role := (rcases role with role | role) with
+      | inl => rw [role] <;> simp
+      | inr => rw [role] <;> simp
+  | inr => exact c.inv.led_cur node state term old (c.led_other different led)
 
 private theorem leader_led : LeaderLed (after :: before :: rest) := by
   intro node state now role
