@@ -2957,10 +2957,11 @@ private theorem foldl_select_max_pos (P : Nat -> Prop) [DecidablePred P]
     : P
         (values.foldl (fun best index => if P index then max best index else best)
           0) := by
-  rcases foldl_select_max P values 0 with zero | holds
-  · rw [zero] at positive
+  split_rel foldl_select_max := (rcases foldl_select_max P values 0 with zero | holds) with
+  | inl =>
+    rw [zero] at positive
     exact absurd positive (Nat.lt_irrefl 0)
-  · exact holds
+  | inr => exact holds
 
 private theorem highestCommittableIndex_signature (state : NodeState) (self : NodeID)
     (positive : 0 < highestCommittableIndex state self)
