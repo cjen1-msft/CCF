@@ -1,0 +1,88 @@
+module
+
+public import Relevance.Generate
+
+/-!
+# A toy model for the relevance tooling
+
+A sender may send any number up to its bound `high`, and may raise the bound. The invariant has
+one clause: every sent number is at most `high`. The preservation proof splits on the action, on
+the guard (whose `else` case is closed by contradiction) and on whether a sent number is the new
+one (an effect case) or an old one (a framing case). The state-level theorem splits on whether a
+sent number is below the bound or at it. The generator must find three step classes (the two
+actions and the new number), two state classes and no unrecorded split.
+-/
+
+@[expose] public section
+
+namespace RelevanceTests.Toy
+
+structure State where
+  sent : List Nat
+  high : Nat
+
+inductive Action where
+  | send (n : Nat)
+  | bump
+
+def step (s : State) : Action → Option State
+  | .send n => if n ≤ s.high then some { s with sent := n :: s.sent } else none
+  | .bump => some { s with high := s.high + 1 }
+
+structure Inv (s : State) : Prop where
+  bounded : ∀ n, n ∈ s.sent → n ≤ s.high
+
+namespace Proof
+
+theorem inv_step {s t : State} {a : Action} (inv : Inv s) (transition : step s a = some t) :
+    Inv t := by
+  split_rel action := (cases h : a) with
+  | send =>
+    rename_i n
+    subst h
+    simp only [step] at transition
+    split_rel guard := (split at transition) with
+    | pos =>
+      rename_i enabled
+      cases transition
+      constructor
+      intro x member
+      split_rel member := (rcases List.mem_cons.mp member with eq | old) with
+      | inl =>
+        subst eq
+        exact enabled
+      | inr => exact inv.bounded x old
+    | neg => cases transition
+  | bump =>
+    subst h
+    cases transition
+    exact ⟨fun x member => Nat.le_succ_of_le (inv.bounded x member)⟩
+
+theorem at_or_below {s : State} (inv : Inv s) {n : Nat} (member : n ∈ s.sent) :
+    n < s.high ∨ n = s.high := by
+  split_rel order := (rcases Nat.lt_or_eq_of_le (inv.bounded n member) with lower | same) with
+  | inl => exact .inl lower
+  | inr => exact .inr same
+
+end Proof
+
+end RelevanceTests.Toy
+
+/--
+info: tie-back: statement = telescope 5/5 class occurrences; branch lemmas 8/8 branch occurrences (4/4 step-own, 1/1 effect, 1/1 frame, 0/0 unattributed, 2/2 state; 2 of them calling nested branch lemmas, 0 proved by the original sub-term because the rebuilt one failed); re-derived roots 2/2 (RelevanceTests.Toy.Proof.at_or_below, RelevanceTests.Toy.Proof.inv_step), using 8 branch lemmas; left in these proofs: 0 branch markers, 0 branch lemmas using a marked theorem []; frame lemmas 1/1; covering lemmas not generated
+---
+info: relevance: 4 split occurrences, 8 branch occurrences; live step-level branch occurrences: 3 step-own, 1 effect, 1 frame, 0 unattributed; 3 step classes, 2 state classes; clauses without premises: []; unused haves: 0; 0 unrecorded splits (0 protocol)
+-/
+#guard_msgs in
+relevance_generate RelevanceTests.Toy.Generated
+  (scope := RelevanceTests.Toy.Proof) (package := [RelevanceTests.Toy])
+  (roots := [RelevanceTests.Toy.Proof.inv_step, RelevanceTests.Toy.Proof.at_or_below])
+  (step := fun (s : RelevanceTests.Toy.State) (a : RelevanceTests.Toy.Action)
+    (t : RelevanceTests.Toy.State) => RelevanceTests.Toy.step s a = some t)
+  (state := fun (s : RelevanceTests.Toy.State) => RelevanceTests.Toy.Inv s)
+
+/-- The class predicate of the new number: some sent number was not sent before the step. -/
+example : RelevanceTests.Toy.Generated.sig { sent := [], high := 1 } (.send 1)
+    { sent := [1], high := 1 } .bounded_inv_step_member_inl := by
+  unfold_ns RelevanceTests.Toy.Generated
+  simp [RelevanceTests.Toy.step]

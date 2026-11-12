@@ -1,7 +1,7 @@
 name = "relevance"
 version = "0.1.0"
 moreLeanArgs = ["-DwarningAsError=true"]
-defaultTargets = ["Relevance"]
+defaultTargets = ["Relevance", "RelevanceTests"]
 
 [[require]]
 name = "ccf_common"
@@ -10,3 +10,6 @@ copy = false
 
 [[lean_lib]]
 name = "Relevance"
+
+[[lean_lib]]
+name = "RelevanceTests"
