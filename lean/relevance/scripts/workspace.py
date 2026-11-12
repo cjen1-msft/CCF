@@ -42,6 +42,25 @@ def requirements(source: Path, config: dict) -> list[tuple[dict, Path]]:
     return out
 
 
+def closure(source: Path, config: dict) -> list[tuple[dict, Path, bool]]:
+    """The direct path requirements, then the transitive ones (which Lake lists as inherited)."""
+    out = [
+        (require, relative, False) for require, relative in requirements(source, config)
+    ]
+    names = {require["name"] for require, _, _ in out}
+    pending = [relative for _, relative, _ in out]
+    while pending:
+        package = LEAN / pending.pop(0)
+        for require, relative in requirements(
+            package, tomllib.loads((package / "lakefile.toml").read_text())
+        ):
+            if require["name"] not in names:
+                names.add(require["name"])
+                out.append((require, relative, True))
+                pending.append(relative)
+    return out
+
+
 def write_package(package: str) -> None:
     source = LEAN / package
     text = (source / "lakefile.toml").read_text()
@@ -78,12 +97,12 @@ def write_package(package: str) -> None:
                 "scope": "",
                 "name": require["name"],
                 "manifestFile": "lake-manifest.json",
-                "inherited": False,
+                "inherited": inherited,
                 "dir": str(WORKSPACE / relative),
                 **({"copy": require["copy"]} if "copy" in require else {}),
                 "configFile": "lakefile.toml",
             }
-            for require, relative in required
+            for require, relative, inherited in closure(source, config)
         ],
         "name": config["name"],
         "lakeDir": ".lake",
