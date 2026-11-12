@@ -1355,32 +1355,39 @@ private theorem maxCommittableIndexPositiveIsSignature
         let result := values.foldl choose best
         result = 0 \/ valid result := by
     intro values
-    induction values with
+    split_rel values := (induction values) with
     | nil =>
         intro best bestValid
         exact bestValid
-    | cons head tail inductionHypothesis =>
+    | cons =>
+        rename_i head tail inductionHypothesis
         intro best bestValid
         apply inductionHypothesis
         simp only [choose]
-        by_cases headValid : valid head
-        · simp [headValid]
-          rcases bestValid with bestZero | bestIsValid
-          · subst best
+        split_rel headValid := (by_cases headValid : valid head) with
+        | pos =>
+          simp [headValid]
+          split_rel bestValid := (rcases bestValid with bestZero | bestIsValid) with
+          | inl =>
+            subst best
             exact Or.inr headValid
-          · by_cases bestLeHead : best <= head
-            · right
+          | inr =>
+            split_rel bestLeHead := (by_cases bestLeHead : best <= head) with
+            | pos =>
+              right
               simpa [Nat.max_eq_right bestLeHead] using headValid
-            · right
+            | neg =>
+              right
               have headLeBest : head <= best := Nat.le_of_lt (Nat.lt_of_not_le bestLeHead)
               simpa [Nat.max_eq_left headLeBest] using bestIsValid
-        · simp [headValid, bestValid]
+        | neg => simp [headValid, bestValid]
   have resultValid :=
     foldValid (List.range (log.length + 1)) 0 (Or.inl rfl)
-  rcases resultValid with resultZero | resultValid
-  · rw [resultZero] at positive
+  split_rel resultValid := (rcases resultValid with resultZero | resultValid) with
+  | inl =>
+    rw [resultZero] at positive
     exact absurd positive (Nat.lt_irrefl 0)
-  · exact resultValid
+  | inr => exact resultValid
 
 /-- Every signature index is no later than the latest signature index. -/
 private theorem signatureIndex_le_maxCommittableIndex
