@@ -1469,10 +1469,12 @@ private theorem maxCommittableIndex_le_of_prefix
     {left right : List Entry}
     (isPrefix : left <+: right)
     : maxCommittableIndex left <= maxCommittableIndex right := by
-  by_cases zero : maxCommittableIndex left = 0
-  · rw [zero]
+  split_rel zero := (by_cases zero : maxCommittableIndex left = 0) with
+  | pos =>
+    rw [zero]
     exact Nat.zero_le _
-  · have positive : 0 < maxCommittableIndex left :=
+  | neg =>
+    have positive : 0 < maxCommittableIndex left :=
       Nat.pos_of_ne_zero zero
     exact
       signatureIndex_le_maxCommittableIndex
