@@ -3766,10 +3766,11 @@ private theorem nominate_sends (state : NodeState)
   unfold nominateSuccessor
   refine Sends.bind' Sends.guard' fun _ _ ⟨leader, empty⟩ => ?_
   subst empty
-  split
-  · exact Sends.bind' (Sends.send _ _ _) fun _ sent eq =>
+  split_rel successor := (split) with
+  | pos =>
+    exact Sends.bind' (Sends.send _ _ _) fun _ sent eq =>
       Sends.pure' ⟨rfl, leader, by simp [eq]⟩
-  · exact Sends.pure' ⟨rfl, leader, by simp⟩
+  | neg => exact Sends.pure' ⟨rfl, leader, by simp⟩
 
 private theorem advanceCommit_sends (middle : NodeState)
     : Sends
