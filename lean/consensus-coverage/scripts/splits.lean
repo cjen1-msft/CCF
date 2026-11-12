@@ -21,7 +21,8 @@ Run from the repository root (the workspace is out of tree):
     lake -d $WS/consensus-coverage env lean $PWD/lean/consensus-coverage/scripts/splits.lean
 
 `SPLITS_OUT` names the directory for the TSV tables (default: the current directory);
-`SPLITS_WALK` selects `own`, `inlined` or `both` (default).
+`SPLITS_WALK` selects `own`, `inlined` or `both` (default). `SPLITS_ROOTS`, a comma-separated
+list of last name components of `roots`, restricts the roots (default: all).
 -/
 
 open Lean Meta Elab Command
@@ -143,7 +144,9 @@ run_cmd liftTermElabM do
   let walk := (← IO.getEnv "SPLITS_WALK").getD "both"
   let stepPat ← patternOf `Consensus.Proofs.Safety.Ctx
   let statePat ← patternOf `Consensus.Proofs.Safety.Inv
-  let rs ← roots.toArray.mapM (resolve ·)
+  let only := ((← IO.getEnv "SPLITS_ROOTS").map (·.splitOn ",")).getD []
+  let chosen := roots.filter fun r => only.isEmpty || only.contains r.getString!
+  let rs ← chosen.toArray.mapM (resolve ·)
   let mut closure : Array Name := #[]
   for r in rs do
     let c ← closureOf r
