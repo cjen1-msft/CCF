@@ -5284,9 +5284,11 @@ private theorem termAt_le_of_mem {log : List Entry} {bound : Nat}
     (terms : forall entry, entry ∈ log -> entry.term <= bound) (index : Nat)
     : termAt log index <= bound := by
   unfold termAt
-  cases found : entryAt? log index with
+  split_rel found := (cases found : entryAt? log index) with
   | none => exact Nat.zero_le _
-  | some entry => exact terms entry (entryAt_mem found)
+  | some =>
+    rename_i entry
+    exact terms entry (entryAt_mem found)
 
 private theorem signature_pos {log : List Entry} {index : Nat}
     (signature : isSignatureAt log index = true)
