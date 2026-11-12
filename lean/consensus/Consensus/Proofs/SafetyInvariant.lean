@@ -1072,11 +1072,12 @@ private theorem step_next
         = some after)
     : next (Model.protocol Config.INITIAL_CONFIGURATION) before action = some after := by
   simp only [Model.transitionSystem, Model.networkStep] at stepped
-  split at stepped
-  · split at stepped
-    · exact stepped
-    · cases stepped
-  · exact stepped
+  split_rel stepped := (split at stepped) with
+  | pos =>
+    split_rel stepped := (split at stepped) with
+    | pos => exact stepped
+    | neg => cases stepped
+  | neg => exact stepped
 
 private theorem step_local
     {nodes : List NodeID} {before after : Model.State}
@@ -1197,7 +1198,9 @@ open Consensus.Model.Node
 @[simp]
 private theorem EntryContent.isSignature_eq_true {content : EntryContent}
     : content.isSignature = true <-> content = .signature := by
-  cases content <;> simp [EntryContent.isSignature]
+  split_rel content := (cases content) with
+  | transaction => simp [EntryContent.isSignature]
+  | signature => simp [EntryContent.isSignature]
 
 /-- A successful one-based lookup proves the index lies within the log. -/
 private theorem entryAtSomeIndexBound
@@ -1207,9 +1210,10 @@ private theorem entryAtSomeIndexBound
     (found : entryAt? log index = some entry)
     : index <= log.length := by
   unfold entryAt? at found
-  split at found
-  · simp_all
-  · rename_i indexNotZero
+  split_rel found := (split at found) with
+  | pos => simp_all
+  | neg =>
+    rename_i indexNotZero
     rw [List.getElem?_eq_some_iff] at found
     rcases found with ⟨within, _⟩
     rw [← Nat.sub_add_cancel (Nat.pos_of_ne_zero indexNotZero)]
@@ -1286,20 +1290,21 @@ private theorem maxCommittableIndexBounded (log : List Entry)
         best <= log.length ->
         values.foldl choose best <= log.length := by
     intro values
-    induction values with
+    split_rel values := (induction values) with
     | nil =>
         intro best _ bestBound
         exact bestBound
-    | cons head tail inductionHypothesis =>
+    | cons =>
+        rename_i head tail inductionHypothesis
         intro best valuesBound bestBound
         apply inductionHypothesis
         · intro index member
           exact valuesBound index (by simp [member])
         · have headBound := valuesBound head (by simp)
           simp only [choose]
-          split
-          · exact Nat.max_le.mpr ⟨bestBound, headBound⟩
-          · exact bestBound
+          split_rel signature := (split) with
+          | pos => exact Nat.max_le.mpr ⟨bestBound, headBound⟩
+          | neg => exact bestBound
   change candidates.foldl choose 0 <= log.length
   exact foldBounded candidates 0 allBounded (Nat.zero_le _)
 
@@ -1521,9 +1526,9 @@ private theorem NodeState.recordCommit_eq (node : NodeID) (state : NodeState)
         /\ (role = state.role \/ role = .none) := by
   unfold NodeState.recordCommit
   dsimp only
-  split
-  · exact ⟨_, _, _, rfl, Or.inr rfl⟩
-  · exact ⟨_, _, _, rfl, Or.inl rfl⟩
+  split_rel retire := (split) with
+  | pos => exact ⟨_, _, _, rfl, Or.inr rfl⟩
+  | neg => exact ⟨_, _, _, rfl, Or.inl rfl⟩
 
 @[simp]
 private theorem NodeState.recordCommit_log (node : NodeID) (state : NodeState)
@@ -2427,9 +2432,10 @@ private theorem length_filter_le (configurations : List Configuration) (bound : 
 
 private theorem zipIdx_sorted {α : Type} (log : List α) (start : Nat)
     : (log.zipIdx start).Pairwise fun first second => first.2 < second.2 := by
-  induction log generalizing start with
+  split_rel log := (induction log generalizing start) with
   | nil => simp
-  | cons head tail ih =>
+  | cons =>
+      rename_i head tail ih
       rw [List.zipIdx_cons, List.pairwise_cons]
       refine ⟨fun pair member => ?_, ih (start + 1)⟩
       have := List.mem_zipIdx member
@@ -3546,7 +3552,11 @@ private theorem AEFrom.ok {self : NodeID} {state : NodeState}
 private theorem Advance.log {self : NodeID} {middle state : NodeState}
     (advance : Advance self middle state)
     : state.log = middle.log := by
-  rcases advance with rfl | h <;> grind
+  split_rel advance := (rcases advance with same | h) with
+  | inl =>
+    subst same
+    grind
+  | inr => grind
 
 private theorem Advance.term {self : NodeID} {middle state : NodeState}
     (advance : Advance self middle state)
@@ -4819,9 +4829,11 @@ variable [Config.InitialConfiguration]
 private theorem Now.seen {history : History} {node : NodeID} {state : NodeState}
     (now : Now history node state)
     : Seen history node state := by
-  cases history with
+  split_rel history := (cases history) with
   | nil => exact absurd now id
-  | cons current rest => exact ⟨current, List.mem_cons_self, now⟩
+  | cons =>
+    rename_i current rest
+    exact ⟨current, List.mem_cons_self, now⟩
 
 private theorem Seen.cons {current : Model.State} {rest : History}
     {node : NodeID} {state : NodeState} (seen : Seen (current :: rest) node state)
@@ -5773,19 +5785,21 @@ private theorem accept_shape {source : NodeID} {request : AppendEntriesRequest}
     fun _ positive left right same =>
       log_matching c.anchors c.monos c.pre_seen senderSeen positive left right same
   have prevAgree : c.pre.log.take request.prevLogIndex = sender.log.take request.prevLogIndex := by
-    rcases Nat.eq_zero_or_pos request.prevLogIndex with zero | positive
-    · rw [zero, List.take_zero, List.take_zero]
-    · exact match' _ positive followerBound prevBound (termEq.trans prevTerm)
+    split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos request.prevLogIndex with zero | positive) with
+    | inl => rw [zero, List.take_zero, List.take_zero]
+    | inr => exact match' _ positive followerBound prevBound (termEq.trans prevTerm)
   have shape := acceptLog_eq followerBound prevBound prevAgree entries match'
   rw [← logEq] at shape
   refine ⟨batchBound, ?_⟩
-  split at shape
-  · rename_i agree
+  split_rel shape := (split at shape) with
+  | pos =>
+    rename_i agree
     have same : c.post.log = c.pre.log := by
       rw [shape, ← agree, List.take_append_drop]
     rw [same]
     exact ⟨agree, Or.inl rfl, prevAgree⟩
-  · rename_i differ
+  | neg =>
+    rename_i differ
     rw [List.append_nil] at shape
     rw [shape, List.take_take, Nat.min_self]
     exact ⟨rfl, Or.inr ⟨rfl, differ⟩, prevAgree⟩
@@ -5856,24 +5870,29 @@ private theorem rooted : RootedLogs (after :: before :: rest) := by
 
 private theorem terms : Terms (after :: before :: rest) := by
   intro node state now entry mem
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨_, old⟩
-  · have le := c.term_le
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    have le := c.term_le
     have preTerms := c.inv.terms c.actor c.pre c.pre_now
-    rcases c.post_log with sub | ⟨entries, log, terms, _, term, _⟩
-        | ⟨earlier, source, sender, n, suffix, canon, _, log⟩
-    · exact Nat.le_trans (preTerms entry (sub.subset mem)) le
-    · rw [log] at mem
-      rcases List.mem_append.mp mem with old | new
-      · exact Nat.le_trans (preTerms entry old) le
-      · rw [terms entry new]
+    split_rel post_log := (rcases c.post_log with sub | ⟨entries, log, terms, _, term, _⟩
+        | ⟨earlier, source, sender, n, suffix, canon, _, log⟩) with
+    | inl => exact Nat.le_trans (preTerms entry (sub.subset mem)) le
+    | inr_inl =>
+      rw [log] at mem
+      split_rel mem_append := (rcases List.mem_append.mp mem with old | new) with
+      | inl => exact Nat.le_trans (preTerms entry old) le
+      | inr =>
+        rw [terms entry new]
         exact le
-    · rw [log] at mem
+    | inr_inr =>
+      rw [log] at mem
       obtain ⟨_, _, rfl⟩ := canon.1.nonempty
       have := c.all Inv.terms _ suffix (List.cons_ne_nil _ _) source sender canon.1 entry
         (List.mem_of_mem_take mem)
       rw [canon.2.1] at this
       exact this
-  · exact c.inv.terms node state old entry mem
+  | inr => exact c.inv.terms node state old entry mem
 
 private theorem sorted : Sorted (after :: before :: rest) := by
   intro node state now
@@ -5914,19 +5933,28 @@ private theorem term_mono : TermMono (after :: before :: rest) := by
 
 private theorem vote_record : VoteRecord (after :: before :: rest) := by
   intro node state earlier candidate now seen voted
-  rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨different, old⟩
-  · rcases c.seen_after seen with seen | ⟨_, rfl⟩
-    · have le := c.term_le
-      rcases c.inv.vote_record c.actor c.pre earlier candidate c.pre_now seen voted with
-        lt | ⟨termEq, keep⟩
-      · exact Or.inl (Nat.lt_of_lt_of_le lt le)
-      · rcases Nat.lt_or_eq_of_le le with lt | same
-        · exact Or.inl (Nat.lt_of_le_of_lt (Nat.le_of_eq termEq) lt)
-        · exact Or.inr ⟨termEq.trans same, Summary.vote_keep c.sum same.symm candidate keep⟩
-    · exact Or.inr ⟨rfl, voted⟩
-  · rcases c.seen_after seen with seen | ⟨same, _⟩
-    · exact c.inv.vote_record node state earlier candidate old seen voted
-    · exact absurd same different
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨different, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    split_rel seen_after := (rcases c.seen_after seen with seen | ⟨actorEq, earlierEq⟩) with
+    | inl =>
+      have le := c.term_le
+      split_rel vote_record :=
+          (rcases c.inv.vote_record c.actor c.pre earlier candidate c.pre_now seen voted
+            with lt | ⟨termEq, keep⟩) with
+      | inl => exact Or.inl (Nat.lt_of_lt_of_le lt le)
+      | inr =>
+        split_rel lt_or_eq_of_le := (rcases Nat.lt_or_eq_of_le le with lt | same) with
+        | inl => exact Or.inl (Nat.lt_of_le_of_lt (Nat.le_of_eq termEq) lt)
+        | inr =>
+          exact Or.inr ⟨termEq.trans same, Summary.vote_keep c.sum same.symm candidate keep⟩
+    | inr =>
+      subst earlierEq
+      exact Or.inr ⟨rfl, voted⟩
+  | inr =>
+    split_rel seen_after := (rcases c.seen_after seen with seen | ⟨same, _⟩) with
+    | inl => exact c.inv.vote_record node state earlier candidate old seen voted
+    | inr => exact absurd same different
 
 /-- The actor's own vote in the step. -/
 private theorem self_granted {term : Nat} (le : c.pre.currentTerm <= term)
@@ -7629,19 +7657,25 @@ variable [Config.InitialConfiguration]
 private theorem good_of_exec {nodes : List NodeID} {history : History}
     (exec : Exec nodes history)
     : Good history := by
-  induction exec with
-  | initial initialized =>
+  split_rel exec := (induction exec) with
+  | initial =>
+      rename_i initialized
       intro earlier suffix nonempty
-      rcases List.suffix_cons_iff.mp suffix with rfl | inner
-      · exact inv_initial initialized
-      · exact (nonempty (List.eq_nil_of_suffix_nil inner)).elim
-  | step prior stepped ih =>
+      split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp suffix with same | inner) with
+      | inl =>
+        subst same
+        exact inv_initial initialized
+      | inr => exact (nonempty (List.eq_nil_of_suffix_nil inner)).elim
+  | step =>
+      rename_i prior stepped ih
       obtain ⟨transition⟩ := LocalTransition.ofStep stepped
       have c : Ctx nodes _ _ _ := ⟨.step prior stepped, transition, ih⟩
       intro earlier suffix nonempty
-      rcases List.suffix_cons_iff.mp suffix with rfl | inner
-      · exact c.inv_step
-      · exact ih earlier inner nonempty
+      split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp suffix with same | inner) with
+      | inl =>
+        subst same
+        exact c.inv_step
+      | inr => exact ih earlier inner nonempty
 
 /-- Every reachable state is the head of a history satisfying the invariant. -/
 private theorem inv_of_reachable {nodes : List NodeID} {state : Model.State}

@@ -266,7 +266,8 @@ def main() -> None:
     if mode == "final" and left:
         failures.append(f"{left} unmarked splits")
     if failures:
-        print(f"RESULT: FAIL ({len(failures)} problems; see above)")
+        more = f" and {len(failures) - 3} more; see above" if len(failures) > 3 else ""
+        print(f"RESULT: FAIL ({'; '.join(failures[:3])}{more})")
         sys.exit(1)
     if mode == "final" or left == 0:
         print("RESULT: PASS (complete: no unmarked splits left)")
