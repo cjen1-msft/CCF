@@ -248,6 +248,50 @@ def runSteps (configuration : Finset NodeID) (nodes : List NodeID) (start : Mode
     state := s.after
   return (out, state)
 
+
+/-- A step from a model action. -/
+def mkStepAction (configuration : Finset NodeID) (nodes : List NodeID) (state : Model.State)
+    (action : Model.Action) : Option Step := do
+  let system := Model.transitionSystem configuration nodes
+  let (actor, event) := match action with
+    | .local node input => (node, Event.internal input)
+    | .deliver e => (e.target, Event.receive e.source e.payload)
+  let after ← system.step state action
+  let pre ← nodeState state actor
+  let post ← nodeState after actor
+  return { before := state, after, actor, pre, post, event }
+
+/-- Bounded random walks of the three-node configuration from the initial state: at each
+state, a pseudo-random enabled action among deliveries of queued envelopes and a fixed set of
+local inputs per node. Evidence from a finite set of runs. -/
+def randomRuns (runs length : Nat) (seed : Nat) : List Step := Id.run do
+  let configuration : Finset NodeID := {0, 1, 2}
+  let nodes : List NodeID := [0, 1, 2]
+  let mut rng := seed
+  let mut out : Array Step := #[]
+  for _ in [0:runs] do
+    let mut state := initialState configuration nodes
+    for i in [0:length] do
+      let locals : List Model.Action := nodes.flatMap fun n =>
+        let len := ((nodeState state n).map (·.log.length)).getD 0
+        [ .local n (.timeout .election), .local n (.timeout .checkQuorum),
+          .local n (.append [{ content := .signature }]),
+          .local n (.append [{ content := .transaction (10 * i) {} }]),
+          .local n .nominateSuccessor ]
+        ++ (nodes.filter (· != n)).map fun p => .local n (.sendEntries p len)
+      let candidates := (state.network.map (fun e => (.deliver e : Model.Action)) ++ locals).filterMap
+        fun a => mkStepAction configuration nodes state a
+      if candidates.isEmpty then break
+      rng := (rng * 6364136223846793005 + 1442695040888963407) % 18446744073709551616
+      -- bias towards deliveries (two thirds of the time when any is enabled)
+      let deliveries := candidates.filter fun st => match st.event with
+        | .receive _ _ => true | _ => false
+      let pool := if deliveries.isEmpty || (rng / 65536) % 3 == 0 then candidates else deliveries
+      let some st := pool[(rng / 4294967296) % pool.length]? | break
+      out := out.push st
+      state := st.after
+  return out.toList
+
 def canonical : Except String (List Step) := do
   let (a, _) ← runSteps {0, 1, 2} [0, 1, 2] (initialState {0, 1, 2} [0, 1, 2]) clientRequestCommits
   let expected : List Entry := [
@@ -297,5 +341,12 @@ def report (label : String) (steps : List Step) : IO Unit := do
   match canonical with
   | .error e => throw (IO.userError e)
   | .ok steps => report "canonical traces" steps
+  let runs := (← IO.getEnv "RUNS").bind String.toNat? |>.getD 0
+  let length := (← IO.getEnv "LENGTH").bind String.toNat? |>.getD 40
+  if runs > 0 then
+    let t0 ← IO.monoNanosNow
+    let steps := randomRuns runs length 42
+    IO.println s!"generated {steps.length} steps in {((← IO.monoNanosNow) - t0) / 1000000} ms"
+    report s!"random walks ({runs} x up to {length} steps, 3 nodes)" steps
 
 end ConsensusCoverage.EvalClasses
