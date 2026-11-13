@@ -82,6 +82,8 @@ structure Combo where
   /-- Under a clause obligation opened above the unit: the clause premises at the pre-state, over
   the unit's parameters, when every variable they mention is passed down as an argument. -/
   prem : Option (Array Expr) := none
+  /-- The clause of the obligation (`.anonymous` when not under one). -/
+  cname : Name := .anonymous
   deriving Inhabited
 
 /-- One disjunct of a `reach` definition or of a class: its flags, the clause premises at the
@@ -90,6 +92,7 @@ structure Disj where
   clause : Bool
   bound : Bool
   prem : Option (Array Expr) := none
+  cname : Name := .anonymous
   e : Expr
   deriving Inhabited
 
@@ -101,6 +104,8 @@ structure SharedClass where
   tag : String
   pred : Expr
   occurrences : Array Nat
+  /-- The clauses whose obligations the class's disjuncts are under. -/
+  clauses : Array Name := #[]
   deriving Inhabited
 
 structure ShSt where
@@ -113,8 +118,14 @@ structure ShSt where
   framedSites : Nat := 0
   /-- Per walked branch reached at this level (index into the branch records): its role. -/
   roles : Array (Nat × String) := #[]
+  /-- Per branch (index) and clause: some kept path kind into it is under that clause. -/
+  clauseOf : Std.HashSet (Nat × Name) := {}
   /-- The keys of `up` for which some path kind was dropped as framing. -/
   framedInto : Std.HashSet (Nat × List Nat) := {}
+  /-- Path kinds under an obligation whose premises could not be carried to a callee. -/
+  carryLost : Nat := 0
+  /-- Units (index) reached under the obligation of a clause. -/
+  unitClauses : Std.HashSet (Nat × Name) := {}
 
 abbrev ShM := StateT ShSt MetaM
 
@@ -287,12 +298,13 @@ def carryTo (args ps : Array Expr) (e : Expr) : Option Expr :=
 def mkReach (inp : SharedIn) (ys : Array Expr) (ds : Array Disj) :
     ShM (Array Combo) := do
   let mut out := #[]
-  let mut keys : Array (Bool × Bool × Option (Array Expr)) := #[]
+  let mut keys : Array (Bool × Bool × Option (Array Expr) × Name) := #[]
   for d in ds do
-    unless keys.contains (d.clause, d.bound, d.prem) do keys := keys.push (d.clause, d.bound, d.prem)
-  for (cl, bd, pm) in keys do
+    let k := (d.clause, d.bound, d.prem, d.cname)
+    unless keys.contains k do keys := keys.push k
+  for (cl, bd, pm, cn) in keys do
       let es := ds.filterMap fun d =>
-        if d.clause == cl && d.bound == bd && d.prem == pm then some d.e else none
+        if d.clause == cl && d.bound == bd && d.prem == pm && d.cname == cn then some d.e else none
       if es.isEmpty then continue
       let v ← mkLambdaFVars (inp.xs ++ ys) (mkOrN es)
       let v ← instantiateMVars v
@@ -304,7 +316,7 @@ def mkReach (inp : SharedIn) (ys : Array Expr) (ds : Array Disj) :
                              hints := .abbrev, safety := .safe }
       modify fun s => { s with defs := s.defs.push name }
       out := out.push { reach := mkConst name (lps.map mkLevelParam), clause := cl, bound := bd,
-                        prem := pm }
+                        prem := pm, cname := cn }
   return out
 
 /-- Run `k` with local variables `ys` standing for the parameters `ps` (declared in `lctx`) of a
@@ -351,6 +363,9 @@ partial def up (inp : SharedIn) (vi : Nat) (S : List Nat) : ShM (Array Combo) :=
     let tb := inp.tailBound[vi]!
     mkReach inp ys (ds.map fun d => { d with bound := d.bound || tb })
   modify fun s => { s with memo := s.memo.insert key r, inProgress := s.inProgress.erase key }
+  for c in r do
+    unless c.cname.isAnonymous do
+      modify fun s => { s with unitClauses := s.unitClauses.insert (vi, c.cname) }
   return r
 
 /-- The disjuncts of a branch or call site at `at_` in unit `ui`: per path kind into `ui`, the
@@ -371,13 +386,15 @@ partial def siteDisjuncts (inp : SharedIn) (ui : Nat) (at_ : SharedAt) (args : A
       out := out.push (← mkEqY y (← inferType y) (← zetaAll a) hetero)
     return out
   -- the premises `prem` (in this unit) carried to the callee's parameters
-  let carry (prem : Option (Array Expr)) : MetaM (Option (Array Expr)) := do
+  let carry (prem : Option (Array Expr)) : ShM (Option (Array Expr)) := do
     let some (as, ps) := callee | return none
     let some prem := prem | return none
-    withExtended at_.lctx (xs ++ ys) do
+    let r ← withExtended at_.lctx (xs ++ ys) do
       let as ← as.mapM zetaAll
       let prem ← prem.mapM zetaAll
       return prem.mapM (carryTo as ps)
+    if r.isNone then modify fun s => { s with carryLost := s.carryLost + 1 }
+    return r
   let framed (prem : Array Expr) : MetaM Bool :=
     withExtended at_.lctx (xs ++ ys) do return (← frameWitness? prem).isSome
   let mut out := #[]
@@ -395,7 +412,8 @@ partial def siteDisjuncts (inp : SharedIn) (ui : Nat) (at_ : SharedAt) (args : A
     match r? with
     | some e =>
       let prem ← carry (cl.map (·.premS))
-      out := out.push { clause := cl.isSome, bound := at_.bound, prem, e }
+      out := out.push { clause := cl.isSome, bound := at_.bound, prem, e,
+                        cname := (cl.map (·.name)).getD .anonymous }
     | none =>
       nFramed := nFramed + 1
       modify fun s => { s with framedSites := s.framedSites + 1 }
@@ -429,7 +447,8 @@ partial def siteDisjuncts (inp : SharedIn) (ui : Nat) (at_ : SharedAt) (args : A
           continue
       let e ← withExtended at_.lctx (xs ++ ys) (finish (some c.reach))
       let prem ← carry (if useCl then none else c.prem)
-      out := out.push { clause := c.clause || useCl, bound := c.bound || at_.bound, prem, e }
+      out := out.push { clause := c.clause || useCl, bound := c.bound || at_.bound, prem, e,
+                        cname := if useCl then cl.get!.name else c.cname }
   return (out, nFramed)
 end
 
@@ -483,6 +502,9 @@ structure SharedOut where
   rootCallee : Nat := 0
   framedSites : Nat := 0
   roles : Array (Nat × String) := #[]
+  carryLost : Nat := 0
+  /-- (unit declaration, clause): the unit is reached under the clause's obligation. -/
+  unitClauses : Array (Name × Name) := #[]
   reached : Nat := 0
   fixed : Nat := 0
   deriving Inhabited
@@ -549,6 +571,8 @@ def sharedClasses (cfg : Config) (ns : Name) (level : Level) (pat : Expr)
         let (dis, nFramed) ← siteDisjuncts inp ui at_ #[] #[] #[]
         let mut kinds : Array String := #[]
         for d in dis do
+          unless d.cname.isAnonymous || d.bound && !d.clause do
+            modify fun s => { s with clauseOf := s.clauseOf.insert (bi, d.cname) }
           let k := if level != .step then "state" else if d.clause then "effect"
             else if d.bound then "unattributed" else "step-own"
           unless kinds.contains k do kinds := kinds.push k
@@ -568,12 +592,19 @@ def sharedClasses (cfg : Config) (ns : Name) (level : Level) (pat : Expr)
     for key in keys do
       let (es, os) := acc.getD key (#[], #[])
       let pred ← instantiateMVars (← mkLambdaFVars xs (mkOrN es))
+      let co := (← get).clauseOf
+      let clauses := os.foldl (init := #[]) fun acc bi =>
+        let b := branches[bi]!
+        let own := if b.clause == "-" then #[] else #[b.clause.toName]
+        let below := co.toArray.filterMap fun (i, n) => if i == bi then some n else none
+        (own ++ below).foldl (fun a n => if a.contains n then a else a.push n) acc
       out := out.push { level, decl := key.1, split := key.2.1, tag := key.2.2, pred,
-                        occurrences := os }
+                        occurrences := os, clauses := clauses.qsort (·.toString < ·.toString) }
     return out
   let (classes, st) ← go.run { defs := Array.replicate defsFrom .anonymous }
   return { classes, defs := st.defs.size - defsFrom, cycles := st.cycles,
-           missingArgs := st.missingArgs, rootCallee, framedSites := st.framedSites, roles := st.roles,
+           missingArgs := st.missingArgs, rootCallee, framedSites := st.framedSites, roles := st.roles, carryLost := st.carryLost,
+           unitClauses := st.unitClauses.toArray.map fun (vi, n) => (units[vi]!.unit.decl, n),
            reached := (reached.filter id).size,
            fixed := fixed.foldl (fun n a => n + (a.filter Option.isSome).size) 0 }
 

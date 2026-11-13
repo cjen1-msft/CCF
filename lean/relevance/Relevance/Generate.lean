@@ -592,6 +592,50 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
     let rootsOf (d : Name) : String :=
       let hits := closures.filter (·.2.contains d)
       if hits.isEmpty then "-" else ",".intercalate (hits.toList.map (·.1.toString))
+    -- clause-level: the clauses (fields of the state pattern's structure) each root reads outside
+    -- step-level theorems, closed under the clauses read by the units under each clause's
+    -- obligation
+    let env ← getEnv
+    let fields : Array Name := match cfg.stateCtor.bind fun c => (env.find? c) with
+      | some (.ctorInfo ci) => (getStructureFields env ci.induct).map (ci.induct ++ ·)
+      | _ => #[]
+    let structName := fields[0]?.map (·.getPrefix)
+    let readsOf (d : Name) : CoreM (Array Name) := do
+      let some ci := (← getEnv).find? d | return #[]
+      let some v := ci.value? (allowOpaque := true) | return #[]
+      let used := v.getUsedConstants
+      if structName.any fun sn => used.contains (sn ++ `casesOn) || used.contains (sn ++ `rec) then
+        return fields
+      return fields.filter used.contains
+    let stepLevel : Std.HashSet Name :=
+      r.levels.foldl (fun h (c, l, _) => if l == .step then h.insert c else h) {}
+    let mut reads : Std.HashMap Name (Array Name) := {}
+    for (u, c) in st.unitClauses do
+      let rs ← liftCoreM <| readsOf u
+      reads := reads.insert c ((reads.getD c #[]) ++ rs)
+    let mut clauseClosures : Array (Name × Array Name) := #[]
+    for root in roots do
+      let mut seen : Std.HashSet Name := {}
+      let mut todo := #[root]
+      let mut use : Array Name := #[]
+      while !todo.isEmpty do
+        let c := todo.back!
+        todo := todo.pop
+        if seen.contains c || stepLevel.contains c then continue
+        seen := seen.insert c
+        for f in ← liftCoreM (readsOf c) do unless use.contains f do use := use.push f
+        todo := todo ++ (← liftCoreM <| theoremsUsed cfg c)
+      let mut cl := use
+      let mut i := 0
+      while i < cl.size do
+        for f in reads.getD (cl[i]!.componentsRev.head!) #[] do
+          unless cl.contains f do cl := cl.push f
+        i := i + 1
+      clauseClosures := clauseClosures.push (root, cl.map (·.componentsRev.head!))
+    let clauseTag (c : SharedClass) : String :=
+      if c.clauses.isEmpty then "-" else
+      let hits := clauseClosures.filter fun (_, cl) => c.clauses.any cl.contains
+      if hits.isEmpty then "none" else ",".intercalate (hits.toList.map (·.1.toString))
     let mut classRows := #[]
     let mut tags : Array (String × Nat) := #[]
     for (cs, its, lvl) in [(st.classes, stepItems, "step"), (sa.classes, stateItems, "state")] do
@@ -604,7 +648,13 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
           | none => tags.push (s!"{lvl} {tag}", 1)
         classRows := classRows.push <| "\t".intercalate [
           "class", s!"{lvl}_{n}", lvl, c.decl.toString, c.split, c.tag,
-          toString c.occurrences.size, "/".intercalate roles.toList, tag]
+          toString c.occurrences.size, "/".intercalate roles.toList, tag,
+          if c.clauses.isEmpty then "-" else ",".intercalate (c.clauses.toList.map toString),
+          clauseTag c]
+        let ct := s!"{lvl} by clause {clauseTag c}"
+        tags := match tags.findIdx? (·.1 == ct) with
+          | some k => tags.modify k fun (t, m) => (t, m + 1)
+          | none => tags.push (ct, 1)
     let (_, shapes) ← liftTermElabM <| mkCreates cfg
     let clauseRows := shapes.map fun (n, nd, np) =>
       s!"{n}\t{nd} data binder(s)\t{np} premise(s){if np == 0 then "\tno premises: no new instances" else ""}"
@@ -636,12 +686,16 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
       ({(r.unrecorded.filter (!·.internal)).size} protocol); {rootUnits.size} roots; \
       {st.classes.size} step classes ({distinct.size} distinct), {sa.classes.size} state classes; \
       {st.defs + sa.defs} reach definitions; {st.reached}/{sa.reached} units reached (step/state), \
-      {st.fixed}/{sa.fixed} fixed parameters, {st.framedSites + sa.framedSites} framed sites, \
+      {st.fixed}/{sa.fixed} fixed parameters, {st.framedSites + sa.framedSites} framed sites \
+      ({st.carryLost} path kinds whose clause premises could not be carried to a callee), \
       {st.cycles + sa.cycles} recursive calls cut, {st.missingArgs + sa.missingArgs} sites with \
       missing arguments, {st.rootCallee} calls of roots; counted branch occurrences by role \
       ({roleCount "step" st.roles}; {roleCount "state" sa.roles}); {deadAt.size} dead branch \
       occurrences; classes by the roots whose proofs use their lemma: \
-      {", ".intercalate (tags.toList.map fun (t, m) => s!"{m} {t}")}; clauses: \
+      {", ".intercalate (tags.toList.map fun (t, m) => s!"{m} {t}")}; clauses read by each \
+      root, closed under the clauses read under each clause's obligation: \
+      {"; ".intercalate (clauseClosures.toList.map fun (n, cl) =>
+        s!"{n}: {cl.size} [{", ".intercalate (cl.toList.map toString)}]")}; clauses: \
       {", ".intercalate (shapes.toList.map fun (n, nd, np) => s!"{n} ({nd} binders, {np} premises)")}"
     -- per-path comparison: each shared class against the per-path occurrences of its case
     let some tac := args.get? "compare" | return
