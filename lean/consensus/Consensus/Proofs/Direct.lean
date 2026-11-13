@@ -130,11 +130,12 @@ private theorem step_next
         = some after)
     : next (Model.protocol Config.INITIAL_CONFIGURATION) before action = some after := by
   simp only [Model.transitionSystem, Model.networkStep] at stepped
-  split at stepped
-  · split at stepped
-    · exact stepped
-    · cases stepped
-  · exact stepped
+  split_rel stepped := (split at stepped) with
+  | pos =>
+    split_rel stepped := (split at stepped) with
+    | pos => exact stepped
+    | neg => cases stepped
+  | neg => exact stepped
 
 private theorem step_local
     {nodes : List NodeID} {before after : Model.State}
@@ -204,10 +205,12 @@ private theorem mem_replaceNode {nodes : List (NodeID × NodeState)} {node membe
       \/ (Not (member = node) /\ (member, state) ∈ nodes) := by
   simp only [replaceNode, List.mem_map] at found
   obtain ⟨⟨key, old⟩, listed, same⟩ := found
-  by_cases here : key = node
-  · simp only [here, beq_self_eq_true, ite_true, Prod.mk.injEq] at same
+  split_rel here := (by_cases here : key = node) with
+  | pos =>
+    simp only [here, beq_self_eq_true, ite_true, Prod.mk.injEq] at same
     exact Or.inl ⟨same.1.symm, same.2.symm⟩
-  · have different : (key == node) = false := by simpa using here
+  | neg =>
+    have different : (key == node) = false := by simpa using here
     simp only [different, Bool.false_eq_true, ite_false, Prod.mk.injEq] at same
     obtain ⟨rfl, rfl⟩ := same
     exact Or.inr ⟨here, listed⟩
@@ -224,12 +227,36 @@ private theorem mem_of_nodeState {concrete : Model.State} {node : NodeID}
 private theorem observeTerm_log (state : NodeState) (message : Model.Node.Message)
     : (Model.Node.observeTerm state message).log = state.log := by
   unfold Model.Node.observeTerm Model.Node.updateTerm
-  split <;> (try split) <;> (try split) <;> rfl
+  split_rel message := (split) with
+  | proposeRequestVoteRequest => rfl
+  | appendEntriesResponse =>
+    split_rel primary := (split) with
+    | pos =>
+      split_rel newer := (split) with
+      | pos => rfl
+      | neg => rfl
+    | neg => rfl
+  | other =>
+    split_rel newer := (split) with
+    | pos => rfl
+    | neg => rfl
 
 private theorem observeTerm_commitIndex (state : NodeState) (message : Model.Node.Message)
     : (Model.Node.observeTerm state message).commitIndex = state.commitIndex := by
   unfold Model.Node.observeTerm Model.Node.updateTerm
-  split <;> (try split) <;> (try split) <;> rfl
+  split_rel message := (split) with
+  | proposeRequestVoteRequest => rfl
+  | appendEntriesResponse =>
+    split_rel primary := (split) with
+    | pos =>
+      split_rel newer := (split) with
+      | pos => rfl
+      | neg => rfl
+    | neg => rfl
+  | other =>
+    split_rel newer := (split) with
+    | pos => rfl
+    | neg => rfl
 
 end Consensus.Proofs.Concrete
 
@@ -242,7 +269,9 @@ open Consensus.Model.Node
 @[simp]
 private theorem EntryContent.isSignature_eq_true {content : EntryContent}
     : content.isSignature = true <-> content = .signature := by
-  cases content <;> simp [EntryContent.isSignature]
+  split_rel content := (cases content) with
+  | transaction => simp [EntryContent.isSignature]
+  | signature => simp [EntryContent.isSignature]
 
 /-- A successful one-based lookup proves the index lies within the log. -/
 private theorem entryAtSomeIndexBound
@@ -252,9 +281,10 @@ private theorem entryAtSomeIndexBound
     (found : entryAt? log index = some entry)
     : index <= log.length := by
   unfold entryAt? at found
-  split at found
-  · simp_all
-  · rename_i indexNotZero
+  split_rel found := (split at found) with
+  | pos => simp_all
+  | neg =>
+    rename_i indexNotZero
     rw [List.getElem?_eq_some_iff] at found
     rcases found with ⟨within, _⟩
     rw [← Nat.sub_add_cancel (Nat.pos_of_ne_zero indexNotZero)]
@@ -271,9 +301,10 @@ private theorem entryAt_of_prefix
   rcases isPrefix with ⟨suffix, rightEq⟩
   rw [← rightEq]
   unfold entryAt? at found ⊢
-  by_cases zero : index = 0
-  · simp [zero] at found
-  · simp only [zero, ↓reduceIte] at found ⊢
+  split_rel zero := (by_cases zero : index = 0) with
+  | pos => simp [zero] at found
+  | neg =>
+    simp only [zero, ↓reduceIte] at found ⊢
     have within : index - 1 < left.length := by
       rw [List.getElem?_eq_some_iff] at found
       exact found.1
@@ -288,10 +319,11 @@ private theorem isSignatureAtTrue
     : Exists
         fun entry =>
           entryAt? log index = some entry /\ entry.content = .signature := by
-  cases found : entryAt? log index with
+  split_rel found := (cases found : entryAt? log index) with
   | none =>
       simp [isSignatureAt, found] at signature
-  | some entry =>
+  | some =>
+      rename_i entry
       refine ⟨entry, rfl, ?_⟩
       simpa [isSignatureAt, found] using signature
 
@@ -316,20 +348,21 @@ private theorem maxCommittableIndexBounded (log : List Entry)
         best <= log.length ->
         values.foldl choose best <= log.length := by
     intro values
-    induction values with
+    split_rel values := (induction values) with
     | nil =>
         intro best _ bestBound
         exact bestBound
-    | cons head tail inductionHypothesis =>
+    | cons =>
+        rename_i head tail inductionHypothesis
         intro best valuesBound bestBound
         apply inductionHypothesis
         · intro index member
           exact valuesBound index (by simp [member])
         · have headBound := valuesBound head (by simp)
           simp only [choose]
-          split
-          · exact Nat.max_le.mpr ⟨bestBound, headBound⟩
-          · exact bestBound
+          split_rel signature := (split) with
+          | pos => exact Nat.max_le.mpr ⟨bestBound, headBound⟩
+          | neg => exact bestBound
   change candidates.foldl choose 0 <= log.length
   exact foldBounded candidates 0 allBounded (Nat.zero_le _)
 
@@ -349,32 +382,39 @@ private theorem maxCommittableIndexPositiveIsSignature
         let result := values.foldl choose best
         result = 0 \/ valid result := by
     intro values
-    induction values with
+    split_rel values := (induction values) with
     | nil =>
         intro best bestValid
         exact bestValid
-    | cons head tail inductionHypothesis =>
+    | cons =>
+        rename_i head tail inductionHypothesis
         intro best bestValid
         apply inductionHypothesis
         simp only [choose]
-        by_cases headValid : valid head
-        · simp [headValid]
-          rcases bestValid with bestZero | bestIsValid
-          · subst best
+        split_rel headValid := (by_cases headValid : valid head) with
+        | pos =>
+          simp [headValid]
+          split_rel bestValid := (rcases bestValid with bestZero | bestIsValid) with
+          | inl =>
+            subst best
             exact Or.inr headValid
-          · by_cases bestLeHead : best <= head
-            · right
+          | inr =>
+            split_rel bestLeHead := (by_cases bestLeHead : best <= head) with
+            | pos =>
+              right
               simpa [Nat.max_eq_right bestLeHead] using headValid
-            · right
+            | neg =>
+              right
               have headLeBest : head <= best := Nat.le_of_lt (Nat.lt_of_not_le bestLeHead)
               simpa [Nat.max_eq_left headLeBest] using bestIsValid
-        · simp [headValid, bestValid]
+        | neg => simp [headValid, bestValid]
   have resultValid :=
     foldValid (List.range (log.length + 1)) 0 (Or.inl rfl)
-  rcases resultValid with resultZero | resultValid
-  · rw [resultZero] at positive
+  split_rel resultValid := (rcases resultValid with resultZero | resultValid) with
+  | inl =>
+    rw [resultZero] at positive
     exact absurd positive (Nat.lt_irrefl 0)
-  · exact resultValid
+  | inr => exact resultValid
 
 /-- Every signature index is no later than the latest signature index. -/
 private theorem signatureIndex_le_maxCommittableIndex
@@ -397,37 +437,41 @@ private theorem signatureIndex_le_maxCommittableIndex
       forall (values : List Nat) (best : Nat),
         best <= values.foldl choose best := by
     intro values
-    induction values with
+    split_rel values := (induction values) with
     | nil =>
         intro best
         exact Nat.le.refl
-    | cons head tail inductionHypothesis =>
+    | cons =>
+        rename_i head tail inductionHypothesis
         intro best
         apply Nat.le_trans (m := choose best head)
         · simp only [choose]
-          split
-          · exact Nat.le_max_left _ _
-          · exact Nat.le.refl
+          split_rel signature := (split) with
+          | pos => exact Nat.le_max_left _ _
+          | neg => exact Nat.le.refl
         · exact inductionHypothesis (choose best head)
   have foldContains :
       forall (values : List Nat) (best : Nat),
         index ∈ values ->
           index <= values.foldl choose best := by
     intro values
-    induction values with
+    split_rel values := (induction values) with
     | nil =>
         simp
-    | cons head tail inductionHypothesis =>
+    | cons =>
+        rename_i head tail inductionHypothesis
         intro best member
         simp only [List.foldl_cons]
-        rcases List.mem_cons.mp member with headEq | tailMember
-        · subst head
+        split_rel mem_cons := (rcases List.mem_cons.mp member with headEq | tailMember) with
+        | inl =>
+          subst head
           have selected :
               choose best index = max best index := by
             simp [choose, signature]
           rw [selected]
           exact Nat.le_trans (Nat.le_max_right best index) (foldAboveStart tail (max best index))
-        · exact
+        | inr =>
+          exact
             inductionHypothesis
               (choose best head) tailMember
   change index <= candidates.foldl choose 0
@@ -452,10 +496,12 @@ private theorem maxCommittableIndex_le_of_prefix
     {left right : List Entry}
     (isPrefix : left <+: right)
     : maxCommittableIndex left <= maxCommittableIndex right := by
-  by_cases zero : maxCommittableIndex left = 0
-  · rw [zero]
+  split_rel zero := (by_cases zero : maxCommittableIndex left = 0) with
+  | pos =>
+    rw [zero]
     exact Nat.zero_le _
-  · have positive : 0 < maxCommittableIndex left :=
+  | neg =>
+    have positive : 0 < maxCommittableIndex left :=
       Nat.pos_of_ne_zero zero
     exact
       signatureIndex_le_maxCommittableIndex
@@ -471,15 +517,18 @@ private theorem isSignatureAt_take_of_le
     : isSignatureAt (log.take count) index = true := by
   rcases isSignatureAtTrue signature with ⟨entry, found, content⟩
   have taken : entryAt? (log.take count) index = some entry := by
-    by_cases zero : index = 0
-    · subst index
+    split_rel zero := (by_cases zero : index = 0) with
+    | pos =>
+      subst index
       simp [entryAt?] at found
-    · unfold entryAt? at found ⊢
+    | neg =>
+      unfold entryAt? at found ⊢
       simp only [zero, ↓reduceIte] at found ⊢
       rw [List.getElem?_take]
-      split
-      · exact found
-      · rename_i outside
+      split_rel within := (split) with
+      | pos => exact found
+      | neg =>
+        rename_i outside
         exact absurd (Nat.lt_of_lt_of_le (Nat.sub_one_lt zero) within) outside
   simp [isSignatureAt, taken, content]
 
@@ -514,9 +563,9 @@ private theorem NodeState.recordCommit_eq (node : NodeID) (state : NodeState)
         /\ (role = state.role \/ role = .none) := by
   unfold NodeState.recordCommit
   dsimp only
-  split
-  · exact ⟨_, _, _, rfl, Or.inr rfl⟩
-  · exact ⟨_, _, _, rfl, Or.inl rfl⟩
+  split_rel retire := (split) with
+  | pos => exact ⟨_, _, _, rfl, Or.inr rfl⟩
+  | neg => exact ⟨_, _, _, rfl, Or.inl rfl⟩
 
 @[simp]
 private theorem NodeState.recordCommit_log (node : NodeID) (state : NodeState)
@@ -567,7 +616,7 @@ private theorem fromLeader_loop (self : NodeID) (limit : Nat) (entries : List En
           /\ commitIndex
               <= max state.commitIndex
                   (maxCommittableIndexUpTo (state.log ++ entries) limit) := by
-  induction entries with
+  split_rel entries := (induction entries) with
   | nil =>
       intro state
       exact ⟨
@@ -580,14 +629,16 @@ private theorem fromLeader_loop (self : NodeID) (limit : Nat) (entries : List En
         Nat.le.refl,
         Nat.le_max_left _ _
       ⟩
-  | cons entry entries ih =>
+  | cons =>
+      rename_i entry entries ih
       intro state
       simp only [List.foldl_cons]
       have mono :=
         maxCommittableIndexUpTo_mono (List.prefix_append (state.log ++ [entry]) entries) limit
       simp only [List.append_assoc, List.cons_append, List.nil_append] at mono
-      by_cases signature : entry.content.isSignature
-      · simp only [signature, ↓reduceIte]
+      split_rel signature := (by_cases signature : entry.content.isSignature) with
+      | pos =>
+        simp only [signature, ↓reduceIte]
         obtain ⟨retired₀, role₀, known₀, eq₀, roleCase₀⟩ :=
           NodeState.recordCommit_eq self { state with log := state.log ++ [entry] }
             (max state.commitIndex
@@ -600,11 +651,13 @@ private theorem fromLeader_loop (self : NodeID) (limit : Nat) (entries : List En
           Nat.le_trans (Nat.le_max_left _ _) lower,
           Nat.le_trans upper (Nat.max_le.mpr ⟨Nat.max_le.mpr ⟨Nat.le_max_left _ _,
             Nat.le_trans mono (Nat.le_max_right _ _)⟩, Nat.le_max_right _ _⟩)⟩
-        rcases roleCase with same | none
-        · rw [same]
+        split_rel roleCase := (rcases roleCase with same | none) with
+        | inl =>
+          rw [same]
           exact roleCase₀
-        · exact Or.inr none
-      · simp only [signature, Bool.false_eq_true, ↓reduceIte]
+        | inr => exact Or.inr none
+      | neg =>
+        simp only [signature, Bool.false_eq_true, ↓reduceIte]
         obtain ⟨commitIndex, retired, role, known, eq, roleCase, lower, upper⟩ := ih _
         rw [eq]
         simp only [List.append_assoc, List.cons_append, List.nil_append] at lower upper roleCase ⊢
@@ -655,10 +708,11 @@ private theorem handleAppendEntiresFromPrimary_eq (self : NodeID) (state : NodeS
     congr 2
     exact Nat.le_antisymm (Nat.max_le.mpr ⟨upper, Nat.le_max_right _ _⟩)
       (Nat.max_le.mpr ⟨Nat.le_trans lower (Nat.le_max_left _ _), Nat.le_max_right _ _⟩)
-  · rcases roleCase' with same | none
-    · rw [same]
+  · split_rel roleCase' := (rcases roleCase' with same | none) with
+    | inl =>
+      rw [same]
       exact roleCase
-    · exact Or.inr none
+    | inr => exact Or.inr none
 
 /-- A rollback point lies after the request's previous index. -/
 private theorem firstTermConflictIndex_ge {state : NodeState}
@@ -686,15 +740,18 @@ private theorem NodeInvariant.reachable {P : NodeID -> NodeState -> Prop}
     (reachable
       : (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes).Reachable state)
     : forall node local_, (node, local_) ∈ state.nodes -> P node local_ := by
-  induction reachable
-    using @TransitionSystem.Reachable.rec
-      (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes) with
-  | initial initialized =>
+  split_rel reachable :=
+      (induction reachable
+        using @TransitionSystem.Reachable.rec
+          (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes)) with
+  | initial =>
+      rename_i initialized
       intro node local_ member
       have initial : local_ = initialNodeState Config.INITIAL_CONFIGURATION node := initialized.2.2.2.2 (node, local_) member
       subst initial
       exact invariant.initial node
-  | @step before after action _ stepped ih =>
+  | step =>
+      rename_i before after action _ stepped ih
       have preserved : forall {actor : NodeID} {old : NodeState}
           {event : Model.Node.Event} {new outputs},
           nodeState before actor = some old ->
@@ -704,15 +761,26 @@ private theorem NodeInvariant.reachable {P : NodeID -> NodeState -> Prop}
             (node, local_) ∈ replaceNode before.nodes actor new ->
             P node local_ := by
         intro actor old event new outputs found acted node local_ member
-        rcases mem_replaceNode member with ⟨rfl, rfl⟩ | ⟨_, listed⟩
-        · exact invariant.step _ _ _ _ _ (ih _ _ (mem_of_nodeState found)) acted
-        · exact ih _ _ listed
-      cases action with
-      | «local» actor input =>
+        split_rel mem_replaceNode :=
+            (rcases mem_replaceNode member with ⟨nodeEq, stateEq⟩ | ⟨other, listed⟩) with
+        | inl =>
+          subst nodeEq stateEq
+          exact invariant.step _ _ _ _ _ (ih _ _ (mem_of_nodeState found)) acted
+        | inr => exact ih _ _ listed
+      split_rel action := (cases action) with
+      | «local» =>
+          rename_i actor input
           obtain ⟨old, new, outputs, found, acted, rfl⟩ := step_local stepped
           exact preserved (event := .internal input) found
-            (by cases input <;> exact acted)
-      | deliver envelope =>
+            (by
+              split_rel input := (cases input) with
+              | append => exact acted
+              | sendEntries => exact acted
+              | timeout => exact acted
+              | nominateSuccessor => exact acted
+              | initAsBackup => exact acted)
+      | deliver =>
+          rename_i envelope
           obtain ⟨_, old, new, outputs, found, received, rfl⟩ := step_deliver stepped
           exact preserved (event := .receive envelope.source envelope.payload) found received
 
@@ -720,21 +788,26 @@ private theorem find_of_mem {entries : List (NodeID × NodeState)} {node : NodeI
     {local_ : NodeState} (distinct : (entries.map Prod.fst).Nodup)
     (member : (node, local_) ∈ entries)
     : entries.find? (fun entry => entry.1 == node) = some (node, local_) := by
-  induction entries with
+  split_rel entries := (induction entries) with
   | nil => simp at member
-  | cons head tail ih =>
+  | cons =>
+      rename_i head tail ih
       obtain ⟨key, value⟩ := head
       simp only [List.map_cons, List.nodup_cons] at distinct
-      by_cases here : key = node
-      · subst here
-        rcases List.mem_cons.mp member with same | later
-        · rw [same]
+      split_rel here := (by_cases here : key = node) with
+      | pos =>
+        subst here
+        split_rel mem_cons := (rcases List.mem_cons.mp member with same | later) with
+        | inl =>
+          rw [same]
           simp
-        · exact absurd (List.mem_map.mpr ⟨_, later, rfl⟩) distinct.1
-      · rcases List.mem_cons.mp member with same | later
-        · simp only [Prod.mk.injEq] at same
+        | inr => exact absurd (List.mem_map.mpr ⟨_, later, rfl⟩) distinct.1
+      | neg =>
+        split_rel mem_cons := (rcases List.mem_cons.mp member with same | later) with
+        | inl =>
+          simp only [Prod.mk.injEq] at same
           exact absurd same.1.symm here
-        · simp [here, ih distinct.2 later]
+        | inr => simp [here, ih distinct.2 later]
 
 private theorem nodeState_of_mem {state : Model.State} {node : NodeID}
     {local_ : NodeState} (distinct : (state.nodes.map Prod.fst).Nodup)
@@ -766,9 +839,10 @@ private theorem guard' {c : Prop} [Decidable c]
     : Keeps (Node := Node) (Message := Message) (Notification := Notification)
         (fun _ => c) (guard c) := by
   intro outputs _ after ran
-  by_cases holds : c
-  · exact holds
-  · simp [guard, holds] at ran
+  split_rel holds := (by_cases holds : c) with
+  | pos => exact holds
+  | neg =>
+    simp [guard, holds] at ran
     cases ran
 
 private theorem bind' {Q : α -> Prop} {P : β -> Prop}
@@ -777,12 +851,13 @@ private theorem bind' {Q : α -> Prop} {P : β -> Prop}
     : Keeps P (m >>= f) := by
   intro outputs result after ran
   simp only [StateT.run_bind] at ran
-  cases ranFirst : m.run outputs with
+  split_rel ranFirst := (cases ranFirst : m.run outputs) with
   | none => simp [ranFirst] at ran
-  | some pair =>
-      obtain ⟨value, middle⟩ := pair
-      simp only [ranFirst] at ran
-      exact rest value (first _ _ _ ranFirst) _ _ _ ran
+  | some =>
+    rename_i pair
+    obtain ⟨value, middle⟩ := pair
+    simp only [ranFirst] at ran
+    exact rest value (first _ _ _ ranFirst) _ _ _ ran
 
 private theorem seq' {P : β -> Prop} {m : Effect Node Message Notification α}
     {f : α -> Effect Node Message Notification β}
@@ -799,9 +874,9 @@ private theorem ite' {P : α -> Prop} {c : Prop} [Decidable c]
     {m n : Effect Node Message Notification α}
     (yes : c -> Keeps P m) (no : Not c -> Keeps P n)
     : Keeps P (if c then m else n) := by
-  split
-  · exact yes ‹_›
-  · exact no ‹_›
+  split_rel condition := (split) with
+  | pos => exact yes ‹_›
+  | neg => exact no ‹_›
 
 private theorem foldlM' {γ : Type} {P : α -> Prop}
     {f : α -> γ -> Effect Node Message Notification α}
@@ -862,10 +937,13 @@ private theorem CommitFrontier.advance {state : NodeState}
   refine ⟨Nat.max_le.mpr ⟨extends_.1, maxCommittableIndexUpTo_le_length log bound⟩,
     fun positive => ?_⟩
   simp only at positive ⊢
-  rcases Nat.le_total state.commitIndex (maxCommittableIndexUpTo log bound) with le | le
-  · rw [Nat.max_eq_right le] at positive ⊢
+  split_rel le_total :=
+      (rcases Nat.le_total state.commitIndex (maxCommittableIndexUpTo log bound) with le | le) with
+  | inl =>
+    rw [Nat.max_eq_right le] at positive ⊢
     exact maxCommittableIndexUpToPositiveIsSignature positive
-  · rw [Nat.max_eq_left le] at positive ⊢
+  | inr =>
+    rw [Nat.max_eq_left le] at positive ⊢
     exact extends_.2 positive
 
 private theorem foldl_select_max (P : Nat -> Prop) [DecidablePred P] (values : List Nat)
@@ -875,20 +953,25 @@ private theorem foldl_select_max (P : Nat -> Prop) [DecidablePred P] (values : L
       \/ P
           (values.foldl (fun best index => if P index then max best index else best)
             init) := by
-  induction values generalizing init with
+  split_rel values := (induction values generalizing init) with
   | nil => exact Or.inl rfl
-  | cons head tail ih =>
+  | cons =>
+      rename_i head tail ih
       simp only [List.foldl_cons]
-      rcases ih (if P head then max init head else init) with same | holds
-      · rw [same]
-        by_cases chosen : P head
-        · rcases Nat.le_total init head with le | le
-          · right
+      split_rel ih := (rcases ih (if P head then max init head else init) with same | holds) with
+      | inl =>
+        rw [same]
+        split_rel chosen := (by_cases chosen : P head) with
+        | pos =>
+          split_rel le_total := (rcases Nat.le_total init head with le | le) with
+          | inl =>
+            right
             simp [chosen, Nat.max_eq_right le]
-          · left
+          | inr =>
+            left
             simp [chosen, Nat.max_eq_left le]
-        · simp [chosen]
-      · exact Or.inr holds
+        | neg => simp [chosen]
+      | inr => exact Or.inr holds
 
 private theorem foldl_select_max_pos (P : Nat -> Prop) [DecidablePred P]
     (values : List Nat)
@@ -897,10 +980,11 @@ private theorem foldl_select_max_pos (P : Nat -> Prop) [DecidablePred P]
     : P
         (values.foldl (fun best index => if P index then max best index else best)
           0) := by
-  rcases foldl_select_max P values 0 with zero | holds
-  · rw [zero] at positive
+  split_rel foldl_select_max := (rcases foldl_select_max P values 0 with zero | holds) with
+  | inl =>
+    rw [zero] at positive
     exact absurd positive (Nat.lt_irrefl 0)
-  · exact holds
+  | inr => exact holds
 
 private theorem highestCommittableIndex_signature (state : NodeState) (self : NodeID)
     (positive : 0 < highestCommittableIndex state self)
@@ -955,25 +1039,29 @@ private theorem CommitFrontier.handleAppendEntriesRequest
   have stepped : CommitFrontier (if request.term = state.currentTerm /\
       (state.role = .candidate \/ state.role = .preVoteCandidate) then
         becomeAwareOfNewTerm state request.term else state) := by
-    split
-    · exact frontier.of_log rfl rfl
-    · exact frontier
+    split_rel stepDown := (split) with
+    | pos => exact frontier.of_log rfl rfl
+    | neg => exact frontier
   generalize (if request.term = state.currentTerm /\
       (state.role = .candidate \/ state.role = .preVoteCandidate) then
         becomeAwareOfNewTerm state request.term else state) = current
     at stepped
   refine Keeps.ite' (fun _ => by
     dsimp only
-    split <;> exact Keeps.seq' fun _ => Keeps.pure' stepped) fun _ => ?_
+    split_rel stepDown := (split) with
+    | pos => exact Keeps.seq' fun _ => Keeps.pure' stepped
+    | neg => exact Keeps.seq' fun _ => Keeps.pure' stepped) fun _ => ?_
   dsimp only
   refine Keeps.ite' (fun _ => Keeps.pure' (stepped.of_log rfl rfl)) fun notBefore => ?_
   have within : current.commitIndex <= request.prevLogIndex :=
     Nat.le_of_not_lt fun lt => notBefore (Or.inl lt)
-  split
-  · exact Keeps.seq' fun _ => Keeps.pure'
+  split_rel conflict := (split) with
+  | none =>
+    exact Keeps.seq' fun _ => Keeps.pure'
       (CommitFrontier.of_log stepped (after := { current with primaryKnown := true }) rfl
         rfl).fromLeader
-  · rename_i index conflict
+  | some =>
+    rename_i index conflict
     have := Ledger.firstTermConflictIndex_ge conflict
     exact Keeps.seq' fun _ => Keeps.pure'
       (CommitFrontier.of_log (stepped.keep (count := index - 1)
@@ -1033,11 +1121,12 @@ private theorem CommitFrontier.promotedLog {state : NodeState}
               else
                 state.log
         } := by
-  split
-  · have kept := frontier.keep (count := lastCommittableIndex state)
+  split_rel committed := (split) with
+  | pos =>
+    have kept := frontier.keep (count := lastCommittableIndex state)
       (by unfold lastCommittableIndex; exact Nat.le_max_left _ _) (suffix := [])
     exact kept.of_log (by simp) rfl
-  · exact frontier.of_log rfl rfl
+  | neg => exact frontier.of_log rfl rfl
 
 end Consensus.Proofs.Direct
 
@@ -1064,7 +1153,13 @@ private theorem CommitFrontier.appendEntry {state : NodeState}
     | exact Keeps.pure' ((frontier.leaderAppendState content).of_log rfl rfl)
     | refine Keeps.ite' (fun _ => ?_) fun _ => ?_
     | refine Keeps.seq' fun _ => ?_
-    | split
+  all_goals
+    split_rel configuration := (split) with
+    | none => exact Keeps.pure' ((frontier.leaderAppendState content).of_log rfl rfl)
+    | some =>
+      refine Keeps.seq' fun _ => ?_
+      refine Keeps.seq' fun _ => ?_
+      exact Keeps.pure' ((frontier.leaderAppendState content).of_log rfl rfl)
 
 private theorem CommitFrontier.becomePrimary {state : NodeState}
     (frontier : CommitFrontier state)
@@ -1102,15 +1197,16 @@ private theorem Keeps.nominateSuccessor (state : NodeState)
         (Model.Node.nominateSuccessor caps state self) := by
   unfold Model.Node.nominateSuccessor
   refine Keeps.seq' fun _ => ?_
-  split
-  · exact Keeps.seq' fun _ => Keeps.pure' rfl
-  · exact Keeps.pure' rfl
+  split_rel successor := (split) with
+  | some => exact Keeps.seq' fun _ => Keeps.pure' rfl
+  | none => exact Keeps.pure' rfl
 
 private theorem CommitFrontier.act {state : NodeState}
     (frontier : CommitFrontier state) (input : Input)
     : Keeps CommitFrontier (Model.Node.act caps self state input) := by
-  cases input with
-  | append entries =>
+  split_rel input := (cases input) with
+  | append =>
+      rename_i entries
       unfold Model.Node.act Model.Node.appendBatch
       exact Keeps.seq' fun _ => Keeps.bind'
         (Keeps.foldlM' (fun current entry kept =>
@@ -1122,11 +1218,13 @@ private theorem CommitFrontier.act {state : NodeState}
               entry.flushes appended frontier)
           entries state frontier)
         fun _ kept => kept.advanced self caps
-  | sendEntries destination endIndex =>
+  | sendEntries =>
+      rename_i destination endIndex
       unfold Model.Node.act Model.Node.sendEntries
       exact Keeps.seq' fun _ => Keeps.seq' fun _ => Keeps.pure' frontier.withSent
-  | timeout kind =>
-      cases kind with
+  | timeout =>
+      rename_i kind
+      split_rel kind := (cases kind) with
       | election =>
           unfold Model.Node.act Model.Node.startElection
           exact Keeps.seq' fun _ => frontier.becomePreVoteCandidate caps self
@@ -1135,15 +1233,17 @@ private theorem CommitFrontier.act {state : NodeState}
           exact Keeps.seq' fun _ => Keeps.pure' (frontier.of_log rfl rfl)
   | nominateSuccessor =>
       exact (Keeps.nominateSuccessor caps self state).mono fun _ same => same ▸ frontier
-  | initAsBackup entries =>
+  | initAsBackup =>
+      rename_i entries
       unfold Model.Node.act Model.Node.initAsBackup
       refine Keeps.bind' Keeps.guard'
         fun _ ⟨_, signed⟩ =>
           Keeps.pure' ⟨by simp [becomeAwareOfNewTerm], fun positive => ?_⟩
-      rcases signed with empty | signature
-      · subst empty
+      split_rel signed := (rcases signed with empty | signature) with
+      | inl =>
+        subst empty
         simp [becomeAwareOfNewTerm] at positive
-      · simpa [becomeAwareOfNewTerm] using signature
+      | inr => simpa [becomeAwareOfNewTerm] using signature
 
 private theorem CommitFrontier.receive {state : NodeState}
     (frontier : CommitFrontier state) (source : NodeID) (message : Message)
@@ -1154,32 +1254,43 @@ private theorem CommitFrontier.receive {state : NodeState}
   refine Keeps.ite' (fun _ => Keeps.pure' frontier) fun _ => ?_
   dsimp only
   generalize observeTerm state message = current at observed ⊢
-  cases message with
-  | appendEntriesRequest request => exact observed.handleAppendEntriesRequest caps source
-  | appendEntriesResponse response =>
+  split_rel message := (cases message) with
+  | appendEntriesRequest =>
+      rename_i request
+      exact observed.handleAppendEntriesRequest caps source
+  | appendEntriesResponse =>
+      rename_i response
       unfold Model.Node.handleAppendEntriesResponse
       refine Keeps.ite' (fun _ => Keeps.pure' observed) fun _ => ?_
       refine Keeps.ite' (fun _ => ?_) fun _ => Keeps.pure' (observed.of_log rfl rfl)
       refine Keeps.ite' (fun _ => CommitFrontier.advanced self ?_ caps)
         fun _ => Keeps.pure' observed
       exact observed.of_log rfl rfl
-  | requestVoteRequest request =>
+  | requestVoteRequest =>
+      rename_i request
       unfold Model.Node.handleRequestVoteRequest
-      exact Keeps.seq' fun _ => Keeps.pure' (by split <;> exact observed.of_log rfl rfl)
-  | requestVoteResponse response =>
+      exact Keeps.seq' fun _ => Keeps.pure' (by
+        split_rel vote := (split) with
+        | pos => exact observed.of_log rfl rfl
+        | neg => exact observed.of_log rfl rfl)
+  | requestVoteResponse =>
+      rename_i response
       unfold Model.Node.handleRequestVoteResponse
       exact Keeps.ite' (fun _ => CommitFrontier.electIfQuorum caps self (observed.of_log rfl rfl))
         fun _ => Keeps.pure' observed
-  | requestPreVoteRequest request =>
+  | requestPreVoteRequest =>
+      rename_i request
       unfold Model.Node.handleRequestPreVoteRequest
       exact Keeps.seq' fun _ => Keeps.pure' observed
-  | requestPreVoteResponse response =>
+  | requestPreVoteResponse =>
+      rename_i response
       unfold Model.Node.handleRequestPreVoteResponse
       refine Keeps.ite' (fun _ => ?_) fun _ => Keeps.pure' observed
       dsimp only
       exact Keeps.ite' (fun _ => CommitFrontier.becomeCandidate caps self (observed.of_log rfl rfl))
         fun _ => Keeps.pure' (observed.of_log rfl rfl)
-  | proposeRequestVoteRequest term =>
+  | proposeRequestVoteRequest =>
+      rename_i term
       unfold Model.Node.handleProposeRequestVoteRequest
       exact Keeps.ite' (fun _ => CommitFrontier.becomeCandidate caps self observed)
         fun _ => Keeps.pure' observed
@@ -1206,11 +1317,13 @@ private theorem commitFrontier_invariant [Config.InitialConfiguration]
     ?_
   ⟩
   intro self state event after outputs frontier stepped
-  cases event with
-  | internal input =>
+  split_rel event := (cases event) with
+  | internal =>
+      rename_i input
       simp only [Model.Node.step] at stepped
       exact frontier.act _ self _ _ _ _ stepped
-  | receive source message =>
+  | receive =>
+      rename_i source message
       simp only [Model.Node.step] at stepped
       exact frontier.receive _ self source message _ _ _ stepped
 
@@ -1295,26 +1408,30 @@ private theorem Extends.handleAppendEntriesRequest (caps : Caps) (source : NodeI
   have stepped : Extends state (if request.term = state.currentTerm /\
       (state.role = .candidate \/ state.role = .preVoteCandidate) then
         becomeAwareOfNewTerm state request.term else state) := by
-    split
-    · exact Extends.of_log rfl rfl
-    · exact Extends.refl _
+    split_rel stepDown := (split) with
+    | pos => exact Extends.of_log rfl rfl
+    | neg => exact Extends.refl _
   generalize (if request.term = state.currentTerm /\
       (state.role = .candidate \/ state.role = .preVoteCandidate) then
         becomeAwareOfNewTerm state request.term else state) = current
     at stepped
   refine Keeps.ite' (fun _ => by
     dsimp only
-    split <;> exact Keeps.seq' fun _ => Keeps.pure' stepped) fun _ => ?_
+    split_rel stepDown := (split) with
+    | pos => exact Keeps.seq' fun _ => Keeps.pure' stepped
+    | neg => exact Keeps.seq' fun _ => Keeps.pure' stepped) fun _ => ?_
   dsimp only
   refine Keeps.ite' (fun _ => Keeps.pure' (stepped.trans (Extends.of_log rfl rfl)))
     fun notBefore => ?_
   have within : current.commitIndex <= request.prevLogIndex :=
     Nat.le_of_not_lt fun lt => notBefore (Or.inl lt)
-  split
-  · exact Keeps.seq' fun _ => Keeps.pure'
+  split_rel conflict := (split) with
+  | none =>
+    exact Keeps.seq' fun _ => Keeps.pure'
       ((stepped.trans (Extends.of_log (after := { current with primaryKnown := true }) rfl
         rfl)).trans Extends.fromLeader)
-  · rename_i index conflict
+  | some =>
+    rename_i index conflict
     have := Ledger.firstTermConflictIndex_ge conflict
     have truncated : Extends current {
         current with
@@ -1362,7 +1479,13 @@ private theorem Extends.appendEntry (state : NodeState) (content : EntryContent)
     | exact Keeps.pure' ((Extends.append _).trans (Extends.of_log rfl rfl))
     | refine Keeps.ite' (fun _ => ?_) fun _ => ?_
     | refine Keeps.seq' fun _ => ?_
-    | split
+  all_goals
+    split_rel configuration := (split) with
+    | none => exact Keeps.pure' ((Extends.append _).trans (Extends.of_log rfl rfl))
+    | some =>
+      refine Keeps.seq' fun _ => ?_
+      refine Keeps.seq' fun _ => ?_
+      exact Keeps.pure' ((Extends.append _).trans (Extends.of_log rfl rfl))
 
 private theorem Extends.becomePrimary (state : NodeState)
     : Keeps (Extends state) (Model.Node.becomePrimary caps self state) := by
@@ -1380,10 +1503,11 @@ private theorem Extends.becomePrimary (state : NodeState)
               else state.log).length
           matchIndex := fun _ => 0
       } := by
-    split
-    · exact Extends.of_prefix (by unfold lastCommittableIndex; exact Nat.le_max_left _ _)
+    split_rel committed := (split) with
+    | pos =>
+      exact Extends.of_prefix (by unfold lastCommittableIndex; exact Nat.le_max_left _ _)
         (List.prefix_refl _) Nat.le.refl
-    · exact Extends.of_log rfl rfl
+    | neg => exact Extends.of_log rfl rfl
   exact Keeps.bind' (Extends.advanced caps self _) fun _ kept =>
     Keeps.seq' fun _ => Keeps.pure' (promoted.trans kept)
 
@@ -1409,8 +1533,9 @@ private theorem Extends.becomePreVoteCandidate (state : NodeState)
 
 private theorem Extends.act (state : NodeState) (input : Input)
     : Keeps (Extends state) (Model.Node.act caps self state input) := by
-  cases input with
-  | append entries =>
+  split_rel input := (cases input) with
+  | append =>
+      rename_i entries
       unfold Model.Node.act Model.Node.appendBatch
       refine Keeps.seq' fun _ => ?_
       exact Keeps.bind'
@@ -1424,11 +1549,13 @@ private theorem Extends.act (state : NodeState) (input : Input)
           entries state (Extends.refl _))
         fun current kept => (Extends.advanced caps self current).mono fun _ next =>
           kept.trans next
-  | sendEntries destination endIndex =>
+  | sendEntries =>
+      rename_i destination endIndex
       unfold Model.Node.act Model.Node.sendEntries
       exact Keeps.seq' fun _ => Keeps.seq' fun _ => Keeps.pure' (Extends.of_log rfl rfl)
-  | timeout kind =>
-      cases kind with
+  | timeout =>
+      rename_i kind
+      split_rel kind := (cases kind) with
       | election =>
           unfold Model.Node.act Model.Node.startElection
           exact Keeps.seq' fun _ => Extends.becomePreVoteCandidate caps self state
@@ -1438,7 +1565,8 @@ private theorem Extends.act (state : NodeState) (input : Input)
   | nominateSuccessor =>
       exact (Keeps.nominateSuccessor caps self state).mono fun _ same =>
         same ▸ Extends.of_log rfl rfl
-  | initAsBackup entries =>
+  | initAsBackup =>
+      rename_i entries
       unfold Model.Node.act Model.Node.initAsBackup
       refine Keeps.bind' Keeps.guard' fun _ ⟨⟨_, _, empty, zero⟩, _⟩ => Keeps.pure' ?_
       exact ⟨
@@ -1455,35 +1583,45 @@ private theorem Extends.receive (state : NodeState) (source : NodeID) (message :
   dsimp only
   generalize observeTerm state message = current at observedExtends ⊢
   refine Keeps.mono (P := Extends current) ?_ fun _ next => observedExtends.trans next
-  cases message with
-  | appendEntriesRequest request =>
+  split_rel message := (cases message) with
+  | appendEntriesRequest =>
+      rename_i request
       exact Extends.handleAppendEntriesRequest caps source
-  | appendEntriesResponse response =>
+  | appendEntriesResponse =>
+      rename_i response
       unfold Model.Node.handleAppendEntriesResponse
       refine Keeps.ite' (fun _ => Keeps.pure' (Extends.refl _)) fun _ => ?_
       refine Keeps.ite' (fun _ => ?_) fun _ => Keeps.pure' (Extends.of_log rfl rfl)
       refine Keeps.ite' (fun _ => ?_) fun _ => Keeps.pure' (Extends.refl _)
       exact (Extends.advanced caps self _).mono fun _ next =>
         (Extends.of_log rfl rfl).trans next
-  | requestVoteRequest request =>
+  | requestVoteRequest =>
+      rename_i request
       unfold Model.Node.handleRequestVoteRequest
-      exact Keeps.seq' fun _ => Keeps.pure' (by split <;> exact Extends.of_log rfl rfl)
-  | requestVoteResponse response =>
+      exact Keeps.seq' fun _ => Keeps.pure' (by
+        split_rel vote := (split) with
+        | pos => exact Extends.of_log rfl rfl
+        | neg => exact Extends.of_log rfl rfl)
+  | requestVoteResponse =>
+      rename_i response
       unfold Model.Node.handleRequestVoteResponse
       refine Keeps.ite' (fun _ => ?_) fun _ => Keeps.pure' (Extends.refl _)
       exact (Extends.electIfQuorum caps self _).mono fun _ next =>
         (Extends.of_log rfl rfl).trans next
-  | requestPreVoteRequest request =>
+  | requestPreVoteRequest =>
+      rename_i request
       unfold Model.Node.handleRequestPreVoteRequest
       exact Keeps.seq' fun _ => Keeps.pure' (Extends.refl _)
-  | requestPreVoteResponse response =>
+  | requestPreVoteResponse =>
+      rename_i response
       unfold Model.Node.handleRequestPreVoteResponse
       refine Keeps.ite' (fun _ => ?_) fun _ => Keeps.pure' (Extends.refl _)
       dsimp only
       refine Keeps.ite' (fun _ => ?_) fun _ => Keeps.pure' (Extends.of_log rfl rfl)
       exact (Extends.becomeCandidate caps self _).mono fun _ next =>
         (Extends.of_log rfl rfl).trans next
-  | proposeRequestVoteRequest term =>
+  | proposeRequestVoteRequest =>
+      rename_i term
       unfold Model.Node.handleProposeRequestVoteRequest
       exact Keeps.ite' (fun _ => Extends.becomeCandidate caps self current)
         fun _ => Keeps.pure' (Extends.refl _)
@@ -1519,21 +1657,26 @@ private theorem committed_log_step {nodes : List NodeID} {before after : Model.S
       -> (node, afterState) ∈ replaceNode before.nodes actor new
       -> beforeState.committedLog <+: afterState.committedLog := by
     intro actor old new found grown member
-    rcases mem_replaceNode member with ⟨rfl, rfl⟩ | ⟨_, listed⟩
-    · have same : beforeState = old :=
+    split_rel mem_replaceNode := (rcases mem_replaceNode member with ⟨nodeEq, stateEq⟩ | ⟨other, listed⟩) with
+    | inl =>
+      subst nodeEq stateEq
+      have same : beforeState = old :=
         Option.some.inj ((nodeState_of_mem distinct beforeMember).symm.trans found)
       subst same
       exact grown.committedLog
-    · have same : afterState = beforeState :=
+    | inr =>
+      have same : afterState = beforeState :=
         Option.some.inj
           ((nodeState_of_mem distinct listed).symm.trans (nodeState_of_mem distinct beforeMember))
       subst same
       exact List.prefix_refl _
-  cases action with
-  | «local» actor input =>
+  split_rel action := (cases action) with
+  | «local» =>
+      rename_i actor input
       obtain ⟨old, new, outputs, found, acted, rfl⟩ := step_local stepped
       exact extended found (Extends.act _ actor old input _ _ _ acted) afterMember
-  | deliver envelope =>
+  | deliver =>
+      rename_i envelope
       obtain ⟨_, old, new, outputs, found, received, rfl⟩ := step_deliver stepped
       exact extended found (Extends.receive _ _ old _ _ _ _ _ received) afterMember
 
