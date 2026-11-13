@@ -609,22 +609,49 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
       return fields.filter used.contains
     let stepLevel : Std.HashSet Name :=
       r.levels.foldl (fun h (c, l, _) => if l == .step then h.insert c else h) {}
-    let mut reads : Std.HashMap Name (Array Name) := {}
-    for (u, c) in st.unitClauses do
-      let rs ← liftCoreM <| readsOf u
-      reads := reads.insert c ((reads.getD c #[]) ++ rs)
-    let mut clauseClosures : Array (Name × Array Name) := #[]
-    for root in roots do
+    -- the clauses read by the theorems in scope that `starts` use, transitively, outside
+    -- step-level theorems
+    let readClosure (starts : Array Name) : CoreM (Array Name) := do
       let mut seen : Std.HashSet Name := {}
-      let mut todo := #[root]
+      let mut todo := starts
       let mut use : Array Name := #[]
       while !todo.isEmpty do
         let c := todo.back!
         todo := todo.pop
         if seen.contains c || stepLevel.contains c then continue
         seen := seen.insert c
-        for f in ← liftCoreM (readsOf c) do unless use.contains f do use := use.push f
-        todo := todo ++ (← liftCoreM <| theoremsUsed cfg c)
+        for f in ← readsOf c do unless use.contains f do use := use.push f
+        todo := todo ++ (← theoremsUsed cfg c)
+      return use
+    let mut under : Std.HashMap Name (Array Name) := {}
+    for (u, c) in st.unitClauses do
+      under := under.insert c ((under.getD c #[]).push u)
+    -- obligations opened in a unit: lemmas count as under them; at a root, the arguments of
+    -- the call sites under them are read
+    let mut rootReads : Std.HashMap Name (Array Name) := {}
+    for σ in r.sites do
+      let some cl := σ.at_.clause | continue
+      let isRoot := r.units.any fun u => u.isRoot && u.unit == σ.at_.unit
+      if isRoot then
+        let used ← liftTermElabM <| withLCtx σ.at_.lctx {} do
+          let mut used : Array Name := #[]
+          for a in σ.args do
+            for c in (← zetaAll (← instantiateMVars a)).getUsedConstants do
+              unless used.contains c do used := used.push c
+          return used
+        let fs := fields.filter used.contains
+        rootReads := rootReads.insert cl.name ((rootReads.getD cl.name #[]) ++ fs)
+        -- theorems called at the site
+        let ts := used.filter fun c => cfg.scope.isPrefixOf ((privateToUserName? c).getD c)
+        under := under.insert cl.name ((under.getD cl.name #[]) ++ ts)
+      else
+        under := under.insert cl.name ((under.getD cl.name #[]).push σ.at_.unit.decl)
+    let mut reads : Std.HashMap Name (Array Name) := {}
+    for (c, us) in under.toList do
+      reads := reads.insert c ((← liftCoreM <| readClosure us) ++ rootReads.getD c #[])
+    let mut clauseClosures : Array (Name × Array Name) := #[]
+    for root in roots do
+      let use ← liftCoreM <| readClosure #[root]
       let mut cl := use
       let mut i := 0
       while i < cl.size do
