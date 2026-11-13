@@ -7,8 +7,9 @@ public import Consensus.Model
 /-!
 # Evaluating generated coverage classes on the steps of concrete runs (partial, unproved)
 
-For the step classes whose case split sits in the obligations `Ctx.leader_led` and
-`Ctx.commit_backed`, and for four state classes of `committed_logs_comparable`, this script
+For all 29 state classes and for the step classes whose case split sits in the obligations
+`Ctx.leader_led`, `Ctx.commit_backed`, `Ctx.election_safety`, `Ctx.canon_mono` and
+`Ctx.completeness`, this script
 decides, per step of a concrete run, whether the class holds, does not hold, or is unknown.
 Each decision is a hand transcription of the generated proposition (see
 `print-eval-classes.lean`): the newness condition of its `reach` definition and the conditions
@@ -26,7 +27,10 @@ generated classes. Two approximations, both CLAIMED sound for runs of the model:
 The `Ctx` of a step is the one built from its action (actor, pre and post state, event).
 
     WS=$(python3 lean/relevance/scripts/workspace.py consensus-coverage)
-    lake -d $WS/consensus-coverage env lean $PWD/lean/consensus-coverage/scripts/eval-classes.lean
+    RUNS=100 LENGTH=60 lake -d $WS/consensus-coverage env lean $PWD/lean/consensus-coverage/scripts/eval-full.lean
+
+The state classes and the new step classes read a computable layer over the run's history
+(`Hist`): grants, elections, canon logs, commit records and the `Committed` fixpoint.
 -/
 
 namespace ConsensusCoverage.EvalClasses
