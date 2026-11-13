@@ -7629,13 +7629,17 @@ private theorem new_in_elected {leader : NodeID} {state : NodeState}
 
 private theorem completeness : Completeness (after :: before :: rest) := by
   intro term part node later log commit committed elected lt
-  cases committed with
-  | fresh step =>
-      exact c.new_in_elected step (Or.inl rfl) later node log commit elected lt
-  | chained step backing le within =>
-      exact c.new_in_elected step (Or.inr ⟨_, _, backing, le, within⟩) later node log commit
-        elected lt
-  | past old => exact c.old_complete old elected lt
+  split_rel committed := (cases committed) with
+  | fresh =>
+    rename_i step
+    exact c.new_in_elected step (Or.inl rfl) later node log commit elected lt
+  | chained =>
+    rename_i within backing le step
+    exact c.new_in_elected step (Or.inr ⟨_, _, backing, le, within⟩) later node log commit
+      elected lt
+  | past =>
+    rename_i old
+    exact c.old_complete old elected lt
 
 end Consensus.Proofs.Safety.Ctx
 
