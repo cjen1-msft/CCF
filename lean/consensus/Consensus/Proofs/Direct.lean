@@ -1153,7 +1153,13 @@ private theorem CommitFrontier.appendEntry {state : NodeState}
     | exact Keeps.pure' ((frontier.leaderAppendState content).of_log rfl rfl)
     | refine Keeps.ite' (fun _ => ?_) fun _ => ?_
     | refine Keeps.seq' fun _ => ?_
-    | split
+  all_goals
+    split_rel configuration := (split) with
+    | none => exact Keeps.pure' ((frontier.leaderAppendState content).of_log rfl rfl)
+    | some =>
+      refine Keeps.seq' fun _ => ?_
+      refine Keeps.seq' fun _ => ?_
+      exact Keeps.pure' ((frontier.leaderAppendState content).of_log rfl rfl)
 
 private theorem CommitFrontier.becomePrimary {state : NodeState}
     (frontier : CommitFrontier state)
@@ -1473,7 +1479,13 @@ private theorem Extends.appendEntry (state : NodeState) (content : EntryContent)
     | exact Keeps.pure' ((Extends.append _).trans (Extends.of_log rfl rfl))
     | refine Keeps.ite' (fun _ => ?_) fun _ => ?_
     | refine Keeps.seq' fun _ => ?_
-    | split
+  all_goals
+    split_rel configuration := (split) with
+    | none => exact Keeps.pure' ((Extends.append _).trans (Extends.of_log rfl rfl))
+    | some =>
+      refine Keeps.seq' fun _ => ?_
+      refine Keeps.seq' fun _ => ?_
+      exact Keeps.pure' ((Extends.append _).trans (Extends.of_log rfl rfl))
 
 private theorem Extends.becomePrimary (state : NodeState)
     : Keeps (Extends state) (Model.Node.becomePrimary caps self state) := by
