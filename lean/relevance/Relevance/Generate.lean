@@ -609,16 +609,18 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
       return fields.filter used.contains
     let stepLevel : Std.HashSet Name :=
       r.levels.foldl (fun h (c, l, _) => if l == .step then h.insert c else h) {}
+    let stepTops : Std.HashSet Name :=
+      r.levels.foldl (fun h (c, l, top) => if l == .step && top then h.insert c else h) {}
     -- the clauses read by the theorems in scope that `starts` use, transitively, outside
-    -- step-level theorems
-    let readClosure (starts : Array Name) : CoreM (Array Name) := do
+    -- the theorems in `skip`
+    let readClosure (skip : Std.HashSet Name) (starts : Array Name) : CoreM (Array Name) := do
       let mut seen : Std.HashSet Name := {}
       let mut todo := starts
       let mut use : Array Name := #[]
       while !todo.isEmpty do
         let c := todo.back!
         todo := todo.pop
-        if seen.contains c || stepLevel.contains c then continue
+        if seen.contains c || skip.contains c then continue
         seen := seen.insert c
         for f in ← readsOf c do unless use.contains f do use := use.push f
         todo := todo ++ (← theoremsUsed cfg c)
@@ -648,10 +650,10 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
         under := under.insert cl.name ((under.getD cl.name #[]).push σ.at_.unit.decl)
     let mut reads : Std.HashMap Name (Array Name) := {}
     for (c, us) in under.toList do
-      reads := reads.insert c ((← liftCoreM <| readClosure us) ++ rootReads.getD c #[])
+      reads := reads.insert c ((← liftCoreM <| readClosure stepTops us) ++ rootReads.getD c #[])
     let mut clauseClosures : Array (Name × Array Name) := #[]
     for root in roots do
-      let use ← liftCoreM <| readClosure #[root]
+      let use ← liftCoreM <| readClosure stepLevel #[root]
       let mut cl := use
       let mut i := 0
       while i < cl.size do
