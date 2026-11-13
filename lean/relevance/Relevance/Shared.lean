@@ -79,6 +79,18 @@ structure Combo where
   reach : Expr
   clause : Bool
   bound : Bool
+  /-- Under a clause obligation opened above the unit: the clause premises at the pre-state, over
+  the unit's parameters, when every variable they mention is passed down as an argument. -/
+  prem : Option (Array Expr) := none
+  deriving Inhabited
+
+/-- One disjunct of a `reach` definition or of a class: its flags, the clause premises at the
+pre-state carried to the callee's parameters (see `Combo.prem`), and the predicate. -/
+structure Disj where
+  clause : Bool
+  bound : Bool
+  prem : Option (Array Expr) := none
+  e : Expr
   deriving Inhabited
 
 /-- One shared class: its case and its predicate over `X`. -/
@@ -99,6 +111,10 @@ structure ShSt where
   missingArgs : Nat := 0
   rootCallee : Nat := 0
   framedSites : Nat := 0
+  /-- Per walked branch reached at this level (index into the branch records): its role. -/
+  roles : Array (Nat × String) := #[]
+  /-- The keys of `up` for which some path kind was dropped as framing. -/
+  framedInto : Std.HashSet (Nat × List Nat) := {}
 
 abbrev ShM := StateT ShSt MetaM
 
@@ -261,13 +277,22 @@ def closedPart (inp : SharedIn) (ui : Nat) (walking : Array FVarId) (conds seeds
     return e.replaceFVars from_ to
   return (ms, finish)
 
-/-- Group disjuncts by flags into `reach` definitions over `xs ++ ys`. -/
-def mkReach (inp : SharedIn) (ys : Array Expr) (ds : Array (Bool × Bool × Expr)) :
+/-- `e` with every occurrence of one of the terms `args` replaced by the parameter `ps` at the
+same position (outermost first), when the result mentions no other local variable than `ps`. -/
+def carryTo (args ps : Array Expr) (e : Expr) : Option Expr :=
+  let r := e.replace fun t => (args.findIdx? (· == t)).bind (ps[·]?)
+  if (collectFVars {} r).fvarIds.all fun f => ps.any (·.fvarId! == f) then some r else none
+
+/-- Group disjuncts by flags and carried premises into `reach` definitions over `xs ++ ys`. -/
+def mkReach (inp : SharedIn) (ys : Array Expr) (ds : Array Disj) :
     ShM (Array Combo) := do
   let mut out := #[]
-  for cl in [false, true] do
-    for bd in [false, true] do
-      let es := ds.filterMap fun (c, b, e) => if c == cl && b == bd then some e else none
+  let mut keys : Array (Bool × Bool × Option (Array Expr)) := #[]
+  for d in ds do
+    unless keys.contains (d.clause, d.bound, d.prem) do keys := keys.push (d.clause, d.bound, d.prem)
+  for (cl, bd, pm) in keys do
+      let es := ds.filterMap fun d =>
+        if d.clause == cl && d.bound == bd && d.prem == pm then some d.e else none
       if es.isEmpty then continue
       let v ← mkLambdaFVars (inp.xs ++ ys) (mkOrN es)
       let v ← instantiateMVars v
@@ -278,7 +303,8 @@ def mkReach (inp : SharedIn) (ys : Array Expr) (ds : Array (Bool × Bool × Expr
       addDecl <| .defnDecl { name, levelParams := lps, type := ty, value := v,
                              hints := .abbrev, safety := .safe }
       modify fun s => { s with defs := s.defs.push name }
-      out := out.push { reach := mkConst name (lps.map mkLevelParam), clause := cl, bound := bd }
+      out := out.push { reach := mkConst name (lps.map mkLevelParam), clause := cl, bound := bd,
+                        prem := pm }
   return out
 
 /-- Run `k` with local variables `ys` standing for the parameters `ps` (declared in `lctx`) of a
@@ -309,7 +335,7 @@ partial def up (inp : SharedIn) (vi : Nat) (S : List Nat) : ShM (Array Combo) :=
     | some d => (collectFVars {} d.type).fvarIds.any vFree.contains
     | none => true
   let r ← withYs v.lctx ps vFrom vTo fun ys => do
-    let mut ds : Array (Bool × Bool × Expr) := #[]
+    let mut ds : Array Disj := #[]
     for si in inp.callers[vi]! do
       let σ := inp.sites[si]!
       let some ui := unitIdx inp σ.at_.unit | continue
@@ -318,17 +344,23 @@ partial def up (inp : SharedIn) (vi : Nat) (S : List Nat) : ShM (Array Combo) :=
         modify fun s => { s with missingArgs := s.missingArgs + 1 }
         continue
       let args := S.toArray.map (σ.args[·]!)
-      ds := ds ++ (← siteDisjuncts inp ui σ.at_ args heteros ys)
+      let callee := (σ.args, v.params.extract 0 σ.args.size)
+      let (sd, nf) ← siteDisjuncts inp ui σ.at_ args heteros ys (some callee)
+      ds := ds ++ sd
+      if nf > 0 then modify fun s => { s with framedInto := s.framedInto.insert key }
     let tb := inp.tailBound[vi]!
-    mkReach inp ys (ds.map fun (c, b, e) => (c, b || tb, e))
+    mkReach inp ys (ds.map fun d => { d with bound := d.bound || tb })
   modify fun s => { s with memo := s.memo.insert key r, inProgress := s.inProgress.erase key }
   return r
 
 /-- The disjuncts of a branch or call site at `at_` in unit `ui`: per path kind into `ui`, the
-flags and `∃ z, reach X z ∧ closure`. With `args`, the closure also takes the arguments `args`
-for the callee's parameters `ps`, as equalities with `ys`. -/
+flags and `∃ z, reach X z ∧ closure`, and the number of path kinds dropped as framing. With
+`args`, the closure also takes the arguments `args` for the callee's parameters `ps`, as
+equalities with `ys`. With `callee` (all the site's arguments and the callee's parameters they
+are for), the clause premises at the pre-state of each disjunct are carried to the callee. -/
 partial def siteDisjuncts (inp : SharedIn) (ui : Nat) (at_ : SharedAt) (args : Array Expr)
-    (heteros : Array Bool) (ys : Array Expr) : ShM (Array (Bool × Bool × Expr)) := do
+    (heteros : Array Bool) (ys : Array Expr) (callee : Option (Array Expr × Array Expr) := none) :
+    ShM (Array Disj × Nat) := do
   let u := inp.units[ui]!
   let xs := inp.xs
   let step := inp.level == .step
@@ -338,7 +370,18 @@ partial def siteDisjuncts (inp : SharedIn) (ui : Nat) (at_ : SharedAt) (args : A
     for ((y, a), hetero) in (ys.zip args).zip heteros do
       out := out.push (← mkEqY y (← inferType y) (← zetaAll a) hetero)
     return out
+  -- the premises `prem` (in this unit) carried to the callee's parameters
+  let carry (prem : Option (Array Expr)) : MetaM (Option (Array Expr)) := do
+    let some (as, ps) := callee | return none
+    let some prem := prem | return none
+    withExtended at_.lctx (xs ++ ys) do
+      let as ← as.mapM zetaAll
+      let prem ← prem.mapM zetaAll
+      return prem.mapM (carryTo as ps)
+  let framed (prem : Array Expr) : MetaM Bool :=
+    withExtended at_.lctx (xs ++ ys) do return (← frameWitness? prem).isSome
   let mut out := #[]
+  let mut nFramed := 0
   if u.isRoot then
     let r? ← withExtended at_.lctx (xs ++ ys) do
       let mut conds := at_.conds
@@ -350,9 +393,13 @@ partial def siteDisjuncts (inp : SharedIn) (ui : Nat) (at_ : SharedAt) (args : A
       let (_, finish) ← closedPart inp ui at_.walking conds args extra eqs
       return some (← finish none)
     match r? with
-    | some e => out := out.push (cl.isSome, at_.bound, e)
-    | none => modify fun s => { s with framedSites := s.framedSites + 1 }
-    return out
+    | some e =>
+      let prem ← carry (cl.map (·.premS))
+      out := out.push { clause := cl.isSome, bound := at_.bound, prem, e }
+    | none =>
+      nFramed := nFramed + 1
+      modify fun s => { s with framedSites := s.framedSites + 1 }
+    return (out, nFramed)
   for useCl in (if cl.isSome then [false, true] else [false]) do
     let r? ← withExtended at_.lctx (xs ++ ys) do
       let mut conds := at_.conds
@@ -365,16 +412,25 @@ partial def siteDisjuncts (inp : SharedIn) (ui : Nat) (at_ : SharedAt) (args : A
         extra := #[mkNot (mkAndN premS)]
       some <$> closedPart inp ui at_.walking conds args extra eqs
     let some (ms, finish) := r? |
+      nFramed := nFramed + 1
       modify fun s => { s with framedSites := s.framedSites + 1 }
       continue
     let S := ms.map fun m => (u.params.findIdx? (· == m)).get!
     let combos ← up inp ui S.toList
+    -- path kinds dropped as framing at an enclosing site
+    if (← get).framedInto.contains (ui, S.toList) then nFramed := nFramed + 1
     for c in combos do
       if cl.isSome && (useCl == c.clause) then continue
+      -- an obligation opened above this unit: framing when its pre-state premises are here
+      if let some prem := c.prem then
+        if ← framed prem then
+          nFramed := nFramed + 1
+          modify fun s => { s with framedSites := s.framedSites + 1 }
+          continue
       let e ← withExtended at_.lctx (xs ++ ys) (finish (some c.reach))
-      out := out.push (c.clause || useCl, c.bound || at_.bound, e)
-  return out
-
+      let prem ← carry (if useCl then none else c.prem)
+      out := out.push { clause := c.clause || useCl, bound := c.bound || at_.bound, prem, e }
+  return (out, nFramed)
 end
 
 /-- The parameters of each unit that are fixed at a level, by iteration from the roots. -/
@@ -426,6 +482,7 @@ structure SharedOut where
   missingArgs : Nat := 0
   rootCallee : Nat := 0
   framedSites : Nat := 0
+  roles : Array (Nat × String) := #[]
   reached : Nat := 0
   fixed : Nat := 0
   deriving Inhabited
@@ -485,12 +542,23 @@ def sharedClasses (cfg : Config) (ns : Name) (level : Level) (pat : Expr)
         unless u.level == level do continue
         let roleOk := if level == .step then b.role == "step-own" || b.role == "effect"
           else b.role == "state"
+        modify fun s => { s with roles := s.roles.push (bi, b.role) }
         let some p := b.pred | continue
         if roleOk then ds := #[p.beta xs]
       else
-        for (cl, bd, e) in ← siteDisjuncts inp ui at_ #[] #[] #[] do
-          if level == .step && !cl && bd then continue
-          ds := ds.push e
+        let (dis, nFramed) ← siteDisjuncts inp ui at_ #[] #[] #[]
+        let mut kinds : Array String := #[]
+        for d in dis do
+          let k := if level != .step then "state" else if d.clause then "effect"
+            else if d.bound then "unattributed" else "step-own"
+          unless kinds.contains k do kinds := kinds.push k
+          if k == "unattributed" then continue
+          ds := ds.push d.e
+        if nFramed > 0 then kinds := kinds.push "frame"
+        -- the branch's role: the strongest kind of its path kinds
+        let role := ["effect", "step-own", "state", "unattributed", "frame"].find? kinds.contains
+          |>.getD "no-path"
+        modify fun s => { s with roles := s.roles.push (bi, role) }
       if ds.isEmpty then continue
       let key := (b.decl, b.split, b.tag)
       unless keys.contains key do keys := keys.push key
@@ -505,7 +573,7 @@ def sharedClasses (cfg : Config) (ns : Name) (level : Level) (pat : Expr)
     return out
   let (classes, st) ← go.run { defs := Array.replicate defsFrom .anonymous }
   return { classes, defs := st.defs.size - defsFrom, cycles := st.cycles,
-           missingArgs := st.missingArgs, rootCallee, framedSites := st.framedSites,
+           missingArgs := st.missingArgs, rootCallee, framedSites := st.framedSites, roles := st.roles,
            reached := (reached.filter id).size,
            fixed := fixed.foldl (fun n a => n + (a.filter Option.isSome).size) 0 }
 

@@ -275,7 +275,7 @@ def sanitize (s : String) : String :=
   String.ofList (s.toList.map fun c => if c.isAlphanum then c else '_')
 
 def table (r : Result) (classOf : Array String := #[])
-    (clauses : Array String := #[]) : MetaM String := do
+    (clauses : Array String := #[]) (extra : Array String := #[]) : MetaM String := do
   let mut rows := #["kind\troot\tlevel\tcall_path\tdecl\tsplit\tbranch\tlive\tcounts\twhy\tconditions\tpredicate\tclause\trole\tclass\ttie_back"]
   for (b, idx) in r.branches.zipIdx do
     let s := r.splits[b.splitId]!
@@ -301,6 +301,7 @@ def table (r : Result) (classOf : Array String := #[])
     rows := rows.push s!"unused_have\t{c}\t-\t-\t{c}\t-\t{n}\t-\t-\thave never used: its branches are not walked\t-\t-"
   for c in clauses do
     rows := rows.push s!"clause\t{c}"
+  rows := rows ++ extra
   return "\n".intercalate rows.toList ++ "\n"
 
 def uniqueNames (bases : Array String) : Array String := Id.run do
@@ -555,10 +556,6 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
     let counted (b : BranchRec) := !b.dead && (counts r r.splits[b.splitId]!).1
     let walked := r.units.filter (·.walked)
     let rootUnits := r.units.filter (·.isRoot)
-    let text ← liftTermElabM <| table r
-    liftCoreM <| addAndCompile <| .defnDecl {
-      name := ns ++ `table, levelParams := [], type := mkConst ``String, value := mkStrLit text,
-      hints := .abbrev, safety := .safe }
     let use (bi : Nat) := counted r.branches[bi]!
     let st ← liftTermElabM <| sharedClasses cfg ns .step stepPat r.branches r.sites r.units use 0
     let sa ← liftTermElabM <| sharedClasses cfg ns .state statePat r.branches r.sites r.units use st.defs
@@ -570,6 +567,60 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
     let stateItems := items sa.classes
     unless stepItems.isEmpty do generate ns `StepBranch `sig "step" stepItems
     unless stateItems.isEmpty do generate ns `StateBranch `ctx "state" stateItems
+    -- the roles of the branches, per level they are reached at
+    let mut roleOf : Array (Array String) := Array.replicate r.branches.size #[]
+    for (bi, role) in st.roles ++ sa.roles do
+      unless roleOf[bi]!.contains role do roleOf := roleOf.modify bi (·.push role)
+    let rs := r.branches.zipIdx.map fun (b, bi) =>
+      if roleOf[bi]!.isEmpty then b else { b with role := "/".intercalate roleOf[bi]!.toList }
+    let mut classOf : Array (Array String) := Array.replicate r.branches.size #[]
+    for (cs, its, pre) in [(st.classes, stepItems, "step_"), (sa.classes, stateItems, "state_")] do
+      for (c, (n, _)) in cs.zip its do
+        for bi in c.occurrences do classOf := classOf.modify bi (·.push (pre ++ n))
+    -- per root given: the theorems in scope its proof uses, transitively
+    let mut closures : Array (Name × Std.HashSet Name) := #[]
+    for root in roots do
+      let mut seen : Std.HashSet Name := {}
+      let mut todo := #[root]
+      while !todo.isEmpty do
+        let c := todo.back!
+        todo := todo.pop
+        if seen.contains c then continue
+        seen := seen.insert c
+        todo := todo ++ (← liftCoreM <| theoremsUsed cfg c)
+      closures := closures.push (root, seen)
+    let rootsOf (d : Name) : String :=
+      let hits := closures.filter (·.2.contains d)
+      if hits.isEmpty then "-" else ",".intercalate (hits.toList.map (·.1.toString))
+    let mut classRows := #[]
+    let mut tags : Array (String × Nat) := #[]
+    for (cs, its, lvl) in [(st.classes, stepItems, "step"), (sa.classes, stateItems, "state")] do
+      for (c, (n, _)) in cs.zip its do
+        let roles := c.occurrences.foldl (fun acc bi =>
+          (roleOf[bi]!).foldl (fun a x => if a.contains x then a else a.push x) acc) #[]
+        let tag := rootsOf c.decl
+        tags := match tags.findIdx? (·.1 == s!"{lvl} {tag}") with
+          | some k => tags.modify k fun (t, m) => (t, m + 1)
+          | none => tags.push (s!"{lvl} {tag}", 1)
+        classRows := classRows.push <| "\t".intercalate [
+          "class", s!"{lvl}_{n}", lvl, c.decl.toString, c.split, c.tag,
+          toString c.occurrences.size, "/".intercalate roles.toList, tag]
+    let (_, shapes) ← liftTermElabM <| mkCreates cfg
+    let clauseRows := shapes.map fun (n, nd, np) =>
+      s!"{n}\t{nd} data binder(s)\t{np} premise(s){if np == 0 then "\tno premises: no new instances" else ""}"
+    let text ← liftTermElabM <| table { r with branches := rs }
+      (classOf.map fun cs => if cs.isEmpty then "-" else ",".intercalate cs.toList) clauseRows
+      classRows
+    liftCoreM <| addAndCompile <| .defnDecl {
+      name := ns ++ `table, levelParams := [], type := mkConst ``String, value := mkStrLit text,
+      hints := .abbrev, safety := .safe }
+    let roleCount (lvl : String) (rs : Array (Nat × String)) : String := Id.run do
+      let mut parts : Array String := #[]
+      for k in ["effect", "step-own", "state", "unattributed", "frame", "no-path"] do
+        let n := (rs.filter (·.2 == k)).size
+        if n != 0 then parts := parts.push s!"{n} {k}"
+      return s!"{lvl}: {", ".intercalate parts.toList}"
+    let deadAt := r.branches.filter fun b => b.dead && b.shared.isSome
     -- distinct step predicates (as the per-path classes are counted)
     let mut distinct : Array Expr := #[]
     for c in st.classes do
@@ -587,7 +638,11 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
       {st.defs + sa.defs} reach definitions; {st.reached}/{sa.reached} units reached (step/state), \
       {st.fixed}/{sa.fixed} fixed parameters, {st.framedSites + sa.framedSites} framed sites, \
       {st.cycles + sa.cycles} recursive calls cut, {st.missingArgs + sa.missingArgs} sites with \
-      missing arguments, {st.rootCallee} calls of roots"
+      missing arguments, {st.rootCallee} calls of roots; counted branch occurrences by role \
+      ({roleCount "step" st.roles}; {roleCount "state" sa.roles}); {deadAt.size} dead branch \
+      occurrences; classes by the roots whose proofs use their lemma: \
+      {", ".intercalate (tags.toList.map fun (t, m) => s!"{m} {t}")}; clauses: \
+      {", ".intercalate (shapes.toList.map fun (n, nd, np) => s!"{n} ({nd} binders, {np} premises)")}"
     -- per-path comparison: each shared class against the per-path occurrences of its case
     let some tac := args.get? "compare" | return
     let pp ← liftTermElabM <| analyse { cfg with shared := false } roots
