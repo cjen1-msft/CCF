@@ -2,6 +2,7 @@ module
 
 public meta import Lean
 public import Relevance.Walk
+public import Relevance.Shared
 
 /-!
 # Generating the step signature and state context from the recorded splits
@@ -170,7 +171,7 @@ structure Result where
   rederived : Array (Name × Except String Name) := #[]
   /-- Shared walk: call sites and units (see `Config.shared`). -/
   sites : Array SiteRec := #[]
-  units : Array (WalkUnit × Option (Array Expr)) := #[]
+  units : Array UnitRec := #[]
   deriving Inhabited
 
 /-- Walk every root; returns all records. -/
@@ -228,8 +229,10 @@ def analyse (cfg : Config) (roots : Array Name) : MetaM Result := do
       let st := { st with path := #[], calls := {}, inProgress := #[], stack := #[],
                           condStack := #[], region := false }
       let (e, st) ← ((walk (v.beta xs)).run ctx).run st
-      let st := if cfg.shared then { st with units := st.units.push ({ decl := root }, some xs) }
-        else st
+      let lctx ← getLCtx
+      let ur : UnitRec := { unit := { decl := root }, walked := true, params := xs, lctx,
+                            isRoot := true, level := lvl, keep, pattern := ps }
+      let st := if cfg.shared then { st with units := st.units.push ur } else st
       -- the root proved again by the rebuilt term, in which branches are calls of their lemmas
       if lvl == .other || cfg.ns.isAnonymous || cfg.shared then return (st, none)
       let name := cfg.ns ++ Name.mkSimple s!"rederive_{root.components.getLast!}"
@@ -247,11 +250,12 @@ def analyse (cfg : Config) (roots : Array Name) : MetaM Result := do
     while i < st.pending.size do
       let u := st.pending[i]!
       i := i + 1
-      if st.units.any (·.1 == u) then continue
+      if st.units.any (·.unit == u) then continue
+      let pre := (st.sites.find? (·.callee == u)).bind (·.preArg)
       let st0 := { st with path := #[], calls := {}, inProgress := #[], stack := #[],
                            condStack := #[], region := false }
-      let (ps, st') ← ((walkUnit ctx u).run ctx).run st0
-      st := { st' with units := st'.units.push (u, ps) }
+      let (ur, st') ← ((walkUnit ctx u pre).run ctx).run st0
+      st := { st' with units := st'.units.push ur }
   return { res with branches := st.branches, splits := st.splits,
                     unrecorded := st.unrecorded, noValue := st.noValue,
                     unusedHaves := st.unusedHaves, ties := st.ties, rederived,
@@ -349,6 +353,39 @@ def generate (ns ty setName : Name) (prefix_ : String) (items : Array (String ×
   liftCoreM <| addDecl <| .defnDecl {
     name := ns ++ setName, levelParams := lps, type := tyv, value := v,
     hints := .abbrev, safety := .safe }
+
+/-- Whether the proof of `d` records split `split` (a `splitMark` with that name). -/
+def recordsSplit (env : Environment) (d : Name) (split : String) : Bool :=
+  match env.find? d >>= (·.value? (allowOpaque := true)) with
+  | none => false
+  | some v => (v.find? fun e => e.isAppOf ``splitMark && e.getAppNumArgs ≥ 2 &&
+      e.getArg! 1 == mkStrLit split).isSome
+
+/-- The theorem whose proof records the split of a per-path occurrence: its innermost declaration
+if that records it, else the nearest theorem on its call path that does. -/
+def splitOwner (env : Environment) (b : BranchRec) : Name := Id.run do
+  if recordsSplit env b.decl b.split then return b.decl
+  for label in (b.path.toList.reverse ++ [b.root.toString]) do
+    let n := (label.splitOn "#").head!.toName
+    if recordsSplit env n b.split then return n
+  return b.decl
+
+/-- Elaborate `stx` (a proof term, typically `by tac`) at type `ty`; the proof, or why not. -/
+def proveWith (stx : Syntax) (ty : Expr) : TermElabM (Except String Expr) := do
+  let saved ← saveState
+  let errors ← errorCount
+  let attempt : TermElabM (Except String Expr) := do
+    let e ← Term.withoutErrToSorry <| Term.elabTermEnsuringType stx ty
+    Term.synthesizeSyntheticMVarsNoPostponing
+    let e ← instantiateMVars e
+    if e.hasMVar || e.hasSyntheticSorry || e.hasSorry || (← errorCount) != errors then
+      return .error "not closed"
+    return .ok e
+  let fail (ex : Exception) : TermElabM (Except String Expr) := do
+    return .error ((← ex.toMessageData.toString).take 200).toString
+  let r ← tryCatchRuntimeEx attempt fail
+  if r matches .error _ then saved.restore
+  return r
 
 def branchDoc (b : BranchRec) : String :=
   let cl := if b.clause == "-" then "" else s!"clause {b.clause}, "
@@ -516,18 +553,94 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
   let r ← liftTermElabM <| analyse cfg roots
   if shared then
     let counted (b : BranchRec) := !b.dead && (counts r r.splits[b.splitId]!).1
-    let walked := r.units.filter (·.2.isSome)
-    let roots := r.units.filter fun (u, _) => r.branches.any fun b =>
-      b.shared.any (·.unit == u) && b.role != "shared"
+    let walked := r.units.filter (·.walked)
+    let rootUnits := r.units.filter (·.isRoot)
     let text ← liftTermElabM <| table r
     liftCoreM <| addAndCompile <| .defnDecl {
       name := ns ++ `table, levelParams := [], type := mkConst ``String, value := mkStrLit text,
       hints := .abbrev, safety := .safe }
+    let use (bi : Nat) := counted r.branches[bi]!
+    let st ← liftTermElabM <| sharedClasses cfg ns .step stepPat r.branches r.sites r.units use 0
+    let sa ← liftTermElabM <| sharedClasses cfg ns .state statePat r.branches r.sites r.units use st.defs
+    let items (cs : Array SharedClass) : Array (String × String × Expr) :=
+      let names := uniqueNames (cs.map fun c => sanitize s!"{c.decl.components.getLast!}_{c.split}_{c.tag}")
+      (names.zip cs).map fun (n, c) =>
+        (n, s!"{c.decl} : split {c.split}, branch {c.tag} ({c.occurrences.size} occurrence(s))", c.pred)
+    let stepItems := items st.classes
+    let stateItems := items sa.classes
+    unless stepItems.isEmpty do generate ns `StepBranch `sig "step" stepItems
+    unless stateItems.isEmpty do generate ns `StateBranch `ctx "state" stateItems
+    -- distinct step predicates (as the per-path classes are counted)
+    let mut distinct : Array Expr := #[]
+    for c in st.classes do
+      let mut found := false
+      for q in distinct do
+        if ← liftTermElabM (do try withReducible (isDefEq c.pred q) catch _ => pure false) then
+          found := true; break
+      unless found do distinct := distinct.push c.pred
     logInfo m!"relevance (shared): {r.units.size} units ({walked.size} walked, \
       {r.units.size - walked.size} without a proof to walk), {r.sites.size} call sites; \
       {r.splits.size} split occurrences, {r.branches.size} branch occurrences \
       ({(r.branches.filter counted).size} counted); {r.unrecorded.size} unrecorded splits \
-      ({(r.unrecorded.filter (!·.internal)).size} protocol); {roots.size} root units with branches"
+      ({(r.unrecorded.filter (!·.internal)).size} protocol); {rootUnits.size} roots; \
+      {st.classes.size} step classes ({distinct.size} distinct), {sa.classes.size} state classes; \
+      {st.defs + sa.defs} reach definitions; {st.reached}/{sa.reached} units reached (step/state), \
+      {st.fixed}/{sa.fixed} fixed parameters, {st.framedSites + sa.framedSites} framed sites, \
+      {st.cycles + sa.cycles} recursive calls cut, {st.missingArgs + sa.missingArgs} sites with \
+      missing arguments, {st.rootCallee} calls of roots"
+    -- per-path comparison: each shared class against the per-path occurrences of its case
+    let some tac := args.get? "compare" | return
+    let pp ← liftTermElabM <| analyse { cfg with shared := false } roots
+    let env ← getEnv
+    let pcounted (b : BranchRec) := !b.dead && (counts pp pp.splits[b.splitId]!).1
+    let mut proved : Nat := 0
+    let mut failed : Array String := #[]
+    let mut onlyPP : Array String := #[]
+    let mut k : Nat := 0
+    for (lvl, pat, cs) in [(Level.step, stepPat, st.classes), (Level.state, statePat, sa.classes)] do
+      let roleOk (b : BranchRec) := if lvl == .step then b.role == "step-own" || b.role == "effect"
+        else b.role == "state"
+      let occs := pp.branches.filter fun b =>
+        b.level == lvl && pcounted b && roleOk b && b.pred.isSome
+      let keyOf (b : BranchRec) := (splitOwner env b, b.split, b.tag)
+      for b in occs do
+        unless cs.any (fun c => (c.decl, c.split, c.tag) == keyOf b) do
+          onlyPP := onlyPP.push (branchDoc b)
+      for c in cs do
+        let mine := occs.filter fun b => keyOf b == (c.decl, c.split, c.tag)
+        let tac := tac
+        let ty ← liftTermElabM <| lambdaTelescope pat fun xs _ => do
+          let rhs := mkOrN (mine.map fun b => b.pred.get!.beta xs)
+          mkForallFVars xs (mkIff (c.pred.beta xs) rhs)
+        let name := ns ++ Name.mkSimple s!"equiv_{k}"
+        k := k + 1
+        match ← liftTermElabM <| proveWith tac ty with
+        | .ok prf =>
+          liftCoreM <| addDecl <| .thmDecl {
+            name, levelParams := (collectLevelParams {} ty).params.toList, type := ty, value := prf }
+          proved := proved + 1
+        | .error e =>
+          -- which inclusion holds
+          let dir (fwd : Bool) : TermElabM Bool := lambdaTelescope pat fun xs _ => do
+            let l := c.pred.beta xs
+            let r := mkOrN (mine.map fun b => b.pred.get!.beta xs)
+            let ty ← mkForallFVars xs (if fwd then mkForall `h .default l r else mkForall `h .default r l)
+            return (← proveWith tac ty) matches .ok _
+          let sp ← liftTermElabM <| dir true
+          let ps ← liftTermElabM <| dir false
+          let e := s!"{if sp then "only shared -> per-path proved" else if ps then "only per-path -> shared proved" else "neither inclusion proved"}; {(e.splitOn "\n").head!}"
+          let e := if sp && ps then "both inclusions proved separately" else e
+          liftCoreM <| addDecl <| .defnDecl {
+            name := name ++ `stmt, levelParams := (collectLevelParams {} ty).params.toList,
+            type := mkSort .zero, value := ty, hints := .abbrev, safety := .safe }
+          failed := failed.push s!"{name}.stmt: {c.decl} {c.split} {c.tag} ({mine.size} per-path): {e}"
+    let ppClasses := (pp.branches.filter fun b => b.level == .step && pcounted b &&
+      (b.role == "step-own" || b.role == "effect") && b.pred.isSome).size
+    logInfo m!"relevance (compare): {proved}/{k} shared classes proved equivalent to the \
+      disjunction of their per-path occurrences ({ppClasses} per-path step occurrences); \
+      {onlyPP.size} per-path occurrences with no shared class\
+      {String.join (failed.toList.map (s!"\n  not proved: " ++ ·))}\
+      {String.join (onlyPP.toList.map (s!"\n  per-path only: " ++ ·))}"
     return
   let counted (b : BranchRec) := !b.dead && (counts r r.splits[b.splitId]!).1
   let live (lvl : Level) := r.branches.filter fun b => b.level == lvl && counted b

@@ -145,11 +145,28 @@ structure SharedAt where
   walking : Array FVarId
   deriving Inhabited
 
-/-- A call site of the shared walk: the callee unit and its arguments. -/
+/-- A call site of the shared walk: the callee unit, its arguments, and the argument that is
+the pre-state of the step, if any. -/
 structure SiteRec where
   at_ : SharedAt
   callee : WalkUnit
   args : Array Expr
+  preArg : Option Nat := none
+  deriving Inhabited
+
+/-- A unit of the shared walk as walked: its parameters (for a root, all its binders) and the
+local context they are declared in; for a lemma, the parameter that is the pre-state; for a
+root, its level, the binders kept for the predicate and the pattern's binders. -/
+structure UnitRec where
+  unit : WalkUnit
+  walked : Bool := false
+  params : Array Expr := #[]
+  lctx : LocalContext := {}
+  pre : Option Nat := none
+  isRoot : Bool := false
+  level : Level := .other
+  keep : Array Expr := #[]
+  pattern : Array Expr := #[]
   deriving Inhabited
 
 structure BranchRec where
@@ -310,8 +327,8 @@ structure St where
   /-- Shared walk: call sites, and units still to walk. -/
   sites : Array SiteRec := #[]
   pending : Array WalkUnit := #[]
-  /-- Shared walk: the units walked, with their parameters (`none`: no proof to walk). -/
-  units : Array (WalkUnit × Option (Array Expr)) := #[]
+  /-- Shared walk: the units walked. -/
+  units : Array UnitRec := #[]
 
 abbrev M := ReaderT Ctx (StateRefT St MetaM)
 
@@ -1068,7 +1085,12 @@ partial def recordSite (callee : WalkUnit) (v : Expr) (args : Array Expr) : M Un
       if used then discard <| walk a
     else discard <| walk a
   let at_ ← sharedAt #[]
-  modify fun st => { st with sites := st.sites.push { at_, callee, args },
+  let mut preArg := none
+  if let some pre := (← read).pre then
+    for (a, i) in args.zipIdx do
+      if a == pre || (← (try withReducible (isDefEq a pre) catch _ => pure false)) then
+        preArg := some i; break
+  modify fun st => { st with sites := st.sites.push { at_, callee, args, preArg },
                              pending := st.pending.push callee }
 
 /-- Walk `v` (the proof of theorem `c`) applied to `args`, binding parameters by `let`. -/
@@ -1326,24 +1348,31 @@ partial def walkBranch (f α tag dead p : Expr) : M Expr := do
 end
 
 /-- Shared walk of lemma unit `u` with context `ctx`: its parameters (for a field unit, the
-theorem's and then the field's) as local variables. Returns the parameters, or `none` when the
-unit has no proof or its proof does not reduce to the constructor. -/
-def walkUnit (ctx : Ctx) (u : WalkUnit) : M (Option (Array Expr)) := do
-  let some ci := (← getEnv).find? u.decl | return none
-  let some v := ci.value? (allowOpaque := true) | return none
+theorem's and then the field's) as local variables, parameter `pre` (if any) as the pre-state.
+-/
+def walkUnit (ctx : Ctx) (u : WalkUnit) (pre : Option Nat) : M UnitRec := do
+  let some ci := (← getEnv).find? u.decl | return { unit := u }
+  let some v := ci.value? (allowOpaque := true) | return { unit := u }
   let v := v.instantiateLevelParams ci.levelParams (ci.levelParams.map mkLevelParam)
-  withReader (fun _ => { ctx with root := u.decl, unit := some u, lemmaUnit := true }) do
   withCall u.decl do
   withLams v fun ps body => do
+    let ctx := { ctx with root := u.decl, unit := some u, lemmaUnit := true,
+                          pre := pre.bind (ps[·]?) }
+    withReader (fun _ => ctx) do
     match u.field with
-    | none => discard <| walk body; return some ps
+    | none =>
+      let lctx ← getLCtx
+      discard <| walk body
+      return { unit := u, walked := true, params := ps, lctx, pre }
     | some i =>
       let cv ← getConstInfoCtor u.ctor
       let some (labels, app, _) ← resolveCtor u.ctor (cv.numParams + cv.numFields) body #[] |
-        return none
+        return { unit := u }
       let field := app.getAppArgs[cv.numParams + i]!
       withCalls labels.toList <| withLams field fun qs fb => do
-        discard <| walk fb; return some (ps ++ qs)
+        let lctx ← getLCtx
+        discard <| walk fb
+        return { unit := u, walked := true, params := ps ++ qs, lctx, pre }
 
 
 end Relevance
