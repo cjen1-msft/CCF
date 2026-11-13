@@ -7033,9 +7033,10 @@ private theorem core {small large : History} (within : small <:+ large)
       have := leaderLed.two_le
       exact this
     have jBound : j <= log.length := jEq ▸ Nat.max_le.mpr ⟨frontier, maxCommittableIndexBounded log⟩
-    have termGe : term <= termAt log j :=
-      upToDate.elim (fun gt => Nat.le_trans maxTermGe (Nat.le_of_lt gt))
-        (fun eq => Nat.le_trans maxTermGe (Nat.le_of_eq eq.1.symm))
+    have termGe : term <= termAt log j := by
+      split_rel upToDate := (rcases upToDate with gt | eq) with
+      | inl => exact Nat.le_trans maxTermGe (Nat.le_of_lt gt)
+      | inr => exact Nat.le_trans maxTermGe (Nat.le_of_eq eq.1.symm)
     have jPos : 0 < j := by
       split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos j with zero | positive) with
       | inl =>
