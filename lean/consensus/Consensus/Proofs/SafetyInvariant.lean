@@ -1914,11 +1914,17 @@ private theorem ite' {P : α -> Prop} {c : Prop} [Decidable c]
 private theorem foldlM' {γ : Type} {P : α -> Prop}
     {f : α -> γ -> Effect Node Message Notification α}
     (step : forall value item, P value -> Keeps P (f value item))
-    : forall (items : List γ) (init : α), P init -> Keeps P (items.foldlM f init)
-  | [], _, holds => by simpa using pure' holds
-  | item :: items, init, holds => by
-      simp only [List.foldlM_cons]
-      exact bind' (step init item holds) fun value kept => foldlM' step items value kept
+    : forall (items : List γ) (init : α), P init -> Keeps P (items.foldlM f init) := by
+  intro items
+  split_rel items := (induction items) with
+  | nil =>
+    intro _ holds
+    simpa using pure' holds
+  | cons =>
+    rename_i item items ih
+    intro init holds
+    simp only [List.foldlM_cons]
+    exact bind' (step init item holds) fun value kept => ih value kept
 
 end Consensus.Proofs.Direct.Keeps
 
@@ -2035,13 +2041,19 @@ private theorem foldlM' {I : α -> List (Envelope Node Message) -> Prop}
           I value sent -> Sends (fun next later => I next (sent ++ later)) (f value item))
     : forall (items : List γ) (init : α) (sent : List (Envelope Node Message)),
         I init sent
-        -> Sends (fun result later => I result (sent ++ later)) (items.foldlM f init)
-  | [], _, _, holds => by simpa using pure' (P := fun result later => I result (_ ++ later)) (by simpa using holds)
-  | item :: items, init, sent, holds => by
-      simp only [List.foldlM_cons]
-      refine bind' (step init sent item holds) fun value later kept => ?_
-      refine mono (foldlM' step items value (sent ++ later) kept) fun _ rest done => ?_
-      simpa [List.append_assoc] using done
+        -> Sends (fun result later => I result (sent ++ later)) (items.foldlM f init) := by
+  intro items
+  split_rel items := (induction items) with
+  | nil =>
+    intro _ _ holds
+    simpa using pure' (P := fun result later => I result (_ ++ later)) (by simpa using holds)
+  | cons =>
+    rename_i item items ih
+    intro init sent holds
+    simp only [List.foldlM_cons]
+    refine bind' (step init sent item holds) fun value later kept => ?_
+    refine mono (ih value (sent ++ later) kept) fun _ rest done => ?_
+    simpa [List.append_assoc] using done
 
 end Consensus.Proofs.Safety.Sends
 
