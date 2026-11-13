@@ -708,4 +708,15 @@ def timed (probe : List NodeID) (runs : List Run) : IO (List Row × Nat) := do
       total := total + us
     report s!"random walks, all three initial configurations" all total
 
+-- The evaluator's answers on the inputs of the Lean cross-checks (`crosscheck.lean`).
+#eval show IO Unit from do
+  let config : Finset NodeID := {0, 1, 2}
+  let s0 := initialState config [0, 1, 2]
+  let probe : List NodeID := [0, 1, 2, 1000]
+  for a in [(.local 0 (.timeout .checkQuorum) : Model.Action), .local 0 (.sendEntries 1 1)] do
+    let some st := mkStepAction config [0, 1, 2] s0 a | IO.println "disabled"
+    for row in evalRun probe 0 { config, steps := [st] } do
+      let pick (l : List (String × Tri)) (n : String) := triStr ((l.lookup n).getD .unknown)
+      IO.println s!"crosscheck pre left_backed_inl={pick row.pre "state_committed_logs_comparable_left_backed_inl"} left_backed_inr={pick row.pre "state_committed_logs_comparable_left_backed_inr"} step leader_led_now_after_inl={pick row.sig "step_leader_led_now_after_inl"}"
+
 end ConsensusCoverage.EvalClasses

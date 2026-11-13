@@ -90,8 +90,70 @@ theorem leader_led_now_after_inl_s1 (rest : History) :
     List.mem_filter.mpr ⟨now, by simp [role]⟩
   simp [s1_primaries] at this
 
+/-! A positive check needs a `Ctx` of the step: an execution, a local transition and the
+invariant before it (`good_of_exec`). -/
+
+def a2 : Model.Action := .local 0 (.sendEntries 1 1)
+
+def r2 := (Model.Node.step (CCF.Capabilities.record 0) 0 (initialNodeState config 0)
+  (.internal (.sendEntries 1 1))).run {}
+
+def post2 : NodeState := match r2 with
+  | some (post, _) => post
+  | none => initialNodeState config 0
+
+def out2 : CCF.Outputs NodeID Message Notification := match r2 with
+  | some (_, outputs) => outputs
+  | none => {}
+
+/-- The step: node 0 (the bootstrap primary) sends entries to node 1 and records it. -/
+def s2 : Model.State := ((transitionSystem config [0, 1, 2]).step s0 a2).getD s0
+
+theorem s2_step : (transitionSystem Config.INITIAL_CONFIGURATION [0, 1, 2]).step s0 a2 = some s2 := by
+  rfl
+
+theorem exec0 : Exec [0, 1, 2] [s0] :=
+  .initial ⟨⟨0, by decide⟩, rfl, by
+    simp [s0, protocol, Config.INITIAL_CONFIGURATION] <;> exact ⟨rfl, rfl, rfl⟩⟩
+
+def tr2 : LocalTransition s0 s2 where
+  actor := 0
+  pre := initialNodeState config 0
+  post := post2
+  event := .internal (.sendEntries 1 1)
+  outputs := out2
+  pending := []
+  found := rfl
+  ran := rfl
+  nodesEq := rfl
+  networkEq := rfl
+  pendingSub := nofun
+  source := Or.inl ⟨_, rfl, rfl⟩
+  available := fun _ eq => by cases eq
+
+def ctx2 : Ctx [0, 1, 2] s2 s0 [] := ⟨.step exec0 s2_step, tr2, good_of_exec exec0⟩
+
+/-- Evaluator: `yes` (the actor is primary after, and its state changed: `sentIndex 1`). -/
+theorem leader_led_now_after_inl_s2 :
+    Classes.step_leader_led_now_after_inl [0, 1, 2] s2 s0 [] := by
+  have now : Now [s2, s0] 0 post2 := by
+    simp only [Now, tr2.nodesEq]
+    exact List.mem_cons_self ..
+  have role : post2.role = .primary := rfl
+  have fresh : ¬ (Now [s0] 0 post2 ∧ post2.role = .primary) := by
+    rintro ⟨old, -⟩
+    simp only [Now, s0, List.map_cons, List.map_nil, List.mem_cons, Prod.mk.injEq,
+      List.not_mem_nil, or_false] at old
+    rcases old with ⟨-, h⟩ | ⟨h, -⟩ | ⟨h, -⟩
+    · have : post2.sentIndex 1 = (initialNodeState config 0).sentIndex 1 := by rw [h]
+      exact absurd this (by decide)
+    all_goals exact absurd h (by decide)
+  exact ⟨ctx2, 0, post2, ⟨ctx2, 0, post2, now, role, fresh, rfl, rfl, rfl⟩,
+    ⟨rfl, rfl⟩, rfl, rfl, now, role⟩
+
 end ConsensusCoverage.CrossCheck
 
 #print axioms ConsensusCoverage.CrossCheck.left_backed_inl_initial
 #print axioms ConsensusCoverage.CrossCheck.left_backed_inr_initial
 #print axioms ConsensusCoverage.CrossCheck.leader_led_now_after_inl_s1
+#print axioms ConsensusCoverage.CrossCheck.leader_led_now_after_inl_s2
