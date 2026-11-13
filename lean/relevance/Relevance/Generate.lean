@@ -684,7 +684,12 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
         tags := match tags.findIdx? (·.1 == ct) with
           | some k => tags.modify k fun (t, m) => (t, m + 1)
           | none => tags.push (ct, 1)
-    let (_, shapes) ← liftTermElabM <| mkCreates cfg
+    let (creates, shapes) ← liftTermElabM <| mkCreates cfg
+    if let some v := creates then
+      let tyv ← liftTermElabM do inferType v
+      liftCoreM <| addDecl <| .defnDecl {
+        name := ns ++ `creates, levelParams := (collectLevelParams {} v).params.toList, type := tyv,
+        value := v, hints := .abbrev, safety := .safe }
     let clauseRows := shapes.map fun (n, nd, np) =>
       s!"{n}\t{nd} data binder(s)\t{np} premise(s){if np == 0 then "\tno premises: no new instances" else ""}"
     let text ← liftTermElabM <| table { r with branches := rs }
