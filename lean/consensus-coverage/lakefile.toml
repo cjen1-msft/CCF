@@ -11,3 +11,6 @@ copy = false
 name = "relevance"
 path = "../relevance"
 copy = false
+
+[[lean_lib]]
+name = "ConsensusCoverage"
