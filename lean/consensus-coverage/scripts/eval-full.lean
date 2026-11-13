@@ -701,6 +701,11 @@ def timed (probe : List NodeID) (runs : List Run) : IO (List Row × Nat) := do
     let mut total := 0
     for (config, seed) in [(({0} : Finset NodeID), 42), ({0, 1}, 43), ({0, 1, 2}, 44)] do
       let rs := randomRuns config runs length seed
+      let stuck := rs.filter (·.steps.length < length)
+      IO.println s!"## initial configuration {config.val}: {rs.length} runs, {stuck.length} ended early with no enabled action, mean length {(rs.foldl (· + ·.steps.length) 0) / max 1 rs.length}"
+      for r in stuck.take 2 do
+        let last := (r.steps.getLast?.map (·.after)).getD (initialState config [0, 1, 2])
+        IO.println s!"##   stuck after {r.steps.length} steps: roles {last.nodes.map fun (n, st) => (n, repr st.role, st.log.length, st.commitIndex)}, network {last.network.length}, last event {(r.steps.getLast?.map fun st => match st.event with | .internal i => inputKind i | .receive _ _ => "receive").getD ""}"
       let (rows, us) ← timed probe rs
       IO.println s!"## initial configuration {config.val}: {rows.length} steps, {us} us"
       report s!"random walks, initial configuration {config.val}, {runs} x up to {length}" rows us
