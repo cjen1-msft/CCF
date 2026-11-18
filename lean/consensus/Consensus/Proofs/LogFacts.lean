@@ -71,6 +71,19 @@ def advance (bootstrap : NodeID) (g : Ghost) (prev : Option Model.State) (s : Mo
 def Origin (g : Ghost) : Prop :=
   ∀ k p, g.committed k p → ∃ l, g.canon k l ∧ p <+: l
 
+/-- A canonical log has a leader in its term; no sending snapshot is required. -/
+def Owners (bootstrap : NodeID) (g : Ghost) : Prop :=
+  ∀ k l, g.canon k l → ∃ n, g.led bootstrap n k
+
+theorem owners_step {bootstrap g prev s} (old : Owners bootstrap g) :
+    Owners bootstrap (advance bootstrap g prev s) := by
+  intro k l canon
+  split_rel canon := (rcases canon with past | ⟨n, st, now, _⟩) with
+  | inl =>
+    obtain ⟨n, led⟩ := old k l past
+    exact ⟨n, led.imp_right fun ⟨p, i, e⟩ => ⟨p, i, .inl e⟩⟩
+  | inr => exact ⟨n, now.2.2.2⟩
+
 def Chain (g : Ghost) : Prop :=
   ∀ k a b, g.canon k a → g.canon k b → a <+: b ∨ b <+: a
 
