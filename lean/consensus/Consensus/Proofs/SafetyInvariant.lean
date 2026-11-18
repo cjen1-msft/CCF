@@ -843,15 +843,23 @@ private def SnapOK (history : History) (entries : List Entry) : Prop :=
   /\ (exists log, Canon history (termAt entries entries.length) log /\ entries <+: log)
   /\ exists term part, Committed history term part /\ entries <+: part
 
+/-- Evidence carried by a queued append. Its commit bound is the one advertised on
+the wire, not the sender's (possibly since advanced) commit index. -/
+private structure AppendEvidence (h : History) (source target : NodeID)
+    (r : AppendEntriesRequest) (log : List Entry) : Prop where
+  different : target ≠ source
+  led : Led h source r.term
+  canon : Canon h r.term log
+  prevBound : r.prevLogIndex ≤ log.length
+  prevTerm : r.prevLogTerm = termAt log r.prevLogIndex
+  entries : r.entries <+: log.drop r.prevLogIndex
+  backed : Backed h log r.primaryCommit r.term
+
 /-- What a queued message tells about its sender. -/
 private def MessageOK (history : History) (envelope : Model.Envelope) : Prop :=
   match envelope.payload with
   | .appendEntriesRequest request =>
-      exists earlier,
-        earlier <:+ history
-        /\ exists state,
-            CanonNow earlier envelope.source state request.term
-            /\ AEOk envelope.source envelope.target state request
+      ∃ log, AppendEvidence history envelope.source envelope.target request log
   | .appendEntriesResponse response =>
       response.success = true
       -> Acked history envelope.source response.term response.lastLogIndex
@@ -1053,6 +1061,29 @@ private def Anchor (history : History) : Prop :=
         /\ index <= log.length
         /\ state.log.take index = log.take index
 
+/-- What a follower can rely on when copying a leader log, even after its sender changes. -/
+private structure CopyLog (g : LogFacts.Ghost) (term : Nat) (log : List Entry) : Prop where
+  rooted : Rooted GENESIS log
+  terms : ∀ e ∈ log, e.term ≤ term
+  sorted : log.Pairwise fun x y => x.term ≤ y.term
+  anchor : ∀ i, 0 < i → i ≤ log.length → ∃ l,
+    g.canon (termAt log i) l ∧ i ≤ l.length ∧ log.take i = l.take i
+
+private def CopyLogs (g : LogFacts.Ghost) : Prop :=
+  ∀ k l, g.canon k l → CopyLog g k l
+
+private theorem copyLogs_step {g bootstrap prev s} (old : CopyLogs g)
+    (current : ∀ n st, (n, st) ∈ s.nodes → CopyLog (LogFacts.advance bootstrap g prev s)
+      st.currentTerm st.log) : CopyLogs (LogFacts.advance bootstrap g prev s) := by
+  intro k l canon
+  split_rel canon := (rcases canon with past | ⟨n, st, now, rfl⟩) with
+  | inl =>
+    obtain ⟨rooted, terms, sorted, anchors⟩ := old k l past
+    refine ⟨rooted, terms, sorted, fun i pos bound => ?_⟩
+    obtain ⟨a, ca, le, eq⟩ := anchors i pos bound
+    exact ⟨a, .inl ca, le, eq⟩
+  | inr => exact now.2.1 ▸ current n st now.1
+
 private def Completeness (history : History) : Prop :=
   forall term part node later log commit,
     Committed history term part
@@ -1096,6 +1127,15 @@ private def Messages (history : History) : Prop :=
 /-- Every log is empty or starts with the bootstrap configuration. -/
 private def RootedLogs (history : History) : Prop :=
   forall node state, Now history node state -> Rooted GENESIS state.log
+
+private theorem copyLogs_cons {s : Model.State} {h : History} (old : CopyLogs (logFacts h))
+    (rooted : RootedLogs (s :: h)) (terms : Terms (s :: h)) (sorted : Sorted (s :: h))
+    (anchor : Anchor (s :: h)) : CopyLogs (logFacts (s :: h)) := by
+  apply copyLogs_step old
+  intro n st mem
+  refine ⟨rooted n st mem, terms n st mem, sorted n st mem, fun i pos bound => ?_⟩
+  obtain ⟨l, canon, le, eq⟩ := anchor n st i mem pos bound
+  exact ⟨l, ((logFacts_correct _).canon ..).2 canon, le, eq⟩
 
 private def LeaderLogs (history : History) : Prop :=
   forall node state, Now history node state -> state.role = .primary -> state.log ≠ []
@@ -1183,8 +1223,12 @@ private structure Inv (history : History) : Prop where
   rooted : RootedLogs history
   leader_logs : LeaderLogs history
   commitChains : CommitChains (logFacts history)
+  copyLogs : CopyLogs (logFacts history)
 
 private theorem Inv.term_mono {h : History} (i : Inv h) : TermMono h := i.ballots.term_mono
+
+private theorem Inv.copyLog {h : History} (i : Inv h) {k l} (canon : Canon h k l) :
+    CopyLog (logFacts h) k l := i.copyLogs k l (((logFacts_correct h).canon ..).2 canon)
 
 /-- The invariant holds at every point of the history. -/
 private def Good (history : History) : Prop :=
@@ -5453,6 +5497,12 @@ private theorem Backed.weaken {log : List Entry} {commit term term' : Nat}
   | inl => exact Or.inl zero
   | inr => exact Or.inr ⟨earlier, part, committed, Nat.le_trans le' le, within⟩
 
+private theorem Backed.shorten {log : List Entry} {i j term : Nat}
+    (backed : Backed history log j term) (le : i ≤ j) : Backed history log i term := by
+  split_rel backed := (rcases backed with zero | ⟨k, p, com, bound, sub⟩) with
+  | inl => exact .inl (Nat.eq_zero_of_le_zero (zero ▸ le))
+  | inr => exact .inr ⟨k, p, com, bound, (take_prefix_take log le).trans sub⟩
+
 private theorem Acked.mono (suffix : history <:+ later) {voter : NodeID}
     {term index : Nat} (acked : Acked history voter term index)
     : Acked later voter term index := by
@@ -5597,14 +5647,39 @@ private theorem inv_initial : Inv [initial] := by
       subst isLeader
       exact Or.inr (by simp [initialLocal])
     | neg => exact Or.inl (by simp [initialLocal, isLeader])
-  constructor
-  · intro node state now entry member
+  have terms : Terms [initial] := by
+    intro node state now entry member
     rw [stateOf now] at member ⊢
     split_rel leader := (by_cases leader : node = INITIAL_PRIMARY) with
     | pos =>
       subst leader
       simp_all [initialLocal]
     | neg => simp [initialLocal, leader] at member
+  have anchor : Anchor [initial] := by
+    intro node state index now positive bound
+    rw [stateOf now] at bound ⊢
+    split_rel isLeader := (by_cases isLeader : node = INITIAL_PRIMARY) with
+    | pos =>
+      subst isLeader
+      have one : index = 1 := by
+        simp [initialLocal] at bound
+        exact Nat.le_antisymm bound (Nat.succ_le_of_lt positive)
+      subst one
+      refine ⟨_, ⟨[initial], List.suffix_refl _, _, _,
+        ⟨now, ?_, ?_, Or.inl ⟨?_, rfl⟩⟩, rfl⟩, ?_, ?_⟩
+      · rw [stateOf now]
+        simp [initialLocal, leaderMem, BOOTSTRAP_TERM, termAt, entryAt?]
+      · rw [stateOf now]
+        simp [initialLocal]
+      · simp [initialLocal, BOOTSTRAP_TERM, termAt, entryAt?]
+      · rw [stateOf now]
+        exact bound
+      · rw [stateOf now]
+    | neg =>
+      simp [initialLocal, isLeader] at bound
+      exact absurd (Nat.lt_of_lt_of_le positive (Nat.le_of_eq bound)) (Nat.lt_irrefl 0)
+  constructor
+  · exact terms
   · exact sorted
   · intro node state now active
     rw [stateOf now] at active ⊢
@@ -5671,28 +5746,7 @@ private theorem inv_initial : Inv [initial] := by
   · intro k l canon gt
     have boot := (initial_canon initialized (((logFacts_correct [initial]).canon ..).1 canon)).1
     exact (Nat.not_lt_of_ge (Nat.le_of_eq boot) gt).elim
-  · intro node state index now positive bound
-    rw [stateOf now] at bound ⊢
-    split_rel isLeader := (by_cases isLeader : node = INITIAL_PRIMARY) with
-    | pos =>
-      subst isLeader
-      have one : index = 1 := by
-        simp [initialLocal] at bound
-        exact Nat.le_antisymm bound (Nat.succ_le_of_lt positive)
-      subst one
-      refine ⟨_, ⟨[initial], List.suffix_refl _, _, _,
-        ⟨now, ?_, ?_, Or.inl ⟨?_, rfl⟩⟩, rfl⟩, ?_, ?_⟩
-      · rw [stateOf now]
-        simp [initialLocal, leaderMem, BOOTSTRAP_TERM, termAt, entryAt?]
-      · rw [stateOf now]
-        simp [initialLocal]
-      · simp [initialLocal, BOOTSTRAP_TERM, termAt, entryAt?]
-      · rw [stateOf now]
-        exact bound
-      · rw [stateOf now]
-    | neg =>
-      simp [initialLocal, isLeader] at bound
-      exact absurd (Nat.lt_of_lt_of_le positive (Nat.le_of_eq bound)) (Nat.lt_irrefl 0)
+  · exact anchor
   · intro term part node later log commit _ elected
     exact absurd elected not_elected_single
   · intro node state now
@@ -5726,6 +5780,7 @@ private theorem inv_initial : Inv [initial] := by
       (bootstrap := INITIAL_PRIMARY) (fun _ _ h => False.elim h) rooted sorted
     intro n k l i e
     exact (not_elected_single (((logFacts_correct [initial]).elected ..).1 e)).elim
+  · exact copyLogs_cons (fun _ _ h => False.elim h) rooted terms sorted anchor
 
 end Initial
 end Consensus.Proofs.Safety
@@ -5788,14 +5843,6 @@ private theorem now_unique {history : History} (exec : Exec nodes history) {node
     : first = second := by
   obtain ⟨current, rest, rfl⟩ := left.nonempty
   exact state_unique (exec.keys List.mem_cons_self) left right
-
-/-- A state seen in a history is the current state of one of its suffixes. -/
-private theorem Seen.now {history : History} {node : NodeID} {state : NodeState}
-    (seen : Seen history node state)
-    : exists earlier, earlier <:+ history /\ Now earlier node state := by
-  obtain ⟨current, member, mem⟩ := seen
-  obtain ⟨front, back, split⟩ := List.append_of_mem member
-  exact ⟨current :: back, ⟨front, split.symm⟩, mem⟩
 
 private theorem Seen.frontier {history : History} (exec : Exec nodes history)
     {node : NodeID} {state : NodeState} (seen : Seen history node state)
@@ -5907,29 +5954,6 @@ private theorem canon_chain {history : History} (chain : LogFacts.Chain (logFact
     : first <+: second \/ second <+: first := by
   have rep := logFacts_correct history
   exact chain _ _ _ ((rep.canon ..).2 left) ((rep.canon ..).2 right)
-
-/-- Two seen logs agreeing on the term at `index` agree up to `index`. -/
-private theorem log_matching {history : History} (anchor : Everywhere Anchor history)
-    (chain : LogFacts.Chain (logFacts history)) {node other : NodeID}
-    {first second : NodeState} (left : Seen history node first)
-    (right : Seen history other second) {index : Nat} (positive : 0 < index)
-    (leftBound : index <= first.log.length) (rightBound : index <= second.log.length)
-    (same : termAt first.log index = termAt second.log index)
-    : first.log.take index = second.log.take index := by
-  obtain ⟨leftHistory, leftSuffix, leftNow⟩ := left.now
-  obtain ⟨rightHistory, rightSuffix, rightNow⟩ := right.now
-  obtain ⟨_, _, rfl⟩ := leftNow.nonempty
-  obtain ⟨_, _, rfl⟩ := rightNow.nonempty
-  obtain ⟨leftLog, leftCanon, leftLength, leftTake⟩ :=
-    anchor _ leftSuffix (List.cons_ne_nil _ _) node first index leftNow positive leftBound
-  obtain ⟨rightLog, rightCanon, rightLength, rightTake⟩ :=
-    anchor _ rightSuffix (List.cons_ne_nil _ _) other second index rightNow positive
-      rightBound
-  rw [same] at leftCanon
-  rw [leftTake, rightTake]
-  exact take_eq_take_of_comparable
-    (canon_chain chain (leftCanon.mono leftSuffix) (rightCanon.mono rightSuffix))
-    leftLength rightLength
 
 private theorem Granted.stamp {h : History} {voter candidate : NodeID} {term : Nat}
     {request : RequestVoteRequest} (granted : Granted h voter candidate term request) :
@@ -6361,8 +6385,6 @@ variable {nodes : List NodeID} {after before : Model.State}
   {rest : History} (c : Ctx nodes after before rest)
 include c
 
-private theorem anchors : Everywhere Anchor (before :: rest) := c.all Inv.anchor
-
 private theorem pre_sorted
     : c.pre.log.Pairwise fun first second => first.term <= second.term :=
   c.inv.sorted c.actor c.pre c.pre_now
@@ -6372,38 +6394,38 @@ keeping the follower's suffix exactly when the follower already agreed. -/
 private theorem accept_shape {source : NodeID} {request : AppendEntriesRequest}
     (eq : c.event = .receive source (.appendEntriesRequest request))
     (accepted : Accepted c.pre request c.post)
-    : exists earlier sender,
-        earlier <:+ before :: rest
-        /\ CanonNow earlier source sender request.term
-        /\ AEOk source c.actor sender request
-        /\ request.prevLogIndex + request.entries.length <= sender.log.length
+    : exists leaderLog : List Entry,
+        AppendEvidence (before :: rest) source c.actor request leaderLog
+        /\ request.prevLogIndex + request.entries.length <= leaderLog.length
         /\ c.post.log.take (request.prevLogIndex + request.entries.length)
-            = sender.log.take (request.prevLogIndex + request.entries.length)
+            = leaderLog.take (request.prevLogIndex + request.entries.length)
         /\ (c.post.log = c.pre.log
             \/ (c.post.log
-                  = sender.log.take (request.prevLogIndex + request.entries.length)
+                  = leaderLog.take (request.prevLogIndex + request.entries.length)
                 /\ Not
                     (c.pre.log.take (request.prevLogIndex + request.entries.length)
-                      = sender.log.take (request.prevLogIndex + request.entries.length))))
+                      = leaderLog.take (request.prevLogIndex + request.entries.length))))
         /\ c.pre.log.take request.prevLogIndex
-            = sender.log.take request.prevLogIndex := by
+            = leaderLog.take request.prevLogIndex := by
   obtain ⟨envelope, ok, sourceEq, targetEq, payload⟩ := c.received_ok eq
-  simp only [MessageOK, payload] at ok
-  obtain ⟨earlier, suffix, sender, canon, aeok⟩ := ok
-  rw [sourceEq] at canon aeok
-  rw [targetEq] at aeok
-  refine ⟨earlier, sender, suffix, canon, aeok, ?_⟩
-  obtain ⟨_, _, prevBound, prevTerm, entries, _⟩ := aeok
+  simp only [MessageOK, payload, sourceEq, targetEq] at ok
+  obtain ⟨leaderLog, evidence⟩ := ok
+  refine ⟨leaderLog, evidence, ?_⟩
+  obtain ⟨_, _, canon, prevBound, prevTerm, entries, _⟩ := evidence
   obtain ⟨_, _, _, followerBound, termEq, logEq, _⟩ := accepted
-  have senderSeen : Seen (before :: rest) source sender := canon.1.seen.mono suffix
-  have batchBound : request.prevLogIndex + request.entries.length <= sender.log.length := by
+  have batchBound : request.prevLogIndex + request.entries.length <= leaderLog.length := by
     exact Nat.le_trans (Nat.add_le_add_left (Nat.le_trans entries.length_le (Nat.le_of_eq List.length_drop))
       _) (Nat.le_of_eq (Nat.add_sub_of_le prevBound))
-  have match' : forall j, 0 < j -> j <= c.pre.log.length -> j <= sender.log.length
-      -> termAt c.pre.log j = termAt sender.log j -> c.pre.log.take j = sender.log.take j :=
-    fun _ positive left right same =>
-      log_matching c.anchors c.inv.chains c.pre_seen senderSeen positive left right same
-  have prevAgree : c.pre.log.take request.prevLogIndex = sender.log.take request.prevLogIndex := by
+  have match' : forall j, 0 < j -> j <= c.pre.log.length -> j <= leaderLog.length
+      -> termAt c.pre.log j = termAt leaderLog j -> c.pre.log.take j = leaderLog.take j := by
+    intro j positive left right same
+    obtain ⟨a, ca, la, ea⟩ := c.inv.anchor _ _ j c.pre_now positive left
+    obtain ⟨b, cb, lb, eb⟩ := (c.inv.copyLog canon).anchor j positive right
+    rw [same] at ca
+    rw [ea, eb]
+    exact take_eq_take_of_comparable
+      (c.inv.chains _ _ _ (((logFacts_correct _).canon ..).2 ca) cb) la lb
+  have prevAgree : c.pre.log.take request.prevLogIndex = leaderLog.take request.prevLogIndex := by
     split_rel eq_zero_or_pos :=
         (rcases Nat.eq_zero_or_pos request.prevLogIndex with zero | positive) with
     | inl => rw [zero, List.take_zero, List.take_zero]
@@ -6434,11 +6456,8 @@ private theorem post_log
             /\ c.pre.role = .primary
             /\ c.post.currentTerm = c.pre.currentTerm
             /\ Not (c.post.role = .candidate))
-      \/ (exists earlier source sender n,
-            earlier <:+ before :: rest
-            /\ CanonNow earlier source sender c.post.currentTerm
-            /\ n <= sender.log.length
-            /\ c.post.log = sender.log.take n) := by
+      \/ (exists leaderLog n, CopyLog (logFacts (before :: rest)) c.post.currentTerm leaderLog
+            /\ n <= leaderLog.length /\ c.post.log = leaderLog.take n) := by
   split_rel kind := (cases Summary.kind c.sum) with
   | same =>
       rename_i log _
@@ -6459,14 +6478,13 @@ private theorem post_log
   | accept =>
       rename_i source request eq accepted
       split_rel accept_shape :=
-          (obtain ⟨earlier, sender, suffix, canon, _, bound, _, same | ⟨fresh, _⟩, _⟩ :=
+          (obtain ⟨leaderLog, evidence, bound, _, same | ⟨fresh, _⟩, _⟩ :=
             c.accept_shape eq accepted) with
       | inl =>
         rw [same]
         exact Or.inl (List.prefix_refl _)
       | inr =>
-        rw [accepted.1] at canon
-        exact Or.inr (Or.inr ⟨earlier, source, sender, _, suffix, canon, bound, fresh⟩)
+        exact .inr (.inr ⟨leaderLog, _, accepted.1 ▸ c.inv.copyLog evidence.canon, bound, fresh⟩)
   | elect =>
       rename_i wins
       obtain ⟨_, ⟨_, candidateLog, _⟩, _, log, _⟩ := Wins.facts wins
@@ -6474,14 +6492,12 @@ private theorem post_log
       exact Or.inl (primaryState_log_prefix _)
   | install =>
       rename_i entries initialized positive signature _ log _ term _
-      obtain ⟨_, _, ⟨leaderLog, ⟨earlier, suffix, source, sender, canon, senderLog⟩, inLog⟩, _⟩ :=
+      obtain ⟨_, _, ⟨leaderLog, canon, inLog⟩, _⟩ :=
         c.snap_available initialized positive signature
-      refine Or.inr (Or.inr ⟨earlier, source, sender, entries.length, suffix, ?_, ?_, ?_⟩)
+      refine Or.inr (Or.inr ⟨leaderLog, entries.length, ?_, inLog.length_le, ?_⟩)
       · rw [term]
-        exact canon
-      · rw [senderLog]
-        exact inLog.length_le
-      · rw [log, senderLog]
+        exact c.inv.copyLog canon
+      · rw [log]
         exact List.prefix_iff_eq_take.mp inLog
 
 /-- Every log stays empty or rooted at the bootstrap configuration. -/
@@ -6492,15 +6508,14 @@ private theorem rooted : RootedLogs (after :: before :: rest) := by
     subst nodeEq stateEq
     have preRooted := c.inv.rooted c.actor c.pre c.pre_now
     split_rel post_log := (rcases c.post_log with sub | ⟨entries, log, _, leader, _, _⟩
-        | ⟨earlier, source, sender, n, suffix, canon, _, log⟩) with
+        | ⟨_, n, copy, _, log⟩) with
     | inl => exact preRooted.prefix sub
     | inr_inl =>
       rw [log]
       exact preRooted.append (c.inv.leader_logs c.actor c.pre c.pre_now leader) entries
     | inr_inr =>
       rw [log]
-      obtain ⟨_, _, rfl⟩ := canon.1.nonempty
-      exact (c.all Inv.rooted _ suffix (List.cons_ne_nil _ _) source sender canon.1).take n
+      exact copy.rooted.take n
   | inr => exact c.inv.rooted node state old
 
 private theorem terms : Terms (after :: before :: rest) := by
@@ -6511,7 +6526,7 @@ private theorem terms : Terms (after :: before :: rest) := by
     have le := c.term_le
     have preTerms := c.inv.terms c.actor c.pre c.pre_now
     split_rel post_log := (rcases c.post_log with sub | ⟨entries, log, terms, _, term, _⟩
-        | ⟨earlier, source, sender, n, suffix, canon, _, log⟩) with
+        | ⟨_, _, copy, _, log⟩) with
     | inl => exact Nat.le_trans (preTerms entry (sub.subset mem)) le
     | inr_inl =>
       rw [log] at mem
@@ -6522,11 +6537,7 @@ private theorem terms : Terms (after :: before :: rest) := by
         exact le
     | inr_inr =>
       rw [log] at mem
-      obtain ⟨_, _, rfl⟩ := canon.1.nonempty
-      have := c.all Inv.terms _ suffix (List.cons_ne_nil _ _) source sender canon.1 entry
-        (List.mem_of_mem_take mem)
-      rw [canon.2.1] at this
-      exact this
+      exact copy.terms entry (List.mem_of_mem_take mem)
   | inr => exact c.inv.terms node state old entry mem
 
 private theorem sorted : Sorted (after :: before :: rest) := by
@@ -6536,7 +6547,7 @@ private theorem sorted : Sorted (after :: before :: rest) := by
     subst nodeEq stateEq
     have preTerms := c.inv.terms c.actor c.pre c.pre_now
     split_rel post_log := (rcases c.post_log with sub | ⟨entries, log, terms, _, _, _⟩
-        | ⟨earlier, source, sender, n, suffix, canon, _, log⟩) with
+        | ⟨_, _, copy, _, log⟩) with
     | inl => exact c.pre_sorted.sublist sub.sublist
     | inr_inl =>
       rw [log, List.pairwise_append]
@@ -6549,9 +6560,7 @@ private theorem sorted : Sorted (after :: before :: rest) := by
         exact preTerms first firstMem
     | inr_inr =>
       rw [log]
-      obtain ⟨_, _, rfl⟩ := canon.1.nonempty
-      exact (c.all Inv.sorted _ suffix (List.cons_ne_nil _ _) source sender canon.1).sublist
-        (List.take_sublist _ _)
+      exact copy.sorted.sublist (List.take_sublist _ _)
   | inr => exact c.inv.sorted node state old
 
 private theorem active : Active (after :: before :: rest) := by
@@ -7330,11 +7339,11 @@ private theorem keep_log (sameTerm : c.post.currentTerm = c.pre.currentTerm)
   | accept =>
     rename_i source request eq accepted
     exfalso
-    obtain ⟨earlier, _, suffix, canon, aeok, _⟩ := c.accept_shape eq accepted
+    obtain ⟨_, evidence, _⟩ := c.accept_shape eq accepted
     have : source = c.actor :=
-      c.inv.election_safety source c.actor request.term (canon.2.2.2.mono suffix)
+      c.inv.election_safety source c.actor request.term evidence.led
         (by rw [accepted.1, sameTerm]; exact led)
-    exact aeok.1 this.symm
+    exact evidence.different this.symm
   | elect =>
     rename_i wins
     have ⟨_, _, _, termCase, _⟩ := c.electStep (c.wins_elect wins)
@@ -7479,7 +7488,7 @@ private theorem anchor : Anchor (after :: before :: rest) := by
       exact ⟨log, canon.mono c.suffix_tail, length, take⟩
     split_rel post_log :=
         (rcases c.post_log with sub | ⟨entries, log, terms, leader, term, notCandidate⟩
-          | ⟨earlier, source, sender, n, suffix, canon, _, log⟩) with
+          | ⟨_, n, copy, _, log⟩) with
     | inl => exact viaPre (Or.inr sub) (Nat.le_trans bound sub.length_le)
     | inr_inl =>
       split_rel lt_or_ge := (rcases (Nat.lt_or_ge c.pre.log.length index).symm with within | above) with
@@ -7498,13 +7507,11 @@ private theorem anchor : Anchor (after :: before :: rest) := by
     | inr_inr =>
       rw [log] at bound ⊢
       have short : index <= n := Nat.le_trans bound (List.length_take_le _ _)
-      obtain ⟨_, _, rfl⟩ := canon.1.nonempty
       obtain ⟨anchored, anchoredCanon, length, take⟩ :=
-        c.anchors _ suffix (List.cons_ne_nil _ _) source sender index canon.1 positive
-          (Nat.le_trans bound (by simp [Nat.min_le_right]))
+        copy.anchor index positive (Nat.le_trans bound (by simp [Nat.min_le_right]))
       refine ⟨anchored, ?_, length, ?_⟩
       · rw [termAt_take short]
-        exact anchoredCanon.mono (suffix.trans c.suffix_tail)
+        exact ((logFacts_correct _).canon ..).1 (.inl anchoredCanon)
       · rw [List.take_take, Nat.min_eq_left short, take]
   | inr =>
     obtain ⟨log, canon, length, take⟩ := c.inv.anchor node state index old positive bound
@@ -7798,9 +7805,9 @@ private theorem accept_backed {source : NodeID} {request : AppendEntriesRequest}
     (accepted : Accepted c.pre request c.post)
     : exists term,
         Backed (after :: before :: rest) c.post.log c.post.commitIndex term := by
-  obtain ⟨earlier, sender, suffix, canon, aeok, batchBound, postTake, shape, prevAgree⟩ :=
+  obtain ⟨leaderLog, evidence, _, postTake, shape, prevAgree⟩ :=
     c.accept_shape received accepted
-  obtain ⟨requestTerm, _, commitLe, _, _, _, commitEq⟩ := accepted
+  obtain ⟨_, _, commitLe, _, _, _, commitEq⟩ := accepted
   rw [commitEq]
   split_rel max_eq_or :=
       (rcases Std.max_eq_or (a := c.pre.commitIndex)
@@ -7815,11 +7822,11 @@ private theorem accept_backed {source : NodeID} {request : AppendEntriesRequest}
     | inr =>
       rw [fresh]
       calc
-        (sender.log.take (request.prevLogIndex + request.entries.length)).take
+        (leaderLog.take (request.prevLogIndex + request.entries.length)).take
               c.pre.commitIndex
-            = sender.log.take c.pre.commitIndex := by
+            = leaderLog.take c.pre.commitIndex := by
           rw [List.take_take, Nat.min_eq_left (Nat.le_trans commitLe (Nat.le_add_right _ _))]
-        _ = (sender.log.take request.prevLogIndex).take c.pre.commitIndex := by
+        _ = (leaderLog.take request.prevLogIndex).take c.pre.commitIndex := by
           rw [List.take_take, Nat.min_eq_left commitLe]
         _ = (c.pre.log.take request.prevLogIndex).take c.pre.commitIndex := by
           rw [prevAgree]
@@ -7829,36 +7836,12 @@ private theorem accept_backed {source : NodeID} {request : AppendEntriesRequest}
     rw [choice]
     have kLe := maxCommittableIndexUpTo_le c.post.log
       (min request.primaryCommit (request.prevLogIndex + request.entries.length))
-    have lcLe := aeok.2.2.2.2.2
-    have senderTerm := canon.2.1
-    obtain ⟨_, _, rfl⟩ := canon.1.nonempty
-    split_rel commit_backed :=
-        (rcases (c.all Inv.commit_backed _ suffix (List.cons_ne_nil _ _) source sender canon.1).2
-          canon.2.2.1 (by rw [senderTerm]; exact canon.2.2.2) with
-          zero | ⟨earlier', part, committed, le, within⟩) with
-    | inl =>
-      exact ⟨0, Or.inl (Nat.eq_zero_of_le_zero (Nat.le_trans kLe
-        (Nat.le_trans (Nat.min_le_left _ _) (Nat.le_trans lcLe (Nat.le_of_eq zero)))))⟩
-    | inr =>
-      refine ⟨c.post.currentTerm, Or.inr
-        ⟨earlier', part, committed.mono (suffix.trans c.suffix_tail),
-          Nat.le_trans le (Nat.le_of_eq (senderTerm.trans requestTerm)), ?_⟩⟩
-      generalize maxCommittableIndexUpTo c.post.log
-        (min request.primaryCommit (request.prevLogIndex + request.entries.length)) = k at kLe ⊢
-      have agree : c.post.log.take k = sender.log.take k := by
-        calc
-          c.post.log.take k
-              = (c.post.log.take (request.prevLogIndex + request.entries.length)).take
-                  k := by
-            rw [List.take_take, Nat.min_eq_left (Nat.le_trans kLe (Nat.min_le_right _ _))]
-          _ = (sender.log.take (request.prevLogIndex + request.entries.length)).take
-                k := by
-            rw [postTake]
-          _ = sender.log.take k := by
-            rw [List.take_take, Nat.min_eq_left (Nat.le_trans kLe (Nat.min_le_right _ _))]
-      rw [agree]
-      exact (take_prefix_take _
-        (Nat.le_trans kLe (Nat.le_trans (Nat.min_le_left _ _) lcLe))).trans within
+    generalize maxCommittableIndexUpTo c.post.log
+      (min request.primaryCommit (request.prevLogIndex + request.entries.length)) = k at kLe ⊢
+    refine ⟨request.term,
+      ((evidence.backed.shorten (Nat.le_trans kLe (Nat.min_le_left ..))).transfer ?_).mono c.suffix_tail⟩
+    have eq := congrArg (List.take k) postTake
+    simpa only [List.take_take, Nat.min_eq_left (Nat.le_trans kLe (Nat.min_le_right ..))] using eq
 
 private theorem commit_backed : CommitBacked (after :: before :: rest) := by
   intro node state now
@@ -7940,11 +7923,11 @@ private theorem commit_backed : CommitBacked (after :: before :: rest) := by
         rename_i source request received accepted
         refine ⟨c.accept_backed received accepted, fun _ led => ?_⟩
         exfalso
-        obtain ⟨earlier, _, suffix, canon, aeok, _⟩ := c.accept_shape received accepted
+        obtain ⟨_, evidence, _⟩ := c.accept_shape received accepted
         have : source = c.actor :=
           c.election_safety source c.actor request.term
-            (canon.2.2.2.mono (suffix.trans c.suffix_tail)) (by rw [accepted.1]; exact led)
-        exact aeok.1 this.symm
+            (evidence.led.mono c.suffix_tail) (by rw [accepted.1]; exact led)
+        exact evidence.different this.symm
     | elect =>
         rename_i wins
         have elect := c.wins_elect wins
@@ -8001,7 +7984,7 @@ private theorem accept_persist {source : NodeID} {request : AppendEntriesRequest
     : part <+: c.post.log
       \/ Bad (after :: before :: rest) part (termAt part part.length)
           c.post.currentTerm := by
-  obtain ⟨earlier, sender, suffix, canon, _, batchBound, _, shape, _⟩ :=
+  obtain ⟨leaderLog, evidence, batchBound, _, shape, _⟩ :=
     c.accept_shape received accepted
   split_rel shape := (rcases shape with same | ⟨fresh, differ⟩) with
   | inl =>
@@ -8010,22 +7993,20 @@ private theorem accept_persist {source : NodeID} {request : AppendEntriesRequest
     exact inPre
   | inr =>
     have requestTerm : request.term = c.post.currentTerm := accepted.1
-    have senderCanon : Canon (before :: rest) c.post.currentTerm sender.log := by
-      rw [← requestTerm]
-      exact ⟨earlier, suffix, source, sender, canon, rfl⟩
+    have senderCanon : Canon (before :: rest) c.post.currentTerm leaderLog := requestTerm ▸ evidence.canon
     generalize request.prevLogIndex + request.entries.length = n at batchBound fresh differ
     -- A part agreeing with the sender beyond the batch end contradicts the truncation.
-    have beyond : n < part.length -> Not (part.take n = sender.log.take n) := by
+    have beyond : n < part.length -> Not (part.take n = leaderLog.take n) := by
       intro long agree
       apply differ
       rw [← agree]
       exact take_eq_of_prefix inPre (Nat.le_of_lt long)
-    split_rel inSender := (by_cases inSender : part <+: sender.log) with
+    split_rel inSender := (by_cases inSender : part <+: leaderLog) with
     | pos =>
       split_rel lt_or_ge := (rcases (Nat.lt_or_ge n part.length).symm with short | long) with
       | inl =>
         left
-        have := take_prefix_take sender.log short
+        have := take_prefix_take leaderLog short
         rw [← List.prefix_iff_eq_take.mp inSender] at this
         rw [fresh]
         exact this
@@ -8038,7 +8019,7 @@ private theorem accept_persist {source : NodeID} {request : AppendEntriesRequest
       split_rel lt_or_ge :=
           (rcases Nat.lt_or_ge (termAt part part.length) c.post.currentTerm with lower | upper) with
       | inl =>
-        exact Or.inr ⟨c.post.currentTerm, sender.log, lower, Nat.le.refl,
+        exact Or.inr ⟨c.post.currentTerm, leaderLog, lower, Nat.le.refl,
           senderCanon.mono c.suffix_tail, inSender⟩
       | inr =>
         exfalso
@@ -8054,7 +8035,7 @@ private theorem accept_persist {source : NodeID} {request : AppendEntriesRequest
         have partLog : part = log.take part.length := partEq.symm.trans take
         have comparable := canon_chain c.inv.chains logCanon senderCanon
         split_rel lt_or_ge :=
-            (rcases (Nat.lt_or_ge sender.log.length part.length).symm with fits | long) with
+            (rcases (Nat.lt_or_ge leaderLog.length part.length).symm with fits | long) with
         | inl =>
           apply inSender
           rw [partLog, take_eq_take_of_comparable comparable length fits]
@@ -8211,8 +8192,9 @@ private theorem old_message {envelope : Model.Envelope}
   split_rel h := (cases h : envelope.payload) with
   | appendEntriesRequest =>
       simp only [MessageOK, h] at ok ⊢
-      obtain ⟨earlier, suffix, rest'⟩ := ok
-      exact ⟨earlier, suffix.trans c.suffix_tail, rest'⟩
+      obtain ⟨log, o⟩ := ok
+      exact ⟨log, o.different, o.led.mono c.suffix_tail, o.canon.mono c.suffix_tail,
+        o.prevBound, o.prevTerm, o.entries, o.backed.mono c.suffix_tail⟩
   | appendEntriesResponse =>
       simp only [MessageOK, h] at ok ⊢
       exact fun success => (ok success).mono c.suffix_tail
@@ -8238,22 +8220,24 @@ private theorem new_message {envelope : Model.Envelope} (new : envelope ∈ c.se
       simp only [MessageOK, h]
       rw [sourceEq]
       obtain ⟨aeok, notCandidate, origin⟩ := ok
-      refine ⟨after :: before :: rest, List.suffix_refl _, c.post,
-        ⟨c.post_now, aeok.2.1.symm, notCandidate, ?_⟩, aeok⟩
-      rw [aeok.2.1]
-      exact c.post_led origin
+      obtain ⟨different, term, bound, prevTerm, entries, commitLe⟩ := aeok
+      have led := c.post_led origin
+      refine ⟨c.post.log, different, term ▸ led, ?_, bound, prevTerm, entries, ?_⟩
+      · exact ⟨_, List.suffix_refl _, c.actor, c.post, ⟨c.post_now, term.symm,
+          notCandidate, term ▸ led⟩, rfl⟩
+      · rw [term]
+        exact ((c.commit_backed _ _ c.post_now).2 notCandidate led).shorten commitLe
   | appendEntriesResponse =>
       simp only [h] at ok
       simp only [MessageOK, h]
       intro success
       obtain ⟨source, request, received, accepted, responseTerm, lastEq⟩ := ok success
-      obtain ⟨earlier, sender, suffix, canon, _, batchBound, postTake, _, _⟩ :=
+      obtain ⟨leaderLog, evidence, batchBound, postTake, _, _⟩ :=
         c.accept_shape received accepted
       rw [sourceEq, responseTerm, lastEq]
-      refine ⟨c.post, sender.log, c.post_seen, rfl,
-        ⟨earlier, suffix.trans c.suffix_tail, source, sender, ?_, rfl⟩, batchBound, ?_⟩
+      refine ⟨c.post, leaderLog, c.post_seen, rfl, ?_, batchBound, ?_⟩
       · rw [← accepted.1]
-        exact canon
+        exact evidence.canon.mono c.suffix_tail
       · rw [← postTake]
         exact List.take_prefix _ _
   | requestVoteRequest =>
@@ -8349,6 +8333,7 @@ private theorem inv_step : Inv (after :: before :: rest) :=
     leader_logs := c.leader_logs
     commitChains := commitChains_step c.inv.commitChains c.rooted c.sorted
       (fun n k l i e => Nat.le_trans (by decide : 2 ≤ 3) (c.electionCerts n k l i e).above)
+    copyLogs := copyLogs_cons c.inv.copyLogs c.rooted c.terms c.sorted c.anchor
   }
 
 end Consensus.Proofs.Safety.Ctx
