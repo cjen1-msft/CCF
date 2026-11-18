@@ -1,0 +1,970 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the Apache 2.0 License.
+#include "host/json_schema.h"
+
+#include "ccf/ds/json.h"
+#include "ccf/node/configuration.h"
+#include "host/config_schema.h"
+
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <algorithm>
+#include <doctest/doctest.h>
+#include <limits>
+#include <nlohmann/json.hpp>
+#include <vector>
+
+TEST_CASE("host configuration unsigned integer bounds")
+{
+  using Json = nlohmann::json;
+  const auto schema = Json::parse(host::host_config_schema);
+  const auto base_config = Json::parse(R"({
+    "network": {
+      "node_to_node_interface": {"bind_address": "127.0.0.1:8081"},
+      "rpc_interfaces": {
+        "primary": {"bind_address": "127.0.0.1:8080"}
+      }
+    },
+    "command": {
+      "type": "Start",
+      "start": {"constitution_files": [], "members": []}
+    }
+  })");
+  const std::vector<std::string> paths = {
+    "/network/rpc_interfaces/primary/max_open_sessions_soft",
+    "/network/rpc_interfaces/primary/max_open_sessions_hard",
+    "/network/rpc_interfaces/primary/http_configuration/max_headers_count",
+    "/network/rpc_interfaces/primary/forwarding_timeout_ms",
+    "/attestation/snp_endorsements_servers/0/max_retries_count",
+    "/snapshots/min_tx_count",
+    "/files_cleanup/max_committed_ledger_chunks",
+    "/consensus/max_uncommitted_tx_count"};
+
+  REQUIRE_FALSE(json::validate_json(base_config, schema).has_value());
+  for (const auto& path : paths)
+  {
+    INFO(path);
+    const Json::json_pointer pointer(path);
+    for (const auto& value : std::vector<Json>{-1, -1.0, -0.5})
+    {
+      INFO(value);
+      auto config = base_config;
+      config[pointer] = value;
+      CHECK(json::validate_json(config, schema).has_value());
+    }
+    for (const auto& value : std::vector<Json>{0, 1})
+    {
+      INFO(value);
+      auto config = base_config;
+      config[pointer] = value;
+      REQUIRE_FALSE(json::validate_json(config, schema).has_value());
+      const Json parsed_config = config.get<ccf::CCFConfig>();
+      CHECK(parsed_config.at(pointer) == value);
+    }
+  }
+
+  const Json::json_pointer header_count(
+    "/network/rpc_interfaces/primary/http_configuration/max_headers_count");
+  const auto maximum = std::numeric_limits<uint32_t>::max();
+  auto config = base_config;
+  config[header_count] = maximum;
+  REQUIRE_FALSE(json::validate_json(config, schema).has_value());
+  const auto parsed_config = config.get<ccf::CCFConfig>();
+  CHECK(
+    parsed_config.network.rpc_interfaces.at("primary")
+      .http_configuration->max_headers_count == maximum);
+
+  for (const auto& value : std::vector<Json>{
+         uint64_t{maximum} + 1, static_cast<double>(maximum) + 1})
+  {
+    INFO(value);
+    config[header_count] = value;
+    CHECK(json::validate_json(config, schema).has_value());
+  }
+}
+
+TEST_CASE("host configuration node-to-node TLS metadata")
+{
+  using Json = nlohmann::json;
+  const auto schema = Json::parse(host::host_config_schema);
+  auto config = Json::parse(R"({
+    "network": {
+      "node_to_node_interface": {"bind_address": "127.0.0.1:8081"},
+      "rpc_interfaces": {}
+    },
+    "command": {
+      "type": "Start",
+      "start": {"constitution_files": [], "members": []}
+    }
+  })");
+  auto& endpoint = config["network"]["node_to_node_tls_interface"];
+  endpoint = {{"bind_address", "localhost:8082"}};
+  REQUIRE_FALSE(json::validate_json(config, schema).has_value());
+  endpoint["published_address"] = "peer.example:8082";
+  REQUIRE_FALSE(json::validate_json(config, schema).has_value());
+
+  endpoint.erase("bind_address");
+  CHECK(json::validate_json(config, schema).has_value());
+}
+
+TEST_CASE("host configuration integer validation")
+{
+  const auto config_schema = nlohmann::json::parse(host::host_config_schema);
+  const auto& schema = config_schema.at("properties").at("worker_threads");
+
+  for (const auto& value :
+       std::vector<nlohmann::json>{0, 1, 65533, 0.0, 1.0, 65533.0})
+  {
+    INFO(value);
+    CHECK_FALSE(json::validate_json(value, schema).has_value());
+  }
+
+  for (const auto& value : std::vector<nlohmann::json>{
+         -1, -1.0, 1.5, 65534, 65534.0, 1e20, "1", true, nullptr})
+  {
+    INFO(value);
+    CHECK(json::validate_json(value, schema).has_value());
+  }
+}
+
+TEST_CASE("host configuration references and error paths")
+{
+  const auto schema = nlohmann::json::parse(host::host_config_schema);
+  auto config = nlohmann::json::parse(R"({
+    "network": {
+      "node_to_node_interface": {"bind_address": "127.0.0.1:8081"},
+      "rpc_interfaces": {
+        "primary": {
+          "bind_address": "127.0.0.1:8080",
+          "redirections": {
+            "to_primary": {
+              "kind": "NodeByRole",
+              "target": {"role": "primary"}
+            },
+            "to_backup": {
+              "kind": "StaticAddress",
+              "target": {"address": "127.0.0.1:8082"}
+            }
+          }
+        }
+      }
+    },
+    "command": {
+      "type": "Start",
+      "start": {"constitution_files": [], "members": []}
+    }
+  })");
+  REQUIRE_FALSE(json::validate_json(config, schema).has_value());
+
+  auto& rpc = config["network"]["rpc_interfaces"]["primary"];
+  std::string expected_path =
+    R"(<root>["network"]["rpc_interfaces"]["primary"])";
+  SUBCASE("first reference")
+  {
+    rpc["redirections"]["to_primary"]["target"]["role"] = "not-a-role";
+    expected_path += R"(["redirections"]["to_primary"]["target"]["role"])";
+  }
+  SUBCASE("second reference")
+  {
+    rpc["redirections"]["to_backup"]["target"]["address"] = 42;
+    expected_path += R"(["redirections"]["to_backup"]["target"]["address"])";
+  }
+  SUBCASE("array item")
+  {
+    rpc["accepted_endpoints"] = nlohmann::json::array({"^/app/", 42});
+    expected_path += R"(["accepted_endpoints"][1])";
+  }
+
+  const auto error = json::validate_json(config, schema);
+  REQUIRE(error.has_value());
+  INFO(*error);
+  CHECK(error->find("context: " + expected_path) != std::string::npos);
+}
+
+struct Bar
+{
+  size_t a = {};
+  std::string b = {};
+  size_t c = {};
+};
+
+DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Bar);
+DECLARE_JSON_REQUIRED_FIELDS(Bar, a);
+DECLARE_JSON_OPTIONAL_FIELDS(Bar, b, c);
+
+TEST_CASE("basic macro parser generation")
+{
+  const Bar default_bar = {};
+  nlohmann::json j;
+
+  REQUIRE_THROWS_AS(j.get<Bar>(), std::invalid_argument);
+
+  j["a"] = 42;
+
+  const Bar bar_0 = j;
+  REQUIRE(bar_0.a == j["a"]);
+  REQUIRE(bar_0.b == default_bar.b);
+  REQUIRE(bar_0.c == default_bar.c);
+
+  j["b"] = "Test";
+  j["c"] = 100;
+  const Bar bar_1 = j;
+  REQUIRE(bar_1.a == j["a"]);
+  REQUIRE(bar_1.b == j["b"].get<std::string>());
+  REQUIRE(bar_1.c == j["c"]);
+}
+
+TEST_CASE("parse errors do not include field values")
+{
+  {
+    nlohmann::json j;
+    j["b"] = "SECRET_VALUE";
+    j["c"] = 12345;
+
+    REQUIRE_THROWS_WITH_AS(
+      j.get<Bar>(),
+      "Missing required field 'a' in object",
+      ccf::JsonParseError);
+  }
+
+  {
+    const nlohmann::json j = "SECRET_VALUE";
+    REQUIRE_THROWS_WITH_AS(
+      j.get<Bar>(), "Expected object", ccf::JsonParseError);
+  }
+}
+
+struct Biz : public Bar
+{
+  size_t f = {};
+};
+
+DECLARE_JSON_TYPE_WITH_BASE(Biz, Bar);
+DECLARE_JSON_REQUIRED_FIELDS(Biz, f);
+
+struct Baz : public Bar
+{
+  size_t d = {};
+  size_t e = {};
+};
+
+DECLARE_JSON_TYPE_WITH_BASE_AND_OPTIONAL_FIELDS(Baz, Bar);
+DECLARE_JSON_REQUIRED_FIELDS(Baz, d);
+DECLARE_JSON_OPTIONAL_FIELDS(Baz, e);
+
+TEST_CASE("macro parser generation with base classes")
+{
+  const Biz default_biz = {};
+  const Baz default_baz = {};
+  nlohmann::json j;
+
+  REQUIRE_THROWS_AS(j.get<Biz>(), std::invalid_argument);
+  REQUIRE_THROWS_AS(j.get<Baz>(), std::invalid_argument);
+
+  j["a"] = 42;
+
+  REQUIRE_THROWS_AS(j.get<Biz>(), std::invalid_argument);
+  REQUIRE_THROWS_AS(j.get<Baz>(), std::invalid_argument);
+
+  j["f"] = 44;
+  const Biz biz_0 = j;
+  REQUIRE(biz_0.a == j["a"]);
+  REQUIRE(biz_0.b == default_biz.b);
+  REQUIRE(biz_0.c == default_biz.c);
+  REQUIRE(biz_0.f == j["f"]);
+
+  j["d"] = 43;
+  const Baz baz_0 = j;
+  REQUIRE(baz_0.a == j["a"]);
+  REQUIRE(baz_0.b == default_baz.b);
+  REQUIRE(baz_0.c == default_baz.c);
+  REQUIRE(baz_0.d == j["d"]);
+  REQUIRE(baz_0.e == default_baz.e);
+
+  j["b"] = "Test";
+  j["c"] = 100;
+  j["e"] = 101;
+  const Baz baz_1 = j;
+  REQUIRE(baz_1.a == j["a"]);
+  REQUIRE(baz_1.b == j["b"].get<std::string>());
+  REQUIRE(baz_1.c == j["c"]);
+  REQUIRE(baz_1.d == j["d"]);
+  REQUIRE(baz_1.e == j["e"]);
+}
+
+struct Foo
+{
+  size_t n_0 = 42;
+  size_t n_1 = 43;
+  int i_0 = -1;
+  int64_t i64_0 = -2;
+  std::string s_0 = "Default value";
+  std::string s_1 = "Other default value";
+  std::optional<size_t> opt = std::nullopt;
+  std::vector<std::string> vec_s = {};
+  size_t ignored;
+};
+
+DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Foo);
+DECLARE_JSON_REQUIRED_FIELDS(Foo, n_0, i_0, i64_0, s_0);
+DECLARE_JSON_OPTIONAL_FIELDS(Foo, n_1, s_1, opt, vec_s);
+
+TEST_CASE("schema generation")
+{
+  const auto schema = ccf::ds::json::build_schema<Foo>("Foo");
+
+  const auto title_it = schema.find("title");
+  REQUIRE(title_it != schema.end());
+  REQUIRE(title_it.value() == "Foo");
+
+  const auto properties_it = schema.find("properties");
+  REQUIRE(properties_it != schema.end());
+
+  const auto required_it = schema.find("required");
+  REQUIRE(required_it != schema.end());
+
+  REQUIRE(required_it->is_array());
+  REQUIRE(required_it->size() == 4);
+
+  // Check limits are actually achievable
+  {
+    auto j_max = nlohmann::json::object();
+    auto j_min = nlohmann::json::object();
+    for (const std::string required : *required_it)
+    {
+      const auto property_it = properties_it->find(required);
+      REQUIRE(property_it != properties_it->end());
+
+      const auto type = property_it->at("type");
+      if (type == "integer")
+      {
+        j_min[required] = property_it->at("minimum");
+        j_max[required] = property_it->at("maximum");
+      }
+      else if (type == "string")
+      {
+        j_min[required] = "Hello world";
+        j_max[required] = "Hello world";
+      }
+      else
+      {
+        throw std::logic_error("Unsupported type");
+      }
+    }
+
+    const auto foo_min = j_min.get<Foo>();
+    const auto foo_max = j_max.get<Foo>();
+
+    using size_limits = std::numeric_limits<size_t>;
+
+    REQUIRE(foo_min.n_0 == size_limits::min());
+    REQUIRE(foo_max.n_0 == size_limits::max());
+
+    using int_limits = std::numeric_limits<int>;
+    REQUIRE(foo_min.i_0 == int_limits::min());
+    REQUIRE(foo_max.i_0 == int_limits::max());
+
+    using int64_limits = std::numeric_limits<int64_t>;
+    REQUIRE(foo_min.i64_0 == int64_limits::min());
+    REQUIRE(foo_max.i64_0 == int64_limits::max());
+  }
+}
+
+// Some struct fields are always present in the serialised JSON (ie - they
+// are required), but are std::optional<T> in C++, and may be serialised as a
+// JSON null. For instance, a node's consensus does not always know its
+// current primary. This must be reflected in the produced schema, which
+// should mark such fields as nullable rather than simply describing the
+// inner (non-optional) type.
+struct RequiredOptional
+{
+  std::optional<size_t> maybe_present = std::nullopt;
+};
+
+DECLARE_JSON_TYPE(RequiredOptional);
+DECLARE_JSON_REQUIRED_FIELDS(RequiredOptional, maybe_present);
+
+TEST_CASE("schema generation for required optional field")
+{
+  const auto schema =
+    ccf::ds::json::build_schema<RequiredOptional>("RequiredOptional");
+
+  const auto required_it = schema.find("required");
+  REQUIRE(required_it != schema.end());
+  REQUIRE(required_it->size() == 1);
+  REQUIRE((*required_it)[0] == "maybe_present");
+
+  const auto& property = schema.at("properties").at("maybe_present");
+  REQUIRE(property.at("type") == "integer");
+  REQUIRE(property.at("nullable") == true);
+
+  // A JSON null is accepted for this required-but-nullable field
+  auto j = nlohmann::json::object();
+  j["maybe_present"] = nullptr;
+  const RequiredOptional parsed = j;
+  REQUIRE(!parsed.maybe_present.has_value());
+
+  // As is a concrete value
+  j["maybe_present"] = 7;
+  const RequiredOptional parsed_value = j;
+  REQUIRE(parsed_value.maybe_present == 7);
+
+  // But the field must still be present
+  auto j_missing = nlohmann::json::object();
+  REQUIRE_THROWS_AS(j_missing.get<RequiredOptional>(), ccf::JsonParseError);
+}
+
+TEST_CASE_TEMPLATE("schema types, integer", T, size_t, ssize_t)
+{
+  std::map<T, std::string> m;
+  const auto schema = ccf::ds::json::build_schema<decltype(m)>("Map");
+
+  REQUIRE(schema["type"] == "array");
+  REQUIRE(schema["items"].is_object());
+
+  REQUIRE(schema["items"]["type"] == "array");
+  REQUIRE(schema["items"]["items"].is_array());
+  REQUIRE(schema["items"]["items"].size() == 2);
+  REQUIRE(schema["items"]["items"][0]["type"] == "integer");
+  REQUIRE(schema["items"]["items"][1]["type"] == "string");
+}
+
+TEST_CASE_TEMPLATE("schema types, floating point", T, float, double)
+{
+  std::map<size_t, T> m;
+  const auto schema = ccf::ds::json::build_schema<decltype(m)>("Map");
+
+  REQUIRE(schema["type"] == "array");
+  REQUIRE(schema["items"].is_object());
+
+  REQUIRE(schema["items"]["type"] == "array");
+  REQUIRE(schema["items"]["items"].is_array());
+  REQUIRE(schema["items"]["items"].size() == 2);
+  REQUIRE(schema["items"]["items"][0]["type"] == "integer");
+  REQUIRE(schema["items"]["items"][1]["type"] == "number");
+}
+
+namespace custom
+{
+  namespace user
+  {
+    namespace defined
+    {
+      struct X
+      {
+        std::string email;
+      };
+
+      void fill_json_schema(nlohmann::json& schema, const X*)
+      {
+        schema["type"] = "string";
+        schema["format"] = "email";
+      }
+
+      struct Y
+      {
+        size_t a;
+        int b;
+      };
+
+      DECLARE_JSON_TYPE(Y);
+      DECLARE_JSON_REQUIRED_FIELDS(Y, a, b);
+    }
+  }
+}
+
+TEST_CASE("custom elements")
+{
+  const auto x_schema =
+    ccf::ds::json::build_schema<custom::user::defined::X>("custom-x");
+  REQUIRE(x_schema["format"] == "email");
+
+  const auto y_schema =
+    ccf::ds::json::build_schema<custom::user::defined::Y>("custom-y");
+  REQUIRE(y_schema["required"].size() == 2);
+}
+
+struct Nest0
+{
+  size_t n = {};
+};
+
+DECLARE_JSON_TYPE(Nest0);
+DECLARE_JSON_REQUIRED_FIELDS(Nest0, n);
+
+bool operator==(const Nest0& l, const Nest0& r)
+{
+  return l.n == r.n;
+}
+
+struct Nest1
+{
+  Nest0 a = {};
+  Nest0 b = {};
+};
+
+DECLARE_JSON_TYPE(Nest1);
+DECLARE_JSON_REQUIRED_FIELDS(Nest1, a, b);
+
+bool operator==(const Nest1& l, const Nest1& r)
+{
+  return l.a == r.a && l.b == r.b;
+}
+
+struct Nest2
+{
+  Nest1 x;
+  std::vector<Nest1> xs;
+};
+
+DECLARE_JSON_TYPE(Nest2);
+DECLARE_JSON_REQUIRED_FIELDS(Nest2, x, xs);
+
+bool operator==(const Nest2& l, const Nest2& r)
+{
+  return l.x == r.x && l.xs == r.xs;
+}
+
+struct Nest3
+{
+  Nest2 v;
+};
+
+DECLARE_JSON_TYPE(Nest3);
+DECLARE_JSON_REQUIRED_FIELDS(Nest3, v);
+
+bool operator==(const Nest3& l, const Nest3& r)
+{
+  return l.v == r.v;
+}
+
+TEST_CASE("nested")
+{
+  const Nest0 n0_1{10};
+  const Nest0 n0_2{20};
+  const Nest0 n0_3{30};
+  const Nest0 n0_4{40};
+
+  const Nest1 n1_1{n0_1, n0_2};
+  const Nest1 n1_2{n0_1, n0_3};
+  const Nest1 n1_3{n0_1, n0_4};
+  const Nest1 n1_4{n0_2, n0_3};
+  const Nest1 n1_5{n0_3, n0_4};
+  const Nest1 n1_6{n0_4, n0_4};
+
+  const Nest2 n2_1{n1_1, {n1_6, n1_5, n1_4, n1_3, n1_2}};
+
+  Nest3 n3{n2_1};
+
+  nlohmann::json j = n3;
+  const auto r0 = j.get<Nest3>();
+
+  REQUIRE(n3 == r0);
+
+  {
+    auto invalid_json = j;
+    invalid_json["v"]["xs"][3]["a"].erase("n");
+    try
+    {
+      invalid_json.get<Nest3>();
+    }
+    catch (ccf::JsonParseError& jpe)
+    {
+      REQUIRE(jpe.pointer() == "#/v/xs/3/a");
+    }
+
+    invalid_json["v"]["xs"][3].erase("a");
+    try
+    {
+      invalid_json.get<Nest3>();
+    }
+    catch (ccf::JsonParseError& jpe)
+    {
+      REQUIRE(jpe.pointer() == "#/v/xs/3");
+    }
+
+    invalid_json["v"]["xs"][3] = "Broken";
+    try
+    {
+      invalid_json.get<Nest3>();
+    }
+    catch (ccf::JsonParseError& jpe)
+    {
+      REQUIRE(jpe.pointer() == "#/v/xs/3");
+    }
+
+    invalid_json["v"]["xs"] = "Broken";
+    try
+    {
+      invalid_json.get<Nest3>();
+    }
+    catch (ccf::JsonParseError& jpe)
+    {
+      REQUIRE(jpe.pointer() == "#/v/xs");
+    }
+
+    invalid_json["v"].erase("xs");
+    try
+    {
+      invalid_json.get<Nest3>();
+    }
+    catch (ccf::JsonParseError& jpe)
+    {
+      REQUIRE(jpe.pointer() == "#/v");
+    }
+  }
+}
+
+struct EnumStruct
+{
+  enum class SampleEnum
+  {
+    One,
+    Two,
+    Three,
+    Unconverted // Deliberately omitted from conversion
+  };
+
+  SampleEnum se;
+};
+
+DECLARE_JSON_ENUM(
+  EnumStruct::SampleEnum,
+  {{EnumStruct::SampleEnum::One, "one"},
+   {EnumStruct::SampleEnum::Two, "two"},
+   {EnumStruct::SampleEnum::Three, "three"}});
+DECLARE_JSON_TYPE(EnumStruct);
+DECLARE_JSON_REQUIRED_FIELDS(EnumStruct, se);
+
+struct RequiredOptionalEnum
+{
+  std::optional<EnumStruct::SampleEnum> maybe_enum = std::nullopt;
+};
+
+DECLARE_JSON_TYPE(RequiredOptionalEnum);
+DECLARE_JSON_REQUIRED_FIELDS(RequiredOptionalEnum, maybe_enum);
+
+TEST_CASE("enum")
+{
+  {
+    INFO("Schema generation");
+    EnumStruct es;
+    es.se = EnumStruct::SampleEnum::Two;
+
+    nlohmann::json j = es;
+
+    REQUIRE(j["se"] == "two");
+
+    const auto schema = ccf::ds::json::build_schema<EnumStruct>("EnumStruct");
+
+    const nlohmann::json expected{"one", "two", "three"};
+    REQUIRE(schema["properties"]["se"]["enum"] == expected);
+  }
+
+  {
+    INFO("Required optional enum schema generation");
+    const auto schema =
+      ccf::ds::json::build_schema<RequiredOptionalEnum>("RequiredOptionalEnum");
+    const auto& property = schema["properties"]["maybe_enum"];
+
+    REQUIRE(property["nullable"] == true);
+    const nlohmann::json expected{"one", "two", "three", nullptr};
+    REQUIRE(property["enum"] == expected);
+  }
+
+  {
+    INFO("from_json");
+
+    nlohmann::json j;
+
+    // Test good conversions
+    j = "one";
+    REQUIRE(j.get<EnumStruct::SampleEnum>() == EnumStruct::SampleEnum::One);
+
+    j = "two";
+    REQUIRE(j.get<EnumStruct::SampleEnum>() == EnumStruct::SampleEnum::Two);
+
+    j = "three";
+    REQUIRE(j.get<EnumStruct::SampleEnum>() == EnumStruct::SampleEnum::Three);
+
+    // Any other value will throw
+    j = "One";
+    REQUIRE_THROWS(j.get<EnumStruct::SampleEnum>());
+
+    j = "two ";
+    REQUIRE_THROWS(j.get<EnumStruct::SampleEnum>());
+
+    j = " three";
+    REQUIRE_THROWS(j.get<EnumStruct::SampleEnum>());
+
+    j = "penguin";
+    REQUIRE_THROWS(j.get<EnumStruct::SampleEnum>());
+
+    j = 0;
+    REQUIRE_THROWS(j.get<EnumStruct::SampleEnum>());
+
+    j = 1;
+    REQUIRE_THROWS(j.get<EnumStruct::SampleEnum>());
+
+    j = nlohmann::json::object();
+    REQUIRE_THROWS(j.get<EnumStruct::SampleEnum>());
+
+    j = nullptr;
+    REQUIRE_THROWS(j.get<EnumStruct::SampleEnum>());
+  }
+
+  {
+    INFO("to_json");
+
+    nlohmann::json j;
+
+    j = EnumStruct::SampleEnum::One;
+    REQUIRE(j.is_string());
+    REQUIRE(j.get<std::string>() == "one");
+
+    j = EnumStruct::SampleEnum::Two;
+    REQUIRE(j.is_string());
+    REQUIRE(j.get<std::string>() == "two");
+
+    j = EnumStruct::SampleEnum::Three;
+    REQUIRE(j.is_string());
+    REQUIRE(j.get<std::string>() == "three");
+
+    REQUIRE_THROWS(j = EnumStruct::SampleEnum::Unconverted);
+  }
+}
+
+struct Stringable
+{
+  std::string s;
+  Stringable() = default;
+
+  Stringable(const std::string& s_) : s(s_) {}
+
+  operator std::string() const
+  {
+    return s;
+  }
+
+  bool operator<(const Stringable& other) const
+  {
+    return s < other.s;
+  }
+};
+
+TEST_CASE("mappings")
+{
+  {
+    INFO("string-keyed maps");
+    std::map<std::string, size_t> m;
+    const auto schema = ccf::ds::json::build_schema<decltype(m)>("Map");
+    REQUIRE(schema["type"] == "object");
+
+    m["foo"] = 42;
+    nlohmann::json j(m);
+    REQUIRE(j.is_object());
+  }
+
+  {
+    INFO("num-keyed maps");
+    std::map<size_t, size_t> m;
+    const auto schema = ccf::ds::json::build_schema<decltype(m)>("Map");
+    REQUIRE(schema["type"] == "array");
+
+    m[5] = 42;
+    nlohmann::json j(m);
+    REQUIRE(j.is_array());
+  }
+
+  {
+    INFO("stringable-keyed maps");
+    std::map<Stringable, size_t> m;
+    const auto schema = ccf::ds::json::build_schema<decltype(m)>("Map");
+    REQUIRE(schema["type"] == "object");
+
+    Stringable foo("foo");
+    m[foo] = 42;
+    nlohmann::json j(m);
+    REQUIRE(j.is_object());
+  }
+
+  // Surprising! Enums are stringed in JSON, but produce pair-arrays rather than
+  // objects. Schema generation correctly documents this.
+  {
+    INFO("enum-keyed maps");
+    std::map<EnumStruct::SampleEnum, size_t> m;
+    const auto schema = ccf::ds::json::build_schema<decltype(m)>("Map");
+    REQUIRE(schema["type"] == "array");
+
+    m[EnumStruct::SampleEnum::One] = 42;
+    nlohmann::json j(m);
+    REQUIRE(j.is_array());
+  }
+}
+
+namespace examples
+{
+  struct X
+  {
+    int a, b;
+  };
+
+  DECLARE_JSON_TYPE(X);
+  DECLARE_JSON_REQUIRED_FIELDS(X, a, b);
+
+  struct Y
+  {
+    bool c;
+    std::string d;
+  };
+
+  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Y);
+  DECLARE_JSON_REQUIRED_FIELDS(Y, c);
+  DECLARE_JSON_OPTIONAL_FIELDS(Y, d);
+
+  struct X_A : X
+  {
+    int m;
+  };
+
+  DECLARE_JSON_TYPE_WITH_BASE(X_A, X);
+  DECLARE_JSON_REQUIRED_FIELDS(X_A, m);
+
+  struct X_B : X
+  {
+    int n;
+  };
+
+  DECLARE_JSON_TYPE_WITH_BASE_AND_OPTIONAL_FIELDS(X_B, X);
+  DECLARE_JSON_REQUIRED_FIELDS(X_B);
+  DECLARE_JSON_OPTIONAL_FIELDS(X_B, n);
+}
+
+namespace renamed
+{
+  struct Foo
+  {
+    size_t x;
+    size_t y;
+    size_t z;
+
+    size_t a;
+    size_t b;
+    size_t c;
+  };
+
+  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Foo);
+  DECLARE_JSON_REQUIRED_FIELDS_WITH_RENAMES(
+    Foo, x, "X", y, "SOMETHING_ELSE", z, "z-z!?(),;");
+  DECLARE_JSON_OPTIONAL_FIELDS_WITH_RENAMES(
+    Foo, a, "A", b, "OTHER_NAME", c, "c");
+}
+
+TEST_CASE("JSON with different field names")
+{
+  const auto schema = ccf::ds::json::build_schema<renamed::Foo>("renamed::Foo");
+
+  const auto& properties = schema["properties"];
+  const auto& required = schema["required"];
+
+  std::vector<char const*> required_json_fields{
+    "X", "SOMETHING_ELSE", "z-z!?(),;"};
+  for (const auto s : required_json_fields)
+  {
+    REQUIRE(properties.find(s) != properties.end());
+    REQUIRE(std::ranges::contains(required, s));
+  }
+
+  std::vector<char const*> optional_json_fields{"A", "OTHER_NAME", "c"};
+  for (const auto s : optional_json_fields)
+  {
+    REQUIRE(properties.find(s) != properties.end());
+    REQUIRE(!std::ranges::contains(required, s));
+  }
+
+  renamed::Foo foo;
+  foo.x = 1;
+  foo.y = 2;
+  foo.z = 3;
+  foo.a = 4;
+  foo.b = 5;
+  foo.c = 6;
+
+  const nlohmann::json j = foo;
+  REQUIRE(j["X"] == foo.x);
+  REQUIRE(j["SOMETHING_ELSE"] == foo.y);
+  REQUIRE(j["z-z!?(),;"] == foo.z);
+  REQUIRE(j["A"] == foo.a);
+  REQUIRE(j["OTHER_NAME"] == foo.b);
+  REQUIRE(j["c"] == foo.c);
+
+  const auto foo2 = j.get<renamed::Foo>();
+  REQUIRE(foo2.x == foo.x);
+  REQUIRE(foo2.y == foo.y);
+  REQUIRE(foo2.z == foo.z);
+  REQUIRE(foo2.a == foo.a);
+  REQUIRE(foo2.b == foo.b);
+  REQUIRE(foo2.c == foo.c);
+
+  {
+    nlohmann::json j_missing;
+    j_missing["X"] = 987654;
+    REQUIRE_THROWS_WITH_AS(
+      j_missing.get<renamed::Foo>(),
+      "Missing required field 'SOMETHING_ELSE' in object",
+      ccf::JsonParseError);
+  }
+
+  {
+    const nlohmann::json j_scalar = "SECRET_VALUE";
+    REQUIRE_THROWS_WITH_AS(
+      j_scalar.get<renamed::Foo>(), "Expected object", ccf::JsonParseError);
+  }
+}
+
+TEST_CASE("example validation")
+{
+  using namespace examples;
+
+  // struct X
+  {
+    // Valid JSON
+    REQUIRE_NOTHROW("{ \"a\": 42, \"b\": 100 }"_json.get<X>());
+    REQUIRE_NOTHROW(
+      "{ \"a\": 42, \"b\": 100, \"Unused\": [\"Anything\"] }"_json.get<X>());
+
+    // Invalid JSON
+    REQUIRE_THROWS("{}"_json.get<X>());
+    REQUIRE_THROWS("{ \"a\": 42 }"_json.get<X>());
+    REQUIRE_THROWS("{ \"a\": 42, \"b\": \"Hello world\" }"_json.get<X>());
+  }
+
+  // struct Y
+  {
+    // Valid JSON
+    REQUIRE_NOTHROW("{ \"c\": true }"_json.get<Y>());
+    REQUIRE_NOTHROW("{ \"c\": false, \"d\": \"Hello\" }"_json.get<Y>());
+
+    // Invalid JSON
+    REQUIRE_THROWS("{ \"d\": \"Hello\" }"_json.get<Y>());
+  }
+
+  // struct X_A
+  {
+    // Valid JSON
+    REQUIRE_NOTHROW("{ \"a\": 42, \"b\": 100, \"m\": 101 }"_json.get<X_A>());
+
+    // Invalid JSON
+    REQUIRE_THROWS("{ \"a\": 42, \"b\": 100 }"_json.get<X_A>());
+    REQUIRE_THROWS("{ \"m\": 101 }"_json.get<X_A>());
+  }
+
+  // struct X_B
+  {
+    // Valid JSON
+    REQUIRE_NOTHROW("{ \"a\": 42, \"b\": 100 }"_json.get<X_B>());
+    REQUIRE_NOTHROW("{ \"a\": 42, \"b\": 100, \"n\": 101 }"_json.get<X_B>());
+
+    // Invalid JSON
+    REQUIRE_THROWS("{ \"n\": 101 }"_json.get<X_B>());
+  }
+}

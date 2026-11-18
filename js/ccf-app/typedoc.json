@@ -1,0 +1,20 @@
+{
+  "entryPoints": [
+    "src/index.ts",
+    "src/consensus.ts",
+    "src/converters.ts",
+    "src/crypto.ts",
+    "src/endpoints.ts",
+    "src/global.ts",
+    "src/historical.ts",
+    "src/kv.ts",
+    "src/polyfill.ts",
+    "src/snp_attestation.ts"
+  ],
+  "out": "html",
+  "theme": "default",
+  "categorizeByGroup": false,
+  "validation": {
+    "invalidLink": true
+  }
+}

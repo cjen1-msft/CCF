@@ -1,0 +1,281 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the Apache 2.0 License.
+#pragma once
+
+#include "ccf/ds/enum_formatter.h"
+#include "ccf/ds/logger_level.h"
+#include "ccf/threading/thread_ids.h"
+
+#define FMT_HEADER_ONLY
+#include <fmt/chrono.h>
+#include <fmt/format.h>
+#include <fmt/ranges.h>
+#include <iostream>
+#include <nlohmann/json.hpp>
+#include <optional>
+#include <sstream>
+#include <tuple>
+#include <type_traits>
+#include <utility>
+
+namespace ccf::logger
+{
+  static constexpr LoggerLevel MOST_VERBOSE = LoggerLevel::TRACE;
+
+  static constexpr const char* LevelNames[] = {
+    "trace", "debug", "info", "fail", "fatal"};
+
+  static constexpr const char* to_string(LoggerLevel l)
+  {
+    return LevelNames[std::to_underlying(l)];
+  }
+
+  static constexpr long int ns_per_s = 1'000'000'000;
+
+  static constexpr auto preamble_length = 45u;
+
+  struct LogLine
+  {
+  public:
+    friend struct Out;
+    LoggerLevel log_level;
+    std::string tag;
+    std::string file_name;
+    size_t line_number;
+    uint16_t thread_id;
+
+    std::ostringstream ss;
+    std::string msg;
+
+    LogLine(
+      LoggerLevel level_,
+      std::string_view tag_,
+      std::string_view file_name_,
+      size_t line_number_) :
+      log_level(level_),
+      tag(tag_),
+      file_name(file_name_),
+      line_number(line_number_),
+      thread_id(ccf::threading::get_current_thread_id())
+    {}
+
+    template <typename T>
+    LogLine& operator<<(const T& item)
+    {
+      ss << item;
+      return *this;
+    }
+
+    LogLine& operator<<(std::ostream& (*f)(std::ostream&))
+    {
+      ss << f;
+      return *this;
+    }
+
+    void finalize()
+    {
+      msg = ss.str();
+    }
+  };
+
+  static std::string get_timestamp(const std::tm& tm, const ::timespec& ts)
+  {
+    // Sample: "2019-07-19 18:53:25.690267"
+    constexpr size_t nano_per_micro = 1000;
+    return fmt::format(
+      "{:%Y-%m-%dT%H:%M:%S}.{:0>6}Z", tm, ts.tv_nsec / nano_per_micro);
+  }
+
+  class AbstractLogger
+  {
+  public:
+    AbstractLogger() = default;
+    virtual ~AbstractLogger() = default;
+
+    virtual void emit(const std::string& s)
+    {
+      std::ignore = std::cout.write(s.c_str(), s.size());
+      std::cout.flush();
+    }
+
+    virtual void write(const LogLine& ll) = 0;
+  };
+
+  class JsonConsoleLogger : public AbstractLogger
+  {
+  public:
+    void write(const LogLine& ll) override
+    {
+      // Fetch time
+      ::timespec host_ts{};
+      if (::timespec_get(&host_ts, TIME_UTC) == 0)
+      {
+        throw std::runtime_error("timespec_get failed");
+      }
+      std::tm host_tm{};
+      ::gmtime_r(&host_ts.tv_sec, &host_tm);
+
+      const auto escaped_msg = nlohmann::json(ll.msg).dump();
+
+      std::string s;
+      s = fmt::format(
+        "{{\"h_ts\":\"{}\",\"thread_id\":\"{}\",\"level\":\"{}\",\"tag\":\"{}"
+        "\",\"file\":\"{}\",\"number\":\"{}\",\"msg\":{}}}\n",
+        get_timestamp(host_tm, host_ts),
+        ll.thread_id,
+        to_string(ll.log_level),
+        ll.tag,
+        ll.file_name,
+        ll.line_number,
+        escaped_msg);
+
+      emit(s);
+    }
+  };
+
+  static std::string format_to_text(const LogLine& ll)
+  {
+    // Fetch time
+    ::timespec host_ts{};
+    if (::timespec_get(&host_ts, TIME_UTC) == 0)
+    {
+      throw std::runtime_error("timespec_get failed");
+    }
+    std::tm host_tm{};
+    ::gmtime_r(&host_ts.tv_sec, &host_tm);
+
+    auto file_line = fmt::format("{}:{} ", ll.file_name, ll.line_number);
+    auto* file_line_data = file_line.data();
+
+    // The preamble is the level, then tag, then file line. If the file line is
+    // too long, the final characters are retained.
+    auto preamble = fmt::format(
+                      "[{:<5}]{} ",
+                      to_string(ll.log_level),
+                      (ll.tag.empty() ? "" : fmt::format("[{}]", ll.tag)))
+                      .substr(0, preamble_length);
+    const auto max_file_line_len = preamble_length - preamble.size();
+
+    const auto len = file_line.size();
+    if (len > max_file_line_len)
+    {
+      file_line_data += len - max_file_line_len;
+    }
+
+    preamble += file_line_data;
+
+    return fmt::format(
+      "{} {:<3} {:<45}| {}\n",
+      get_timestamp(host_tm, host_ts),
+      ll.thread_id,
+      preamble,
+      ll.msg);
+  }
+
+  class TextConsoleLogger : public AbstractLogger
+  {
+  public:
+    void write(const LogLine& ll) override
+    {
+      emit(format_to_text(ll));
+    }
+  };
+
+  class config
+  {
+  public:
+    static std::vector<std::unique_ptr<AbstractLogger>>& loggers()
+    {
+      return get_loggers();
+    }
+
+    static void add_text_console_logger()
+    {
+      get_loggers().emplace_back(std::make_unique<TextConsoleLogger>());
+    }
+
+    static void add_json_console_logger()
+    {
+      get_loggers().emplace_back(std::make_unique<JsonConsoleLogger>());
+    }
+
+    static void default_init()
+    {
+      get_loggers().clear();
+      add_text_console_logger();
+    }
+
+    static LoggerLevel& level()
+    {
+      static LoggerLevel the_level = MOST_VERBOSE;
+
+      return the_level;
+    }
+
+    static bool ok(LoggerLevel l)
+    {
+      return l >= level();
+    }
+
+  private:
+    static std::vector<std::unique_ptr<AbstractLogger>>& get_loggers()
+    {
+      static std::vector<std::unique_ptr<AbstractLogger>> the_loggers;
+      return the_loggers;
+    }
+  };
+
+  struct Out
+  {
+    bool operator==(LogLine& line)
+    {
+      line.finalize();
+
+      for (auto const& logger : config::loggers())
+      {
+        logger->write(line);
+      }
+
+      return true;
+    }
+  };
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wgnu-zero-variadic-macro-arguments"
+
+// Clang 12.0 and 13.0 fails to compile the FMT_STRING macro in certain
+// contexts. Error is: non-literal type '<dependent type>' cannot be used in a
+// constant expression. Since consteval is available in these compilers, format
+// should already use compile-time checks.
+#if defined(__clang__) && __clang_major__ >= 12
+#  define CCF_FMT_STRING(s) (s)
+#else
+#  define CCF_FMT_STRING(s) FMT_STRING(s)
+#endif
+
+// The == operator is being used to:
+// 1. Be a lower precedence than <<, such that using << on the LogLine will
+// happen before the LogLine is "equalitied" with the Out.
+// 2. Be a higher precedence than &&, such that the log statement is bound
+// more tightly than the short-circuiting.
+// This allows:
+// CCF_LOG_OUT(DEBUG, "foo") << "this " << "msg";
+#define CCF_LOG_OUT(LVL, TAG) \
+  ccf::logger::config::ok(ccf::LoggerLevel::LVL) && \
+    ccf::logger::Out() == \
+      ccf::logger::LogLine(ccf::LoggerLevel::LVL, TAG, __FILE__, __LINE__)
+
+// To avoid repeating the (s, ...) args for every macro, we cheat with a curried
+// macro here by ending the macro with another macro name, which then accepts
+// the trailing arguments
+#define CCF_LOG_FMT_2(s, ...) fmt::format(CCF_FMT_STRING(s), ##__VA_ARGS__)
+#define CCF_LOG_FMT(LVL, TAG) CCF_LOG_OUT(LVL, TAG) << CCF_LOG_FMT_2
+
+#define CCF_APP_TRACE CCF_LOG_FMT(TRACE, "app")
+#define CCF_APP_DEBUG CCF_LOG_FMT(DEBUG, "app")
+#define CCF_APP_INFO CCF_LOG_FMT(INFO, "app")
+#define CCF_APP_FAIL CCF_LOG_FMT(FAIL, "app")
+#define CCF_APP_FATAL CCF_LOG_FMT(FATAL, "app")
+
+#pragma clang diagnostic pop
+}

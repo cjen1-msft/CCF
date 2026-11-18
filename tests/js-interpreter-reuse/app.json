@@ -1,0 +1,131 @@
+{
+  "endpoints": {
+    "/fibonacci/reuse/none": {
+      "post": {
+        "js_module": "cache.js",
+        "js_function": "cachedFib",
+        "redirection_strategy": "none",
+        "authn_policies": ["no_auth"],
+        "mode": "readonly",
+        "openapi": {}
+      }
+    },
+    "/fibonacci/reuse/a": {
+      "post": {
+        "js_module": "cache.js",
+        "js_function": "cachedFib",
+        "redirection_strategy": "none",
+        "authn_policies": ["no_auth"],
+        "mode": "readonly",
+        "openapi": {},
+        "interpreter_reuse": {
+          "key": "a"
+        }
+      }
+    },
+    "/fibonacci/reuse/b": {
+      "post": {
+        "js_module": "cache.js",
+        "js_function": "cachedFib",
+        "redirection_strategy": "none",
+        "authn_policies": ["no_auth"],
+        "mode": "readonly",
+        "openapi": {},
+        "interpreter_reuse": {
+          "key": "b"
+        }
+      }
+    },
+    "/fibonacci/reuse/c": {
+      "post": {
+        "js_module": "cache.js",
+        "js_function": "cachedFib",
+        "redirection_strategy": "none",
+        "authn_policies": ["no_auth"],
+        "mode": "readonly",
+        "openapi": {},
+        "interpreter_reuse": {
+          "key": "c"
+        }
+      }
+    },
+    "/di": {
+      "post": {
+        "js_module": "di_sample.js",
+        "js_function": "slowCall",
+        "redirection_strategy": "none",
+        "authn_policies": ["no_auth"],
+        "mode": "readonly",
+        "openapi": {},
+        "interpreter_reuse": {
+          "key": "arbitrary_string_goes_here"
+        }
+      }
+    },
+    "/increment": {
+      "post": {
+        "js_module": "global_handle.js",
+        "js_function": "increment",
+        "redirection_strategy": "none",
+        "authn_policies": ["no_auth"],
+        "mode": "readwrite",
+        "openapi": {},
+        "interpreter_reuse": {
+          "key": "global_handle"
+        }
+      }
+    },
+    "/globals": {
+      "post": {
+        "js_module": "global_handle.js",
+        "js_function": "globals",
+        "redirection_strategy": "none",
+        "authn_policies": ["no_auth"],
+        "mode": "readwrite",
+        "openapi": {},
+        "interpreter_reuse": {
+          "key": "global_handle"
+        }
+      }
+    },
+    "/historical": {
+      "get": {
+        "js_module": "global_handle.js",
+        "js_function": "historical",
+        "redirection_strategy": "none",
+        "authn_policies": ["no_auth"],
+        "mode": "historical",
+        "openapi": {},
+        "interpreter_reuse": {
+          "key": "historical_response"
+        }
+      }
+    },
+    "/historical/range/{seqno}": {
+      "get": {
+        "js_module": "global_handle.js",
+        "js_function": "historical",
+        "redirection_strategy": "none",
+        "authn_policies": ["no_auth"],
+        "mode": "readonly",
+        "openapi": {},
+        "interpreter_reuse": {
+          "key": "historical_response"
+        }
+      }
+    },
+    "/func_caching": {
+      "get": {
+        "js_module": "func_caching.js",
+        "js_function": "func_caching",
+        "redirection_strategy": "none",
+        "authn_policies": ["no_auth"],
+        "mode": "readonly",
+        "openapi": {},
+        "interpreter_reuse": {
+          "key": "func_caching"
+        }
+      }
+    }
+  }
+}

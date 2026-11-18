@@ -1,0 +1,811 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the Apache 2.0 License.
+#pragma once
+
+#include "ccf/ds/locking.h"
+#include "ccf/kv/untyped_map_diff.h"
+#include "ccf/kv/untyped_map_handle.h"
+#include "ds/dl_list.h"
+#include "ds/internal_logger.h"
+#include "kv/kv_serialiser.h"
+#include "kv/kv_types.h"
+#include "kv/untyped_change_set.h"
+
+#include <functional>
+#include <list>
+#include <optional>
+#include <unordered_set>
+
+namespace ccf::kv::untyped
+{
+  struct LocalCommit
+  {
+    LocalCommit() = default;
+
+    LocalCommit(Version v, State&& s, Write w) :
+      version(v),
+      state(std::move(s)),
+      writes(std::move(w))
+    {}
+
+    Version version{0};
+    State state;
+    Write writes;
+    LocalCommit* next = nullptr;
+    LocalCommit* prev = nullptr;
+  };
+
+  using LocalCommits = ::ds::DLList<LocalCommit>;
+
+  struct Roll
+  {
+    std::unique_ptr<LocalCommits> commits;
+    size_t rollback_counter{0};
+
+    LocalCommits empty_commits;
+
+    void reset_commits()
+    {
+      commits->clear();
+      commits->insert_back(create_new_local_commit(0, State(), Write()));
+    }
+
+    template <typename... Args>
+    LocalCommit* create_new_local_commit(Args&&... args)
+    {
+      LocalCommit* c = empty_commits.pop();
+      if (c == nullptr)
+      {
+        // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+        c = new LocalCommit(std::forward<Args>(args)...);
+      }
+      else
+      {
+        c->~LocalCommit();
+        new (c) LocalCommit(std::forward<Args>(args)...);
+      }
+      return c;
+    }
+  };
+
+  class Map : public AbstractMap
+  {
+  public:
+    using K = ccf::kv::untyped::SerialisedEntry;
+    using V = ccf::kv::untyped::SerialisedEntry;
+    using H = ccf::kv::untyped::SerialisedKeyHasher;
+
+    using StateSnapshot = ccf::kv::untyped::State::Snapshot;
+
+    using CommitHook = ccf::kv::untyped::CommitHook;
+    using MapHook = ccf::kv::untyped::MapHook;
+
+  private:
+    AbstractStore* store;
+    Roll roll;
+    CommitHook global_hook = nullptr;
+    MapHook hook = nullptr;
+    std::list<std::pair<Version, Write>> commit_deltas;
+    ccf::ds::Mutex sl;
+    const SecurityDomain security_domain;
+
+    static State deserialize_map_snapshot(
+      std::span<const uint8_t> serialized_state)
+    {
+      State map;
+      const uint8_t* data = serialized_state.data();
+      size_t size = serialized_state.size();
+
+      while (size != 0)
+      {
+        // Deserialize the key
+        size_t key_size = size;
+        K key = map::deserialize<K>(data, size);
+        key_size -= size;
+        serialized::skip(data, size, map::get_padding(key_size));
+
+        // Deserialize the value
+        size_t value_size = size;
+        VersionV value = map::deserialize<VersionV>(data, size);
+        value_size -= size;
+        serialized::skip(data, size, map::get_padding(value_size));
+
+        // Version was previously signed, with negative values indicating
+        // deletions. Maintain ability to parse those snapshots, but do not
+        // retain these deletions locally.
+        if ((int64_t)value.version >= 0)
+        {
+          map = map.put(key, value);
+        }
+      }
+      return map;
+    }
+
+  public:
+    class HandleCommitter : public AbstractCommitter
+    {
+    protected:
+      Map& map;
+
+      ChangeSet& change_set;
+
+      Version commit_version = NoVersion;
+
+      bool changes = false;
+
+    public:
+      HandleCommitter(Map& m, ChangeSet& change_set_) :
+        map(m),
+        change_set(change_set_)
+      {}
+
+      // Commit-related methods
+      bool has_writes() override
+      {
+        return change_set.has_writes();
+      }
+
+      bool prepare() override
+      {
+        auto& map_roll = map.get_roll();
+
+        // If the parent map has rolled back since this transaction began, this
+        // transaction must fail.
+        if (change_set.rollback_counter != map_roll.rollback_counter)
+        {
+          return false;
+        }
+
+        // If we have iterated over the map, check for a global version match.
+        // Check each key in our read set.
+        auto* current = map_roll.commits->get_tail();
+        if (
+          change_set.read_version.has_value() &&
+          (change_set.read_version.value() != current->version))
+        {
+          LOG_DEBUG_FMT(
+            "Read version {} is invalid", change_set.read_version.value());
+          return false;
+        }
+
+        // Check each key in our read set.
+        for (const auto& [key, version] : change_set.reads)
+        {
+          // Get the value from the current state.
+          auto search = current->state.get(key);
+
+          if (version == NoVersion)
+          {
+            // If we depend on the key not existing, it must be absent.
+            if (search.has_value())
+            {
+              LOG_DEBUG_FMT("Read depends on non-existing entry");
+              return false;
+            }
+          }
+          else
+          {
+            // If the transaction depends on the key existing, it must be
+            // present and have the expected version.
+            if (!search.has_value() || version != search.value().version)
+            {
+              LOG_DEBUG_FMT("Read depends on invalid version of entry");
+              return false;
+            }
+          }
+        }
+
+        return true;
+      }
+
+      void commit(Version v, bool track_deletes_on_missing_keys) override
+      {
+        KV_TRACE(if (trace::context().tx == 0) {
+          trace::unsupported(map.get_store(), "map commit outside transaction");
+        });
+        if (change_set.writes.empty())
+        {
+          commit_version = change_set.start_version;
+          return;
+        }
+
+        auto& map_roll = map.get_roll();
+        auto state = map_roll.commits->get_tail()->state;
+
+        // Record our commit time.
+        commit_version = v;
+
+        for (const auto& [key, maybe_value] : change_set.writes)
+        {
+          if (maybe_value.has_value())
+          {
+            // Write the new value with the global version.
+            changes = true;
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+            state = state.put(key, VersionV{v, maybe_value.value()});
+          }
+          else
+          {
+            // Delete the key if it exists
+            auto search = state.get(key);
+            if (search.has_value())
+            {
+              changes = true;
+              state = state.remove(key);
+            }
+            else if (track_deletes_on_missing_keys)
+            {
+              // track deletes even when they delete keys that don't exist in
+              // this map's state
+              changes = true;
+            }
+          }
+        }
+
+        if (changes)
+        {
+          map.roll.commits->insert_back(map.roll.create_new_local_commit(
+            v, std::move(state), change_set.writes));
+        }
+      }
+
+      ConsensusHookPtr post_commit() override
+      {
+        // This is run separately from commit so that all commits in the Tx
+        // have been applied before map hooks are run. The maps in the Tx
+        // are still locked when post_commit is run.
+        return map.trigger_map_hook(commit_version, change_set.writes);
+      }
+    };
+
+    class Snapshot : public AbstractMap::Snapshot
+    {
+    private:
+      const std::string name;
+      const SecurityDomain security_domain;
+      const ccf::kv::Version version;
+
+      std::unique_ptr<StateSnapshot> map_snapshot;
+
+    public:
+      Snapshot(
+        std::string name_,
+        SecurityDomain security_domain_,
+        ccf::kv::Version version_,
+        std::unique_ptr<StateSnapshot>&& map_snapshot_) :
+        name(std::move(name_)),
+        security_domain(security_domain_),
+        version(version_),
+        map_snapshot(std::move(map_snapshot_))
+      {}
+
+      void serialise(KvStoreSerialiser& s) override
+      {
+        LOG_TRACE_FMT("Serialising snapshot for map: {}", name);
+        s.start_map(name, security_domain);
+        s.serialise_entry_version(version);
+
+        s.serialise_raw_in_place(
+          map_snapshot->get_serialized_size(), [this](std::span<uint8_t> data) {
+            map_snapshot->serialize(data.data());
+          });
+      }
+
+      [[nodiscard]] SecurityDomain get_security_domain() const override
+      {
+        return security_domain;
+      }
+    };
+
+    // Public typedefs for external consumption
+    using ReadOnlyHandle = ccf::kv::untyped::MapHandle;
+    using WriteOnlyHandle = ccf::kv::untyped::MapHandle;
+    using Handle = ccf::kv::untyped::MapHandle;
+    using Diff = ccf::kv::untyped::MapDiff;
+
+    Map(AbstractStore* store_, const std::string& name_) :
+      AbstractMap(name_),
+      store(store_),
+      roll{std::make_unique<LocalCommits>(), 0, {}},
+      security_domain(ccf::kv::get_security_domain(name_))
+    {
+      roll.reset_commits();
+    }
+
+    Map(const Map& that) = delete;
+
+    void serialise_changes(
+      const AbstractChangeSet* changes, KvStoreSerialiser& s) override
+    {
+      const auto* const non_abstract =
+        dynamic_cast<const ccf::kv::untyped::ChangeSet*>(changes);
+      if (non_abstract == nullptr)
+      {
+        LOG_FAIL_FMT("Unable to serialise map due to type mismatch");
+        return;
+      }
+
+      const auto& change_set = *non_abstract;
+
+      s.start_map(name, security_domain);
+
+      // Retain the legacy read-set headers for ledger compatibility.
+      s.serialise_entry_version(NoVersion);
+      s.serialise_count_header(0);
+
+      uint64_t write_ctr = 0;
+      uint64_t remove_ctr = 0;
+      for (const auto& [key, maybe_value] : change_set.writes)
+      {
+        if (maybe_value.has_value())
+        {
+          ++write_ctr;
+        }
+        else
+        {
+          ++remove_ctr;
+        }
+      }
+
+      s.serialise_count_header(write_ctr);
+      for (const auto& [key, maybe_value] : change_set.writes)
+      {
+        if (maybe_value.has_value())
+        {
+          // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+          s.serialise_write(key, maybe_value.value());
+        }
+      }
+
+      s.serialise_count_header(remove_ctr);
+      for (const auto& [key, maybe_value] : change_set.writes)
+      {
+        if (!maybe_value.has_value())
+        {
+          s.serialise_remove(key);
+        }
+      }
+    }
+
+    class SnapshotHandleCommitter : public AbstractCommitter
+    {
+    private:
+      Map& map;
+
+      SnapshotChangeSet& change_set;
+
+    public:
+      SnapshotHandleCommitter(Map& m, SnapshotChangeSet& change_set_) :
+        map(m),
+        change_set(change_set_)
+      {}
+
+      bool has_writes() override
+      {
+        return true;
+      }
+
+      bool prepare() override
+      {
+        // Snapshots never conflict
+        return true;
+      }
+
+      void commit(Version v, bool track_deletes_on_missing_keys) override
+      {
+        (void)v;
+        KV_TRACE(
+          trace::unsupported(map.get_store(), "map snapshot application"));
+        (void)track_deletes_on_missing_keys;
+        // Version argument is ignored. The version of the roll after the
+        // snapshot is applied depends on the version of the map at which the
+        // snapshot was taken.
+        map.roll.reset_commits();
+        map.roll.rollback_counter++;
+
+        auto* r = map.roll.commits->get_head();
+
+        r->state = change_set.state;
+        r->version = change_set.version;
+
+        // Executing hooks from snapshot requires copying the entire snapshotted
+        // state so only do it if there's a hook on the table
+        if (map.hook || map.global_hook)
+        {
+          r->state.foreach([&r](const K& k, const VersionV& v) {
+            r->writes[k] = v.value;
+            return true;
+          });
+        }
+      }
+
+      ConsensusHookPtr post_commit() override
+      {
+        auto* r = map.roll.commits->get_head();
+        return map.trigger_map_hook(change_set.version, r->writes);
+      }
+    };
+
+    // A map's version and serialised state, as read from a snapshot. The state
+    // views the deserialiser's input, so is only valid while that is.
+    struct SnapshotEntry
+    {
+      Version version;
+      std::span<const uint8_t> serialised_state;
+    };
+
+    // Reads this map's entry from a snapshot, without deserialising its state
+    SnapshotEntry read_snapshot_entry(KvStoreDeserialiser& d)
+    {
+      KV_TRACE(trace::unsupported(get_store(), "map snapshot import"));
+      const auto version = d.deserialise_entry_version();
+      // The map's serialised state may be as large as the snapshot, so it is
+      // parsed in place rather than copied
+      return {version, d.deserialise_raw_span()};
+    }
+
+    ChangeSetPtr deserialise_snapshot_changes(KvStoreDeserialiser& d)
+    {
+      // Create a new empty change set, deserialising d's contents into it.
+      const auto entry = read_snapshot_entry(d);
+      return make_snapshot_changes(
+        deserialise_snapshot_state(entry.serialised_state), entry.version);
+    }
+
+    static State deserialise_snapshot_state(
+      std::span<const uint8_t> serialised_state)
+    {
+      return deserialize_map_snapshot(serialised_state);
+    }
+
+    // Change set replacing a map's state with state, at version, as when the
+    // map is deserialised from a snapshot
+    static ChangeSetPtr make_snapshot_changes(State state, Version version)
+    {
+      return std::make_unique<SnapshotChangeSet>(std::move(state), version);
+    }
+
+    ChangeSetPtr deserialise_changes(KvStoreDeserialiser& d, Version version)
+    {
+      return deserialise_internal(d, version);
+    }
+
+    ChangeSetPtr deserialise_internal(KvStoreDeserialiser& d, Version version)
+    {
+      KV_TRACE(trace::unsupported(get_store(), "map deserialisation"));
+      // Create a new change set, and deserialise d's contents into it.
+      auto change_set_ptr = create_change_set(version, false);
+      if (change_set_ptr == nullptr)
+      {
+        LOG_FAIL_FMT(
+          "Failed to create change set over '{}' at {} - too early",
+          name,
+          version);
+        throw std::logic_error("Can't create change set");
+      }
+
+      auto& change_set = *change_set_ptr;
+
+      uint64_t ctr = 0;
+
+      auto rv = d.deserialise_entry_version();
+      if (rv != NoVersion)
+      {
+        change_set.read_version = rv;
+      }
+
+      ctr = d.deserialise_read_header();
+      for (size_t i = 0; i < ctr; ++i)
+      {
+        auto r = d.deserialise_read();
+        change_set.reads[std::get<0>(r)] = std::get<1>(r);
+      }
+
+      ctr = d.deserialise_write_header();
+      for (size_t i = 0; i < ctr; ++i)
+      {
+        auto w = d.deserialise_write();
+        change_set.writes[std::get<0>(w)] = std::get<1>(w);
+      }
+
+      ctr = d.deserialise_remove_header();
+      for (size_t i = 0; i < ctr; ++i)
+      {
+        auto r = d.deserialise_remove();
+        change_set.writes[r] = std::nullopt;
+      }
+
+      return change_set_ptr;
+    }
+
+    std::unique_ptr<AbstractCommitter> create_committer(
+      AbstractChangeSet* changes) override
+    {
+      auto* non_abstract = dynamic_cast<ChangeSet*>(changes);
+      if (non_abstract == nullptr)
+      {
+        throw std::logic_error("Type confusion error");
+      }
+
+      auto* snapshot_change_set =
+        dynamic_cast<SnapshotChangeSet*>(non_abstract);
+      if (snapshot_change_set != nullptr)
+      {
+        return std::make_unique<SnapshotHandleCommitter>(
+          *this, *snapshot_change_set);
+      }
+
+      return std::make_unique<HandleCommitter>(*this, *non_abstract);
+    }
+
+    /** Get store that the map belongs to
+     *
+     * @return Pointer to `ccf::kv::AbstractStore`
+     */
+    AbstractStore* get_store() override
+    {
+      return store;
+    }
+
+    void set_map_hook(const MapHook& hook_)
+    {
+      hook = hook_;
+    }
+
+    void unset_map_hook()
+    {
+      hook = nullptr;
+    }
+
+    /** Set handler to be called on global transaction commit
+     *
+     * @param hook_ function to be called on global transaction commit
+     */
+    void set_global_hook(const CommitHook& hook_)
+    {
+      global_hook = hook_;
+    }
+
+    /** Reset global transaction commit handler
+     */
+    void unset_global_hook()
+    {
+      global_hook = nullptr;
+    }
+
+    /** Get security domain of a Map
+     *
+     * @return Security domain of the map (affects serialisation)
+     */
+    SecurityDomain get_security_domain() override
+    {
+      return security_domain;
+    }
+
+    std::unique_ptr<AbstractMap::Snapshot> snapshot(Version v) override
+    {
+      // This takes a snapshot of the state of the map at the last entry
+      // committed at or before this version. The Map expects to be locked while
+      // taking the snapshot.
+      auto* r = roll.commits->get_head();
+
+      for (auto* current = roll.commits->get_tail(); current != nullptr;
+           current = current->prev)
+      {
+        if (current->version <= v)
+        {
+          r = current;
+          break;
+        }
+      }
+
+      return std::make_unique<Snapshot>(
+        name, security_domain, r->version, r->state.make_snapshot());
+    }
+
+    void compact(Version v) override
+    {
+      KV_TRACE(if (!trace::in_environment()) {
+        trace::unsupported(get_store(), "map compaction outside store");
+      });
+      // This discards available rollback state before version v, and
+      // populates the commit_deltas to be passed to the global commit hook,
+      // if there is one, up to version v. The Map expects to be locked during
+      // compaction.
+      while (roll.commits->get_head() != roll.commits->get_tail())
+      {
+        auto* r = roll.commits->get_head();
+
+        // Globally committed but not discardable.
+        if (r->version == v)
+        {
+          // We know that write set is not empty.
+          if (global_hook)
+          {
+            commit_deltas.emplace_back(r->version, std::move(r->writes));
+          }
+          return;
+        }
+
+        // Discardable, so move to commit_deltas.
+        if (global_hook && !r->writes.empty())
+        {
+          commit_deltas.emplace_back(r->version, std::move(r->writes));
+        }
+
+        // Stop if the next state may be rolled back or is the only state.
+        // This ensures there is always a state present.
+        if (r->next->version > v)
+        {
+          return;
+        }
+
+        auto* c = roll.commits->pop();
+        roll.empty_commits.insert(c);
+      }
+
+      // There is only one roll. We may need to call the commit hook.
+      auto* r = roll.commits->get_head();
+
+      if (global_hook && !r->writes.empty())
+      {
+        commit_deltas.emplace_back(r->version, std::move(r->writes));
+      }
+    }
+
+    void post_compact() override
+    {
+      if (global_hook)
+      {
+        KV_TRACE(trace::unsupported(get_store(), "global hook"));
+        for (auto& [version, writes] : commit_deltas)
+        {
+          LOG_TRACE_FMT(
+            "Executing global hook on table {} at version {}",
+            get_name(),
+            version);
+          global_hook(version, writes);
+        }
+      }
+
+      commit_deltas.clear();
+    }
+
+    void rollback(Version v) override
+    {
+      KV_TRACE(if (!trace::in_environment()) {
+        trace::unsupported(get_store(), "map rollback outside store");
+      });
+      // This rolls the current state back to version v.
+      // The Map expects to be locked during rollback.
+      bool advance = false;
+
+      while (roll.commits->get_head() != roll.commits->get_tail())
+      {
+        auto* r = roll.commits->get_tail();
+
+        // The initial empty state has v = 0, so will not be discarded if it
+        // is present.
+        if (r->version <= v)
+        {
+          break;
+        }
+
+        advance = true;
+        auto* c = roll.commits->pop_tail();
+        roll.empty_commits.insert(c);
+      }
+
+      if (advance)
+      {
+        roll.rollback_counter++;
+      }
+    }
+
+    void clear() override
+    {
+      KV_TRACE(
+        trace::unsupported(get_store(), "map clear outside transaction"));
+      // This discards all entries in the roll and resets the rollback
+      // counter. The Map expects to be locked before clearing it.
+      roll.reset_commits();
+      roll.rollback_counter = 0;
+    }
+
+    // Clang cannot track capabilities selected and held across map collection
+    // loops, so these dynamic lock-forwarding methods remain opaque.
+    void lock() CCF_NO_THREAD_SAFETY_ANALYSIS override
+    {
+      sl.lock();
+    }
+
+    void unlock() CCF_NO_THREAD_SAFETY_ANALYSIS override
+    {
+      sl.unlock();
+    }
+
+    // Exchanges the entire state of this map with that of other. The caller
+    // must hold the locks of both maps.
+    void swap(Map& other) noexcept
+    {
+      std::swap(roll, other.roll);
+    }
+
+    ChangeSetPtr create_change_set(
+      Version version, bool track_deletes_on_missing_keys)
+    {
+      lock();
+
+      ChangeSetPtr changes = nullptr;
+
+      // Find the last entry committed at or before this version.
+      for (auto* current = roll.commits->get_tail(); current != nullptr;
+           current = current->prev)
+      {
+        if (current->version <= version)
+        {
+          // Only deletes are copied: MapDiff reconstructs puts from the state
+          // (see untyped_map_diff.cpp).
+          ccf::kv::untyped::Write writes;
+          if (track_deletes_on_missing_keys)
+          {
+            for (const auto& [key, maybe_value] : current->writes)
+            {
+              if (!maybe_value.has_value())
+              {
+                writes.emplace_hint(writes.end(), key, std::nullopt);
+              }
+            }
+          }
+          changes = std::make_unique<untyped::ChangeSet>(
+            roll.rollback_counter,
+            current->state,
+            roll.commits->get_head()->state,
+            std::move(writes),
+            current->version);
+          KV_TRACE(changes->trace_metadata.id = trace::context();
+                   trace::operation(
+                     changes->trace_metadata,
+                     "map_acquire",
+                     get_name(),
+                     {{"version", current->version},
+                      {"global", roll.commits->get_head()->version}}));
+          break;
+        }
+      }
+
+      // Returning nullptr is allowed, and indicates that we have no suitable
+      // version - the version requested is _earlier_ than anything in the
+      // roll
+
+      KV_TRACE(if (changes == nullptr) {
+        trace::operation(trace::context(), "map_unavailable", get_name());
+      });
+
+      unlock();
+      return changes;
+    }
+
+    Roll& get_roll()
+    {
+      KV_TRACE(if (trace::context().tx == 0) {
+        trace::unsupported(get_store(), "direct map roll access");
+      });
+      return roll;
+    }
+
+    ConsensusHookPtr trigger_map_hook(Version version, const Write& writes)
+    {
+      if (hook && !writes.empty())
+      {
+        KV_TRACE(trace::unsupported(get_store(), "local hook"));
+        LOG_TRACE_FMT(
+          "Executing local hook on table {} at version {}",
+          get_name(),
+          version);
+        return hook(version, writes);
+      }
+      return nullptr;
+    }
+  };
+}

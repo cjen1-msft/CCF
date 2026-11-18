@@ -1,0 +1,44 @@
+{
+  "endpoints": {
+    "/text": {
+      "post": {
+        "js_module": "content_types.js",
+        "js_function": "text",
+        "redirection_strategy": "none",
+        "authn_policies": ["user_cert"],
+        "mode": "readonly",
+        "openapi": {}
+      }
+    },
+    "/json": {
+      "post": {
+        "js_module": "content_types.js",
+        "js_function": "json",
+        "redirection_strategy": "none",
+        "authn_policies": ["user_cert"],
+        "mode": "readonly",
+        "openapi": {}
+      }
+    },
+    "/binary": {
+      "post": {
+        "js_module": "content_types.js",
+        "js_function": "binary",
+        "redirection_strategy": "none",
+        "authn_policies": ["user_cert"],
+        "mode": "readonly",
+        "openapi": {}
+      }
+    },
+    "/custom": {
+      "post": {
+        "js_module": "content_types.js",
+        "js_function": "custom",
+        "redirection_strategy": "none",
+        "authn_policies": ["user_cert"],
+        "mode": "readonly",
+        "openapi": {}
+      }
+    }
+  }
+}
