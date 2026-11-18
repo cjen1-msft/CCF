@@ -3,12 +3,12 @@ module
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-public import Consensus.Proofs.SafetyInvariant
-import all Consensus.Proofs.SafetyInvariant
+public import ConsensusCoverage.Historical
+import all ConsensusCoverage.Historical
 
 namespace ConsensusCoverage.GrantMonitor
 
-open Consensus Consensus.Model.Node Consensus.Proofs.Safety
+open Consensus Consensus.Model.Node
 
 public structure Query where
   voter : NodeID
@@ -39,27 +39,27 @@ public def advance (q : Query) (old : Memory) (s t : Model.State) : Memory :=
    old.granted || (grantStep q s t && (q.voter == q.candidate || old.seenCandidate))⟩
 
 public def HasSeen (q : Query) (h : List Model.State) : Prop :=
-  ∃ st, Seen h q.candidate st ∧ st.currentTerm = q.term
+  ∃ st, Historical.Seen h q.candidate st ∧ st.currentTerm = q.term
 
 public def HasGrant (q : Query) (h : List Model.State) : Prop :=
-  Granted h q.voter q.candidate q.term q.request
+  Historical.Granted h q.voter q.candidate q.term q.request
 
-private theorem seen_cons (q : Query) (t : Model.State) (h : History) :
+private theorem seen_cons (q : Query) (t : Model.State) (h : Historical.History) :
     HasSeen q (t :: h) ↔ HasSeen q h ∨ here q t = true := by
-  simp only [HasSeen, Seen, here, List.any_eq_true, Prod.exists, Bool.and_eq_true, beq_iff_eq,
+  simp only [HasSeen, Historical.Seen, here, List.any_eq_true, Prod.exists, Bool.and_eq_true, beq_iff_eq,
     List.mem_cons]
   grind
 
 private theorem grantStep_iff (q : Query) (s t : Model.State) :
-    grantStep q s t = true ↔ GrantStep t s q.voter q.candidate q.term q.request := by
-  simp only [grantStep, GrantStep, Bool.and_eq_true, List.any_eq_true, Prod.exists, beq_iff_eq,
+    grantStep q s t = true ↔ Historical.GrantStep t s q.voter q.candidate q.term q.request := by
+  simp only [grantStep, Historical.GrantStep, Bool.and_eq_true, List.any_eq_true, Prod.exists, beq_iff_eq,
     decide_eq_true_eq]
   grind
 
-private theorem granted_cons (q : Query) (t s : Model.State) (h : History) :
-    Granted (t :: s :: h) q.voter q.candidate q.term q.request ↔
-      Granted (s :: h) q.voter q.candidate q.term q.request ∨
-      (GrantStep t s q.voter q.candidate q.term q.request ∧
+private theorem granted_cons (q : Query) (t s : Model.State) (h : Historical.History) :
+    Historical.Granted (t :: s :: h) q.voter q.candidate q.term q.request ↔
+      Historical.Granted (s :: h) q.voter q.candidate q.term q.request ∨
+      (Historical.GrantStep t s q.voter q.candidate q.term q.request ∧
         (q.voter = q.candidate ∨ HasSeen q (s :: h))) := by
   constructor
   · rintro ⟨a, b, rest, suffix, step, seen⟩
@@ -83,7 +83,7 @@ public theorem correct (q : Query) (s : Model.State) (h : List Model.State) :
   | nil =>
     constructor
     · rw [seen_cons]
-      simp [scan, start, HasSeen, Seen]
+      simp [scan, start, HasSeen, Historical.Seen]
     · change false = true ↔ _
       constructor
       · intro no; contradiction

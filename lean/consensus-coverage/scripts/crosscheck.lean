@@ -27,10 +27,10 @@ instance : Config.InitialConfiguration := ⟨config⟩
 def s0 : Model.State :=
   { nodes := [0, 1, 2].map fun node => (node, initialNodeState config node) }
 
-/-- Evaluator: `yes` on the initial history (context `1000...`, first canonical state). -/
+/-- Evaluator: `yes` on the initial state. -/
 theorem left_backed_inl_initial :
-    Classes.state_committed_logs_comparable_left_backed_inl [s0] :=
-  ⟨0, initialNodeState config 0, by simp [Now, s0], 0, Or.inl rfl, rfl⟩
+    Classes.state_committed_logs_comparable_left_backed_inl (Frame.start s0) :=
+  ⟨0, initialNodeState config 0, by simp [Now, Frame.start, s0], 0, Or.inl rfl, rfl⟩
 
 theorem no_signature_initial (node index : NodeID) :
     isSignatureAt (initialNodeState config node).log index = false := by
@@ -50,19 +50,17 @@ theorem no_signature_initial (node index : NodeID) :
     simp [isSignatureAt, entryAt?]
 
 theorem not_committed_initial (term : Nat) (part : List Entry) :
-    ¬ Committed [s0] term part := by
-  intro h
-  cases h with
-  | past old => cases old
-  | fresh step | chained step =>
-    obtain ⟨⟨now, -⟩, -, -, sig, -⟩ := step
-    simp only [Now, s0, List.map_cons, List.map_nil, List.mem_cons, Prod.mk.injEq,
+    ¬ Committed (Frame.start s0) term part := by
+  rintro (old | ⟨n, st, base, index, step, _, _⟩)
+  · exact old
+  · obtain ⟨⟨now, _⟩, _, _, sig, _⟩ := step
+    simp only [s0, List.map_cons, List.map_nil, List.mem_cons, Prod.mk.injEq,
       List.not_mem_nil, or_false] at now
     rcases now with ⟨-, rfl⟩ | ⟨-, rfl⟩ | ⟨-, rfl⟩ <;> simp [no_signature_initial] at sig
 
-/-- Evaluator: `no` on the initial history. -/
+/-- Evaluator: `no` on the initial state. -/
 theorem left_backed_inr_initial :
-    ¬ Classes.state_committed_logs_comparable_left_backed_inr [s0] := by
+    ¬ Classes.state_committed_logs_comparable_left_backed_inr (Frame.start s0) := by
   rintro ⟨-, -, -, -, -, ⟨_, _, h, -⟩, -⟩
   exact not_committed_initial _ _ h
 
@@ -83,15 +81,14 @@ theorem s1_primaries :
 
 
 /-- Evaluator: `no` (the actor's post state is a follower; no node is primary after). -/
-theorem leader_led_now_after_inl_s1 (rest : History) :
-    ¬ Classes.step_leader_led_now_after_inl s1 s0 rest := by
+theorem leader_led_now_after_inl_s1 (f : Frame) :
+    ¬ Classes.step_leader_led_now_after_inl f s1 := by
   rintro ⟨-, -, -, ⟨-, n, st, now, role, -⟩, -⟩
   have : (n, st) ∈ s1.nodes.filter (fun p => p.2.role == .primary) :=
     List.mem_filter.mpr ⟨now, by simp [role]⟩
   simp [s1_primaries] at this
 
-/-! A positive check needs a `Ctx` of the step: an execution, a local transition and the
-invariant before it (`inv_of_exec`). -/
+/-! A positive check needs the actual local transition and the invariant before it. -/
 
 def a2 : Model.Action := .local 0 (.sendEntries 1 1)
 
@@ -112,8 +109,8 @@ def s2 : Model.State := ((transitionSystem config [0, 1, 2]).step s0 a2).getD s0
 theorem s2_step : (transitionSystem Config.INITIAL_CONFIGURATION [0, 1, 2]).step s0 a2 = some s2 := by
   rfl
 
-theorem exec0 : Exec [0, 1, 2] [s0] :=
-  .initial ⟨⟨0, by decide⟩, rfl, by
+theorem initialized : (transitionSystem Config.INITIAL_CONFIGURATION [0, 1, 2]).init s0 :=
+  ⟨⟨0, by decide⟩, rfl, by
     simp [s0, protocol, Config.INITIAL_CONFIGURATION] <;> exact ⟨rfl, rfl, rfl⟩⟩
 
 def tr2 : LocalTransition s0 s2 where
@@ -131,18 +128,19 @@ def tr2 : LocalTransition s0 s2 where
   source := Or.inl ⟨_, rfl, rfl⟩
   available := fun _ eq => by cases eq
 
-def ctx2 : Ctx s2 s0 [] := ⟨tr2, inv_of_exec exec0⟩
+def ctx2 : Ctx (Frame.start s0) s2 := ⟨tr2, inv_initial initialized⟩
 
 /-- Evaluator: `yes` (the actor is primary after, and its state changed: `sentIndex 1`). -/
 theorem leader_led_now_after_inl_s2 :
-    Classes.step_leader_led_now_after_inl s2 s0 [] := by
-  have now : Now [s2, s0] 0 post2 := by
-    simp only [Now, tr2.nodesEq]
+    Classes.step_leader_led_now_after_inl (Frame.start s0) s2 := by
+  have now : Now ((Frame.start s0).advance s2) 0 post2 := by
+    change (0, post2) ∈ s2.nodes
+    rw [tr2.nodesEq]
     exact List.mem_cons_self ..
   have role : post2.role = .primary := rfl
-  have fresh : ¬ (Now [s0] 0 post2 ∧ post2.role = .primary) := by
+  have fresh : ¬ (Now (Frame.start s0) 0 post2 ∧ post2.role = .primary) := by
     rintro ⟨old, -⟩
-    simp only [Now, s0, List.map_cons, List.map_nil, List.mem_cons, Prod.mk.injEq,
+    simp only [Now, Frame.start, s0, List.map_cons, List.map_nil, List.mem_cons, Prod.mk.injEq,
       List.not_mem_nil, or_false] at old
     rcases old with ⟨-, h⟩ | ⟨h, -⟩ | ⟨h, -⟩
     · have : post2.sentIndex 1 = (initialNodeState config 0).sentIndex 1 := by rw [h]

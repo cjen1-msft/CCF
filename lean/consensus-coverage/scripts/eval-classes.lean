@@ -5,7 +5,10 @@ meta import all Consensus.Proofs.SafetyInvariant
 public import Consensus.Model
 
 /-!
-# Evaluating generated coverage classes on the steps of concrete runs (partial, unproved)
+# Historical experiment: evaluating selected classes of the list-based proof
+
+This hand transcription is not a classifier for the stepwise proof; for its proved
+snapshot slice use `pair-coverage.lean`.
 
 For the step classes whose case split sits in the obligations `Ctx.leader_led` and
 `Ctx.commit_backed`, and for four state classes of `committed_logs_comparable`, this script

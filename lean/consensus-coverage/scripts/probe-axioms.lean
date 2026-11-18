@@ -12,4 +12,4 @@ open Consensus.Proofs.Safety in
 open Consensus.Proofs.Safety in
 #print axioms LocalTransition.summary
 open Consensus.Proofs.Safety in
-#print axioms inv_of_exec
+#print axioms inv_of_reachable

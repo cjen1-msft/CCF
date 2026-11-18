@@ -59,19 +59,26 @@ The shared `check-imports` command rejects modules missing from that import clos
 [`Properties.lean`](Consensus/Properties.lean) contains the full theorem and witness-lemma statements, with one-line proof links into `Proofs/`.
 Import `Consensus.Properties` and use `Consensus.Properties.<name>` for these declarations.
 Proof modules follow the shared [dependency import contract](../common/README.md#dependency-imports); import additional facilities explicitly rather than relying on incidental reexports.
-`Proofs/Direct.lean` establishes node-local commit invariants; `Proofs/SafetyInvariant.lean` establishes the cross-node history invariant, in the `Consensus.Proofs.Safety` namespace, used for election safety and committed-log comparability.
+`Proofs/Direct.lean` establishes node-local commit invariants; `Proofs/SafetyInvariant.lean` establishes the cross-node invariant used for election safety and committed-log comparability.
 [`Proofs/Witnesses.lean`](Consensus/Proofs/Witnesses.lean) supplies the checked witness implementations, using shared execution-construction helpers in [`Proofs/GenericWitnesses.lean`](Consensus/Proofs/GenericWitnesses.lean).
 The safety-invariant proof remains independent of the witness construction, allowing Lake to check them in parallel.
 
 To list the safety-invariant declarations used by the exported theorems, run `lake env lean scripts/invariant-dependencies.lean`.
 
-The original joint proof is being converted in place. Its vote uniqueness argument now uses
-[`VoteFacts.Inv`](Consensus/Proofs/VoteFacts.lean): each step preserves a set of observed
+The two properties follow from `Inv f`, where `f : Frame` holds the current protocol
+state and two ghost fields. `inv_initial` establishes it at `Frame.start`; `Ctx.inv_step`
+preserves it at `f.advance after` given only `Inv f` and one protocol transition.
+`inv_of_reachable` lifts this result to any reachable state. The public properties
+still speak about positions in a trace; preservation does not take a trace as input.
+
+[`VoteFacts.Inv`](Consensus/Proofs/VoteFacts.lean) tracks observed
 `(voter, term, votedFor)` facts and cannot introduce a second candidate for one voter and term.
 [`LogFacts.advance`](Consensus/Proofs/LogFacts.lean) updates the evidence for seen logs,
 grants, elections, leader logs and commits using the two endpoints and the previous ghost.
-`logFacts_correct` proves that these relations agree with the historical definitions.
-When comparing same-term elections, the proof now carries the first election's quorum and
+An independent [historical specification](../consensus-coverage/ConsensusCoverage/Historical.lean)
+proves that folding this update agrees with looking through the history. The safety proof
+does not import that specification.
+When comparing same-term elections, the proof carries the first election's quorum and
 commit backing rather than recovering them from the snapshot where it won.
 
 The commit/election intersection lemma (`core`) now takes only quorum and log facts.
@@ -93,16 +100,13 @@ step cannot turn that request into a grant: the signature outranks the request,
 and no leader in the allowed term range can explain losing it. This replaces
 the comparison of when the blocking commit and individual grants occurred.
 
-`Ctx.inv_step` now takes one local transition and the invariant immediately
-before it, not an execution or an invariant for every past state. A queued
-AppendEntries request carries backing for the commit index it advertises.
+Each queued AppendEntries request carries backing for the commit index it advertises.
 Delivery and snapshot installation can copy a leader log using its retained
 prefix evidence, without looking up the state that supplied the log.
 
-The invariant still has a history parameter: some clauses use the historical
-definitions of observations, elections and commits rather than the ghost
-relations directly. A one-step induction hypothesis does not by itself
-remove that parameter or make the full coverage target finite.
+This proof is stepwise, not finite-state: the ghost ranges over unbounded terms and
+logs. A finite coverage target needs a separate argument about which combinations
+of answers can occur. The snapshot reader below has that argument for two questions.
 
 ## Trace replay
 
@@ -147,7 +151,7 @@ valid step. [The projection theorem](../consensus-coverage/ConsensusCoverage/Sna
 proves that the four recorded fields suffice; [exactness](../consensus-coverage/ConsensusCoverage/PairWitnesses.lean)
 is over reachable steps of the original model, across configurations. A missing row is a
 coverage gap; an unexpected row cannot occur on a model step. Hitting every row does not
-validate a trace or cover the rest of the history proof.
+validate a trace or cover the rest of the safety proof.
 
 The [historical vote monitor](../consensus-coverage/ConsensusCoverage/GrantMonitor.lean)
 is separate from that table. For one fixed voter, candidate, term and vote request,

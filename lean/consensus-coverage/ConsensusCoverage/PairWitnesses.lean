@@ -88,7 +88,6 @@ public theorem exact (row : Bool × Bool × Bool) : row ∈ table ↔ Occurs row
     · cases h
   · rintro ⟨cfg,nodes,s,t,act,reach,stepped,rfl⟩
     letI : Config.InitialConfiguration := ⟨cfg⟩
-    obtain ⟨h, prev⟩ := exec_of_reachable (nodes := nodes) (state := s) reach
-    exact complete (rest := h) (.step prev (action := act) stepped)
+    exact complete reach stepped
 
 end ConsensusCoverage.PairQuestions

@@ -6,11 +6,9 @@ import all Consensus.Proofs.SafetyInvariant
 /-!
 # Generator run on the consensus safety proof, measurement only
 
-One `relevance_generate` call over the two safety theorems: the step is one `Ctx` (a step of an
-execution with the invariant holding before it) from history `before :: rest` to
-`after :: before :: rest`; the state is a history satisfying `Inv`; `inv_of_exec` turns an
-execution into the invariant at its head, so theorems taking an execution are
-state-level.
+One `relevance_generate` call over the two safety theorems: `Ctx f after` supplies one protocol
+transition and the pre-state invariant. Its endpoints are `f` and `f.advance after`.
+State classes are extracted from `Inv f`.
 
 Run from the repository root (the workspace is out of tree):
 
@@ -27,10 +25,9 @@ relevance_generate ConsensusCoverage.Generated
   (roots := [Consensus.Proofs.CommittedLogs.committed_logs_prefix,
     Consensus.Proofs.Election.election_safety])
   (step := fun [Config.InitialConfiguration]
-    (after before : Model.State) (rest : History) => Ctx after before rest)
+    (f : Frame) (after : Model.State) => Ctx f after)
   (pre := fun [Config.InitialConfiguration]
-    (_ before : Model.State) (rest : History) => before :: rest)
+    (f : Frame) (_ : Model.State) => f)
   (post := fun [Config.InitialConfiguration]
-    (after before : Model.State) (rest : History) => after :: before :: rest)
-  (state := fun [Config.InitialConfiguration] (history : History) => Inv history)
-  (derive := [Consensus.Proofs.Safety.inv_of_exec])
+    (f : Frame) (after : Model.State) => f.advance after)
+  (state := fun [Config.InitialConfiguration] (f : Frame) => Inv f)
