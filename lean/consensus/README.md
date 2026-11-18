@@ -87,9 +87,15 @@ nonzero, the committed prefix backing that base. `commitChains_step` preserves
 these certificates; `carried_of_chain` inducts over their links, not over execution
 steps. Idle steps do not lengthen a certificate.
 
-The outer invariant still uses `Good history`. In particular, the candidate,
-message and persistence arguments still have historical witnesses. These ghosts
-are proof data; they do not establish that the full coverage target is finite.
+For a candidate that cannot win, `Blocked` records an ungranted request and a
+blocking signed log for a voter in every possible election quorum. A single
+step cannot turn that request into a grant: the signature outranks the request,
+and no leader in the allowed term range can explain losing it. This replaces
+the comparison of when the blocking commit and individual grants occurred.
+
+The outer invariant still uses `Good history`, notably to recover log and commit
+facts about the sender of a queued AppendEntries request. These ghosts are
+proof data; they do not establish that the full coverage target is finite.
 
 ## Trace replay
 
