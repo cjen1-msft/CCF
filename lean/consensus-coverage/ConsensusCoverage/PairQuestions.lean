@@ -39,9 +39,9 @@ private theorem newPrimary_iff (before after : Model.State) :
     Bool.not_eq_true', Bool.eq_false_iff]
   grind
 
-private theorem won_iff [Config.InitialConfiguration] {nodes : List NodeID}
-    {after before : Model.State} {rest : History} (valid : Nonempty (Ctx nodes after before rest)) :
-    Classes.step_leader_led_leader_inr nodes after before rest ↔ newPrimary before after = true := by
+private theorem won_iff [Config.InitialConfiguration]
+    {after before : Model.State} {rest : History} (valid : Nonempty (Ctx after before rest)) :
+    Classes.step_leader_led_leader_inr after before rest ↔ newPrimary before after = true := by
   rw [newPrimary_iff]
   constructor
   · rintro ⟨c, n, s, _, ⟨rfl,rfl⟩, _, _, _, primary, _, wins, _, _⟩
@@ -68,17 +68,17 @@ public inductive Question
   | zeroBefore | wonPrimary | zeroAfter
   deriving Repr, DecidableEq
 
-private def specification [Config.InitialConfiguration] (nodes : List NodeID)
+private def specification [Config.InitialConfiguration]
     (before after : Model.State) (rest : History) : Question → Prop
   | .zeroBefore => Classes.state_committed_logs_comparable_left_backed_inl (before :: rest)
-  | .wonPrimary => Classes.step_leader_led_leader_inr nodes after before rest
+  | .wonPrimary => Classes.step_leader_led_leader_inr after before rest
   | .zeroAfter => Classes.state_committed_logs_comparable_left_backed_inl (after :: before :: rest)
 
 /-- In particular, proof contexts (and the configured node list) are not runtime inputs. -/
 public def answer (before after : Model.State) : Question → Bool :=
-  question_table% (fun (q : Question) [Config.InitialConfiguration] (nodes : List NodeID)
-      (rest : History) (_ : Nonempty (Ctx nodes after before rest)) =>
-      specification nodes before after rest q) by
+  question_table% (fun (q : Question) [Config.InitialConfiguration]
+      (rest : History) (_ : Nonempty (Ctx after before rest)) =>
+      specification before after rest q) by
     first | exact zero_iff _ _ | exact won_iff ‹_›
 
 public def label (before after : Model.State) : Bool × Bool × Bool :=
@@ -87,15 +87,15 @@ public def label (before after : Model.State) : Bool × Bool × Bool :=
 
 private theorem validCtx [Config.InitialConfiguration] {nodes : List NodeID}
     {after before : Model.State} {rest : History} (exec : Exec nodes (after :: before :: rest)) :
-    Nonempty (Ctx nodes after before rest) := by
+    Nonempty (Ctx after before rest) := by
   cases exec with
   | step prior stepped =>
     obtain ⟨tr⟩ := LocalTransition.ofStep stepped
-    exact ⟨⟨.step prior stepped, tr, good_of_exec prior⟩⟩
+    exact ⟨⟨tr, inv_of_exec prior⟩⟩
 
 theorem answer_iff [Config.InitialConfiguration] {nodes : List NodeID} {before after : Model.State}
     {rest : History} (exec : Exec nodes (after :: before :: rest)) (q : Question) :
-    answer before after q = true ↔ specification nodes before after rest q := by
+    answer before after q = true ↔ specification before after rest q := by
   cases q with
   | zeroBefore => simpa [answer, specification] using (zero_iff before rest).symm
   | zeroAfter => simpa [answer, specification] using (zero_iff after (before :: rest)).symm
@@ -105,8 +105,8 @@ theorem answer_iff [Config.InitialConfiguration] {nodes : List NodeID} {before a
 public def table : List (Bool × Bool × Bool) :=
   [(true,false,true), (true,true,true), (true,false,false), (false,false,false), (false,true,false)]
 
-private theorem win_preserves_commit [Config.InitialConfiguration] {nodes : List NodeID}
-    {after before : Model.State} {rest : History} (c : Ctx nodes after before rest)
+private theorem win_preserves_commit [Config.InitialConfiguration]
+    {after before : Model.State} {rest : History} (c : Ctx after before rest)
     (wins : Wins c.actor c.pre c.event c.post) : c.post.commitIndex = c.pre.commitIndex := by
   obtain ⟨cand, campaign, _, advance⟩ := wins
   have ⟨_, logEq, commitEq, _⟩ := campaign
@@ -132,8 +132,9 @@ private theorem zero_mem (s : Model.State) :
   simp [zero, List.any_eq_true, Prod.exists]
 
 private theorem zero_old [Config.InitialConfiguration] {nodes : List NodeID}
-    {after before : Model.State} {rest : History} (c : Ctx nodes after before rest)
+    {after before : Model.State} {rest : History} (exec : Exec nodes (after :: before :: rest))
     (h : zero after = true) : zero before = true := by
+  obtain ⟨c⟩ := validCtx exec
   obtain ⟨n, st, now, z⟩ := (zero_mem _).1 h
   apply (zero_mem _).2
   rcases c.now_after now with ⟨rfl,rfl⟩ | ⟨_,old⟩
@@ -141,8 +142,8 @@ private theorem zero_old [Config.InitialConfiguration] {nodes : List NodeID}
     have pre := c.pre_now
     have post := c.post_now
     have frontier := c.frontier_pre
-    have keys := c.prior.keys List.mem_cons_self
-    cases c.exec with
+    have keys := c.inv.distinct before rfl
+    cases exec with
     | step _ stepped =>
       have pref := Direct.committed_log_step keys stepped pre post
       have le := pref.length_le
@@ -150,8 +151,8 @@ private theorem zero_old [Config.InitialConfiguration] {nodes : List NodeID}
       exact le
   · exact ⟨n, st, old, z⟩
 
-private theorem zero_on_win [Config.InitialConfiguration] {nodes : List NodeID}
-    {after before : Model.State} {rest : History} (ctx : Nonempty (Ctx nodes after before rest))
+private theorem zero_on_win [Config.InitialConfiguration]
+    {after before : Model.State} {rest : History} (ctx : Nonempty (Ctx after before rest))
     (win : newPrimary before after = true) (h : zero before = true) : zero after = true := by
   obtain ⟨c, _, _, _, _, _, _, _, _, _, wins, _, _⟩ := (won_iff ctx).2 win
   obtain ⟨n,st,old,z⟩ := (zero_mem _).1 h
@@ -166,7 +167,7 @@ private theorem zero_on_win [Config.InitialConfiguration] {nodes : List NodeID}
 theorem complete [Config.InitialConfiguration] {nodes : List NodeID} {before after : Model.State}
     {rest : History} (exec : Exec nodes (after :: before :: rest)) : label before after ∈ table := by
   have ⟨c⟩ := validCtx exec
-  have mono := zero_old c
+  have mono := zero_old exec
   have frame := zero_on_win ⟨c⟩
   change (zero before, newPrimary before after, zero after) ∈ table
   cases h₁ : zero before <;> cases h₂ : newPrimary before after <;> cases h₃ : zero after <;>

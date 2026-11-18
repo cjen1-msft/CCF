@@ -10,8 +10,8 @@ import all Consensus.Proofs.Direct
 One `relevance_generate` call with `(shared := true)` over the public safety theorems (log
 safety, election safety) and the two node-local ones. The step is one `Ctx` (a step of an
 execution with the invariant holding before it) from history `before :: rest` to
-`after :: before :: rest`; the state is a history satisfying `Inv`; `good_of_exec` turns an
-execution into the invariant at every point of it, so theorems taking an execution are
+`after :: before :: rest`; the state is a history satisfying `Inv`; `inv_of_exec` turns an
+execution into the invariant at its head, so theorems taking an execution are
 state-level. Writes the branch table to the file named by `RELEVANCE_TABLE`, if set.
 
 Run from the repository root (the workspace is out of tree):
@@ -32,14 +32,14 @@ relevance_generate ConsensusCoverage.Classes
     Consensus.Proofs.Election.election_safety,
     Consensus.Proofs.Direct.single_node_committed_log_monotonic,
     Consensus.Proofs.Direct.committed_frontier_is_signature])
-  (step := fun [Config.InitialConfiguration] (nodes : List Model.Node.NodeID)
-    (after before : Model.State) (rest : History) => Ctx nodes after before rest)
-  (pre := fun [Config.InitialConfiguration] (_ : List Model.Node.NodeID)
+  (step := fun [Config.InitialConfiguration]
+    (after before : Model.State) (rest : History) => Ctx after before rest)
+  (pre := fun [Config.InitialConfiguration]
     (_ before : Model.State) (rest : History) => before :: rest)
-  (post := fun [Config.InitialConfiguration] (_ : List Model.Node.NodeID)
+  (post := fun [Config.InitialConfiguration]
     (after before : Model.State) (rest : History) => after :: before :: rest)
   (state := fun [Config.InitialConfiguration] (history : History) => Inv history)
-  (derive := [Consensus.Proofs.Safety.good_of_exec])
+  (derive := [Consensus.Proofs.Safety.inv_of_exec])
   (shared := true)
 
 end

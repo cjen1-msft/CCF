@@ -10,11 +10,11 @@ import all Consensus.Proofs.SafetyInvariant
 Checks the three inputs the generator needs for a proof about histories, with the generator's
 own functions and without walking any proof:
 
-- the step pattern `Ctx nodes after before rest` with pre-state `before :: rest` and post-state
+- the step pattern `Ctx after before rest` with pre-state `before :: rest` and post-state
   `after :: before :: rest` (`(pre := ...)`, `(post := ...)`);
 - the clauses of `Inv`, read through their definitions: data binders and premises per clause;
 - the theorems that are state-level because a hypothesis of theirs is turned into `Inv` by
-  `good_of_exec` (`(derive := ...)`).
+  `inv_of_exec` (`(derive := ...)`).
 
 Run from the repository root (the workspace is out of tree):
 
@@ -31,15 +31,15 @@ open Consensus Consensus.Proofs Consensus.Proofs.Safety in
     let e ← Term.elabTerm s none
     Term.synthesizeSyntheticMVarsNoPostponing
     instantiateMVars e
-  let stepPat ← elab_ (← `(fun [Consensus.Proofs.Config.InitialConfiguration] (nodes : List Model.Node.NodeID)
-    (after before : Model.State) (rest : History) => Ctx nodes after before rest))
+  let stepPat ← elab_ (← `(fun [Consensus.Proofs.Config.InitialConfiguration]
+    (after before : Model.State) (rest : History) => Ctx after before rest))
   let statePat ← elab_ (← `(fun [Consensus.Proofs.Config.InitialConfiguration] (history : History) =>
     Inv history))
-  let preOf ← elab_ (← `(fun [Consensus.Proofs.Config.InitialConfiguration] (_ : List Model.Node.NodeID)
+  let preOf ← elab_ (← `(fun [Consensus.Proofs.Config.InitialConfiguration]
     (_ before : Model.State) (rest : History) => before :: rest))
-  let postOf ← elab_ (← `(fun [Consensus.Proofs.Config.InitialConfiguration] (_ : List Model.Node.NodeID)
+  let postOf ← elab_ (← `(fun [Consensus.Proofs.Config.InitialConfiguration]
     (after before : Model.State) (rest : History) => after :: before :: rest))
-  let derive := #[``good_of_exec]
+  let derive := #[``inv_of_exec]
   let stateCtor ← liftTermElabM <| lambdaTelescope statePat fun _ body => do
     let some c := body.getAppFn.constName? | return none
     return some (getStructureCtor (← getEnv) c).name

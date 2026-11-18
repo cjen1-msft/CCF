@@ -84,14 +84,14 @@ theorem s1_primaries :
 
 /-- Evaluator: `no` (the actor's post state is a follower; no node is primary after). -/
 theorem leader_led_now_after_inl_s1 (rest : History) :
-    ¬ Classes.step_leader_led_now_after_inl [0, 1, 2] s1 s0 rest := by
+    ¬ Classes.step_leader_led_now_after_inl s1 s0 rest := by
   rintro ⟨-, -, -, ⟨-, n, st, now, role, -⟩, -⟩
   have : (n, st) ∈ s1.nodes.filter (fun p => p.2.role == .primary) :=
     List.mem_filter.mpr ⟨now, by simp [role]⟩
   simp [s1_primaries] at this
 
 /-! A positive check needs a `Ctx` of the step: an execution, a local transition and the
-invariant before it (`good_of_exec`). -/
+invariant before it (`inv_of_exec`). -/
 
 def a2 : Model.Action := .local 0 (.sendEntries 1 1)
 
@@ -131,11 +131,11 @@ def tr2 : LocalTransition s0 s2 where
   source := Or.inl ⟨_, rfl, rfl⟩
   available := fun _ eq => by cases eq
 
-def ctx2 : Ctx [0, 1, 2] s2 s0 [] := ⟨.step exec0 s2_step, tr2, good_of_exec exec0⟩
+def ctx2 : Ctx s2 s0 [] := ⟨tr2, inv_of_exec exec0⟩
 
 /-- Evaluator: `yes` (the actor is primary after, and its state changed: `sentIndex 1`). -/
 theorem leader_led_now_after_inl_s2 :
-    Classes.step_leader_led_now_after_inl [0, 1, 2] s2 s0 [] := by
+    Classes.step_leader_led_now_after_inl s2 s0 [] := by
   have now : Now [s2, s0] 0 post2 := by
     simp only [Now, tr2.nodesEq]
     exact List.mem_cons_self ..

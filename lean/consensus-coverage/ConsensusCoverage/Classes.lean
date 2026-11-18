@@ -25,14 +25,14 @@ relevance_generate ConsensusCoverage.Classes
     Consensus.Proofs.Election.election_safety,
     Consensus.Proofs.Direct.single_node_committed_log_monotonic,
     Consensus.Proofs.Direct.committed_frontier_is_signature])
-  (step := fun [Config.InitialConfiguration] (nodes : List Model.Node.NodeID)
-    (after before : Model.State) (rest : History) => Ctx nodes after before rest)
-  (pre := fun [Config.InitialConfiguration] (_ : List Model.Node.NodeID)
+  (step := fun [Config.InitialConfiguration]
+    (after before : Model.State) (rest : History) => Ctx after before rest)
+  (pre := fun [Config.InitialConfiguration]
     (_ before : Model.State) (rest : History) => before :: rest)
-  (post := fun [Config.InitialConfiguration] (_ : List Model.Node.NodeID)
+  (post := fun [Config.InitialConfiguration]
     (after before : Model.State) (rest : History) => after :: before :: rest)
   (state := fun [Config.InitialConfiguration] (history : History) => Inv history)
-  (derive := [Consensus.Proofs.Safety.good_of_exec])
+  (derive := [Consensus.Proofs.Safety.inv_of_exec])
   (shared := true)
 
 end

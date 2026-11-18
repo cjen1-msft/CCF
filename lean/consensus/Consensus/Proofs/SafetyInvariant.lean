@@ -1224,15 +1224,13 @@ private structure Inv (history : History) : Prop where
   leader_logs : LeaderLogs history
   commitChains : CommitChains (logFacts history)
   copyLogs : CopyLogs (logFacts history)
+  distinct : ∀ s ∈ history.head?, (s.nodes.map Prod.fst).Nodup
+  frontier : ∀ n st, Now history n st → Direct.CommitFrontier st
 
 private theorem Inv.term_mono {h : History} (i : Inv h) : TermMono h := i.ballots.term_mono
 
 private theorem Inv.copyLog {h : History} (i : Inv h) {k l} (canon : Canon h k l) :
     CopyLog (logFacts h) k l := i.copyLogs k l (((logFacts_correct h).canon ..).2 canon)
-
-/-- The invariant holds at every point of the history. -/
-private def Good (history : History) : Prop :=
-  forall earlier, earlier <:+ history -> Not (earlier = []) -> Inv earlier
 
 end Consensus.Proofs.Safety
 
@@ -1276,16 +1274,11 @@ open Model.Node
 open Consensus.Proofs.Ledger
 variable [Config.InitialConfiguration]
 
-/-- `clause` holds at every nonempty suffix of `history`. -/
-private def Everywhere (clause : History -> Prop) (history : History) : Prop :=
-  forall earlier, earlier <:+ history -> Not (earlier = []) -> clause earlier
-
 /-- One step of an execution, the invariant holding before it. -/
-private structure Ctx (nodes : List NodeID) (after before : Model.State)
+private structure Ctx (after before : Model.State)
     (rest : History) where
-  exec : Exec nodes (after :: before :: rest)
   tr : LocalTransition before after
-  good : Good (before :: rest)
+  inv : Inv (before :: rest)
 
 end Consensus.Proofs.Safety
 
@@ -1296,8 +1289,7 @@ open CCF
 open Model.Node
 open Consensus.Proofs.Ledger
 variable [Config.InitialConfiguration]
-variable {nodes : List NodeID} {after before : Model.State}
-  {rest : History} (c : Ctx nodes after before rest)
+variable {after before : Model.State} {rest : History} (c : Ctx after before rest)
 include c
 
 private abbrev actor : NodeID := c.tr.actor
@@ -5781,83 +5773,15 @@ private theorem inv_initial : Inv [initial] := by
     intro n k l i e
     exact (not_elected_single (((logFacts_correct [initial]).elected ..).1 e)).elim
   · exact copyLogs_cons (fun _ _ h => False.elim h) rooted terms sorted anchor
+  · intro s mem
+    obtain rfl : initial = s := Option.some.inj mem
+    exact initialized.2.2.1
+  · intro n st mem
+    have eq : st = Model.initialNodeState INITIAL_CONFIGURATION n := initialized.2.2.2.2 _ mem
+    rw [eq]
+    exact Direct.commitFrontier_invariant.initial n
 
 end Initial
-end Consensus.Proofs.Safety
-
-namespace Consensus.Proofs.Safety
-
-set_option linter.unusedSectionVars false
-open CCF
-open Model.Node
-open Consensus.Proofs.Ledger
-variable [Config.InitialConfiguration]
-section Everywhere
-variable {clause : History -> Prop} {history : History}
-
-private theorem Everywhere.cons {current : Model.State}
-    (old : Everywhere clause history) (now : clause (current :: history))
-    : Everywhere clause (current :: history) := by
-  intro earlier suffix nonempty
-  split_rel mp := (rcases List.suffix_cons_iff.mp suffix with same | inner) with
-  | inl =>
-    subst same
-    exact now
-  | inr => exact old earlier inner nonempty
-
-private theorem Everywhere.suffix (all : Everywhere clause history) {earlier : History}
-    (suffix : earlier <:+ history)
-    : Everywhere clause earlier :=
-  fun inner within nonempty => all inner (within.trans suffix) nonempty
-
-private theorem Good.everywhere (good : Good history)
-    (project : forall {h}, Inv h -> clause h)
-    : Everywhere clause history :=
-  fun earlier suffix nonempty => project (good earlier suffix nonempty)
-
-end Everywhere
-end Consensus.Proofs.Safety
-
-namespace Consensus.Proofs.Safety
-
-set_option linter.unusedSectionVars false
-open CCF
-open Model.Node
-open Consensus.Proofs.Ledger
-variable [Config.InitialConfiguration]
-section Exec
-variable {nodes : List NodeID}
-
-private theorem Now.nonempty {history : History} {node : NodeID}
-    {state : NodeState} (now : Now history node state)
-    : exists current rest, history = current :: rest := by
-  split_rel history := (cases history) with
-  | nil => exact absurd now id
-  | cons =>
-    rename_i current rest
-    exact ⟨current, rest, rfl⟩
-
-private theorem now_unique {history : History} (exec : Exec nodes history) {node : NodeID}
-    {first second : NodeState} (left : Now history node first)
-    (right : Now history node second)
-    : first = second := by
-  obtain ⟨current, rest, rfl⟩ := left.nonempty
-  exact state_unique (exec.keys List.mem_cons_self) left right
-
-private theorem Seen.frontier {history : History} (exec : Exec nodes history)
-    {node : NodeID} {state : NodeState} (seen : Seen history node state)
-    : Direct.CommitFrontier state := by
-  obtain ⟨current, member, mem⟩ := seen
-  obtain ⟨front, back, split⟩ := List.append_of_mem member
-  have tail : Exec nodes (current :: back) := exec.suffix ⟨front, split.symm⟩ (by simp)
-  exact Direct.commitFrontier_invariant.reachable tail.reachable node state mem
-
-private theorem Seen.commit_le {history : History} (exec : Exec nodes history)
-    {node : NodeID} {state : NodeState} (seen : Seen history node state)
-    : state.commitIndex <= state.log.length :=
-  (seen.frontier exec).1
-
-end Exec
 end Consensus.Proofs.Safety
 
 namespace Consensus.Proofs.Safety
@@ -6109,21 +6033,14 @@ open CCF
 open Model.Node
 open Consensus.Proofs.Ledger
 variable [Config.InitialConfiguration]
-variable {nodes : List NodeID} {after before : Model.State}
-  {rest : History} (c : Ctx nodes after before rest)
+variable {after before : Model.State} {rest : History} (c : Ctx after before rest)
 include c
 
 private theorem sum : Summary c.actor c.pre c.event c.post c.sent := c.tr.summary
 
-private theorem prior : Exec nodes (before :: rest) :=
-  c.exec.suffix (List.suffix_cons _ _) (List.cons_ne_nil _ _)
-
-private theorem all {clause : History -> Prop} (project : forall {h}, Inv h -> clause h)
-    : Everywhere clause (before :: rest) :=
-  c.good.everywhere project
-
-private theorem inv : Inv (before :: rest) :=
-  c.good _ (List.suffix_refl _) (List.cons_ne_nil _ _)
+private theorem keys_after : (after.nodes.map Prod.fst).Nodup := by
+  rw [c.tr.nodesEq, Concrete.replaceNode_keys]
+  exact c.inv.distinct before rfl
 
 private theorem suffix_tail : before :: rest <:+ after :: before :: rest :=
   List.suffix_cons _ _
@@ -6134,12 +6051,12 @@ private theorem post_now : Now (after :: before :: rest) c.actor c.post := c.tr.
 
 private theorem now_pre {state : NodeState} (now : Now (before :: rest) c.actor state)
     : state = c.pre :=
-  now_unique c.prior now c.pre_now
+  state_unique (c.inv.distinct before rfl) now c.pre_now
 
 private theorem now_post {state : NodeState}
     (now : Now (after :: before :: rest) c.actor state)
     : state = c.post :=
-  now_unique c.exec now c.post_now
+  state_unique c.keys_after now c.post_now
 
 private theorem now_after {node : NodeID} {state : NodeState}
     (now : Now (after :: before :: rest) node state)
@@ -6165,7 +6082,7 @@ private theorem post_seen : Seen (after :: before :: rest) c.actor c.post :=
   c.post_now.seen
 
 private theorem frontier_pre : c.pre.commitIndex <= c.pre.log.length :=
-  c.pre_seen.commit_le c.prior
+  (c.inv.frontier _ _ c.pre_now).1
 
 private theorem received {source : NodeID} {message : Message}
     (eq : c.event = .receive source message)
@@ -6295,7 +6212,7 @@ private theorem electStep {node : NodeID} {term commit : Nat} {log : List Entry}
     subst this
     exact ⟨rfl, logEq, commitEq, termCase, leaderTerm, leaderRole, winning, three⟩
   | inr =>
-    have := now_unique c.prior old candidateMem
+    have := state_unique (c.inv.distinct before rfl) old candidateMem
     subst this
     split_rel termCase := (rcases termCase with lt | ⟨_, role⟩) with
     | inl => exact absurd leaderTerm (Nat.ne_of_lt lt)
@@ -6381,8 +6298,7 @@ open CCF
 open Model.Node
 open Consensus.Proofs.Ledger
 variable [Config.InitialConfiguration]
-variable {nodes : List NodeID} {after before : Model.State}
-  {rest : History} (c : Ctx nodes after before rest)
+variable {after before : Model.State} {rest : History} (c : Ctx after before rest)
 include c
 
 private theorem pre_sorted
@@ -6583,7 +6499,7 @@ private theorem ballot_step {before after : Model.State} {g : VoteFacts.Ghost}
   | inr => exact ⟨st, old, Nat.le_refl _, fun _ _ h => h⟩
 
 private theorem ballots : Ballots (after :: before :: rest) :=
-  ballot_step c.tr (c.exec.keys List.mem_cons_self) c.inv.ballots
+  ballot_step c.tr c.keys_after c.inv.ballots
 
 private theorem rankAtGrant {v n t r k l i}
     (fresh : LogFacts.GrantAt before after v n t r) (obs : (logFacts (before :: rest)).seen v k l)
@@ -7155,8 +7071,7 @@ open Consensus.Proofs.Ledger
 open Consensus.Proofs.Config
 open Model (BOOTSTRAP_TERM)
 variable [Config.InitialConfiguration]
-variable {nodes : List NodeID} {after before : Model.State}
-  {rest : History} (c : Ctx nodes after before rest)
+variable {after before : Model.State} {rest : History} (c : Ctx after before rest)
 include c
 
 omit c in
@@ -7402,7 +7317,7 @@ private theorem canon_mono : CanonMono (after :: before :: rest) := by
     intro node' state' ⟨now', _, _, led'⟩
     have := safety node' node _ led' led
     subst this
-    rw [now_unique c.exec now' now]
+    rw [state_unique c.keys_after now' now]
     exact List.prefix_refl _
   split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨different, old⟩) with
   | inl =>
@@ -7634,8 +7549,7 @@ open CCF
 open Model.Node
 open Consensus.Proofs.Ledger
 variable [Config.InitialConfiguration]
-variable {nodes : List NodeID} {after before : Model.State}
-  {rest : History} (c : Ctx nodes after before rest)
+variable {after before : Model.State} {rest : History} (c : Ctx after before rest)
 include c
 
 private theorem pre_led (leader : c.pre.role = .primary)
@@ -7938,7 +7852,7 @@ private theorem commit_backed : CommitBacked (after :: before :: rest) := by
           | inl => exact Nat.le_trans (Nat.le_of_eq zero) (Nat.zero_le _)
           | inr =>
             exact signatureIndex_le_maxCommittableIndex
-              ((c.pre_seen.frontier c.prior).2 positive)
+              ((c.inv.frontier _ _ c.pre_now).2 positive)
         have agree : c.post.log.take c.pre.commitIndex = c.pre.log.take c.pre.commitIndex := by
           rw [take_eq_of_prefix winning
               (by rw [List.length_take]; exact Nat.le_min.mpr ⟨committable, c.frontier_pre⟩),
@@ -8334,6 +8248,14 @@ private theorem inv_step : Inv (after :: before :: rest) :=
     commitChains := commitChains_step c.inv.commitChains c.rooted c.sorted
       (fun n k l i e => Nat.le_trans (by decide : 2 ≤ 3) (c.electionCerts n k l i e).above)
     copyLogs := copyLogs_cons c.inv.copyLogs c.rooted c.terms c.sorted c.anchor
+    distinct := by
+      intro s mem
+      exact (Option.some.inj mem : after = s) ▸ c.keys_after
+    frontier := by
+      intro n st mem
+      rcases c.now_after mem with ⟨rfl, rfl⟩ | ⟨_, old⟩
+      · exact Direct.commitFrontier_invariant.step _ _ _ _ _ (c.inv.frontier _ _ c.pre_now) c.tr.ran
+      · exact c.inv.frontier n st old
   }
 
 end Consensus.Proofs.Safety.Ctx
@@ -8346,50 +8268,34 @@ open Model.Node
 open Consensus.Proofs.Ledger
 variable [Config.InitialConfiguration]
 
-/-- The invariant holds at every point of every execution. -/
-private theorem good_of_exec {nodes : List NodeID} {history : History}
+/-- Only the immediate induction hypothesis is passed to the step. -/
+private theorem inv_of_exec {nodes : List NodeID} {history : History}
     (exec : Exec nodes history)
-    : Good history := by
+    : Inv history := by
   split_rel exec := (induction exec) with
   | initial =>
       rename_i initialized
-      intro earlier suffix nonempty
-      split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp suffix with same | inner) with
-      | inl =>
-        subst same
-        exact inv_initial initialized
-      | inr => exact (nonempty (List.eq_nil_of_suffix_nil inner)).elim
+      exact inv_initial initialized
   | step =>
       rename_i prior stepped ih
       obtain ⟨transition⟩ := LocalTransition.ofStep stepped
-      have c : Ctx nodes _ _ _ := ⟨.step prior stepped, transition, ih⟩
-      intro earlier suffix nonempty
-      split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp suffix with same | inner) with
-      | inl =>
-        subst same
-        exact c.inv_step
-      | inr => exact ih earlier inner nonempty
+      exact (Ctx.mk transition ih).inv_step
 
 /-- Every reachable state is the head of a history satisfying the invariant. -/
 private theorem inv_of_reachable {nodes : List NodeID} {state : Model.State}
     (reachable
       : (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes).Reachable state)
-    : exists history, Exec nodes (state :: history) /\ Inv (state :: history) := by
+    : exists history, Inv (state :: history) := by
   obtain ⟨history, exec⟩ := exec_of_reachable reachable
-  exact ⟨history, exec, good_of_exec exec _ (List.suffix_refl _) (List.cons_ne_nil _ _)⟩
+  exact ⟨history, inv_of_exec exec⟩
 
 /-- The committed logs of two nodes in one state are comparable. -/
-private theorem committed_logs_comparable {nodes : List NodeID} {history : History}
-    (exec : Exec nodes history) {left right : NodeID}
+private theorem committed_logs_comparable {history : History}
+    (inv : Inv history) {left right : NodeID}
     {leftState rightState : NodeState} (leftNow : Now history left leftState)
     (rightNow : Now history right rightState)
     : leftState.committedLog <+: rightState.committedLog
       \/ rightState.committedLog <+: leftState.committedLog := by
-  have good := good_of_exec exec
-  have nonempty : Not (history = []) := by
-    rintro rfl
-    exact leftNow
-  have inv := good _ (List.suffix_refl _) nonempty
   unfold NodeState.committedLog
   split_rel left_backed :=
       (obtain ⟨_, zero | ⟨_, part, committed, _, within⟩⟩ :=
@@ -8430,7 +8336,7 @@ private theorem primary_eq_of_reachable [Config.InitialConfiguration]
     (leftLeader : leftState.role = .primary) (rightLeader : rightState.role = .primary)
     (sameTerm : leftState.currentTerm = rightState.currentTerm)
     : left = right := by
-  obtain ⟨history, _, inv⟩ := Safety.inv_of_reachable reachable
+  obtain ⟨history, inv⟩ := Safety.inv_of_reachable reachable
   have leftLed := inv.leader_led left leftState leftMember leftLeader
   rw [sameTerm] at leftLed
   exact inv.election_safety left right _ leftLed
@@ -8480,10 +8386,10 @@ private theorem committed_logs_prefix_of_le [Config.InitialConfiguration]
   obtain ⟨carried, carriedMember, grown⟩ :=
     Direct.committed_log_later earlierFound earlierMember (laterIndex - earlierIndex)
       later (by rwa [Nat.add_sub_cancel' ordered])
-  obtain ⟨history, exec⟩ :=
-    Safety.exec_of_reachable (trace.reachable (CCF.Execution.Trace.stateAt_mem laterFound))
+  obtain ⟨history, inv⟩ :=
+    Safety.inv_of_reachable (trace.reachable (CCF.Execution.Trace.stateAt_mem laterFound))
   split_rel committed_logs_comparable :=
-      (rcases Safety.committed_logs_comparable exec carriedMember laterMember with
+      (rcases Safety.committed_logs_comparable inv carriedMember laterMember with
         carriedFirst | laterFirst) with
   | inl => exact Or.inl (grown.trans carriedFirst)
   | inr => exact List.prefix_or_prefix_of_prefix grown laterFirst

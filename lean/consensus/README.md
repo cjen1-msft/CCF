@@ -93,9 +93,16 @@ step cannot turn that request into a grant: the signature outranks the request,
 and no leader in the allowed term range can explain losing it. This replaces
 the comparison of when the blocking commit and individual grants occurred.
 
-The outer invariant still uses `Good history`, notably to recover log and commit
-facts about the sender of a queued AppendEntries request. These ghosts are
-proof data; they do not establish that the full coverage target is finite.
+`Ctx.inv_step` now takes one local transition and the invariant immediately
+before it, not an execution or an invariant for every past state. A queued
+AppendEntries request carries backing for the commit index it advertises.
+Delivery and snapshot installation can copy a leader log using its retained
+prefix evidence, without looking up the state that supplied the log.
+
+The invariant still has a history parameter: some clauses use the historical
+definitions of observations, elections and commits rather than the ghost
+relations directly. A one-step induction hypothesis does not by itself
+remove that parameter or make the full coverage target finite.
 
 ## Trace replay
 
