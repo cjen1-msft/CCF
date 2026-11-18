@@ -1,6 +1,7 @@
 module
 
 public import Consensus.Model
+import Consensus.Proofs.VoteFacts
 
 import all Init.Control.State
 
@@ -796,13 +797,30 @@ private def TermMono (history : History) : Prop :=
     -> Seen history node earlier
     -> earlier.currentTerm <= state.currentTerm
 
-private def VoteRecord (history : History) : Prop :=
-  forall node state earlier candidate,
-    Now history node state
-    -> Seen history node earlier
-    -> earlier.votedFor = some candidate
-    -> earlier.currentTerm < state.currentTerm
-        \/ (earlier.currentTerm = state.currentTerm /\ state.votedFor = some candidate)
+private def voteFacts : History → VoteFacts.Ghost
+  | [] => []
+  | s :: h => VoteFacts.advance (voteFacts h) s
+
+private def Ballots : History → Prop
+  | [] => True
+  | s :: h => VoteFacts.Inv s (voteFacts (s :: h))
+
+private theorem seen_stamp {h : History} {n : NodeID} {st : NodeState}
+    (seen : Seen h n st) : VoteFacts.stamp n st ∈ voteFacts h := by
+  induction h with
+  | nil => simp [Seen] at seen
+  | cons s h ih =>
+    obtain ⟨p, mem, obs⟩ := seen
+    rcases List.mem_cons.1 mem with rfl | old
+    · exact VoteFacts.mem_advance.2 (.inl ⟨n, st, obs, rfl⟩)
+    · exact VoteFacts.mem_advance.2 (.inr (ih ⟨p, old, obs⟩))
+
+private theorem Ballots.term_mono {h : History} (inv : Ballots h) : TermMono h := by
+  cases h with
+  | nil => exact fun _ _ _ now => now.elim
+  | cons s h =>
+    exact fun n st earlier now seen =>
+      inv.bounds (VoteFacts.stamp n earlier) (seen_stamp seen) st now
 
 private def LedCur (history : History) : Prop :=
   forall node state term,
@@ -930,8 +948,7 @@ private structure Inv (history : History) : Prop where
   terms : Terms history
   sorted : Sorted history
   active : Active history
-  term_mono : TermMono history
-  vote_record : VoteRecord history
+  ballots : Ballots history
   led_cur : LedCur history
   leader_led : LeaderLed history
   candidate : Candidate history
@@ -947,6 +964,8 @@ private structure Inv (history : History) : Prop where
   message_terms : MessageTerms history
   rooted : RootedLogs history
   leader_logs : LeaderLogs history
+
+private theorem Inv.term_mono {h : History} (i : Inv h) : TermMono h := i.ballots.term_mono
 
 /-- The invariant holds at every point of the history. -/
 private def Good (history : History) : Prop :=
@@ -5370,12 +5389,7 @@ private theorem inv_initial : Inv [initial] := by
       split_rel member := (by_cases member : node ∈ INITIAL_CONFIGURATION) with
       | pos => simp_all [BOOTSTRAP_TERM]
       | neg => simp_all
-  · intro node state earlier now seen
-    rw [stateOf now, initial_seen initialized seen]
-    exact Nat.le_refl _
-  · intro node state earlier candidate now seen voted
-    rw [initial_seen initialized seen] at voted
-    simp [initialLocal] at voted
+  · exact VoteFacts.initial initial fun _ _ _ => state_unique initialized.2.2.1
   · intro node state term now led
     obtain ⟨rfl, rfl⟩ := led_single led
     rw [stateOf now]
@@ -5701,63 +5715,12 @@ private theorem log_matching {history : History} (anchor : Everywhere Anchor his
     (canon_chain mono (leftCanon.mono leftSuffix) (rightCanon.mono rightSuffix))
     leftLength rightLength
 
-/-- A voter grants at most one candidate per term. -/
-private theorem vote_unique {nodes : List NodeID} {history : History}
-    (exec : Exec nodes history) (record : Everywhere VoteRecord history)
-    {voter first second : NodeID} {term : Nat}
-    {firstRequest secondRequest : RequestVoteRequest}
-    (left : Granted history voter first term firstRequest)
-    (right : Granted history voter second term secondRequest)
-    : first = second := by
-  have ordered : forall {early late : NodeID} {earlyRequest lateRequest : RequestVoteRequest},
-      Granted history voter early term earlyRequest
-      -> Granted history voter late term lateRequest
-      -> (forall a b r a' b' r', a :: b :: r <:+ history -> a' :: b' :: r' <:+ history
-          -> GrantStep a b voter early term earlyRequest
-          -> GrantStep a' b' voter late term lateRequest
-          -> a :: b :: r <:+ a' :: b' :: r' -> early = late) := by
-    intro early late _ _ _ _ a b r a' b' r' suffix suffix' step step' within
-    obtain ⟨granting, granted, grantingMem, grantedMem, _, grantedTerm, grantedVote, _⟩ := step
-    obtain ⟨granting', granted', grantingMem', grantedMem', grantingTerm', grantedTerm',
-      grantedVote', _⟩ := step'
-    split_rel mp := (rcases List.suffix_cons_iff.mp within with same | inner) with
-    | inl =>
-      cases same
-      have := state_unique (exec.keys (suffix'.subset List.mem_cons_self)) grantedMem
-        grantedMem'
-      subst this
-      rw [grantedVote] at grantedVote'
-      exact Option.some.inj grantedVote'
-    | inr =>
-      have tail : b' :: r' <:+ history := (List.suffix_cons _ _).trans suffix'
-      have seen : Seen (b' :: r') voter granted := ⟨a, inner.subset List.mem_cons_self, grantedMem⟩
-      split_rel record :=
-          (rcases record _ tail (List.cons_ne_nil _ _) voter granting' granted early grantingMem'
-            seen grantedVote with lt | ⟨termEq, keep⟩) with
-      | inl =>
-        exact (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt
-          (Nat.le_trans grantingTerm' (Nat.le_of_eq grantedTerm.symm)))).elim
-      | inr =>
-        have seen' : Seen (a' :: b' :: r') voter granting' :=
-          ⟨b', List.mem_cons_of_mem _ List.mem_cons_self, grantingMem'⟩
-        split_rel record :=
-            (rcases record _ suffix' (List.cons_ne_nil _ _) voter granted' granting' early grantedMem'
-              seen' keep with lt | ⟨_, final⟩) with
-        | inl =>
-          exact (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt
-            (Nat.le_of_eq (grantedTerm'.trans (grantedTerm.symm.trans termEq))))).elim
-        | inr =>
-          rw [final] at grantedVote'
-          exact Option.some.inj grantedVote'
-  obtain ⟨a, b, r, suffix, step, seen⟩ := left
-  obtain ⟨a', b', r', suffix', step', seen'⟩ := right
-  split_rel suffix_comparable := (rcases suffix_comparable suffix suffix' with within | within) with
-  | inl =>
-    exact ordered ⟨a, b, r, suffix, step, seen⟩ ⟨a', b', r', suffix', step', seen'⟩ a b r a' b'
-      r' suffix suffix' step step' within
-  | inr =>
-    exact (ordered ⟨a', b', r', suffix', step', seen'⟩ ⟨a, b, r, suffix, step, seen⟩ a' b' r' a
-      b r suffix' suffix step' step within).symm
+private theorem Granted.stamp {h : History} {voter candidate : NodeID} {term : Nat}
+    {request : RequestVoteRequest} (granted : Granted h voter candidate term request) :
+    ⟨voter, term, some candidate⟩ ∈ voteFacts h := by
+  obtain ⟨a, _, _, suffix, ⟨_, st, _, mem, _, termEq, vote, _⟩, _⟩ := granted
+  have seen : Seen h voter st := ⟨a, suffix.subset List.mem_cons_self, mem⟩
+  simpa [VoteFacts.stamp, termEq, vote] using seen_stamp seen
 
 /-- The commit step behind a committed part, with its backing. -/
 private theorem Committed.shape {history : History} {term : Nat}
@@ -6461,45 +6424,19 @@ private theorem active : Active (after :: before :: rest) := by
     exact c.post_two (Or.inl role)
   | inr => exact c.inv.active node state old role
 
-private theorem term_mono : TermMono (after :: before :: rest) := by
-  intro node state earlier now seen
-  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨different, old⟩) with
-  | inl =>
-    subst nodeEq stateEq
-    split_rel seen_after := (rcases c.seen_after seen with seen | ⟨same, stateEq⟩) with
-    | inl => exact Nat.le_trans (c.inv.term_mono c.actor c.pre earlier c.pre_now seen) c.term_le
-    | inr =>
-      subst stateEq
-      exact Nat.le.refl
-  | inr =>
-    split_rel seen_after := (rcases c.seen_after seen with seen | ⟨same, other⟩) with
-    | inl => exact c.inv.term_mono node state earlier old seen
-    | inr => exact absurd same different
+omit c in
+private theorem ballot_step {before after : Model.State} {g : VoteFacts.Ghost}
+    (tr : LocalTransition before after) (distinct : (after.nodes.map Prod.fst).Nodup)
+    (prior : VoteFacts.Inv before g) : VoteFacts.Inv after (VoteFacts.advance g after) := by
+  apply VoteFacts.preserve prior (fun _ _ _ => state_unique distinct)
+  intro n st now
+  split_rel mem_after := (rcases tr.mem_after now with ⟨rfl, rfl⟩ | ⟨_, old⟩) with
+  | inl => exact ⟨tr.pre, tr.pre_mem, Summary.term_le tr.summary,
+      fun same => Summary.vote_keep tr.summary same.symm⟩
+  | inr => exact ⟨st, old, Nat.le_refl _, fun _ _ h => h⟩
 
-private theorem vote_record : VoteRecord (after :: before :: rest) := by
-  intro node state earlier candidate now seen voted
-  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨different, old⟩) with
-  | inl =>
-    subst nodeEq stateEq
-    split_rel seen_after := (rcases c.seen_after seen with seen | ⟨actorEq, earlierEq⟩) with
-    | inl =>
-      have le := c.term_le
-      split_rel vote_record :=
-          (rcases c.inv.vote_record c.actor c.pre earlier candidate c.pre_now seen voted
-            with lt | ⟨termEq, keep⟩) with
-      | inl => exact Or.inl (Nat.lt_of_lt_of_le lt le)
-      | inr =>
-        split_rel lt_or_eq_of_le := (rcases Nat.lt_or_eq_of_le le with lt | same) with
-        | inl => exact Or.inl (Nat.lt_of_le_of_lt (Nat.le_of_eq termEq) lt)
-        | inr =>
-          exact Or.inr ⟨termEq.trans same, Summary.vote_keep c.sum same.symm candidate keep⟩
-    | inr =>
-      subst earlierEq
-      exact Or.inr ⟨rfl, voted⟩
-  | inr =>
-    split_rel seen_after := (rcases c.seen_after seen with seen | ⟨same, _⟩) with
-    | inl => exact c.inv.vote_record node state earlier candidate old seen voted
-    | inr => exact absurd same different
+private theorem ballots : Ballots (after :: before :: rest) :=
+  ballot_step c.tr (c.exec.keys List.mem_cons_self) c.inv.ballots
 
 /-- The actor's own vote in the step. -/
 private theorem self_granted {term : Nat} (le : c.pre.currentTerm <= term)
@@ -7205,16 +7142,13 @@ variable {nodes : List NodeID} {after before : Model.State}
 include c
 
 private theorem termMonos : Everywhere TermMono (after :: before :: rest) :=
-  (c.all Inv.term_mono).cons c.term_mono
+  (c.all Inv.term_mono).cons c.ballots.term_mono
 
 private theorem sortedAll : Everywhere Sorted (after :: before :: rest) :=
   (c.all Inv.sorted).cons c.sorted
 
 private theorem rootedAll : Everywhere RootedLogs (after :: before :: rest) :=
   (c.all Inv.rooted).cons c.rooted
-
-private theorem votes : Everywhere VoteRecord (after :: before :: rest) :=
-  (c.all Inv.vote_record).cons c.vote_record
 
 private theorem old_step_in_new {node : NodeID} {later commit : Nat} {log : List Entry}
     (elect : ElectStep after before rest node later log commit)
@@ -7324,8 +7258,8 @@ private theorem new_old_unique {node other : NodeID} {term commit : Nat}
       (candidateLog' ▸ c.all Inv.rooted _ ((List.suffix_cons _ _).trans suffix)
         (List.cons_ne_nil _ _) other candidate' candidateMem')
       agree le le' quorum quorum'
-    exact vote_unique c.exec c.votes (granted voter mem)
-      ((granted' voter mem').mono (suffix.trans c.suffix_tail))
+    exact c.ballots.unique voter term node other (granted voter mem).stamp
+      ((granted' voter mem').mono (suffix.trans c.suffix_tail)).stamp
 
 private theorem election_safety : ElectionSafety (after :: before :: rest) := by
   intro node other term left right
@@ -8398,8 +8332,7 @@ private theorem inv_step : Inv (after :: before :: rest) :=
     terms := c.terms
     sorted := c.sorted
     active := c.active
-    term_mono := c.term_mono
-    vote_record := c.vote_record
+    ballots := c.ballots
     led_cur := c.led_cur
     leader_led := c.leader_led
     candidate := c.candidate
