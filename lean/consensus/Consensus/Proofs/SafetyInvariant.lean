@@ -2,6 +2,7 @@ module
 
 public import Consensus.Model
 import Consensus.Proofs.VoteFacts
+import Consensus.Proofs.LogFacts
 
 import all Init.Control.State
 
@@ -718,6 +719,103 @@ private inductive Committed : History -> Nat -> List Entry -> Prop where
     {part : List Entry} (old : Committed rest term part)
     : Committed (current :: rest) term part
 
+private def logFacts : History → LogFacts.Ghost
+  | [] => LogFacts.empty
+  | s :: h => LogFacts.advance INITIAL_PRIMARY (logFacts h) h.head? s
+
+private theorem logOrigin (h : History) : LogFacts.Origin (logFacts h) := by
+  induction h with
+  | nil => exact fun _ _ c => c.elim
+  | cons _ _ ih => exact LogFacts.origin_step ih
+
+private structure Represents (g : LogFacts.Ghost) (h : History) : Prop where
+  seen : ∀ n k l, g.seen n k l ↔ ∃ st, Seen h n st ∧ st.currentTerm = k ∧ st.log = l
+  grant : ∀ v c k r, g.grant v c k r ↔ Granted h v c k r
+  elected : ∀ n k l i, g.elected n k l i ↔ Elected h n k l i
+  canon : ∀ k l, g.canon k l ↔ Canon h k l
+  committed : ∀ k p, g.committed k p ↔ Committed h k p
+
+private theorem edge_cons (P : Model.State → Model.State → History → Prop) (s : Model.State)
+    (h : History) :
+    (∃ a b r, a :: b :: r <:+ s :: h ∧ P a b r) ↔
+      (∃ a b r, a :: b :: r <:+ h ∧ P a b r) ∨ ∃ b r, h = b :: r ∧ P s b r := by
+  constructor
+  · rintro ⟨a, b, r, suffix, p⟩
+    rcases List.suffix_cons_iff.1 suffix with eq | old
+    · cases eq; exact .inr ⟨_, _, rfl, p⟩
+    · exact .inl ⟨a, b, r, old, p⟩
+  · rintro (⟨a, b, r, old, p⟩ | ⟨b, r, rfl, p⟩)
+    · exact ⟨a, b, r, List.suffix_cons_iff.2 (.inr old), p⟩
+    · exact ⟨s, b, r, List.suffix_refl _, p⟩
+
+private theorem commit_cons {s : Model.State} {h : History} {k : Nat} {l : List Entry} :
+    Committed (s :: h) k l ↔ Committed h k l ∨ ∃ n st base i,
+      CommitStep (s :: h) n st k base i ∧ l = st.log.take i ∧
+      (base = 0 ∨ ∃ e p, Committed h e p ∧ e ≤ k ∧ st.log.take base <+: p) := by
+  constructor
+  · intro c
+    cases c with
+    | past old => exact .inl old
+    | fresh step => exact .inr ⟨_, _, _, _, step, rfl, .inl rfl⟩
+    | chained step back le sub => exact .inr ⟨_, _, _, _, step, rfl, .inr ⟨_, _, back, le, sub⟩⟩
+  · rintro (old | ⟨_, _, _, _, step, rfl, rfl | ⟨_, _, back, le, sub⟩⟩)
+    · exact .past old
+    · exact .fresh step
+    · exact .chained step back le sub
+
+private theorem logFacts_correct (h : History) : Represents (logFacts h) h := by
+  induction h with
+  | nil =>
+    have noC (k l) : ¬ Committed [] k l := by intro c; cases c
+    constructor <;> simp [logFacts, LogFacts.empty, Seen, Granted, Elected, Canon, CanonNow, Now, noC]
+  | cons s h ih =>
+    let g := logFacts h
+    let t := LogFacts.advance INITIAL_PRIMARY g h.head? s
+    change Represents t (s :: h)
+    have seen (n k l) : t.seen n k l ↔ ∃ st, Seen (s :: h) n st ∧ st.currentTerm = k ∧ st.log = l := by
+      change g.seen n k l ∨ _ ↔ _
+      rw [ih.seen]; simp only [Seen, List.mem_cons]; grind
+    have grant (v c k r) : t.grant v c k r ↔ Granted (s :: h) v c k r := by
+      change g.grant v c k r ∨ _ ↔ _
+      rw [ih.grant]
+      unfold Granted
+      rw [edge_cons]
+      apply or_congr_right
+      change (∃ p, h.head? = some p ∧ GrantStep s p v c k r ∧
+        (v = c ∨ ∃ l, g.seen c k l)) ↔ _
+      simp only [g, ih.seen]
+      cases h <;> simp [List.cons.injEq] <;> grind
+    have elected (n k l i) : t.elected n k l i ↔ Elected (s :: h) n k l i := by
+      change g.elected n k l i ∨ (∃ p, h.head? = some p ∧ LogFacts.ElectionAt p s t.grant n k l i) ↔ _
+      rw [ih.elected]
+      unfold Elected
+      rw [edge_cons]
+      apply or_congr_right
+      simp only [LogFacts.ElectionAt, grant, ElectStep]
+      cases h <;> simp [List.cons.injEq, LogFacts.requestAt, vals]
+      exact ⟨fun p => ⟨_, _, ⟨rfl, rfl⟩, p⟩, fun ⟨_, _, ⟨rfl, rfl⟩, p⟩ => p⟩
+    have now (n st k) : t.canonNow INITIAL_PRIMARY s n st k ↔ CanonNow (s :: h) n st k := by
+      simp only [LogFacts.Ghost.canonNow, LogFacts.Ghost.led, CanonNow, Led, Now, elected]
+    have canon (k l) : t.canon k l ↔ Canon (s :: h) k l := by
+      change g.canon k l ∨ (∃ n st, t.canonNow INITIAL_PRIMARY s n st k ∧ st.log = l) ↔ _
+      rw [ih.canon]; simp only [Canon, now, List.suffix_cons_iff]
+      grind
+    have commitAt (n st k base i) : t.commitAt INITIAL_PRIMARY s n st k base i ↔
+        CommitStep (s :: h) n st k base i := by
+      have acks (v : NodeID) : (∃ l, t.seen v k l ∧ st.log.take i <+: l) ↔
+          ∃ x, Seen (s :: h) v x ∧ x.currentTerm = k ∧ st.log.take i <+: x.log := by
+        constructor
+        · rintro ⟨l, obs, sub⟩
+          obtain ⟨x, mem, term, rfl⟩ := (seen _ _ _).1 obs
+          exact ⟨x, mem, term, sub⟩
+        · rintro ⟨x, mem, term, sub⟩
+          exact ⟨x.log, (seen ..).2 ⟨x, mem, term, rfl⟩, sub⟩
+      simp only [LogFacts.Ghost.commitAt, CommitStep, now, acks]
+    refine ⟨seen, grant, elected, canon, fun k l => ?_⟩
+    change g.committed k l ∨ (∃ n st b i, t.commitAt INITIAL_PRIMARY s n st k b i ∧
+      l = st.log.take i ∧ (b = 0 ∨ ∃ e p, g.committed e p ∧ e ≤ k ∧ st.log.take b <+: p)) ↔ _
+    simp only [commit_cons (s := s) (h := h), g, ih.committed, commitAt]
+
 /-- The first `commit` entries of `log` lie within a part committed by `term`. -/
 private def Backed (history : History) (log : List Entry) (commit term : Nat) : Prop :=
   commit = 0
@@ -955,6 +1053,7 @@ private structure Inv (history : History) : Prop where
   elect_backed : ElectBacked history
   election_safety : ElectionSafety history
   canon_mono : CanonMono history
+  chains : LogFacts.Chain (logFacts history)
   anchor : Anchor history
   completeness : Completeness history
   commit_backed : CommitBacked history
@@ -5429,6 +5528,11 @@ private theorem inv_initial : Inv [initial] := by
     refine ⟨fun log canon => ?_, fun log commit elected => absurd elected not_elected_single⟩
     rw [(initial_canon initialized canon).2, stateOf now]
     exact List.prefix_refl _
+  · intro k a b ca cb
+    have rep := logFacts_correct [initial]
+    rw [(initial_canon initialized ((rep.canon ..).1 ca)).2,
+      (initial_canon initialized ((rep.canon ..).1 cb)).2]
+    exact Or.inl (List.prefix_refl _)
   · intro node state index now positive bound
     rw [stateOf now] at bound ⊢
     split_rel isLeader := (by_cases isLeader : node = INITIAL_PRIMARY) with
@@ -5660,41 +5764,16 @@ private theorem Led.elected {history : History} {node : NodeID} {term : Nat}
   | inr => exact elected
 
 /-- Logs of leaders of one term form a chain. -/
-private theorem canon_chain {history : History} (mono : Everywhere CanonMono history)
+private theorem canon_chain {history : History} (chain : LogFacts.Chain (logFacts history))
     {term : Nat} {first second : List Entry} (left : Canon history term first)
     (right : Canon history term second)
     : first <+: second \/ second <+: first := by
-  obtain ⟨early, earlySuffix, earlyNode, earlyState,
-    ⟨earlyNow, earlyTerm, earlyRole, earlyLed⟩, rfl⟩ := left
-  obtain ⟨late, lateSuffix, lateNode, lateState,
-    ⟨lateNow, lateTerm, lateRole, lateLed⟩, rfl⟩ := right
-  have contains : forall {inner outer : History} {innerNode outerNode : NodeID}
-      {innerState outerState : NodeState},
-      inner <:+ outer -> outer <:+ history
-      -> Now inner innerNode innerState -> innerState.currentTerm = term
-      -> Not (innerState.role = .candidate) -> Led inner innerNode term
-      -> Now outer outerNode outerState -> outerState.currentTerm = term
-      -> Not (outerState.role = .candidate) -> Led outer outerNode term
-      -> innerState.log <+: outerState.log := by
-    intro inner outer innerNode outerNode innerState outerState within outerSuffix
-      innerNow innerTerm innerRole innerLed outerNow outerTerm outerRole outerLed
-    obtain ⟨current, rest, rfl⟩ := outerNow.nonempty
-    have clause := mono _ outerSuffix (List.cons_ne_nil _ _)
-    refine (clause outerNode outerState outerNow outerRole (outerTerm ▸ outerLed)).1 _ ?_
-    rw [outerTerm]
-    exact ⟨inner, within, innerNode, innerState, ⟨innerNow, innerTerm, innerRole, innerLed⟩,
-      rfl⟩
-  split_rel suffix_comparable := (rcases suffix_comparable earlySuffix lateSuffix with within | within) with
-  | inl =>
-    exact Or.inl (contains within lateSuffix earlyNow earlyTerm earlyRole earlyLed lateNow
-      lateTerm lateRole lateLed)
-  | inr =>
-    exact Or.inr (contains within earlySuffix lateNow lateTerm lateRole lateLed earlyNow
-      earlyTerm earlyRole earlyLed)
+  have rep := logFacts_correct history
+  exact chain _ _ _ ((rep.canon ..).2 left) ((rep.canon ..).2 right)
 
 /-- Two seen logs agreeing on the term at `index` agree up to `index`. -/
 private theorem log_matching {history : History} (anchor : Everywhere Anchor history)
-    (mono : Everywhere CanonMono history) {node other : NodeID}
+    (chain : LogFacts.Chain (logFacts history)) {node other : NodeID}
     {first second : NodeState} (left : Seen history node first)
     (right : Seen history other second) {index : Nat} (positive : 0 < index)
     (leftBound : index <= first.log.length) (rightBound : index <= second.log.length)
@@ -5712,7 +5791,7 @@ private theorem log_matching {history : History} (anchor : Everywhere Anchor his
   rw [same] at leftCanon
   rw [leftTake, rightTake]
   exact take_eq_take_of_comparable
-    (canon_chain mono (leftCanon.mono leftSuffix) (rightCanon.mono rightSuffix))
+    (canon_chain chain (leftCanon.mono leftSuffix) (rightCanon.mono rightSuffix))
     leftLength rightLength
 
 private theorem Granted.stamp {h : History} {voter candidate : NodeID} {term : Nat}
@@ -5778,34 +5857,15 @@ private theorem committed_in_canon {history : History} (complete : Completeness 
 /-- Committed parts are comparable. -/
 private theorem committed_comparable {history : History}
     (complete : Completeness history) (mono : Everywhere CanonMono history)
+    (chain : LogFacts.Chain (logFacts history))
     {first second : Nat} {left right : List Entry}
     (leftCommitted : Committed history first left)
     (rightCommitted : Committed history second right)
     : left <+: right \/ right <+: left := by
-  have inCanon : forall {term term' : Nat} {part part' : List Entry},
-      Committed history term part -> Committed history term' part' -> term <= term'
-      -> part <+: part' \/ part' <+: part := by
-    intro term term' part part' committed committed' le
-    obtain ⟨current, rest, leader, state, _, index, suffix, ⟨⟨now, termEq, role, led⟩, _⟩,
-      rfl, _⟩ := committed'.shape
-    have canon' : Canon history term' state.log :=
-      ⟨_, suffix, leader, state, ⟨now, termEq, role, led⟩, rfl⟩
-    split_rel eq_or_lt_of_le := (rcases Nat.eq_or_lt_of_le le with same | lt) with
-    | inl =>
-      subst same
-      obtain ⟨current₀, rest₀, leader₀, state₀, _, index₀, suffix₀,
-        ⟨⟨now₀, termEq₀, role₀, led₀⟩, _⟩, rfl, _⟩ := committed.shape
-      have canon : Canon history term state₀.log :=
-        ⟨_, suffix₀, leader₀, state₀, ⟨now₀, termEq₀, role₀, led₀⟩, rfl⟩
-      split_rel canon_chain := (rcases canon_chain mono canon canon' with sub | sub) with
-      | inl => exact comparable_of_prefix ((List.take_prefix _ _).trans sub) (List.take_prefix _ _)
-      | inr => exact comparable_of_prefix (List.take_prefix _ _) ((List.take_prefix _ _).trans sub)
-    | inr =>
-      exact comparable_of_prefix (committed_in_canon complete mono committed canon' lt)
-        (List.take_prefix _ _)
-  split_rel le_total := (rcases Nat.le_total first second with le | le) with
-  | inl => exact inCanon leftCommitted rightCommitted le
-  | inr => exact (inCanon rightCommitted leftCommitted le).symm
+  have rep := logFacts_correct history
+  apply LogFacts.comparable (logFacts history) (logOrigin history) chain _
+    ((rep.committed ..).2 leftCommitted) ((rep.committed ..).2 rightCommitted)
+  · exact fun _ _ _ _ p l => committed_in_canon complete mono ((rep.committed ..).1 p) ((rep.canon ..).1 l)
 
 /--
 A committed prefix is committed no later than `bound`, or a commit step of a
@@ -6264,7 +6324,7 @@ private theorem accept_shape {source : NodeID} {request : AppendEntriesRequest}
   have match' : forall j, 0 < j -> j <= c.pre.log.length -> j <= sender.log.length
       -> termAt c.pre.log j = termAt sender.log j -> c.pre.log.take j = sender.log.take j :=
     fun _ positive left right same =>
-      log_matching c.anchors c.monos c.pre_seen senderSeen positive left right same
+      log_matching c.anchors c.inv.chains c.pre_seen senderSeen positive left right same
   have prevAgree : c.pre.log.take request.prevLogIndex = sender.log.take request.prevLogIndex := by
     split_rel eq_zero_or_pos :=
         (rcases Nat.eq_zero_or_pos request.prevLogIndex with zero | positive) with
@@ -6907,7 +6967,7 @@ commit indices: the committed part is in the elected log, provided `clean`:
 every leader log of a term in `(term, later]` before the election contains it.
 -/
 private theorem core {small large : History} (within : small <:+ large)
-    (termMono : Everywhere TermMono large) (canonMono : Everywhere CanonMono small)
+    (termMono : Everywhere TermMono large) (chain : LogFacts.Chain (logFacts small))
     (sorted : Everywhere Sorted small) (rooted : Everywhere RootedLogs small)
     {current : Model.State}
     {past : History} {leader : NodeID} {state : NodeState}
@@ -7052,7 +7112,7 @@ private theorem core {small large : History} (within : small <:+ large)
       have leaderCanon : Canon small term state.log :=
         ⟨current :: past, commitSuffix, leader, state,
           ⟨leaderNow, leaderTerm, leaderRole, leaderLed⟩, rfl⟩
-      have comparable := canon_chain canonMono (canon.mono electInner) leaderCanon
+      have comparable := canon_chain chain (canon.mono electInner) leaderCanon
       have anchoredIndex := Nat.le_trans indexLeJ anchoredLength
       exact viaAnchor indexLeJ anchoredIndex
         (take_eq_take_of_comparable comparable anchoredIndex indexLe).symm
@@ -7170,13 +7230,13 @@ private theorem old_step_in_new {node : NodeID} {later commit : Nat} {log : List
         (rcases c.elect_backed after before rest node later log commit (List.suffix_refl _) elect with
           zero | ⟨_, part, committedE, _, inPart⟩) with
     | inl => exact (Nat.not_lt_zero base (zero ▸ above)).elim
-    | inr => exact ⟨part, inPart, committed_comparable c.inv.completeness c.monos committedH committedE⟩
+    | inr => exact ⟨part, inPart, committed_comparable c.inv.completeness c.monos c.inv.chains committedH committedE⟩
   split_rel agree_or_contained :=
       (rcases agree_or_contained step.2.1 step.2.2.1 frontier low high with
         done | ⟨k, agree, baseLe, commitLe⟩) with
   | inl => exact done
   | inr =>
-    exact core c.suffix_tail c.termMonos c.monos (c.all Inv.sorted) (c.all Inv.rooted) suffix
+    exact core c.suffix_tail c.termMonos c.inv.chains (c.all Inv.sorted) (c.all Inv.rooted) suffix
       step
       (List.suffix_refl _) (List.suffix_refl _) elect (c.all Inv.persist) c.anchors
       (c.all Inv.terms) lt agree baseLe commitLe
@@ -7402,8 +7462,15 @@ private theorem canon_mono : CanonMono (after :: before :: rest) := by
       | inl => exact (c.inv.canon_mono node state old role oldLed).2 log commit old'
       | inr => exact absurd (c.electStep step).1 different
 
-private theorem canonMonos : Everywhere CanonMono (after :: before :: rest) :=
-  c.monos.cons c.canon_mono
+private theorem chains : LogFacts.Chain (logFacts (after :: before :: rest)) := by
+  have rep := logFacts_correct (after :: before :: rest)
+  apply LogFacts.chain_step c.inv.chains
+  rintro n st k ⟨now, rfl, role, led⟩ l canon
+  have old : Led (after :: before :: rest) n st.currentTerm := by
+    rcases led with boot | ⟨p, i, elect⟩
+    · exact .inl boot
+    · exact .inr ⟨p, i, (rep.elected ..).1 elect⟩
+  exact (c.canon_mono n st now role old).1 l ((rep.canon ..).1 canon)
 
 private theorem anchor : Anchor (after :: before :: rest) := by
   intro node state index now positive bound
@@ -7472,7 +7539,6 @@ private theorem new_in_elected {leader : NodeID} {state : NodeState}
         -> term < later
         -> state.log.take index <+: log := by
   have safety := c.election_safety
-  have canonMonos := c.canonMonos
   obtain ⟨⟨leaderNow, rfl, leaderRole, leaderLed⟩, baseLe, indexLe, signature, _⟩ := step
   have partSignature := take_signature signature
   have two : 2 <= state.currentTerm := leaderLed.two_le
@@ -7563,7 +7629,7 @@ private theorem new_in_elected {leader : NodeID} {state : NodeState}
             exact comparable_of_prefix (List.take_prefix _ _) inLeader
           | inr_inl =>
             subst same
-            split_rel canon_chain := (rcases canon_chain canonMonos leaderCanon canon' with sub | sub) with
+            split_rel canon_chain := (rcases canon_chain c.chains leaderCanon canon' with sub | sub) with
             | inl =>
               exact comparable_of_prefix ((List.take_prefix _ _).trans sub)
                 (List.take_prefix _ _)
@@ -7579,7 +7645,7 @@ private theorem new_in_elected {leader : NodeID} {state : NodeState}
             done | ⟨k, agree, baseLe', commitLe⟩) with
       | inl => exact done
       | inr =>
-        exact core (List.suffix_refl _) c.termMonos canonMonos c.sortedAll c.rootedAll
+        exact core (List.suffix_refl _) c.termMonos c.chains c.sortedAll c.rootedAll
           (List.suffix_refl _)
           ⟨⟨leaderNow, rfl, leaderRole, leaderLed⟩, baseLe, indexLe, signature, ‹_›⟩
           electSuffix electInner elect ((c.all Inv.persist).suffix innerH)
@@ -8057,7 +8123,7 @@ private theorem accept_persist {source : NodeID} {request : AppendEntriesRequest
           exact this.symm.trans (Nat.le_antisymm termLe upper)
         rw [termEq] at logCanon
         have partLog : part = log.take part.length := partEq.symm.trans take
-        have comparable := canon_chain c.monos logCanon senderCanon
+        have comparable := canon_chain c.inv.chains logCanon senderCanon
         split_rel lt_or_ge :=
             (rcases (Nat.lt_or_ge sender.log.length part.length).symm with fits | long) with
         | inl =>
@@ -8339,6 +8405,7 @@ private theorem inv_step : Inv (after :: before :: rest) :=
     elect_backed := c.elect_backed
     election_safety := c.election_safety
     canon_mono := c.canon_mono
+    chains := c.chains
     anchor := c.anchor
     completeness := c.completeness
     commit_backed := c.commit_backed
@@ -8422,7 +8489,7 @@ private theorem committed_logs_comparable {nodes : List NodeID} {history : Histo
       exact List.nil_prefix
     | inr =>
       split_rel committed_comparable :=
-          (rcases committed_comparable inv.completeness (good.everywhere Inv.canon_mono)
+          (rcases committed_comparable inv.completeness (good.everywhere Inv.canon_mono) inv.chains
             committed committed' with sub | sub) with
       | inl => exact comparable_of_prefix (within.trans sub) within'
       | inr => exact comparable_of_prefix within (within'.trans sub)
