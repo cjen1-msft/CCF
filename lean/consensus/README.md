@@ -109,3 +109,11 @@ proves that the four recorded fields suffice; [exactness](../consensus-coverage/
 is over reachable steps of the original model, across configurations. A missing row is a
 coverage gap; an unexpected row cannot occur on a model step. Hitting every row does not
 validate a trace or cover the rest of the history proof.
+
+The [historical vote monitor](../consensus-coverage/ConsensusCoverage/GrantMonitor.lean)
+is separate from that table. For one fixed voter, candidate, term and vote request,
+it computes the election proof's `Granted` predicate exactly. It needs only two bits
+between snapshot pairs: whether the candidate has been seen in that term and whether
+the grant has been established. A grant implies the candidate was seen, so there are
+at most three memory states per query. This does not bound how many different queries
+the full proof might need.
