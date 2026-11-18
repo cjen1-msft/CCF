@@ -920,6 +920,26 @@ private theorem Ballots.term_mono {h : History} (inv : Ballots h) : TermMono h :
     exact fun n st earlier now seen =>
       inv.bounds (VoteFacts.stamp n earlier) (seen_stamp seen) st now
 
+private structure ElectionCert (g : LogFacts.Ghost) (v : VoteFacts.Ghost)
+    (n : NodeID) (k : Nat) (l : List Entry) (i : Nat) : Prop where
+  above : 3 ≤ k
+  rooted : Rooted GENESIS l
+  frontier : i ≤ l.length
+  backing : i = 0 ∨ ∃ e p, g.committed e p ∧ e < k ∧ l.take i <+: p
+  quorum : ∃ voters, hasQuorum (activeConfigurations l i) voters ∧
+    ∀ x ∈ voters, ⟨x, k, some n⟩ ∈ v
+
+private theorem ElectionCert.weaken {g g' : LogFacts.Ghost} {v v' : VoteFacts.Ghost}
+    {n k l i} (c : ElectionCert g v n k l i)
+    (cs : ∀ t p, g.committed t p → g'.committed t p) (vs : ∀ b ∈ v, b ∈ v') :
+    ElectionCert g' v' n k l i := by
+  obtain ⟨voters, q, observed⟩ := c.quorum
+  refine ⟨c.above, c.rooted, c.frontier, ?_, ⟨voters, q, fun x m => vs _ (observed x m)⟩⟩
+  exact c.backing.imp_right fun ⟨e, p, mem, lt, sub⟩ => ⟨e, p, cs _ _ mem, lt, sub⟩
+
+private def ElectionCerts (g : LogFacts.Ghost) (v : VoteFacts.Ghost) : Prop :=
+  ∀ n k l i, g.elected n k l i → ElectionCert g v n k l i
+
 private def LedCur (history : History) : Prop :=
   forall node state term,
     Now history node state
@@ -1051,6 +1071,7 @@ private structure Inv (history : History) : Prop where
   leader_led : LeaderLed history
   candidate : Candidate history
   elect_backed : ElectBacked history
+  electionCerts : ElectionCerts (logFacts history) (voteFacts history)
   election_safety : ElectionSafety history
   canon_mono : CanonMono history
   chains : LogFacts.Chain (logFacts history)
@@ -5522,6 +5543,8 @@ private theorem inv_initial : Inv [initial] := by
   · intro after before rest node term log commit suffix
     have := suffix.length_le
     simp at this
+  · intro n k l i e
+    exact (not_elected_single (((logFacts_correct [initial]).elected ..).1 e)).elim
   · intro node other term left right
     rw [(led_single left).2, (led_single right).2]
   · intro node state now _ led
@@ -7275,53 +7298,66 @@ private theorem old_complete {term later commit : Nat} {node : NodeID}
   | inl => exact c.inv.completeness term part node later log commit committed old lt
   | inr => exact c.old_in_new step committed (List.suffix_refl _) lt
 
+private theorem freshCert {node : NodeID} {term commit : Nat} {log : List Entry}
+    (elect : ElectStep after before rest node term log commit) :
+    ElectionCert (logFacts (before :: rest)) (voteFacts (after :: before :: rest))
+      node term log commit := by
+  have backing := c.elect_backed after before rest node term log commit (List.suffix_refl _) elect
+  obtain ⟨st, _, mem, _, logEq, _, front, _, _, _, _, above, voters, quorum, granted⟩ := elect
+  refine ⟨above, logEq ▸ c.inv.rooted _ _ mem, front, ?_,
+    ⟨voters, quorum, fun v m => (granted v m).stamp⟩⟩
+  rcases backing with zero | backed
+  · exact .inl zero
+  · obtain ⟨e, p, com, le, sub⟩ := backed
+    exact .inr ⟨e, p, ((logFacts_correct _).committed ..).2 com, by omega, sub⟩
+
+private theorem electionCerts : ElectionCerts (logFacts (after :: before :: rest))
+    (voteFacts (after :: before :: rest)) := by
+  intro n k l i e
+  rcases c.elected_after (((logFacts_correct _).elected ..).1 e) with old | new
+  · exact (c.inv.electionCerts n k l i (((logFacts_correct _).elected ..).2 old)).weaken
+      (fun _ _ h => .inl h) (fun _ h => VoteFacts.mem_advance.2 (.inr h))
+  · exact (c.freshCert new).weaken (fun _ _ h => .inl h) (fun _ h => h)
+
+omit c in
+private theorem certificates_agree {g : LogFacts.Ghost} {v : VoteFacts.Ghost}
+    {s : Model.State} {n m k l i l' i'} (a : ElectionCert g v n k l i)
+    (b : ElectionCert g v m k l' i') (votes : VoteFacts.Inv s v)
+    (carriedA : ∀ t p, g.committed t p → t < k → p <+: l)
+    (carriedB : ∀ t p, g.committed t p → t < k → p <+: l') : n = m := by
+  have takeEq {x y : List Entry} {j : Nat} (front : j ≤ x.length)
+      (back : j = 0 ∨ ∃ e p, g.committed e p ∧ e < k ∧ x.take j <+: p)
+      (carry : ∀ t p, g.committed t p → t < k → p <+: y) : x.take j = y.take j := by
+    split_rel backing := (rcases back with rfl | ⟨e, p, com, lt, sub⟩) with
+    | inl => simp
+    | inr => exact take_of_prefix_length (sub.trans (carry e p com lt)) (List.length_take_of_le front)
+  have agree : ∃ j, l.take j = l'.take j ∧ i ≤ j ∧ i' ≤ j := by
+    split_rel le_total := (rcases Nat.le_total i' i with le | le) with
+    | inl => exact ⟨i, takeEq a.frontier a.backing carriedB, Nat.le_refl _, le⟩
+    | inr => exact ⟨i', (takeEq b.frontier b.backing carriedA).symm, le, Nat.le_refl _⟩
+  obtain ⟨j, eq, le, le'⟩ := agree
+  obtain ⟨xs, q, observed⟩ := a.quorum
+  obtain ⟨ys, q', observed'⟩ := b.quorum
+  obtain ⟨voter, mem, mem'⟩ := quorums_intersect GENESIS_configured a.rooted b.rooted eq le le' q q'
+  exact votes.unique voter k n m (observed voter mem) (observed' voter mem')
+
 private theorem new_old_unique {node other : NodeID} {term commit : Nat}
     {log : List Entry}
     (elect : ElectStep after before rest node term log commit)
     (led : Led (before :: rest) other term)
     : node = other := by
-  have ⟨candidate, _, candidateMem, _, candidateLog, _, frontier, _, _, _, _, three, voters,
-    quorum, granted⟩ := elect
-  split_rel led := (rcases led with ⟨same, other⟩ | ⟨log', commit', a, b, r, suffix, elect'⟩) with
+  have fresh := c.freshCert elect
+  split_rel led := (rcases led with ⟨same, _⟩ | ⟨l, i, old⟩) with
   | inl =>
-    subst same
-    simp [BOOTSTRAP_TERM] at three
+    have := fresh.above
+    simp [same, BOOTSTRAP_TERM] at this
   | inr =>
-    have ⟨candidate', _, candidateMem', _, candidateLog', _, frontier', _, _, _, _, _, voters',
-      quorum', granted'⟩ := elect'
-    have agreement : exists k, log.take k = log'.take k /\ commit <= k /\ commit' <= k := by
-      split_rel le_total := (rcases Nat.le_total commit' commit with le | le) with
-      | inl =>
-        refine ⟨commit, ?_, Nat.le.refl, le⟩
-        split_rel elect_backed :=
-            (rcases c.elect_backed after before rest node term log commit (List.suffix_refl _) elect with
-              zero | ⟨_, part, committed, below, inPart⟩) with
-        | inl => rw [zero, List.take_zero, List.take_zero]
-        | inr =>
-          have := c.inv.completeness _ part other term log' commit' committed
-            ⟨a, b, r, suffix, elect'⟩
-            (Nat.lt_of_le_of_lt below (Nat.sub_lt (Nat.lt_of_lt_of_le (Nat.zero_lt_succ 2) three)
-              Nat.one_pos))
-          exact take_of_prefix_length (inPart.trans this) (List.length_take_of_le frontier)
-      | inr =>
-        refine ⟨commit', ?_, le, Nat.le.refl⟩
-        split_rel elect_backed :=
-            (rcases c.inv.elect_backed a b r other term log' commit' suffix elect' with
-              zero | ⟨_, part, committed, below, inPart⟩) with
-        | inl => rw [zero, List.take_zero, List.take_zero]
-        | inr =>
-          have := c.old_in_new elect committed ((List.suffix_cons _ _).trans suffix)
-            (Nat.lt_of_le_of_lt below (Nat.sub_lt (Nat.lt_of_lt_of_le (Nat.zero_lt_succ 2) three)
-              Nat.one_pos))
-          exact (take_of_prefix_length (inPart.trans this) (List.length_take_of_le frontier')).symm
-    obtain ⟨k, agree, le, le'⟩ := agreement
-    obtain ⟨voter, mem, mem'⟩ := quorums_intersect GENESIS_configured
-      (candidateLog ▸ c.inv.rooted node candidate candidateMem)
-      (candidateLog' ▸ c.all Inv.rooted _ ((List.suffix_cons _ _).trans suffix)
-        (List.cons_ne_nil _ _) other candidate' candidateMem')
-      agree le le' quorum quorum'
-    exact c.ballots.unique voter term node other (granted voter mem).stamp
-      ((granted' voter mem').mono (suffix.trans c.suffix_tail)).stamp
+    have rep := logFacts_correct (before :: rest)
+    have cert := c.inv.electionCerts other term l i ((rep.elected ..).2 old)
+    apply certificates_agree fresh (cert.weaken (fun _ _ h => h)
+      (fun _ h => VoteFacts.mem_advance.2 (.inr h))) c.ballots
+    · exact fun _ _ com => c.old_in_new elect ((rep.committed ..).1 com) (List.suffix_refl _)
+    · exact fun _ _ com => c.inv.completeness _ _ _ _ _ _ ((rep.committed ..).1 com) old
 
 private theorem election_safety : ElectionSafety (after :: before :: rest) := by
   intro node other term left right
@@ -8413,6 +8449,7 @@ private theorem inv_step : Inv (after :: before :: rest) :=
     leader_led := c.leader_led
     candidate := c.candidate
     elect_backed := c.elect_backed
+    electionCerts := c.electionCerts
     election_safety := c.election_safety
     canon_mono := c.canon_mono
     chains := c.chains

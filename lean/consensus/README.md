@@ -65,6 +65,20 @@ The safety-invariant proof remains independent of the witness construction, allo
 
 To list the safety-invariant declarations used by the exported theorems, run `lake env lean scripts/invariant-dependencies.lean`.
 
+The original joint proof is being converted in place. Its vote uniqueness argument now uses
+[`VoteFacts.Inv`](Consensus/Proofs/VoteFacts.lean): each step preserves a set of observed
+`(voter, term, votedFor)` facts and cannot introduce a second candidate for one voter and term.
+[`LogFacts.advance`](Consensus/Proofs/LogFacts.lean) updates the evidence for seen logs,
+grants, elections, leader logs and commits using the two endpoints and the previous ghost.
+`logFacts_correct` proves that these relations agree with the historical definitions.
+When comparing same-term elections, the proof now carries the first election's quorum and
+commit backing rather than recovering them from the snapshot where it won.
+
+This is not yet a history-free proof of the two public claims. In particular,
+`old_in_new` and `new_in_elected` still order historical commit and election witnesses
+to prove that later elected logs contain earlier committed prefixes. The outer induction
+still uses `Good history`. The ghosts are proof data, not a finite-state claim.
+
 ## Trace replay
 
 The [trace replayer](replay/README.md) checks finite driver observations against direct model transitions, independently of proofs.
