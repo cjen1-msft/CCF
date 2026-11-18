@@ -1,0 +1,6 @@
+# For ThreadSanitizerSuppressions
+# https://github.com/google/sanitizers/wiki/ThreadSanitizerSuppressions
+
+# Race between closedir and epoll_ctl.
+race:closedir
+race:epoll_ctl

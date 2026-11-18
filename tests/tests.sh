@@ -1,0 +1,49 @@
+#!/bin/bash
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the Apache 2.0 License.
+
+set -eo pipefail
+
+if [[ "${GITHUB_ACTIONS:-}" == "true" && -z "${CCF_TEST_REPORT_DIR:-}" ]]; then
+    exec python3 ../tests/infra/test_reporting.py ctest "$0" "$@"
+fi
+
+echo "Setting up Python environment..."
+if [ ! -f "env/bin/activate" ]
+    then
+        python3 -m venv --without-pip env
+fi
+
+bash ../scripts/install_uv.sh env/bin
+source env/bin/activate
+if [ -n "${PIP_INDEX_URL:-}" ] && [ -z "${UV_INDEX_URL:-}" ]; then
+    export UV_INDEX_URL="$PIP_INDEX_URL"
+fi
+if [[ "${CCF_USE_RELEASED_PYTHON_PACKAGE:-0}" == "1" ]]; then
+    uv pip install -q --upgrade --reinstall-package ccf ccf
+else
+    uv pip install -q -e ../python/
+fi
+uv pip install -q -r ../tests/requirements.txt
+echo "Python environment successfully setup"
+
+if [[ "${CCF_TEST_SYNC_AFTER_SETUP:-0}" == "1" ]]; then
+    echo "Flushing filesystem writeback after Python environment setup..."
+    sync_start=$SECONDS
+    sync
+    echo "Filesystem writeback completed in $((SECONDS - sync_start))s"
+fi
+
+# Export where the VENV has been set, so tests running
+# a sandbox.sh can inherit it rather create a new one
+VENV_DIR=$(realpath env)
+export VENV_DIR="$VENV_DIR"
+
+# Enable https://github.com/Qix-/better-exceptions
+export BETTER_EXCEPTIONS=1
+
+if [[ -n "${CCF_TEST_REPORT_DIR:-}" ]]; then
+    ctest "$@" --output-junit "$CCF_TEST_REPORT_DIR/junit.xml"
+else
+    ctest "$@"
+fi

@@ -1,0 +1,497 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the Apache 2.0 License.
+#pragma once
+
+#include "ccf/ds/hex.h"
+#include "ccf/http_configuration.h"
+#include "ccf/http_query.h"
+#include "ds/internal_logger.h"
+#include "http/http_exceptions.h"
+#include "http_builder.h"
+#include "http_proc.h"
+
+#include <algorithm>
+#include <cctype>
+#include <llhttp/llhttp.h>
+#include <map>
+#include <queue>
+#include <regex>
+#include <string>
+#include <string_view>
+
+namespace http
+{
+  inline auto split_url_path(const std::string_view& url)
+  {
+    LOG_TRACE_FMT("Received url to parse: {}", std::string_view(url));
+
+    const auto path_end = url.find('?');
+    const auto query_start =
+      path_end == std::string::npos ? url.size() : path_end + 1;
+
+    const auto query_end = url.find('#', query_start);
+    const auto fragment_start =
+      query_end == std::string::npos ? url.size() : query_end + 1;
+
+    return std::make_tuple(
+      url.substr(0, path_end),
+      url.substr(query_start, query_end - query_start),
+      url.substr(fragment_start));
+  }
+
+  // Percent-decodes an entire string, used for URL path fragments. Query
+  // strings must instead be decoded per-component, after splitting on '&' and
+  // '=' (see ccf::http::parse_query), so that escaped separators are preserved.
+  // The decoding rules (lenient '%XX', '+' -> space) are shared with, and
+  // implemented by, ccf::http::decode_query_component.
+  static std::string url_decode(const std::string_view& s_)
+  {
+    return ccf::http::decode_query_component(s_);
+  }
+
+  inline bool status_success(ccf::http_status status)
+  {
+    return status >= 200 && status < 300;
+  }
+
+  struct SimpleRequestProcessor : public http::RequestProcessor
+  {
+  public:
+    ~SimpleRequestProcessor() override = default;
+
+    struct Request
+    {
+      llhttp_method method;
+      std::string url;
+      ccf::http::HeaderMap headers;
+      std::vector<uint8_t> body;
+    };
+
+    std::queue<Request> received;
+
+    void handle_request(
+      llhttp_method method,
+      const std::string_view& url,
+      ccf::http::HeaderMap&& headers,
+      std::vector<uint8_t>&& body,
+      int32_t /*stream_id*/) override
+    {
+      received.emplace(Request{method, std::string(url), headers, body});
+    }
+  };
+
+  struct SimpleResponseProcessor : public ::http::ResponseProcessor
+  {
+  public:
+    ~SimpleResponseProcessor() override = default;
+
+    struct Response
+    {
+      ccf::http_status status;
+      ccf::http::HeaderMap headers;
+      std::vector<uint8_t> body;
+    };
+
+    std::queue<Response> received;
+
+    void handle_response(
+      ccf::http_status status,
+      ccf::http::HeaderMap&& headers,
+      std::vector<uint8_t>&& body) override
+    {
+      received.emplace(Response{status, headers, body});
+    }
+  };
+
+  enum State : uint8_t
+  {
+    DONE,
+    IN_MESSAGE
+  };
+
+  static int on_msg_begin(llhttp_t* parser);
+  static int on_url(llhttp_t* parser, const char* at, size_t length);
+  static int on_header_field(llhttp_t* parser, const char* at, size_t length);
+  static int on_header_value(llhttp_t* parser, const char* at, size_t length);
+  static int on_headers_complete(llhttp_t* parser);
+  static int on_body(llhttp_t* parser, const char* at, size_t length);
+  static int on_msg_end(llhttp_t* parser);
+
+  struct URL
+  {
+    std::string scheme;
+    std::string host;
+    std::string port;
+    std::string path;
+    std::string query;
+    std::string fragment;
+  };
+
+  inline URL parse_url_full(const std::string& url)
+  {
+    LOG_TRACE_FMT("Received url to parse: {}", url);
+
+    // From https://tools.ietf.org/html/rfc3986#appendix-B
+    std::regex url_regex(
+      "^(([^:/?#]+):)?(//([^/?#]*))?([^?#]*)(\\?([^#]*))?(#(.*))?");
+
+    std::smatch match;
+    if (!std::regex_match(url, match, url_regex))
+    {
+      throw std::invalid_argument(fmt::format("Unable to parse url: {}", url));
+    }
+
+    const auto host_port = match[4].str();
+
+    // IPv6 hosts may contain colons, so only search for port after the closing
+    // square bracket
+    const auto closing_bracket = host_port.rfind(']');
+    const auto port_delim_start =
+      closing_bracket == std::string::npos ? 0 : closing_bracket;
+    const auto port_delim = host_port.find(':', port_delim_start);
+
+    URL u;
+    u.scheme = match[2].str();
+    u.host = host_port.substr(0, port_delim);
+    if (port_delim != std::string::npos)
+    {
+      u.port = host_port.substr(port_delim + 1);
+    }
+    u.path = match[5].str();
+    u.query = match[7].str();
+    u.fragment = match[9].str();
+    return u;
+  }
+
+  class Parser
+  {
+  public:
+    virtual ~Parser() = default;
+
+  protected:
+    llhttp_t parser;
+    llhttp_settings_t settings;
+    ccf::http::ParserConfiguration configuration;
+    State state = DONE;
+
+    std::vector<uint8_t> body_buf;
+    ccf::http::HeaderMap headers;
+
+    std::pair<std::string, std::string> partial_parsed_header;
+
+    void complete_header()
+    {
+      headers.emplace(partial_parsed_header);
+      partial_parsed_header.first.clear();
+      partial_parsed_header.second.clear();
+    }
+
+    Parser(
+      llhttp_type_t type,
+      ccf::http::ParserConfiguration config =
+        ccf::http::ParserConfiguration{}) :
+      parser{},
+      settings{},
+      configuration(std::move(config))
+    {
+      llhttp_settings_init(&settings);
+
+      settings.on_message_begin = on_msg_begin;
+      settings.on_header_field = on_header_field;
+      settings.on_header_value = on_header_value;
+      settings.on_headers_complete = on_headers_complete;
+      settings.on_body = on_body;
+      settings.on_message_complete = on_msg_end;
+
+      llhttp_init(&parser, type, &settings);
+      parser.data = this;
+    }
+
+  public:
+    void execute(const uint8_t* data, size_t size)
+    {
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+      const auto* const data_char = reinterpret_cast<const char*>(data);
+      auto err_no = llhttp_execute(&parser, data_char, size);
+
+      if (err_no == HPE_PAUSED_UPGRADE)
+      {
+        // Assume Upgrade requests will be handled by caller inspecting headers,
+        // so we can instantly resume the parser.
+        llhttp_resume_after_upgrade(&parser);
+      }
+      else if (err_no != HPE_OK)
+      {
+        throw std::runtime_error(fmt::format(
+          "HTTP parsing failed ({}: {}) around byte {}",
+          llhttp_errno_name(err_no),
+          llhttp_get_error_reason(&parser),
+          llhttp_get_error_pos(&parser) - data_char));
+      }
+    }
+
+    void append_body(const char* at, size_t length)
+    {
+      if (state == IN_MESSAGE)
+      {
+        LOG_TRACE_FMT("Appending chunk [{} bytes]", length);
+        std::copy(at, at + length, std::back_inserter(body_buf));
+
+        auto const& max_body_size = configuration.max_body_size.value_or(
+          ccf::http::default_max_body_size);
+        if (body_buf.size() > max_body_size)
+        {
+          throw RequestPayloadTooLargeException(fmt::format(
+            "HTTP request body is too large (max size allowed: {})",
+            max_body_size));
+        }
+      }
+      else
+      {
+        throw std::runtime_error("Receiving content outside of message");
+      }
+    }
+
+    virtual void new_message()
+    {
+      if (state == DONE)
+      {
+        LOG_TRACE_FMT("Entering new message");
+        state = IN_MESSAGE;
+        body_buf.clear();
+        headers.clear();
+      }
+      else
+      {
+        throw std::runtime_error(
+          "Entering new message when previous message isn't complete");
+      }
+    }
+
+    virtual void handle_completed_message() = 0;
+
+    void end_message()
+    {
+      if (state == IN_MESSAGE)
+      {
+        LOG_TRACE_FMT("Done with message");
+        handle_completed_message();
+        state = DONE;
+      }
+      else
+      {
+        throw std::runtime_error("Ending message, but not in a message");
+      }
+    }
+
+    void header_field(const char* at, size_t length)
+    {
+      if (!partial_parsed_header.second.empty())
+      {
+        complete_header();
+      }
+
+      const auto max_headers_count = configuration.max_headers_count.value_or(
+        ccf::http::default_max_headers_count);
+      if (headers.size() >= max_headers_count)
+      {
+        throw RequestHeaderTooLargeException(fmt::format(
+          "Too many headers (max number allowed: {})", max_headers_count));
+      }
+
+      // HTTP headers are stored lowercase as it is easier to verify HTTP
+      // signatures later on
+      auto f = std::string(at, length);
+      ccf::nonstd::to_lower(f);
+      auto& partial_header_key = partial_parsed_header.first;
+      partial_header_key.append(f);
+
+      auto const& max_header_size = configuration.max_header_size.value_or(
+        ccf::http::default_max_header_size);
+      if (partial_header_key.size() > max_header_size)
+      {
+        throw RequestHeaderTooLargeException(fmt::format(
+          "Header key for '{}' is too large (max size allowed: {})",
+          partial_parsed_header.first,
+          max_header_size));
+      }
+    }
+
+    void header_value(const char* at, size_t length)
+    {
+      auto& partial_header_value = partial_parsed_header.second;
+      partial_header_value.append(at, length);
+      auto const& max_header_size = configuration.max_header_size.value_or(
+        ccf::http::default_max_header_size);
+      if (partial_header_value.size() > max_header_size)
+      {
+        throw RequestHeaderTooLargeException(fmt::format(
+          "Header value for '{}' is too large (max size allowed: {})",
+          partial_parsed_header.first,
+          max_header_size));
+      }
+    }
+
+    void headers_complete()
+    {
+      complete_header();
+
+      // If the Content-Length header advertises a body larger than the
+      // configured maximum, reject the message immediately rather than
+      // waiting until enough body chunks have been appended to exceed the
+      // limit (see append_body). For chunked bodies, Content-Length is ignored
+      // by llhttp and the accumulation check in append_body still applies.
+      auto const& max_body_size =
+        configuration.max_body_size.value_or(ccf::http::default_max_body_size);
+      if (
+        (parser.flags & F_CHUNKED) == 0 &&
+        (parser.flags & F_CONTENT_LENGTH) != 0 &&
+        parser.content_length > max_body_size)
+      {
+        throw RequestPayloadTooLargeException(fmt::format(
+          "HTTP message body is too large (Content-Length: {}, max size "
+          "allowed: {})",
+          parser.content_length,
+          max_body_size));
+      }
+    }
+  };
+
+  static int on_msg_begin(llhttp_t* parser)
+  {
+    auto* p = reinterpret_cast<Parser*>(parser->data);
+    p->new_message();
+    return HPE_OK;
+  }
+
+  static int on_header_field(llhttp_t* parser, const char* at, size_t length)
+  {
+    auto* p = reinterpret_cast<Parser*>(parser->data);
+    p->header_field(at, length);
+    return HPE_OK;
+  }
+
+  static int on_header_value(llhttp_t* parser, const char* at, size_t length)
+  {
+    auto* p = reinterpret_cast<Parser*>(parser->data);
+    p->header_value(at, length);
+    return HPE_OK;
+  }
+
+  static int on_headers_complete(llhttp_t* parser)
+  {
+    auto* p = reinterpret_cast<Parser*>(parser->data);
+    p->headers_complete();
+    return HPE_OK;
+  }
+
+  static int on_body(llhttp_t* parser, const char* at, size_t length)
+  {
+    auto* p = reinterpret_cast<Parser*>(parser->data);
+    p->append_body(at, length);
+    return HPE_OK;
+  }
+
+  static int on_msg_end(llhttp_t* parser)
+  {
+    auto* p = reinterpret_cast<Parser*>(parser->data);
+    p->end_message();
+    return HPE_OK;
+  }
+
+  // Request-specific
+  class RequestParser : public Parser
+  {
+  private:
+    RequestProcessor& proc;
+
+    std::string url;
+    size_t max_request_target_size;
+
+  public:
+    ~RequestParser() override = default;
+
+    RequestParser(
+      RequestProcessor& proc_,
+      const ccf::http::ParserConfiguration& config =
+        ccf::http::ParserConfiguration{}) :
+      Parser(HTTP_REQUEST, config),
+      proc(proc_),
+      max_request_target_size(
+        config.max_request_target_size
+          .value_or(ccf::http::default_max_request_target_size)
+          .count_bytes())
+    {
+      settings.on_url = on_url;
+    }
+
+    void append_url(const char* at, size_t length)
+    {
+      if (
+        length > max_request_target_size ||
+        url.size() > max_request_target_size - length)
+      {
+        throw RequestTargetTooLongException(fmt::format(
+          "HTTP request target is too long (max size allowed: {})",
+          max_request_target_size));
+      }
+      url.append(at, length);
+    }
+
+    void new_message() override
+    {
+      Parser::new_message();
+      url.clear();
+    }
+
+    void handle_completed_message() override
+    {
+      if (url.empty())
+      {
+        proc.handle_request(
+          llhttp_method(parser.method),
+          {},
+          std::move(headers),
+          std::move(body_buf));
+      }
+      else
+      {
+        proc.handle_request(
+          llhttp_method(parser.method),
+          url,
+          std::move(headers),
+          std::move(body_buf));
+      }
+    }
+  };
+
+  static int on_url(llhttp_t* parser, const char* at, size_t length)
+  {
+    auto* p = reinterpret_cast<RequestParser*>(parser->data);
+    p->append_url(at, length);
+    return HPE_OK;
+  }
+
+  // Response-specific
+  class ResponseParser : public Parser
+  {
+  private:
+    ResponseProcessor& proc;
+
+  public:
+    ~ResponseParser() override = default;
+
+    ResponseParser(ResponseProcessor& proc_) :
+      Parser(HTTP_RESPONSE, ccf::http::ParserConfiguration{}),
+      proc(proc_)
+    {}
+
+    void handle_completed_message() override
+    {
+      proc.handle_response(
+        ccf::http_status(parser.status_code),
+        std::move(headers),
+        std::move(body_buf));
+    }
+  };
+}
