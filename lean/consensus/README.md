@@ -74,10 +74,17 @@ grants, elections, leader logs and commits using the two endpoints and the previ
 When comparing same-term elections, the proof now carries the first election's quorum and
 commit backing rather than recovering them from the snapshot where it won.
 
-This is not yet a history-free proof of the two public claims. In particular,
-`old_in_new` and `new_in_elected` still order historical commit and election witnesses
-to prove that later elected logs contain earlier committed prefixes. The outer induction
-still uses `Good history`. The ghosts are proof data, not a finite-state claim.
+The commit/election intersection lemma (`core`) now takes only quorum and log facts.
+At a grant, the request must outrank each signed prefix the voter retained, or a
+leader log must witness that the voter lost the prefix. A later observation cannot
+introduce a lower-term prefix for that voter. Elections retain this evidence, so
+`new_in_elected` can induct on the election term without revisiting the vote or the
+election. This also handles a commit recorded after a higher-term election.
+
+The outer invariant still uses `Good history`. The old-commit/new-election proof
+still follows a commit's backing chain, and the candidate, message and persistence
+arguments still have historical witnesses. These ghosts are proof data; they do not
+establish that the full coverage target is finite.
 
 ## Trace replay
 
