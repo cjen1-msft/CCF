@@ -1,0 +1,230 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the Apache 2.0 License.
+#pragma once
+
+#include "ccf/crypto/base64.h"
+#include "ccf/crypto/verifier.h"
+#include "ccf/ds/json.h"
+#include "ccf/http_consts.h"
+#include "http_parser.h"
+
+#define FMT_HEADER_ONLY
+#include <fmt/format.h>
+#include <optional>
+#include <string>
+
+namespace http
+{
+  enum class JwtCryptoAlgorithm : uint8_t
+  {
+    RS256,
+    ES256,
+  };
+  DECLARE_JSON_ENUM(
+    JwtCryptoAlgorithm,
+    {{JwtCryptoAlgorithm::RS256, "RS256"},
+     {JwtCryptoAlgorithm::ES256, "ES256"}});
+
+  struct JwtHeader
+  {
+    JwtCryptoAlgorithm alg{};
+    std::string kid;
+  };
+
+  DECLARE_JSON_TYPE(JwtHeader);
+  DECLARE_JSON_REQUIRED_FIELDS(JwtHeader, alg, kid);
+
+  struct JwtPayload
+  {
+    size_t exp{};
+    std::string iss;
+    std::optional<size_t> nbf;
+    std::optional<std::string> tid;
+  };
+
+  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(JwtPayload);
+  DECLARE_JSON_REQUIRED_FIELDS(JwtPayload, exp, iss);
+  DECLARE_JSON_OPTIONAL_FIELDS(JwtPayload, nbf, tid);
+
+  class JwtVerifier
+  {
+  public:
+    struct Token
+    {
+      nlohmann::json header;
+      JwtHeader header_typed;
+      nlohmann::json payload;
+      JwtPayload payload_typed;
+      std::vector<uint8_t> signature;
+      std::string_view signed_content;
+    };
+
+    static bool parse_auth_scheme(
+      std::string_view& auth_header_value, std::string& error_reason)
+    {
+      auto next_space = auth_header_value.find(' ');
+      if (next_space == std::string::npos)
+      {
+        error_reason = "Authorization header only contains one field";
+        return false;
+      }
+      auto auth_scheme = auth_header_value.substr(0, next_space);
+      if (auth_scheme != ccf::http::auth::BEARER_AUTH_SCHEME)
+      {
+        error_reason = fmt::format(
+          "Authorization header does not have {} scheme",
+          ccf::http::auth::BEARER_AUTH_SCHEME);
+        return false;
+      }
+      auth_header_value = auth_header_value.substr(next_space + 1);
+      return true;
+    }
+
+    static std::vector<uint8_t> parse_jwt_b64url(
+      std::string_view b64url, std::string_view part, std::string& error_reason)
+    {
+      try
+      {
+        auto raw = ccf::crypto::raw_from_b64url(b64url);
+        if (raw.empty())
+        {
+          error_reason = fmt::format("JWT part is empty ({})", part);
+          return {};
+        }
+        return raw;
+      }
+      catch (const std::exception& e)
+      {
+        error_reason =
+          fmt::format("Failed to parse base64url in JWT ({})", part);
+        return {};
+      }
+    }
+
+    static std::optional<Token> parse_token(
+      std::string_view& token, std::string& error_reason)
+    {
+      constexpr char separator = '.';
+      size_t first_dot = token.find(separator);
+      size_t second_dot = std::string::npos;
+      if (first_dot != std::string::npos)
+      {
+        second_dot = token.find(separator, first_dot + 1);
+      }
+      size_t extra_dot = std::string::npos;
+      if (second_dot != std::string::npos)
+      {
+        extra_dot = token.find(separator, second_dot + 1);
+      }
+      if (
+        first_dot == std::string::npos || second_dot == std::string::npos ||
+        extra_dot != std::string::npos)
+      {
+        error_reason = "Malformed JWT: must contain exactly 3 parts";
+        return std::nullopt;
+      }
+      size_t header_size = first_dot;
+      size_t payload_size = second_dot - first_dot - 1;
+      std::string_view header_b64url = token.substr(0, header_size);
+      std::string_view payload_b64url =
+        token.substr(first_dot + 1, payload_size);
+      std::string_view signature_b64url = token.substr(second_dot + 1);
+
+      auto header_raw = parse_jwt_b64url(header_b64url, "header", error_reason);
+      if (header_raw.empty())
+      {
+        return std::nullopt;
+      }
+
+      auto payload_raw =
+        parse_jwt_b64url(payload_b64url, "payload", error_reason);
+      if (payload_raw.empty())
+      {
+        return std::nullopt;
+      }
+
+      auto signature_raw =
+        parse_jwt_b64url(signature_b64url, "signature", error_reason);
+      if (signature_raw.empty())
+      {
+        return std::nullopt;
+      }
+
+      auto signed_content = token.substr(0, second_dot);
+      nlohmann::json header;
+      nlohmann::json payload;
+      try
+      {
+        header = ccf::parse_json_safe(header_raw);
+        payload = ccf::parse_json_safe(payload_raw);
+      }
+      catch (const ccf::JsonParseError& e)
+      {
+        error_reason = fmt::format(
+          "JWT header or payload exceeds permitted JSON nesting depth: {}",
+          e.what());
+        return std::nullopt;
+      }
+      catch (const nlohmann::json::parse_error& e)
+      {
+        error_reason =
+          fmt::format("JWT header or payload is not valid JSON: {}", e.what());
+        return std::nullopt;
+      }
+      if (!header.is_object() || !payload.is_object())
+      {
+        error_reason = "JWT header or payload is not an object";
+        return std::nullopt;
+      }
+      JwtHeader header_typed;
+      try
+      {
+        header_typed = header.get<JwtHeader>();
+      }
+      catch (const ccf::JsonParseError& e)
+      {
+        error_reason =
+          fmt::format("JWT header does not follow schema: {}", e.describe());
+        return std::nullopt;
+      }
+      JwtPayload payload_typed;
+      try
+      {
+        payload_typed = payload.get<JwtPayload>();
+      }
+      catch (const ccf::JsonParseError& e)
+      {
+        error_reason = fmt::format(
+          "JWT payload is missing required field: {}", e.describe());
+        return std::nullopt;
+      }
+      Token parsed = {
+        header,
+        header_typed,
+        payload,
+        payload_typed,
+        signature_raw,
+        signed_content};
+      return parsed;
+    }
+
+    static std::optional<Token> extract_token(
+      const ccf::http::HeaderMap& headers, std::string& error_reason)
+    {
+      const auto auth_it = headers.find(ccf::http::headers::AUTHORIZATION);
+      if (auth_it == headers.end())
+      {
+        error_reason =
+          fmt::format("Missing {} header", ccf::http::headers::AUTHORIZATION);
+        return std::nullopt;
+      }
+      std::string_view token = auth_it->second;
+      if (!parse_auth_scheme(token, error_reason))
+      {
+        return std::nullopt;
+      }
+      auto parsed = parse_token(token, error_reason);
+      return parsed;
+    }
+  };
+}

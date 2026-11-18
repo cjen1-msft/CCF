@@ -1,0 +1,32 @@
+{
+  "endpoints": {
+    "/records/{key}": {
+      "get": {
+        "js_module": "basic.js",
+        "js_function": "get_record",
+        "redirection_strategy": "none",
+        "authn_policies": ["user_cert"],
+        "mode": "readonly",
+        "openapi": {}
+      },
+      "put": {
+        "js_module": "basic.js",
+        "js_function": "put_record",
+        "redirection_strategy": "none",
+        "authn_policies": ["user_cert"],
+        "mode": "readwrite",
+        "openapi": {}
+      }
+    },
+    "/records": {
+      "post": {
+        "js_module": "basic.js",
+        "js_function": "post_records",
+        "redirection_strategy": "to_primary",
+        "authn_policies": ["user_cert"],
+        "mode": "readwrite",
+        "openapi": {}
+      }
+    }
+  }
+}
