@@ -1,0 +1,19 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the Apache 2.0 License.
+#pragma once
+
+#include <string>
+
+namespace ccf
+{
+  // clang-format off
+
+  //
+  // @CMAKE_GENERATED_COMMENT@
+  //
+
+  static constexpr auto ccf_version = "@CCF_VERSION@";
+  static constexpr auto quickjs_version = "@QUICKJS_VERSION@";
+
+  // clang-format on
+}

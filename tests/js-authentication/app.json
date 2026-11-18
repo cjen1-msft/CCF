@@ -1,0 +1,68 @@
+{
+  "endpoints": {
+    "/cert": {
+      "get": {
+        "js_module": "endpoints.js",
+        "js_function": "cert",
+        "redirection_strategy": "none",
+        "authn_policies": ["user_cert"],
+        "mode": "readonly",
+        "openapi": {}
+      }
+    },
+    "/jwt": {
+      "get": {
+        "js_module": "endpoints.js",
+        "js_function": "jwt",
+        "redirection_strategy": "none",
+        "authn_policies": ["jwt"],
+        "mode": "readonly",
+        "openapi": {}
+      }
+    },
+    "/multi_auth": {
+      "post": {
+        "js_module": "endpoints.js",
+        "js_function": "multi_auth",
+        "redirection_strategy": "none",
+        "authn_policies": [
+          "user_cert",
+          "member_cert",
+          "jwt",
+          "user_cose_sign1",
+          "no_auth"
+        ],
+        "mode": "readonly",
+        "openapi": {}
+      }
+    },
+    "/secret": {
+      "get": {
+        "js_module": "endpoints.js",
+        "js_function": "get_secret",
+        "redirection_strategy": "none",
+        "authn_policies": ["user_cert"],
+        "mode": "readonly",
+        "openapi": {}
+      },
+      "post": {
+        "js_module": "endpoints.js",
+        "js_function": "put_secret",
+        "redirection_strategy": "none",
+        "authn_policies": ["user_cert"],
+        "mode": "readwrite",
+        "openapi": {}
+      }
+    },
+    "/roles": {
+      "post": {
+        "js_module": "endpoints.js",
+        "js_function": "add_role",
+        "redirection_strategy": "none",
+        "authn_policies": ["user_cert"],
+        "mode": "readwrite",
+        "openapi": {}
+      }
+    }
+  }
+}

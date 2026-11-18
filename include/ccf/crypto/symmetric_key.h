@@ -1,0 +1,176 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the Apache 2.0 License.
+#pragma once
+
+#include "ccf/crypto/entropy.h"
+
+#include <memory>
+#include <span>
+#include <stdexcept>
+#include <vector>
+
+namespace ccf::crypto
+{
+  constexpr size_t GCM_DEFAULT_KEY_SIZE = 32;
+
+  constexpr size_t GCM_SIZE_TAG = 16;
+
+  struct GcmHeader
+  {
+    uint8_t tag[GCM_SIZE_TAG] = {};
+
+    // Size does not change after construction
+    std::vector<uint8_t> iv;
+
+    GcmHeader(size_t iv_size);
+
+    void set_iv(const uint8_t* data, size_t size);
+    [[nodiscard]] std::span<const uint8_t> get_iv() const;
+
+    [[nodiscard]] size_t serialised_size() const;
+    [[nodiscard]] std::vector<uint8_t> serialise() const;
+    void serialise(std::span<uint8_t> output) const;
+
+    void deserialise(const std::vector<uint8_t>& ser);
+    void deserialise(const uint8_t*& data, size_t& size);
+  };
+
+  template <size_t IV_BYTES>
+  struct FixedSizeGcmHeader : public GcmHeader
+  {
+    static constexpr size_t IV_SIZE = IV_BYTES;
+
+    FixedSizeGcmHeader() : GcmHeader(IV_SIZE) {}
+
+    static size_t serialised_size()
+    {
+      return GCM_SIZE_TAG + IV_SIZE;
+    }
+
+    void set_random_iv(EntropyPtr entropy = ccf::crypto::get_entropy())
+    {
+      iv = entropy->random(IV_SIZE);
+    }
+  };
+
+  // GcmHeader with 12-byte (96-bit) IV
+  constexpr size_t iv_size = 12;
+  using StandardGcmHeader = FixedSizeGcmHeader<iv_size>;
+
+  struct GcmCipher
+  {
+    StandardGcmHeader hdr;
+    std::vector<uint8_t> cipher;
+
+    GcmCipher();
+    GcmCipher(size_t size);
+
+    std::vector<uint8_t> serialise();
+
+    void deserialise(const std::vector<uint8_t>& serial);
+  };
+
+  class KeyAesGcm
+  {
+  public:
+    class Context
+    {
+    public:
+      Context() = default;
+      virtual ~Context() = default;
+
+      Context(const Context&) = delete;
+      Context& operator=(const Context&) = delete;
+      Context(Context&&) = delete;
+      Context& operator=(Context&&) = delete;
+
+      // Contexts are reusable, but are not safe for concurrent use.
+      // Replaces cipher with the ciphertext, including for empty plaintext.
+      virtual void encrypt(
+        std::span<const uint8_t> iv,
+        std::span<const uint8_t> plain,
+        std::span<const uint8_t> aad,
+        std::vector<uint8_t>& cipher,
+        uint8_t tag[GCM_SIZE_TAG]) = 0;
+
+      // cipher must be exactly plain.size() bytes. Input and output must not
+      // partially overlap; identical plaintext and ciphertext spans are valid.
+      virtual void encrypt(
+        std::span<const uint8_t> iv,
+        std::span<const uint8_t> plain,
+        std::span<const uint8_t> aad,
+        std::span<uint8_t> cipher,
+        uint8_t tag[GCM_SIZE_TAG]);
+
+      // Replaces plain on success and clears it if authentication fails.
+      virtual bool decrypt(
+        std::span<const uint8_t> iv,
+        const uint8_t tag[GCM_SIZE_TAG],
+        std::span<const uint8_t> cipher,
+        std::span<const uint8_t> aad,
+        std::vector<uint8_t>& plain) = 0;
+    };
+
+    KeyAesGcm() = default;
+    virtual ~KeyAesGcm() = default;
+
+    [[nodiscard]] virtual std::unique_ptr<Context> make_context() const
+    {
+      throw std::logic_error("Reusable AES-GCM contexts are not supported");
+    }
+
+    // AES-GCM encryption
+    // Replaces cipher with the ciphertext, including for empty plaintext.
+    virtual void encrypt(
+      std::span<const uint8_t> iv,
+      std::span<const uint8_t> plain,
+      std::span<const uint8_t> aad,
+      std::vector<uint8_t>& cipher,
+      uint8_t tag[GCM_SIZE_TAG]) const = 0;
+
+    // cipher must be exactly plain.size() bytes. Input and output must not
+    // partially overlap; identical plaintext and ciphertext spans are valid.
+    virtual void encrypt(
+      std::span<const uint8_t> iv,
+      std::span<const uint8_t> plain,
+      std::span<const uint8_t> aad,
+      std::span<uint8_t> cipher,
+      uint8_t tag[GCM_SIZE_TAG]) const;
+
+    // AES-GCM decryption
+    // Replaces plain on success and clears it if authentication fails.
+    virtual bool decrypt(
+      std::span<const uint8_t> iv,
+      const uint8_t tag[GCM_SIZE_TAG],
+      std::span<const uint8_t> cipher,
+      std::span<const uint8_t> aad,
+      std::vector<uint8_t>& plain) const = 0;
+
+    // plain must be exactly cipher.size() bytes. Input and output must not
+    // partially overlap; identical ciphertext and plaintext spans are valid.
+    // Zeroes plain if authentication fails.
+    virtual bool decrypt(
+      std::span<const uint8_t> iv,
+      const uint8_t tag[GCM_SIZE_TAG],
+      std::span<const uint8_t> cipher,
+      std::span<const uint8_t> aad,
+      std::span<uint8_t> plain) const;
+
+    // Key size in bits
+    [[nodiscard]] virtual size_t key_size() const = 0;
+  };
+
+  std::unique_ptr<KeyAesGcm> make_key_aes_gcm(std::span<const uint8_t> raw_key);
+
+  /** Check for unsupported AES key sizes
+   * @p num_bits Key size in bits
+   */
+  inline void check_supported_aes_key_size(size_t num_bits)
+  {
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+    if (num_bits != 128 && num_bits != 192 && num_bits != 256)
+    {
+      throw std::runtime_error("Unsupported key size");
+    }
+  }
+}

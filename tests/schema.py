@@ -1,0 +1,394 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the Apache 2.0 License.
+import http
+import json
+import os
+
+import e2e_operations
+import e2e_tutorial
+import infra.checker
+import infra.e2e_args
+import infra.network
+import infra.openapi
+import infra.proc
+import nobuiltins
+import openapi_spec_validator
+import packaging.version
+from infra.runner import ConcurrentRunner
+from loguru import logger as LOG
+from openapi_core import OpenAPI
+from openapi_core.datatypes import RequestParameters
+from openapi_core.validation.response.exceptions import InvalidData
+from packaging import version
+from werkzeug.datastructures import Headers, ImmutableMultiDict
+
+
+def is_newer_openapi_version(fetched_version, file_version):
+    if file_version is None:
+        return True
+
+    try:
+        return version.parse(fetched_version) > version.parse(file_version)
+    except packaging.version.InvalidVersion:
+        return fetched_version > file_version
+
+
+def validate_nullable_consensus_primary(schema):
+    api = OpenAPI.from_dict(schema)
+    request = infra.openapi._Request(
+        host_url="https://localhost",
+        path="/node/consensus",
+        method="get",
+        parameters=RequestParameters(
+            query=ImmutableMultiDict(),
+            header=Headers(),
+            cookie=ImmutableMultiDict(),
+            path={},
+        ),
+        body=None,
+        content_type="",
+    )
+    details = {
+        "configs": [],
+        "acks": {},
+        "membership_state": "Active",
+        "current_view": 0,
+        "ticking": False,
+    }
+
+    def validate_response(details):
+        response = infra.openapi._Response(
+            status_code=http.HTTPStatus.OK,
+            headers=Headers({"content-type": "application/json"}),
+            data=json.dumps({"details": details}).encode(),
+            content_type="application/json",
+        )
+        api.validate_response(request, response)
+
+    validate_response({**details, "primary_id": None})
+
+    for invalid_details in (
+        {**details, "primary_id": "not-a-node-id"},
+        details,
+    ):
+        try:
+            validate_response(invalid_details)
+        except InvalidData:
+            pass
+        else:
+            raise AssertionError(
+                f"Invalid consensus details passed schema validation: "
+                f"{invalid_details}"
+            )
+
+
+def run(args):
+    os.makedirs(args.schema_dir, exist_ok=True)
+
+    changed_files = []
+    old_schema = {
+        dir_entry.path
+        for dir_entry in os.scandir(args.schema_dir)
+        if dir_entry.is_file()
+    }
+
+    documents_valid = True
+    all_methods = []
+
+    def fetch_schema(api_response, target_file_path):
+        check(
+            api_response, error=lambda status, msg: status == http.HTTPStatus.OK.value
+        )
+
+        response_body = api_response.body.json()
+        paths = response_body["paths"]
+        all_methods.extend(paths.keys())
+        fetched_version = response_body["info"]["version"]
+
+        formatted_schema = json.dumps(response_body, indent=2)
+        openapi_target_file = os.path.join(args.schema_dir, target_file_path)
+
+        try:
+            old_schema.remove(openapi_target_file)
+        except KeyError:
+            pass
+
+        with open(openapi_target_file, "a+", encoding="utf-8") as f:
+            prefix, ext = os.path.splitext(openapi_target_file)
+            f.seek(0)
+            previous = f.read().strip()
+            if previous != formatted_schema:
+                file_version = None
+                try:
+                    from_file = json.loads(previous)
+                    file_version = from_file["info"]["version"]
+                except (
+                    json.JSONDecodeError,
+                    KeyError,
+                ):
+                    pass
+
+                if is_newer_openapi_version(fetched_version, file_version):
+                    LOG.debug(
+                        f"Writing schema to {openapi_target_file} - overwriting {file_version} with {fetched_version}"
+                    )
+                    f.truncate(0)
+                    f.seek(0)
+                    f.write(formatted_schema)
+                else:
+                    LOG.error(
+                        f"Found differences in {openapi_target_file}, but not overwriting as retrieved version is not newer ({fetched_version} <= {file_version})"
+                    )
+                    alt_file = f"{prefix}_{fetched_version}{ext}"
+                    LOG.error(f"Writing to {alt_file} for comparison")
+                    with open(alt_file, "w", encoding="utf-8") as f2:
+                        f2.write(formatted_schema)
+                    try:
+                        old_schema.remove(alt_file)
+                    except KeyError:
+                        pass
+                changed_files.append(openapi_target_file)
+            else:
+                LOG.debug(f"Schema matches in {openapi_target_file}")
+
+        try:
+            openapi_spec_validator.validate_spec(response_body)
+            if target_file_path == "node_openapi.json":
+                validate_nullable_consensus_primary(response_body)
+        except Exception as e:
+            LOG.error(f"Validation of {prefix} schema failed")
+            LOG.error(e)
+            return False
+
+        return True
+
+    with infra.network.network(
+        args.nodes, args.binary_dir, args.debug_nodes
+    ) as network:
+        network.start_and_open(args)
+        primary, _ = network.find_primary()
+
+        check = infra.checker.Checker()
+
+        with primary.client() as client:
+            LOG.info("user frontend")
+            if not fetch_schema(client.get("/app/api"), "app_openapi.json"):
+                documents_valid = False
+
+            LOG.info("node frontend")
+            if not fetch_schema(client.get("/node/api"), "node_openapi.json"):
+                documents_valid = False
+
+            LOG.info("gov API - latest (unversioned)")
+            latest_gov_schema = client.get("/gov/api")
+            if not fetch_schema(latest_gov_schema, "gov_openapi.json"):
+                documents_valid = False
+
+            for path_item in latest_gov_schema.body.json()["paths"].values():
+                api_version_parameters = [
+                    parameter
+                    for parameter in path_item["parameters"]
+                    if parameter["name"] == "api-version"
+                ]
+                assert len(api_version_parameters) == 1
+                api_version_schema = api_version_parameters[0]["schema"]
+                assert api_version_schema["default"] == "latest"
+                assert "enum" not in api_version_schema
+
+            invalid_version_response = client.get("/gov/api?api-version=not-a-version")
+            check(
+                invalid_version_response,
+                error=lambda status, msg: (
+                    status == http.HTTPStatus.BAD_REQUEST.value
+                    and msg.json()["error"]["code"] == "UnsupportedApiVersionValue"
+                ),
+            )
+
+        with primary.api_versioned_client(
+            api_version=infra.clients.API_VERSION_LATEST
+        ) as client:
+            LOG.info("gov API - latest (explicit)")
+            explicit_latest_gov_schema = client.get("/gov/api")
+            assert explicit_latest_gov_schema.status_code == http.HTTPStatus.OK.value
+            assert (
+                explicit_latest_gov_schema.body.json() == latest_gov_schema.body.json()
+            )
+
+        with primary.api_versioned_client(
+            api_version=infra.clients.API_VERSION_PREVIEW_01
+        ) as client:
+            LOG.info("gov API - preview v1")
+            if not fetch_schema(
+                client.get("/gov/api"), "gov/2023-06-01-preview/gov.json"
+            ):
+                documents_valid = False
+
+        with primary.api_versioned_client(
+            api_version=infra.clients.API_VERSION_01
+        ) as client:
+            LOG.info("gov API - v1")
+            if not fetch_schema(client.get("/gov/api"), "gov/2024-07-01/gov.json"):
+                documents_valid = False
+
+    made_changes = False
+
+    if len(old_schema) > 0:
+        LOG.error("Removing old files which are no longer reported by the service:")
+        for f in old_schema:
+            LOG.error(" " + f)
+            os.remove(f)
+            f_dir = os.path.dirname(f)
+            # Remove empty directories too
+            while not os.listdir(f_dir):
+                os.rmdir(f_dir)
+                f_dir = os.path.dirname(f_dir)
+        made_changes = True
+
+    if len(changed_files) > 0:
+        LOG.error("Found problems with the following schema files:")
+        for f in changed_files:
+            LOG.error(" " + f)
+        made_changes = True
+
+    if args.list_all:
+        LOG.info("Discovered methods:")
+        for method in sorted(set(all_methods)):
+            LOG.info(f"  {method}")
+
+    assert not (made_changes or not documents_valid)
+
+
+def run_nobuiltins(args):
+    with infra.network.network(
+        args.nodes, args.binary_dir, args.debug_nodes, pdb=args.pdb
+    ) as network:
+        network.start_and_open(args)
+        nobuiltins.test_nobuiltins_endpoints(network, args)
+
+
+if __name__ == "__main__":
+
+    def add(parser):
+        parser.add_argument(
+            "--schema-dir",
+            help="Path to directory where retrieved schema should be saved",
+            required=True,
+        )
+        parser.add_argument(
+            "--list-all",
+            help="List all discovered methods at the end of the run",
+            action="store_true",
+        )
+        parser.add_argument(
+            "--ledger-tutorial",
+            help="Path to ledger tutorial file",
+            type=str,
+        )
+        parser.add_argument(
+            "--config-samples-dir",
+            help="Configuration samples directory",
+            type=str,
+            default=None,
+        )
+        parser.add_argument(
+            "--historical-testdata",
+            help="Historical ledger test data directory",
+            type=str,
+        )
+
+    cr = ConcurrentRunner(add)
+
+    cr.add(
+        "schema",
+        run,
+        package="samples/apps/logging/logging",
+        nodes=infra.e2e_args.nodes(cr.args, 1),
+    )
+
+    cr.add(
+        "nobuiltins",
+        run_nobuiltins,
+        package="samples/apps/nobuiltins/nobuiltins",
+        nodes=infra.e2e_args.min_nodes(cr.args, f=1),
+    )
+
+    cr.add(
+        "tutorial",
+        e2e_tutorial.run,
+        package="samples/apps/logging/logging",
+        nodes=["local://127.0.0.1:8000"],
+        initial_member_count=1,
+    )
+
+    # These groups run concurrently, each on its own network.
+    cr.add(
+        "operations-lifecycle",
+        e2e_operations.run_runtime_lifecycle_checks,
+        package="samples/apps/logging/logging",
+        nodes=infra.e2e_args.nodes(cr.args, 1),
+        log_level="trace",
+    )
+
+    for name, target in (
+        ("operations-offline", e2e_operations.run_offline_ledger_tools),
+        ("operations-snapshots", e2e_operations.run_snapshot_manual_and_retention),
+        ("operations-chunks", e2e_operations.run_ledger_chunk_operations),
+        ("operations-config", e2e_operations.run_node_config_checks),
+        ("operations-cose", e2e_operations.run_cose_checks),
+        ("operations-tb-snapshots", e2e_operations.run_time_based_snapshots),
+        ("operations-persistence", e2e_operations.run_snapshot_persistence),
+    ):
+        cr.add(
+            name,
+            target,
+            package="samples/apps/logging/logging",
+            nodes=infra.e2e_args.min_nodes(cr.args, f=0),
+            initial_user_count=1,
+            ledger_chunk_bytes="1B",  # Chunk ledger at every signature transaction
+        )
+
+    cr.add(
+        "download",
+        e2e_operations.run_ledger_chunk_download,
+        package="samples/apps/logging/logging",
+        nodes=infra.e2e_args.max_nodes(cr.args, f=0),
+        initial_user_count=1,
+        ledger_chunk_bytes="1B",  # Chunk ledger at every signature transaction
+        # Force a signature (and so a new chunk) after every transaction, so the
+        # chunk count depends only on transaction count, not on how much
+        # wall-clock time elapses before the default signature interval fires.
+        sig_tx_interval=1,
+    )
+
+    cr.add(
+        "committed-prefix-download",
+        e2e_operations.run_committed_ledger_prefix_download,
+        package="samples/apps/logging/logging",
+        nodes=infra.e2e_args.min_nodes(cr.args, f=0),
+        initial_user_count=1,
+        ledger_chunk_bytes="50MB",
+        # A due snapshot ends the chunk at the next signature regardless of
+        # size, which would promote the file to .committed mid-test.
+        snapshot_tx_interval=100000,
+    )
+
+    for name, target in (
+        ("download-snapshot", e2e_operations.run_backup_snapshot_download),
+        (
+            "download-snapshot-limits",
+            e2e_operations.run_backup_snapshot_download_limits,
+        ),
+        (
+            "download-snapshot-failures",
+            e2e_operations.run_backup_snapshot_download_failures,
+        ),
+    ):
+        cr.add(
+            name,
+            target,
+            package="samples/apps/logging/logging",
+            nodes=infra.e2e_args.max_nodes(cr.args, f=0),
+            initial_user_count=1,
+        )
+
+    cr.run()
