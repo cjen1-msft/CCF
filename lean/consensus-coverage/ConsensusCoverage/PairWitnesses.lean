@@ -1,7 +1,5 @@
 module
 
-meta import Consensus.Model
-meta import ConsensusCoverage.PairQuestions
 public import ConsensusCoverage.PairQuestions
 import all ConsensusCoverage.PairQuestions
 import all Consensus.Proofs.SafetyInvariant
@@ -30,13 +28,19 @@ private def schedule : List Command := [
   .input 0 (.timeout .checkQuorum), .input 1 (.timeout .election),
   .deliver 1 0, .deliver 0 1, .deliver 1 0, .deliver 0 1]
 
-private def replay (nodes : List NodeID) (s : Model.State) :
-    List Command → Option (List (Bool × Bool × Bool))
+private def replay {α : Type} (observe : Model.State → Model.State → α) (nodes : List NodeID)
+    (s : Model.State) : List Command → Option (List α)
   | [] => some []
   | cmd :: rest => do
     let act ← cmd.resolve s
     let t ← (transitionSystem config nodes).step s act
-    return label s t :: (← replay nodes t rest)
+    return observe s t :: (← replay observe nodes t rest)
+
+/-- The two model executions witnessing the table, in chronological order. -/
+public def examples : Option (List (List Model.State)) :=
+  [[0, 1], [0, 1, 2]].mapM fun ns => do
+    let s := initial ns
+    return s :: (← replay (fun _ t => t) ns s schedule)
 
 public def Occurs (row : Bool × Bool × Bool) : Prop :=
   ∃ (cfg : CCF.Finset NodeID) (nodes : List NodeID) (s t : Model.State) (act : Model.Action),
@@ -44,7 +48,7 @@ public def Occurs (row : Bool × Bool × Bool) : Prop :=
       (transitionSystem cfg nodes).step s act = some t ∧ label s t = row
 
 private theorem run_occurs {nodes : List NodeID} {s : Model.State} {cmds es}
-    (reach : (transitionSystem config nodes).Reachable s) (h : replay nodes s cmds = some es) :
+    (reach : (transitionSystem config nodes).Reachable s) (h : replay label nodes s cmds = some es) :
     ∀ e ∈ es, Occurs e := by
   induction cmds generalizing s es with
   | nil => cases h; simp
@@ -58,7 +62,7 @@ private theorem run_occurs {nodes : List NodeID} {s : Model.State} {cmds es}
     · exact ih (.step reach step) followed e old
 
 private def covers : Bool :=
-  match replay [0,1] (initial [0,1]) schedule, replay [0,1,2] (initial [0,1,2]) schedule with
+  match replay label [0,1] (initial [0,1]) schedule, replay label [0,1,2] (initial [0,1,2]) schedule with
   | some a, some b => table.all fun row => row ∈ a ∨ row ∈ b
   | _, _ => false
 

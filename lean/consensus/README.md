@@ -70,3 +70,42 @@ To list the safety-invariant declarations used by the exported theorems, run `la
 The [trace replayer](replay/README.md) checks finite driver observations against direct model transitions, independently of proofs.
 It checks each native send against the model, delivers any matching queued packet, treats undelivered packets as lost, and never repairs model state.
 The current native Fluentd capture path and replay's assurance limits are documented there.
+
+## Proof-derived snapshot coverage
+
+The [coverage reader](../consensus-coverage/scripts/pair-coverage.lean) scores consecutive
+snapshots against two questions from the [consensus safety proof](Consensus/Proofs/SafetyInvariant.lean).
+For each step it prints three bits: is any node at commit index zero **before**, is any
+node **newly primary** for its term, and is any node at zero **after**? The middle bit
+includes a candidate becoming primary in its current term, but not a primary continuing
+in the same term.
+
+The reachable rows are exactly `101`, `111`, `100`, `000`, and `010`. No step can reintroduce
+a zero index after every node has committed, and the election-winning step cannot advance
+the winner's commit index. One 13-step execution first commits on both nodes, then elects
+a primary (`010`). Repeating the schedule with an idle third node witnesses an election
+while that node remains at zero (`111`). Together the two executions visit all five rows.
+
+Run from the repository root:
+
+```sh
+WS=$(python3 lean/relevance/scripts/workspace.py consensus-coverage)
+lake -d "$WS/consensus-coverage" build ConsensusCoverage.Snapshot ConsensusCoverage.PairWitnesses
+reader="$PWD/lean/consensus-coverage/scripts/pair-coverage.lean"
+lake -d "$WS/consensus-coverage" env lean --run "$reader" check
+lake -d "$WS/consensus-coverage" env lean --run "$reader" trace run1.json run2.json
+```
+
+Each JSON file is one run: a chronological array of full-cluster snapshots. Each snapshot
+is an array of records like `{"id":0,"primary":true,"currentTerm":2,"commitIndex":0}`.
+Include the same IDs (including idle nodes) exactly once in each snapshot; order is immaterial.
+Provide consecutive model-action boundaries, not arbitrary sampling intervals or raw per-node
+Fluentd events. Files are scored separately, then coverage is combined.
+
+[The reduction](../consensus-coverage/ConsensusCoverage/PairQuestions.lean) proves agreement with
+`state_committed_logs_comparable_left_backed_inl` and `step_leader_led_leader_inr` on every
+valid step. [The projection theorem](../consensus-coverage/ConsensusCoverage/Snapshot.lean)
+proves that the four recorded fields suffice; [exactness](../consensus-coverage/ConsensusCoverage/PairWitnesses.lean)
+is over reachable steps of the original model, across configurations. A missing row is a
+coverage gap; an unexpected row cannot occur on a model step. Hitting every row does not
+validate a trace or cover the rest of the history proof.
