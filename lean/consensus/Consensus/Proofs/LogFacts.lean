@@ -74,6 +74,42 @@ def Origin (g : Ghost) : Prop :=
 def Chain (g : Ghost) : Prop :=
   ∀ k a b, g.canon k a → g.canon k b → a <+: b ∨ b <+: a
 
+/-- A non-bootstrap leader log carries the winning committable prefix. This is what
+the original proof used to recover by visiting the instant the leader log was seen. -/
+def WinningPrefix (g : Ghost) : Prop :=
+  ∀ k l, g.canon k l → Model.BOOTSTRAP_TERM < k →
+    ∃ n p i, g.elected n k p i ∧ p.take (maxCommittableIndex p) <+: l
+
+theorem winningPrefix_step {bootstrap g prev s} (old : WinningPrefix g)
+    (wins : ∀ n st k, (advance bootstrap g prev s).canonNow bootstrap s n st k →
+      Model.BOOTSTRAP_TERM < k → ∃ p i, (advance bootstrap g prev s).elected n k p i ∧
+        p.take (maxCommittableIndex p) <+: st.log) :
+    WinningPrefix (advance bootstrap g prev s) := by
+  intro k l canon gt
+  split_rel canon := (rcases canon with past | ⟨n, st, now, rfl⟩) with
+  | inl =>
+    obtain ⟨n, p, i, elect, sub⟩ := old k l past gt
+    exact ⟨n, p, i, .inl elect, sub⟩
+  | inr =>
+    obtain ⟨p, i, elect, sub⟩ := wins n st k now gt
+    exact ⟨n, p, i, elect, sub⟩
+
+def Complete (g : Ghost) : Prop :=
+  ∀ k p n t l i, g.committed k p → g.elected n t l i → k < t → p <+: l
+
+def Later (g : Ghost) : Prop :=
+  ∀ k t p l, g.committed k p → g.canon t l → k < t → p <+: l
+
+theorem later_of_complete {g : Ghost} (wins : WinningPrefix g) (complete : Complete g)
+    (signed : ∀ k p, g.committed k p →
+      Model.BOOTSTRAP_TERM ≤ k ∧ isSignatureAt p p.length = true)
+    (kept : ∀ {p l : List Entry}, p <+: l → isSignatureAt p p.length = true →
+      p <+: l.take (maxCommittableIndex l)) : Later g := by
+  intro k t p l commit canon lt
+  obtain ⟨floor, sig⟩ := signed k p commit
+  obtain ⟨n, e, i, elect, sub⟩ := wins t l canon (Nat.lt_of_le_of_lt floor lt)
+  exact (kept (complete k p n t e i commit elect lt) sig).trans sub
+
 theorem origin_step {bootstrap g prev s} (old : Origin g) :
     Origin (advance bootstrap g prev s) := by
   intro k p c
@@ -98,7 +134,7 @@ theorem chain_step {bootstrap g prev s} (old : Chain g)
 and different-term cases need no positions, witnesses' histories, or temporal induction. -/
 theorem comparable (g : Ghost)
     (backed : Origin g) (chain : Chain g)
-    (later : ∀ k t p l, g.committed k p → g.canon t l → k < t → p <+: l)
+    (later : Later g)
     {k t p q} (hp : g.committed k p) (hq : g.committed t q) : p <+: q ∨ q <+: p := by
   obtain ⟨a, ca, pa⟩ := backed k p hp
   obtain ⟨b, cb, qb⟩ := backed t q hq
