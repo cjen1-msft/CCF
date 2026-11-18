@@ -1039,12 +1039,6 @@ private def Candidate (history : History) : Prop :=
             \/ Doomed history node state)
         /\ forall entry, entry ∈ state.log -> entry.term < state.currentTerm
 
-private def ElectBacked (history : History) : Prop :=
-  forall after before rest node term log commit,
-    after :: before :: rest <:+ history
-    -> ElectStep after before rest node term log commit
-    -> Backed (before :: rest) log commit (term - 1)
-
 private def ElectionSafety (history : History) : Prop :=
   forall node other term, Led history node term -> Led history other term -> node = other
 
@@ -1128,7 +1122,6 @@ private structure Inv (history : History) : Prop where
   led_cur : LedCur history
   leader_led : LeaderLed history
   candidate : Candidate history
-  elect_backed : ElectBacked history
   electionCerts : ElectionCerts (logFacts history) (voteFacts history)
   election_safety : ElectionSafety history
   rankedElections : RankedElections (logFacts history) (voteFacts history)
@@ -5603,9 +5596,6 @@ private theorem inv_initial : Inv [initial] := by
       split_rel member := (by_cases member : node ∈ INITIAL_CONFIGURATION) with
       | pos => simp [primary, member] at candidate
       | neg => simp [primary, member] at candidate
-  · intro after before rest node term log commit suffix
-    have := suffix.length_le
-    simp at this
   · intro n k l i e
     exact (not_elected_single (((logFacts_correct [initial]).elected ..).1 e)).elim
   · intro node other term left right
@@ -6373,8 +6363,6 @@ include c
 
 private theorem anchors : Everywhere Anchor (before :: rest) := c.all Inv.anchor
 
-private theorem monos : Everywhere CanonMono (before :: rest) := c.all Inv.canon_mono
-
 private theorem pre_sorted
     : c.pre.log.Pairwise fun first second => first.term <= second.term :=
   c.inv.sorted c.actor c.pre c.pre_now
@@ -7029,54 +7017,49 @@ private theorem candidate : Candidate (after :: before :: rest) := by
     | inl => exact Or.inl (backed.mono c.suffix_tail)
     | inr => exact Or.inr (Doomed.cons' doomed rfl rfl rfl)
 
-private theorem elect_backed : ElectBacked (after :: before :: rest) := by
-  intro a b r node term log commit suffix step
-  split_rel suffix_cons_iff := (rcases List.suffix_cons_iff.mp suffix with same | inner) with
+private theorem elect_backed {node term log commit}
+    (step : ElectStep after before rest node term log commit) : Backed (before :: rest) log commit (term - 1) := by
+  have ⟨actorEq, logEq, commitEq, termCase, _, _, _, three⟩ := c.electStep step
+  subst actorEq
+  split_rel termCase := (rcases termCase with lt | ⟨same, preRole⟩) with
   | inl =>
-    simp only [List.cons.injEq] at same
-    obtain ⟨rfl, rfl, rfl⟩ := same
-    have ⟨actorEq, logEq, commitEq, termCase, _, _, _, three⟩ := c.electStep step
-    subst actorEq
-    split_rel termCase := (rcases termCase with lt | ⟨same, preRole⟩) with
+    split_rel pre_split := (rcases c.pre_split (term - 1) with backed
+        | ⟨current, past, leader, leaderState, late, base, index, inner, commitStep, below,
+          baseLe, within⟩) with
     | inl =>
-      split_rel pre_split := (rcases c.pre_split (term - 1) with backed
-          | ⟨current, past, leader, leaderState, late, base, index, inner, commitStep, below,
-            baseLe, within⟩) with
-      | inl =>
-        rw [← logEq, ← commitEq]
-        exact backed
-      | inr =>
-        exfalso
-        refine c.doomed_absurd step ?_ inner commitStep (by omega) (by omega)
-          (by rw [← logEq, ← commitEq]; exact within) ?_
-        · intro entry member
-          rw [← logEq] at member
-          have := c.inv.terms c.actor c.pre c.pre_now entry member
-          omega
-        · intro earlier earlierSuffix seen
-          obtain ⟨other, seenOther, otherTerm⟩ := seen
-          have := c.pre_terms earlierSuffix seenOther
-          omega
+      rw [← logEq, ← commitEq]
+      exact backed
     | inr =>
-      obtain ⟨_, _, _, backed, low⟩ := c.inv.candidate c.actor c.pre c.pre_now preRole
-      split_rel backed := (rcases backed with backed
-          | ⟨current, past, leader, leaderState, late, base, index, inner, commitStep, le,
-            baseLe, within, order⟩) with
-      | inl =>
-        rw [← logEq, ← commitEq, ← same]
-        exact backed
-      | inr =>
-        exfalso
-        refine c.doomed_absurd step ?_ inner commitStep (by omega) (by omega)
-          (by rw [← logEq, ← commitEq]; exact within)
-          fun earlier earlierSuffix seen => order earlier earlierSuffix ?_
-        · intro entry member
-          rw [← logEq] at member
-          have := low entry member
-          omega
-        · obtain ⟨other, seenOther, otherTerm⟩ := seen
-          exact ⟨other, seenOther, otherTerm.trans same.symm⟩
-  | inr => exact c.inv.elect_backed a b r node term log commit inner step
+      exfalso
+      refine c.doomed_absurd step ?_ inner commitStep (by omega) (by omega)
+        (by rw [← logEq, ← commitEq]; exact within) ?_
+      · intro entry member
+        rw [← logEq] at member
+        have := c.inv.terms c.actor c.pre c.pre_now entry member
+        omega
+      · intro earlier earlierSuffix seen
+        obtain ⟨other, seenOther, otherTerm⟩ := seen
+        have := c.pre_terms earlierSuffix seenOther
+        omega
+  | inr =>
+    obtain ⟨_, _, _, backed, low⟩ := c.inv.candidate c.actor c.pre c.pre_now preRole
+    split_rel backed := (rcases backed with backed
+        | ⟨current, past, leader, leaderState, late, base, index, inner, commitStep, le,
+          baseLe, within, order⟩) with
+    | inl =>
+      rw [← logEq, ← commitEq, ← same]
+      exact backed
+    | inr =>
+      exfalso
+      refine c.doomed_absurd step ?_ inner commitStep (by omega) (by omega)
+        (by rw [← logEq, ← commitEq]; exact within)
+        fun earlier earlierSuffix seen => order earlier earlierSuffix ?_
+      · intro entry member
+        rw [← logEq] at member
+        have := low entry member
+        omega
+      · obtain ⟨other, seenOther, otherTerm⟩ := seen
+        exact ⟨other, seenOther, otherTerm.trans same.symm⟩
 
 end Consensus.Proofs.Safety.Ctx
 
@@ -7300,7 +7283,7 @@ private theorem old_step_in_new {node : NodeID} {later commit : Nat} {log : List
           /\ (state.log.take index <+: part \/ part <+: state.log.take index) := by
     intro above
     split_rel elect_backed :=
-        (rcases c.elect_backed after before rest node later log commit (List.suffix_refl _) elect with
+        (rcases c.elect_backed elect with
           zero | ⟨_, part, committedE, _, inPart⟩) with
     | inl => exact (Nat.not_lt_zero base (zero ▸ above)).elim
     | inr => exact ⟨part, inPart, committed_comparable c.inv.completeness c.inv.winningPrefix c.inv.chains committedH committedE⟩
@@ -7352,7 +7335,7 @@ private theorem freshCert {node : NodeID} {term commit : Nat} {log : List Entry}
     (elect : ElectStep after before rest node term log commit) :
     ElectionCert (logFacts (before :: rest)) (voteFacts (after :: before :: rest))
       node term log commit := by
-  have backing := c.elect_backed after before rest node term log commit (List.suffix_refl _) elect
+  have backing := c.elect_backed elect
   obtain ⟨st, _, mem, _, logEq, _, front, _, _, _, _, above, voters, quorum, granted⟩ := elect
   refine ⟨above, logEq ▸ c.inv.rooted _ _ mem, front, ?_,
     ⟨voters, quorum, fun v m => (granted v m).stamp⟩⟩
@@ -7924,7 +7907,7 @@ private theorem keep_backed
       exact (c.pre_backed agree preRole old).mono c.suffix_tail
   | inr =>
     have ⟨_, logEq, commitEq', _⟩ := c.electStep step
-    have backed := c.elect_backed after before rest c.actor _ log commit (List.suffix_refl _) step
+    have backed := c.elect_backed step
     rw [← logEq, ← commitEq'] at backed
     exact ((backed.weaken (Nat.sub_le _ _)).transfer agree).mono c.suffix_tail
 
@@ -8110,8 +8093,7 @@ private theorem commit_backed : CommitBacked (after :: before :: rest) := by
           List.suffix_refl _, elect⟩) rfl ?_)
         · show Backed _ _ candidate.commitIndex _
           rw [candidateCommit]
-          exact ((c.elect_backed after before rest c.actor _ _ _ (List.suffix_refl _)
-            elect).weaken (Nat.sub_le _ _)).transfer agree
+          exact ((c.elect_backed elect).weaken (Nat.sub_le _ _)).transfer agree
         · intro voter _ positive
           exact absurd positive (Nat.lt_irrefl 0)
     | install =>
@@ -8479,7 +8461,6 @@ private theorem inv_step : Inv (after :: before :: rest) :=
     led_cur := c.led_cur
     leader_led := c.leader_led
     candidate := c.candidate
-    elect_backed := c.elect_backed
     electionCerts := c.electionCerts
     election_safety := c.election_safety
     rankedElections := c.rankedElections
