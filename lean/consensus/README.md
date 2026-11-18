@@ -81,10 +81,15 @@ introduce a lower-term prefix for that voter. Elections retain this evidence, so
 `new_in_elected` can induct on the election term without revisiting the vote or the
 election. This also handles a commit recorded after a higher-term election.
 
-The outer invariant still uses `Good history`. The old-commit/new-election proof
-still follows a commit's backing chain, and the candidate, message and persistence
-arguments still have historical witnesses. These ghosts are proof data; they do not
-establish that the full coverage target is finite.
+For the other direction, a new election must carry every older committed prefix.
+`CommitChain` records the signed quorum evidence for a commit and, if its base is
+nonzero, the committed prefix backing that base. `commitChains_step` preserves
+these certificates; `carried_of_chain` inducts over their links, not over execution
+steps. Idle steps do not lengthen a certificate.
+
+The outer invariant still uses `Good history`. In particular, the candidate,
+message and persistence arguments still have historical witnesses. These ghosts
+are proof data; they do not establish that the full coverage target is finite.
 
 ## Trace replay
 

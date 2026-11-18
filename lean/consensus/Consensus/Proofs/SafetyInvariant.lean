@@ -1113,6 +1113,60 @@ private def MessageTerms (history : History) : Prop :=
   forall envelope,
     Pending history envelope -> Bumping envelope.payload -> 2 <= envelope.payload.term
 
+private structure CommitFacts (g : LogFacts.Ghost) (l : List Entry) (t base i : Nat) : Prop where
+  canon : g.canon t l
+  rooted : Rooted GENESIS l
+  sorted : l.Pairwise fun x y => x.term ≤ y.term
+  floor : 2 ≤ t
+  baseLe : base ≤ i
+  indexLe : i ≤ l.length
+  signature : isSignatureAt l i = true
+  termAtIndex : termAt l i = t
+  acks : ∃ xs, hasQuorum ((activeConfigurations l base).filter (·.index ≤ i)) xs ∧
+    ∀ x ∈ xs, ∃ p, g.seen x t p ∧ l.take i <+: p
+
+/-- A derivation from signed quorum evidence. No constructor names a snapshot or a
+position in the execution; idle steps do not add links to a derivation. -/
+private inductive CommitChain (g : LogFacts.Ghost) : Nat → List Entry → Prop where
+  | fresh {l t i} (facts : CommitFacts g l t 0 i) : CommitChain g t (l.take i)
+  | backed {l t b i e p} (facts : CommitFacts g l t b i) (prior : g.committed e p)
+      (chain : CommitChain g e p) (le : e ≤ t) (within : l.take b <+: p) :
+      CommitChain g t (l.take i)
+
+private def CommitChains (g : LogFacts.Ghost) : Prop :=
+  ∀ t p, g.committed t p → CommitChain g t p
+
+private theorem CommitChain.advance {g bootstrap prev s t p} (c : CommitChain g t p) :
+    CommitChain (LogFacts.advance bootstrap g prev s) t p := by
+  have lift {l t b i} (f : CommitFacts g l t b i) :
+      CommitFacts (LogFacts.advance bootstrap g prev s) l t b i := by
+    obtain ⟨xs, q, obs⟩ := f.acks
+    refine { f with canon := .inl f.canon, acks := ⟨xs, q, ?_⟩ }
+    intro x mem
+    obtain ⟨p, seen, sub⟩ := obs x mem
+    exact ⟨p, .inl seen, sub⟩
+  induction c with
+  | fresh facts => exact .fresh (lift facts)
+  | backed facts prior _ le within ih => exact .backed (lift facts) (.inl prior) ih le within
+
+private theorem commitChains_step {g bootstrap prev} {s : Model.State} (old : CommitChains g)
+    (rooted : ∀ n st, (n, st) ∈ s.nodes → Rooted GENESIS st.log)
+    (sorted : ∀ n st, (n, st) ∈ s.nodes → st.log.Pairwise fun x y => x.term ≤ y.term)
+    (floor : ∀ n k l i, (LogFacts.advance bootstrap g prev s).elected n k l i → 2 ≤ k) :
+    CommitChains (LogFacts.advance bootstrap g prev s) := by
+  intro t p com
+  split_rel committed := (rcases com with past | ⟨n, st, b, i, step, rfl, backing⟩) with
+  | inl => exact (old _ _ past).advance
+  | inr =>
+    obtain ⟨now, le, bound, sig, term, acks⟩ := step
+    have two : 2 ≤ t := now.2.2.2.elim (fun h => by rw [h.1]; decide)
+      (fun ⟨l, i, elect⟩ => floor n t l i elect)
+    have facts : CommitFacts (LogFacts.advance bootstrap g prev s) st.log t b i :=
+      ⟨.inr ⟨n, st, now, rfl⟩, rooted n st now.1, sorted n st now.1, two, le, bound, sig, term, acks⟩
+    split_rel backing := (rcases backing with rfl | ⟨e, p, prior, le, sub⟩) with
+    | inl => exact .fresh facts
+    | inr => exact .backed facts (.inl prior) (old e p prior).advance le sub
+
 private structure Inv (history : History) : Prop where
   terms : Terms history
   sorted : Sorted history
@@ -1137,6 +1191,7 @@ private structure Inv (history : History) : Prop where
   message_terms : MessageTerms history
   rooted : RootedLogs history
   leader_logs : LeaderLogs history
+  commitChains : CommitChains (logFacts history)
 
 private theorem Inv.term_mono {h : History} (i : Inv h) : TermMono h := i.ballots.term_mono
 
@@ -5536,6 +5591,21 @@ private theorem inv_initial : Inv [initial] := by
   have stateOf : forall {node : NodeID} {state : NodeState},
       Now [initial] node state -> state = initialLocal node :=
     fun now => initial_state initialized now
+  have sorted : Sorted [initial] := by
+    intro node state now
+    rw [stateOf now]
+    unfold initialLocal
+    split_rel primary := (split) with
+    | pos => simp
+    | neg => simp
+  have rooted : RootedLogs [initial] := by
+    intro node state now
+    rw [stateOf now]
+    split_rel isLeader := (by_cases isLeader : node = INITIAL_PRIMARY) with
+    | pos =>
+      subst isLeader
+      exact Or.inr (by simp [initialLocal])
+    | neg => exact Or.inl (by simp [initialLocal, isLeader])
   constructor
   · intro node state now entry member
     rw [stateOf now] at member ⊢
@@ -5544,12 +5614,7 @@ private theorem inv_initial : Inv [initial] := by
       subst leader
       simp_all [initialLocal]
     | neg => simp [initialLocal, leader] at member
-  · intro node state now
-    rw [stateOf now]
-    unfold initialLocal
-    split_rel primary := (split) with
-    | pos => simp
-    | neg => simp
+  · exact sorted
   · intro node state now active
     rw [stateOf now] at active ⊢
     simp only [Engaged, initialLocal] at active ⊢
@@ -5653,13 +5718,7 @@ private theorem inv_initial : Inv [initial] := by
     simp [Pending, initialized.2.2.2.1] at pending
   · intro envelope pending
     simp [Pending, initialized.2.2.2.1] at pending
-  · intro node state now
-    rw [stateOf now]
-    split_rel isLeader := (by_cases isLeader : node = INITIAL_PRIMARY) with
-    | pos =>
-      subst isLeader
-      exact Or.inr (by simp [initialLocal])
-    | neg => exact Or.inl (by simp [initialLocal, isLeader])
+  · exact rooted
   · intro node state now leader
     rw [stateOf now] at leader ⊢
     split_rel isLeader := (by_cases isLeader : node = INITIAL_PRIMARY) with
@@ -5671,6 +5730,11 @@ private theorem inv_initial : Inv [initial] := by
       split_rel leader := (split at leader) with
       | pos => cases leader
       | neg => cases leader
+
+  · apply commitChains_step (g := LogFacts.empty) (s := initial) (prev := none)
+      (bootstrap := INITIAL_PRIMARY) (fun _ _ h => False.elim h) rooted sorted
+    intro n k l i e
+    exact (not_elected_single (((logFacts_correct [initial]).elected ..).1 e)).elim
 
 end Initial
 end Consensus.Proofs.Safety
@@ -7079,18 +7143,6 @@ private theorem take_of_prefix_length {α : Type} {small large : List α} {n : N
   rw [← length]
   exact List.prefix_iff_eq_take.mp sub
 
-private structure CommitFacts (g : LogFacts.Ghost) (l : List Entry) (t base i : Nat) : Prop where
-  canon : g.canon t l
-  rooted : Rooted GENESIS l
-  sorted : l.Pairwise fun x y => x.term ≤ y.term
-  floor : 2 ≤ t
-  baseLe : base ≤ i
-  indexLe : i ≤ l.length
-  signature : isSignatureAt l i = true
-  termAtIndex : termAt l i = t
-  acks : ∃ xs, hasQuorum ((activeConfigurations l base).filter (·.index ≤ i)) xs ∧
-    ∀ x ∈ xs, ∃ p, g.seen x t p ∧ l.take i <+: p
-
 private theorem CommitStep.facts {current past h n st t b i}
     (step : CommitStep (current :: past) n st t b i) (suffix : current :: past <:+ h)
     (rooted : RootedLogs (current :: past)) (sorted : Sorted (current :: past)) :
@@ -7266,60 +7318,47 @@ variable {nodes : List NodeID} {after before : Model.State}
   {rest : History} (c : Ctx nodes after before rest)
 include c
 
-private theorem old_step_in_new {node : NodeID} {later commit : Nat} {log : List Entry}
-    (elect : ElectStep after before rest node later log commit)
-    {current : Model.State} {past : History}
-    (suffix : current :: past <:+ before :: rest) {leader : NodeID}
-    {state : NodeState} {term base index : Nat}
-    (step : CommitStep (current :: past) leader state term base index)
-    (committed : Committed (current :: past) term (state.log.take index))
-    (lt : term < later) (low : commit <= base -> state.log.take base <+: log)
-    : state.log.take index <+: log := by
-  have ⟨_, _, _, _, _, _, frontier, _⟩ := elect
-  have committedH := committed.mono suffix
-  have high : base < commit
-      -> exists part,
-          log.take commit <+: part
-          /\ (state.log.take index <+: part \/ part <+: state.log.take index) := by
-    intro above
-    split_rel elect_backed :=
-        (rcases c.elect_backed elect with
-          zero | ⟨_, part, committedE, _, inPart⟩) with
-    | inl => exact (Nat.not_lt_zero base (zero ▸ above)).elim
-    | inr => exact ⟨part, inPart, committed_comparable c.inv.completeness c.inv.winningPrefix c.inv.chains committedH committedE⟩
-  split_rel agree_or_contained :=
-      (rcases agree_or_contained step.2.1 step.2.2.1 frontier low high with
-        done | ⟨k, agree, baseLe, commitLe⟩) with
-  | inl => exact done
-  | inr =>
-    have cert := step.facts suffix (c.all Inv.rooted _ suffix (List.cons_ne_nil _ _))
-      (c.all Inv.sorted _ suffix (List.cons_ne_nil _ _))
-    have campaign := (c.freshCampaign elect).transport (g' := logFacts (before :: rest))
-      (fun _ m => m) (fun _ _ h => h) (fun _ _ _ le => le) (fun _ _ _ _ obs _ => .inl obs)
-    exact core c.inv.chains cert campaign lt (Nat.sub_le _ _) agree baseLe commitLe
-      fun _ _ above _ canon => committed_in_canon c.inv.completeness c.inv.winningPrefix committedH
-        (((logFacts_correct _).canon ..).1 canon) above
+omit c in
+private theorem carried_of_chain {g : LogFacts.Ghost} {v n later log commit t p}
+    (campaign : CampaignFacts g v g.canon n later log commit later)
+    (backing : commit = 0 ∨ ∃ e q, g.committed e q ∧ log.take commit <+: q)
+    (origin : LogFacts.Origin g) (chains : LogFacts.Chain g) (prior : LogFacts.Later g)
+    (cert : CommitChain g t p) (com : g.committed t p) (lt : t < later) : p <+: log := by
+  have carry {l t b i} (f : CommitFacts g l t b i) (mem : g.committed t (l.take i))
+      (lt : t < later) (low : commit ≤ b → l.take b <+: log) : l.take i <+: log := by
+    have high (above : b < commit) :
+        ∃ q, log.take commit <+: q ∧ (l.take i <+: q ∨ q <+: l.take i) := by
+      split_rel backing := (rcases backing with zero | ⟨e, q, old, sub⟩) with
+      | inl => omega
+      | inr => exact ⟨q, sub, LogFacts.comparable g origin chains prior mem old⟩
+    split_rel agreement := (rcases agree_or_contained f.baseLe f.indexLe campaign.frontier low high with
+      sub | ⟨k, agree, baseLe, commitLe⟩) with
+    | inl => exact sub
+    | inr =>
+      exact core chains f campaign lt (Nat.sub_le _ _) agree baseLe commitLe
+        (fun e a above _ canon => prior t e _ a mem canon above)
+  split_rel certificate := (induction cert) with
+  | fresh => exact carry ‹_› com lt (fun _ => by simp)
+  | backed =>
+    rename_i facts old _ le sub ih
+    exact carry facts com lt (fun _ => sub.trans (ih old (Nat.lt_of_le_of_lt le lt)))
 
 /-- A part committed before the step is in the log of a new election. -/
 private theorem old_in_new {node : NodeID} {later commit : Nat} {log : List Entry}
     (elect : ElectStep after before rest node later log commit)
-    {history : History} {term : Nat} {part : List Entry}
-    (committed : Committed history term part) (suffix : history <:+ before :: rest)
+    {term : Nat} {part : List Entry}
+    (committed : (logFacts (before :: rest)).committed term part)
     (lt : term < later)
     : part <+: log := by
-  split_rel committed := (induction committed) with
-  | fresh =>
-    rename_i step
-    exact c.old_step_in_new elect suffix step (Committed.fresh step) lt
-      fun _ => by rw [List.take_zero]; exact List.nil_prefix
-  | chained =>
-    rename_i step backing le within ih
-    exact c.old_step_in_new elect suffix step (Committed.chained step backing le within)
-      lt fun _ => within.trans (ih ((List.suffix_cons _ _).trans suffix)
-        (Nat.lt_of_le_of_lt le lt))
-  | past =>
-    rename_i _ ih
-    exact ih ((List.suffix_cons _ _).trans suffix) lt
+  have rep := logFacts_correct (before :: rest)
+  have campaign := (c.freshCampaign elect).transport (g' := logFacts (before :: rest))
+    (fun _ m => m) (fun _ _ h => h) (fun _ _ _ le => le) (fun _ _ _ _ obs _ => .inl obs)
+  apply carried_of_chain campaign _ (logOrigin _) c.inv.chains _
+    (c.inv.commitChains _ _ committed) committed lt
+  · exact (c.elect_backed elect).imp_right fun ⟨e, q, m, _, sub⟩ =>
+      ⟨e, q, (rep.committed ..).2 m, sub⟩
+  · exact fun _ _ _ _ m canon => committed_in_canon c.inv.completeness c.inv.winningPrefix
+      ((rep.committed ..).1 m) ((rep.canon ..).1 canon)
 
 /-- A part committed before the step is in every later elected log. -/
 private theorem old_complete {term later commit : Nat} {node : NodeID}
@@ -7329,7 +7368,7 @@ private theorem old_complete {term later commit : Nat} {node : NodeID}
     : part <+: log := by
   split_rel elected_after := (rcases c.elected_after elected with old | step) with
   | inl => exact c.inv.completeness term part node later log commit committed old lt
-  | inr => exact c.old_in_new step committed (List.suffix_refl _) lt
+  | inr => exact c.old_in_new step (((logFacts_correct _).committed ..).2 committed) lt
 
 private theorem freshCert {node : NodeID} {term commit : Nat} {log : List Entry}
     (elect : ElectStep after before rest node term log commit) :
@@ -7392,7 +7431,7 @@ private theorem new_old_unique {node other : NodeID} {term commit : Nat}
     have cert := c.inv.electionCerts other term l i ((rep.elected ..).2 old)
     apply certificates_agree fresh (cert.weaken (fun _ _ h => h)
       (fun _ h => VoteFacts.mem_advance.2 (.inr h))) c.ballots
-    · exact fun _ _ com => c.old_in_new elect ((rep.committed ..).1 com) (List.suffix_refl _)
+    · exact fun _ _ com => c.old_in_new elect com
     · exact fun _ _ com => c.inv.completeness _ _ _ _ _ _ ((rep.committed ..).1 com) old
 
 private theorem election_safety : ElectionSafety (after :: before :: rest) := by
@@ -8476,6 +8515,8 @@ private theorem inv_step : Inv (after :: before :: rest) :=
     message_terms := c.message_terms
     rooted := c.rooted
     leader_logs := c.leader_logs
+    commitChains := commitChains_step c.inv.commitChains c.rooted c.sorted
+      (fun n k l i e => Nat.le_trans (by decide : 2 ≤ 3) (c.electionCerts n k l i e).above)
   }
 
 end Consensus.Proofs.Safety.Ctx
