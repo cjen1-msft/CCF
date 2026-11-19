@@ -344,8 +344,10 @@ structure Result where
   observations : Nat
 deriving Repr, BEq
 
-def replay (header : Header) (instructions : Array Instruction)
-    : Except String Result := do
+/-- Observe each enabled model action exactly once, including stutters. Read-only native
+observations still have to pass; they do not create extra model steps. -/
+def foldActions {α : Type} (header : Header) (instructions : Array Instruction) (acc : α)
+    (observe : α → Model.State → Model.State → α) : Except String (Result × α) := do
   unless !header.declared.isEmpty
           && header.declared.all (!·.isEmpty)
           && header.declared.eraseDups == header.declared do
@@ -360,16 +362,23 @@ def replay (header : Header) (instructions : Array Instruction)
   if instructions.isEmpty then throw "replay instructions must not be empty"
   let mut state : ReplayState := { state := header.initial }
   let mut actions := 0
+  let mut acc := acc
   for instruction in instructions, index in [:instructions.size] do
+    let before := state.state
     state ←
       (runInstruction header state instruction).mapError
         fun error =>
           s!"instruction {index + 1} at {instruction.origin.label}: {error}"
-    if let .action .. := instruction then actions := actions + 1
-  return {
+    if let .action .. := instruction then
+      actions := actions + 1
+      acc := observe acc before state.state
+  return ({
     instructions := instructions.size,
     actions,
     observations := instructions.size - actions
-  }
+  }, acc)
+
+def replay (header : Header) (instructions : Array Instruction) : Except String Result :=
+  Prod.fst <$> foldActions header instructions () (fun _ _ _ => ())
 
 end Consensus.Replay
