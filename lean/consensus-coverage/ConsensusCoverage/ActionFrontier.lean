@@ -45,6 +45,40 @@ public theorem incumbent_eq (s : Step) :
   rw [project_eq]
   exact Bool.eq_iff_iff.mpr ((label_true s _).trans incumbent)
 
+/-- Which of the 457 coordinates this projection promises to distinguish. -/
+@[expose] public def selected : Question → Bool
+  | .pre _ | .post _ => true
+  | .step .leader_led_leader_inr | .step .leader_led_leader_inl
+  | .step .leader_led_now_after_inl => true
+  | .step _ => false
+
+/-- Equal keys iff all 12 pre-state, three leader-step and 12 post-state
+answers agree. The two-bit endpoint encoding and redundant incumbent column
+neither add nor lose any distinction on this slice. -/
+public theorem same_key {s t : Step} :
+    project (label s) = project (label t) ↔
+      ∀ q, selected q = true → label s q = label t q := by
+  constructor
+  · intro eq q sel
+    cases q with
+    | pre b =>
+      have key := congrArg (fun (k : FrontierRows.Row × Bool) => (k.1.zeroBefore, k.1.backedBefore)) eq
+      rw [project_eq, project_eq] at key
+      change StateCoverage.read _ _ _ = StateCoverage.read _ _ _ at key
+      exact congrFun ((pre_answers s).trans ((congrArg ProofContexts.answers key).trans (pre_answers t).symm)) b
+    | post b =>
+      have key := congrArg (fun (k : FrontierRows.Row × Bool) => (k.1.zeroAfter, k.1.backedAfter)) eq
+      rw [project_eq, project_eq] at key
+      change StateCoverage.read _ _ _ = StateCoverage.read _ _ _ at key
+      exact congrFun ((post_answers s).trans ((congrArg ProofContexts.answers key).trans (post_answers t).symm)) b
+    | step b =>
+      have won := congrArg (fun (k : FrontierRows.Row × Bool) => k.1.wonPrimary) eq
+      have changed := congrArg Prod.snd eq
+      have incumbent := (incumbent_eq s).trans (eq ▸ (incumbent_eq t).symm)
+      cases b <;> first | exact won | exact changed | exact incumbent | contradiction
+  · intro h
+    exact Prod.ext (Projection.row_eq (h _ rfl) (h _ rfl) (h _ rfl) (h _ rfl) (h _ rfl)) (h _ rfl)
+
 /-- Reachability of all nine rows also holds for profiles pinned to the recorded action. -/
 public theorem exact_frontier (r : FrontierRows.Row) :
     r ∈ FrontierRows.table ↔ ∃ s : Step, Projection.project (label s) = r := by
