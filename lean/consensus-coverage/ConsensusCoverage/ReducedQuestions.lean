@@ -40,15 +40,19 @@ private def bumping : Message → Bool
 private theorem bumping_iff (m : Message) : bumping m = true ↔ Bumping m := by
   cases m <;> simp [bumping, Bumping]
 
-private def freshSend (s : Model.State) (sent : List Model.Envelope)
-    (test : Message → Bool) : Bool :=
-  sent.any fun e => !s.network.contains e && test e.payload
+/-- Compare complete envelopes before projecting to payloads. A replay computes
+this difference once, not once per generated column. -/
+@[expose] public def freshPayloads (s : Model.State) (sent : List Model.Envelope) : List Message :=
+  (sent.filter fun e => !s.network.contains e).map (·.payload)
+
+private def freshSend (s : Model.State) (sent : List Model.Envelope) (test : Message → Bool) : Bool :=
+  (freshPayloads s sent).any test
 
 private theorem freshSend_iff (s : Model.State) (sent : List Model.Envelope)
     (test : Message → Bool) :
     freshSend s sent test = true ↔
       ∃ e ∈ sent, ¬ e ∈ s.network ∧ test e.payload = true := by
-  simp [freshSend, List.any_eq_true]
+  simp [freshSend, freshPayloads, List.any_eq_true]
 
 private theorem pending_of_sent [Config.InitialConfiguration] {f : Frame} {t : Model.State}
     (c : Ctx f t) {e : Model.Envelope} (h : e ∈ c.sent) : Pending (f.advance t) e := by
@@ -316,14 +320,17 @@ public inductive Column where
   | .retained => .mem_network_mem_append_inl
   | .outgoing => .mem_network_mem_append_inr
 
+private def answerFrom (fresh : List Message) : Column → Bool
+  | .message | .outgoing => fresh.any (fun _ => true)
+  | .bumping => fresh.any bumping
+  | .sentKind k => fresh.any (hasKind k)
+  | .termKind k => fresh.any (hasKind k.message)
+  | .retained => false
+
 /-- On a successful reachable step, read the covered column using only the two
 snapshots; neither the chosen context nor a replay of the action is needed. -/
-@[expose] public def answer (before after : Model.State) : Column → Bool
-  | .message | .outgoing => freshSend before after.network (fun _ => true)
-  | .bumping => freshSend before after.network bumping
-  | .sentKind k => freshSend before after.network (hasKind k)
-  | .termKind k => freshSend before after.network (hasKind k.message)
-  | .retained => false
+@[expose] public def answer (before after : Model.State) : Column → Bool :=
+  answerFrom (freshPayloads before after.network)
 
 public theorem context_correct [Config.InitialConfiguration] {f : Frame} {t : Model.State}
     (c : Ctx f t) (k : Column) :
@@ -334,7 +341,7 @@ public theorem context_correct [Config.InitialConfiguration] {f : Frame} {t : Mo
     exact ((message_terms_mem_network_inr_iff c).trans (Bool.eq_iff_iff.mp (freshSend_eq c _))).symm
   | sentKind k => exact ((sent_iff c k).trans (Bool.eq_iff_iff.mp (freshSend_eq c _))).symm
   | termKind k => exact ((term_iff c k).trans (Bool.eq_iff_iff.mp (freshSend_eq c _))).symm
-  | retained => simpa [answer, Column.branch] using (old_append_iff c).symm
+  | retained => simpa [answer, answerFrom, Column.branch] using (old_append_iff c).symm
   | outgoing => exact ((new_append_iff c).trans (Bool.eq_iff_iff.mp (freshSend_eq c _))).symm
 
 public theorem answer_iff (s : ActionProfile.Step) (k : Column) :
@@ -366,14 +373,18 @@ public theorem mem_covered_iff (b : Classes.StepBranch) :
   simp only [covered, List.mem_map]
   exact ⟨fun ⟨k, _, eq⟩ => ⟨k, eq⟩, fun ⟨k, eq⟩ => ⟨k, all k, eq⟩⟩
 
+@[expose] public def readFrom? (fresh : List Message) (b : Classes.StepBranch) : Option Bool :=
+  (columns.find? fun k => decide (k.branch = b)).map (answerFrom fresh)
+
 /-- Lookup by generated branch; `none` is unsupported, not a negative answer. -/
-@[expose] public def read? (before after : Model.State) (b : Classes.StepBranch) : Option Bool :=
-  (columns.find? fun k => decide (k.branch = b)).map (answer before after)
+@[expose] public def read? (before after : Model.State) : Classes.StepBranch → Option Bool :=
+  readFrom? (freshPayloads before after.network)
 
 public theorem read?_correct (s : ActionProfile.Step) (b : Classes.StepBranch) (value : Bool) :
     read? s.before s.after b = some value ↔
       b ∈ covered ∧ value = ActionProfile.label s (.step b) := by
-  unfold read?
+  unfold read? readFrom?
+  change ((columns.find? _).map (answer s.before s.after) = some value) ↔ _
   cases h : columns.find? (fun k => decide (k.branch = b)) with
   | none =>
     have notCovered : b ∉ covered := by
