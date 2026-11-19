@@ -39,10 +39,13 @@ public def read (cfg : Configuration) (s : Model.State) (a : Model.Action)
     (t : Model.State) (past : List Model.State) : Evidence :=
   let view := GuardedDomain.ofAction cfg s t past a
   let noNew := CommitKeys.noNew (cfg.min?.getD 0) t (s :: past)
+  let stable := GrantFrontier.noNewGrant t (s :: past) && noNew
+  let tag := EventSupport.actionTag a
+  let fresh := ReducedQuestions.freshPayloads s t.network
   ⟨(FrontierRows.historyLabel cfg s t past, LeaderEffect.changedPrimary s t),
-    EventSupport.actionTag a, ReducedQuestions.freshPayloads s t.network,
-    view, !noNew, AckAdvance.read? s a t, NominationRows.test cfg s a t past,
-    SignedQuiet.test view s t noNew, DeltaSupport.read s a t⟩
+    tag, fresh, view, !noNew, AckAdvance.read? s a t,
+    decide (tag = .nominateSuccessor) && stable && fresh.any (fun _ => true),
+    SignedQuiet.test view s t stable, DeltaSupport.read s a t⟩
 
 private def direct (k : FrontierRows.Row × Bool) (freshCommit : Bool) (ackAdvance : Option Bool) :
     Classes.StepBranch → Option Bool
@@ -143,46 +146,11 @@ public theorem read_unconditional (s : Step) {b : Classes.StepBranch} (mem : b �
     | some _ => rfl
     | none => rcases leaderCol with rfl | rfl | rfl | rfl <;> rfl
 
-/-- Membership in the three-row all-false slice. One positive bit excludes
-the whole row; an unknown bit is not evidence that the action belongs. -/
-public def quietFrom (inert : Bool) (atQuestion : Question → Option Bool) : Option Bool :=
-  if inert then some true else
-  let bits := stepBranches.toList.map fun b => atQuestion (.step b)
-  if some true ∈ bits then some false else if none ∈ bits then none else some true
-
-public def quiet? (e : Evidence) : Option Bool := quietFrom e.inert (answer e)
-
-public theorem quiet?_sound (s : Step) {v : Bool}
-    (known : quiet? (read s.cfg s.before s.act s.after s.past) = some v) :
-    label s ∈ ZeroRows.table ↔ v = true := by
+/-- The replay gate decides membership in the all-false table, even when
+some of the individual step answers are unknown. -/
+public theorem inert_iff (s : Step) :
+    (read s.cfg s.before s.act s.after s.past).inert = true ↔ label s ∈ ZeroRows.table := by
   rw [SignedQuiet.exact, and_iff_right (show Realized (label s) from ⟨s, rfl⟩)]
-  let e := read s.cfg s.before s.act s.after s.past
-  change quiet? e = some v at known
-  unfold quiet? quietFrom at known
-  split at known
-  · rename_i inert
-    cases known
-    exact ⟨fun _ => rfl, fun _ => congrArg Profile.step (SignedQuiet.gate_sound s inert)⟩
-  dsimp only at known
-  split at known
-  · rename_i pos
-    cases known
-    obtain ⟨b, _, bit⟩ := List.mem_map.mp pos
-    exact ⟨fun zero => (congrFun zero b).symm.trans (sound s (.step b) bit), Bool.noConfusion⟩
-  · rename_i noPos
-    split at known
-    · contradiction
-    · rename_i noUnknown
-      cases known
-      refine ⟨fun _ => rfl, fun _ => funext fun b => ?_⟩
-      have mem : b ∈ stepBranches.toList := by
-        rw [← step_get b]
-        exact Array.getElem_mem_toList ..
-      cases bit : answer e (.step b) with
-      | none => exact (noUnknown (List.mem_map.mpr ⟨b, mem, bit⟩)).elim
-      | some out =>
-        cases out
-        · exact sound s (.step b) bit
-        · exact (noPos (List.mem_map.mpr ⟨b, mem, bit⟩)).elim
+  exact SignedQuiet.gate_iff s
 
 end ConsensusCoverage.ReplayAnswers

@@ -250,9 +250,18 @@ exists and two nominations after a signed commit. The two synthetic heartbeat
 captures above hit **3/3 of these full labels** in seven validated actions.
 In [the signed capture](replay/fixtures/valid/signed-heartbeats.ndjson),
 actions 3 and 5 resend the same queued heartbeat on opposite sides of backup
-initialization: first `11 -> 11`, then `01 -> 01`. `trace` reports confirmed
-labels separately from actions whose membership is undetermined. This score
-does not cover labels with a positive step answer.
+initialization: first `11 -> 11`, then `01 -> 01`.
+
+Membership in this slice is **decidable on every validated action**, even
+when the reader cannot fill in all 433 coordinates. The [four-question
+converse](../consensus-coverage/ConsensusCoverage/SignedQuiet.lean) proves that
+if a node record changes, an envelope is new, a vote grant is new, or a
+committed prefix is new, at least one step answer is true. If none changes,
+all 433 answers are false. An old vote need not be absent: [the grant
+reader](../consensus-coverage/ConsensusCoverage/GrantFrontier.lean) checks the
+least request accepted by each eligible voter record. Every other request
+accepted there is covered by the same old grant. This score does not cover
+labels with a positive step answer.
 
 A delivery can also have an all-false label while **removing** an envelope:
 in [an initialized heartbeat exchange](../consensus-coverage/ConsensusCoverage/DropWitness.lean),

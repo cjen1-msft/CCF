@@ -21,20 +21,11 @@ public structure Row where
   yes : BitVec questionCount
   no : BitVec questionCount
 
-/-- Evaluate each coordinate once for both the quiet-slice score and the
-pairwise comparisons. Only the two packed masks need to survive the action. -/
-public def read (e : ReplayAnswers.Evidence) : Row × Option Bool :=
+/-- Evaluate each coordinate once; retain both masks so unknown is not false. -/
+public def read (e : ReplayAnswers.Evidence) : Row :=
   let a := questions.map (ReplayAnswers.answer e)
   let atSlot := fun i : Fin questionCount => a[i.val]'(by simp [a, questions_size])
-  (⟨encodeBits fun i => atSlot i == some true, encodeBits fun i => atSlot i == some false⟩,
-    ReplayAnswers.quietFrom e.inert fun q => atSlot q.slot)
-
-public theorem read_quiet (e : ReplayAnswers.Evidence) : (read e).2 = ReplayAnswers.quiet? e := by
-  dsimp only [read, ReplayAnswers.quiet?]
-  apply congrArg (ReplayAnswers.quietFrom e.inert)
-  funext q
-  rw [Array.getElem_map]
-  exact congrArg (ReplayAnswers.answer e) (questionAt_slot q)
+  ⟨encodeBits fun i => atSlot i == some true, encodeBits fun i => atSlot i == some false⟩
 
 private def Fits (r : Row) (p : Profile) : Prop :=
   ∀ i : Fin questionCount,
@@ -42,7 +33,7 @@ private def Fits (r : Row) (p : Profile) : Prop :=
     (r.no.getLsbD i.val = true → p (questionAt i) = false)
 
 private theorem fits (s : Step) :
-    Fits (read (ReplayAnswers.read s.cfg s.before s.act s.after s.past)).1 (label s) := by
+    Fits (read (ReplayAnswers.read s.cfg s.before s.act s.after s.past)) (label s) := by
   intro i
   simp only [read, encodeBits_get, Array.getElem_map, beq_iff_eq]
   exact ⟨ReplayAnswers.sound s _, ReplayAnswers.sound s _⟩
@@ -105,7 +96,7 @@ private theorem lower {rs : List Row} (incompatible : rs.Pairwise (fun a b => co
     simp only [List.length_cons]
     omega
 
-public def observed (s : Step) := (read (ReplayAnswers.read s.cfg s.before s.act s.after s.past)).1
+public def observed (s : Step) := read (ReplayAnswers.read s.cfg s.before s.act s.after s.past)
 
 /-- Compare the known coordinates of any recorded action with a fixed step
 signature. One contrary bit refutes it; confirmation needs all 433. -/

@@ -86,4 +86,31 @@ public theorem exact : table.Nodup ∧ table.length = 3 ∧
     ∀ p : Profile, p ∈ table ↔ Realized p ∧ p.step = bits :=
   exact_shape shape rfl rfl
 
+private def duplicateAfterElection : Option Step := do
+  let election := FrontierRows.runs[1]
+  let run := {election with schedule := election.schedule ++
+    [.input 0 .nominateSuccessor, .input 0 .nominateSuccessor]}
+  let steps ← JointWitnesses.recorded run (by
+    change ({0, 1} : CCF.Finset Model.Node.NodeID).Nonempty ∧ ([0, 1] : List Model.Node.NodeID).Nodup
+    decide)
+  return (← steps.getLast?).val
+
+private def votedCheck (s : Step) : Bool :=
+  decide (EventSupport.actionTag s.act = .nominateSuccessor) &&
+    !(s.before.nodes.all fun (_, st) => st.votedFor.isNone) &&
+    SignedQuiet.gate s.cfg s.before s.act s.after s.past
+
+set_option maxRecDepth 8192 in
+private theorem votedCheck_passes : duplicateAfterElection.any votedCheck = true := by decide +kernel
+
+/-- Votes are present, but none is new. The duplicate nomination after the
+election has an all-false step signature, just like a pre-election duplicate. -/
+public theorem voted_stutter :
+    ∃ s : Step, EventSupport.actionTag s.act = .nominateSuccessor ∧
+      s.before.nodes.all (fun (_, st) => st.votedFor.isNone) = false ∧
+      (label s).step = fun _ => false := by
+  obtain ⟨s, _, pass⟩ := (Option.any_eq_true _ _).mp votedCheck_passes
+  simp only [votedCheck, Bool.and_eq_true, decide_eq_true_eq, Bool.not_eq_true'] at pass
+  exact ⟨s, pass.1.1, pass.1.2, (SignedQuiet.gate_iff s).mp pass.2⟩
+
 end ConsensusCoverage.NominationRows

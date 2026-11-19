@@ -5,12 +5,16 @@ module
 
 public import ConsensusCoverage.ZeroRows
 public import ConsensusCoverage.CommitKeys
+public import ConsensusCoverage.GrantFrontier
 import all ConsensusCoverage.ActionProfile
 import all ConsensusCoverage.CommitKeys
+import all ConsensusCoverage.GrantFrontier
 public import ConsensusCoverage.GuardedDomain
 import all ConsensusCoverage.GuardedDomain
 import all ConsensusCoverage.InertProfile
 import all ConsensusCoverage.ProofContexts
+import all ConsensusCoverage.ReducedQuestions
+import all ConsensusCoverage.SolvedWitnesses
 import all ConsensusCoverage.StateCoverage
 import all ConsensusCoverage.StutterProfile
 import all ConsensusCoverage.ZeroRows
@@ -29,46 +33,37 @@ open ActionProfile FullProfile StutterProfile
 set_option backward.privateInPublic true
 set_option backward.privateInPublic.warn false
 
-/-- Check the log-evidence hypotheses other than preservation of the node
-table. Unlike the unsigned gate, this can accept signed prefixes. -/
+/-- On an unchanged node table, only grants and committed prefixes can add
+log evidence. Both checks use the strict past when testing for an old fact. -/
 @[expose] public def evidence (cfg : FullProfile.Configuration) (before after : Model.State)
     (past : List Model.State) : Bool :=
-  before.nodes.all (fun (_, st) => st.votedFor.isNone) &&
+  GrantFrontier.noNewGrant after (before :: past) &&
     CommitKeys.noNew (cfg.min?.getD 0) after (before :: past)
-
-private theorem frozenGrant [Config.InitialConfiguration] {f : Frame}
-    (quiet : ∀ n st, Now f n st → st.votedFor = none) :
-    (f.advance f.current).logs.grant = f.logs.grant := by
-  funext v n k r
-  apply propext
-  refine ⟨?_, Or.inl⟩
-  rintro (old | ⟨_, eq, atStep, _⟩)
-  · exact old
-  · cases eq
-    obtain ⟨_, y, _, mem, _, _, vote, _⟩ := atStep
-    rw [quiet v y mem] at vote
-    contradiction
 
 private theorem stable (s : Step) (nodes : s.after.nodes = s.before.nodes)
     (passes : evidence s.cfg s.before s.after s.past = true) :
     @StableLogs ⟨s.cfg⟩ s.frame s.after := by
   letI : Config.InitialConfiguration := ⟨s.cfg⟩
-  obtain ⟨unvoted, noNew⟩ := Bool.and_eq_true_iff.mp passes
+  obtain ⟨grants, noNew⟩ := Bool.and_eq_true_iff.mp passes
   have nodeEq := nodes.trans (congrArg (fun t : Model.State => t.nodes) s.current_eq).symm
   have logsEq := advance_logs_nodes (f := s.frame) nodeEq
-  have quiet (n st) (mem : Now s.frame n st) : st.votedFor = none := by
-    change (n, st) ∈ (FullProfile.current s.frame).nodes at mem
-    rw [s.current_eq] at mem
-    exact Option.isNone_iff_eq_none.mp (List.all_eq_true.mp unvoted (n, st) mem)
   change (s.frame.advance s.after).logs = s.frame.logs
   apply logs_ext
   · exact (congrArg LogFacts.Ghost.seen logsEq).trans (frozenSeen s.folded.invariant)
-  · exact (congrArg LogFacts.Ghost.grant logsEq).trans (frozenGrant quiet)
+  · exact (GrantFrontier.step_grant_eq s).mp grants
   · exact (congrArg LogFacts.Ghost.elected logsEq).trans (frozenElection s.folded.invariant)
   · exact (congrArg LogFacts.Ghost.canon logsEq).trans (frozenCanon s.folded)
   · funext k l
     apply propext
     exact ⟨(CommitKeys.step_noNew s).mp noNew k l, Or.inl⟩
+
+public theorem evidence_iff (s : Step) (nodes : s.after.nodes = s.before.nodes) :
+    evidence s.cfg s.before s.after s.past = true ↔ @StableLogs ⟨s.cfg⟩ s.frame s.after := by
+  refine ⟨stable s nodes, fun eq => Bool.and_eq_true_iff.mpr ⟨?_, ?_⟩⟩
+  · exact (GrantFrontier.step_grant_eq s).mpr (congrArg LogFacts.Ghost.grant eq)
+  · apply (CommitKeys.step_noNew s).mpr
+    intro k l post
+    exact Eq.mp (congrFun (congrFun (congrArg LogFacts.Ghost.committed eq) k) l) post
 
 /-- Reuse any proof that no support is new; the remaining evidence is a
 Boolean test on the recorded replay. -/
@@ -84,14 +79,13 @@ public theorem label_eq_of_support (s : Step) (support : SameSupport s.before s.
 
 /-- Reject new envelopes, but allow removals, reordering and duplication.
 On a validated action, only the actor can have changed its node record. -/
-@[expose] public def test (v : Option GuardedDomain.View) (s t : Model.State) (noNew : Bool) : Bool :=
-  v.any (fun x => !x.changed) && t.network.all s.network.contains &&
-    (s.nodes.all (fun (_, st) => st.votedFor.isNone) && noNew)
+@[expose] public def test (v : Option GuardedDomain.View) (s t : Model.State) (logsStable : Bool) : Bool :=
+  v.any (fun x => !x.changed) && t.network.all s.network.contains && logsStable
 
 @[expose] public def gate (cfg : FullProfile.Configuration) (before : Model.State) (a : Model.Action)
     (after : Model.State) (past : List Model.State) : Bool :=
   test (GuardedDomain.ofAction cfg before after past a) before after
-    (CommitKeys.noNew (cfg.min?.getD 0) after (before :: past))
+    (evidence cfg before after past)
 
 /-- For a passing, successfully replayed action, return the whole
 457-coordinate label using only the pre-state answer key. -/
@@ -109,7 +103,42 @@ public theorem gate_sound (s : Step)
     exact InertProfile.replace_eq s.context.inv.distinct s.context.tr.found
   apply label_eq_of_noNewSupport s ⟨nodes, fun e h => List.contains_iff_mem.mp
     (List.all_eq_true.mp forward e h)⟩
-  exact Bool.and_eq_true_iff.mpr logs
+  exact logs
+
+/-- Four negative proof answers suffice on *any* successful action, even a
+delivery or a step taken after an election. -/
+public theorem gate_of_four (s : Step)
+    (node : label s (.step .commit_backed_now_after_inl) = false)
+    (msg : label s (.step .messages_mem_network_inr) = false)
+    (grant : label s (.step .grantFactsBefore_grant_inr) = false)
+    (commit : label s (.step .commitChains_step_committed_inr) = false) :
+    gate s.cfg s.before s.act s.after s.past = true := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  obtain ⟨v, made, ok⟩ := GuardedDomain.ofAction_matches s
+  have old : Now s.frame s.context.actor s.context.post := by
+    apply Classical.byContradiction
+    intro new
+    have hit := (SolvedWitnesses.sig_iff s.context .commit_backed_now_after_inl).mpr
+      (Or.inl ⟨⟨s.context.post_now, new, rfl⟩, s.context.post_now⟩)
+    exact Bool.noConfusion (node.symm.trans ((label_true s _).mpr hit))
+  have queue := (ReducedQuestions.answer_eq s .message).trans msg
+  have subset : s.after.network.all s.before.network.contains = true := by
+    simpa [ReducedQuestions.answer, ReducedQuestions.answerFrom, ReducedQuestions.freshPayloads,
+      List.all_eq_true, List.any_eq_false] using queue
+  have noGrant : GrantFrontier.noNewGrant s.after (s.before :: s.past) = true := by
+    cases h : GrantFrontier.noNewGrant s.after (s.before :: s.past) with
+    | false => exact Bool.noConfusion (grant.symm.trans (GrantFrontier.fresh_implies_grant_arm s h))
+    | true => rfl
+  have noCommit : CommitKeys.noNew (s.cfg.min?.getD 0) s.after (s.before :: s.past) = true := by
+    simpa only [Bool.not_eq_false'] using (CommitKeys.fresh_answer s).trans commit
+  simp [gate, test, evidence, made, (GuardedDomain.View.old_post ok).mp old, subset, noGrant, noCommit]
+
+/-- Total slice membership: a failing gate refutes the all-false signature;
+there is no need to evaluate the other 429 coordinates. -/
+public theorem gate_iff (s : Step) :
+    gate s.cfg s.before s.act s.after s.past = true ↔ (label s).step = fun _ => false :=
+  ⟨fun h => congrArg Profile.step (gate_sound s h),
+    fun h => gate_of_four s (congrFun h _) (congrFun h _) (congrFun h _) (congrFun h _)⟩
 
 private def appendResult (nodes : List NodeID) : Option Model.State :=
   (transitionSystem {0} nodes).step (StateCoverage.initial nodes)

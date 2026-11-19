@@ -36,13 +36,13 @@ private def visit (cfg : CCF.Finset Nat) (score : Score) (s : Model.State) (a : 
   let past := s :: score.past
   let e := ReplayAnswers.read cfg s a t score.past
   let edge := e.key.1
-  let (row, quiet) := CaptureBounds.read e
+  let row := CaptureBounds.read e
   let pre := (edge.zeroBefore, edge.backedBefore)
   { states := record score.states (edge.zeroAfter, edge.backedAfter),
     edges := record score.edges edge,
     multiEdges := score.multiEdges.map fun seen => record seen e.key,
     rows := row :: score.rows,
-    quiet := score.quiet.add pre quiet,
+    quiet := score.quiet.add pre (some e.inert),
     nomination := score.nomination.add pre (CaptureBounds.signature? row NominationRows.bits),
     past }
 
