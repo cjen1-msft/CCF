@@ -155,11 +155,26 @@ each of the three states, but cannot create the first backing certificate or
 remove the last zero-commit node on the winning step. This gives six rows without
 a win and three with a win. Every row has an initialized model execution.
 
+**Multi-node leader coverage: exactly 13 rows.** For a recorded action, consider
+the 12 proof questions before, three leader questions about the action, and the
+12 questions after. The leader questions ask whether a primary was elected,
+whether a node changed state and ended primary, and whether that change was to
+an incumbent in the same term. The third answer is determined by the first
+two. [Equality of row keys is equivalent to agreement on all 27 answers](../consensus-coverage/ConsensusCoverage/ActionFrontier.lean).
+
+[The 13-row table](../consensus-coverage/ConsensusCoverage/LeaderCoverage.lean)
+is exact across deployments with **at least two distinct nodes**, not necessarily
+two voters. Each row has an initialized witness. Before the first certificate,
+every node's commit index is zero. Since one action updates at most one node,
+the step that creates the first certificate cannot also remove the last zero in
+a multi-node deployment. A singleton can do both. Counting singletons as well,
+there are 14 witnessed leader rows and at most one more possible row.
+
 Score saved native captures from the repository root:
 
 ```sh
 WS=$(python3 lean/relevance/scripts/workspace.py consensus-coverage)
-lake -d "$WS/consensus-coverage" build ConsensusCoverage.SnapshotStates Consensus.Replay.Reduction
+lake -d "$WS/consensus-coverage" build ConsensusCoverage.LeaderCoverage Consensus.Replay.Reduction
 reader="$PWD/lean/consensus-coverage/scripts/proof-coverage.lean"
 lake -d "$WS/consensus-coverage" env lean --run "$reader" check
 lake -d "$WS/consensus-coverage" env lean --run "$reader" trace lean/consensus/replay/fixtures/valid/replication.ndjson
@@ -168,7 +183,10 @@ lake -d "$WS/consensus-coverage" env lean --run "$reader" trace lean/consensus/r
 The scorer uses the [native replay checks](replay/README.md), counting states and
 steps at model action boundaries. The model witnesses hit **3/3 states and 9/9
 projected steps**. The included synthetic replication capture hits **3/3 and 4/9**,
-respectively, in nine model actions. Neither score is the full transition denominator.
+respectively, in nine model actions. On the multi-node leader table, six model
+schedules hit **13/13**, and the replication capture hits **5/13**. Singleton
+captures do not contribute to this score. None of these scores uses the full
+transition denominator.
 
 **Full state-pair denominator: at least six; exact count unknown.** [The full specification](../consensus-coverage/ConsensusCoverage/FullProfile.lean)
 uses all 457 generated answers (12 before, 433 about the step, 12 after).
@@ -183,12 +201,17 @@ collision splits one of those keys, so any full table has at least six entries.
 The nine history-resolved rows are not themselves a lower bound of nine distinct
 *sets* of profiles.
 
-The snapshot-pair specification is exact **for the generated closed predicates**.
-When the action is known, [its proof context is unique](../consensus-coverage/ConsensusCoverage/ActionContext.lean).
-The [action-specific dispatcher](../consensus-coverage/ConsensusCoverage/PinnedClasses.lean)
-uses this same context across all 433 step questions. It proves that a true
-action-specific answer implies the original closed predicate, not the converse.
-An exact count of the resulting reachable transition profiles is not known. The shared extractor also
+**Full recorded-action denominator: at least 14; exact count unknown.**
+The [recorded-action specification](../consensus-coverage/ConsensusCoverage/ActionProfile.lean)
+assigns an initialized step exactly one 457-answer vector. All 433 step
+questions use [the same, unique context for the recorded action](../consensus-coverage/ConsensusCoverage/ActionContext.lean).
+The 14 witnessed leader rows therefore distinguish at least 14 full vectors
+over all deployments; 15 is an upper bound only for the leader projection.
+Unlike the snapshot-pair specification, these rows are individual vectors, not
+sets of vectors. A [pinned step answer](../consensus-coverage/ConsensusCoverage/PinnedClasses.lean)
+implies the corresponding closed answer, not necessarily the converse.
+
+These counts concern the generated questions. The shared extractor also
 reports 54 unrecorded splits, 41 classified as protocol splits. Thus neither the
 finite-universe proof nor the nine-row theorem establishes that the extractor
 captures every distinction in the source safety proof.

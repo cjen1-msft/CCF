@@ -3,6 +3,7 @@
 
 import ConsensusCoverage.StateCoverage
 import ConsensusCoverage.FrontierWitnesses
+import ConsensusCoverage.LeaderCoverage
 import Consensus.Replay.Reduction
 
 open Consensus Consensus.Replay ConsensusCoverage
@@ -10,18 +11,21 @@ open Consensus Consensus.Replay ConsensusCoverage
 private structure Score where
   states : List StateCoverage.Row := []
   edges : List FrontierRows.Row := []
+  multiEdges : Option (List LeaderWitnesses.Key) := none
   past : List Model.State := []
 
 private def record [BEq α] (xs : List α) (x : α) := if xs.contains x then xs else x :: xs
 
 private def start (cfg : CCF.Finset Nat) (s : Model.State) : Score :=
-  { states := [StateCoverage.read cfg s []] }
+  { states := [StateCoverage.read cfg s []], multiEdges := if s.nodes.length ≥ 2 then some [] else none }
 
 private def visit (cfg : CCF.Finset Nat) (score : Score) (s t : Model.State) : Score :=
   let past := s :: score.past
   let edge := FrontierRows.historyLabel cfg s t score.past
   { states := record score.states (edge.zeroAfter, edge.backedAfter),
-    edges := record score.edges edge, past }
+    edges := record score.edges edge,
+    multiEdges := score.multiEdges.map fun seen => record seen (edge, LeaderEffect.changedPrimary s t),
+    past }
 
 private def report (states : List StateCoverage.Row) (edges : List FrontierRows.Row) : IO Unit := do
   let table := StateCoverage.activeTable
@@ -38,6 +42,18 @@ private def report (states : List StateCoverage.Row) (edges : List FrontierRows.
   IO.println s!"{FrontierRows.table.length - missing.length}/{FrontierRows.table.length} projected step rows \
     (state profiles + new primary); missing: \
     {if missing.isEmpty then "none" else String.intercalate " " (missing.map edgeKey)}"
+
+private def reportLeaders (edges : List LeaderWitnesses.Key) : IO Unit := do
+  let table := LeaderCoverage.multiTable
+  unless edges.all (· ∈ table) do throw <| IO.userError "unexpected multi-node leader row"
+  let missing := table.filter (· ∉ edges)
+  let key (k : LeaderWitnesses.Key) :=
+    let r := k.1
+    String.ofList ([r.zeroBefore, r.backedBefore, r.wonPrimary, r.zeroAfter, r.backedAfter, k.2].map
+      fun b => if b then '1' else '0')
+  IO.println s!"{table.length - missing.length}/{table.length} multi-node leader rows \
+    (state profiles + 3 leader questions); missing: \
+    {if missing.isEmpty then "none" else String.intercalate " " (missing.map key)}"
 
 private def fromCapture (file : String) : IO Score := do
   let records ← readLog file
@@ -56,7 +72,13 @@ def main : List String → IO Unit
     report states edges
     unless StateCoverage.activeTable.all (· ∈ states) && FrontierRows.table.all (· ∈ edges) do
       throw <| IO.userError "incomplete model witnesses"
+    let some keys := LeaderWitnesses.multiWitnessRows | throw <| IO.userError "disabled multi-node witness schedule"
+    reportLeaders keys
+    unless LeaderCoverage.multiTable.all (· ∈ keys) do throw <| IO.userError "incomplete multi-node witnesses"
   | "trace" :: file :: more => do
     let scores ← (file :: more).mapM fromCapture
     report (scores.flatMap Score.states) (scores.flatMap Score.edges)
+    let multi := scores.filterMap Score.multiEdges
+    if multi.isEmpty then IO.println "multi-node leader rows: not applicable (no multi-node capture)"
+    else reportLeaders multi.flatten
   | _ => throw <| IO.userError "usage: proof-coverage.lean check | trace FILE.ndjson [FILE.ndjson ...]"
