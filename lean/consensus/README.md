@@ -105,8 +105,7 @@ Delivery and snapshot installation can copy a leader log using its retained
 prefix evidence, without looking up the state that supplied the log.
 
 This proof is stepwise, not finite-state: the ghost ranges over unbounded terms and
-logs. A finite coverage target needs a separate argument about which combinations
-of answers can occur. The snapshot reader below has that argument for two questions.
+logs. The finite counts below are for proof answers, not protocol states.
 
 ## Trace replay
 
@@ -114,7 +113,66 @@ The [trace replayer](replay/README.md) checks finite driver observations against
 It checks each native send against the model, delivers any matching queued packet, treats undelivered packets as lost, and never repairs model state.
 The current native Fluentd capture path and replay's assurance limits are documented there.
 
-## Proof-derived snapshot coverage
+## Proof-derived coverage
+
+**State denominator: three profiles for nonempty clusters.** All twelve generated
+state questions reduce to two facts: is any node's commit index zero, and does
+some node's committed prefix fit inside a commit certificate held by the proof?
+In that order the reachable keys are `10` (no backing yet), `11` (some node still
+at zero, backing exists), and `01` (no node at zero). The model also permits
+initializing an empty node list under a nonempty voting configuration: this gives
+`00`, a fourth reachable state with no possible action. It is not a target for
+nonempty implementation runs.
+
+This is not a sample of the state questions. [The reduction](../consensus-coverage/ConsensusCoverage/StateBasis.lean)
+covers every constructor of the generated state dispatcher. [`same_answers` and
+`exact`](../consensus-coverage/ConsensusCoverage/StateCoverage.lean) prove respectively
+that two initialized runs have the same key **if and only if** all twelve answers
+agree, and that every listed key occurs. The [certificate reader](../consensus-coverage/ConsensusCoverage/CommitMonitor.lean)
+uses previous protocol snapshots, not proof witnesses. In particular, delivery of
+a signature to a quorum can establish backing before the leader receives the
+acknowledgment: testing whether any local commit index is positive would be wrong.
+
+**Step denominator for these states plus the new-primary question: nine rows.**
+The [exact table](../consensus-coverage/ConsensusCoverage/FrontierWitnesses.lean)
+has six possible source/destination combinations. A new primary can occur within
+each of the three states, but cannot create the first backing certificate or
+remove the last zero-commit node on the winning step. This gives six rows without
+a win and three with a win. Every row has an initialized model execution.
+
+Score saved native captures from the repository root:
+
+```sh
+WS=$(python3 lean/relevance/scripts/workspace.py consensus-coverage)
+lake -d "$WS/consensus-coverage" build ConsensusCoverage.Projection Consensus.Replay.Reduction
+reader="$PWD/lean/consensus-coverage/scripts/proof-coverage.lean"
+lake -d "$WS/consensus-coverage" env lean --run "$reader" check
+lake -d "$WS/consensus-coverage" env lean --run "$reader" trace lean/consensus/replay/fixtures/valid/replication.ndjson
+```
+
+The scorer uses the [native replay checks](replay/README.md), counting states and
+steps at model action boundaries. The model witnesses hit **3/3 states and 9/9
+projected steps**. The included synthetic replication capture hits **3/3 and 4/9**,
+respectively, in nine model actions. Neither score is the full transition denominator.
+
+**Full state-pair denominator: not known.** [The full specification](../consensus-coverage/ConsensusCoverage/FullProfile.lean)
+uses all 457 generated answers (12 before, 433 about the step, 12 after).
+For a pair of full snapshots with no history, the label is the set of whole
+answer vectors compatible with that pair on initialized executions. The quotient is
+proved finite, but its capacity is not its reachable count. [The projection theorem](../consensus-coverage/ConsensusCoverage/Projection.lean)
+proves that the nine rows above are exactly the projected image of those vectors.
+It also gives a counterexample to using nine for the full model: sending entries
+and stepping down from the same initial state have the same projected row but
+different full observations.
+
+The specification is exact **for the generated predicates**. Each generated step
+predicate can existentially choose its own step context; it does not yet retain
+a shared action witness across all 433 questions. The shared extractor also
+reports 54 unrecorded splits, 41 classified as protocol splits. Thus neither the
+finite-universe proof nor the nine-row theorem establishes that the extractor
+captures every distinction in the source safety proof.
+
+### Endpoint-only slice
 
 The [coverage reader](../consensus-coverage/scripts/pair-coverage.lean) scores consecutive
 snapshots against two questions from the [consensus safety proof](Consensus/Proofs/SafetyInvariant.lean).
