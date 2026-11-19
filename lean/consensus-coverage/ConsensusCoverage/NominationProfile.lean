@@ -74,4 +74,21 @@ public theorem test_iff (s : Step) :
     SignedQuiet.evidence_of_negatives s (congrFun eq _) (congrFun eq _)⟩,
     (answer_eq s .message).trans (congrFun eq _)⟩
 
+/-- On a recorded nomination, there are no other signatures unless a vote
+grant or a committed prefix becomes new in the proof history. -/
+public theorem stable_iff (s : Step) (tag : EventSupport.actionTag s.act = .nominateSuccessor) :
+    SignedQuiet.evidence s.cfg s.before s.after s.past = true ↔
+      (label s).step = (fun _ => false) ∨ (label s).step = bits := by
+  constructor
+  · intro stable
+    cases msg : answer s.before s.after .message with
+    | true => exact .inr (shape s (by simp [test, tag, stable, msg]))
+    | false =>
+      have subset : s.after.network.all s.before.network.contains = true := by
+        simpa [answer, answerFrom, freshPayloads, List.all_eq_true, List.any_eq_false] using msg
+      have nodes := (run_nomination s tag).2.2.1.trans (congrArg (fun x : Model.State => x.nodes) s.current_eq)
+      exact .inl (congrArg Profile.step (SignedQuiet.label_eq_of_noNewSupport s
+        ⟨nodes, fun _ mem => List.contains_iff_mem.mp (List.all_eq_true.mp subset _ mem)⟩ stable))
+  · rintro (eq | eq) <;> exact SignedQuiet.evidence_of_negatives s (congrFun eq _) (congrFun eq _)
+
 end ConsensusCoverage.NominationRows

@@ -236,15 +236,13 @@ separately be shown stable. A repeated queued proposal fails the message test. -
   decide (EventSupport.actionTag a = .nominateSuccessor) && SignedQuiet.evidence cfg s t past &&
     ReducedQuestions.answer s t .message
 
-private theorem from_test (s : Step) (passes : test s.cfg s.before s.act s.after s.past = true) :
+private theorem run_nomination (s : Step) (tag : EventSupport.actionTag s.act = .nominateSuccessor) :
     letI : Config.InitialConfiguration := ⟨s.cfg⟩
-    Stable s.frame s.after s.context ∧ s.context.post = s.context.pre ∧
-      ∃ e ∈ s.context.sent, ¬ Pending s.frame e := by
+    let c := s.context
+    c.event = .internal .nominateSuccessor ∧ c.post = c.pre ∧ s.after.nodes = (current s.frame).nodes ∧
+      ∀ e ∈ c.sent, proposal e.payload = true := by
   letI : Config.InitialConfiguration := ⟨s.cfg⟩
   let c := s.context
-  obtain ⟨⟨tag, evidence⟩, message⟩ := show
-      (EventSupport.actionTag s.act = .nominateSuccessor ∧ SignedQuiet.evidence s.cfg s.before s.after s.past = true)
-      ∧ ReducedQuestions.answer s.before s.after .message = true by simpa [test] using passes
   have action : ActionContext.action c = s.act := (s.context_eq c).mpr rfl
   rw [← action, EventSupport.actionTag_eq] at tag
   have event : c.event = .internal .nominateSuccessor := by
@@ -259,6 +257,20 @@ private theorem from_test (s : Step) (passes : test s.cfg s.before s.act s.after
   have nodes : s.after.nodes = (current s.frame).nodes := by
     rw [c.tr.nodesEq, same]
     exact InertProfile.replace_eq c.inv.distinct c.tr.found
+  refine ⟨event, same, nodes, fun e sent => ?_⟩
+  rw [(allSent e (outgoing ▸ sent : e ∈ [] ++ sentList)).2]
+  rfl
+
+private theorem from_test (s : Step) (passes : test s.cfg s.before s.act s.after s.past = true) :
+    letI : Config.InitialConfiguration := ⟨s.cfg⟩
+    Stable s.frame s.after s.context ∧ s.context.post = s.context.pre ∧
+      ∃ e ∈ s.context.sent, ¬ Pending s.frame e := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  let c := s.context
+  obtain ⟨⟨tag, evidence⟩, message⟩ := show
+      (EventSupport.actionTag s.act = .nominateSuccessor ∧ SignedQuiet.evidence s.cfg s.before s.after s.past = true)
+      ∧ ReducedQuestions.answer s.before s.after .message = true by simpa [test] using passes
+  obtain ⟨event, same, nodes, only⟩ := run_nomination s tag
   have logs := SignedQuiet.stable s (nodes.trans (congrArg (fun x : Model.State => x.nodes) s.current_eq)) evidence
   have sig := (ReducedQuestions.answer_iff s .message).mp message
   obtain ⟨e, sent, fresh, _⟩ := (ReducedQuestions.freshSend_iff ..).mp ((ReducedQuestions.messages_iff c).mp sig)
@@ -266,8 +278,7 @@ private theorem from_test (s : Step) (passes : test s.cfg s.before s.act s.after
   intro e pending new
   rcases c.tr.mem_network pending with old | sent
   · exact (new old).elim
-  · rw [(allSent e (outgoing ▸ sent : e ∈ [] ++ sentList)).2]
-    rfl
+  · exact only e sent
 
 public theorem excluded (s : Step) (passes : test s.cfg s.before s.act s.after s.past = true)
     (b : Classes.StepBranch) (out : possible b = false) : label s (.step b) = false := by

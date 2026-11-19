@@ -113,4 +113,47 @@ public theorem voted_stutter :
   simp only [votedCheck, Bool.and_eq_true, decide_eq_true_eq, Bool.not_eq_true'] at pass
   exact ⟨s, pass.1.1, pass.1.2, (SignedQuiet.gate_iff s).mp pass.2⟩
 
+private def quietNominations := duplicateAfterElection.toList ++ [SignedQuiet.two, SignedQuiet.one]
+
+private def quietKey (s : Step) : Option StateCoverage.Row :=
+  if EventSupport.actionTag s.act = .nominateSuccessor ∧ SignedQuiet.gate s.cfg s.before s.act s.after s.past = true
+  then some (StateCoverage.read s.cfg s.before s.past) else none
+
+set_option maxRecDepth 8192 in
+private theorem quietKeys : quietNominations.filterMap quietKey = StateCoverage.activeTable := by decide +kernel
+
+/-- Every row has an actual nomination witness. Conversely, no other full
+label occurs on a nomination that adds neither a grant nor a committed key. -/
+public theorem exact_stable :
+    let rows := ZeroRows.table ++ table
+    rows.Nodup ∧ rows.length = 6 ∧ ∀ p : Profile, p ∈ rows ↔ ∃ s : Step,
+      EventSupport.actionTag s.act = .nominateSuccessor ∧ SignedQuiet.evidence s.cfg s.before s.after s.past = true ∧
+      label s = p := by
+  refine ⟨List.pairwise_append.mpr ⟨ZeroRows.count.1, exact.1, ?_⟩, ?_, fun p => ⟨?_, ?_⟩⟩
+  · rintro a ha _ hb rfl
+    have zero := congrFun ((SignedQuiet.exact a).mp ha).2 .messages_mem_network_inr
+    have fresh := congrFun ((exact.2.2 a).mp hb).2 .messages_mem_network_inr
+    exact Bool.noConfusion (zero.symm.trans fresh)
+  · rw [List.length_append, ZeroRows.count.2, exact.2.1]
+  · intro mem
+    rcases List.mem_append.mp mem with hz | hn
+    · obtain ⟨pre, hpre, rfl⟩ := List.mem_map.mp (show p ∈ ProofContexts.table.map StutterProfile.diagonal from hz)
+      obtain ⟨r, hr, rfl⟩ := List.mem_map.mp (show pre ∈ StateCoverage.activeTable.map ProofContexts.answers from hpre)
+      obtain ⟨s, _, key⟩ := List.mem_filterMap.mp (quietKeys ▸ hr : r ∈ quietNominations.filterMap quietKey)
+      simp only [quietKey] at key
+      split at key
+      · rename_i pass
+        have zero := (SignedQuiet.gate_iff s).mp pass.2
+        exact ⟨s, pass.1, (stable_iff s pass.1).mpr (.inl zero),
+          (Option.some.inj key) ▸ SignedQuiet.gate_sound s pass.2⟩
+      · cases key
+    · obtain ⟨⟨s, rfl⟩, h⟩ := (exact.2.2 p).mp hn
+      have pass := (test_iff s).mpr h
+      have both := Bool.and_eq_true_iff.mp (Bool.and_eq_true_iff.mp pass).1
+      exact ⟨s, of_decide_eq_true both.1, both.2, rfl⟩
+  · rintro ⟨s, tag, stable, rfl⟩
+    rcases (stable_iff s tag).mp stable with hz | hn
+    · exact List.mem_append_left _ (ZeroRows.mem_of_zero s hz)
+    · exact List.mem_append_right _ ((exact.2.2 _).mpr ⟨⟨s, rfl⟩, hn⟩)
+
 end ConsensusCoverage.NominationRows

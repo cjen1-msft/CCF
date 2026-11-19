@@ -287,8 +287,15 @@ show its endpoint stays `10`, `11`, or `01`, and each is reachable. The two nomi
 **3/3**. In the first, repeating the nomination before delivery instead hits
 the all-false `10 -> 10` label. In the second, delivery removes the first
 proposal, allowing the same primary to send a fresh one after the backup
-installs its committed prefix. Together with the all-false slice, these are
-six fully classified rows, not six additional rows on top of the lower bound.
+installs its committed prefix.
+
+**Exactly six full labels occur on nominations that add neither a vote grant
+nor a committed prefix.** Each of the three pre-state contexts can send a new
+proposal or add no new envelope. All six have initialized nomination witnesses;
+[`exact_stable`](../consensus-coverage/ConsensusCoverage/NominationWitnesses.lean)
+proves that no seventh label occurs under those conditions. The six are already
+included in the lower bound of 48. The delayed-commit nominations above fall
+outside this table.
 
 `answers` prints one row per validated action, in three bit strings: pre-state,
 step, post-state. `columns` names each bit in order. `1` and `0` are proved
