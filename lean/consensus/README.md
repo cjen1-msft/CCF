@@ -220,17 +220,22 @@ collision splits one of those keys, so any full table has at least six entries.
 The nine history-resolved rows are not themselves a lower bound of nine distinct
 *sets* of profiles.
 
-**Full recorded-action denominator: at least 42; at least 40 on multi-node deployments.**
+**Full recorded-action denominator: at least 48; at least 46 on multi-node deployments.**
 The [recorded-action specification](../consensus-coverage/ConsensusCoverage/ActionProfile.lean)
 assigns an initialized step exactly one 457-answer vector. All 433 step
 questions use [the same, unique context for the recorded action](../consensus-coverage/ConsensusCoverage/ActionContext.lean).
-[Twenty initialized schedules](../consensus-coverage/ConsensusCoverage/JointWitnesses.lean)
-take 108 successful steps. They fork a replication run with signed and unsigned
-appends, send a fresh nomination in each of the three contexts, and distinguish
-a first heartbeat from a duplicate. The 42 distinct joint answers use both endpoints, leader and message
-questions, guarded log questions and fresh committed prefixes. Each difference
-is a difference in a full label. There is no proof these labels exhaust the
-reachable transitions.
+[Twenty-two initialized schedules](../consensus-coverage/ConsensusCoverage/JointWitnesses.lean)
+take 121 successful steps. They distinguish 48 combinations of endpoint,
+leader, message, log and committed-prefix answers. Each difference is a
+difference in a full label; the schedules do not prove exhaustion.
+
+Two reconfiguration runs account for six more combinations than the previous
+20 schedules. In the three-node run, two successive nominations leave every
+node record unchanged, yet each establishes a new committed prefix. A
+certificate may use only backing from an earlier step: establishing one
+prefix makes the next eligible on the following nomination. A third
+nomination adds nothing. Counting all nominations with unchanged nodes as the
+same step would miss this distinction.
 
 [An upper cover](../consensus-coverage/ConsensusCoverage/ActionCover.lean)
 reconstructs every full label from a leader row, the kinds of fresh messages,

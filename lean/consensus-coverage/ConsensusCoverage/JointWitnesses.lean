@@ -113,9 +113,36 @@ private def emptyBackup : MultiRun :=
 private def nominationForks : List MultiRun :=
   [0, 3, 6].map fun n => onTwo (replication.schedule.take n ++ [.input 0 .nominateSuccessor])
 
+private def nominate : Command := .input 0 .nominateSuccessor
+
+-- Only the shorter prefix reaches the old quorum. Its certificate can back
+-- a longer prefix under the new configuration, but not until the next step.
+private def delayedCommit : MultiRun := onTwo [
+  .input 0 (.append [{content := .transaction 1 {configuration := some {0}}},
+    {content := .signature, flushes := [(1, 3)]}, {content := .signature}]),
+  .deliver 0 1, nominate, nominate]
+
+private def chainedCommit : MultiRun :=
+  ⟨{runs[3] with schedule := [
+    .input 0 (.append [{content := .transaction 1 {configuration := some {0, 2}}},
+      {content := .signature, flushes := [(1, 3)]},
+      {content := .transaction 2 {configuration := some {0}}},
+      {content := .signature}, {content := .signature}]),
+    .deliver 0 2, .deliver 2 0, .input 0 (.sendEntries 2 5), .deliver 0 2,
+    .deliver 0 1, nominate, nominate, nominate]},
+    MessageWitnesses.spareNode.valid, ⟨0, by decide, 1, by decide, by decide⟩⟩
+
+/-- In the second run, two successive nominations each add a committed key;
+the third does not. These bits are part of the recorded action label (`read_eq`). -/
+private theorem delayed_commit_answers :
+    (observed delayedCommit.val delayedCommit.property.1).map (·.2.1) =
+      [false, true, true, false] ∧
+    (observed chainedCommit.val chainedCommit.property.1).map (·.2.1) =
+      [false, false, false, false, false, true, true, true, false] := by decide +kernel
+
 private def multiRuns : List MultiRun :=
   (MessageWitnesses.multiSchedules.map fun c => ⟨c.val.run, c.val.valid, c.property⟩) ++
-  appendForks ++ nominationForks ++ [onTwo [heartbeat, heartbeat], emptyBackup]
+  appendForks ++ nominationForks ++ [onTwo [heartbeat, heartbeat], emptyBackup, delayedCommit, chainedCommit]
 
 private def soloObserved : List Key :=
   observed MessageWitnesses.solo.run MessageWitnesses.solo.valid
@@ -148,21 +175,21 @@ private theorem all_replayed :
         true := by decide +kernel
 
 private theorem sample_size :
-    1 + multiRuns.length = 20 ∧ soloObserved.length + multiObserved.length = 108 := by decide +kernel
+    1 + multiRuns.length = 22 ∧ soloObserved.length + multiObserved.length = 121 := by decide +kernel
 
-public theorem multi_count : multiKeys.Nodup ∧ multiKeys.length = 40 := by decide +kernel
-public theorem count : keys.Nodup ∧ keys.length = 42 := by decide +kernel
+public theorem multi_count : multiKeys.Nodup ∧ multiKeys.length = 46 := by decide +kernel
+public theorem count : keys.Nodup ∧ keys.length = 48 := by decide +kernel
 
-/-- Every list covering the full recorded-action labels has at least 42 rows. -/
+/-- Every list covering the full recorded-action labels has at least 48 rows. -/
 public theorem full_lower_bound (rows : List Profile) (complete : ∀ s, label s ∈ rows) :
-    42 ≤ rows.length := by
+    48 ≤ rows.length := by
   simpa only [count.2] using
     (projected_lower_bound project count.1 (fun _ => occurs) complete)
 
-/-- The 40 multi-node keys have witnesses with two distinct deployed node IDs. -/
+/-- Each key here has a witness with at least two distinct deployed node IDs. -/
 public theorem multi_lower_bound (rows : List Profile)
     (complete : ∀ s : Step, LeaderCoverage.MultiNode s.nodes → label s ∈ rows) :
-    40 ≤ rows.length := by
+    46 ≤ rows.length := by
   have sub : multiKeys ⊆ rows.map project := by
     intro k hk
     obtain ⟨s, multi, eq⟩ := multi_occurs hk
