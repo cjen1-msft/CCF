@@ -17,8 +17,8 @@ import all ConsensusCoverage.ZeroRows
 import all Consensus.Proofs.SafetyInvariant
 
 /-! The three diagonal labels are exactly the reachable labels with no true
-step answer. Signed witnesses preserve the old commit evidence rather than
-assuming that a repeated snapshot is always idempotent on the ghost. -/
+step answer. The replay gate allows queue removals, but checks that the log
+fold adds no evidence even on signed prefixes. -/
 
 namespace ConsensusCoverage.SignedQuiet
 
@@ -70,17 +70,22 @@ private theorem stable (s : Step) (nodes : s.after.nodes = s.before.nodes)
     apply propext
     exact ⟨(CommitKeys.step_noNew s).mp noNew k l, Or.inl⟩
 
-/-- Reuse any proof of support preservation; the remaining evidence is a
+/-- Reuse any proof that no support is new; the remaining evidence is a
 Boolean test on the recorded replay. -/
+public theorem label_eq_of_noNewSupport (s : Step) (support : NoNewSupport s.before s.after)
+    (passes : evidence s.cfg s.before s.after s.past = true) :
+    label s = diagonal (ProofContexts.answers (StateCoverage.read s.cfg s.before s.past)) :=
+  StutterProfile.label_eq_of_noNewSupport s support (stable s support.1 passes)
+
 public theorem label_eq_of_support (s : Step) (support : SameSupport s.before s.after)
     (passes : evidence s.cfg s.before s.after s.past = true) :
     label s = diagonal (ProofContexts.answers (StateCoverage.read s.cfg s.before s.past)) :=
-  StutterProfile.label_eq_of_support s support (stable s support.1 passes)
+  label_eq_of_noNewSupport s support.noNew passes
 
-/-- Compare queue membership, not order or multiplicity. On a validated
-action, only the actor can have changed its node record. -/
+/-- Reject new envelopes, but allow removals, reordering and duplication.
+On a validated action, only the actor can have changed its node record. -/
 @[expose] public def test (v : Option GuardedDomain.View) (s t : Model.State) (noNew : Bool) : Bool :=
-  v.any (fun x => !x.changed) && (t.network.all s.network.contains && s.network.all t.network.contains) &&
+  v.any (fun x => !x.changed) && t.network.all s.network.contains &&
     (s.nodes.all (fun (_, st) => st.votedFor.isNone) && noNew)
 
 @[expose] public def gate (cfg : FullProfile.Configuration) (before : Model.State) (a : Model.Action)
@@ -96,14 +101,14 @@ public theorem gate_sound (s : Step)
   letI : Config.InitialConfiguration := ⟨s.cfg⟩
   obtain ⟨v, made, ok⟩ := GuardedDomain.ofAction_matches s
   simp only [gate, test, made, Option.any_some, Bool.not_eq_true', Bool.and_eq_true] at passes
-  obtain ⟨⟨unchanged, forward, backward⟩, logs⟩ := passes
+  obtain ⟨⟨unchanged, forward⟩, logs⟩ := passes
   have same := s.context.now_pre ((GuardedDomain.View.old_post ok).mpr unchanged)
   change s.context.tr.post = s.context.tr.pre at same
   have nodes : s.after.nodes = s.before.nodes := by
     rw [← s.current_eq, s.context.tr.nodesEq, same]
     exact InertProfile.replace_eq s.context.inv.distinct s.context.tr.found
-  apply label_eq_of_support s ⟨nodes, fun e => ⟨fun h => List.contains_iff_mem.mp
-    (List.all_eq_true.mp forward e h), fun h => List.contains_iff_mem.mp (List.all_eq_true.mp backward e h)⟩⟩
+  apply label_eq_of_noNewSupport s ⟨nodes, fun e h => List.contains_iff_mem.mp
+    (List.all_eq_true.mp forward e h)⟩
   exact Bool.and_eq_true_iff.mpr logs
 
 private def appendResult (nodes : List NodeID) : Option Model.State :=

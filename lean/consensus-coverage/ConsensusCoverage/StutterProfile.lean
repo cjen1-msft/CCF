@@ -12,8 +12,8 @@ import all ConsensusCoverage.StateCoverage
 import all Consensus.Proofs.SafetyInvariant
 
 /-! The complete pinned step profile when a recorded action preserves node
-states, queued-envelope membership, and log evidence. This includes literal
-stutters, but does not require the two proof frames to be equal. -/
+states and log evidence and introduces no new queued envelope. The queue
+may shrink, and the two proof frames need not be equal. -/
 
 namespace ConsensusCoverage.StutterProfile
 
@@ -33,17 +33,25 @@ public theorem SameSupport.of_eq {s t : Model.State} (h : t = s) : SameSupport s
   cases h
   exact ⟨rfl, fun _ => Iff.rfl⟩
 
+/-- The node table is unchanged, and each post-step envelope was already pending. -/
+public def NoNewSupport (s t : Model.State) : Prop :=
+  t.nodes = s.nodes ∧ t.network ⊆ s.network
+
+public theorem SameSupport.noNew {s t : Model.State} (h : SameSupport s t) : NoNewSupport s t :=
+  ⟨h.1, fun _ he => (h.2 _).mp he⟩
+
 private theorem now_eq [Config.InitialConfiguration] {f : Frame} {t : Model.State}
-    (h : SameSupport f.current t) : Now (f.advance t) = Now f := by
+    (h : NoNewSupport f.current t) : Now (f.advance t) = Now f := by
   have nodes := h.1
   change t.nodes = f.current.nodes at nodes
   funext n st
   change ((n, st) ∈ t.nodes) = ((n, st) ∈ f.current.nodes)
   rw [nodes]
 
-private theorem pending_eq [Config.InitialConfiguration] {f : Frame} {t : Model.State}
-    (h : SameSupport f.current t) : Pending (f.advance t) = Pending f :=
-  funext fun e => propext (h.2 e)
+private theorem pending_of_next [Config.InitialConfiguration] {f : Frame} {t : Model.State}
+    (h : NoNewSupport f.current t) (e : Model.Envelope) :
+    Pending (f.advance t) e → Pending f e :=
+  fun he => h.2 he
 
 private theorem seen_eq [Config.InitialConfiguration] {f : Frame} {t : Model.State}
     (h : (f.advance t).logs = f.logs) : Seen (f.advance t) = Seen f := by
@@ -80,35 +88,40 @@ private partial def rebuild (facts : List Fact) (p : Expr) : MetaM (Option Expr)
     return some (← mkAppM ``And.intro #[l, r])
   return none
 
-private def contradictionFrom (ctx : Simp.Context) (facts : List Fact) : MetaM (Option Expr) := do
+private def contradictionFromWith (ctx : Simp.Context) (transfer : Fact → Option Fact)
+    (facts : List Fact) : MetaM (Option Expr) := do
   unless facts.any (fun (p, _) => p.isAppOfArity ``Not 1) do return none
   let facts ← facts.mapM fun (p, h) => do
     let (r, _) ← simp p ctx
     let h ← if let some eq := r.proof? then mkEqMP eq h else pure h
     return (r.expr, h)
+  let facts := facts ++ facts.filterMap transfer
   for (p, h) in facts do
     if p.isAppOfArity ``Not 1 then
       if let some yes ← rebuild facts (p.getArg! 0) then return some (mkApp h yes)
   return none
+
+private def contradictionFrom (ctx : Simp.Context) (facts : List Fact) : MetaM (Option Expr) :=
+  contradictionFromWith ctx (fun _ => none) facts
 
 mutual
 
 /-- Refute a positive path formula. Conjunctions may contain more than one reach
 call: one refuted conjunct suffices. Disjunctions require proofs for both
 arms. A cached certificate is a kernel-checked lemma, not a boolean oracle. -/
-private partial def refute (ctx : Simp.Context) (eq logs : Expr)
+private partial def refute (ctx : Simp.Context) (eq logs : Expr) (transfer : Fact → Option Fact)
     (todo : List Fact) (atoms : List Fact := []) : Gen (Option Expr) := do
-  let (p, h) :: rest := todo | contradictionFrom ctx atoms
+  let (p, h) :: rest := todo | contradictionFromWith ctx transfer atoms
   if let some n := reachName? p then
     if ← certify n then
       let .const _ us := p.getAppFn | throwError "expected constant"
       return some (mkAppN (mkConst (certName n) us) (p.getAppArgs ++ #[eq, logs, h]))
   if p.isAppOfArity ``And 2 then
-    return ← refute ctx eq logs
+    return ← refute ctx eq logs transfer
       ((p.getArg! 0, ← mkAppM ``And.left #[h]) :: (p.getArg! 1, ← mkAppM ``And.right #[h]) :: rest) atoms
   if p.isAppOfArity ``Or 2 then
     let arm (q : Expr) := withLocalDeclD `h q fun hq => do
-      let some result ← refute ctx eq logs ((q, hq) :: rest) atoms | return none
+      let some result ← refute ctx eq logs transfer ((q, hq) :: rest) atoms | return none
       return some (← mkLambdaFVars #[hq] result)
     let some l ← arm (p.getArg! 0) | return none
     let some r ← arm (p.getArg! 1) | return none
@@ -117,9 +130,9 @@ private partial def refute (ctx : Simp.Context) (eq logs : Expr)
     return ← withLocalDeclD `w (p.getArg! 0) fun w => do
       let q := (p.getArg! 1).beta #[w]
       withLocalDeclD `h q fun hq => do
-        let some result ← refute ctx eq logs ((q, hq) :: rest) atoms | return none
+        let some result ← refute ctx eq logs transfer ((q, hq) :: rest) atoms | return none
         return some (← mkAppM ``Exists.elim #[h, ← mkLambdaFVars #[w, hq] result])
-  refute ctx eq logs rest ((p, h) :: atoms)
+  refute ctx eq logs transfer rest ((p, h) :: atoms)
 
 private partial def certify (n : Name) : Gen Bool := do
   if let some done := (← get)[n]? then return done
@@ -130,7 +143,7 @@ private partial def certify (n : Name) : Gen Bool := do
     let t := xs[2]!
     let current := mkApp (mkConst ``Frame.current) f
     let next := mkAppN (mkConst ``Frame.advance) #[inst, f, t]
-    withLocalDeclD `support (mkApp2 (mkConst ``SameSupport) current t) fun eq => do
+    withLocalDeclD `support (mkApp2 (mkConst ``NoNewSupport) current t) fun eq => do
       let project (x : Expr) := mkApp (mkConst ``Frame.logs) x
       withLocalDeclD `logs (← mkEq (project next) (project f)) fun logs => do
         let mut rules : SimpTheorems := {}
@@ -138,14 +151,19 @@ private partial def certify (n : Name) : Gen Bool := do
           rules ← rules.addDeclToUnfold name
         let rewrites := #[
           mkAppN (mkConst ``now_eq) #[inst, f, t, eq],
-          mkAppN (mkConst ``pending_eq) #[inst, f, t, eq],
           mkAppN (mkConst ``seen_eq) #[inst, f, t, logs],
           mkAppN (mkConst ``led_eq) #[inst, f, t, logs], logs]
         for i in [:rewrites.size] do
           rules ← rules.add (.other ((`stutterRewrite).appendIndexAfter i)) #[] rewrites[i]!
         let ctx ← Simp.mkContext (simpTheorems := #[rules]) (congrTheorems := ← getSimpCongrTheorems)
+        let pending := mkAppN (mkConst ``pending_of_next) #[inst, f, t, eq]
+        -- Transfer only positive post-step facts, never rewrite a negation.
+        let transfer : Fact → Option Fact := fun (p, h) => do
+          guard (p.isAppOfArity ``Pending 2 && p.getArg! 0 == next)
+          let e := p.getArg! 1
+          return (mkApp2 (mkConst ``Pending) f e, mkApp2 pending e h)
         withLocalDeclD `h p fun h => do
-          let some proof ← refute ctx eq logs [(p, h)] | return false
+          let some proof ← refute ctx eq logs transfer [(p, h)] | return false
           let pred := mkAppN (mkConst n (ci.levelParams.map mkLevelParam)) xs
           let type ← mkForallFVars (xs ++ #[eq, logs]) (← mkArrow pred (mkConst ``False))
           let value ← mkLambdaFVars (xs ++ #[eq, logs, h]) proof
@@ -184,7 +202,7 @@ private def compile : MetaM Unit := do
     let value ← mkLambdaFVars xs (mkAppN (mkConst ``Classes.StepBranch.casesOn [.zero])
       (#[motive, b] ++ proofs))
     addDecl <| .thmDecl {
-      name := `ConsensusCoverage.StutterProfile.dispatch_false, levelParams := ci.levelParams,
+      name := `ConsensusCoverage.StutterProfile.dispatch_false_of_noNewSupport, levelParams := ci.levelParams,
       type, value }
     logInfo m!"stutter: {arms.size} dispatcher arms; {cache.size - arms.size} shared reach certificates"
 
@@ -198,8 +216,19 @@ how the vote observations are stored. -/
 public def StableLogs [Config.InitialConfiguration] (f : FullProfile.ProofFrame) (t : Model.State) : Prop :=
   (f.advance t).logs = f.logs
 
-/-- Unchanged support and unchanged log evidence refute every question for
-the same actual context. Vote-list equality is not required. -/
+private theorem dispatch_false [Config.InitialConfiguration] (f : Frame) (t : Model.State)
+    (c : Ctx f t) (b : Classes.StepBranch) (support : SameSupport f.current t)
+    (logs : StableLogs f t) : ¬ PinnedClasses.dispatch f t c b :=
+  dispatch_false_of_noNewSupport f t c b support.noNew logs
+
+/-- No new support and unchanged log evidence refute every question for the
+same actual context. Vote-list equality is not required. -/
+public theorem sig_false_of_noNewSupport [Config.InitialConfiguration] {f : Frame} {t : Model.State}
+    (c : Ctx f t) (support : NoNewSupport (FullProfile.current f) t) (logs : StableLogs f t)
+    (b : Classes.StepBranch) : ¬ PinnedClasses.sig c b :=
+  dispatch_false_of_noNewSupport _ _ c b support logs
+
+/-- Unchanged support is a special case. -/
 public theorem sig_false_of_support [Config.InitialConfiguration] {f : Frame} {t : Model.State}
     (c : Ctx f t) (support : SameSupport (FullProfile.current f) t) (logs : StableLogs f t)
     (b : Classes.StepBranch) : ¬ PinnedClasses.sig c b :=
@@ -336,16 +365,21 @@ public def diagonal (pre : ProofContexts.Answers) : FullProfile.Profile
   | .post b => pre b
 
 /-- All 433 coordinates share the context of the recorded action. -/
-public theorem step_profile_of_support (s : ActionProfile.Step) (support : SameSupport s.before s.after)
+public theorem step_profile_of_noNewSupport (s : ActionProfile.Step) (support : NoNewSupport s.before s.after)
     (logs : @StableLogs ⟨s.cfg⟩ s.frame s.after) :
     (ActionProfile.label s).step = fun _ => false := by
   letI : Config.InitialConfiguration := ⟨s.cfg⟩
-  have support' : SameSupport (FullProfile.current s.frame) s.after := s.current_eq.symm ▸ support
+  have support' : NoNewSupport (FullProfile.current s.frame) s.after := s.current_eq.symm ▸ support
   funext b
   apply Bool.eq_false_iff.mpr
   intro yes
-  exact sig_false_of_support s.context support' logs b
+  exact sig_false_of_noNewSupport s.context support' logs b
     ((ActionProfile.label_true s (.step b)).mp yes)
+
+public theorem step_profile_of_support (s : ActionProfile.Step) (support : SameSupport s.before s.after)
+    (logs : @StableLogs ⟨s.cfg⟩ s.frame s.after) :
+    (ActionProfile.label s).step = fun _ => false :=
+  step_profile_of_noNewSupport s support.noNew logs
 
 public theorem step_profile_of_stable (s : ActionProfile.Step) (stutter : s.after = s.before)
     (logs : @StableLogs ⟨s.cfg⟩ s.frame s.after) :
@@ -360,7 +394,7 @@ public theorem step_profile (s : ActionProfile.Step) (stutter : s.after = s.befo
   step_profile_of_stable s stutter (step_stable s stutter quiet)
 
 /-- The full 457-coordinate label, with unchanged pre/post proof-state answers. -/
-public theorem label_eq_of_support (s : ActionProfile.Step) (support : SameSupport s.before s.after)
+public theorem label_eq_of_noNewSupport (s : ActionProfile.Step) (support : NoNewSupport s.before s.after)
     (logs : @StableLogs ⟨s.cfg⟩ s.frame s.after) :
     ActionProfile.label s = diagonal (ProofContexts.answers (StateCoverage.read s.cfg s.before s.past)) := by
   letI : Config.InitialConfiguration := ⟨s.cfg⟩
@@ -372,11 +406,16 @@ public theorem label_eq_of_support (s : ActionProfile.Step) (support : SameSuppo
   funext q
   cases q with
   | pre b => exact congrFun (ActionProfile.pre_answers s) b
-  | step b => exact congrFun (step_profile_of_support s support logs) b
+  | step b => exact congrFun (step_profile_of_noNewSupport s support logs) b
   | post b =>
     have h := (ActionProfile.label_true s (.post b)).trans
       ((same b).trans (ActionProfile.label_true s (.pre b)).symm)
     exact (Bool.eq_iff_iff.mpr h).trans (congrFun (ActionProfile.pre_answers s) b)
+
+public theorem label_eq_of_support (s : ActionProfile.Step) (support : SameSupport s.before s.after)
+    (logs : @StableLogs ⟨s.cfg⟩ s.frame s.after) :
+    ActionProfile.label s = diagonal (ProofContexts.answers (StateCoverage.read s.cfg s.before s.past)) :=
+  label_eq_of_noNewSupport s support.noNew logs
 
 public theorem label_eq_of_stable (s : ActionProfile.Step) (stutter : s.after = s.before)
     (logs : @StableLogs ⟨s.cfg⟩ s.frame s.after) :

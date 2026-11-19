@@ -254,6 +254,13 @@ initialization: first `11 -> 11`, then `01 -> 01`. `trace` reports confirmed
 labels separately from actions whose membership is undetermined. This score
 does not cover labels with a positive step answer.
 
+A delivery can also have an all-false label while **removing** an envelope:
+in [an initialized heartbeat exchange](../consensus-coverage/ConsensusCoverage/DropWitness.lean),
+the primary consumes the only pending zero-index acknowledgment and neither
+node changes. The proof needs every *remaining* envelope to have been present
+before, not every old envelope to remain. In the signed nomination capture,
+receiving the proposal at the term-zero node is another such delivery (`11 -> 11`).
+
 **Exact nonzero slice: three full labels have the fresh-nomination signature.**
 [Seven step answers](../consensus-coverage/ConsensusCoverage/NominationProfile.lean)
 are true and the other 426 are false. This happens when a primary nominates a
