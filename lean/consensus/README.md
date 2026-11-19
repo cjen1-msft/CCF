@@ -207,19 +207,17 @@ collision splits one of those keys, so any full table has at least six entries.
 The nine history-resolved rows are not themselves a lower bound of nine distinct
 *sets* of profiles.
 
-**Full recorded-action denominator: at least 31; exact count unknown.**
+**Full recorded-action denominator: at least 39; at least 37 on multi-node deployments.**
 The [recorded-action specification](../consensus-coverage/ConsensusCoverage/ActionProfile.lean)
 assigns an initialized step exactly one 457-answer vector. All 433 step
 questions use [the same, unique context for the recorded action](../consensus-coverage/ConsensusCoverage/ActionContext.lean).
-For example, sending the first heartbeat and re-sending an identical queued heartbeat
-do not have the same message answers: the proof asks whether an envelope *value* is
-new, not whether the queue grew. [Seven initialized schedules](../consensus-coverage/ConsensusCoverage/MessageWitnesses.lean)
-take 59 successful steps and distinguish 30 full labels by their leader, endpoint,
-and message answers; 29 occur on multi-node deployments. Stepping down the primary
-and initializing an empty backup send no messages and agree on the leader answers,
-but differ on a [log-entry question](../consensus-coverage/ConsensusCoverage/LeaderRefinement.lean).
-This adds at least one full label: **at least 31 overall and 30 on multi-node
-deployments**. There is no proof these exhaust the reachable labels.
+[Seventeen initialized schedules](../consensus-coverage/ConsensusCoverage/JointWitnesses.lean)
+take 96 successful steps. They fork a replication run with signed and unsigned
+appends before and after commitment, and distinguish a first heartbeat from a
+duplicate. The 39 distinct joint answers use both endpoints, leader and message
+questions, guarded log questions and fresh committed prefixes. Each difference
+is a difference in a full label. There is no proof these labels exhaust the
+reachable transitions.
 
 **Exact slice: three full labels have all 433 step answers false.** They are
 `10 -> 10`, `11 -> 11`, and `01 -> 01`. [The upper bound](../consensus-coverage/ConsensusCoverage/ZeroRows.lean)
