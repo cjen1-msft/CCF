@@ -5,6 +5,7 @@ module
 
 public import ConsensusCoverage.FullProfile
 public import ConsensusCoverage.FrontierWitnesses
+import all ConsensusCoverage.PairWitnesses
 import all ConsensusCoverage.FrontierRows
 import all ConsensusCoverage.FullProfile
 import all ConsensusCoverage.StateCoverage
@@ -106,5 +107,56 @@ public theorem strict : ∃ cfg ns s t u past a b,
       rw [eq] at member
       obtain ⟨cfg, _, frame, _, _, _, _, bits⟩ := mem_observe_iff.mp member
       exact no_primary_question cfg frame ((bits _).mp yes)
+
+private abbrev EndpointKey := Bool × Bool × Bool
+
+private noncomputable def endpointKey (o : FullProfile.Observation) : EndpointKey :=
+  open Classical in
+  if h : ∃ p, p ∈ o then (project h.choose).pair else (false, false, false)
+
+private theorem endpointKey_eq {s t : Model.State} (h : IsReachableStep s t) :
+    endpointKey (observe s t) = PairQuestions.label s t := by
+  classical
+  have someProfile := observe_nonempty_iff.mpr h
+  unfold endpointKey
+  rw [dite_eq_left someProfile]
+  obtain ⟨cfg, ns, f, act, folded, curr, step, eq⟩ := someProfile.choose_spec
+  obtain ⟨x, past, run, rfl⟩ := Folded.history folded
+  have same := (@StateCoverage.frame_current ⟨cfg⟩ x past).symm.trans curr
+  rw [← same] at step
+  rw [← eq, project_frame run step, FrontierRows.historyLabel_pair, same]
+
+/-- This lower bound counts *different sets of compatible profiles*, not profiles
+within a set. Five endpoint keys are reachable. Removing one of the two distinct
+observations in `strict` still leaves every endpoint key represented. -/
+public theorem full_lower_bound {rows : List FullProfile.Observation} (h : ExactTable rows) :
+    6 ≤ rows.length := by
+  classical
+  obtain ⟨cfg, ns, s, t, u, past, a, b, run, left, right, same, diff⟩ := strict
+  have reach := (run_folded run).reachable
+  rw [show ∀ x h, current (@StateCoverage.frame ⟨cfg⟩ x h) = x from
+    fun x h => @StateCoverage.frame_current ⟨cfg⟩ x h] at reach
+  have lt : IsReachableStep s t := ⟨cfg, ns, a, reach, left⟩
+  have rt : IsReachableStep s u := ⟨cfg, ns, b, reach, right⟩
+  have inL := h.complete ⟨(s, t), lt⟩
+  have inR := h.complete ⟨(s, u), rt⟩
+  change observe s t ∈ rows at inL
+  change observe s u ∈ rows at inR
+  have eqKey : endpointKey (observe s t) = endpointKey (observe s u) := by
+    rw [endpointKey_eq lt, endpointKey_eq rt]
+    exact congrArg FrontierRows.Row.pair same
+  have sub : PairQuestions.table ⊆ (rows.erase (observe s t)).map endpointKey := by
+    intro r mem
+    obtain ⟨c, nodes, x, y, act, reachable, ran, rfl⟩ := (PairQuestions.exact _).mp mem
+    have stepped : IsReachableStep x y := ⟨c, nodes, act, reachable, ran⟩
+    have eq := endpointKey_eq stepped
+    by_cases collision : observe x y = observe s t
+    · rw [collision, eqKey] at eq
+      exact List.mem_map.mpr ⟨_, (List.mem_erase_of_ne (Ne.symm diff)).mpr inR, eq⟩
+    · exact List.mem_map.mpr ⟨_, (List.mem_erase_of_ne collision).mpr (h.complete ⟨(x, y), stepped⟩), eq⟩
+  have bound := (show PairQuestions.table.Nodup by decide).length_le_of_subset sub
+  rw [List.length_map, List.length_erase_of_mem inL] at bound
+  change 5 ≤ rows.length - 1 at bound
+  omega
 
 end ConsensusCoverage.Projection

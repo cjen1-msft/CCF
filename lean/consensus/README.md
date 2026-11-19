@@ -155,7 +155,7 @@ steps at model action boundaries. The model witnesses hit **3/3 states and 9/9
 projected steps**. The included synthetic replication capture hits **3/3 and 4/9**,
 respectively, in nine model actions. Neither score is the full transition denominator.
 
-**Full state-pair denominator: not known.** [The full specification](../consensus-coverage/ConsensusCoverage/FullProfile.lean)
+**Full state-pair denominator: at least six; exact count unknown.** [The full specification](../consensus-coverage/ConsensusCoverage/FullProfile.lean)
 uses all 457 generated answers (12 before, 433 about the step, 12 after).
 For a pair of full snapshots with no history, the label is the set of whole
 answer vectors compatible with that pair on initialized executions. The quotient is
@@ -163,7 +163,10 @@ proved finite, but its capacity is not its reachable count. [The projection theo
 proves that the nine rows above are exactly the projected image of those vectors.
 It also gives a counterexample to using nine for the full model: sending entries
 and stepping down from the same initial state have the same projected row but
-different full observations.
+different full observations. Five endpoint-only keys are reachable, and this
+collision splits one of those keys, so any full table has at least six entries.
+The nine history-resolved rows are not themselves a lower bound of nine distinct
+*sets* of profiles.
 
 The specification is exact **for the generated predicates**. Each generated step
 predicate can existentially choose its own step context; it does not yet retain
