@@ -309,12 +309,10 @@ false. The [proof](../consensus-coverage/ConsensusCoverage/InertProfile.lean)
 checks that the node states, queue membership and proof log evidence are unchanged.
 The first action still contains unknowns. Separately, [a model witness](../consensus-coverage/ConsensusCoverage/FreshHeartbeat.lean)
 sends an empty heartbeat from voter 0 to voter 1 starting with an empty queue.
-Its endpoints are both `10`. Of the 433 step answers, 6 are proved true, 198
-false, and 229 remain unknown with the initial reader. [Specializing the proof
-paths to the actual packet](../consensus-coverage/ConsensusCoverage/FreshHeartbeatPaths.lean)
-brings this to **15 true, 251 false, and 167 unknown**. One true answer
-concerns the incumbent primary, not the queue. These are coordinates of one
-label, not 266 distinct steps.
+Its [complete label](../consensus-coverage/ConsensusCoverage/FreshHeartbeatResidual.lean)
+has endpoints `10 -> 10` and **23 true, 410 false, zero unknown** step answers.
+One true answer concerns the incumbent primary, not the queue. This is one
+initialized send, not a classification of all heartbeats.
 [Witness elimination](../consensus-coverage/ConsensusCoverage/SolvedWitnesses.lean)
 simplifies all 433 predicates with a proof in both directions but does not decide
 the remaining existential questions.
