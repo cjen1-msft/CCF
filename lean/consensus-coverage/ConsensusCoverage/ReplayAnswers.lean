@@ -3,6 +3,7 @@ module
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
+public import ConsensusCoverage.AckAdvance
 public import ConsensusCoverage.ActionFrontier
 public import ConsensusCoverage.CommitKeys
 public import ConsensusCoverage.DeltaSupport
@@ -28,6 +29,7 @@ public structure Evidence where
   fresh : List Model.Node.Message
   view : Option GuardedDomain.View
   freshCommit : Bool
+  ackAdvance : Option Bool
   inert : Bool
   delta : DeltaSupport.Evidence
 
@@ -37,13 +39,15 @@ public def read (cfg : Configuration) (s : Model.State) (a : Model.Action)
   let noNew := CommitKeys.noNew (cfg.min?.getD 0) t (s :: past)
   ⟨(FrontierRows.historyLabel cfg s t past, LeaderEffect.changedPrimary s t),
     EventSupport.actionTag a, ReducedQuestions.freshPayloads s t.network,
-    view, !noNew, SignedQuiet.test view s t noNew, DeltaSupport.read s a t⟩
+    view, !noNew, AckAdvance.read? s a t, SignedQuiet.test view s t noNew, DeltaSupport.read s a t⟩
 
-private def direct (k : FrontierRows.Row × Bool) (freshCommit : Bool) : Classes.StepBranch → Option Bool
+private def direct (k : FrontierRows.Row × Bool) (freshCommit : Bool) (ackAdvance : Option Bool) :
+    Classes.StepBranch → Option Bool
   | .leader_led_leader_inr => some k.1.wonPrimary
   | .leader_led_now_after_inl => some k.2
   | .leader_led_leader_inl => some (k.2 && !k.1.wonPrimary)
   | .commitChains_step_committed_inr => some freshCommit
+  | .advance_backed_advance_inr => ackAdvance
   | _ => none
 
 /-- `none` is an unknown coordinate, not a negative answer. -/
@@ -51,12 +55,13 @@ public def answer (e : Evidence) : Question → Option Bool
   | .pre b => some (ProofContexts.answers (e.key.1.zeroBefore, e.key.1.backedBefore) b)
   | .post b => some (ProofContexts.answers (e.key.1.zeroAfter, e.key.1.backedAfter) b)
   | .step b => (e.view.bind (GuardedQuestions.answer · b)).orElse fun _ =>
-      (ReducedQuestions.readFrom? e.fresh b).orElse fun _ => (direct e.key e.freshCommit b).orElse fun _ =>
+      (ReducedQuestions.readFrom? e.fresh b).orElse fun _ => (direct e.key e.freshCommit e.ackAdvance b).orElse fun _ =>
       if e.inert || decide (e.tag ∉ EventSupport.allowed b) || DeltaSupport.excluded e.delta b then some false else none
 
 private theorem direct_sound (s : Step) (b : Classes.StepBranch) {v : Bool}
     (h : direct (ActionFrontier.project (label s))
-      (read s.cfg s.before s.act s.after s.past).freshCommit b = some v) : label s (.step b) = v := by
+      (read s.cfg s.before s.act s.after s.past).freshCommit (AckAdvance.read? s.before s.act s.after) b = some v) :
+    label s (.step b) = v := by
   generalize key : ActionFrontier.project (label s) = k at h
   have won := congrArg (fun (p : FrontierRows.Row × Bool) => p.1.wonPrimary) key
   have changed := congrArg Prod.snd key
@@ -64,7 +69,8 @@ private theorem direct_sound (s : Step) (b : Classes.StepBranch) {v : Bool}
   rw [key] at incumbent
   cases b <;> first | exact won.trans (Option.some.inj h) | exact changed.trans (Option.some.inj h)
                     | exact incumbent.trans (Option.some.inj h)
-                    | exact (CommitKeys.fresh_answer s).symm.trans (Option.some.inj h) | contradiction
+                    | exact (CommitKeys.fresh_answer s).symm.trans (Option.some.inj h)
+                    | exact AckAdvance.read?_correct s h | contradiction
 
 public theorem sound (s : Step) (q : Question) {v : Bool}
     (known : answer (read s.cfg s.before s.act s.after s.past) q = some v) : label s q = v := by
@@ -85,7 +91,7 @@ public theorem sound (s : Step) (q : Question) {v : Bool}
     | none =>
       simp only [queue, Option.orElse_none] at known
       cases h : direct (ActionFrontier.project (label s))
-          (!CommitKeys.noNew _ s.after (s.before :: s.past)) b with
+          (!CommitKeys.noNew _ s.after (s.before :: s.past)) (AckAdvance.read? s.before s.act s.after) b with
       | some res => exact (direct_sound s b h).trans (by simpa [h] using known)
       | none =>
         simp only [h, Option.orElse_none] at known

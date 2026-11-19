@@ -199,9 +199,10 @@ It reports a range when the count is not determined. The [lower-bound proof](../
 counts actions together only when each pair disagrees on a known answer; a
 `?` never distinguishes two actions. The upper bound is the number of validated
 actions. The two heartbeat fixtures together hit **exactly seven distinct full
-labels**. Replication hits **eight to nine**: only the two AppendEntries
-responses (actions 6 and 9) are not yet distinguished. These counts describe the
-captures, not the global reachable table.
+labels**. Replication hits **exactly nine**. Its two same-term acknowledgments
+are distinguished by [the commit-advance proof branch](../consensus-coverage/ConsensusCoverage/AckAdvance.lean):
+action 6 leaves the primary at commit index 2; action 9 advances it from 2 to 4.
+These counts describe the captures, not the global reachable table.
 
 **Full state-pair denominator: at least six; exact count unknown.** [The full specification](../consensus-coverage/ConsensusCoverage/FullProfile.lean)
 uses all 457 generated answers (12 before, 433 about the step, 12 after).
