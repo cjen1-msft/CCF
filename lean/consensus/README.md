@@ -261,7 +261,12 @@ same packet again. The second action grows the queue but gives a **complete
 457-answer row**: both endpoints have key `10`, and all 433 step bits are
 false. The [proof](../consensus-coverage/ConsensusCoverage/InertProfile.lean)
 checks that the node states, queue membership and proof log evidence are unchanged.
-The first action still contains unknowns. [Witness elimination](../consensus-coverage/ConsensusCoverage/SolvedWitnesses.lean)
+The first action still contains unknowns. Separately, [a model witness](../consensus-coverage/ConsensusCoverage/FreshHeartbeat.lean)
+sends an empty heartbeat from voter 0 to voter 1 starting with an empty queue.
+Its endpoints are both `10`. Of the 433 step answers, 6 are proved true, 198
+false, and 229 remain unknown. One true answer concerns the incumbent primary,
+not the queue. These are coordinates of one label, not 204 different steps.
+[Witness elimination](../consensus-coverage/ConsensusCoverage/SolvedWitnesses.lean)
 simplifies all 433 predicates with a proof in both directions but does not decide
 the remaining existential questions.
 
