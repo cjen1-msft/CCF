@@ -11,9 +11,9 @@ import all ConsensusCoverage.StateBasis
 import all ConsensusCoverage.StateCoverage
 import all Consensus.Proofs.SafetyInvariant
 
-/-! The complete pinned step profile when a recorded action repeats the current
-snapshot without adding log evidence. Equality of protocol states alone is not
-used to identify the two proof frames. -/
+/-! The complete pinned step profile when a recorded action preserves node
+states, queued-envelope membership, and log evidence. This includes literal
+stutters, but does not require the two proof frames to be equal. -/
 
 namespace ConsensusCoverage.StutterProfile
 
@@ -24,11 +24,26 @@ set_option backward.privateInPublic.warn false
 set_option maxHeartbeats 0
 set_option maxRecDepth 8192
 
+/-- Equality of the node table and of the support of the network queue, not
+its order or multiplicities. -/
+public def SameSupport (s t : Model.State) : Prop :=
+  t.nodes = s.nodes ∧ ∀ e : Model.Envelope, e ∈ t.network ↔ e ∈ s.network
+
+public theorem SameSupport.of_eq {s t : Model.State} (h : t = s) : SameSupport s t := by
+  cases h
+  exact ⟨rfl, fun _ => Iff.rfl⟩
+
 private theorem now_eq [Config.InitialConfiguration] {f : Frame} {t : Model.State}
-    (h : t = f.current) : Now (f.advance t) = Now f := by cases h; rfl
+    (h : SameSupport f.current t) : Now (f.advance t) = Now f := by
+  have nodes := h.1
+  change t.nodes = f.current.nodes at nodes
+  funext n st
+  change ((n, st) ∈ t.nodes) = ((n, st) ∈ f.current.nodes)
+  rw [nodes]
 
 private theorem pending_eq [Config.InitialConfiguration] {f : Frame} {t : Model.State}
-    (h : t = f.current) : Pending (f.advance t) = Pending f := by cases h; rfl
+    (h : SameSupport f.current t) : Pending (f.advance t) = Pending f :=
+  funext fun e => propext (h.2 e)
 
 private theorem seen_eq [Config.InitialConfiguration] {f : Frame} {t : Model.State}
     (h : (f.advance t).logs = f.logs) : Seen (f.advance t) = Seen f := by
@@ -115,7 +130,7 @@ private partial def certify (n : Name) : Gen Bool := do
     let t := xs[2]!
     let current := mkApp (mkConst ``Frame.current) f
     let next := mkAppN (mkConst ``Frame.advance) #[inst, f, t]
-    withLocalDeclD `eq (← mkEq t current) fun eq => do
+    withLocalDeclD `support (mkApp2 (mkConst ``SameSupport) current t) fun eq => do
       let project (x : Expr) := mkApp (mkConst ``Frame.logs) x
       withLocalDeclD `logs (← mkEq (project next) (project f)) fun logs => do
         let mut rules : SimpTheorems := {}
@@ -183,12 +198,18 @@ how the vote observations are stored. -/
 public def StableLogs [Config.InitialConfiguration] (f : FullProfile.ProofFrame) (t : Model.State) : Prop :=
   (f.advance t).logs = f.logs
 
-/-- Stuttering protocol state plus stuttering *log evidence* refutes every
-question for the same actual context. Vote-list equality is not required. -/
+/-- Unchanged support and unchanged log evidence refute every question for
+the same actual context. Vote-list equality is not required. -/
+public theorem sig_false_of_support [Config.InitialConfiguration] {f : Frame} {t : Model.State}
+    (c : Ctx f t) (support : SameSupport (FullProfile.current f) t) (logs : StableLogs f t)
+    (b : Classes.StepBranch) : ¬ PinnedClasses.sig c b :=
+  dispatch_false _ _ c b support logs
+
+/-- In particular, literal stuttering suffices if the log evidence is stable. -/
 public theorem sig_false [Config.InitialConfiguration] {f : Frame} {t : Model.State}
     (c : Ctx f t) (eq : t = FullProfile.current f) (logs : StableLogs f t)
     (b : Classes.StepBranch) : ¬ PinnedClasses.sig c b :=
-  dispatch_false _ _ c b eq logs
+  sig_false_of_support c (.of_eq eq) logs b
 
 private theorem noElection [Config.InitialConfiguration] {f : Frame} (inv : Inv f)
     {grants n k l i} : ¬ LogFacts.ElectionAt f.current f.current grants n k l i := by
@@ -282,14 +303,31 @@ private theorem stableLogs {cfg nodes f} (folded : FullProfile.Folded cfg nodes 
       contradiction
   exact logs_ext seen grant elect canon committed
 
+private theorem advance_logs_nodes [Config.InitialConfiguration] {f : Frame} {t : Model.State}
+    (nodes : t.nodes = f.current.nodes) :
+    (f.advance t).logs = (f.advance f.current).logs := by
+  cases f with
+  | mk s logs votes =>
+    cases s
+    cases t
+    cases nodes
+    rfl
+
+/-- Only the next snapshot's node table enters the log fold. -/
+public theorem step_stable_of_nodes (s : ActionProfile.Step) (nodes : s.after.nodes = s.before.nodes)
+    (quiet : UnsignedUnvoted s.before) :
+    @StableLogs ⟨s.cfg⟩ s.frame s.after := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  have same : s.after.nodes = s.frame.current.nodes :=
+    nodes.trans (congrArg (fun t : Model.State => t.nodes) s.current_eq).symm
+  exact (advance_logs_nodes same).trans (stableLogs s.folded (s.current_eq.symm ▸ quiet))
+
 /-- In the initialized unsigned/unvoted class, repeating the snapshot adds no
 log evidence. This does not equate frames or assume idempotence of the fold. -/
 public theorem step_stable (s : ActionProfile.Step) (stutter : s.after = s.before)
     (quiet : UnsignedUnvoted s.before) :
-    @StableLogs ⟨s.cfg⟩ s.frame s.after := by
-  letI : Config.InitialConfiguration := ⟨s.cfg⟩
-  have eq := stutter.trans s.current_eq.symm
-  exact eq.symm ▸ stableLogs s.folded (s.current_eq.symm ▸ quiet)
+    @StableLogs ⟨s.cfg⟩ s.frame s.after :=
+  step_stable_of_nodes s (congrArg (fun t : Model.State => t.nodes) stutter) quiet
 
 /-- The diagonal label for the two equal state profiles. -/
 public def diagonal (pre : ProofContexts.Answers) : FullProfile.Profile
@@ -298,16 +336,21 @@ public def diagonal (pre : ProofContexts.Answers) : FullProfile.Profile
   | .post b => pre b
 
 /-- All 433 coordinates share the context of the recorded action. -/
-public theorem step_profile_of_stable (s : ActionProfile.Step) (stutter : s.after = s.before)
+public theorem step_profile_of_support (s : ActionProfile.Step) (support : SameSupport s.before s.after)
     (logs : @StableLogs ⟨s.cfg⟩ s.frame s.after) :
     (ActionProfile.label s).step = fun _ => false := by
   letI : Config.InitialConfiguration := ⟨s.cfg⟩
-  have eq := stutter.trans s.current_eq.symm
+  have support' : SameSupport (FullProfile.current s.frame) s.after := s.current_eq.symm ▸ support
   funext b
   apply Bool.eq_false_iff.mpr
   intro yes
-  exact sig_false s.context eq logs b
+  exact sig_false_of_support s.context support' logs b
     ((ActionProfile.label_true s (.step b)).mp yes)
+
+public theorem step_profile_of_stable (s : ActionProfile.Step) (stutter : s.after = s.before)
+    (logs : @StableLogs ⟨s.cfg⟩ s.frame s.after) :
+    (ActionProfile.label s).step = fun _ => false :=
+  step_profile_of_support s (.of_eq stutter) logs
 
 /-- All 433 action-specific coordinates on initialized stutters with no
 current votes or signed entries. -/
@@ -317,22 +360,28 @@ public theorem step_profile (s : ActionProfile.Step) (stutter : s.after = s.befo
   step_profile_of_stable s stutter (step_stable s stutter quiet)
 
 /-- The full 457-coordinate label, with unchanged pre/post proof-state answers. -/
-public theorem label_eq_of_stable (s : ActionProfile.Step) (stutter : s.after = s.before)
+public theorem label_eq_of_support (s : ActionProfile.Step) (support : SameSupport s.before s.after)
     (logs : @StableLogs ⟨s.cfg⟩ s.frame s.after) :
     ActionProfile.label s = diagonal (ProofContexts.answers (StateCoverage.read s.cfg s.before s.past)) := by
   letI : Config.InitialConfiguration := ⟨s.cfg⟩
-  have eq : (s.frame.advance s.after).current = s.frame.current := stutter.trans s.current_eq.symm
+  have eq : (s.frame.advance s.after).current.nodes = s.frame.current.nodes :=
+    support.1.trans (congrArg (fun t : Model.State => t.nodes) s.current_eq).symm
   have logsEq : (s.frame.advance s.after).logs = s.frame.logs := logs
   have same := (StateBasis.ctx_equiv_iff ‹_› ‹_› (s.frame.advance s.after) s.frame).2
     ⟨by simp only [StateBasis.Zero, eq], by simp only [StateBasis.Backing, Committed, eq, logsEq]⟩
   funext q
   cases q with
   | pre b => exact congrFun (ActionProfile.pre_answers s) b
-  | step b => exact congrFun (step_profile_of_stable s stutter logs) b
+  | step b => exact congrFun (step_profile_of_support s support logs) b
   | post b =>
     have h := (ActionProfile.label_true s (.post b)).trans
       ((same b).trans (ActionProfile.label_true s (.pre b)).symm)
     exact (Bool.eq_iff_iff.mpr h).trans (congrFun (ActionProfile.pre_answers s) b)
+
+public theorem label_eq_of_stable (s : ActionProfile.Step) (stutter : s.after = s.before)
+    (logs : @StableLogs ⟨s.cfg⟩ s.frame s.after) :
+    ActionProfile.label s = diagonal (ProofContexts.answers (StateCoverage.read s.cfg s.before s.past)) :=
+  label_eq_of_support s (.of_eq stutter) logs
 
 public theorem label_eq (s : ActionProfile.Step) (stutter : s.after = s.before)
     (quiet : UnsignedUnvoted s.before) :
