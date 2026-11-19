@@ -314,12 +314,19 @@ outside this table.
 `answers` prints one row per validated action, in three bit strings: pre-state,
 step, post-state. `columns` names each bit in order. `1` and `0` are proved
 answers; `?` is unknown, not false. The [reader](../consensus-coverage/ConsensusCoverage/ReplayAnswers.lean)
-decides both endpoints and at least 36 step questions on every action: three
+decides both endpoints and at least 40 step questions on every action: three
 leader questions, [16 fresh-envelope questions](../consensus-coverage/ConsensusCoverage/ReducedQuestions.lean),
 [14 questions compiled to finite searches over the actual node records, logs and history](../consensus-coverage/ConsensusCoverage/GuardedQuestions.lean),
+[four questions from the rooted- and sorted-log proofs](../consensus-coverage/ConsensusCoverage/ActorLogRows.lean),
 and [three questions about a previously unseen committed `(term, prefix)`](../consensus-coverage/ConsensusCoverage/BackingRead.lean).
 Invalid captures produce no rows. Do not count distinct strings containing `?`
 as full transition coverage.
+
+The rooted- and sorted-log proofs agree on the acting node: both enter their
+actor case exactly when its record changes **or** a new committed key appears.
+Their two prefix cases additionally require the actor's post-log to be a prefix
+of its pre-log. A delayed-commit nomination satisfies all four despite leaving
+every local log unchanged.
 
 For the three commit questions (columns 89-91), the [exact table](../consensus-coverage/ConsensusCoverage/BackingRows.lean)
 is `000`, `110`, `101`, `111`: the first bit says a key is new; the other two

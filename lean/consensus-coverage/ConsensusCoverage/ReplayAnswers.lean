@@ -5,6 +5,7 @@ module
 
 public import ConsensusCoverage.AckAdvance
 public import ConsensusCoverage.ActionFrontier
+public import ConsensusCoverage.ActorLogRows
 public import ConsensusCoverage.BackingRead
 public import ConsensusCoverage.CommitKeys
 public import ConsensusCoverage.DeltaSupport
@@ -48,8 +49,8 @@ public def read (cfg : Configuration) (s : Model.State) (a : Model.Action)
     decide (tag = .nominateSuccessor) && stable && fresh.any (fun _ => true),
     SignedQuiet.test view s t stable, DeltaSupport.read s a t⟩
 
-private def direct (k : FrontierRows.Row × Bool) (backing : Bool × Bool) (ackAdvance : Option Bool) :
-    Classes.StepBranch → Option Bool
+private def direct (k : FrontierRows.Row × Bool) (backing : Bool × Bool) (ackAdvance : Option Bool)
+    (view : Option GuardedDomain.View) : Classes.StepBranch → Option Bool
   | .leader_led_leader_inr => some k.1.wonPrimary
   | .leader_led_now_after_inl => some k.2
   | .leader_led_leader_inl => some (k.2 && !k.1.wonPrimary)
@@ -57,6 +58,8 @@ private def direct (k : FrontierRows.Row × Bool) (backing : Bool × Bool) (ackA
   | .commitChains_step_backing_inl => some backing.1
   | .commitChains_step_backing_inr => some backing.2
   | .advance_backed_advance_inr => ackAdvance
+  | b@.rooted_now_after_inl | b@.sorted_now_after_inl | b@.rooted_post_log_inl | b@.sorted_post_log_inl =>
+    view.bind (ActorLogRows.read? · (backing.1 || backing.2) b)
   | _ => none
 
 /-- `none` is an unknown coordinate, not a negative answer. -/
@@ -65,12 +68,13 @@ public def answer (e : Evidence) : Question → Option Bool
   | .post b => some (ProofContexts.answers (e.key.1.zeroAfter, e.key.1.backedAfter) b)
   | .step b => if e.nomination then some (NominationRows.bits b) else
       (e.view.bind (GuardedQuestions.answer · b)).orElse fun _ =>
-      (ReducedQuestions.readFrom? e.fresh b).orElse fun _ => (direct e.key e.backing e.ackAdvance b).orElse fun _ =>
+      (ReducedQuestions.readFrom? e.fresh b).orElse fun _ => (direct e.key e.backing e.ackAdvance e.view b).orElse fun _ =>
       if e.inert || decide (e.tag ∉ EventSupport.allowed b) || DeltaSupport.excluded e.delta b then some false else none
 
 private theorem direct_sound (s : Step) (b : Classes.StepBranch) {v : Bool}
     (h : direct (ActionFrontier.project (label s))
-      (BackingRead.read (s.cfg.min?.getD 0) s.after (s.before :: s.past)) (AckAdvance.read? s.before s.act s.after) b = some v) :
+      (BackingRead.read (s.cfg.min?.getD 0) s.after (s.before :: s.past)) (AckAdvance.read? s.before s.act s.after)
+      (GuardedDomain.ofAction s.cfg s.before s.after s.past s.act) b = some v) :
     label s (.step b) = v := by
   generalize key : ActionFrontier.project (label s) = k at h
   have won := congrArg (fun (p : FrontierRows.Row × Bool) => p.1.wonPrimary) key
@@ -83,6 +87,7 @@ private theorem direct_sound (s : Step) (b : Classes.StepBranch) {v : Bool}
                     | exact (BackingRead.zero_answer s).symm.trans (Option.some.inj h)
                     | exact (BackingRead.prior_answer s).symm.trans (Option.some.inj h)
                     | exact AckAdvance.read?_correct s h | contradiction
+                    | exact Option.some.inj ((ActorLogRows.at_step s (by decide)).symm.trans h)
 
 private theorem gates (s : Step) :
     let e := read s.cfg s.before s.act s.after s.past
@@ -114,7 +119,8 @@ public theorem sound (s : Step) (q : Question) {v : Bool}
     | none =>
       simp only [queue, Option.orElse_none] at known
       cases h : direct (ActionFrontier.project (label s))
-          (BackingRead.read _ s.after (s.before :: s.past)) (AckAdvance.read? s.before s.act s.after) b with
+          (BackingRead.read _ s.after (s.before :: s.past)) (AckAdvance.read? s.before s.act s.after)
+          (GuardedDomain.ofAction s.cfg s.before s.after s.past s.act) b with
       | some res => exact (direct_sound s b h).trans (by simpa [h] using known)
       | none =>
         simp only [h, Option.orElse_none] at known
@@ -131,9 +137,9 @@ public theorem sound (s : Step) (q : Question) {v : Bool}
 public def unconditional : List Classes.StepBranch :=
   GuardedQuestions.covered ++ (ReducedQuestions.covered ++ [.leader_led_leader_inr,
     .leader_led_now_after_inl, .leader_led_leader_inl, .commitChains_step_committed_inr,
-    .commitChains_step_backing_inl, .commitChains_step_backing_inr])
+    .commitChains_step_backing_inl, .commitChains_step_backing_inr] ++ ActorLogRows.covered)
 
-public theorem unconditional_count : unconditional.Nodup ∧ unconditional.length = 36 := by decide
+public theorem unconditional_count : unconditional.Nodup ∧ unconditional.length = 40 := by decide
 
 public theorem read_unconditional (s : Step) {b : Classes.StepBranch} (mem : b ∈ unconditional) :
     answer (read s.cfg s.before s.act s.after s.past) (.step b) = some (label s (.step b)) := by
@@ -152,13 +158,22 @@ public theorem read_unconditional (s : Step) {b : Classes.StepBranch} (mem : b �
   cases g : GuardedQuestions.read? s.cfg s.before s.after s.past s.act b
   case some => rfl
   change ((ReducedQuestions.read? s.before s.after b).orElse _).isSome
-  rcases List.mem_append.mp mem with queue | leaderCol
-  · rw [(ReducedQuestions.read?_correct s b _).mpr ⟨queue, (rfl : _ = label s (.step b))⟩]
-    rfl
-  · simp only [List.mem_cons, List.not_mem_nil, or_false] at leaderCol
+  rcases List.mem_append.mp mem with mem | actorCol
+  case inl =>
+    rcases List.mem_append.mp mem with queue | leaderCol
+    · rw [(ReducedQuestions.read?_correct s b _).mpr ⟨queue, (rfl : _ = label s (.step b))⟩]
+      rfl
+    · simp only [List.mem_cons, List.not_mem_nil, or_false] at leaderCol
+      cases h : ReducedQuestions.read? s.before s.after b with
+      | some _ => rfl
+      | none => rcases leaderCol with rfl | rfl | rfl | rfl | rfl | rfl <;> rfl
+  case inr =>
+    obtain ⟨v, made, _⟩ := GuardedDomain.ofAction_matches s
+    simp only [ActorLogRows.covered, List.mem_cons, List.not_mem_nil, or_false] at actorCol
     cases h : ReducedQuestions.read? s.before s.after b with
     | some _ => rfl
-    | none => rcases leaderCol with rfl | rfl | rfl | rfl | rfl | rfl <;> rfl
+    | none =>
+      rcases actorCol with rfl | rfl | rfl | rfl <;> simp only [read, made] <;> rfl
 
 /-- The replay gate decides membership in the all-false table, even when
 some of the individual step answers are unknown. -/
