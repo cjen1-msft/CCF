@@ -179,6 +179,7 @@ reader="$PWD/lean/consensus-coverage/scripts/proof-coverage.lean"
 lake -d "$WS/consensus-coverage" env lean --run "$reader" check
 lake -d "$WS/consensus-coverage" env lean --run "$reader" trace lean/consensus/replay/fixtures/valid/replication.ndjson
 lake -d "$WS/consensus-coverage" env lean --run "$reader" answers lean/consensus/replay/fixtures/valid/replication.ndjson
+lake -d "$WS/consensus-coverage" env lean --run "$reader" answers lean/consensus/replay/fixtures/valid/duplicate-heartbeat.ndjson
 lake -d "$WS/consensus-coverage" env lean --run "$reader" columns
 ```
 
@@ -220,16 +221,20 @@ deployments**. There is no proof these exhaust the reachable labels.
 `answers` prints one row per validated action, in three bit strings: pre-state,
 step, post-state. `columns` names each bit in order. `1` and `0` are proved
 answers; `?` is unknown, not false. The [reader](../consensus-coverage/ConsensusCoverage/ReplayAnswers.lean)
-decides both endpoints and at least 19 step questions on every action: the
-three leader questions and [16 fresh-envelope questions](../consensus-coverage/ConsensusCoverage/ReducedQuestions.lean).
+decides both endpoints and at least 20 step questions on every action: three
+leader questions, [16 fresh-envelope questions](../consensus-coverage/ConsensusCoverage/ReducedQuestions.lean),
+and [a question about a new canonical log and a nonacting node](../consensus-coverage/ConsensusCoverage/CanonicalLogs.lean).
 Invalid captures produce no rows. Do not count distinct strings containing `?`
 as full transition coverage.
 
-There are full answers for particular steps. For example, an unsigned append
-followed by a successful nomination that changes nothing yields a witnessed
-row with **all 433 step bits false**. The [proof](../consensus-coverage/ConsensusCoverage/StutterProfile.lean)
-checks that the log evidence also remains unchanged; equality of snapshots alone
-is not assumed to establish this. [Witness elimination](../consensus-coverage/ConsensusCoverage/SolvedWitnesses.lean)
+The [duplicate-heartbeat fixture](replay/fixtures/valid/duplicate-heartbeat.ndjson)
+shows the difference between a complete action and a complete capture. Its
+unsigned configuration append sends one heartbeat; the next action sends the
+same packet again. The second action grows the queue but gives a **complete
+457-answer row**: both endpoints have key `10`, and all 433 step bits are
+false. The [proof](../consensus-coverage/ConsensusCoverage/InertProfile.lean)
+checks that the node states, queue membership and proof log evidence are unchanged.
+The first action still contains unknowns. [Witness elimination](../consensus-coverage/ConsensusCoverage/SolvedWitnesses.lean)
 simplifies all 433 predicates with a proof in both directions but does not decide
 the remaining existential questions.
 
@@ -239,6 +244,11 @@ question across 68 of the 433 step questions. It uses 12 action kinds: five
 local input constructors and seven delivered message constructors. On a
 validated replay these excluded answers must be false; a non-excluded answer
 still needs a witness. This count is not a transition coverage denominator.
+
+[Delta support](../consensus-coverage/ConsensusCoverage/DeltaSupport.lean) certifies
+additional negative answers when a step introduces no new queue value, node record,
+election or commit evidence. These tests apply to 111 columns. The nine actions
+in the replication fixture still have unknown step bits; none is a complete row.
 
 These counts concern the generated questions. The shared extractor also
 reports 54 unrecorded splits, 41 classified as protocol splits. Thus neither the
