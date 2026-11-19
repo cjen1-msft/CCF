@@ -9,6 +9,7 @@ public import ConsensusCoverage.CommitKeys
 public import ConsensusCoverage.DeltaSupport
 public import ConsensusCoverage.EventSupport
 public import ConsensusCoverage.GuardedQuestions
+public import ConsensusCoverage.NominationProfile
 public import ConsensusCoverage.ReducedQuestions
 public import ConsensusCoverage.SignedQuiet
 import all ConsensusCoverage.ActionFrontier
@@ -30,6 +31,7 @@ public structure Evidence where
   view : Option GuardedDomain.View
   freshCommit : Bool
   ackAdvance : Option Bool
+  nomination : Bool
   inert : Bool
   delta : DeltaSupport.Evidence
 
@@ -39,7 +41,8 @@ public def read (cfg : Configuration) (s : Model.State) (a : Model.Action)
   let noNew := CommitKeys.noNew (cfg.min?.getD 0) t (s :: past)
   ⟨(FrontierRows.historyLabel cfg s t past, LeaderEffect.changedPrimary s t),
     EventSupport.actionTag a, ReducedQuestions.freshPayloads s t.network,
-    view, !noNew, AckAdvance.read? s a t, SignedQuiet.test view s t noNew, DeltaSupport.read s a t⟩
+    view, !noNew, AckAdvance.read? s a t, NominationRows.test cfg s a t past,
+    SignedQuiet.test view s t noNew, DeltaSupport.read s a t⟩
 
 private def direct (k : FrontierRows.Row × Bool) (freshCommit : Bool) (ackAdvance : Option Bool) :
     Classes.StepBranch → Option Bool
@@ -54,7 +57,8 @@ private def direct (k : FrontierRows.Row × Bool) (freshCommit : Bool) (ackAdvan
 public def answer (e : Evidence) : Question → Option Bool
   | .pre b => some (ProofContexts.answers (e.key.1.zeroBefore, e.key.1.backedBefore) b)
   | .post b => some (ProofContexts.answers (e.key.1.zeroAfter, e.key.1.backedAfter) b)
-  | .step b => (e.view.bind (GuardedQuestions.answer · b)).orElse fun _ =>
+  | .step b => if e.nomination then some (NominationRows.bits b) else
+      (e.view.bind (GuardedQuestions.answer · b)).orElse fun _ =>
       (ReducedQuestions.readFrom? e.fresh b).orElse fun _ => (direct e.key e.freshCommit e.ackAdvance b).orElse fun _ =>
       if e.inert || decide (e.tag ∉ EventSupport.allowed b) || DeltaSupport.excluded e.delta b then some false else none
 
@@ -78,6 +82,9 @@ public theorem sound (s : Step) (q : Question) {v : Bool}
   | pre b => exact (congrFun (pre_answers s) b).trans (Option.some.inj known)
   | post b => exact (congrFun (post_answers s) b).trans (Option.some.inj known)
   | step b =>
+    by_cases pass : (read s.cfg s.before s.act s.after s.past).nomination = true
+    · exact (congrFun (NominationRows.shape s pass) b).trans (by simpa only [answer, pass, ite_true, Option.some.injEq] using known)
+    simp only [answer, pass] at known
     change (Option.orElse (GuardedQuestions.read? s.cfg s.before s.after s.past s.act b) _) = some v at known
     cases g : GuardedQuestions.read? s.cfg s.before s.after s.past s.act b
     case some res => exact (GuardedQuestions.read?_correct s b g).trans (by simpa [g] using known)
@@ -118,6 +125,9 @@ public theorem read_unconditional (s : Step) {b : Classes.StepBranch} (mem : b �
     obtain ⟨v, eq⟩ := Option.isSome_iff_exists.mp h
     rw [sound s (.step b) eq, eq]
   apply enough
+  by_cases pass : (read s.cfg s.before s.act s.after s.past).nomination = true
+  · simp only [answer, pass, ite_true, Option.isSome_some]
+  simp only [answer, pass]
   change ((GuardedQuestions.read? s.cfg s.before s.after s.past s.act b).orElse _).isSome
   rcases List.mem_append.mp mem with guardCol | mem
   · rw [GuardedQuestions.read?_at s guardCol]

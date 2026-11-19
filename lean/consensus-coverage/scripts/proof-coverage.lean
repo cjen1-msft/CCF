@@ -9,16 +9,25 @@ import Consensus.Replay.Reduction
 
 open Consensus Consensus.Replay ConsensusCoverage
 
+private structure SliceScore where
+  hits : List StateCoverage.Row := []
+  unknown : Nat := 0
+
 private structure Score where
   states : List StateCoverage.Row := []
   edges : List FrontierRows.Row := []
   multiEdges : Option (List LeaderWitnesses.Key) := none
   rows : List CaptureBounds.Row := []
-  quiet : List StateCoverage.Row := []
-  quietUnknown : Nat := 0
+  quiet : SliceScore := {}
+  nomination : SliceScore := {}
   past : List Model.State := []
 
 private def record [BEq α] (xs : List α) (x : α) := if xs.contains x then xs else x :: xs
+
+private def SliceScore.add (score : SliceScore) (key : StateCoverage.Row) : Option Bool → SliceScore
+  | some true => {score with hits := record score.hits key}
+  | some false => score
+  | none => {score with unknown := score.unknown + 1}
 
 private def start (cfg : CCF.Finset Nat) (s : Model.State) : Score :=
   { states := [StateCoverage.read cfg s []], multiEdges := if s.nodes.length ≥ 2 then some [] else none }
@@ -28,16 +37,23 @@ private def visit (cfg : CCF.Finset Nat) (score : Score) (s : Model.State) (a : 
   let e := ReplayAnswers.read cfg s a t score.past
   let edge := e.key.1
   let (row, quiet) := CaptureBounds.read e
+  let pre := (edge.zeroBefore, edge.backedBefore)
   { states := record score.states (edge.zeroAfter, edge.backedAfter),
     edges := record score.edges edge,
     multiEdges := score.multiEdges.map fun seen => record seen e.key,
     rows := row :: score.rows,
-    quiet := if quiet == some true then record score.quiet (edge.zeroBefore, edge.backedBefore) else score.quiet,
-    quietUnknown := score.quietUnknown + quiet.isNone.toNat,
+    quiet := score.quiet.add pre quiet,
+    nomination := score.nomination.add pre (CaptureBounds.signature? row NominationRows.bits),
     past }
 
 private def stateKey (row : StateCoverage.Row) : String :=
   String.ofList ([row.1, row.2].map fun b => if b then '1' else '0')
+
+private def reportSlice (name : String) (scores : List SliceScore) : IO Unit := do
+  let missing := StateCoverage.activeTable.filter (· ∉ scores.flatMap SliceScore.hits)
+  IO.println s!"{StateCoverage.activeTable.length - missing.length}/{StateCoverage.activeTable.length} confirmed \
+    {name} step labels; not confirmed: {if missing.isEmpty then "none" else String.intercalate " " (missing.map stateKey)}; \
+    actions with undetermined slice membership: {(scores.map SliceScore.unknown).sum}"
 
 private def report (states : List StateCoverage.Row) (edges : List FrontierRows.Row) : IO Unit := do
   let table := StateCoverage.activeTable
@@ -120,11 +136,7 @@ def main : List String → IO Unit
     let multi := scores.filterMap Score.multiEdges
     if multi.isEmpty then IO.println "multi-node leader rows: not applicable (no multi-node capture)"
     else reportLeaders multi.flatten
-    let rows := scores.flatMap Score.quiet
-    let missing := StateCoverage.activeTable.filter (· ∉ rows)
-    IO.println s!"{StateCoverage.activeTable.length - missing.length}/{StateCoverage.activeTable.length} confirmed \
-      all-false step labels; not confirmed: \
-      {if missing.isEmpty then "none" else String.intercalate " " (missing.map stateKey)}; \
-      actions with undetermined slice membership: {(scores.map Score.quietUnknown).sum}"
+    reportSlice "all-false" (scores.map Score.quiet)
+    reportSlice "fresh-nomination signature" (scores.map Score.nomination)
   | ["answers", file] => printAnswers file
   | _ => throw <| IO.userError "usage: proof-coverage.lean check | trace FILE.ndjson [FILE.ndjson ...] | answers FILE.ndjson | columns"

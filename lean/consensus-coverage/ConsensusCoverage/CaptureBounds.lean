@@ -107,6 +107,43 @@ private theorem lower {rs : List Row} (incompatible : rs.Pairwise (fun a b => co
 
 public def observed (s : Step) := (read (ReplayAnswers.read s.cfg s.before s.act s.after s.past)).1
 
+/-- Compare the known coordinates of any recorded action with a fixed step
+signature. One contrary bit refutes it; confirmation needs all 433. -/
+public def signature? (r : Row) (target : Classes.StepBranch → Bool) : Option Bool :=
+  let agrees (b : Classes.StepBranch) := if target b then r.yes else r.no
+  let disagrees (b : Classes.StepBranch) := if target b then r.no else r.yes
+  if stepBranches.toList.any (fun b => (disagrees b).getLsbD (Question.step b).slot.val) then some false
+  else if stepBranches.toList.all (fun b => (agrees b).getLsbD (Question.step b).slot.val) then some true
+  else none
+
+public theorem signature?_sound (s : Step) (target : Classes.StepBranch → Bool) {v : Bool}
+    (known : signature? (observed s) target = some v) : (label s).step = target ↔ v = true := by
+  have bit (b : Classes.StepBranch) :
+      ((observed s).yes.getLsbD (Question.step b).slot.val = true → (label s).step b = true) ∧
+      ((observed s).no.getLsbD (Question.step b).slot.val = true → (label s).step b = false) := by
+    simpa only [observed, questionAt_slot, Profile.step] using fits s (Question.step b).slot
+  dsimp only [signature?] at known
+  split at known
+  · rename_i contrary
+    cases known
+    obtain ⟨b, _, h⟩ := List.any_eq_true.mp contrary
+    refine ⟨fun eq => ?_, Bool.noConfusion⟩
+    cases t : target b
+    · have h := (bit b).1 (by simpa [t] using h)
+      exact (t.symm.trans (congrFun eq b).symm).trans h
+    · have h := (bit b).2 (by simpa [t] using h)
+      exact h.symm.trans ((congrFun eq b).trans t)
+  · split at known
+    · rename_i agrees
+      cases known
+      refine ⟨fun _ => rfl, fun _ => funext fun b => ?_⟩
+      have mem : b ∈ stepBranches.toList := by rw [← step_get b]; exact Array.getElem_mem_toList ..
+      have h := List.all_eq_true.mp agrees b mem
+      cases t : target b
+      · exact (bit b).2 (by simpa [t] using h)
+      · exact (bit b).1 (by simpa [t] using h)
+    · contradiction
+
 /-- This bounds the number of distinct full labels in *these* actions, not
 the number reachable in the entire model. The action count is an upper bound. -/
 public theorem bounds (ss : List Step) (ps : List Profile) (distinct : ps.Nodup)

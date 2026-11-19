@@ -1,0 +1,10 @@
+{"msg":{"function":"become_leader","state":{"node_id":"0"}}}
+{"msg":{"function":"replicate","state":{"node_id":"0"},"globally_committable":false}}
+{"msg":{"function":"add_configuration","state":{"node_id":"0"},"nodes":{"0":{}}}}
+{"msg":{"function":"replicate","state":{"node_id":"0","current_view":2,"last_idx":1,"commit_idx":0,"leadership_state":"Leader"},"seqno":2,"globally_committable":false}}
+{"msg":{"function":"add_configuration","state":{"node_id":"0"},"idx":2,"nodes":{"0":{},"1":{}}}}
+{"msg":{"function":"send_append_entries","state":{"node_id":"0"},"to_node_id":"1","packet":{"msg":"append_entries","term":2,"prev_idx":1,"prev_term":2,"idx":1,"leader_commit_idx":0,"term_of_idx":2,"contains_new_view":false}}}
+{"msg":{"function":"nomination","state":{"node_id":"0","current_view":2,"last_idx":2,"commit_idx":0,"leadership_state":"Leader"}}}
+{"msg":{"function":"step_down_and_nominate_successor","to_node_id":"1","state":{"node_id":"0","current_view":2}}}
+{"msg":{"function":"nomination","state":{"node_id":"0","current_view":2,"last_idx":2,"commit_idx":0,"leadership_state":"Leader"}}}
+{"msg":{"function":"step_down_and_nominate_successor","to_node_id":"1","state":{"node_id":"0","current_view":2}}}
