@@ -5,6 +5,7 @@ module
 
 public import ConsensusCoverage.AckAdvance
 public import ConsensusCoverage.ActionFrontier
+public import ConsensusCoverage.BackingRead
 public import ConsensusCoverage.CommitKeys
 public import ConsensusCoverage.DeltaSupport
 public import ConsensusCoverage.EventSupport
@@ -29,7 +30,7 @@ public structure Evidence where
   tag : EventSupport.Tag
   fresh : List Model.Node.Message
   view : Option GuardedDomain.View
-  freshCommit : Bool
+  backing : Bool × Bool
   ackAdvance : Option Bool
   nomination : Bool
   inert : Bool
@@ -38,21 +39,23 @@ public structure Evidence where
 public def read (cfg : Configuration) (s : Model.State) (a : Model.Action)
     (t : Model.State) (past : List Model.State) : Evidence :=
   let view := GuardedDomain.ofAction cfg s t past a
-  let noNew := CommitKeys.noNew (cfg.min?.getD 0) t (s :: past)
-  let stable := GrantFrontier.noNewGrant t (s :: past) && noNew
+  let backing := BackingRead.read (cfg.min?.getD 0) t (s :: past)
+  let stable := GrantFrontier.noNewGrant t (s :: past) && !(backing.1 || backing.2)
   let tag := EventSupport.actionTag a
   let fresh := ReducedQuestions.freshPayloads s t.network
   ⟨(FrontierRows.historyLabel cfg s t past, LeaderEffect.changedPrimary s t),
-    tag, fresh, view, !noNew, AckAdvance.read? s a t,
+    tag, fresh, view, backing, AckAdvance.read? s a t,
     decide (tag = .nominateSuccessor) && stable && fresh.any (fun _ => true),
     SignedQuiet.test view s t stable, DeltaSupport.read s a t⟩
 
-private def direct (k : FrontierRows.Row × Bool) (freshCommit : Bool) (ackAdvance : Option Bool) :
+private def direct (k : FrontierRows.Row × Bool) (backing : Bool × Bool) (ackAdvance : Option Bool) :
     Classes.StepBranch → Option Bool
   | .leader_led_leader_inr => some k.1.wonPrimary
   | .leader_led_now_after_inl => some k.2
   | .leader_led_leader_inl => some (k.2 && !k.1.wonPrimary)
-  | .commitChains_step_committed_inr => some freshCommit
+  | .commitChains_step_committed_inr => some (backing.1 || backing.2)
+  | .commitChains_step_backing_inl => some backing.1
+  | .commitChains_step_backing_inr => some backing.2
   | .advance_backed_advance_inr => ackAdvance
   | _ => none
 
@@ -62,12 +65,12 @@ public def answer (e : Evidence) : Question → Option Bool
   | .post b => some (ProofContexts.answers (e.key.1.zeroAfter, e.key.1.backedAfter) b)
   | .step b => if e.nomination then some (NominationRows.bits b) else
       (e.view.bind (GuardedQuestions.answer · b)).orElse fun _ =>
-      (ReducedQuestions.readFrom? e.fresh b).orElse fun _ => (direct e.key e.freshCommit e.ackAdvance b).orElse fun _ =>
+      (ReducedQuestions.readFrom? e.fresh b).orElse fun _ => (direct e.key e.backing e.ackAdvance b).orElse fun _ =>
       if e.inert || decide (e.tag ∉ EventSupport.allowed b) || DeltaSupport.excluded e.delta b then some false else none
 
 private theorem direct_sound (s : Step) (b : Classes.StepBranch) {v : Bool}
     (h : direct (ActionFrontier.project (label s))
-      (read s.cfg s.before s.act s.after s.past).freshCommit (AckAdvance.read? s.before s.act s.after) b = some v) :
+      (BackingRead.read (s.cfg.min?.getD 0) s.after (s.before :: s.past)) (AckAdvance.read? s.before s.act s.after) b = some v) :
     label s (.step b) = v := by
   generalize key : ActionFrontier.project (label s) = k at h
   have won := congrArg (fun (p : FrontierRows.Row × Bool) => p.1.wonPrimary) key
@@ -76,8 +79,17 @@ private theorem direct_sound (s : Step) (b : Classes.StepBranch) {v : Bool}
   rw [key] at incumbent
   cases b <;> first | exact won.trans (Option.some.inj h) | exact changed.trans (Option.some.inj h)
                     | exact incumbent.trans (Option.some.inj h)
-                    | exact (CommitKeys.fresh_answer s).symm.trans (Option.some.inj h)
+                    | exact ((BackingRead.any_eq s).trans (CommitKeys.fresh_answer s)).symm.trans (Option.some.inj h)
+                    | exact (BackingRead.zero_answer s).symm.trans (Option.some.inj h)
+                    | exact (BackingRead.prior_answer s).symm.trans (Option.some.inj h)
                     | exact AckAdvance.read?_correct s h | contradiction
+
+private theorem gates (s : Step) :
+    let e := read s.cfg s.before s.act s.after s.past
+    e.nomination = NominationRows.test s.cfg s.before s.act s.after s.past ∧
+      e.inert = SignedQuiet.gate s.cfg s.before s.act s.after s.past := by
+  simp only [read, BackingRead.any_eq s, Bool.not_not]
+  exact ⟨rfl, rfl⟩
 
 public theorem sound (s : Step) (q : Question) {v : Bool}
     (known : answer (read s.cfg s.before s.act s.after s.past) q = some v) : label s q = v := by
@@ -86,7 +98,8 @@ public theorem sound (s : Step) (q : Question) {v : Bool}
   | post b => exact (congrFun (post_answers s) b).trans (Option.some.inj known)
   | step b =>
     by_cases pass : (read s.cfg s.before s.act s.after s.past).nomination = true
-    · exact (congrFun (NominationRows.shape s pass) b).trans (by simpa only [answer, pass, ite_true, Option.some.injEq] using known)
+    · exact (congrFun (NominationRows.shape s ((gates s).1 ▸ pass)) b).trans
+        (by simpa only [answer, pass, ite_true, Option.some.injEq] using known)
     simp only [answer, pass] at known
     change (Option.orElse (GuardedQuestions.read? s.cfg s.before s.after s.past s.act b) _) = some v at known
     cases g : GuardedQuestions.read? s.cfg s.before s.after s.past s.act b
@@ -101,7 +114,7 @@ public theorem sound (s : Step) (q : Question) {v : Bool}
     | none =>
       simp only [queue, Option.orElse_none] at known
       cases h : direct (ActionFrontier.project (label s))
-          (!CommitKeys.noNew _ s.after (s.before :: s.past)) (AckAdvance.read? s.before s.act s.after) b with
+          (BackingRead.read _ s.after (s.before :: s.past)) (AckAdvance.read? s.before s.act s.after) b with
       | some res => exact (direct_sound s b h).trans (by simpa [h] using known)
       | none =>
         simp only [h, Option.orElse_none] at known
@@ -109,7 +122,7 @@ public theorem sound (s : Step) (q : Question) {v : Bool}
         · rename_i excluded
           simp only [Bool.or_eq_true, decide_eq_true_eq] at excluded
           rcases excluded with (inert | tag) | delta
-          · exact (congrFun (SignedQuiet.gate_sound s inert) (.step b)).trans (Option.some.inj known)
+          · exact (congrFun (SignedQuiet.gate_sound s ((gates s).2 ▸ inert)) (.step b)).trans (Option.some.inj known)
           · exact (EventSupport.label_false s b tag).trans (Option.some.inj known)
           · exact (DeltaSupport.label_false s b delta).trans (Option.some.inj known)
         · contradiction
@@ -117,9 +130,10 @@ public theorem sound (s : Step) (q : Question) {v : Bool}
 /-- Columns the reader settles on every step, without needing a tag exclusion. -/
 public def unconditional : List Classes.StepBranch :=
   GuardedQuestions.covered ++ (ReducedQuestions.covered ++ [.leader_led_leader_inr,
-    .leader_led_now_after_inl, .leader_led_leader_inl, .commitChains_step_committed_inr])
+    .leader_led_now_after_inl, .leader_led_leader_inl, .commitChains_step_committed_inr,
+    .commitChains_step_backing_inl, .commitChains_step_backing_inr])
 
-public theorem unconditional_count : unconditional.Nodup ∧ unconditional.length = 34 := by decide
+public theorem unconditional_count : unconditional.Nodup ∧ unconditional.length = 36 := by decide
 
 public theorem read_unconditional (s : Step) {b : Classes.StepBranch} (mem : b ∈ unconditional) :
     answer (read s.cfg s.before s.act s.after s.past) (.step b) = some (label s (.step b)) := by
@@ -144,17 +158,17 @@ public theorem read_unconditional (s : Step) {b : Classes.StepBranch} (mem : b �
   · simp only [List.mem_cons, List.not_mem_nil, or_false] at leaderCol
     cases h : ReducedQuestions.read? s.before s.after b with
     | some _ => rfl
-    | none => rcases leaderCol with rfl | rfl | rfl | rfl <;> rfl
+    | none => rcases leaderCol with rfl | rfl | rfl | rfl | rfl | rfl <;> rfl
 
 /-- The replay gate decides membership in the all-false table, even when
 some of the individual step answers are unknown. -/
 public theorem inert_iff (s : Step) :
     (read s.cfg s.before s.act s.after s.past).inert = true ↔ label s ∈ ZeroRows.table := by
-  rw [SignedQuiet.exact, and_iff_right (show Realized (label s) from ⟨s, rfl⟩)]
+  rw [(gates s).2, SignedQuiet.exact, and_iff_right (show Realized (label s) from ⟨s, rfl⟩)]
   exact SignedQuiet.gate_iff s
 
 public theorem nomination_iff (s : Step) :
-    (read s.cfg s.before s.act s.after s.past).nomination = true ↔ (label s).step = NominationRows.bits :=
-  NominationRows.test_iff s
+    (read s.cfg s.before s.act s.after s.past).nomination = true ↔ (label s).step = NominationRows.bits := by
+  rw [(gates s).1, NominationRows.test_iff]
 
 end ConsensusCoverage.ReplayAnswers

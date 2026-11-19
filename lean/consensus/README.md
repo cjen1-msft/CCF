@@ -300,14 +300,20 @@ outside this table.
 `answers` prints one row per validated action, in three bit strings: pre-state,
 step, post-state. `columns` names each bit in order. `1` and `0` are proved
 answers; `?` is unknown, not false. The [reader](../consensus-coverage/ConsensusCoverage/ReplayAnswers.lean)
-decides both endpoints and at least 34 step questions on every action: three
+decides both endpoints and at least 36 step questions on every action: three
 leader questions, [16 fresh-envelope questions](../consensus-coverage/ConsensusCoverage/ReducedQuestions.lean),
 [14 questions compiled to finite searches over the actual node records, logs and history](../consensus-coverage/ConsensusCoverage/GuardedQuestions.lean),
-and [whether the step established a previously unseen committed `(term, prefix)`](../consensus-coverage/ConsensusCoverage/CommitKeys.lean).
-The last answer is true on actions 1 and 8 of the replication capture: the
-second certificate is new even though the cluster already had backing.
+and [three questions about a previously unseen committed `(term, prefix)`](../consensus-coverage/ConsensusCoverage/BackingRead.lean).
 Invalid captures produce no rows. Do not count distinct strings containing `?`
 as full transition coverage.
+
+For the three commit questions (columns 89-91), the [exact table](../consensus-coverage/ConsensusCoverage/BackingRows.lean)
+is `000`, `110`, `101`, `111`: the first bit says a key is new; the other two
+say a new key has a certificate starting at zero or one backed by a key from
+an earlier step. Both reasons can hold. The replication capture reads `110` on
+action 1, `111` on action 8, and `000` elsewhere. The delayed-commit model run
+reads `110` on follower delivery and `101` on the next nomination. All four
+rows have multi-node witnesses. This table counts commit reasons, not full labels.
 
 The [duplicate-heartbeat fixture](replay/fixtures/valid/duplicate-heartbeat.ndjson)
 shows the difference between a complete action and a complete capture. Its

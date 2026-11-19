@@ -42,16 +42,19 @@ private theorem leader_iff [Config.InitialConfiguration] (history : List Model.S
   simp only [leader, Bool.and_eq_true, Bool.or_eq_true, decide_eq_true_eq,
     CommitMonitor.elected_iff, Historical.Led]
 
-private def backed (old : List Key) (st : NodeState) (base : Nat) : Bool :=
-  decide (base = 0) || old.any fun (k, part) =>
+private def prior (old : List Key) (st : NodeState) (base : Nat) : Bool :=
+  old.any fun (k, part) =>
     decide (k ≤ st.currentTerm ∧ st.log.take base <+: part)
 
-private theorem backed_iff [Config.InitialConfiguration] {history : List Model.State}
+private def backed (old : List Key) (st : NodeState) (base : Nat) : Bool :=
+  decide (base = 0) || prior old st base
+
+private theorem prior_iff [Config.InitialConfiguration] {history : List Model.State}
     {old : List Key} (old_exact : ∀ k l, (k, l) ∈ old ↔ Historical.Committed history k l)
     (st : NodeState) (base : Nat) :
-    backed old st base = true ↔ base = 0 ∨
+    prior old st base = true ↔
       ∃ k part, Historical.Committed history k part ∧ k ≤ st.currentTerm ∧ st.log.take base <+: part := by
-  simp only [backed, Bool.or_eq_true, decide_eq_true_eq, List.any_eq_true, Prod.exists, old_exact]
+  simp only [prior, decide_eq_true_eq, List.any_eq_true, Prod.exists, old_exact]
 
 private def acknowledges (history : List Model.State) (k : Nat) (part : List Entry)
     (v : NodeID) : Bool :=
@@ -70,28 +73,28 @@ private theorem acknowledges_iff (history : List Model.State) (k : Nat) (part : 
     exact ⟨snap, seen, v, x, mem, rfl, term, sub⟩
 
 private def certified (s : Model.State) (history : List Model.State)
-    (old : List Key) (st : NodeState) (i : Nat) : Bool :=
+    (support : NodeState → Nat → Bool) (st : NodeState) (i : Nat) : Bool :=
   isSignatureAt st.log i && (decide (termAt st.log i = st.currentTerm) &&
     (List.range (i + 1)).any fun base =>
-      backed old st base &&
+      support st base &&
         CommitMonitor.quorum ((activeConfigurations st.log base).filter (·.index ≤ i))
           (acknowledges (s :: history) st.currentTerm (st.log.take i)))
 
 private def here (bootstrap : NodeID) (s : Model.State) (history : List Model.State)
-    (old : List Key) : List Key :=
+    (support : NodeState → Nat → Bool) : List Key :=
   (s.nodes.filter fun (n, st) => leader bootstrap (s :: history) n st).flatMap fun (_, st) =>
-    ((List.range (st.log.length + 1)).filter (certified s history old st)).map
+    ((List.range (st.log.length + 1)).filter (certified s history support st)).map
       fun i => (st.currentTerm, st.log.take i)
 
 private theorem mem_here [Config.InitialConfiguration] (s : Model.State) (history : List Model.State)
-    (old : List Key) (old_exact : ∀ k l, (k, l) ∈ old ↔ Historical.Committed history k l)
+    (support : NodeState → Nat → Bool)
     (k : Nat) (l : List Entry) :
-    (k, l) ∈ here Config.INITIAL_PRIMARY s history old ↔
+    (k, l) ∈ here Config.INITIAL_PRIMARY s history support ↔
       ∃ n st base i, Historical.CommitStep (s :: history) n st k base i ∧ l = st.log.take i ∧
-        (base = 0 ∨ ∃ e p, Historical.Committed history e p ∧ e ≤ k ∧ st.log.take base <+: p) := by
+        support st base = true := by
   simp only [here, List.mem_flatMap, List.mem_filter, List.mem_map, Prod.exists, List.mem_range,
     Nat.lt_succ_iff, Prod.mk.injEq, leader_iff, certified, Bool.and_eq_true, List.any_eq_true,
-    decide_eq_true_eq, backed_iff old_exact, CommitMonitor.quorum_iff, acknowledges_iff,
+    decide_eq_true_eq, CommitMonitor.quorum_iff, acknowledges_iff,
     Historical.CommitStep, Historical.CanonNow, Historical.Now]
   constructor
   · rintro ⟨n, st, ⟨now, role, led⟩, i, ⟨len, sig, term, base, le, back, votes⟩, rfl, rfl⟩
@@ -107,7 +110,7 @@ certificate if it is signed. -/
   | [] => []
   | s :: h =>
     let old := keys bootstrap h
-    (here bootstrap s h old ++ old).eraseDups
+    (here bootstrap s h (backed old) ++ old).eraseDups
 
 private theorem mem_historical [Config.InitialConfiguration] (history : List Model.State) :
     ∀ k l, (k, l) ∈ keys Config.INITIAL_PRIMARY history ↔ Historical.Committed history k l := by
@@ -119,7 +122,11 @@ private theorem mem_historical [Config.InitialConfiguration] (history : List Mod
     cases h
   | cons s h ih =>
     intro k l
-    rw [keys, List.mem_eraseDups, List.mem_append, mem_here s h _ ih, ih, Historical.commit_cons, or_comm]
+    rw [keys, List.mem_eraseDups, List.mem_append, mem_here, ih, Historical.commit_cons, or_comm]
+    simp only [backed, Bool.or_eq_true, decide_eq_true_eq, prior_iff ih]
+    apply or_congr_right
+    constructor <;> rintro ⟨n, st, base, i, step, eq, back⟩ <;>
+      exact ⟨n, st, base, i, step, eq, by simpa only [step.1.2.1] using back⟩
 
 /-- Proof-only view of the same fold used to construct the safety frame. -/
 public def historicalFold (cfg : CCF.Finset NodeID) (history : List Model.State) : LogFacts.Ghost :=
@@ -149,7 +156,7 @@ steps with signatures that only reproduce existing commit evidence. -/
 @[expose] public def noNew (bootstrap : NodeID) (after : Model.State)
     (history : List Model.State) : Bool :=
   let old := keys bootstrap history
-  (here bootstrap after history old).all old.contains
+  (here bootstrap after history (backed old)).all old.contains
 
 public theorem noNew_iff (cfg : CCF.Finset NodeID) (after : Model.State) (history : List Model.State) :
     noNew (cfg.min?.getD 0) after history = true ↔

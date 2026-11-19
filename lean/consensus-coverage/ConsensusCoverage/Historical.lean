@@ -182,6 +182,20 @@ private theorem commit_cons {s : Model.State} {h : History} {k : Nat} {l : List 
     · exact .fresh step
     · exact .chained step back le sub
 
+private theorem commitAt_iff {g : LogFacts.Ghost} {s : Model.State} {h : History}
+    (now : ∀ n st k, g.canonNow INITIAL_PRIMARY s n st k ↔ CanonNow (s :: h) n st k)
+    (seen : ∀ n k l, g.seen n k l ↔ ∃ st, Seen (s :: h) n st ∧ st.currentTerm = k ∧ st.log = l)
+    (n st k base i) : g.commitAt INITIAL_PRIMARY s n st k base i ↔ CommitStep (s :: h) n st k base i := by
+  have acks (v : NodeID) : (∃ l, g.seen v k l ∧ st.log.take i <+: l) ↔
+      ∃ x, Seen (s :: h) v x ∧ x.currentTerm = k ∧ st.log.take i <+: x.log := by
+    constructor
+    · rintro ⟨l, obs, sub⟩
+      obtain ⟨x, mem, term, rfl⟩ := (seen _ _ _).1 obs
+      exact ⟨x, mem, term, sub⟩
+    · rintro ⟨x, mem, term, sub⟩
+      exact ⟨x.log, (seen ..).2 ⟨x, mem, term, rfl⟩, sub⟩
+  simp only [LogFacts.Ghost.commitAt, CommitStep, now, acks]
+
 private theorem logFacts_correct (h : History) : Represents (logFacts h) h := by
   induction h with
   | nil =>
@@ -219,20 +233,9 @@ private theorem logFacts_correct (h : History) : Represents (logFacts h) h := by
       change g.canon k l ∨ (∃ n st, t.canonNow INITIAL_PRIMARY s n st k ∧ st.log = l) ↔ _
       rw [ih.canon]; simp only [Canon, now, List.suffix_cons_iff]
       grind
-    have commitAt (n st k base i) : t.commitAt INITIAL_PRIMARY s n st k base i ↔
-        CommitStep (s :: h) n st k base i := by
-      have acks (v : NodeID) : (∃ l, t.seen v k l ∧ st.log.take i <+: l) ↔
-          ∃ x, Seen (s :: h) v x ∧ x.currentTerm = k ∧ st.log.take i <+: x.log := by
-        constructor
-        · rintro ⟨l, obs, sub⟩
-          obtain ⟨x, mem, term, rfl⟩ := (seen _ _ _).1 obs
-          exact ⟨x, mem, term, sub⟩
-        · rintro ⟨x, mem, term, sub⟩
-          exact ⟨x.log, (seen ..).2 ⟨x, mem, term, rfl⟩, sub⟩
-      simp only [LogFacts.Ghost.commitAt, CommitStep, now, acks]
     refine ⟨seen, grant, elected, canon, fun k l => ?_⟩
     change g.committed k l ∨ (∃ n st b i, t.commitAt INITIAL_PRIMARY s n st k b i ∧
       l = st.log.take i ∧ (b = 0 ∨ ∃ e p, g.committed e p ∧ e ≤ k ∧ st.log.take b <+: p)) ↔ _
-    simp only [commit_cons (s := s) (h := h), g, ih.committed, commitAt]
+    simp only [commit_cons (s := s) (h := h), g, ih.committed, commitAt_iff now seen]
 
 end ConsensusCoverage.Historical
