@@ -8,6 +8,7 @@ public import Consensus.Proofs.LogFacts
 import all ConsensusCoverage.ActionProfile
 import all ConsensusCoverage.CommitMonitor
 import all ConsensusCoverage.Historical
+import all ConsensusCoverage.SolvedWitnesses
 import all ConsensusCoverage.StateCoverage
 import all Consensus.Proofs.SafetyInvariant
 
@@ -173,6 +174,34 @@ public theorem step_noNew (s : ActionProfile.Step) :
       (@StateCoverage.frame ⟨s.cfg⟩ s.before s.past).logs.committed k l
   rw [StateCoverage.frame_logs, StateCoverage.frame_logs]
   exact noNew_iff s.cfg _ _
+
+open Consensus.Proofs.Safety in
+theorem fresh_iff [Config.InitialConfiguration] {f : Frame} {t : Model.State} (c : Ctx f t) :
+    PinnedClasses.sig c .commitChains_step_committed_inr ↔
+      ∃ k p, Committed (f.advance t) k p ∧ ¬ Committed f k p := by
+  rw [SolvedWitnesses.sig_iff]
+  change SolvedWitnesses.step_commitChains_step_committed_inr f t c ↔ _
+  constructor
+  · exact fun ⟨k, p, fresh, _⟩ => ⟨k, p, fresh⟩
+  · rintro ⟨k, p, post, fresh⟩
+    rcases keep : post with prior | ⟨n, st, base, i, step, eq, backing⟩
+    · exact (fresh prior).elim
+    · have h := And.intro step (And.intro eq backing)
+      exact ⟨k, p, ⟨post, fresh⟩, ⟨n, st, base, i, h⟩, n, ⟨st, base, i, h⟩,
+        st, ⟨base, i, h⟩, base, ⟨i, h⟩, i, h, step, ⟨eq, backing⟩, eq, backing, post⟩
+
+/-- Reports the first appearance of each committed key, not just the first
+certificate on the entire run. -/
+public theorem fresh_answer (s : ActionProfile.Step) :
+    (!noNew (s.cfg.min?.getD 0) s.after (s.before :: s.past)) =
+      ActionProfile.label s (.step .commitChains_step_committed_inr) := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply Bool.eq_iff_iff.mpr
+  rw [Bool.not_eq_true', ← Bool.not_eq_true, step_noNew, ActionProfile.label_true]
+  change _ ↔ PinnedClasses.sig s.context .commitChains_step_committed_inr
+  rw [fresh_iff]
+  change _ ↔ ∃ k p, committedAfter s k p ∧ ¬ committedBefore s k p
+  grind
 
 private def signature : Entry := ⟨BOOTSTRAP_TERM, .signature⟩
 

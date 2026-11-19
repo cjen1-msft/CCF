@@ -5,6 +5,7 @@ module
 
 public import ConsensusCoverage.ActionFrontier
 public import ConsensusCoverage.CanonicalLogs
+public import ConsensusCoverage.CommitKeys
 public import ConsensusCoverage.DeltaSupport
 public import ConsensusCoverage.EventSupport
 public import ConsensusCoverage.InertProfile
@@ -24,6 +25,7 @@ public structure Evidence where
   tag : EventSupport.Tag
   fresh : List Model.Node.Message
   canonicalOther : Bool
+  freshCommit : Bool
   inert : Bool
   delta : DeltaSupport.Evidence
 
@@ -32,25 +34,28 @@ public def read (cfg : Configuration) (s : Model.State) (a : Model.Action)
   ⟨(FrontierRows.historyLabel cfg s t past, LeaderEffect.changedPrimary s t),
     EventSupport.actionTag a, ReducedQuestions.freshPayloads s t.network,
     CanonicalLogs.fresh (cfg.min?.getD 0) t (s :: past) && CanonicalLogs.otherLog a t,
+    !CommitKeys.noNew (cfg.min?.getD 0) t (s :: past),
     InertProfile.gate s a, DeltaSupport.read s a t⟩
 
-private def direct (k : FrontierRows.Row × Bool) (canonicalOther : Bool) : Classes.StepBranch → Option Bool
+private def direct (k : FrontierRows.Row × Bool) (canonicalOther freshCommit : Bool) : Classes.StepBranch → Option Bool
   | .leader_led_leader_inr => some k.1.wonPrimary
   | .leader_led_now_after_inl => some k.2
   | .leader_led_leader_inl => some (k.2 && !k.1.wonPrimary)
   | .terms_now_after_inr => some canonicalOther
+  | .commitChains_step_committed_inr => some freshCommit
   | _ => none
 
 /-- `none` is an unknown coordinate, not a negative answer. -/
 public def answer (e : Evidence) : Question → Option Bool
   | .pre b => some (ProofContexts.answers (e.key.1.zeroBefore, e.key.1.backedBefore) b)
   | .post b => some (ProofContexts.answers (e.key.1.zeroAfter, e.key.1.backedAfter) b)
-  | .step b => (ReducedQuestions.readFrom? e.fresh b).orElse fun _ => (direct e.key e.canonicalOther b).orElse fun _ =>
+  | .step b => (ReducedQuestions.readFrom? e.fresh b).orElse fun _ => (direct e.key e.canonicalOther e.freshCommit b).orElse fun _ =>
       if e.inert || decide (e.tag ∉ EventSupport.allowed b) || DeltaSupport.excluded e.delta b then some false else none
 
 private theorem direct_sound (s : Step) (b : Classes.StepBranch) {v : Bool}
     (h : direct (ActionFrontier.project (label s))
-      (read s.cfg s.before s.act s.after s.past).canonicalOther b = some v) : label s (.step b) = v := by
+      (read s.cfg s.before s.act s.after s.past).canonicalOther
+      (read s.cfg s.before s.act s.after s.past).freshCommit b = some v) : label s (.step b) = v := by
   generalize key : ActionFrontier.project (label s) = k at h
   have won := congrArg (fun (p : FrontierRows.Row × Bool) => p.1.wonPrimary) key
   have changed := congrArg Prod.snd key
@@ -58,7 +63,8 @@ private theorem direct_sound (s : Step) (b : Classes.StepBranch) {v : Bool}
   rw [key] at incumbent
   cases b <;> first | exact won.trans (Option.some.inj h) | exact changed.trans (Option.some.inj h)
                     | exact incumbent.trans (Option.some.inj h)
-                    | exact (CanonicalLogs.other_answer s).symm.trans (Option.some.inj h) | contradiction
+                    | exact (CanonicalLogs.other_answer s).symm.trans (Option.some.inj h)
+                    | exact (CommitKeys.fresh_answer s).symm.trans (Option.some.inj h) | contradiction
 
 public theorem sound (s : Step) (q : Question) {v : Bool}
     (known : answer (read s.cfg s.before s.act s.after s.past) q = some v) : label s q = v := by
@@ -76,7 +82,8 @@ public theorem sound (s : Step) (q : Question) {v : Bool}
     | none =>
       simp only [queue, Option.orElse_none] at known
       cases h : direct (ActionFrontier.project (label s))
-          (CanonicalLogs.fresh _ s.after (s.before :: s.past) && CanonicalLogs.otherLog s.act s.after) b with
+          (CanonicalLogs.fresh _ s.after (s.before :: s.past) && CanonicalLogs.otherLog s.act s.after)
+          (!CommitKeys.noNew _ s.after (s.before :: s.past)) b with
       | some res => exact (direct_sound s b h).trans (by simpa [h] using known)
       | none =>
         simp only [h, Option.orElse_none] at known
@@ -92,9 +99,9 @@ public theorem sound (s : Step) (q : Question) {v : Bool}
 /-- Columns the reader settles on every step, without needing a tag exclusion. -/
 public def unconditional : List Classes.StepBranch :=
   ReducedQuestions.covered ++ [.leader_led_leader_inr, .leader_led_now_after_inl, .leader_led_leader_inl,
-    .terms_now_after_inr]
+    .terms_now_after_inr, .commitChains_step_committed_inr]
 
-public theorem unconditional_count : unconditional.Nodup ∧ unconditional.length = 20 := by decide
+public theorem unconditional_count : unconditional.Nodup ∧ unconditional.length = 21 := by decide
 
 public theorem read_unconditional (s : Step) {b : Classes.StepBranch} (mem : b ∈ unconditional) :
     answer (read s.cfg s.before s.act s.after s.past) (.step b) = some (label s (.step b)) := by
@@ -110,6 +117,6 @@ public theorem read_unconditional (s : Step) {b : Classes.StepBranch} (mem : b �
   · simp only [List.mem_cons, List.not_mem_nil, or_false] at leaderCol
     cases h : ReducedQuestions.read? s.before s.after b with
     | some _ => rfl
-    | none => rcases leaderCol with rfl | rfl | rfl | rfl <;> rfl
+    | none => rcases leaderCol with rfl | rfl | rfl | rfl | rfl <;> rfl
 
 end ConsensusCoverage.ReplayAnswers

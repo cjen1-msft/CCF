@@ -5,11 +5,11 @@ module
 
 public import ConsensusCoverage.StutterProfile
 import all ConsensusCoverage.ActionProfile
+import all ConsensusCoverage.CommitKeys
 import all ConsensusCoverage.FrontierRows
 import all ConsensusCoverage.LeaderRefinement
 import all ConsensusCoverage.PairQuestions
 import all ConsensusCoverage.ProofContexts
-import all ConsensusCoverage.SolvedWitnesses
 import all ConsensusCoverage.StateBasis
 import all ConsensusCoverage.StateCoverage
 import all ConsensusCoverage.StutterProfile
@@ -19,20 +19,6 @@ namespace ConsensusCoverage.ZeroRows
 
 open Consensus Consensus.Model Consensus.Model.Node Consensus.Proofs Consensus.Proofs.Safety
 open ActionProfile FullProfile
-
-private theorem new_commit [Config.InitialConfiguration] {f : Frame} {t : Model.State} (c : Ctx f t) :
-    PinnedClasses.sig c .commitChains_step_committed_inr ↔
-      ∃ k p, Committed (f.advance t) k p ∧ ¬ Committed f k p := by
-  rw [SolvedWitnesses.sig_iff]
-  change SolvedWitnesses.step_commitChains_step_committed_inr f t c ↔ _
-  constructor
-  · exact fun ⟨k, p, fresh, _⟩ => ⟨k, p, fresh⟩
-  · rintro ⟨k, p, post, fresh⟩
-    rcases keep : post with prior | ⟨n, st, base, i, step, eq, backing⟩
-    · exact (fresh prior).elim
-    · have h := And.intro step (And.intro eq backing)
-      exact ⟨k, p, ⟨post, fresh⟩, ⟨n, st, base, i, h⟩, n, ⟨st, base, i, h⟩,
-        st, ⟨base, i, h⟩, base, ⟨i, h⟩, i, h, step, ⟨eq, backing⟩, eq, backing, post⟩
 
 private theorem zero_iff [Config.InitialConfiguration] {f : Frame} {t : Model.State} (c : Ctx f t)
     {nodes : List NodeID} {act : Model.Action}
@@ -77,7 +63,7 @@ public theorem endpoints (s : Step)
   have old {k p} (h : Committed (s.frame.advance s.after) k p) : Committed s.frame k p := by
     apply Classical.byContradiction
     intro notOld
-    exact Bool.noConfusion (commit.symm.trans ((label_true ..).mpr ((new_commit c).mpr ⟨k, p, h, notOld⟩)))
+    exact Bool.noConfusion (commit.symm.trans ((label_true ..).mpr ((CommitKeys.fresh_iff c).mpr ⟨k, p, h, notOld⟩)))
   have backed : StateBasis.Backing s.frame ↔ StateBasis.Backing (s.frame.advance s.after) := by
     rw [StateCoverage.backed_iff _ c.inv, StateCoverage.backed_iff _ c.inv_step]
     exact ⟨fun ⟨_, k, p, h⟩ => ⟨List.ne_nil_of_mem c.post_now, k, p, Or.inl h⟩,

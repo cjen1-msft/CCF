@@ -221,9 +221,12 @@ deployments**. There is no proof these exhaust the reachable labels.
 `answers` prints one row per validated action, in three bit strings: pre-state,
 step, post-state. `columns` names each bit in order. `1` and `0` are proved
 answers; `?` is unknown, not false. The [reader](../consensus-coverage/ConsensusCoverage/ReplayAnswers.lean)
-decides both endpoints and at least 20 step questions on every action: three
+decides both endpoints and at least 21 step questions on every action: three
 leader questions, [16 fresh-envelope questions](../consensus-coverage/ConsensusCoverage/ReducedQuestions.lean),
-and [a question about a new canonical log and a nonacting node](../consensus-coverage/ConsensusCoverage/CanonicalLogs.lean).
+[a question about a new canonical log and a nonacting node](../consensus-coverage/ConsensusCoverage/CanonicalLogs.lean),
+and [whether the step established a previously unseen committed `(term, prefix)`](../consensus-coverage/ConsensusCoverage/CommitKeys.lean).
+The last answer is true on actions 1 and 8 of the replication capture: the
+second certificate is new even though the cluster already had backing.
 Invalid captures produce no rows. Do not count distinct strings containing `?`
 as full transition coverage.
 
