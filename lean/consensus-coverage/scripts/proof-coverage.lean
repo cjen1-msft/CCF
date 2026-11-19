@@ -84,6 +84,13 @@ private def printAnswers (file : String) : IO Unit := do
   for line in lines do IO.println line
 
 def main : List String → IO Unit
+  | ["columns"] => do
+    IO.println "section\tbit (1-based)\tgenerated question"
+    for q in FullProfile.questions do
+      match q with
+      | .pre b => IO.println s!"pre\t{b.ctorIdx + 1}\t{repr b}"
+      | .step b => IO.println s!"step\t{b.ctorIdx + 1}\t{repr b}"
+      | .post b => IO.println s!"post\t{b.ctorIdx + 1}\t{repr b}"
   | ["check"] => do
     let some edges := FrontierRows.witnessRows | throw <| IO.userError "disabled witness schedule"
     let states := edges.flatMap fun r => [(r.zeroBefore, r.backedBefore), (r.zeroAfter, r.backedAfter)]
@@ -100,4 +107,4 @@ def main : List String → IO Unit
     if multi.isEmpty then IO.println "multi-node leader rows: not applicable (no multi-node capture)"
     else reportLeaders multi.flatten
   | ["answers", file] => printAnswers file
-  | _ => throw <| IO.userError "usage: proof-coverage.lean check | trace FILE.ndjson [FILE.ndjson ...] | answers FILE.ndjson"
+  | _ => throw <| IO.userError "usage: proof-coverage.lean check | trace FILE.ndjson [FILE.ndjson ...] | answers FILE.ndjson | columns"

@@ -174,10 +174,12 @@ Score saved native captures from the repository root:
 
 ```sh
 WS=$(python3 lean/relevance/scripts/workspace.py consensus-coverage)
-lake -d "$WS/consensus-coverage" build ConsensusCoverage.LeaderCoverage Consensus.Replay.Reduction
+lake -d "$WS/consensus-coverage" build ConsensusCoverage.LeaderCoverage ConsensusCoverage.ReplayAnswers Consensus.Replay.Reduction
 reader="$PWD/lean/consensus-coverage/scripts/proof-coverage.lean"
 lake -d "$WS/consensus-coverage" env lean --run "$reader" check
 lake -d "$WS/consensus-coverage" env lean --run "$reader" trace lean/consensus/replay/fixtures/valid/replication.ndjson
+lake -d "$WS/consensus-coverage" env lean --run "$reader" answers lean/consensus/replay/fixtures/valid/replication.ndjson
+lake -d "$WS/consensus-coverage" env lean --run "$reader" columns
 ```
 
 The scorer uses the [native replay checks](replay/README.md), counting states and
@@ -201,18 +203,35 @@ collision splits one of those keys, so any full table has at least six entries.
 The nine history-resolved rows are not themselves a lower bound of nine distinct
 *sets* of profiles.
 
-**Full recorded-action denominator: at least 15; exact count unknown.**
+**Full recorded-action denominator: at least 31; exact count unknown.**
 The [recorded-action specification](../consensus-coverage/ConsensusCoverage/ActionProfile.lean)
 assigns an initialized step exactly one 457-answer vector. All 433 step
 questions use [the same, unique context for the recorded action](../consensus-coverage/ConsensusCoverage/ActionContext.lean).
-The leader rows do not suffice: from the same three-node initial state, stepping
-down the primary and initializing an empty backup agree on all 27 leader-projection
-answers but disagree on a generated log-entry question. [This split](../consensus-coverage/ConsensusCoverage/LeaderRefinement.lean)
-proves that at least 14 full vectors occur on multi-node deployments and at
-least 15 across all deployments. The full model has no proved exact count.
-Unlike the snapshot-pair specification, these rows are individual vectors, not
-sets of vectors. A [pinned step answer](../consensus-coverage/ConsensusCoverage/PinnedClasses.lean)
-implies the corresponding closed answer, not necessarily the converse.
+For example, sending the first heartbeat and re-sending an identical queued heartbeat
+do not have the same message answers: the proof asks whether an envelope *value* is
+new, not whether the queue grew. [Seven initialized schedules](../consensus-coverage/ConsensusCoverage/MessageWitnesses.lean)
+take 59 successful steps and distinguish 30 full labels by their leader, endpoint,
+and message answers; 29 occur on multi-node deployments. Stepping down the primary
+and initializing an empty backup send no messages and agree on the leader answers,
+but differ on a [log-entry question](../consensus-coverage/ConsensusCoverage/LeaderRefinement.lean).
+This adds at least one full label: **at least 31 overall and 30 on multi-node
+deployments**. There is no proof these exhaust the reachable labels.
+
+`answers` prints one row per validated action, in three bit strings: pre-state,
+step, post-state. `columns` names each bit in order. `1` and `0` are proved
+answers; `?` is unknown, not false. The [reader](../consensus-coverage/ConsensusCoverage/ReplayAnswers.lean)
+decides both endpoints and at least 19 step questions on every action: the
+three leader questions and [16 fresh-envelope questions](../consensus-coverage/ConsensusCoverage/ReducedQuestions.lean).
+Invalid captures produce no rows. Do not count distinct strings containing `?`
+as full transition coverage.
+
+There are full answers for particular steps. For example, an unsigned append
+followed by a successful nomination that changes nothing yields a witnessed
+row with **all 433 step bits false**. The [proof](../consensus-coverage/ConsensusCoverage/StutterProfile.lean)
+checks that the log evidence also remains unchanged; equality of snapshots alone
+is not assumed to establish this. [Witness elimination](../consensus-coverage/ConsensusCoverage/SolvedWitnesses.lean)
+simplifies all 433 predicates with a proof in both directions but does not decide
+the remaining existential questions.
 
 [Event support](../consensus-coverage/ConsensusCoverage/EventSupport.lean)
 automatically rules out 650 combinations of recorded action kind and proof
