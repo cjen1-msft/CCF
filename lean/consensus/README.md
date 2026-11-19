@@ -229,6 +229,14 @@ questions, guarded log questions and fresh committed prefixes. Each difference
 is a difference in a full label. There is no proof these labels exhaust the
 reachable transitions.
 
+[An upper cover](../consensus-coverage/ConsensusCoverage/ActionCover.lean)
+reconstructs every full label from a leader row, the kinds of fresh messages,
+and the remaining answers not ruled out for the recorded event. Depending on
+the event, 348 to 385 bits remain free in this construction. The cover has
+fewer than `2^396` entries, down from `2^457` unrestricted answer vectors.
+It includes impossible combinations and can represent the same label more
+than once; its size is not a coverage target.
+
 **Exact slice: three full labels have all 433 step answers false.** They are
 `10 -> 10`, `11 -> 11`, and `01 -> 01`. [The upper bound](../consensus-coverage/ConsensusCoverage/ZeroRows.lean)
 does not assume the action leaves the snapshot unchanged: removing the last
