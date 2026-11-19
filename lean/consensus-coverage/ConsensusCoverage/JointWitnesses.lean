@@ -4,6 +4,7 @@ module
 -- Licensed under the Apache 2.0 License.
 
 public import ConsensusCoverage.MessageWitnesses
+import ConsensusCoverage.ActorLogRows
 import ConsensusCoverage.CommitKeys
 import all ConsensusCoverage.FrontierWitnesses
 import all ConsensusCoverage.GuardedDomain
@@ -14,8 +15,8 @@ import all ConsensusCoverage.PairWitnesses
 /-!
 # Joint witnesses from initialized action schedules
 
-Refine the joint endpoint/leader/message key with the guarded questions and
-the fresh committed-key question. Replay produces witnesses, not exclusions:
+Refine the joint endpoint/leader/message key with the guarded questions,
+the actor's rooted-log case and the fresh committed-key question. Replay produces witnesses, not exclusions:
 the schedules need not enumerate all reachable actions.
 -/
 
@@ -29,13 +30,14 @@ public abbrev Key := Nat × Bool × List Bool
 
 public def project (p : Profile) : Key :=
   (MessageWitnesses.project p, p (.step .commitChains_step_committed_inr),
-    GuardedQuestions.covered.map fun b => p (.step b))
+    p (.step .rooted_now_after_inl) :: GuardedQuestions.covered.map fun b => p (.step b))
 
 private def read (s : Step) : Option Key := do
   let view ← GuardedDomain.ofAction s.cfg s.before s.after s.past s.act
   let bits ← GuardedQuestions.covered.mapM (GuardedQuestions.answer view)
-  return (MessageWitnesses.read s.cfg s.before s.after s.past,
-    !CommitKeys.noNew (s.cfg.min?.getD 0) s.after (s.before :: s.past), bits)
+  let fresh := !CommitKeys.noNew (s.cfg.min?.getD 0) s.after (s.before :: s.past)
+  let rooted ← ActorLogRows.read? view fresh .rooted_now_after_inl
+  return (MessageWitnesses.read s.cfg s.before s.after s.past, fresh, rooted :: bits)
 
 private theorem guard_bits (s : Step) (v : GuardedDomain.View)
     (view : GuardedDomain.ofAction s.cfg s.before s.after s.past s.act = some v)
@@ -53,10 +55,12 @@ private theorem guard_bits (s : Step) (v : GuardedDomain.View)
 
 private theorem read_eq (s : Step) : read s = some (project (label s)) := by
   obtain ⟨v, made, _⟩ := GuardedDomain.ofAction_matches s
+  have rooted := ActorLogRows.at_step s (b := .rooted_now_after_inl) (by decide)
+  simp only [made, Option.bind_some, BackingRead.any_eq, CommitKeys.fresh_answer] at rooted
   unfold read project
   rw [made]
   simp only [Option.bind_eq_bind, Option.bind_some, guard_bits s v made _ (fun _ h => h),
-    ← MessageWitnesses.project_eq, CommitKeys.fresh_answer]
+    ← MessageWitnesses.project_eq, CommitKeys.fresh_answer, rooted]
   rfl
 
 open FrontierRows
@@ -177,19 +181,19 @@ private theorem all_replayed :
 private theorem sample_size :
     1 + multiRuns.length = 22 ∧ soloObserved.length + multiObserved.length = 121 := by decide +kernel
 
-public theorem multi_count : multiKeys.Nodup ∧ multiKeys.length = 46 := by decide +kernel
-public theorem count : keys.Nodup ∧ keys.length = 48 := by decide +kernel
+public theorem multi_count : multiKeys.Nodup ∧ multiKeys.length = 47 := by decide +kernel
+public theorem count : keys.Nodup ∧ keys.length = 49 := by decide +kernel
 
-/-- Every list covering the full recorded-action labels has at least 48 rows. -/
+/-- Every list covering the full recorded-action labels has at least 49 rows. -/
 public theorem full_lower_bound (rows : List Profile) (complete : ∀ s, label s ∈ rows) :
-    48 ≤ rows.length := by
+    49 ≤ rows.length := by
   simpa only [count.2] using
     (projected_lower_bound project count.1 (fun _ => occurs) complete)
 
 /-- Each key here has a witness with at least two distinct deployed node IDs. -/
 public theorem multi_lower_bound (rows : List Profile)
     (complete : ∀ s : Step, LeaderCoverage.MultiNode s.nodes → label s ∈ rows) :
-    46 ≤ rows.length := by
+    47 ≤ rows.length := by
   have sub : multiKeys ⊆ rows.map project := by
     intro k hk
     obtain ⟨s, multi, eq⟩ := multi_occurs hk

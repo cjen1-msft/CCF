@@ -220,14 +220,17 @@ collision splits one of those keys, so any full table has at least six entries.
 The nine history-resolved rows are not themselves a lower bound of nine distinct
 *sets* of profiles.
 
-**Full recorded-action denominator: at least 48; at least 46 on multi-node deployments.**
+**Full recorded-action denominator: at least 49; at least 47 on multi-node deployments.**
 The [recorded-action specification](../consensus-coverage/ConsensusCoverage/ActionProfile.lean)
 assigns an initialized step exactly one 457-answer vector. All 433 step
 questions use [the same, unique context for the recorded action](../consensus-coverage/ConsensusCoverage/ActionContext.lean).
 [Twenty-two initialized schedules](../consensus-coverage/ConsensusCoverage/JointWitnesses.lean)
-take 121 successful steps. They distinguish 48 combinations of endpoint,
+take 121 successful steps. They distinguish 49 combinations of endpoint,
 leader, message, log and committed-prefix answers. Each difference is a
-difference in a full label; the schedules do not prove exhaustion.
+difference in a full label; the schedules do not prove exhaustion. In
+particular, resending an already queued empty heartbeat and initializing an
+empty backup agree on the earlier 48-key projection. Only the latter changes
+the actor's record, so the rooted-log proof distinguishes them.
 
 Two reconfiguration runs account for six more combinations than the previous
 20 schedules. In the three-node run, two successive nominations leave every
@@ -308,7 +311,7 @@ nor a committed prefix.** Each of the three pre-state contexts can send a new
 proposal or add no new envelope. All six have initialized nomination witnesses;
 [`exact_stable`](../consensus-coverage/ConsensusCoverage/NominationWitnesses.lean)
 proves that no seventh label occurs under those conditions. The six are already
-included in the lower bound of 48. The delayed-commit nominations above fall
+included in the lower bound of 49. The delayed-commit nominations above fall
 outside this table.
 
 `answers` prints one row per validated action, in three bit strings: pre-state,
