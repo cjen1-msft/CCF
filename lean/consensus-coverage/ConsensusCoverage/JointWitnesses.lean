@@ -110,9 +110,12 @@ private def emptyBackup : MultiRun :=
   ⟨{ runs[3] with schedule := [.input 2 (.initAsBackup [])] },
     MessageWitnesses.spareNode.valid, ⟨0, by decide, 1, by decide, by decide⟩⟩
 
+private def nominationForks : List MultiRun :=
+  [0, 3, 6].map fun n => onTwo (replication.schedule.take n ++ [.input 0 .nominateSuccessor])
+
 private def multiRuns : List MultiRun :=
   (MessageWitnesses.multiSchedules.map fun c => ⟨c.val.run, c.val.valid, c.property⟩) ++
-  appendForks ++ [onTwo [heartbeat, heartbeat], emptyBackup]
+  appendForks ++ nominationForks ++ [onTwo [heartbeat, heartbeat], emptyBackup]
 
 private def soloObserved : List Key :=
   observed MessageWitnesses.solo.run MessageWitnesses.solo.valid
@@ -145,21 +148,21 @@ private theorem all_replayed :
         true := by decide +kernel
 
 private theorem sample_size :
-    1 + multiRuns.length = 17 ∧ soloObserved.length + multiObserved.length = 96 := by decide +kernel
+    1 + multiRuns.length = 20 ∧ soloObserved.length + multiObserved.length = 108 := by decide +kernel
 
-public theorem multi_count : multiKeys.Nodup ∧ multiKeys.length = 37 := by decide +kernel
-public theorem count : keys.Nodup ∧ keys.length = 39 := by decide +kernel
+public theorem multi_count : multiKeys.Nodup ∧ multiKeys.length = 40 := by decide +kernel
+public theorem count : keys.Nodup ∧ keys.length = 42 := by decide +kernel
 
-/-- Every list covering the full recorded-action labels has at least 39 rows. -/
+/-- Every list covering the full recorded-action labels has at least 42 rows. -/
 public theorem full_lower_bound (rows : List Profile) (complete : ∀ s, label s ∈ rows) :
-    39 ≤ rows.length := by
+    42 ≤ rows.length := by
   simpa only [count.2] using
     (projected_lower_bound project count.1 (fun _ => occurs) complete)
 
-/-- The 37 multi-node keys have witnesses with two distinct deployed node IDs. -/
+/-- The 40 multi-node keys have witnesses with two distinct deployed node IDs. -/
 public theorem multi_lower_bound (rows : List Profile)
     (complete : ∀ s : Step, LeaderCoverage.MultiNode s.nodes → label s ∈ rows) :
-    37 ≤ rows.length := by
+    40 ≤ rows.length := by
   have sub : multiKeys ⊆ rows.map project := by
     intro k hk
     obtain ⟨s, multi, eq⟩ := multi_occurs hk
