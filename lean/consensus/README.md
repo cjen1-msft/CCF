@@ -214,6 +214,13 @@ Unlike the snapshot-pair specification, these rows are individual vectors, not
 sets of vectors. A [pinned step answer](../consensus-coverage/ConsensusCoverage/PinnedClasses.lean)
 implies the corresponding closed answer, not necessarily the converse.
 
+[Event support](../consensus-coverage/ConsensusCoverage/EventSupport.lean)
+automatically rules out 650 combinations of recorded action kind and proof
+question across 68 of the 433 step questions. It uses 12 action kinds: five
+local input constructors and seven delivered message constructors. On a
+validated replay these excluded answers must be false; a non-excluded answer
+still needs a witness. This count is not a transition coverage denominator.
+
 These counts concern the generated questions. The shared extractor also
 reports 54 unrecorded splits, 41 classified as protocol splits. Thus neither the
 finite-universe proof nor the nine-row theorem establishes that the extractor
