@@ -4,14 +4,15 @@ module
 -- Licensed under the Apache 2.0 License.
 
 public import ConsensusCoverage.ActionFrontier
-public import ConsensusCoverage.CanonicalLogs
 public import ConsensusCoverage.CommitKeys
 public import ConsensusCoverage.DeltaSupport
 public import ConsensusCoverage.EventSupport
+public import ConsensusCoverage.GuardedQuestions
 public import ConsensusCoverage.InertProfile
 public import ConsensusCoverage.ReducedQuestions
 import all ConsensusCoverage.ActionFrontier
 import all ConsensusCoverage.FrontierRows
+import all ConsensusCoverage.GuardedQuestions
 import all ConsensusCoverage.Projection
 import all ConsensusCoverage.StutterProfile
 
@@ -24,7 +25,7 @@ public structure Evidence where
   key : FrontierRows.Row × Bool
   tag : EventSupport.Tag
   fresh : List Model.Node.Message
-  canonicalOther : Bool
+  view : Option GuardedDomain.View
   freshCommit : Bool
   inert : Bool
   delta : DeltaSupport.Evidence
@@ -33,15 +34,14 @@ public def read (cfg : Configuration) (s : Model.State) (a : Model.Action)
     (t : Model.State) (past : List Model.State) : Evidence :=
   ⟨(FrontierRows.historyLabel cfg s t past, LeaderEffect.changedPrimary s t),
     EventSupport.actionTag a, ReducedQuestions.freshPayloads s t.network,
-    CanonicalLogs.fresh (cfg.min?.getD 0) t (s :: past) && CanonicalLogs.otherLog a t,
+    GuardedDomain.ofAction cfg s t past a,
     !CommitKeys.noNew (cfg.min?.getD 0) t (s :: past),
     InertProfile.gate s a, DeltaSupport.read s a t⟩
 
-private def direct (k : FrontierRows.Row × Bool) (canonicalOther freshCommit : Bool) : Classes.StepBranch → Option Bool
+private def direct (k : FrontierRows.Row × Bool) (freshCommit : Bool) : Classes.StepBranch → Option Bool
   | .leader_led_leader_inr => some k.1.wonPrimary
   | .leader_led_now_after_inl => some k.2
   | .leader_led_leader_inl => some (k.2 && !k.1.wonPrimary)
-  | .terms_now_after_inr => some canonicalOther
   | .commitChains_step_committed_inr => some freshCommit
   | _ => none
 
@@ -49,12 +49,12 @@ private def direct (k : FrontierRows.Row × Bool) (canonicalOther freshCommit : 
 public def answer (e : Evidence) : Question → Option Bool
   | .pre b => some (ProofContexts.answers (e.key.1.zeroBefore, e.key.1.backedBefore) b)
   | .post b => some (ProofContexts.answers (e.key.1.zeroAfter, e.key.1.backedAfter) b)
-  | .step b => (ReducedQuestions.readFrom? e.fresh b).orElse fun _ => (direct e.key e.canonicalOther e.freshCommit b).orElse fun _ =>
+  | .step b => (e.view.bind (GuardedQuestions.answer · b)).orElse fun _ =>
+      (ReducedQuestions.readFrom? e.fresh b).orElse fun _ => (direct e.key e.freshCommit b).orElse fun _ =>
       if e.inert || decide (e.tag ∉ EventSupport.allowed b) || DeltaSupport.excluded e.delta b then some false else none
 
 private theorem direct_sound (s : Step) (b : Classes.StepBranch) {v : Bool}
     (h : direct (ActionFrontier.project (label s))
-      (read s.cfg s.before s.act s.after s.past).canonicalOther
       (read s.cfg s.before s.act s.after s.past).freshCommit b = some v) : label s (.step b) = v := by
   generalize key : ActionFrontier.project (label s) = k at h
   have won := congrArg (fun (p : FrontierRows.Row × Bool) => p.1.wonPrimary) key
@@ -63,7 +63,6 @@ private theorem direct_sound (s : Step) (b : Classes.StepBranch) {v : Bool}
   rw [key] at incumbent
   cases b <;> first | exact won.trans (Option.some.inj h) | exact changed.trans (Option.some.inj h)
                     | exact incumbent.trans (Option.some.inj h)
-                    | exact (CanonicalLogs.other_answer s).symm.trans (Option.some.inj h)
                     | exact (CommitKeys.fresh_answer s).symm.trans (Option.some.inj h) | contradiction
 
 public theorem sound (s : Step) (q : Question) {v : Bool}
@@ -72,7 +71,10 @@ public theorem sound (s : Step) (q : Question) {v : Bool}
   | pre b => exact (congrFun (pre_answers s) b).trans (Option.some.inj known)
   | post b => exact (congrFun (post_answers s) b).trans (Option.some.inj known)
   | step b =>
-    simp only [answer, read, ← ActionFrontier.project_eq] at known
+    change (Option.orElse (GuardedQuestions.read? s.cfg s.before s.after s.past s.act b) _) = some v at known
+    cases g : GuardedQuestions.read? s.cfg s.before s.after s.past s.act b
+    case some res => exact (GuardedQuestions.read?_correct s b g).trans (by simpa [g] using known)
+    simp only [g, Option.orElse_none, read, ← ActionFrontier.project_eq] at known
     rw [show ReducedQuestions.readFrom? (ReducedQuestions.freshPayloads s.before s.after.network) b =
       ReducedQuestions.read? s.before s.after b from rfl] at known
     cases queue : ReducedQuestions.read? s.before s.after b with
@@ -82,7 +84,6 @@ public theorem sound (s : Step) (q : Question) {v : Bool}
     | none =>
       simp only [queue, Option.orElse_none] at known
       cases h : direct (ActionFrontier.project (label s))
-          (CanonicalLogs.fresh _ s.after (s.before :: s.past) && CanonicalLogs.otherLog s.act s.after)
           (!CommitKeys.noNew _ s.after (s.before :: s.past)) b with
       | some res => exact (direct_sound s b h).trans (by simpa [h] using known)
       | none =>
@@ -98,10 +99,10 @@ public theorem sound (s : Step) (q : Question) {v : Bool}
 
 /-- Columns the reader settles on every step, without needing a tag exclusion. -/
 public def unconditional : List Classes.StepBranch :=
-  ReducedQuestions.covered ++ [.leader_led_leader_inr, .leader_led_now_after_inl, .leader_led_leader_inl,
-    .terms_now_after_inr, .commitChains_step_committed_inr]
+  GuardedQuestions.covered ++ (ReducedQuestions.covered ++ [.leader_led_leader_inr,
+    .leader_led_now_after_inl, .leader_led_leader_inl, .commitChains_step_committed_inr])
 
-public theorem unconditional_count : unconditional.Nodup ∧ unconditional.length = 21 := by decide
+public theorem unconditional_count : unconditional.Nodup ∧ unconditional.length = 34 := by decide
 
 public theorem read_unconditional (s : Step) {b : Classes.StepBranch} (mem : b ∈ unconditional) :
     answer (read s.cfg s.before s.act s.after s.past) (.step b) = some (label s (.step b)) := by
@@ -110,6 +111,12 @@ public theorem read_unconditional (s : Step) {b : Classes.StepBranch} (mem : b �
     obtain ⟨v, eq⟩ := Option.isSome_iff_exists.mp h
     rw [sound s (.step b) eq, eq]
   apply enough
+  change ((GuardedQuestions.read? s.cfg s.before s.after s.past s.act b).orElse _).isSome
+  rcases List.mem_append.mp mem with guardCol | mem
+  · rw [GuardedQuestions.read?_at s guardCol]
+    rfl
+  cases g : GuardedQuestions.read? s.cfg s.before s.after s.past s.act b
+  case some => rfl
   change ((ReducedQuestions.read? s.before s.after b).orElse _).isSome
   rcases List.mem_append.mp mem with queue | leaderCol
   · rw [(ReducedQuestions.read?_correct s b _).mpr ⟨queue, (rfl : _ = label s (.step b))⟩]
@@ -117,6 +124,6 @@ public theorem read_unconditional (s : Step) {b : Classes.StepBranch} (mem : b �
   · simp only [List.mem_cons, List.not_mem_nil, or_false] at leaderCol
     cases h : ReducedQuestions.read? s.before s.after b with
     | some _ => rfl
-    | none => rcases leaderCol with rfl | rfl | rfl | rfl | rfl <;> rfl
+    | none => rcases leaderCol with rfl | rfl | rfl | rfl <;> rfl
 
 end ConsensusCoverage.ReplayAnswers
