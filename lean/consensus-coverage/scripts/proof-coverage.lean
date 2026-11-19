@@ -2,13 +2,14 @@
 -- Licensed under the Apache 2.0 License.
 
 import ConsensusCoverage.StateCoverage
-import ConsensusCoverage.PairWitnesses
+import ConsensusCoverage.FrontierWitnesses
 import Consensus.Replay.Reduction
 
 open Consensus Consensus.Replay ConsensusCoverage
 
 private structure Score where
   states : List StateCoverage.Row := []
+  edges : List FrontierRows.Row := []
   past : List Model.State := []
 
 private def record [BEq α] (xs : List α) (x : α) := if xs.contains x then xs else x :: xs
@@ -18,16 +19,25 @@ private def start (cfg : CCF.Finset Nat) (s : Model.State) : Score :=
 
 private def visit (cfg : CCF.Finset Nat) (score : Score) (s t : Model.State) : Score :=
   let past := s :: score.past
-  { states := record score.states (StateCoverage.read cfg t past), past }
+  let edge := FrontierRows.historyLabel cfg s t score.past
+  { states := record score.states (edge.zeroAfter, edge.backedAfter),
+    edges := record score.edges edge, past }
 
-private def report (states : List StateCoverage.Row) : IO Unit := do
+private def report (states : List StateCoverage.Row) (edges : List FrontierRows.Row) : IO Unit := do
   let table := StateCoverage.activeTable
-  let key (row : StateCoverage.Row) :=
-    s!"{if row.1 then 1 else 0}{if row.2 then 1 else 0}"
+  let bits (xs : List Bool) := String.ofList (xs.map fun b => if b then '1' else '0')
+  let key (row : StateCoverage.Row) := bits [row.1, row.2]
+  let edgeKey (r : FrontierRows.Row) :=
+    bits [r.zeroBefore, r.backedBefore, r.wonPrimary, r.zeroAfter, r.backedAfter]
   unless states.all (· ∈ table) do throw <| IO.userError "unexpected state on a nonempty replay"
   let missing := table.filter (· ∉ states)
   IO.println s!"{table.length - missing.length}/{table.length} reachable nonempty state profiles; missing: \
     {if missing.isEmpty then "none" else String.intercalate " " (missing.map key)}"
+  unless edges.all (· ∈ FrontierRows.table) do throw <| IO.userError "unexpected projected step"
+  let missing := FrontierRows.table.filter (· ∉ edges)
+  IO.println s!"{FrontierRows.table.length - missing.length}/{FrontierRows.table.length} projected step rows \
+    (state profiles + new primary); missing: \
+    {if missing.isEmpty then "none" else String.intercalate " " (missing.map edgeKey)}"
 
 private def fromCapture (file : String) : IO Score := do
   let records ← readLog file
@@ -41,15 +51,12 @@ private def fromCapture (file : String) : IO Score := do
 
 def main : List String → IO Unit
   | ["check"] => do
-    let some runs := PairQuestions.examples | throw <| IO.userError "disabled witness schedule"
-    let mut keys := []
-    for ss in runs do
-      let first :: _ := ss | throw <| IO.userError "empty witness"
-      let score := (ss.zip ss.tail).foldl (fun acc (s,t) => visit {0, 1} acc s t) (start {0, 1} first)
-      keys := score.states ++ keys
-    report keys
-    unless StateCoverage.activeTable.all (· ∈ keys) do throw <| IO.userError "incomplete state witnesses"
+    let some edges := FrontierRows.witnessRows | throw <| IO.userError "disabled witness schedule"
+    let states := edges.flatMap fun r => [(r.zeroBefore, r.backedBefore), (r.zeroAfter, r.backedAfter)]
+    report states edges
+    unless StateCoverage.activeTable.all (· ∈ states) && FrontierRows.table.all (· ∈ edges) do
+      throw <| IO.userError "incomplete model witnesses"
   | "trace" :: file :: more => do
     let scores ← (file :: more).mapM fromCapture
-    report (scores.flatMap Score.states)
+    report (scores.flatMap Score.states) (scores.flatMap Score.edges)
   | _ => throw <| IO.userError "usage: proof-coverage.lean check | trace FILE.ndjson [FILE.ndjson ...]"
