@@ -218,6 +218,15 @@ but differ on a [log-entry question](../consensus-coverage/ConsensusCoverage/Lea
 This adds at least one full label: **at least 31 overall and 30 on multi-node
 deployments**. There is no proof these exhaust the reachable labels.
 
+**Exact slice: three full labels have all 433 step answers false.** They are
+`10 -> 10`, `11 -> 11`, and `01 -> 01`. [The upper bound](../consensus-coverage/ConsensusCoverage/ZeroRows.lean)
+does not assume the action leaves the snapshot unchanged: removing the last
+zero commit index or establishing the first certificate forces a true step
+answer. [The converse](../consensus-coverage/ConsensusCoverage/SignedQuiet.lean)
+has initialized witnesses for all three: a duplicate heartbeat before backing
+exists and two nominations after a signed commit. This does not classify
+actions with a positive step answer.
+
 `answers` prints one row per validated action, in three bit strings: pre-state,
 step, post-state. `columns` names each bit in order. `1` and `0` are proved
 answers; `?` is unknown, not false. The [reader](../consensus-coverage/ConsensusCoverage/ReplayAnswers.lean)
