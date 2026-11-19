@@ -12,15 +12,16 @@ import all Consensus.Proofs.SafetyInvariant
 
 namespace ConsensusCoverage.ActionProfile
 
-open Consensus Consensus.Model Consensus.Proofs Consensus.Proofs.Safety FullProfile
+open Consensus Consensus.Model Consensus.Model.Node Consensus.Proofs Consensus.Proofs.Safety FullProfile
 
+set_option autoImplicit false
 set_option backward.privateInPublic true
 set_option backward.privateInPublic.warn false
 
 /-- The inputs to replay: initial membership, preceding snapshots (newest first),
 and the action actually recorded. A disabled action has no label. -/
 public structure Step where
-  cfg : Configuration
+  cfg : FullProfile.Configuration
   nodes : List NodeID
   before : Model.State
   past : List Model.State
