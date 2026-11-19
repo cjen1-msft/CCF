@@ -59,4 +59,19 @@ public theorem shape (s : Step) (pass : test s.cfg s.before s.act s.after s.past
 
 public theorem positive_count : (stepBranches.toList.filter bits).length = 7 := by decide +kernel
 
+/-- The seven-positive signature identifies the recorded action, not merely
+a call to `nominateSuccessor` within some other action. -/
+public theorem test_iff (s : Step) :
+    test s.cfg s.before s.act s.after s.past = true ↔ (label s).step = bits := by
+  refine ⟨shape s, fun eq => ?_⟩
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  have hit : label s (.step .summary_input_nominateSuccessor) = true := congrFun eq _
+  have tag := EventSupport.sig_support s.context _ ((label_true s _).mp hit)
+  rw [(s.context_eq s.context).mpr rfl] at tag
+  have nom : EventSupport.actionTag s.act = .nominateSuccessor :=
+    List.mem_singleton.mp (show EventSupport.actionTag s.act ∈ [.nominateSuccessor] from tag)
+  exact Bool.and_eq_true_iff.mpr ⟨Bool.and_eq_true_iff.mpr ⟨decide_eq_true nom,
+    SignedQuiet.evidence_of_negatives s (congrFun eq _) (congrFun eq _)⟩,
+    (answer_eq s .message).trans (congrFun eq _)⟩
+
 end ConsensusCoverage.NominationRows

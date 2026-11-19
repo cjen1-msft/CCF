@@ -310,27 +310,9 @@ public theorem positives_eq : positives =
       .mem_network_mem_append_inr, .new_message_h_appendEntriesRequest, .post_led_origin_inl] :=
   by decide +kernel
 
-/-- Explicit zero-based constructor slots, checked against the actual dispatcher
-order. These columns are unclassified, not known false. -/
-public theorem residual_slots : residual.map (·.ctorIdx) =
-    [29, 48, 49, 50, 51, 52, 55, 56, 57, 60, 61, 104, 105, 108, 109, 111, 112, 113, 114, 115,
-     116, 118, 119, 120, 121, 122, 123, 124, 131, 132, 133, 134, 146, 148, 149, 150, 151, 152,
-     153, 154, 155, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 181, 182, 183, 184, 212,
-     213, 214, 215, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 249,
-     250, 251, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287,
-     288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 304, 305, 306, 307, 308, 309,
-     310, 311, 312, 313, 314, 315, 316, 317, 318, 319, 320, 321, 322, 323, 324, 325, 326, 327,
-     328, 329, 330, 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343, 344, 345,
-     346, 347, 348, 349, 354, 355, 356, 357, 358, 359, 360, 361, 362, 363, 364, 365, 366, 367,
-     368, 369, 370, 371, 372, 373, 374, 375, 376, 377, 378, 379, 380, 381, 382, 383, 384, 385,
-     386, 387, 388, 389, 390, 391, 392, 393, 394, 395, 396, 397, 398, 399, 400, 401, 402, 403,
-     404, 405, 406, 407, 408, 409, 410, 411, 412, 413, 414, 415, 416, 417, 418, 419, 420, 421,
-     422, 423, 424, 425, 426, 427, 428, 429, 430, 431, 432] :=
-  by decide +kernel
-
 public theorem counts :
-    stepBranches.size = 433 ∧ residual.length = 229 ∧ positives.length = 6 ∧
-      (stepBranches.toList.filter fun b => read? (.step b) == some false).length = 198 :=
+    stepBranches.size = 433 ∧ residual.length = 118 ∧ positives.length = 6 ∧
+      (stepBranches.toList.filter fun b => read? (.step b) == some false).length = 309 :=
   by decide +kernel
 
 public theorem residual_iff (b : Classes.StepBranch) :

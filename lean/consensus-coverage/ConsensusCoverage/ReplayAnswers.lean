@@ -153,4 +153,8 @@ public theorem inert_iff (s : Step) :
   rw [SignedQuiet.exact, and_iff_right (show Realized (label s) from ⟨s, rfl⟩)]
   exact SignedQuiet.gate_iff s
 
+public theorem nomination_iff (s : Step) :
+    (read s.cfg s.before s.act s.after s.past).nomination = true ↔ (label s).step = NominationRows.bits :=
+  NominationRows.test_iff s
+
 end ConsensusCoverage.ReplayAnswers

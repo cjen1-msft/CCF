@@ -62,6 +62,12 @@ private def eventTag : Event → Tag
   | .internal i => inputTag i
   | .receive _ m => messageTag m
 
+private theorem tag_of_pin {s u t : Model.State} {l : LocalTransition s u} {r : LocalTransition s t}
+    (pin : u = t ∧ HEq l r) : eventTag l.event = eventTag r.event := by
+  obtain ⟨rfl, h⟩ := pin
+  cases eq_of_heq h
+  rfl
+
 private theorem actionTag_eq [Config.InitialConfiguration] {f : Frame} {t : Model.State}
     (c : Ctx f t) : actionTag (ActionContext.action c) = eventTag c.tr.event := by
   unfold ActionContext.action ActionContext.encode
@@ -85,17 +91,20 @@ private theorem included {small big : List Tag}
 private theorem mem_of_eq {x y : Tag} (eq : x = y) {ts : List Tag}
     (mem : y ∈ ts) : x ∈ ts := eq ▸ mem
 
+private theorem mem_inter {x : Tag} {l r : List Tag} (left : x ∈ l) (right : x ∈ r) :
+    x ∈ l.filter (fun t => decide (t ∈ r)) := List.mem_filter.mpr ⟨left, decide_eq_true right⟩
+
 private theorem allTag (t : Tag) : t ∈ inputs ++ messages := by cases t <;> decide
 
 /-!
 For positive formulas, compute guaranteed equalities between constructor tags and
-guaranteed tag memberships. Conjunctions link aliases; disjunctions keep only
+guaranteed tag memberships. Conjunctions link aliases and intersect memberships; disjunctions keep only
 common consequences (taking the union for membership); existentials forget
 consequences still mentioning the witness. Reach calls reuse kernel-checked
 summaries over their parameters. In particular, membership of an arbitrary
 existential's tag never constrains the actual step without a proved link.
-Heterogeneous equalities at dependent endpoints and all other unrecognized
-conditions are ignored, even when they could in principle sharpen the support.
+The endpoint and transition pins identify the event of the actual transition.
+Unrecognized conditions do not restrict its tag.
 -/
 
 set_option maxHeartbeats 0
@@ -156,6 +165,10 @@ private def observation (ty x : Expr) : MetaM (Option Expr) := do
     return none
   if e.isAppOf ``Ctx.event then
     if let some raw ← unfoldDefinition? e then e := raw
+  -- The same transition projection can be indexed by `t` or `(f.advance t).current`.
+  e := e.replace fun x =>
+    if x.isAppOfArity ``Frame.current 1 && x.appArg!.isAppOf ``Frame.advance then
+      some x.appArg!.appArg! else none
   let (fn, v) :=
     if ty.isConstOf ``Input then (``inputTag, e)
     else if ty.isConstOf ``Consensus.Model.Node.Message then (``messageTag, e)
@@ -185,21 +198,24 @@ private def widen (f : Fact) (tags : List Name) : MetaM Expr := do
   mkAppOptM ``included #[some (← tagList small), some (← tagList tags),
     some (← mkEqRefl (mkConst ``Bool.true)), some x, some f.proof]
 
-private def addFact (fs : Array Fact) (f : Fact) : Array Fact :=
+private def addFact (fs : Array Fact) (f : Fact) : MetaM (Array Fact) := do
   match f.cond with
   | .mem x tags =>
     if let some i := fs.findIdx? fun g => match g.cond with
       | .mem y _ => x == y
       | _ => false then
-      match fs[i]?.map Fact.cond with
-      | some (.mem _ old) => if tags.length < old.length then fs.set! i f else fs
-      | _ => fs
-    else fs.push f
+      match fs[i]? with
+      | some ⟨.mem _ old, oldProof⟩ =>
+        if old.all tags.contains then return fs
+        if tags.all old.contains then return fs.set! i f
+        return fs.set! i ⟨.mem x (old.filter tags.contains), ← mkAppM ``mem_inter #[oldProof, f.proof]⟩
+      | _ => return fs
+    else return fs.push f
   | .eq x y =>
     if x == y || fs.any (fun g => match g.cond with
         | .eq a b => (a == x && b == y) || (a == y && b == x)
-        | _ => false) then fs
-    else fs.push f
+        | _ => false) then return fs
+    else return fs.push f
 
 private def links (fs : Array Fact) (x : Expr) : MetaM (Array (Expr × Expr)) := do
   let mut out := #[]
@@ -227,20 +243,20 @@ private def close (facts : Array Fact) : MetaM (Array Fact) := do
     match f.cond with
     | .eq x y => add (add ks x) y
     | .mem x _ => add ks x
-  let mut fs := facts.foldl addFact #[]
+  let mut fs ← facts.foldlM addFact #[]
   for x in keys do
-    if let some f ← seed x then fs := addFact fs f
+    if let some f ← seed x then fs ← addFact fs f
     let neighbors ← links fs x
     for (a, ha) in neighbors do
       for (b, hb) in neighbors do
         if a != b && !(fs.any fun f => match f.cond with
             | .eq y z => (a == y && b == z) || (a == z && b == y)
             | _ => false) then
-          fs := addFact fs ⟨.eq a b, ← mkEqTrans (← mkEqSymm ha) hb⟩
+          fs ← addFact fs ⟨.eq a b, ← mkEqTrans (← mkEqSymm ha) hb⟩
   for f in fs do
     if let .mem x tags := f.cond then
       for (y, hy) in ← links fs x do
-        fs := addFact fs ⟨.mem y tags, ← mkAppM ``mem_of_eq #[← mkEqSymm hy, f.proof]⟩
+        fs ← addFact fs ⟨.mem y tags, ← mkAppM ``mem_of_eq #[← mkEqSymm hy, f.proof]⟩
   -- Constants already have their singleton fact wherever they occur. Keep the
   -- resulting memberships, not edges through constants or tautological facts.
   return fs.filter fun f => match f.cond with
@@ -273,6 +289,12 @@ mutual
 private partial def summarize (p h : Expr) : Gen (Array Fact) := do
   let args := p.getAppArgs
   if p.isAppOfArity ``And 2 then
+    if args[0]!.isAppOfArity ``Eq 3 && args[1]!.isAppOfArity ``HEq 4 &&
+        (args[1]!.getArg! 0).isAppOf ``LocalTransition then
+      let a := args[1]!.getAppArgs
+      let some l ← observation a[0]! a[1]! | throwError "expected left transition"
+      let some r ← observation a[2]! a[3]! | throwError "expected right transition"
+      return #[⟨.eq l r, ← mkAppM ``tag_of_pin #[h]⟩]
     let projArgs := args.map some |>.push (some h)
     let l ← summarize args[0]! (← mkAppOptM ``And.left projArgs)
     let r ← summarize args[1]! (← mkAppOptM ``And.right projArgs)
@@ -414,8 +436,8 @@ duplicate entries or the syntax of an `allowed` list. -/
 theorem exclusion_counts :
     let columns := FullProfile.stepBranches
     let misses := fun b => (inputs ++ messages).countP (fun t => decide (t ∉ allowed b))
-    columns.size = 433 ∧ (columns.filter fun b => misses b > 0).size = 68 ∧
-      columns.foldl (fun n b => n + misses b) 0 = 650 := by decide +kernel
+    columns.size = 433 ∧ (columns.filter fun b => misses b > 0).size = 183 ∧
+      columns.foldl (fun n b => n + misses b) 0 = 1780 := by decide +kernel
 
 /-- A local timeout cannot satisfy the commit-backing branch for the maximum
 of the old commit index and the newly committable index. -/

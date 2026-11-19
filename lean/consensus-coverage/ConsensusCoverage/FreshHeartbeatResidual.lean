@@ -444,7 +444,7 @@ private def sound := `ConsensusCoverage.FreshHeartbeatResidual.residualCertified
 
 private def compile : MetaM Unit := do
   let ps ← FreshHeartbeatPaths.fixedParams
-  let slots ← FreshHeartbeatPaths.slots ((← getConstInfo ``FreshHeartbeatPaths.residual_slots).type.getArg! 2)
+  let slots ← FreshHeartbeatPaths.slots (mkConst ``FreshHeartbeatPaths.residual)
   let ci ← getConstInfo ``SolvedWitnesses.dispatch
   let branches ← getConstInfoInduct ``Classes.StepBranch
   let arms := (ci.value!.beta ps).bindingBody!.getAppArgs.extract 2 (branches.ctors.length + 2)

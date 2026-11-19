@@ -307,13 +307,14 @@ private def certName := `ConsensusCoverage.FreshHeartbeatPaths.pathCertified
 private partial def slots (xs : Expr) : MetaM (List Nat) := do
   let xs ← whnf xs
   if xs.isAppOf ``List.nil then return []
-  unless xs.isAppOfArity ``List.cons 3 do throwError "expected literal residual slots"
-  let some n ← getNatValue? (xs.getArg! 1) | throwError "expected literal slot"
-  return n :: (← slots (xs.getArg! 2))
+  unless xs.isAppOfArity ``List.cons 3 do throwError "expected a list of residual branches"
+  let b ← whnf (xs.getArg! 1)
+  let some name := b.getAppFn.constName? | throwError "expected a branch constructor: {b}"
+  return (← getConstInfoCtor name).cidx :: (← slots xs.appArg!)
 
 private def compile : MetaM Unit := do
   let params ← fixedParams
-  let wanted ← slots ((← getConstInfo ``FreshHeartbeat.residual_slots).type.getArg! 2)
+  let wanted ← slots (mkConst ``FreshHeartbeat.residual)
   let .defnInfo ci ← getConstInfo ``SolvedWitnesses.dispatch | throwError "expected solved dispatcher"
   let branches := (← getConstInfoInduct ``Classes.StepBranch).ctors.toArray
   let arms := (ci.value.beta params).bindingBody!.getAppArgs.extract 2 (branches.size + 2)
@@ -420,25 +421,12 @@ public theorem negative (b : Classes.StepBranch) (resolved : b ∉ residual)
 /-- Verified census of the combined reader on this action, not an upper
 bound on the number of true bits. -/
 public theorem counts :
-    stepBranches.size = 433 ∧ residual.length = 167 ∧ positives.length = 15 ∧
-      (stepBranches.toList.filter fun b => read? (.step b) == some false).length = 251 :=
+    stepBranches.size = 433 ∧ residual.length = 56 ∧ positives.length = 15 ∧
+      (stepBranches.toList.filter fun b => read? (.step b) == some false).length = 362 :=
   by decide +kernel
 
 public theorem positive_slots : positives.map (·.ctorIdx) =
     [48, 49, 71, 72, 73, 104, 105, 114, 146, 174, 186, 187, 248, 272, 274] :=
-  by decide +kernel
-
-public theorem residual_slots : residual.map (·.ctorIdx) =
-    [50, 108, 109, 113, 131, 132, 133, 134, 148, 149, 150, 152, 154, 155, 166, 168, 169, 170,
-     171, 172, 173, 181, 182, 183, 184, 212, 213, 214, 215, 221, 222, 223, 224, 225, 228, 229,
-     230, 231, 232, 233, 250, 251, 273, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285,
-     286, 287, 295, 296, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317,
-     318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330, 331, 332, 333, 346, 347,
-     348, 349, 354, 355, 356, 357, 358, 359, 360, 361, 362, 363, 364, 365, 366, 367, 368, 369,
-     370, 371, 372, 373, 374, 375, 376, 377, 378, 379, 380, 381, 382, 383, 384, 385, 386, 387,
-     388, 389, 390, 391, 392, 393, 394, 395, 396, 397, 398, 399, 400, 401, 402, 403, 404, 405,
-     406, 407, 408, 409, 410, 411, 412, 413, 414, 417, 418, 419, 420, 421, 422, 423, 424, 425,
-     426, 429, 430, 431, 432] :=
   by decide +kernel
 
 end ConsensusCoverage.FreshHeartbeatPaths

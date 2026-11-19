@@ -105,6 +105,17 @@ public theorem gate_sound (s : Step)
     (List.all_eq_true.mp forward e h)⟩
   exact logs
 
+public theorem evidence_of_negatives (s : Step)
+    (grant : label s (.step .grantFactsBefore_grant_inr) = false)
+    (commit : label s (.step .commitChains_step_committed_inr) = false) :
+    evidence s.cfg s.before s.after s.past = true := by
+  apply Bool.and_eq_true_iff.mpr
+  constructor
+  · cases h : GrantFrontier.noNewGrant s.after (s.before :: s.past) with
+    | false => exact Bool.noConfusion (grant.symm.trans (GrantFrontier.fresh_implies_grant_arm s h))
+    | true => rfl
+  · simpa only [Bool.not_eq_false'] using (CommitKeys.fresh_answer s).trans commit
+
 /-- Four negative proof answers suffice on *any* successful action, even a
 delivery or a step taken after an election. -/
 public theorem gate_of_four (s : Step)
@@ -125,13 +136,7 @@ public theorem gate_of_four (s : Step)
   have subset : s.after.network.all s.before.network.contains = true := by
     simpa [ReducedQuestions.answer, ReducedQuestions.answerFrom, ReducedQuestions.freshPayloads,
       List.all_eq_true, List.any_eq_false] using queue
-  have noGrant : GrantFrontier.noNewGrant s.after (s.before :: s.past) = true := by
-    cases h : GrantFrontier.noNewGrant s.after (s.before :: s.past) with
-    | false => exact Bool.noConfusion (grant.symm.trans (GrantFrontier.fresh_implies_grant_arm s h))
-    | true => rfl
-  have noCommit : CommitKeys.noNew (s.cfg.min?.getD 0) s.after (s.before :: s.past) = true := by
-    simpa only [Bool.not_eq_false'] using (CommitKeys.fresh_answer s).trans commit
-  simp [gate, test, evidence, made, (GuardedDomain.View.old_post ok).mp old, subset, noGrant, noCommit]
+  simp [gate, test, made, (GuardedDomain.View.old_post ok).mp old, subset, evidence_of_negatives s grant commit]
 
 /-- Total slice membership: a failing gate refutes the all-false signature;
 there is no need to evaluate the other 429 coordinates. -/

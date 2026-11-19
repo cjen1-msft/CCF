@@ -240,8 +240,8 @@ same step would miss this distinction.
 [An upper cover](../consensus-coverage/ConsensusCoverage/ActionCover.lean)
 reconstructs every full label from a leader row, the kinds of fresh messages,
 and the remaining answers not ruled out for the recorded event. Depending on
-the event, 348 to 385 bits remain free in this construction. The cover has
-fewer than `2^396` entries, down from `2^457` unrestricted answer vectors.
+the event, 237 to 302 bits remain free in this construction. The cover has
+fewer than `2^313` entries, down from `2^457` unrestricted answer vectors.
 It includes impossible combinations and can represent the same label more
 than once; its size is not a coverage target.
 
@@ -277,11 +277,13 @@ receiving the proposal at the term-zero node is another such delivery (`11 -> 11
 
 **Exact nonzero slice: three full labels have the fresh-nomination signature.**
 [Seven step answers](../consensus-coverage/ConsensusCoverage/NominationProfile.lean)
-are true and the other 426 are false. This happens when a primary nominates a
-successor, the proposal is new to the queue, and the proof log stays stable
-under the checked conditions. [The converse and witnesses](../consensus-coverage/ConsensusCoverage/NominationWitnesses.lean)
-cover *any* recorded action with these 433 answers: its endpoint must stay
-`10`, `11`, or `01`, and each is reachable. The two nomination fixtures hit
+are true and the other 426 are false **if and only if** the recorded action
+is a nomination, an envelope is new to the queue, and no new vote grant or
+committed prefix appears. This test decides membership on every validated
+action. Calling the nomination helper as part of an append is not enough:
+the positive summary-input answer requires the recorded input itself.
+[The table and witnesses](../consensus-coverage/ConsensusCoverage/NominationWitnesses.lean)
+show its endpoint stays `10`, `11`, or `01`, and each is reachable. The two nomination fixtures hit
 **3/3**. In the first, repeating the nomination before delivery instead hits
 the all-false `10 -> 10` label. In the second, delivery removes the first
 proposal, allowing the same primary to send a fresh one after the backup
@@ -318,8 +320,8 @@ simplifies all 433 predicates with a proof in both directions but does not decid
 the remaining existential questions.
 
 [Event support](../consensus-coverage/ConsensusCoverage/EventSupport.lean)
-automatically rules out 650 combinations of recorded action kind and proof
-question across 68 of the 433 step questions. It uses 12 action kinds: five
+automatically rules out 1,780 combinations of recorded action kind and proof
+question across 183 of the 433 step questions. It uses 12 action kinds: five
 local input constructors and seven delivered message constructors. On a
 validated replay these excluded answers must be false; a non-excluded answer
 still needs a witness. This count is not a transition coverage denominator.
