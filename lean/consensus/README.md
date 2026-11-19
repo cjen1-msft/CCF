@@ -237,6 +237,20 @@ prefix makes the next eligible on the following nomination. A third
 nomination adds nothing. Counting all nominations with unchanged nodes as the
 same step would miss this distinction.
 
+[Unchanged node records preserve all twelve state answers](../consensus-coverage/ConsensusCoverage/BackingStutter.lean):
+they cannot establish the *first* committed key. Any new key on such a step
+must use older backing. There can be no gap in a chain of delayed commits:
+if an action adds no key, [the next node-preserving action cannot add one either](../consensus-coverage/ConsensusCoverage/ConsecutiveStutter.lean).
+
+[Repeating the same local input](../consensus-coverage/ConsensusCoverage/RepeatedInput.lean)
+at the same node is an exact full-label case. If the first input leaves node
+records unchanged, the repeat sends no new envelope value and establishes no
+new vote grant. **All 433 step answers are false if and only if the repeat adds
+no committed key.** If the first input also added no key, exactly three full
+labels are possible across all such repeats, one per state context; all three
+have nomination witnesses. Before the first certificate, a repeated nomination
+can only have the all-false `10 -> 10` label.
+
 [An upper cover](../consensus-coverage/ConsensusCoverage/ActionCover.lean)
 reconstructs every full label from a leader row, the kinds of fresh messages,
 and the remaining answers not ruled out for the recorded event. Depending on
