@@ -201,12 +201,15 @@ collision splits one of those keys, so any full table has at least six entries.
 The nine history-resolved rows are not themselves a lower bound of nine distinct
 *sets* of profiles.
 
-**Full recorded-action denominator: at least 14; exact count unknown.**
+**Full recorded-action denominator: at least 15; exact count unknown.**
 The [recorded-action specification](../consensus-coverage/ConsensusCoverage/ActionProfile.lean)
 assigns an initialized step exactly one 457-answer vector. All 433 step
 questions use [the same, unique context for the recorded action](../consensus-coverage/ConsensusCoverage/ActionContext.lean).
-The 14 witnessed leader rows therefore distinguish at least 14 full vectors
-over all deployments; 15 is an upper bound only for the leader projection.
+The leader rows do not suffice: from the same three-node initial state, stepping
+down the primary and initializing an empty backup agree on all 27 leader-projection
+answers but disagree on a generated log-entry question. [This split](../consensus-coverage/ConsensusCoverage/LeaderRefinement.lean)
+proves that at least 14 full vectors occur on multi-node deployments and at
+least 15 across all deployments. The full model has no proved exact count.
 Unlike the snapshot-pair specification, these rows are individual vectors, not
 sets of vectors. A [pinned step answer](../consensus-coverage/ConsensusCoverage/PinnedClasses.lean)
 implies the corresponding closed answer, not necessarily the converse.
