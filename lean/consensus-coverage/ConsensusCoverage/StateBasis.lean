@@ -3,6 +3,7 @@ module
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
+public meta import Lean
 public import ConsensusCoverage.Classes
 import all ConsensusCoverage.Classes
 import all Consensus.Proofs.SafetyInvariant
@@ -42,7 +43,25 @@ public def Backing (f : Frame) : Prop :=
   | _ => backing
 
 section
+-- Reach names are numbered across the whole proof, including unrelated step
+-- classes. Read the path from the named state predicate, not a global index.
+meta section
+open Lean Elab Term
+elab "firstReach% " id:ident : term => do
+  let ci ← getConstInfo (← realizeGlobalConstNoOverload id)
+  let some (.const n _) := ci.value!.find? (fun
+    | .const (.str pre name) _ => pre == `ConsensusCoverage.Classes && name.startsWith "reach_"
+    | _ => false) | throwErrorAt id "no generated reach path in {id}"
+  elabTerm (mkIdent n) none
+end
+
 variable [Config.InitialConfiguration]
+
+private abbrev nilPath (f : Frame) : Prop :=
+  (firstReach% state_signatureIndex_le_maxCommittableIndex_values_nil) f
+
+private abbrev signedPath (f : Frame) (log : List Entry) (i : Nat) : Prop :=
+  (firstReach% state_signatureIndex_le_maxCommittableIndex_mem_cons_inl) f log i
 
 private theorem left_inl (f : Frame) :
     state_committed_logs_comparable_left_backed_inl f ↔ Zero f := by
@@ -77,7 +96,7 @@ private theorem right_inl (f : Frame) :
 -- The two nodes and the two committed parts in these generated telescopes
 -- need not differ. One backing witness suffices, using prefix reflexivity.
 private theorem backing_pair (f : Frame) :
-    (reach_3102 f ↔ Backing f) ∧
+    (state_committed_logs_comparable_right_backed_inr f ↔ Backing f) ∧
     (state_committed_logs_comparable_committed_comparable_inl f ↔ Backing f) ∧
     (state_committed_logs_comparable_committed_comparable_inr f ↔ Backing f) := by
   refine ⟨?_, ?_, ?_⟩ <;>
@@ -95,19 +114,20 @@ private theorem backing_pair (f : Frame) :
          w, w.1, w.2, w.2.1, ?_⟩
        first | exact w.2.2 | exact ⟨w.2.2, List.prefix_refl part⟩)
 
-private theorem reach_3105_iff (f : Frame) : reach_3105 f ↔ Backing f := by
-  simp only [reach_3105, reach_3104, reach_3103, and_true, (backing_pair f).1]
+private theorem nilPath_iff (f : Frame) : nilPath f ↔ Backing f := by
+  change (((state_committed_logs_comparable_right_backed_inr f ∧ True) ∧ True) ∧ True) ↔ _
+  simp only [and_true, (backing_pair f).1]
 
-private theorem backing_of_reach_3107 {f : Frame} {log : List Entry} {index : Nat}
-    (h : reach_3107 f log index) : Backing f := by
+private theorem backing_of_path {f : Frame} {log : List Entry} {index : Nat}
+    (h : signedPath f log index) : Backing f := by
   obtain ⟨_, _, ⟨⟨reached, _⟩, _⟩, _⟩ := h
   exact (backing_pair f).1.mp reached
 
--- The generated telescope at `reach_3106` has forgotten the link between
+-- The generated telescope has forgotten the link between
 -- these log arguments and the backing witnesses. The singleton is sufficient.
 private def signedLog : List Entry := [⟨0, .signature⟩]
 
-private theorem signed_reach (f : Frame) (h : Backing f) : reach_3107 f signedLog 1 :=
+private theorem signed_reach (f : Frame) (h : Backing f) : signedPath f signedLog 1 :=
   ⟨signedLog, signedLog, ⟨⟨(backing_pair f).1.mpr h, trivial⟩, signedLog, signedLog, rfl, rfl⟩,
     List.prefix_refl _, rfl, rfl, rfl⟩
 
@@ -135,42 +155,42 @@ public theorem ctx_iff_decode (f : Frame) (b : StateBranch) :
   | signatureIndex_le_maxCommittableIndex_values_nil =>
     constructor
     · rintro (⟨reached, _⟩ | ⟨_, _, reached, _⟩)
-      · exact (reach_3105_iff f).mp reached
-      · exact backing_of_reach_3107 reached
+      · exact (nilPath_iff f).mp reached
+      · exact backing_of_path reached
     · intro h
-      exact Or.inl ⟨(reach_3105_iff f).mpr h, trivial⟩
+      exact Or.inl ⟨(nilPath_iff f).mpr h, trivial⟩
   | signatureIndex_le_maxCommittableIndex_values_cons =>
     constructor
     · rintro (⟨_, _, reached, _⟩ | ⟨_, _, reached, _⟩) <;>
-        exact backing_of_reach_3107 reached
+        exact backing_of_path reached
     · intro h
       exact Or.inl ⟨signedLog, 1, signed_reach f h, [], by simp, rfl, Nat.le_refl _,
         best_le_fold signedLog⟩
   | signatureIndex_le_maxCommittableIndex_mem_cons_inl =>
     constructor
     · rintro ⟨_, _, reached, _⟩
-      exact backing_of_reach_3107 reached
+      exact backing_of_path reached
     · intro h
       exact ⟨signedLog, 1, signed_reach f h, 1, [], by simp, by simp, rfl, rfl, Nat.le_refl _,
         best_le_fold signedLog⟩
   | signatureIndex_le_maxCommittableIndex_signature_pos =>
     constructor
     · rintro ⟨_, _, reached, _⟩
-      exact backing_of_reach_3107 reached
+      exact backing_of_path reached
     · intro h
       exact ⟨signedLog, 1, signed_reach f h, 1, [], by simp, 0, by simp, rfl, by simp, 1, [],
         Nat.le_refl, rfl, rfl, Nat.le_refl _, rfl⟩
   | signatureIndex_le_maxCommittableIndex_signature_neg =>
     constructor
     · rintro ⟨_, _, reached, _⟩
-      exact backing_of_reach_3107 reached
+      exact backing_of_path reached
     · intro h
       exact ⟨signedLog, 1, signed_reach f h, 1, [], by simp, 0, by simp, rfl, by simp, 0, [],
         Nat.le_refl, by decide, rfl, Nat.le_refl _, rfl⟩
   | signatureIndex_le_maxCommittableIndex_mem_cons_inr =>
     constructor
     · rintro ⟨_, _, reached, _⟩
-      exact backing_of_reach_3107 reached
+      exact backing_of_path reached
     · intro h
       exact ⟨signedLog, 1, signed_reach f h, 0, [1], fun best _ => Nat.le_max_right best 1,
         by simp, by simp, rfl, Nat.le_refl _, best_le_fold signedLog⟩

@@ -3184,7 +3184,7 @@ private theorem Keeps.nominateSuccessor (state : NodeState)
 private theorem CommitFrontier.act {state : NodeState}
     (frontier : CommitFrontier state) (input : Input)
     : Keeps CommitFrontier (Model.Node.act caps self state input) := by
-  split_rel input := (cases input) with
+  split_rel input := (cases whichInput : input) with
   | append =>
       rename_i entries
       unfold Model.Node.act Model.Node.appendBatch
@@ -3204,7 +3204,7 @@ private theorem CommitFrontier.act {state : NodeState}
       exact Keeps.seq' fun _ => Keeps.seq' fun _ => Keeps.pure' frontier.withSent
   | timeout =>
       rename_i kind
-      split_rel kind := (cases kind) with
+      split_rel kind := (cases whichKind : kind) with
       | election =>
           unfold Model.Node.act Model.Node.startElection
           exact Keeps.seq' fun _ => frontier.becomePreVoteCandidate caps self
@@ -5074,10 +5074,10 @@ private theorem appendBatch_summary (self : NodeID) (state : NodeState)
 private theorem summary (self : NodeID) (before : NodeState) (event : Event)
     : Sends (fun after sent => Summary self before event after sent)
         (Model.Node.step (Capabilities.record self) self before event) := by
-  split_rel event := (cases event) with
+  split_rel event := (cases whichEvent : event) with
   | internal =>
       rename_i input
-      split_rel input := (cases input) with
+      split_rel input := (cases whichInput : input) with
       | append =>
           rename_i contents
           exact appendBatch_summary self before contents
@@ -5086,7 +5086,7 @@ private theorem summary (self : NodeID) (before : NodeState) (event : Event)
           exact sendEntries_summary self before destination endIndex
       | timeout =>
           rename_i kind
-          split_rel kind := (cases kind) with
+          split_rel kind := (cases whichKind : kind) with
           | election => exact startElection_summary self before
           | checkQuorum => exact checkQuorum_summary self before _
       | nominateSuccessor => exact nominate_summary self before
@@ -5095,7 +5095,7 @@ private theorem summary (self : NodeID) (before : NodeState) (event : Event)
           exact initAsBackup_summary self before entries
   | receive =>
       rename_i source message
-      split_rel message := (cases message) with
+      split_rel message := (cases whichMessage : message) with
       | appendEntriesRequest =>
           rename_i request
           exact appendEntriesRequest_summary self before source request
