@@ -274,20 +274,20 @@ private def selectPacket (replay : ReplayState) (source destination : NodeID)
 /-- Run one model action, recording the envelopes it queues. -/
 private def ReplayState.run (replay : ReplayState) (header : Header)
     (action : Model.Action) (name : String)
-    : Except String ReplayState := do
+    : Except String (ReplayState × Option Model.Action) := do
   let some state := Model.networkStep header.bootstrap replay.state action
   | throw s!"disabled model action '{name}'"
   -- A step appends the acting node's sends to the network left after any delivery.
   let pending := replay.state.network.length - if action matches .deliver _ then 1 else 0
-  return { state, queued := replay.queued ++ state.network.drop pending }
+  return ({ state, queued := replay.queued ++ state.network.drop pending }, some action)
 
 /-- Observations never change model state or repair a disabled action. -/
-def runInstruction (header : Header) (replay : ReplayState) (instruction : Instruction)
-    : Except String ReplayState := do
+private def resolveInstruction (header : Header) (replay : ReplayState) (instruction : Instruction)
+    : Except String (ReplayState × Option Model.Action) := do
   match instruction with
   | .observeNodeState node expected _ =>
       observeState header node expected replay
-      return replay
+      return (replay, none)
   | .observeSends sends _ =>
       let mut queued := replay.queued
       for send in sends do
@@ -301,7 +301,7 @@ def runInstruction (header : Header) (replay : ReplayState) (instruction : Instr
         let target := header.declared[envelope.target]?.getD (toString envelope.target)
         throw
           s!"model queued {(messageJson envelope.payload).compress} to '{target}' with no native send"
-      return { replay with queued := [] }
+      return ({ replay with queued := [] }, none)
   | .action (step@(.local node input)) _ =>
       let node ← header.nodeId node
       match input with
@@ -338,6 +338,10 @@ def runInstruction (header : Header) (replay : ReplayState) (instruction : Instr
       | throw s!"no node has a committed signature at {index} in term {view}"
       replay.run header (.local joiner (.initAsBackup (source.log.take index))) step.name
 
+def runInstruction (header : Header) (replay : ReplayState) (instruction : Instruction)
+    : Except String ReplayState :=
+  Prod.fst <$> resolveInstruction header replay instruction
+
 structure Result where
   instructions : Nat
   actions : Nat
@@ -346,8 +350,8 @@ deriving Repr, BEq
 
 /-- Observe each enabled model action exactly once, including stutters. Read-only native
 observations still have to pass; they do not create extra model steps. -/
-def foldActions {α : Type} (header : Header) (instructions : Array Instruction) (acc : α)
-    (observe : α → Model.State → Model.State → α) : Except String (Result × α) := do
+def foldRecordedActions {α : Type} (header : Header) (instructions : Array Instruction) (acc : α)
+    (observe : α → Model.State → Model.Action → Model.State → α) : Except String (Result × α) := do
   unless !header.declared.isEmpty
           && header.declared.all (!·.isEmpty)
           && header.declared.eraseDups == header.declared do
@@ -365,18 +369,23 @@ def foldActions {α : Type} (header : Header) (instructions : Array Instruction)
   let mut acc := acc
   for instruction in instructions, index in [:instructions.size] do
     let before := state.state
-    state ←
-      (runInstruction header state instruction).mapError
+    let (next, action) ←
+      (resolveInstruction header state instruction).mapError
         fun error =>
           s!"instruction {index + 1} at {instruction.origin.label}: {error}"
-    if let .action .. := instruction then
+    state := next
+    if let some action := action then
       actions := actions + 1
-      acc := observe acc before state.state
+      acc := observe acc before action state.state
   return ({
     instructions := instructions.size,
     actions,
     observations := instructions.size - actions
   }, acc)
+
+def foldActions {α : Type} (header : Header) (instructions : Array Instruction) (acc : α)
+    (observe : α → Model.State → Model.State → α) : Except String (Result × α) :=
+  foldRecordedActions header instructions acc fun x s _ t => observe x s t
 
 def replay (header : Header) (instructions : Array Instruction) : Except String Result :=
   Prod.fst <$> foldActions header instructions () (fun _ _ _ => ())
