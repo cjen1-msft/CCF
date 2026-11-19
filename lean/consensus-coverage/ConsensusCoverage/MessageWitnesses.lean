@@ -8,6 +8,7 @@ public import ConsensusCoverage.LeaderCoverage
 public import ConsensusCoverage.ReducedQuestions
 import all ConsensusCoverage.FrontierWitnesses
 import all ConsensusCoverage.LeaderCoverage
+import all ConsensusCoverage.LeaderRefinement
 import all ConsensusCoverage.LeaderWitnesses
 import all ConsensusCoverage.ReducedQuestions
 
@@ -144,20 +145,36 @@ public theorem occurs {k : Nat} (mem : k ∈ keys) :
   · obtain ⟨s, _, key⟩ := multi_occurs (List.mem_eraseDups.mpr h : k ∈ multiKeys)
     exact ⟨s, key⟩
 
-/-- Every list covering the full reachable action labels contains at least thirty entries. -/
-public theorem full_lower_bound (rows : List Profile) (complete : ∀ s, label s ∈ rows) :
-    30 ≤ rows.length := by
-  rw [← count.2]
-  exact projected_lower_bound project count.1 (fun _ => occurs) complete
+-- Neither step sends a fresh message; their generated log-entry answers differ.
+private theorem split {rows : List Profile} {ks : List Nat} (distinct : ks.Nodup)
+    (covered : ∀ k ∈ ks, ∃ p ∈ rows, project p = k)
+    (multi : ∀ s : Step, LeaderCoverage.MultiNode s.nodes → label s ∈ rows) :
+    ks.length < rows.length := by
+  let d := LeaderRefinement.down
+  let b := LeaderRefinement.backup
+  apply LeaderRefinement.split_bound (project := project) distinct covered
+    (multi d ⟨0, by decide, 1, by decide, by decide⟩)
+    (multi b ⟨0, by decide, 1, by decide, by decide⟩)
+  · intro same
+    exact Bool.noConfusion (LeaderRefinement.down_yes.symm.trans ((congrFun same _).trans LeaderRefinement.backup_no))
+  · rw [project_eq, project_eq]
+    decide +kernel
 
-/-- The bound remains at least twenty-nine when only multi-node deployments are required. -/
+/-- Thirty witnessed projected keys, and a collision on a full log-entry question. -/
+public theorem full_lower_bound (rows : List Profile) (complete : ∀ s, label s ∈ rows) :
+    31 ≤ rows.length := by
+  have h := split count.1 (rows := rows) (fun k hk => by
+    obtain ⟨s, eq⟩ := occurs hk
+    exact ⟨_, complete s, eq⟩) (fun s _ => complete s)
+  simpa only [count.2, Nat.lt_iff_add_one_le] using h
+
+/-- Twenty-nine projected keys and the same collision occur on multi-node deployments. -/
 public theorem multi_lower_bound (rows : List Profile)
     (complete : ∀ s, LeaderCoverage.MultiNode s.nodes → label s ∈ rows) :
-    29 ≤ rows.length := by
-  have sub : multiKeys ⊆ rows.map project := by
-    intro k hk
+    30 ≤ rows.length := by
+  have h := split multi_count.1 (rows := rows) (fun k hk => by
     obtain ⟨s, multi, key⟩ := multi_occurs hk
-    exact List.mem_map.mpr ⟨label s, complete s multi, key⟩
-  simpa only [multi_count.2, List.length_map] using multi_count.1.length_le_of_subset sub
+    exact ⟨_, complete s multi, key⟩) complete
+  simpa only [multi_count.2, Nat.lt_iff_add_one_le] using h
 
 end ConsensusCoverage.MessageWitnesses

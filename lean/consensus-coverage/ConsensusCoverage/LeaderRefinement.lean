@@ -100,12 +100,14 @@ public theorem strict : ∃ s t : Step, LeaderCoverage.MultiNode s.nodes ∧ Lea
   · intro same
     exact Bool.noConfusion (down_yes.symm.trans ((congrFun same _).trans backup_no))
 
-private theorem split_bound {keys : List LeaderWitnesses.Key} (distinct : keys.Nodup)
-    {rows : List FullProfile.Profile} (covered : ∀ k ∈ keys, ∃ p ∈ rows, ActionFrontier.project p = k)
+/-- A witnessed collision gives one more full label than the distinct projected keys. -/
+public theorem split_bound {α : Type} {project : FullProfile.Profile → α} {keys : List α}
+    (distinct : keys.Nodup)
+    {rows : List FullProfile.Profile} (covered : ∀ k ∈ keys, ∃ p ∈ rows, project p = k)
     {p q : FullProfile.Profile} (hp : p ∈ rows) (hq : q ∈ rows) (ne : p ≠ q)
-    (same : ActionFrontier.project p = ActionFrontier.project q) : keys.length < rows.length := by
+    (same : project p = project q) : keys.length < rows.length := by
   classical
-  have sub : keys ⊆ (rows.erase p).map ActionFrontier.project := by
+  have sub : keys ⊆ (rows.erase p).map project := by
     intro k hk
     obtain ⟨r, hr, rfl⟩ := covered k hk
     by_cases eq : r = p
@@ -120,7 +122,7 @@ private theorem split_bound {keys : List LeaderWitnesses.Key} (distinct : keys.N
 public theorem multi_lower_bound {rows : List FullProfile.Profile}
     (complete : ∀ s : Step, LeaderCoverage.MultiNode s.nodes → label s ∈ rows) : 14 ≤ rows.length := by
   obtain ⟨s, t, ms, mt, same, ne⟩ := strict
-  have h := split_bound LeaderCoverage.multi_count.1 (rows := rows) (fun k hk => by
+  have h := split_bound (project := ActionFrontier.project) LeaderCoverage.multi_count.1 (rows := rows) (fun k hk => by
     obtain ⟨u, mu, eq⟩ := (LeaderCoverage.multi_exact k).mp hk
     exact ⟨_, complete u mu, eq⟩) (complete s ms) (complete t mt) ne same
   simpa only [LeaderCoverage.multi_count.2, Nat.lt_iff_add_one_le] using h
@@ -128,7 +130,7 @@ public theorem multi_lower_bound {rows : List FullProfile.Profile}
 public theorem full_lower_bound {rows : List FullProfile.Profile}
     (complete : ∀ s : Step, label s ∈ rows) : 15 ≤ rows.length := by
   obtain ⟨s, t, _, _, same, ne⟩ := strict
-  have h := split_bound LeaderWitnesses.table_count.1 (rows := rows) (fun k hk => by
+  have h := split_bound (project := ActionFrontier.project) LeaderWitnesses.table_count.1 (rows := rows) (fun k hk => by
     obtain ⟨cfg, ns, x, y, past, a, run, ran, rfl⟩ := LeaderWitnesses.table_occurs hk
     let u : Step := ⟨cfg, ns, x, past, a, y, run, ran⟩
     exact ⟨_, complete u, ActionFrontier.project_eq u⟩) (complete s) (complete t) ne same
