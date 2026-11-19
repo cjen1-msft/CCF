@@ -4,7 +4,7 @@
 import ConsensusCoverage.StateCoverage
 import ConsensusCoverage.FrontierWitnesses
 import ConsensusCoverage.LeaderCoverage
-import ConsensusCoverage.ReplayAnswers
+import ConsensusCoverage.CaptureBounds
 import Consensus.Replay.Reduction
 
 open Consensus Consensus.Replay ConsensusCoverage
@@ -13,6 +13,7 @@ private structure Score where
   states : List StateCoverage.Row := []
   edges : List FrontierRows.Row := []
   multiEdges : Option (List LeaderWitnesses.Key) := none
+  rows : List CaptureBounds.Row := []
   quiet : List StateCoverage.Row := []
   quietUnknown : Nat := 0
   past : List Model.State := []
@@ -26,10 +27,11 @@ private def visit (cfg : CCF.Finset Nat) (score : Score) (s : Model.State) (a : 
   let past := s :: score.past
   let e := ReplayAnswers.read cfg s a t score.past
   let edge := e.key.1
-  let quiet := ReplayAnswers.quiet? e
+  let (row, quiet) := CaptureBounds.read e
   { states := record score.states (edge.zeroAfter, edge.backedAfter),
     edges := record score.edges edge,
     multiEdges := score.multiEdges.map fun seen => record seen e.key,
+    rows := row :: score.rows,
     quiet := if quiet == some true then record score.quiet (edge.zeroBefore, edge.backedBefore) else score.quiet,
     quietUnknown := score.quietUnknown + quiet.isNone.toNat,
     past }
@@ -110,6 +112,10 @@ def main : List String → IO Unit
     unless LeaderCoverage.multiTable.all (· ∈ keys) do throw <| IO.userError "incomplete multi-node witnesses"
   | "trace" :: file :: more => do
     let scores ← (file :: more).mapM fun path => fromCapture path start visit
+    let rows := scores.reverse.flatMap Score.rows
+    let lower := (CaptureBounds.select rows).length
+    let count := if lower == rows.length then s!"exactly {lower}" else s!"{lower} to {rows.length}"
+    IO.println s!"{count} distinct full proof labels in these captures (global denominator unknown)"
     report (scores.flatMap Score.states) (scores.flatMap Score.edges)
     let multi := scores.filterMap Score.multiEdges
     if multi.isEmpty then IO.println "multi-node leader rows: not applicable (no multi-node capture)"

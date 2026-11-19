@@ -174,7 +174,7 @@ Score saved native captures from the repository root:
 
 ```sh
 WS=$(python3 lean/relevance/scripts/workspace.py consensus-coverage)
-lake -d "$WS/consensus-coverage" build ConsensusCoverage.LeaderCoverage ConsensusCoverage.ReplayAnswers Consensus.Replay.Reduction
+lake -d "$WS/consensus-coverage" build ConsensusCoverage.LeaderCoverage ConsensusCoverage.CaptureBounds Consensus.Replay.Reduction
 reader="$PWD/lean/consensus-coverage/scripts/proof-coverage.lean"
 lake -d "$WS/consensus-coverage" env lean --run "$reader" check
 lake -d "$WS/consensus-coverage" env lean --run "$reader" trace lean/consensus/replay/fixtures/valid/replication.ndjson
@@ -193,6 +193,15 @@ respectively, in nine model actions. On the multi-node leader table, six model
 schedules hit **13/13**, and the replication capture hits **5/13**. Singleton
 captures do not contribute to this score. None of these scores uses the full
 transition denominator.
+
+`trace` also counts distinct **full** labels within the supplied captures.
+It reports a range when the count is not determined. The [lower-bound proof](../consensus-coverage/ConsensusCoverage/CaptureBounds.lean)
+counts actions together only when each pair disagrees on a known answer; a
+`?` never distinguishes two actions. The upper bound is the number of validated
+actions. The two heartbeat fixtures together hit **exactly seven distinct full
+labels**. Replication hits **eight to nine**: only the two AppendEntries
+responses (actions 6 and 9) are not yet distinguished. These counts describe the
+captures, not the global reachable table.
 
 **Full state-pair denominator: at least six; exact count unknown.** [The full specification](../consensus-coverage/ConsensusCoverage/FullProfile.lean)
 uses all 457 generated answers (12 before, 433 about the step, 12 after).

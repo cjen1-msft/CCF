@@ -129,10 +129,12 @@ public theorem read_unconditional (s : Step) {b : Classes.StepBranch} (mem : b �
 
 /-- Membership in the three-row all-false slice. One positive bit excludes
 the whole row; an unknown bit is not evidence that the action belongs. -/
-public def quiet? (e : Evidence) : Option Bool :=
-  if e.inert then some true else
-  let bits := stepBranches.toList.map fun b => answer e (.step b)
+public def quietFrom (inert : Bool) (atQuestion : Question → Option Bool) : Option Bool :=
+  if inert then some true else
+  let bits := stepBranches.toList.map fun b => atQuestion (.step b)
   if some true ∈ bits then some false else if none ∈ bits then none else some true
+
+public def quiet? (e : Evidence) : Option Bool := quietFrom e.inert (answer e)
 
 public theorem quiet?_sound (s : Step) {v : Bool}
     (known : quiet? (read s.cfg s.before s.act s.after s.past) = some v) :
@@ -140,7 +142,7 @@ public theorem quiet?_sound (s : Step) {v : Bool}
   rw [SignedQuiet.exact, and_iff_right (show Realized (label s) from ⟨s, rfl⟩)]
   let e := read s.cfg s.before s.act s.after s.past
   change quiet? e = some v at known
-  unfold quiet? at known
+  unfold quiet? quietFrom at known
   split at known
   · rename_i inert
     cases known
