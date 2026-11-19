@@ -4,6 +4,7 @@
 import ConsensusCoverage.StateCoverage
 import ConsensusCoverage.FrontierWitnesses
 import ConsensusCoverage.LeaderCoverage
+import ConsensusCoverage.ReplayAnswers
 import Consensus.Replay.Reduction
 
 open Consensus Consensus.Replay ConsensusCoverage
@@ -55,15 +56,32 @@ private def reportLeaders (edges : List LeaderWitnesses.Key) : IO Unit := do
     (state profiles + 3 leader questions); missing: \
     {if missing.isEmpty then "none" else String.intercalate " " (missing.map key)}"
 
-private def fromCapture (file : String) : IO Score := do
+private def fromCapture {α : Type} (file : String) (start : CCF.Finset Nat → Model.State → α)
+    (visit : CCF.Finset Nat → α → Model.State → Model.Action → Model.State → α) : IO α := do
   let records ← readLog file
   let result := do
     let (events, declared) ← prepareEvents (← records)
     let r ← reduce events declared
-    foldActions r.header r.instructions (start r.header.bootstrap r.header.initial) (visit r.header.bootstrap)
+    foldRecordedActions r.header r.instructions (start r.header.bootstrap r.header.initial) (visit r.header.bootstrap)
   let (counts, score) ← IO.ofExcept (result.mapError fun error => s!"{file}: {error}")
   IO.println s!"{file}: {counts.actions} validated model actions, {counts.observations} replay observations"
   return score
+
+private def printAnswers (file : String) : IO Unit := do
+  let init := fun (_ : CCF.Finset Nat) (_ : Model.State) => (([] : List Model.State), (#[] : Array String))
+  let (_, lines) ← fromCapture file init fun cfg (past, lines) s a t =>
+    let e := ReplayAnswers.read cfg s a t past
+    let sectionBits (bs : Array FullProfile.Question) := String.ofList <| bs.toList.map fun q =>
+      match ReplayAnswers.answer e q with
+      | some true => '1'
+      | some false => '0'
+      | none => '?'
+    let pre := sectionBits (FullProfile.stateBranches.map FullProfile.Question.pre)
+    let step := sectionBits (FullProfile.stepBranches.map FullProfile.Question.step)
+    let post := sectionBits (FullProfile.stateBranches.map FullProfile.Question.post)
+    (s :: past, lines.push s!"{lines.size + 1}\t{repr e.tag}\t{pre}\t{step}\t{post}")
+  IO.println "action\tkind\tpre[12]\tstep[433]\tpost[12]   (1=true, 0=false, ?=unknown)"
+  for line in lines do IO.println line
 
 def main : List String → IO Unit
   | ["check"] => do
@@ -76,9 +94,10 @@ def main : List String → IO Unit
     reportLeaders keys
     unless LeaderCoverage.multiTable.all (· ∈ keys) do throw <| IO.userError "incomplete multi-node witnesses"
   | "trace" :: file :: more => do
-    let scores ← (file :: more).mapM fromCapture
+    let scores ← (file :: more).mapM fun path => fromCapture path start (fun cfg acc s _ t => visit cfg acc s t)
     report (scores.flatMap Score.states) (scores.flatMap Score.edges)
     let multi := scores.filterMap Score.multiEdges
     if multi.isEmpty then IO.println "multi-node leader rows: not applicable (no multi-node capture)"
     else reportLeaders multi.flatten
-  | _ => throw <| IO.userError "usage: proof-coverage.lean check | trace FILE.ndjson [FILE.ndjson ...]"
+  | ["answers", file] => printAnswers file
+  | _ => throw <| IO.userError "usage: proof-coverage.lean check | trace FILE.ndjson [FILE.ndjson ...] | answers FILE.ndjson"
