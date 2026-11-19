@@ -7,6 +7,8 @@ public import ConsensusCoverage.ZeroRows
 public import ConsensusCoverage.CommitKeys
 import all ConsensusCoverage.ActionProfile
 import all ConsensusCoverage.CommitKeys
+public import ConsensusCoverage.GuardedDomain
+import all ConsensusCoverage.GuardedDomain
 import all ConsensusCoverage.InertProfile
 import all ConsensusCoverage.ProofContexts
 import all ConsensusCoverage.StateCoverage
@@ -75,43 +77,34 @@ public theorem label_eq_of_support (s : Step) (support : SameSupport s.before s.
     label s = diagonal (ProofContexts.answers (StateCoverage.read s.cfg s.before s.past)) :=
   StutterProfile.label_eq_of_support s support (stable s support.1 passes)
 
-/-- Completes the support check for nominations. On a validated nomination
-the node table cannot change, but a newly queued proposal would fail the
-queue check. This gate is not an enabledness test. -/
+/-- Compare queue membership, not order or multiplicity. On a validated
+action, only the actor can have changed its node record. -/
+@[expose] public def test (v : Option GuardedDomain.View) (s t : Model.State) (noNew : Bool) : Bool :=
+  v.any (fun x => !x.changed) && (t.network.all s.network.contains && s.network.all t.network.contains) &&
+    (s.nodes.all (fun (_, st) => st.votedFor.isNone) && noNew)
+
 @[expose] public def gate (cfg : FullProfile.Configuration) (before : Model.State) (a : Model.Action)
     (after : Model.State) (past : List Model.State) : Bool :=
-  match a with
-  | .local _ .nominateSuccessor => (after.network == before.network) && evidence cfg before after past
-  | _ => false
+  test (GuardedDomain.ofAction cfg before after past a) before after
+    (CommitKeys.noNew (cfg.min?.getD 0) after (before :: past))
 
-private theorem nominate_nodes {cfg ns before after src past}
-    (run : StateCoverage.Run cfg ns before past)
-    (ran : (transitionSystem cfg ns).step before (.local src .nominateSuccessor) = some after) :
-    after.nodes = before.nodes := by
-  letI : Config.InitialConfiguration := ⟨cfg⟩
-  obtain ⟨pre, post, outputs, found, acted, result⟩ := Concrete.step_local ran
-  obtain ⟨_, _, postEq, _, _⟩ := nominate_sends src pre _ _ _ acted
-  have distinct := (@StateCoverage.run_inv ‹_› _ _ _ run).distinct
-  have nodes : (before.nodes.map Prod.fst).Nodup := by
-    simpa only [StateCoverage.frame_current] using distinct
-  rw [result, postEq]
-  exact InertProfile.replace_eq nodes found
-
-/-- For a passing, successfully replayed nomination, return the whole
+/-- For a passing, successfully replayed action, return the whole
 457-coordinate label using only the pre-state answer key. -/
 public theorem gate_sound (s : Step)
     (passes : gate s.cfg s.before s.act s.after s.past = true) :
     label s = diagonal (ProofContexts.answers (StateCoverage.read s.cfg s.before s.past)) := by
-  cases action : s.act with
-  | deliver => simp [gate, action] at passes
-  | «local» node input =>
-    cases input <;> simp only [gate, action, Bool.false_eq_true] at passes
-    case nominateSuccessor =>
-      have ran := s.ran
-      rw [action] at ran
-      obtain ⟨net, quiet⟩ := Bool.and_eq_true_iff.mp passes
-      have queues := beq_iff_eq.mp net
-      exact label_eq_of_support s ⟨nominate_nodes s.run ran, fun e => queues ▸ Iff.rfl⟩ quiet
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  obtain ⟨v, made, ok⟩ := GuardedDomain.ofAction_matches s
+  simp only [gate, test, made, Option.any_some, Bool.not_eq_true', Bool.and_eq_true] at passes
+  obtain ⟨⟨unchanged, forward, backward⟩, logs⟩ := passes
+  have same := s.context.now_pre ((GuardedDomain.View.old_post ok).mpr unchanged)
+  change s.context.tr.post = s.context.tr.pre at same
+  have nodes : s.after.nodes = s.before.nodes := by
+    rw [← s.current_eq, s.context.tr.nodesEq, same]
+    exact InertProfile.replace_eq s.context.inv.distinct s.context.tr.found
+  apply label_eq_of_support s ⟨nodes, fun e => ⟨fun h => List.contains_iff_mem.mp
+    (List.all_eq_true.mp forward e h), fun h => List.contains_iff_mem.mp (List.all_eq_true.mp backward e h)⟩⟩
+  exact Bool.and_eq_true_iff.mpr logs
 
 private def appendResult (nodes : List NodeID) : Option Model.State :=
   (transitionSystem {0} nodes).step (StateCoverage.initial nodes)

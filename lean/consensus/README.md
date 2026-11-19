@@ -178,6 +178,9 @@ lake -d "$WS/consensus-coverage" build ConsensusCoverage.LeaderCoverage Consensu
 reader="$PWD/lean/consensus-coverage/scripts/proof-coverage.lean"
 lake -d "$WS/consensus-coverage" env lean --run "$reader" check
 lake -d "$WS/consensus-coverage" env lean --run "$reader" trace lean/consensus/replay/fixtures/valid/replication.ndjson
+lake -d "$WS/consensus-coverage" env lean --run "$reader" trace \
+  lean/consensus/replay/fixtures/valid/duplicate-heartbeat.ndjson \
+  lean/consensus/replay/fixtures/valid/signed-heartbeats.ndjson
 lake -d "$WS/consensus-coverage" env lean --run "$reader" answers lean/consensus/replay/fixtures/valid/replication.ndjson
 lake -d "$WS/consensus-coverage" env lean --run "$reader" answers lean/consensus/replay/fixtures/valid/duplicate-heartbeat.ndjson
 lake -d "$WS/consensus-coverage" env lean --run "$reader" columns
@@ -224,8 +227,13 @@ does not assume the action leaves the snapshot unchanged: removing the last
 zero commit index or establishing the first certificate forces a true step
 answer. [The converse](../consensus-coverage/ConsensusCoverage/SignedQuiet.lean)
 has initialized witnesses for all three: a duplicate heartbeat before backing
-exists and two nominations after a signed commit. This does not classify
-actions with a positive step answer.
+exists and two nominations after a signed commit. The two synthetic heartbeat
+captures above hit **3/3 of these full labels** in seven validated actions.
+In [the signed capture](replay/fixtures/valid/signed-heartbeats.ndjson),
+actions 3 and 5 resend the same queued heartbeat on opposite sides of backup
+initialization: first `11 -> 11`, then `01 -> 01`. `trace` reports confirmed
+labels separately from actions whose membership is undetermined. This score
+does not cover labels with a positive step answer.
 
 `answers` prints one row per validated action, in three bit strings: pre-state,
 step, post-state. `columns` names each bit in order. `1` and `0` are proved

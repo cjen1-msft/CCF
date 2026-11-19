@@ -8,10 +8,11 @@ public import ConsensusCoverage.CommitKeys
 public import ConsensusCoverage.DeltaSupport
 public import ConsensusCoverage.EventSupport
 public import ConsensusCoverage.GuardedQuestions
-public import ConsensusCoverage.InertProfile
 public import ConsensusCoverage.ReducedQuestions
+public import ConsensusCoverage.SignedQuiet
 import all ConsensusCoverage.ActionFrontier
 import all ConsensusCoverage.FrontierRows
+import all ConsensusCoverage.FullProfile
 import all ConsensusCoverage.GuardedQuestions
 import all ConsensusCoverage.Projection
 import all ConsensusCoverage.StutterProfile
@@ -32,11 +33,11 @@ public structure Evidence where
 
 public def read (cfg : Configuration) (s : Model.State) (a : Model.Action)
     (t : Model.State) (past : List Model.State) : Evidence :=
+  let view := GuardedDomain.ofAction cfg s t past a
+  let noNew := CommitKeys.noNew (cfg.min?.getD 0) t (s :: past)
   ⟨(FrontierRows.historyLabel cfg s t past, LeaderEffect.changedPrimary s t),
     EventSupport.actionTag a, ReducedQuestions.freshPayloads s t.network,
-    GuardedDomain.ofAction cfg s t past a,
-    !CommitKeys.noNew (cfg.min?.getD 0) t (s :: past),
-    InertProfile.gate s a, DeltaSupport.read s a t⟩
+    view, !noNew, SignedQuiet.test view s t noNew, DeltaSupport.read s a t⟩
 
 private def direct (k : FrontierRows.Row × Bool) (freshCommit : Bool) : Classes.StepBranch → Option Bool
   | .leader_led_leader_inr => some k.1.wonPrimary
@@ -92,7 +93,7 @@ public theorem sound (s : Step) (q : Question) {v : Bool}
         · rename_i excluded
           simp only [Bool.or_eq_true, decide_eq_true_eq] at excluded
           rcases excluded with (inert | tag) | delta
-          · exact (congrFun (InertProfile.gate_sound s inert) (.step b)).trans (Option.some.inj known)
+          · exact (congrFun (SignedQuiet.gate_sound s inert) (.step b)).trans (Option.some.inj known)
           · exact (EventSupport.label_false s b tag).trans (Option.some.inj known)
           · exact (DeltaSupport.label_false s b delta).trans (Option.some.inj known)
         · contradiction
@@ -125,5 +126,45 @@ public theorem read_unconditional (s : Step) {b : Classes.StepBranch} (mem : b �
     cases h : ReducedQuestions.read? s.before s.after b with
     | some _ => rfl
     | none => rcases leaderCol with rfl | rfl | rfl | rfl <;> rfl
+
+/-- Membership in the three-row all-false slice. One positive bit excludes
+the whole row; an unknown bit is not evidence that the action belongs. -/
+public def quiet? (e : Evidence) : Option Bool :=
+  if e.inert then some true else
+  let bits := stepBranches.toList.map fun b => answer e (.step b)
+  if some true ∈ bits then some false else if none ∈ bits then none else some true
+
+public theorem quiet?_sound (s : Step) {v : Bool}
+    (known : quiet? (read s.cfg s.before s.act s.after s.past) = some v) :
+    label s ∈ ZeroRows.table ↔ v = true := by
+  rw [SignedQuiet.exact, and_iff_right (show Realized (label s) from ⟨s, rfl⟩)]
+  let e := read s.cfg s.before s.act s.after s.past
+  change quiet? e = some v at known
+  unfold quiet? at known
+  split at known
+  · rename_i inert
+    cases known
+    exact ⟨fun _ => rfl, fun _ => congrArg Profile.step (SignedQuiet.gate_sound s inert)⟩
+  dsimp only at known
+  split at known
+  · rename_i pos
+    cases known
+    obtain ⟨b, _, bit⟩ := List.mem_map.mp pos
+    exact ⟨fun zero => (congrFun zero b).symm.trans (sound s (.step b) bit), Bool.noConfusion⟩
+  · rename_i noPos
+    split at known
+    · contradiction
+    · rename_i noUnknown
+      cases known
+      refine ⟨fun _ => rfl, fun _ => funext fun b => ?_⟩
+      have mem : b ∈ stepBranches.toList := by
+        rw [← step_get b]
+        exact Array.getElem_mem_toList ..
+      cases bit : answer e (.step b) with
+      | none => exact (noUnknown (List.mem_map.mpr ⟨b, mem, bit⟩)).elim
+      | some out =>
+        cases out
+        · exact sound s (.step b) bit
+        · exact (noPos (List.mem_map.mpr ⟨b, mem, bit⟩)).elim
 
 end ConsensusCoverage.ReplayAnswers

@@ -13,6 +13,8 @@ private structure Score where
   states : List StateCoverage.Row := []
   edges : List FrontierRows.Row := []
   multiEdges : Option (List LeaderWitnesses.Key) := none
+  quiet : List StateCoverage.Row := []
+  quietUnknown : Nat := 0
   past : List Model.State := []
 
 private def record [BEq α] (xs : List α) (x : α) := if xs.contains x then xs else x :: xs
@@ -20,24 +22,30 @@ private def record [BEq α] (xs : List α) (x : α) := if xs.contains x then xs 
 private def start (cfg : CCF.Finset Nat) (s : Model.State) : Score :=
   { states := [StateCoverage.read cfg s []], multiEdges := if s.nodes.length ≥ 2 then some [] else none }
 
-private def visit (cfg : CCF.Finset Nat) (score : Score) (s t : Model.State) : Score :=
+private def visit (cfg : CCF.Finset Nat) (score : Score) (s : Model.State) (a : Model.Action) (t : Model.State) : Score :=
   let past := s :: score.past
-  let edge := FrontierRows.historyLabel cfg s t score.past
+  let e := ReplayAnswers.read cfg s a t score.past
+  let edge := e.key.1
+  let quiet := ReplayAnswers.quiet? e
   { states := record score.states (edge.zeroAfter, edge.backedAfter),
     edges := record score.edges edge,
-    multiEdges := score.multiEdges.map fun seen => record seen (edge, LeaderEffect.changedPrimary s t),
+    multiEdges := score.multiEdges.map fun seen => record seen e.key,
+    quiet := if quiet == some true then record score.quiet (edge.zeroBefore, edge.backedBefore) else score.quiet,
+    quietUnknown := score.quietUnknown + quiet.isNone.toNat,
     past }
+
+private def stateKey (row : StateCoverage.Row) : String :=
+  String.ofList ([row.1, row.2].map fun b => if b then '1' else '0')
 
 private def report (states : List StateCoverage.Row) (edges : List FrontierRows.Row) : IO Unit := do
   let table := StateCoverage.activeTable
   let bits (xs : List Bool) := String.ofList (xs.map fun b => if b then '1' else '0')
-  let key (row : StateCoverage.Row) := bits [row.1, row.2]
   let edgeKey (r : FrontierRows.Row) :=
     bits [r.zeroBefore, r.backedBefore, r.wonPrimary, r.zeroAfter, r.backedAfter]
   unless states.all (· ∈ table) do throw <| IO.userError "unexpected state on a nonempty replay"
   let missing := table.filter (· ∉ states)
   IO.println s!"{table.length - missing.length}/{table.length} reachable nonempty state profiles; missing: \
-    {if missing.isEmpty then "none" else String.intercalate " " (missing.map key)}"
+    {if missing.isEmpty then "none" else String.intercalate " " (missing.map stateKey)}"
   unless edges.all (· ∈ FrontierRows.table) do throw <| IO.userError "unexpected projected step"
   let missing := FrontierRows.table.filter (· ∉ edges)
   IO.println s!"{FrontierRows.table.length - missing.length}/{FrontierRows.table.length} projected step rows \
@@ -101,10 +109,16 @@ def main : List String → IO Unit
     reportLeaders keys
     unless LeaderCoverage.multiTable.all (· ∈ keys) do throw <| IO.userError "incomplete multi-node witnesses"
   | "trace" :: file :: more => do
-    let scores ← (file :: more).mapM fun path => fromCapture path start (fun cfg acc s _ t => visit cfg acc s t)
+    let scores ← (file :: more).mapM fun path => fromCapture path start visit
     report (scores.flatMap Score.states) (scores.flatMap Score.edges)
     let multi := scores.filterMap Score.multiEdges
     if multi.isEmpty then IO.println "multi-node leader rows: not applicable (no multi-node capture)"
     else reportLeaders multi.flatten
+    let rows := scores.flatMap Score.quiet
+    let missing := StateCoverage.activeTable.filter (· ∉ rows)
+    IO.println s!"{StateCoverage.activeTable.length - missing.length}/{StateCoverage.activeTable.length} confirmed \
+      all-false step labels; not confirmed: \
+      {if missing.isEmpty then "none" else String.intercalate " " (missing.map stateKey)}; \
+      actions with undetermined slice membership: {(scores.map Score.quietUnknown).sum}"
   | ["answers", file] => printAnswers file
   | _ => throw <| IO.userError "usage: proof-coverage.lean check | trace FILE.ndjson [FILE.ndjson ...] | answers FILE.ndjson | columns"
