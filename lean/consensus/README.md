@@ -115,7 +115,7 @@ The current native Fluentd capture path and replay's assurance limits are docume
 
 ## Proof-derived coverage
 
-**State denominator: three profiles for nonempty clusters.** All twelve generated
+**State denominator during replay: three profiles for nonempty clusters.** All twelve generated
 state questions reduce to two facts: is any node's commit index zero, and does
 some node's committed prefix fit inside a commit certificate held by the proof?
 In that order the reachable keys are `10` (no backing yet), `11` (some node still
@@ -133,6 +133,18 @@ uses previous protocol snapshots, not proof witnesses. In particular, delivery o
 a signature to a quorum can establish backing before the leader receives the
 acknowledgment: testing whether any local commit index is positive would be wrong.
 
+**State denominator without history: four labels for nonempty clusters.** A single
+snapshot can admit `{10}`, `{11}`, `{01}`, or `{10,11}`. For the last label,
+[two initialized runs](../consensus-coverage/ConsensusCoverage/HistoryCollision.lean)
+reach identical protocol states, including the network queue, then take the same
+next action. In one run replication established a commit certificate before the
+election advanced; in the other it did not. The
+[snapshot table](../consensus-coverage/ConsensusCoverage/SnapshotStates.lean)
+has a witness for each label and proves that two snapshots get the same label
+if and only if they admit the same whole vectors of answers to all twelve state
+questions. An empty cluster adds only `{00}`. This table characterizes snapshots;
+the executable scorer below uses the actual replay history and counts three, not four.
+
 **Step denominator for these states plus the new-primary question: nine rows.**
 The [exact table](../consensus-coverage/ConsensusCoverage/FrontierWitnesses.lean)
 has six possible source/destination combinations. A new primary can occur within
@@ -144,7 +156,7 @@ Score saved native captures from the repository root:
 
 ```sh
 WS=$(python3 lean/relevance/scripts/workspace.py consensus-coverage)
-lake -d "$WS/consensus-coverage" build ConsensusCoverage.Projection Consensus.Replay.Reduction
+lake -d "$WS/consensus-coverage" build ConsensusCoverage.SnapshotStates Consensus.Replay.Reduction
 reader="$PWD/lean/consensus-coverage/scripts/proof-coverage.lean"
 lake -d "$WS/consensus-coverage" env lean --run "$reader" check
 lake -d "$WS/consensus-coverage" env lean --run "$reader" trace lean/consensus/replay/fixtures/valid/replication.ndjson
