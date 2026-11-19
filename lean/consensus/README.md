@@ -128,7 +128,10 @@ This is not a sample of the state questions. [The reduction](../consensus-covera
 covers every constructor of the generated state dispatcher. [`same_answers` and
 `exact`](../consensus-coverage/ConsensusCoverage/StateCoverage.lean) prove respectively
 that two initialized runs have the same key **if and only if** all twelve answers
-agree, and that every listed key occurs. The [certificate reader](../consensus-coverage/ConsensusCoverage/CommitMonitor.lean)
+agree, and that every listed key occurs. [`ProofContexts.exact_three`](../consensus-coverage/ConsensusCoverage/ProofContexts.lean)
+counts the full twelve-answer vectors directly: one run with voters and nodes
+both fixed to `{0,1,2}` visits all three. No other nonempty deployment adds a
+fourth vector. The [certificate reader](../consensus-coverage/ConsensusCoverage/CommitMonitor.lean)
 uses previous protocol snapshots, not proof witnesses. In particular, delivery of
 a signature to a quorum can establish backing before the leader receives the
 acknowledgment: testing whether any local commit index is positive would be wrong.
@@ -180,9 +183,12 @@ collision splits one of those keys, so any full table has at least six entries.
 The nine history-resolved rows are not themselves a lower bound of nine distinct
 *sets* of profiles.
 
-The specification is exact **for the generated predicates**. Each generated step
-predicate can existentially choose its own step context; it does not yet retain
-a shared action witness across all 433 questions. The shared extractor also
+The snapshot-pair specification is exact **for the generated closed predicates**.
+When the action is known, [its proof context is unique](../consensus-coverage/ConsensusCoverage/ActionContext.lean).
+The [action-specific dispatcher](../consensus-coverage/ConsensusCoverage/PinnedClasses.lean)
+uses this same context across all 433 step questions. It proves that a true
+action-specific answer implies the original closed predicate, not the converse.
+An exact count of the resulting reachable transition profiles is not known. The shared extractor also
 reports 54 unrecorded splits, 41 classified as protocol splits. Thus neither the
 finite-universe proof nor the nine-row theorem establishes that the extractor
 captures every distinction in the source safety proof.
