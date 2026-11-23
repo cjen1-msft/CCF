@@ -220,20 +220,28 @@ collision splits one of those keys, so any full table has at least six entries.
 The nine history-resolved rows are not themselves a lower bound of nine distinct
 *sets* of profiles.
 
-**Full recorded-action denominator: at least 49; at least 47 on multi-node deployments.**
+**Full recorded-action denominator: at least 139; at least 136 on multi-node deployments.**
 The [recorded-action specification](../consensus-coverage/ConsensusCoverage/ActionProfile.lean)
 assigns an initialized step exactly one 457-answer vector. All 433 step
 questions use [the same, unique context for the recorded action](../consensus-coverage/ConsensusCoverage/ActionContext.lean).
-[Twenty-two initialized schedules](../consensus-coverage/ConsensusCoverage/JointWitnesses.lean)
-take 121 successful steps. They distinguish 49 combinations of endpoint,
-leader, message, log and committed-prefix answers. Each difference is a
-difference in a full label; the schedules do not prove exhaustion. In
-particular, resending an already queued empty heartbeat and initializing an
-empty backup agree on the earlier 48-key projection. Only the latter changes
-the actor's record, so the rooted-log proof distinguishes them.
+The [explorer](../consensus-coverage/scripts/explore.lean) searches initialized
+schedules mechanically: breadth-first to depth three over five deployments,
+then 300 seeded random walks, 71,733 steps in all. It distinguishes two steps
+only by the 64 answers proved on every step (both endpoints and
+[40 step answers](../consensus-coverage/ConsensusCoverage/JointWitnesses.lean)).
+[Forty-seven of its schedules](../consensus-coverage/ConsensusCoverage/ExploredWitnesses.lean)
+(489 steps) are replayed in the kernel and give 139 distinct combinations.
+Each difference is a difference in a full label. The count was still growing
+when the search stopped: the last 50 walks added three. It measures search
+effort and the 64 answers compared, not the size of the table. The 22
+hand-written schedules alone give 49 and 47 with the same key.
 
-Two reconfiguration runs account for six more combinations than the previous
-20 schedules. In the three-node run, two successive nominations leave every
+```sh
+lake -d "$WS/consensus-coverage" env lean --run "$PWD/lean/consensus-coverage/scripts/explore.lean" \
+  --depth 3 --walks 300 --length 20 --seed 20261123 --every 50 --out /tmp/witnesses.lean.txt
+```
+
+In a three-node reconfiguration run, two successive nominations leave every
 node record unchanged, yet each establishes a new committed prefix. A
 certificate may use only backing from an earlier step: establishing one
 prefix makes the next eligible on the following nomination. A third
@@ -311,7 +319,7 @@ nor a committed prefix.** Each of the three pre-state contexts can send a new
 proposal or add no new envelope. All six have initialized nomination witnesses;
 [`exact_stable`](../consensus-coverage/ConsensusCoverage/NominationWitnesses.lean)
 proves that no seventh label occurs under those conditions. The six are already
-included in the lower bound of 49. The delayed-commit nominations above fall
+included in the lower bound. The delayed-commit nominations above fall
 outside this table.
 
 **Four to six full labels occur on delayed-commit nominations before any

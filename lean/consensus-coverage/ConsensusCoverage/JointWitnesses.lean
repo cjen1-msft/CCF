@@ -5,6 +5,7 @@ module
 
 public import ConsensusCoverage.MessageWitnesses
 import ConsensusCoverage.ActorLogRows
+import ConsensusCoverage.BackingRead
 import ConsensusCoverage.CommitKeys
 import all ConsensusCoverage.FrontierWitnesses
 import all ConsensusCoverage.GuardedDomain
@@ -16,8 +17,10 @@ import all ConsensusCoverage.PairWitnesses
 # Joint witnesses from initialized action schedules
 
 Refine the joint endpoint/leader/message key with the guarded questions,
-the actor's rooted-log case and the fresh committed-key question. Replay produces witnesses, not exclusions:
-the schedules need not enumerate all reachable actions.
+the actor's rooted-log cases and the three committed-key questions. The
+leader incumbent bit is determined by the two other leader bits; the two
+sorted-log bits agree with their rooted twins. Replay produces witnesses,
+not exclusions: the schedules need not enumerate all reachable actions.
 -/
 
 namespace ConsensusCoverage.JointWitnesses
@@ -30,14 +33,24 @@ public abbrev Key := Nat × Bool × List Bool
 
 public def project (p : Profile) : Key :=
   (MessageWitnesses.project p, p (.step .commitChains_step_committed_inr),
-    p (.step .rooted_now_after_inl) :: GuardedQuestions.covered.map fun b => p (.step b))
+    p (.step .rooted_now_after_inl) :: (GuardedQuestions.covered.map fun b => p (.step b)) ++
+      [p (.step .commitChains_step_backing_inl), p (.step .commitChains_step_backing_inr),
+        p (.step .rooted_post_log_inl)])
 
-private def read (s : Step) : Option Key := do
-  let view ← GuardedDomain.ofAction s.cfg s.before s.after s.past s.act
+/-- Read the joint key from raw model data. For an initialized successful
+step this always returns the projection of its full proof label. -/
+public def readKey (cfg : CCF.Finset NodeID) (before : Model.State)
+    (act : Model.Action) (after : Model.State) (past : List Model.State) : Option Key := do
+  let view ← GuardedDomain.ofAction cfg before after past act
   let bits ← GuardedQuestions.covered.mapM (GuardedQuestions.answer view)
-  let fresh := !CommitKeys.noNew (s.cfg.min?.getD 0) s.after (s.before :: s.past)
+  let backing := BackingRead.read (cfg.min?.getD 0) after (before :: past)
+  let fresh := backing.1 || backing.2
   let rooted ← ActorLogRows.read? view fresh .rooted_now_after_inl
-  return (MessageWitnesses.read s.cfg s.before s.after s.past, fresh, rooted :: bits)
+  let post ← ActorLogRows.read? view fresh .rooted_post_log_inl
+  return (MessageWitnesses.read cfg before after past, fresh, rooted :: bits ++ [backing.1, backing.2, post])
+
+private def read (s : Step) : Option Key :=
+  readKey s.cfg s.before s.act s.after s.past
 
 private theorem guard_bits (s : Step) (v : GuardedDomain.View)
     (view : GuardedDomain.ofAction s.cfg s.before s.after s.past s.act = some v)
@@ -56,32 +69,59 @@ private theorem guard_bits (s : Step) (v : GuardedDomain.View)
 private theorem read_eq (s : Step) : read s = some (project (label s)) := by
   obtain ⟨v, made, _⟩ := GuardedDomain.ofAction_matches s
   have rooted := ActorLogRows.at_step s (b := .rooted_now_after_inl) (by decide)
-  simp only [made, Option.bind_some, BackingRead.any_eq, CommitKeys.fresh_answer] at rooted
-  unfold read project
+  have post := ActorLogRows.at_step s (b := .rooted_post_log_inl) (by decide)
+  simp only [made, Option.bind_some, BackingRead.any_eq, CommitKeys.fresh_answer] at rooted post
+  unfold read readKey project
   rw [made]
-  simp only [Option.bind_eq_bind, Option.bind_some, guard_bits s v made _ (fun _ h => h),
-    ← MessageWitnesses.project_eq, CommitKeys.fresh_answer, rooted]
+  simp only [Option.bind_eq_bind, Option.bind_some, guard_bits s v made _ (fun _ h => h)]
+  rw [BackingRead.any_eq s, CommitKeys.fresh_answer s, rooted, post, ← MessageWitnesses.project_eq,
+    BackingRead.zero_answer, BackingRead.prior_answer]
   rfl
+
+public theorem readKey_eq (s : Step) :
+    readKey s.cfg s.before s.act s.after s.past = some (project (label s)) :=
+  read_eq s
 
 open FrontierRows
 
 -- The state-only frontier replay does not pass the recorded action to its
 -- observer. Here the resolved action is retained in each initialized Step.
-private def replay (r : Run) (s : Model.State) (past : List Model.State)
+private def replayUsing (resolve : Nat → Model.State → Command → Option Model.Action)
+    (r : Run) (s : Model.State) (past : List Model.State)
     (reach : StateCoverage.Run r.cfg r.nodes s past) :
     List Command → Option (List { w : Step // w.nodes = r.nodes })
   | [] => some []
   | cmd :: rest => do
-    let act ← cmd.resolve s
+    let act ← resolve past.length s cmd
     match ran : (transitionSystem r.cfg r.nodes).step s act with
     | none => none
     | some t =>
-      let tail ← replay r t (s :: past) (.step reach ran) rest
+      let tail ← replayUsing resolve r t (s :: past) (.step reach ran) rest
       return ⟨⟨r.cfg, r.nodes, s, past, act, t, reach, ran⟩, rfl⟩ :: tail
+
+private def replay (r : Run) (s : Model.State) (past : List Model.State)
+    (reach : StateCoverage.Run r.cfg r.nodes s past) :
+    List Command → Option (List { w : Step // w.nodes = r.nodes }) :=
+  replayUsing (fun _ s cmd => cmd.resolve s) r s past reach
 
 private def recorded (r : Run) (valid : r.valid) :
     Option (List { w : Step // w.nodes = r.nodes }) :=
   replay r (initial r) [] (.initial (initialized r valid)) r.schedule
+
+-- `Command.resolve` picks the first envelope on a route. Discovery can pick
+-- any queued value, so allow sparse overrides (schedule index, queue index).
+-- The route is still checked and the actual model must accept the delivery.
+private def recordedAt (r : Run) (valid : r.valid) (choices : List (Nat × Nat)) :
+    Option (List { w : Step // w.nodes = r.nodes }) :=
+  if choices.isEmpty then recorded r valid else
+    let resolve := fun i (s : Model.State) (cmd : Command) =>
+      match choices.lookup i, cmd with
+      | none, _ => cmd.resolve s
+      | some j, .deliver a b => do
+        let e ← s.network[j]?
+        if e.source == a && e.target == b then some (.deliver e) else none
+      | some _, .input .. => none
+    replayUsing resolve r (initial r) [] (.initial (initialized r valid)) r.schedule
 
 private def observed (r : Run) (valid : r.valid) : List Key :=
   ((recorded r valid).getD []).filterMap fun w => read w.val
