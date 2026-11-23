@@ -421,8 +421,8 @@ public theorem negative (b : Classes.StepBranch) (resolved : b ∉ residual)
 /-- Verified census of the combined reader on this action, not an upper
 bound on the number of true bits. -/
 public theorem counts :
-    stepBranches.size = 433 ∧ residual.length = 56 ∧ positives.length = 15 ∧
-      (stepBranches.toList.filter fun b => read? (.step b) == some false).length = 362 :=
+    stepBranches.size = 433 ∧ residual.length = 33 ∧ positives.length = 15 ∧
+      (stepBranches.toList.filter fun b => read? (.step b) == some false).length = 385 :=
   by decide +kernel
 
 public theorem positive_slots : positives.map (·.ctorIdx) =

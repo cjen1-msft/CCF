@@ -328,8 +328,8 @@ committed prefix, with no new vote grant and no election recorded so far;
 [the test](../consensus-coverage/ConsensusCoverage/DelayedNominationRead.lean)
 is executable on every replayed action. [All 433 step answers are
 determined](../consensus-coverage/ConsensusCoverage/DelayedNomination.lean):
-22 are always true, three more are true exactly when the proposal is new to
-the queue, and the remaining 408 are false. Both endpoints are `11` or both
+23 are always true, three more are true exactly when the proposal is new to
+the queue, and the remaining 407 are false. Both endpoints are `11` or both
 are `01`. Each of the four labels has an initialized witness and `exact`
 proves there is no fifth. A single-node deployment cannot be in the family,
 and [the primary always has a successor](../consensus-coverage/ConsensusCoverage/DelayedNominationSuccessor.lean).
@@ -390,10 +390,20 @@ local input constructors and seven delivered message constructors. On a
 validated replay these excluded answers must be false; a non-excluded answer
 still needs a witness. This count is not a transition coverage denominator.
 
-[Delta support](../consensus-coverage/ConsensusCoverage/DeltaSupport.lean) certifies
-additional negative answers when a step introduces no new queue value, node record,
-election or commit evidence. These tests apply to 111 columns. The nine actions
-in the replication fixture still have unknown step bits; none is a complete row.
+[Evidence support](../consensus-coverage/ConsensusCoverage/EvidenceSupport.lean)
+names, for every one of the 433 step questions, the fresh proof evidence
+without which its answer must be false. There are seven kinds: a new node
+record, a new envelope value, and a new fact in each of the five ghost
+relations (seen logs, vote grants, elections, leader logs, committed
+prefixes). Whether each kind is fresh is decided exactly on every replayed
+action (`fresh_iff`). 106 questions need one particular kind and 108 need
+one of two; 135 can be triggered by any of the seven. On the replication
+fixture this lowers the unknown answers per action from 196-261 to 164-254
+of 433. Typical appends and deliveries introduce several kinds of evidence
+at once, so exclusion alone does not complete their labels.
+[Delta support](../consensus-coverage/ConsensusCoverage/DeltaSupport.lean)
+remains for eleven questions that a stronger commit test excludes: no
+signature anywhere rules out every certificate, not only new keys.
 
 These counts concern the generated questions. The shared extractor also
 reports 54 unrecorded splits, 41 classified as protocol splits. Thus neither the

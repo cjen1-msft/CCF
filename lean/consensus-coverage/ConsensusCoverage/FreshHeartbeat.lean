@@ -311,8 +311,8 @@ public theorem positives_eq : positives =
   by decide +kernel
 
 public theorem counts :
-    stepBranches.size = 433 ∧ residual.length = 118 ∧ positives.length = 6 ∧
-      (stepBranches.toList.filter fun b => read? (.step b) == some false).length = 309 :=
+    stepBranches.size = 433 ∧ residual.length = 79 ∧ positives.length = 6 ∧
+      (stepBranches.toList.filter fun b => read? (.step b) == some false).length = 348 :=
   by decide +kernel
 
 public theorem residual_iff (b : Classes.StepBranch) :

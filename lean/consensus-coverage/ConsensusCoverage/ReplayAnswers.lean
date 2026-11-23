@@ -9,6 +9,7 @@ public import ConsensusCoverage.ActorLogRows
 public import ConsensusCoverage.BackingRead
 public import ConsensusCoverage.CommitKeys
 public import ConsensusCoverage.DeltaSupport
+public import ConsensusCoverage.EvidenceSupport
 public import ConsensusCoverage.EventSupport
 public import ConsensusCoverage.GuardedQuestions
 public import ConsensusCoverage.NominationProfile
@@ -35,19 +36,24 @@ public structure Evidence where
   ackAdvance : Option Bool
   nomination : Bool
   inert : Bool
+  support : EvidenceSupport.Evidence
   delta : DeltaSupport.Evidence
 
 public def read (cfg : Configuration) (s : Model.State) (a : Model.Action)
     (t : Model.State) (past : List Model.State) : Evidence :=
   let view := GuardedDomain.ofAction cfg s t past a
-  let backing := BackingRead.read (cfg.min?.getD 0) t (s :: past)
-  let stable := GrantFrontier.noNewGrant t (s :: past) && !(backing.1 || backing.2)
+  let bootstrap := cfg.min?.getD 0
+  let backing := BackingRead.read bootstrap t (s :: past)
+  let commit := backing.1 || backing.2
+  let noNewGrant := GrantFrontier.noNewGrant t (s :: past)
+  let stable := noNewGrant && !commit
   let tag := EventSupport.actionTag a
   let fresh := ReducedQuestions.freshPayloads s t.network
   ⟨(FrontierRows.historyLabel cfg s t past, LeaderEffect.changedPrimary s t),
     tag, fresh, view, backing, AckAdvance.read? s a t,
     decide (tag = .nominateSuccessor) && stable && fresh.any (fun _ => true),
-    SignedQuiet.test view s t stable, DeltaSupport.read s a t⟩
+    SignedQuiet.test view s t stable, EvidenceSupport.readFrom s t past bootstrap fresh view noNewGrant commit,
+    DeltaSupport.read s a t⟩
 
 private def direct (k : FrontierRows.Row × Bool) (backing : Bool × Bool) (ackAdvance : Option Bool)
     (view : Option GuardedDomain.View) : Classes.StepBranch → Option Bool
@@ -69,7 +75,8 @@ public def answer (e : Evidence) : Question → Option Bool
   | .step b => if e.nomination then some (NominationRows.bits b) else
       (e.view.bind (GuardedQuestions.answer · b)).orElse fun _ =>
       (ReducedQuestions.readFrom? e.fresh b).orElse fun _ => (direct e.key e.backing e.ackAdvance e.view b).orElse fun _ =>
-      if e.inert || decide (e.tag ∉ EventSupport.allowed b) || DeltaSupport.excluded e.delta b then some false else none
+      if e.inert || decide (e.tag ∉ EventSupport.allowed b) ||
+          EvidenceSupport.excluded e.support b || DeltaSupport.excluded e.delta b then some false else none
 
 private theorem direct_sound (s : Step) (b : Classes.StepBranch) {v : Bool}
     (h : direct (ActionFrontier.project (label s))
@@ -127,9 +134,11 @@ public theorem sound (s : Step) (q : Question) {v : Bool}
         split at known
         · rename_i excluded
           simp only [Bool.or_eq_true, decide_eq_true_eq] at excluded
-          rcases excluded with (inert | tag) | delta
+          rcases excluded with ((inert | tag) | support) | delta
           · exact (congrFun (SignedQuiet.gate_sound s ((gates s).2 ▸ inert)) (.step b)).trans (Option.some.inj known)
           · exact (EventSupport.label_false s b tag).trans (Option.some.inj known)
+          · rw [BackingRead.any_eq s] at support
+            exact (EvidenceSupport.label_false s b support).trans (Option.some.inj known)
           · exact (DeltaSupport.label_false s b delta).trans (Option.some.inj known)
         · contradiction
 
