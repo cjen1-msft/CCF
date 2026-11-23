@@ -248,6 +248,20 @@ most frequent open families were appends, election timeouts, pre-vote
 requests and sends. Closing a family means deciding those answers for every
 step in it, not only for the steps explored.
 
+[`FamilyPrune.generate`](../consensus-coverage/ConsensusCoverage/FamilyPrune.lean)
+produces the negative half of a closure for any family: given an action
+kind, the stale evidence kinds and optional facts about the handler, it
+certifies which step answers must be false. It reproduces the ten possible
+answers of the fresh-nomination family exactly. How much it removes depends
+on the family. For an acknowledgment that changes only the leader's record
+(`open:appendEntriesResponse:0100000`, two actions of the replication
+capture) 206 of 433 answers survive, because a changed node record re-enters
+most node invariants. [That family](../consensus-coverage/ConsensusCoverage/AckRead.lean)
+splits exactly into retry, accepted without commit advance, and accepted
+with advance; six more answers are decided and [four distinct labels are
+witnessed](../consensus-coverage/ConsensusCoverage/AckWitnesses.lean), but
+180 answers per action remain undecided, so the family is still open.
+
 **Full recorded-action denominator: at least 187; at least 184 on multi-node deployments.**
 The [recorded-action specification](../consensus-coverage/ConsensusCoverage/ActionProfile.lean)
 assigns an initialized step exactly one 457-answer vector. All 433 step
