@@ -1,0 +1,270 @@
+{
+  "endpoints": {
+    "/custom_auth": {
+      "get": {
+        "js_module": "logging.js",
+        "js_function": "custom_auth",
+        "redirection_strategy": "none",
+        "authn_policies": ["no_auth"],
+        "mode": "readonly",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      }
+    },
+    "/multi_auth": {
+      "post": {
+        "js_module": "logging.js",
+        "js_function": "multi_auth",
+        "redirection_strategy": "to_primary",
+        "authn_policies": [
+          {
+            "all_of": ["user_cert", "jwt", "user_cose_sign1"]
+          },
+          "user_cert",
+          "member_cert",
+          "any_cert",
+          "jwt",
+          "user_cose_sign1",
+          "no_auth"
+        ],
+        "mode": "readwrite",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      }
+    },
+    "/log/private": {
+      "get": {
+        "js_module": "logging.js",
+        "js_function": "get_private",
+        "redirection_strategy": "none",
+        "authn_policies": ["jwt", "user_cert"],
+        "mode": "readonly",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      },
+      "post": {
+        "js_module": "logging.js",
+        "js_function": "post_private",
+        "redirection_strategy": "to_primary",
+        "authn_policies": ["jwt", "user_cert"],
+        "mode": "readwrite",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      },
+      "delete": {
+        "js_module": "logging.js",
+        "js_function": "delete_private",
+        "redirection_strategy": "to_primary",
+        "authn_policies": ["jwt", "user_cert"],
+        "mode": "readwrite",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      }
+    },
+    "/log/private/backup": {
+      "get": {
+        "js_module": "logging.js",
+        "js_function": "get_private",
+        "redirection_strategy": "to_backup",
+        "authn_policies": ["jwt", "user_cert"],
+        "mode": "readonly",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      }
+    },
+    "/log/private/admin_only": {
+      "post": {
+        "js_module": "logging.js",
+        "js_function": "post_private_admin_only",
+        "redirection_strategy": "to_primary",
+        "authn_policies": ["user_cert"],
+        "mode": "readwrite",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      }
+    },
+    "/log/private/anonymous": {
+      "post": {
+        "js_module": "logging.js",
+        "js_function": "post_private",
+        "redirection_strategy": "to_primary",
+        "authn_policies": ["no_auth"],
+        "mode": "readwrite",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      }
+    },
+    "/log/private/all": {
+      "delete": {
+        "js_module": "logging.js",
+        "js_function": "clear_private",
+        "redirection_strategy": "to_primary",
+        "authn_policies": ["jwt", "user_cert"],
+        "mode": "readwrite",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      }
+    },
+    "/log/private/count": {
+      "get": {
+        "js_module": "logging.js",
+        "js_function": "count_private",
+        "redirection_strategy": "none",
+        "authn_policies": ["jwt", "user_cert"],
+        "mode": "readonly",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      }
+    },
+    "/log/private/historical": {
+      "get": {
+        "js_module": "logging.js",
+        "js_function": "get_historical",
+        "redirection_strategy": "none",
+        "authn_policies": ["jwt", "user_cert"],
+        "mode": "historical",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      }
+    },
+    "/log/private/historical_receipt": {
+      "get": {
+        "js_module": "logging.js",
+        "js_function": "get_historical_with_receipt",
+        "redirection_strategy": "none",
+        "authn_policies": ["jwt", "user_cert"],
+        "mode": "historical",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      }
+    },
+    "/log/private/historical/range": {
+      "get": {
+        "js_module": "logging.js",
+        "js_function": "get_historical_range",
+        "redirection_strategy": "none",
+        "authn_policies": ["jwt", "user_cert"],
+        "mode": "readonly",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      }
+    },
+    "/log/private/prefix_cert": {
+      "post": {
+        "js_module": "logging.js",
+        "js_function": "post_private_prefix_cert",
+        "redirection_strategy": "to_primary",
+        "authn_policies": ["jwt", "user_cert"],
+        "mode": "readwrite",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      }
+    },
+    "/log/public": {
+      "get": {
+        "js_module": "logging.js",
+        "js_function": "get_public",
+        "redirection_strategy": "none",
+        "authn_policies": ["jwt", "user_cert"],
+        "mode": "readonly",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      },
+      "post": {
+        "js_module": "logging.js",
+        "js_function": "post_public",
+        "redirection_strategy": "to_primary",
+        "authn_policies": ["jwt", "user_cert"],
+        "mode": "readwrite",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      },
+      "delete": {
+        "js_module": "logging.js",
+        "js_function": "delete_public",
+        "redirection_strategy": "to_primary",
+        "authn_policies": ["jwt", "user_cert"],
+        "mode": "readwrite",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      }
+    },
+    "/log/public/backup": {
+      "get": {
+        "js_module": "logging.js",
+        "js_function": "get_public",
+        "redirection_strategy": "to_backup",
+        "authn_policies": ["jwt", "user_cert"],
+        "mode": "readonly",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      }
+    },
+    "/log/public/all": {
+      "delete": {
+        "js_module": "logging.js",
+        "js_function": "clear_public",
+        "redirection_strategy": "to_primary",
+        "authn_policies": ["jwt", "user_cert"],
+        "mode": "readwrite",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      }
+    },
+    "/log/public/count": {
+      "get": {
+        "js_module": "logging.js",
+        "js_function": "count_public",
+        "redirection_strategy": "none",
+        "authn_policies": ["jwt", "user_cert"],
+        "mode": "readonly",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      }
+    },
+    "/log/public/historical": {
+      "get": {
+        "js_module": "logging.js",
+        "js_function": "get_historical_public",
+        "redirection_strategy": "none",
+        "authn_policies": ["jwt", "user_cert"],
+        "mode": "historical",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      }
+    },
+    "/log/public/historical_receipt": {
+      "get": {
+        "js_module": "logging.js",
+        "js_function": "get_historical_public_with_receipt",
+        "redirection_strategy": "none",
+        "authn_policies": ["jwt", "user_cert"],
+        "mode": "historical",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      }
+    },
+    "/log/public/historical/range": {
+      "get": {
+        "js_module": "logging.js",
+        "js_function": "get_historical_range_public",
+        "redirection_strategy": "none",
+        "authn_policies": ["jwt", "user_cert"],
+        "mode": "readonly",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      }
+    },
+    "/log/private/raw_text/{id}": {
+      "post": {
+        "js_module": "logging.js",
+        "js_function": "post_private_raw_text",
+        "redirection_strategy": "to_primary",
+        "authn_policies": ["jwt", "user_cert"],
+        "mode": "readwrite",
+        "openapi": {},
+        "interpreter_reuse": { "key": "singleton_interpreter" }
+      }
+    }
+  }
+}

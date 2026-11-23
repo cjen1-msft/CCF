@@ -1,0 +1,25 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the Apache 2.0 License.
+#pragma once
+
+#include "ccf/ds/json.h"
+#include "ccf/ds/unit_strings.h"
+#include "ccf/service/consensus_type.h"
+
+namespace ccf::consensus
+{
+  struct Configuration
+  {
+    ccf::ds::TimeString message_timeout = {"100ms"};
+    ccf::ds::TimeString election_timeout = {"5000ms"};
+    size_t max_uncommitted_tx_count = 10000;
+
+    bool operator==(const Configuration&) const = default;
+    bool operator!=(const Configuration&) const = default;
+  };
+
+  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Configuration);
+  DECLARE_JSON_REQUIRED_FIELDS(Configuration);
+  DECLARE_JSON_OPTIONAL_FIELDS(
+    Configuration, message_timeout, election_timeout, max_uncommitted_tx_count);
+}

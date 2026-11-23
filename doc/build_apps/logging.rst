@@ -1,0 +1,46 @@
+Logging
+=======
+
+CCF-generated log records are written to stdout at every severity, including ``fail`` and ``fatal``.
+The ``fatal`` severity label alone does not mean that the node will terminate or that the message will be written to stderr.
+CCF writes a flushed diagnostic to stderr when a fatal path terminates the node or process; recoverable errors and ordinary log records remain on stdout.
+
+This contract covers diagnostics produced by CCF itself.
+Applications and dependencies may write directly to stderr, and runtime-generated diagnostics such as assertion failures, uncaught C++ exceptions, or Rust panic hooks may also appear there.
+Those outputs are outside CCF's guarantee and must not contain confidential data.
+The experimental :doc:`Rust SDK <rust_api>` does not expose the CCF logging API, so output from Rust's ``print!`` and ``eprint!`` macros is visible to the host and must not contain confidential data.
+
+To add your own lines to the node's output you should use the ``CCF_APP_*`` macros defined in ``ccf/ds/logger.h``:
+
+.. code-block:: cpp
+
+    #include "ccf/ds/logger.h"
+
+    int x = 5;
+    CCF_APP_INFO("x is currently {}", x);
+
+Applications written in JavaScript and TypeScript can produce similar log lines using standard functions ``console.log``, ``console.info``, ``console.warn``, and ``console.error``:
+
+.. code-block:: js
+
+    x = 5
+    console.info(`x is ${x}`)
+
+Either approach will produce a line in the node's stdout like::
+
+    2022-07-12T12:34:56.626262Z        0   [info ][app] ../src/my_app/my_app.cpp:42    | x is 5
+
+These logging functions do several things:
+
+- Variable substitution. See `libfmt <https://fmt.dev/latest/>`_ for more details of the formatting syntax used in C++
+- Declare the severity of the entry. CCF defines 5 levels (``trace``, ``debug``, ``info``, ``fail``, and ``fatal``), and production nodes will generally ignore entries below ``info``
+- Prefix formatted metadata. The produced log line will include a timestamp, the name and line number where the line was produced, and an ``[app]`` tag
+- Write directly to stdout through the framework logger
+
+CCF bundles the header-only C++ interface from `fmt 12.2.1 <https://github.com/fmtlib/fmt/releases/tag/12.2.1>`_.
+Applications using fmt directly should include ``<fmt/format.h>`` for ``fmt::format`` rather than relying on ``<fmt/core.h>`` to include it, and ``<fmt/std.h>`` for ``std::byte`` formatting.
+The ``CCF_APP_*`` logging macros remain available through ``ccf/ds/logger.h``.
+
+.. note:: The app's logging entries will be interleaved (line-by-line) with the framework's logging messages. Filter for entries containing ``[app]`` to extract only application log lines.
+
+.. note:: Since these logs are produced during execution, they will generally only appear on a single node and not every replica. They may also log information about uncommitted or re-executed transactions, as they are emitted independently of transaction commit.
