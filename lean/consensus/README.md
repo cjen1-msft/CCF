@@ -239,26 +239,31 @@ append, two of AppendEntries delivery, acknowledgment, backup initialization,
 and send). The two heartbeat captures have 3 of 7 actions in closed
 families; the two nomination captures 5 of 9.
 
-**Full recorded-action denominator: at least 139; at least 136 on multi-node deployments.**
+**Full recorded-action denominator: at least 187; at least 184 on multi-node deployments.**
 The [recorded-action specification](../consensus-coverage/ConsensusCoverage/ActionProfile.lean)
 assigns an initialized step exactly one 457-answer vector. All 433 step
 questions use [the same, unique context for the recorded action](../consensus-coverage/ConsensusCoverage/ActionContext.lean).
 The [explorer](../consensus-coverage/scripts/explore.lean) searches initialized
-schedules mechanically: breadth-first to depth three over five deployments,
-then 300 seeded random walks, 71,733 steps in all. It distinguishes two steps
-only by the 64 answers proved on every step (both endpoints and
+schedules mechanically, breadth-first and by seeded random walks, optionally
+continuing from given schedule prefixes. It distinguishes two steps only by
+the 64 answers proved on every step (both endpoints and
 [40 step answers](../consensus-coverage/ConsensusCoverage/JointWitnesses.lean)).
-[Forty-seven of its schedules](../consensus-coverage/ConsensusCoverage/ExploredWitnesses.lean)
-(489 steps) are replayed in the kernel and give 139 distinct combinations.
-Each difference is a difference in a full label. The count was still growing
-when the search stopped: the last 50 walks added three. It measures search
-effort and the 64 answers compared, not the size of the table. The 22
-hand-written schedules alone give 49 and 47 with the same key.
+Two runs scored 96,735 steps. [Seventy-four of their schedules](../consensus-coverage/ConsensusCoverage/ExploredWitnesses.lean)
+(918 steps) are replayed in the kernel and give 187 distinct combinations.
+Each difference is a difference in a full label. Neither run reached a
+plateau: the second was still adding about three keys per hundred walks. The
+number measures search effort and the 64 answers compared, not the size of
+the table. The 22 hand-written schedules alone give 49 and 47 with the same key.
 
 ```sh
 lake -d "$WS/consensus-coverage" env lean --run "$PWD/lean/consensus-coverage/scripts/explore.lean" \
   --depth 3 --walks 300 --length 20 --seed 20261123 --every 50 --out /tmp/witnesses.lean.txt
 ```
+
+The explorer also tests claims before they are proved. It checked the
+invariant below on 25,009 snapshots and looked for a delayed-commit
+nomination without a successor among 1,073 successor-less nominations; it
+found no counterexample to either, and both were then proved.
 
 In a three-node reconfiguration run, two successive nominations leave every
 node record unchanged, yet each establishes a new committed prefix. A

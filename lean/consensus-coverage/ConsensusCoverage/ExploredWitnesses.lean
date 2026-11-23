@@ -64,6 +64,8 @@ private abbrev sig : AppendEntryInput := {content := .signature}
 private abbrev tx : AppendEntryInput := {content := .transaction 1 {}}
 private abbrev cfg (ns : CCF.Finset NodeID) : AppendEntryInput :=
   {content := .transaction 1 {configuration := some ns}}
+private abbrev retire (ns : CCF.Finset NodeID) : AppendEntryInput :=
+  {content := .transaction 1 {retirementConfirmations := ns}}
 private abbrev flush (peer i : Nat) : AppendEntryInput := {sig with flushes := [(peer, i)]}
 private abbrev signed : Entry := ⟨2, .signature⟩
 private abbrev unsigned : Entry := ⟨2, .transaction 1 {}⟩
@@ -361,11 +363,252 @@ private def cert45 : Certificate := soloCert
 private def cert46 : Certificate := soloCert
   (⟨{0}, [0], [append 0 [sig], append 0 [sig]]⟩) [] [1202591316684, 652835502846]
 
+-- Additional keys from --depth 2 --walks 1015 --length 20 --seed 20261123
+-- --seed-prefixes --retirement --four-nodes.
+private def cert47 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [cfg {0}, flush 1 3, sig], deliver 0 1, deliver 1 0, send 0 1 3,
+    send 0 1 3, deliver 0 1, send 0 1 4, elect 1, append 0 [retire {1}, flush 1 6],
+    deliver 0 1, deliver 0 1]⟩) []
+  [1300309949128, 1325534748748, 1889786116859, 1884425289728, 1855425871872, 1737851379833,
+    681834691321, 646460973177, 681834937082, 618475528313, 638339719288]
+
+private def cert48 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [cfg {0}, flush 1 3, sig], deliver 0 1, deliver 1 0,
+    append 0 [tx, flush 1 6], deliver 0 1, deliver 1 0, elect 1, append 0 [retire {1}, sig]]⟩) []
+  [1300309949128, 1325534748748, 1889786116859, 1918785518330, 1737851347064, 652835273465,
+    646460973177, 652835519226]
+
+private def cert49 : Certificate := multiCert
+  (⟨{0, 1, 2}, [0, 1, 2], [send 0 1 1,
+    append 0 [cfg {0}, {content := .signature, flushes := [(1, 3), (2, 3)]}, sig],
+    down 0, deliver 0 2, deliver 0 1]⟩) [(4, 1)]
+  [1300309981825, 1300309949128, 1236950825721, 1325534748748, 1875290488835]
+
+private def cert50 : Certificate := multiCert
+  (⟨{0, 1, 2}, [0, 1, 2], [
+    append 0 [cfg {0}, {content := .signature, flushes := [(1, 3), (2, 3)]}, sig],
+    send 0 1 4, down 0, deliver 0 2, elect 0]⟩) []
+  [1300309949128, 1300309981945, 1236950825721, 1325534748748, 1883411823355]
+
+private def cert51 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [cfg {0}, flush 1 3, sig], deliver 0 1, deliver 1 0, nom 0,
+    deliver 0 1, send 0 1 3, deliver 1 0, deliver 0 1, elect 0, append 0 [tx, sig], elect 1,
+    append 0 [retire {1}], send 0 1 5, nom 0, deliver 1 0]⟩) []
+  [1300309949128, 1325534748748, 1889786116859, 1874770001920, 1883616026745, 1884425289728,
+    1883479718777, 1875290095616, 2193663196281, 1889786101498, 1883411554425, 1889785839352,
+    1918785273593, 1874770001920, 1889785855737]
+
+private def cert52 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [cfg {0}, flush 1 3, sig], deliver 0 1, deliver 1 0,
+    append 0 [retire {1}, flush 1 6], nom 0, deliver 0 1, elect 1, nom 0, deliver 1 0, deliver 0 1,
+    elect 1, deliver 1 0, deliver 1 0, deliver 0 1, elect 0, elect 1, deliver 1 0,
+    append 0 [cfg {0, 1}, sig], send 0 1 7, deliver 0 1, deliver 0 1, deliver 1 0]⟩)
+  [(8, 1), (19, 2), (21, 2)]
+  [1300309949128, 1325534748748, 1889786116859, 1918785518330, 1855425871872, 1737851347064,
+    646460973177, 618475290624, 646426656768, 646665445497, 646460973177, 618475290624,
+    646529137529, 618475290624, 927713197177, 618475290624, 646426656768, 681834675960,
+    681834692345, 638339743865, 618475290624, 652835274489]
+
+private def cert53 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [cfg {0}, flush 1 3, sig], deliver 0 1, nom 0, deliver 1 0,
+    send 0 1 3, send 0 1 3, deliver 0 1, deliver 0 1, append 0 [flush 1 5], send 0 1 5, elect 1,
+    deliver 1 0, deliver 0 1, deliver 0 1, deliver 1 0]⟩) [(6, 1), (11, 5), (12, 5), (13, 3), (14, 2)]
+  [1300309949128, 1325534748748, 1874770395139, 1889785854713, 1884425289728, 1855425871872,
+    1737851379833, 646665445497, 681834937082, 647474708480, 646460973177, 646426901369,
+    618475290624, 638339514368, 646528892928]
+
+private def cert54 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1, 2], [
+    append 0 [cfg {0, 2}, flush 1 3, {content := .transaction 2 {configuration := some {0}}}, sig, sig],
+    deliver 0 2, deliver 2 0, send 0 2 5, deliver 0 2, deliver 0 1, append 0 [tx, flush 2 7],
+    deliver 0 2]⟩) []
+  [1300309949128, 1256814944257, 1271310564089, 1300309981945, 1256815009864, 1325534748748,
+    1918785518330, 1875290562682]
+
+private def cert55 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1, 2], [
+    append 0 [cfg {0, 2}, flush 1 3, {content := .transaction 2 {configuration := some {0}}}, sig, sig],
+    deliver 0 2, deliver 2 0, send 0 2 5, deliver 0 2, deliver 0 1, nom 0, deliver 0 2]⟩) []
+  [1300309949128, 1256814944257, 1271310564089, 1300309981945, 1256815009864, 1325534748748,
+    1874770395139, 1883616288891]
+
+private def cert56 : Certificate := multiCert
+  (⟨{0}, [0, 1], [append 0 [sig], append 0 [tx, sig], nom 0,
+    restore 1 [bootstrap {0}, signed, unsigned, signed], append 0 [cfg {0, 1}, sig], nom 0,
+    deliver 0 1, down 0, deliver 1 0, deliver 0 1, elect 0, deliver 0 1, deliver 1 0, elect 0,
+    deliver 0 1, elect 0, deliver 0 1, deliver 1 0]⟩) [(14, 1), (16, 2)]
+  [1340030270156, 1889786084094, 1855425871872, 1717987123272, 681834674936, 637819420672,
+    638339752057, 618475535097, 618475290624, 618475290624, 646460979961, 646426656768,
+    646665452409, 646460980345, 646426894457, 646460735488, 618475290624, 646665452665]
+
+private def cert57 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [cfg {0}, flush 1 3, sig], deliver 0 1, nom 0, nom 0, send 0 1 3,
+    send 0 1 4, send 0 1 4, deliver 1 0, send 0 1 4, deliver 0 1, deliver 0 1, deliver 0 1]⟩)
+  [(9, 2), (10, 2), (11, 3)]
+  [1300309949128, 1325534748748, 1874770395139, 1855425871872, 1884425289728, 1918785272569,
+    1884425289728, 1889785854713, 1884425289728, 1875290095616, 1875290300536, 1717987156089]
+
+private def cert58 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [cfg {0}, flush 1 3, sig], deliver 0 1, deliver 1 0, elect 1, elect 1,
+    deliver 1 0, send 0 1 4, deliver 0 1, deliver 0 1, elect 1, nom 0, deliver 0 1, deliver 1 0,
+    deliver 1 0, deliver 0 1, send 1 0 4, append 1 [tx], deliver 1 0, deliver 1 0]⟩)
+  [(12, 3), (13, 2), (17, 1), (18, 2)]
+  [1300309949128, 1325534748748, 1889786116859, 1883411554425, 1855425871872, 1883377238016,
+    1918785272569, 1855425871872, 1737851347064, 646460973177, 637819420672, 646665445497,
+    646529137529, 646426656768, 956712611961, 618475290624, 652835257080, 618475290624, 638339759225]
+
+private def cert59 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [cfg {0}, flush 1 3, sig], deliver 0 1, deliver 1 0, elect 1,
+    deliver 1 0, send 0 1 3, nom 0, deliver 0 1, elect 1, deliver 0 1, deliver 0 1, deliver 1 0,
+    deliver 1 0, deliver 1 0, deliver 0 1, elect 1, deliver 0 1, elect 0, append 0 [retire {1}, sig]]⟩)
+  [(11, 2), (14, 1)]
+  [1300309949128, 1325534748748, 1889786116859, 1883411554425, 1883377238016, 1884425289728,
+    1874770001920, 1855425871872, 1883411316736, 1737851379833, 646665445497, 646529137529,
+    646426656768, 618475290624, 618475290624, 646460973177, 618475290624, 956712615033, 652835520250]
+
+private def cert60 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [cfg {0}, flush 1 3, sig], deliver 0 1, deliver 1 0,
+    append 0 [retire {1}, flush 1 6], deliver 0 1, deliver 1 0, nom 0, nom 0, elect 1, nom 0,
+    append 0 [cfg {0, 1}, flush 1 8, sig], deliver 1 0, deliver 0 1]⟩) [(12, 1)]
+  [1300309949128, 1325534748748, 1889786116859, 1918785518330, 1737851347064, 618475290624,
+    618475290624, 618475290624, 646460973177, 618475290624, 681834674936, 646426656768, 638339973246]
+
+private def cert61 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1, 2, 3], [append 0 [cfg {1}, flush 1 3], deliver 0 1, deliver 1 0, append 0 [cfg {0}],
+    send 0 1 4, nom 0, backup 2, down 0,
+    restore 3 [bootstrap {0, 1}, {term := 2, content := .transaction 1 {configuration := some {1}}},
+      signed]]⟩) []
+  [1300309949128, 1325534748748, 1889785854713, 1889785838328, 1918785272569, 1874770001920,
+    1855426002945, 1855426116345, 1855426076744]
+
+private def cert62 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [cfg {0}, flush 1 3, sig], deliver 0 1, send 0 1 3, deliver 1 0,
+    send 0 1 4, nom 0, nom 0, nom 0, deliver 0 1, deliver 1 0, send 0 1 4, elect 1, deliver 0 1,
+    deliver 1 0, deliver 0 1, deliver 0 1, nom 0, deliver 1 0, deliver 1 0, elect 1, deliver 0 1,
+    deliver 0 1, deliver 1 0]⟩) [(8, 1), (12, 4), (14, 1), (18, 4), (21, 1)]
+  [1300309949128, 1325534748748, 1884425682947, 1889785854713, 1918785272569, 1874770001920,
+    1855425871872, 1855425871872, 1737851347064, 652835273465, 647474708480, 646460973177,
+    638339752057, 646426656768, 646665445497, 638339514368, 618475290624, 618475290624,
+    618475535225, 646460973177, 618475290624, 618475290624, 646529137785]
+
+private def cert63 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [cfg {0}, flush 1 3, sig], deliver 0 1, nom 0, nom 0, send 0 1 3,
+    deliver 0 1, deliver 1 0, send 0 1 4, deliver 0 1, send 0 1 4, deliver 0 1, deliver 1 0, elect 0,
+    deliver 0 1, deliver 0 1, deliver 0 1, elect 1, deliver 1 0, nom 0, deliver 0 1,
+    append 0 [tx, flush 1 6], elect 1, deliver 1 0]⟩) [(5, 3), (11, 2), (13, 3), (15, 2), (19, 4), (22, 6)]
+  [1300309949128, 1325534748748, 1874770395139, 1855425871872, 1884425289728, 1855425871872,
+    1889785854713, 1918785272569, 1883616026745, 1884425289728, 1855425871872, 1883479718777,
+    2193663196281, 1855425871872, 1875290095616, 1875290333305, 1883411554425, 1855425871872,
+    1874770001920, 1883616026745, 1918785519354, 1883411554425, 1883377483641]
+
+private def cert64 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [cfg {0}, flush 1 3, sig], deliver 0 1, deliver 1 0,
+    append 0 [retire {1}, sig], nom 0, append 0 [tx, sig], append 0 [cfg {0, 1}, flush 1 10, sig],
+    send 0 1 10, deliver 0 1, append 0 [cfg {0}, flush 1 13, sig], deliver 0 1, send 0 1 14,
+    append 0 [cfg {0, 1}, sig], deliver 1 0, send 0 1 16, deliver 0 1]⟩) [(10, 1), (15, 4)]
+  [1300309949128, 1325534748748, 1889786116859, 1889786100474, 1855425871872, 1889786100474,
+    1918785256184, 1884425289728, 1875290095616, 1918785256184, 1855425871872, 1918785272569,
+    1889785838328, 1889785854713, 1918785272569, 1737851601022]
+
+private def cert65 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1, 2], [
+    append 0 [cfg {0, 2}, flush 1 3, {content := .transaction 2 {configuration := some {0}}}, sig, sig],
+    deliver 0 2, deliver 2 0, send 0 2 5, deliver 0 2, deliver 0 1, deliver 1 0, deliver 2 0,
+    append 0 [cfg {0, 2}, flush 2 8], send 0 1 3, deliver 0 1, down 0, deliver 0 2, elect 0,
+    deliver 0 2, deliver 2 0, deliver 0 2, elect 2, deliver 1 0, deliver 2 0, send 0 2 8,
+    append 0 [retire {1}, sig], deliver 2 0, down 0]⟩) [(15, 2), (19, 1), (22, 1)]
+  [1300309949128, 1256814944257, 1271310564089, 1300309981945, 1256815009864, 1325534748748,
+    1889786116859, 1889786116859, 1918785256184, 1884425289728, 1875290333305, 1855426116345,
+    1737851609210, 646460979961, 646426656768, 646665452409, 646529130617, 646460973177,
+    618475290624, 956712615033, 618475290624, 652835258104, 646426656768, 618475536121]
+
+private def cert66 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [cfg {0}, flush 1 3, sig], deliver 0 1, nom 0, nom 0, deliver 0 1,
+    deliver 0 1, send 0 1 3, send 0 1 3, deliver 1 0, append 0 [retire {1}, sig, sig], deliver 0 1,
+    deliver 0 1, deliver 1 0, deliver 1 0, deliver 0 1, deliver 1 0, elect 0, append 0 [cfg {0, 1}],
+    deliver 0 1, nom 0, down 0, deliver 1 0, deliver 0 1, deliver 1 0]⟩) []
+  [1300309949128, 1325534748748, 1874770395139, 1855425871872, 1883616026745, 1855425871872,
+    1884425289728, 1855425871872, 1889785854713, 1889786100474, 1875290095616, 1855425871872,
+    1883479718777, 1855425871872, 1855425871872, 1855425871872, 2164663778425, 1918785257208,
+    1875290333305, 1874770001920, 1855426117369, 1855425871872, 1883616026745, 1883479719801]
+
+private def cert67 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1, 2], [
+    append 0 [cfg {0, 2}, flush 1 3, {content := .transaction 2 {configuration := some {0}}}, sig, sig],
+    deliver 0 2, deliver 2 0, send 0 2 5, deliver 0 2, deliver 0 1, nom 0, nom 0, deliver 0 2,
+    deliver 1 0, elect 2, deliver 2 0, deliver 2 1]⟩) [(11, 2), (12, 4)]
+  [1300309949128, 1256814944257, 1271310564089, 1300309981945, 1256815009864, 1325534748748,
+    1874770395139, 1855426265091, 1883616026745, 1889785854713, 1883411554425, 1883479718777,
+    1883377475705]
+
+private def cert68 : Certificate := multiCert
+  (⟨{0, 1, 2}, [0, 1, 2], [nom 0, deliver 0 2, append 0 [cfg {0, 2}, flush 1 3, sig], deliver 0 1,
+    deliver 1 0, nom 0, nom 0, deliver 0 1, deliver 1 2, append 0 [flush 2 5], send 0 1 3,
+    deliver 0 2, deliver 0 1, elect 1, deliver 1 0, deliver 2 0, deliver 0 1, deliver 1 2,
+    deliver 0 1, deliver 1 0]⟩) [(14, 4), (16, 4)]
+  [1256294711296, 1236950581248, 1300309949128, 1256815009864, 1271310564089, 1256294711296,
+    1236950581248, 1265140736121, 1265004322817, 1300309965560, 1265949999104, 1256814804992,
+    1236950581248, 1264936263801, 1264902191993, 1236950581248, 1236950581248, 1264901947392,
+    1256814804992, 1265004183552]
+
+private def cert69 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [cfg {1}, flush 1 3], down 0, elect 0, deliver 0 1, deliver 0 1,
+    deliver 1 0, elect 1, deliver 1 0, deliver 0 1, deliver 1 0, deliver 1 0, deliver 0 1,
+    append 1 [tx, flush 0 5], nom 1, send 1 0 5, append 1 [cfg {0, 1}], append 1 [tx], deliver 1 0]⟩)
+  [(3, 1), (5, 1), (7, 1), (9, 1), (17, 1)]
+  [1300309949128, 1236950825721, 1264936270585, 1264901947392, 1325534748748, 1855425871872,
+    1883411554425, 1883377238016, 1883616026745, 1883479718777, 1855425871872, 2193663193209,
+    1918785518330, 1874770001920, 1884425289728, 1889785838328, 1889785838328, 1875290307704]
+
+private def cert70 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [cfg {0}, flush 1 3, sig], deliver 0 1, deliver 1 0,
+    append 0 [tx, flush 1 6], deliver 0 1, deliver 1 0, elect 1, append 0 [retire {1}, sig],
+    elect 1, deliver 1 0, append 0 [tx, sig], append 0 [cfg {0, 1}, flush 1 12], deliver 0 1,
+    deliver 1 0, deliver 0 1, deliver 1 0, deliver 0 1, send 0 1 9, down 0, deliver 0 1]⟩)
+  [(12, 2), (13, 3), (14, 2), (19, 2)]
+  [1300309949128, 1325534748748, 1889786116859, 1918785518330, 1737851347064, 652835273465,
+    646460973177, 652835519226, 618475290624, 646426656768, 652835519226, 681834674936,
+    638339752057, 652835273465, 638339514368, 618475290624, 618475290624, 681834691321,
+    618475535097, 638339711096]
+
+private def cert71 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [cfg {0}, flush 1 3, sig], deliver 0 1, send 0 1 3, down 0,
+    deliver 0 1, elect 0, deliver 0 1, deliver 1 0, deliver 1 0, deliver 0 1, deliver 1 0,
+    deliver 1 0, elect 1, down 0, deliver 0 1, elect 1, elect 1, elect 0, deliver 1 0, deliver 0 1,
+    deliver 1 0]⟩) [(7, 2), (18, 1), (20, 3)]
+  [1300309949128, 1325534748748, 1884425682947, 1855426116345, 1855425871872, 1883411561209,
+    1883377238016, 1883616033657, 1855425871872, 1883479711865, 1855425871872, 2193663196281,
+    1883411554425, 1855426117369, 1875290333305, 1855426109561, 1855425871872, 1883411562233,
+    1855425871872, 1883377238016, 1883616034681]
+
+private def cert72 : Certificate := multiCert
+  (⟨{0, 1, 2}, [0, 1, 2], [send 0 1 1,
+    append 0 [cfg {0}, {content := .signature, flushes := [(1, 3), (2, 3)]}, sig],
+    down 0, deliver 0 2, deliver 0 1, deliver 1 0, deliver 0 1, elect 0, deliver 0 1, deliver 2 0,
+    deliver 1 0, deliver 1 0, deliver 0 2, elect 0, elect 0, elect 2, deliver 0 1]⟩)
+  [(4, 1), (10, 2), (12, 2)]
+  [1300309981825, 1300309949128, 1236950825721, 1325534748748, 1875290488835, 1855425871872,
+    1875290300416, 1883411561209, 1883377238016, 1855425871872, 1883616033657, 1855425871872,
+    1883479711865, 1883411561593, 1855425871872, 1883411554425, 1883479711745]
+
+private def cert73 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1, 2], [
+    append 0 [cfg {0, 2}, flush 1 3, {content := .transaction 2 {configuration := some {0}}}, sig, sig],
+    deliver 0 2, deliver 2 0, send 0 2 5, deliver 0 2, deliver 0 1, nom 0, nom 0, nom 0,
+    append 0 [cfg {0, 1}], append 0 [cfg {0, 1, 2}], deliver 0 2, down 0, deliver 0 2, deliver 2 0,
+    deliver 0 2, deliver 2 1, deliver 1 2, deliver 2 0, elect 0, deliver 0 2, deliver 0 2, deliver 2 0]⟩) []
+  [1300309949128, 1256814944257, 1271310564089, 1300309981945, 1256815009864, 1325534748748,
+    1874770395139, 1855426265091, 1855425871872, 1889785838328, 1889785838328, 1883616026745,
+    1855426116345, 1855425871872, 1855425871872, 1855425871872, 1883479711865, 1855426109561,
+    1883479718777, 1883411561593, 1855425871872, 1883377238016, 1855426116729]
+
 private def certificates : List Certificate :=
   [cert0, cert1, cert2, cert3, cert4, cert5, cert6, cert7, cert8, cert9, cert10, cert11, cert12, cert13,
     cert14, cert15, cert16, cert17, cert18, cert19, cert20, cert21, cert22, cert23, cert24, cert25, cert26,
     cert27, cert28, cert29, cert30, cert31, cert32, cert33, cert34, cert35, cert36, cert37, cert38, cert39,
-    cert40, cert41, cert42, cert43, cert44, cert45, cert46]
+    cert40, cert41, cert42, cert43, cert44, cert45, cert46, cert47, cert48, cert49, cert50, cert51, cert52,
+    cert53, cert54, cert55, cert56, cert57, cert58, cert59, cert60, cert61, cert62, cert63, cert64, cert65,
+    cert66, cert67, cert68, cert69, cert70, cert71, cert72, cert73]
 -- END GENERATED CERTIFICATES
 
 private def multiKeys : List Nat :=
@@ -389,19 +632,19 @@ private theorem multi_occurs {k : Nat} (mem : k ∈ multiKeys) :
     obtain ⟨s, nodes, key⟩ := c.checked k found
     exact ⟨s, nodes ▸ h.down, key⟩
 
-private theorem count : keys.Nodup ∧ keys.length = 139 := by decide +kernel
-private theorem multi_count : multiKeys.Nodup ∧ multiKeys.length = 136 := by decide +kernel
+private theorem count : keys.Nodup ∧ keys.length = 187 := by decide +kernel
+private theorem multi_count : multiKeys.Nodup ∧ multiKeys.length = 184 := by decide +kernel
 
-/-- Every list covering all initialized recorded step labels has at least 139 rows. -/
+/-- Every list covering all initialized recorded step labels has at least 187 rows. -/
 public theorem full_lower_bound (rows : List Profile) (complete : ∀ s, label s ∈ rows) :
-    139 ≤ rows.length := by
+    187 ≤ rows.length := by
   simpa only [count.2] using
     (projected_lower_bound project count.1 (fun _ => occurs) complete)
 
-/-- Every cover of initialized steps on multi-node deployments has at least 136 rows. -/
+/-- Every cover of initialized steps on multi-node deployments has at least 184 rows. -/
 public theorem multi_lower_bound (rows : List Profile)
     (complete : ∀ s : Step, LeaderCoverage.MultiNode s.nodes → label s ∈ rows) :
-    136 ≤ rows.length := by
+    184 ≤ rows.length := by
   have sub : multiKeys ⊆ rows.map project := by
     intro k hk
     obtain ⟨s, multi, key⟩ := multi_occurs hk

@@ -7,6 +7,8 @@ public meta import ConsensusCoverage.JointWitnesses
 public meta import ConsensusCoverage.GuardedDomain
 public meta import ConsensusCoverage.GrantFrontier
 public meta import ConsensusCoverage.EventSupport
+public meta import ConsensusCoverage.DelayedNominationRead
+public meta import ConsensusCoverage.Timely
 public meta import Std.Data.HashSet
 public meta import Std.Data.HashMap.Basic
 
@@ -18,6 +20,15 @@ To keep artifacts out of the source tree, pass an absolute output path.
 This is bounded discovery, not exhaustion. BFS does not merge snapshots
 (even identical snapshots may have different histories). Walks sample with
 replacement. "Shortest" means shortest among paths actually explored.
+
+`--check-timely` and `--check-delayed` run independent falsifiers in the
+same search. `--seed-prefixes` adds built-in delayed-commit and retirement
+starts. Repeat `--prefix NAME[:N]` to select individual starts or truncate
+them to the first N commands. The prefix is replayed from initialization;
+`--length` is the number of additional walk steps. `--four-nodes` adds two
+four-node deployments. `--retirement` adds the targeted palette below.
+An optional `--budget-seconds` stops between walks (not during BFS). Repeat
+the reported completed walk count without that flag for deterministic replay.
 -/
 
 open Consensus Consensus.Model Consensus.Model.Node ConsensusCoverage
@@ -36,6 +47,9 @@ def deployments : Array Deployment :=
   #[⟨[0], [0]⟩, ⟨[0], [0, 1]⟩, ⟨[0, 1], [0, 1]⟩, ⟨[0, 1], [0, 1, 2]⟩,
     ⟨[0, 1, 2], [0, 1, 2]⟩]
 
+def fourNodeDeployments : Array Deployment :=
+  #[⟨[0, 1], [0, 1, 2, 3]⟩, ⟨[0, 1, 2, 3], [0, 1, 2, 3]⟩]
+
 def Deployment.cfg (d : Deployment) : CCF.Finset NodeID :=
   d.voters.foldl (fun acc n => insert n acc) ∅
 
@@ -52,7 +66,32 @@ def palette : List String :=
    "initAsBackup: empty prefix and each other node's whole committed prefix",
    "all generated inputs are deduplicated and filtered by the actual model step"]
 
-def localInputs (s : Model.State) (self : NodeID) (st : NodeState) : List Input := Id.run do
+def retirementInputs (self : NodeID) (st : NodeState) : List Input := Id.run do
+  let sig : AppendEntryInput := {content := .signature}
+  let len := st.log.length
+  let singleton : CCF.Finset NodeID := {self}
+  let mut batches := []
+  if latestConfigurationMembers (configurationHistory st.log) != singleton then
+    let c : AppendEntryInput := {content := .transaction 1 {configuration := some singleton}}
+    -- Flush the signed change to the current peers, before the final
+    -- signature. Delivering real responses can advance the leader's commit.
+    let peers := (eligiblePeers st self).sort
+    let flush := {sig with flushes := peers.map fun n => (n, len + 2)}
+    batches := [[c], [c, sig], [c, flush], [c, flush, sig]] ++
+      peers.flatMap (fun n =>
+        let one := {sig with flushes := [(n, len + 2)]}
+        [[c, one], [c, one, sig]])
+  -- Removal alone retains completed retirees as eligible successors.
+  -- The only retirement input is an append with confirmation metadata.
+  let confirmable := st.retirementCompletedNodes \ retiredCommittedNodes st.log
+  if confirmable.Nonempty then
+    for confirmed in confirmable :: (confirmable.sort.map fun n => ({n} : CCF.Finset NodeID)) do
+      let c : AppendEntryInput := {content := .transaction 1 {retirementConfirmations := confirmed}}
+      let flush := {sig with flushes := confirmed.sort.map fun n => (n, len + 2)}
+      batches := batches ++ [[c], [c, sig], [c, sig, sig], [c, flush]]
+  return batches.map .append
+
+def localInputs (retirement : Bool) (s : Model.State) (self : NodeID) (st : NodeState) : List Input := Id.run do
   let tx : AppendEntryInput := {content := .transaction 1 {}}
   let sig : AppendEntryInput := {content := .signature}
   let len := st.log.length
@@ -72,7 +111,8 @@ def localInputs (s : Model.State) (self : NodeID) (st : NodeState) : List Input 
       sent ++ [Input.append [flush1], .append [tx, flush1], .append [tx, flush2],
         .initAsBackup other.committedLog] ++
         (configs.flatMap fun c => [Input.append [c, flush2], .append [c, flush2, sig]])) ++
-    [Input.timeout .election, .timeout .checkQuorum, .nominateSuccessor, .initAsBackup []]).eraseDups
+    [Input.timeout .election, .timeout .checkQuorum, .nominateSuccessor, .initAsBackup []] ++
+    (if retirement && st.role == .primary then retirementInputs self st else [])).eraseDups
 
 structure Candidate where
   act : Model.Action
@@ -80,7 +120,7 @@ structure Candidate where
   -- queue index only when plain FrontierRows.Run would select a different value.
   choice : Option Nat := none
 
-def candidates (s : Model.State) : List Candidate := Id.run do
+def candidates (retirement : Bool) (s : Model.State) : List Candidate := Id.run do
   let mut seen : List Model.Envelope := []
   let mut deliveries := []
   for (e, i) in s.network.zipIdx do
@@ -89,7 +129,7 @@ def candidates (s : Model.State) : List Candidate := Id.run do
       deliveries := ⟨.deliver e, if later then some i else none⟩ :: deliveries
       seen := e :: seen
   return deliveries.reverse ++ (s.nodes.flatMap fun (n, st) =>
-    (localInputs s n st).map fun i => ⟨.local n i, none⟩)
+    (localInputs retirement s n st).map fun i => ⟨.local n i, none⟩)
 
 structure Enabled extends Candidate where
   after : Model.State
@@ -139,6 +179,58 @@ def Path.depth (p : Path) : Nat := p.hits.length
 def Path.multi (p : Path) : Bool := p.deployment.nodes.length ≥ 2
 def Path.plain (p : Path) : Bool := p.hits.all fun h => h.choice.isNone
 
+inductive SeedCommand where
+  | input (n : NodeID) (i : Input)
+  | deliver (source target : NodeID) (index : Option Nat := none)
+
+structure Seed where
+  name : String
+  deployment : Deployment
+  commands : List SeedCommand
+
+def SeedCommand.resolve (s : Model.State) : SeedCommand → Option Candidate
+  | .input n i => some ⟨.local n i, none⟩
+  | .deliver source target choice => do
+    let onRoute := fun (e : Model.Envelope) => e.source == source && e.target == target
+    let e ← match choice with
+      | none => s.network.find? onRoute
+      | some n => (s.network[n]?).filter onRoute
+    return ⟨.deliver e, choice⟩
+
+-- Keep these as ordinary schedules so users can add seeds (including exact
+-- queue overrides) without an interpreter for a separate input language.
+def seeds : List Seed :=
+  let sig : AppendEntryInput := {content := .signature}
+  let cfg := fun n ns => ({content := .transaction n {configuration := some ns}} : AppendEntryInput)
+  let flush := fun p i => ({sig with flushes := [(p, i)]} : AppendEntryInput)
+  let nom := SeedCommand.input 0 .nominateSuccessor
+  let two : Deployment := ⟨[0, 1], [0, 1]⟩
+  let three : Deployment := ⟨[0, 1], [0, 1, 2]⟩
+  let delayed := [SeedCommand.input 0 (.append [cfg 1 {0}, flush 1 3, sig]), .deliver 0 1]
+  let chain := [SeedCommand.input 0 (.append [cfg 1 {0, 2}, flush 1 3, cfg 2 {0}, sig, sig]),
+    .deliver 0 2, .deliver 2 0, .input 0 (.sendEntries 2 5), .deliver 0 2, .deliver 0 1]
+  let confirm := fun ns => ({content := .transaction 1 {retirementConfirmations := ns}} : AppendEntryInput)
+  [⟨"delayed", two, delayed ++ [nom, nom]⟩,
+   ⟨"chained", three, chain ++ [nom, nom, nom]⟩,
+   ⟨"cert31", two, delayed ++ [.input 0 (.sendEntries 1 3)]⟩,
+   ⟨"retired", two, delayed ++ [.deliver 1 0, .input 0 (.append [confirm {1}, sig]), nom]⟩]
+
+def defaultPrefixes : List String :=
+  ["delayed:2", "delayed", "chained:6", "chained", "cert31", "retired:3", "retired"]
+
+def findSeed (spec : String) : Except String Seed := do
+  let parts := spec.splitOn ":"
+  let name := parts.head!
+  let some seed := seeds.find? (·.name == name)
+    | throw s!"unknown prefix {name}; choose delayed, chained, cert31, or retired"
+  match parts with
+  | [_] => return seed
+  | [_, size] =>
+    let some n := size.toNat? | throw s!"invalid prefix length in {spec}"
+    if n > seed.commands.length then throw s!"prefix {spec} is longer than its schedule"
+    return {seed with name := spec, commands := seed.commands.take n}
+  | _ => throw s!"invalid prefix {spec}"
+
 abbrev KeySet := Std.HashSet Key
 abbrev Witnesses := Std.HashMap Key Path
 
@@ -169,6 +261,13 @@ def hazardNames : Array String :=
     "CONTRADICTION: consecutive unchanged nodes + fresh grant",
     "CONTRADICTION: second stutter adds commit after first did not"]
 
+structure Tally where
+  count : Nat := 0
+  shortest : Option Path := none
+
+def Tally.hit (t : Tally) (p : Path) : Tally :=
+  ⟨t.count + 1, if t.shortest.all (p.depth < ·.depth) then some p else t.shortest⟩
+
 structure Score where
   all : Witnesses := {}
   multi : Witnesses := {}
@@ -178,16 +277,22 @@ structure Score where
   patterns : Std.HashMap String KeySet := {}
   outside : Witnesses := {}
   hazards : Array (Nat × Option Path) := hazardNames.map fun _ => (0, none)
+  timelyChecked : Nat := 0
+  timelyFailures : Nat := 0
+  timelyExamples : Array Path := #[]
+  delayed : Std.HashMap (Bool × StateCoverage.Row) Tally := {}
+  nominationsWithoutSuccessor : Nat := 0
+  walksCompleted : Nat := 0
   steps : Nat := 0
   checked : Nat := 0
   enabled : Nat := 0
   stuck : Nat := 0
   later : Nat := 0
 
-def Score.menu (score : Score) (p : Path) : Score × Array Enabled := Id.run do
+def Score.menu (score : Score) (p : Path) (retirement : Bool) : Score × Array Enabled := Id.run do
   let mut menu := #[]
   let mut checked := score.checked
-  for c in candidates p.state do
+  for c in candidates retirement p.state do
     checked := checked + 1
     if let some after := (transitionSystem p.deployment.cfg p.deployment.nodes).step p.state c.act then
       menu := menu.push ⟨c, after⟩
@@ -197,7 +302,32 @@ def insertGroup (groups : Std.HashMap String KeySet) (name : String) (key : Key)
     Std.HashMap String KeySet :=
   groups.alter name fun old => some ((old.getD {}).insert key)
 
-def visit (family : Option FamilyCheck) (score : Score) (p : Path) (c : Enabled) :
+structure Options where
+  depth : Nat := 2
+  walks : Nat := 120
+  length : Nat := 14
+  seed : Nat := 20261123
+  every : Nat := 20
+  budgetSeconds : Option Nat := none
+  out : Option String := none
+  checkFamily : Bool := false
+  checkTimely : Bool := false
+  checkDelayed : Bool := false
+  prefixes : List String := []
+  retirement : Bool := false
+  fourNodes : Bool := false
+  deriving Repr
+
+def Score.checkTimely (score : Score) (p : Path) : Score :=
+  let checks := score.timelyChecked + 1
+  if Timely.check (p.deployment.cfg.min?.getD 0) p.state p.past then
+    {score with timelyChecked := checks}
+  else
+    let examples := if score.timelyExamples.size < 5 then score.timelyExamples.push p
+      else score.timelyExamples
+    {score with timelyChecked := checks, timelyFailures := score.timelyFailures + 1, timelyExamples := examples}
+
+def visit (o : Options) (family : Option FamilyCheck) (score : Score) (p : Path) (c : Enabled) :
     IO (Score × Path) := do
   let cfg := p.deployment.cfg
   let some key := JointWitnesses.readKey cfg p.state c.act c.after p.past
@@ -207,6 +337,25 @@ def visit (family : Option FamilyCheck) (score : Score) (p : Path) (c : Enabled)
   let facts := evidence v key
   let h : Hit := ⟨c.toCandidate, key, facts⟩
   let next : Path := ⟨p.deployment, c.after, p.state :: p.past, h :: p.hits, score.steps + 1⟩
+  let previousFailures := score.timelyFailures
+  let score := if o.checkTimely then score.checkTimely next else score
+  if score.timelyFailures > previousFailures && score.timelyFailures ≤ 5 then
+    IO.println s!"TIMELY FAILURE at explored step {next.id}, schedule depth {next.depth}"
+    (← IO.getStdout).flush
+  let score ← if o.checkDelayed then do
+      let nomination := match c.act with | .local _ .nominateSuccessor => true | _ => false
+      let sends := DelayedNomination.sends p.state c.act
+      let score := if nomination && !sends then
+        {score with nominationsWithoutSuccessor := score.nominationsWithoutSuccessor + 1} else score
+      if DelayedNomination.test cfg p.state c.act c.after p.past then
+        let group := (sends, StateCoverage.read cfg p.state p.past)
+        let t := score.delayed[group]?.getD {}
+        if !sends && t.count == 0 then
+          IO.println s!"OPEN ROW HIT at explored step {next.id}, schedule depth {next.depth}"
+          (← IO.getStdout).flush
+        pure {score with delayed := score.delayed.insert group (t.hit next)}
+      else pure score
+    else pure score
   let still := !facts.changed
   let consecutive := still && (p.hits.head?.any (! ·.facts.changed))
   let baseZero := key.2.2[15]?.getD false -- after rooted-now and the 14 guarded bits
@@ -229,22 +378,20 @@ def visit (family : Option FamilyCheck) (score : Score) (p : Path) (c : Enabled)
       then keepShorter score.outside key next else score.outside
     hazards}, next)
 
-structure Options where
-  depth : Nat := 2
-  walks : Nat := 120
-  length : Nat := 14
-  seed : Nat := 20261123
-  every : Nat := 20
-  out : Option String := none
-  checkFamily : Bool := false
-  deriving Repr
-
 def usage :=
-  "explore.lean [--depth N] [--walks N] [--length N] [--seed N] [--every N] --out FILE [--check-family]"
+  "explore.lean [--depth N] [--walks N] [--length N] [--seed N] [--every N] [--budget-seconds N] --out FILE\n" ++
+  "  [--check-family] [--check-timely] [--check-delayed] [--four-nodes] [--retirement]\n" ++
+  "  [--seed-prefixes] [--prefix NAME[:N]]... (delayed, chained, cert31, retired)"
 
 def options : List String → Options → Except String Options
   | [], o => if o.out.isSome then .ok o else .error usage
   | "--check-family" :: more, o => options more {o with checkFamily := true}
+  | "--check-timely" :: more, o => options more {o with checkTimely := true}
+  | "--check-delayed" :: more, o => options more {o with checkDelayed := true}
+  | "--four-nodes" :: more, o => options more {o with fourNodes := true}
+  | "--retirement" :: more, o => options more {o with retirement := true}
+  | "--seed-prefixes" :: more, o => options more {o with prefixes := o.prefixes ++ defaultPrefixes}
+  | "--prefix" :: spec :: more, o => options more {o with prefixes := o.prefixes ++ [spec]}
   | "--out" :: file :: more, o => options more {o with out := some file}
   | flag :: value :: more, o => do
     let some n := value.toNat? | throw s!"expected a natural after {flag}\n{usage}"
@@ -253,6 +400,7 @@ def options : List String → Options → Except String Options
     | "--walks" => options more {o with walks := n}
     | "--length" => options more {o with length := n}
     | "--seed" => options more {o with seed := n}
+    | "--budget-seconds" => options more {o with budgetSeconds := some n}
     | "--every" => if n > 0 then options more {o with every := n} else throw "--every must be positive"
     | _ => throw usage
   | _, _ => .error usage
@@ -261,30 +409,62 @@ def lcg (x : Nat) : Nat := (1664525 * x + 1013904223) % 4294967296
 
 def growth (phase : String) (score : Score) : IO Unit := do
   IO.println s!"{phase}: {score.steps} steps; {score.all.size} keys, {score.multi.size} multi"
+  unless score.timelyChecked == 0 do
+    IO.println s!"  Timely so far: {score.timelyChecked} snapshots, {score.timelyFailures} failures"
   (← IO.getStdout).flush
 
+def backgrounds (o : Options) : Array Deployment :=
+  if o.fourNodes then deployments ++ fourNodeDeployments else deployments
+
 def search (o : Options) : IO Score := do
+  let start ← IO.monoMsNow
   let family := if o.checkFamily then some nominationExample else none
-  let roots := deployments.map fun d => ({deployment := d, state := d.initial} : Path)
+  let roots := (backgrounds o).map fun d => ({deployment := d, state := d.initial} : Path)
+  let selected ← IO.ofExcept (o.prefixes.mapM findSeed)
   let mut score := {}
+  if o.checkTimely then
+    for p in roots do
+      let old := score.timelyFailures
+      score := score.checkTimely p
+      if score.timelyFailures > old then IO.println s!"TIMELY FAILURE at initialization: {repr p.deployment}"
+  let mut walkRoots := roots
+  for seed in selected do
+    let d := seed.deployment
+    let some root := roots.find? (fun p => p.deployment.voters == d.voters && p.deployment.nodes == d.nodes)
+      | throw (IO.userError s!"missing deployment for prefix {seed.name}")
+    let mut p := root
+    for cmd in seed.commands do
+      let some c := cmd.resolve p.state | throw (IO.userError s!"unresolved prefix {seed.name} at depth {p.depth}")
+      let some after := (transitionSystem d.cfg d.nodes).step p.state c.act
+        | throw (IO.userError s!"disabled prefix {seed.name} at depth {p.depth}")
+      let (s, q) ← visit o family {score with checked := score.checked + 1, enabled := score.enabled + 1}
+        p ⟨c, after⟩
+      score := s
+      p := q
+    walkRoots := walkRoots.push p
+  unless selected.isEmpty do growth s!"Replayed {selected.length} walk prefixes" score
   let mut todo := roots
   for i in [:o.depth] do
     let mut next := #[]
     for p in todo do
-      let (s, menu) := score.menu p
+      let (s, menu) := score.menu p o.retirement
       score := s
       for c in menu do
-        let (s, q) ← visit family score p c
+        let (s, q) ← visit o family score p c
         score := s
         if i + 1 < o.depth then next := next.push q
     growth s!"BFS depth {i+1}" score
     todo := next
   let mut rng := o.seed % 4294967296
   for i in [:o.walks] do
-    let some root := roots[i % roots.size]? | throw (IO.userError "no deployment")
+    if let some limit := o.budgetSeconds then
+      if (← IO.monoMsNow) - start ≥ 1000 * limit then
+        growth s!"Budget reached after {score.walksCompleted} walks" score
+        break
+    let some root := walkRoots[i % walkRoots.size]? | throw (IO.userError "no deployment")
     let mut p := root
     for _ in [:o.length] do
-      let (s, menu) := score.menu p
+      let (s, menu) := score.menu p o.retirement
       score := s
       if menu.isEmpty then
         score := {score with stuck := score.stuck + 1}
@@ -298,9 +478,10 @@ def search (o : Options) : IO Score := do
       rng := lcg rng
       let some chosen := sameKind[(rng / 65536) % sameKind.size]?
         | throw (IO.userError "sampled an empty action kind")
-      let (s, q) ← visit family score p chosen
+      let (s, q) ← visit o family score p chosen
       score := s
       p := q
+    score := {score with walksCompleted := i + 1}
     if (i+1) % o.every == 0 || i+1 == o.walks then growth s!"walks {i+1}" score
   return score
 
@@ -333,8 +514,9 @@ def commandText : Model.Action → String
   | .deliver e => s!".deliver {e.source} {e.target}"
 
 def runText (p : Path) : String :=
-  s!"⟨{finsetText p.deployment.voters}, {repr p.deployment.nodes}, [\n    " ++
-  String.intercalate ",\n    " (p.hits.reverse.map fun h => commandText h.act) ++ "]⟩"
+  let commands := p.hits.reverse.map fun h => commandText h.act
+  let schedule := if commands.isEmpty then "[]" else "[\n    " ++ String.intercalate ",\n    " commands ++ "]"
+  s!"⟨{finsetText p.deployment.voters}, {repr p.deployment.nodes}, {schedule}⟩"
 
 def choices (p : Path) : List (Nat × Nat) :=
   p.hits.reverse.zipIdx.filterMap fun (h, step) => h.choice.map fun i => (step, i)
@@ -376,8 +558,44 @@ def witnessText (label : String) (h : Hit) (p : Path) : String :=
   s!"-- {label} key {encode h.key}; {kind h.act}; depth {p.depth}; {h.facts.pattern}\n" ++
     s!"({runText p}, {repr (choices p)}),\n"
 
+def scheduleType := " : List (FrontierRows.Run × List (Nat × Nat)) := [\n"
+
+def reportChecks (o : Options) (s : Score) : IO String := do
+  let mut text := ""
+  if o.checkTimely then
+    let expected := s.steps + (backgrounds o).size
+    unless s.timelyChecked == expected do
+      throw (IO.userError s!"Timely check count {s.timelyChecked} disagrees with {expected} snapshots")
+    IO.println s!"Timely: {s.timelyChecked} snapshots checked; {s.timelyFailures} failures"
+    text := text ++ "private def timelyFailures" ++ scheduleType
+    for p in s.timelyExamples do
+      let schedule := s!"({runText p}, {repr (choices p)}),\n"
+      IO.println s!"Timely failure at step {p.id} (depth {p.depth}):\n{schedule}"
+      text := text ++ schedule
+    text := text ++ "]\n"
+  if o.checkDelayed then
+    let rows : List StateCoverage.Row := [(true, false), (true, true), (false, true)]
+    let allGroups := [false, true].flatMap fun sends => rows.map (sends, ·)
+    if s.delayed.toList.any (fun (group, _) => !allGroups.contains group) then
+      throw (IO.userError "delayed nomination hit an unexpected initialized endpoint context")
+    let total := s.delayed.toList.foldl (fun n (_, t) => n + t.count) 0
+    IO.println s!"Delayed nomination test: {total} steps passed; \
+      {s.nominationsWithoutSuccessor} nominations without a successor before filtering by test"
+    text := text ++ "private def delayedWitnesses" ++ scheduleType
+    for (sends, pre) in allGroups do
+      let t := s.delayed[(sends, pre)]?.getD {}
+      let label := s!"sends={sends}, pre={context pre.1 pre.2}"
+      IO.println s!"  {label}: {t.count} steps"
+      if let some (p, h) := t.shortest.bind (fun p => p.hits.head?.map (p, ·)) then
+        let schedule := witnessText label h p
+        IO.println schedule
+        text := text ++ schedule
+    text := text ++ "]\n"
+  return text
+
 def report (o : Options) (s : Score) (ms : Nat) : IO Unit := do
   IO.println s!"search: {s.steps} explored steps, {ms} ms, {s.steps * 1000 / max 1 ms} steps/s"
+  IO.println s!"completed walks: {s.walksCompleted}/{o.walks}"
   IO.println s!"menu probes: {s.checked} ({s.checked - s.enabled} disabled; {s.enabled - s.steps} enabled but not followed)"
   IO.println s!"walks ended with empty menu: {s.stuck}; explored non-first-route deliveries: {s.later}"
   IO.println s!"distinct keys: {s.all.size} overall / {s.multi.size} multi; plain Run: {s.plain.size}/{s.plainMulti.size}"
@@ -393,6 +611,7 @@ def report (o : Options) (s : Score) (ms : Nat) : IO Unit := do
       IO.println (witnessText "example" h p)
   if o.checkFamily then
     IO.println s!"nomination example: {s.outside.size} distinct out-of-table keys (see witness file)"
+  let checkText ← reportChecks o s
   let runs := cover s
   let observed (rs : List Path) := Std.HashSet.ofList (rs.flatMap fun p => p.hits.map (·.key))
   unless (observed runs).size == s.all.size && (observed (runs.filter Path.multi)).size == s.multi.size do
@@ -400,7 +619,7 @@ def report (o : Options) (s : Score) (ms : Nat) : IO Unit := do
   IO.println s!"cover: {runs.length} schedules, {(runs.filter (·.multi)).length} multi, \
     {(runs.filter (! ·.plain)).length} with queue choices, {runs.foldl (fun n p => n + p.depth) 0} steps"
   let text (label : String) (ws : Witnesses) :=
-    s!"private def {label} : List (FrontierRows.Run × List (Nat × Nat)) := [\n" ++
+    s!"private def {label}{scheduleType}" ++
     String.join ((ordered ws).filterMap fun (_, p) => p.hits.head?.map (witnessText label · p)) ++ "]\n"
   let certs := runs.zipIdx.map fun (p, i) =>
     let multi := if p.multi then "(some ⟨⟨0, by decide, 1, by decide, by decide⟩⟩)" else "none"
@@ -411,7 +630,7 @@ def report (o : Options) (s : Score) (ms : Nat) : IO Unit := do
   IO.FS.writeFile file <| "-- Shortest explored witnesses; (FrontierRows.Run, [(step, queue index)]).\n" ++
     "-- Both indices are zero-based. Nonempty choices are required for exact replay.\n" ++
     "-- Overall:\n" ++ text "overall" s.all ++ "-- Multi-node:\n" ++ text "multiNode" s.multi ++
-    "-- Falsifying witnesses:\n" ++ text "outside" s.outside ++
+    "-- Falsifying witnesses:\n" ++ text "outside" s.outside ++ checkText ++
     "-- Greedy cover (paste into ExploredWitnesses):\n" ++ String.intercalate "\n" certs ++
     "\nprivate def certificates : List Certificate := " ++
     listText ((List.range runs.length).map fun i => s!"cert{i}") ++ "\n"
@@ -425,9 +644,12 @@ public def main (args : List String) : IO Unit := do
     let opts ← IO.ofExcept (options args {})
     IO.println s!"{repr opts}"
     IO.println "Deployments (voters, deployed nodes):"
-    for d in deployments do IO.println s!"  {repr d.voters}, {repr d.nodes}"
+    for d in backgrounds opts do IO.println s!"  {repr d.voters}, {repr d.nodes}"
     IO.println "Action palette:"
     for line in palette do IO.println s!"  {line}"
+    if opts.retirement then
+      IO.println "  singleton actor configuration, optionally signed/flushed to one or all eligible peers (+ optional trailing signature)"
+      IO.println "  confirm retirement (each eligible retiree or all); bare, signed, two signatures, or signed with flush to retirees"
     let start ← IO.monoMsNow
     let score ← search opts
     let stop ← IO.monoMsNow
