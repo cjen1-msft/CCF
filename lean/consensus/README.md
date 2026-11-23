@@ -239,6 +239,15 @@ append, two of AppendEntries delivery, acknowledgment, backup initialization,
 and send). The two heartbeat captures have 3 of 7 actions in closed
 families; the two nomination captures 5 of 9.
 
+The explorer reports the same breakdown for its search (`--families`). In
+one run of 25,002 steps, 6,587 steps were in the three closed families and
+18,415 were in 47 open families, which together showed 172 distinct
+combinations of the 64 always-known answers. Each open family showed
+between 1 and 15 of them and left 80 to 261 step answers undecided. The
+most frequent open families were appends, election timeouts, pre-vote
+requests and sends. Closing a family means deciding those answers for every
+step in it, not only for the steps explored.
+
 **Full recorded-action denominator: at least 187; at least 184 on multi-node deployments.**
 The [recorded-action specification](../consensus-coverage/ConsensusCoverage/ActionProfile.lean)
 assigns an initialized step exactly one 457-answer vector. All 433 step

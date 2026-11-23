@@ -9,6 +9,8 @@ public meta import ConsensusCoverage.GrantFrontier
 public meta import ConsensusCoverage.EventSupport
 public meta import ConsensusCoverage.DelayedNominationRead
 public meta import ConsensusCoverage.Timely
+public meta import ConsensusCoverage.Families
+public meta import ConsensusCoverage.ReplayAnswers
 public meta import Std.Data.HashSet
 public meta import Std.Data.HashMap.Basic
 
@@ -29,6 +31,9 @@ them to the first N commands. The prefix is replayed from initialization;
 four-node deployments. `--retirement` adds the targeted palette below.
 An optional `--budget-seconds` stops between walks (not during BFS). Repeat
 the reported completed walk count without that flag for deterministic replay.
+`--families` prints a closure census using `Families.classify`. Unknown
+step-answer ranges sample the first 20 distinct keys in each family. Its
+shortest explored family witnesses are included in `--out`.
 -/
 
 open Consensus Consensus.Model Consensus.Model.Node ConsensusCoverage
@@ -268,6 +273,26 @@ structure Tally where
 def Tally.hit (t : Tally) (p : Path) : Tally :=
   ⟨t.count + 1, if t.shortest.all (p.depth < ·.depth) then some p else t.shortest⟩
 
+def familySampleCap : Nat := 20
+
+structure FamilyTally where
+  closed : Bool
+  tally : Tally := {}
+  keys : KeySet := {}
+  samples : Nat := 0
+  unknown : Option (Nat × Nat) := none
+
+def FamilyTally.hit (row : FamilyTally) (before next : Path) (h : Hit) : FamilyTally :=
+  let newSample := row.samples < familySampleCap && !row.keys.contains h.key
+  let row := {row with tally := row.tally.hit next, keys := row.keys.insert h.key}
+  if newSample then
+    let e := ReplayAnswers.read before.deployment.cfg before.state h.act next.state before.past
+    let n := FullProfile.stepBranches.foldl (fun n b =>
+      n + (ReplayAnswers.answer e (.step b)).isNone.toNat) 0
+    let (lo, hi) := row.unknown.getD (n, n)
+    {row with samples := row.samples + 1, unknown := some (min lo n, max hi n)}
+  else row
+
 structure Score where
   all : Witnesses := {}
   multi : Witnesses := {}
@@ -282,6 +307,7 @@ structure Score where
   timelyExamples : Array Path := #[]
   delayed : Std.HashMap (Bool × StateCoverage.Row) Tally := {}
   nominationsWithoutSuccessor : Nat := 0
+  families : Std.HashMap String FamilyTally := {}
   walksCompleted : Nat := 0
   steps : Nat := 0
   checked : Nat := 0
@@ -313,6 +339,7 @@ structure Options where
   checkFamily : Bool := false
   checkTimely : Bool := false
   checkDelayed : Bool := false
+  families : Bool := false
   prefixes : List String := []
   retirement : Bool := false
   fourNodes : Bool := false
@@ -337,6 +364,14 @@ def visit (o : Options) (family : Option FamilyCheck) (score : Score) (p : Path)
   let facts := evidence v key
   let h : Hit := ⟨c.toCandidate, key, facts⟩
   let next : Path := ⟨p.deployment, c.after, p.state :: p.past, h :: p.hits, score.steps + 1⟩
+  let score ← if o.families then do
+      let family := Families.classify cfg p.state c.act c.after p.past
+      let code := Families.code family
+      let row := score.families[code]?.getD {closed := family.closed}
+      unless row.closed == family.closed do
+        throw (IO.userError s!"family code {code} changed closure status")
+      pure {score with families := score.families.insert code (row.hit p next h)}
+    else pure score
   let previousFailures := score.timelyFailures
   let score := if o.checkTimely then score.checkTimely next else score
   if score.timelyFailures > previousFailures && score.timelyFailures ≤ 5 then
@@ -380,11 +415,12 @@ def visit (o : Options) (family : Option FamilyCheck) (score : Score) (p : Path)
 
 def usage :=
   "explore.lean [--depth N] [--walks N] [--length N] [--seed N] [--every N] [--budget-seconds N] --out FILE\n" ++
-  "  [--check-family] [--check-timely] [--check-delayed] [--four-nodes] [--retirement]\n" ++
+  "  [--families] [--check-family] [--check-timely] [--check-delayed] [--four-nodes] [--retirement]\n" ++
   "  [--seed-prefixes] [--prefix NAME[:N]]... (delayed, chained, cert31, retired)"
 
 def options : List String → Options → Except String Options
   | [], o => if o.out.isSome then .ok o else .error usage
+  | "--families" :: more, o => options more {o with families := true}
   | "--check-family" :: more, o => options more {o with checkFamily := true}
   | "--check-timely" :: more, o => options more {o with checkTimely := true}
   | "--check-delayed" :: more, o => options more {o with checkDelayed := true}
@@ -593,6 +629,54 @@ def reportChecks (o : Options) (s : Score) : IO String := do
     text := text ++ "]\n"
   return text
 
+def reportFamilies (s : Score) : IO String := do
+  let rows := s.families.toList.mergeSort fun (a, x) (b, y) =>
+    x.tally.count > y.tally.count || (x.tally.count == y.tally.count && a ≤ b)
+  let closed := rows.filter (·.2.closed)
+  let opened := rows.filter (! ·.2.closed)
+  let steps (rs : List (String × FamilyTally)) := rs.foldl (fun n (_, r) => n + r.tally.count) 0
+  let keys (rs : List (String × FamilyTally)) :=
+    rs.foldl (fun ks (_, r) => r.keys.toList.foldl (·.insert ·) ks) ({} : KeySet)
+  let closedKeys := keys closed
+  let openKeys := keys opened
+  unless steps rows == s.steps && (keys rows).size == s.all.size do
+    throw (IO.userError "family totals disagree with explored steps or keys")
+  IO.println s!"Family census: {s.steps} steps, {s.all.size} distinct sound keys"
+  IO.println s!"  closed: {steps closed} steps, {closedKeys.size} keys, {closed.length} codes"
+  IO.println s!"  open: {steps opened} steps, {openKeys.size} keys, {opened.length} codes"
+  IO.println s!"  keys seen in both groups: {closedKeys.size + openKeys.size - s.all.size}"
+  IO.println s!"Open evidence bit order: {Families.evidenceOrder}"
+  IO.println s!"Unknowns: first {familySampleCap} distinct keys per code (first encountered step for each), \
+    over {FullProfile.stepBranches.size} step questions. Sample extrema, not exhaustion."
+  let header := "family\tstatus\tsteps\tkeys\tsampled\tunknown_min\tunknown_max\tshortest_depth"
+  let line (code : String) (r : FamilyTally) :=
+    let status := if r.closed then "closed" else "open"
+    let (lo, hi) := r.unknown.getD (0, 0)
+    let depth := (r.tally.shortest.map Path.depth).getD 0
+    s!"{code}\t{status}\t{r.tally.count}\t{r.keys.size}\t{r.samples}\t{lo}\t{hi}\t{depth}"
+  IO.println "Families by explored steps:"
+  IO.println header
+  let mut witnesses := ""
+  for (code, r) in rows do
+    let some p := r.tally.shortest | throw (IO.userError s!"missing witness for {code}")
+    let some (lo, hi) := r.unknown | throw (IO.userError s!"missing unknown samples for {code}")
+    unless r.samples == min familySampleCap r.keys.size && lo ≤ hi &&
+        hi ≤ FullProfile.stepBranches.size do
+      throw (IO.userError s!"invalid unknown samples for {code}")
+    IO.println (line code r)
+    witnesses := witnesses ++ s!"({repr code}, {runText p}, {repr (choices p)}),\n"
+  IO.println "Open closure priorities (fewest keys, then fewest minimum unknowns):"
+  IO.println header
+  for (code, r) in opened.mergeSort (fun (a, x) (b, y) =>
+      let xmin := (x.unknown.getD (0, 0)).1
+      let ymin := (y.unknown.getD (0, 0)).1
+      x.keys.size < y.keys.size || (x.keys.size == y.keys.size &&
+        (xmin < ymin || (xmin == ymin && a ≤ b)))) do
+    IO.println (line code r)
+  return "-- Shortest explored witness for each family code, in first table order.\n" ++
+    "private def familyWitnesses : List (String × FrontierRows.Run × List (Nat × Nat)) := [\n" ++
+    witnesses ++ "]\n"
+
 def report (o : Options) (s : Score) (ms : Nat) : IO Unit := do
   IO.println s!"search: {s.steps} explored steps, {ms} ms, {s.steps * 1000 / max 1 ms} steps/s"
   IO.println s!"completed walks: {s.walksCompleted}/{o.walks}"
@@ -612,6 +696,7 @@ def report (o : Options) (s : Score) (ms : Nat) : IO Unit := do
   if o.checkFamily then
     IO.println s!"nomination example: {s.outside.size} distinct out-of-table keys (see witness file)"
   let checkText ← reportChecks o s
+  let familyText ← if o.families then reportFamilies s else pure ""
   let runs := cover s
   let observed (rs : List Path) := Std.HashSet.ofList (rs.flatMap fun p => p.hits.map (·.key))
   unless (observed runs).size == s.all.size && (observed (runs.filter Path.multi)).size == s.multi.size do
@@ -630,7 +715,7 @@ def report (o : Options) (s : Score) (ms : Nat) : IO Unit := do
   IO.FS.writeFile file <| "-- Shortest explored witnesses; (FrontierRows.Run, [(step, queue index)]).\n" ++
     "-- Both indices are zero-based. Nonempty choices are required for exact replay.\n" ++
     "-- Overall:\n" ++ text "overall" s.all ++ "-- Multi-node:\n" ++ text "multiNode" s.multi ++
-    "-- Falsifying witnesses:\n" ++ text "outside" s.outside ++ checkText ++
+    "-- Falsifying witnesses:\n" ++ text "outside" s.outside ++ checkText ++ familyText ++
     "-- Greedy cover (paste into ExploredWitnesses):\n" ++ String.intercalate "\n" certs ++
     "\nprivate def certificates : List Certificate := " ++
     listText ((List.range runs.length).map fun i => s!"cert{i}") ++ "\n"
