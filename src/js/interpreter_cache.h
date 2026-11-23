@@ -1,0 +1,154 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the Apache 2.0 License.
+#pragma once
+
+#include "ccf/ds/locking.h"
+#include "ccf/js/interpreter_cache_interface.h"
+#include "ds/internal_logger.h"
+#include "ds/lru.h"
+
+#include <atomic>
+
+namespace ccf::js
+{
+  class InterpreterCache : public AbstractInterpreterCache
+  {
+  protected:
+    // Locks access to the LRU and its freshness marker.
+    ccf::ds::Mutex lock;
+    LRU<std::string, std::shared_ptr<js::core::Context>> lru
+      CCF_GUARDED_BY(lock);
+    size_t cache_build_marker CCF_GUARDED_BY(lock) = 0;
+
+    std::atomic<std::shared_ptr<const InterpreterFactory>> interpreter_factory =
+      nullptr;
+
+    std::shared_ptr<js::core::Context> make_interpreter(js::TxAccess access)
+    {
+      const auto factory = interpreter_factory.load();
+      if (factory != nullptr)
+      {
+        return (*factory)(access);
+      }
+
+      return std::make_shared<js::core::Context>(access);
+    }
+
+  public:
+    InterpreterCache(size_t max_cache_size) : lru(max_cache_size) {}
+
+    std::shared_ptr<js::core::Context> get_interpreter(
+      js::TxAccess access,
+      const std::optional<ccf::endpoints::InterpreterReusePolicy>&
+        interpreter_reuse,
+      size_t freshness_marker) override
+    {
+      if (access != js::TxAccess::APP_RW && access != js::TxAccess::APP_RO)
+      {
+        throw std::logic_error(
+          "JS interpreter reuse lru is only supported for APP "
+          "interpreters");
+      }
+
+      if (!interpreter_reuse.has_value())
+      {
+        LOG_TRACE_FMT("Returning freshly constructed interpreter");
+        return make_interpreter(access);
+      }
+
+      std::string key;
+      switch (interpreter_reuse->kind)
+      {
+        case ccf::endpoints::InterpreterReusePolicy::Kind::KeyBased:
+        {
+          key = interpreter_reuse->key;
+          break;
+        }
+      }
+      if (access == js::TxAccess::APP_RW)
+      {
+        key += " (rw)";
+      }
+      else if (access == js::TxAccess::APP_RO)
+      {
+        key += " (ro)";
+      }
+
+      {
+        ccf::ds::MutexGuard guard(lock);
+        if (cache_build_marker != freshness_marker)
+        {
+          LOG_INFO_FMT(
+            "Clearing interpreter lru at {} - rebuilding at {}",
+            cache_build_marker,
+            freshness_marker);
+          lru.clear();
+          cache_build_marker = freshness_marker;
+        }
+        auto it = lru.find(key);
+        if (it != lru.end())
+        {
+          LOG_TRACE_FMT(
+            "Returning interpreter previously in cache, with key {}", key);
+          lru.promote(it);
+          return it->second;
+        }
+      }
+
+      auto interpreter = make_interpreter(access);
+
+      ccf::ds::MutexGuard guard(lock);
+      if (cache_build_marker != freshness_marker)
+      {
+        LOG_TRACE_FMT(
+          "Not caching interpreter at key {} because the cache was refreshed "
+          "while it was constructed",
+          key);
+        return interpreter;
+      }
+
+      auto it = lru.find(key);
+      if (it == lru.end())
+      {
+        it = lru.insert(key, std::move(interpreter));
+        LOG_INFO_FMT(
+          "Constructed cached JS interpreter at key {}. Cache now contains {} "
+          "interpreters",
+          key,
+          lru.size());
+      }
+      else
+      {
+        LOG_TRACE_FMT(
+          "Another interpreter was cached concurrently, with key {}", key);
+        lru.promote(it);
+      }
+      return it->second;
+    }
+
+    void set_max_cached_interpreters(size_t max) override
+    {
+      ccf::ds::MutexGuard guard(lock);
+      lru.set_max_size(max);
+    }
+
+    void clear_cached_interpreters() override
+    {
+      ccf::ds::MutexGuard guard(lock);
+      lru.clear();
+    }
+
+    void set_interpreter_factory(const InterpreterFactory& ip) override
+    {
+      if (ip != nullptr)
+      {
+        interpreter_factory.store(
+          std::make_shared<const InterpreterFactory>(ip));
+      }
+      else
+      {
+        interpreter_factory.store(nullptr);
+      }
+    }
+  };
+}

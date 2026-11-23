@@ -1,0 +1,139 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the Apache 2.0 License.
+#pragma once
+
+#include "ccf/ds/json.h"
+#include "ccf/service/consensus_type.h"
+#include "ccf/service/tables/code_id.h"
+#include "node/rpc/call_types.h"
+
+namespace ccf
+{
+  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(GetState::Out);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    GetState::Out,
+    node_id,
+    state,
+    last_signed_seqno,
+    startup_seqno,
+    stop_notice);
+  DECLARE_JSON_OPTIONAL_FIELDS(
+    GetState::Out, recovery_target_seqno, last_recovered_seqno);
+
+  DECLARE_JSON_TYPE(GetVersion::Out);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    GetVersion::Out, ccf_version, quickjs_version, unsafe);
+
+  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(JoinNetworkNodeToNode::In);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    JoinNetworkNodeToNode::In,
+    node_info_network,
+    quote_info,
+    public_encryption_key,
+    startup_seqno);
+  DECLARE_JSON_OPTIONAL_FIELDS(
+    JoinNetworkNodeToNode::In,
+    id_format,
+    certificate_signing_request,
+    node_data,
+    sealing_recovery_data,
+    code_transparent_statement,
+    ledger_sign_mode,
+    join_fetch_count,
+    mldsa_supported);
+
+  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(NetworkIdentity);
+  DECLARE_JSON_REQUIRED_FIELDS(NetworkIdentity, cert, priv_key);
+  DECLARE_JSON_OPTIONAL_FIELDS(NetworkIdentity, pq_cert, pq_priv_key);
+
+  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(
+    JoinNetworkNodeToNode::Out::NetworkInfo);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    JoinNetworkNodeToNode::Out::NetworkInfo,
+    public_only,
+    last_recovered_signed_idx,
+    ledger_secrets,
+    identity);
+  DECLARE_JSON_OPTIONAL_FIELDS(
+    JoinNetworkNodeToNode::Out::NetworkInfo,
+    service_status,
+    endorsed_certificate,
+    cose_signatures_config);
+
+  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(JoinNetworkNodeToNode::Out);
+  DECLARE_JSON_REQUIRED_FIELDS(JoinNetworkNodeToNode::Out, node_status);
+  DECLARE_JSON_OPTIONAL_FIELDS(
+    JoinNetworkNodeToNode::Out, node_id, network_info);
+
+  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(CreateNetworkNodeToNode::In);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    CreateNetworkNodeToNode::In,
+    node_id,
+    certificate_signing_request,
+    node_endorsed_certificate,
+    public_key,
+    service_cert,
+    quote_info,
+    public_encryption_key,
+    measurement,
+    node_info_network,
+    create_txid);
+  DECLARE_JSON_OPTIONAL_FIELDS(
+    CreateNetworkNodeToNode::In,
+    genesis_info,
+    node_data,
+    service_data,
+    snp_security_policy,
+    snp_uvm_endorsements,
+    sealing_recovery_data,
+    pq_service_cert);
+
+  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(GetNetworkInfo::Out);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    GetNetworkInfo::Out,
+    service_status,
+    service_certificate,
+    current_view,
+    primary_id,
+    recovery_count,
+    service_data,
+    current_service_create_txid);
+  DECLARE_JSON_OPTIONAL_FIELDS(GetNetworkInfo::Out, pq_service_certificate);
+
+  DECLARE_JSON_TYPE(GetNode::NodeInfo);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    GetNode::NodeInfo,
+    node_id,
+    status,
+    primary,
+    rpc_interfaces,
+    node_data,
+    last_written);
+
+  DECLARE_JSON_TYPE(GetNodes::Out);
+  DECLARE_JSON_REQUIRED_FIELDS(GetNodes::Out, nodes);
+
+  DECLARE_JSON_TYPE(VerifyReceipt::In);
+  DECLARE_JSON_REQUIRED_FIELDS(VerifyReceipt::In, receipt);
+  DECLARE_JSON_TYPE(VerifyReceipt::Out);
+  DECLARE_JSON_REQUIRED_FIELDS(VerifyReceipt::Out, valid);
+
+  DECLARE_JSON_TYPE(GetCode::Version);
+  DECLARE_JSON_REQUIRED_FIELDS(GetCode::Version, digest, status);
+  DECLARE_JSON_TYPE(GetCode::Out);
+  DECLARE_JSON_REQUIRED_FIELDS(GetCode::Out, versions);
+
+  DECLARE_JSON_TYPE(GetSnpHostDataMap::HostData);
+  DECLARE_JSON_REQUIRED_FIELDS(GetSnpHostDataMap::HostData, raw, metadata);
+  DECLARE_JSON_TYPE(GetSnpHostDataMap::Out);
+  DECLARE_JSON_REQUIRED_FIELDS(GetSnpHostDataMap::Out, host_data);
+
+  DECLARE_JSON_TYPE(GetRecoveryShare::Out);
+  DECLARE_JSON_REQUIRED_FIELDS(GetRecoveryShare::Out, encrypted_share);
+
+  DECLARE_JSON_TYPE(SubmitRecoveryShare::In);
+  DECLARE_JSON_REQUIRED_FIELDS(SubmitRecoveryShare::In, share);
+  DECLARE_JSON_TYPE(SubmitRecoveryShare::Out);
+  DECLARE_JSON_REQUIRED_FIELDS(SubmitRecoveryShare::Out, message);
+
+}

@@ -1,0 +1,252 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the Apache 2.0 License.
+import http
+import re
+
+import infra.clients
+import infra.consortium
+import infra.e2e_args
+import infra.network
+import suite.test_requirements as reqs
+from infra.proposal import ProposalState
+from loguru import logger as LOG
+
+
+@reqs.description("Send an unsigned request where signature is required")
+def test_missing_signature_header(network, args):
+    node = network.find_node_by_role(role=infra.network.NodeRole.PRIMARY)
+    member = network.consortium.get_any_active_member()
+    # NB: This client uses member cert auth, so no signature is inserted later
+    with node.client(member.local_id) as mc:
+        r = mc.post("/gov/members/proposals:create")
+        assert r.status_code == http.HTTPStatus.UNAUTHORIZED, r.status_code
+        www_auth = "www-authenticate"
+        assert www_auth in r.headers, r.headers
+        auth_header = r.headers[www_auth]
+        if auth_header != 'COSE-SIGN1 realm="Signed request access"':
+            assert auth_header.startswith("Signature"), auth_header
+            elements = {
+                e[0].strip(): e[1]
+                for e in (element.split("=") for element in auth_header.split(","))
+            }
+            assert "headers" in elements, elements
+            required_headers = elements["headers"]
+            assert required_headers.startswith('"'), required_headers
+            assert required_headers.endswith('"'), required_headers
+            assert "(request-target)" in required_headers, required_headers
+            assert "digest" in required_headers, required_headers
+
+    return network
+
+
+def make_signature_corrupter(fn):
+    class SignatureCorrupter(infra.clients.HttpSig):
+        def auth_flow(self, request):
+            yield fn(next(super().auth_flow(request)))
+
+    return SignatureCorrupter
+
+
+signature_regex = 'signature="([^"]*)"'
+
+
+def missing_signature(request):
+    original = request.headers["authorization"]
+    request.headers["authorization"] = re.sub(signature_regex, "", original)
+    return request
+
+
+def empty_signature(request):
+    original = request.headers["authorization"]
+    request.headers["authorization"] = re.sub(
+        signature_regex, 'signature="",', original
+    )
+    return request
+
+
+def modified_signature(request):
+    original = request.headers["authorization"]
+    s = re.search(signature_regex, original).group(1)
+    index = len(s) // 3
+    char = s[index]
+    new_char = "B" if char == "A" else "A"
+    new_s = s[:index] + new_char + s[index + 1 :]
+    request.headers["authorization"] = re.sub(
+        signature_regex, f'signature="{new_s}",', original
+    )
+    return request
+
+
+@reqs.description(
+    "Send many governance transactions in a tight loop, with no commit waits in-between"
+)
+def test_rapid_governance(network, args):
+    node = network.find_node_by_role(role=infra.network.NodeRole.PRIMARY)
+
+    repeats = 50
+    for _ in range(repeats):
+        member = network.consortium.generate_and_add_new_member(
+            node,
+            curve=args.participants_curve,
+        )
+        member.ack(node)
+        network.consortium.remove_member(node, member)
+
+    return network
+
+
+@reqs.description("Send a corrupted signature where signed request is required")
+def test_corrupted_signature(network, args):
+    node = network.find_node_by_role(role=infra.network.NodeRole.PRIMARY)
+
+    # Test each supported curve
+    for curve in infra.network.EllipticCurve:
+        LOG.info(f"Testing curve: {curve.name}")
+        # Add a member so we have at least one on this curve
+        member = network.consortium.generate_and_add_new_member(
+            node,
+            curve=curve,
+        )
+
+        r = member.ack(node)
+        with node.client() as nc:
+            nc.wait_for_commit(r)
+
+        with node.client(*member.auth(write=True)) as mc:
+            mc.client_impl._corrupt_signature = True
+            r = mc.post(
+                f"/gov/members/proposals:create?api-version={args.gov_api_version}",
+                '{"actions": []}',
+            )
+            assert r.status_code == http.HTTPStatus.UNAUTHORIZED, r.status_code
+
+        # Remove the new member once we're done with them
+        network.consortium.remove_member(node, member)
+
+    return network
+
+
+@reqs.description("Test various governance operations")
+def test_governance(network, args):
+    node = network.find_node_by_role(role=infra.network.NodeRole.PRIMARY)
+
+    LOG.info("Original members can ACK")
+    network.consortium.get_any_active_member().ack(node)
+
+    LOG.info("Network can be opened again, with no effect")
+    network.consortium.transition_service_to_open(node)
+
+    LOG.info("Unknown proposal is rejected on completion")
+
+    unkwown_proposal = {"actions": [{"name": "unknown_action"}]}
+
+    try:
+        proposal = network.consortium.get_any_active_member().propose(
+            node, unkwown_proposal
+        )
+        assert False, "Unknown proposal should fail on validation"
+    except infra.proposal.ProposalNotCreated:
+        pass
+
+    LOG.info("Proposal to add a new member (with different curve)")
+    (
+        new_member_proposal,
+        new_member,
+        careful_vote,
+    ) = network.consortium.generate_and_propose_new_member(
+        remote_node=node,
+        curve=infra.network.EllipticCurve(args.participants_curve).next(),
+    )
+
+    LOG.info("Check proposal has been recorded in open state")
+    proposal = network.consortium.get_proposal(node, new_member_proposal.proposal_id)
+    assert proposal.state == infra.proposal.ProposalState.OPEN
+
+    LOG.info("Rest of consortium accept the proposal")
+    network.consortium.vote_using_majority(node, new_member_proposal, careful_vote)
+    assert new_member_proposal.state == ProposalState.ACCEPTED
+
+    # Manually add new member to consortium
+    network.consortium.add_member(new_member)
+
+    LOG.debug("Further vote requests fail as the proposal has already been accepted")
+    params_error = http.HTTPStatus.BAD_REQUEST.value
+    response = network.consortium.get_member_by_local_id("member0").vote(
+        node, new_member_proposal, careful_vote
+    )
+    assert response.status_code == params_error
+    response = network.consortium.get_member_by_local_id("member1").vote(
+        node, new_member_proposal, careful_vote
+    )
+    assert response.status_code == params_error
+
+    LOG.debug("Accepted proposal cannot be withdrawn")
+    response = network.consortium.get_member_by_local_id(
+        new_member_proposal.proposer_id
+    ).withdraw(node, new_member_proposal)
+    assert response.status_code == params_error
+
+    LOG.info("New non-active member should get insufficient rights response")
+    current_recovery_thresold = network.consortium.recovery_threshold
+    expected_error = http.HTTPStatus.UNAUTHORIZED
+    try:
+        proposal_recovery_threshold, careful_vote = network.consortium.make_proposal(
+            "set_recovery_threshold", recovery_threshold=current_recovery_thresold
+        )
+        new_member.propose(node, proposal_recovery_threshold)
+        assert False, "New non-active member should get insufficient rights response"
+    except infra.proposal.ProposalNotCreated as e:
+        assert (
+            e.response.status_code == expected_error
+        ), f"{e.response.status_code} != {expected_error}"
+
+    LOG.debug("New member ACK")
+    new_member.ack(node)
+
+    LOG.info("New member is now active and send a proposal")
+    proposal = new_member.propose(node, proposal_recovery_threshold)
+    proposal.vote_for = careful_vote
+
+    LOG.debug("Members vote for proposal")
+    network.consortium.vote_using_majority(node, proposal, careful_vote)
+    assert proposal.state == infra.proposal.ProposalState.ACCEPTED
+
+    LOG.info("New member makes a new proposal")
+    proposal_recovery_threshold, careful_vote = network.consortium.make_proposal(
+        "set_recovery_threshold", recovery_threshold=current_recovery_thresold
+    )
+    proposal = new_member.propose(node, proposal_recovery_threshold)
+
+    LOG.debug("Other members (non proposer) are unable to withdraw new proposal")
+    response = network.consortium.get_member_by_local_id("member1").withdraw(
+        node, proposal
+    )
+    assert response.status_code == http.HTTPStatus.FORBIDDEN.value
+
+    LOG.debug("Proposer withdraws their proposal")
+    response = new_member.withdraw(node, proposal)
+    assert response.status_code == http.HTTPStatus.OK.value
+    assert proposal.state == infra.proposal.ProposalState.WITHDRAWN
+
+    proposal = network.consortium.get_proposal(node, proposal.proposal_id)
+    assert proposal.state == infra.proposal.ProposalState.WITHDRAWN
+
+    LOG.debug("Further withdraws idempotently pass")
+    response = new_member.withdraw(node, proposal)
+    assert response.status_code == http.HTTPStatus.OK
+
+    LOG.debug("Further votes fail")
+    response = new_member.vote(node, proposal, careful_vote)
+    assert response.status_code == params_error
+
+
+def run(args):
+    with infra.network.network(
+        args.nodes, args.binary_dir, args.debug_nodes, pdb=args.pdb
+    ) as network:
+        network.start_and_open(args)
+
+        network = test_missing_signature_header(network, args)
+        network = test_rapid_governance(network, args)
+        network = test_corrupted_signature(network, args)
+        network = test_governance(network, args)

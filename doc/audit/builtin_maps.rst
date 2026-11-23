@@ -1,0 +1,715 @@
+Built-in Maps
+=============
+
+``public:ccf.gov.``
+-------------------
+
+``members.certs``
+~~~~~~~~~~~~~~~~~
+
+X509 certificates of legacy members in the consortium.
+
+**Key** Member ID: SHA-256 fingerprint of the member certificate, represented as a hex-encoded string.
+
+**Value** Member certificate, represented as a PEM-encoded string.
+
+``members.public_keys``
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Certificate-free member enrollments.
+
+**Key** Member ID: the ``did:key`` containing the member's public key.
+
+**Value** The public key, represented as DER SubjectPublicKeyInfo bytes.
+
+See :ref:`architecture/cryptography:Identity IDs` for enrollment and revocation semantics.
+
+``members.encryption_public_keys``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Public encryption keys submitted by members to the network. The recovery share for each member is encrypted by the key they have submitted.
+
+**Key** Member ID: SHA-256 fingerprint of the member certificate, represented as a hex-encoded string.
+
+**Value** Member public encryption key, represented as a PEM-encoded string.
+
+DID members use their ``did:key`` as the key instead of a certificate fingerprint.
+
+``members.info``
+~~~~~~~~~~~~~~~~
+
+Participation status and auxiliary information attached to a member.
+
+**Key** Member ID: SHA-256 fingerprint of the member's X509 certificate, represented as a hex-encoded string.
+
+**Value** Represented as JSON.
+
+.. doxygenstruct:: ccf::MemberDetails
+   :project: CCF
+   :members:
+
+.. doxygenenum:: ccf::MemberStatus
+   :project: CCF
+
+``members.acks``
+~~~~~~~~~~~~~~~~
+
+Member acknowledgements of the ledger state, each containing a signature over the Merkle root at a particular sequence number.
+
+**Key** Member ID: SHA-256 fingerprint of the member certificate, represented as a hex-encoded string.
+
+**Value** Represented as JSON.
+
+.. doxygenstruct:: ccf::MemberAck
+   :project: CCF
+   :members:
+
+.. doxygenstruct:: ccf::StateDigest
+   :project: CCF
+   :members:
+
+.. doxygenstruct:: ccf::SignedReq
+   :project: CCF
+   :members:
+
+``users.certs``
+~~~~~~~~~~~~~~~
+
+X509 certificates of legacy network users.
+
+**Key** User ID: SHA-256 fingerprint of the user certificate, represented as a hex-encoded string.
+
+**Value** User certificate, represented as a PEM-encoded string.
+
+``users.public_keys``
+~~~~~~~~~~~~~~~~~~~~~
+
+Certificate-free user enrollments.
+
+**Key** User ID: the ``did:key`` containing the user's public key.
+
+**Value** The public key, represented as DER SubjectPublicKeyInfo bytes.
+
+Member and user information and acknowledgement tables also accept ``did:key`` IDs as keys.
+
+``users.info``
+~~~~~~~~~~~~~~
+
+Auxiliary information attached to a user.
+
+**Key** User ID: SHA-256 fingerprint of the user certificate, represented as a hex-encoded string.
+
+**Value** Represented as JSON.
+
+.. doxygenstruct:: ccf::UserDetails
+   :project: CCF
+   :members:
+
+``nodes.info``
+~~~~~~~~~~~~~~
+
+Identity, status and attestations (endorsed quotes) of the nodes hosting the network.
+
+**Key** Node ID: SHA-256 digest of the node public key, represented as a hex-encoded string.
+
+**Value** Represented as JSON.
+
+.. doxygenstruct:: ccf::NodeInfo
+   :project: CCF
+   :members:
+
+.. doxygenenum:: ccf::NodeStatus
+   :project: CCF
+
+.. doxygenstruct:: ccf::NodeInfoNetwork
+   :project: CCF
+   :members:
+
+.. doxygenstruct:: ccf::NodeInfoNetwork_v2
+   :project: CCF
+   :members:
+
+.. doxygenstruct:: ccf::QuoteInfo
+   :project: CCF
+   :members:
+
+.. doxygenenum:: ccf::QuoteFormat
+   :project: CCF
+
+``nodes.endorsed_certificates``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Key** Node ID: SHA-256 digest of the node public key, represented as a hex-encoded string.
+
+**Value** Node service-endorsed certificate, represented as a PEM-encoded string.
+
+``nodes.code_ids``
+~~~~~~~~~~~~~~~~~~
+
+DEPRECATED. Previously contained versions of the code allowed to join the current network on SGX hardware.
+
+**Key** MRENCLAVE, represented as a base64 hex-encoded string (length: 64).
+
+**Value** Status represented as JSON.
+
+**Example**
+
+.. list-table::
+   :header-rows: 1
+
+   * - Code ID
+     - Status
+   * - ``cae46d1...bb908b64e``
+     - ``ALLOWED_TO_JOIN``
+
+``nodes.virtual.host_data``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Map mimicking SNP host_data for virtual nodes, restricting which host_data values may be presented by new nodes joining the network.
+
+**Key** Host data: The host data.
+
+**Value** Metadata: The platform specific meaning of the host data.
+
+``nodes.virtual.measurements``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Trusted virtual measurements for new nodes allowed to join the network. Virtual measurements are constructed by CCF to test and debug code update flows on hardware without TEE protections.
+
+.. warning:: Since virtual nodes provide no protection, this should be empty on production instances.
+
+**Key** Measurement, represented as a base64 hex-encoded string (length: 64).
+
+**Value** Status represented as JSON.
+
+``nodes.snp.host_data``
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Trusted attestation report host data field for new nodes allowed to join the network (:doc:`SNP <../operations/platforms/snp>` only). Only the presence of the joiner's host data key is checked, so the metadata is optional and may be empty for space-saving or privacy reasons.
+
+**Key** Host data: The host data.
+
+**Value** Metadata: The platform specific meaning of the host data.
+
+``nodes.snp.measurements``
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Trusted SNP measurements for new nodes allowed to join the network (:doc:`SNP <../operations/platforms/snp>` only).
+
+.. note:: For improved serviceability on confidential ACI deployments, see :ref:`audit/builtin_maps:``nodes.snp.uvm_endorsements``` map.
+
+**Key** Measurement, represented as a base64 hex-encoded string (length: 96).
+
+**Value** Status represented as JSON.
+
+**Example**
+
+.. list-table::
+   :header-rows: 1
+
+   * - Code ID
+     - Status
+   * - ``ede8268...01b66ed1``
+     - ``ALLOWED_TO_JOIN``
+
+``nodes.snp.uvm_endorsements``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For Confidential Azure Container Instance (ACI) deployments, trusted endorsements of utility VM (UVM) for new nodes allowed to join the network (:doc:`SNP <../operations/platforms/snp>` only).
+
+**Key** Trusted endorser DID (did:x509 only for now: https://github.com/microsoft/did-x509/blob/main/specification.md).
+
+**Value** Map of issuer feed to Security Version Number (SVN) represented as JSON. See https://www.rfc-editor.org/rfc/rfc9943.
+
+``nodes.snp.tcb_versions``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The minimum trusted TCB version for new nodes allowed to join the network (:doc:`SNP <../operations/platforms/snp>` only).
+
+.. note:: For improved serviceability on confidential ACI deployments, see :ref:`audit/builtin_maps:``nodes.snp.uvm_endorsements``` map.
+
+**Key** AMD CPUID, represented as a lowercase hex string without an '0x' prefix.
+
+**Value** The minimum TCB version for that CPUID.
+
+**Example**
+
+.. list-table::
+   :header-rows: 1
+
+   * - CPUID
+     - TCB Version
+   * - ``00a00f11``
+     - ``{"hexstring": "d315000000000004", "boot_loader": 4, "tee": 0, "snp": 21, "microcode": 211}``
+
+``nodes.sealed_recovery_keys``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Key** Node ID: SHA-256 digest of the node public key, represented as a hex-encoded string.
+
+**Value** Sealed recovery key for the node. The private key is encrypted using a key derived from SNP's ``DERIVED_KEY``, allowing the node to unseal its recovery share during local sealing recovery.
+
+.. doxygenstruct:: ccf::SealedRecoveryKey
+    :project: CCF
+    :members:
+
+``nodes.node_join_policy``
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Code update policy: JavaScript module, exporting ``apply()``, which evaluates the transparent statements presented by joining nodes whose host data is not explicitly trusted.
+See :ref:`operations/code_upgrade:Code Update Policy` for details.
+It is set with the ``set_node_join_policy`` governance action, and removed with the ``remove_node_join_policy`` governance action.
+
+**Key** Sentinel value 0, represented as a little-endian 64-bit unsigned integer.
+
+**Value** JavaScript module, represented as a string.
+
+``service.info``
+~~~~~~~~~~~~~~~~
+
+Service identity and status.
+
+**Key** Sentinel value 0, represented as a little-endian 64-bit unsigned integer.
+
+**Value** Represented as JSON.
+
+.. doxygenenum:: ccf::ServiceStatus
+   :project: CCF
+
+.. doxygenstruct:: ccf::ServiceInfo
+   :project: CCF
+   :members:
+
+.. mermaid::
+
+    graph TB;
+        Opening-- transition_service_to_open -->Open;
+        Recovering-- "transition_service_to_open (recovery)"-->WaitingForRecoveryShares;
+        WaitingForRecoveryShares -- member shares reassembly--> Open;
+        Open-- "start in recovery"-->Recovering;
+
+``service.signing_identities``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Public keys for verifying service COSE signatures, published as ``COSE_KEY`` values in the same transaction as the certificates in ``service.info`` when a service is created or recovered.
+``CLASSICAL`` holds the EC public key of ``service.info.cert``; ``PQ`` holds the ML-DSA public key of ``service.info.pq_cert`` as an RFC 9964 AKP key, and is present exactly when that certificate is.
+A service created before this table existed has no ``CLASSICAL`` entry until its next recovery, so ``CLASSICAL`` falls back to the key of ``service.info.cert``, and older entries may hold DER certificates or public keys.
+``PQ`` never falls back: an incomplete or mismatched pair is rejected, a PQ identity is only introduced by a recovery, and a service holding one only accepts nodes with ML-DSA support.
+
+**Key** Identity type as a little-endian 64-bit unsigned integer.
+
+.. doxygenenum:: ccf::IdentityType
+   :project: CCF
+
+**Value** Represented as JSON.
+
+.. doxygenenum:: ccf::IdentityKind
+   :project: CCF
+
+.. doxygenstruct:: ccf::Identity
+   :project: CCF
+   :members:
+
+``service.config``
+~~~~~~~~~~~~~~~~~~
+
+Service configuration.
+
+**Key** Sentinel value 0, represented as a little-endian 64-bit unsigned integer.
+
+**Value** Represented as JSON.
+
+.. doxygenstruct:: ccf::ServiceConfiguration
+   :project: CCF
+   :members:
+
+``service.previous_service_identity``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+PEM identity of previous service, which this service recovered from.
+
+**Key** Sentinel value 0, represented as a little-endian 64-bit unsigned integer.
+
+**Value** Previous :term:`Service Identity`, represented as a PEM-encoded JSON string.
+
+``proposals``
+~~~~~~~~~~~~~
+
+Governance proposals.
+
+**Key** Proposal ID: SHA-256 digest of the proposal and store state observed during its creation, represented as a hex-encoded string.
+
+**Value** Proposal as submitted (body of proposal request), as a raw buffer.
+
+``proposals_info``
+~~~~~~~~~~~~~~~~~~
+
+Status, proposer ID and ballots attached to a proposal.
+
+**Key** Proposal ID: SHA-256 digest of the proposal and store state observed during its creation, represented as a hex-encoded string.
+
+**Value** Represented as JSON.
+
+.. doxygenstruct:: ccf::jsgov::ProposalInfo
+   :project: CCF
+   :members:
+
+.. doxygenenum:: ccf::ProposalState
+   :project: CCF
+
+``modules``
+~~~~~~~~~~~
+
+JavaScript modules, accessible by JavaScript endpoint functions.
+
+**Key** Module name as a string.
+
+**Value** Contents of the module as a string.
+
+``modules_quickjs_bytecode``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+JavaScript engine module cache, accessible by JavaScript endpoint functions.
+
+**Key** Module name as a string.
+
+**Value** Compiled bytecode as raw buffer.
+
+``modules_quickjs_version``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+JavaScript engine version of the module cache, accessible by JavaScript endpoint functions.
+
+**Key** Sentinel value 0, represented as a little-endian 64-bit unsigned integer.
+
+**Value** QuickJS version as a string.
+
+``js_runtime_options``
+~~~~~~~~~~~~~~~~~~~~~~
+QuickJS runtime options, used to configure runtimes created by CCF.
+
+**Key** Sentinel value 0, represented as a little-endian 64-bit unsigned integer.
+
+**Value** Represented as JSON.
+
+.. doxygenstruct:: ccf::JSRuntimeOptions
+   :project: CCF
+   :members:
+
+``interpreter.flush``
+~~~~~~~~~~~~~~~~~~~~~~
+Used by transactions that set the JS application to signal to the interpreter cache system that existing instances need to be flushed.
+
+**Key** Sentinel value 0, represented as a little-endian 64-bit unsigned integer.
+
+**Value** Boolean, represented as JSON.
+
+``endpoints``
+~~~~~~~~~~~~~
+
+JavaScript endpoint definitions.
+
+**Key** Concatenation of HTTP method and endpoint dispatch key.
+
+.. list-table:: Examples
+   :header-rows: 1
+
+   * - ``app.json`` fragment
+     - Key
+   * - ``{ "endpoints": { "/jwt": { "get": { ... } } } }``
+     - ``GET /jwt``
+   * - ``{ "endpoints": { "/jwt": { "post": { ... } } } }``
+     - ``POST /jwt``
+   * - ``{ "endpoints": { "/log/private/{id}": { "post": { ... } } } }``
+     - ``POST /log/private/{id}``
+
+**Value** Represented as JSON.
+
+.. doxygenstruct:: ccf::endpoints::EndpointProperties
+   :project: CCF
+   :members:
+
+.. doxygenenum:: ccf::endpoints::Mode
+   :project: CCF
+
+.. doxygenenum:: ccf::endpoints::ForwardingRequired
+   :project: CCF
+
+``tls.ca_cert_bundles``
+~~~~~~~~~~~~~~~~~~~~~~~
+
+CA cert bundle storage table, these bundles are used to authenticate connections to JWT issuers.
+
+**Key** Bundle name, represented as a string.
+
+**Value** Cert bundle, represented as a PEM-encoded string.
+
+``jwt.issuers``
+~~~~~~~~~~~~~~~
+
+JWT issuers.
+
+**Key** JWT issuer URL, represented as a string.
+
+**Value** Represented as JSON.
+
+.. doxygenstruct:: ccf::JwtIssuerMetadata
+   :project: CCF
+   :members:
+
+``jwt.public_signing_keys_metadata_v2``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+JWT signing keys.
+
+**Key** JWT Key ID, represented as a string.
+
+**Value** List of (DER-encoded public key, issuer, constraint), represented as JSON.
+
+``constitution``
+~~~~~~~~~~~~~~~~
+
+Service constitution: JavaScript module, exporting ``validate()``, ``resolve()`` and ``apply()``.
+
+**Key** Sentinel value 0, represented as a little-endian 64-bit unsigned integer.
+
+**Value** JavaScript module, represented as a string.
+
+``history``
+~~~~~~~~~~~
+
+Governance history of the service, captures signed governance requests submitted by members.
+
+**Key** Member ID: SHA-256 fingerprint of the member certificate, represented as a hex-encoded string.
+
+**Value** Represented as JSON.
+
+See :cpp:struct:`ccf::SignedReq`
+
+``cose_history``
+~~~~~~~~~~~~~~~~
+
+Governance history of the service, captures all COSE Sign 1 governance requests submitted by members.
+
+**Key** Member ID: SHA-256 fingerprint of the member certificate, represented as a hex-encoded string.
+
+**Value** COSE Sign1. For proposal creation requests (``ccf.gov.msg.type`` set to ``proposal`` in the protected header), the payload is detached (``nil``) since the signed proposal body is already stored in the ``proposals`` table, written in the same transaction. Ballots and withdrawals embed their payload.
+
+To verify a detached entry, supply the proposal body from the ``proposals`` table as the detached payload when verifying the COSE Sign1 signature. Entries written by older versions of CCF embed the proposal payload as well, so auditors reading historical ledgers should accept both forms.
+
+``cose_recent_proposals``
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Window of recent COSE signed proposals, kept for the purpose of avoiding potential replay. Submitted proposals must be newer than the timestamp of the median, and not collide with any entry.
+
+The window size is set to 100 by default, but can be overridden by setting `recent_cose_proposals_window_size` in ``public:ccf.gov.service.config``.
+
+**Key** ccf.gov.msg.created_at field from COSE protect header, as a string zero-padded to 10 characters, followed by SHA-256 digest of the COSE Sign1, represented as a hex-encoded string and separated by a ':'.
+
+**Value** Proposal ID as a string.
+
+``recovery_decision_protocol.nodes``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Key** Location name: A string which is unique to the location of a particular node within a network.
+
+**Value** 
+
+.. doxygenstruct:: ccf::recovery_decision_protocol::NodeInfo
+   :project: CCF
+   :members:
+
+``recovery_decision_protocol.gossip``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Key** Location name of the source of the gossip message.
+
+**Value** The TxID of the last recovered signed transaction known by the source node.
+
+``recovery_decision_protocol.chosen_node``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Value** The location name of the chosen node. This will either be the node this node voted for, or the node that it has received an `IAmOpen` message from.
+
+``recovery_decision_protocol.votes``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Key** Location name of the node which has voted for this node to be opened.
+
+``recovery_decision_protocol.sm_state``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Value** State machine state of the recovery decision protocol.
+
+.. doxygenenum:: ccf::recovery_decision_protocol::StateMachine
+   :project: CCF
+
+``recovery_decision_protocol.timeout_sm_state``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Value** Timeout state machine state of the recovery decision protocol. Ticks based on `failover_timeout` and advances `recovery_decision_protocol.sm_state` if it falls behind.
+
+See :cpp:enum:`ccf::recovery_decision_protocol::StateMachine` above.
+
+``recovery_decision_protocol.open_kind``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Value** The kind of recovery that was performed, either `Quorum`-based which guarantees that there is at most one recovered service using this path, or `Failover`-based which could allow multiple services to recover.
+
+.. doxygenenum:: ccf::recovery_decision_protocol::OpenKinds
+   :project: CCF
+
+``public:ccf.internal.``
+------------------------
+
+``historical_encrypted_ledger_secret``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+On each rekey, the old ledger secret is stored in this table , encrypted with the new secret.
+
+While the contents themselves are encrypted, the table is public so as to be accessible by a node bootstrapping a recovery service.
+
+``encrypted_ledger_secrets``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Used to broadcast ledger secrets between nodes during a recovery and ledger rekey.
+
+While the contents themselves are encrypted, the table is public so as to be accessible by a node bootstrapping a recovery service.
+
+``tree``
+~~~~~~~~
+
+On every signature transaction, this contains the serialised Merkle Tree for the ledger, between the previous signature and this one.
+
+This is used to generate receipts for historical transactions without having the recompute hashes.
+
+``signatures``
+~~~~~~~~~~~~~~
+
+Signatures emitted by the primary node at regular interval, over the root of the Merkle Tree at that sequence number.
+
+**Key** Sentinel value 0, represented as a little-endian 64-bit unsigned integer.
+
+**Value**
+
+.. doxygenstruct:: ccf::PrimarySignature
+   :project: CCF
+   :members:
+
+.. doxygenstruct:: ccf::NodeSignature
+   :project: CCF
+   :members:
+
+``cose_signatures``
+~~~~~~~~~~~~~~~~~~~
+
+COSE signatures over the Merkle root, keyed by service signing identity type.
+
+**Key** Identity type as a little-endian 64-bit unsigned integer. Only ``CLASSICAL`` (0) is currently populated; ``PQ`` (1) is reserved for future support.
+
+**Value** A CBOR-encoded COSE Sign1 message, stored as a base64-encoded JSON string. Implements the following :ccf_repo:`CDDL schema </cddl/ccf-merkle-tree-cose-signature.cddl>`.
+
+``recovery_shares``
+~~~~~~~~~~~~~~~~~~~
+
+Members' recovery_shares, encrypted by the keys recorded in ``members.encryption_public_keys``.
+
+While the contents themselves are encrypted, the table is public so as to be accessible by nodes bootstrapping a recovery service.
+
+``snapshot_evidence``
+~~~~~~~~~~~~~~~~~~~~~
+
+Evidence inserted in the ledger by a primary producing a snapshot to establish provenance.
+
+**Key** Sentinel value 0, represented as a little-endian 64-bit unsigned integer.
+
+**Value**
+
+.. doxygenstruct:: ccf::SnapshotHash
+   :project: CCF
+   :members:
+
+``snapshot_status``
+~~~~~~~~~~~~~~~~~~~
+
+Status information recorded when a primary produces a snapshot.
+
+**Key** Sentinel value 0, represented as a little-endian 64-bit unsigned integer.
+
+**Value**
+
+.. doxygenstruct:: ccf::SnapshotStatus
+   :project: CCF
+   :members:
+
+``snapshot_create``
+~~~~~~~~~~~~~~~~~~~
+
+Durability marker written when a snapshot is explicitly requested via the operator endpoint.
+This ensures the request is recorded as a real transaction even when it would otherwise carry only a transaction flag.
+
+**Key** Sentinel value 0, represented as a little-endian 64-bit unsigned integer.
+
+**Value** Sentinel value 0, represented as a little-endian 64-bit unsigned integer.
+
+``encrypted_submitted_shares``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Used to persist submitted shares during a recovery.
+
+While the contents themselves are encrypted, the table is public so as to be accessible by nodes bootstrapping a recovery service.
+
+
+``previous_service_identity_endorsement``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Endorsements of service identities by the identities that succeed them, keyed by service signing identity type.
+When a service opens, it signs with the key of each identity type an endorsement of the key that signed the previous endorsement of that type, or of its own key if there is none, so that each type chains service identities across disaster recoveries.
+
+**Key** Identity type as a little-endian 64-bit unsigned integer.
+``CLASSICAL`` (0) is written by every service.
+``PQ`` (1) is written by a service with an ML-DSA identity, in the same transaction.
+It endorses the previous ``PQ`` endorsing key over the same epochs, and with the same previous Merkle root, as ``CLASSICAL``, or its own key if the previous service had no ML-DSA identity.
+
+**Value**
+
+.. doxygenstruct:: ccf::CoseEndorsement
+    :project: CCF
+    :members:
+
+The ``endorsement`` field contains the raw COSE Sign1 message implementing the following :ccf_repo:`CDDL schema </cddl/ccf-cose-endorsement-service-identity.cddl>`.
+
+
+``previous_service_last_signed_root``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Key** Sentinel value 0, represented as a little-endian 64-bit unsigned integer.
+
+**Value** Last signed Merkle root of previous service instance, represented as a hex-encoded string.
+
+``sealed_shares``
+~~~~~~~~~~~~~~~~~
+
+**Value** Per-node encrypted ledger secret wrapping keys, encrypted by the public keys recorded in ``nodes.sealed_recovery_keys``.
+
+While the contents themselves are encrypted, the table is public so as to be accessible by a node starting a recovery service.
+
+.. doxygenstruct:: ccf::SealedSharesInfo
+    :project: CCF
+    :members:
+
+``sealing_recovery_names``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Mapping from sealing recovery names to node IDs for nodes that support local sealing. This table is used alongside ``nodes.sealed_recovery_keys`` to fetch the sealed recovery key when a node is recovering.
+
+**Key** Sealing recovery name of the node, represented as a string.
+
+**Value** Node ID: SHA-256 digest of the node public key, represented as a hex-encoded string.
+
+``last_recovery_type``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+**Value** The mechanism by which the ledger secret was recovered.
+
+.. doxygenenum:: ccf::RecoveryType
+   :project: CCF
