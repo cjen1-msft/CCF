@@ -220,6 +220,25 @@ collision splits one of those keys, so any full table has at least six entries.
 The nine history-resolved rows are not themselves a lower bound of nine distinct
 *sets* of profiles.
 
+**Exhaustiveness ledger: ten labels in three closed families; every other
+action is in a named open family.** [`Families.classify`](../consensus-coverage/ConsensusCoverage/Families.lean)
+assigns each replayed action to exactly one family. A family is closed when
+its complete label list is proved, with a witness for every row and no
+others. Closed so far: no fresh evidence at all (3 labels), a nomination
+whose only fresh evidence is its proposal (3), and a nomination that
+establishes a delayed commit before any election (4). `Families.exact`
+proves these are exactly ten distinct labels. Every other action falls in
+an open family named by its action kind and by which of seven kinds of
+evidence are fresh, for example `open:append:0110011`. Labels in open
+families are bounded but not enumerated. The table is exhaustive only when
+no reachable open family remains.
+
+`trace` prints this breakdown. The replication capture has no action in a
+closed family: its nine actions fall in eight open families (three kinds of
+append, two of AppendEntries delivery, acknowledgment, backup initialization,
+and send). The two heartbeat captures have 3 of 7 actions in closed
+families; the two nomination captures 5 of 9.
+
 **Full recorded-action denominator: at least 139; at least 136 on multi-node deployments.**
 The [recorded-action specification](../consensus-coverage/ConsensusCoverage/ActionProfile.lean)
 assigns an initialized step exactly one 457-answer vector. All 433 step

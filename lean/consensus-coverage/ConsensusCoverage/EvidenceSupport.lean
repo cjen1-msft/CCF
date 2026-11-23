@@ -415,6 +415,7 @@ public structure Evidence where
   elected : Bool
   canon : Bool
   committed : Bool
+  deriving DecidableEq, Repr
 
 @[expose] public def Evidence.fresh (e : Evidence) : Family → Bool
   | .pending => e.pending

@@ -5,7 +5,9 @@ import ConsensusCoverage.StateCoverage
 import ConsensusCoverage.FrontierWitnesses
 import ConsensusCoverage.LeaderCoverage
 import ConsensusCoverage.CaptureBounds
+import ConsensusCoverage.Families
 import Consensus.Replay.Reduction
+import Std.Data.TreeMap.Basic
 
 open Consensus Consensus.Replay ConsensusCoverage
 
@@ -16,6 +18,7 @@ private structure Score where
   rows : List CaptureBounds.Row := []
   quiet : List StateCoverage.Row := []
   nomination : List StateCoverage.Row := []
+  families : Std.TreeMap String Nat := {}
   past : List Model.State := []
 
 private def record [BEq α] (xs : List α) (x : α) := if xs.contains x then xs else x :: xs
@@ -29,12 +32,14 @@ private def visit (cfg : CCF.Finset Nat) (score : Score) (s : Model.State) (a : 
   let edge := e.key.1
   let row := CaptureBounds.read e
   let pre := (edge.zeroBefore, edge.backedBefore)
+  let family := Families.code (Families.classify cfg s a t score.past)
   { states := record score.states (edge.zeroAfter, edge.backedAfter),
     edges := record score.edges edge,
     multiEdges := score.multiEdges.map fun seen => record seen e.key,
     rows := row :: score.rows,
     quiet := if e.inert then record score.quiet pre else score.quiet,
     nomination := if e.nomination then record score.nomination pre else score.nomination,
+    families := score.families.alter family (fun n => some (n.getD 0 + 1)),
     past }
 
 private def stateKey (row : StateCoverage.Row) : String :=
@@ -44,6 +49,19 @@ private def reportSlice (name : String) (hits : List StateCoverage.Row) : IO Uni
   let missing := StateCoverage.activeTable.filter (· ∉ hits)
   IO.println s!"{StateCoverage.activeTable.length - missing.length}/{StateCoverage.activeTable.length} \
     {name} step labels; missing: {if missing.isEmpty then "none" else String.intercalate " " (missing.map stateKey)}"
+
+private def reportFamilies (scores : List Score) : IO Unit := do
+  let counts := scores.foldl (init := ({} : Std.TreeMap String Nat)) fun total score =>
+    score.families.foldl (fun acc name count => acc.alter name (fun n => some (n.getD 0 + count))) total
+  let closed := [Families.Family.quiet, .freshNomination, .delayedNomination].map Families.code
+  let closedCounts := closed.map fun name => (name, counts.getD name 0)
+  let summary := String.intercalate " " (closedCounts.map fun (name, count) => s!"{name}={count}")
+  IO.println s!"closed families ({(closedCounts.map Prod.snd).sum} actions): {summary}"
+  IO.println s!"open family bits (1=fresh, 0=stale): {Families.evidenceOrder}"
+  IO.println "open family\tactions"
+  for (name, count) in counts.toList do
+    unless closed.contains name do
+      IO.println s!"{name}\t{count}"
 
 private def report (states : List StateCoverage.Row) (edges : List FrontierRows.Row) : IO Unit := do
   let table := StateCoverage.activeTable
@@ -128,5 +146,8 @@ def main : List String → IO Unit
     else reportLeaders multi.flatten
     reportSlice "all-false" (scores.flatMap Score.quiet)
     reportSlice "fresh-nomination signature" (scores.flatMap Score.nomination)
+    reportFamilies scores
   | ["answers", file] => printAnswers file
-  | _ => throw <| IO.userError "usage: proof-coverage.lean check | trace FILE.ndjson [FILE.ndjson ...] | answers FILE.ndjson | columns"
+  | _ => throw <| IO.userError
+    ("usage: proof-coverage.lean check | trace FILE.ndjson [FILE.ndjson ...] | answers FILE.ndjson | columns\n" ++
+      s!"trace open families: open:<action kind>:<7 bits> (1=fresh, 0=stale), in order: {Families.evidenceOrder}")
