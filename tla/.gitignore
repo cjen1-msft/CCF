@@ -1,0 +1,16 @@
+*.jar
+states/
+tools/
+*.out
+*.toolbox/
+*.tlaps/
+.Rproj.user/
+.RData
+.Rhistory
+*.Rproj
+.DS_Store
+*.dot
+*TTrace*.tla
+*TTrace*.bin
+*_stats.json
+**/states.dump*

@@ -1,0 +1,306 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the Apache 2.0 License.
+#pragma once
+
+#include "ccf/historical_queries_interface.h"
+#include "kv/test/stub_consensus.h"
+#include "node/recovery_decision_protocol.h"
+#include "node/rpc/gov_effects_interface.h"
+#include "node/rpc/node_interface.h"
+#include "node/rpc/node_operation_interface.h"
+
+#include <stdexcept>
+
+namespace ccf
+{
+  class StubNodeOperation : public ccf::AbstractNodeOperation
+  {
+  public:
+    bool is_public = false;
+    bool can_replicate_result = true;
+    ccf::COSESignaturesConfig cose_signatures_config = {};
+
+    ExtendedState state() override
+    {
+      return {NodeStartupState::partOfNetwork, {}, {}};
+    }
+
+    bool is_in_initialised_state() const override
+    {
+      return false;
+    }
+
+    bool is_part_of_public_network() const override
+    {
+      return is_public;
+    }
+
+    bool is_part_of_network() const override
+    {
+      return true;
+    }
+
+    bool is_reading_public_ledger() const override
+    {
+      return false;
+    }
+
+    bool is_reading_private_ledger() const override
+    {
+      return false;
+    }
+
+    bool is_member_frontend_open() override
+    {
+      return true;
+    }
+
+    bool is_user_frontend_open() override
+    {
+      return true;
+    }
+
+    bool is_accessible_to_members() const override
+    {
+      return true;
+    }
+
+    bool can_replicate() override
+    {
+      return can_replicate_result;
+    }
+
+    std::optional<ccf::NodeId> get_primary() override
+    {
+      return ccf::kv::test::PrimaryNodeId;
+    }
+
+    ccf::kv::Version get_last_recovered_signed_idx() override
+    {
+      return ccf::kv::NoVersion;
+    }
+
+    SessionMetrics get_session_metrics() override
+    {
+      return {};
+    }
+
+    size_t get_jwt_attempts() override
+    {
+      return 0;
+    }
+
+    QuoteVerificationResult verify_quote(
+      ccf::kv::ReadOnlyTx& tx,
+      const QuoteInfo& quote_info,
+      const std::vector<uint8_t>& expected_node_public_key_der,
+      pal::PlatformAttestationMeasurement& measurement,
+      const std::optional<std::vector<uint8_t>>& code_transparent_statement,
+      std::shared_ptr<NetworkIdentitySubsystemInterface>
+        network_identity_subsystem) override
+    {
+      return QuoteVerificationResult::Verified;
+    }
+
+    ccf::kv::Version get_startup_snapshot_seqno() override
+    {
+      return 0;
+    }
+
+    void initiate_private_recovery(ccf::kv::Tx& tx) override
+    {
+      throw std::logic_error("Unimplemented");
+    }
+
+    void trigger_snapshot(ccf::kv::Tx& /*tx*/) override {}
+
+    ccf::crypto::Pem get_self_signed_node_certificate() override
+    {
+      return {};
+    }
+
+    const ccf::COSESignaturesConfig& get_cose_signatures_config() override
+    {
+      return cose_signatures_config;
+    }
+
+    RecoveryDecisionProtocolSubsystem& recovery_decision_protocol() override
+    {
+      throw std::logic_error("Unimplemented");
+    }
+
+    void shuffle_sealed_shares(ccf::kv::Tx& /*tx*/) override {}
+  };
+
+  class StubGovernanceEffects : public ccf::AbstractGovernanceEffects
+  {
+  public:
+    void transition_service_to_open(ccf::kv::Tx& tx, ServiceIdentities) override
+    {
+      return;
+    }
+
+    bool rekey_ledger(ccf::kv::Tx& tx) override
+    {
+      return true;
+    }
+
+    void trigger_recovery_shares_refresh(ccf::kv::Tx& tx) override
+    {
+      return;
+    }
+
+    void trigger_ledger_chunk(ccf::kv::Tx& tx) override
+    {
+      return;
+    }
+
+    void trigger_snapshot(ccf::kv::Tx& tx) override
+    {
+      return;
+    }
+
+    void shuffle_sealed_shares(ccf::kv::Tx& /*tx*/) override
+    {
+      return;
+    }
+  };
+
+  class StubNodeStateCache : public historical::AbstractStateCache
+  {
+  public:
+    void set_default_expiry_duration(
+      historical::ExpiryDuration seconds_until_expiry)
+    {}
+
+    void set_soft_cache_limit(historical::CacheSize cache_limit) {}
+
+    void track_deletes_on_missing_keys(bool track) {}
+
+    ccf::kv::ReadOnlyStorePtr get_store_at(
+      historical::RequestHandle handle,
+      ccf::SeqNo seqno,
+      historical::ExpiryDuration seconds_until_expiry)
+    {
+      return nullptr;
+    }
+
+    ccf::kv::ReadOnlyStorePtr get_store_at(
+      historical::RequestHandle handle, ccf::SeqNo seqno)
+    {
+      return nullptr;
+    }
+
+    historical::StatePtr get_state_at(
+      historical::RequestHandle handle,
+      ccf::SeqNo seqno,
+      historical::ExpiryDuration seconds_until_expiry)
+    {
+      return nullptr;
+    }
+
+    historical::StatePtr get_state_at(
+      historical::RequestHandle handle, ccf::SeqNo seqno)
+    {
+      return nullptr;
+    }
+
+    std::vector<ccf::kv::ReadOnlyStorePtr> get_store_range(
+      historical::RequestHandle handle,
+      ccf::SeqNo start_seqno,
+      ccf::SeqNo end_seqno,
+      historical::ExpiryDuration seconds_until_expiry)
+    {
+      return {};
+    }
+
+    std::vector<ccf::kv::ReadOnlyStorePtr> get_store_range(
+      historical::RequestHandle handle,
+      ccf::SeqNo start_seqno,
+      ccf::SeqNo end_seqno)
+    {
+      return {};
+    }
+
+    std::vector<historical::StatePtr> get_state_range(
+      historical::RequestHandle handle,
+      ccf::SeqNo start_seqno,
+      ccf::SeqNo end_seqno,
+      historical::ExpiryDuration seconds_until_expiry)
+    {
+      return {};
+    }
+
+    std::vector<historical::StatePtr> get_state_range(
+      historical::RequestHandle handle,
+      ccf::SeqNo start_seqno,
+      ccf::SeqNo end_seqno)
+    {
+      return {};
+    }
+
+    std::vector<ccf::kv::ReadOnlyStorePtr> get_stores_for(
+      historical::RequestHandle handle,
+      const SeqNoCollection& seqnos,
+      historical::ExpiryDuration seconds_until_expiry)
+    {
+      return {};
+    }
+
+    std::vector<ccf::kv::ReadOnlyStorePtr> get_stores_for(
+      historical::RequestHandle handle, const SeqNoCollection& seqnos)
+    {
+      return {};
+    }
+
+    std::vector<historical::StatePtr> get_states_for(
+      historical::RequestHandle handle,
+      const SeqNoCollection& seqnos,
+      historical::ExpiryDuration seconds_until_expiry)
+    {
+      return {};
+    }
+
+    std::vector<historical::StatePtr> get_states_for(
+      historical::RequestHandle handle, const SeqNoCollection& seqnos)
+    {
+      return {};
+    }
+
+    bool drop_cached_states(historical::RequestHandle handle)
+    {
+      return true;
+    }
+
+    size_t get_estimated_store_cache_size()
+    {
+      return 0;
+    }
+  };
+
+  struct StubNodeContext : public ccf::AbstractNodeContext
+  {
+  public:
+    ccf::NodeId node_id = ccf::kv::test::PrimaryNodeId;
+    std::shared_ptr<StubNodeOperation> node_operation = nullptr;
+    std::shared_ptr<StubGovernanceEffects> gov_effects = nullptr;
+    std::shared_ptr<StubNodeStateCache> cache = nullptr;
+
+    StubNodeContext()
+    {
+      node_operation = std::make_shared<StubNodeOperation>();
+      install_subsystem(node_operation);
+
+      gov_effects = std::make_shared<StubGovernanceEffects>();
+      install_subsystem(gov_effects);
+
+      cache = std::make_shared<StubNodeStateCache>();
+      install_subsystem(cache);
+    }
+
+    ccf::NodeId get_node_id() const override
+    {
+      return node_id;
+    }
+  };
+}

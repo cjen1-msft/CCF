@@ -1,0 +1,32 @@
+# To get started with Dependabot version updates, you'll need to specify which
+# package ecosystems to update and where the package manifests are located.
+# Please see the documentation for all configuration options:
+# https://help.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
+
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/js/ccf-app" # Location of package manifests
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "pip"
+    directory: "/python" # Location of package manifests
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      # Check for updates to GitHub Actions daily, but only surface them
+      # after the cooldown below has elapsed.
+      interval: "daily"
+    # Wait 7 days after a new release is published before opening an update
+    # PR, to reduce the supply-chain risk of pulling in a freshly tagged
+    # (and potentially compromised) release.
+    cooldown:
+      default-days: 7
+    groups:
+      codeql:
+        patterns:
+          - "github/codeql-action*"

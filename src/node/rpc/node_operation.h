@@ -1,0 +1,142 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the Apache 2.0 License.
+#pragma once
+
+#include "node/recovery_decision_protocol.h"
+#include "node/rpc/node_interface.h"
+#include "node/rpc/node_operation_interface.h"
+
+namespace ccf
+{
+  class NodeOperation : public AbstractNodeOperation
+  {
+  protected:
+    AbstractNodeState& impl;
+
+  public:
+    NodeOperation(AbstractNodeState& impl_) : impl(impl_) {}
+
+    ExtendedState state() override
+    {
+      return impl.state();
+    }
+
+    [[nodiscard]] bool is_in_initialised_state() const override
+    {
+      return impl.is_in_initialised_state();
+    }
+
+    [[nodiscard]] bool is_part_of_public_network() const override
+    {
+      return impl.is_part_of_public_network();
+    }
+
+    [[nodiscard]] bool is_part_of_network() const override
+    {
+      return impl.is_part_of_network();
+    }
+
+    [[nodiscard]] bool is_reading_public_ledger() const override
+    {
+      return impl.is_reading_public_ledger();
+    }
+
+    [[nodiscard]] bool is_reading_private_ledger() const override
+    {
+      return impl.is_reading_private_ledger();
+    }
+
+    bool is_user_frontend_open() override
+    {
+      return impl.is_user_frontend_open();
+    }
+
+    bool is_member_frontend_open() override
+    {
+      return impl.is_member_frontend_open();
+    }
+
+    [[nodiscard]] bool is_accessible_to_members() const override
+    {
+      return impl.is_accessible_to_members();
+    }
+
+    bool can_replicate() override
+    {
+      return impl.can_replicate();
+    }
+
+    std::optional<ccf::NodeId> get_primary() override
+    {
+      return impl.get_primary();
+    }
+
+    ccf::kv::Version get_last_recovered_signed_idx() override
+    {
+      return impl.get_last_recovered_signed_idx();
+    }
+
+    ccf::kv::Version get_startup_snapshot_seqno() override
+    {
+      return impl.get_startup_snapshot_seqno();
+    }
+
+    SessionMetrics get_session_metrics() override
+    {
+      return impl.get_session_metrics();
+    }
+
+    size_t get_jwt_attempts() override
+    {
+      return impl.get_jwt_attempts();
+    }
+
+    QuoteVerificationResult verify_quote(
+      ccf::kv::ReadOnlyTx& tx,
+      const QuoteInfo& quote_info,
+      const std::vector<uint8_t>& expected_node_public_key_der,
+      pal::PlatformAttestationMeasurement& measurement,
+      const std::optional<std::vector<uint8_t>>& code_transparent_statement,
+      std::shared_ptr<NetworkIdentitySubsystemInterface>
+        network_identity_subsystem) override
+    {
+      return impl.verify_quote(
+        tx,
+        quote_info,
+        expected_node_public_key_der,
+        measurement,
+        code_transparent_statement,
+        network_identity_subsystem);
+    }
+
+    void initiate_private_recovery(ccf::kv::Tx& tx) override
+    {
+      impl.initiate_private_recovery(tx);
+    }
+
+    void trigger_snapshot(ccf::kv::Tx& tx) override
+    {
+      impl.trigger_snapshot(tx);
+    }
+
+    ccf::crypto::Pem get_self_signed_node_certificate() override
+    {
+      return impl.get_self_signed_certificate();
+    }
+
+    const ccf::COSESignaturesConfig& get_cose_signatures_config() override
+    {
+      return impl.get_cose_signatures_config();
+    }
+
+    RecoveryDecisionProtocolSubsystem& recovery_decision_protocol() override
+    {
+      return impl.get_recovery_decision_protocol();
+    }
+
+    void shuffle_sealed_shares(ccf::kv::Tx& tx) override
+    {
+      impl.shuffle_sealed_shares(tx);
+    }
+  };
+}

@@ -1,0 +1,427 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the Apache 2.0 License.
+#pragma once
+#include "ccf/app_interface.h"
+#include "ccf/js/core/context.h"
+#include "ccf/node/configuration.h"
+#include "ccf/node/start_type.h"
+#include "ccf/node_context.h"
+#include "ccf/node_subsystem_interface.h"
+#include "common/create_node_status.h"
+#include "crypto/openssl/hash.h"
+#include "ds/internal_logger.h"
+#include "ds/work_beacon.h"
+#include "indexing/enclave_lfs_access.h"
+#include "indexing/historical_transaction_fetcher.h"
+#include "indexing/indexer.h"
+#include "js/interpreter_cache.h"
+#include "kv/ledger_chunker.h"
+#include "node/commit_callback_subsystem.h"
+#include "node/commit_point_subsystem.h"
+#include "node/historical_queries.h"
+#include "node/network_state.h"
+#include "node/node_inbound_message.h"
+#include "node/node_state.h"
+#include "node/node_transport.h"
+#include "node/rpc/cosesigconfig_subsystem.h"
+#include "node/rpc/custom_protocol_subsystem.h"
+#include "node/rpc/forwarder.h"
+#include "node/rpc/gov_effects.h"
+#include "node/rpc/ledger_interface.h"
+#include "node/rpc/member_frontend.h"
+#include "node/rpc/network_identity_accessors_impl.h"
+#include "node/rpc/network_identity_subsystem.h"
+#include "node/rpc/node_frontend.h"
+#include "node/rpc/node_operation.h"
+#include "node/rpc/rpc_connection_manager.h"
+#include "node/rpc/rpc_map.h"
+#include "node/rpc/user_frontend.h"
+#include "node/runtime_control.h"
+#include "node/signature_cache_subsystem.h"
+#include "tasks/worker.h"
+
+namespace ccf
+{
+  class Enclave
+  {
+  private:
+    ccf::ds::WorkBeacon work_beacon;
+    ccf::AbstractRuntimeControl& runtime_control;
+    ccf::NetworkState network;
+    std::shared_ptr<AbstractLedgerSubsystemInterface> ledger_subsystem =
+      nullptr;
+    std::shared_ptr<AbstractNodeTransport> node_transport = nullptr;
+    std::shared_ptr<NodeIngress> node_ingress = nullptr;
+    std::shared_ptr<RPCMap> rpc_map;
+    std::shared_ptr<RPCConnectionManager> rpcsessions;
+    std::shared_ptr<ccf::NodeState> node;
+    std::atomic<bool> stop_requested = false;
+    std::atomic<bool> stop_notice_requested = false;
+
+    StartType start_type{};
+
+    struct NodeContext : public ccf::AbstractNodeContext
+    {
+      const ccf::NodeId this_node;
+
+      NodeContext(ccf::NodeId id) : this_node(std::move(id)) {}
+
+      [[nodiscard]] ccf::NodeId get_node_id() const override
+      {
+        return this_node;
+      }
+    };
+
+    std::unique_ptr<NodeContext> context = nullptr;
+
+    std::shared_ptr<ccf::historical::StateCache> historical_state_cache =
+      nullptr;
+    std::shared_ptr<ccf::indexing::Indexer> indexer = nullptr;
+    std::shared_ptr<ccf::indexing::EnclaveLFSAccess> lfs_access = nullptr;
+
+  public:
+    struct StartupInfo
+    {
+      std::vector<uint8_t> node_cert;
+      std::vector<uint8_t> service_cert;
+      std::vector<uint8_t> rpc_addresses;
+    };
+
+    Enclave(
+      const ccf::CCFConfig& config,
+      ccf::AbstractRuntimeControl& runtime_control_,
+      const std::shared_ptr<AbstractLedgerSubsystemInterface>& ledger_subsystem,
+      const std::shared_ptr<AbstractNodeTransport>& node_transport) :
+      runtime_control(runtime_control_),
+      ledger_subsystem(ledger_subsystem),
+      node_transport(node_transport),
+      rpc_map(std::make_shared<RPCMap>()),
+      rpcsessions(std::make_shared<RPCConnectionManager>(rpc_map))
+    {
+      if (ledger_subsystem == nullptr || node_transport == nullptr)
+      {
+        throw std::invalid_argument(
+          "A ledger subsystem and node transport must be provided");
+      }
+
+      LOG_TRACE_FMT("Creating ledger secrets");
+      network.ledger_secrets = std::make_shared<ccf::LedgerSecrets>();
+
+      network.tables->set_chunker(
+        std::make_shared<ccf::kv::LedgerChunker>(config.ledger.chunk_size));
+      network.tables->set_max_transaction_size(
+        config.ledger.max_transaction_size);
+
+      LOG_TRACE_FMT("Creating node");
+      node = std::make_shared<ccf::NodeState>(
+        this->node_transport,
+        network,
+        rpcsessions,
+        config.node_certificate.curve_id,
+        runtime_control,
+        this->ledger_subsystem);
+
+      LOG_TRACE_FMT("Creating context");
+      context = std::make_unique<NodeContext>(node->get_node_id());
+
+      LOG_TRACE_FMT("Creating context subsystems");
+      historical_state_cache = std::make_shared<ccf::historical::StateCache>(
+        *network.tables, network.ledger_secrets, this->ledger_subsystem);
+      context->install_subsystem(historical_state_cache);
+      context->install_subsystem(
+        std::make_shared<ccf::CommitPointSubsystem>(node));
+
+      indexer = std::make_shared<ccf::indexing::Indexer>(
+        std::make_shared<ccf::indexing::HistoricalTransactionFetcher>(
+          historical_state_cache),
+        *context);
+      context->install_subsystem(indexer);
+
+      lfs_access = std::make_shared<ccf::indexing::EnclaveLFSAccess>(
+        ccf::tasks::get_main_job_board());
+      context->install_subsystem(lfs_access);
+
+      context->install_subsystem(std::make_shared<ccf::NodeOperation>(*node));
+      context->install_subsystem(
+        std::make_shared<ccf::GovernanceEffects>(*node));
+
+      context->install_subsystem(
+        std::make_shared<ccf::NetworkIdentitySubsystem>(
+          std::make_shared<ccf::NodeStateAccessor>(*node),
+          std::make_shared<ccf::HistoricalStateAccessor>(
+            historical_state_cache),
+          network.identity,
+          std::make_shared<ccf::TaskSchedulerImpl>()));
+
+      context->install_subsystem(
+        std::make_shared<ccf::NodeConfigurationSubsystem>(*node));
+
+      auto cpss = std::make_shared<ccf::CustomProtocolSubsystem>(*node);
+      context->install_subsystem(cpss);
+      rpcsessions->set_custom_protocol_subsystem(cpss);
+
+      context->install_subsystem(this->ledger_subsystem);
+
+      static constexpr size_t max_interpreter_cache_size = 10;
+      auto interpreter_cache =
+        std::make_shared<ccf::js::InterpreterCache>(max_interpreter_cache_size);
+      context->install_subsystem(interpreter_cache);
+
+      context->install_subsystem(
+        std::make_shared<ccf::AbstractCOSESignaturesConfigSubsystem>(*node));
+
+      auto commit_callbacks = std::make_shared<ccf::CommitCallbackSubsystem>();
+      context->install_subsystem(commit_callbacks);
+      rpcsessions->set_commit_callbacks_subsystem(commit_callbacks);
+
+      auto signature_cache = std::make_shared<ccf::SignatureCacheSubsystem>();
+      context->install_subsystem(signature_cache);
+
+      LOG_TRACE_FMT("Creating RPC actors / ffi");
+      rpc_map->register_frontend<ccf::ActorsType::members>(
+        std::make_unique<ccf::MemberRpcFrontend>(network, *context));
+
+      rpc_map->register_frontend<ccf::ActorsType::users>(
+        std::make_unique<ccf::UserRpcFrontend>(
+          network, ccf::make_user_endpoints(*context), *context));
+
+      rpc_map->register_frontend<ccf::ActorsType::nodes>(
+        std::make_unique<ccf::NodeRpcFrontend>(network, *context));
+    }
+
+    // The launcher must join all runtime threads before destroying the node.
+    // This also handles failed startup, before the event loop has run.
+    ~Enclave()
+    {
+      request_stop();
+      node_transport->set_inbound_handler(nullptr);
+      rpcsessions->stop(ccf::tls::OpenSSLServer::LoopState::NotRunning);
+      // Accepted writes must reach disk before queued tasks are discarded.
+      ledger_subsystem->shutdown();
+      ccf::tasks::get_main_job_board().shutdown();
+      node->shutdown();
+      // Frontends borrow the context and must be released before it.
+      rpc_map->frontends().clear();
+      LOG_TRACE_FMT("Shutting down enclave");
+    }
+
+    void request_stop()
+    {
+      if (node_ingress != nullptr)
+      {
+        node_ingress->stop();
+      }
+      stop_requested.store(true);
+      work_beacon.notify_work_available_coalesced();
+      ccf::tasks::get_main_job_board().stop_waiters();
+    }
+
+    void request_stop_notice()
+    {
+      stop_notice_requested.store(true);
+      work_beacon.notify_work_available_coalesced();
+    }
+
+    StartupInfo initialise(ccf::CCFConfig ccf_config_)
+    {
+      start_type = ccf_config_.command.type;
+      StartupInfo result;
+      const auto tick_interval =
+        std::chrono::milliseconds(ccf_config_.tick_interval);
+      auto& job_board = ccf::tasks::get_main_job_board();
+      indexer->register_periodic_tasks(job_board, tick_interval);
+      node->initialize(
+        ccf_config_.consensus,
+        rpc_map,
+        rpcsessions,
+        context->get_subsystem<ccf::CommitCallbackSubsystem>(),
+        context->get_subsystem<ccf::SignatureCacheSubsystem>(),
+        ccf_config_.ledger_signatures.tx_count,
+        ccf_config_.ledger_signatures.delay.count_ms(),
+        job_board,
+        tick_interval);
+      historical_state_cache->start_periodic_tick(job_board, tick_interval);
+      node_ingress = std::make_shared<NodeIngress>(
+        job_board,
+        [this](
+          NodeMsgType type,
+          const NodeId& from,
+          const uint8_t* data,
+          size_t size) { node->recv_node_inbound(type, from, data, size); });
+      node_transport->set_inbound_handler(node_ingress);
+
+      rpcsessions->update_listening_interface_options(ccf_config_.network);
+
+      // Idle RPC connections are closed after this period (nullopt = never).
+      std::optional<std::chrono::milliseconds> rpc_idle_timeout;
+      if (ccf_config_.idle_connection_timeout.has_value())
+      {
+        rpc_idle_timeout = std::chrono::milliseconds(
+          ccf_config_.idle_connection_timeout->count_ms());
+      }
+      rpcsessions->set_idle_connection_timeout(rpc_idle_timeout);
+
+      // Bind and start listening on each configured RPC interface. TLS is now
+      // terminated in the connection: an interface whose certificate is not yet
+      // available refuses connections until set_*_cert provides one (a joining
+      // node receives the service cert later). Ephemeral ports (bind ":0") are
+      // assigned here, so the resolved addresses are reported back to the host
+      // (which writes the rpc addresses file).
+      {
+        // An object rather than a default-constructed (null) json, so that a
+        // node with no RPC interfaces still writes a well-formed, empty map.
+        nlohmann::json resolved_rpc_addresses = nlohmann::json::object();
+
+        // Bind interfaces with an explicit (non-zero) port before those
+        // requesting an ephemeral port (port 0 or unspecified). Multiple
+        // interfaces on a node can share a single host address (for example
+        // the sole ::1 IPv6 loopback), and if an ephemeral interface is bound
+        // first the OS may assign it the exact port that another interface is
+        // configured to bind, making that later bind fail with "address
+        // already in use".
+        const auto is_ephemeral = [](const auto& interface) {
+          const auto port =
+            ccf::split_net_address(interface.bind_address).second;
+          return port.empty() || port == "0";
+        };
+        std::vector<std::string> ordered_interface_names;
+        ordered_interface_names.reserve(
+          ccf_config_.network.rpc_interfaces.size());
+        for (const auto& [name, interface] : ccf_config_.network.rpc_interfaces)
+        {
+          if (!is_ephemeral(interface))
+          {
+            ordered_interface_names.push_back(name);
+          }
+        }
+        for (const auto& [name, interface] : ccf_config_.network.rpc_interfaces)
+        {
+          if (is_ephemeral(interface))
+          {
+            ordered_interface_names.push_back(name);
+          }
+        }
+
+        for (const auto& name : ordered_interface_names)
+        {
+          auto& interface = ccf_config_.network.rpc_interfaces.at(name);
+          const auto [host, port] =
+            ccf::split_net_address(interface.bind_address);
+          // UDP interfaces use the custom protocol path; TCP interfaces the
+          // OpenSSL stream path.
+          const uint16_t bound = (interface.protocol == "udp") ?
+            rpcsessions->listen_udp(name, host, port) :
+            rpcsessions->listen(name, host, port);
+          interface.bind_address =
+            ccf::make_net_address(host, std::to_string(bound));
+
+          if (interface.published_address.empty())
+          {
+            interface.published_address = interface.bind_address;
+          }
+          else
+          {
+            const auto [phost, pport] =
+              ccf::split_net_address(interface.published_address);
+            if (pport == "0")
+            {
+              interface.published_address =
+                ccf::make_net_address(phost, std::to_string(bound));
+            }
+          }
+          resolved_rpc_addresses[name] = interface.bind_address;
+        }
+        const auto dumped = resolved_rpc_addresses.dump();
+        result.rpc_addresses.assign(dumped.begin(), dumped.end());
+      }
+
+      node->set_n2n_message_limit(ccf_config_.node_to_node_message_limit);
+
+      historical_state_cache->set_soft_cache_limit(
+        ccf_config_.historical_cache_soft_limit);
+
+      auto network_identity_subsystem =
+        context->get_subsystem<ccf::NetworkIdentitySubsystem>();
+      if (network_identity_subsystem == nullptr)
+      {
+        throw std::logic_error(
+          "NetworkIdentitySubsystem is not installed; cannot start "
+          "network identity fetching");
+      }
+      network_identity_subsystem->start_with_config(
+        ccf_config_.identity_history_fetch);
+
+      // If we haven't heard from a node for multiple elections, then cleanup
+      // their node-to-node channel
+      const auto idle_timeout =
+        std::chrono::milliseconds(ccf_config_.consensus.election_timeout) * 4;
+      node->set_n2n_idle_timeout(idle_timeout);
+
+      LOG_TRACE_FMT(
+        "Creating node with start_type {}", start_type_to_str(start_type));
+      const auto create_info = node->create(start_type, ccf_config_);
+
+      // Copy node and service certs out
+      result.node_cert = create_info.self_signed_node_cert.raw();
+
+      if (start_type == StartType::Start || start_type == StartType::Recover)
+      {
+        // When starting a node in start or recover modes, fresh network secrets
+        // are created and the associated certificate can be passed to the host
+        result.service_cert = create_info.service_cert.raw();
+      }
+
+      return result;
+    }
+
+    bool run_main()
+    {
+      LOG_DEBUG_FMT("Running main thread");
+
+      while (!stop_requested.load())
+      {
+        work_beacon.wait_for_work();
+        if (stop_requested.load())
+        {
+          break;
+        }
+
+        if (stop_notice_requested.exchange(false))
+        {
+          node_ingress->submit(
+            "Node stop notice", [this]() { node->stop_notice(); });
+        }
+      }
+
+      LOG_INFO_FMT("Stopping RPC transports");
+      // The host is still running the libuv loop at this point.
+      rpcsessions->stop(ccf::tls::OpenSSLServer::LoopState::Running);
+
+      LOG_INFO_FMT("Enclave stopped successfully. Stopping host...");
+      runtime_control.report_stopped();
+
+      return true;
+    }
+
+    bool run_worker()
+    {
+      LOG_DEBUG_FMT("Running worker thread");
+
+      {
+        auto& job_board = ccf::tasks::get_main_job_board();
+        const auto timeout = std::chrono::milliseconds(100);
+
+        while (!stop_requested.load())
+        {
+          auto task = job_board.wait_for_task(timeout);
+          if (task != nullptr)
+          {
+            ccf::tasks::try_do_task(*task);
+          }
+        }
+      }
+
+      return true;
+    }
+  };
+}

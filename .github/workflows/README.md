@@ -1,0 +1,222 @@
+Documents the various GitHub Actions workflows, the role they fulfill and 3rd party (i.e. outside of https://github.com/actions/) dependencies if any.
+
+All jobs run on 1ES hosted pools targeted by pool name only, for example `runs-on: [gha-vmss-d16av7-ci]`.
+
+# Shared actions
+
+## Azure Linux CI dependencies
+
+The local composite action in `.github/actions/install-ci-dependencies/action.yml` installs Azure Linux 3 and 4 CI dependencies and caches downloaded RPM and npm packages. Cache keys separate runner architectures, hash the relevant dependency inputs, and include the date of the most recent Sunday at midnight UTC. The RPM key also separates package managers, while the npm key separates jobs so each job can save the packages it downloads. The weekly date makes GitHub Actions create refreshed immutable caches each week.
+
+At a weekly rollover, restore keys first reuse the latest cache for the same dependency inputs and then fall back to a compatible cache for the same architecture. The package managers refresh registry metadata and download only missing or updated packages. `actions/cache` saves each populated directory automatically after a successful job when the exact weekly key was not restored.
+
+The action also assigns uv a writable cache directory outside `/github/home/.cache`, because some tests clear that directory. A weekly cache persists uv's content-addressed package cache, keyed on the pinned uv installer, `python/pyproject.toml`, and the `python-requirements` input, which each workflow sets to the requirements files it installs so unrelated jobs do not invalidate each other's cache; jobs that do not install Python packages disable this cache entirely with `cache-python-packages: false`. CI dependency setup uses `uv pip` so cached packages remain reusable, with workflows configuring the package index through `UV_INDEX_URL`. Pip is not used for package installation because the PyPI proxy redirects artifacts to short-lived URLs that pip cannot reuse across jobs.
+
+# Maintained
+
+## Bencher
+
+Builds and runs CCF performance tests, both end to end and micro-benchmarks. Results are stored as artifacts and summarized in the workflow run against an EWMA baseline with a seven-run half-life.
+The end-to-end tests include `fluentd_emission`, which measures two-node throughput and latency with Raft trace export disabled and then enabled, sending events to a local Fluentd-compatible TCP collector.
+Triggered on every commit on `main`, twice daily on week days, and manually, but not on PR builds because the setup required to build from forks is complex and fragile in terms of security, and the increase in pool usage would be substantial.
+
+Tests are run on two different testbeds for comparison: gha-vmss-d16av7-ci (Standard_D16ads_v7 VMs with 16 vCPUs and 64 GiB RAM) and gha-aci-genoa (Azure Container Instances with SEV-SNP).
+
+File: `bencher.yml`
+3rd party dependencies: None
+
+## Bencher A/B
+
+Builds and runs CCF performance tests on the PR branch, then renders radar charts comparing up to five recent branch runs against the recent trend on `main`. Two nested shaded blue bands show the shared seven-run-half-life EWMA baseline +/- 1 and +/- 2 standard deviations of the latest `main` runs. Both branch and `main` histories are restored from cumulative perf artifacts, and the orange branch lines progress from the faintest oldest run to the strongest latest run. Triggered on PRs that have the label `bench-ab`.
+
+The end-to-end tests run with `CCF_BENCHMARK_FLUENTD=1`. For each workload and signature interval, this starts a local Fluentd-compatible TCP collector and configures every node to export Raft trace events to it. The collector decodes and counts events without storing them, and the run fails if any node sends none. The radar charts therefore compare branch runs with export enabled against `main` runs without export. `fluentd_emission` is excluded because it configures its own collector. Collector counts, node logs and configurations, and Locust statistics are uploaded as the `benchmark-diagnostics` artifact. To reproduce a run locally, set `CCF_BENCHMARK_FLUENTD=1` when running a Locust benchmark.
+
+File: `bencher-ab.yml`
+3rd party dependencies: None
+
+## Copilot Setup Steps
+
+Sets up dependencies for the Copilot coding agent. Triggered when the workflow or setup script changes, and manually.
+
+File: `copilot-setup-steps.yml`
+3rd party dependencies: None
+
+# Continuous Integration
+
+Main continuous integration job. Builds CCF for all target platforms, runs unit, end to end and partition tests. Runs on PRs, merge queue runs, manually, and once a week, regardless of commits.
+
+The Virtual A, B, and C jobs target `gha-vmss-d16av7-ci`, `gha-vmss-d16av7-ci-b`, and `gha-vmss-d16av7-ci-c`, respectively, to distribute demand across the regional pools.
+
+File: `ci.yml`
+3rd party dependencies: None
+
+## Test failure annotations
+
+On GitHub Actions, `tests/tests.sh` automatically enables `tests/infra/test_reporting.py` to publish test failures as error annotations and a job-summary table.
+The Python SDK job invokes the reporter with `python ../tests/infra/test_reporting.py pytest`.
+Each invocation publishes up to ten annotations and 100 summary rows.
+Full test output is available in the job logs, with node logs in the log artifacts.
+
+Python e2e annotations identify the CTest test, concurrent scenario, logical case, exception, source location, and workspace prefix where available.
+Failures are captured by `ConcurrentRunner`, the e2e suite runner, and the shared CLI's uncaught-exception handler.
+Description decorators provide case names and descriptions.
+Child threads should use `infra.concurrency.Thread` (or `StoppableThread`) to retain their owning scenario.
+Subclasses implement `_run()` rather than overriding `run()`, so their work executes inside the context-propagation and exception-reporting wrapper.
+Uninstrumented threads can only be identified by the outer test and thread name.
+
+CTest and pytest XML results supply diagnostics for failures outside the Python e2e handlers, including native test failures, crashes, timeouts, and missing executables.
+Doctest assertion details supplement CTest's termination diagnostic.
+Setup or collection failures without test results receive a command-level annotation.
+Handled exceptions, intentional skips, and ordinary error log messages do not generate failure annotations.
+The reporter preserves failing command exit statuses and fails an otherwise successful invocation if reporting fails.
+
+Reporting options are managed by the wrapper and reporter.
+Intermediate results are stored per invocation under `build/test-results/` for CTest and `python/test-results/` for pytest; these directories are not uploaded.
+Local `./tests.sh ...` commands run CTest without XML reporting or GitHub annotations.
+
+# Continuous Integration AL4
+
+Builds CCF on Azure Linux 4 and runs unit and end to end tests, to track readiness for the move from Azure Linux 3, which `ci.yml` builds against. Runs daily on `main` on week days, and manually. It deliberately does not run on PRs, to keep PR feedback fast and limit pool usage.
+
+Its Virtual A, B, and C jobs use the same pool distribution as the main continuous integration workflow.
+
+File: `ci-al4.yml`
+3rd party dependencies: None
+
+# Cross-platform LTS
+
+Builds configurable CCF release install trees on Azure Linux 3 and Azure Linux 4 in parallel, then runs the LTS live-upgrade test directly on a VMSS runner. By default, it upgrades from the previous stable CCF release to the latest stable release; both versions can be overridden using the manual inputs in [`cross-platform-lts.yml`](cross-platform-lts.yml). Separate runtime images install only the required shared-library packages and copy in the matching install tree. Each CCF node runs in the container matching the distribution on which its binary was built, while the existing Python test infrastructure orchestrates the rolling upgrade over host networking. Runs weekly and manually, but not on pull requests because both full builds and the compatibility test are expensive.
+
+Because the upgrade job runs directly on the runner rather than in a container, it first restores ownership of the workspace with `sudo chown`. VMSS runners are reused across jobs, and `--user root` container jobs, including the Azure Linux 3 build in the same run, can leave root-owned files in the shared workspace that would otherwise make `actions/checkout` fail with permission errors.
+
+Shared workflow environment values define the Python version, base images, runner pool labels, install archive filename, and test workspace.
+
+File: `cross-platform-lts.yml`
+3rd party dependencies: None
+
+# Coverage
+
+Builds CCF with coverage enabled, runs unit, end to end and partition tests, and uploads HTML coverage reports. Triggered on every commit on `main`, twice daily on week days, and manually.
+
+A parallel job on `gha-aci-genoa` builds with coverage and runs the same SEV-SNP tests as the ACI SNP Genoa job in `ci.yml`, excluding benchmarks, then uploads their merged coverage profile. Before generating reports, the Virtual job waits for that job and merges its profile into the overall statistics. This does not lengthen the workflow, because the SNP job normally finishes well before the Virtual tests. Profiles only match binaries built with the same compiler and compile options, so the Virtual job also checks that both jobs used the same compiler version. If the SNP job does not succeed, or its compiler differs, the Virtual job fails rather than report statistics without SNP coverage, which also keeps that run out of the coverage trend.
+
+The Virtual job summary plots line and branch coverage together on a shared percentage axis with endpoint labels, for the previous successful runs on the same branch, recovered from their job logs, followed by the current run. The GitHub API sometimes returns an outdated list of runs, so a list is only used if it includes the current run, and is otherwise requested again. If no up-to-date list is returned, the trend only includes the current run, and the job reports a warning.
+
+File: `coverage.yml`
+3rd party dependencies: None
+
+# Long Tests
+
+Secondary continuous integration job. Runs more expensive, longer tests, such as tests against ASAN and TSAN builds, extended fuzzing etc.
+
+- Runs daily on week days.
+- Can be manually run on a PR by setting `run-long-test` label, or via workflow dispatch.
+- VMSS jobs target `gha-vmss-d16av7-ci-c` to use pool C's larger runner capacity.
+
+File: `long-test.yml`
+3rd party dependencies: None
+
+# CodeQL analysis
+
+Builds CCF with CodeQL, and runs the security-extended checks. Triggered on PRs that affect ".github/workflows/codeql-analysis.yml", on pushes to main, once a week on schedule, and manually.
+
+File: `codeql-analysis.yml`
+3rd party dependencies:
+
+- `github/codeql-action/init@v4`
+- `github/codeql-action/analyze@v4`
+
+# Continuous Verification
+
+Runs the standard model checking, simulation, trace validation, and counterexample jobs each week.
+
+File: `ci-verification.yml`
+3rd party dependencies: None
+
+# Long Verification
+
+Runs the longer consensus model checking and simulation jobs each week.
+VMSS jobs target `gha-vmss-d16av7-ci-c` to use pool C's larger runner capacity.
+
+File: `long-verification.yml`
+3rd party dependencies: None
+
+# TLA Shallow Verification
+
+Runs on pull requests that change `tla/` or `src/consensus/aft/raft.h`.
+
+- Simulates the consistency and consensus specifications on a GitHub-hosted runner. The simulation job has a 10-minute timeout.
+- Builds the Raft scenario driver and validates its traces against the consensus specification on a GitHub-hosted runner.
+
+File: `tla-shallow.yml`
+3rd party dependencies: None
+
+# Lean
+
+Runs all Lean verification for the repository. Future Lean checks should be added as jobs to this workflow.
+
+The disaster recovery job builds the library and replayer with `lake build --wfail --fail-fast` and runs Lean's built-in linters with `lake lint` on Ubuntu 26.04 on relevant pull requests.
+Canonical behavior checks run with `#eval` when their test module is built, and assertion failures fail the build.
+The build includes both the human-reviewed model and system properties and the proof implementation files marked as generated for review purposes.
+The standard `mk_all --check --module` command ensures that the modular library root imports every library module, so newly added proofs cannot silently escape the checks.
+
+The kernel-check job runs `lake check --inadvisably-no-sandbox` on Ubuntu 26.04 for the disaster-recovery model and replayer package, including its imported common infrastructure.
+Build isolation is disabled so disaster recovery can use the sibling common sources directly; kernel rechecking and the axiom-dependency audit remain enabled.
+The replayer is the only executable entrypoint; the canonical test runner is namespaced within the library.
+The job builds and exports every default target, including the complete library import root and replayer, and requires Lean's kernel to accept the declarations with only the standard axioms.
+This provides the axiom-dependency check and supplements the build, linters, and executable tests.
+Temporary exports use disk-backed runner storage rather than `/tmp`.
+Additional bundled checkers are not enabled.
+
+The disaster recovery job also checks the records of the recovery trace fixtures in `lean/disaster-recovery/replayer/fixtures` against `trace.schema.json`, with `check-schema.py`.
+It runs `replayer/check-fixtures.sh` using the package's built `disaster-recovery-replay` executable.
+That replays the fixtures' quorum, failover and multiple-timeout traces, which must pass, and invalid and valid traces stored as diffs against them, which must fail and pass.
+It then runs the trace viewer's `viewer/build.py`, which fails if a dump the viewer shows is missing or disagrees with the replayer.
+
+The Genoa SNP job in `ci.yml`, whose tests run with `CCF_RECOVERY_TRACE=1`, builds just the `disaster-recovery-replay` target and replays the protocol's e2e scenarios against the model.
+
+After the build, `scripts/lean-format-checks.sh` checks every tracked `.lean` file with the pinned leanfmt dependency.
+The workflow runs on pull requests that change `lean/`, any `.lean` file, the formatter script, or the workflow.
+See the [local formatting commands](../../lean/disaster-recovery/README.md#formatting) to apply fixes.
+
+File: `lean.yml`
+3rd party dependencies: Mathlib and leanfmt (pinned in the Lake package), and elan.
+
+# Vendored Dependency Verification
+
+Verifies that files under `3rdparty/` match the Git commits or release artifacts recorded in `cgmanifest.json`. Triggered on pull requests and pushes to `main` that change vendored sources, the manifest, the verifier, or this workflow. It can also be run manually.
+
+File: `vendor-verification.yml`
+3rd party dependencies: None
+
+# Release
+
+Produces CCF reference release artifacts, excluding the Python package. Triggered on tags matching `ccf-[567].*`, and manually with an optional dry run. The output of a non-dry-run job is a draft release, which needs to be published manually. Publishing triggers the downstream jobs listed below.
+
+Python packages are built and published separately by the [OneBranch pipeline](../../.pipelines/README.md), without attestations.
+
+Release-build tests, installed-package tests, and the recovery benchmark use the latest released `ccf` Python package from PyPI. The release job sets `CCF_USE_RELEASED_PYTHON_PACKAGE=1`; normal development and CI tests continue to use the local package.
+
+File: `release.yml`
+3rd party dependencies: None
+
+# Release Attestation
+
+Generate signed build provenance attestations for non-Python release artifacts. Triggered on release publishing. Python wheels and existing attestation bundles are excluded.
+
+File: `release-attestation.yml`
+3rd party dependencies: None
+
+# NPM
+
+Publishes ccf-app TS package from a GitHub release to NPM. Triggered on release publishing.
+
+File: `npm.yml`
+3rd party dependencies: None
+
+# Documentation
+
+Builds and publishes documentation to GitHub Pages. Triggered on pushes to main, and manually. Note that special permissions (Settings > Environment) are configured.
+
+File: `doc.yml`
+3rd party dependencies: None

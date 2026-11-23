@@ -1,0 +1,23 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the Apache 2.0 License.
+#pragma once
+
+#include "ccf/ds/json.h"
+#include "ccf/reconfiguration_type.h"
+#include "ccf/service/consensus_type.h"
+#include "ccf/service/service_config.h"
+
+namespace ccf
+{
+  static constexpr auto default_node_cert_validity_period_days = 365;
+  static constexpr auto default_service_cert_validity_period_days = 365;
+  static constexpr size_t default_recent_cose_proposals_window_size = 100;
+
+  // The there is always only one active configuration, so this is a single
+  // Value
+  using Configuration = ServiceValue<ServiceConfiguration>;
+  namespace Tables
+  {
+    static constexpr auto CONFIGURATION = "public:ccf.gov.service.config";
+  }
+}

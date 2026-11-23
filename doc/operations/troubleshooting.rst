@@ -1,0 +1,107 @@
+Troubleshooting CCF
+===================
+
+This page contains troubleshooting tips for CCF.
+
+Tips for interacting with CCF to diagnose issues
+------------------------------------------------
+.. note:: In the examples below this documentation uses ``example-ccf-domain.com`` as an example CCF domain, you will need to replace that with your own CCF domain when using these commands. You will also need to add authentication parameters such as ``--cacert`` to the curl commands, see :doc:`Issuing commands </use_apps/issue_commands>` for an example.
+
+.. note:: CCF may be deployed with a load balancer which may cache the node which last responded to a query from an IP address. Until the cache clears, the load balancer will direct any subsequent queries from that IP address to the same node. As an example, if the cache clears after one minute, then in order to get a response from a different node, an operator must wait one minute between queries.  
+
+Below are descriptions of CLI commands and how they are useful for diagnosing CCF issues:
+
+**"What node is handling my requests?"**
+
+.. code-block:: bash 
+
+    curl https://example-ccf-domain.com/node/network/nodes/self -i
+
+This identifies which node is handling queries. Selected fields from the response body include:
+
+.. code-block:: json
+
+    {
+      "node_id": "<Node ID>",
+      "primary": true,
+      "status": "Trusted"
+    }
+
+**"What CCF version is running?"**
+
+.. code-block:: bash
+
+    curl https://example-ccf-domain.com/node/version
+
+This is useful to confirm the version that is running.
+
+**"What nodes are part of the current network?"**
+
+.. code-block:: bash
+
+    curl https://example-ccf-domain.com/node/network/nodes
+
+This shows information for all nodes recorded in the network, including pending or retired nodes. In a healthy steady state, all nodes participating in consensus show ``"status": "Trusted"``, and exactly one shows ``"primary": true``.
+Around upgrades, restarts, or migrations, nodes may transition through other states temporarily. If the network remains in an unhealthy state for a long time, this indicates there is an issue.
+
+You can obtain this information for a single node by querying the :http:GET:`/node/network/nodes/{node_id}` endpoint, where ``{node id}`` can be obtained from the :http:GET:`/node/network/nodes/self` endpoint described above. Take note of the ``node_data`` field in the response which contains useful correlation IDs.
+
+**"Is the network in the middle of a reconfiguration?"**
+
+.. code-block:: bash
+
+    curl https://example-ccf-domain.com/node/consensus
+
+This has a few bits of data that might help us diagnose a partitioned/faulty network. In particular, most of the time there should be a single entry in the ``configs`` list. During an upgrade/restart/migration, there may be multiple values. If multiple values persist for a long time, it suggests something went wrong during the reconfiguration.
+
+**"Is the CCF network stable?"**
+
+.. code-block:: bash
+
+    curl https://example-ccf-domain.com/node/commit
+
+This is a good endpoint to query to check if the CCF service is reachable. Additionally, a large and increasing difference between the ``View`` in the :term:`Transaction ID` in this response, and the ``current_view`` from the :http:GET:`/node/consensus` response, indicates a partitioned node. For example, if the response from :http:GET:`/node/commit` shows the ``View`` is ``15``, and the response from :http:GET:`/node/consensus` states the ``current view`` is ``78967`` and that number is constantly increasing, then this indicates the node is unable to make consensus progress, which likely indicates it is unable to contact other nodes. 
+
+.. tip:: See :ccf_repo:`tests/infra/health_watcher.py` for a detailed technical example of how the health of the network can be monitored.
+
+
+Node Output
+-----------
+
+By default node output is written to ``stdout`` and to ``stderr`` and can be handled accordingly.
+
+There is an option to generate machine-readable logs for monitoring. To enable this, set the ``logging.format`` configuration entry to ``"Json"``. The generated logs will be in JSON format as displayed below:
+
+.. code-block:: json
+
+    {
+        "file": "../src/consensus/aft/raft.h",
+        "h_ts": "2019-09-02T14:47:24.589384Z",
+        "thread_id": "0",
+        "level": "info",
+        "tag": "",
+        "msg": "Deserialising signature at 24\n",
+        "number": "651"
+    }
+
+- ``h_ts`` is the ISO 8601 UTC timestamp captured when the logger writes the message
+- ``thread_id`` is the identifier of the thread that produced the log message, encoded as a string
+- ``tag`` identifies the logging component; it may be empty for internal logs, while application logs use ``app``
+- ``file`` is the file the log originated from
+- ``number`` is the line number in the file the log originated from, encoded as a string
+- ``level`` is the level of the log message [info, debug, trace, fail, fatal]
+- ``msg`` is the log message
+
+See :ref:`this page <build_apps/logging:Logging>` for steps to add application-specific logging.
+
+Error Codes
+-----------
+
+``StartupSeqnoIsOld``
+~~~~~~~~~~~~~~~~~~~~~
+
+Returned when a node tries to join with a snapshot older than the minimum required by the target service. This includes joining without a snapshot when the target node itself started from one.
+See :ref:`this page <operations/ledger_snapshot:Join or Recover From Snapshot>` for more information.
+
+**Resolution:** This can be resolved by trying to join again with a fresh snapshot.
+The seqno of the snapshot a node started from is available as ``startup_seqno`` in :http:GET:`/node/state`.

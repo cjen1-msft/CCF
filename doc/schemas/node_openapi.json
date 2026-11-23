@@ -1,0 +1,2199 @@
+{
+  "components": {
+    "responses": {
+      "default": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/CCFError"
+            }
+          }
+        },
+        "description": "An error occurred"
+      }
+    },
+    "schemas": {
+      "Attestation": {
+        "properties": {
+          "endorsements": {
+            "$ref": "#/components/schemas/base64string"
+          },
+          "format": {
+            "$ref": "#/components/schemas/QuoteFormat"
+          },
+          "measurement": {
+            "$ref": "#/components/schemas/string"
+          },
+          "node_id": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "raw": {
+            "$ref": "#/components/schemas/base64string"
+          },
+          "uvm_endorsements": {
+            "$ref": "#/components/schemas/base64string"
+          }
+        },
+        "required": [
+          "node_id",
+          "raw",
+          "endorsements",
+          "format"
+        ],
+        "type": "object"
+      },
+      "Attestation_array": {
+        "items": {
+          "$ref": "#/components/schemas/Attestation"
+        },
+        "type": "array"
+      },
+      "Authority": {
+        "enum": [
+          "Node",
+          "Service",
+          "ACME",
+          "Unsecured"
+        ],
+        "type": "string"
+      },
+      "Binary": {
+        "format": "binary",
+        "type": "string"
+      },
+      "CCFError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Response error code. CCF error codes: https://microsoft.github.io/CCF/main/operations/troubleshooting.html#error-codes",
+                "type": "string"
+              },
+              "message": {
+                "description": "Response error message",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "Configuration": {
+        "properties": {
+          "idx": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "nodes": {
+            "$ref": "#/components/schemas/NodeId_to_Configuration__NodeInfo"
+          },
+          "rid": {
+            "$ref": "#/components/schemas/uint64"
+          }
+        },
+        "required": [
+          "idx",
+          "nodes",
+          "rid"
+        ],
+        "type": "object"
+      },
+      "Configuration__NodeInfo": {
+        "properties": {
+          "address": {
+            "$ref": "#/components/schemas/string"
+          }
+        },
+        "required": [
+          "address"
+        ],
+        "type": "object"
+      },
+      "Configuration_array": {
+        "items": {
+          "$ref": "#/components/schemas/Configuration"
+        },
+        "type": "array"
+      },
+      "ConsensusConfigDetails": {
+        "properties": {
+          "details": {
+            "$ref": "#/components/schemas/ConsensusDetails"
+          }
+        },
+        "required": [
+          "details"
+        ],
+        "type": "object"
+      },
+      "ConsensusDetails": {
+        "properties": {
+          "acks": {
+            "$ref": "#/components/schemas/NodeId_to_ConsensusDetails__Ack"
+          },
+          "configs": {
+            "$ref": "#/components/schemas/Configuration_array"
+          },
+          "current_view": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "leadership_state": {
+            "$ref": "#/components/schemas/LeadershipState"
+          },
+          "learners": {
+            "$ref": "#/components/schemas/NodeId_to_uint64"
+          },
+          "membership_state": {
+            "$ref": "#/components/schemas/MembershipState"
+          },
+          "primary_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true,
+                "type": "object"
+              }
+            ]
+          },
+          "reconfiguration_type": {
+            "$ref": "#/components/schemas/ReconfigurationType"
+          },
+          "retirement_phase": {
+            "$ref": "#/components/schemas/RetirementPhase"
+          },
+          "ticking": {
+            "$ref": "#/components/schemas/boolean"
+          }
+        },
+        "required": [
+          "configs",
+          "acks",
+          "membership_state",
+          "primary_id",
+          "current_view",
+          "ticking"
+        ],
+        "type": "object"
+      },
+      "ConsensusDetails__Ack": {
+        "properties": {
+          "last_received_ms": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "seqno": {
+            "$ref": "#/components/schemas/uint64"
+          }
+        },
+        "required": [
+          "seqno",
+          "last_received_ms"
+        ],
+        "type": "object"
+      },
+      "ConsensusNodeConfig": {
+        "properties": {
+          "address": {
+            "$ref": "#/components/schemas/string"
+          }
+        },
+        "required": [
+          "address"
+        ],
+        "type": "object"
+      },
+      "ConsensusType": {
+        "enum": [
+          "CFT",
+          "BFT"
+        ],
+        "type": "string"
+      },
+      "Cose": {
+        "format": "binary",
+        "type": "string"
+      },
+      "Endorsement": {
+        "properties": {
+          "authority": {
+            "$ref": "#/components/schemas/Authority"
+          }
+        },
+        "required": [
+          "authority"
+        ],
+        "type": "object"
+      },
+      "GetAttestations__Out": {
+        "properties": {
+          "attestations": {
+            "$ref": "#/components/schemas/Attestation_array"
+          }
+        },
+        "required": [
+          "attestations"
+        ],
+        "type": "object"
+      },
+      "GetCommit__Out": {
+        "properties": {
+          "transaction_id": {
+            "$ref": "#/components/schemas/TransactionId"
+          },
+          "view_history": {
+            "$ref": "#/components/schemas/TransactionId_array"
+          }
+        },
+        "required": [
+          "transaction_id"
+        ],
+        "type": "object"
+      },
+      "GetHistoricalCacheInfo__Out": {
+        "properties": {
+          "estimated_size": {
+            "$ref": "#/components/schemas/uint64"
+          }
+        },
+        "required": [
+          "estimated_size"
+        ],
+        "type": "object"
+      },
+      "GetNetworkInfo__Out": {
+        "properties": {
+          "current_service_create_txid": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TransactionId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true,
+                "type": "object"
+              }
+            ]
+          },
+          "current_view": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/uint64"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true,
+                "type": "object"
+              }
+            ]
+          },
+          "primary_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true,
+                "type": "object"
+              }
+            ]
+          },
+          "recovery_count": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "service_certificate": {
+            "$ref": "#/components/schemas/Pem"
+          },
+          "service_data": {
+            "$ref": "#/components/schemas/json"
+          },
+          "service_status": {
+            "$ref": "#/components/schemas/ServiceStatus"
+          }
+        },
+        "required": [
+          "service_status",
+          "service_certificate",
+          "current_view",
+          "primary_id",
+          "recovery_count",
+          "service_data",
+          "current_service_create_txid"
+        ],
+        "type": "object"
+      },
+      "GetNode__NodeInfo": {
+        "properties": {
+          "last_written": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "node_data": {
+            "$ref": "#/components/schemas/json"
+          },
+          "node_id": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "primary": {
+            "$ref": "#/components/schemas/boolean"
+          },
+          "rpc_interfaces": {
+            "$ref": "#/components/schemas/string_to_NodeInfoNetwork_v2__NetInterface"
+          },
+          "status": {
+            "$ref": "#/components/schemas/NodeStatus"
+          }
+        },
+        "required": [
+          "node_id",
+          "status",
+          "primary",
+          "rpc_interfaces",
+          "node_data",
+          "last_written"
+        ],
+        "type": "object"
+      },
+      "GetNode__NodeInfo_array": {
+        "items": {
+          "$ref": "#/components/schemas/GetNode__NodeInfo"
+        },
+        "type": "array"
+      },
+      "GetNodes__Out": {
+        "properties": {
+          "nodes": {
+            "$ref": "#/components/schemas/GetNode__NodeInfo_array"
+          }
+        },
+        "required": [
+          "nodes"
+        ],
+        "type": "object"
+      },
+      "GetQuotes__Out": {
+        "properties": {
+          "quotes": {
+            "$ref": "#/components/schemas/Quote_array"
+          }
+        },
+        "required": [
+          "quotes"
+        ],
+        "type": "object"
+      },
+      "GetServicePreviousIdentity__Out": {
+        "properties": {
+          "previous_service_identity": {
+            "$ref": "#/components/schemas/Pem"
+          }
+        },
+        "required": [
+          "previous_service_identity"
+        ],
+        "type": "object"
+      },
+      "GetState__Out": {
+        "properties": {
+          "last_recovered_seqno": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "last_signed_seqno": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "node_id": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "recovery_target_seqno": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "startup_seqno": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ccf__NodeStartupState"
+          },
+          "stop_notice": {
+            "$ref": "#/components/schemas/boolean"
+          }
+        },
+        "required": [
+          "node_id",
+          "state",
+          "last_signed_seqno",
+          "startup_seqno",
+          "stop_notice"
+        ],
+        "type": "object"
+      },
+      "GetTxStatus__Out": {
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/TxStatus"
+          },
+          "transaction_id": {
+            "$ref": "#/components/schemas/TransactionId"
+          }
+        },
+        "required": [
+          "transaction_id",
+          "status"
+        ],
+        "type": "object"
+      },
+      "GetVersion__Out": {
+        "properties": {
+          "ccf_version": {
+            "$ref": "#/components/schemas/string"
+          },
+          "quickjs_version": {
+            "$ref": "#/components/schemas/string"
+          },
+          "unsafe": {
+            "$ref": "#/components/schemas/boolean"
+          }
+        },
+        "required": [
+          "ccf_version",
+          "quickjs_version",
+          "unsafe"
+        ],
+        "type": "object"
+      },
+      "JWTRefreshMetrics": {
+        "properties": {
+          "attempts": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "failures": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "successes": {
+            "$ref": "#/components/schemas/uint64"
+          }
+        },
+        "required": [
+          "attempts",
+          "successes",
+          "failures"
+        ],
+        "type": "object"
+      },
+      "JavaScriptMetrics": {
+        "properties": {
+          "bytecode_size": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "bytecode_used": {
+            "$ref": "#/components/schemas/boolean"
+          },
+          "max_cached_interpreters": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "max_execution_time": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "max_heap_size": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "max_stack_size": {
+            "$ref": "#/components/schemas/uint64"
+          }
+        },
+        "required": [
+          "bytecode_size",
+          "bytecode_used",
+          "max_heap_size",
+          "max_stack_size",
+          "max_execution_time",
+          "max_cached_interpreters"
+        ],
+        "type": "object"
+      },
+      "LeadershipState": {
+        "enum": [
+          "None",
+          "Leader",
+          "Follower",
+          "PreVoteCandidate",
+          "Candidate"
+        ],
+        "type": "string"
+      },
+      "MembershipState": {
+        "enum": [
+          "Active",
+          "Retired"
+        ],
+        "type": "string"
+      },
+      "NodeId": {
+        "format": "hex",
+        "pattern": "^[a-f0-9]{64}$",
+        "type": "string"
+      },
+      "NodeId_to_Configuration__NodeInfo": {
+        "additionalProperties": {
+          "$ref": "#/components/schemas/Configuration__NodeInfo"
+        },
+        "type": "object"
+      },
+      "NodeId_to_ConsensusDetails__Ack": {
+        "additionalProperties": {
+          "$ref": "#/components/schemas/ConsensusDetails__Ack"
+        },
+        "type": "object"
+      },
+      "NodeId_to_uint64": {
+        "additionalProperties": {
+          "$ref": "#/components/schemas/uint64"
+        },
+        "type": "object"
+      },
+      "NodeInfoNetwork_v2__NetInterface": {
+        "properties": {
+          "accepted_endpoints": {
+            "$ref": "#/components/schemas/string_array"
+          },
+          "app_protocol": {
+            "$ref": "#/components/schemas/string"
+          },
+          "bind_address": {
+            "$ref": "#/components/schemas/string"
+          },
+          "enabled_operator_features": {
+            "$ref": "#/components/schemas/OperatorFeature_set"
+          },
+          "endorsement": {
+            "$ref": "#/components/schemas/Endorsement"
+          },
+          "forwarding_timeout_ms": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "http_configuration": {
+            "$ref": "#/components/schemas/ParserConfiguration"
+          },
+          "max_open_sessions_hard": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "max_open_sessions_soft": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/string"
+          },
+          "published_address": {
+            "$ref": "#/components/schemas/string"
+          },
+          "redirections": {
+            "$ref": "#/components/schemas/NodeInfoNetwork_v2__NetInterface__Redirections"
+          }
+        },
+        "required": [
+          "bind_address"
+        ],
+        "type": "object"
+      },
+      "NodeInfoNetwork_v2__NetInterface__Redirections": {
+        "properties": {
+          "to_backup": {
+            "$ref": "#/components/schemas/RedirectionResolverConfig"
+          },
+          "to_primary": {
+            "$ref": "#/components/schemas/RedirectionResolverConfig"
+          }
+        },
+        "type": "object"
+      },
+      "NodeMetrics": {
+        "properties": {
+          "sessions": {
+            "$ref": "#/components/schemas/SessionMetrics"
+          }
+        },
+        "required": [
+          "sessions"
+        ],
+        "type": "object"
+      },
+      "NodeStatus": {
+        "enum": [
+          "Pending",
+          "Trusted",
+          "Retired"
+        ],
+        "type": "string"
+      },
+      "OperatorFeature": {
+        "enum": [
+          "SnapshotRead",
+          "LedgerChunkRead",
+          "SnapshotCreate"
+        ],
+        "type": "string"
+      },
+      "OperatorFeature_set": {
+        "items": {
+          "$ref": "#/components/schemas/OperatorFeature"
+        },
+        "type": "array"
+      },
+      "ParserConfiguration": {
+        "properties": {
+          "initial_window_size": {
+            "$ref": "#/components/schemas/SizeString"
+          },
+          "max_body_size": {
+            "$ref": "#/components/schemas/SizeString"
+          },
+          "max_concurrent_streams_count": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "max_frame_size": {
+            "$ref": "#/components/schemas/SizeString"
+          },
+          "max_header_size": {
+            "$ref": "#/components/schemas/SizeString"
+          },
+          "max_headers_count": {
+            "$ref": "#/components/schemas/uint32"
+          },
+          "max_request_target_size": {
+            "$ref": "#/components/schemas/SizeString"
+          }
+        },
+        "type": "object"
+      },
+      "Pem": {
+        "type": "string"
+      },
+      "Quote": {
+        "properties": {
+          "endorsements": {
+            "$ref": "#/components/schemas/base64string"
+          },
+          "format": {
+            "$ref": "#/components/schemas/QuoteFormat"
+          },
+          "measurement": {
+            "$ref": "#/components/schemas/string"
+          },
+          "node_id": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "raw": {
+            "$ref": "#/components/schemas/base64string"
+          },
+          "uvm_endorsements": {
+            "$ref": "#/components/schemas/base64string"
+          }
+        },
+        "required": [
+          "node_id",
+          "raw",
+          "endorsements",
+          "format"
+        ],
+        "type": "object"
+      },
+      "QuoteFormat": {
+        "enum": [
+          "OE_SGX_v1",
+          "Insecure_Virtual",
+          "AMD_SEV_SNP_v1"
+        ],
+        "type": "string"
+      },
+      "Quote_array": {
+        "items": {
+          "$ref": "#/components/schemas/Quote"
+        },
+        "type": "array"
+      },
+      "ReconfigurationType": {
+        "enum": [
+          "OneTransaction",
+          "TwoTransaction"
+        ],
+        "type": "string"
+      },
+      "RedirectionResolutionKind": {
+        "enum": [
+          "NodeByRole",
+          "StaticAddress"
+        ],
+        "type": "string"
+      },
+      "RedirectionResolverConfig": {
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/RedirectionResolutionKind"
+          },
+          "target": {
+            "$ref": "#/components/schemas/json"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "RetirementPhase": {
+        "enum": [
+          "Ordered",
+          "Signed",
+          "Completed",
+          "RetiredCommitted"
+        ],
+        "type": "string"
+      },
+      "SelfSignedNodeCertificateInfo": {
+        "properties": {
+          "self_signed_certificate": {
+            "$ref": "#/components/schemas/Pem"
+          }
+        },
+        "required": [
+          "self_signed_certificate"
+        ],
+        "type": "object"
+      },
+      "ServiceConfiguration": {
+        "properties": {
+          "consensus": {
+            "$ref": "#/components/schemas/ConsensusType"
+          },
+          "maximum_node_certificate_validity_days": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "maximum_service_certificate_validity_days": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "recent_cose_proposals_window_size": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "reconfiguration_type": {
+            "$ref": "#/components/schemas/ReconfigurationType"
+          },
+          "recovery_threshold": {
+            "$ref": "#/components/schemas/uint64"
+          }
+        },
+        "required": [
+          "recovery_threshold"
+        ],
+        "type": "object"
+      },
+      "ServiceStatus": {
+        "enum": [
+          "Opening",
+          "Open",
+          "WaitingForRecoveryShares",
+          "Recovering"
+        ],
+        "type": "string"
+      },
+      "SessionMetrics": {
+        "properties": {
+          "active": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "interfaces": {
+            "$ref": "#/components/schemas/string_to_SessionMetrics__PerInterface"
+          },
+          "peak": {
+            "$ref": "#/components/schemas/uint64"
+          }
+        },
+        "required": [
+          "active",
+          "peak",
+          "interfaces"
+        ],
+        "type": "object"
+      },
+      "SessionMetrics__Errors": {
+        "properties": {
+          "parsing": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "request_header_too_large": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "request_payload_too_large": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "request_target_too_long": {
+            "$ref": "#/components/schemas/uint64"
+          }
+        },
+        "required": [
+          "parsing",
+          "request_payload_too_large",
+          "request_header_too_large",
+          "request_target_too_long"
+        ],
+        "type": "object"
+      },
+      "SessionMetrics__PerInterface": {
+        "properties": {
+          "active": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "errors": {
+            "$ref": "#/components/schemas/SessionMetrics__Errors"
+          },
+          "hard_cap": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "peak": {
+            "$ref": "#/components/schemas/uint64"
+          },
+          "soft_cap": {
+            "$ref": "#/components/schemas/uint64"
+          }
+        },
+        "required": [
+          "active",
+          "peak",
+          "soft_cap",
+          "hard_cap",
+          "errors"
+        ],
+        "type": "object"
+      },
+      "SizeString": {
+        "pattern": "^[0-9]+(B|KB|MB|GB|TB|PB)?$",
+        "type": "string"
+      },
+      "TransactionId": {
+        "pattern": "^[0-9]+\\.[0-9]+$",
+        "type": "string"
+      },
+      "TransactionId_array": {
+        "items": {
+          "$ref": "#/components/schemas/TransactionId"
+        },
+        "type": "array"
+      },
+      "TxStatus": {
+        "enum": [
+          "Unknown",
+          "Pending",
+          "Committed",
+          "Invalid"
+        ],
+        "type": "string"
+      },
+      "base64string": {
+        "format": "base64",
+        "type": "string"
+      },
+      "boolean": {
+        "type": "boolean"
+      },
+      "ccf__NodeStartupState": {
+        "enum": [
+          "Uninitialized",
+          "Initialized",
+          "Pending",
+          "PartOfPublicNetwork",
+          "PartOfNetwork",
+          "ReadingPublicLedger",
+          "ReadingPrivateLedger"
+        ],
+        "type": "string"
+      },
+      "json": {},
+      "string": {
+        "type": "string"
+      },
+      "string_array": {
+        "items": {
+          "$ref": "#/components/schemas/string"
+        },
+        "type": "array"
+      },
+      "string_to_ConsensusNodeConfig": {
+        "additionalProperties": {
+          "$ref": "#/components/schemas/ConsensusNodeConfig"
+        },
+        "type": "object"
+      },
+      "string_to_NodeInfoNetwork_v2__NetInterface": {
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NodeInfoNetwork_v2__NetInterface"
+        },
+        "type": "object"
+      },
+      "string_to_SessionMetrics__PerInterface": {
+        "additionalProperties": {
+          "$ref": "#/components/schemas/SessionMetrics__PerInterface"
+        },
+        "type": "object"
+      },
+      "uint32": {
+        "maximum": 4294967295,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "uint64": {
+        "maximum": 18446744073709551615,
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "x-ccf-forwarding": {
+      "always": {
+        "description": "If this request is made to a backup node, it will be forwarded to the primary node for execution.",
+        "value": "always"
+      },
+      "never": {
+        "description": "This call will never be forwarded, and is always executed on the receiving node, potentially breaking session consistency. If this attempts to write on a backup, this will fail.",
+        "value": "never"
+      },
+      "sometimes": {
+        "description": "If this request is made to a backup node, it may be forwarded to the primary node for execution. Specifically, if this request is sent as part of a session which was already forwarded, then it will also be forwarded.",
+        "value": "sometimes"
+      }
+    }
+  },
+  "info": {
+    "description": "This API provides public, uncredentialed access to service and node state.",
+    "title": "CCF Public Node API",
+    "version": "5.0.9"
+  },
+  "openapi": "3.0.0",
+  "paths": {
+    "/node/api": {
+      "get": {
+        "operationId": "GetNodeApi",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/json"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "summary": "OpenAPI schema",
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/sometimes"
+        }
+      }
+    },
+    "/node/attestations": {
+      "get": {
+        "operationId": "GetNodeAttestations",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetAttestations__Out"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/sometimes"
+        }
+      }
+    },
+    "/node/attestations/self": {
+      "get": {
+        "operationId": "GetNodeAttestationsSelf",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Attestation"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      }
+    },
+    "/node/backup": {
+      "get": {
+        "operationId": "GetNodeBackup",
+        "responses": {
+          "200": {
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      }
+    },
+    "/node/commit": {
+      "get": {
+        "description": "Latest transaction ID that has been committed on the service",
+        "operationId": "GetNodeCommit",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "view_history",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "view_history_since",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/uint64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetCommit__Out"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "summary": "Current commit level",
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/sometimes"
+        }
+      }
+    },
+    "/node/config": {
+      "get": {
+        "operationId": "GetNodeConfig",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/string_to_ConsensusNodeConfig"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      }
+    },
+    "/node/consensus": {
+      "get": {
+        "operationId": "GetNodeConsensus",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsensusConfigDetails"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      }
+    },
+    "/node/historical_cache": {
+      "get": {
+        "operationId": "GetNodeHistoricalCache",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetHistoricalCacheInfo__Out"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/sometimes"
+        }
+      }
+    },
+    "/node/index/strategies": {
+      "get": {
+        "operationId": "GetNodeIndexStrategies",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/json"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      }
+    },
+    "/node/js_metrics": {
+      "get": {
+        "operationId": "GetNodeJsMetrics",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JavaScriptMetrics"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/sometimes"
+        }
+      }
+    },
+    "/node/jwt_keys/refresh/metrics": {
+      "get": {
+        "operationId": "GetNodeJwtKeysRefreshMetrics",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JWTRefreshMetrics"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/sometimes"
+        }
+      }
+    },
+    "/node/ledger_chunk": {
+      "get": {
+        "description": "Redirect to the corresponding /node/ledger_chunk/{chunk_name} endpoint for the ledger chunk including the sequence number specified in the 'since' query parameter. If 'include_committed_prefix' is true and no committed file is available, this may temporarily redirect to a synthetic committed-prefix resource.",
+        "operationId": "GetNodeLedgerChunk",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "since",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/uint64"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_committed_prefix",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/boolean"
+            }
+          }
+        ],
+        "responses": {
+          "307": {
+            "description": "Redirect to a temporary committed ledger prefix."
+          },
+          "308": {
+            "description": "Redirect to the selected ledger chunk."
+          },
+          "404": {
+            "description": "No matching ledger chunk is available."
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "summary": "Download ledger chunk",
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      },
+      "head": {
+        "description": "Redirect to the corresponding /node/ledger_chunk/{chunk_name} endpoint for the ledger chunk including the sequence number specified in the 'since' query parameter. If 'include_committed_prefix' is true and no committed file is available, this may temporarily redirect to a synthetic committed-prefix resource.",
+        "operationId": "HeadNodeLedgerChunk",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "since",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/uint64"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_committed_prefix",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/boolean"
+            }
+          }
+        ],
+        "responses": {
+          "307": {
+            "description": "Redirect to a temporary committed ledger prefix."
+          },
+          "308": {
+            "description": "Redirect to the selected ledger chunk."
+          },
+          "404": {
+            "description": "No matching ledger chunk is available."
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "summary": "Ledger chunk metadata",
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      }
+    },
+    "/node/ledger_chunk/committed_prefix/{chunk_name}": {
+      "get": {
+        "description": "Download a synthetic chunk containing only committed ledger entries. Supports HTTP Range and digest headers. The resource is not a canonical .committed ledger file and must not be used for recovery.",
+        "operationId": "GetNodeLedgerChunkCommittedPrefixChunkName",
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/Binary"
+                }
+              }
+            },
+            "description": "The requested committed ledger prefix."
+          },
+          "206": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/Binary"
+                }
+              }
+            },
+            "description": "The requested byte range of the committed ledger prefix."
+          },
+          "304": {
+            "description": "The requested committed ledger prefix has not changed."
+          },
+          "404": {
+            "description": "The requested committed ledger prefix is not available."
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "summary": "Download committed ledger prefix",
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      },
+      "head": {
+        "description": "Metadata about a synthetic chunk containing only committed ledger entries. The resource is not a canonical .committed ledger file.",
+        "operationId": "HeadNodeLedgerChunkCommittedPrefixChunkName",
+        "responses": {
+          "200": {
+            "description": "Metadata for the requested committed ledger prefix."
+          },
+          "206": {
+            "description": "Metadata for the requested committed ledger prefix range."
+          },
+          "304": {
+            "description": "The requested committed ledger prefix has not changed."
+          },
+          "404": {
+            "description": "The requested committed ledger prefix is not available."
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "summary": "Committed ledger prefix metadata",
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "chunk_name",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/node/ledger_chunk/{chunk_name}": {
+      "get": {
+        "description": "Download a specific ledger chunk by name. Supports HTTP Range header for partial downloads.",
+        "operationId": "GetNodeLedgerChunkChunkName",
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/Binary"
+                }
+              }
+            },
+            "description": "The requested ledger chunk."
+          },
+          "206": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/Binary"
+                }
+              }
+            },
+            "description": "The requested byte range of the ledger chunk."
+          },
+          "304": {
+            "description": "The requested ledger chunk has not changed."
+          },
+          "404": {
+            "description": "The requested ledger chunk is not available."
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "summary": "Download ledger chunk",
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      },
+      "head": {
+        "description": "Metadata about a specific ledger chunk (Content-Length and x-ms-ccf-ledger-chunk-name)",
+        "operationId": "HeadNodeLedgerChunkChunkName",
+        "responses": {
+          "200": {
+            "description": "Metadata for the requested ledger chunk."
+          },
+          "206": {
+            "description": "Metadata for the requested ledger chunk range."
+          },
+          "304": {
+            "description": "The requested ledger chunk has not changed."
+          },
+          "404": {
+            "description": "The requested ledger chunk is not available."
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "summary": "Ledger chunk metadata",
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "chunk_name",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/node/metrics": {
+      "get": {
+        "operationId": "GetNodeMetrics",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeMetrics"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      }
+    },
+    "/node/network": {
+      "get": {
+        "operationId": "GetNodeNetwork",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetNetworkInfo__Out"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/sometimes"
+        }
+      }
+    },
+    "/node/network/nodes": {
+      "get": {
+        "operationId": "GetNodeNetworkNodes",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "host",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "port",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetNodes__Out"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/sometimes"
+        }
+      }
+    },
+    "/node/network/nodes/primary": {
+      "get": {
+        "operationId": "GetNodeNetworkNodesPrimary",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetNode__NodeInfo"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/sometimes"
+        }
+      }
+    },
+    "/node/network/nodes/self": {
+      "get": {
+        "operationId": "GetNodeNetworkNodesSelf",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetNode__NodeInfo"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      }
+    },
+    "/node/network/nodes/{node_id}": {
+      "delete": {
+        "operationId": "DeleteNodeNetworkNodesNodeId",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/boolean"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/always"
+        }
+      },
+      "get": {
+        "operationId": "GetNodeNetworkNodesNodeId",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetNode__NodeInfo"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/sometimes"
+        }
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "node_id",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/node/network/removable_nodes": {
+      "get": {
+        "operationId": "GetNodeNetworkRemovableNodes",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetNodes__Out"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/sometimes"
+        }
+      }
+    },
+    "/node/primary": {
+      "get": {
+        "operationId": "GetNodePrimary",
+        "responses": {
+          "200": {
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      },
+      "head": {
+        "operationId": "HeadNodePrimary",
+        "responses": {
+          "308": {
+            "description": "Redirect to the current primary node."
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      }
+    },
+    "/node/quotes": {
+      "get": {
+        "operationId": "GetNodeQuotes",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetQuotes__Out"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/sometimes"
+        }
+      }
+    },
+    "/node/quotes/self": {
+      "get": {
+        "operationId": "GetNodeQuotesSelf",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Quote"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      }
+    },
+    "/node/ready/app": {
+      "get": {
+        "operationId": "GetNodeReadyApp",
+        "responses": {
+          "204": {
+            "description": "Default response description"
+          },
+          "503": {
+            "description": "The application frontend is not ready."
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      }
+    },
+    "/node/ready/gov": {
+      "get": {
+        "operationId": "GetNodeReadyGov",
+        "responses": {
+          "204": {
+            "description": "Default response description"
+          },
+          "503": {
+            "description": "The governance frontend is not ready."
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      }
+    },
+    "/node/receipt": {
+      "get": {
+        "description": "A signed statement from the service over a transaction entry in the ledger",
+        "operationId": "GetNodeReceipt",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "transaction_id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/TransactionId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/json"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "202": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/string"
+                }
+              }
+            },
+            "description": "The transaction is not yet available. The response describes why and the Retry-After header indicates when to retry."
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "summary": "Receipt for a transaction",
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/sometimes"
+        }
+      }
+    },
+    "/node/receipt/cose": {
+      "get": {
+        "description": "A COSE Sign1 envelope containing a signed statement from the service over a transaction entry in the ledger, with a Merkle proof in the unprotected header. See https://datatracker.ietf.org/doc/draft-ietf-scitt-receipts-ccf-profile/ for a complete description.",
+        "operationId": "GetNodeReceiptCose",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "transaction_id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/TransactionId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/cose": {
+                "schema": {
+                  "$ref": "#/components/schemas/Cose"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "202": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/string"
+                }
+              }
+            },
+            "description": "The transaction is not yet available. The response describes why and the Retry-After header indicates when to retry."
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "summary": "COSE receipt for a transaction",
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/sometimes"
+        }
+      }
+    },
+    "/node/self_signed_certificate": {
+      "get": {
+        "operationId": "GetNodeSelfSignedCertificate",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SelfSignedNodeCertificateInfo"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      }
+    },
+    "/node/service/configuration": {
+      "get": {
+        "operationId": "GetNodeServiceConfiguration",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceConfiguration"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      }
+    },
+    "/node/service/previous_identity": {
+      "get": {
+        "operationId": "GetNodeServicePreviousIdentity",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetServicePreviousIdentity__Out"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/sometimes"
+        }
+      }
+    },
+    "/node/snapshot": {
+      "get": {
+        "operationId": "GetNodeSnapshot",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/uint64"
+            }
+          }
+        ],
+        "responses": {
+          "308": {
+            "description": "Redirect to the selected snapshot."
+          },
+          "404": {
+            "description": "No matching snapshot is available."
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      },
+      "head": {
+        "operationId": "HeadNodeSnapshot",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/uint64"
+            }
+          }
+        ],
+        "responses": {
+          "308": {
+            "description": "Redirect to the selected snapshot."
+          },
+          "404": {
+            "description": "No matching snapshot is available."
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      }
+    },
+    "/node/snapshot/{snapshot_name}": {
+      "get": {
+        "operationId": "GetNodeSnapshotSnapshotName",
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/Binary"
+                }
+              }
+            },
+            "description": "The requested snapshot."
+          },
+          "206": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/Binary"
+                }
+              }
+            },
+            "description": "The requested byte range of the snapshot."
+          },
+          "304": {
+            "description": "The requested snapshot has not changed."
+          },
+          "404": {
+            "description": "The requested snapshot is not available."
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      },
+      "head": {
+        "operationId": "HeadNodeSnapshotSnapshotName",
+        "responses": {
+          "200": {
+            "description": "Metadata for the requested snapshot."
+          },
+          "206": {
+            "description": "Metadata for the requested snapshot range."
+          },
+          "304": {
+            "description": "The requested snapshot has not changed."
+          },
+          "404": {
+            "description": "The requested snapshot is not available."
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "snapshot_name",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/node/snapshot:create": {
+      "post": {
+        "operationId": "PostNodeSnapshotCreate",
+        "responses": {
+          "204": {
+            "description": "Default response description"
+          },
+          "404": {
+            "description": "The required operator feature is not enabled on this interface."
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      }
+    },
+    "/node/state": {
+      "get": {
+        "operationId": "GetNodeState",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetState__Out"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      }
+    },
+    "/node/tx": {
+      "get": {
+        "description": "Possible statuses returned are Unknown, Pending, Committed or Invalid.",
+        "operationId": "GetNodeTx",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "transaction_id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/TransactionId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetTxStatus__Out"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "summary": "Current status of a transaction",
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/sometimes"
+        }
+      }
+    },
+    "/node/version": {
+      "get": {
+        "operationId": "GetNodeVersion",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetVersion__Out"
+                }
+              }
+            },
+            "description": "Default response description"
+          },
+          "default": {
+            "$ref": "#/components/responses/default"
+          }
+        },
+        "x-ccf-forwarding": {
+          "$ref": "#/components/x-ccf-forwarding/never"
+        }
+      }
+    }
+  },
+  "servers": []
+}
