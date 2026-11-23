@@ -314,6 +314,20 @@ proves that no seventh label occurs under those conditions. The six are already
 included in the lower bound of 49. The delayed-commit nominations above fall
 outside this table.
 
+**Four to six full labels occur on delayed-commit nominations before any
+election.** The family is a recorded nomination that establishes a new
+committed prefix, with no new vote grant and no election recorded so far;
+[the test](../consensus-coverage/ConsensusCoverage/DelayedNominationRead.lean)
+is executable on every replayed action. [All 433 step answers are
+determined](../consensus-coverage/ConsensusCoverage/DelayedNomination.lean):
+22 are always true, three more are true exactly when the proposal is new to
+the queue, and two record whether the primary has a successor. Both endpoints
+are `11` or both are `01`. With a successor that gives four labels, each
+with an initialized witness, and no fifth (`exact_with_successor`). A
+single-node deployment cannot be in the family. Without a successor the
+label is also fully determined, one per context, but those two rows have
+neither a witness nor a proof that they cannot occur.
+
 `answers` prints one row per validated action, in three bit strings: pre-state,
 step, post-state. `columns` names each bit in order. `1` and `0` are proved
 answers; `?` is unknown, not false. The [reader](../consensus-coverage/ConsensusCoverage/ReplayAnswers.lean)
