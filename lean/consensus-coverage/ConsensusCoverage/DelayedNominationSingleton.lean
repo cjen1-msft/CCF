@@ -189,5 +189,3 @@ public theorem singleton_noNew (s : Step) (n : NodeID) (one : s.nodes = [n])
     exact BackingStutter.committed_of_zero s.folded atBefore
 
 end ConsensusCoverage.DelayedNomination
-
-#print axioms ConsensusCoverage.DelayedNomination.singleton_noNew

@@ -420,5 +420,3 @@ run_cmd liftTermElabM buildPruner
 end
 
 end ConsensusCoverage.DelayedNomination
-
-#print axioms ConsensusCoverage.DelayedNomination.possible_of_sig

@@ -123,6 +123,3 @@ public theorem endpoints (s : Step) (h : test s.cfg s.before s.act s.after s.pas
   BackingStutter.endpoints s (before_nodes s ((test_iff s).mp h).1).symm
 
 end ConsensusCoverage.DelayedNomination
-
-#print axioms ConsensusCoverage.DelayedNomination.noElection_iff
-#print axioms ConsensusCoverage.DelayedNomination.test_iff

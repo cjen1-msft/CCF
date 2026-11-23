@@ -4,6 +4,7 @@ module
 -- Licensed under the Apache 2.0 License.
 
 public import ConsensusCoverage.DelayedNominationRead
+public import ConsensusCoverage.DelayedNominationSuccessor
 import all ConsensusCoverage.DelayedNominationRead
 import all ConsensusCoverage.DelayedNominationPrune
 import all ConsensusCoverage.DelayedNominationArms
@@ -115,15 +116,15 @@ public theorem shape (s : Step) (h : test s.cfg s.before s.act s.after s.past = 
 evidence tests not assumed to be functions of that signature. -/
 public theorem replay_iff (s : Step) :
     test s.cfg s.before s.act s.after s.past = true ↔
-      (∃ successor fresh, (label s).step = signature successor fresh) ∧
+      (∃ fresh, (label s).step = signature true fresh) ∧
       GrantFrontier.noNewGrant s.after (s.before :: s.past) = true ∧
       hasElection (s.after :: s.before :: s.past) = false := by
   constructor
   · intro pass
-    refine ⟨⟨_, _, shape s pass⟩, ?_⟩
+    refine ⟨⟨_, by simpa only [sends_of_test s pass] using shape s pass⟩, ?_⟩
     have last := Bool.and_eq_true_iff.mp pass
     exact ⟨(Bool.and_eq_true_iff.mp last.1).2, by simpa only [Bool.not_eq_true'] using last.2⟩
-  · rintro ⟨⟨successor, fresh, sig⟩, noGrant, noElection⟩
+  · rintro ⟨⟨fresh, sig⟩, noGrant, noElection⟩
     letI : Config.InitialConfiguration := ⟨s.cfg⟩
     have input : label s (.step .summary_input_nominateSuccessor) = true := congrFun sig _
     have action := EventSupport.sig_support s.context _ ((label_true s _).mp input)
@@ -139,7 +140,7 @@ public def row (zero successor fresh : Bool) : Profile
   | .step b => signature successor fresh b
 
 public theorem row_eq (s : Step) (h : test s.cfg s.before s.act s.after s.past = true) :
-    label s = row (StateCoverage.read s.cfg s.before s.past).1 (sends s.before s.act)
+    label s = row (StateCoverage.read s.cfg s.before s.past).1 true
       (ReducedQuestions.answer s.before s.after .message) := by
   have pair : StateCoverage.read s.cfg s.before s.past = ((StateCoverage.read s.cfg s.before s.past).1, true) :=
     Prod.ext rfl (backed s h)
@@ -148,41 +149,32 @@ public theorem row_eq (s : Step) (h : test s.cfg s.before s.act s.after s.past =
   cases q with
   | pre b => exact congrFun pre b
   | post b => exact congrFun ((endpoints s h).symm.trans pre) b
-  | step b => exact congrFun (shape s h) b
+  | step b => exact congrFun (by simpa only [sends_of_test s h] using shape s h) b
 
-/-- Only these parameter pairs can occur; this does not assert that a
-nomination without a successor actually belongs to the family. -/
+/-- The two reachable step signatures, split by proposal freshness. -/
 public theorem shape_cases (s : Step) (h : test s.cfg s.before s.act s.after s.past = true) :
-    (label s).step = signature true true ∨ (label s).step = signature true false ∨
-      (label s).step = signature false false := by
-  have eq := shape s h
-  cases suc : sends s.before s.act with
-  | false =>
-    exact .inr (.inr (by simpa only [suc, no_queue_without_successor s (stable s h) suc] using eq))
-  | true =>
-    cases fresh : ReducedQuestions.answer s.before s.after .message with
-    | false => exact .inr (.inl (by simpa only [suc, fresh] using eq))
-    | true => exact .inl (by simpa only [suc, fresh] using eq)
+    (label s).step = signature true true ∨ (label s).step = signature true false := by
+  obtain ⟨fresh, eq⟩ := ((replay_iff s).mp h).1
+  cases fresh
+  · exact .inr eq
+  · exact .inl eq
 
-/-- Replay side, with the three candidate step signatures explicit.
-The third is a conditional signature, not a witness of reachability. -/
+/-- Replay side, with both reachable step signatures explicit. -/
 public theorem replay_cases_iff (s : Step) :
     test s.cfg s.before s.act s.after s.past = true ↔
-      ((label s).step = signature true true ∨ (label s).step = signature true false ∨
-        (label s).step = signature false false) ∧
+      ((label s).step = signature true true ∨ (label s).step = signature true false) ∧
       GrantFrontier.noNewGrant s.after (s.before :: s.past) = true ∧
       hasElection (s.after :: s.before :: s.past) = false := by
   constructor
   · intro pass
     exact ⟨shape_cases s pass, ((replay_iff s).mp pass).2⟩
-  · rintro ⟨(a | b | c), evidence⟩
-    · exact (replay_iff s).mpr ⟨⟨true, true, a⟩, evidence⟩
-    · exact (replay_iff s).mpr ⟨⟨true, false, b⟩, evidence⟩
-    · exact (replay_iff s).mpr ⟨⟨false, false, c⟩, evidence⟩
+  · rintro ⟨(a | b), evidence⟩
+    · exact (replay_iff s).mpr ⟨⟨true, a⟩, evidence⟩
+    · exact (replay_iff s).mpr ⟨⟨false, b⟩, evidence⟩
 
-/-- The four witnessed rows with a successor: each endpoint context has
+/-- The four witnessed rows: each endpoint context has
 one fresh-envelope row and one repeated-envelope row. -/
-public def rowsWithSuccessor : List Profile :=
+public def rows : List Profile :=
   [row true true true, row true true false, row false true true, row false true false]
 
 private def rowKey (p : Profile) : Bool × Bool :=
@@ -190,50 +182,35 @@ private def rowKey (p : Profile) : Bool × Bool :=
 
 private theorem occurrence (ws : List Step) (k f : Bool)
     (seen : ws.getLast?.map observe = some ((k, true), true, true, f)) :
-    ∃ s : Step, test s.cfg s.before s.act s.after s.past = true ∧ sends s.before s.act = true ∧
-      label s = row k true f := by
+    ∃ s : Step, test s.cfg s.before s.act s.after s.past = true ∧ label s = row k true f := by
   obtain ⟨s, _, same⟩ := Option.map_eq_some_iff.mp seen
   have zero : (StateCoverage.read s.cfg s.before s.past).1 = k :=
     congrArg (fun x => x.1.1) same
   have pass : test s.cfg s.before s.act s.after s.past = true :=
     congrArg (fun x => x.2.1) same
-  have successor : sends s.before s.act = true := congrArg (fun x => x.2.2.1) same
   have fresh : ReducedQuestions.answer s.before s.after .message = f :=
     congrArg (fun x => x.2.2.2) same
-  exact ⟨s, pass, successor, by rw [row_eq s pass, zero, successor, fresh]⟩
+  exact ⟨s, pass, by rw [row_eq s pass, zero, fresh]⟩
 
-/-- All four conditions of exactness for the successor-present part. -/
-public theorem exact_with_successor :
-    rowsWithSuccessor.Nodup ∧ rowsWithSuccessor.length = 4 ∧
-    ∀ p : Profile, p ∈ rowsWithSuccessor ↔
-      ∃ s : Step, test s.cfg s.before s.act s.after s.past = true ∧
-        sends s.before s.act = true ∧ label s = p := by
-  have distinct : (rowsWithSuccessor.map rowKey).Nodup := by decide +kernel
-  have nodup : rowsWithSuccessor.Nodup :=
+/-- Exact full profiles of initialized delayed-commit nominations before the first election. -/
+public theorem exact :
+    rows.Nodup ∧ rows.length = 4 ∧
+    ∀ p : Profile, p ∈ rows ↔
+      ∃ s : Step, test s.cfg s.before s.act s.after s.past = true ∧ label s = p := by
+  have distinct : (rows.map rowKey).Nodup := by decide +kernel
+  have nodup : rows.Nodup :=
     (List.pairwise_map.mp distinct).imp (fun ne eq => ne (congrArg rowKey eq))
   refine ⟨nodup, rfl, fun p => ⟨?_, ?_⟩⟩
   · intro mem
-    simp only [rowsWithSuccessor, List.mem_cons, List.not_mem_nil, or_false] at mem
+    simp only [rows, List.mem_cons, List.not_mem_nil, or_false] at mem
     rcases mem with rfl | rfl | rfl | rfl
     · exact occurrence _ _ _ coldFresh
     · exact occurrence _ _ _ coldRepeated
     · exact occurrence _ _ _ warmFresh
     · exact occurrence _ _ _ warmRepeated
-  · rintro ⟨s, h, successor, rfl⟩
-    rw [row_eq s h, successor]
+  · rintro ⟨s, h, rfl⟩
+    rw [row_eq s h]
     cases (StateCoverage.read s.cfg s.before s.past).1 <;>
-      cases ReducedQuestions.answer s.before s.after .message <;> simp [rowsWithSuccessor]
-
-/-- All 457 coordinates of the residual part are fixed by the zero-index
-reader. Neither endpoint key is asserted to be witnessed here. -/
-public theorem without_successor (s : Step)
-    (h : test s.cfg s.before s.act s.after s.past = true) (no : sends s.before s.act = false) :
-    label s = row (StateCoverage.read s.cfg s.before s.past).1 false false := by
-  rw [row_eq s h, no, no_queue_without_successor s (stable s h) no]
+      cases ReducedQuestions.answer s.before s.after .message <;> simp [rows]
 
 end ConsensusCoverage.DelayedNomination
-
-#print axioms ConsensusCoverage.DelayedNomination.shape
-#print axioms ConsensusCoverage.DelayedNomination.replay_cases_iff
-#print axioms ConsensusCoverage.DelayedNomination.exact_with_successor
-#print axioms ConsensusCoverage.DelayedNomination.without_successor
