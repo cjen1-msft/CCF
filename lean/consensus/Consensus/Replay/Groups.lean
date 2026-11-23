@@ -11,7 +11,7 @@ public section
 Runs the reduction rules over each node's events: peek the next event, run one rule from
 it, and take what the rule emitted as a group. The peeked event gives the group's node and
 times, so the rules track neither.
-A receive or `init_as_backup` must be its rule's first action, since replay decides from
+A receive must be its rule's first action, since replay decides from
 that action whether the group waits.
 -/
 
@@ -19,7 +19,7 @@ namespace Consensus.Replay
 
 open Reducer
 
-/-- One rule's instructions as a group; bootstrap, a drop or a snapshot hook emits none. -/
+/-- One rule's instructions as a group; bootstrap or a drop emits none. -/
 private def group : Reduction (Option Group) := do
   let some head ← CCF.Parsec.peek | CCF.Parsec.failure "unexpected end of input"
   ruleStep

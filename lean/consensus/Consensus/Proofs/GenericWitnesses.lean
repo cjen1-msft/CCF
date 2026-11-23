@@ -121,7 +121,6 @@ theorem effect_guard_true {S : Type} (s : S)
 theorem local_next (config : Config) (states : NodeID -> NodeState)
     (network : List Model.Envelope) (node : NodeID) (member : node ∈ config.val)
     (input : Input) (after : NodeState) (outputs : Outputs NodeID Message Notification)
-    (ordinary : forall entries, input ≠ .initAsBackup entries)
     (run
       : (step (Capabilities.record node) node (states node) (.internal input)).run {}
         = some (after, outputs))
@@ -132,12 +131,7 @@ theorem local_next (config : Config) (states : NodeID -> NodeState)
             nodes := table config (Function.update states node after)
             network := network ++ outputs.outgoing
           } := by
-  have unguarded : Model.networkStep config { nodes := table config states, network }
-      (.local node input) =
-      MultiNodeTransitionSystem.next (Model.protocol config)
-        { nodes := table config states, network } (.local node input) := by
-    cases input <;> simp_all [Model.networkStep]
-  simp [unguarded, MultiNodeTransitionSystem.next, Model.protocol,
+  simp [MultiNodeTransitionSystem.next, Model.protocol,
     lookup_table config states node member, run]
   simp only [table, List.map_map]
   apply List.map_congr_left
@@ -160,7 +154,7 @@ theorem delivery_next (config : Config) (states : NodeID -> NodeState)
             nodes := table config (Function.update states envelope.target after)
             network := removeOne envelope network ++ outputs.outgoing
           } := by
-  simp [Model.networkStep, MultiNodeTransitionSystem.next, Model.protocol, queued, guard,
+  simp [MultiNodeTransitionSystem.next, Model.protocol, queued, guard,
     lookup_table config states envelope.target member, run]
   simp only [table, List.map_map]
   apply List.map_congr_left
@@ -170,14 +164,13 @@ theorem delivery_next (config : Config) (states : NodeID -> NodeState)
 theorem at_local {config : Config} {states : NodeID -> NodeState}
     (reachable : At config states) (node : NodeID) (member : node ∈ config.val)
     (input : Input) (after : NodeState) (outputs : Outputs NodeID Message Notification)
-    (ordinary : forall entries, input ≠ .initAsBackup entries)
     (run
       : (step (Capabilities.record node) node (states node) (.internal input)).run {}
         = some (after, outputs))
     : At config (Function.update states node after) := by
   obtain ⟨network, reachable⟩ := reachable
   exact ⟨_, .step reachable
-    (local_next config states network node member input after outputs ordinary run)⟩
+    (local_next config states network node member input after outputs run)⟩
 
 def bootstrapLog (config : Config) : List Entry :=
   [
@@ -438,7 +431,7 @@ theorem at_signed (config : Config)
         (Function.update (Model.initialNodeState config) (primary config)
           (leader config (primary config) ∅)) :=
   at_local (at_initial config) (primary config) (primary_mem config)
-    (.append [{ content := .signature }]) _ {} (by intro entries; exact Input.noConfusion)
+    (.append [{ content := .signature }]) _ {}
     (sign_bootstrap config)
 
 def replicationRequest (config : Config) (primary : NodeID) (peers : Finset NodeID)
@@ -567,7 +560,6 @@ theorem at_replicate {config : Config} {states : NodeID -> NodeState}
   let second := Function.update first target (follower config (committed config (primary config) peers))
   have sentStep := local_next config states network (primary config) (primary_mem config)
     (.sendEntries target 2) sent { outgoing := [request] }
-    (by intro entries; exact Input.noConfusion)
     (by simpa [leading] using send_bootstrap config (primary config) target peers member different fresh)
   have requestStep := delivery_next config first (network ++ [request]) request member
     (by simp) _ { outgoing := [response] }
@@ -759,7 +751,7 @@ theorem at_trace {config : Config} {states : NodeID -> NodeState}
       using local_next config states
         (network ++ (List.range n).flatMap (fun _ => outputs.outgoing)) node member
         .nominateSuccessor (states node) outputs
-        (by intro entries; exact Input.noConfusion) run
+        run
   obtain ⟨trace, present⟩ := reachable_trace_of_tail reachable continuation
     (fun _ => .local node .nominateSuccessor) (by simp [continuation]) enabled 0
   exact ⟨trace, network, by simpa [continuation] using present⟩

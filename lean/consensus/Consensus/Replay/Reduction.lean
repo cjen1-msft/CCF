@@ -370,38 +370,6 @@ private def ruleDrop : Reduction Unit := do
   -- consume
   event head "drop_pending_to"
 
-/--
-Snapshot installation runs ledger hooks outside the consensus lock, so bare ticks
-may interleave with their events.
-A tick is a lock hold of its own, as is `init_as_backup`, so the hooks emit nothing; the
-node must still initialize later.
--/
-private def ruleInitAsBackup : Reduction Unit := do
-  let head ← peek
-  let hooks := ["add_configuration", "retired_committed_tx"]
-  unless hooks.contains head.function || head.function == "init_as_backup" do
-    failure s!"{head.record.location}: expected init_as_backup, got {head.function}"
-  -- consume
-  many_ (event head "add_configuration" <|> event head "retired_committed_tx")
-  let rest ←
-    liftM (m := CCF.Parsec.Parser Event)
-      ((fun input => .success input (input.events.extract input.position))
-        : CCF.Parsec.Parser Event (Array Event))
-  unless rest.any (·.function == "init_as_backup") do
-    liftExcept head
-      (throw
-        "not grouped with replicate_entry, execute_append_entries_sync or init_as_backup")
-  if hooks.contains head.function then
-    return
-  let init ← peek
-  event head "init_as_backup"
-  event head "become_follower"
-  let index ← readJson init init.message (nat · "seqno")
-  let view ← readJson init init.message (nat · "view")
-  -- emit
-  emitObserve init "init-as-backup"
-  emitAction init "init-as-backup" (.initAsBackup head.node index view)
-
 def ruleStep : Reduction Unit := do
   -- Recv rules
   attempt ruleRecvAppendEntries
@@ -411,7 +379,6 @@ def ruleStep : Reduction Unit := do
   <|> attempt ruleRecvRequestVoteResponse
   -- Async rules
   <|> attempt ruleBootstrap
-  <|> attempt ruleInitAsBackup
   <|> attempt ruleAppend
   <|> attempt ruleTick
   <|> attempt ruleNomination

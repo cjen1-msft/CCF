@@ -43,11 +43,10 @@ Bootstrap accepts bare ticks and nominations before genesis, which native code r
 Rules reduce each node's stream independently into groups, one per hold of the consensus lock, and read action inputs from its events; only top-level alternatives backtrack.
 A native `replicate` event and the entries that follow it, each starting with its `replicate_entry` event, form one group and one model append, so the model checks commit once per batch, as CCF does.
 A `replicate` call rejected at its first entry traces no entries and appends nothing.
-Snapshot installation runs its `add_configuration` and `retired_committed_tx` hooks outside the lock, before the node's `init_as_backup`; the hooks form no group, so the initialization's group starts at `init_as_backup` and groups that fall between them, such as ticks of any node, replay as usual.
 
 Replay repeatedly runs the next group of some node, with no other group's actions between its actions.
 It runs the enabled group with the earliest `ts`, the wall-clock emission time in nanoseconds that a record may carry; without it `m_ts` stands in, which is the order of execution within a process and otherwise only makes diagnostics reproducible, as counters of different processes are not comparable.
-A group whose first action is a receive waits until a matching packet is queued, and one whose first action is `init_as_backup` waits until some node has committed its prefix; other actions must be enabled when their group runs.
+A group whose first action is a receive waits until a matching packet is queued; other actions must be enabled when their group runs.
 Clocks of different hosts therefore only choose among enabled groups, and cannot fail a trace.
 If groups remain but none may run, replay fails, listing first the groups that can never run, such as a receive whose packet is never sent.
 `--schedule` prints the groups in the order they ran, ending with any that failed.

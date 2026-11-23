@@ -130,12 +130,11 @@ namespace Consensus.Proofs.Deadlock
 open CCF CCF.MultiNodeTransitionSystem
 open Model.Node
 
-/-- A local input other than initialization that the node's step accepts is an
+/-- A local input that the node's step accepts is an
 enabled global action. -/
 private theorem enabled_of_total {config : Finset NodeID} {nodes : List NodeID}
     {state : Model.State} {node : NodeID} {local_ : NodeState} {input : Input}
     (distinct : (state.nodes.map Prod.fst).Nodup) (member : (node, local_) ∈ state.nodes)
-    (notInit : forall entries, Not (input = .initAsBackup entries))
     (total
       : Total.Total
           (Model.Node.step (Capabilities.record node) node local_ (.internal input)))
@@ -148,16 +147,7 @@ private theorem enabled_of_total {config : Finset NodeID} {nodes : List NodeID}
   }, ?_⟩
   let _ : Config.InitialConfiguration := ⟨config⟩
   have found := Direct.nodeState_of_mem distinct member
-  have global : Model.networkStep config state (.local node input)
-      = next (Model.protocol config) state (.local node input) := by
-    unfold Model.networkStep
-    split
-    · rename_i entries eq
-      cases eq
-      exact (notInit entries rfl).elim
-    · rfl
-  simp only [Model.transitionSystem, global]
-  simp [next, Model.protocol, found, ran]
+  simp [Model.transitionSystem, lift, next, Model.protocol, found, ran]
 
 /-- A primary can always nominate a successor; an eligible node can campaign. -/
 private theorem enabled_of_member {config : Finset NodeID} {nodes : List NodeID}
@@ -167,9 +157,9 @@ private theorem enabled_of_member {config : Finset NodeID} {nodes : List NodeID}
     : exists action nextState,
         (Model.transitionSystem config nodes).step state action = some nextState := by
   rcases acts with primary | eligible
-  · exact enabled_of_total distinct member (input := .nominateSuccessor) (by simp)
+  · exact enabled_of_total distinct member (input := .nominateSuccessor)
       (Total.nominateSuccessor node local_ primary)
-  · exact enabled_of_total distinct member (input := .timeout .election) (by simp)
+  · exact enabled_of_total distinct member (input := .timeout .election)
       (Total.startElection node local_ eligible)
 
 end Consensus.Proofs.Deadlock
@@ -481,12 +471,6 @@ private theorem Rel.act (state : NodeState) (input : Input)
   | nominateSuccessor =>
       exact (Direct.Keeps.nominateSuccessor caps self state).mono fun _ same =>
         same ▸ Rel.refl _
-  | initAsBackup entries =>
-      unfold Model.Node.act Model.Node.initAsBackup
-      refine Keeps.bind' Keeps.guard' fun _ ⟨fresh, _⟩ => Keeps.pure' ?_
-      refine Rel.of_fields ⟨?_, ?_⟩ rfl (by simp [becomeAwareOfNewTerm])
-      · simp [becomeAwareOfNewTerm, fresh.2.2.2]
-      · simp [NodeState.committedLog, fresh.2.2.2]
 
 /-- The follower append loop, which may record commits after signatures. -/
 private theorem Rel.fromLeaderLoop (limit : Nat) (entries : List Entry)
@@ -908,7 +892,6 @@ private theorem Shrinks.becomePreVoteCandidate (state : NodeState)
     fun _ => Keeps.seq' fun _ => Keeps.pure' (shrinks_refl _)
 
 private theorem act_ok (state : NodeState) (input : Input) (ok : LogOK state.log)
-    (notInit : forall entries, Not (input = .initAsBackup entries))
     : Keeps (fun after : NodeState => LogOK after.log)
         (Model.Node.act caps self state input) := by
   have viaShrinks : forall {m : NodeEffect NodeState}, Keeps (Shrinks state) m
@@ -943,7 +926,6 @@ private theorem act_ok (state : NodeState) (input : Input) (ok : LogOK state.log
           exact Keeps.seq' fun _ => Keeps.pure' ok
   | nominateSuccessor =>
       exact (Direct.Keeps.nominateSuccessor caps self state).mono fun _ same => same ▸ ok
-  | initAsBackup entries => exact (notInit entries rfl).elim
 
 /-- Accepting AppendEntries leaves the follower in the request's term. -/
 private theorem handleAppendEntriesRequest_term (source : NodeID) (state : NodeState)
@@ -998,19 +980,11 @@ private theorem step_ok (state : NodeState) (event : Event) (ok : LogOK state.lo
           LogOK after.log
           \/ (exists source request,
                 event = .receive source (.appendEntriesRequest request)
-                /\ after.currentTerm = request.term)
-          \/ exists entries,
-              event = .internal (.initAsBackup entries) /\ after.log = entries)
+                /\ after.currentTerm = request.term))
         (Model.Node.step caps self state event) := by
   cases event with
   | internal input =>
-      by_cases init : exists entries, input = .initAsBackup entries
-      · obtain ⟨entries, rfl⟩ := init
-        unfold Model.Node.step Model.Node.act Model.Node.initAsBackup
-        exact Keeps.bind' Keeps.guard' fun _ _ =>
-          Keeps.pure' (Or.inr (Or.inr ⟨entries, rfl, by simp [becomeAwareOfNewTerm]⟩))
-      · exact (act_ok caps self state input ok fun entries eq => init ⟨entries, eq⟩).mono
-          fun _ kept => Or.inl kept
+      exact (act_ok caps self state input ok).mono fun _ kept => Or.inl kept
   | receive source message =>
       unfold Model.Node.step Model.Node.receive
       refine Keeps.ite' (fun _ => Keeps.pure' (Or.inl ok)) fun _ => ?_
@@ -1024,10 +998,7 @@ private theorem step_ok (state : NodeState) (event : Event) (ok : LogOK state.lo
                 \/ (exists source' request,
                     Event.receive source message
                       = .receive source' (.appendEntriesRequest request)
-                    /\ after.currentTerm = request.term)
-                \/ exists entries,
-                    Event.receive source message = .internal (.initAsBackup entries)
-                    /\ after.log = entries) m :=
+                    /\ after.currentTerm = request.term)) m :=
         fun kept => kept.mono fun _ shrunk => Or.inl (ok.prefix (observedLog ▸ shrunk))
       cases message with
       | appendEntriesRequest request =>
@@ -1037,7 +1008,7 @@ private theorem step_ok (state : NodeState) (event : Event) (ok : LogOK state.lo
             fun _ result => ?_
           rcases result with logEq | termEq
           · exact Or.inl (logEq.trans observedLog ▸ ok)
-          · exact Or.inr (Or.inl ⟨source, request, rfl, termEq⟩)
+          · exact Or.inr ⟨source, request, rfl, termEq⟩
       | appendEntriesResponse response =>
           refine viaShrinks ?_
           unfold Model.Node.handleAppendEntriesResponse
@@ -1147,7 +1118,7 @@ private theorem leader_logs (ih : Everywhere LeaderLogsOK (before :: rest))
   rcases c.now_after now with ⟨rfl, rfl⟩ | ⟨different, old⟩
   · have preOk := Logs.Ctx.pre_ok c ih c.pre_now
     rcases step_ok (Capabilities.record c.actor) c.actor c.pre c.event preOk _ _ _ c.tr.ran with
-      ok | ⟨source, request, received, termEq'⟩ | ⟨entries, initialized, logEq⟩
+      ok | ⟨source, request, received, termEq'⟩
     · exact ok
     · exfalso
       obtain ⟨envelope, ok, sourceEq, targetEq, payload⟩ := c.received_ok received
@@ -1159,14 +1130,6 @@ private theorem leader_logs (ih : Everywhere LeaderLogsOK (before :: rest))
         exact led
       have same := c.election_safety _ _ _ ledSender ledActor
       exact aeok.1 (targetEq.trans same.symm)
-    · -- A joining node copies a committed prefix of another node's log.
-      have available := c.tr.available entries initialized
-      simp only [Model.committedPrefixOf, List.any_eq_true, Bool.and_eq_true,
-        decide_eq_true_eq, beq_iff_eq] at available
-      obtain ⟨⟨other, otherState⟩, member, _, prefixEq⟩ := available
-      have otherOk := Logs.Ctx.pre_ok c ih member
-      rw [logEq, ← prefixEq]
-      exact otherOk.take _
   · exact ih _ (List.suffix_refl _) (List.cons_ne_nil _ _) node state term
       ⟨old, termEq, role, c.led_other different led⟩
 
@@ -1517,8 +1480,7 @@ private theorem witness {nodes : List NodeID} {current : Model.State} {rest : Hi
   obtain ⟨front, back, split⟩ := List.append_of_mem earlierMem
   have suffix₀ : earlier :: back <:+ current :: rest := ⟨front, split.symm⟩
   have inv₀ : Inv (earlier :: back) := good _ suffix₀ (List.cons_ne_nil _ _)
-  obtain ⟨_, backed₀⟩ := (inv₀.commit_backed node₀ local₀ member₀).1
-  rcases backed₀ with zero | ⟨term₀, part₀, committed₀, _, within₀⟩
+  rcases inv₀.commit_backed node₀ local₀ member₀ with zero | ⟨term₀, part₀, committed₀, _, within₀⟩
   · omega
   have frontier₀ : local₀.commitIndex <= local₀.log.length :=
     Safety.Seen.commit_le (exec.suffix suffix₀ (List.cons_ne_nil _ _))
@@ -1592,8 +1554,7 @@ private theorem witness {nodes : List NodeID} {current : Model.State} {rest : Hi
       exact missing (Safety.committed_in_canon inv.completeness monos committed canon lt)
   -- Its committed log lies within the longest committed part.
   have committedInPart : voterState.committedLog <+: part := by
-    obtain ⟨_, backed⟩ := (inv.commit_backed key voterState voterMember).1
-    rcases backed with zero | ⟨_, other, otherCommitted, _, within⟩
+    rcases inv.commit_backed key voterState voterMember with zero | ⟨_, other, otherCommitted, _, within⟩
     · simp [NodeState.committedLog, zero]
     · exact within.trans (longest _ _ otherCommitted)
   have frontier : voterState.commitIndex <= voterState.log.length :=

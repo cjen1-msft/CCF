@@ -47,15 +47,12 @@ def Header.initial (header : Header) : Model.State :=
 inductive Step where
   | local (node : String) (input : Input)
   | receive (source destination : String) (packet : Json)
-  /-- Initialize from a node's committed prefix ending at `index` in term `view`. -/
-  | initAsBackup (node : String) (index view : Nat)
 
 def Step.name : Step → String
   | .local _ (.append _) => "append"
   | .local _ (.sendEntries ..) => "sendEntries"
   | .local _ (.timeout _) => "timeout"
   | .local _ .nominateSuccessor => "nominateSuccessor"
-  | .local _ (.initAsBackup _) | .initAsBackup .. => "initAsBackup"
   | .receive .. => "receive"
 
 structure ReplayState where
@@ -309,24 +306,11 @@ private def selectPacket (replay : ReplayState) (source destination : NodeID)
       s!"ambiguous delivery from '{source}' to '{destination}': matching packets differ in model payload"
   return envelope
 
-/-- A node whose committed prefix has a signature at `index` in term `view`. -/
-private def initSource (replay : ReplayState) (index view : Nat)
-    : Except String NodeState := do
-  -- Committed prefixes in a reachable state are comparable, so any such node will do.
-  let some (_, source) :=
-    replay.state.nodes.find?
-      fun (_, state) =>
-        index <= state.commitIndex
-        && (index == 0 || isSignatureAt state.log index)
-        && termAt state.log index == view
-  | throw s!"no node has a committed signature at {index} in term {view}"
-  return source
-
 /-- Run one model action, recording the envelopes it queues. -/
 private def ReplayState.run (replay : ReplayState) (header : Header)
     (action : Model.Action) (name : String)
     : Except String ReplayState := do
-  let some state := Model.networkStep header.bootstrap replay.state action
+  let some state := CCF.MultiNodeTransitionSystem.next (Model.protocol header.bootstrap) replay.state action
   | throw s!"disabled model action '{name}'"
   -- A step appends the acting node's sends to the network left after any delivery.
   let pending := replay.state.network.length - if action matches .deliver _ then 1 else 0
@@ -377,14 +361,8 @@ def runInstruction (header : Header) (replay : ReplayState) (instruction : Instr
       let destination ← header.nodeId destination
       let envelope ← selectPacket replay source destination packet
       replay.run header (.deliver envelope) "receive"
-  | .action (step@(.initAsBackup node index view)) _ =>
-      let joiner ← header.nodeId node
-      let source ← initSource replay index view
-      replay.run header (.local joiner (.initAsBackup (source.log.take index))) step.name
-
 /--
-Why a step must wait: a receive has no matching queued packet, or an initialization has no
-committed source. Both only become enabled as other nodes act. Other steps are local to a
+A receive must wait until it has a matching queued packet. Other steps are local to a
 node changed only by its own groups, so a disabled one fails when its group runs.
 The reason is built only on demand: a waiting group is retried after every other group.
 -/
@@ -397,10 +375,6 @@ private def Step.waiting (header : Header) (replay : ReplayState)
       if pending.any fun envelope => (checkPacket packet envelope.payload).isOk then
         return none
       return some fun _ => missing header pending source destination packet
-  | .initAsBackup _ index view =>
-      match initSource replay index view with
-      | .ok _ => return none
-      | .error reason => return some fun _ => reason
   | .local .. => pure none
 
 /-- Why a group must wait before its first action, located at that action. -/
