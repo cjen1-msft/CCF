@@ -88,7 +88,7 @@ On a validated action, only the actor can have changed its node record. -/
     (evidence cfg before after past)
 
 /-- For a passing, successfully replayed action, return the whole
-457-coordinate label using only the pre-state answer key. -/
+label using only the pre-state answer key. -/
 public theorem gate_sound (s : Step)
     (passes : gate s.cfg s.before s.act s.after s.past = true) :
     label s = diagonal (ProofContexts.answers (StateCoverage.read s.cfg s.before s.past)) := by

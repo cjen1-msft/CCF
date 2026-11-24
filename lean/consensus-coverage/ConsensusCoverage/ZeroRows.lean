@@ -68,7 +68,9 @@ public theorem endpoints (s : Step)
     rw [StateCoverage.backed_iff _ c.inv, StateCoverage.backed_iff _ c.inv_step]
     exact ⟨fun ⟨_, k, p, h⟩ => ⟨List.ne_nil_of_mem c.post_now, k, p, Or.inl h⟩,
       fun ⟨_, k, p, h⟩ => ⟨List.ne_nil_of_mem c.pre_now, k, p, old h⟩⟩
-  have ctx := (StateBasis.ctx_equiv_iff ‹_› ‹_› s.frame (s.frame.advance s.after)).mpr ⟨zero, backed⟩
+  have ctx := (StateBasis.ctx_equiv_iff ⟨s.cfg⟩ ⟨s.cfg⟩ s.frame (s.frame.advance s.after)
+      (@Inv.commitChains ⟨s.cfg⟩ _ c.inv)
+      (@Inv.commitChains ⟨s.cfg⟩ _ c.inv_step)).mpr ⟨zero, backed⟩
   funext b
   exact Bool.eq_iff_iff.mpr ((label_true s (.pre b)).trans ((ctx b).trans (label_true s (.post b)).symm))
 

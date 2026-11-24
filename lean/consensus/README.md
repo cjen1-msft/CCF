@@ -366,7 +366,7 @@ fewer than `2^341` entries, down from `2^485` unrestricted answer vectors.
 It includes impossible combinations and can represent the same label more
 than once; its size is not a coverage target.
 
-**Exact slice: three full labels have all 461 step answers false.** They are
+**Exact slice: three full labels have all 516 step answers false.** They are
 `10 -> 10`, `11 -> 11`, and `01 -> 01`. [The upper bound](../consensus-coverage/ConsensusCoverage/ZeroRows.lean)
 does not assume the action leaves the snapshot unchanged: removing the last
 zero commit index or establishing the first certificate forces a true step
@@ -379,11 +379,11 @@ actions 3 and 5 resend the same queued heartbeat on opposite sides of backup
 initialization: first `11 -> 11`, then `01 -> 01`.
 
 Membership in this slice is **decidable on every validated action**, even
-when the reader cannot fill in all 461 step coordinates. The [four-question
+when the reader cannot fill in all 516 step coordinates. The [four-question
 converse](../consensus-coverage/ConsensusCoverage/SignedQuiet.lean) proves that
 if a node record changes, an envelope is new, a vote grant is new, or a
 committed prefix is new, at least one step answer is true. If none changes,
-all 461 step answers are false. An old vote need not be absent: [the grant
+all 516 step answers are false. An old vote need not be absent: [the grant
 reader](../consensus-coverage/ConsensusCoverage/GrantFrontier.lean) checks the
 least request accepted by each eligible voter record. Every other request
 accepted there is covered by the same old grant. This score does not cover

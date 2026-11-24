@@ -4,6 +4,7 @@ module
 -- Licensed under the Apache 2.0 License.
 
 meta import Lean
+public meta import ConsensusCoverage.ProofWalk
 public import ConsensusCoverage.ActionProfile
 import all ConsensusCoverage.ActionProfile
 import all ConsensusCoverage.PinnedClasses
@@ -88,51 +89,45 @@ private partial def rebuild (facts : List Fact) (p : Expr) : MetaM (Option Expr)
     return some (← mkAppM ``And.intro #[l, r])
   return none
 
-private def contradictionFromWith (ctx : Simp.Context) (transfer : Fact → Option Fact)
-    (facts : List Fact) : MetaM (Option Expr) := do
-  unless facts.any (fun (p, _) => p.isAppOfArity ``Not 1) do return none
-  let facts ← facts.mapM fun (p, h) => do
-    let (r, _) ← simp p ctx
-    let h ← if let some eq := r.proof? then mkEqMP eq h else pure h
-    return (r.expr, h)
-  let facts := facts ++ facts.filterMap transfer
+private def findFalse (facts : List Fact) : MetaM (Option Expr) := do
   for (p, h) in facts do
+    if p.isConstOf ``False then return some h
     if p.isAppOfArity ``Not 1 then
       if let some yes ← rebuild facts (p.getArg! 0) then return some (mkApp h yes)
   return none
 
-private def contradictionFrom (ctx : Simp.Context) (facts : List Fact) : MetaM (Option Expr) :=
-  contradictionFromWith ctx (fun _ => none) facts
+/-- The rewrites are fixed for the entire predicate. Memoize the equality
+between propositions, not a proof from a particular disjunct's hypothesis. -/
+private def contradictionChecker (ctx : Simp.Context) (transfer : Fact → Option Fact := fun _ => none) :
+    MetaM (List Fact → MetaM (Option Expr)) := do
+  let cache ← IO.mkRef ({} : Std.HashMap Expr Simp.Result)
+  return fun facts => do
+    if let some proof ← findFalse (facts ++ facts.filterMap transfer) then return some proof
+    unless facts.any (fun (p, _) => p.isAppOfArity ``Not 1) do return none
+    let facts ← facts.mapM fun (p, h) => do
+      let r ← match (← cache.get)[p]? with
+        | some r => pure r
+        | none =>
+          let (r, _) ← simp p ctx
+          cache.modify (·.insert p r)
+          pure r
+      let h := if let some eq := r.proof? then
+        mkAppN (mkConst ``Eq.mp [.zero]) #[p, r.expr, eq, h] else h
+      return (r.expr, h)
+    findFalse (facts ++ facts.filterMap transfer)
 
 mutual
 
 /-- Refute a positive path formula. Conjunctions may contain more than one reach
 call: one refuted conjunct suffices. Disjunctions require proofs for both
 arms. A cached certificate is a kernel-checked lemma, not a boolean oracle. -/
-private partial def refute (ctx : Simp.Context) (eq logs : Expr) (transfer : Fact → Option Fact)
-    (todo : List Fact) (atoms : List Fact := []) : Gen (Option Expr) := do
-  let (p, h) :: rest := todo | contradictionFromWith ctx transfer atoms
+private partial def refuteReach (fact : Fact) (eq logs : Expr) : Gen (Option Expr) := do
+  let (p, h) := fact
   if let some n := reachName? p then
     if ← certify n then
       let .const _ us := p.getAppFn | throwError "expected constant"
       return some (mkAppN (mkConst (certName n) us) (p.getAppArgs ++ #[eq, logs, h]))
-  if p.isAppOfArity ``And 2 then
-    return ← refute ctx eq logs transfer
-      ((p.getArg! 0, ← mkAppM ``And.left #[h]) :: (p.getArg! 1, ← mkAppM ``And.right #[h]) :: rest) atoms
-  if p.isAppOfArity ``Or 2 then
-    let arm (q : Expr) := withLocalDeclD `h q fun hq => do
-      let some result ← refute ctx eq logs transfer ((q, hq) :: rest) atoms | return none
-      return some (← mkLambdaFVars #[hq] result)
-    let some l ← arm (p.getArg! 0) | return none
-    let some r ← arm (p.getArg! 1) | return none
-    return some (← mkAppM ``Or.elim #[h, l, r])
-  if p.isAppOfArity ``Exists 2 then
-    return ← withLocalDeclD `w (p.getArg! 0) fun w => do
-      let q := (p.getArg! 1).beta #[w]
-      withLocalDeclD `h q fun hq => do
-        let some result ← refute ctx eq logs transfer ((q, hq) :: rest) atoms | return none
-        return some (← mkAppM ``Exists.elim #[h, ← mkLambdaFVars #[w, hq] result])
-  refute ctx eq logs transfer rest ((p, h) :: atoms)
+  return none
 
 private partial def certify (n : Name) : Gen Bool := do
   if let some done := (← get)[n]? then return done
@@ -162,8 +157,10 @@ private partial def certify (n : Name) : Gen Bool := do
           guard (p.isAppOfArity ``Pending 2 && p.getArg! 0 == next)
           let e := p.getArg! 1
           return (mkApp2 (mkConst ``Pending) f e, mkApp2 pending e h)
+        let closePath ← contradictionChecker ctx transfer
         withLocalDeclD `h p fun h => do
-          let some proof ← refute ctx eq logs transfer [(p, h)] | return false
+          let some proof ← ProofWalk.refute (refuteReach · eq logs)
+            (fun facts => closePath facts) [(p, h)] | return false
           let pred := mkAppN (mkConst n (ci.levelParams.map mkLevelParam)) xs
           let type ← mkForallFVars (xs ++ #[eq, logs]) (← mkArrow pred (mkConst ``False))
           let value ← mkLambdaFVars (xs ++ #[eq, logs, h]) proof
@@ -401,7 +398,9 @@ public theorem label_eq_of_noNewSupport (s : ActionProfile.Step) (support : NoNe
   have eq : (s.frame.advance s.after).current.nodes = s.frame.current.nodes :=
     support.1.trans (congrArg (fun t : Model.State => t.nodes) s.current_eq).symm
   have logsEq : (s.frame.advance s.after).logs = s.frame.logs := logs
-  have same := (StateBasis.ctx_equiv_iff ‹_› ‹_› (s.frame.advance s.after) s.frame).2
+  have same := (StateBasis.ctx_equiv_iff ⟨s.cfg⟩ ⟨s.cfg⟩ (s.frame.advance s.after) s.frame
+      (@Inv.commitChains ⟨s.cfg⟩ _ s.context.inv_step)
+      (@Inv.commitChains ⟨s.cfg⟩ _ s.context.inv)).2
     ⟨by simp only [StateBasis.Zero, eq], by simp only [StateBasis.Backing, Committed, eq, logsEq]⟩
   funext q
   cases q with
