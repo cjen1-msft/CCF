@@ -147,7 +147,7 @@ private def cert1 : Certificate := certify run1 choices1 valid1 [run1At2, run1At
 
 -- BEGIN BOUNDED CENSUS
 private def bounded0 : Run :=
-  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .transaction 1 {}}])]⟩
+  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.append [{content := .transaction 1 {}}])]⟩
 private theorem bounded0Valid : bounded0.valid := by decide
 private def bounded0Cert : Certificate := certify bounded0 [] bounded0Valid
   [caseAt 0 [.act_input_append,
@@ -184,7 +184,7 @@ private def bounded0Cert : Certificate := certify bounded0 [] bounded0Valid
     .terms_post_log_inr_inl]]
 
 private def bounded1 : Run :=
-  ⟨{0, 1}, [0, 1], [     .input 0 (.timeout .checkQuorum)]⟩
+  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.timeout .checkQuorum)]⟩
 private theorem bounded1Valid : bounded1.valid := by decide
 private def bounded1Cert : Certificate := certify bounded1 [] bounded1Valid
   [caseAt 0 [.act_input_timeout,
@@ -201,19 +201,31 @@ private def bounded1Cert : Certificate := certify bounded1 [] bounded1Valid
     .terms_post_log_inr_inr]]
 
 private def bounded2 : Run :=
-  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature}]),     .input 0 (.timeout .checkQuorum)]⟩
+  ⟨{0, 1}, [0, 1, 2], [     .input 2 (.initAsBackup [])]⟩
 private theorem bounded2Valid : bounded2.valid := by decide
 private def bounded2Cert : Certificate := certify bounded2 [] bounded2Valid
+  [caseAt 0 [.act_input_initAsBackup]]
+
+private def bounded3 : Run :=
+  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.append [{content := .signature}]),     .input 0 (.append [{content := .transaction 1 {}}])]⟩
+private theorem bounded3Valid : bounded3.valid := by decide
+private def bounded3Cert : Certificate := certify bounded3 [] bounded3Valid
+  [caseAt 1 [.persist_pre_kind_append]]
+
+private def bounded4 : Run :=
+  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.append [{content := .signature}]),     .input 0 (.timeout .checkQuorum)]⟩
+private theorem bounded4Valid : bounded4.valid := by decide
+private def bounded4Cert : Certificate := certify bounded4 [] bounded4Valid
   [caseAt 1 [.persist_pre_kind_same]]
 
-private def certificates : List Certificate := [cert0, cert1, bounded0Cert, bounded1Cert, bounded2Cert]
+private def certificates : List Certificate := [cert0, cert1, bounded0Cert, bounded1Cert, bounded2Cert, bounded3Cert, bounded4Cert]
 -- END GENERATED CERTIFICATES
 
 /-- The positive cases computed by running the sound reader on the cover. -/
 public def witnessed : List Classes.StepBranch :=
   (certificates.flatMap (·.questions)).eraseDups
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 89 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 91 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
