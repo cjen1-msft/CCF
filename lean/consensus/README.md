@@ -487,13 +487,13 @@ validated replay these excluded answers must be false; a non-excluded answer
 still needs a witness. This count is not a transition coverage denominator.
 
 [Evidence support](../consensus-coverage/ConsensusCoverage/EvidenceSupport.lean)
-names, for every one of the 461 step questions, the fresh proof evidence
+names, for every one of the 516 step questions, the fresh proof evidence
 without which its answer must be false. There are seven kinds: a new node
 record, a new envelope value, and a new fact in each of the five ghost
 relations (seen logs, vote grants, elections, leader logs, committed
 prefixes). Whether each kind is fresh is decided exactly on every replayed
-action (`fresh_iff`). 119 questions need one particular kind and 121 need
-one of two; 135 can be triggered by any of the seven. Typical appends and
+action (`fresh_iff`). 129 questions need one particular kind and 123 need
+one of two; for 176 the certified guard uses all seven. Typical appends and
 deliveries introduce several kinds of evidence at once, so exclusion alone
 does not complete their labels.
 [Delta support](../consensus-coverage/ConsensusCoverage/DeltaSupport.lean)

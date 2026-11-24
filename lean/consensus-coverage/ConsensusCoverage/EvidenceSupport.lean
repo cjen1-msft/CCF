@@ -4,6 +4,7 @@ module
 -- Licensed under the Apache 2.0 License.
 
 meta import Lean
+public meta import ConsensusCoverage.ProofWalk
 public meta import ConsensusCoverage.DeltaSupport
 public import ConsensusCoverage.ActionProfile
 public import ConsensusCoverage.CanonicalLogs
@@ -177,15 +178,8 @@ private def reachName? (p : Expr) : Option Name := do
 
 mutual
 
-/-- Reuse certificates for shared reach conditions, and stop at the first
-conflict on each path. The path succeeds only if both disjuncts close. -/
-private partial def refute (c : Check) (todo : List Fact) (atoms : List Fact := [])
-    : Gen (Option Expr) := do
-  let (p, h) :: rest := todo |
-    for (p, h) in atoms do
-      if p.isAppOfArity ``Not 1 then
-        if let some hp ← rebuild c atoms p.appArg! then return some (mkApp h hp)
-    return none
+private partial def refuteAtom (c : Check) (fact : Fact) : Gen (Option Expr) := do
+  let (p, h) := fact
   if let some n := reachName? p then
     if let some lemma ← certify n c.mask then
       let .const _ us := p.getAppFn | throwError "expected a reach constant"
@@ -196,28 +190,7 @@ private partial def refute (c : Check) (todo : List Fact) (atoms : List Fact := 
     let no := mkAppN (mkConst ``stable_elect_iff) (c.params.extract 0 4)
     let no ← mkAppM ``Iff.mp #[no, c.stable[4]!]
     return some (mkAppN no ((p.getAppArgs.extract 3 p.getAppNumArgs).push h))
-  if p.isAppOfArity ``And 2 then
-    let left := mkAppN (mkConst ``And.left) (p.getAppArgs.push h)
-    let right := mkAppN (mkConst ``And.right) (p.getAppArgs.push h)
-    return ← refute c
-      ((p.getArg! 0, left) :: (p.getArg! 1, right) :: rest)
-      atoms
-  if p.isAppOfArity ``Or 2 then
-    let arm (q : Expr) := withLocalDeclD `hq q fun hq => do
-      let some pf ← refute c ((q, hq) :: rest) atoms | return none
-      return some (← mkLambdaFVars #[hq] pf)
-    let some l ← arm (p.getArg! 0) | return none
-    let some r ← arm (p.getArg! 1) | return none
-    return some (mkAppN (mkConst ``Or.elim) (p.getAppArgs ++ #[mkConst ``False, h, l, r]))
-  if p.isAppOfArity ``Exists 2 then
-    let .const _ us := p.getAppFn | throwError "expected existential"
-    return ← withLocalDeclD `w (p.getArg! 0) fun w => do
-      let q := p.appArg!.beta #[w]
-      withLocalDeclD `hq q fun hq => do
-        let some pf ← refute c ((q, hq) :: rest) atoms | return none
-        return some (mkAppN (mkConst ``Exists.elim us)
-          (p.getAppArgs ++ #[mkConst ``False, h, ← mkLambdaFVars #[w, hq] pf]))
-  refute c rest ((p, h) :: atoms)
+  return none
 
 private partial def certify (n : Name) (m : Mask) : Gen (Option Name) := do
   if let some done := (← get)[(n, m)]? then return done
@@ -229,7 +202,11 @@ private partial def certify (n : Name) (m : Mask) : Gen (Option Name) := do
     withLocalDeclsD decls fun hs => do
       withLocalDeclD `h p fun h => do
         let checks := ⟨xs, mkAppN (mkConst ``Frame.advance) fp, hs, m⟩
-        let some proof ← refute checks [(p, h)] | return none
+        let some proof ← ProofWalk.refute (refuteAtom checks) (fun atoms => do
+          for (p, h) in atoms do
+            if p.isAppOfArity ``Not 1 then
+              if let some hp ← rebuild checks atoms p.appArg! then return some (mkApp h hp)
+          return none) [(p, h)] | return none
         let pred := mkAppN (mkConst n (ci.levelParams.map mkLevelParam)) xs
         let stable := m.indices.toArray.map (fun i => hs[i]!)
         let name := `ConsensusCoverage.EvidenceSupport ++ Name.mkSimple
@@ -518,13 +495,13 @@ membership in a smallest set (ties count for all their families). -/
 public theorem census :
     let columns := FullProfile.stepBranches.toList
     let size := fun b => ((supports b).headD []).length
-    columns.length = 461 ∧
+    columns.length = 516 ∧
       columns.all (fun b => !(supports b).isEmpty) = true ∧
       ([1, 2, 3, 4, 5, 6, 7].map fun n => columns.countP (fun b => size b == n)) =
-        [119, 121, 22, 28, 6, 30, 135] ∧
+        [129, 123, 22, 30, 6, 30, 176] ∧
       (familiesInOrder.map fun k => columns.countP fun b =>
         (supports b).any fun ks => ks.length == size b && ks.contains k) =
-        [232, 368, 187, 146, 296, 216, 249] := by
+        [273, 419, 228, 187, 343, 259, 294] := by
   decide +kernel
 
 end ConsensusCoverage.EvidenceSupport
