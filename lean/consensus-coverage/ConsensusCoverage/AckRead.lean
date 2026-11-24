@@ -3,6 +3,7 @@ module
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
+meta import ConsensusCoverage.ReachPath
 public import ConsensusCoverage.AckAdvance
 public import ConsensusCoverage.AckFamily
 import all ConsensusCoverage.AckAdvance
@@ -274,7 +275,7 @@ public theorem ack_kind_eq (s : Step) (h : AckFamily.test s.cfg s.before s.act s
     have adv := AckAdvance.actual_advance c ev accepted
     obtain ⟨x, mem⟩ := List.exists_mem_of_ne_nil _ (c.inv.leader_logs c.actor c.pre c.pre_now accepted.1)
     have postMem : x ∈ c.post.log := adv.log.symm ▸ mem
-    have reach : SolvedWitnesses.reach_54 s.frame s.after c c :=
+    have reach : (reach% SolvedWitnesses.step_post_log_kind_ack[0]) s.frame s.after c c :=
       ⟨⟨c.actor, c.post, c.post_now, new_post s h, rfl⟩, c.post_now, x, postMem, c.post_now, postMem,
         c.post_now, c.term_le, c.inv.terms c.actor c.pre c.pre_now, rfl⟩
     exact .inl ⟨reach, src, r, ev, accepted.1, accepted.2.1, accepted.2.2.1, adv, rfl⟩
@@ -329,7 +330,7 @@ public theorem terms_answers (s : Step) (h : AckFamily.test s.cfg s.before s.act
   have nonempty := c.inv.leader_logs c.actor c.pre c.pre_now role
   have ⟨entry, ent⟩ : ∃ e, e ∈ c.pre.log := List.exists_mem_of_ne_nil _ nonempty
   have now := c.post_now
-  have newNode : SolvedWitnesses.reach_0 s.frame s.after c c :=
+  have newNode : (reach% SolvedWitnesses.step_terms_mem_append_inl[0]) s.frame s.after c c :=
     ⟨c.actor, c.post, now, new_post s h, rfl⟩
   have append : c.post.log = c.pre.log ++ [] ∧
       (∀ e : Entry, e ∈ ([] : List Entry) → e.term = c.pre.currentTerm) ∧

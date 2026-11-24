@@ -3,9 +3,11 @@ module
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
+meta import ConsensusCoverage.ReachPath
 public meta import Lean
 public import ConsensusCoverage.DelayedNominationRead
 import all ConsensusCoverage.ActionContext
+import all ConsensusCoverage.BackingArms
 import all ConsensusCoverage.CommitKeys
 import all ConsensusCoverage.DelayedNominationRead
 import all ConsensusCoverage.DelayedNominationPrune
@@ -121,23 +123,67 @@ public theorem other_answer (s : Step) (h : test s.cfg s.before s.act s.after s.
 
 variable [Config.InitialConfiguration] {f : Frame} {t : Model.State} {c : Ctx f t}
 
-private theorem r45 (key : Fresh f t) : reach_45 f t c c :=
+private theorem oldChainBase {k p} (chain : CommitChain f.logs k p) (old : Committed f k p) :
+    ∃ l k i, CommitFacts f.logs l k 0 i ∧ Committed f k (l.take i) := by
+  induction chain with
+  | fresh facts => exact ⟨_, _, _, facts, old⟩
+  | backed _ prior _ _ _ ih => exact ih prior
+
+private theorem commitPositive (st : Stable f t c) (prior : PinnedClasses.sig c .commitChains_step_backing_inr) :
+    sig c .commitChains_step_led_inl ∧ sig c .advance_chain_fresh ∧ sig c .advance_chain_backed := by
+  obtain ⟨n, node, k, b, i, step, fresh, e, p, committed, earlier, sub⟩ :=
+    (BackingArms.prior_iff c).mp prior
+  have boot : k = BOOTSTRAP_TERM ∧ n = Config.INITIAL_PRIMARY := step.1.2.2.2.elim id
+    (fun ⟨_, _, elect⟩ => (st.noElection _ _ _ _ elect).elim)
+  obtain ⟨bootTerm, bootNode⟩ := boot
+  subst n
+  subst k
+  let k := BOOTSTRAP_TERM
+  let n := Config.INITIAL_PRIMARY
+  have old := And.intro committed (And.intro earlier sub)
+  have back : ∃ e p, Committed f e p ∧ e ≤ k ∧ node.log.take b <+: p := ⟨e, p, old⟩
+  have backing : Backed f node.log b k := .inr back
+  have post : Committed (f.advance t) k (node.log.take i) :=
+    .inr ⟨n, node, b, i, step, rfl, backing⟩
+  have h := And.intro step (And.intro (Eq.refl (node.log.take i)) backing)
+  have facts := BackingArms.commitFacts c step
+  have ⟨now, le, bound, signature, term, acks⟩ := step
+  have bootstrap : sig c .commitChains_step_led_inl := .inr
+    ⟨k, node.log.take i, ⟨post, fresh⟩, ⟨n, node, b, i, h⟩, ⟨node, b, i, h⟩,
+      node, ⟨b, i, h⟩, b, ⟨i, h⟩, i, h, step, h.2, rfl, backing, now, step.2, le,
+      step.2.2, bound, step.2.2.2, signature, step.2.2.2.2, term, acks,
+      back, e, ⟨p, old⟩, p, old, committed, old.2, earlier, sub, rfl, rfl, post⟩
+  have reach : (reach% step_advance_chain_fresh[0]) f t c :=
+    ⟨k, node.log.take i, ⟨post, fresh⟩, ⟨n, node, b, i, h⟩, n, ⟨node, b, i, h⟩,
+      node, ⟨b, i, h⟩, b, ⟨i, h⟩, i, h, step, h.2, rfl, backing, now, step.2, le,
+      step.2.2, bound, step.2.2.2, signature, step.2.2.2.2, term, acks,
+      back, e, ⟨p, old⟩, p, old, committed, old.2, earlier, sub, post, facts.floor, facts⟩
+  obtain ⟨log, oldTerm, index, baseFacts, baseCommitted⟩ :=
+    oldChainBase (c.inv.commitChains e p committed) committed
+  have chain : CommitChain f.logs oldTerm (log.take index) := .fresh baseFacts
+  have advanced : CommitChain (f.advance t).logs oldTerm (log.take index) := chain.advance
+  exact ⟨bootstrap, ⟨reach, log, oldTerm, index, baseFacts⟩,
+    ⟨reach, log, oldTerm, 0, index, oldTerm, log.take index, baseFacts, baseCommitted, chain,
+      Nat.le_refl _, List.nil_prefix, advanced⟩⟩
+
+private theorem r45 (key : Fresh f t) : (reach% step_rooted_now_after_inl[1]) f t c c :=
   let ⟨k, p, a, b⟩ := key; ⟨k, p, a, b, rfl⟩
 
-private theorem r6 (key : Fresh f t) : reach_6 f t c c :=
+private theorem r6 (key : Fresh f t) : (reach% step_sorted_now_after_inl[1]) f t c c :=
   let ⟨k, p, a, b⟩ := key; ⟨k, p, a, b, rfl⟩
 
-private theorem r57 (key : Fresh f t) : reach_57 f t c c :=
+private theorem r57 (key : Fresh f t) : (reach% step_post_log_kind_ack[3]) f t c c :=
   .inl ⟨r6 key, c.post_now, c.post_now, c.post_now, c.inv.terms c.actor c.pre c.pre_now, rfl⟩
 
-private theorem r427 (key : Fresh f t) : reach_427 f t c t c.tr :=
+private theorem r427 (key : Fresh f t) : (reach% step_summary_event_internal[9,0]) f t c t c.tr :=
   .inr (.inr ⟨⟨r57 key, rfl⟩, rfl, HEq.rfl⟩)
 
-private theorem r2289 (st : Stable f t c) (key : Fresh f t) : reach_2289 f t c c.actor c.pre :=
+private theorem r2289 (st : Stable f t c) (key : Fresh f t) :
+    (reach% step_nominate_sends_successor_none[9,0]) f t c c.actor c.pre :=
   ⟨c.event, ⟨t, c.tr, r427 key, rfl, rfl, rfl⟩, st.event⟩
 
 private theorem r1009 (st : Stable f t c) (key : Fresh f t) :
-    reach_1009 f t c c.post.log c.pre.log :=
+    (reach% step_prefix_small_inl[1]) f t c c.post.log c.pre.log :=
   .inl ⟨r45 key, c.post_now, c.post_now, c.post_now,
     st.post ▸ List.prefix_refl c.pre.log, c.inv.rooted c.actor c.pre c.pre_now, rfl, rfl⟩
 
@@ -181,14 +227,14 @@ local macro "fill_log" : tactic => `(tactic| (repeat' first
 
 private theorem rootAppend (st : Stable f t c) (key : Fresh f t) :
     sig c .rooted_post_log_inr_inl := by
-  reach_arm reach_45
+  reach_arm step_rooted_now_after_inl[1]
   refine ⟨r45 key, c.post_now, c.post_now, c.post_now, Or.inl ⟨[], appTerms st⟩,
     ⟨[], appTerms st⟩, [], ?_⟩
   fill_log
 
 private theorem sortedAppend (st : Stable f t c) (key : Fresh f t) :
     sig c .sorted_post_log_inr_inl := by
-  reach_arm reach_6
+  reach_arm step_sorted_now_after_inl[1]
   refine ⟨r6 key, c.post_now, c.post_now, c.post_now, Or.inl ⟨[], appTerms st⟩,
     ⟨[], appTerms st⟩, [], ?_⟩
   fill_log
@@ -213,7 +259,7 @@ local macro "fill_copy" : tactic => `(tactic| (repeat' first
 
 private theorem rootCopy (st : Stable f t c) (key : Fresh f t) :
     sig c .rooted_post_log_inr_inr := by
-  reach_arm reach_45
+  reach_arm step_rooted_now_after_inl[1]
   have p : ∃ log i, CopyLog f.logs c.post.currentTerm log ∧ i ≤ log.length ∧ c.post.log = log.take i :=
     ⟨c.pre.log, c.pre.log.length, copyProof st⟩
   refine ⟨r45 key, c.post_now, c.post_now, c.post_now, Or.inr p, p, c.pre.log,
@@ -222,7 +268,7 @@ private theorem rootCopy (st : Stable f t c) (key : Fresh f t) :
 
 private theorem sortedCopy (st : Stable f t c) (key : Fresh f t) :
     sig c .sorted_post_log_inr_inr := by
-  reach_arm reach_6
+  reach_arm step_sorted_now_after_inl[1]
   have p : ∃ log i, CopyLog f.logs c.post.currentTerm log ∧ i ≤ log.length ∧ c.post.log = log.take i :=
     ⟨c.pre.log, c.pre.log.length, copyProof st⟩
   refine ⟨r6 key, c.post_now, c.post_now, c.post_now, Or.inr p, p, c.pre.log,
@@ -236,15 +282,23 @@ private theorem appendKind (st : Stable f t c) :
   simpa only [eq, List.append_nil] using st.post
 
 private theorem kindSame (st : Stable f t c) (key : Fresh f t) : sig c .post_log_kind_same := by
-  reach_arm reach_57
+  reach_arm step_post_log_kind_ack[3]
   exact ⟨r57 key, congrArg NodeState.log st.post, congrArg NodeState.commitIndex st.post, rfl⟩
 
 private theorem kindAppend (st : Stable f t c) (key : Fresh f t) : sig c .post_log_kind_append := by
-  reach_arm reach_57
+  reach_arm step_post_log_kind_ack[3]
   exact ⟨r57 key, [], c.pre.sentIndex, stRole st, by simp, appendKind st, rfl⟩
 
+private theorem roleSame (st : Stable f t c) (key : Fresh f t) : sig c .post_log_role_inl := by
+  reach_arm step_post_log_kind_ack[3]
+  have log : c.post.log = (c.pre.log ++ []) := by simp [st.post]
+  have term := congrArg NodeState.currentTerm st.post
+  have role := congrArg NodeState.role st.post
+  exact ⟨r57 key, [], c.pre.sentIndex, stRole st, by simp, appendKind st, rfl,
+    log, ⟨term, .inl role⟩, term, .inl role, role⟩
+
 private theorem advancePositive (st : Stable f t c) (key : Fresh f t) : sig c .facts_advance_inl := by
-  reach_arm reach_680
+  reach_arm step_facts_advance_inl[7]
   refine ⟨c.actor, c.post, Or.inl ⟨r57 key, [], c.pre.sentIndex, stRole st,
     by simp, appendKind st, rfl, rfl, ?_, rfl⟩, Or.inl rfl⟩
   exact (appendKind st).resolve_right (fun h => by
@@ -265,11 +319,11 @@ private theorem prefixPositive (st : Stable f t c) (key : Fresh f t) :
 
 private theorem summaryPositive (st : Stable f t c) (key : Fresh f t) :
     sig c .summary_event_internal ∧ sig c .summary_input_nominateSuccessor := by
-  have portal : reach_1300 f t c c.event := ⟨t, c.tr, r427 key, rfl⟩
+  have portal : (reach% step_summary_event_internal[9]) f t c c.event := ⟨t, c.tr, r427 key, rfl⟩
   constructor
-  · reach_arm reach_1300
+  · reach_arm step_summary_event_internal[9]
     exact ⟨c.event, portal, .nominateSuccessor, st.event⟩
-  · reach_arm reach_1300
+  · reach_arm step_summary_input_nominateSuccessor[9]
     exact ⟨c.event, portal, st.event⟩
 
 private theorem quietPositive (st : Stable f t c) (key : Fresh f t) : sig c .quiet_summary_either_inl := by
@@ -282,33 +336,33 @@ private theorem quietPositive (st : Stable f t c) (key : Fresh f t) : sig c .qui
     rw [← List.nil_append sent, ← eq] at nominated
     exact nominated
   have engaged : Engaged c.pre := by simp [Engaged, role]
-  have path : reach_2347 f t c c.actor c.pre c.pre c.event c.sent := by
-    reach_arm reach_2289
+  have path : (reach% step_quiet_summary_either_inl[9]) f t c c.actor c.pre c.pre c.event c.sent := by
+    reach_arm step_nominate_sends_successor_none[9,0]
     exact ⟨c.pre, r2289 st key, ⟨role, packets⟩, role, packets, ⟨role, packets⟩, role, packets,
       rfl, rfl, st.event⟩
-  reach_arm reach_2347
+  reach_arm step_quiet_summary_either_inl[9]
   refine ⟨c.actor, c.pre, c.pre, c.event, c.sent, path, Or.inl engaged, engaged,
     rfl, rfl, rfl, rfl, rfl, rfl, rfl, fun _ => Or.inl engaged, ?_⟩
   simpa only [st.post] using (Summary.sends c.sum)
 
 private theorem successorSome (st : Stable f t c) (key : Fresh f t)
     (someTarget : ∃ n, findSuccessor c.pre c.actor = some n) : sig c .nominate_sends_successor_some := by
-  reach_arm reach_2444
+  reach_arm step_nominate_sends_successor_some[9]
   exact ⟨c.actor, c.pre, Or.inl (r2289 st key), stRole st, stRole st, stRole st, someTarget⟩
 
 private theorem successorNone (st : Stable f t c) (key : Fresh f t)
     (noTarget : ¬ ∃ n, findSuccessor c.pre c.actor = some n) : sig c .nominate_sends_successor_none := by
-  reach_arm reach_2444
+  reach_arm step_nominate_sends_successor_none[9]
   exact ⟨c.actor, c.pre, Or.inl (r2289 st key), stRole st, stRole st, stRole st, fun n eq => noTarget ⟨n, eq⟩⟩
 
 private theorem r1233 (key : Fresh f t) {n x} (now : Now (f.advance t) n x) :
-    reach_1233 f t c c.actor n c.post x :=
+    (reach% step_mem_replaceNode_here_neg[5]) f t c c.actor n c.post x :=
   ⟨t, c.tr, .inl ⟨.inl ⟨r6 key, now, rfl⟩, now, rfl, HEq.rfl⟩, now, rfl, rfl⟩
 
 private theorem replacePositive (key : Fresh f t) : sig c .mem_replaceNode_here_pos := by
   have mem : (c.actor, c.post) ∈ Concrete.replaceNode f.current.nodes c.actor c.post :=
     c.tr.nodesEq ▸ c.post_now
-  reach_arm reach_1233
+  reach_arm step_mem_replaceNode_here_neg[5]
   exact ⟨c.actor, c.actor, c.post, c.post, r1233 key c.post_now, (c.actor, c.pre),
     ⟨c.pre_now, by simp⟩, c.pre, ⟨c.pre_now, by simp⟩, c.pre_now, by simp, mem⟩
 
@@ -318,7 +372,7 @@ private theorem replaceOther (st : Stable f t c) (key : Fresh f t) {n x}
   have mem : (n, x) ∈ Concrete.replaceNode f.current.nodes c.actor c.post := c.tr.nodesEq ▸ next
   have eq : (if (n == c.actor) = true then (c.actor, c.post) else (n, x)) = (n, x) := by
     simp [ne]
-  reach_arm reach_1233
+  reach_arm step_mem_replaceNode_here_neg[5]
   exact ⟨c.actor, n, c.post, x, r1233 key next, (n, x), ⟨now, eq⟩, n, x, ⟨now, eq⟩, now, eq, ne, mem⟩
 
 omit [Config.InitialConfiguration] in

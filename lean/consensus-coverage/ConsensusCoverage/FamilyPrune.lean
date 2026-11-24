@@ -6,6 +6,7 @@ module
 public meta import ConsensusCoverage.DelayedNominationPrune
 public meta import ConsensusCoverage.EvidenceSupport
 public meta import ConsensusCoverage.EventSupport
+public meta import ConsensusCoverage.ProofWalk
 public meta import ConsensusCoverage.StutterProfile
 public import ConsensusCoverage.EvidenceSupport
 public import ConsensusCoverage.EventSupport
@@ -62,6 +63,16 @@ private theorem lift_possible (tag : EventSupport.Tag) (stale : List EvidenceSup
   intro kind stable sig
   rw [EventSupport.actionTag_eq] at kind
   exact Bool.noConfusion (out.symm.trans (cert _ _ _ _ (List.mem_singleton.mpr kind) stable h sig))
+
+private theorem noTag [Config.InitialConfiguration] {f : Frame} {t : Model.State}
+    (c : Ctx f t) (tag : EventSupport.Tag) (b : Classes.StepBranch)
+    (kind : EventSupport.eventTag c.event ∈ [tag]) (no : tag ∉ EventSupport.allowed b) :
+    ¬ SolvedWitnesses.sig c b := by
+  intro yes
+  have support := EventSupport.sig_support c b ((SolvedWitnesses.sig_iff c b).mpr yes)
+  rw [EventSupport.actionTag_eq, show EventSupport.eventTag c.tr.event = tag from
+    List.mem_singleton.mp kind] at support
+  exact no support
 
 meta section
 open Lean Meta Elab Command
@@ -178,8 +189,22 @@ mutual
 /-- Walk the normalized path once; event pins, stabilities and handler facts
 remain in scope together. A failed search leaves the arm possible. -/
 private partial def deny (sp : Spec) (path : Path) (todo : List Atom) (atoms : List Atom)
-    (tags : Array EventSupport.Fact) (inlineDepth : Nat) : Gen (Option Expr) := do
-  let (p, h) :: rest := todo | atLeaf sp path atoms tags
+    (tags : Array EventSupport.Fact) (inlineDepth : Nat) (choices : List Atom := []) :
+    Gen (Option Expr) := do
+  let (p, h) :: rest := todo |
+    if let some pf ← atLeaf sp path atoms tags then return some pf
+    let (p, h) :: rest := choices | return none
+    let split (p h : Expr) (more : List Atom) : Gen (Option Expr) := do
+      let arm (q : Expr) := withLocalDeclD `hq q fun hq => do
+        let some pf ← deny sp path [(q, hq)] atoms tags inlineDepth more | return none
+        return some (← mkLambdaFVars #[hq] pf)
+      let some l ← arm (p.getArg! 0) | return none
+      let some r ← arm (p.getArg! 1) | return none
+      return some (ProofWalk.casesOr p h (mkConst ``False) l r)
+    unless rest.isEmpty do
+      for (q, hq) in choices do
+        if let some pf ← split q hq [] then return some pf
+    split p h rest
   if let some pf ← sp.extra.deny path.extra [(p, h)] then return some pf
   if let .const n us := p.getAppFn then
     if isReach n then
@@ -195,8 +220,8 @@ private partial def deny (sp : Spec) (path : Path) (todo : List Atom) (atoms : L
           #[path.initial.proof] ++ sp.mask.indices.toArray.map (path.evidence.stable[·]!) ++ #[path.extra, h]))
       if inlineDepth > 0 then
         let body := (← getConstInfo n).instantiateValueLevelParams! us |>.beta p.getAppArgs
-        return ← deny sp path ((body, h) :: rest) ((p, h) :: atoms) tags (inlineDepth - 1)
-      return ← deny sp path rest ((p, h) :: atoms) tags inlineDepth
+        return ← deny sp path ((body, h) :: rest) ((p, h) :: atoms) tags (inlineDepth - 1) choices
+      return ← deny sp path rest ((p, h) :: atoms) tags inlineDepth choices
   if sp.mask.testBit 4 && p.isAppOf ``ElectStep &&
       p.getArg! 1 == path.evidence.params[1]! && p.getArg! 2 == path.evidence.params[2]! then
     let no := mkAppN (mkConst ``EvidenceSupport.stable_elect_iff) (path.evidence.params.extract 0 4)
@@ -204,26 +229,18 @@ private partial def deny (sp : Spec) (path : Path) (todo : List Atom) (atoms : L
     return some (mkAppN no ((p.getAppArgs.extract 3 p.getAppNumArgs).push h))
   let tags := tags ++ (← tagFacts p h)
   if p.isAppOfArity ``And 2 then
-    let args := p.getAppArgs.push h
-    return ← deny sp path ((p.getArg! 0, mkAppN (mkConst ``And.left) args) ::
-      (p.getArg! 1, mkAppN (mkConst ``And.right) args) :: rest) atoms tags inlineDepth
+    let (left, right) := ProofWalk.conjuncts p h
+    return ← deny sp path (left :: right :: rest) atoms tags inlineDepth choices
   if p.isAppOfArity ``Or 2 then
-    let arm (q : Expr) := withLocalDeclD `hq q fun hq => do
-      let some pf ← deny sp path ((q, hq) :: rest) atoms tags inlineDepth | return none
-      return some (← mkLambdaFVars #[hq] pf)
-    let some l ← arm (p.getArg! 0) | return none
-    let some r ← arm (p.getArg! 1) | return none
-    return some (mkAppN (mkConst ``Or.elim) (p.getAppArgs ++ #[mkConst ``False, h, l, r]))
+    return ← deny sp path rest atoms tags inlineDepth ((p, h) :: choices)
   if p.isAppOfArity ``Exists 2 then
-    let .const _ us := p.getAppFn | throwError "expected existential"
     return ← withLocalDeclD `w (p.getArg! 0) fun w => do
       let q := p.appArg!.beta #[w]
       withLocalDeclD `hq q fun hq => do
         let rest ← if ← isProp (p.getArg! 0) then pure ((p.getArg! 0, w) :: rest) else pure rest
-        let some pf ← deny sp path ((q, hq) :: rest) atoms tags inlineDepth | return none
-        return some (mkAppN (mkConst ``Exists.elim us)
-          (p.getAppArgs ++ #[mkConst ``False, h, ← mkLambdaFVars #[w, hq] pf]))
-  deny sp path rest ((p, h) :: atoms) tags inlineDepth
+        let some pf ← deny sp path ((q, hq) :: rest) atoms tags inlineDepth choices | return none
+        return some (ProofWalk.casesExists p h (mkConst ``False) (← mkLambdaFVars #[w, hq] pf))
+  deny sp path rest ((p, h) :: atoms) tags inlineDepth choices
 
 private partial def certify (sp : Spec) (n : Name) : Gen (Option Name) := do
   if let some done := (← get)[n]? then return done
@@ -284,7 +301,11 @@ public def generate (ns tag : Name) (stale : List Name) (extra : Extra := {})
     let arms := body.getAppArgs.extract 2 body.getAppNumArgs
     unless arms.size == branch.ctors.length && body.isAppOf ``Classes.StepBranch.casesOn &&
         arms.all (·.getAppArgs == ps) do throwError "unexpected normalized dispatcher"
-    let (results, cache) ← (arms.mapM (fun arm => certify sp arm.getAppFn.constName!) : Gen _).run {}
+    let tags ← branch.ctors.toArray.mapM (fun b =>
+      DelayedNomination.notAllowed (mkConst tag) (mkConst b))
+    let (results, cache) ← (arms.zipWithM (fun arm no =>
+      if no.isSome then pure none else certify sp arm.getAppFn.constName!) tags : Gen _).run {}
+    let possible := tags.zipWith (fun a b => a.isNone && b.isNone) results
     let name := ns ++ `possible
     let caseFn u := mkConst ``Classes.StepBranch.casesOn [u]
     let tableTy := mkConst ``Bool
@@ -295,7 +316,7 @@ public def generate (ns tag : Name) (stale : List Name) (extra : Extra := {})
       type := ← mkForallFVars #[b] tableTy
       value := ← mkLambdaFVars #[b] (mkAppN (caseFn (.succ .zero))
         (#[← mkLambdaFVars #[b] tableTy, b] ++
-          results.map (fun h => if h.isSome then mkConst ``Bool.false else yes)))
+          possible.map toExpr))
       hints := .abbrev
       safety := .safe }
     addDecl decl (forceExpose := true)
@@ -324,9 +345,11 @@ public def generate (ns tag : Name) (stale : List Name) (extra : Extra := {})
             mkLambdaFVars #[q] (← mkArrow (mkAppN (mkConst ci.name ls) (ps.push q)) out)
           let proofs ← arms.zipIdx.mapM fun (arm, i) => withLocalDeclD `h arm fun h => do
             let out ← mkEq (mkApp (mkConst name) (mkConst branch.ctors[i]!)) yes
-            let proof ← match results[i]! with
-              | some cert => mkFalseElim out (mkAppN (mkConst cert ls) (ps ++ #[kind] ++ hs ++ #[extra, h]))
-              | none => mkEqRefl yes
+            let proof ← match tags[i]!, results[i]! with
+              | some no, _ => mkFalseElim out (mkAppN (mkConst ``noTag)
+                  (ps ++ #[mkConst tag, mkConst branch.ctors[i]!, kind, no, h]))
+              | none, some cert => mkFalseElim out (mkAppN (mkConst cert ls) (ps ++ #[kind] ++ hs ++ #[extra, h]))
+              | none, none => mkEqRefl yes
             mkLambdaFVars #[h] proof
           let args := xs ++ #[kind, stable, extra]
           addDecl (.thmDecl {
@@ -341,7 +364,7 @@ public def generate (ns tag : Name) (stale : List Name) (extra : Extra := {})
       levelParams := ci.levelParams
       type := ← inferType proof
       value := proof })
-    logInfo m!"{ns}: {results.countP Option.isNone}/{arms.size} possible, {cache.size} shared checks"
+    logInfo m!"{ns}: {possible.countP id}/{arms.size} possible, {cache.size} shared checks"
 
 end
 

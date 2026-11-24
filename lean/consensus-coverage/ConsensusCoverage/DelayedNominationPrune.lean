@@ -4,7 +4,10 @@ module
 -- Licensed under the Apache 2.0 License.
 
 public meta import Lean
+public meta import ConsensusCoverage.ProofWalk
+meta import ConsensusCoverage.ReachPath
 import all ConsensusCoverage.DelayedNominationRead
+import all ConsensusCoverage.EventSupport
 import all ConsensusCoverage.NominationArms
 import all ConsensusCoverage.NominationRows
 import all ConsensusCoverage.SolvedWitnesses
@@ -101,11 +104,13 @@ private theorem stNoElection (s : Stable f t c) (n k l i) : ¬ f.logs.elected n 
   exact s.noElection n k l i
 
 private theorem stNo13 (s : Stable f t c) {term part node later log commit}
-    (h : SolvedWitnesses.reach_13 f t c term part node later log commit) : False :=
+    (h : (reach% SolvedWitnesses.step_completeness_committed_inl[0]) f t c term part node later log commit) :
+    False :=
   s.noElection _ _ _ _ h.2.1
 
 private theorem stNo2 (s : Stable f t c) {c₁ term part node later log commit}
-    (h : SolvedWitnesses.reach_2 f t c c₁ term part node later log commit) : False :=
+    (h : (reach% SolvedWitnesses.step_sorted_now_after_inl[3,0,0]) f t c c₁ term part node later log commit) :
+    False :=
   stNo13 s ⟨h.1, h.2.1, h.2.2.1, h.2.2.2.1⟩
 
 private theorem stProposal (s : Stable f t c) (e : Model.Envelope)
@@ -116,14 +121,14 @@ private theorem stProposal (s : Stable f t c) (e : Model.Envelope)
   · exact s.proposal e sent
 
 private theorem stPayload (s : Stable f t c) {e : Model.Envelope} {m : Message}
-    (new : SolvedWitnesses.reach_25 f t c c e) (eq : e.payload = m)
+    (new : (reach% SolvedWitnesses.step_messages_mem_network_inr[0]) f t c c e) (eq : e.payload = m)
     (no : NominationRows.proposal m = false) : False := by
   have yes := stProposal s e new.1 new.2.1
   rw [eq, no] at yes
   contradiction
 
 private theorem stNo43 (s : Stable f t c) {c₁ e}
-    (h : SolvedWitnesses.reach_43 f t c c₁ e) : False := by
+    (h : (reach% SolvedWitnesses.step_message_terms_mem_network_inr[0]) f t c c₁ e) : False := by
   have proposal := stProposal s e h.1 (fun old => h.2.2.1 ⟨old, h.2.1⟩)
   have bump := h.2.1
   cases eq : e.payload <;> simp [eq, NominationRows.proposal, Bumping] at proposal bump
@@ -143,13 +148,23 @@ private theorem stEvent (s : Stable f t c) {e : Event}
 private theorem stEventTrans {e : Event} {u : Model.State} {tr : LocalTransition f.current u}
     (h : e = tr.event) (pin : u = t ∧ HEq tr c.tr) : e = c.event := h.trans (stPin pin)
 
+private theorem noTag (s : Stable f t c) (b : Classes.StepBranch)
+    (excluded : EventSupport.Tag.nominateSuccessor ∉ EventSupport.allowed b) :
+    ¬ SolvedWitnesses.sig c b := by
+  intro yes
+  have tag := EventSupport.sig_support c b ((SolvedWitnesses.sig_iff c b).mpr yes)
+  rw [EventSupport.actionTag_eq, show c.tr.event = _ from s.event] at tag
+  exact excluded tag
+
 private def possible : Classes.StepBranch → Bool
   | .sorted_now_after_inl | .sorted_post_log_inl | .sorted_post_log_inr_inl
   | .sorted_post_log_inr_inr | .sorted_now_after_inr
   | .rooted_now_after_inl | .rooted_post_log_inl | .rooted_post_log_inr_inl
   | .rooted_post_log_inr_inr | .rooted_now_after_inr
-  | .commitChains_step_committed_inr | .commitChains_step_backing_inl | .commitChains_step_backing_inr
-  | .post_log_kind_same | .post_log_kind_append | .facts_advance_inl
+  | .commitChains_step_committed_inr | .commitChains_step_led_inl
+  | .commitChains_step_backing_inl | .commitChains_step_backing_inr
+  | .advance_chain_fresh | .advance_chain_backed
+  | .post_log_kind_same | .post_log_kind_append | .post_log_role_inl | .facts_advance_inl
   | .messages_mem_network_inr | .mem_network_mem_append_inl | .mem_network_mem_append_inr
   | .new_message_h_proposeRequestVoteRequest
   | .prefix_small_inl | .prefix_small_inr | .mem_replaceNode_here_pos | .mem_replaceNode_here_neg
@@ -175,6 +190,7 @@ private def isCtor (p : Expr) : MetaM Bool := do
   return (← getEnv).isConstructor n
 
 private def contradict (ctx : Simp.Context) (facts : List Fact) : MetaM (Option Expr) := do
+  if let some proof ← StutterProfile.findFalse facts then return some proof
   let mut rules : SimpTheorems := {}
   let mut k := 0
   for (p, h) in facts do
@@ -190,9 +206,10 @@ private def contradict (ctx : Simp.Context) (facts : List Fact) : MetaM (Option 
       rules ← rules.add (.other ((`substRule).appendIndexAfter k)) #[] rule
       k := k + 1
   let ctx := ctx.setSimpTheorems (ctx.simpTheorems.push rules)
+  let procs := #[← Simp.getSimprocs]
   let mut simple := []
   for (p, h) in facts do
-    let (r, _) ← simp p ctx (simprocs := #[← Simp.getSimprocs])
+    let (r, _) ← simp p ctx (simprocs := procs)
     let pf ← if let some eq := r.proof? then mkEqMP eq h else pure h
     if r.expr.isConstOf ``False then return some pf
     simple := (r.expr, pf) :: simple
@@ -227,7 +244,7 @@ private def pinType (s u tr : Expr) : MetaM Expr := do
 
 private def payloadConflict (s : Expr) (atoms : List Fact) : MetaM (Option Expr) := do
   for (p, h) in atoms do
-    unless p.isAppOf ``SolvedWitnesses.reach_25 do continue
+    unless p.isAppOf (reachName% SolvedWitnesses.step_messages_mem_network_inr[0]) do continue
     let payload ← mkAppM ``CCF.Envelope.payload #[p.appArg!]
     for (q, eq) in atoms do
       unless q.isAppOfArity ``Eq 3 && q.getArg! 1 == payload do continue
@@ -288,7 +305,8 @@ private partial def eventConflict (s : Expr) (atoms : List Fact) : Compile (Opti
   return none
 
 private partial def solve (ctx : Simp.Context) (s : Expr) (goal : Goal) (ty : Expr)
-    (todo : List Fact) (atoms : List Fact := []) (unfolds : Nat := 2) : Compile (Option Expr) := do
+    (todo : List Fact) (atoms : List Fact := []) (unfolds : Nat := 2)
+    (choices : List Fact := []) : Compile (Option Expr) := do
   let (p, h) :: rest := todo |
     match goal with
     | .pinned _ tr => if let some pf ← pinOf s atoms tr then return some pf
@@ -298,7 +316,14 @@ private partial def solve (ctx : Simp.Context) (s : Expr) (goal : Goal) (ty : Ex
     let contradiction ← if contradiction.isSome then pure contradiction else payloadConflict s atoms
     let contradiction ← if contradiction.isSome then pure contradiction
       else liftM (contradict ctx atoms)
-    contradiction.mapM fun pf => liftM (mkFalseElim ty pf)
+    if let some pf := contradiction then return some (← mkFalseElim ty pf)
+    let (p, h) :: rest := choices | return none
+    let arm (q : Expr) := withLocalDeclD `hq q fun hq => do
+      let some result ← solve ctx s goal ty [(q, hq)] atoms unfolds rest | return none
+      return some (← mkLambdaFVars #[hq] result)
+    let some l ← arm (p.getArg! 0) | return none
+    let some r ← arm (p.getArg! 1) | return none
+    return some (ProofWalk.casesOr p h ty l r)
   if p.isAppOfArity ``Wins 4 then
     if let some pf ← tryApp ``stNoWins #[s] then
       if ← isDefEq (← inferType pf).appArg! p then return some (← mkFalseElim ty (mkApp pf h))
@@ -307,11 +332,11 @@ private partial def solve (ctx : Simp.Context) (s : Expr) (goal : Goal) (ty : Ex
     for lemma in [``Stable.noElection, ``stNoElection] do
       let pf ← mkAppM lemma #[s, args[1]!, args[2]!, args[3]!, args[4]!]
       if ← isDefEq (← inferType pf).appArg! p then return some (← mkFalseElim ty (mkApp pf h))
-  if p.isAppOfArity ``SolvedWitnesses.reach_2 11 then
+  if p.isAppOfArity (reachName% SolvedWitnesses.step_sorted_now_after_inl[3,0,0]) 11 then
     return some (← mkFalseElim ty (← mkAppM ``stNo2 #[s, h]))
-  if p.isAppOfArity ``SolvedWitnesses.reach_13 10 then
+  if p.isAppOfArity (reachName% SolvedWitnesses.step_completeness_committed_inl[0]) 10 then
     return some (← mkFalseElim ty (← mkAppM ``stNo13 #[s, h]))
-  if p.isAppOf ``SolvedWitnesses.reach_43 then
+  if p.isAppOf (reachName% SolvedWitnesses.step_message_terms_mem_network_inr[0]) then
     return some (← mkFalseElim ty (← mkAppM ``stNo43 #[s, h]))
   if let .const n us := p.getAppFn then
     if isReach n then
@@ -320,26 +345,20 @@ private partial def solve (ctx : Simp.Context) (s : Expr) (goal : Goal) (ty : Ex
         return some (← mkFalseElim ty pf)
       if unfolds > 0 then
         let body := ((← getConstInfo n).instantiateValueLevelParams! us).beta p.getAppArgs
-        return ← solve ctx s goal ty ((body, ← mkExpectedTypeHint h body) :: rest) ((p, h) :: atoms) (unfolds - 1)
+        return ← solve ctx s goal ty ((body, h) :: rest) ((p, h) :: atoms) (unfolds - 1) choices
   if p.isAppOfArity ``And 2 then
-    return ← solve ctx s goal ty
-      ((p.getArg! 0, ← mkAppM ``And.left #[h]) :: (p.getArg! 1, ← mkAppM ``And.right #[h]) :: rest) atoms unfolds
+    let (left, right) := ProofWalk.conjuncts p h
+    return ← solve ctx s goal ty (left :: right :: rest) atoms unfolds choices
   if p.isAppOfArity ``Or 2 then
-    let arm (q : Expr) := withLocalDeclD `h q fun hq => do
-      let some result ← solve ctx s goal ty ((q, hq) :: rest) atoms unfolds | return none
-      return some (← mkLambdaFVars #[hq] result)
-    let some l ← arm (p.getArg! 0) | return none
-    let some r ← arm (p.getArg! 1) | return none
-    return some (← mkAppOptM ``Or.elim #[p.getArg! 0, p.getArg! 1, ty, h, l, r])
+    return ← solve ctx s goal ty rest atoms unfolds ((p, h) :: choices)
   if p.isAppOfArity ``Exists 2 then
     return ← withLocalDeclD `w (p.getArg! 0) fun w => do
       let q := p.appArg!.beta #[w]
       withLocalDeclD `h q fun hq => do
         let rest := if ← isProp (p.getArg! 0) then (p.getArg! 0, w) :: rest else rest
-        let some result ← solve ctx s goal ty ((q, hq) :: rest) atoms unfolds | return none
-        return some (← mkAppOptM ``Exists.elim #[p.getArg! 0, p.getArg! 1, ty, h,
-          ← mkLambdaFVars #[w, hq] result])
-  solve ctx s goal ty rest ((p, h) :: atoms) unfolds
+        let some result ← solve ctx s goal ty ((q, hq) :: rest) atoms unfolds choices | return none
+        return some (ProofWalk.casesExists p h ty (← mkLambdaFVars #[w, hq] result))
+  solve ctx s goal ty rest ((p, h) :: atoms) unfolds choices
 
 private partial def certify (n : Name) (kind : String) : Compile Bool := do
   let key := certName n kind
@@ -384,6 +403,15 @@ private partial def certify (n : Name) (kind : String) : Compile Bool := do
 
 end
 
+private def notAllowed (tag branch : Expr) : MetaM (Option Expr) := do
+  let allowed := mkApp (mkConst ``EventSupport.allowed) branch
+  let mem ← mkAppM ``Membership.mem #[allowed, tag]
+  let excluded := mkNot mem
+  let inst ← synthInstance (mkApp (mkConst ``Decidable) excluded)
+  let test := mkApp2 (mkConst ``decide) excluded inst
+  unless (← withTransparency .all (whnf test)).isConstOf ``Bool.true do return none
+  return some (← mkDecideProof excluded)
+
 private def buildPruner : MetaM Unit := do
   let ci ← getConstInfo ``SolvedWitnesses.dispatch
   let branch ← getConstInfoInduct ``Classes.StepBranch
@@ -397,23 +425,29 @@ private def buildPruner : MetaM Unit := do
       let motive ← withLocalDeclD `b (mkConst ``Classes.StepBranch) fun q => do
         let out ← mkEq (mkApp (mkConst ``possible) q) (mkConst ``Bool.true)
         mkLambdaFVars #[q] (← mkArrow (mkAppN (mkConst ci.name) (ps.push q)) out)
-      let one (arm : Expr) (name : Name) : Compile Expr :=
+      let one (arm : Expr) (name : Name) : Compile (Option Expr) :=
         withLocalDeclD `h arm fun h => do
-          let selected := mkApp (mkConst ``possible) (mkConst name)
+          let branch := mkConst name
+          let selected := mkApp (mkConst ``possible) branch
           let out ← mkEq selected (mkConst ``Bool.true)
-          let pf ← if ← withTransparency .all (isDefEq selected (mkConst ``Bool.true)) then
-            mkEqRefl (mkConst ``Bool.true)
-          else
-            let n := arm.getAppFn.constName!
-            unless ← certify n "excluded" do throwError "unproved delayed nomination exclusion: {name}"
-            mkFalseElim out (mkAppN (mkConst (certName n "excluded")) (ps ++ #[s, h]))
-          mkLambdaFVars #[h] pf
-      let (arms, _) ← (bs.zipWithM one branch.ctors.toArray).run {}
+          if ← withTransparency .all (isDefEq selected (mkConst ``Bool.true)) then
+            return some (← mkLambdaFVars #[h] (← mkEqRefl (mkConst ``Bool.true)))
+          let no ← match ← notAllowed (mkConst ``EventSupport.Tag.nominateSuccessor) branch with
+            | some cert => pure (mkAppN (mkConst ``noTag) (ps ++ #[s, branch, cert, h]))
+            | none => do
+              let n := arm.getAppFn.constName!
+              unless ← certify n "excluded" do return none
+              pure (mkAppN (mkConst (certName n "excluded")) (ps ++ #[s, h]))
+          return some (← mkLambdaFVars #[h] (← mkFalseElim out no))
+      let names := branch.ctors.toArray
+      let (arms, _) ← (bs.zipWithM one names).run {}
+      let missing := (names.zip arms).filterMap fun (n, pf) => if pf.isNone then some n else none
+      unless missing.isEmpty do throwError "unproved delayed nomination exclusions: {missing}"
       addDecl (.thmDecl {
         name := `ConsensusCoverage.DelayedNomination.possible_of_sig, levelParams := [],
         type := ← mkForallFVars (xs.push s) (motive.beta #[b]),
         value := ← mkLambdaFVars (xs.push s)
-          (mkAppN (mkConst ``Classes.StepBranch.casesOn [.zero]) (#[motive, b] ++ arms)) })
+          (mkAppN (mkConst ``Classes.StepBranch.casesOn [.zero]) (#[motive, b] ++ arms.map Option.get!)) })
 
 run_cmd liftTermElabM buildPruner
 

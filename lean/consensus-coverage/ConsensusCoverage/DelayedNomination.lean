@@ -31,14 +31,20 @@ intentionally distinguish finding a successor from sending a new value. -/
   | .sorted_post_log_inr_inr | .sorted_now_after_inr
   | .rooted_now_after_inl | .rooted_post_log_inl | .rooted_post_log_inr_inl
   | .rooted_post_log_inr_inr | .rooted_now_after_inr
-  | .commitChains_step_committed_inr | .commitChains_step_backing_inr
-  | .post_log_kind_same | .post_log_kind_append | .facts_advance_inl
+  | .commitChains_step_committed_inr | .commitChains_step_led_inl | .commitChains_step_backing_inr
+  | .advance_chain_fresh | .advance_chain_backed
+  | .post_log_kind_same | .post_log_kind_append | .post_log_role_inl | .facts_advance_inl
   | .prefix_small_inl | .prefix_small_inr | .mem_replaceNode_here_pos | .mem_replaceNode_here_neg
   | .summary_event_internal | .summary_input_nominateSuccessor | .quiet_summary_either_inl => true
   | .messages_mem_network_inr | .mem_network_mem_append_inr | .new_message_h_proposeRequestVoteRequest => fresh
   | .nominate_sends_successor_some => successor
   | .nominate_sends_successor_none => !successor
   | _ => false
+
+public theorem signature_counts :
+    stepBranches.size = 516 ∧
+      (stepBranches.toList.filter (signature true false)).length = 27 ∧
+      (stepBranches.toList.filter (signature true true)).length = 30 := by decide +kernel
 
 public theorem shape (s : Step) (h : test s.cfg s.before s.act s.after s.past = true) :
     (label s).step = signature (sends s.before s.act) (ReducedQuestions.answer s.before s.after .message) := by
@@ -49,6 +55,8 @@ public theorem shape (s : Step) (h : test s.cfg s.before s.act s.after s.past = 
   obtain ⟨node, state, ne, now⟩ := another s h
   obtain ⟨zero, prior⟩ := BackingStutter.nomination_answers s ((test_iff s).mp h).1
   have commit := ((test_iff s).mp h).2.1
+  have priorAnswer := prior.symm.trans commit
+  have commits := commitPositive st ((label_true s (.step .commitChains_step_backing_inr)).mp priorAnswer)
   have out := (ReducedQuestions.answer_eq s .outgoing).symm.trans
     (show ReducedQuestions.answer s.before s.after .outgoing = _ from rfl)
   have keep : label s (.step .mem_network_mem_append_inl) = false :=
@@ -82,7 +90,10 @@ public theorem shape (s : Step) (h : test s.cfg s.before s.act s.after s.past = 
   cases b <;> first
     | exact excluded _ rfl
     | exact commit
-    | exact prior ▸ commit
+    | exact pos _ commits.1
+    | exact pos _ commits.2.1
+    | exact pos _ commits.2.2
+    | exact priorAnswer
     | exact zero
     | exact someAnswer
     | exact noneAnswer
@@ -102,6 +113,7 @@ public theorem shape (s : Step) (h : test s.cfg s.before s.act s.after s.past = 
     | exact pos _ (sortedCopy st key)
     | exact pos _ (kindSame st key)
     | exact pos _ (kindAppend st key)
+    | exact pos _ (roleSame st key)
     | exact pos _ (advancePositive st key)
     | exact pos _ (prefixPositive st key).1
     | exact pos _ (prefixPositive st key).2
