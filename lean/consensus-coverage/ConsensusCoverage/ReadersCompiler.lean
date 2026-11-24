@@ -5,17 +5,21 @@ module
 
 public import ConsensusCoverage.ReadersAtoms
 public import ConsensusCoverage.ReadersIndex
+public import ConsensusCoverage.ReadersRequestCuts
 public import ConsensusCoverage.ReadersVoteReply
 public import ConsensusCoverage.CommitKeys
 public import Consensus.Proofs.LogFacts
 import all ConsensusCoverage.ReadersAtoms
 import all ConsensusCoverage.ReadersIndex
+import all ConsensusCoverage.ReadersRequestCuts
+import all ConsensusCoverage.ReadersRequestTransport
 import all ConsensusCoverage.ReadersShapes
 import all ConsensusCoverage.ReadersVoteReply
 import all ConsensusCoverage.GuardedDomain
 import all ConsensusCoverage.SolvedWitnesses
 import all Consensus.Proofs.SafetyInvariant
 public meta import Lean
+public meta import ConsensusCoverage.ReadersRequestTransport
 
 /-! Compile each shared normalized predicate once, including its reusable
 witness bounds. The final dispatcher uses only readers with a certificate. -/
@@ -1382,8 +1386,11 @@ partial def compileUncached (env : Env) (n : Name) : CM RInfo := do
     let p := ci.value!.beta (pre ++ actuals)
     let call := mkAppN (mkConst n) (pre ++ actuals)
     let split := params.isEmpty && p.isAppOfArity ``Or 2
-    let r1 ← if !split && env.isFrame p then simplify env p env.first else pure { expr := p }
-    let r2 ← if !split then simplify env r1.expr env.second else pure { expr := p }
+    let cuts ← RequestTransport.normalize isGenerated env.ok env.xv env.f p
+    let r1 ← if !split && env.isFrame p then
+      cuts.mkEqTrans (← simplify env cuts.expr env.first)
+    else pure cuts
+    let r2 ← if !split then simplify env r1.expr env.second else pure { expr := r1.expr }
     let short := shortName n
     let mut guards := #[]
     let mut conds := #[]
