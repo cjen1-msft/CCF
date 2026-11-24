@@ -6,6 +6,7 @@ module
 public meta import ConsensusCoverage.JointWitnesses
 public meta import ConsensusCoverage.GuardedDomain
 public meta import ConsensusCoverage.EventSupport
+public meta import ConsensusCoverage.ExplorerGhost
 public meta import ConsensusCoverage.DelayedNominationRead
 public meta import ConsensusCoverage.Timely
 public meta import ConsensusCoverage.Families
@@ -49,7 +50,21 @@ written to `--out`.
 `--exhaust` explores a single bounded deployment by breadth-first search,
 merging equal finite proof-frame keys. On every merge it checks the
 enabled action signatures of both concrete histories. Counts are not
-proofs of key sufficiency or exhaustion of the unbounded model.
+proofs of key sufficiency or exhaustion of the unbounded model. With
+`--case-out FILE`, it also reads every question on every admitted edge
+of the merged graph, using only ReplayAnswers. `--finite-case-reads`
+prepares its evidence from the incremental ghost and uses the projection
+for unconditional columns. It checks all answers against history at
+the first appearance of each key and every 1,024th admitted edge.
+Use `--check-ghost` with it to compare every admitted edge.
+
+`--check-ghost` compares the finite incremental ghost, key and family
+against the history readers on every edge read. `--incremental` uses
+the finite ghost alone (except for the optional independent census).
+`--frontier-only` releases expanded states once their merge signatures
+are cached. `--compact` interns the exact frame-key fields and signature
+rows. Duplicate checks and case reads can run in batches with
+`--merge-workers N`; set `LEAN_NUM_THREADS` to bound the native task pool.
 -/
 
 open Consensus Consensus.Model Consensus.Model.Node ConsensusCoverage
@@ -112,16 +127,17 @@ def retirementInputs (self : NodeID) (st : NodeState) : List Input := Id.run do
       batches := batches ++ [[c], [c, sig], [c, sig, sig], [c, flush]]
   return batches.map .append
 
-def localInputs (retirement : Bool) (s : Model.State) (self : NodeID) (st : NodeState) : List Input := Id.run do
+def localInputs (retirement : Bool) (s : Model.State) (self : NodeID) (st : NodeState)
+    (reconfig : Bool := true) : List Input := Id.run do
   let tx : AppendEntryInput := {content := .transaction 1 {}}
   let sig : AppendEntryInput := {content := .signature}
   let len := st.log.length
   let peers := s.nodes.filter (·.1 != self)
-  let members := latestConfigurationMembers (configurationHistory st.log)
-  let sets := s.nodes.filterMap fun (n, _) =>
-    let m := if n ∈ members then members.erase n else insert n members
-    if m.Nonempty then some m else none
-  let configs := sets.map fun m => ({content := .transaction 1 {configuration := some m}} : AppendEntryInput)
+  let configs : List AppendEntryInput := if !reconfig then [] else
+    let members := latestConfigurationMembers (configurationHistory st.log)
+    s.nodes.filterMap fun (n, _) =>
+      let m := if n ∈ members then members.erase n else insert n members
+      if m.Nonempty then some {content := .transaction 1 {configuration := some m}} else none
   return ([Input.append [tx], .append [sig], .append [tx, sig]] ++
     (configs.flatMap fun c => [Input.append [c], .append [c, sig]]) ++
     (peers.flatMap fun (peer, other) =>
@@ -141,7 +157,8 @@ structure Candidate where
   -- queue index only when plain FrontierRows.Run would select a different value.
   choice : Option Nat := none
 
-def candidates (retirement : Bool) (s : Model.State) : List Candidate := Id.run do
+def candidates (retirement : Bool) (s : Model.State) (reconfig : Bool := true) :
+    List Candidate := Id.run do
   let mut seen : List Model.Envelope := []
   let mut deliveries := []
   for (e, i) in s.network.zipIdx do
@@ -150,7 +167,7 @@ def candidates (retirement : Bool) (s : Model.State) : List Candidate := Id.run 
       deliveries := ⟨.deliver e, if later then some i else none⟩ :: deliveries
       seen := e :: seen
   return deliveries.reverse ++ (s.nodes.flatMap fun (n, st) =>
-    (localInputs retirement s n st).map fun i => ⟨.local n i, none⟩)
+    (localInputs retirement s n st reconfig).map fun i => ⟨.local n i, none⟩)
 
 structure Enabled extends Candidate where
   after : Model.State
@@ -621,6 +638,57 @@ def choices (p : Path) : List (Nat × Nat) := deliveryChoices (p.hits.map (·.to
 def encode (k : Key) : Nat :=
   k.2.2.foldl (fun n bit => 2 * n + bit.toNat) (k.1 * 2 + k.2.1.toNat)
 
+def decode (n : Nat) : Key :=
+  let width := GuardedQuestions.covered.length + 4
+  (n >>> (width + 1), n.testBit width,
+    (List.range width).reverse.map n.testBit)
+
+open FullProfile in
+def keyAnswers (k : Key) : List (Question × Bool) :=
+  -- Expand the losslessly packed endpoints, incumbent, and sorted-log twins.
+  let offset := ReducedQuestions.covered.length
+  let hi (i : Nat) := k.1.testBit (offset + i)
+  let queue := (List.range offset).reverse.map k.1.testBit
+  let tail := k.2.2
+  let (guards, suffix) := (tail.drop 1).splitAt GuardedQuestions.covered.length
+  let step :=
+    (ReducedQuestions.covered.zip queue) ++ (GuardedQuestions.covered.zip guards) ++
+    [(.leader_led_leader_inr, hi 3),
+      (.leader_led_now_after_inl, hi 0),
+      (.leader_led_leader_inl, hi 0 && !hi 3),
+      (.commitChains_step_committed_inr, k.2.1),
+      (.commitChains_step_backing_inl, suffix[0]!),
+      (.commitChains_step_backing_inr, suffix[1]!),
+      (.rooted_now_after_inl, tail[0]!),
+      (.sorted_now_after_inl, tail[0]!),
+      (.rooted_post_log_inl, suffix[2]!),
+      (.sorted_post_log_inl, suffix[2]!)]
+  let endpoint (side : Classes.StateBranch → Question) (zero backed : Bool) :=
+    stateBranches.toList.map fun b => (side b, ProofContexts.answers (zero, backed) b)
+  endpoint .pre (hi 5) (hi 4) ++ step.map (fun (b, v) => (.step b, v)) ++
+    endpoint .post (hi 2) (hi 1)
+
+def branchName {α : Type} [Repr α] (b : α) : String :=
+  (reprStr b).splitOn "." |>.getLast!
+
+def coordinateName : FullProfile.Question → String
+  | .pre b => s!"pre.{branchName b}"
+  | .step b => branchName b
+  | .post b => s!"post.{branchName b}"
+
+def showKeyAnswers (file : String) : IO Unit := do
+  let header := (keyAnswers (decode 0)).map (coordinateName ·.1)
+  unless header.length == 64 && header.eraseDups == header do
+    throw (IO.userError "expected 64 distinct key coordinates")
+  IO.println ("key\t" ++ String.intercalate "\t" header)
+  for line in ← IO.FS.lines file do
+    let some code := line.toNat? | throw (IO.userError s!"invalid key: {line}")
+    let k := decode code
+    unless encode k == code && k.1 < 2 ^ (6 + ReducedQuestions.covered.length) do
+      throw (IO.userError s!"key is too large: {code}")
+    IO.println (toString code ++ "\t" ++
+      String.intercalate "\t" ((keyAnswers k).map fun (_, v) => toString v.toNat))
+
 def ordered (ws : Witnesses) : List (Key × Path) :=
   ws.toList.mergeSort (fun a b => a.2.id ≤ b.2.id)
 
@@ -857,6 +925,10 @@ def BoundPalette.name : BoundPalette → String
   | .reconfig => "reconfig"
   | .retirement => "retirement"
 
+inductive GhostMode where
+  | history | check | incremental
+  deriving Repr, BEq
+
 structure Bounds where
   deployment : Deployment := ⟨[0, 1], [0, 1]⟩
   maxLog : Nat := 2
@@ -865,12 +937,26 @@ structure Bounds where
   maxNetwork : Option Nat := none
   palette : BoundPalette := .core
   stepBudget : Option Nat := none
+  maxSeconds : Option Nat := none
+  caseOut : Option String := none
+  finiteCaseReads : Bool := false
+  ghostMode : GhostMode := .history
+  frontierOnly : Bool := false
+  compact : Bool := false
+  mergeWorkers : Nat := 1
   out : String := ""
   deriving Repr
 
 def exhaustUsage :=
   "explore.lean --exhaust [--voters 0,1] [--nodes 0,1] [--max-log 2] [--max-term 3]\n" ++
-  "  [--max-copies 1] [--max-network N] [--palette core|reconfig|retirement] [--step-budget N] --out FILE"
+  "  [--max-copies 1] [--max-network N] [--palette core|reconfig|retirement]\n" ++
+  "  [--step-budget N] [--max-seconds N] [--case-out TSV] --out FILE\n" ++
+  "  [--finite-case-reads] (prepare ReplayAnswers from the finite ghost)\n" ++
+  "  [--check-ghost | --incremental] (default: read the proof ghost from history)\n" ++
+  "  [--frontier-only] (with --incremental: keep signatures, not expanded states)\n" ++
+  "  [--compact] (intern exact frame fields and cached signature rows)\n" ++
+  "  [--merge-workers N] (with --incremental: batch duplicate checks and case reads)\n" ++
+  "explore.lean --key-answers FILE (one decimal key per input line; writes TSV to stdout)"
 
 def boundOptions : List String → Bounds → Except String Bounds
   | [], b => do
@@ -878,8 +964,20 @@ def boundOptions : List String → Bounds → Except String Bounds
     unless !d.voters.isEmpty && d.voters == d.voters.eraseDups &&
         d.nodes == d.nodes.eraseDups && d.voters.all d.nodes.contains do
       throw "voters must be a nonempty set of distinct deployed node IDs; node IDs must be distinct"
+    if b.caseOut == some b.out then throw "--case-out and --out must differ"
+    if b.finiteCaseReads && (b.caseOut.isNone || b.ghostMode == .history) then
+      throw "--finite-case-reads requires --case-out and an incremental ghost"
+    if b.mergeWorkers == 0 then throw "--merge-workers must be positive"
+    if (b.frontierOnly || 1 < b.mergeWorkers) && b.ghostMode != .incremental then
+      throw "--frontier-only and parallel merge checks require --incremental"
     if b.out.isEmpty then throw exhaustUsage else return b
   | "--out" :: file :: more, b => boundOptions more {b with out := file}
+  | "--case-out" :: file :: more, b => boundOptions more {b with caseOut := some file}
+  | "--finite-case-reads" :: more, b => boundOptions more {b with finiteCaseReads := true}
+  | "--check-ghost" :: more, b => boundOptions more {b with ghostMode := .check}
+  | "--incremental" :: more, b => boundOptions more {b with ghostMode := .incremental}
+  | "--frontier-only" :: more, b => boundOptions more {b with frontierOnly := true}
+  | "--compact" :: more, b => boundOptions more {b with compact := true}
   | "--palette" :: value :: more, b => do
     let p ← match value with
       | "core" => pure .core
@@ -902,6 +1000,8 @@ def boundOptions : List String → Bounds → Except String Bounds
       | "--max-copies" => boundOptions more {b with maxCopies := n}
       | "--max-network" => boundOptions more {b with maxNetwork := some n}
       | "--step-budget" => boundOptions more {b with stepBudget := some n}
+      | "--max-seconds" => boundOptions more {b with maxSeconds := some n}
+      | "--merge-workers" => boundOptions more {b with mergeWorkers := n}
       | _ => throw exhaustUsage
   | _, _ => .error exhaustUsage
 
@@ -956,6 +1056,27 @@ structure FrameKey where
   votes : List (List Nat)
   deriving BEq, Hashable
 
+abbrev FrameFields := Std.HashMap (List (List Nat)) Nat
+
+inductive FrameIdentity where
+  | structural (key : FrameKey)
+  | interned (ids : Array Nat)
+  deriving BEq, Hashable
+
+-- IDs encode exact component equality, not hash equality. A search has
+-- a single deployment, so that constant need not be interned.
+def FrameKey.intern (k : FrameKey) (pool : FrameFields) : FrameIdentity × FrameFields := Id.run do
+  let mut pool := pool
+  let mut ids := Array.emptyWithCapacity 8
+  for xs in [k.nodes, k.queue, k.observations, k.canonical, k.commits, k.elections, k.grants, k.votes] do
+    if let some id := pool[xs]? then
+      ids := ids.push id
+    else
+      let id := pool.size
+      pool := pool.insert xs id
+      ids := ids.push id
+  return (.interned ids, pool)
+
 def elections : List Model.State → List (List Nat)
   | t :: s :: past =>
     (t.nodes.filterMap fun (n, y) => do
@@ -1001,21 +1122,31 @@ def frameKey (d : Deployment) (s : Model.State) (past : List Model.State) : Fram
     setCode ((hist.foldr (fun snap g => VoteFacts.advance g snap) []).map fun st =>
       st.voter :: st.term :: optional st.vote)⟩
 
+def ghostFrameKey (d : Deployment) (s : Model.State) (g : ExplorerGhost.Ghost) : FrameKey :=
+  let keys (xs : List (Nat × List Entry)) := setCode (xs.map fun (k, l) => k :: logCode l)
+  ⟨(d.voters, d.nodes), s.nodes.map fun (n, st) => nodeCode d.nodes n st,
+    (s.network.map envelopeCode).mergeSort (fun a b => compare a b != .gt),
+    setCode (g.seen.map fun (n, k, l) => n :: k :: logCode l),
+    keys g.canonical, keys g.committed,
+    setCode (g.elected.map fun (n, k, l, i) => [n, k, i] ++ logCode l),
+    setCode (g.grants.map fun ((v, c, k), (term, idx)) => [v, c, k, term, idx]),
+    setCode (g.votes.map fun st => st.voter :: st.term :: optional st.vote)⟩
+
 structure FramePath where
   state : Model.State := {nodes := []}
   past : List Model.State := []
   hits : List Candidate := []
   codes : List Nat := []
+  ghost : ExplorerGhost.Ghost := {}
   deriving Inhabited
 
-def FramePath.advance (p : FramePath) (e : Enabled) (k : Key) : FramePath :=
-  ⟨e.after, p.state :: p.past, e.toCandidate :: p.hits, encode k :: p.codes⟩
+def FramePath.advance (p : FramePath) (e : Enabled) (k : Key) (keepPast : Bool)
+    (ghost : ExplorerGhost.Ghost) : FramePath :=
+  ⟨e.after, if keepPast then p.state :: p.past else [],
+    e.toCandidate :: p.hits, encode k :: p.codes, ghost⟩
 
 def boundCandidates (b : Bounds) (s : Model.State) : List Candidate :=
-  (candidates (b.palette == .retirement) s).filter fun c =>
-    b.palette != .core || match c.act with
-    | .local _ (.append xs) => xs.all fun x => x.content.metadata.configuration.isNone
-    | _ => true
+  candidates (b.palette == .retirement) s (b.palette != .core)
 
 -- Sort by the actual selected action: queue offsets are replay data, not
 -- action identity. commandText preserves all local inputs in the palette.
@@ -1028,13 +1159,32 @@ structure EdgeRead where
   key : Key
   family : String
   inside : Bool
-  deriving BEq, Repr
+  deriving BEq, Hashable, Repr
+
+abbrev SignatureRows := Std.HashMap EdgeRead EdgeRead
+
+def internRows (rows : List EdgeRead) (pool : SignatureRows) : List EdgeRead × SignatureRows := Id.run do
+  let mut pool := pool
+  let mut shared := []
+  for row in rows do
+    if let some old := pool[row]? then
+      shared := old :: shared
+    else
+      pool := pool.insert row row
+      shared := row :: shared
+  return (shared.reverse, pool)
 
 structure Probe where
-  edges : Array (Enabled × EdgeRead) := #[]
+  edges : Array (Enabled × EdgeRead × ExplorerGhost.Ghost) := #[]
   excluded : Nat := 0
   menuNs : Nat := 0
   readerNs : Nat := 0
+
+def readIncremental (cfg : CCF.Finset NodeID) (p : FramePath) (e : Enabled) :
+    IO ExplorerGhost.Edge := do
+  let some row := ExplorerGhost.read cfg p.ghost p.state e.after e.act
+    | throw (IO.userError "incremental reader failed on enabled bounded-search action")
+  return row
 
 def probe (b : Bounds) (p : FramePath) (compareAll : Bool) : IO Probe := do
   let start ← IO.monoNanosNow
@@ -1049,26 +1199,191 @@ def probe (b : Bounds) (p : FramePath) (compareAll : Bool) : IO Probe := do
     if !inside then
       excluded := excluded + 1
       unless compareAll do continue
-    let some key := JointWitnesses.readKey cfg p.state e.act e.after p.past
-      | throw (IO.userError "reader failed on enabled bounded-search action")
-    let family := Families.code (Families.classify cfg p.state e.act e.after p.past)
-    edges := edges.push (e, ⟨actionCode e.act, key, family, inside⟩)
+    let fast ← if b.ghostMode == .history then pure none else some <$> readIncremental cfg p e
+    let (key, family) ← match b.ghostMode, fast with
+      | .incremental, some row => pure (row.key, row.family)
+      | _, _ => do
+        let some key := JointWitnesses.readKey cfg p.state e.act e.after p.past
+          | throw (IO.userError "history reader failed on enabled bounded-search action")
+        let family := Families.code (Families.classify cfg p.state e.act e.after p.past)
+        if let some row := fast then
+          let old := frameKey b.deployment e.after (p.state :: p.past)
+          let new := ghostFrameKey b.deployment e.after row.ghost
+          unless row.key == key && row.family == family && old == new do
+            IO.println (scheduleText b.deployment (e.toCandidate :: p.hits))
+            IO.println s!"queue choices: {repr (deliveryChoices (e.toCandidate :: p.hits))}"
+            throw (IO.userError s!"incremental disagreement: history key {repr key}, family {family}; \
+              incremental key {repr row.key}, family {row.family}; frame keys equal: {old == new}")
+        pure (key, family)
+    edges := edges.push (e, ⟨actionCode e.act, key, family, inside⟩,
+      fast.elim {} (·.ghost))
   return ⟨edges, excluded, mapped - start, (← IO.monoNanosNow) - mapped⟩
 
-def signature (p : Probe) : List EdgeRead :=
-  (p.edges.toList.map Prod.snd).mergeSort fun a b =>
+def sortSignature (rows : List EdgeRead) : List EdgeRead :=
+  rows.mergeSort fun a b =>
     a.action.1 < b.action.1 ||
       (a.action.1 == b.action.1 && compare a.action.2 b.action.2 != .gt)
+
+def signature (p : Probe) : List EdgeRead :=
+  sortSignature (p.edges.toList.map (·.2.1))
+
+-- Duplicate arrivals need only their signature. Release the successor state
+-- and ghost per action instead of building a full expansion.
+def compareSignature (b : Bounds) (p : FramePath) : IO (List EdgeRead) := do
+  if b.ghostMode != .incremental then return signature (← probe b p true)
+  let cfg := b.deployment.cfg
+  let system := transitionSystem cfg b.deployment.nodes
+  let mut rows := []
+  for c in boundCandidates b p.state do
+    let some after := system.step p.state c.act | continue
+    let row ← readIncremental cfg p ⟨c, after⟩
+    rows := ⟨actionCode c.act, row.key, row.family, b.allows after⟩ :: rows
+  return sortSignature rows.reverse
+
+structure MergeCheck where
+  pair : Nat
+  representative : Nat
+  expected : List EdgeRead
+  arrival : FramePath
+
+def checkMerge (b : Bounds) (job : MergeCheck) : IO Nat := do
+  let actual ← compareSignature b job.arrival
+  unless job.expected == actual do
+    let path := scheduleText b.deployment job.arrival.hits
+    let choices := repr (deliveryChoices job.arrival.hits)
+    throw (IO.userError s!"merge disagreement at pair {job.pair}, frame {job.representative}:\
+      \nold {repr job.expected}\nnew {repr actual}\n{path}\nqueue choices: {choices}")
+  return actual.length
+
+def checkMerges (b : Bounds) (jobs : Array MergeCheck) : IO Nat := do
+  let mut count := 0
+  for job in jobs do
+    count := count + (← checkMerge b job)
+  return count
+
+structure Batch (Job Result : Type) where
+  jobs : Array Job := #[]
+  tasks : List (Task (Except IO.Error Result)) := []
+
+def Batch.finish (b : Batch Job Result) (run : Array Job → IO Result) : IO (List Result) := do
+  let mut results := []
+  for task in b.tasks.reverse do
+    results := (← IO.ofExcept (← IO.wait task)) :: results
+  if !b.jobs.isEmpty then results := (← run b.jobs) :: results
+  return results.reverse
+
+def Batch.push (b : Batch Job Result) (job : Job) (workers : Nat)
+    (run : Array Job → IO Result) : IO (Batch Job Result × List Result) := do
+  let jobs := b.jobs.push job
+  if jobs.size < 64 then return ({b with jobs}, [])
+  let tasks := (← IO.asTask (run jobs)) :: b.tasks
+  let next : Batch Job Result := {tasks}
+  if tasks.length < workers then return (next, [])
+  return ({}, ← next.finish run)
 
 def boundedWitness (d : Deployment) (p : FramePath) : String :=
   let oneLine (s : String) := s.replace "\n" " "
   s!"{p.codes.head!}\t{p.hits.length}\t{oneLine (scheduleText d p.hits)}\t\
     {oneLine (reprStr (deliveryChoices p.hits))}\t{oneLine (reprStr p.codes.reverse)}\n"
 
+structure BoundedCase where
+  yes : Nat := 0
+  no : Nat := 0
+  witness : Option FramePath := none
+  deriving Inhabited
+
+def caseProjection : Array (Option Nat) :=
+  let questions := (keyAnswers (decode 0)).map (·.1)
+  FullProfile.stepBranches.map fun branch => questions.findIdx? (· == .step branch)
+
+def finiteCaseEvidence (b : Bounds) (p next : FramePath) (act : Model.Action)
+    (key : Key) (decoded : Array (FullProfile.Question × Bool)) : ReplayAnswers.Evidence :=
+  let view := GuardedDomain.ofAction b.deployment.cfg p.state next.state [] act
+  let fresh := ReducedQuestions.freshPayloads p.state next.state.network
+  let commit := key.2.1
+  let grant := p.ghost.grants != next.ghost.grants
+  let stable := !grant && !commit
+  let tag := EventSupport.actionTag act
+  let flags : EvidenceSupport.Evidence := ⟨!fresh.isEmpty, (view.map (·.changed)).getD false,
+    p.ghost.seen.length != next.ghost.seen.length, grant,
+    p.ghost.elected.length != next.ghost.elected.length,
+    p.ghost.canonical.length != next.ghost.canonical.length, commit⟩
+  let bit (branch : Classes.StepBranch) :=
+    (decoded.find? (fun (q, _) => q == .step branch)).any (·.2)
+  let pair := FrontierRows.Row.ofPair (PairQuestions.label p.state next.state)
+    (!p.ghost.committed.isEmpty) (!next.ghost.committed.isEmpty)
+  let backing := (bit .commitChains_step_backing_inl, bit .commitChains_step_backing_inr)
+  ⟨(pair, LeaderEffect.changedPrimary p.state next.state),
+    tag, fresh, view, backing, AckAdvance.read? p.state act next.state,
+    tag == .nominateSuccessor && stable && !fresh.isEmpty,
+    SignedQuiet.test view p.state next.state stable, flags, DeltaSupport.read p.state act next.state⟩
+
+def readBoundedCases (b : Bounds) (p next : FramePath) (act : Model.Action)
+    (key : Key) (audit : Bool) (cases : Array BoundedCase) : IO (Array BoundedCase) := do
+  let cfg := b.deployment.cfg
+  let decoded := if b.finiteCaseReads || audit then (keyAnswers key).toArray else #[]
+  let check := audit || (b.finiteCaseReads && b.ghostMode == .check)
+  let history := if !b.finiteCaseReads || check
+    then some (ReplayAnswers.read cfg p.state act next.state p.past) else none
+  let evidence ← if b.finiteCaseReads then pure (finiteCaseEvidence b p next act key decoded)
+    else match history with
+      | some value => pure value
+      | none => throw (IO.userError "missing ReplayAnswers history evidence")
+  if audit then
+    unless decoded.all (fun (q, v) => history.any (fun e => ReplayAnswers.answer e q == some v)) do
+      throw (IO.userError s!"decoded answers disagree with ReplayAnswers for {encode key}")
+  let mut cases := cases
+  for h : i in [:FullProfile.stepBranches.size] do
+    let question := FullProfile.Question.step FullProfile.stepBranches[i]
+    let actual := if b.finiteCaseReads && !evidence.nomination then
+      match caseProjection[i]!.bind (fun j => decoded[j]?) with
+      | some (_, value) => some value
+      | none => ReplayAnswers.answer evidence question
+      else ReplayAnswers.answer evidence question
+    if b.finiteCaseReads && history.any (fun e => ReplayAnswers.answer e question != actual) then
+      throw (IO.userError s!"finite case read disagreement at {i} for {encode key}")
+    match actual with
+    | some true =>
+      cases := cases.modify i fun c =>
+        {c with yes := c.yes + 1, witness := c.witness.orElse (fun _ => some next)}
+    | some false => cases := cases.modify i fun c => {c with no := c.no + 1}
+    | none => pure ()
+  return cases
+
+abbrev CensusRead := FramePath × FramePath × Model.Action × Key × Bool
+
+def emptyCases : Array BoundedCase := Array.replicate FullProfile.stepBranches.size {}
+
+def countCases (b : Bounds) (jobs : Array CensusRead) :
+    IO (Array BoundedCase) := do
+  let mut cases := emptyCases
+  for (p, next, act, key, audit) in jobs do
+    cases ← readBoundedCases b p next act key audit cases
+  return cases
+
+def addCases (old new : Array BoundedCase) : Array BoundedCase :=
+  old.mapIdx fun i c =>
+    let n := new[i]!
+    ⟨c.yes + n.yes, c.no + n.no, c.witness.orElse (fun _ => n.witness)⟩
+
+def writeBoundedCases (file : String) (d : Deployment) (steps : Nat)
+    (cases : Array BoundedCase) : IO Unit := do
+  let mut rows := #["index\tquestion\tknown_true\tknown_false\tunknown\t\
+    key\tdepth\tschedule\tqueue_choices\tprefix_keys\n"]
+  for (branch, i) in FullProfile.stepBranches.toList.zipIdx do
+    let c := cases[i]!
+    let path := (c.witness.map (boundedWitness d)).getD "\t\t\t\t\n"
+    rows := rows.push s!"{i}\t{branchName branch}\t{c.yes}\t{c.no}\t{steps - c.yes - c.no}\t{path}"
+  IO.FS.writeFile file (String.join rows.toList)
+  IO.println s!"Case census: used ReplayAnswers on all {steps} admitted edges; wrote {file}"
+
 def exhaust (b : Bounds) : IO Unit := do
   let d := b.deployment
   IO.println s!"bounds: voters={d.voters} nodes={d.nodes} log={b.maxLog} term={b.maxTerm} \
-    copies={b.maxCopies} network={repr b.maxNetwork} palette={b.palette.name} budget={repr b.stepBudget}"
+    copies={b.maxCopies} network={repr b.maxNetwork} palette={b.palette.name} \
+    budget={repr b.stepBudget} seconds={repr b.maxSeconds} ghost={repr b.ghostMode} \
+    frontierOnly={b.frontierOnly} compact={b.compact} mergeWorkers={b.mergeWorkers} \
+    finiteCaseReads={b.finiteCaseReads}"
   IO.println "Bounded frame-merge search; equality of keys has not been proved to imply equality of labels."
   IO.println "Action palette:"
   for (line, i) in palette.zipIdx do
@@ -1078,90 +1393,150 @@ def exhaust (b : Bounds) : IO Unit := do
     IO.println "  confirm retirement (each eligible retiree or all); bare, signed, two signatures, or signed with flush to retirees"
   (← IO.getStdout).flush
   let start ← IO.monoNanosNow
-  let initial : FramePath := ⟨d.initial, [], [], []⟩
+  let deadline := b.maxSeconds.map (fun s => start + s * 1000000000)
+  let expired : IO Bool := deadline.elim (pure false) fun t => do
+    return t ≤ (← IO.monoNanosNow)
+  let bootstrap := d.cfg.min?.getD 0
+  let initial : FramePath := {state := d.initial, ghost := ExplorerGhost.start bootstrap d.initial}
   unless b.allows initial.state do throw (IO.userError "initial state is outside the selected bounds")
-  let mut seen : Std.HashMap FrameKey Nat := ({} : Std.HashMap FrameKey Nat).insert
-    (frameKey d initial.state []) 0
-  let mut frames := #[initial]
+  let initialKey := if b.ghostMode == .history then frameKey d initial.state []
+    else ghostFrameKey d initial.state initial.ghost
+  if b.ghostMode == .check && initialKey != frameKey d initial.state [] then
+    throw (IO.userError "incremental disagreement on initial frame key")
+  let (initialId, fields) := if b.compact then initialKey.intern {} else (.structural initialKey, {})
+  let mut fields := fields
+  let mut signatureRows : SignatureRows := {}
+  -- Keep these buffers outside the state captured by the nested BFS loops;
+  -- Lean can then update uniquely owned arrays in-place.
+  let seen ← IO.mkRef (({} : Std.HashMap FrameIdentity Nat).insert initialId 0)
+  let frames ← IO.mkRef #[initial]
+  let mut discovered := 1
   let mut signatures : Std.HashMap Nat (List EdgeRead) := {}
   let mut witnesses : Std.HashMap Key FramePath := {}
   let mut families := {}
+  let mut cases := emptyCases
   let mut depthCounts := #[1]
   let mut head := 0
   let mut steps := 0
   let mut excluded := 0
   let mut pairs := 0
   let mut checkedEdges := 0
+  let mut ghostChecks := 0
   let mut menuNs := 0
   let mut readerNs := 0
   let mut frameNs := 0
   let mut compareNs := 0
-  while head < frames.size do
-    let p := frames[head]!
+  let mut merges : Batch MergeCheck Nat := {}
+  let mut census : Batch CensusRead (Array BoundedCase) := {}
+  while head < discovered do
+    if ← expired then break
+    let p := (← frames.get)[head]!
     let depth := p.hits.length + 1
-    let reads ← probe b p false
+    let saveSignature := b.frontierOnly && !signatures.contains head
+    let reads ← probe b p saveSignature
+    if saveSignature then
+      let rows := signature reads
+      let (rows, pool) := if b.compact then internRows rows signatureRows else (rows, signatureRows)
+      signatureRows := pool
+      signatures := signatures.insert head rows
+    if b.ghostMode == .check then ghostChecks := ghostChecks + reads.edges.size
     excluded := excluded + reads.excluded
     menuNs := menuNs + reads.menuNs
     readerNs := readerNs + reads.readerNs
     let mut complete := true
-    for (e, row) in reads.edges do
-      if b.stepBudget.any (· ≤ steps) then
+    for (e, row, ghost) in reads.edges do
+      unless row.inside do continue
+      if b.stepBudget.any (· ≤ steps) || (← expired) then
         complete := false
         break
       steps := steps + 1
-      let next := p.advance e row.key
-      unless witnesses.contains row.key do
+      let keepPast := b.ghostMode != .incremental || b.caseOut.isSome
+      let next := p.advance e row.key keepPast ghost
+      let fresh := !witnesses.contains row.key
+      if b.caseOut.isSome then
+        let audit := fresh || (b.finiteCaseReads && steps % 1024 == 0)
+        if b.mergeWorkers == 1 then
+          cases ← readBoundedCases b p next e.act row.key audit cases
+        else
+          let (pending, counts) ← census.push (p, next, e.act, row.key, audit) b.mergeWorkers (countCases b)
+          census := pending
+          cases := counts.foldl addCases cases
+      if fresh then
         witnesses := witnesses.insert row.key next
       families := insertGroup families row.family row.key
       let tick ← IO.monoNanosNow
-      let k := frameKey d next.state next.past
-      let existing := seen[k]?
+      let k := if b.ghostMode == .history then frameKey d next.state next.past
+        else ghostFrameKey d next.state next.ghost
+      let (k, pool) := if b.compact then k.intern fields else (.structural k, fields)
+      fields := pool
+      let existing ← seen.modifyGet fun map =>
+        match map[k]? with
+        | some i => (some i, map)
+        | none => (none, map.insert k discovered)
       frameNs := frameNs + (← IO.monoNanosNow) - tick
       if let some i := existing then
         let tick ← IO.monoNanosNow
-        let old ← if let some cached := signatures[i]? then pure cached else do
-          pure (signature (← probe b frames[i]! true))
-        signatures := signatures.insert i old
-        let new := signature (← probe b next true)
+        let expected ← if let some cached := signatures[i]? then pure cached else do
+          let old ← compareSignature b (← frames.get)[i]!
+          if b.ghostMode == .check then ghostChecks := ghostChecks + old.length
+          let (rows, pool) := if b.compact then internRows old signatureRows else (old, signatureRows)
+          signatureRows := pool
+          signatures := signatures.insert i rows
+          pure rows
         pairs := pairs + 1
-        checkedEdges := checkedEdges + new.length
-        unless old == new do
-          IO.println s!"Merge disagreement at pair {pairs}:\nold {repr old}\nnew {repr new}"
-          for path in [frames[i]!, next] do
-            IO.println (scheduleText d path.hits)
-            IO.println s!"queue choices: {repr (deliveryChoices path.hits)}"
-          throw (IO.userError "equal frame keys had different enabled action signatures")
+        let job : MergeCheck := ⟨pairs, i, expected, next⟩
+        if b.mergeWorkers == 1 then
+          let count ← checkMerge b job
+          checkedEdges := checkedEdges + count
+          if b.ghostMode == .check then ghostChecks := ghostChecks + count
+        else
+          let (pending, checks) ← merges.push job b.mergeWorkers (checkMerges b)
+          merges := pending
+          checkedEdges := checkedEdges + checks.sum
         compareNs := compareNs + (← IO.monoNanosNow) - tick
       else
-        seen := seen.insert k frames.size
-        frames := frames.push next
+        frames.modify (·.push next)
+        discovered := discovered + 1
         if depthCounts.size == depth then depthCounts := depthCounts.push 0
         depthCounts := depthCounts.modify depth (· + 1)
       if steps % 1000 == 0 then
-        IO.println s!"progress: {steps} steps, {frames.size} frames, {frames.size - head} frontier, {witnesses.size} keys"
+        IO.println s!"progress: {steps} steps, {discovered} frames, {discovered - head} frontier, {witnesses.size} keys"
         (← IO.getStdout).flush
     if !complete then break
+    if b.frontierOnly then frames.modify (·.set! head {})
     head := head + 1
+  let tick ← IO.monoNanosNow
+  checkedEdges := checkedEdges + (← merges.finish (checkMerges b)).sum
+  compareNs := compareNs + (← IO.monoNanosNow) - tick
+  cases := (← census.finish (countCases b)).foldl addCases cases
   let stop ← IO.monoNanosNow
   let ms := (stop - start) / 1000000
-  IO.println s!"frames: {frames.size}; expanded: {head}; frontier: {frames.size - head}; fixpoint: {head == frames.size}"
+  IO.println s!"frames: {discovered}; expanded: {head}; frontier: {discovered - head}; fixpoint: {head == discovered}"
   IO.println s!"frames by depth: {repr depthCounts}"
   IO.println s!"steps: {steps}; excluded by bounds: {excluded}; keys: {witnesses.size}; {ms} ms; {steps * 1000 / max 1 ms} steps/s"
   IO.println s!"merge self-check: {pairs} history pairs, {checkedEdges} enabled action pairs, 0 disagreements"
+  if b.ghostMode == .check then
+    IO.println s!"incremental cross-check: {ghostChecks} edges, 0 disagreements"
+  if b.compact then
+    IO.println s!"interned: {fields.size} frame components, {signatureRows.size} signature rows"
   IO.println s!"time ms: menus/bounds {menuNs / 1000000}, key+family {readerNs / 1000000}, \
     frame keys {frameNs / 1000000}, merge checks {compareNs / 1000000}"
   for (code, keys) in families.toList.mergeSort (fun a b => a.1 ≤ b.1) do
     IO.println s!"family: {code} {keys.size}"
+    let codes := (keys.toList.map encode).mergeSort (· ≤ ·)
+    IO.println s!"family keys: {code} {String.intercalate "," (codes.map toString)}"
   let rows := witnesses.toList.mergeSort fun a b => encode a.1 ≤ encode b.1
   IO.FS.writeFile b.out <| "key\tdepth\tschedule\tqueue_choices\tprefix_keys\n" ++
     String.join (rows.map fun (_, p) => boundedWitness d p)
   IO.println s!"wrote {b.out}"
+  if let some file := b.caseOut then writeBoundedCases file d steps cases
 
 end ConsensusCoverage.Explore
 
 open ConsensusCoverage.Explore in
 public def main (args : List String) : IO Unit := do
   if args == ["--help"] then IO.println (usage ++ "\n" ++ exhaustUsage)
+  else if let ["--key-answers", file] := args then showKeyAnswers file
   else if args.head? == some "--exhaust" then
     exhaust (← IO.ofExcept (boundOptions args.tail! {}))
   else do

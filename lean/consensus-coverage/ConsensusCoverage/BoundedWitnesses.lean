@@ -135,9 +135,45 @@ private def cert16 : Certificate := multiCert
   (⟨{0, 1}, [0, 1], [append 0 [flush 1 2], deliver 0 1, deliver 1 0, nom 0, deliver 0 1,
     deliver 1 0, deliver 0 1, append 1 [flush 0 3], deliver 1 0]⟩) [(8, 1)] 1875290569854
 
+private def cert17 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [sig], down 0, elect 0, deliver 0 1, deliver 1 0, deliver 0 1,
+    deliver 1 0, deliver 0 1, deliver 1 0, send 0 1 2, deliver 0 1, deliver 1 0, nom 0,
+    deliver 0 1, deliver 1 0, deliver 0 1, deliver 1 0, deliver 0 1, down 1, elect 1,
+    deliver 1 0, deliver 0 1, deliver 1 0]⟩) [] 1265004428409
+
+private def cert18 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [sig], down 0, elect 0, deliver 0 1, deliver 1 0, deliver 0 1,
+    deliver 1 0, deliver 0 1, deliver 1 0, send 0 1 2, deliver 0 1, deliver 1 0, nom 0,
+    deliver 0 1, deliver 1 0, deliver 0 1, deliver 1 0, deliver 0 1, append 1 [tx], send 1 0 3,
+    deliver 1 0]⟩) [] 1256815017080
+
+private def cert19 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [sig], down 0, elect 0, deliver 0 1, deliver 1 0, deliver 0 1,
+    deliver 1 0, deliver 0 1, deliver 1 0, send 0 1 2, deliver 0 1, deliver 1 0, nom 0,
+    deliver 0 1, deliver 1 0, deliver 0 1, deliver 1 0, deliver 0 1, append 1 [flush 0 3],
+    deliver 1 0]⟩) [] 1325534755964
+
+private def cert20 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [flush 1 2], deliver 0 1, deliver 1 0, nom 0, deliver 0 1,
+    deliver 1 0, deliver 0 1, deliver 1 0, deliver 0 1, down 1, elect 1, deliver 1 0, deliver 0 1,
+    deliver 1 0, deliver 0 1, deliver 1 0, deliver 0 1, append 1 [flush 0 3], deliver 1 0,
+    deliver 0 1]⟩) [] 1752346902265
+
+private def cert21 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [flush 1 2], deliver 0 1, down 0, deliver 1 0, elect 1,
+    deliver 1 0, deliver 0 1, deliver 1 0, deliver 0 1, deliver 1 0, deliver 0 1,
+    append 1 [flush 0 3], deliver 1 0, deliver 0 1, append 1 [tx], send 1 0 4,
+    deliver 1 0]⟩) [] 1737851354232
+
+private def cert22 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [flush 1 2], deliver 0 1, down 0, deliver 1 0, elect 1,
+    deliver 1 0, deliver 0 1, deliver 1 0, deliver 0 1, deliver 1 0, deliver 0 1,
+    append 1 [flush 0 3], deliver 1 0, deliver 0 1, append 1 [flush 0 4], deliver 1 0]⟩)
+  [] 1737851616382
+
 private def certificates : List Certificate :=
   [cert0, cert1, cert2, cert3, cert4, cert5, cert6, cert7, cert8, cert9, cert10, cert11,
-    cert12, cert13, cert14, cert15, cert16]
+    cert12, cert13, cert14, cert15, cert16, cert17, cert18, cert19, cert20, cert21, cert22]
 -- END GENERATED CERTIFICATES
 
 private def newKeys : List Nat := certificates.map (·.key)
@@ -162,19 +198,19 @@ private theorem multi_occurs {k : Nat} (mem : k ∈ multiKeys) :
   · exact ExploredWitnesses.multi_occurs old
   · exact new_occurs new
 
-private theorem count : keys.Nodup ∧ keys.length = 204 := by decide +kernel
-private theorem multi_count : multiKeys.Nodup ∧ multiKeys.length = 201 := by decide +kernel
+private theorem count : keys.Nodup ∧ keys.length = 210 := by decide +kernel
+private theorem multi_count : multiKeys.Nodup ∧ multiKeys.length = 207 := by decide +kernel
 
-/-- Every cover of initialized recorded step labels contains at least 204 rows. -/
+/-- Every cover of initialized recorded step labels contains at least 210 rows. -/
 public theorem full_lower_bound (rows : List Profile) (complete : ∀ s, label s ∈ rows) :
-    204 ≤ rows.length := by
+    210 ≤ rows.length := by
   simpa only [count.2] using
     (projected_lower_bound project count.1 (fun _ => occurs) complete)
 
-/-- Every cover of initialized multi-node step labels contains at least 201 rows. -/
+/-- Every cover of initialized multi-node step labels contains at least 207 rows. -/
 public theorem multi_lower_bound (rows : List Profile)
     (complete : ∀ s : Step, LeaderCoverage.MultiNode s.nodes → label s ∈ rows) :
-    201 ≤ rows.length := by
+    207 ≤ rows.length := by
   have sub : multiKeys ⊆ rows.map project := by
     intro k hk
     obtain ⟨s, multi, key⟩ := multi_occurs hk
