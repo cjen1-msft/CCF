@@ -99,7 +99,7 @@ private theorem lower {rs : List Row} (incompatible : rs.Pairwise (fun a b => co
 public def observed (s : Step) := read (ReplayAnswers.read s.cfg s.before s.act s.after s.past)
 
 /-- Compare the known coordinates of any recorded action with a fixed step
-signature. One contrary bit refutes it; confirmation needs all 433. -/
+signature. One contrary bit refutes it; confirmation needs every step answer. -/
 public def signature? (r : Row) (target : Classes.StepBranch → Bool) : Option Bool :=
   let agrees (b : Classes.StepBranch) := if target b then r.yes else r.no
   let disagrees (b : Classes.StepBranch) := if target b then r.no else r.yes
