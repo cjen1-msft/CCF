@@ -16,7 +16,7 @@ set_option backward.privateInPublic.warn false
 private abbrev Key := NodeID × NodeID × Nat
 private abbrev Table := List (Key × (Nat × Nat))
 
-private def candidate (g : Ghost) (before : Model.State) (p : NodeID × NodeState) :
+private noncomputable def candidate (g : Ghost) (before : Model.State) (p : NodeID × NodeState) :
     Option (Key × (Nat × Nat)) := do
   let (v, y) := p
   let c ← y.votedFor
@@ -27,7 +27,7 @@ private def candidate (g : Ghost) (before : Model.State) (p : NodeID × NodeStat
   guard (!g.granted v c k min)
   return ((v, c, k), (min.lastCommittableTerm, min.lastCommittableIndex))
 
-private def insert (g : Ghost) (s : Model.State) (a : Table × Bool) (p : NodeID × NodeState) :
+private noncomputable def insert (g : Ghost) (s : Model.State) (a : Table × Bool) (p : NodeID × NodeState) :
     Table × Bool :=
   match candidate g s p with
   | none => a
