@@ -1468,7 +1468,8 @@ def coveredName := `ConsensusCoverage.ReadersCompiler.generatedColumns
 def correctName := `ConsensusCoverage.ReadersCompiler.readView_correct
 def supportedName := `ConsensusCoverage.ReadersCompiler.readView_supported
 
-public def driver : MetaM Unit := do
+public def driverWith (run? : Option (Env → Array Name → Array Expr → MetaM Unit)) :
+    MetaM Unit := do
   let start ← IO.monoMsNow
   let ci ← getConstInfo ``SolvedWitnesses.dispatch
   let branch ← getConstInfoInduct ``Classes.StepBranch
@@ -1588,6 +1589,7 @@ public def driver : MetaM Unit := do
       let env : Env := { inst, f, t, c, xv, ok, first, second, basic, simprocs := #[simprocs], reportDir }
       let miss ← missing.get
       unless miss.isEmpty do logInfo m!"missing simp names: {miss}"
+      if let some run := run? then return ← run env armNames xs
       let st ← IO.mkRef ({} : St)
       -- Try shallow formulas first. The order changes only when work is
       -- attempted; the dispatcher is emitted in constructor order.
@@ -1669,6 +1671,8 @@ public def driver : MetaM Unit := do
       if let some dir := reportDir then
         IO.FS.writeFile (dir / "summary.txt") (msg ++ "\n" ++ toString (covered.map fun n => n.getString!) ++ "\n")
       logInfo msg
+
+public def driver : MetaM Unit := driverWith none
 
 end
 
