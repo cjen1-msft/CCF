@@ -20,9 +20,12 @@ must not be reported as explicit exploration rates.
 All three use one copy per envelope value. `MultiNodeTransitionSystem.next`
 only consults the pending queue to remove a delivery, and appends sends.
 On an admitted edge every send except a re-sent delivered value is fresh.
-The remaining queue-dependent reader input is the set of pre-sources and
-post-targets used to probe progress fields. Unlike the cached reader, the
-witness replay below uses the actual ordered queues and history. Use
+The legacy reader probes progress fields at pre-sources and post-targets.
+The generated readers also test network membership of outgoing envelopes
+and whether a retained envelope is new. `CensusQueue.outgoing_membership`
+and `CensusQueue.retained_not_new` give the one-copy reductions; matching
+all generated guards to these reductions is not proved. Unlike the cached
+reader, the witness replay below uses actual ordered queues and history. Use
 `--exhaust --check-ghost` for an independent differential validation.
 None of these search reductions is a kernel proof of exhaustion. -/
 
