@@ -3,7 +3,10 @@ module
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
+meta import ConsensusCoverage.ReachPath
 meta import Lean
+public meta import ConsensusCoverage.ProofWalk
+meta import all ConsensusCoverage.FreshHeartbeat
 meta import all ConsensusCoverage.FreshHeartbeatPaths
 public import ConsensusCoverage.FreshHeartbeatPaths
 import all ConsensusCoverage.FreshHeartbeatPaths
@@ -32,14 +35,16 @@ private abbrev f := witness.frame
 private abbrev t := witness.after
 private abbrev send : Event := .internal (.sendEntries 1 0)
 
-private theorem entered_summary : SolvedWitnesses.reach_399 f t concrete concrete := by
+private theorem entered_summary :
+    (reach% SolvedWitnesses.step_summary_event_internal[16,0,0]) f t concrete concrete := by
   have root := (FreshHeartbeatPaths.queue26 concrete heartbeat).2 ⟨rfl, rfl⟩
   exact .inr (.inr (.inr ⟨heartbeat, root, (outgoing heartbeat).2 rfl, rfl⟩))
 
 -- The dependent transition pair carries the actual recorded event, not an
 -- arbitrary event with the same before and after snapshots.
 private theorem pin_transition {P : (u : Model.State) → LocalTransition f.current u → Prop} :
-    (∃ u tr, SolvedWitnesses.reach_434 f t concrete u tr ∧ P u tr) ↔ P t concrete.tr := by
+    (∃ u tr, (reach% SolvedWitnesses.step_summary_event_internal[16,0]) f t concrete u tr ∧ P u tr) ↔
+      P t concrete.tr := by
   constructor
   · rintro ⟨u, tr, ⟨_, rfl, heq⟩, h⟩
     cases eq_of_heq heq
@@ -47,15 +52,17 @@ private theorem pin_transition {P : (u : Model.State) → LocalTransition f.curr
   · exact fun h => ⟨t, concrete.tr, ⟨entered_summary, rfl, HEq.rfl⟩, h⟩
 
 private theorem event463 (n : NodeID) (st : NodeState) (e : Event) :
-    SolvedWitnesses.reach_463 f t concrete n st e ↔ n = 0 ∧ st = primary ∧ e = send :=
+    (reach% SolvedWitnesses.step_appendBatch_summary_mem_append_inl[16,0]) f t concrete n st e ↔
+      n = 0 ∧ st = primary ∧ e = send :=
   pin_transition
 
 private theorem event1307 (e : Event) :
-    SolvedWitnesses.reach_1307 f t concrete e ↔ e = send :=
+    (reach% SolvedWitnesses.step_summary_event_internal[16]) f t concrete e ↔ e = send :=
   pin_transition
 
 private theorem event1457 (st : NodeState) (e : Event) :
-    SolvedWitnesses.reach_1457 f t concrete st e ↔ st = primary ∧ e = send :=
+    (reach% SolvedWitnesses.step_appendEntriesRequest_summary_observe_bumping_inl[16,0]) f t concrete st e ↔
+      st = primary ∧ e = send :=
   pin_transition
 
 private def FixedTransition (u : Model.State) (tr : LocalTransition f.current u) : Prop :=
@@ -79,22 +86,24 @@ private theorem pin_pair {R : (u : Model.State) → LocalTransition f.current u 
   · exact fun ⟨h, p⟩ => ⟨t, concrete.tr, h, p⟩
 
 private theorem pins425 (u : Model.State) (tr : LocalTransition f.current u)
-    (h : SolvedWitnesses.reach_425 f t concrete u tr) : FixedTransition u tr := by
+    (h : (reach% SolvedWitnesses.step_summary_event_internal[7,0]) f t concrete u tr) : FixedTransition u tr := by
   rcases h with ⟨_, _, _, _, eq, heq⟩ | ⟨_, _, _, _, _, eq, heq⟩ | ⟨_, eq, heq⟩
   all_goals exact ⟨eq, heq⟩
 
 private theorem pins446 (u : Model.State) (tr : LocalTransition f.current u)
-    (h : SolvedWitnesses.reach_446 f t concrete u tr) : FixedTransition u tr :=
+    (h : (reach% SolvedWitnesses.step_summary_event_internal[28,0]) f t concrete u tr) : FixedTransition u tr :=
   ⟨h.2.1, h.2.2⟩
 
 private theorem event454 (n : NodeID) (st : NodeState) (e : Event) :
-    SolvedWitnesses.reach_454 f t concrete n st e ↔
-      SolvedWitnesses.reach_425 f t concrete t concrete.tr ∧ n = 0 ∧ st = primary ∧ e = send :=
+    (reach% SolvedWitnesses.step_appendBatch_summary_mem_append_inl[7,0]) f t concrete n st e ↔
+      (reach% SolvedWitnesses.step_summary_event_internal[7,0]) f t concrete t concrete.tr ∧
+        n = 0 ∧ st = primary ∧ e = send :=
   pin_pair pins425
 
 private theorem event475 (n : NodeID) (st : NodeState) (e : Event) :
-    SolvedWitnesses.reach_475 f t concrete n st e ↔
-      SolvedWitnesses.reach_446 f t concrete t concrete.tr ∧ n = 0 ∧ st = primary ∧ e = send :=
+    (reach% SolvedWitnesses.step_appendBatch_summary_mem_append_inl[28,0]) f t concrete n st e ↔
+      (reach% SolvedWitnesses.step_summary_event_internal[28,0]) f t concrete t concrete.tr ∧
+        n = 0 ∧ st = primary ∧ e = send :=
   pin_pair pins446
 
 private theorem after_mem (n : NodeID) (st : NodeState) :
@@ -186,8 +195,8 @@ private theorem append_middle_rev (middle : NodeState) :
     exact ⟨primary.sentIndex, rfl, rfl⟩
 
 private theorem replace_pin (node member : NodeID) (value st : NodeState) :
-    SolvedWitnesses.reach_1244 f t concrete node member value st ↔
-      SolvedWitnesses.reach_1185 f t concrete concrete member st ∧
+    (reach% SolvedWitnesses.step_mem_replaceNode_here_neg[16]) f t concrete node member value st ↔
+      (reach% SolvedWitnesses.step_mem_replaceNode_here_neg[16,0,0]) f t concrete concrete member st ∧
         Now (f.advance t) member st ∧ (member, st) ∈ t.nodes ∧ node = 0 ∧ value = primary := by
   constructor
   · rintro ⟨u, tr, ⟨h, now, rfl, eq⟩, mem, hn, hv⟩
@@ -369,25 +378,25 @@ private def simplify (rules : SimpTheorems) (body : Expr) : MetaM Simp.Result :=
 -- A transition wrapper may carry arbitrary other path conditions. We only
 -- extract the two equations identifying its dependent arguments, checking
 -- every disjunct and never guessing the other witnesses.
-private partial def project (goal : Expr) (facts : List (Expr × Expr)) : MetaM (Option Expr) := do
-  let (p, h) :: rest := facts | return none
-  if p == goal then return some h
-  if p.isAppOfArity ``And 2 then
-    let a := p.getArg! 0
-    let b := p.getArg! 1
-    let left := mkApp3 (mkConst ``And.left) a b h
-    let right := mkApp3 (mkConst ``And.right) a b h
-    return ← project goal ((a, left) :: (b, right) :: rest)
-  if p.isAppOfArity ``Or 2 then
+private partial def project (goal : Expr) (facts : List ProofWalk.Fact)
+    (choices : List ProofWalk.Fact := []) : MetaM (Option Expr) := do
+  let (p, h) :: rest := facts |
+    let (p, h) :: rest := choices | return none
     let arm (q : Expr) := withLocalDeclD `hq q fun hq => do
-      let some pf ← project goal ((q, hq) :: rest) | return none
+      let some pf ← project goal [(q, hq)] rest | return none
       return some (← mkLambdaFVars #[hq] pf)
     let some l ← arm (p.getArg! 0) | return none
     let some r ← arm (p.getArg! 1) | return none
-    return some (mkAppN (mkConst ``Or.elim) #[p.getArg! 0, p.getArg! 1, goal, h, l, r])
+    return some (ProofWalk.casesOr p h goal l r)
+  if p == goal then return some h
+  if p.isAppOfArity ``And 2 then
+    let (left, right) := ProofWalk.conjuncts p h
+    return ← project goal (left :: right :: rest) choices
+  if p.isAppOfArity ``Or 2 then
+    return ← project goal rest ((p, h) :: choices)
   if p.isAppOfArity ``Eq 3 || p.isAppOfArity ``HEq 4 then
     if ← withTransparency .reducible (isDefEq p goal) then return some h
-  project goal rest
+  project goal rest choices
 
 private def transitionRule (ps : Array Expr) (n : Name) (body : Expr)
     (rules : SimpTheorems) : MetaM SimpTheorems :=
@@ -547,21 +556,25 @@ public theorem negative (b : Classes.StepBranch) (resolved : b ∉ residual)
     · exact read_sound _ h
     · exact (notPositive (List.mem_filter.mpr ⟨FreshHeartbeat.mem_universe b, beq_iff_eq.mpr h⟩)).elim
 
+local elab "heartbeat_census" : command =>
+  Lean.Elab.Command.liftTermElabM (FreshHeartbeat.logCensus ``positives ``residual)
+heartbeat_census
+
 /-- Exact zero-based step slots, in the generated dispatcher order. -/
 public theorem positive_slots : positives.map (·.ctorIdx) =
-    [48, 49, 50, 71, 72, 73, 104, 105, 114, 146, 148, 150, 166, 174, 186, 187,
-     232, 248, 250, 272, 274, 362, 363] :=
+    [54, 55, 56, 77, 78, 79, 116, 117, 126, 164, 166, 168, 184, 192, 206, 207,
+     268, 284, 286, 316, 318, 427, 428] :=
   by decide +kernel
 
 public theorem residual_empty : residual = [] := by decide +kernel
 
 public theorem counts :
-    stateBranches.size = 12 ∧ stepBranches.size = 433 ∧
+    stateBranches.size = 16 ∧ stepBranches.size = 516 ∧
       positives.length = 23 ∧
-      (stepBranches.toList.filter fun b => read? (.step b) == some false).length = 410 :=
+      (stepBranches.toList.filter fun b => read? (.step b) == some false).length = 493 :=
   by decide +kernel
 
-/-- The complete executable label: both endpoints and all 433 step bits. -/
+/-- The complete executable label: both endpoints and every step bit. -/
 @[expose] public def read : Profile
   | .pre b | .post b => ProofContexts.answers (true, false) b
   | .step b => read? (.step b) == some true

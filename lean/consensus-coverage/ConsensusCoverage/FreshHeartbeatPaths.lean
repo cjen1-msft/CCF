@@ -3,6 +3,8 @@ module
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
+meta import ConsensusCoverage.ReachPath
+meta import all ConsensusCoverage.FreshHeartbeat
 meta import Lean
 public import ConsensusCoverage.FreshHeartbeat
 import all ConsensusCoverage.FreshHeartbeat
@@ -27,18 +29,22 @@ set_option maxRecDepth 8192
 attribute [local instance] FreshHeartbeat.instInitialConfiguration_consensusCoverage
 
 private theorem queue25 (c : Ctx witness.frame witness.after) (e : Model.Envelope) :
-    SolvedWitnesses.reach_25 witness.frame witness.after concrete c e ↔ e = heartbeat ∧ c = concrete := by
+    (reach% SolvedWitnesses.step_messages_mem_network_inr[0])
+      witness.frame witness.after concrete c e ↔ e = heartbeat ∧ c = concrete := by
   change (Pending (witness.frame.advance witness.after) e ∧ ¬Pending witness.frame e ∧ c = concrete) ↔ _
   simp [new_pending, old_pending]
 
 private theorem queue26 (c : Ctx witness.frame witness.after) (e : Model.Envelope) :
-    SolvedWitnesses.reach_26 witness.frame witness.after concrete c e ↔ e = heartbeat ∧ c = concrete := by
-  change (SolvedWitnesses.reach_25 witness.frame witness.after concrete concrete e ∧
+    (reach% SolvedWitnesses.step_new_message_h_appendEntriesRequest[0])
+      witness.frame witness.after concrete c e ↔ e = heartbeat ∧ c = concrete := by
+  change ((reach% SolvedWitnesses.step_messages_mem_network_inr[0])
+      witness.frame witness.after concrete concrete e ∧
     e ∈ concrete.tr.outputs.outgoing ∧ Pending (witness.frame.advance witness.after) e ∧ c = concrete) ↔ _
   simp [queue25, new_pending, outgoing]
 
 private theorem queue43 (c : Ctx witness.frame witness.after) (e : Model.Envelope) :
-    SolvedWitnesses.reach_43 witness.frame witness.after concrete c e ↔ e = heartbeat ∧ c = concrete := by
+    (reach% SolvedWitnesses.step_message_terms_mem_network_inr[0])
+      witness.frame witness.after concrete c e ↔ e = heartbeat ∧ c = concrete := by
   change (Pending (witness.frame.advance witness.after) e ∧ Bumping e.payload ∧
     ¬(Pending witness.frame e ∧ Bumping e.payload) ∧ c = concrete) ↔ _
   simp only [new_pending, old_pending, false_and, not_false_eq_true, true_and]
@@ -173,7 +179,8 @@ private theorem owner : Led (witness.frame.advance witness.after) 0 BOOTSTRAP_TE
 private theorem boot_floor : 2 ≤ BOOTSTRAP_TERM := by decide +kernel
 
 private theorem queue28 (c : Ctx witness.frame witness.after) (n : NodeID) (st : NodeState) :
-    SolvedWitnesses.reach_28 witness.frame witness.after concrete c n st ↔
+    (reach% SolvedWitnesses.step_commit_backed_eq_zero_or_pos_inl[1])
+      witness.frame witness.after concrete c n st ↔
       c = concrete ∧ n = 0 ∧ st = primary := by
   constructor
   · rintro ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hc, hn, hs⟩
@@ -304,13 +311,8 @@ private def boolOption (v : Option Bool) : Expr :=
 private def tableName := `ConsensusCoverage.FreshHeartbeatPaths.pathRead
 private def certName := `ConsensusCoverage.FreshHeartbeatPaths.pathCertified
 
-private partial def slots (xs : Expr) : MetaM (List Nat) := do
-  let xs ← whnf xs
-  if xs.isAppOf ``List.nil then return []
-  unless xs.isAppOfArity ``List.cons 3 do throwError "expected a list of residual branches"
-  let b ← whnf (xs.getArg! 1)
-  let some name := b.getAppFn.constName? | throwError "expected a branch constructor: {b}"
-  return (← getConstInfoCtor name).cidx :: (← slots xs.appArg!)
+private def slots (xs : Expr) : MetaM (List Nat) := do
+  (← FreshHeartbeat.branchNames xs).mapM fun name => return (← getConstInfoCtor name).cidx
 
 private def compile : MetaM Unit := do
   let params ← fixedParams
@@ -418,15 +420,19 @@ public theorem negative (b : Classes.StepBranch) (resolved : b ∉ residual)
     · exact read_sound _ h
     · exact (notPositive (List.mem_filter.mpr ⟨FreshHeartbeat.mem_universe b, beq_iff_eq.mpr h⟩)).elim
 
+local elab "heartbeat_census" : command =>
+  Lean.Elab.Command.liftTermElabM (FreshHeartbeat.logCensus ``positives ``residual)
+heartbeat_census
+
 /-- Verified census of the combined reader on this action, not an upper
 bound on the number of true bits. -/
 public theorem counts :
-    stepBranches.size = 433 ∧ residual.length = 33 ∧ positives.length = 15 ∧
-      (stepBranches.toList.filter fun b => read? (.step b) == some false).length = 385 :=
+    stepBranches.size = 516 ∧ residual.length = 36 ∧ positives.length = 15 ∧
+      (stepBranches.toList.filter fun b => read? (.step b) == some false).length = 465 :=
   by decide +kernel
 
 public theorem positive_slots : positives.map (·.ctorIdx) =
-    [48, 49, 71, 72, 73, 104, 105, 114, 146, 174, 186, 187, 248, 272, 274] :=
+    [54, 55, 77, 78, 79, 116, 117, 126, 164, 192, 206, 207, 284, 316, 318] :=
   by decide +kernel
 
 end ConsensusCoverage.FreshHeartbeatPaths
