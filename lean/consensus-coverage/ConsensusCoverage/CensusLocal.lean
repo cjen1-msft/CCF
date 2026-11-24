@@ -72,4 +72,23 @@ public theorem correct {b : Classes.StepBranch} (mem : b ∈ columns) : Factored
   obtain ⟨⟨_, proof⟩, _, rfl⟩ := List.mem_map.mp mem
   exact proof
 
+/-- On a concrete action, the small compiler can use empty history and
+arbitrary commit and ghost payloads for a local coordinate. Even the
+two node-lookup failure paths agree. The snapshots remain unchanged. -/
+public theorem action_read {b : Classes.StepBranch} (mem : b ∈ columns)
+    (cfg : FullProfile.Configuration) (s t : Model.State) (act : Model.Action) (past : List Model.State)
+    (g : CensusGhost.Input) (pre post : List (Nat × List Entry)) :
+    ((GuardedDomain.ofAction cfg s t [] act).bind fun v =>
+      let e := eventOf act
+      let x : XView := ⟨v, e, outputsOf v.actor v.pre e, pre, post⟩
+      CensusGhost.Exec.read? g ⟨cfg, some x⟩ b) = Readers.read? (Readers.read cfg s act t past) b := by
+  cases a : CCF.MultiNodeTransitionSystem.nodeState s (GuardedDomain.actionActor act) <;>
+    cases z : CCF.MultiNodeTransitionSystem.nodeState t (GuardedDomain.actionActor act) <;>
+    simp only [Readers.read, ofXAction, GuardedDomain.ofAction, a, z,
+      Option.bind_eq_bind, Option.bind_none, Option.bind_some, pure]
+  · rfl
+  · rfl
+  · rfl
+  · exact correct mem g cfg (packX (GuardedDomain.pack _ s t past _ _ _) (eventOf act)) [] pre post
+
 end ConsensusCoverage.CensusLocal
