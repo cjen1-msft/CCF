@@ -18,6 +18,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace
@@ -256,6 +257,12 @@ namespace
     Ref buffer;
     U64 count = 0;
   };
+
+  L* history_job(L* bounds, L* actions, L* unit)
+  {
+    lean_dec(unit);
+    return ccf_scale_history_row(bounds, actions);
+  }
 
   struct Search
   {
@@ -568,6 +575,36 @@ namespace
       initialize();
       visited.insert({0, 0, 0});
       parents.push_back({NIL, NIL});
+      struct Audit
+      {
+        Ref task;
+        U64 step, frame;
+        Id cases;
+      };
+      std::vector<Audit> audits;
+      auto check_audits = [&]() {
+        for (const auto& job : audits)
+        {
+          auto row = lean_task_get(job.task.p);
+          if (lean_is_scalar(row))
+            throw std::runtime_error("ordered-history row replay failed");
+          const auto actual = bytes(Ref::borrow(lean_ctor_get(row, 0)));
+          const auto& cached = census.at(job.cases).answers;
+          if (actual != cached)
+          {
+            const auto i = std::mismatch(
+              actual.begin(), actual.end(), cached.begin(), cached.end());
+            throw std::runtime_error(
+              "ordered-history mismatch on edge " + std::to_string(job.step) +
+              ", frame " + std::to_string(job.frame) + ", question " +
+              std::to_string(i.first - actual.begin()));
+          }
+          ++audited;
+        }
+        audits.clear();
+        if (audited && audited % 1024 == 0)
+          std::cout << "reader audit: " << audited << " matching rows" << std::endl;
+      };
       auto start = Clock::now();
       auto expired = [&]() {
         return static_cast<U64>(
@@ -590,20 +627,14 @@ namespace
           if (audit_every && steps % audit_every == 0)
           {
             auto prefix = actions(parent_path(id(head), arc.edge));
-            Ref row(call<ccf_scale_history_row>(b, prefix.p));
-            if (lean_is_scalar(row.p))
-              throw std::runtime_error("ordered-history row replay failed");
-            const auto actual = bytes(Ref::borrow(row[0]));
-            const auto& cached = census.at(r.label.cases).answers;
-            if (actual != cached)
-            {
-              const auto i = std::mismatch(actual.begin(), actual.end(), cached.begin(), cached.end());
-              throw std::runtime_error(
-                "ordered-history mismatch on edge " + std::to_string(steps) +
-                ", frame " + std::to_string(head) + ", question " +
-                std::to_string(i.first - actual.begin()));
-            }
-            ++audited;
+            auto fn = lean_alloc_closure(reinterpret_cast<void*>(history_job), 3, 2);
+            lean_inc(b);
+            lean_closure_set(fn, 0, b);
+            lean_closure_set(fn, 1, std::exchange(prefix.p, lean_box(0)));
+            audits.push_back({Ref(lean_task_spawn_core(fn, 0, false)), steps, head, r.label.cases});
+            // Bound retained ordered paths even when the task pool is small.
+            if (audits.size() == 16)
+              check_audits();
           }
           record(r.label, 1, [&](Id i) {
             return replay(id(head), arc.edge, r.label, i);
@@ -620,7 +651,11 @@ namespace
                     << std::endl;
       }
       if (audit_every)
+      {
+        if (!audits.empty())
+          check_audits();
         std::cout << "ordered-history row comparisons: " << audited << '\n';
+      }
       report(visited.frames.size());
     }
 
