@@ -375,8 +375,8 @@ or action kinds. A column can have more than one sufficient blocker. -/
 theorem exclusion_counts :
     let columns := FullProfile.stepBranches
     let count := fun k => (columns.filter fun b => decide (k ∈ blockers b)).size
-    columns.size = 433 ∧ (columns.filter fun b => !(blockers b).isEmpty).size = 111 ∧
-      count .pending = 21 ∧ count .now = 59 ∧ count .election = 20 ∧ count .commit = 11 := by
+    columns.size = 461 ∧ (columns.filter fun b => !(blockers b).isEmpty).size = 121 ∧
+      count .pending = 21 ∧ count .now = 62 ∧ count .election = 26 ∧ count .commit = 13 := by
   decide +kernel
 
 end
@@ -442,19 +442,19 @@ private theorem nodesSame_of_read (s : ActionProfile.Step)
 private def witnessCounts (s : ActionProfile.Step) : Nat × Nat :=
   ((excludedColumns s).size, (newColumns s).size)
 
-/-- An initialized heartbeat changes only the queue and yields 48 false bits
+/-- An initialized heartbeat changes only the queue and yields 58 false bits
 beyond the existing exact and tag readers. -/
 public theorem queue_only_witness :
     ∃ s : ActionProfile.Step, s.before.nodes = s.after.nodes ∧ s.before.network ≠ s.after.network ∧
-      witnessCounts s = (90, 48) ∧ ∀ b ∈ newColumns s, ActionProfile.label s (.step b) = false := by
+      witnessCounts s = (100, 58) ∧ ∀ b ∈ newColumns s, ActionProfile.label s (.step b) = false := by
   refine ⟨queueOnly, nodesSame_of_read _ (by decide +kernel), ?_, by decide +kernel, fun _ => newColumns_false _⟩
   exact fun eq => (by decide : 0 ≠ 1) (congrArg List.length eq)
 
-/-- An initialized unsigned append changes only the nodes and yields 34 false
+/-- An initialized unsigned append changes only the nodes and yields 41 false
 bits beyond the existing exact and tag readers. -/
 public theorem nodes_only_witness :
     ∃ s : ActionProfile.Step, s.before.network = s.after.network ∧ s.before.nodes ≠ s.after.nodes ∧
-      witnessCounts s = (52, 34) ∧ ∀ b ∈ newColumns s, ActionProfile.label s (.step b) = false := by
+      witnessCounts s = (59, 41) ∧ ∀ b ∈ newColumns s, ActionProfile.label s (.step b) = false := by
   refine ⟨nodesOnly, rfl, ?_, by decide +kernel, fun _ => newColumns_false _⟩
   exact fun eq => (by decide : [1, 0] ≠ [2, 0])
     (congrArg (List.map (fun p : NodeID × NodeState => p.2.log.length)) eq)

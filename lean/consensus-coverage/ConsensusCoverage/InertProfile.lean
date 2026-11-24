@@ -153,7 +153,7 @@ private def heartbeat : Model.Envelope :=
 
 /-- Two sends from a voter to another voter. The second successful send
 changes the packet count from one to two, with the same empty AppendEntries
-envelope. All 433 step answers are false and both state keys are `(true,false)`. -/
+envelope. All step answers are false and both state keys are `(true,false)`. -/
 public theorem duplicate_heartbeat_witness :
     ∃ s : ActionProfile.Step, s.cfg = {0, 1} ∧ s.nodes = [0, 1] ∧
       s.act = .local 0 (.sendEntries 1 0) ∧ gate s.before s.act = true ∧

@@ -3,6 +3,7 @@ module
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
+public meta import ConsensusCoverage.ReachPath
 meta import Lean
 public import ConsensusCoverage.SolvedWitnesses
 import all ConsensusCoverage.SolvedWitnesses
@@ -54,18 +55,18 @@ private theorem actual (event : IsNomination c)
     simp [Ctx.sent, ← ran.2] at sent
 
 private theorem reach434 {e : Model.Envelope} (sent : e ∈ c.sent) (fresh : ¬ Pending f e) :
-    SolvedWitnesses.reach_434 f t c t c.tr := by
+    (reach% SolvedWitnesses.step_summary_input_nominateSuccessor[16,0]) f t c t c.tr := by
   have pending : Pending (f.advance t) e := by
     change e ∈ t.network
     rw [c.tr.networkEq]
     exact List.mem_append_right _ sent
-  have h26 : SolvedWitnesses.reach_26 f t c c e :=
+  have h26 : (reach% SolvedWitnesses.step_new_message_h_proposeRequestVoteRequest[0]) f t c c e :=
     ⟨⟨pending, fresh, rfl⟩, sent, pending, rfl⟩
   exact ⟨Or.inr (Or.inr (Or.inr ⟨e, h26, sent, rfl⟩)), rfl, HEq.rfl⟩
 
-private theorem reach2296 (h : SolvedWitnesses.reach_434 f t c t c.tr)
+private theorem reach2296 (h : (reach% SolvedWitnesses.step_summary_input_nominateSuccessor[16,0]) f t c t c.tr)
     (event : c.event = .internal .nominateSuccessor) :
-    SolvedWitnesses.reach_2296 f t c c.actor c.pre :=
+    (reach% SolvedWitnesses.step_nominate_sends_successor_some[16,0]) f t c c.actor c.pre :=
   ⟨c.event, ⟨t, c.tr, h, rfl, rfl, rfl⟩, event⟩
 
 meta section
@@ -89,21 +90,21 @@ private partial def selectArm (name : Name) : TacticM Unit := do
     unless startsWithReach name p do throwError "could not find arm for {name}"
 
 /-- Select an arm by its first reach conjunct, rather than its position in the generated Or. -/
-elab "reach_arm " reach:ident : tactic => withMainContext do
-  selectArm (← realizeGlobalConstNoOverloadWithInfo reach)
+elab "reach_arm " path:reachPath : tactic => withMainContext do
+  selectArm (← ReachPath.resolve path)
 
 end
 
 public theorem summary_event_internal (event : IsNomination c)
     {e : Model.Envelope} (fresh : FreshOutgoing c e) :
     SolvedWitnesses.sig c .summary_event_internal := by
-  reach_arm SolvedWitnesses.reach_1307
+  reach_arm SolvedWitnesses.step_summary_event_internal[16]
   exact ⟨c.event, ⟨t, c.tr, reach434 fresh.1 fresh.2, rfl⟩, .nominateSuccessor, event⟩
 
 public theorem summary_input_nominateSuccessor (event : IsNomination c)
     {e : Model.Envelope} (fresh : FreshOutgoing c e) :
     SolvedWitnesses.sig c .summary_input_nominateSuccessor := by
-  reach_arm SolvedWitnesses.reach_1307
+  reach_arm SolvedWitnesses.step_summary_input_nominateSuccessor[16]
   exact ⟨c.event, ⟨t, c.tr, reach434 fresh.1 fresh.2, rfl⟩, event⟩
 
 public theorem quiet_summary_either_inl (event : IsNomination c)
@@ -111,9 +112,9 @@ public theorem quiet_summary_either_inl (event : IsNomination c)
     SolvedWitnesses.sig c .quiet_summary_either_inl := by
   obtain ⟨same, role, nominated, _⟩ := actual event fresh.1
   have engaged : Engaged c.pre := by simp [Engaged, role]
-  reach_arm SolvedWitnesses.reach_2345
-  have path : SolvedWitnesses.reach_2345 f t c c.actor c.pre c.pre c.event c.sent := by
-    reach_arm SolvedWitnesses.reach_2296
+  reach_arm SolvedWitnesses.step_quiet_summary_either_inl[7]
+  have path : (reach% SolvedWitnesses.step_quiet_summary_either_inl[7]) f t c c.actor c.pre c.pre c.event c.sent := by
+    reach_arm SolvedWitnesses.step_nominate_sends_successor_some[16,0]
     exact ⟨c.pre, reach2296 (reach434 fresh.1 fresh.2) event,
       ⟨role, nominated⟩, role, nominated, ⟨role, nominated⟩, role, nominated, rfl, rfl, event⟩
   refine ⟨c.actor, c.pre, c.pre, c.event, c.sent, path, Or.inl engaged, engaged,
@@ -124,7 +125,7 @@ public theorem nominate_sends_successor_some (event : IsNomination c)
     {e : Model.Envelope} (fresh : FreshOutgoing c e) :
     SolvedWitnesses.sig c .nominate_sends_successor_some := by
   obtain ⟨_, role, _, successor⟩ := actual event fresh.1
-  reach_arm SolvedWitnesses.reach_2451
+  reach_arm SolvedWitnesses.step_nominate_sends_successor_some[16]
   exact ⟨c.actor, c.pre, Or.inl (reach2296 (reach434 fresh.1 fresh.2) event),
     role, role, role, successor⟩
 
@@ -204,12 +205,21 @@ private inductive Shape where
 
 /-- These two generated proof cones only need the summary portals, the
     argument pins of nomination/advance-commit, and the sends of quiet summary. -/
-private def shape (n : Name) : Shape :=
-  let i := ((n.getString!.drop 6).toString.toNat?).getD 0
-  if 447 ≤ i && i ≤ 475 then .portal
-  else if (2280 ≤ i && i ≤ 2308) || (2435 ≤ i && i ≤ 2463) then .arguments
-  else if 2338 ≤ i && i ≤ 2373 then .quiet
-  else .closed
+private def shapes : MetaM (Name → Shape) := do
+  let children (n : Name) : MetaM (Array Name) := do
+    return ReachPath.children solved (← getConstInfo n).value!
+  let portals ← (← children ``SolvedWitnesses.step_appendBatch_summary_mem_append_inl).flatMapM children
+  let quiet ← children ``SolvedWitnesses.step_quiet_summary_either_inr
+  let mut arguments := #[]
+  for arm in ← children ``SolvedWitnesses.step_nominate_sends_successor_none do
+    for child in ← children arm do
+      if (← children child).any portals.contains then
+        arguments := arguments.push arm |>.push child
+  return fun n =>
+    if portals.contains n then .portal
+    else if arguments.contains n then .arguments
+    else if quiet.contains n then .quiet
+    else .closed
 
 private def reach? (p : Expr) : Option Name := do
   let n ← p.getAppFn.constName?
@@ -229,7 +239,7 @@ private abbrev Fact := Expr × Expr
 
 mutual
 
-private partial def certify (n : Name) : MetaM Unit := do
+private partial def certify (shape : Name → Shape) (n : Name) : MetaM Unit := do
   if (← getEnv).contains (certName n) then return
   let ci ← getConstInfo n
   let levels := ci.levelParams.map mkLevelParam
@@ -253,17 +263,17 @@ private partial def certify (n : Name) : MetaM Unit := do
       else
         withLocalDeclD `nom (← mkAppM ``IsNomination #[c]) fun nom =>
           withLocalDeclD `h pred fun h => do
-            let proof ← follow result nom none [(p, h)] []
+            let proof ← follow shape result nom none [(p, h)] []
             add #[nom, h] proof
     catch e => throwError "certifying {n}: {e.toMessageData}"
 
 /-- Traverse the positive logical skeleton; a subeffect proved impossible
     immediately discharges its enclosing conjunction. -/
-private partial def follow (result nom : Expr) (succ : Option Expr)
+private partial def follow (shape : Name → Shape) (result nom : Expr) (succ : Option Expr)
     (todo seen : List Fact) : MetaM Expr := do
   let (p, h) :: rest := todo | throwError "unresolved leaf for {result}"
   if let some n := reach? p then
-    certify n
+    certify shape n
     let .const _ ls := p.getAppFn | throwError "expected generated reach"
     let kind := shape n
     let proof := mkAppN (mkConst (certName n) ls)
@@ -278,18 +288,18 @@ private partial def follow (result nom : Expr) (succ : Option Expr)
         return ← closeGuard proof nom test
       let hargs ← mkAppM ``And.left #[proof]
       if ← isDefEq (← inferType hargs) result then return hargs
-    return ← follow result nom succ rest ((p', proof) :: seen)
+    return ← follow shape result nom succ rest ((p', proof) :: seen)
   if p.isAppOfArity ``And 2 then
-    return ← follow result nom succ
+    return ← follow shape result nom succ
       ((p.getArg! 0, ← mkAppM ``And.left #[h]) :: (p.appArg!, ← mkAppM ``And.right #[h]) :: rest) seen
   if p.isAppOfArity ``Or 2 then
-    return ← splitOr p h fun q hq => follow result nom succ ((q, hq) :: rest) seen
+    return ← splitOr p h fun q hq => follow shape result nom succ ((q, hq) :: rest) seen
   if let some (_, no) := seen.find? (fun (q, _) => q.isAppOfArity ``Not 1 &&
       q.appArg!.isAppOf ``BumpingSend) then
     if result.isConstOf ``False && (← isDefEq p (← inferType no).appArg!) then
       return mkApp no h
   if p.isAppOfArity ``Exists 2 then
-    return ← openExist p h fun q hq => follow result nom succ ((q, hq) :: rest) seen
+    return ← openExist p h fun q hq => follow shape result nom succ ((q, hq) :: rest) seen
   if p.isForall then
     if result.isAppOfArity ``Not 1 && result.appArg!.isAppOf ``BumpingSend then
       if let some proof ← observing? (mkAppM ``proposal_not_bumping #[h]) then
@@ -298,11 +308,12 @@ private partial def follow (result nom : Expr) (succ : Option Expr)
       if let some (_, args) := seen.find? (fun (q, _) => q.isAppOf ``Arguments) then
         if let some proof ← observing? (mkAppM ``successor_conflict #[args, s, h]) then
           return proof
-  follow result nom succ rest seen
+  follow shape result nom succ rest seen
 
 end
 
 private def compileNegatives : MetaM Unit := do
+  let shape ← shapes
   for (n, needsSuccessor) in [(``SolvedWitnesses.step_quiet_summary_either_inr, false),
       (``SolvedWitnesses.step_nominate_sends_successor_none, true)] do
     let ci ← getConstInfo n
@@ -312,7 +323,7 @@ private def compileNegatives : MetaM Unit := do
       let pred := mkAppN (mkConst n ls) xs
       withLocalDeclD `nom (← mkAppM ``IsNomination #[c]) fun nom => do
         let close (succ : Option Expr) := withLocalDeclD `h pred fun h => do
-          let proof ← follow (mkConst ``False) nom succ [(p, h)] []
+          let proof ← follow shape (mkConst ``False) nom succ [(p, h)] []
           let args := xs ++ #[nom] ++ succ.toArray ++ #[h]
           addDecl <| .thmDecl {
             name := certName n, levelParams := ci.levelParams

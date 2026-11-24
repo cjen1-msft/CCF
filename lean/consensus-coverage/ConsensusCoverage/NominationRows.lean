@@ -4,6 +4,7 @@ module
 -- Licensed under the Apache 2.0 License.
 
 meta import Lean
+meta import ConsensusCoverage.ReachPath
 public meta import ConsensusCoverage.EventSupport
 public import ConsensusCoverage.ReducedQuestions
 public import ConsensusCoverage.SignedQuiet
@@ -44,39 +45,42 @@ private theorem oldNow [Config.InitialConfiguration] {f : Frame} {t : Model.Stat
 
 private theorem payload26 [Config.InitialConfiguration] {f : Frame} {t : Model.State}
     {c w : Ctx f t} {e : Model.Envelope} (stable : Stable f t c)
-    (reach : SolvedWitnesses.reach_26 f t c w e) {m : Message}
+    (reach : (reach% SolvedWitnesses.step_new_message_h_proposeRequestVoteRequest[0]) f t c w e) {m : Message}
     (eq : e.payload = m) (no : proposal m = false) : False := by
   have yes := stable.only e reach.1.1 reach.1.2.1
   simp_all
 
 private theorem no43 [Config.InitialConfiguration] {f : Frame} {t : Model.State}
     {c w : Ctx f t} {e : Model.Envelope} (stable : Stable f t c)
-    (h : SolvedWitnesses.reach_43 f t c w e) : False := by
+    (h : (reach% SolvedWitnesses.step_message_terms_mem_network_inr[0]) f t c w e) : False := by
   obtain ⟨pending, bumps, notOld, _⟩ := h
   have yes := stable.only e pending (fun old => notOld ⟨old, bumps⟩)
   cases eq : e.payload <;> simp_all [proposal, Bumping]
 
 private theorem event434 [Config.InitialConfiguration] {f : Frame} {t u : Model.State}
     {c : Ctx f t} {tr : LocalTransition f.current u} (stable : Stable f t c)
-    (h : SolvedWitnesses.reach_434 f t c u tr) : tr.event = .internal .nominateSuccessor := by
+    (h : (reach% SolvedWitnesses.step_summary_input_nominateSuccessor[16,0]) f t c u tr) :
+    tr.event = .internal .nominateSuccessor := by
   obtain ⟨_, rfl, heq⟩ := h
   cases eq_of_heq heq
   exact stable.event
 
 private theorem event463 [Config.InitialConfiguration] {f : Frame} {t : Model.State} {c : Ctx f t}
-    {n st e} (s : Stable f t c) (h : SolvedWitnesses.reach_463 f t c n st e) :
+    {n st e} (s : Stable f t c)
+    (h : (reach% SolvedWitnesses.step_appendBatch_summary_mem_append_inl[16,0]) f t c n st e) :
     e = .internal .nominateSuccessor := by
   obtain ⟨_, _, h, _, _, rfl⟩ := h
   exact event434 s h
 
 private theorem event1307 [Config.InitialConfiguration] {f : Frame} {t : Model.State} {c : Ctx f t}
-    {e} (s : Stable f t c) (h : SolvedWitnesses.reach_1307 f t c e) :
+    {e} (s : Stable f t c) (h : (reach% SolvedWitnesses.step_summary_input_nominateSuccessor[16]) f t c e) :
     e = .internal .nominateSuccessor := by
   obtain ⟨_, _, h, rfl⟩ := h
   exact event434 s h
 
 private theorem event1457 [Config.InitialConfiguration] {f : Frame} {t : Model.State} {c : Ctx f t}
-    {st e} (s : Stable f t c) (h : SolvedWitnesses.reach_1457 f t c st e) :
+    {st e} (s : Stable f t c)
+    (h : (reach% SolvedWitnesses.step_appendEntriesRequest_summary_observe_bumping_inl[16,0]) f t c st e) :
     e = .internal .nominateSuccessor := by
   obtain ⟨_, _, h, _, rfl⟩ := h
   exact event434 s h
@@ -109,8 +113,11 @@ private def cert (n : Name) := `ConsensusCoverage.NominationRows ++ Name.mkSimpl
 private def eventConflict (stable : Expr) (atoms : List Fact) : MetaM (Option Expr) := do
   for (p, h) in atoms do
     let some n := p.getAppFn.constName? | continue
-    let some lem := [( ``SolvedWitnesses.reach_463, ``event463),
-        (``SolvedWitnesses.reach_1307, ``event1307), (``SolvedWitnesses.reach_1457, ``event1457)].lookup n | continue
+    let some lem := [
+      ((reachName% SolvedWitnesses.step_appendBatch_summary_mem_append_inl[16,0]), ``event463),
+      ((reachName% SolvedWitnesses.step_summary_input_nominateSuccessor[16]), ``event1307),
+      ((reachName% SolvedWitnesses.step_appendEntriesRequest_summary_observe_bumping_inl[16,0]), ``event1457)
+    ].lookup n | continue
     let nom ← mkAppM lem #[stable, h]
     for (q, eq) in atoms do
       unless q.isAppOfArity ``Eq 3 && q.getArg! 1 == p.appArg! do continue
@@ -140,8 +147,10 @@ private partial def deny (ctx : Simp.Context) (stable : Expr) (todo : List Fact)
     StutterProfile.contradictionFrom ctx atoms
   if let .const n us := p.getAppFn then
     if n.getPrefix == `ConsensusCoverage.SolvedWitnesses && n.getString!.startsWith "reach_" then
-      if n == ``SolvedWitnesses.reach_43 then return some (← mkAppM ``no43 #[stable, h])
-      if n == ``SolvedWitnesses.reach_26 then return ← deny ctx stable rest ((p.appArg!, h) :: packets) shapes atoms
+      if n == (reachName% SolvedWitnesses.step_message_terms_mem_network_inr[0]) then
+        return some (← mkAppM ``no43 #[stable, h])
+      if n == (reachName% SolvedWitnesses.step_new_message_h_proposeRequestVoteRequest[0]) then
+        return ← deny ctx stable rest ((p.appArg!, h) :: packets) shapes atoms
       if ← certify n then return some (mkAppN (mkConst (cert n) us) (p.getAppArgs ++ #[stable, h]))
   if p.isAppOfArity ``Eq 3 then
     let rhs := p.getArg! 2
@@ -212,9 +221,13 @@ private def compile : MetaM Unit := do
       let one (arm : Expr) (name : Name) : Gen Expr := do
         let n := arm.getAppFn.constName!
         withLocalDeclD `h arm fun h => do
-          let out ← mkEq (mkApp (mkConst ``possible) (mkConst name)) (mkConst ``Bool.true)
-          let pf ← if ← certify n then mkFalseElim out (mkAppN (mkConst (cert n)) (ps ++ #[stable, h]))
-            else mkEqRefl (mkConst ``Bool.true)
+          let selected := mkApp (mkConst ``possible) (mkConst name)
+          let out ← mkEq selected (mkConst ``Bool.true)
+          let pf ← if ← withTransparency .all (isDefEq selected (mkConst ``Bool.true)) then
+            mkEqRefl (mkConst ``Bool.true)
+          else
+            unless ← certify n do throwError "unproved stable nomination exclusion: {name}"
+            mkFalseElim out (mkAppN (mkConst (cert n)) (ps ++ #[stable, h]))
           mkLambdaFVars #[h] pf
       let (arms, _) ← (bs.zipWithM one branch.ctors.toArray).run {}
       addDecl (.thmDecl {

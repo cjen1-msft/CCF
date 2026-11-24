@@ -364,7 +364,7 @@ public def diagonal (pre : ProofContexts.Answers) : FullProfile.Profile
   | .step _ => false
   | .post b => pre b
 
-/-- All 433 coordinates share the context of the recorded action. -/
+/-- All coordinates share the context of the recorded action. -/
 public theorem step_profile_of_noNewSupport (s : ActionProfile.Step) (support : NoNewSupport s.before s.after)
     (logs : @StableLogs ⟨s.cfg⟩ s.frame s.after) :
     (ActionProfile.label s).step = fun _ => false := by
@@ -386,14 +386,14 @@ public theorem step_profile_of_stable (s : ActionProfile.Step) (stutter : s.afte
     (ActionProfile.label s).step = fun _ => false :=
   step_profile_of_support s (.of_eq stutter) logs
 
-/-- All 433 action-specific coordinates on initialized stutters with no
+/-- All action-specific coordinates on initialized stutters with no
 current votes or signed entries. -/
 public theorem step_profile (s : ActionProfile.Step) (stutter : s.after = s.before)
     (quiet : UnsignedUnvoted s.before) :
     (ActionProfile.label s).step = fun _ => false :=
   step_profile_of_stable s stutter (step_stable s stutter quiet)
 
-/-- The full 457-coordinate label, with unchanged pre/post proof-state answers. -/
+/-- The full label, with unchanged pre/post proof-state answers. -/
 public theorem label_eq_of_noNewSupport (s : ActionProfile.Step) (support : NoNewSupport s.before s.after)
     (logs : @StableLogs ⟨s.cfg⟩ s.frame s.after) :
     ActionProfile.label s = diagonal (ProofContexts.answers (StateCoverage.read s.cfg s.before s.past)) := by

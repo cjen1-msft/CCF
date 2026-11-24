@@ -503,6 +503,7 @@ including certificates proving a key that was already present. The exact
 committed-family bit excludes only new keys. Check the precise difference. -/
 public theorem delta_exceptions : missingDelta =
     ([.rankedElections_elected_inl, .old_complete_elected_after_inl,
+      .new_in_elected_led_inl, .new_in_elected_led_inr,
       .new_in_elected_backing_inl, .new_in_elected_backing_inr,
       .new_in_elected_lt_trichotomy_inl, .new_in_elected_lt_trichotomy_inr_inl,
       .new_in_elected_canon_chain_inl, .new_in_elected_canon_chain_inr,
@@ -517,13 +518,13 @@ membership in a smallest set (ties count for all their families). -/
 public theorem census :
     let columns := FullProfile.stepBranches.toList
     let size := fun b => ((supports b).headD []).length
-    columns.length = 433 ∧
+    columns.length = 461 ∧
       columns.all (fun b => !(supports b).isEmpty) = true ∧
       ([1, 2, 3, 4, 5, 6, 7].map fun n => columns.countP (fun b => size b == n)) =
-        [106, 108, 22, 28, 4, 30, 135] ∧
+        [119, 121, 22, 28, 6, 30, 135] ∧
       (familiesInOrder.map fun k => columns.countP fun b =>
         (supports b).any fun ks => ks.length == size b && ks.contains k) =
-        [230, 358, 184, 142, 278, 214, 239] := by
+        [232, 368, 187, 146, 296, 216, 249] := by
   decide +kernel
 
 end ConsensusCoverage.EvidenceSupport
