@@ -3,6 +3,7 @@ module
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
+meta import ConsensusCoverage.ReachPath
 public import ConsensusCoverage.LeaderEffect
 public import ConsensusCoverage.PinnedClasses
 import all ConsensusCoverage.LeaderEffect
@@ -33,7 +34,7 @@ private theorem changedActor [Config.InitialConfiguration] {f : Frame} {t : Mode
 /-- Common generated path into the actor branch of `leader_led`. -/
 private theorem leaderReach [Config.InitialConfiguration] {f : Frame} {t : Model.State}
     (c : Ctx f t) :
-    PinnedClasses.reach_11 f t c c c.actor c.post ↔
+    (reach% PinnedClasses.step_leader_led_now_after_inl[0]) f t c c c.actor c.post ↔
       c.post.role = .primary ∧ ¬ Now f c.actor c.post := by
   constructor
   · rintro ⟨_, rfl, _, _, _, primary, fresh, _, rfl, rfl⟩

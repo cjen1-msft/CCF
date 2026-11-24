@@ -436,7 +436,7 @@ duplicate entries or the syntax of an `allowed` list. -/
 theorem exclusion_counts :
     let columns := FullProfile.stepBranches
     let misses := fun b => (inputs ++ messages).countP (fun t => decide (t ∉ allowed b))
-    columns.size = 433 ∧ (columns.filter fun b => misses b > 0).size = 183 ∧
+    columns.size = 461 ∧ (columns.filter fun b => misses b > 0).size = 183 ∧
       columns.foldl (fun n b => n + misses b) 0 = 1780 := by decide +kernel
 
 /-- A local timeout cannot satisfy the commit-backing branch for the maximum

@@ -3,7 +3,7 @@ module
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-public meta import Lean
+meta import ConsensusCoverage.ReachPath
 public import ConsensusCoverage.Classes
 import all ConsensusCoverage.Classes
 import all Consensus.Proofs.SafetyInvariant
@@ -43,25 +43,13 @@ public def Backing (f : Frame) : Prop :=
   | _ => backing
 
 section
--- Reach names are numbered across the whole proof, including unrelated step
--- classes. Read the path from the named state predicate, not a global index.
-meta section
-open Lean Elab Term
-elab "firstReach% " id:ident : term => do
-  let ci ← getConstInfo (← realizeGlobalConstNoOverload id)
-  let some (.const n _) := ci.value!.find? (fun
-    | .const (.str pre name) _ => pre == `ConsensusCoverage.Classes && name.startsWith "reach_"
-    | _ => false) | throwErrorAt id "no generated reach path in {id}"
-  elabTerm (mkIdent n) none
-end
-
 variable [Config.InitialConfiguration]
 
 private abbrev nilPath (f : Frame) : Prop :=
-  (firstReach% state_signatureIndex_le_maxCommittableIndex_values_nil) f
+  (reach% state_signatureIndex_le_maxCommittableIndex_values_nil[0]) f
 
 private abbrev signedPath (f : Frame) (log : List Entry) (i : Nat) : Prop :=
-  (firstReach% state_signatureIndex_le_maxCommittableIndex_mem_cons_inl) f log i
+  (reach% state_signatureIndex_le_maxCommittableIndex_mem_cons_inl[0]) f log i
 
 private theorem left_inl (f : Frame) :
     state_committed_logs_comparable_left_backed_inl f ↔ Zero f := by

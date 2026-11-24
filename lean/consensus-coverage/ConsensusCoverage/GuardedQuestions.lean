@@ -4,6 +4,7 @@ module
 -- Licensed under the Apache 2.0 License.
 
 meta import Lean
+meta import ConsensusCoverage.ReachPath
 public import ConsensusCoverage.GuardedDomain
 import all ConsensusCoverage.GuardedDomain
 import all ConsensusCoverage.FrontierWitnesses
@@ -161,8 +162,11 @@ private def compile : MetaM Unit := do
 
     -- This family has state, log-index and historical-observation guards.
     -- These are shared DAG nodes, not a list of supported columns.
-    let roots := #[``SolvedWitnesses.reach_0, ``SolvedWitnesses.reach_1, ``SolvedWitnesses.reach_9,
-      ``SolvedWitnesses.reach_10, ``SolvedWitnesses.reach_39]
+    let roots := #[(reachName% SolvedWitnesses.step_terms_mem_append_inl[0]),
+      (reachName% SolvedWitnesses.step_terms_mem_append_inl[1]),
+      (reachName% SolvedWitnesses.step_active_now_after_inl[0]),
+      (reachName% SolvedWitnesses.step_led_cur_led_after_inl[0]),
+      (reachName% SolvedWitnesses.step_persist_now_after_inl[0])]
     let mut basic : SimpTheorems := {}
     for r in #[``eq_self, ``and_true, ``true_and, ``or_false, ``false_or,
         ``exists_const, ``and_assoc, ``not_false_eq_true, ``not_true_eq_false] do

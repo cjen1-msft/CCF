@@ -3,6 +3,7 @@ module
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
+meta import ConsensusCoverage.ReachPath
 public import ConsensusCoverage.ActionProfile
 import all ConsensusCoverage.ActionProfile
 import all ConsensusCoverage.FullProfile
@@ -20,7 +21,7 @@ generated send premises. Thus the executable code only needs the two raw queues.
 
 The scope is `covered`; this module does not decide the other generated questions
 or count the joint reachable edge labels. For example, `terms_now_after_inr` also
-requires the fresh canonical-log witness in `reach_1`. An unchanged other node
+requires the fresh canonical-log witness. An unchanged other node
 alone does not supply that witness.
 -/
 
@@ -62,7 +63,7 @@ private theorem pending_of_sent [Config.InitialConfiguration] {f : Frame} {t : M
 
 private theorem reach43_iff [Config.InitialConfiguration] {f : Frame} {t : Model.State}
     (c : Ctx f t) (e : Model.Envelope) :
-    PinnedClasses.reach_43 f t c c e ↔
+    (reach% PinnedClasses.step_message_terms_mem_network_inr[0]) f t c c e ↔
       Pending (f.advance t) e ∧ Bumping e.payload ∧ ¬ Pending f e := by
   constructor
   · rintro ⟨_, _, _, pending, bumps, fresh, _, rfl⟩
@@ -93,7 +94,8 @@ public theorem message_terms_mem_network_inr_iff
 
 private theorem reach25_iff [Config.InitialConfiguration] {f : Frame} {t : Model.State}
     (c : Ctx f t) (e : Model.Envelope) :
-    PinnedClasses.reach_25 f t c c e ↔ Pending (f.advance t) e ∧ ¬ Pending f e := by
+    (reach% PinnedClasses.step_messages_mem_network_inr[0]) f t c c e ↔
+      Pending (f.advance t) e ∧ ¬ Pending f e := by
   constructor
   · rintro ⟨_, _, _, pending, fresh, _, rfl⟩
     exact ⟨pending, fresh⟩
@@ -102,7 +104,8 @@ private theorem reach25_iff [Config.InitialConfiguration] {f : Frame} {t : Model
 
 private theorem reach26_iff [Config.InitialConfiguration] {f : Frame} {t : Model.State}
     (c : Ctx f t) (e : Model.Envelope) :
-    PinnedClasses.reach_26 f t c c e ↔ e ∈ c.sent ∧ ¬ Pending f e := by
+    (reach% PinnedClasses.step_new_message_h_appendEntriesRequest[0]) f t c c e ↔
+      e ∈ c.sent ∧ ¬ Pending f e := by
   constructor
   · rintro ⟨w, pin, _, reach, sent, _, _, rfl⟩
     subst w
@@ -165,7 +168,8 @@ private theorem hasKind_iff (k : MessageKind) (m : Message) :
 private theorem sent_kind_iff [Config.InitialConfiguration] {f : Frame} {t : Model.State}
     (c : Ctx f t) (k : MessageKind) :
     (∃ w : Ctx f t, w = c ∧ ∃ e : Model.Envelope,
-      PinnedClasses.reach_26 f t c w e ∧ SendOK w.actor w.pre w.event w.post e ∧
+      (reach% PinnedClasses.step_new_message_h_appendEntriesRequest[0]) f t c w e ∧
+      SendOK w.actor w.pre w.event w.post e ∧
         ∃ a : k.Arg, e.payload = k.make a ∧ e.payload = k.make a ∧ e ∈ w.sent) ↔
     freshSend f.current c.sent (hasKind k) = true := by
   rw [freshSend_iff]
@@ -181,7 +185,8 @@ private theorem sent_kind_iff [Config.InitialConfiguration] {f : Frame} {t : Mod
 private theorem term_kind_iff [Config.InitialConfiguration] {f : Frame} {t : Model.State}
     (c : Ctx f t) (k : MessageKind) (bumps : ∀ a : k.Arg, Bumping (k.make a)) :
     (∃ w : Ctx f t, w = c ∧ ∃ e : Model.Envelope,
-      PinnedClasses.reach_43 f t c w e ∧ e ∈ w.sent ∧ SendOK w.actor w.pre w.event w.post e ∧
+      (reach% PinnedClasses.step_message_terms_mem_network_inr[0]) f t c w e ∧
+      e ∈ w.sent ∧ SendOK w.actor w.pre w.event w.post e ∧
         ∃ a : k.Arg, e.payload = k.make a ∧ e.payload = k.make a ∧
           Pending (f.advance t) e ∧ Bumping e.payload ∧ 2 ≤ w.post.currentTerm) ↔
     freshSend f.current c.sent (hasKind k) = true := by
@@ -256,7 +261,8 @@ private theorem term_iff [Config.InitialConfiguration] {f : Frame} {t : Model.St
 
 private theorem reach1002_iff [Config.InitialConfiguration] {f : Frame} {t : Model.State}
     (c : Ctx f t) (e : Model.Envelope) :
-    PinnedClasses.reach_1002 f t c c.tr e ↔ Pending (f.advance t) e ∧ ¬ Pending f e := by
+    (reach% PinnedClasses.step_mem_network_mem_append_inl[0]) f t c c.tr e ↔
+      Pending (f.advance t) e ∧ ¬ Pending f e := by
   constructor
   · rintro ⟨w, pin, e', reach, _, _, rfl⟩
     subst w
@@ -266,7 +272,8 @@ private theorem reach1002_iff [Config.InitialConfiguration] {f : Frame} {t : Mod
 
 private theorem reach1003_imp [Config.InitialConfiguration] {f : Frame} {t : Model.State}
     (c : Ctx f t) (e : Model.Envelope) :
-    PinnedClasses.reach_1003 f t c c.tr e → Pending (f.advance t) e ∧ ¬ Pending f e := by
+    (reach% PinnedClasses.step_mem_network_mem_append_inl[1]) f t c c.tr e →
+      Pending (f.advance t) e ∧ ¬ Pending f e := by
   rintro ⟨w, pin, e', reach, _, _, _, rfl⟩
   subst w
   obtain ⟨pending, _, fresh⟩ := (reach43_iff c e).mp reach

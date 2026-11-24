@@ -3,6 +3,7 @@ module
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
+meta import ConsensusCoverage.ReachPath
 public import ConsensusCoverage.ActionProfile
 import all ConsensusCoverage.ActionProfile
 import all ConsensusCoverage.ActionContext
@@ -102,13 +103,13 @@ private theorem necessary [Config.InitialConfiguration] {f : Frame} {t : Model.S
     suffices eq : m.commitIndex = c.pre.commitIndex by exact eq ▸ lt
   -- The eight append/ack arms retain the old commit index in the middle
   -- state. So do the four election arms, through the campaign candidate.
-  · simp only [SolvedWitnesses.reach_689] at reach
+  · reach_unfold SolvedWitnesses.step_advance_backed_advance_inr[0] at reach
     rcases reach with h | h | h | h <;> grind
-  · simp only [SolvedWitnesses.reach_690] at reach
+  · reach_unfold SolvedWitnesses.step_advance_backed_advance_inr[1] at reach
     rcases reach with h | h | h | h <;> grind
-  · simp only [SolvedWitnesses.reach_691] at reach
+  · reach_unfold SolvedWitnesses.step_advance_backed_advance_inr[2] at reach
     rcases reach with h | h <;> grind [primaryState, Campaign]
-  · simp only [SolvedWitnesses.reach_692] at reach
+  · reach_unfold SolvedWitnesses.step_advance_backed_advance_inr[3] at reach
     rcases reach with h | h <;> grind [primaryState, Campaign]
 
 private theorem sufficient [Config.InitialConfiguration] {f : Frame} {t : Model.State}
@@ -127,7 +128,8 @@ private theorem sufficient [Config.InitialConfiguration] {f : Frame} {t : Model.
   have fresh : ¬ Now f c.actor c.post := by
     intro old
     exact Nat.ne_of_gt lt (congrArg NodeState.commitIndex (c.now_pre old))
-  have newState : SolvedWitnesses.reach_27 f t c c c.actor c.post := ⟨c.post_now, fresh, rfl⟩
+  have newState : (reach% SolvedWitnesses.step_commit_backed_kind_ack[0]) f t c c c.actor c.post :=
+    ⟨c.post_now, fresh, rfl⟩
   obtain ⟨leader, success, term, _⟩ := guard
   have log : c.post.log = c.pre.log := advance.log
   have sameTerm : c.post.currentTerm = c.pre.currentTerm := advance.term
@@ -137,7 +139,7 @@ private theorem sufficient [Config.InitialConfiguration] {f : Frame} {t : Model.
   have backed : Backed f c.post.log m.commitIndex c.post.currentTerm := by
     apply c.pre_backed (by rw [log]) (by simp [leader]) (c.pre_led leader)
   have acks := ack_premises c event leader success term advance
-  have reach : SolvedWitnesses.reach_689 f t c c m := by
+  have reach : (reach% SolvedWitnesses.step_advance_backed_advance_inr[0]) f t c c m := by
     -- Fresh-node, then ack. The equality to `Summary.kind c.sum` in
     -- this arm is reflexive by proof irrelevance once its fields are supplied.
     exact .inr (.inr (.inl ⟨newState, c.post_now, c.post_now, src, r, event, leader,

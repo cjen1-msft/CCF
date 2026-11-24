@@ -3,6 +3,7 @@ module
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
+meta import ConsensusCoverage.ReachPath
 public import ConsensusCoverage.BackingRead
 public import ConsensusCoverage.GuardedDomain
 import all ConsensusCoverage.ActionProfile
@@ -21,7 +22,8 @@ open Consensus Consensus.Model Consensus.Proofs Consensus.Proofs.Safety
 set_option maxRecDepth 8192
 
 private abbrev Sources [Config.InitialConfiguration] {f : Frame} {t : Model.State} (c : Ctx f t) :=
-  reach_5 f t c c ∨ reach_6 f t c c ∨ reach_7 f t c c ∨ reach_8 f t c c
+  (reach% step_sorted_now_after_inl[0]) f t c c ∨ (reach% step_sorted_now_after_inl[1]) f t c c ∨
+    (reach% step_sorted_now_after_inl[2]) f t c c ∨ (reach% step_sorted_now_after_inl[3]) f t c c
 
 /-- Every indirect call through an election and a commit still requires new
 evidence. With unchanged nodes only a new committed key can enter this path. -/
@@ -31,13 +33,16 @@ private theorem sources_iff (s : Step) (v : View) (ok : @View.Matches ⟨s.cfg�
   letI : Config.InitialConfiguration := ⟨s.cfg⟩
   let c := s.context
   have vc : v.Matches c := ok
-  have node : reach_5 s.frame s.after c c ↔ v.changed = true := by
-    simp only [reach_5, and_true, GuardedDomain.any_fresh_now c, View.old_post vc, Bool.not_eq_false]
-  have key : reach_6 s.frame s.after c c ↔ label s (.step .commitChains_step_committed_inr) = true := by
+  have node : (reach% step_sorted_now_after_inl[0]) s.frame s.after c c ↔ v.changed = true := by
+    reach_unfold step_sorted_now_after_inl[0]
+    simp only [and_true, GuardedDomain.any_fresh_now c, View.old_post vc, Bool.not_eq_false]
+  have key : (reach% step_sorted_now_after_inl[1]) s.frame s.after c c ↔
+      label s (.step .commitChains_step_committed_inr) = true := by
     rw [label_true]
     change _ ↔ PinnedClasses.sig c _
     rw [CommitKeys.fresh_iff c]
-    simp only [reach_6, and_true, Committed]
+    reach_unfold step_sorted_now_after_inl[1]
+    simp only [and_true, Committed]
   constructor
   · intro h
     by_cases changed : v.changed = true
@@ -55,18 +60,20 @@ private theorem sources_iff (s : Step) (v : View) (ok : @View.Matches ⟨s.cfg�
     have old {k p} (post : Committed (s.frame.advance s.after) k p) : Committed s.frame k p := by
       apply Classical.byContradiction
       exact fun absent => fresh (key.mp ⟨k, p, post, absent, rfl⟩)
-    have no2 {k p n e l j} : ¬reach_2 s.frame s.after c c k p n e l j := by
+    have no2 {k p n e l j} : ¬(reach% step_sorted_now_after_inl[3,0,0]) s.frame s.after c c k p n e l j := by
       rintro ⟨post, elected, lt, new, _⟩
       exact new ⟨old post, by simpa only [Elected, elect] using elected, lt⟩
-    have no3 : ¬reach_3 s.frame s.after c c := fun ⟨_, _, _, _, _, _, root, _⟩ => no2 root
-    have no4 {n st k b i} : ¬reach_4 s.frame s.after c c n st k b i :=
+    have no3 : ¬(reach% step_sorted_now_after_inl[3,0]) s.frame s.after c c :=
+      fun ⟨_, _, _, _, _, _, root, _⟩ => no2 root
+    have no4 {n st k b i} : ¬(reach% step_sorted_now_after_inl[3,1]) s.frame s.after c c n st k b i :=
       fun ⟨_, _, _, _, _, root, _⟩ => no2 root
     rcases h with newNode | new | ⟨_, _, post, notOld, _⟩ | indirect
     · exact changed (node.mp newNode)
     · exact fresh (key.mp new)
     · exact notOld (by simpa only [canon] using post)
-    · change reach_8 s.frame s.after c c at indirect
-      simp only [reach_8, no3, no4, false_and, false_or, exists_false] at indirect
+    · change (reach% step_sorted_now_after_inl[3]) s.frame s.after c c at indirect
+      reach_unfold step_sorted_now_after_inl[3] at indirect
+      simp only [no3, no4, false_and, false_or, exists_false] at indirect
   · exact fun h => h.elim (fun h => .inl (node.mpr h)) (fun h => .inr (.inl (key.mpr h)))
 
 @[expose] public def covered : List Classes.StepBranch :=
