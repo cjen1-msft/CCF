@@ -154,7 +154,7 @@ private def claim27 : Claim :=
 private def claim28 : Claim :=
   ⟨112, 7, [.canon_mono_elected_after_inl], by decide +kernel⟩
 private def claim29 : Claim :=
-  ⟨130, 6, [.canon_mono_now_after_inr], by decide +kernel⟩
+  ⟨130, 6, [.canon_mono_now_after_inr, .completeness_committed_inr], by decide +kernel⟩
 private def claim30 : Claim :=
   ⟨131, 3, [
     .campaign_backed_pre_split_inl, .candidate_kind_inl, .candidate_now_after_inl,
@@ -174,10 +174,10 @@ private def claims : List Claim := [
 /-- Cases witnessed by an executable reader on a replayed corpus step. -/
 public def witnessed : List Classes.StepBranch := claims.flatMap (·.questions)
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 170 := by decide
+public theorem count : witnessed.Nodup ∧ witnessed.length = 171 := by decide
 
 public theorem union_count :
-    (witnessed ++ CaseWitnesses.witnessed).eraseDups.length = 175 := by decide
+    (witnessed ++ CaseWitnesses.witnessed).eraseDups.length = 176 := by decide
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
