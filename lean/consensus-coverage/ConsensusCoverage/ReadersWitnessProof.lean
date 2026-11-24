@@ -27,8 +27,8 @@ public structure Claim where
   questions : List Classes.StepBranch
   accepted : checked schedule offset questions = true
 
-public theorem Claim.occurs (c : Claim) {b : Classes.StepBranch} (mem : b ∈ c.questions) :
-    ∃ s : Step, label s (.step b) = true := by
+private theorem Claim.reads (c : Claim) {b : Classes.StepBranch} (mem : b ∈ c.questions) :
+    ∃ s : Step, Readers.read? (Readers.read s.cfg s.before s.act s.after s.past) b = some true := by
   have ran := c.accepted
   unfold checked at ran
   cases found : ReadersCorpus.stepAt c.schedule c.offset with
@@ -40,7 +40,13 @@ public theorem Claim.occurs (c : Claim) {b : Classes.StepBranch} (mem : b ∈ c.
     rw [Bool.or_eq_true] at accepted
     rcases accepted with prior | test
     · rw [Bool.and_eq_true] at prior
-      exact ReplayAnswers.sound s (.step b) (beq_iff_eq.mp prior.2)
-    · exact Readers.read?_correct s b (beq_iff_eq.mp test)
+      exact (Readers.read?_at s (List.contains_iff_mem.mp prior.1)).trans
+        (congrArg some (ReplayAnswers.sound s (.step b) (beq_iff_eq.mp prior.2)))
+    · exact beq_iff_eq.mp test
+
+public theorem Claim.occurs (c : Claim) {b : Classes.StepBranch} (mem : b ∈ c.questions) :
+    ∃ s : Step, label s (.step b) = true := by
+  obtain ⟨s, yes⟩ := c.reads mem
+  exact ⟨s, Readers.read?_correct s b yes⟩
 
 end ConsensusCoverage.ReadersWitnessProof
