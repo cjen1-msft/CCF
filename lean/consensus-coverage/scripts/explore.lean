@@ -11,6 +11,7 @@ public meta import ConsensusCoverage.DelayedNominationRead
 public meta import ConsensusCoverage.Timely
 public meta import ConsensusCoverage.Families
 public meta import ConsensusCoverage.ReplayAnswers
+public meta import ConsensusCoverage.CensusReplay
 public meta import ConsensusCoverage.PairWitnesses
 meta import all ConsensusCoverage.CanonicalLogs
 meta import all ConsensusCoverage.CommitMonitor
@@ -948,6 +949,7 @@ structure Bounds where
   stepBudget : Option Nat := none
   maxSeconds : Option Nat := none
   caseOut : Option String := none
+  readerCensus : Bool := false
   finiteCaseReads : Bool := false
   ghostMode : GhostMode := .history
   frontierOnly : Bool := false
@@ -961,6 +963,7 @@ def exhaustUsage :=
   "explore.lean --exhaust [--voters 0,1] [--nodes 0,1] [--max-log 2] [--max-term 3]\n" ++
   "  [--max-copies 1] [--max-network N] [--palette core|reconfig|retirement]\n" ++
   "  [--step-budget N] [--max-seconds N] [--case-out TSV] --out FILE\n" ++
+  "  [--reader-census] (include generated three-valued answers in --case-out)\n" ++
   "  [--finite-case-reads] (prepare ReplayAnswers from the finite ghost)\n" ++
   "  [--check-ghost | --incremental] (default: read the proof ghost from history)\n" ++
   "  [--frontier-only] (with --incremental: keep signatures, not expanded states)\n" ++
@@ -976,6 +979,7 @@ def boundOptions : List String → Bounds → Except String Bounds
         d.nodes == d.nodes.eraseDups && d.voters.all d.nodes.contains do
       throw "voters must be a nonempty set of distinct deployed node IDs; node IDs must be distinct"
     if b.caseOut == some b.out then throw "--case-out and --out must differ"
+    if b.readerCensus && b.caseOut.isNone then throw "--reader-census requires --case-out"
     if b.finiteCaseReads && (b.caseOut.isNone || b.ghostMode == .history) then
       throw "--finite-case-reads requires --case-out and an incremental ghost"
     if b.mergeWorkers == 0 then throw "--merge-workers must be positive"
@@ -986,6 +990,7 @@ def boundOptions : List String → Bounds → Except String Bounds
     if b.out.isEmpty then throw exhaustUsage else return b
   | "--out" :: file :: more, b => boundOptions more {b with out := file}
   | "--case-out" :: file :: more, b => boundOptions more {b with caseOut := some file}
+  | "--reader-census" :: more, b => boundOptions more {b with readerCensus := true}
   | "--finite-case-reads" :: more, b => boundOptions more {b with finiteCaseReads := true}
   | "--check-ghost" :: more, b => boundOptions more {b with ghostMode := .check}
   | "--incremental" :: more, b => boundOptions more {b with ghostMode := .incremental}
@@ -1343,6 +1348,7 @@ def readBoundedCases (b : Bounds) (p next : FramePath) (act : Model.Action)
     else match history with
       | some value => pure value
       | none => throw (IO.userError "missing ReplayAnswers history evidence")
+  let generated := if b.readerCensus then some (Readers.read cfg p.state act next.state p.past) else none
   if audit then
     unless decoded.all (fun (q, v) => history.any (fun e => ReplayAnswers.answer e q == some v)) do
       throw (IO.userError s!"decoded answers disagree with ReplayAnswers for {encode key}")
@@ -1356,6 +1362,7 @@ def readBoundedCases (b : Bounds) (p next : FramePath) (act : Model.Action)
       else ReplayAnswers.answer evidence question
     if b.finiteCaseReads && history.any (fun e => ReplayAnswers.answer e question != actual) then
       throw (IO.userError s!"finite case read disagreement at {i} for {encode key}")
+    let actual := actual.orElse fun _ => generated.bind (Readers.read? · FullProfile.stepBranches[i])
     match actual with
     | some true =>
       cases := cases.modify i fun c =>
@@ -1389,7 +1396,7 @@ def writeBoundedCases (file : String) (d : Deployment) (steps : Nat)
     let path := (c.witness.map (boundedWitness d)).getD "\t\t\t\t\n"
     rows := rows.push s!"{i}\t{branchName branch}\t{c.yes}\t{c.no}\t{steps - c.yes - c.no}\t{path}"
   IO.FS.writeFile file (String.join rows.toList)
-  IO.println s!"Case census: used ReplayAnswers on all {steps} admitted edges; wrote {file}"
+  IO.println s!"Case census: {steps} admitted edges; wrote {file}"
 
 def exhaust (b : Bounds) : IO Unit := do
   let d := b.deployment
