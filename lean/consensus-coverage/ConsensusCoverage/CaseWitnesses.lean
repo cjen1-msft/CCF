@@ -357,22 +357,22 @@ private def bounded19Cert : Certificate := certify bounded19 [(4, 1)] bounded19V
     .receive_message_requestVoteResponse]]
 
 private def bounded20 : Run :=
-  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]),     .deliver 0 1,     .deliver 1 0,     .input 0 (.append [{content := .signature}]),     .input 0 (.nominateSuccessor),     .deliver 0 1,     .deliver 1 0]⟩
+  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]),     .deliver 0 1,     .input 0 (.nominateSuccessor),     .deliver 0 1,     .input 1 (.timeout .election),     .deliver 1 0]⟩
 private theorem bounded20Valid : bounded20.valid := by decide
-private def bounded20Cert : Certificate := certify bounded20 [] bounded20Valid
-  [caseAt 6 [.receive_vote_neg]]
+private def bounded20Cert : Certificate := certify bounded20 [(5, 2)] bounded20Valid
+  [caseAt 5 [.receive_message_requestPreVoteRequest]]
 
 private def bounded21 : Run :=
-  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]),     .deliver 0 1,     .input 0 (.nominateSuccessor),     .deliver 0 1,     .deliver 1 0,     .deliver 0 1,     .input 1 (.timeout .checkQuorum)]⟩
+  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]),     .deliver 0 1,     .deliver 1 0,     .input 0 (.append [{content := .signature}]),     .input 0 (.nominateSuccessor),     .deliver 0 1,     .deliver 1 0]⟩
 private theorem bounded21Valid : bounded21.valid := by decide
-private def bounded21Cert : Certificate := certify bounded21 [(4, 1)] bounded21Valid
-  [caseAt 6 [.canon_mono_elected_after_inl]]
+private def bounded21Cert : Certificate := certify bounded21 [] bounded21Valid
+  [caseAt 6 [.receive_vote_neg]]
 
 private def bounded22 : Run :=
-  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature}]),     .input 0 (.timeout .checkQuorum),     .input 0 (.timeout .election),     .deliver 0 1,     .deliver 1 0,     .input 0 (.timeout .election),     .deliver 0 1]⟩
+  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]),     .deliver 0 1,     .input 0 (.nominateSuccessor),     .deliver 0 1,     .deliver 1 0,     .deliver 0 1,     .input 1 (.timeout .checkQuorum)]⟩
 private theorem bounded22Valid : bounded22.valid := by decide
-private def bounded22Cert : Certificate := certify bounded22 [(6, 1)] bounded22Valid
-  [caseAt 6 [.receive_message_requestPreVoteRequest]]
+private def bounded22Cert : Certificate := certify bounded22 [(4, 1)] bounded22Valid
+  [caseAt 6 [.canon_mono_elected_after_inl]]
 
 private def bounded23 : Run :=
   ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .transaction 1 {configuration := some {1}}}, {content := .signature, flushes := [(1, 3)]}]),     .deliver 0 1,     .deliver 1 0,     .input 0 (.sendEntries 1 3),     .deliver 0 1,     .deliver 1 0,     .input 1 (.timeout .election)]⟩
