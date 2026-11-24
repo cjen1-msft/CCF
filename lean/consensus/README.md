@@ -124,12 +124,14 @@ of `False` in its own context. The script-replay result is diagnostic only: the 
 script can rely on different hypotheses in different branches.
 
 The current generator emits 516 step questions and 16 state questions (548 coordinates
-with both endpoints). Results below that cite 433 or 461 step questions, or 457 or 485
-total coordinates, describe earlier question sets.
+with both endpoints). The 16 state answers have been rechecked. The full-label
+family, witness, and support counts below describe earlier question sets unless
+stated otherwise; they are not results for the expanded set.
 
-**State denominator during replay: three profiles for nonempty clusters.** All twelve generated
+**State denominator during replay: three profiles for nonempty clusters.** All sixteen generated
 state questions reduce to two facts: is any node's commit index zero, and does
 some node's committed prefix fit inside a commit certificate held by the proof?
+The two commit-chain questions use the initialized run's chain invariant.
 In that order the reachable keys are `10` (no backing yet), `11` (some node still
 at zero, backing exists), and `01` (no node at zero). The model also permits
 initializing an empty node list under a nonempty voting configuration: this gives
@@ -220,7 +222,7 @@ action 6 leaves the primary at commit index 2; action 9 advances it from 2 to 4.
 These counts describe the captures, not the global reachable table.
 
 **Full state-pair denominator: at least six; exact count unknown.** [The full specification](../consensus-coverage/ConsensusCoverage/FullProfile.lean)
-uses all 457 generated answers (12 before, 433 about the step, 12 after).
+uses all 548 generated answers (16 before, 516 about the step, 16 after).
 For a pair of full snapshots with no history, the label is the set of whole
 answer vectors compatible with that pair on initialized executions. The quotient is
 proved finite, but its capacity is not its reachable count. [The projection theorem](../consensus-coverage/ConsensusCoverage/Projection.lean)
@@ -290,7 +292,7 @@ of always-known answers or family code.
 
 **Full recorded-action denominator: at least 204; at least 201 on multi-node deployments.**
 The [recorded-action specification](../consensus-coverage/ConsensusCoverage/ActionProfile.lean)
-assigns an initialized step exactly one 457-answer vector. All 433 step
+assigns an initialized step exactly one 548-answer vector. All 516 step
 questions use [the same, unique context for the recorded action](../consensus-coverage/ConsensusCoverage/ActionContext.lean).
 The [explorer](../consensus-coverage/scripts/explore.lean) searches initialized
 schedules mechanically, breadth-first and by seeded random walks, optionally
@@ -350,7 +352,7 @@ if an action adds no key, [the next node-preserving action cannot add one either
 [Repeating the same local input](../consensus-coverage/ConsensusCoverage/RepeatedInput.lean)
 at the same node is an exact full-label case. If the first input leaves node
 records unchanged, the repeat sends no new envelope value and establishes no
-new vote grant. **All 433 step answers are false if and only if the repeat adds
+new vote grant. **All 461 step answers are false if and only if the repeat adds
 no committed key.** If the first input also added no key, exactly three full
 labels are possible across all such repeats, one per state context; all three
 have nomination witnesses. Before the first certificate, a repeated nomination
@@ -359,12 +361,12 @@ can only have the all-false `10 -> 10` label.
 [An upper cover](../consensus-coverage/ConsensusCoverage/ActionCover.lean)
 reconstructs every full label from a leader row, the kinds of fresh messages,
 and the remaining answers not ruled out for the recorded event. Depending on
-the event, 237 to 302 bits remain free in this construction. The cover has
-fewer than `2^313` entries, down from `2^457` unrestricted answer vectors.
+the event, 265 to 330 bits remain free in this construction. The cover has
+fewer than `2^341` entries, down from `2^485` unrestricted answer vectors.
 It includes impossible combinations and can represent the same label more
 than once; its size is not a coverage target.
 
-**Exact slice: three full labels have all 433 step answers false.** They are
+**Exact slice: three full labels have all 461 step answers false.** They are
 `10 -> 10`, `11 -> 11`, and `01 -> 01`. [The upper bound](../consensus-coverage/ConsensusCoverage/ZeroRows.lean)
 does not assume the action leaves the snapshot unchanged: removing the last
 zero commit index or establishing the first certificate forces a true step
@@ -377,11 +379,11 @@ actions 3 and 5 resend the same queued heartbeat on opposite sides of backup
 initialization: first `11 -> 11`, then `01 -> 01`.
 
 Membership in this slice is **decidable on every validated action**, even
-when the reader cannot fill in all 433 coordinates. The [four-question
+when the reader cannot fill in all 461 step coordinates. The [four-question
 converse](../consensus-coverage/ConsensusCoverage/SignedQuiet.lean) proves that
 if a node record changes, an envelope is new, a vote grant is new, or a
 committed prefix is new, at least one step answer is true. If none changes,
-all 433 answers are false. An old vote need not be absent: [the grant
+all 461 step answers are false. An old vote need not be absent: [the grant
 reader](../consensus-coverage/ConsensusCoverage/GrantFrontier.lean) checks the
 least request accepted by each eligible voter record. Every other request
 accepted there is covered by the same old grant. This score does not cover
@@ -464,7 +466,7 @@ The [duplicate-heartbeat fixture](replay/fixtures/valid/duplicate-heartbeat.ndjs
 shows the difference between a complete action and a complete capture. Its
 unsigned configuration append sends one heartbeat; the next action sends the
 same packet again. The second action grows the queue but gives a **complete
-457-answer row**: both endpoints have key `10`, and all 433 step bits are
+485-answer row**: both endpoints have key `10`, and all 461 step bits are
 false. The [proof](../consensus-coverage/ConsensusCoverage/InertProfile.lean)
 checks that the node states, queue membership and proof log evidence are unchanged.
 The first action still contains unknowns. Separately, [a model witness](../consensus-coverage/ConsensusCoverage/FreshHeartbeat.lean)
@@ -474,35 +476,33 @@ has endpoints `10 -> 10` and **23 true, 410 false, zero unknown** step answers.
 One true answer concerns the incumbent primary, not the queue. This is one
 initialized send, not a classification of all heartbeats.
 [Witness elimination](../consensus-coverage/ConsensusCoverage/SolvedWitnesses.lean)
-simplifies all 433 predicates with a proof in both directions but does not decide
+simplifies all 461 predicates with a proof in both directions but does not decide
 the remaining existential questions.
 
 [Event support](../consensus-coverage/ConsensusCoverage/EventSupport.lean)
 automatically rules out 1,780 combinations of recorded action kind and proof
-question across 183 of the 433 step questions. It uses 12 action kinds: five
+question across 183 of the 461 step questions. It uses 12 action kinds: five
 local input constructors and seven delivered message constructors. On a
 validated replay these excluded answers must be false; a non-excluded answer
 still needs a witness. This count is not a transition coverage denominator.
 
 [Evidence support](../consensus-coverage/ConsensusCoverage/EvidenceSupport.lean)
-names, for every one of the 433 step questions, the fresh proof evidence
+names, for every one of the 461 step questions, the fresh proof evidence
 without which its answer must be false. There are seven kinds: a new node
 record, a new envelope value, and a new fact in each of the five ghost
 relations (seen logs, vote grants, elections, leader logs, committed
 prefixes). Whether each kind is fresh is decided exactly on every replayed
-action (`fresh_iff`). 106 questions need one particular kind and 108 need
-one of two; 135 can be triggered by any of the seven. On the replication
-fixture this lowers the unknown answers per action from 196-261 to 164-254
-of 433. Typical appends and deliveries introduce several kinds of evidence
-at once, so exclusion alone does not complete their labels.
+action (`fresh_iff`). 119 questions need one particular kind and 121 need
+one of two; 135 can be triggered by any of the seven. Typical appends and
+deliveries introduce several kinds of evidence at once, so exclusion alone
+does not complete their labels.
 [Delta support](../consensus-coverage/ConsensusCoverage/DeltaSupport.lean)
-remains for eleven questions that a stronger commit test excludes: no
+remains for thirteen questions that a stronger commit test excludes: no
 signature anywhere rules out every certificate, not only new keys.
 
-These counts concern the generated questions. The shared extractor also
-reports 54 unrecorded splits, 41 classified as protocol splits. Thus neither the
-finite-universe proof nor the nine-row theorem establishes that the extractor
-captures every distinction in the source safety proof.
+These counts concern the generated questions. The split gate checks that
+every detected case split is recorded. The finite-universe proof and the
+nine-row projection theorem do not enumerate the full reachable labels.
 
 ### Endpoint-only slice
 
