@@ -41,7 +41,8 @@ private def inputs (name : Name) : Array String :=
   | `ConsensusCoverage.ReadersAtoms.historicalPrefixes => #["historical_nodes"]
   | `ConsensusCoverage.GuardedDomain.canonAt
   | `ConsensusCoverage.CanonicalLogs.keys => #["canonical"]
-  | `ConsensusCoverage.GuardedDomain.observations => #["observations"]
+  | `ConsensusCoverage.GuardedDomain.observations
+  | `ConsensusCoverage.ReadersPolar.observations => #["observations"]
   | `ConsensusCoverage.GuardedDomain.ledTerms => #["leaders"]
   | `ConsensusCoverage.ReadersAtoms.electedExact
   | `ConsensusCoverage.ReadersAtoms.electionExact => #["elections"]

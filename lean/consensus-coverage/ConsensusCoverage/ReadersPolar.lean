@@ -6,6 +6,8 @@ module
 public import ConsensusCoverage.ReadersAtoms
 public import Consensus.Proofs.LogFacts
 import all ConsensusCoverage.ReadersAtoms
+import all ConsensusCoverage.GuardedDomain
+import all Consensus.Proofs.SafetyInvariant
 
 namespace ConsensusCoverage.ReadersPolar
 
@@ -29,6 +31,13 @@ public structure Pools where
   naturals : Thunk (List Nat)
   configurations : Thunk (List Configuration)
   sets : Thunk (List (CCF.Finset NodeID))
+
+open Safety in
+def observations (pools : Pools) : List Observation :=
+  (pools.records.get.map observe).eraseDups
+
+theorem finset_mem {v : NodeID} {s : CCF.Finset NodeID} (h : v ∈ s) : v ∈ s.val :=
+  h
 
 private def subsets : List NodeID → List (List NodeID)
   | [] => [[]]

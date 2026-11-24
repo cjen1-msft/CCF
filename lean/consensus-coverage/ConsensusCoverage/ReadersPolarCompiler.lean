@@ -70,7 +70,9 @@ private def combine (l r : Option Compiled) : MetaM (Option Compiled) := do
     return some (← fromProof (← mkAppM ``either #[l.2, r.2]))
   return l.or r
 
-private def poolFor (e : PolarEnv) (α : Expr) : MetaM (Option Expr) := do
+private def poolFor (pools α : Expr) : MetaM (Option Expr) := do
+  if α.isConstOf ``Safety.Observation then
+    return some (mkApp (mkConst ``ReadersPolar.observations) pools)
   let attr := match α.getAppFn.constName? with
     | some ``Model.State => some ``Pools.states
     | some ``NodeID => some ``Pools.ids
@@ -83,6 +85,7 @@ private def poolFor (e : PolarEnv) (α : Expr) : MetaM (Option Expr) := do
     | some ``AppendEntriesRequest => some ``Pools.appendRequests
     | some ``AppendEntriesResponse => some ``Pools.acknowledgements
     | some ``Configuration => some ``Pools.configurations
+    | some ``CCF.Finset => some ``Pools.sets
     | _ => none
   let attr ← if attr.isSome then pure attr
     else if ← isNatType α then pure (some ``Pools.naturals)
@@ -92,15 +95,15 @@ private def poolFor (e : PolarEnv) (α : Expr) : MetaM (Option Expr) := do
     else if α.isAppOf ``CCF.Envelope &&
         (← withReducible (isDefEq α (mkConst ``Model.Envelope))) then
       pure (some ``Pools.envelopes)
-    else if ← withReducible (isDefEq α (← mkAppM ``CCF.Finset #[mkConst ``NodeID])) then
-      pure (some ``Pools.sets)
     else if ← withReducible (isDefEq α (mkApp (mkConst ``List [.zero]) (mkConst ``Entry))) then
       pure (some ``Pools.logs)
     else pure none
   if let some attr := attr then
-    let field := mkApp (mkConst attr) e.pools
+    let field := mkApp (mkConst attr) pools
     if attr == ``Pools.states then return some field
-    return some (← mkAppM ``Thunk.get #[field])
+    let list ← mkAppM ``Thunk.get #[field]
+    unless ← withReducible (isDefEq (← inferType list) (← mkAppM ``List #[α])) do return none
+    return some list
   if α.isConstOf ``Bool then
     return some (← mkListLit α [mkConst ``Bool.false, mkConst ``Bool.true])
   if α.isConstOf ``Role then
@@ -169,13 +172,22 @@ private def existsGuard (e : Env) (α pred : Expr) : CM (Option (Guard × Expr �
         let g ← useKeyedPool a g
         return some (g, ← mkLambdaFVars #[a, h] g.mem, a)
 
+private def finsetGuard (a typ h : Expr) : MetaM (Array Guard) := do
+  unless typ.isAppOfArity ``Membership.mem 5 && typ.appArg! == a do return #[]
+  let set := typ.getArg! 3
+  let ty ← inferType set
+  unless ty.isAppOf ``CCF.Finset && !set.containsFVar a.fvarId! do return #[]
+  let some proof ← observing? (mkAppM ``finset_mem #[h]) | return #[]
+  let list := (← inferType proof).getArg! 3
+  return #[{ kind := .plain, list, mem := proof, rank := 0, tag := "finset" }]
+
 private def forallGuard (e : Env) (α pred : Expr) : CM (Option (Guard × Expr × Expr)) := do
   withLocalDeclD `a α fun a =>
   forallTelescope (pred.beta #[a]) fun premises concl => do
     for h in premises do
       let typ ← inferType h
       unless ← isProp typ do continue
-      let candidates ← findGuards e a typ h
+      let candidates ← (· ++ ·) <$> finsetGuard a typ h <*> findGuards e a typ h
       for g in candidates.qsort (·.rank < ·.rank) do
         let g ← useKeyedPool a g
         let value := match g.kind with | .subst a => a | _ => g.list
@@ -267,7 +279,7 @@ private partial def quantifier (e : PolarEnv) (n : Name) (yes ex : Bool) (p α p
   if e.exact.isFrame α then
     blockBinder n s!"{pole yes}:binder_frame" α pred
     return none
-  let some list ← poolFor e α | do
+  let some list ← poolFor e.pools α | do
     blockBinder n s!"{pole yes}:no_pool" α pred
     return none
   withLocalDeclD `a α fun a => do
