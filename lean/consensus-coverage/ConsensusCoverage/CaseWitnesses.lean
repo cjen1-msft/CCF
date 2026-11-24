@@ -7,6 +7,13 @@ public import ConsensusCoverage.JointWitnesses
 import all ConsensusCoverage.FrontierWitnesses
 import all ConsensusCoverage.JointWitnesses
 import all ConsensusCoverage.ReplayAnswers
+import all ConsensusCoverage.CensusReplay
+import all ConsensusCoverage.Readers
+import all ConsensusCoverage.ReadersGenerated
+import all ConsensusCoverage.ReadersAtoms
+import all ConsensusCoverage.ReadersShapes
+import all ConsensusCoverage.ReadersIndex
+import all ConsensusCoverage.ReadersVoteReply
 
 /-! Positive answers from initialized, replayed schedules. This witnesses
 individual proof cases, not a complete joint table of step labels. -/
@@ -26,9 +33,9 @@ local instance (r : Run) : Decidable r.valid :=
   inferInstanceAs (Decidable (r.cfg.Nonempty ∧ r.nodes.Nodup))
 
 private def accepts (s : Step) (questions : List Classes.StepBranch) : Bool :=
-  let r := JointWitnesses.caseReader
-  let e := r.prepare s.cfg s.before s.act s.after s.past
-  questions.all fun b => decide (r.answer e b = some true)
+  let old := ReplayAnswers.read s.cfg s.before s.act s.after s.past
+  let generated := Readers.read s.cfg s.before s.act s.after s.past
+  questions.all fun b => decide (CensusReplay.answer old generated b = some true)
 
 private def selected (r : Run) (choices : List (Nat × Nat)) (valid : r.valid)
     (offset : Nat) : Option Step := do
@@ -52,7 +59,7 @@ private def certify (r : Run) (choices : List (Nat × Nat)) (valid : r.valid)
   | none => simp [step] at checked
   | some s =>
     simp only [step, Option.any_some, accepts] at checked
-    exact ⟨s, JointWitnesses.caseReader.sound s b (of_decide_eq_true (List.all_eq_true.mp checked b mem))⟩
+    exact ⟨s, CensusReplay.correct s b (of_decide_eq_true (List.all_eq_true.mp checked b mem))⟩
 
 local macro "caseAt " offset:term:arg questions:term:arg : term =>
   `(⟨$offset, $questions, by decide +kernel⟩)
@@ -138,14 +145,75 @@ private def run1At13 : Claim run1 choices1 valid1 :=
   caseAt 13 [.message_terms_h_requestPreVoteResponse, .new_message_h_requestPreVoteResponse]
 private def cert1 : Certificate := certify run1 choices1 valid1 [run1At2, run1At6, run1At10, run1At13]
 
-private def certificates : List Certificate := [cert0, cert1]
+-- BEGIN BOUNDED CENSUS
+private def bounded0 : Run :=
+  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .transaction 1 {}}])]⟩
+private theorem bounded0Valid : bounded0.valid := by decide
+private def bounded0Cert : Certificate := certify bounded0 [] bounded0Valid
+  [caseAt 0 [.act_input_append,
+    .anchor_lt_or_ge_inl,
+    .anchor_lt_or_ge_inr,
+    .anchor_now_after_inl,
+    .anchor_post_log_inr_inl,
+    .canon_mono_canon_after_inl,
+    .canon_mono_canon_after_inr,
+    .canon_mono_now_after_inl,
+    .commitFrontier_invariant_event_internal,
+    .commit_backed_kind_append,
+    .commit_backed_now_after_inl,
+    .copyLogs_step_canon_inr,
+    .election_safety_led_after_inl,
+    .foldlM__items_nil,
+    .inv_step_frontier_now_inl,
+    .inv_step_term_mono_now_inl,
+    .inv_step_term_mono_seen_inl,
+    .inv_step_term_mono_seen_inr,
+    .keep_log_kind_append,
+    .leader_logs_leader_inl,
+    .leader_logs_now_after_inl,
+    .post_log_kind_append,
+    .post_log_role_inl,
+    .post_two_active_inl,
+    .post_two_active_inr_inl,
+    .rooted_now_after_inr,
+    .rooted_post_log_inr_inl,
+    .sorted_now_after_inr,
+    .sorted_post_log_inr_inl,
+    .terms_mem_append_inl,
+    .terms_mem_append_inr,
+    .terms_post_log_inr_inl]]
+
+private def bounded1 : Run :=
+  ⟨{0, 1}, [0, 1], [     .input 0 (.timeout .checkQuorum)]⟩
+private theorem bounded1Valid : bounded1.valid := by decide
+private def bounded1Cert : Certificate := certify bounded1 [] bounded1Valid
+  [caseAt 0 [.act_input_timeout,
+    .act_kind_checkQuorum,
+    .anchor_post_log_inl,
+    .anchor_post_log_inr_inr,
+    .commit_backed_kind_same,
+    .keep_backed_led_after_inl,
+    .keep_log_kind_same,
+    .post_log_kind_same,
+    .prefix_small_inl,
+    .rooted_post_log_inr_inr,
+    .sorted_post_log_inr_inr,
+    .terms_post_log_inr_inr]]
+
+private def bounded2 : Run :=
+  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature}]),     .input 0 (.timeout .checkQuorum)]⟩
+private theorem bounded2Valid : bounded2.valid := by decide
+private def bounded2Cert : Certificate := certify bounded2 [] bounded2Valid
+  [caseAt 1 [.persist_pre_kind_same]]
+
+private def certificates : List Certificate := [cert0, cert1, bounded0Cert, bounded1Cert, bounded2Cert]
 -- END GENERATED CERTIFICATES
 
 /-- The positive cases computed by running the sound reader on the cover. -/
 public def witnessed : List Classes.StepBranch :=
   (certificates.flatMap (·.questions)).eraseDups
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 44 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 89 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
