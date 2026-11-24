@@ -56,6 +56,12 @@ def main():
     args = p.parse_args()
     exe = args.exe.resolve(strict=True)
     args.directory.mkdir(exist_ok=True, parents=True)
+    key = args.directory / "decoder-key.txt"
+    key.write_text("618475535481\n")
+    # Golden legacy header and values: adding proof questions must not silently
+    # change the stable coordinate names/order or break --key-answers.
+    decoded = subprocess.check_output(["nice", exe, "--key-answers", key])
+    assert hashlib.sha256(decoded).hexdigest() == "b1bcd9d24ffd9b76ec111a814eee8fc4b64d2f875e69aecad0ee73a088651ecd"
     for log, term, *expected in ORACLES:
         if not (args.small and log == 5):
             assert run(exe, args.directory, "--scale", log, term, 1, (log, term) == (2, 3)) == tuple(expected)

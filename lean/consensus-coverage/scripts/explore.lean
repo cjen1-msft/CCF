@@ -643,6 +643,15 @@ def decode (n : Nat) : Key :=
   (n >>> (width + 1), n.testBit width,
     (List.range width).reverse.map n.testBit)
 
+-- This is the published projection schema, not the full state-question universe.
+def keyStateBranches : List Classes.StateBranch :=
+  [.committed_logs_comparable_left_backed_inl, .committed_logs_comparable_left_backed_inr,
+    .committed_logs_comparable_right_backed_inl, .committed_logs_comparable_right_backed_inr,
+    .committed_logs_comparable_committed_comparable_inl, .committed_logs_comparable_committed_comparable_inr,
+    .signatureIndex_le_maxCommittableIndex_values_nil, .signatureIndex_le_maxCommittableIndex_values_cons,
+    .signatureIndex_le_maxCommittableIndex_mem_cons_inl, .signatureIndex_le_maxCommittableIndex_signature_pos,
+    .signatureIndex_le_maxCommittableIndex_signature_neg, .signatureIndex_le_maxCommittableIndex_mem_cons_inr]
+
 open FullProfile in
 def keyAnswers (k : Key) : List (Question × Bool) :=
   -- Expand the losslessly packed endpoints, incumbent, and sorted-log twins.
@@ -664,7 +673,7 @@ def keyAnswers (k : Key) : List (Question × Bool) :=
       (.rooted_post_log_inl, suffix[2]!),
       (.sorted_post_log_inl, suffix[2]!)]
   let endpoint (side : Classes.StateBranch → Question) (zero backed : Bool) :=
-    stateBranches.toList.map fun b => (side b, ProofContexts.answers (zero, backed) b)
+    keyStateBranches.map fun b => (side b, ProofContexts.answers (zero, backed) b)
   endpoint .pre (hi 5) (hi 4) ++ step.map (fun (b, v) => (.step b, v)) ++
     endpoint .post (hi 2) (hi 1)
 
