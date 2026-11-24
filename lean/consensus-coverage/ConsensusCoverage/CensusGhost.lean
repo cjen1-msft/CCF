@@ -37,6 +37,27 @@ private def slice (g : Ghost) : Slice :=
   ⟨g, (g.seen.map (·.1)).eraseDups, (g.seen.map (·.2.1)).eraseDups,
     (g.seen.map (·.2.2)).eraseDups, (g.elected.map (·.2.2.2)).eraseDups⟩
 
+private def observation (p : NodeID × NodeState) : NodeID × Nat × List Entry :=
+  (p.1, p.2.currentTerm, p.2.log)
+
+/-- The first three marginal domains in `slice` preserve membership for
+every observation projection, provided the finite seen triples are exact.
+Neither the order of observations nor their multiplicity is needed. -/
+private theorem seen_domain {α : Type} [BEq α] [LawfulBEq α]
+    (g : Ghost) (h : List Model.State)
+    (seen : ∀ o, o ∈ g.seen ↔ o ∈ (histNodes h).map observation)
+    (field : NodeID × Nat × List Entry → α) (v : α) :
+    v ∈ (g.seen.map field).eraseDups ↔ v ∈ (histNodes h).map (field ∘ observation) := by
+  rw [List.mem_eraseDups]
+  constructor
+  · intro mem
+    obtain ⟨o, ho, eq⟩ := List.mem_map.mp mem
+    obtain ⟨p, hp, rfl⟩ := List.mem_map.mp ((seen o).mp ho)
+    exact List.mem_map.mpr ⟨p, hp, eq⟩
+  · intro mem
+    obtain ⟨p, hp, eq⟩ := List.mem_map.mp mem
+    exact List.mem_map.mpr ⟨observation p, (seen _).mpr (List.mem_map.mpr ⟨p, hp, rfl⟩), eq⟩
+
 /-- Replacing the index domain in an election-guarded existential does not
 assume that the ghost remembers every past commit index. Its election
 tuples must contain the actual elections, not merely elected terms. -/
