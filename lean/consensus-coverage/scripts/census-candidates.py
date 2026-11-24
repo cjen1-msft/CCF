@@ -39,6 +39,8 @@ def main():
     p.add_argument("--dag", type=Path, required=True, help="reader generator's direct reach DAG TSV")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--differential", type=Path, required=True)
+    p.add_argument("--positive-witnesses", action="append", type=Path, default=[],
+                   help="positive-only evidence (a .cases.tsv), never included in fixpoint denominators")
     p.add_argument("models", nargs="+", type=Path, help="prefix of .cases.tsv and .log; baseline first")
     a = p.parse_args()
     if len({m.name for m in a.models}) != len(a.models):
@@ -52,6 +54,17 @@ def main():
         stats = Counter("yes" if y else "unknown" if u else "no" for y, _, u in rows.values())
         print(name, steps, f"true={stats['yes']} false={stats['no']} unknown={stats['unknown']}")
     baseline = next(iter(models))
+    witnessed = {q: [] for q in exact}
+    for path in a.positive_witnesses:
+        with path.open() as f:
+            rows = list(csv.DictReader(f, delimiter="\t"))
+        if [r["question"] for r in rows] != list(models[baseline][1]):
+            raise ValueError(f"{path}: wrong question set/order")
+        for r in rows:
+            if r["question"] in exact and int(r["known_true"]) > 0:
+                if not r["schedule"] or not r["queue_choices"] or int(r["depth"]) < 1:
+                    raise ValueError(f"{path}: positive without concrete witness: {r['question']}")
+                witnessed[r["question"]].append(path.name)
     candidates = []
     differential = []
     for q in sorted(exact):
@@ -62,19 +75,22 @@ def main():
             # Group by identical direct shared predicates, not an inferred reason for impossibility.
             candidates.append((",".join(direct), q, ",".join(models),
                                sum(rows[q][1] for _, rows in models.values()),
-                               f"ConsensusCoverage.SolvedWitnesses.{arm} s.frame s.after s.context"))
-        elif baseline not in positive:
-            differential.append((q, baseline, ",".join(positive)))
+                               f"ConsensusCoverage.SolvedWitnesses.{arm} s.frame s.after s.context",
+                               ",".join(witnessed[q])))
+        if baseline not in positive and (positive or witnessed[q]):
+            differential.append((q, baseline, ",".join(positive), ",".join(witnessed[q])))
     for path, header, rows in [
-        (a.out, ("direct_reaches", "question", "completed_models", "false_model_edge_incidences", "formula"),
+        (a.out, ("direct_reaches", "question", "completed_models", "false_model_edge_incidences", "formula",
+                 "witnessed_outside_models"),
          sorted(candidates)),
-        (a.differential, ("question", "absent_in_baseline", "true_in_models"), differential)
+        (a.differential, ("question", "absent_in_baseline", "true_in_models", "positive_witness_tables"), differential)
     ]:
         with path.open("w") as f:
             writer = csv.writer(f, delimiter="\t", lineterminator="\n")
             writer.writerow(header)
             writer.writerows(rows)
-    print(f"{len(candidates)} candidates in {len({r[0] for r in candidates})} direct-reach groups;"
+    print(f"{len(candidates)} bounded negatives in {len({r[0] for r in candidates})} direct-reach groups;"
+          f" {sum(bool(r[-1]) for r in candidates)} witnessed outside completed models;"
           f" {len(differential)} positive outside baseline only; {len(exact)} total coordinates.")
 
 
