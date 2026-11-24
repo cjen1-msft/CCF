@@ -312,18 +312,18 @@ private def bounded15Cert : Certificate := certify bounded15 [] bounded15Valid
     .persist_pre_kind_accept]]
 
 private def bounded16 : Run :=
-  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]),     .deliver 0 1,     .input 0 (.nominateSuccessor),     .deliver 0 1,     .deliver 1 0]⟩
+  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.append [{content := .signature}]),     .input 0 (.timeout .checkQuorum),     .input 0 (.timeout .election),     .deliver 0 1,     .deliver 1 0]⟩
 private theorem bounded16Valid : bounded16.valid := by decide
-private def bounded16Cert : Certificate := certify bounded16 [(4, 1)] bounded16Valid
+private def bounded16Cert : Certificate := certify bounded16 [] bounded16Valid
+  [caseAt 4 [.receive_message_requestPreVoteResponse]]
+
+private def bounded17 : Run :=
+  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]),     .deliver 0 1,     .input 0 (.nominateSuccessor),     .deliver 0 1,     .deliver 1 0]⟩
+private theorem bounded17Valid : bounded17.valid := by decide
+private def bounded17Cert : Certificate := certify bounded17 [(4, 1)] bounded17Valid
   [caseAt 4 [.receive_message_requestVoteRequest,
     .receive_vote_pos,
     .rv_stable_now_after_inr]]
-
-private def bounded17 : Run :=
-  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature}]),     .input 0 (.timeout .checkQuorum),     .input 0 (.timeout .election),     .deliver 0 1,     .deliver 1 0]⟩
-private theorem bounded17Valid : bounded17.valid := by decide
-private def bounded17Cert : Certificate := certify bounded17 [] bounded17Valid
-  [caseAt 4 [.receive_message_requestPreVoteResponse]]
 
 private def bounded18 : Run :=
   ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]),     .deliver 0 1,     .input 0 (.nominateSuccessor),     .deliver 0 1,     .deliver 1 0,     .deliver 0 1]⟩
@@ -361,14 +361,27 @@ private theorem bounded20Valid : bounded20.valid := by decide
 private def bounded20Cert : Certificate := certify bounded20 [(6, 1)] bounded20Valid
   [caseAt 6 [.receive_message_requestPreVoteRequest]]
 
-private def certificates : List Certificate := [cert0, cert1, bounded0Cert, bounded1Cert, bounded2Cert, bounded3Cert, bounded4Cert, bounded5Cert, bounded6Cert, bounded7Cert, bounded8Cert, bounded9Cert, bounded10Cert, bounded11Cert, bounded12Cert, bounded13Cert, bounded14Cert, bounded15Cert, bounded16Cert, bounded17Cert, bounded18Cert, bounded19Cert, bounded20Cert]
+private def bounded21 : Run :=
+  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.append [{content := .transaction 1 {configuration := some {1}}}, {content := .signature, flushes := [(1, 3)]}]),     .deliver 0 1,     .deliver 1 0,     .input 0 (.sendEntries 1 3),     .deliver 0 1,     .deliver 1 0,     .input 1 (.timeout .election),     .input 1 (.append [{content := .signature, flushes := [(0, 4)]}]),     .deliver 1 0]⟩
+private theorem bounded21Valid : bounded21.valid := by decide
+private def bounded21Cert : Certificate := certify bounded21 [(8, 1)] bounded21Valid
+  [caseAt 8 [.accept_persist_inSender_pos,
+    .accept_persist_shape_inr]]
+
+private def bounded22 : Run :=
+  ⟨{0}, [0, 1], [     .input 0 (.append [{content := .signature}]),     .input 0 (.append [{content := .transaction 1 {configuration := some {0, 1}}}]),     .input 0 (.timeout .checkQuorum),     .input 0 (.timeout .election),     .input 1 (.initAsBackup [{term := 2, content := .transaction 0 {configuration := some {0}}}, {term := 2, content := .signature}]),     .deliver 0 1,     .deliver 1 0,     .deliver 0 1,     .deliver 1 0,     .input 0 (.append [{content := .signature}])]⟩
+private theorem bounded22Valid : bounded22.valid := by decide
+private def bounded22Cert : Certificate := certify bounded22 [(5, 1), (7, 1)] bounded22Valid
+  [caseAt 9 [.previousBacking_elected_inl]]
+
+private def certificates : List Certificate := [cert0, cert1, bounded0Cert, bounded1Cert, bounded2Cert, bounded3Cert, bounded4Cert, bounded5Cert, bounded6Cert, bounded7Cert, bounded8Cert, bounded9Cert, bounded10Cert, bounded11Cert, bounded12Cert, bounded13Cert, bounded14Cert, bounded15Cert, bounded16Cert, bounded17Cert, bounded18Cert, bounded19Cert, bounded20Cert, bounded21Cert, bounded22Cert]
 -- END GENERATED CERTIFICATES
 
 /-- The positive cases computed by running the sound reader on the cover. -/
 public def witnessed : List Classes.StepBranch :=
   (certificates.flatMap (·.questions)).eraseDups
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 153 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 156 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
