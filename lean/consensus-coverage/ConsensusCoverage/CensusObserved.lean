@@ -7,6 +7,8 @@ public import ConsensusCoverage.ExplorerGhost
 public import ConsensusCoverage.ReadersAtoms
 import all ConsensusCoverage.ExplorerGhost
 import all ConsensusCoverage.ReadersAtoms
+import all ConsensusCoverage.GuardedDomain
+import all Consensus.Proofs.SafetyInvariant
 
 namespace ConsensusCoverage.CensusObserved
 
@@ -64,5 +66,34 @@ public theorem tracks_read (cfg : FullProfile.Configuration) (g : Ghost)
     rw [log_votes]
     change VoteFacts.advance g.votes t = VoteFacts.advance (voteStamps hist) t
     rw [ok.2]
+
+public theorem observation_mem {g : Ghost} {hist : List Model.State} (ok : Tracks g hist)
+    (n : NodeID) (o : Safety.Observation) :
+    o ∈ ExplorerGhost.observations g n ↔ o ∈ GuardedDomain.observations hist n := by
+  cases o with | mk k l =>
+    have stored : Safety.Observation.mk k l ∈ ExplorerGhost.observations g n ↔ (n, k, l) ∈ g.seen := by
+      rw [ExplorerGhost.observations, List.mem_filterMap]
+      constructor
+      · rintro ⟨⟨id, term, log⟩, mem, eq⟩
+        split at eq <;> simp_all
+      · exact fun mem => ⟨(n, k, l), mem, by simp⟩
+    rw [stored, ok.1]
+    simp only [List.mem_map, histNodes, List.mem_flatMap, GuardedDomain.observations,
+      List.mem_filter, Prod.exists, beq_iff_eq, observe, Prod.mk.injEq, Safety.observe,
+      Safety.Observation.mk.injEq]
+    grind
+
+public theorem prefix_mem {g : Ghost} {hist : List Model.State} (ok : Tracks g hist)
+    (p : List Entry) :
+    p ∈ ([] :: g.seen.flatMap (fun (_, _, l) => prefixes l)).eraseDups ↔ p ∈ historicalPrefixes hist := by
+  rw [List.mem_eraseDups, historicalPrefixes, List.mem_cons, List.mem_cons]
+  apply or_congr_right
+  simp only [List.mem_flatMap]
+  constructor
+  · rintro ⟨o, mem, pre⟩
+    obtain ⟨node, hn, rfl⟩ := List.mem_map.mp ((ok.1 o).mp mem)
+    exact ⟨node, hn, pre⟩
+  · rintro ⟨node, hn, pre⟩
+    exact ⟨observe node, (ok.1 _).mpr (List.mem_map.mpr ⟨node, hn, rfl⟩), pre⟩
 
 end ConsensusCoverage.CensusObserved
