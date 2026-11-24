@@ -272,7 +272,21 @@ with advance; six more answers are decided and [four distinct labels are
 witnessed](../consensus-coverage/ConsensusCoverage/AckWitnesses.lean), but
 180 answers per action remain undecided, so the family is still open.
 
-**Full recorded-action denominator: at least 187; at least 184 on multi-node deployments.**
+**Per-question reachability: 44 cases witnessed, 4 proved impossible, 385
+undetermined.** Each step question is one case of one case split in the
+safety proof. [`CaseWitnesses.occurs`](../consensus-coverage/ConsensusCoverage/CaseWitnesses.lean)
+proves 44 of the 433 are true on some initialized step, from two schedules
+replayed in the kernel. [`CaseUnreachable.label_false`](../consensus-coverage/ConsensusCoverage/CaseUnreachable.lean)
+proves four are false on every initialized step: one about a retained
+envelope and three about a nomination changing the actor's record, which it
+never does. For the other 385 the replay reader returned "unknown" on at
+least one explored step and never "true", so the search cannot yet say
+anything; they need exact readers or separate proofs. The explorer's
+`--cases` mode prints this census. In its run of 25,002 steps it evaluated
+all 433 answers on 191 steps: the first occurrence of each new combination
+of always-known answers or family code.
+
+**Full recorded-action denominator: at least 204; at least 201 on multi-node deployments.**
 The [recorded-action specification](../consensus-coverage/ConsensusCoverage/ActionProfile.lean)
 assigns an initialized step exactly one 457-answer vector. All 433 step
 questions use [the same, unique context for the recorded action](../consensus-coverage/ConsensusCoverage/ActionContext.lean).
@@ -291,6 +305,27 @@ the table. The 22 hand-written schedules alone give 49 and 47 with the same key.
 ```sh
 lake -d "$WS/consensus-coverage" env lean --run "$PWD/lean/consensus-coverage/scripts/explore.lean" \
   --depth 3 --walks 300 --length 20 --seed 20261123 --every 50 --out /tmp/witnesses.lean.txt
+```
+
+The explorer can also enumerate a bounded model completely (`--exhaust`).
+A step's label depends only on the proof state before it (protocol state
+plus ghost), the action and the state after, so histories that reach the
+same proof state are merged and the search runs until no new one appears.
+With two voters, logs of at most two entries, terms up to three and one copy
+of each envelope, the fixpoint has 618 proof states, 858 steps and 76
+combinations of the 64 always-known answers. Raising the term bound to four
+gives 1,891 states and 93 combinations; raising the log bound to three
+instead gives 10,259 states and 113. Larger bounds were stopped at a budget
+of 20,000 steps. Across all runs there were 150 combinations, 17 of them new,
+and [their witnesses](../consensus-coverage/ConsensusCoverage/BoundedWitnesses.lean)
+raise the kernel-checked bound to 204 and 201. The count is still growing
+with the bounds. That equal merge keys imply equal labels is checked
+empirically (no disagreement in 55,778 pairs of histories) but not proved,
+so a fixpoint here is evidence, not an exhaustion theorem.
+
+```sh
+lake -d "$WS/consensus-coverage" env lean --run "$PWD/lean/consensus-coverage/scripts/explore.lean" \
+  --exhaust --voters 0,1 --nodes 0,1 --max-log 2 --max-term 3 --max-copies 1 --out /tmp/bounded.tsv
 ```
 
 The explorer also tests claims before they are proved. It checked the

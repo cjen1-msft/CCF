@@ -1,0 +1,118 @@
+module
+
+-- Copyright (c) Microsoft Corporation. All rights reserved.
+-- Licensed under the Apache 2.0 License.
+
+public import ConsensusCoverage.EvidenceSupport
+public import ConsensusCoverage.EventSupport
+public import ConsensusCoverage.ReducedQuestions
+public import ConsensusCoverage.SolvedWitnesses
+import all ConsensusCoverage.ActionProfile
+import all ConsensusCoverage.ReducedQuestions
+import all ConsensusCoverage.SolvedWitnesses
+import all Consensus.Proofs.SafetyInvariant
+
+/-! Universally false proof cases. The search motivates which proofs to try;
+its finite budget is not a hypothesis of these theorems. -/
+
+namespace ConsensusCoverage.CaseUnreachable
+
+open ActionProfile
+open CCF Consensus Consensus.Model Consensus.Model.Node Consensus.Proofs Consensus.Proofs.Safety
+
+set_option backward.privateInPublic true
+set_option backward.privateInPublic.warn false
+set_option maxRecDepth 8192
+
+private def noSupport (b : Classes.StepBranch) : Bool :=
+  (EventSupport.allowed b).isEmpty || decide ([] ∈ EvidenceSupport.supports b)
+
+private theorem support_false (s : Step) (b : Classes.StepBranch)
+    (h : noSupport b = true) : label s (.step b) = false := by
+  simp only [noSupport, Bool.or_eq_true] at h
+  rcases h with noEvent | noEvidence
+  · apply EventSupport.label_false
+    simp [List.isEmpty_iff.mp noEvent]
+  · exact EvidenceSupport.label_false s b <|
+      List.any_eq_true.mpr ⟨[], of_decide_eq_true noEvidence, rfl⟩
+
+public theorem retained_false (s : Step) :
+    label s (.step .mem_network_mem_append_inl) = false :=
+  (ReducedQuestions.answer_eq s .retained).symm
+
+-- The nested act/nominateSuccessor proof paths all enter through a fresh
+-- actor record. A successful nomination can send, but leaves that record intact.
+private theorem no_nomination_reach [Config.InitialConfiguration] {f : Frame} {t : Model.State}
+    (c : Ctx f t) {self pre post outputs}
+    (reach : SolvedWitnesses.reach_51 f t c self pre (.internal .nominateSuccessor) post outputs) :
+    False := by
+  obtain ⟨_, _, _, fresh, _, _, actual, _, _⟩ := reach
+  have ran := c.tr.ran
+  change (Node.step (Capabilities.record c.actor) c.actor c.pre c.tr.event).run {} =
+    some (c.post, c.tr.outputs) at ran
+  rw [← actual] at ran
+  obtain ⟨_, _, same, _, _⟩ := nominate_sends c.actor c.pre {} _ _ ran
+  exact fresh (same.symm ▸ c.pre_now)
+
+private theorem solved_false (s : Step) (b : Classes.StepBranch)
+    (no : ¬ @SolvedWitnesses.sig ⟨s.cfg⟩ s.frame s.after s.context b) :
+    label s (.step b) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  exact Bool.eq_false_iff.mpr fun yes =>
+    no ((SolvedWitnesses.sig_iff s.context b).mp ((label_true s _).mp yes))
+
+public theorem act_nomination_false (s : Step) :
+    label s (.step .act_input_nominateSuccessor) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply solved_false
+  change ¬ SolvedWitnesses.reach_1012 s.frame s.after s.context .nominateSuccessor
+  rintro ⟨_, _, _, _, _, reach, internal, _⟩
+  exact no_nomination_reach s.context (internal ▸ reach)
+
+private theorem no_nomination_successor [Config.InitialConfiguration] {f : Frame} {t : Model.State}
+    (c : Ctx f t) {self pre} (reach : SolvedWitnesses.reach_1263 f t c self pre) : False := by
+  obtain ⟨⟨_, _, _, introReach, internal, _⟩, _⟩ := reach
+  exact no_nomination_reach c (internal ▸ introReach)
+
+public theorem nomination_some_false (s : Step) :
+    label s (.step .nominateSuccessor_successor_some) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply solved_false
+  change ¬ SolvedWitnesses.step_nominateSuccessor_successor_some s.frame s.after s.context
+  rintro ⟨_, _, reach, _⟩
+  exact no_nomination_successor s.context reach
+
+public theorem nomination_none_false (s : Step) :
+    label s (.step .nominateSuccessor_successor_none) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply solved_false
+  change ¬ SolvedWitnesses.step_nominateSuccessor_successor_none s.frame s.after s.context
+  rintro ⟨_, _, reach, _⟩
+  exact no_nomination_successor s.context reach
+
+private def individual : List Classes.StepBranch :=
+  [.mem_network_mem_append_inl, .act_input_nominateSuccessor,
+    .nominateSuccessor_successor_some, .nominateSuccessor_successor_none]
+
+/-- Cases refuted by the generic support checks or individual proofs below. -/
+public def refuted : List Classes.StepBranch :=
+  FullProfile.stepBranches.toList.filter fun b => noSupport b || decide (b ∈ individual)
+
+public theorem count : refuted.Nodup ∧ refuted.length = 4 := by decide +kernel
+
+public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
+    ∀ s : Step, label s (.step b) = false := by
+  intro s
+  have h := (List.mem_filter.mp mem).2
+  simp only [Bool.or_eq_true] at h
+  rcases h with unsupported | direct
+  · exact support_false s b unsupported
+  · have mem := of_decide_eq_true direct
+    simp only [individual, List.mem_cons, List.not_mem_nil, or_false] at mem
+    rcases mem with rfl | rfl | rfl | rfl
+    · exact retained_false s
+    · exact act_nomination_false s
+    · exact nomination_some_false s
+    · exact nomination_none_false s
+
+end ConsensusCoverage.CaseUnreachable
