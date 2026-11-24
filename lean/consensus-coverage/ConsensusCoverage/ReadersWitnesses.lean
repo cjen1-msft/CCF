@@ -23,19 +23,23 @@ set_option maxRecDepth 8192
 
 -- Replay the observed offsets with the kernel; the measurements are not proofs.
 private def claim0 : Claim :=
-  ⟨0, 0, [.seen_after_seen_inl], by decide +kernel⟩
+  ⟨0, 0, [.seen_after_now_after_inl, .seen_after_seen_inl, .seen_after_seen_inr], by decide +kernel⟩
 private def claim1 : Claim :=
   ⟨15, 0, [.summary_event_internal], by decide +kernel⟩
+private def claim2 : Claim :=
+  ⟨26, 2, [.match_ack_now_after_inl], by decide +kernel⟩
+private def claim3 : Claim :=
+  ⟨26, 3, [.match_ack_matchIndex_inl], by decide +kernel⟩
 
-private def claims : List Claim := [claim0, claim1]
+private def claims : List Claim := [claim0, claim1, claim2, claim3]
 
 /-- Cases witnessed by an executable reader on a replayed corpus step. -/
 public def witnessed : List Classes.StepBranch := claims.flatMap (·.questions)
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 2 := by decide
+public theorem count : witnessed.Nodup ∧ witnessed.length = 6 := by decide
 
 public theorem union_count :
-    (witnessed ++ CaseWitnesses.witnessed).eraseDups.length = 45 := by decide
+    (witnessed ++ CaseWitnesses.witnessed).eraseDups.length = 49 := by decide
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
