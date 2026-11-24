@@ -4,6 +4,7 @@ module
 -- Licensed under the Apache 2.0 License.
 
 meta import Lean
+public meta import ConsensusCoverage.ProofWalk
 public import ConsensusCoverage.ActionContext
 public import ConsensusCoverage.ActionProfile
 public import ConsensusCoverage.PinnedClasses
@@ -88,7 +89,7 @@ private theorem included {small big : List Tag}
     t ∈ big :=
   of_decide_eq_true (List.all_eq_true.mp h t mem)
 
-private theorem mem_of_eq {x y : Tag} (eq : x = y) {ts : List Tag}
+private theorem mem_of_eq {x y : Tag} {ts : List Tag} (eq : x = y)
     (mem : y ∈ ts) : x ∈ ts := eq ▸ mem
 
 private theorem mem_inter {x : Tag} {l r : List Tag} (left : x ∈ l) (right : x ∈ r) :
@@ -128,6 +129,9 @@ private structure SummaryFact where
 
 private abbrev Gen := StateRefT (Std.HashMap Name (Array SummaryFact)) MetaM
 
+private def isReach (n : Name) : Bool :=
+  n.getPrefix == `ConsensusCoverage.PinnedClasses && n.getString!.startsWith "reach_"
+
 private def inputNames : List Name :=
   [``Tag.append, ``Tag.sendEntries, ``Tag.timeout, ``Tag.nominateSuccessor, ``Tag.initAsBackup]
 
@@ -138,16 +142,19 @@ private def messageNames : List Name :=
 
 private def tagList (ns : List Name) : MetaM Expr := mkListLit (mkConst ``Tag) (ns.map mkConst)
 
+private def tagTy := mkConst ``Tag
+private def tagTypeLevel := Level.succ .zero
+
 private def Condition.prop : Condition → MetaM Expr
-  | .eq x y => mkEq x y
-  | .mem x tags => do mkAppM ``List.Mem #[x, ← tagList tags]
+  | .eq x y => pure (mkApp3 (mkConst ``Eq [tagTypeLevel]) tagTy x y)
+  | .mem x tags => return mkApp3 (mkConst ``List.Mem [.zero]) tagTy x (← tagList tags)
 
 private def Condition.mapM (f : Expr → MetaM Expr) : Condition → MetaM Condition
   | .eq x y => return .eq (← f x) (← f y)
   | .mem x tags => return .mem (← f x) tags
 
 private def Condition.mentions (p : Condition) (x : Expr) : Bool :=
-  let contains := fun (e : Expr) => (e.find? (· == x)).isSome
+  let contains := fun (e : Expr) => e.containsFVar x.fvarId!
   match p with
   | .eq a b => contains a || contains b
   | .mem a _ => contains a
@@ -158,7 +165,8 @@ private def observation (ty x : Expr) : MetaM (Option Expr) := do
   let mut e := x
   if ty.isAppOf ``Ctx then
     let tr := mkAppN (mkConst ``Ctx.tr) (ty.getAppArgs.push x)
-    e ← mkAppM ``LocalTransition.event #[tr]
+    e := mkApp3 (mkConst ``LocalTransition.event)
+      (mkApp (mkConst ``Frame.current) (ty.getArg! 1)) (ty.getArg! 2) tr
   else if ty.isAppOf ``LocalTransition then
     e := mkAppN (mkConst ``LocalTransition.event) (ty.getAppArgs.push x)
   else unless ty.isConstOf ``Event || ty.isConstOf ``Input || ty.isConstOf ``Consensus.Model.Node.Message do
@@ -189,14 +197,14 @@ private def fromEq (ty x y h : Expr) : MetaM (Array Fact) := do
   let obs ← withLocalDeclD `v ty fun v => do
     let some r ← observation ty v | throwError "expected observation at {ty}"
     mkLambdaFVars #[v] r
-  let proof ← mkCongrArg obs h
+  let proof := mkAppN (mkConst ``congrArg [tagTypeLevel, tagTypeLevel]) #[ty, tagTy, x, y, obs, h]
   return #[⟨.eq a b, proof⟩]
 
 private def widen (f : Fact) (tags : List Name) : MetaM Expr := do
   let .mem x small := f.cond | throwError "expected membership"
   if small == tags then return f.proof
-  mkAppOptM ``included #[some (← tagList small), some (← tagList tags),
-    some (← mkEqRefl (mkConst ``Bool.true)), some x, some f.proof]
+  return mkAppN (mkConst ``included) #[← tagList small, ← tagList tags,
+    ← mkEqRefl (mkConst ``Bool.true), x, f.proof]
 
 private def addFact (fs : Array Fact) (f : Fact) : MetaM (Array Fact) := do
   match f.cond with
@@ -208,7 +216,8 @@ private def addFact (fs : Array Fact) (f : Fact) : MetaM (Array Fact) := do
       | some ⟨.mem _ old, oldProof⟩ =>
         if old.all tags.contains then return fs
         if tags.all old.contains then return fs.set! i f
-        return fs.set! i ⟨.mem x (old.filter tags.contains), ← mkAppM ``mem_inter #[oldProof, f.proof]⟩
+        let proof := mkAppN (mkConst ``mem_inter) #[x, ← tagList old, ← tagList tags, oldProof, f.proof]
+        return fs.set! i ⟨.mem x (old.filter tags.contains), proof⟩
       | _ => return fs
     else return fs.push f
   | .eq x y =>
@@ -217,19 +226,24 @@ private def addFact (fs : Array Fact) (f : Fact) : MetaM (Array Fact) := do
         | _ => false) then return fs
     else return fs.push f
 
-private def links (fs : Array Fact) (x : Expr) : MetaM (Array (Expr × Expr)) := do
+private def symm (x y h : Expr) : Expr :=
+  mkAppN (mkConst ``Eq.symm [tagTypeLevel]) #[tagTy, x, y, h]
+
+private def trans (x y z xy yz : Expr) : Expr :=
+  mkAppN (mkConst ``Eq.trans [tagTypeLevel]) #[tagTy, x, y, z, xy, yz]
+
+private def links (fs : Array Fact) (x : Expr) : Array (Expr × Expr) := Id.run do
   let mut out := #[]
   for f in fs do
     if let .eq a b := f.cond then
       if a == x then out := out.push (b, f.proof)
-      else if b == x then out := out.push (a, ← mkEqSymm f.proof)
+      else if b == x then out := out.push (a, symm a b f.proof)
   return out
 
 private def seed (x : Expr) : MetaM (Option Fact) := do
   if let .const n _ := x then
     if inputNames.contains n || messageNames.contains n then
-      return some ⟨.mem x [n], ← mkAppOptM ``List.Mem.head #[some (mkConst ``Tag),
-        some x, some (← tagList [])]⟩
+      return some ⟨.mem x [n], mkApp3 (mkConst ``List.Mem.head [.zero]) tagTy x (← tagList [])⟩
   if x.isAppOf ``inputTag then
     return some ⟨.mem x inputNames, mkApp (mkConst ``allInputTags) x.appArg!⟩
   if x.isAppOf ``messageTag then
@@ -246,31 +260,32 @@ private def close (facts : Array Fact) : MetaM (Array Fact) := do
   let mut fs ← facts.foldlM addFact #[]
   for x in keys do
     if let some f ← seed x then fs ← addFact fs f
-    let neighbors ← links fs x
+    let neighbors := links fs x
     for (a, ha) in neighbors do
       for (b, hb) in neighbors do
         if a != b && !(fs.any fun f => match f.cond with
             | .eq y z => (a == y && b == z) || (a == z && b == y)
             | _ => false) then
-          fs ← addFact fs ⟨.eq a b, ← mkEqTrans (← mkEqSymm ha) hb⟩
+          fs ← addFact fs ⟨.eq a b, trans a x b (symm x a ha) hb⟩
   for f in fs do
     if let .mem x tags := f.cond then
-      for (y, hy) in ← links fs x do
-        fs ← addFact fs ⟨.mem y tags, ← mkAppM ``mem_of_eq #[← mkEqSymm hy, f.proof]⟩
+      for (y, hy) in links fs x do
+        let proof := mkAppN (mkConst ``mem_of_eq) #[y, x, ← tagList tags, symm x y hy, f.proof]
+        fs ← addFact fs ⟨.mem y tags, proof⟩
   -- Constants already have their singleton fact wherever they occur. Keep the
   -- resulting memberships, not edges through constants or tautological facts.
   return fs.filter fun f => match f.cond with
     | .eq x y => !x.isConst && !y.isConst
     | .mem x _ => !x.isConst
 
-private def join (l r : Array Fact) (h : Expr) (hl hr : Expr) : MetaM (Array Fact) := do
+private def join (l r : Array Fact) (p h : Expr) : MetaM (Array Fact) := do
   let mut out := #[]
   for f in l do
     for g in r do
       let matched ← match f.cond, g.cond with
         | .eq a b, .eq c d =>
           if a == c && b == d then pure (some (f.cond, f.proof, g.proof))
-          else if a == d && b == c then pure (some (f.cond, f.proof, ← mkEqSymm g.proof))
+          else if a == d && b == c then pure (some (f.cond, f.proof, symm c d g.proof))
           else pure none
         | .mem a xs, .mem b ys =>
           if a == b then do
@@ -280,12 +295,15 @@ private def join (l r : Array Fact) (h : Expr) (hl hr : Expr) : MetaM (Array Fac
           else pure none
         | _, _ => pure none
       if let some (cond, lp, rp) := matched then
-        out := out.push ⟨cond, ← mkAppM ``Or.elim
-          #[h, ← mkLambdaFVars #[hl] lp, ← mkLambdaFVars #[hr] rp]⟩
+        out := out.push ⟨cond, ProofWalk.casesOr p h (← cond.prop)
+          (Lean.mkLambda `hl .default (p.getArg! 0) lp)
+          (Lean.mkLambda `hr .default (p.getArg! 1) rp)⟩
   return out
 
 mutual
 
+/-- Branch proofs use bound index zero for their hypothesis. Building binders
+directly avoids re-abstracting the long right-hand certificate at every join. -/
 private partial def summarize (p h : Expr) : Gen (Array Fact) := do
   let args := p.getAppArgs
   if p.isAppOfArity ``And 2 then
@@ -294,28 +312,31 @@ private partial def summarize (p h : Expr) : Gen (Array Fact) := do
       let a := args[1]!.getAppArgs
       let some l ← observation a[0]! a[1]! | throwError "expected left transition"
       let some r ← observation a[2]! a[3]! | throwError "expected right transition"
-      return #[⟨.eq l r, ← mkAppM ``tag_of_pin #[h]⟩]
-    let projArgs := args.map some |>.push (some h)
-    let l ← summarize args[0]! (← mkAppOptM ``And.left projArgs)
-    let r ← summarize args[1]! (← mkAppOptM ``And.right projArgs)
+      let proof := mkAppN (mkConst ``tag_of_pin)
+        #[a[0]!.getArg! 0, a[0]!.getArg! 1, a[2]!.getArg! 1, a[1]!, a[3]!, h]
+      return #[⟨.eq l r, proof⟩]
+    let ((lp, lh), (rp, rh)) := ProofWalk.conjuncts p h
+    let l ← summarize lp lh
+    let r ← summarize rp rh
     if l.isEmpty then return r
     if r.isEmpty then return l
     close (l ++ r)
   else if p.isAppOfArity ``Or 2 then
-    withLocalDeclD `hl args[0]! fun hl =>
-    withLocalDeclD `hr args[1]! fun hr => do
-      join (← summarize args[0]! hl) (← summarize args[1]! hr) h hl hr
+    let l ← summarize args[0]! (mkBVar 0)
+    if l.isEmpty then return #[]
+    join l (← summarize args[1]! (mkBVar 0)) p h
   else if p.isAppOfArity ``Exists 2 && args[1]!.isLambda then
     withLocalDeclD `w args[0]! fun w => do
       let body := args[1]!.beta #[w]
-      withLocalDeclD `hw body fun hw => do
-        let fs ← summarize body hw
-        (fs.filter fun f => !f.cond.mentions w).mapM fun f => do
-          return ⟨f.cond, ← mkAppM ``Exists.elim #[h, ← mkLambdaFVars #[w, hw] f.proof]⟩
+      let fs ← summarize body (mkBVar 0)
+      (fs.filter fun f => !f.cond.mentions w).mapM fun f => do
+        let scope := Lean.mkLambda `hw .default body f.proof
+        let branch := Lean.mkLambda `w .default args[0]! (scope.abstract #[w])
+        return ⟨f.cond, ProofWalk.casesExists p h (← f.cond.prop) branch⟩
   else if p.isAppOfArity ``Eq 3 then
     close (← fromEq args[0]! args[1]! args[2]! h)
-  else if let .const n@(.str ns s) ls := p.getAppFn then
-    if ns == `ConsensusCoverage.PinnedClasses && s.startsWith "reach_" then
+  else if let .const n ls := p.getAppFn then
+    if isReach n then
       let fs ← compileReach n
       return ← fs.mapM fun f => do
         return ⟨← f.cond.mapM (fun e => pure (e.beta args)),
@@ -328,6 +349,8 @@ private partial def compileReach (n : Name) : Gen (Array SummaryFact) := do
   let ci ← getConstInfo n
   let fs ← lambdaTelescope ci.value! fun xs p =>
     withLocalDeclD `h p fun h => do
+      for dep in p.getUsedConstants do
+        if isReach dep then discard (compileReach dep)
       let facts ← close (← summarize p h)
       facts.mapIdxM fun i f => do
         let name := `ConsensusCoverage.EventSupport ++ Name.mkSimple (n.getString!) |>.appendIndexAfter i
@@ -362,6 +385,8 @@ private def compile : MetaM Unit := do
       unless arm.getAppArgs == params do throwError "unexpected pinned arm: {arm}"
       let some p ← unfoldDefinition? arm | throwError "cannot unfold {arm}"
       withLocalDeclD `h p fun h => do
+        for dep in p.getUsedConstants do
+          if isReach dep then discard (compileReach dep)
         let facts ← close (← summarize p h)
         let some f := facts.find? (fun f => match f.cond with
             | .mem x _ => x == key
@@ -436,8 +461,8 @@ duplicate entries or the syntax of an `allowed` list. -/
 theorem exclusion_counts :
     let columns := FullProfile.stepBranches
     let misses := fun b => (inputs ++ messages).countP (fun t => decide (t ∉ allowed b))
-    columns.size = 461 ∧ (columns.filter fun b => misses b > 0).size = 183 ∧
-      columns.foldl (fun n b => n + misses b) 0 = 1780 := by decide +kernel
+    columns.size = 516 ∧ (columns.filter fun b => misses b > 0).size = 228 ∧
+      columns.foldl (fun n b => n + misses b) 0 = 2176 := by decide +kernel
 
 /-- A local timeout cannot satisfy the commit-backing branch for the maximum
 of the old commit index and the newly committable index. -/
