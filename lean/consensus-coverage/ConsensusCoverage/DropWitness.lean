@@ -50,7 +50,7 @@ private def witnessStep : Step :=
 /-- Send an empty AppendEntries, deliver it, then deliver its successful
 zero-index ACK to the primary. The last delivery erases the only queued
 envelope and leaves both node records fixed. The previous reverse-membership
-test rejects it; the new gate certifies all 457 answers. -/
+test rejects it; the new gate certifies the complete label. -/
 public theorem ack_consumes_witness :
     ∃ s : Step, s.cfg = {0, 1} ∧ s.nodes = [0, 1] ∧ s.act = .deliver ack ∧
       s.before.network = [ack] ∧ s.after.network = [] ∧ s.after.nodes = s.before.nodes ∧
