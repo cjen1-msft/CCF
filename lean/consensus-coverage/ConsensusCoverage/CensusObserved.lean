@@ -125,4 +125,29 @@ public theorem election_mem {g : Ghost} {s t : Model.State} {h : List Model.Stat
       simpa [grants] using quorum
     simp [(lookup _ _).mp old, floor, role, campaign, sub, bound, votes, guard]
 
+public def ElectionHistory (g : Ghost) (h : List Model.State) : Prop :=
+  ∀ n k l i, (n, k, l, i) ∈ g.elected ↔ electedExact n k l i h = true
+
+public theorem elections_start (b : NodeID) (s : Model.State) : ElectionHistory (start b s) [s] := by
+  intro n k l i
+  change (n, k, l, i) ∈ ([] : List (NodeID × Nat × List Entry × Nat)) ↔ false = true
+  simp
+
+public theorem elections_read {cfg : FullProfile.Configuration} {g : Ghost} {s t : Model.State}
+    {act : Model.Action} {edge : Edge} {h : List Model.State}
+    (run : ExplorerGhost.read cfg g s t act = some edge)
+    (old : ElectionHistory g (s :: h))
+    (lookup : ∀ n x, (n, x) ∈ s.nodes ↔ s.nodes.lookup n = some x)
+    (grants : ∀ v n k r, edge.ghost.granted v n k r = grantedIn (t :: s :: h) v n k r) :
+    ElectionHistory edge.ghost (t :: s :: h) := by
+  intro n k l i
+  have accumulated : edge.ghost.elected = union g.elected (elections edge.ghost s t) := by
+    unfold ExplorerGhost.read at run
+    simp only [Option.bind_eq_bind, Option.bind_eq_some_iff] at run
+    obtain ⟨_, _, _, _, _, _, _, _, eq⟩ := run
+    cases eq
+    rfl
+  rw [accumulated, mem_union, old, election_mem lookup grants]
+  simp only [electedExact, Bool.or_eq_true, or_comm]
+
 end ConsensusCoverage.CensusObserved
