@@ -59,15 +59,20 @@ private structure Obs where
   negativesInferred : Nat := 0
   duplicates : Nat := 0
 
-private def observe (rows : List Sample) (b : Classes.StepBranch) : IO (Obs × Bool) := do
+private def observe (rows : List Sample) (b : Classes.StepBranch) (search : Option Nat) :
+    IO (Obs × Bool) := do
   let exact := Readers.covered.contains b
   let (knownYes, remaining) :=
     (rows.map fun s => (s, ReplayAnswers.answer s.baseline (.step b))).partition (·.2 == some true)
   if let (s, _) :: _ := knownYes then
     -- Both readers are sound, and the exact one is total.
     if exact then return ({ firstYes := some (s.schedule, s.offset), exactInferred := 1 }, true)
+  let candidates : List (Sample × Option Bool) := match search with
+    | none => knownYes ++ remaining
+    | some limit =>
+      (knownYes ++ remaining.filter (fun (_, answer) => answer != some false)).take limit
   let mut result : Obs := {}
-  for (s, baseline) in knownYes ++ remaining do
+  for (s, baseline) in candidates do
     result := { result with duplicates := result.duplicates + (s.copies - 1) }
     let answer ← if exact && baseline.isSome then do
         result := { result with exactInferred := result.exactInferred + 1 }
@@ -108,12 +113,20 @@ public def main (args : List String) : IO Unit := do
   IO.println "question\tclass\tschedule\toffset\tbaseline_yes\texact_inferred\tnegatives_inferred\tduplicates\tcalls\tmin_ns\tmedian_ns\tmax_ns"
   (← IO.getStdout).flush
   let trace := (← IO.getEnv "CCF_READERS_TRACE").isSome
+  let search ← (← IO.getEnv "CCF_READERS_SEARCH_PREFIXES").mapM fun value =>
+    match value.toNat? with
+    | some (limit + 1) => pure (limit + 1)
+    | _ => throw (IO.userError "CCF_READERS_SEARCH_PREFIXES must be a positive integer")
   for (b, i) in FullProfile.stepBranches.toList.zipIdx do
     if i % shards != shard then continue
     let name := toString (repr b)
     if !selected.isEmpty && !selected.contains ((name.splitOn ".").getLast!) then continue
     if trace then IO.eprintln s!"reading {name}"
-    let (observed, baseline) ← observe sample b
+    let (observed, baseline) ← observe sample b search
+    -- A bounded positive search cannot classify a row without a hit.
+    if search.isSome && observed.firstYes.isNone then
+      IO.eprintln s!"unmeasured {name}: no hit in bounded positive search"
+      continue
     let (status, schedule, offset) := match observed.firstYes with
       | some (s, i) => ("yes", toString s, toString i)
       | none => (if observed.hasUnknown then "unknown" else "no", "-", "-")
