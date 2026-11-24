@@ -28,7 +28,8 @@ private def claim0 : Claim :=
     .leader_led_now_after_inl, .led_cur_led_after_inl, .led_cur_led_cur_inr,
     .led_cur_lt_or_eq_of_le_inr, .led_cur_now_after_inl, .persist_now_after_inl,
     .persist_seen_after_inr, .rooted_now_after_inl, .seen_after_now_after_inl,
-    .seen_after_seen_inl, .seen_after_seen_inr, .sorted_now_after_inl, .terms_now_after_inl
+    .seen_after_seen_inl, .seen_after_seen_inr, .sorted_now_after_inl, .summary_input_append,
+    .terms_now_after_inl
   ], by decide +kernel⟩
 private def claim1 : Claim :=
   ⟨0, 1, [.persist_persist_inl, .persist_seen_after_inl], by decide +kernel⟩
@@ -51,17 +52,23 @@ private def claim6 : Claim :=
 private def claim7 : Claim :=
   ⟨15, 0, [
     .mem_network_mem_append_inr, .messages_mem_network_inr,
-    .new_message_h_proposeRequestVoteRequest, .summary_event_internal
+    .new_message_h_proposeRequestVoteRequest, .summary_event_internal,
+    .summary_input_nominateSuccessor
   ], by decide +kernel⟩
 private def claim8 : Claim :=
   ⟨18, 0, [
     .message_terms_h_appendEntriesRequest, .message_terms_mem_network_inr,
-    .new_message_h_appendEntriesRequest
+    .new_message_h_appendEntriesRequest, .summary_input_sendEntries
   ], by decide +kernel⟩
 private def claim9 : Claim :=
-  ⟨19, 0, [.rooted_post_log_inl, .sorted_post_log_inl], by decide +kernel⟩
+  ⟨19, 0, [
+    .rooted_post_log_inl, .sorted_post_log_inl, .summary_input_initAsBackup
+  ], by decide +kernel⟩
 private def claim10 : Claim :=
-  ⟨20, 1, [.new_message_h_appendEntriesResponse], by decide +kernel⟩
+  ⟨20, 1, [
+    .new_message_h_appendEntriesResponse, .summary_event_receive,
+    .summary_message_appendEntriesRequest
+  ], by decide +kernel⟩
 private def claim11 : Claim :=
   ⟨26, 0, [.terms_post_log_inl], by decide +kernel⟩
 private def claim12 : Claim :=
@@ -69,24 +76,26 @@ private def claim12 : Claim :=
 private def claim13 : Claim :=
   ⟨26, 3, [.match_ack_matchIndex_inl], by decide +kernel⟩
 private def claim14 : Claim :=
-  ⟨46, 2, [.terms_now_after_inr], by decide +kernel⟩
+  ⟨44, 0, [.summary_input_timeout, .summary_kind_checkQuorum], by decide +kernel⟩
 private def claim15 : Claim :=
+  ⟨46, 2, [.terms_now_after_inr], by decide +kernel⟩
+private def claim16 : Claim :=
   ⟨131, 3, [
     .message_terms_h_requestVoteRequest, .new_message_h_requestVoteRequest
   ], by decide +kernel⟩
 
 private def claims : List Claim := [
   claim0, claim1, claim2, claim3, claim4, claim5, claim6, claim7, claim8, claim9, claim10,
-  claim11, claim12, claim13, claim14, claim15
+  claim11, claim12, claim13, claim14, claim15, claim16
 ]
 
 /-- Cases witnessed by an executable reader on a replayed corpus step. -/
 public def witnessed : List Classes.StepBranch := claims.flatMap (·.questions)
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 43 := by decide
+public theorem count : witnessed.Nodup ∧ witnessed.length = 51 := by decide
 
 public theorem union_count :
-    (witnessed ++ CaseWitnesses.witnessed).eraseDups.length = 49 := by decide
+    (witnessed ++ CaseWitnesses.witnessed).eraseDups.length = 56 := by decide
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
