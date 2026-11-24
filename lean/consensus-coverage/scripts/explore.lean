@@ -707,8 +707,12 @@ def reportCases (o : Options) (s : Score) : IO String := do
     let choicesName := s!"choices{i}"
     let valid := s!"valid{i}"
     let names := claims.toList.map fun (j, _) => s!"run{i}At{j}"
-    let proofs := claims.toList.zipWith (fun (j, cases) name =>
-      s!"private def {name} : Claim {run} {choicesName} {valid} := caseAt {j} {repr cases}\n") names
+    let proofs ← (claims.toList.zip names).mapM fun ((j, cases), name) => do
+      let questions ← cases.mapM fun i => do
+        let some branch := FullProfile.stepBranches[i]? |
+          throw (IO.userError s!"case export index {i} is not a step question")
+        pure ("." ++ shortName branch)
+      pure s!"private def {name} : Claim {run} {choicesName} {valid} := caseAt {j} {listText questions}\n"
     certs := certs.push <| s!"private def {run} : FrontierRows.Run := {runText p}\n\
       private def {choicesName} : List (Nat × Nat) := {repr (choices p)}\n\
       private theorem {valid} : {run}.valid := by decide\n" ++ String.join proofs ++

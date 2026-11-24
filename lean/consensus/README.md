@@ -124,9 +124,8 @@ of `False` in its own context. The script-replay result is diagnostic only: the 
 script can rely on different hypotheses in different branches.
 
 The current generator emits 516 step questions and 16 state questions (548 coordinates
-with both endpoints). The 16 state answers have been rechecked. The full-label
-family, witness, and support counts below describe earlier question sets unless
-stated otherwise; they are not results for the expanded set.
+with both endpoints). The exact family, witness, and support results below are
+checked on this schema. Historical search statistics are indicated separately.
 
 **State denominator during replay: three profiles for nonempty clusters.** All sixteen generated
 state questions reduce to two facts: is any node's commit index zero, and does
@@ -141,9 +140,9 @@ nonempty implementation runs.
 This is not a sample of the state questions. [The reduction](../consensus-coverage/ConsensusCoverage/StateBasis.lean)
 covers every constructor of the generated state dispatcher. [`same_answers` and
 `exact`](../consensus-coverage/ConsensusCoverage/StateCoverage.lean) prove respectively
-that two initialized runs have the same key **if and only if** all twelve answers
+that two initialized runs have the same key **if and only if** all sixteen answers
 agree, and that every listed key occurs. [`ProofContexts.exact_three`](../consensus-coverage/ConsensusCoverage/ProofContexts.lean)
-counts the full twelve-answer vectors directly: one run with voters and nodes
+counts the full sixteen-answer vectors directly: one run with voters and nodes
 both fixed to `{0,1,2}` visits all three. No other nonempty deployment adds a
 fourth vector. The [certificate reader](../consensus-coverage/ConsensusCoverage/CommitMonitor.lean)
 uses previous protocol snapshots, not proof witnesses. In particular, delivery of
@@ -158,7 +157,7 @@ next action. In one run replication established a commit certificate before the
 election advanced; in the other it did not. The
 [snapshot table](../consensus-coverage/ConsensusCoverage/SnapshotStates.lean)
 has a witness for each label and proves that two snapshots get the same label
-if and only if they admit the same whole vectors of answers to all twelve state
+if and only if they admit the same whole vectors of answers to all sixteen state
 questions. An empty cluster adds only `{00}`. This table characterizes snapshots;
 the executable scorer below uses the actual replay history and counts three, not four.
 
@@ -170,11 +169,11 @@ remove the last zero-commit node on the winning step. This gives six rows withou
 a win and three with a win. Every row has an initialized model execution.
 
 **Multi-node leader coverage: exactly 13 rows.** For a recorded action, consider
-the 12 proof questions before, three leader questions about the action, and the
-12 questions after. The leader questions ask whether a primary was elected,
+the 16 proof questions before, three leader questions about the action, and the
+16 questions after. The leader questions ask whether a primary was elected,
 whether a node changed state and ended primary, and whether that change was to
 an incumbent in the same term. The third answer is determined by the first
-two. [Equality of row keys is equivalent to agreement on all 27 answers](../consensus-coverage/ConsensusCoverage/ActionFrontier.lean).
+two. [Equality of row keys is equivalent to agreement on all 35 answers](../consensus-coverage/ConsensusCoverage/ActionFrontier.lean).
 
 [The 13-row table](../consensus-coverage/ConsensusCoverage/LeaderCoverage.lean)
 is exact across deployments with **at least two distinct nodes**, not necessarily
@@ -188,7 +187,8 @@ Score saved native captures from the repository root:
 
 ```sh
 WS=$(python3 lean/relevance/scripts/workspace.py consensus-coverage)
-lake -d "$WS/consensus-coverage" build ConsensusCoverage.LeaderCoverage ConsensusCoverage.CaptureBounds Consensus.Replay.Reduction
+lake -d "$WS/consensus-coverage" build ConsensusCoverage.LeaderCoverage \
+  ConsensusCoverage.CaptureBounds ConsensusCoverage.Families Consensus.Replay.Reduction
 reader="$PWD/lean/consensus-coverage/scripts/proof-coverage.lean"
 lake -d "$WS/consensus-coverage" env lean --run "$reader" check
 lake -d "$WS/consensus-coverage" env lean --run "$reader" trace lean/consensus/replay/fixtures/valid/replication.ndjson
@@ -254,7 +254,7 @@ and send). The two heartbeat captures have 3 of 7 actions in closed
 families; the two nomination captures 5 of 9.
 
 The explorer reports the same breakdown for its search (`--families`). In
-one run of 25,002 steps, 6,587 steps were in the three closed families and
+an earlier run of 25,002 steps on the 433-question schema, 6,587 steps were in the three closed families and
 18,415 were in 47 open families, which together showed 172 distinct
 combinations of the 64 always-known answers. Each open family showed
 between 1 and 15 of them and left 80 to 261 step answers undecided. The
@@ -269,26 +269,24 @@ certifies which step answers must be false. It reproduces the ten possible
 answers of the fresh-nomination family exactly. How much it removes depends
 on the family. For an acknowledgment that changes only the leader's record
 (`open:appendEntriesResponse:0100000`, two actions of the replication
-capture) 206 of 433 answers survive, because a changed node record re-enters
+capture) 234 of 516 answers survive, because a changed node record re-enters
 most node invariants. [That family](../consensus-coverage/ConsensusCoverage/AckRead.lean)
 splits exactly into retry, accepted without commit advance, and accepted
 with advance; six more answers are decided and [four distinct labels are
 witnessed](../consensus-coverage/ConsensusCoverage/AckWitnesses.lean), but
-180 answers per action remain undecided, so the family is still open.
+208 answers per action remain undecided on those two fixture actions, so the
+family is still open.
 
-**Per-question reachability: 44 cases witnessed, 4 proved impossible, 385
-undetermined.** Each step question is one case of one case split in the
+**Per-question reachability: 44 cases witnessed, 4 proved impossible, 468
+not classified by these certificates.** Each step question is one case of one case split in the
 safety proof. [`CaseWitnesses.occurs`](../consensus-coverage/ConsensusCoverage/CaseWitnesses.lean)
-proves 44 of the 433 are true on some initialized step, from two schedules
+proves 44 of the 516 are true on some initialized step, from two schedules
 replayed in the kernel. [`CaseUnreachable.label_false`](../consensus-coverage/ConsensusCoverage/CaseUnreachable.lean)
 proves four are false on every initialized step: one about a retained
 envelope and three about a nomination changing the actor's record, which it
-never does. For the other 385 the replay reader returned "unknown" on at
-least one explored step and never "true", so the search cannot yet say
-anything; they need exact readers or separate proofs. The explorer's
-`--cases` mode prints this census. In its run of 25,002 steps it evaluated
-all 433 answers on 191 steps: the first occurrence of each new combination
-of always-known answers or family code.
+never does. The explorer's `--cases` mode distinguishes questions witnessed
+true, questions always false in that search, and questions still unknown
+on some explored step. Only a separate proof establishes unreachability.
 
 **Full recorded-action denominator: at least 204; at least 201 on multi-node deployments.**
 The [recorded-action specification](../consensus-coverage/ConsensusCoverage/ActionProfile.lean)
@@ -296,14 +294,15 @@ assigns an initialized step exactly one 548-answer vector. All 516 step
 questions use [the same, unique context for the recorded action](../consensus-coverage/ConsensusCoverage/ActionContext.lean).
 The [explorer](../consensus-coverage/scripts/explore.lean) searches initialized
 schedules mechanically, breadth-first and by seeded random walks, optionally
-continuing from given schedule prefixes. It distinguishes two steps only by
-the 64 answers proved on every step (both endpoints and
-[40 step answers](../consensus-coverage/ConsensusCoverage/JointWitnesses.lean)).
-Two runs scored 96,735 steps. [Seventy-four of their schedules](../consensus-coverage/ConsensusCoverage/ExploredWitnesses.lean)
+continuing from given schedule prefixes. It distinguishes two steps by a compact
+key for the endpoint contexts and
+[40 always-known step answers](../consensus-coverage/ConsensusCoverage/JointWitnesses.lean).
+The key is unchanged by the four added state questions at each endpoint.
+Two earlier runs scored 96,735 steps. [Seventy-four of their schedules](../consensus-coverage/ConsensusCoverage/ExploredWitnesses.lean)
 (918 steps) are replayed in the kernel and give 187 distinct combinations.
 Each difference is a difference in a full label. Neither run reached a
 plateau: the second was still adding about three keys per hundred walks. The
-number measures search effort and the 64 answers compared, not the size of
+number measures search effort and distinct keys, not the size of
 the table. The 22 hand-written schedules alone give 49 and 47 with the same key.
 
 ```sh
@@ -315,7 +314,7 @@ The explorer can also enumerate a bounded model completely (`--exhaust`).
 A step's label depends only on the proof state before it (protocol state
 plus ghost), the action and the state after, so histories that reach the
 same proof state are merged and the search runs until no new one appears.
-With two voters, logs of at most two entries, terms up to three and one copy
+In an earlier run with two voters, logs of at most two entries, terms up to three and one copy
 of each envelope, the fixpoint has 618 proof states, 858 steps and 76
 combinations of the 64 always-known answers. Raising the term bound to four
 gives 1,891 states and 93 combinations; raising the log bound to three
@@ -344,7 +343,7 @@ prefix makes the next eligible on the following nomination. A third
 nomination adds nothing. Counting all nominations with unchanged nodes as the
 same step would miss this distinction.
 
-[Unchanged node records preserve all twelve state answers](../consensus-coverage/ConsensusCoverage/BackingStutter.lean):
+[Unchanged node records preserve all sixteen state answers](../consensus-coverage/ConsensusCoverage/BackingStutter.lean):
 they cannot establish the *first* committed key. Any new key on such a step
 must use older backing. There can be no gap in a chain of delayed commits:
 if an action adds no key, [the next node-preserving action cannot add one either](../consensus-coverage/ConsensusCoverage/ConsecutiveStutter.lean).
@@ -422,10 +421,10 @@ outside this table.
 election.** The family is a recorded nomination that establishes a new
 committed prefix, with no new vote grant and no election recorded so far;
 [the test](../consensus-coverage/ConsensusCoverage/DelayedNominationRead.lean)
-is executable on every replayed action. [All 433 step answers are
+is executable on every replayed action. [All 516 step answers are
 determined](../consensus-coverage/ConsensusCoverage/DelayedNomination.lean):
-23 are always true, three more are true exactly when the proposal is new to
-the queue, and the remaining 407 are false. Both endpoints are `11` or both
+27 are always true, three more are true exactly when the proposal is new to
+the queue, and the remaining 486 are false. Both endpoints are `11` or both
 are `01`. Each of the four labels has an initialized witness and `exact`
 proves there is no fifth. A single-node deployment cannot be in the family,
 and [the primary always has a successor](../consensus-coverage/ConsensusCoverage/DelayedNominationSuccessor.lean).
@@ -472,7 +471,7 @@ checks that the node states, queue membership and proof log evidence are unchang
 The first action still contains unknowns. Separately, [a model witness](../consensus-coverage/ConsensusCoverage/FreshHeartbeat.lean)
 sends an empty heartbeat from voter 0 to voter 1 starting with an empty queue.
 Its [complete label](../consensus-coverage/ConsensusCoverage/FreshHeartbeatResidual.lean)
-has endpoints `10 -> 10` and **23 true, 410 false, zero unknown** step answers.
+has endpoints `10 -> 10` and **23 true, 493 false, zero unknown** step answers.
 One true answer concerns the incumbent primary, not the queue. This is one
 initialized send, not a classification of all heartbeats.
 [Witness elimination](../consensus-coverage/ConsensusCoverage/SolvedWitnesses.lean)

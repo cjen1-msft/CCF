@@ -114,7 +114,9 @@ private def printAnswers (file : String) : IO Unit := do
     let step := sectionBits (FullProfile.stepBranches.map FullProfile.Question.step)
     let post := sectionBits (FullProfile.stateBranches.map FullProfile.Question.post)
     (s :: past, lines.push s!"{lines.size + 1}\t{repr e.tag}\t{pre}\t{step}\t{post}")
-  IO.println "action\tkind\tpre[12]\tstep[433]\tpost[12]   (1=true, 0=false, ?=unknown)"
+  let states := FullProfile.stateBranches.size
+  let steps := FullProfile.stepBranches.size
+  IO.println s!"action\tkind\tpre[{states}]\tstep[{steps}]\tpost[{states}]   (1=true, 0=false, ?=unknown)"
   for line in lines do IO.println line
 
 def main : List String → IO Unit
