@@ -288,7 +288,7 @@ never does. The explorer's `--cases` mode distinguishes questions witnessed
 true, questions always false in that search, and questions still unknown
 on some explored step. Only a separate proof establishes unreachability.
 
-**Full recorded-action denominator: at least 210; at least 207 on multi-node deployments.**
+**Full recorded-action denominator: at least 223; at least 220 on multi-node deployments.**
 The [recorded-action specification](../consensus-coverage/ConsensusCoverage/ActionProfile.lean)
 assigns an initialized step exactly one 548-answer vector. All 516 step
 questions use [the same, unique context for the recorded action](../consensus-coverage/ConsensusCoverage/ActionContext.lean).
@@ -320,35 +320,86 @@ combinations of the 64 always-known answers. Raising the term bound to four
 gives 1,891 states and 93 combinations; raising the log bound to three
 instead gives 10,259 states and 113.
 
-The search now carries the ghost forward step by step instead of rebuilding
+The search carries the ghost forward step by step instead of rebuilding
 it from the history ([`ExplorerGhost`](../consensus-coverage/ConsensusCoverage/ExplorerGhost.lean);
 it agreed with the history readers on every checked step, but is not proved
 equal to them), and runs as a native binary built by
-[`build-explorer.sh`](../consensus-coverage/scripts/build-explorer.sh). That
-made it 5.7 times faster on a matched run, to about 1,800 to 3,100 proof
-states per second. This is far below an explicit-state model checker: the
-remaining time goes to computing each state's merge key and to re-checking
-merged histories against each other.
+[`build-explorer.sh`](../consensus-coverage/scripts/build-explorer.sh).
 
-With at most one message in flight, the largest fixpoint so far has
-2,000,475 proof states and 2,878,034 steps (logs of at most five entries,
-terms up to three) and 115 combinations. In that restricted model the count
-stops growing: raising the log bound from four to five adds none, and
-raising the term bound from five to six (logs of at most two) adds none.
-Without the cap on messages in flight the smallest model did not finish in
-25 minutes: 770,209 states, 2,105,760 steps and 103 combinations, with
-414,235 states still unexplored. So the growth comes from messages
-overlapping in the network, and whether it levels off there is not known.
+A second engine ([`scale.lean`](../consensus-coverage/scripts/scale.lean),
+[`scale.cpp`](../consensus-coverage/scripts/scale.cpp)) runs at the scale of
+an explicit-state model checker. It still calls the Lean model for every
+distinct local step and the Lean reader for every distinct label key, but
+stores a proof state as three numbers: the node table, the ghost and the set
+of messages in flight, each interned by exact comparison. This uses the fact
+that [a step](../common/CCF/MultiNodeTransitionSystem.lean) touches the
+network only to remove the delivered message and append the sent ones. It
+also caches the reader per local step and ghost, which is not proved correct.
+`--scale` enumerates states one at a time: about 297,000 states per second
+on one core (median of five runs of 49 million states, range 269,000 to
+305,000), limited by hash-table lookups for visited states and message sets.
+`--symbolic` instead keeps, for each node table and ghost, the whole set of
+possible networks as one decision diagram, and `--queue-ladder` computes
+every cap on messages in flight in one pass.
+[`check-scale.py`](../consensus-coverage/scripts/check-scale.py) checks the
+engines against each other and against the Lean-only search above: equal
+state counts, step counts and sets of combinations with at most one, two and
+three messages in flight.
 
-Across all runs there were 151 combinations; [their witnesses](../consensus-coverage/ConsensusCoverage/BoundedWitnesses.lean)
-raise the kernel-checked bound to 210 and 207. That equal merge keys imply
-equal labels is checked empirically (no disagreement in 877,560 pairs of
-histories in the largest run) but not proved, so a fixpoint here is
-evidence, not an exhaustion theorem.
+With two voters, logs of at most two entries, terms up to three and one copy
+of each envelope, the model is now searched completely, with no cap on
+messages in flight:
+
+| Messages in flight | Proof states    | Steps             | Combinations |
+| ------------------ | --------------- | ----------------- | ------------ |
+| at most 1          | 618             | 858               | 76           |
+| at most 2          | 34,256          | 72,012            | 101          |
+| at most 3          | 659,046         | 1,947,551         | 103          |
+| at most 5          | 49,306,958      | 229,185,348       | 103          |
+| at most 6          | 260,731,160     | 1,422,307,505     | 103          |
+| no cap             | 529,465,319,840 | 6,170,227,084,286 | 103          |
+
+Never more than 29 messages are in flight. The rows up to six were also
+enumerated one state at a time; the last is symbolic only. So in this model
+a third overlapping message adds two combinations and further ones add none.
+
+The other bounds do add combinations, and none of them has been searched
+without a cap. Logs of at most three entries give 113, 133, 135 and 135
+combinations with at most one to four messages in flight (637,783,694 states
+at four). Terms up to four give 93, 127, 128, 128 and 128 with at most one
+to five (1,835,550,931 states at five). Three voters give 55 and 100 with at
+most two and three (93,981,162 states). The uncapped runs of these three
+models were stopped after about ten minutes with states still unexplored.
+With at most one message in flight the count also stops growing along the
+log bound at four entries (115) and along the term bound at five.
+
+Across all runs there were 220 multi-node combinations; [their witnesses](../consensus-coverage/ConsensusCoverage/BoundedWitnesses.lean)
+raise the kernel-checked bound to 223 and 220. Everything else in this
+section is a measurement, not a theorem. That equal merge keys imply equal
+labels is checked empirically (no disagreement in 1,288,506 pairs of
+histories with at most three messages in flight) but not proved. The key
+compares 64 answers, not the full label of 548. A bounded model is a
+fragment of the protocol: a fixpoint says nothing about longer logs, higher
+terms, more nodes or reconfiguration.
+
+The same search counts, for each of the 516 step questions, the steps on
+which the reader answers yes, no or unknown.
+[`ScaleCensus`](../consensus-coverage/ConsensusCoverage/ScaleCensus.lean)
+proves that outside the 40 always-known answers the reader depends only on
+a small finite context, so the census is exact over all steps of a searched
+model rather than a sample. Over the complete two-voter model it finds 43
+questions answered yes somewhere, 10 answered no on every step and 463
+unknown on some step and never yes; it adds no witnessed case to the 44.
 
 ```sh
 lake -d "$WS/consensus-coverage" env lean --run "$PWD/lean/consensus-coverage/scripts/explore.lean" \
   --exhaust --voters 0,1 --nodes 0,1 --max-log 2 --max-term 3 --max-copies 1 --out /tmp/bounded.tsv
+```
+
+```sh
+EXE=$(LEAN_CC=/path/to/gcc16/bin/cc bash lean/consensus-coverage/scripts/build-explorer.sh | tail -n 1)
+nice "$EXE" --queue-ladder --max-log 2 --max-term 3 --out /tmp/ladder.tsv
+python3 lean/consensus-coverage/scripts/check-scale.py "$EXE" /tmp/scale-check
 ```
 
 The explorer also tests claims before they are proved. It checked the
@@ -466,6 +517,18 @@ leader questions, [16 fresh-envelope questions](../consensus-coverage/ConsensusC
 and [three questions about a previously unseen committed `(term, prefix)`](../consensus-coverage/ConsensusCoverage/BackingRead.lean).
 Invalid captures produce no rows. Do not count distinct strings containing `?`
 as full transition coverage.
+
+**184 of the 516 step questions now have a generated exact reader.**
+[`Readers`](../consensus-coverage/ConsensusCoverage/Readers.lean) compiles a
+question's formula into an executable test together with its proof. On every
+initialized recorded step the test returns the question's answer
+(`read?_at`), and any answer it returns is correct (`read?_correct`). Of the
+184, [146 are not among the 40 above](../consensus-coverage/ConsensusCoverage/ReadersCensus.lean),
+so 186 step questions are readable in all and 330 are not yet. The generator
+works from the formulas, not from question names, so it reruns when the
+questions change. The readers are not yet used by `answers` or the searches:
+126 of them read the whole history rather than the search's finite ghost,
+and 40 take more than 10 ms on some action of the replication capture.
 
 The rooted- and sorted-log proofs agree on the acting node: both enter their
 actor case exactly when its record changes **or** a new committed key appears.
