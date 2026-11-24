@@ -19,13 +19,13 @@ ORACLES = [
 ]
 
 
-def run(exe, directory, mode, log, term, queue, census=False):
+def run(exe, directory, mode, log, term, queue, census=False, exhaust=("--check-ghost",)):
     prefix = directory / f"{mode[2:]}-L{log}T{term}Q{queue}"
     out = prefix.with_suffix(".tsv")
     cmd = ["nice", exe, mode, "--max-log", str(log), "--max-term", str(term),
            "--max-network", str(queue), "--out", out]
     if mode == "--exhaust":
-        cmd.append("--check-ghost")
+        cmd.extend(exhaust)
     if census:
         cmd.extend(["--case-out", prefix.with_suffix(".cases.tsv")])
     text = subprocess.check_output(cmd, text=True)
@@ -52,7 +52,8 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("exe", type=Path)
     p.add_argument("directory", type=Path)
-    p.add_argument("--small", action="store_true", help="skip the two-million-frame log-five cell")
+    p.add_argument("--small", action="store_true",
+                   help="skip the two-million-frame log-five cell and the Lean-only queue-three run")
     args = p.parse_args()
     exe = args.exe.resolve(strict=True)
     args.directory.mkdir(exist_ok=True, parents=True)
@@ -73,6 +74,14 @@ def main():
     left = run(exe, args.directory, "--scale", 2, 3, 2, True)
     right = run(exe, args.directory, "--symbolic", 2, 3, 2, True)
     assert left == right and left[:3] == (34256, 72012, 101)
+    # The Lean-only search steps whole states with their real queues. Only
+    # with overlapping messages does that test the native queue factoring.
+    merged = ("--incremental", "--frontier-only", "--compact", "--merge-workers", "4")
+    assert run(exe, args.directory, "--exhaust", 2, 3, 2, exhaust=merged) == left
+    if not args.small:
+        assert run(exe, args.directory, "--exhaust", 2, 3, 3, exhaust=merged) == run(
+            exe, args.directory, "--scale", 2, 3, 3
+        )
     cases = census(args.directory, "scale", 2)
     assert [r["question"] for r in cases] == [r["question"] for r in history]
     assert cases == census(args.directory, "symbolic", 2)
