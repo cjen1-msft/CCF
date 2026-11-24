@@ -1311,6 +1311,13 @@ structure BoundedCase where
   witness : Option FramePath := none
   deriving Inhabited
 
+structure CaseCounts where
+  rows : Array BoundedCase := Array.replicate FullProfile.stepBranches.size {}
+  wider : Std.HashSet Nat := {}
+
+def extraColumns : Array Bool :=
+  FullProfile.stepBranches.map fun b => Readers.covered.contains b && !ReplayAnswers.unconditional.contains b
+
 def caseProjection : Array (Option Nat) :=
   let questions := (keyAnswers (decode 0)).map (·.1)
   FullProfile.stepBranches.map fun branch => questions.findIdx? (· == .step branch)
@@ -1338,7 +1345,7 @@ def finiteCaseEvidence (b : Bounds) (p next : FramePath) (act : Model.Action)
     SignedQuiet.test view p.state next.state stable, flags, DeltaSupport.read p.state act next.state⟩
 
 def readBoundedCases (b : Bounds) (p next : FramePath) (act : Model.Action)
-    (key : Key) (audit : Bool) (cases : Array BoundedCase) : IO (Array BoundedCase) := do
+    (key : Key) (audit : Bool) (counts : CaseCounts) : IO CaseCounts := do
   let cfg := b.deployment.cfg
   let decoded := if b.finiteCaseReads || audit then (keyAnswers key).toArray else #[]
   let check := audit || (b.finiteCaseReads && b.ghostMode == .check)
@@ -1352,7 +1359,8 @@ def readBoundedCases (b : Bounds) (p next : FramePath) (act : Model.Action)
   if audit then
     unless decoded.all (fun (q, v) => history.any (fun e => ReplayAnswers.answer e q == some v)) do
       throw (IO.userError s!"decoded answers disagree with ReplayAnswers for {encode key}")
-  let mut cases := cases
+  let mut cases := counts.rows
+  let mut wider := encode key
   for h : i in [:FullProfile.stepBranches.size] do
     let question := FullProfile.Question.step FullProfile.stepBranches[i]
     let actual := if b.finiteCaseReads && !evidence.nomination then
@@ -1363,29 +1371,30 @@ def readBoundedCases (b : Bounds) (p next : FramePath) (act : Model.Action)
     if b.finiteCaseReads && history.any (fun e => ReplayAnswers.answer e question != actual) then
       throw (IO.userError s!"finite case read disagreement at {i} for {encode key}")
     let actual := actual.orElse fun _ => generated.bind (Readers.read? · FullProfile.stepBranches[i])
+    if b.readerCensus && extraColumns[i]! then
+      let some value := actual | throw (IO.userError s!"covered reader returned unknown at {i}")
+      wider := 2 * wider + value.toNat
     match actual with
     | some true =>
       cases := cases.modify i fun c =>
         {c with yes := c.yes + 1, witness := c.witness.orElse (fun _ => some next)}
     | some false => cases := cases.modify i fun c => {c with no := c.no + 1}
     | none => pure ()
-  return cases
+  return ⟨cases, if b.readerCensus then counts.wider.insert wider else counts.wider⟩
 
 abbrev CensusRead := FramePath × FramePath × Model.Action × Key × Bool
 
-def emptyCases : Array BoundedCase := Array.replicate FullProfile.stepBranches.size {}
-
-def countCases (b : Bounds) (jobs : Array CensusRead) :
-    IO (Array BoundedCase) := do
-  let mut cases := emptyCases
+def countCases (b : Bounds) (jobs : Array CensusRead) : IO CaseCounts := do
+  let mut cases : CaseCounts := {}
   for (p, next, act, key, audit) in jobs do
     cases ← readBoundedCases b p next act key audit cases
   return cases
 
-def addCases (old new : Array BoundedCase) : Array BoundedCase :=
-  old.mapIdx fun i c =>
-    let n := new[i]!
-    ⟨c.yes + n.yes, c.no + n.no, c.witness.orElse (fun _ => n.witness)⟩
+def addCases (old new : CaseCounts) : CaseCounts :=
+  ⟨old.rows.mapIdx fun i c =>
+    let n := new.rows[i]!
+    ⟨c.yes + n.yes, c.no + n.no, c.witness.orElse (fun _ => n.witness)⟩,
+   new.wider.fold (fun acc k => acc.insert k) old.wider⟩
 
 def writeBoundedCases (file : String) (d : Deployment) (steps : Nat)
     (cases : Array BoundedCase) : IO Unit := do
@@ -1435,7 +1444,7 @@ def exhaust (b : Bounds) : IO Unit := do
   let mut signatures : Std.HashMap Nat (List EdgeRead) := {}
   let mut witnesses : Std.HashMap Key FramePath := {}
   let mut families := {}
-  let mut cases := emptyCases
+  let mut cases : CaseCounts := {}
   let mut depthCounts := #[1]
   let mut head := 0
   let mut steps := 0
@@ -1450,7 +1459,7 @@ def exhaust (b : Bounds) : IO Unit := do
   let mut frameNs := 0
   let mut compareNs := 0
   let mut merges : Batch MergeCheck Nat := {}
-  let mut census : Batch CensusRead (Array BoundedCase) := {}
+  let mut census : Batch CensusRead CaseCounts := {}
   while head < discovered do
     if ← expired then break
     let p := (← frames.get)[head]!
@@ -1557,7 +1566,9 @@ def exhaust (b : Bounds) : IO Unit := do
   IO.FS.writeFile b.out <| "key\tdepth\tschedule\tqueue_choices\tprefix_keys\n" ++
     String.join (rows.map fun (_, p) => boundedWitness d p)
   IO.println s!"wrote {b.out}"
-  if let some file := b.caseOut then writeBoundedCases file d steps cases
+  if let some file := b.caseOut then writeBoundedCases file d steps cases.rows
+  if b.readerCensus then
+    IO.println s!"wider projection: {cases.wider.size}; extra coordinates: {(extraColumns.filter id).size}"
 
 end ConsensusCoverage.Explore
 
