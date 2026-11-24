@@ -1,0 +1,13 @@
+module  -- shake: keep-all --deprecated_module: ignore
+
+public import Kv.Model
+public import Kv.Model.Transitions
+public import Kv.Model.Types
+public import Kv.Properties
+public import Kv.Properties.Invariants
+public import Kv.Properties.Programs
+public import Kv.TraceValidation
+public import Kv.TraceValidation.Records
+public import Kv.TraceValidation.Types
+public import Kv.TraceValidation.Adapter
+public import Kv.TraceValidation.Transitions
