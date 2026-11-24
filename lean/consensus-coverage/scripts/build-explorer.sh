@@ -8,6 +8,8 @@
 # Nix Lean 4.35.0 build uses GCC 16 libstdc++ wait/notify symbols absent in GCC 13.
 # The compiler defaults to cc on PATH; build products go in the Lake workspace
 # cache under ~/.cache/ccf-consensus-coverage, not in the checkout.
+# The executable includes the explicit, symbolic and ranked queue engines.
+# e.g. nice "$EXE" --queue-ladder --max-log 2 --max-term 3 --out witnesses.tsv
 
 set -euo pipefail
 
@@ -43,7 +45,14 @@ runtime = re.sub(r"(?m)^(?:public )?meta import ", "import ", original)
 runtime = runtime.replace("\nmeta section\n", "", 1).removesuffix("\nend\n") + "\n"
 for name in re.findall(r"(?m)^import all (.+)$", runtime):
     runtime = runtime.replace(f"\nimport {name}\n", "\n", 1)
-(mirror / "explore.lean").write_text(runtime)
+(mirror / "explore.lean").write_text(runtime.replace("public def main (args", "public def explorerMain (args"))
+(mirror / "scale.lean").write_bytes((source / "scripts/scale.lean").read_bytes())
+cc = os.environ["LEAN_CC"]
+prefix = subprocess.check_output(["lean", "--print-prefix"], text=True).strip()
+driver = target / "scale-driver.o"
+subprocess.run([str(Path(cc).with_name("c++")), "-std=c++20", "-O3", "-g", "-Wall", "-Wextra",
+                "-Werror", "-I" + prefix + "/include", "-c", str(source / "scripts/scale.cpp"),
+                "-o", str(driver)], check=True)
 
 manifest = json.loads((coverage / "lake-manifest.json").read_text())
 for package in manifest["packages"]:
@@ -58,6 +67,10 @@ manifest["name"] = "bounded_explorer"
 (target / "lakefile.toml").write_text(f'''name = "bounded_explorer"
 srcDir = "src"
 moreLeanArgs = ["-DwarningAsError=true"]
+moreLinkArgs = [{json.dumps(str(driver))}, "-lstdc++"]
+
+[[lean_lib]]
+name = "scripts"
 
 [[require]]
 name = "consensus_coverage"
@@ -66,12 +79,12 @@ copy = false
 
 [[lean_exe]]
 name = "bounded-explore"
-root = "scripts.explore"
+root = "scripts.scale"
 ''')
 subprocess.run(["lake", "-d", str(target), "--quiet", "build", "bounded-explore"],
                stdout=sys.stderr, check=True)
 
-# The unused proof bound 2^(2^457) cannot be materialized. Check that
+# The unused proof bound 2^(2^questionCount) cannot be materialized. Check that
 # generated C never reads it before omitting its eager initializer from a
 # copied object. Leave all Lean sources and shared Lake objects alone.
 exe = target / ".lake/build/bin/bounded-explore"
@@ -87,8 +100,6 @@ for o in objects:
         assert code.count(initialization) == 1
         overlay = target / "FullProfile-runtime.c"
         overlay.write_text(code.replace(initialization, ""))
-cc = os.environ["LEAN_CC"]
-prefix = subprocess.check_output(["lean", "--print-prefix"], text=True).strip()
 replacement = target / "FullProfile-runtime.o"
 subprocess.run([
     cc, "-I" + prefix + "/include", "-O3", "-DNDEBUG", "-DLEAN_EXPORTING",

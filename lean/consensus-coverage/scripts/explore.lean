@@ -944,6 +944,7 @@ structure Bounds where
   frontierOnly : Bool := false
   compact : Bool := false
   mergeWorkers : Nat := 1
+  mergeEvery : Nat := 1
   out : String := ""
   deriving Repr
 
@@ -956,6 +957,7 @@ def exhaustUsage :=
   "  [--frontier-only] (with --incremental: keep signatures, not expanded states)\n" ++
   "  [--compact] (intern exact frame fields and cached signature rows)\n" ++
   "  [--merge-workers N] (with --incremental: batch duplicate checks and case reads)\n" ++
+  "  [--merge-every N] (check every Nth duplicate; 0 disables the merge audit)\n" ++
   "explore.lean --key-answers FILE (one decimal key per input line; writes TSV to stdout)"
 
 def boundOptions : List String → Bounds → Except String Bounds
@@ -968,6 +970,8 @@ def boundOptions : List String → Bounds → Except String Bounds
     if b.finiteCaseReads && (b.caseOut.isNone || b.ghostMode == .history) then
       throw "--finite-case-reads requires --case-out and an incremental ghost"
     if b.mergeWorkers == 0 then throw "--merge-workers must be positive"
+    if b.mergeEvery > 1 && b.frontierOnly then
+      throw "sampled merge checks need retained representatives; omit --frontier-only"
     if (b.frontierOnly || 1 < b.mergeWorkers) && b.ghostMode != .incremental then
       throw "--frontier-only and parallel merge checks require --incremental"
     if b.out.isEmpty then throw exhaustUsage else return b
@@ -1002,6 +1006,7 @@ def boundOptions : List String → Bounds → Except String Bounds
       | "--step-budget" => boundOptions more {b with stepBudget := some n}
       | "--max-seconds" => boundOptions more {b with maxSeconds := some n}
       | "--merge-workers" => boundOptions more {b with mergeWorkers := n}
+      | "--merge-every" => boundOptions more {b with mergeEvery := n}
       | _ => throw exhaustUsage
   | _, _ => .error exhaustUsage
 
@@ -1383,7 +1388,7 @@ def exhaust (b : Bounds) : IO Unit := do
     copies={b.maxCopies} network={repr b.maxNetwork} palette={b.palette.name} \
     budget={repr b.stepBudget} seconds={repr b.maxSeconds} ghost={repr b.ghostMode} \
     frontierOnly={b.frontierOnly} compact={b.compact} mergeWorkers={b.mergeWorkers} \
-    finiteCaseReads={b.finiteCaseReads}"
+    finiteCaseReads={b.finiteCaseReads} mergeEvery={b.mergeEvery}"
   IO.println "Bounded frame-merge search; equality of keys has not been proved to imply equality of labels."
   IO.println "Action palette:"
   for (line, i) in palette.zipIdx do
@@ -1420,10 +1425,12 @@ def exhaust (b : Bounds) : IO Unit := do
   let mut steps := 0
   let mut excluded := 0
   let mut pairs := 0
+  let mut arrivals := 0
   let mut checkedEdges := 0
   let mut ghostChecks := 0
   let mut menuNs := 0
   let mut readerNs := 0
+  let mut readsMade := 0
   let mut frameNs := 0
   let mut compareNs := 0
   let mut merges : Batch MergeCheck Nat := {}
@@ -1432,7 +1439,7 @@ def exhaust (b : Bounds) : IO Unit := do
     if ← expired then break
     let p := (← frames.get)[head]!
     let depth := p.hits.length + 1
-    let saveSignature := b.frontierOnly && !signatures.contains head
+    let saveSignature := b.frontierOnly && b.mergeEvery == 1 && !signatures.contains head
     let reads ← probe b p saveSignature
     if saveSignature then
       let rows := signature reads
@@ -1443,6 +1450,7 @@ def exhaust (b : Bounds) : IO Unit := do
     excluded := excluded + reads.excluded
     menuNs := menuNs + reads.menuNs
     readerNs := readerNs + reads.readerNs
+    readsMade := readsMade + reads.edges.size
     let mut complete := true
     for (e, row, ghost) in reads.edges do
       unless row.inside do continue
@@ -1475,6 +1483,8 @@ def exhaust (b : Bounds) : IO Unit := do
         | none => (none, map.insert k discovered)
       frameNs := frameNs + (← IO.monoNanosNow) - tick
       if let some i := existing then
+        arrivals := arrivals + 1
+        if b.mergeEvery == 0 || arrivals % b.mergeEvery != 0 then continue
         let tick ← IO.monoNanosNow
         let expected ← if let some cached := signatures[i]? then pure cached else do
           let old ← compareSignature b (← frames.get)[i]!
@@ -1515,12 +1525,14 @@ def exhaust (b : Bounds) : IO Unit := do
   IO.println s!"frames by depth: {repr depthCounts}"
   IO.println s!"steps: {steps}; excluded by bounds: {excluded}; keys: {witnesses.size}; {ms} ms; {steps * 1000 / max 1 ms} steps/s"
   IO.println s!"merge self-check: {pairs} history pairs, {checkedEdges} enabled action pairs, 0 disagreements"
+  IO.println s!"duplicate arrivals: {arrivals}; merge audit interval: {b.mergeEvery}"
   if b.ghostMode == .check then
     IO.println s!"incremental cross-check: {ghostChecks} edges, 0 disagreements"
   if b.compact then
     IO.println s!"interned: {fields.size} frame components, {signatureRows.size} signature rows"
   IO.println s!"time ms: menus/bounds {menuNs / 1000000}, key+family {readerNs / 1000000}, \
     frame keys {frameNs / 1000000}, merge checks {compareNs / 1000000}"
+  IO.println s!"expansion reader calls: {readsMade} (including requested out-of-bounds signatures)"
   for (code, keys) in families.toList.mergeSort (fun a b => a.1 ≤ b.1) do
     IO.println s!"family: {code} {keys.size}"
     let codes := (keys.toList.map encode).mergeSort (· ≤ ·)
