@@ -271,6 +271,7 @@ namespace
     Visited visited;
     std::deque<Parent> parents;
     Names keys, families, case_rows;
+    std::unordered_map<U64, Id> case_inputs;
     std::vector<std::string> witnesses;
     std::map<Id, std::set<Id>> family_keys;
     std::vector<Census> census;
@@ -432,10 +433,21 @@ namespace
       Id ci = NIL;
       if (!case_out.empty())
       {
-        auto ans = bytes(Ref::borrow(lean_ctor_get(r, 3)));
-        ci = case_rows.add(ans);
-        if (ci == census.size())
-          census.push_back({std::move(ans), 0});
+        auto code = lean_ctor_get(r, 3);
+        if (!lean_is_scalar(code) || lean_unbox(code) >= NIL)
+          throw std::overflow_error("census context exceeds key width");
+        auto [entry, fresh] =
+          case_inputs.try_emplace(U64(ki) << 32 | lean_unbox(code), NIL);
+        if (fresh)
+        {
+          auto compute = lean_ctor_get(r, 4);
+          lean_inc(compute);
+          auto ans = bytes(Ref(lean_apply_1(compute, lean_box(0))));
+          entry->second = case_rows.add(ans);
+          if (entry->second == census.size())
+            census.push_back({std::move(ans), 0});
+        }
+        ci = entry->second;
       }
       family_keys[fi].insert(ki);
       Reading v{gid, {ki, fi, ci}};
@@ -563,6 +575,7 @@ namespace
                 << "; queues: " << queues.size()
                 << "; ghost values: " << ghosts.values.size()
                 << "; reader misses: " << fetched
+                << "; census contexts: " << case_inputs.size()
                 << "; menu misses: " << menu_misses
                 << "; reader ns: " << reader_ns << "; menu ns: " << menu_ns
                 << std::endl;

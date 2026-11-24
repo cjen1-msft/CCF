@@ -5,6 +5,8 @@ module
 
 import all scripts.explore
 import all ConsensusCoverage.GuardedDomain
+import all ConsensusCoverage.ReplayAnswers
+import all ConsensusCoverage.ScaleCensus
 
 /-! Native bounded exploration: `scripts/build-explorer.sh` builds this entry
 point outside the checkout. `--scale` enumerates exact interned triples
@@ -72,24 +74,41 @@ private structure Reading where
   ghost : ExplorerGhost.Ghost
   key : String
   family : String
-  cases : ByteArray
+  -- The native census forces the row once per (key, caseCode), never once per key alone.
+  caseCode : Nat
+  cases : Unit → ByteArray
+
+-- A future unconditional reader must join the packed schema or get its own
+-- coordinate before it can be excluded from the finite residual census.
+set_option maxRecDepth 8192 in
+example : ReplayAnswers.unconditional.all (fun branch =>
+    ((keyAnswers (decode 0)).map Prod.fst).contains (.step branch)) = true := by decide +kernel
+
+private def caseVector (c : ScaleCensus.Context) (decoded : Array (FullProfile.Question × Bool)) :
+    ByteArray := Id.run do
+  let mut out := ByteArray.empty
+  for h : i in [:FullProfile.stepBranches.size] do
+    let projected := if c.nomination then none
+      else caseProjection[i]!.bind fun j => decoded[j]?.map Prod.snd
+    let value := projected.orElse fun _ => c.other FullProfile.stepBranches[i]
+    out := out.push (value.elim 0 (fun v => if v then 2 else 1))
+  return out
+
+private def censusInput (b : Bounds) (p next : FramePath) (a : Model.Action) (key : JointWitnesses.Key) :=
+  ScaleCensus.context (finiteCaseEvidence b p next a key #[])
+
+-- Only the backing fields need the decoded coordinates. The finite context
+-- discards those fields, so decode once per new census row, not per edge.
+example (b : Bounds) (p next : FramePath) (a : Model.Action) (key : JointWitnesses.Key) (decoded) :
+    censusInput b p next a key = ScaleCensus.context (finiteCaseEvidence b p next a key decoded) := rfl
 
 @[export ccf_scale_read] def read (b : Bounds) (g : ExplorerGhost.Ghost)
     (s t : Model.State) (a : Model.Action) : Option Reading := do
   let r ← ExplorerGhost.read b.deployment.cfg g s t a
-  let cases := if b.caseOut.isNone then ByteArray.empty else Id.run do
-    let decoded := (keyAnswers r.key).toArray
-    let evidence := finiteCaseEvidence b {state := s, ghost := g}
-      {state := t, ghost := r.ghost} a r.key decoded
-    let mut out := ByteArray.empty
-    for h : i in [:FullProfile.stepBranches.size] do
-      let projected := if evidence.nomination then none
-        else caseProjection[i]!.bind fun j => decoded[j]?.map Prod.snd
-      let value := projected.orElse fun _ =>
-        ReplayAnswers.answer evidence (.step FullProfile.stepBranches[i])
-      out := out.push (value.elim 0 (fun v => if v then 2 else 1))
-    return out
-  return ⟨r.ghost, toString (encode r.key), r.family, cases⟩
+  let key := toString (encode r.key)
+  if b.caseOut.isNone then return ⟨r.ghost, key, r.family, 0, fun _ => .empty⟩
+  let c := censusInput b {state := s, ghost := g} {state := t, ghost := r.ghost} a r.key
+  return ⟨r.ghost, key, r.family, c.code, fun _ => caseVector c (keyAnswers r.key).toArray⟩
 
 @[export ccf_scale_case_names] def caseNames (_ : Bounds) :=
   FullProfile.stepBranches.map branchName
