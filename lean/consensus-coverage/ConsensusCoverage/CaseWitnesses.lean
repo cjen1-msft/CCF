@@ -148,15 +148,9 @@ private def cert1 : Certificate := certify run1 choices1 valid1 [run1At2, run1At
 
 -- BEGIN BOUNDED CENSUS
 private def bounded0 : Run :=
-  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.append [{content := .transaction 1 {configuration := some {0, 1, 2}}}])]⟩
+  ⟨{0, 1, 2}, [0, 1, 2], [     .input 0 (.append [{content := .transaction 1 {}}])]⟩
 private theorem bounded0Valid : bounded0.valid := by decide
 private def bounded0Cert : Certificate := certify bounded0 [] bounded0Valid
-  [caseAt 0 [.post_led_origin_inl]]
-
-private def bounded1 : Run :=
-  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.append [{content := .transaction 1 {}}])]⟩
-private theorem bounded1Valid : bounded1.valid := by decide
-private def bounded1Cert : Certificate := certify bounded1 [] bounded1Valid
   [caseAt 0 [.act_input_append,
     .anchor_lt_or_ge_inl,
     .anchor_lt_or_ge_inr,
@@ -190,17 +184,18 @@ private def bounded1Cert : Certificate := certify bounded1 [] bounded1Valid
     .terms_mem_append_inr,
     .terms_post_log_inr_inl]]
 
+private def bounded1 : Run :=
+  ⟨{0, 1, 2}, [0, 1, 2], [     .input 0 (.sendEntries 1 0)]⟩
+private theorem bounded1Valid : bounded1.valid := by decide
+private def bounded1Cert : Certificate := certify bounded1 [] bounded1Valid
+  [caseAt 0 [.commit_backed_kind_same,
+    .keep_backed_led_after_inl,
+    .post_led_origin_inl]]
+
 private def bounded2 : Run :=
-  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.sendEntries 1 0)]⟩
+  ⟨{0, 1, 2}, [0, 1, 2], [     .input 0 (.sendEntries 1 1)]⟩
 private theorem bounded2Valid : bounded2.valid := by decide
 private def bounded2Cert : Certificate := certify bounded2 [] bounded2Valid
-  [caseAt 0 [.commit_backed_kind_same,
-    .keep_backed_led_after_inl]]
-
-private def bounded3 : Run :=
-  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.sendEntries 1 1)]⟩
-private theorem bounded3Valid : bounded3.valid := by decide
-private def bounded3Cert : Certificate := certify bounded3 [] bounded3Valid
   [caseAt 0 [.act_input_sendEntries,
     .anchor_post_log_inl,
     .anchor_post_log_inr_inr,
@@ -211,162 +206,142 @@ private def bounded3Cert : Certificate := certify bounded3 [] bounded3Valid
     .sorted_post_log_inr_inr,
     .terms_post_log_inr_inr]]
 
-private def bounded4 : Run :=
-  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.timeout .checkQuorum)]⟩
-private theorem bounded4Valid : bounded4.valid := by decide
-private def bounded4Cert : Certificate := certify bounded4 [] bounded4Valid
+private def bounded3 : Run :=
+  ⟨{0, 1, 2}, [0, 1, 2], [     .input 0 (.timeout .checkQuorum)]⟩
+private theorem bounded3Valid : bounded3.valid := by decide
+private def bounded3Cert : Certificate := certify bounded3 [] bounded3Valid
   [caseAt 0 [.act_input_timeout,
     .act_kind_checkQuorum]]
 
-private def bounded5 : Run :=
+private def bounded4 : Run :=
   ⟨{0, 1}, [0, 1, 2], [     .input 2 (.initAsBackup [])]⟩
-private theorem bounded5Valid : bounded5.valid := by decide
-private def bounded5Cert : Certificate := certify bounded5 [] bounded5Valid
+private theorem bounded4Valid : bounded4.valid := by decide
+private def bounded4Cert : Certificate := certify bounded4 [] bounded4Valid
   [caseAt 0 [.act_input_initAsBackup]]
 
+private def bounded5 : Run :=
+  ⟨{0, 1, 2}, [0, 1, 2], [     .input 0 (.append [{content := .signature}]),     .input 0 (.sendEntries 1 1)]⟩
+private theorem bounded5Valid : bounded5.valid := by decide
+private def bounded5Cert : Certificate := certify bounded5 [] bounded5Valid
+  [caseAt 1 [.persist_pre_kind_append,
+    .persist_pre_kind_same]]
+
 private def bounded6 : Run :=
-  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.append [{content := .signature}]),     .input 0 (.append [{content := .transaction 1 {}}])]⟩
+  ⟨{0, 1, 2}, [0, 1, 2], [     .input 0 (.sendEntries 1 0),     .deliver 0 1]⟩
 private theorem bounded6Valid : bounded6.valid := by decide
 private def bounded6Cert : Certificate := certify bounded6 [] bounded6Valid
-  [caseAt 1 [.persist_pre_kind_append]]
-
-private def bounded7 : Run :=
-  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.append [{content := .signature}]),     .input 0 (.sendEntries 1 1)]⟩
-private theorem bounded7Valid : bounded7.valid := by decide
-private def bounded7Cert : Certificate := certify bounded7 [] bounded7Valid
-  [caseAt 1 [.persist_pre_kind_same]]
-
-private def bounded8 : Run :=
-  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.append [{content := .transaction 1 {configuration := some {0, 1, 2}}}]),     .deliver 0 2]⟩
-private theorem bounded8Valid : bounded8.valid := by decide
-private def bounded8Cert : Certificate := certify bounded8 [] bounded8Valid
-  [caseAt 1 [.commitFrontier_invariant_event_receive,
-    .post_two_active_inr_inr_inl,
-    .receive_message_appendEntriesRequest]]
-
-private def bounded9 : Run :=
-  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.sendEntries 1 0),     .deliver 0 1]⟩
-private theorem bounded9Valid : bounded9.valid := by decide
-private def bounded9Cert : Certificate := certify bounded9 [] bounded9Valid
   [caseAt 1 [.accept_backed_max_eq_or_inl,
     .accept_backed_max_eq_or_inr,
     .accept_backed_shape_inl,
     .accept_shape_eq_zero_or_pos_inl,
     .accept_shape_shape_pos,
+    .commitFrontier_invariant_event_receive,
     .commit_backed_kind_accept,
     .post_log_accept_shape_inl,
-    .post_log_kind_accept]]
+    .post_log_kind_accept,
+    .post_two_active_inr_inr_inl,
+    .receive_message_appendEntriesRequest]]
 
-private def bounded10 : Run :=
-  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.sendEntries 1 1),     .deliver 0 1]⟩
-private theorem bounded10Valid : bounded10.valid := by decide
-private def bounded10Cert : Certificate := certify bounded10 [] bounded10Valid
+private def bounded7 : Run :=
+  ⟨{0, 1, 2}, [0, 1, 2], [     .input 0 (.sendEntries 1 1),     .deliver 0 1]⟩
+private theorem bounded7Valid : bounded7.valid := by decide
+private def bounded7Cert : Certificate := certify bounded7 [] bounded7Valid
   [caseAt 1 [.accept_backed_shape_inr,
     .accept_shape_shape_neg,
     .post_log_accept_shape_inr]]
 
-private def bounded11 : Run :=
-  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]),     .deliver 0 1,     .deliver 1 0]⟩
-private theorem bounded11Valid : bounded11.valid := by decide
-private def bounded11Cert : Certificate := certify bounded11 [] bounded11Valid
+private def bounded8 : Run :=
+  ⟨{0, 1, 2}, [0, 1, 2], [     .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]),     .deliver 0 1,     .deliver 1 0]⟩
+private theorem bounded8Valid : bounded8.valid := by decide
+private def bounded8Cert : Certificate := certify bounded8 [] bounded8Valid
   [caseAt 2 [.persist_pre_kind_ack]]
 
-private def bounded12 : Run :=
-  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.append [{content := .signature}]),     .input 0 (.timeout .checkQuorum),     .input 0 (.timeout .election)]⟩
-private theorem bounded12Valid : bounded12.valid := by decide
-private def bounded12Cert : Certificate := certify bounded12 [] bounded12Valid
-  [caseAt 2 [.act_kind_election]]
-
-private def bounded13 : Run :=
-  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.append [{content := .transaction 1 {configuration := some {0, 1, 2}}}]),     .deliver 0 2,     .deliver 2 0]⟩
-private theorem bounded13Valid : bounded13.valid := by decide
-private def bounded13Cert : Certificate := certify bounded13 [] bounded13Valid
-  [caseAt 2 [.receive_message_appendEntriesResponse]]
-
-private def bounded14 : Run :=
-  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.sendEntries 1 1),     .deliver 0 1,     .deliver 1 0]⟩
-private theorem bounded14Valid : bounded14.valid := by decide
-private def bounded14Cert : Certificate := certify bounded14 [] bounded14Valid
+private def bounded9 : Run :=
+  ⟨{0, 1, 2}, [0, 1, 2], [     .input 0 (.sendEntries 1 1),     .deliver 0 1,     .deliver 1 0]⟩
+private theorem bounded9Valid : bounded9.valid := by decide
+private def bounded9Cert : Certificate := certify bounded9 [] bounded9Valid
   [caseAt 2 [.commit_backed_fromSource_pos,
     .commit_backed_kind_ack,
     .commit_backed_max_eq_or_inr,
     .keep_log_kind_ack,
     .match_ack_matchIndex_inr,
-    .post_log_kind_ack]]
+    .post_log_kind_ack,
+    .receive_message_appendEntriesResponse]]
 
-private def bounded15 : Run :=
-  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.sendEntries 1 1),     .deliver 0 1,     .input 0 (.append [{content := .transaction 1 {}}])]⟩
-private theorem bounded15Valid : bounded15.valid := by decide
-private def bounded15Cert : Certificate := certify bounded15 [] bounded15Valid
+private def bounded10 : Run :=
+  ⟨{0, 1, 2}, [0, 1, 2], [     .input 0 (.sendEntries 1 1),     .deliver 0 1,     .input 0 (.append [{content := .transaction 1 {}}])]⟩
+private theorem bounded10Valid : bounded10.valid := by decide
+private def bounded10Cert : Certificate := certify bounded10 [] bounded10Valid
   [caseAt 2 [.anchor_now_after_inr]]
 
-private def bounded16 : Run :=
+private def bounded11 : Run :=
+  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.append [{content := .signature}]),     .input 0 (.timeout .checkQuorum),     .input 0 (.timeout .election)]⟩
+private theorem bounded11Valid : bounded11.valid := by decide
+private def bounded11Cert : Certificate := certify bounded11 [] bounded11Valid
+  [caseAt 2 [.act_kind_election]]
+
+private def bounded12 : Run :=
   ⟨{0, 1}, [0, 1, 2], [     .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]),     .deliver 0 1,     .deliver 1 0,     .input 2 (.initAsBackup [{term := 2, content := .transaction 0 {configuration := some {0, 1}}}, {term := 2, content := .signature}])]⟩
-private theorem bounded16Valid : bounded16.valid := by decide
-private def bounded16Cert : Certificate := certify bounded16 [] bounded16Valid
+private theorem bounded12Valid : bounded12.valid := by decide
+private def bounded12Cert : Certificate := certify bounded12 [] bounded12Valid
   [caseAt 3 [.commit_backed_kind_install,
     .leader_floor_led_inl,
     .post_log_kind_install,
     .post_two_active_inr_inr_inr]]
 
-private def bounded17 : Run :=
-  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]),     .deliver 0 1,     .deliver 1 0,     .input 0 (.sendEntries 1 2),     .deliver 0 1]⟩
-private theorem bounded17Valid : bounded17.valid := by decide
-private def bounded17Cert : Certificate := certify bounded17 [] bounded17Valid
+private def bounded13 : Run :=
+  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]),     .deliver 0 1,     .input 0 (.nominateSuccessor),     .deliver 0 1]⟩
+private theorem bounded13Valid : bounded13.valid := by decide
+private def bounded13Cert : Certificate := certify bounded13 [] bounded13Valid
+  [caseAt 3 [.campaign_backed_pre_split_inl,
+    .candidate_kind_inl,
+    .candidate_now_after_inl,
+    .receive_message_proposeRequestVoteRequest]]
+
+private def bounded14 : Run :=
+  ⟨{0, 1}, [0, 1], [     .input 0 (.sendEntries 1 1),     .deliver 0 1,     .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]),     .deliver 0 1]⟩
+private theorem bounded14Valid : bounded14.valid := by decide
+private def bounded14Cert : Certificate := certify bounded14 [] bounded14Valid
+  [caseAt 3 [.accept_shape_eq_zero_or_pos_inr]]
+
+private def bounded15 : Run :=
+  ⟨{0, 1, 2}, [0, 1, 2], [     .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]),     .deliver 0 1,     .deliver 1 0,     .input 0 (.sendEntries 1 2),     .deliver 0 1]⟩
+private theorem bounded15Valid : bounded15.valid := by decide
+private def bounded15Cert : Certificate := certify bounded15 [] bounded15Valid
   [caseAt 4 [.accept_persist_shape_inl,
     .persist_pre_kind_accept]]
 
-private def bounded18 : Run :=
-  ⟨{0, 1}, [0, 1, 2], [     .input 0 (.sendEntries 1 1),     .deliver 0 1,     .deliver 1 0,     .input 0 (.sendEntries 1 1),     .deliver 0 1]⟩
-private theorem bounded18Valid : bounded18.valid := by decide
-private def bounded18Cert : Certificate := certify bounded18 [] bounded18Valid
-  [caseAt 4 [.accept_shape_eq_zero_or_pos_inr]]
-
-private def bounded19 : Run :=
-  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]),     .deliver 0 1,     .deliver 1 0,     .input 0 (.nominateSuccessor),     .deliver 0 1]⟩
-private theorem bounded19Valid : bounded19.valid := by decide
-private def bounded19Cert : Certificate := certify bounded19 [] bounded19Valid
-  [caseAt 4 [.receive_message_proposeRequestVoteRequest]]
-
-private def bounded20 : Run :=
-  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature}]),     .input 0 (.timeout .checkQuorum),     .input 0 (.timeout .election),     .deliver 0 1,     .deliver 1 0]⟩
-private theorem bounded20Valid : bounded20.valid := by decide
-private def bounded20Cert : Certificate := certify bounded20 [] bounded20Valid
-  [caseAt 4 [.campaign_backed_pre_split_inl,
-    .candidate_kind_inl,
-    .candidate_now_after_inl,
-    .receive_message_requestPreVoteResponse]]
-
-private def bounded21 : Run :=
-  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature}]),     .input 0 (.timeout .checkQuorum),     .input 0 (.timeout .election),     .deliver 0 1,     .deliver 1 0,     .deliver 0 1]⟩
-private theorem bounded21Valid : bounded21.valid := by decide
-private def bounded21Cert : Certificate := certify bounded21 [] bounded21Valid
-  [caseAt 5 [.receive_message_requestVoteRequest,
+private def bounded16 : Run :=
+  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]),     .deliver 0 1,     .input 0 (.nominateSuccessor),     .deliver 0 1,     .deliver 1 0]⟩
+private theorem bounded16Valid : bounded16.valid := by decide
+private def bounded16Cert : Certificate := certify bounded16 [(4, 1)] bounded16Valid
+  [caseAt 4 [.receive_message_requestVoteRequest,
     .receive_vote_pos,
     .rv_stable_now_after_inr]]
 
-private def bounded22 : Run :=
-  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]),     .deliver 0 1,     .deliver 1 0,     .input 0 (.nominateSuccessor),     .deliver 0 1,     .deliver 1 0,     .deliver 0 1]⟩
-private theorem bounded22Valid : bounded22.valid := by decide
-private def bounded22Cert : Certificate := certify bounded22 [] bounded22Valid
-  [caseAt 6 [.completeness_committed_inl,
-    .freshCert_backing_inr,
-    .old_complete_elected_after_inr]]
+private def bounded17 : Run :=
+  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature}]),     .input 0 (.timeout .checkQuorum),     .input 0 (.timeout .election),     .deliver 0 1,     .deliver 1 0]⟩
+private theorem bounded17Valid : bounded17.valid := by decide
+private def bounded17Cert : Certificate := certify bounded17 [] bounded17Valid
+  [caseAt 4 [.receive_message_requestPreVoteResponse]]
 
-private def bounded23 : Run :=
-  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature}]),     .input 0 (.timeout .checkQuorum),     .input 0 (.timeout .election),     .deliver 0 1,     .deliver 1 0,     .deliver 0 1,     .deliver 1 0]⟩
-private theorem bounded23Valid : bounded23.valid := by decide
-private def bounded23Cert : Certificate := certify bounded23 [] bounded23Valid
-  [caseAt 6 [.canon_mono_elected_after_inr,
+private def bounded18 : Run :=
+  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]),     .deliver 0 1,     .input 0 (.nominateSuccessor),     .deliver 0 1,     .deliver 1 0,     .deliver 0 1]⟩
+private theorem bounded18Valid : bounded18.valid := by decide
+private def bounded18Cert : Certificate := certify bounded18 [(4, 1)] bounded18Valid
+  [caseAt 5 [.canon_mono_elected_after_inr,
     .commit_backed_kind_elect,
+    .completeness_committed_inl,
     .election_safety_led_after_inr,
     .freshCampaign_term_inr,
     .freshCert_backing_inl,
+    .freshCert_backing_inr,
     .grantFactsBefore_grant_inl,
     .keep_backed_led_after_inr,
     .leader_logs_leader_inr,
     .led_cur_led_after_inr,
     .led_cur_role_inl,
+    .old_complete_elected_after_inr,
     .persist_pre_kind_elect,
     .post_led_origin_inr,
     .post_log_kind_elect,
@@ -374,20 +349,26 @@ private def bounded23Cert : Certificate := certify bounded23 [] bounded23Valid
     .rankedElections_elected_inr,
     .receive_message_requestVoteResponse]]
 
-private def bounded24 : Run :=
-  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature}]),     .input 0 (.timeout .checkQuorum),     .input 0 (.timeout .election),     .deliver 0 1,     .deliver 1 0,     .deliver 0 1,     .deliver 1 0,     .input 0 (.timeout .checkQuorum)]⟩
-private theorem bounded24Valid : bounded24.valid := by decide
-private def bounded24Cert : Certificate := certify bounded24 [] bounded24Valid
-  [caseAt 7 [.canon_mono_elected_after_inl]]
+private def bounded19 : Run :=
+  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]),     .deliver 0 1,     .input 0 (.nominateSuccessor),     .deliver 0 1,     .deliver 1 0,     .deliver 0 1,     .input 1 (.timeout .checkQuorum)]⟩
+private theorem bounded19Valid : bounded19.valid := by decide
+private def bounded19Cert : Certificate := certify bounded19 [(4, 1)] bounded19Valid
+  [caseAt 6 [.canon_mono_elected_after_inl]]
 
-private def certificates : List Certificate := [cert0, cert1, bounded0Cert, bounded1Cert, bounded2Cert, bounded3Cert, bounded4Cert, bounded5Cert, bounded6Cert, bounded7Cert, bounded8Cert, bounded9Cert, bounded10Cert, bounded11Cert, bounded12Cert, bounded13Cert, bounded14Cert, bounded15Cert, bounded16Cert, bounded17Cert, bounded18Cert, bounded19Cert, bounded20Cert, bounded21Cert, bounded22Cert, bounded23Cert, bounded24Cert]
+private def bounded20 : Run :=
+  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature}]),     .input 0 (.timeout .checkQuorum),     .input 0 (.timeout .election),     .deliver 0 1,     .deliver 1 0,     .input 0 (.timeout .election),     .deliver 0 1]⟩
+private theorem bounded20Valid : bounded20.valid := by decide
+private def bounded20Cert : Certificate := certify bounded20 [(6, 1)] bounded20Valid
+  [caseAt 6 [.receive_message_requestPreVoteRequest]]
+
+private def certificates : List Certificate := [cert0, cert1, bounded0Cert, bounded1Cert, bounded2Cert, bounded3Cert, bounded4Cert, bounded5Cert, bounded6Cert, bounded7Cert, bounded8Cert, bounded9Cert, bounded10Cert, bounded11Cert, bounded12Cert, bounded13Cert, bounded14Cert, bounded15Cert, bounded16Cert, bounded17Cert, bounded18Cert, bounded19Cert, bounded20Cert]
 -- END GENERATED CERTIFICATES
 
 /-- The positive cases computed by running the sound reader on the cover. -/
 public def witnessed : List Classes.StepBranch :=
   (certificates.flatMap (·.questions)).eraseDups
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 152 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 153 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
