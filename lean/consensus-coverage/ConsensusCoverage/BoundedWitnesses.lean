@@ -171,9 +171,74 @@ private def cert22 : Certificate := multiCert
     append 1 [flush 0 3], deliver 1 0, deliver 0 1, append 1 [flush 0 4], deliver 1 0]⟩)
   [] 1737851616382
 
+private def cert23 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [flush 1 2], deliver 0 1, deliver 1 0, send 0 1 2, deliver 0
+    1, nom 0, deliver 0 1, elect 1, deliver 1 0, deliver 0 1, elect 0, deliver 0 1,
+    deliver 1 0]⟩) [(8, 2), (12, 3)] 618475535481
+
+private def cert24 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [send 0 1 0, append 0 [flush 1 2], deliver 0 1, deliver 1 0, down 0,
+    elect 0, deliver 0 1, deliver 1 0, deliver 0 1, deliver 1 0, deliver 0 1, nom 0,
+    deliver 0 1, deliver 0 1, deliver 1 0]⟩) [(2, 1), (6, 1), (8, 1), (10, 1), (12, 2),
+    (14, 2)] 618475536249
+
+private def cert25 : Certificate := multiCert
+  (⟨{0, 1, 2}, [0, 1, 2], [append 0 [flush 1 2], deliver 0 1, deliver 1 0, send 0 2 2,
+    deliver 0 2, deliver 2 0, nom 0, deliver 0 2, deliver 2 1, deliver 1 2, deliver 2 1,
+    deliver 2 0]⟩) [(11, 1)] 638339758969
+
+private def cert26 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [flush 1 2], deliver 0 1, deliver 1 0, send 0 1 2, deliver 0
+    1, nom 0, deliver 0 1, elect 1, deliver 1 0, deliver 0 1, elect 1, deliver 1 0]⟩) [(8,
+    2), (11, 3)] 646426901625
+
+private def cert27 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [flush 1 2], deliver 0 1, deliver 1 0, down 0, elect 0,
+    deliver 0 1, deliver 1 0, deliver 0 1, deliver 1 0, deliver 0 1, nom 0, deliver 0 1,
+    elect 1, deliver 1 0]⟩) [(13, 2)] 646426902393
+
+private def cert28 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [flush 1 2], down 0, elect 0, deliver 0 1, deliver 1 0,
+    deliver 0 1, deliver 0 1, deliver 1 0, nom 0, deliver 0 1, deliver 0 1, deliver 1 0]⟩)
+    [(3, 1), (7, 1), (9, 2), (11, 2)] 1236950826873
+
+private def cert29 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [flush 1 2], down 0, elect 0, deliver 0 1, deliver 1 0,
+    deliver 0 1, deliver 0 1, elect 1, deliver 1 0, deliver 0 1, elect 1, deliver 1 0]⟩)
+    [(3, 1), (8, 2), (11, 3)] 1264902192249
+
+private def cert30 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [flush 1 2], down 0, elect 0, deliver 0 1, deliver 1 0,
+    deliver 0 1, deliver 0 1, deliver 1 0, nom 0, deliver 0 1, elect 1, deliver 1 0]⟩)
+    [(3, 1), (7, 1), (9, 2), (11, 3)] 1264902193017
+
+private def cert31 : Certificate := multiCert
+  (⟨{0, 1, 2}, [0, 1, 2], [append 0 [flush 1 2], deliver 0 1, deliver 1 0, send 0 1 2,
+    deliver 0 1, send 0 2 2, deliver 0 2]⟩) [] 1737851347016
+
+private def cert32 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [flush 1 2], deliver 0 1, down 0, elect 0, deliver 0 1,
+    deliver 1 0, deliver 0 1, deliver 1 0, nom 0, deliver 0 1, deliver 0 1, deliver 1 0]⟩)
+    [(5, 1), (7, 1), (9, 2), (11, 2)] 1855426117497
+
+private def cert33 : Certificate := multiCert
+  (⟨{0, 1, 2}, [0, 1, 2], [send 0 1 1, deliver 0 1, deliver 1 0, append 0 [flush 2 2],
+    deliver 0 2, deliver 2 0, nom 0, deliver 0 2, deliver 2 0, deliver 0 2, deliver 2 1]⟩)
+    [(10, 2)] 1875290333185
+
+private def cert34 : Certificate := multiCert
+  (⟨{0, 1, 2}, [0, 1, 2], [append 0 [flush 1 2], deliver 0 1, deliver 1 0, nom 0, deliver
+    0 1, deliver 1 2, deliver 2 1, deliver 1 0]⟩) [(7, 1)] 1875290340217
+
+private def cert35 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [append 0 [flush 1 2], deliver 0 1, nom 0, deliver 0 1, elect 1,
+    deliver 1 0, deliver 0 1, elect 1, deliver 1 0]⟩) [(5, 2), (8, 3)] 1883377482873
+
 private def certificates : List Certificate :=
   [cert0, cert1, cert2, cert3, cert4, cert5, cert6, cert7, cert8, cert9, cert10, cert11,
-    cert12, cert13, cert14, cert15, cert16, cert17, cert18, cert19, cert20, cert21, cert22]
+    cert12, cert13, cert14, cert15, cert16, cert17, cert18, cert19, cert20, cert21, cert22,
+    cert23, cert24, cert25, cert26, cert27, cert28, cert29, cert30, cert31, cert32, cert33,
+    cert34, cert35]
 -- END GENERATED CERTIFICATES
 
 private def newKeys : List Nat := certificates.map (·.key)
@@ -198,19 +263,19 @@ private theorem multi_occurs {k : Nat} (mem : k ∈ multiKeys) :
   · exact ExploredWitnesses.multi_occurs old
   · exact new_occurs new
 
-private theorem count : keys.Nodup ∧ keys.length = 210 := by decide +kernel
-private theorem multi_count : multiKeys.Nodup ∧ multiKeys.length = 207 := by decide +kernel
+private theorem count : keys.Nodup ∧ keys.length = 223 := by decide +kernel
+private theorem multi_count : multiKeys.Nodup ∧ multiKeys.length = 220 := by decide +kernel
 
-/-- Every cover of initialized recorded step labels contains at least 210 rows. -/
+/-- Every cover of initialized recorded step labels contains at least 223 rows. -/
 public theorem full_lower_bound (rows : List Profile) (complete : ∀ s, label s ∈ rows) :
-    210 ≤ rows.length := by
+    223 ≤ rows.length := by
   simpa only [count.2] using
     (projected_lower_bound project count.1 (fun _ => occurs) complete)
 
-/-- Every cover of initialized multi-node step labels contains at least 207 rows. -/
+/-- Every cover of initialized multi-node step labels contains at least 220 rows. -/
 public theorem multi_lower_bound (rows : List Profile)
     (complete : ∀ s : Step, LeaderCoverage.MultiNode s.nodes → label s ∈ rows) :
-    207 ≤ rows.length := by
+    220 ≤ rows.length := by
   have sub : multiKeys ⊆ rows.map project := by
     intro k hk
     obtain ⟨s, multi, key⟩ := multi_occurs hk
