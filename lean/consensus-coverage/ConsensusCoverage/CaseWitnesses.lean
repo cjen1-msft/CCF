@@ -320,14 +320,48 @@ private def bounded17Cert : Certificate := certify bounded17 [] bounded17Valid
     .receive_vote_pos,
     .rv_stable_now_after_inr]]
 
-private def certificates : List Certificate := [cert0, cert1, bounded0Cert, bounded1Cert, bounded2Cert, bounded3Cert, bounded4Cert, bounded5Cert, bounded6Cert, bounded7Cert, bounded8Cert, bounded9Cert, bounded10Cert, bounded11Cert, bounded12Cert, bounded13Cert, bounded14Cert, bounded15Cert, bounded16Cert, bounded17Cert]
+private def bounded18 : Run :=
+  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]),     .deliver 0 1,     .deliver 1 0,     .input 0 (.nominateSuccessor),     .deliver 0 1,     .deliver 1 0,     .deliver 0 1]⟩
+private theorem bounded18Valid : bounded18.valid := by decide
+private def bounded18Cert : Certificate := certify bounded18 [] bounded18Valid
+  [caseAt 6 [.completeness_committed_inl,
+    .freshCert_backing_inr,
+    .old_complete_elected_after_inr]]
+
+private def bounded19 : Run :=
+  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature}]),     .input 0 (.timeout .checkQuorum),     .input 0 (.timeout .election),     .deliver 0 1,     .deliver 1 0,     .deliver 0 1,     .deliver 1 0]⟩
+private theorem bounded19Valid : bounded19.valid := by decide
+private def bounded19Cert : Certificate := certify bounded19 [] bounded19Valid
+  [caseAt 6 [.canon_mono_elected_after_inr,
+    .commit_backed_kind_elect,
+    .election_safety_led_after_inr,
+    .freshCampaign_term_inr,
+    .freshCert_backing_inl,
+    .keep_backed_led_after_inr,
+    .leader_logs_leader_inr,
+    .led_cur_led_after_inr,
+    .led_cur_role_inl,
+    .persist_pre_kind_elect,
+    .post_led_origin_inr,
+    .post_log_kind_elect,
+    .previousBacking_elected_inr,
+    .rankedElections_elected_inr,
+    .receive_message_requestVoteResponse]]
+
+private def bounded20 : Run :=
+  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .signature}]),     .input 0 (.timeout .checkQuorum),     .input 0 (.timeout .election),     .deliver 0 1,     .deliver 1 0,     .deliver 0 1,     .deliver 1 0,     .input 0 (.timeout .checkQuorum)]⟩
+private theorem bounded20Valid : bounded20.valid := by decide
+private def bounded20Cert : Certificate := certify bounded20 [] bounded20Valid
+  [caseAt 7 [.canon_mono_elected_after_inl]]
+
+private def certificates : List Certificate := [cert0, cert1, bounded0Cert, bounded1Cert, bounded2Cert, bounded3Cert, bounded4Cert, bounded5Cert, bounded6Cert, bounded7Cert, bounded8Cert, bounded9Cert, bounded10Cert, bounded11Cert, bounded12Cert, bounded13Cert, bounded14Cert, bounded15Cert, bounded16Cert, bounded17Cert, bounded18Cert, bounded19Cert, bounded20Cert]
 -- END GENERATED CERTIFICATES
 
 /-- The positive cases computed by running the sound reader on the cover. -/
 public def witnessed : List Classes.StepBranch :=
   (certificates.flatMap (·.questions)).eraseDups
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 128 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 147 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
