@@ -64,9 +64,10 @@ private def claim5 : Claim :=
   ], by decide +kernel⟩
 private def claim6 : Claim :=
   ⟨3, 6, [
-    .election_safety_led_after_inr, .freshCert_backing_inl, .keep_backed_led_after_inr,
-    .leader_led_leader_inr, .led_cur_led_cur_inl, .led_cur_role_inl, .previousBacking_elected_inr,
-    .receive_message_requestVoteResponse
+    .canon_mono_elected_after_inr, .election_safety_led_after_inr, .freshCampaign_term_inr,
+    .freshCert_backing_inl, .keep_backed_led_after_inr, .leader_led_leader_inr,
+    .led_cur_led_after_inr, .led_cur_led_cur_inl, .led_cur_role_inl, .previousBacking_elected_inr,
+    .rankedElections_elected_inr, .receive_message_requestVoteResponse
   ], by decide +kernel⟩
 private def claim7 : Claim :=
   ⟨15, 0, [
@@ -124,10 +125,10 @@ private def claims : List Claim := [
 /-- Cases witnessed by an executable reader on a replayed corpus step. -/
 public def witnessed : List Classes.StepBranch := claims.flatMap (·.questions)
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 112 := by decide
+public theorem count : witnessed.Nodup ∧ witnessed.length = 116 := by decide
 
 public theorem union_count :
-    (witnessed ++ CaseWitnesses.witnessed).eraseDups.length = 117 := by decide
+    (witnessed ++ CaseWitnesses.witnessed).eraseDups.length = 121 := by decide
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
