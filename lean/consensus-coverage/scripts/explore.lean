@@ -5,7 +5,6 @@ module
 
 public meta import ConsensusCoverage.JointWitnesses
 public meta import ConsensusCoverage.GuardedDomain
-public meta import ConsensusCoverage.GrantFrontier
 public meta import ConsensusCoverage.EventSupport
 public meta import ConsensusCoverage.DelayedNominationRead
 public meta import ConsensusCoverage.Timely
@@ -849,6 +848,11 @@ inductive BoundPalette where
   | core | reconfig | retirement
   deriving Repr, BEq
 
+def BoundPalette.name : BoundPalette → String
+  | .core => "core"
+  | .reconfig => "reconfig"
+  | .retirement => "retirement"
+
 structure Bounds where
   deployment : Deployment := ⟨[0, 1], [0, 1]⟩
   maxLog : Nat := 2
@@ -1024,10 +1028,11 @@ structure EdgeRead where
 
 structure Probe where
   edges : Array (Enabled × EdgeRead) := #[]
+  excluded : Nat := 0
   menuNs : Nat := 0
   readerNs : Nat := 0
 
-def probe (b : Bounds) (p : FramePath) : IO Probe := do
+def probe (b : Bounds) (p : FramePath) (compareAll : Bool) : IO Probe := do
   let start ← IO.monoNanosNow
   let cfg := b.deployment.cfg
   let menu := (boundCandidates b p.state).filterMap fun c =>
@@ -1035,12 +1040,16 @@ def probe (b : Bounds) (p : FramePath) : IO Probe := do
       ((⟨c, t⟩ : Enabled), b.allows t)
   let mapped ← IO.monoNanosNow
   let mut edges := #[]
+  let mut excluded := 0
   for (e, inside) in menu do
+    if !inside then
+      excluded := excluded + 1
+      unless compareAll do continue
     let some key := JointWitnesses.readKey cfg p.state e.act e.after p.past
       | throw (IO.userError "reader failed on enabled bounded-search action")
     let family := Families.code (Families.classify cfg p.state e.act e.after p.past)
     edges := edges.push (e, ⟨actionCode e.act, key, family, inside⟩)
-  return ⟨edges, mapped - start, (← IO.monoNanosNow) - mapped⟩
+  return ⟨edges, excluded, mapped - start, (← IO.monoNanosNow) - mapped⟩
 
 def signature (p : Probe) : List EdgeRead :=
   (p.edges.toList.map Prod.snd).mergeSort fun a b =>
@@ -1048,18 +1057,23 @@ def signature (p : Probe) : List EdgeRead :=
       (a.action.1 == b.action.1 && compare a.action.2 b.action.2 != .gt)
 
 def boundedWitness (d : Deployment) (p : FramePath) : String :=
-  s!"{p.codes.head!}\t{p.hits.length}\t{(scheduleText d p.hits).replace "\n" " "}\t\
-    {repr (deliveryChoices p.hits)}\t{repr p.codes.reverse}\n"
+  let oneLine (s : String) := s.replace "\n" " "
+  s!"{p.codes.head!}\t{p.hits.length}\t{oneLine (scheduleText d p.hits)}\t\
+    {oneLine (reprStr (deliveryChoices p.hits))}\t{oneLine (reprStr p.codes.reverse)}\n"
 
 def exhaust (b : Bounds) : IO Unit := do
-  IO.println s!"bounds: {repr b}"
-  IO.println "Bounded frame-merge search; equality of keys has not been proved to imply equality of labels."
-  IO.println s!"Action palette: {repr b.palette}; distinct queue values, all core local inputs"
-  if b.palette != .core then IO.println "  plus one-member reconfigurations (bare, signed, and flushed)"
-  if b.palette == .retirement then IO.println "  plus singleton and retirement-confirmation batches"
-  for line in palette do IO.println s!"  {line}"
-  let start ← IO.monoNanosNow
   let d := b.deployment
+  IO.println s!"bounds: voters={d.voters} nodes={d.nodes} log={b.maxLog} term={b.maxTerm} \
+    copies={b.maxCopies} network={repr b.maxNetwork} palette={b.palette.name} budget={repr b.stepBudget}"
+  IO.println "Bounded frame-merge search; equality of keys has not been proved to imply equality of labels."
+  IO.println "Action palette:"
+  for (line, i) in palette.zipIdx do
+    if b.palette != .core || (i != 2 && i != 3) then IO.println s!"  {line}"
+  if b.palette == .retirement then
+    IO.println "  singleton actor configuration, optionally signed/flushed to one or all eligible peers (+ optional trailing signature)"
+    IO.println "  confirm retirement (each eligible retiree or all); bare, signed, two signatures, or signed with flush to retirees"
+  (← IO.getStdout).flush
+  let start ← IO.monoNanosNow
   let initial : FramePath := ⟨d.initial, [], [], []⟩
   unless b.allows initial.state do throw (IO.userError "initial state is outside the selected bounds")
   let mut seen : Std.HashMap FrameKey Nat := ({} : Std.HashMap FrameKey Nat).insert
@@ -1081,16 +1095,12 @@ def exhaust (b : Bounds) : IO Unit := do
   while head < frames.size do
     let p := frames[head]!
     let depth := p.hits.length + 1
-    let reads ← probe b p
-    let sig := signature reads
-    signatures := signatures.insert head sig
+    let reads ← probe b p false
+    excluded := excluded + reads.excluded
     menuNs := menuNs + reads.menuNs
     readerNs := readerNs + reads.readerNs
     let mut complete := true
     for (e, row) in reads.edges do
-      if !row.inside then
-        excluded := excluded + 1
-        continue
       if b.stepBudget.any (· ≤ steps) then
         complete := false
         break
@@ -1106,15 +1116,16 @@ def exhaust (b : Bounds) : IO Unit := do
       if let some i := existing then
         let tick ← IO.monoNanosNow
         let old ← if let some cached := signatures[i]? then pure cached else do
-          pure (signature (← probe b frames[i]!))
+          pure (signature (← probe b frames[i]! true))
         signatures := signatures.insert i old
-        let new := signature (← probe b next)
+        let new := signature (← probe b next true)
         pairs := pairs + 1
         checkedEdges := checkedEdges + new.length
         unless old == new do
           IO.println s!"Merge disagreement at pair {pairs}:\nold {repr old}\nnew {repr new}"
-          IO.println (boundedWitness d frames[i]!)
-          IO.println (boundedWitness d next)
+          for path in [frames[i]!, next] do
+            IO.println (scheduleText d path.hits)
+            IO.println s!"queue choices: {repr (deliveryChoices path.hits)}"
           throw (IO.userError "equal frame keys had different enabled action signatures")
         compareNs := compareNs + (← IO.monoNanosNow) - tick
       else
@@ -1122,6 +1133,9 @@ def exhaust (b : Bounds) : IO Unit := do
         frames := frames.push next
         if depthCounts.size == depth then depthCounts := depthCounts.push 0
         depthCounts := depthCounts.modify depth (· + 1)
+      if steps % 1000 == 0 then
+        IO.println s!"progress: {steps} steps, {frames.size} frames, {frames.size - head} frontier, {witnesses.size} keys"
+        (← IO.getStdout).flush
     if !complete then break
     head := head + 1
   let stop ← IO.monoNanosNow
