@@ -43,8 +43,8 @@ A clause (a field of the state pattern's structure) that is a definition rather 
 unfolded at its head to read its instance binders and premises; conditions nested deeper (a
 `match` with implications inside) are not premises, and stay case splits of the proof.
 
-A split counts when at least two of its branches are live (not closed by contradiction) and no
-live branch's script closes every other live branch (the replay test of `split_rel`).
+A split counts when at least two of its branches are live. A dead branch has a kernel-checked
+proof of `False` in its branch context. The replay test of `split_rel` is advisory only.
 
 Generated:
 
@@ -291,17 +291,14 @@ def counts (r : Result) (s : SplitRec) : Bool × String :=
   let bs := s.branches.map (r.branches[·]!)
   let live := bs.filter (!·.dead)
   let refut := if s.refutation then "inside a refutation; " else ""
-  if live.size < 2 then (false, s!"{refut}{live.size} live branch(es)")
-  else if s.coveredBy != "" then
-    (false, s!"{refut}redundant: the script of {s.coveredBy} closes every live branch")
-  else (true, s!"{refut}{live.size} live branches, no script closes the others")
+  (live.size ≥ 2, s!"{refut}{live.size} live branch(es)")
 
 def sanitize (s : String) : String :=
   String.ofList (s.toList.map fun c => if c.isAlphanum then c else '_')
 
 def table (r : Result) (classOf : Array String := #[])
     (clauses : Array String := #[]) (extra : Array String := #[]) : MetaM String := do
-  let mut rows := #["kind\troot\tlevel\tcall_path\tdecl\tsplit\tbranch\tlive\tcounts\twhy\tconditions\tpredicate\tclause\trole\tclass\ttie_back"]
+  let mut rows := #["kind\troot\tlevel\tcall_path\tdecl\tsplit\tbranch\tlive\tcounts\twhy\tconditions\tpredicate\tclause\trole\tclass\ttie_back\tcovered_by\tsplit_id"]
   for (b, idx) in r.branches.zipIdx do
     let s := r.splits[b.splitId]!
     let (c, why) := counts r s
@@ -312,7 +309,8 @@ def table (r : Result) (classOf : Array String := #[])
       "branch", b.root.toString, b.level.str, "/".intercalate b.path.toList, b.decl.toString,
       b.split, b.tag, if b.dead then "dead" else "live", toString c, why,
       " ∧ ".intercalate b.conds.toList, b.predStr, b.clause, b.role, (classOf[idx]?).getD "-",
-      if tie.isEmpty then "-" else "; ".intercalate tie]
+      if tie.isEmpty then "-" else "; ".intercalate tie,
+      if s.coveredBy.isEmpty then "-" else s.coveredBy, toString b.splitId]
   for u in r.unrecorded do
     rows := rows.push <| "\t".intercalate [
       "unrecorded", u.root.toString, "-", "/".intercalate u.path.toList, u.decl.toString,

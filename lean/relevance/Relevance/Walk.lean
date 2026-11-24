@@ -227,7 +227,7 @@ structure SplitRec where
   path : Array String
   decl : Name
   name : String
-  /-- The live branch whose script closes every other live branch (replay test), or `""`. -/
+  /-- Advisory replay result: a live branch whose script closes the other live branches, or `""`. -/
   coveredBy : String := ""
   /-- The goal of the split is `False`: it reasons about a hypothetical item. -/
   refutation : Bool := false
@@ -1249,11 +1249,14 @@ partial def walkBranch (f α tag dead p : Expr) : M Expr := do
   -- collect conditions
   let mut conds := #[]
   let mut condApps := #[]
-  let mut body := p
+  let mut body := p.consumeMData
   while body.isAppOfArity ``condMark 4 do
     conds := conds.push body.getAppArgs[2]!
     condApps := condApps.push (mkAppN body.getAppFn (body.getAppArgs.extract 0 3))
-    body := body.getAppArgs[3]!
+    body := body.getAppArgs[3]!.consumeMData
+  unless deadE.isConstOf ``Bool.false ||
+      (dead && body.isAppOfArity ``False.elim 2) do
+    throwError "relevance: branch {st.splits[splitId]!.name}/{tag} has an uncertified dead flag"
   let condStrs ← conds.mapM fun c => do oneLine (← inferType c)
   let id := st.branches.size
   let ctx ← read

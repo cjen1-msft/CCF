@@ -118,12 +118,14 @@ The current native Fluentd capture path and replay's assurance limits are docume
 [`ConsensusCoverage.Classes`](../consensus-coverage/ConsensusCoverage/Classes.lean) requires
 every detected case split in the four coverage roots to be recorded, including splits made
 by automation. The generator rejects unrecorded eliminators both in its shared walk and
-in a declaration-local walk of the kernel proof closure. A recorded split need not add a
-question: the existing branch-liveness and script-replay tests still apply.
+in a declaration-local walk of the kernel proof closure. A recorded split counts when
+at least two branches are live. A dead branch must eliminate a kernel-checked proof
+of `False` in its own context. The script-replay result is diagnostic only: the same
+script can rely on different hypotheses in different branches.
 
-The current generator emits 461 step questions and 12 state questions (485 coordinates
-with both endpoints). The exact step tables and measurements below that cite 433 step
-questions or 457 coordinates describe the earlier question set, not the expanded one.
+The current generator emits 516 step questions and 16 state questions (548 coordinates
+with both endpoints). Results below that cite 433 or 461 step questions, or 457 or 485
+total coordinates, describe earlier question sets.
 
 **State denominator during replay: three profiles for nonempty clusters.** All twelve generated
 state questions reduce to two facts: is any node's commit index zero, and does

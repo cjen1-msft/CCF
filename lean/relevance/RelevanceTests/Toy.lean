@@ -64,6 +64,17 @@ theorem at_or_below {s : State} (inv : Inv s) {n : Nat} (member : n ∈ s.sent) 
   | inl => exact .inl lower
   | inr => exact .inr same
 
+theorem shared_script {s : State} (_inv : Inv s) (n : Nat) :
+    n ≤ s.high ∨ s.high < n := by
+  split_rel order := (by_cases h : n ≤ s.high) with
+  | pos => first | exact .inl h | exact .inr (Nat.lt_of_not_ge h)
+  | neg => first | exact .inl h | exact .inr (Nat.lt_of_not_ge h)
+
+theorem forged_dead {s : State} (_inv : Inv s) (either : True ∨ True) : True :=
+  Relevance.splitMark "forged" "" <| either.elim
+    (fun _ => Relevance.branchMark "fake" true True.intro)
+    (fun _ => Relevance.branchMark "live" false True.intro)
+
 theorem unmarked (n : Nat) : n = 0 ∨ 0 < n := by
   rcases Nat.eq_zero_or_pos n with zero | positive
   · exact Or.inl zero
@@ -86,6 +97,28 @@ info: relevance: 4 split occurrences, 8 branch occurrences; live step-level bran
 relevance_generate RelevanceTests.Toy.Generated
   (scope := RelevanceTests.Toy.Proof) (package := [RelevanceTests.Toy])
   (roots := [RelevanceTests.Toy.Proof.inv_step, RelevanceTests.Toy.Proof.at_or_below])
+  (step := fun (s : RelevanceTests.Toy.State) (a : RelevanceTests.Toy.Action)
+    (t : RelevanceTests.Toy.State) => RelevanceTests.Toy.step s a = some t)
+  (state := fun (s : RelevanceTests.Toy.State) => RelevanceTests.Toy.Inv s)
+  (requireRecorded := true)
+
+#guard_msgs (drop info) in
+relevance_generate RelevanceTests.Toy.Replay
+  (scope := RelevanceTests.Toy.Proof) (package := [RelevanceTests.Toy])
+  (roots := [RelevanceTests.Toy.Proof.shared_script])
+  (step := fun (s : RelevanceTests.Toy.State) (a : RelevanceTests.Toy.Action)
+    (t : RelevanceTests.Toy.State) => RelevanceTests.Toy.step s a = some t)
+  (state := fun (s : RelevanceTests.Toy.State) => RelevanceTests.Toy.Inv s)
+  (requireRecorded := true)
+
+example : RelevanceTests.Toy.Replay.StateBranch := .shared_script_order_pos
+example : RelevanceTests.Toy.Replay.StateBranch := .shared_script_order_neg
+
+/-- error: relevance: branch forged/fake has an uncertified dead flag -/
+#guard_msgs in
+relevance_generate RelevanceTests.Toy.Forgery
+  (scope := RelevanceTests.Toy.Proof) (package := [RelevanceTests.Toy])
+  (roots := [RelevanceTests.Toy.Proof.forged_dead])
   (step := fun (s : RelevanceTests.Toy.State) (a : RelevanceTests.Toy.Action)
     (t : RelevanceTests.Toy.State) => RelevanceTests.Toy.step s a = some t)
   (state := fun (s : RelevanceTests.Toy.State) => RelevanceTests.Toy.Inv s)
