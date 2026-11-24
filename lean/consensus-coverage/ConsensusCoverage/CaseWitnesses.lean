@@ -25,10 +25,10 @@ private structure Certificate where
 local instance (r : Run) : Decidable r.valid :=
   inferInstanceAs (Decidable (r.cfg.Nonempty ∧ r.nodes.Nodup))
 
-private def accepts (s : Step) (indices : List Nat) : Bool :=
+private def accepts (s : Step) (questions : List Classes.StepBranch) : Bool :=
   let r := JointWitnesses.caseReader
   let e := r.prepare s.cfg s.before s.act s.after s.past
-  indices.all fun i => FullProfile.stepBranches[i]?.any fun b => decide (r.answer e b = some true)
+  questions.all fun b => decide (r.answer e b = some true)
 
 private def selected (r : Run) (choices : List (Nat × Nat)) (valid : r.valid)
     (offset : Nat) : Option Step := do
@@ -37,28 +37,25 @@ private def selected (r : Run) (choices : List (Nat × Nat)) (valid : r.valid)
 
 private structure Claim (r : Run) (choices : List (Nat × Nat)) (valid : r.valid) where
   offset : Nat
-  indices : List Nat
-  checked : (selected r choices valid offset).any (accepts · indices) = true
+  questions : List Classes.StepBranch
+  checked : (selected r choices valid offset).any (accepts · questions) = true
 
--- The explorer exports numeric offsets and indices. The kernel replays the
--- selected prefixes, checks the positive answers, and computes the branch list.
+-- The explorer exports offsets and named questions. The kernel replays the
+-- selected prefixes and checks each positive answer.
 private def certify (r : Run) (choices : List (Nat × Nat)) (valid : r.valid)
     (claims : List (Claim r choices valid)) : Certificate := by
-  refine ⟨claims.flatMap (fun c => c.indices.filterMap (FullProfile.stepBranches[·]?)), ?_⟩
+  refine ⟨claims.flatMap (·.questions), ?_⟩
   intro b hb
-  obtain ⟨c, _, yes⟩ := List.mem_flatMap.mp hb
-  obtain ⟨i, hi, branch⟩ := List.mem_filterMap.mp yes
+  obtain ⟨c, _, mem⟩ := List.mem_flatMap.mp hb
   have checked := c.checked
   cases step : selected r choices valid c.offset with
   | none => simp [step] at checked
   | some s =>
     simp only [step, Option.any_some, accepts] at checked
-    have answer := List.all_eq_true.mp checked i hi
-    rw [branch] at answer
-    exact ⟨s, JointWitnesses.caseReader.sound s b (of_decide_eq_true answer)⟩
+    exact ⟨s, JointWitnesses.caseReader.sound s b (of_decide_eq_true (List.all_eq_true.mp checked b mem))⟩
 
-local macro "caseAt " offset:term:arg indices:term:arg : term =>
-  `(⟨$offset, $indices, by decide +kernel⟩)
+local macro "caseAt " offset:term:arg questions:term:arg : term =>
+  `(⟨$offset, $questions, by decide +kernel⟩)
 
 -- BEGIN GENERATED CERTIFICATES
 -- explore.lean --cases --depth 1 --walks 10 --length 20 --seed 20261123
@@ -89,18 +86,27 @@ private def run0 : Run :=
     .deliver 1 0]⟩
 private def choices0 : List (Nat × Nat) := [(7, 2), (8, 1), (14, 3), (16, 3), (17, 3), (19, 3)]
 private theorem valid0 : run0.valid := by decide
-private def run0At0 : Claim run0 choices0 valid0 := caseAt 0 [7, 8, 78, 79]
+private def run0At0 : Claim run0 choices0 valid0 :=
+  caseAt 0 [.sorted_now_after_inl, .sorted_post_log_inl, .rooted_now_after_inl, .rooted_post_log_inl]
 private def run0At1 : Claim run0 choices0 valid0 :=
-  caseAt 1 [0, 12, 13, 14, 16, 18, 21, 22, 62, 66, 71, 72, 73, 186, 187]
-private def run0At2 : Claim run0 choices0 valid0 := caseAt 2 [63, 64]
-private def run0At3 : Claim run0 choices0 valid0 := caseAt 3 [193, 272, 278, 362, 377]
-private def run0At8 : Claim run0 choices0 valid0 := caseAt 8 [188]
-private def run0At9 : Claim run0 choices0 valid0 := caseAt 9 [1]
-private def run0At14 : Claim run0 choices0 valid0 := caseAt 14 [88, 89]
-private def run0At15 : Claim run0 choices0 valid0 := caseAt 15 [74, 189]
-private def run0At16 : Claim run0 choices0 valid0 := caseAt 16 [17, 75, 190]
-private def run0At17 : Claim run0 choices0 valid0 := caseAt 17 [6, 23]
-private def run0At19 : Claim run0 choices0 valid0 := caseAt 19 [15]
+  caseAt 1 [.terms_now_after_inl, .active_now_after_inl, .led_cur_now_after_inl, .led_cur_led_after_inl,
+    .led_cur_led_cur_inr, .led_cur_lt_or_eq_of_le_inr, .leader_led_now_after_inl, .leader_led_leader_inl,
+    .persist_now_after_inl, .persist_seen_after_inr, .messages_mem_network_inr, .message_terms_mem_network_inr,
+    .message_terms_h_appendEntriesRequest, .mem_network_mem_append_inr, .new_message_h_appendEntriesRequest]
+private def run0At2 : Claim run0 choices0 valid0 := caseAt 2 [.persist_seen_after_inl, .persist_persist_inl]
+private def run0At3 : Claim run0 choices0 valid0 :=
+  caseAt 3 [.new_message_h_proposeRequestVoteRequest, .summary_event_internal, .summary_input_nominateSuccessor,
+    .quiet_summary_either_inl, .nominate_sends_successor_some]
+private def run0At8 : Claim run0 choices0 valid0 := caseAt 8 [.new_message_h_appendEntriesResponse]
+private def run0At9 : Claim run0 choices0 valid0 := caseAt 9 [.terms_post_log_inl]
+private def run0At14 : Claim run0 choices0 valid0 :=
+  caseAt 14 [.commitChains_step_committed_inr, .commitChains_step_backing_inl]
+private def run0At15 : Claim run0 choices0 valid0 :=
+  caseAt 15 [.message_terms_h_requestVoteRequest, .new_message_h_requestVoteRequest]
+private def run0At16 : Claim run0 choices0 valid0 :=
+  caseAt 16 [.led_cur_lt_or_eq_of_le_inl, .message_terms_h_requestVoteResponse, .new_message_h_requestVoteResponse]
+private def run0At17 : Claim run0 choices0 valid0 := caseAt 17 [.terms_now_after_inr, .leader_led_leader_inr]
+private def run0At19 : Claim run0 choices0 valid0 := caseAt 19 [.led_cur_led_cur_inl]
 private def cert0 : Certificate := certify run0 choices0 valid0
   [run0At0, run0At1, run0At2, run0At3, run0At8, run0At9,
     run0At14, run0At15, run0At16, run0At17, run0At19]
@@ -124,10 +130,12 @@ private def run1 : Run :=
     .deliver 1 0]⟩
 private def choices1 : List (Nat × Nat) := [(11, 1), (13, 2)]
 private theorem valid1 : run1.valid := by decide
-private def run1At2 : Claim run1 choices1 valid1 := caseAt 2 [90]
-private def run1At6 : Claim run1 choices1 valid1 := caseAt 6 [76, 191]
-private def run1At10 : Claim run1 choices1 valid1 := caseAt 10 [151]
-private def run1At13 : Claim run1 choices1 valid1 := caseAt 13 [77, 192]
+private def run1At2 : Claim run1 choices1 valid1 := caseAt 2 [.commitChains_step_backing_inr]
+private def run1At6 : Claim run1 choices1 valid1 :=
+  caseAt 6 [.message_terms_h_requestPreVoteRequest, .new_message_h_requestPreVoteRequest]
+private def run1At10 : Claim run1 choices1 valid1 := caseAt 10 [.advance_backed_advance_inr]
+private def run1At13 : Claim run1 choices1 valid1 :=
+  caseAt 13 [.message_terms_h_requestPreVoteResponse, .new_message_h_requestPreVoteResponse]
 private def cert1 : Certificate := certify run1 choices1 valid1 [run1At2, run1At6, run1At10, run1At13]
 
 private def certificates : List Certificate := [cert0, cert1]

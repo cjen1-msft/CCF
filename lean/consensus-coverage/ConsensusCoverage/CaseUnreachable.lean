@@ -3,6 +3,7 @@ module
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
+meta import ConsensusCoverage.ReachPath
 public import ConsensusCoverage.EvidenceSupport
 public import ConsensusCoverage.EventSupport
 public import ConsensusCoverage.ReducedQuestions
@@ -44,7 +45,8 @@ public theorem retained_false (s : Step) :
 -- actor record. A successful nomination can send, but leaves that record intact.
 private theorem no_nomination_reach [Config.InitialConfiguration] {f : Frame} {t : Model.State}
     (c : Ctx f t) {self pre post outputs}
-    (reach : SolvedWitnesses.reach_51 f t c self pre (.internal .nominateSuccessor) post outputs) :
+    (reach : (reach% SolvedWitnesses.step_act_input_nominateSuccessor[0,0])
+      f t c self pre (.internal .nominateSuccessor) post outputs) :
     False := by
   obtain ⟨_, _, _, fresh, _, _, actual, _, _⟩ := reach
   have ran := c.tr.ran
@@ -65,12 +67,15 @@ public theorem act_nomination_false (s : Step) :
     label s (.step .act_input_nominateSuccessor) = false := by
   letI : Config.InitialConfiguration := ⟨s.cfg⟩
   apply solved_false
-  change ¬ SolvedWitnesses.reach_1012 s.frame s.after s.context .nominateSuccessor
+  change ¬ (reach% SolvedWitnesses.step_act_input_nominateSuccessor[0])
+    s.frame s.after s.context .nominateSuccessor
   rintro ⟨_, _, _, _, _, reach, internal, _⟩
   exact no_nomination_reach s.context (internal ▸ reach)
 
 private theorem no_nomination_successor [Config.InitialConfiguration] {f : Frame} {t : Model.State}
-    (c : Ctx f t) {self pre} (reach : SolvedWitnesses.reach_1263 f t c self pre) : False := by
+    (c : Ctx f t) {self pre}
+    (reach : (reach% SolvedWitnesses.step_nominateSuccessor_successor_some[0]) f t c self pre) :
+    False := by
   obtain ⟨⟨_, _, _, introReach, internal, _⟩, _⟩ := reach
   exact no_nomination_reach c (internal ▸ introReach)
 
