@@ -262,6 +262,20 @@ with advance; six more answers are decided and [four distinct labels are
 witnessed](../consensus-coverage/ConsensusCoverage/AckWitnesses.lean), but
 180 answers per action remain undecided, so the family is still open.
 
+**Per-question reachability: 44 cases witnessed, 4 proved impossible, 385
+undetermined.** Each step question is one case of one case split in the
+safety proof. [`CaseWitnesses.occurs`](../consensus-coverage/ConsensusCoverage/CaseWitnesses.lean)
+proves 44 of the 433 are true on some initialized step, from two schedules
+replayed in the kernel. [`CaseUnreachable.label_false`](../consensus-coverage/ConsensusCoverage/CaseUnreachable.lean)
+proves four are false on every initialized step: one about a retained
+envelope and three about a nomination changing the actor's record, which it
+never does. For the other 385 the replay reader returned "unknown" on at
+least one explored step and never "true", so the search cannot yet say
+anything; they need exact readers or separate proofs. The explorer's
+`--cases` mode prints this census. In its run of 25,002 steps it evaluated
+all 433 answers on 191 steps: the first occurrence of each new combination
+of always-known answers or family code.
+
 **Full recorded-action denominator: at least 187; at least 184 on multi-node deployments.**
 The [recorded-action specification](../consensus-coverage/ConsensusCoverage/ActionProfile.lean)
 assigns an initialized step exactly one 457-answer vector. All 433 step

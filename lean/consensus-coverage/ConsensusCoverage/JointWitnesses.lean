@@ -4,6 +4,7 @@ module
 -- Licensed under the Apache 2.0 License.
 
 public import ConsensusCoverage.MessageWitnesses
+public import ConsensusCoverage.ReplayAnswers
 import ConsensusCoverage.ActorLogRows
 import ConsensusCoverage.BackingRead
 import ConsensusCoverage.CommitKeys
@@ -81,6 +82,36 @@ private theorem read_eq (s : Step) : read s = some (project (label s)) := by
 public theorem readKey_eq (s : Step) :
     readKey s.cfg s.before s.act s.after s.past = some (project (label s)) :=
   read_eq s
+
+public structure CaseReader where
+  Evidence : Type
+  prepare : FullProfile.Configuration → Model.State → Model.Action → Model.State →
+    List Model.State → Evidence
+  answer : Evidence → Classes.StepBranch → Option Bool
+  sound (s : Step) (b : Classes.StepBranch) {v : Bool} :
+    answer (prepare s.cfg s.before s.act s.after s.past) b = some v → label s (.step b) = v
+
+/-- Share each reader's evidence across the questions, and use the fallback
+only where the first reader returns `none`. -/
+@[expose] public def CaseReader.orElse (first fallback : CaseReader) : CaseReader where
+  Evidence := first.Evidence × fallback.Evidence
+  prepare cfg before act after past :=
+    (first.prepare cfg before act after past, fallback.prepare cfg before act after past)
+  answer e b := (first.answer e.1 b).orElse fun _ => fallback.answer e.2 b
+  sound s b := by
+    intro _ h
+    cases found : first.answer (first.prepare s.cfg s.before s.act s.after s.past) b with
+    | some v => exact first.sound s b (by simpa only [found, Option.orElse_some] using h)
+    | none => exact fallback.sound s b (by simpa only [found, Option.orElse_none] using h)
+
+@[expose] public def replayReader : CaseReader where
+  Evidence := ReplayAnswers.Evidence
+  prepare := ReplayAnswers.read
+  answer e b := ReplayAnswers.answer e (.step b)
+  sound s b := ReplayAnswers.sound s (.step b)
+
+/-- Shared registration point for discovery and proof replay. -/
+@[expose] public def caseReader : CaseReader := replayReader
 
 open FrontierRows
 

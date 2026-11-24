@@ -11,6 +11,13 @@ public meta import ConsensusCoverage.DelayedNominationRead
 public meta import ConsensusCoverage.Timely
 public meta import ConsensusCoverage.Families
 public meta import ConsensusCoverage.ReplayAnswers
+public meta import ConsensusCoverage.PairWitnesses
+meta import all ConsensusCoverage.CanonicalLogs
+meta import all ConsensusCoverage.CommitMonitor
+meta import all ConsensusCoverage.GrantFrontier
+meta import all ConsensusCoverage.GuardedDomain
+meta import all Consensus.Proofs.SafetyInvariant
+public meta import Consensus.Proofs.VoteFacts
 public meta import Std.Data.HashSet
 public meta import Std.Data.HashMap.Basic
 
@@ -34,6 +41,16 @@ the reported completed walk count without that flag for deterministic replay.
 `--families` prints a closure census using `Families.classify`. Unknown
 step-answer ranges sample the first 20 distinct keys in each family. Its
 shortest explored family witnesses are included in `--out`.
+`--cases` counts each question's known true, known false, and unknown
+answers on every explored step. `--sample-cases` instead reads only the
+first occurrence of each new key or family code. Shortest positive
+witnesses (among the evaluated steps) and a greedy schedule cover are
+written to `--out`.
+
+`--exhaust` explores a single bounded deployment by breadth-first search,
+merging equal finite proof-frame keys. On every merge it checks the
+enabled action signatures of both concrete histories. Counts are not
+proofs of key sufficiency or exhaustion of the unbounded model.
 -/
 
 open Consensus Consensus.Model Consensus.Model.Node ConsensusCoverage
@@ -172,6 +189,7 @@ def evidence (v : GuardedDomain.View) (k : Key) : Evidence :=
 structure Hit extends Candidate where
   key : Key
   facts : Evidence
+  trueCases : List Nat := []
 
 structure Path where
   deployment : Deployment
@@ -282,13 +300,24 @@ structure FamilyTally where
   samples : Nat := 0
   unknown : Option (Nat × Nat) := none
 
+structure CaseTally where
+  yes : Tally := {}
+  no : Nat := 0
+  unknown : Nat := 0
+
+def CaseTally.hit (row : CaseTally) (p : Path) : Option Bool → CaseTally
+  | some true => {row with yes := row.yes.hit p}
+  | some false => {row with no := row.no + 1}
+  | none => {row with unknown := row.unknown + 1}
+
 def FamilyTally.hit (row : FamilyTally) (before next : Path) (h : Hit) : FamilyTally :=
   let newSample := row.samples < familySampleCap && !row.keys.contains h.key
   let row := {row with tally := row.tally.hit next, keys := row.keys.insert h.key}
   if newSample then
-    let e := ReplayAnswers.read before.deployment.cfg before.state h.act next.state before.past
+    let reader := JointWitnesses.caseReader
+    let e := reader.prepare before.deployment.cfg before.state h.act next.state before.past
     let n := FullProfile.stepBranches.foldl (fun n b =>
-      n + (ReplayAnswers.answer e (.step b)).isNone.toNat) 0
+      n + (reader.answer e b).isNone.toNat) 0
     let (lo, hi) := row.unknown.getD (n, n)
     {row with samples := row.samples + 1, unknown := some (min lo n, max hi n)}
   else row
@@ -308,6 +337,10 @@ structure Score where
   delayed : Std.HashMap (Bool × StateCoverage.Row) Tally := {}
   nominationsWithoutSuccessor : Nat := 0
   families : Std.HashMap String FamilyTally := {}
+  cases : Array CaseTally := #[]
+  caseCodes : Std.HashSet String := {}
+  caseSamples : Nat := 0
+  caseReadMs : Nat := 0
   walksCompleted : Nat := 0
   steps : Nat := 0
   checked : Nat := 0
@@ -340,6 +373,8 @@ structure Options where
   checkTimely : Bool := false
   checkDelayed : Bool := false
   families : Bool := false
+  cases : Bool := false
+  sampleCases : Bool := false
   prefixes : List String := []
   retirement : Bool := false
   fourNodes : Bool := false
@@ -362,11 +397,27 @@ def visit (o : Options) (family : Option FamilyCheck) (score : Score) (p : Path)
   let some v := GuardedDomain.ofAction cfg p.state c.after p.past c.act
     | throw (IO.userError "actor lookup failed on enabled step")
   let facts := evidence v key
-  let h : Hit := ⟨c.toCandidate, key, facts⟩
+  let classification := if o.families || o.sampleCases then
+    some (Families.classify cfg p.state c.act c.after p.past) else none
+  let code := classification.map Families.code
+  let sample := o.cases && (!o.sampleCases || !score.all.contains key ||
+    code.any (!score.caseCodes.contains ·))
+  let (answers, readMs) ← if sample then do
+      let start ← IO.monoMsNow
+      let reader := JointWitnesses.caseReader
+      let e := reader.prepare cfg p.state c.act c.after p.past
+      let answers := FullProfile.stepBranches.map (reader.answer e)
+      pure (answers, (← IO.monoMsNow) - start)
+    else pure (#[], 0)
+  let trueCases := answers.toList.zipIdx.filterMap fun (v, i) => if v == some true then some i else none
+  let h : Hit := ⟨c.toCandidate, key, facts, trueCases⟩
   let next : Path := ⟨p.deployment, c.after, p.state :: p.past, h :: p.hits, score.steps + 1⟩
-  let score ← if o.families then do
-      let family := Families.classify cfg p.state c.act c.after p.past
-      let code := Families.code family
+  let score := if sample then {score with
+    cases := score.cases.mapIdx fun i row => row.hit next answers[i]!
+    caseCodes := code.elim score.caseCodes score.caseCodes.insert
+    caseSamples := score.caseSamples + 1
+    caseReadMs := score.caseReadMs + readMs} else score
+  let score ← if let (true, some family, some code) := (o.families, classification, code) then do
       let row := score.families[code]?.getD {closed := family.closed}
       unless row.closed == family.closed do
         throw (IO.userError s!"family code {code} changed closure status")
@@ -415,12 +466,15 @@ def visit (o : Options) (family : Option FamilyCheck) (score : Score) (p : Path)
 
 def usage :=
   "explore.lean [--depth N] [--walks N] [--length N] [--seed N] [--every N] [--budget-seconds N] --out FILE\n" ++
-  "  [--families] [--check-family] [--check-timely] [--check-delayed] [--four-nodes] [--retirement]\n" ++
+  "  [--families] [--cases | --sample-cases] [--check-family] [--check-timely] [--check-delayed]\n" ++
+  "  [--four-nodes] [--retirement]\n" ++
   "  [--seed-prefixes] [--prefix NAME[:N]]... (delayed, chained, cert31, retired)"
 
 def options : List String → Options → Except String Options
   | [], o => if o.out.isSome then .ok o else .error usage
   | "--families" :: more, o => options more {o with families := true}
+  | "--cases" :: more, o => options more {o with cases := true}
+  | "--sample-cases" :: more, o => options more {o with cases := true, sampleCases := true}
   | "--check-family" :: more, o => options more {o with checkFamily := true}
   | "--check-timely" :: more, o => options more {o with checkTimely := true}
   | "--check-delayed" :: more, o => options more {o with checkDelayed := true}
@@ -458,6 +512,8 @@ def search (o : Options) : IO Score := do
   let roots := (backgrounds o).map fun d => ({deployment := d, state := d.initial} : Path)
   let selected ← IO.ofExcept (o.prefixes.mapM findSeed)
   let mut score := {}
+  if o.cases then
+    score := {score with cases := FullProfile.stepBranches.map fun _ => {}}
   if o.checkTimely then
     for p in roots do
       let old := score.timelyFailures
@@ -549,13 +605,17 @@ def commandText : Model.Action → String
   | .local n i => s!".input {n} ({inputText i})"
   | .deliver e => s!".deliver {e.source} {e.target}"
 
-def runText (p : Path) : String :=
-  let commands := p.hits.reverse.map fun h => commandText h.act
+def scheduleText (d : Deployment) (hits : List Candidate) : String :=
+  let commands := hits.reverse.map fun h => commandText h.act
   let schedule := if commands.isEmpty then "[]" else "[\n    " ++ String.intercalate ",\n    " commands ++ "]"
-  s!"⟨{finsetText p.deployment.voters}, {repr p.deployment.nodes}, {schedule}⟩"
+  s!"⟨{finsetText d.voters}, {repr d.nodes}, {schedule}⟩"
 
-def choices (p : Path) : List (Nat × Nat) :=
-  p.hits.reverse.zipIdx.filterMap fun (h, step) => h.choice.map fun i => (step, i)
+def runText (p : Path) : String := scheduleText p.deployment (p.hits.map (·.toCandidate))
+
+def deliveryChoices (hits : List Candidate) : List (Nat × Nat) :=
+  hits.reverse.zipIdx.filterMap fun (h, step) => h.choice.map fun i => (step, i)
+
+def choices (p : Path) : List (Nat × Nat) := deliveryChoices (p.hits.map (·.toCandidate))
 
 -- The integer encoding is only an export format for kernel certificates;
 -- discovery and all counters above use the full, structured JointWitnesses.Key.
@@ -567,14 +627,15 @@ def ordered (ws : Witnesses) : List (Key × Path) :=
 
 -- Separate multi-node and overall coverage. For the kernel prefer a plain Run
 -- wherever one was seen, even when the unrestricted witness is shorter.
-def greedy (todo : KeySet) (paths : List Path) : List Path := Id.run do
+def greedy [BEq α] [Hashable α] (keys : Path → List α)
+    (todo : Std.HashSet α) (paths : List Path) : List Path := Id.run do
   let mut remaining := todo
   let mut selected := []
   for _ in [:todo.size] do
     if remaining.isEmpty then break
-    let mut best : Option (Path × List Key) := none
+    let mut best : Option (Path × List α) := none
     for p in paths do
-      let gain := (p.hits.map (·.key)).eraseDups.filter remaining.contains
+      let gain := (keys p).eraseDups.filter remaining.contains
       if !gain.isEmpty && (best.all fun (old, keys) =>
           gain.length > keys.length || (gain.length == keys.length && p.depth < old.depth)) then
         best := some (p, gain)
@@ -585,16 +646,78 @@ def greedy (todo : KeySet) (paths : List Path) : List Path := Id.run do
 
 def cover (score : Score) : List Path :=
   let pool (ws plain : Witnesses) := (ordered ws).map fun (k, w) => plain[k]?.getD w
-  let multi := greedy (Std.HashSet.ofList (score.multi.toList.map Prod.fst)) (pool score.multi score.plainMulti)
-  let done := Std.HashSet.ofList (multi.flatMap fun p => p.hits.map (·.key))
+  let keys := fun p : Path => p.hits.map (·.key)
+  let multi := greedy keys (Std.HashSet.ofList (score.multi.toList.map Prod.fst)) (pool score.multi score.plainMulti)
+  let done := Std.HashSet.ofList (multi.flatMap keys)
   let left := (score.all.toList.map Prod.fst).filter (!done.contains ·)
-  multi ++ greedy (Std.HashSet.ofList left) (pool score.all score.plain)
+  multi ++ greedy keys (Std.HashSet.ofList left) (pool score.all score.plain)
 
 def witnessText (label : String) (h : Hit) (p : Path) : String :=
   s!"-- {label} key {encode h.key}; {kind h.act}; depth {p.depth}; {h.facts.pattern}\n" ++
     s!"({runText p}, {repr (choices p)}),\n"
 
 def scheduleType := " : List (FrontierRows.Run × List (Nat × Nat)) := [\n"
+
+def reportCases (o : Options) (s : Score) : IO String := do
+  let rows := (FullProfile.stepBranches.zip s.cases).toList.zipIdx
+  unless rows.length == FullProfile.stepBranches.size &&
+      rows.all (fun ((_, r), _) => r.yes.count + r.no + r.unknown == s.caseSamples) &&
+      (o.sampleCases || s.caseSamples == s.steps) do
+    throw (IO.userError "case totals disagree with evaluation count")
+  let yes := rows.filter (fun ((_, r), _) => r.yes.count > 0)
+  let unseen := rows.filter (fun ((_, r), _) => r.yes.count == 0)
+  let no := unseen.filter (fun ((_, r), _) => r.unknown == 0 && s.caseSamples > 0)
+  let unknown := unseen.filter (fun ((_, r), _) => r.unknown > 0 || s.caseSamples == 0)
+  IO.println s!"Case census: {s.caseSamples}/{s.steps} explored steps fully evaluated \
+    ({s.caseReadMs} ms in case reads, including unknowns)"
+  IO.println (if o.sampleCases then "Selection: first occurrence of each new key or family code."
+    else "Selection: every explored step, counting occurrences, including prefix replay.")
+  let shortName (b : Classes.StepBranch) :=
+    (reprStr b).splitOn "." |>.getLast!
+  let witnesses := yes.filterMap fun ((_, r), _) => r.yes.shortest
+  let trueCases (p : Path) := p.hits.flatMap (·.trueCases)
+  let runs := greedy trueCases (Std.HashSet.ofList (yes.map Prod.snd)) witnesses
+  unless (Std.HashSet.ofList (runs.flatMap trueCases)).size == yes.length do
+    throw (IO.userError "greedy case export did not cover all positive answers")
+  let groups := [("(a) witnessed true", yes), ("(b) false in every evaluated step", no),
+    ("(c) never witnessed true, unknown or not evaluated", unknown)]
+  let mut text := "-- Case census (bounded search, not an unreachability proof).\n"
+  for (group, rs) in groups do
+    IO.println s!"{group}: {rs.length}"
+    IO.println "question\tknown_true\tknown_false\tunknown\tshortest_depth\twitness"
+    for ((b, r), _) in rs do
+      let p := r.yes.shortest
+      let depth := (p.map fun p => toString p.depth).getD "-"
+      let witness := (p.map fun p => toString p.id).getD "-"
+      IO.println s!"{shortName b}\t{r.yes.count}\t{r.no}\t{r.unknown}\t{depth}\t{witness}"
+  text := text ++ "-- Shortest positive witness by explored step ID (both override indices zero-based).\n" ++
+    "private def caseWitnesses : List (Nat × FrontierRows.Run × List (Nat × Nat)) := [\n"
+  for p in (witnesses.mergeSort (·.id ≤ ·.id)).eraseDupsBy (·.id == ·.id) do
+    text := text ++ s!"({p.id}, {runText p}, {repr (choices p)}),\n"
+  IO.println s!"Case cover: {runs.length} schedules, {runs.foldl (fun n p => n + p.depth) 0} steps"
+  let mut claimed : Std.HashSet Nat := {}
+  let mut certs := #[]
+  for (p, i) in runs.zipIdx do
+    let mut claims := #[]
+    for (h, j) in p.hits.reverse.zipIdx do
+      let cases := h.trueCases.filter (!claimed.contains ·)
+      unless cases.isEmpty do
+        claims := claims.push (j, cases)
+        claimed := cases.foldl (·.insert ·) claimed
+    let run := s!"run{i}"
+    let choicesName := s!"choices{i}"
+    let valid := s!"valid{i}"
+    let names := claims.toList.map fun (j, _) => s!"run{i}At{j}"
+    let proofs := claims.toList.zipWith (fun (j, cases) name =>
+      s!"private def {name} : Claim {run} {choicesName} {valid} := caseAt {j} {repr cases}\n") names
+    certs := certs.push <| s!"private def {run} : FrontierRows.Run := {runText p}\n\
+      private def {choicesName} : List (Nat × Nat) := {repr (choices p)}\n\
+      private theorem {valid} : {run}.valid := by decide\n" ++ String.join proofs ++
+      s!"private def cert{i} : Certificate := certify {run} {choicesName} {valid}\n  {listText names}\n"
+  return text ++ "]\n-- Greedy positive cover (paste into CaseWitnesses):\n" ++
+    String.intercalate "\n" certs.toList ++
+    "private def certificates : List Certificate := " ++
+    listText ((List.range runs.length).map fun i => s!"cert{i}") ++ "\n"
 
 def reportChecks (o : Options) (s : Score) : IO String := do
   let mut text := ""
@@ -697,6 +820,7 @@ def report (o : Options) (s : Score) (ms : Nat) : IO Unit := do
     IO.println s!"nomination example: {s.outside.size} distinct out-of-table keys (see witness file)"
   let checkText ← reportChecks o s
   let familyText ← if o.families then reportFamilies s else pure ""
+  let caseText ← if o.cases then reportCases o s else pure ""
   let runs := cover s
   let observed (rs : List Path) := Std.HashSet.ofList (rs.flatMap fun p => p.hits.map (·.key))
   unless (observed runs).size == s.all.size && (observed (runs.filter Path.multi)).size == s.multi.size do
@@ -718,14 +842,311 @@ def report (o : Options) (s : Score) (ms : Nat) : IO Unit := do
     "-- Falsifying witnesses:\n" ++ text "outside" s.outside ++ checkText ++ familyText ++
     "-- Greedy cover (paste into ExploredWitnesses):\n" ++ String.intercalate "\n" certs ++
     "\nprivate def certificates : List Certificate := " ++
-    listText ((List.range runs.length).map fun i => s!"cert{i}") ++ "\n"
+    listText ((List.range runs.length).map fun i => s!"cert{i}") ++ "\n" ++ caseText
   IO.println s!"wrote {file}"
+
+inductive BoundPalette where
+  | core | reconfig | retirement
+  deriving Repr, BEq
+
+structure Bounds where
+  deployment : Deployment := ⟨[0, 1], [0, 1]⟩
+  maxLog : Nat := 2
+  maxTerm : Nat := 3
+  maxCopies : Nat := 1
+  maxNetwork : Option Nat := none
+  palette : BoundPalette := .core
+  stepBudget : Option Nat := none
+  out : String := ""
+  deriving Repr
+
+def exhaustUsage :=
+  "explore.lean --exhaust [--voters 0,1] [--nodes 0,1] [--max-log 2] [--max-term 3]\n" ++
+  "  [--max-copies 1] [--max-network N] [--palette core|reconfig|retirement] [--step-budget N] --out FILE"
+
+def boundOptions : List String → Bounds → Except String Bounds
+  | [], b => do
+    let d := b.deployment
+    unless !d.voters.isEmpty && d.voters == d.voters.eraseDups &&
+        d.nodes == d.nodes.eraseDups && d.voters.all d.nodes.contains do
+      throw "voters must be a nonempty set of distinct deployed node IDs; node IDs must be distinct"
+    if b.out.isEmpty then throw exhaustUsage else return b
+  | "--out" :: file :: more, b => boundOptions more {b with out := file}
+  | "--palette" :: value :: more, b => do
+    let p ← match value with
+      | "core" => pure .core
+      | "reconfig" => pure .reconfig
+      | "retirement" => pure .retirement
+      | _ => throw exhaustUsage
+    boundOptions more {b with palette := p}
+  | flag :: value :: more, b => do
+    if flag == "--voters" || flag == "--nodes" then
+      let some ns := (value.splitOn ",").mapM String.toNat?
+        | throw s!"expected comma-separated node IDs after {flag}"
+      let d := b.deployment
+      let d := if flag == "--voters" then {d with voters := ns.mergeSort (· ≤ ·)} else {d with nodes := ns}
+      boundOptions more {b with deployment := d}
+    else
+      let some n := value.toNat? | throw s!"expected a natural after {flag}\n{exhaustUsage}"
+      match flag with
+      | "--max-log" => boundOptions more {b with maxLog := n}
+      | "--max-term" => boundOptions more {b with maxTerm := n}
+      | "--max-copies" => boundOptions more {b with maxCopies := n}
+      | "--max-network" => boundOptions more {b with maxNetwork := some n}
+      | "--step-budget" => boundOptions more {b with stepBudget := some n}
+      | _ => throw exhaustUsage
+  | _, _ => .error exhaustUsage
+
+-- Field lengths separate variable-width parts; these are structural keys,
+-- not hash digests. CCF finsets are serialized in increasing order.
+def field (xs : List Nat) : List Nat := xs.length :: xs
+
+def optional (n : Option Nat) : List Nat := n.toList
+
+def logCode (l : List Entry) : List Nat := field (l.flatMap fun e =>
+  e.term :: match e.content with
+  | .signature => [0]
+  | .transaction n m =>
+    [1, n] ++ field (m.configuration.toList.flatMap fun c => field c.sort) ++
+      field m.retirementConfirmations.sort)
+
+def nodeCode (ns : List NodeID) (n : NodeID) (s : NodeState) : List Nat :=
+  let role := match s.role with
+    | .none => 0 | .follower => 1 | .preVoteCandidate => 2 | .candidate => 3 | .primary => 4
+  [n, role, s.currentTerm, s.commitIndex, s.isNewFollower.toNat, s.primaryKnown.toNat] ++
+    logCode s.log ++ ns.map s.sentIndex ++ ns.map s.matchIndex ++
+    field (optional s.votedFor) ++ field s.votesGranted.sort ++ field s.preVotesGranted.sort ++
+    field (optional s.retiredCommittedIndex)
+
+def envelopeCode (e : Model.Envelope) : List Nat :=
+  e.source :: e.target :: match e.payload with
+  | .appendEntriesRequest r => [0, r.term, r.prevLogIndex, r.prevLogTerm, r.primaryCommit] ++ logCode r.entries
+  | .appendEntriesResponse r => [1, r.term, r.success.toNat, r.lastLogIndex]
+  | .requestVoteRequest r => [2, r.term, r.lastCommittableTerm, r.lastCommittableIndex]
+  | .requestVoteResponse r => [3, r.term, r.voteGranted.toNat]
+  | .requestPreVoteRequest r => [4, r.term, r.lastCommittableTerm, r.lastCommittableIndex]
+  | .requestPreVoteResponse r => [5, r.term, r.voteGranted.toNat]
+  | .proposeRequestVoteRequest k => [6, k]
+
+def setCode (xs : List (List Nat)) : List (List Nat) :=
+  xs.eraseDups.mergeSort (fun a b => compare a b != .gt)
+
+def Bounds.allows (b : Bounds) (s : Model.State) : Bool :=
+  s.nodes.all (fun (_, st) => st.currentTerm ≤ b.maxTerm && st.log.length ≤ b.maxLog) &&
+  b.maxNetwork.all (fun n => s.network.length ≤ n) &&
+  s.network.all (fun e => s.network.count e ≤ b.maxCopies)
+
+structure FrameKey where
+  deployment : List NodeID × List NodeID
+  nodes : List (List Nat)
+  queue : List (List Nat)
+  observations : List (List Nat)
+  canonical : List (List Nat)
+  commits : List (List Nat)
+  elections : List (List Nat)
+  grants : List (List Nat)
+  votes : List (List Nat)
+  deriving BEq, Hashable
+
+def elections : List Model.State → List (List Nat)
+  | t :: s :: past =>
+    (t.nodes.filterMap fun (n, y) => do
+      let x ← s.nodes.lookup n
+      if CommitMonitor.election t s past n y.currentTerm then
+        some ([n, y.currentTerm, x.commitIndex] ++ logCode x.log) else none) ++ elections (s :: past)
+  | _ => []
+
+open Consensus.Proofs in
+def grantThresholds : List Model.State → List ((Nat × Nat × Nat) × (Nat × Nat))
+  | t :: s :: past =>
+    (t.nodes.filterMap fun (v, y) => do
+      let c ← y.votedFor
+      let x ← s.nodes.lookup v
+      let k := y.currentTerm
+      let r := GrantFrontier.minimum x k
+      let q : GrantMonitor.Query := ⟨v, c, k, r⟩
+      let old := (GuardedDomain.observations (s :: past) c).any fun o => o.currentTerm == k
+      if (GrantMonitor.advance q ⟨old, false⟩ s t).granted then
+        some ((v, c, k), (r.lastCommittableTerm, r.lastCommittableIndex)) else none) ++
+      grantThresholds (s :: past)
+  | _ => []
+
+def grants (hist : List Model.State) : List (List Nat) := Id.run do
+  let mut mins : Std.HashMap (Nat × Nat × Nat) (Nat × Nat) := {}
+  for (key, threshold) in grantThresholds hist do
+    mins := mins.alter key fun old => some (old.elim threshold fun best =>
+      if threshold.1 < best.1 || (threshold.1 == best.1 && threshold.2 < best.2)
+      then threshold else best)
+  return setCode (mins.toList.map fun ((v, c, k), (term, idx)) => [v, c, k, term, idx])
+
+open Consensus.Proofs in
+def frameKey (d : Deployment) (s : Model.State) (past : List Model.State) : FrameKey :=
+  let hist := s :: past
+  let bootstrap := d.cfg.min?.getD 0
+  let logKeys (xs : List (Nat × List Entry)) := setCode (xs.map fun (k, l) => k :: logCode l)
+  ⟨(d.voters, d.nodes), s.nodes.map fun (n, st) => nodeCode d.nodes n st,
+    (s.network.map envelopeCode).mergeSort (fun a b => compare a b != .gt),
+    setCode (d.nodes.flatMap fun n => (GuardedDomain.observations hist n).map fun o =>
+      n :: o.currentTerm :: logCode o.log),
+    logKeys (CanonicalLogs.keys bootstrap hist), logKeys (CommitKeys.keys bootstrap hist),
+    setCode (elections hist), grants hist,
+    setCode ((hist.foldr (fun snap g => VoteFacts.advance g snap) []).map fun st =>
+      st.voter :: st.term :: optional st.vote)⟩
+
+structure FramePath where
+  state : Model.State := {nodes := []}
+  past : List Model.State := []
+  hits : List Candidate := []
+  codes : List Nat := []
+  deriving Inhabited
+
+def FramePath.advance (p : FramePath) (e : Enabled) (k : Key) : FramePath :=
+  ⟨e.after, p.state :: p.past, e.toCandidate :: p.hits, encode k :: p.codes⟩
+
+def boundCandidates (b : Bounds) (s : Model.State) : List Candidate :=
+  (candidates (b.palette == .retirement) s).filter fun c =>
+    b.palette != .core || match c.act with
+    | .local _ (.append xs) => xs.all fun x => x.content.metadata.configuration.isNone
+    | _ => true
+
+-- Sort by the actual selected action: queue offsets are replay data, not
+-- action identity. commandText preserves all local inputs in the palette.
+def actionCode : Model.Action → String × List Nat
+  | .deliver e => ("", envelopeCode e)
+  | a => (commandText a, [])
+
+structure EdgeRead where
+  action : String × List Nat
+  key : Key
+  family : String
+  inside : Bool
+  deriving BEq, Repr
+
+structure Probe where
+  edges : Array (Enabled × EdgeRead) := #[]
+  menuNs : Nat := 0
+  readerNs : Nat := 0
+
+def probe (b : Bounds) (p : FramePath) : IO Probe := do
+  let start ← IO.monoNanosNow
+  let cfg := b.deployment.cfg
+  let menu := (boundCandidates b p.state).filterMap fun c =>
+    ((transitionSystem cfg b.deployment.nodes).step p.state c.act).map fun t =>
+      ((⟨c, t⟩ : Enabled), b.allows t)
+  let mapped ← IO.monoNanosNow
+  let mut edges := #[]
+  for (e, inside) in menu do
+    let some key := JointWitnesses.readKey cfg p.state e.act e.after p.past
+      | throw (IO.userError "reader failed on enabled bounded-search action")
+    let family := Families.code (Families.classify cfg p.state e.act e.after p.past)
+    edges := edges.push (e, ⟨actionCode e.act, key, family, inside⟩)
+  return ⟨edges, mapped - start, (← IO.monoNanosNow) - mapped⟩
+
+def signature (p : Probe) : List EdgeRead :=
+  (p.edges.toList.map Prod.snd).mergeSort fun a b =>
+    a.action.1 < b.action.1 ||
+      (a.action.1 == b.action.1 && compare a.action.2 b.action.2 != .gt)
+
+def boundedWitness (d : Deployment) (p : FramePath) : String :=
+  s!"{p.codes.head!}\t{p.hits.length}\t{(scheduleText d p.hits).replace "\n" " "}\t\
+    {repr (deliveryChoices p.hits)}\t{repr p.codes.reverse}\n"
+
+def exhaust (b : Bounds) : IO Unit := do
+  IO.println s!"bounds: {repr b}"
+  IO.println "Bounded frame-merge search; equality of keys has not been proved to imply equality of labels."
+  IO.println s!"Action palette: {repr b.palette}; distinct queue values, all core local inputs"
+  if b.palette != .core then IO.println "  plus one-member reconfigurations (bare, signed, and flushed)"
+  if b.palette == .retirement then IO.println "  plus singleton and retirement-confirmation batches"
+  for line in palette do IO.println s!"  {line}"
+  let start ← IO.monoNanosNow
+  let d := b.deployment
+  let initial : FramePath := ⟨d.initial, [], [], []⟩
+  unless b.allows initial.state do throw (IO.userError "initial state is outside the selected bounds")
+  let mut seen : Std.HashMap FrameKey Nat := ({} : Std.HashMap FrameKey Nat).insert
+    (frameKey d initial.state []) 0
+  let mut frames := #[initial]
+  let mut signatures : Std.HashMap Nat (List EdgeRead) := {}
+  let mut witnesses : Std.HashMap Key FramePath := {}
+  let mut families := {}
+  let mut depthCounts := #[1]
+  let mut head := 0
+  let mut steps := 0
+  let mut excluded := 0
+  let mut pairs := 0
+  let mut checkedEdges := 0
+  let mut menuNs := 0
+  let mut readerNs := 0
+  let mut frameNs := 0
+  let mut compareNs := 0
+  while head < frames.size do
+    let p := frames[head]!
+    let depth := p.hits.length + 1
+    let reads ← probe b p
+    let sig := signature reads
+    signatures := signatures.insert head sig
+    menuNs := menuNs + reads.menuNs
+    readerNs := readerNs + reads.readerNs
+    let mut complete := true
+    for (e, row) in reads.edges do
+      if !row.inside then
+        excluded := excluded + 1
+        continue
+      if b.stepBudget.any (· ≤ steps) then
+        complete := false
+        break
+      steps := steps + 1
+      let next := p.advance e row.key
+      unless witnesses.contains row.key do
+        witnesses := witnesses.insert row.key next
+      families := insertGroup families row.family row.key
+      let tick ← IO.monoNanosNow
+      let k := frameKey d next.state next.past
+      let existing := seen[k]?
+      frameNs := frameNs + (← IO.monoNanosNow) - tick
+      if let some i := existing then
+        let tick ← IO.monoNanosNow
+        let old ← if let some cached := signatures[i]? then pure cached else do
+          pure (signature (← probe b frames[i]!))
+        signatures := signatures.insert i old
+        let new := signature (← probe b next)
+        pairs := pairs + 1
+        checkedEdges := checkedEdges + new.length
+        unless old == new do
+          IO.println s!"Merge disagreement at pair {pairs}:\nold {repr old}\nnew {repr new}"
+          IO.println (boundedWitness d frames[i]!)
+          IO.println (boundedWitness d next)
+          throw (IO.userError "equal frame keys had different enabled action signatures")
+        compareNs := compareNs + (← IO.monoNanosNow) - tick
+      else
+        seen := seen.insert k frames.size
+        frames := frames.push next
+        if depthCounts.size == depth then depthCounts := depthCounts.push 0
+        depthCounts := depthCounts.modify depth (· + 1)
+    if !complete then break
+    head := head + 1
+  let stop ← IO.monoNanosNow
+  let ms := (stop - start) / 1000000
+  IO.println s!"frames: {frames.size}; expanded: {head}; frontier: {frames.size - head}; fixpoint: {head == frames.size}"
+  IO.println s!"frames by depth: {repr depthCounts}"
+  IO.println s!"steps: {steps}; excluded by bounds: {excluded}; keys: {witnesses.size}; {ms} ms; {steps * 1000 / max 1 ms} steps/s"
+  IO.println s!"merge self-check: {pairs} history pairs, {checkedEdges} enabled action pairs, 0 disagreements"
+  IO.println s!"time ms: menus/bounds {menuNs / 1000000}, key+family {readerNs / 1000000}, \
+    frame keys {frameNs / 1000000}, merge checks {compareNs / 1000000}"
+  for (code, keys) in families.toList.mergeSort (fun a b => a.1 ≤ b.1) do
+    IO.println s!"family: {code} {keys.size}"
+  let rows := witnesses.toList.mergeSort fun a b => encode a.1 ≤ encode b.1
+  IO.FS.writeFile b.out <| "key\tdepth\tschedule\tqueue_choices\tprefix_keys\n" ++
+    String.join (rows.map fun (_, p) => boundedWitness d p)
+  IO.println s!"wrote {b.out}"
 
 end ConsensusCoverage.Explore
 
 open ConsensusCoverage.Explore in
 public def main (args : List String) : IO Unit := do
-  if args == ["--help"] then IO.println usage else do
+  if args == ["--help"] then IO.println (usage ++ "\n" ++ exhaustUsage)
+  else if args.head? == some "--exhaust" then
+    exhaust (← IO.ofExcept (boundOptions args.tail! {}))
+  else do
     let opts ← IO.ofExcept (options args {})
     IO.println s!"{repr opts}"
     IO.println "Deployments (voters, deployed nodes):"
