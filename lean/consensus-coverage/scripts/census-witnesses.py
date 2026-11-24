@@ -14,6 +14,9 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("tables", nargs="+", type=Path)
     p.add_argument("--write", action="store_true", help="otherwise check the existing module")
+    p.add_argument("--max-depth", type=int, help="stage certificates through this witness depth")
+    p.add_argument("--defer", action="append", default=[],
+                   help="explicit script-only question (resource-limited kernel replay)")
     args = p.parse_args()
     file = Path(__file__).resolve().parents[1] / "ConsensusCoverage/CaseWitnesses.lean"
     src = file.read_text()
@@ -30,13 +33,15 @@ def main():
             raise ValueError(f"incomplete case table: {path}")
         for row in rows:
             q = row["question"]
-            if q in old or not int(row["known_true"]):
+            if q in old or q in args.defer or not int(row["known_true"]):
                 continue
             if not re.fullmatch(r"\w+", q, re.ASCII):
                 raise ValueError(f"invalid case name: {q}")
             w = (int(row["depth"]), row["schedule"], row["queue_choices"])
             if not w[0] or not w[1] or not w[2]:
                 raise ValueError(f"positive without a replay: {path}, {q}")
+            if args.max_depth is not None and w[0] > args.max_depth:
+                continue
             best[q] = min(w, best.get(q, w))
     groups = defaultdict(list)
     for q, w in sorted(best.items()):
