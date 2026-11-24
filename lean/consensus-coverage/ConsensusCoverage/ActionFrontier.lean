@@ -45,7 +45,7 @@ public theorem incumbent_eq (s : Step) :
   rw [project_eq]
   exact Bool.eq_iff_iff.mpr ((label_true s _).trans incumbent)
 
-/-- Which of the 457 coordinates this projection promises to distinguish. -/
+/-- Which full-label coordinates this projection promises to distinguish. -/
 @[expose] public def selected : Question → Bool
   | .pre _ | .post _ => true
   | .step .leader_led_leader_inr | .step .leader_led_leader_inl

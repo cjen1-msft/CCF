@@ -11,10 +11,10 @@ import all Consensus.Proofs.SafetyInvariant
 /-!
 # Two-bit basis for the generated state questions
 
-These are equivalences of the closed generated predicates, even on arbitrary
-frames. In particular a node at index zero can witness `Backing` if there is
-a ghost committed part: its empty prefix fits. No reachability or invariant
-assumption is needed to decode the answers.
+The original questions and the signature-content cases decode on arbitrary
+frames. The two commit-chain cases additionally use the invariant that each
+recorded commitment has a chain. A node at index zero can witness `Backing`
+if there is a ghost committed part: its empty prefix fits.
 -/
 
 namespace ConsensusCoverage.StateBasis
@@ -35,6 +35,9 @@ public def Zero (f : Frame) : Prop :=
 public def Backing (f : Frame) : Prop :=
   ∃ n st term part, (n, st) ∈ f.current.nodes ∧ Committed f term part ∧
     st.committedLog <+: part
+
+/-- Each recorded commitment has its invariant chain of quorum evidence. -/
+public def ChainEvidence [Config.InitialConfiguration] (f : Frame) : Prop := CommitChains f.logs
 
 /-- Decode a state question from the truth values of the two basis predicates. -/
 @[expose] public def decode (zero backing : Prop) : StateBranch → Prop
@@ -119,6 +122,69 @@ private theorem signed_reach (f : Frame) (h : Backing f) : signedPath f signedLo
   ⟨signedLog, signedLog, ⟨⟨(backing_pair f).1.mpr h, trivial⟩, signedLog, signedLog, rfl, rfl⟩,
     List.prefix_refl _, rfl, rfl, rfl⟩
 
+private abbrev paired (f : Frame) : Prop :=
+  (reach% state_tip_chain_fresh[0,0,0]) f
+
+private theorem paired_iff (f : Frame) : paired f ↔ Backing f :=
+  (backing_pair f).1
+
+private theorem signature_content (f : Frame) :
+    state_isSignature_eq_true_content_signature f ↔ Backing f := by
+  constructor
+  · rintro ⟨⟨h, _⟩, _⟩
+    apply (paired_iff f).mp
+    rcases h with ⟨_, _, paths, _⟩ | ⟨short, _⟩ | ⟨short, _⟩
+    · rcases paths with one | two | three | four
+      · obtain ⟨_, _, ⟨_, _, p, _⟩, _⟩ := one
+        exact p.1.1
+      · obtain ⟨_, _, ⟨_, _, ⟨_, _, p, _⟩, _⟩, _⟩ := two
+        exact p.1.1
+      · obtain ⟨_, _, _, ⟨_, _, p, _⟩, _⟩ := three
+        exact p.1.1
+      · obtain ⟨_, _, _, ⟨_, _, ⟨_, _, p, _⟩, _⟩, _⟩ := four
+        exact p.1.1
+    · exact short.1.1.1
+    · exact short.1.1.1.1
+  · intro backed
+    exact ⟨⟨.inr (.inl ⟨⟨⟨⟨(paired_iff f).mpr backed, trivial⟩, trivial⟩,
+      trivial⟩, trivial⟩), trivial⟩, trivial⟩
+
+private theorem base_commit {f : Frame} {k p} (chain : CommitChain f.logs k p)
+    (old : Committed f k p) :
+    ∃ l k i, CommitFacts f.logs l k 0 i ∧ Committed f k (l.take i) := by
+  induction chain with
+  | fresh facts => exact ⟨_, _, _, facts, old⟩
+  | backed _ prior _ _ _ ih => exact ih prior
+
+private abbrev tipPath (f : Frame) (k : Nat) (p : List Entry) : Prop :=
+  (reach% state_tip_chain_fresh[0]) f k p
+
+private theorem backing_of_tip {f : Frame} {k p} (h : tipPath f k p) : Backing f := by
+  apply (paired_iff f).mp
+  rcases h with ⟨⟨reach, _⟩, _⟩ | ⟨_, _, reach, _⟩
+  · exact reach
+  · exact reach.1.1
+
+private theorem tip_cases (f : Frame) (chains : CommitChains f.logs) :
+    (state_tip_chain_fresh f ↔ Backing f) ∧ (state_tip_chain_backed f ↔ Backing f) := by
+  have witness (backed : Backing f) : ∃ l k i, CommitFacts f.logs l k 0 i ∧
+      Committed f k (l.take i) ∧ tipPath f k (l.take i) := by
+    have ⟨_, _, k, p, _, committed, _⟩ := backed
+    obtain ⟨l, k, i, facts, old⟩ := base_commit (chains k p committed) committed
+    exact ⟨l, k, i, facts, old, .inl ⟨⟨(paired_iff f).mpr backed, trivial⟩, k, l.take i, old, rfl, rfl⟩⟩
+  refine ⟨⟨fun ⟨_, _, p, _⟩ => backing_of_tip p, ?_⟩, ⟨fun ⟨_, _, p, _⟩ => backing_of_tip p, ?_⟩⟩
+  · intro backed
+    obtain ⟨l, k, i, facts, _, path⟩ := witness backed
+    exact ⟨k, l.take i, path, l, k, i, facts, rfl, facts, rfl,
+      CommitChain.fresh facts, HEq.rfl, .fresh facts⟩
+  · intro backed
+    obtain ⟨l, k, i, facts, prior, path⟩ := witness backed
+    have chain : CommitChain f.logs k (l.take i) := .fresh facts
+    have within : l.take 0 <+: l.take i := List.nil_prefix
+    have extended := CommitChain.backed facts prior chain (Nat.le_refl k) within
+    exact ⟨k, l.take i, path, l, k, 0, i, k, l.take i, facts, prior, chain,
+      Nat.le_refl k, within, rfl, facts, Nat.le_refl k, rfl, extended, HEq.rfl, extended⟩
+
 omit [Config.InitialConfiguration] in
 private theorem best_le_fold (log : List Entry) (values : List Nat) (best : Nat) :
     best ≤ values.foldl (fun b i => if isSignatureAt log i then max b i else b) best := by
@@ -130,8 +196,12 @@ private theorem best_le_fold (log : List Entry) (values : List Nat) (best : Nat)
     · exact Nat.le_trans (Nat.le_max_left _ _) (ih _)
     · exact ih _
 
-/-- Decode every constructor of the generated enum. -/
-public theorem ctx_iff_decode (f : Frame) (b : StateBranch) :
+@[expose] public def nonChain : StateBranch → Bool
+  | .tip_chain_fresh | .tip_chain_backed => false
+  | _ => true
+
+/-- The original two-bit equivalence still holds without invariants on all non-chain questions. -/
+public theorem ctx_iff_decode_nonChain (f : Frame) (b : StateBranch) (base : nonChain b = true) :
     ctx f b ↔ decode (Zero f) (Backing f) b := by
   cases b with
   | committed_logs_comparable_left_backed_inl => exact left_inl f
@@ -182,23 +252,47 @@ public theorem ctx_iff_decode (f : Frame) (b : StateBranch) :
     · intro h
       exact ⟨signedLog, 1, signed_reach f h, 0, [1], fun best _ => Nat.le_max_right best 1,
         by simp, by simp, rfl, Nat.le_refl _, best_le_fold signedLog⟩
+  | isSignature_eq_true_content_signature => exact signature_content f
+  | isSignature_eq_true_content_transaction => exact signature_content f
+  | tip_chain_fresh | tip_chain_backed => cases base
+
+/-- Decode all state questions on frames with committed-chain evidence. -/
+public theorem ctx_iff_decode (f : Frame) (chains : ChainEvidence f) (b : StateBranch) :
+    ctx f b ↔ decode (Zero f) (Backing f) b := by
+  cases b <;> first
+    | exact ctx_iff_decode_nonChain f _ rfl
+    | exact (tip_cases f chains).1
+    | exact (tip_cases f chains).2
 
 end
 
+/-- On arbitrary frames the non-chain questions still distinguish exactly the two basis bits. -/
+public theorem ctx_equiv_iff_nonChain (cfg cfg' : Config.InitialConfiguration) (f g : Frame) :
+    (∀ b, nonChain b = true → (@ctx cfg f b ↔ @ctx cfg' g b)) ↔
+      (Zero f ↔ Zero g) ∧ (Backing f ↔ Backing g) := by
+  constructor
+  · intro h
+    have probe (b : StateBranch) (base : nonChain b = true) :
+        decode (Zero f) (Backing f) b ↔ decode (Zero g) (Backing g) b :=
+      (@ctx_iff_decode_nonChain cfg f b base).symm.trans
+        ((h b base).trans (@ctx_iff_decode_nonChain cfg' g b base))
+    exact ⟨probe .committed_logs_comparable_left_backed_inl rfl,
+      probe .committed_logs_comparable_left_backed_inr rfl⟩
+  · rintro ⟨zero, backing⟩ b base
+    rw [@ctx_iff_decode_nonChain cfg f b base, @ctx_iff_decode_nonChain cfg' g b base]
+    cases b <;> simp only [decode, zero, backing]
+
 /-- The left `inl` and `inr` are probes for the two bits, even when comparing
 frames under different initial configurations. -/
-public theorem ctx_equiv_iff (cfg cfg' : Config.InitialConfiguration) (f g : Frame) :
+public theorem ctx_equiv_iff (cfg cfg' : Config.InitialConfiguration) (f g : Frame)
+    (chains : @ChainEvidence cfg f) (chains' : @ChainEvidence cfg' g) :
     (∀ b, @ctx cfg f b ↔ @ctx cfg' g b) ↔
       (Zero f ↔ Zero g) ∧ (Backing f ↔ Backing g) := by
   constructor
   · intro h
-    have probe (b : StateBranch) : decode (Zero f) (Backing f) b ↔
-        decode (Zero g) (Backing g) b :=
-      (@ctx_iff_decode cfg f b).symm.trans ((h b).trans (@ctx_iff_decode cfg' g b))
-    exact ⟨probe .committed_logs_comparable_left_backed_inl,
-      probe .committed_logs_comparable_left_backed_inr⟩
+    exact (ctx_equiv_iff_nonChain cfg cfg' f g).mp (fun b _ => h b)
   · rintro ⟨zero, backing⟩ b
-    rw [@ctx_iff_decode cfg f b, @ctx_iff_decode cfg' g b]
+    rw [@ctx_iff_decode cfg f chains b, @ctx_iff_decode cfg' g chains' b]
     cases b <;> simp only [decode, zero, backing]
 
 end ConsensusCoverage.StateBasis

@@ -26,11 +26,12 @@ public abbrev Answers := Classes.StateBranch → Bool
 public theorem faithful {cfg ns s past} (run : Run cfg ns s past) (b : Classes.StateBranch) :
     answers (StateCoverage.read cfg s past) b = true ↔ Holds cfg s past b := by
   letI : Proofs.Config.InitialConfiguration := ⟨cfg⟩
-  obtain ⟨zero, backed⟩ := @StateCoverage.read_iff ‹_› s past (@StateCoverage.run_inv ‹_› _ _ _ run)
+  have inv := StateCoverage.run_inv run
+  obtain ⟨zero, backed⟩ := @StateCoverage.read_iff ‹_› s past inv
   change ((StateCoverage.read cfg s past).1 = true ↔ _) at zero
   change ((StateCoverage.read cfg s past).2 = true ↔ _) at backed
   unfold StateCoverage.Holds
-  rw [StateBasis.ctx_iff_decode]
+  rw [StateBasis.ctx_iff_decode _ inv.commitChains]
   cases b <;> simp only [answers, StateBasis.decode, Bool.and_eq_true, zero, backed]
 
 public def table : List Answers := StateCoverage.activeTable.map answers

@@ -90,10 +90,13 @@ public def Holds (cfg : CCF.Finset NodeID) (s : Model.State) (hist : List Model.
 does not add any. The two histories need not come from the same configuration. -/
 public theorem same_answers {cfg cfg' ns ns' s t h h'} (left : Run cfg ns s h) (right : Run cfg' ns' t h') :
     read cfg s h = read cfg' t h' ↔ ∀ b, Holds cfg s h b ↔ Holds cfg' t h' b := by
-  obtain ⟨z, c⟩ := @read_iff ⟨cfg⟩ s h (@run_inv ⟨cfg⟩ _ _ _ left)
-  obtain ⟨z', c'⟩ := @read_iff ⟨cfg'⟩ t h' (@run_inv ⟨cfg'⟩ _ _ _ right)
+  have inv := @run_inv ⟨cfg⟩ _ _ _ left
+  have inv' := @run_inv ⟨cfg'⟩ _ _ _ right
+  obtain ⟨z, c⟩ := @read_iff ⟨cfg⟩ s h inv
+  obtain ⟨z', c'⟩ := @read_iff ⟨cfg'⟩ t h' inv'
   unfold Holds
-  rw [StateBasis.ctx_equiv_iff]
+  rw [StateBasis.ctx_equiv_iff _ _ _ _
+    (@Inv.commitChains ⟨cfg⟩ _ inv) (@Inv.commitChains ⟨cfg'⟩ _ inv')]
   change ((read cfg s h).1 = true ↔ _) at z
   change ((read cfg s h).2 = true ↔ _) at c
   change ((read cfg' t h').1 = true ↔ _) at z'
