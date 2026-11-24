@@ -4,6 +4,7 @@ module
 -- Licensed under the Apache 2.0 License.
 
 meta import Lean
+public meta import ConsensusCoverage.ProofWalk
 public import ConsensusCoverage.ActionProfile
 import ConsensusCoverage.EventSupport
 import ConsensusCoverage.ReducedQuestions
@@ -223,15 +224,8 @@ private partial def rebuild (c : Check) (atoms : List Fact) (p : Expr) : MetaM (
 
 mutual
 
-/-- Check every arm of a positive disjunction and reuse the certificate for
-each shared reach call. Everything not modeled here is an opaque atom. -/
-private partial def refute (c : Check) (todo : List Fact) (atoms : List Fact := []) :
-    Gen (Option Expr) := do
-  let (p, h) :: rest := todo |
-    for (p, h) in atoms do
-      if p.isAppOfArity ``Not 1 then
-        if let some yes ← rebuild c atoms p.appArg! then return some (mkApp h yes)
-    return none
+private partial def refuteAtom (c : Check) (fact : Fact) : Gen (Option Expr) := do
+  let (p, h) := fact
   if let some n := reachName? p then
     if ← certify n c.family then
       let .const _ us := p.getAppFn | throwError "expected a reach constant"
@@ -241,23 +235,7 @@ private partial def refute (c : Check) (todo : List Fact) (atoms : List Fact := 
     return some (mkAppN c.stable ((p.getAppArgs.extract 3 p.getAppNumArgs).push h))
   if c.family == ``Family.commit && p.isAppOf ``CommitStep && p.getArg! 1 == c.newFrame then
     return some (mkAppN c.stable ((p.getAppArgs.extract 2 p.getAppNumArgs).push h))
-  if p.isAppOfArity ``And 2 then
-    return ← refute c
-      ((p.getArg! 0, ← mkAppM ``And.left #[h]) :: (p.getArg! 1, ← mkAppM ``And.right #[h]) :: rest) atoms
-  if p.isAppOfArity ``Or 2 then
-    let arm (q : Expr) := withLocalDeclD `hq q fun hq => do
-      let some result ← refute c ((q, hq) :: rest) atoms | return none
-      return some (← mkLambdaFVars #[hq] result)
-    let some l ← arm (p.getArg! 0) | return none
-    let some r ← arm (p.getArg! 1) | return none
-    return some (← mkAppM ``Or.elim #[h, l, r])
-  if p.isAppOfArity ``Exists 2 then
-    return ← withLocalDeclD `w (p.getArg! 0) fun w => do
-      let q := p.appArg!.beta #[w]
-      withLocalDeclD `hq q fun hq => do
-        let some result ← refute c ((q, hq) :: rest) atoms | return none
-        return some (← mkAppM ``Exists.elim #[h, ← mkLambdaFVars #[w, hq] result])
-  refute c rest ((p, h) :: atoms)
+  return none
 
 private partial def certify (n k : Name) : Gen Bool := do
   if let some done := (← get)[(n, k)]? then return done
@@ -267,7 +245,12 @@ private partial def certify (n k : Name) : Gen Bool := do
     let next := mkAppN (mkConst ``Frame.advance) (xs.extract 0 3)
     withLocalDeclD `stable stable fun hStable => do
       withLocalDeclD `h p fun h => do
-        let some proof ← refute ⟨k, xs[1]!, next, hStable⟩ [(p, h)] | return false
+        let c : Check := ⟨k, xs[1]!, next, hStable⟩
+        let some proof ← ProofWalk.refute (refuteAtom c) (fun atoms => do
+          for (p, h) in atoms do
+            if p.isAppOfArity ``Not 1 then
+              if let some yes ← rebuild c atoms p.appArg! then return some (mkApp h yes)
+          return none) [(p, h)] | return false
         let pred := mkAppN (mkConst n (ci.levelParams.map mkLevelParam)) xs
         let type ← mkForallFVars (xs.push hStable) (← mkArrow pred (mkConst ``False))
         let value ← mkLambdaFVars (xs ++ #[hStable, h]) proof
@@ -375,8 +358,8 @@ or action kinds. A column can have more than one sufficient blocker. -/
 theorem exclusion_counts :
     let columns := FullProfile.stepBranches
     let count := fun k => (columns.filter fun b => decide (k ∈ blockers b)).size
-    columns.size = 461 ∧ (columns.filter fun b => !(blockers b).isEmpty).size = 121 ∧
-      count .pending = 21 ∧ count .now = 62 ∧ count .election = 26 ∧ count .commit = 13 := by
+    columns.size = 516 ∧ (columns.filter fun b => !(blockers b).isEmpty).size = 131 ∧
+      count .pending = 21 ∧ count .now = 70 ∧ count .election = 28 ∧ count .commit = 13 := by
   decide +kernel
 
 end
@@ -442,19 +425,19 @@ private theorem nodesSame_of_read (s : ActionProfile.Step)
 private def witnessCounts (s : ActionProfile.Step) : Nat × Nat :=
   ((excludedColumns s).size, (newColumns s).size)
 
-/-- An initialized heartbeat changes only the queue and yields 58 false bits
+/-- An initialized heartbeat changes only the queue and yields 60 false bits
 beyond the existing exact and tag readers. -/
 public theorem queue_only_witness :
     ∃ s : ActionProfile.Step, s.before.nodes = s.after.nodes ∧ s.before.network ≠ s.after.network ∧
-      witnessCounts s = (100, 58) ∧ ∀ b ∈ newColumns s, ActionProfile.label s (.step b) = false := by
+      witnessCounts s = (110, 60) ∧ ∀ b ∈ newColumns s, ActionProfile.label s (.step b) = false := by
   refine ⟨queueOnly, nodesSame_of_read _ (by decide +kernel), ?_, by decide +kernel, fun _ => newColumns_false _⟩
   exact fun eq => (by decide : 0 ≠ 1) (congrArg List.length eq)
 
-/-- An initialized unsigned append changes only the nodes and yields 41 false
+/-- An initialized unsigned append changes only the nodes and yields 43 false
 bits beyond the existing exact and tag readers. -/
 public theorem nodes_only_witness :
     ∃ s : ActionProfile.Step, s.before.network = s.after.network ∧ s.before.nodes ≠ s.after.nodes ∧
-      witnessCounts s = (59, 41) ∧ ∀ b ∈ newColumns s, ActionProfile.label s (.step b) = false := by
+      witnessCounts s = (61, 43) ∧ ∀ b ∈ newColumns s, ActionProfile.label s (.step b) = false := by
   refine ⟨nodesOnly, rfl, ?_, by decide +kernel, fun _ => newColumns_false _⟩
   exact fun eq => (by decide : [1, 0] ≠ [2, 0])
     (congrArg (List.map (fun p : NodeID × NodeState => p.2.log.length)) eq)

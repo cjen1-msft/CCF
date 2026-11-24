@@ -361,8 +361,8 @@ can only have the all-false `10 -> 10` label.
 [An upper cover](../consensus-coverage/ConsensusCoverage/ActionCover.lean)
 reconstructs every full label from a leader row, the kinds of fresh messages,
 and the remaining answers not ruled out for the recorded event. Depending on
-the event, 265 to 330 bits remain free in this construction. The cover has
-fewer than `2^341` entries, down from `2^485` unrestricted answer vectors.
+the event, 275 to 362 bits remain free in this construction. The cover has
+fewer than `2^373` entries, compared with `2^548` unrestricted answer vectors.
 It includes impossible combinations and can represent the same label more
 than once; its size is not a coverage target.
 
@@ -480,8 +480,8 @@ simplifies all 461 predicates with a proof in both directions but does not decid
 the remaining existential questions.
 
 [Event support](../consensus-coverage/ConsensusCoverage/EventSupport.lean)
-automatically rules out 1,780 combinations of recorded action kind and proof
-question across 183 of the 461 step questions. It uses 12 action kinds: five
+automatically rules out 2,176 combinations of recorded action kind and proof
+question across 228 of the 516 step questions. It uses 12 action kinds: five
 local input constructors and seven delivered message constructors. On a
 validated replay these excluded answers must be false; a non-excluded answer
 still needs a witness. This count is not a transition coverage denominator.

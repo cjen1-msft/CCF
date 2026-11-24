@@ -199,8 +199,8 @@ public theorem multi_upper {rows : List Profile} (distinct : rows.Nodup)
   simpa only [candidates_length, LeaderCoverage.multi_count.2] using distinct.length_le_of_subset sub
 
 public theorem free_counts : tags.map (fun tag => (free tag).length) =
-    [295, 265, 300, 269, 266, 330, 297, 288, 310, 282, 313, 309] := by decide +kernel
+    [317, 275, 325, 279, 276, 362, 321, 309, 341, 301, 344, 338] := by decide +kernel
 
-public theorem ceiling : capacity 15 < 2 ^ 341 ∧ capacity 13 < 2 ^ 341 := by decide +kernel
+public theorem ceiling : capacity 15 < 2 ^ 373 ∧ capacity 13 < 2 ^ 373 := by decide +kernel
 
 end ConsensusCoverage.ActionCover
