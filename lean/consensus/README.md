@@ -352,7 +352,7 @@ if an action adds no key, [the next node-preserving action cannot add one either
 [Repeating the same local input](../consensus-coverage/ConsensusCoverage/RepeatedInput.lean)
 at the same node is an exact full-label case. If the first input leaves node
 records unchanged, the repeat sends no new envelope value and establishes no
-new vote grant. **All 461 step answers are false if and only if the repeat adds
+new vote grant. **All 516 step answers are false if and only if the repeat adds
 no committed key.** If the first input also added no key, exactly three full
 labels are possible across all such repeats, one per state context; all three
 have nomination witnesses. Before the first certificate, a repeated nomination
@@ -398,7 +398,7 @@ receiving the proposal at the term-zero node is another such delivery (`11 -> 11
 
 **Exact nonzero slice: three full labels have the fresh-nomination signature.**
 [Seven step answers](../consensus-coverage/ConsensusCoverage/NominationProfile.lean)
-are true and the other 426 are false **if and only if** the recorded action
+are true and the other 509 are false **if and only if** the recorded action
 is a nomination, an envelope is new to the queue, and no new vote grant or
 committed prefix appears. This test decides membership on every validated
 action. Calling the nomination helper as part of an append is not enough:
@@ -466,7 +466,7 @@ The [duplicate-heartbeat fixture](replay/fixtures/valid/duplicate-heartbeat.ndjs
 shows the difference between a complete action and a complete capture. Its
 unsigned configuration append sends one heartbeat; the next action sends the
 same packet again. The second action grows the queue but gives a **complete
-485-answer row**: both endpoints have key `10`, and all 461 step bits are
+548-answer row**: both endpoints have key `10`, and all 516 step bits are
 false. The [proof](../consensus-coverage/ConsensusCoverage/InertProfile.lean)
 checks that the node states, queue membership and proof log evidence are unchanged.
 The first action still contains unknowns. Separately, [a model witness](../consensus-coverage/ConsensusCoverage/FreshHeartbeat.lean)
@@ -476,7 +476,7 @@ has endpoints `10 -> 10` and **23 true, 410 false, zero unknown** step answers.
 One true answer concerns the incumbent primary, not the queue. This is one
 initialized send, not a classification of all heartbeats.
 [Witness elimination](../consensus-coverage/ConsensusCoverage/SolvedWitnesses.lean)
-simplifies all 461 predicates with a proof in both directions but does not decide
+simplifies all 516 predicates with a proof in both directions but does not decide
 the remaining existential questions.
 
 [Event support](../consensus-coverage/ConsensusCoverage/EventSupport.lean)

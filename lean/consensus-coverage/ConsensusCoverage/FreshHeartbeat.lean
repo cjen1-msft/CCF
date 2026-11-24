@@ -3,7 +3,9 @@ module
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
+meta import ConsensusCoverage.ReachPath
 meta import Lean
+public meta import ConsensusCoverage.ProofWalk
 public import ConsensusCoverage.ReplayAnswers
 import all ConsensusCoverage.ActionContext
 import all ConsensusCoverage.CommitKeys
@@ -105,33 +107,13 @@ private def certName (n : Name) : Name :=
 
 mutual
 
-/-- Eliminate conjunctions, disjunctions and existentials without unfolding
-arbitrary atoms. In contrast to the stutter compiler, leave queued-envelope
-newness untouched. Reuse its newness contradiction check at the leaves. -/
-private partial def refute (ctx : Simp.Context) (nodes logs : Expr)
-    (todo : List Fact) (atoms : List Fact := []) : Gen (Option Expr) := do
-  let (p, h) :: rest := todo | StutterProfile.contradictionFrom ctx atoms
+private partial def refuteReach (fact : Fact) (nodes logs : Expr) : Gen (Option Expr) := do
+  let (p, h) := fact
   if let some n := StutterProfile.reachName? p then
     if ← certify n then
       let .const _ us := p.getAppFn | throwError "expected constant"
       return some (mkAppN (mkConst (certName n) us) (p.getAppArgs ++ #[nodes, logs, h]))
-  if p.isAppOfArity ``And 2 then
-    return ← refute ctx nodes logs
-      ((p.getArg! 0, ← mkAppM ``And.left #[h]) :: (p.getArg! 1, ← mkAppM ``And.right #[h]) :: rest) atoms
-  if p.isAppOfArity ``Or 2 then
-    let arm (q : Expr) := withLocalDeclD `h q fun hq => do
-      let some result ← refute ctx nodes logs ((q, hq) :: rest) atoms | return none
-      return some (← mkLambdaFVars #[hq] result)
-    let some l ← arm (p.getArg! 0) | return none
-    let some r ← arm (p.getArg! 1) | return none
-    return some (← mkAppM ``Or.elim #[h, l, r])
-  if p.isAppOfArity ``Exists 2 then
-    return ← withLocalDeclD `w (p.getArg! 0) fun w => do
-      let q := (p.getArg! 1).beta #[w]
-      withLocalDeclD `h q fun hq => do
-        let some result ← refute ctx nodes logs ((q, hq) :: rest) atoms | return none
-        return some (← mkAppM ``Exists.elim #[h, ← mkLambdaFVars #[w, hq] result])
-  refute ctx nodes logs rest ((p, h) :: atoms)
+  return none
 
 private partial def certify (n : Name) : Gen Bool := do
   if let some done := (← get)[n]? then return done
@@ -156,8 +138,10 @@ private partial def certify (n : Name) : Gen Bool := do
         for i in [:rewrites.size] do
           rules ← rules.add (.other ((`heartbeatRewrite).appendIndexAfter i)) #[] rewrites[i]!
         let ctx ← Simp.mkContext (simpTheorems := #[rules]) (congrTheorems := ← getSimpCongrTheorems)
+        let closePath ← StutterProfile.contradictionChecker ctx
         withLocalDeclD `h p fun h => do
-          let some proof ← refute ctx nodes logs [(p, h)] | return false
+          let some proof ← ProofWalk.refute (refuteReach · nodes logs)
+            (fun facts => closePath facts) [(p, h)] | return false
           let pred := mkAppN (mkConst n (ci.levelParams.map mkLevelParam)) xs
           let type ← mkForallFVars (xs ++ #[nodes, logs]) (← mkArrow pred (mkConst ``False))
           let value ← mkLambdaFVars (xs ++ #[nodes, logs, h]) proof
@@ -259,7 +243,8 @@ public theorem incumbent_send :
     ⟨by decide +kernel, rfl, by decide +kernel, rfl, List.nil_prefix, by decide +kernel⟩
   have mem := (new_pending heartbeat).mpr rfl
   have sent := (outgoing heartbeat).mpr rfl
-  have root : SolvedWitnesses.reach_26 witness.frame witness.after concrete concrete heartbeat :=
+  have root : (reach% SolvedWitnesses.step_new_message_h_appendEntriesRequest[0])
+      witness.frame witness.after concrete concrete heartbeat :=
     ⟨⟨mem, old_pending heartbeat, rfl⟩, sent, mem, rfl⟩
   refine ⟨?_, stay, stay.1, stay.2, .inl stay⟩
   exact ⟨heartbeat, root, rfl, ⟨ok, candidate, .inl stay⟩,
@@ -310,9 +295,34 @@ public theorem positives_eq : positives =
       .mem_network_mem_append_inr, .new_message_h_appendEntriesRequest, .post_led_origin_inl] :=
   by decide +kernel
 
+meta section
+
+open Lean Meta
+
+private partial def branchNames (xs : Expr) : MetaM (List Name) := do
+  let xs ← whnf xs
+  if xs.isAppOf ``List.nil then return []
+  unless xs.isAppOfArity ``List.cons 3 do throwError "expected a list of branches"
+  let b ← whnf (xs.getArg! 1)
+  let some name := b.getAppFn.constName? | throwError "expected a branch constructor: {b}"
+  return name :: (← branchNames xs.appArg!)
+
+private def logCensus (p u : Name) : MetaM Unit := do
+  let yes ← branchNames (mkConst p)
+  let unknown ← branchNames (mkConst u)
+  let columns := (← getConstInfoInduct ``Classes.StepBranch).ctors.length
+  logInfo m!"heartbeat census: {yes.length} positive, {columns - yes.length - unknown.length} negative, \
+    {unknown.length} unresolved; positives {yes.map Name.getString!}; unresolved {unknown.map Name.getString!}"
+
+end
+
+local elab "heartbeat_census" : command =>
+  Lean.Elab.Command.liftTermElabM (logCensus ``positives ``residual)
+heartbeat_census
+
 public theorem counts :
-    stepBranches.size = 433 ∧ residual.length = 79 ∧ positives.length = 6 ∧
-      (stepBranches.toList.filter fun b => read? (.step b) == some false).length = 348 :=
+    stepBranches.size = 516 ∧ residual.length = 85 ∧ positives.length = 6 ∧
+      (stepBranches.toList.filter fun b => read? (.step b) == some false).length = 425 :=
   by decide +kernel
 
 public theorem residual_iff (b : Classes.StepBranch) :
@@ -355,12 +365,12 @@ public theorem witness_packet :
     witness.after.network = [⟨0, 1, .appendEntriesRequest ⟨BOOTSTRAP_TERM, 0, 0, [], 0⟩⟩] :=
   ⟨rfl, rfl, rfl, rfl, sameNodes, rfl, rfl⟩
 
-/- An example of a remaining quantified path is slot 432. Even after
+/- An example of a remaining quantified path is `maxCommittableIndex_le_of_prefix_zero_neg`. Even after
 equation-pinned witnesses are substituted and the send context fixed, its
-26 arms quantify entry lists `left`, `right` and require both
-`maxCommittableIndex left ≠ 0` and `left <+: right`. In its first arm,
-`reach_888` obtains these lists as `take frontier` of other entry lists
-satisfying `reach_862`. A finite packet or node lookup does not by itself
+arms quantify entry lists `left`, `right` and require both
+`maxCommittableIndex left ≠ 0` and `left <+: right`. The shared
+canonical-log path obtains these lists as `take frontier` of other
+entry lists. A finite packet or node lookup does not by itself
 discharge those reach obligations. -/
 private theorem prefix_residual :
     label witness (.step .maxCommittableIndex_le_of_prefix_zero_neg) = true ↔
