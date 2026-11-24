@@ -8,6 +8,7 @@ public import ConsensusCoverage.ReadersAtoms
 import all ConsensusCoverage.ExplorerGhost
 import all ConsensusCoverage.ReadersAtoms
 import all ConsensusCoverage.GuardedDomain
+import all ConsensusCoverage.CommitMonitor
 import all Consensus.Proofs.SafetyInvariant
 
 namespace ConsensusCoverage.CensusObserved
@@ -95,5 +96,33 @@ public theorem prefix_mem {g : Ghost} {hist : List Model.State} (ok : Tracks g h
     exact ⟨node, hn, pre⟩
   · rintro ⟨node, hn, pre⟩
     exact ⟨observe node, (ok.1 _).mpr (List.mem_map.mpr ⟨node, hn, rfl⟩), pre⟩
+
+/-- Exact single-step election tuples, conditional on grant answers and
+unambiguous pre-state lookup. No raw history is needed to enumerate tuples. -/
+public theorem election_mem {g : Ghost} {s t : Model.State} {h : List Model.State}
+    (lookup : ∀ n x, (n, x) ∈ s.nodes ↔ s.nodes.lookup n = some x)
+    (grants : ∀ v n k r, g.granted v n k r = grantedIn (t :: s :: h) v n k r)
+    (n k : Nat) (l : List Entry) (i : Nat) :
+    (n, k, l, i) ∈ elections g s t ↔ electionExact t s h n k l i = true := by
+  constructor
+  · intro mem
+    obtain ⟨⟨id, y⟩, new, yes⟩ := List.mem_filterMap.mp mem
+    cases hx : s.nodes.lookup id with
+    | none => simp [hx] at yes
+    | some x =>
+      simp [hx, guard, Option.bind_eq_some_iff, grants] at yes
+      obtain ⟨⟨floor, role⟩, ⟨⟨bound, campaign⟩, sub⟩, votes, rfl, rfl, rfl, rfl⟩ := yes
+      simp only [electionExact, List.any_eq_true, Prod.exists, Bool.and_eq_true, decide_eq_true_eq]
+      exact ⟨id, x, (lookup _ _).mpr hx, id, y, new,
+        ⟨rfl, rfl, rfl, rfl, bound, campaign, rfl, role, sub, floor⟩, by simpa using votes⟩
+  · intro yes
+    simp only [electionExact, List.any_eq_true, Prod.exists, Bool.and_eq_true, decide_eq_true_eq] at yes
+    obtain ⟨_, x, old, id, y, new, ⟨rfl, rfl, rfl, rfl, bound, campaign, term, role, sub, floor⟩, quorum⟩ := yes
+    subst k
+    refine List.mem_filterMap.mpr ⟨(_, y), new, ?_⟩
+    have votes : CommitMonitor.quorum (Config.activeConfigurationsOf x)
+        (fun v => g.granted v id y.currentTerm (LogFacts.requestAt y.currentTerm x.log x.commitIndex)) = true := by
+      simpa [grants] using quorum
+    simp [(lookup _ _).mp old, floor, role, campaign, sub, bound, votes, guard]
 
 end ConsensusCoverage.CensusObserved
