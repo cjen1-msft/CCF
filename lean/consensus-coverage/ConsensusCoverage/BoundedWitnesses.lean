@@ -234,11 +234,190 @@ private def cert35 : Certificate := multiCert
   (⟨{0, 1}, [0, 1], [append 0 [flush 1 2], deliver 0 1, nom 0, deliver 0 1, elect 1,
     deliver 1 0, deliver 0 1, elect 1, deliver 1 0]⟩) [(5, 2), (8, 3)] 1883377482873
 
+private def cert36 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [
+    .input 0 (.append [{content := .transaction 1 {configuration := some {1}}}, {content := .signature, flushes := [(1, 3)]}]),
+    .deliver 0 1,
+    .deliver 1 0,
+    .input 0 (.sendEntries 1 3),
+    .deliver 0 1,
+    .deliver 1 0,
+    .input 1 (.timeout .election),
+    .input 1 (.append [{content := .signature, flushes := [(0, 4)]}]),
+    .deliver 1 0]⟩) [(8, 1)] 638339726200
+
+private def cert37 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1, 2], [
+    .input 0 (.append [{content := .transaction 1 {configuration := some {1}}}, {content := .signature, flushes := [(1, 3)]}]),
+    .deliver 0 1,
+    .deliver 1 0,
+    .input 0 (.timeout .checkQuorum),
+    .input 0 (.timeout .election),
+    .deliver 0 1,
+    .deliver 1 0,
+    .deliver 0 1,
+    .deliver 1 0,
+    .deliver 0 1,
+    .input 1 (.timeout .election),
+    .input 2 (.initAsBackup [{term := 2, content := .transaction 0 {configuration := some {0, 1}}}, {term := 2, content := .transaction 1 {configuration := some {1}}}, {term := 2, content := .signature}]),
+    .deliver 1 0]⟩) [(12, 1)] 638339759993
+
+private def cert38 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1, 2], [
+    .input 0 (.append [{content := .transaction 1 {configuration := some {0, 1, 2}}}, {content := .signature, flushes := [(1, 3)]}]),
+    .deliver 0 1,
+    .deliver 1 0,
+    .input 0 (.sendEntries 1 3),
+    .deliver 0 1,
+    .deliver 1 0,
+    .input 0 (.sendEntries 2 3),
+    .input 2 (.initAsBackup [{term := 2, content := .transaction 0 {configuration := some {0, 1}}}, {term := 2, content := .transaction 1 {configuration := some {0, 1, 2}}}, {term := 2, content := .signature}]),
+    .deliver 0 2,
+    .input 0 (.append [{content := .signature, flushes := [(2, 4)]}]),
+    .deliver 0 2]⟩) [(10, 1)] 638339981434
+
+private def cert39 : Certificate := multiCert
+  (⟨{0}, [0, 1], [
+    .input 0 (.append [{content := .signature}]),
+    .input 0 (.append [{content := .transaction 1 {configuration := some {0, 1}}}]),
+    .input 0 (.timeout .checkQuorum),
+    .input 0 (.timeout .election),
+    .input 1 (.initAsBackup [{term := 2, content := .transaction 0 {configuration := some {0}}}, {term := 2, content := .signature}]),
+    .deliver 0 1,
+    .deliver 1 0,
+    .deliver 0 1,
+    .deliver 1 0,
+    .input 0 (.append [{content := .signature}])]⟩) [(5, 1), (7, 1)] 652835520254
+
+private def cert40 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1], [
+    .input 0 (.append [{content := .transaction 1 {configuration := some {0}}}, {content := .signature, flushes := [(1, 3)]}]),
+    .deliver 0 1,
+    .deliver 1 0,
+    .input 0 (.append [{content := .transaction 1 {configuration := some {0, 1}}}]),
+    .input 0 (.timeout .checkQuorum),
+    .input 0 (.timeout .election),
+    .deliver 0 1,
+    .deliver 1 0,
+    .deliver 0 1,
+    .deliver 1 0,
+    .deliver 0 1,
+    .input 0 (.append [{content := .signature, flushes := [(1, 4)]}])]⟩) [] 681834938106
+
+private def cert41 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1, 2], [
+    .input 0 (.append [{content := .transaction 1 {configuration := some {0, 1, 2}}}]),
+    .deliver 0 2,
+    .deliver 2 0,
+    .input 0 (.append [{content := .signature, flushes := [(2, 3)]}]),
+    .deliver 0 2,
+    .deliver 2 0,
+    .input 0 (.nominateSuccessor),
+    .deliver 0 2,
+    .deliver 2 1,
+    .deliver 1 2,
+    .input 0 (.sendEntries 1 0),
+    .deliver 0 1,
+    .deliver 1 0]⟩) [] 1236950825849
+
+private def cert42 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1, 2], [
+    .input 0 (.append [{content := .transaction 1 {configuration := some {0}}}, {content := .signature, flushes := [(1, 3)]}]),
+    .deliver 0 1,
+    .deliver 1 0,
+    .input 0 (.nominateSuccessor),
+    .deliver 0 1,
+    .deliver 1 0,
+    .deliver 0 1,
+    .input 0 (.timeout .election),
+    .input 2 (.initAsBackup [{term := 2, content := .transaction 0 {configuration := some {0, 1}}}, {term := 2, content := .transaction 1 {configuration := some {0}}}, {term := 2, content := .signature}]),
+    .deliver 0 1]⟩) [] 1737851386745
+
+private def cert43 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1, 2], [
+    .input 0 (.append [{content := .transaction 1 {configuration := some {0, 1, 2}}}, {content := .signature, flushes := [(1, 3)]}]),
+    .deliver 0 2,
+    .deliver 0 1,
+    .deliver 1 0,
+    .deliver 2 0,
+    .input 0 (.sendEntries 1 3),
+    .deliver 0 1,
+    .input 0 (.append [{content := .signature, flushes := [(2, 4)]}]),
+    .deliver 0 2]⟩) [] 1737851609162
+
+private def cert44 : Certificate := multiCert
+  (⟨{0}, [0, 1], [
+    .input 0 (.append [{content := .signature}]),
+    .input 0 (.append [{content := .transaction 1 {configuration := some {0, 1}}}]),
+    .deliver 0 1,
+    .deliver 1 0,
+    .input 0 (.append [{content := .signature, flushes := [(1, 4)]}]),
+    .deliver 0 1]⟩) [] 1737851609166
+
+private def cert45 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1, 2], [
+    .input 0 (.append [{content := .transaction 1 {configuration := some {1}}}, {content := .signature, flushes := [(1, 3)]}]),
+    .deliver 0 1,
+    .deliver 1 0,
+    .input 0 (.sendEntries 1 3),
+    .deliver 0 1,
+    .deliver 1 0,
+    .input 1 (.timeout .election),
+    .input 1 (.append [{content := .signature, flushes := [(0, 4)]}]),
+    .deliver 1 0]⟩) [(8, 1)] 1875290307448
+
+private def cert46 : Certificate := multiCert
+  (⟨{0, 1}, [0, 1, 2], [
+    .input 0 (.append [{content := .transaction 1 {configuration := some {1}}}, {content := .signature, flushes := [(1, 3)]}]),
+    .deliver 0 1,
+    .deliver 1 0,
+    .input 0 (.timeout .checkQuorum),
+    .input 0 (.timeout .election),
+    .deliver 0 1,
+    .deliver 1 0,
+    .deliver 0 1,
+    .deliver 1 0,
+    .deliver 0 1,
+    .input 1 (.timeout .election),
+    .deliver 1 0]⟩) [(11, 1)] 1875290341241
+
+private def cert47 : Certificate := multiCert
+  (⟨{0}, [0, 1], [
+    .input 0 (.append [{content := .signature}]),
+    .input 0 (.append [{content := .transaction 1 {configuration := some {0, 1}}}]),
+    .deliver 0 1,
+    .deliver 1 0,
+    .input 0 (.sendEntries 1 1),
+    .deliver 0 1,
+    .input 0 (.timeout .checkQuorum),
+    .input 0 (.timeout .election),
+    .deliver 0 1,
+    .deliver 1 0,
+    .input 0 (.timeout .election),
+    .deliver 0 1]⟩) [(9, 1), (11, 2)] 1883377475585
+
+private def cert48 : Certificate := multiCert
+  (⟨{0}, [0, 1], [
+    .input 0 (.append [{content := .signature}]),
+    .input 0 (.append [{content := .transaction 1 {configuration := some {0, 1}}}]),
+    .deliver 0 1,
+    .deliver 1 0,
+    .input 0 (.sendEntries 1 1),
+    .deliver 0 1,
+    .input 0 (.timeout .checkQuorum),
+    .input 0 (.timeout .election),
+    .deliver 0 1,
+    .deliver 1 0,
+    .deliver 0 1,
+    .deliver 1 0,
+    .input 0 (.append [{content := .signature}])]⟩) [(9, 1), (11, 1)] 1889786101502
+
 private def certificates : List Certificate :=
   [cert0, cert1, cert2, cert3, cert4, cert5, cert6, cert7, cert8, cert9, cert10, cert11,
     cert12, cert13, cert14, cert15, cert16, cert17, cert18, cert19, cert20, cert21, cert22,
     cert23, cert24, cert25, cert26, cert27, cert28, cert29, cert30, cert31, cert32, cert33,
-    cert34, cert35]
+    cert34, cert35, cert36, cert37, cert38, cert39, cert40, cert41, cert42, cert43,
+    cert44, cert45, cert46, cert47, cert48]
 -- END GENERATED CERTIFICATES
 
 private def newKeys : List Nat := certificates.map (·.key)
@@ -263,19 +442,19 @@ private theorem multi_occurs {k : Nat} (mem : k ∈ multiKeys) :
   · exact ExploredWitnesses.multi_occurs old
   · exact new_occurs new
 
-private theorem count : keys.Nodup ∧ keys.length = 223 := by decide +kernel
-private theorem multi_count : multiKeys.Nodup ∧ multiKeys.length = 220 := by decide +kernel
+private theorem count : keys.Nodup ∧ keys.length = 236 := by decide +kernel
+private theorem multi_count : multiKeys.Nodup ∧ multiKeys.length = 233 := by decide +kernel
 
-/-- Every cover of initialized recorded step labels contains at least 223 rows. -/
+/-- Every cover of initialized recorded step labels contains at least 236 rows. -/
 public theorem full_lower_bound (rows : List Profile) (complete : ∀ s, label s ∈ rows) :
-    223 ≤ rows.length := by
+    236 ≤ rows.length := by
   simpa only [count.2] using
     (projected_lower_bound project count.1 (fun _ => occurs) complete)
 
-/-- Every cover of initialized multi-node step labels contains at least 220 rows. -/
+/-- Every cover of initialized multi-node step labels contains at least 233 rows. -/
 public theorem multi_lower_bound (rows : List Profile)
     (complete : ∀ s : Step, LeaderCoverage.MultiNode s.nodes → label s ∈ rows) :
-    220 ≤ rows.length := by
+    233 ≤ rows.length := by
   have sub : multiKeys ⊆ rows.map project := by
     intro k hk
     obtain ⟨s, multi, key⟩ := multi_occurs hk
