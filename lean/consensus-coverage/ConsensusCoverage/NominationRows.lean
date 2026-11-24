@@ -4,6 +4,7 @@ module
 -- Licensed under the Apache 2.0 License.
 
 meta import Lean
+public meta import ConsensusCoverage.ProofWalk
 meta import ConsensusCoverage.ReachPath
 public meta import ConsensusCoverage.EventSupport
 public import ConsensusCoverage.ReducedQuestions
@@ -134,46 +135,15 @@ private def eventConflict (stable : Expr) (atoms : List Fact) : MetaM (Option Ex
 
 mutual
 
-private partial def deny (ctx : Simp.Context) (stable : Expr) (todo : List Fact)
-    (packets shapes atoms : List Fact := []) :
-    Gen (Option Expr) := do
-  let (p, h) :: rest := todo |
-    for (e, reach) in packets do
-      for (lhs, eq) in shapes do
-        let payload ← mkAppM ``CCF.Envelope.payload #[e]
-        if lhs == payload then
-          return some (← mkAppM ``payload26 #[stable, reach, eq, ← mkEqRefl (mkConst ``Bool.false)])
-    if let some proof ← eventConflict stable atoms then return some proof
-    StutterProfile.contradictionFrom ctx atoms
+private partial def denyAtom (stable : Expr) (fact : Fact) : Gen (Option Expr) := do
+  let (p, h) := fact
   if let .const n us := p.getAppFn then
     if n.getPrefix == `ConsensusCoverage.SolvedWitnesses && n.getString!.startsWith "reach_" then
       if n == (reachName% SolvedWitnesses.step_message_terms_mem_network_inr[0]) then
         return some (← mkAppM ``no43 #[stable, h])
-      if n == (reachName% SolvedWitnesses.step_new_message_h_proposeRequestVoteRequest[0]) then
-        return ← deny ctx stable rest ((p.appArg!, h) :: packets) shapes atoms
-      if ← certify n then return some (mkAppN (mkConst (cert n) us) (p.getAppArgs ++ #[stable, h]))
-  if p.isAppOfArity ``Eq 3 then
-    let rhs := p.getArg! 2
-    if let .const (.str ns name) _ := rhs.getAppFn then
-      if ns == ``Consensus.Model.Node.Message && name != "proposeRequestVoteRequest" then
-        return ← deny ctx stable rest packets ((p.getArg! 1, h) :: shapes) ((p, h) :: atoms)
-  if p.isAppOfArity ``And 2 then
-    return ← deny ctx stable ((p.getArg! 0, ← mkAppM ``And.left #[h]) ::
-      (p.getArg! 1, ← mkAppM ``And.right #[h]) :: rest) packets shapes atoms
-  if p.isAppOfArity ``Or 2 then
-    let arm (q : Expr) := withLocalDeclD `arm q fun hq => do
-      let some result ← deny ctx stable ((q, hq) :: rest) packets shapes atoms | return none
-      return some (← mkLambdaFVars #[hq] result)
-    let some l ← arm (p.getArg! 0) | return none
-    let some r ← arm (p.getArg! 1) | return none
-    return some (← mkAppM ``Or.elim #[h, l, r])
-  if p.isAppOfArity ``Exists 2 then
-    return ← withLocalDeclD `x (p.getArg! 0) fun x => do
-      let q := p.appArg!.beta #[x]
-      withLocalDeclD `hx q fun hx => do
-        let some r ← deny ctx stable ((q, hx) :: rest) packets shapes atoms | return none
-        return some (← mkAppM ``Exists.elim #[h, ← mkLambdaFVars #[x, hx] r])
-  deny ctx stable rest packets shapes ((p, h) :: atoms)
+      unless n == (reachName% SolvedWitnesses.step_new_message_h_proposeRequestVoteRequest[0]) do
+        if ← certify n then return some (mkAppN (mkConst (cert n) us) (p.getAppArgs ++ #[stable, h]))
+  return none
 
 private partial def certify (n : Name) : Gen Bool := do
   if let some ok := (← get)[n]? then return ok
@@ -193,7 +163,19 @@ private partial def certify (n : Name) : Gen Bool := do
         for i in [:eqs.size] do
           rules ← rules.add (.other ((`stableRewrite).appendIndexAfter i)) #[] eqs[i]!
         let ctx ← Simp.mkContext (simpTheorems := #[rules]) (congrTheorems := ← getSimpCongrTheorems)
-        let result ← deny ctx stable [(p, h)]
+        let closePath ← StutterProfile.contradictionChecker ctx
+        let result ← ProofWalk.refute (denyAtom stable) (fun atoms => do
+          for (p, reach) in atoms do
+            unless p.isAppOf (reachName% SolvedWitnesses.step_new_message_h_proposeRequestVoteRequest[0]) do
+              continue
+            let payload ← mkAppM ``CCF.Envelope.payload #[p.appArg!]
+            for (q, eq) in atoms do
+              unless q.isAppOfArity ``Eq 3 && q.getArg! 1 == payload do continue
+              let .const (.str ns name) _ := q.appArg!.getAppFn | continue
+              if ns == ``Consensus.Model.Node.Message && name != "proposeRequestVoteRequest" then
+                return some (← mkAppM ``payload26 #[stable, reach, eq, ← mkEqRefl (mkConst ``Bool.false)])
+          if let some proof ← eventConflict stable atoms then return some proof
+          closePath atoms) [(p, h)]
         let some proof := result | return false
         addDecl (.thmDecl {
           name := cert n, levelParams := ci.levelParams,

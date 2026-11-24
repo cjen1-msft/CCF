@@ -88,13 +88,15 @@ private theorem direct_sound (s : Step) (b : Classes.StepBranch) {v : Bool}
   have changed := congrArg Prod.snd key
   have incumbent := ActionFrontier.incumbent_eq s
   rw [key] at incumbent
-  cases b <;> first | exact won.trans (Option.some.inj h) | exact changed.trans (Option.some.inj h)
-                    | exact incumbent.trans (Option.some.inj h)
-                    | exact ((BackingRead.any_eq s).trans (CommitKeys.fresh_answer s)).symm.trans (Option.some.inj h)
-                    | exact (BackingRead.zero_answer s).symm.trans (Option.some.inj h)
-                    | exact (BackingRead.prior_answer s).symm.trans (Option.some.inj h)
-                    | exact AckAdvance.read?_correct s h | contradiction
-                    | exact Option.some.inj ((ActorLogRows.at_step s (by decide)).symm.trans h)
+  unfold direct at h
+  split at h <;>
+    first | contradiction | exact won.trans (Option.some.inj h) | exact changed.trans (Option.some.inj h)
+          | exact incumbent.trans (Option.some.inj h)
+          | exact ((BackingRead.any_eq s).trans (CommitKeys.fresh_answer s)).symm.trans (Option.some.inj h)
+          | exact (BackingRead.zero_answer s).symm.trans (Option.some.inj h)
+          | exact (BackingRead.prior_answer s).symm.trans (Option.some.inj h)
+          | exact AckAdvance.read?_correct s h
+          | exact Option.some.inj ((ActorLogRows.at_step s (by decide)).symm.trans h)
 
 private theorem gates (s : Step) :
     let e := read s.cfg s.before s.act s.after s.past
