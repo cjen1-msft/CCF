@@ -67,7 +67,7 @@ manifest["name"] = "bounded_explorer"
 (target / "lakefile.toml").write_text(f'''name = "bounded_explorer"
 srcDir = "src"
 moreLeanArgs = ["-DwarningAsError=true"]
-moreLinkArgs = [{json.dumps(str(driver))}, "-lstdc++"]
+moreLinkArgs = [{json.dumps(str(driver))}, "-lstdc++", "-L{prefix}/lib/lean", "-Wl,-rpath,{prefix}/lib/lean", "-lleanshared"]
 
 [[lean_lib]]
 name = "scripts"

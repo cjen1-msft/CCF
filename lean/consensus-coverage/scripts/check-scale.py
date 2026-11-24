@@ -19,7 +19,7 @@ ORACLES = [
 ]
 
 
-def run(exe, directory, mode, log, term, queue, census=False, exhaust=("--check-ghost",)):
+def run(exe, directory, mode, log, term, queue, census=False, exhaust=("--check-ghost",), readers=False):
     prefix = directory / f"{mode[2:]}-L{log}T{term}Q{queue}"
     out = prefix.with_suffix(".tsv")
     cmd = ["nice", exe, mode, "--max-log", str(log), "--max-term", str(term),
@@ -28,11 +28,17 @@ def run(exe, directory, mode, log, term, queue, census=False, exhaust=("--check-
         cmd.extend(exhaust)
     if census:
         cmd.extend(["--case-out", prefix.with_suffix(".cases.tsv")])
+    if readers:
+        cmd.append("--reader-census")
+        if mode == "--scale":
+            cmd[3:3] = ["--audit-reader-every", "1"]
     text = subprocess.check_output(cmd, text=True)
     prefix.with_suffix(".log").write_text(text)
     frame = re.search(r"^frames: (\d+); expanded: (\d+); frontier: 0; fixpoint: true$", text, re.M)
     edge = re.search(r"^steps: (\d+);.*?keys: (\d+)", text, re.M)
     assert frame and edge and frame[1] == frame[2], prefix
+    if readers and mode == "--scale":
+        assert f"ordered-history row comparisons: {edge[1]}\n" in text, prefix
     with out.open() as f:
         keys = sorted(int(x["key"]) for x in csv.DictReader(f, delimiter="\t"))
     assert len(set(keys)) == len(keys) == int(edge[2]), prefix
@@ -54,6 +60,8 @@ def main():
     p.add_argument("directory", type=Path)
     p.add_argument("--small", action="store_true",
                    help="skip the two-million-frame log-five cell and the Lean-only queue-three run")
+    p.add_argument("--readers", action="store_true",
+                   help="also check generated census and wider keys against ordered histories")
     args = p.parse_args()
     exe = args.exe.resolve(strict=True)
     args.directory.mkdir(exist_ok=True, parents=True)
@@ -94,6 +102,32 @@ def main():
             assert {k for k, cap in first.items() if cap <= q} == {
                 int(row["key"]) for row in csv.DictReader(f, delimiter="\t")
             }
+    if args.readers:
+        reader_dir = args.directory / "readers"
+        reader_dir.mkdir(exist_ok=True)
+        for q in ((1,) if args.small else (1, 2)):
+            scores = {}
+            for mode in ("--scale", "--symbolic", "--exhaust"):
+                scores[mode] = run(exe, reader_dir, mode, 2, 3, q, True,
+                                   exhaust=("--incremental", "--merge-workers", "3", "--merge-every", "0"),
+                                   readers=True)
+            assert len(set(scores.values())) == 1
+            reference = census(reader_dir, "exhaust", q)
+            # A different BFS action tie-break is allowed; witness depth must be minimal.
+            cols = ("question", "known_true", "known_false", "unknown", "depth")
+            def observations(rows):
+                return [tuple(r[k] for k in cols) for r in rows]
+            for mode in ("scale", "symbolic"):
+                assert observations(census(reader_dir, mode, q)) == observations(reference)
+            wider = []
+            for mode in ("scale", "symbolic", "exhaust"):
+                text = (reader_dir / f"{mode}-L2T3Q{q}.log").read_text()
+                m = re.search(r"^wider projection: (\d+); extra coordinates: (\d+)$", text, re.M)
+                assert m and int(m[1]) >= scores["--scale"][2] and int(m[2]) > 0
+                wider.append(m.groups())
+            assert len(set(wider)) == 1
+            print(f"Q{q}: {scores['--exhaust'][1]} ordered-history edges, {len(reference)} rows, "
+                  f"matching counts and shortest depths; wider {wider[0][0]}.")
 
 
 if __name__ == "__main__":

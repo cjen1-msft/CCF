@@ -43,6 +43,8 @@ namespace
     L* ccf_scale_read(L*, L*, L*, L*, L*);
     L* ccf_scale_witness(L*, L*, L*, L*, L*);
     L* ccf_scale_case_names(L*);
+    L* ccf_scale_wide_columns(L*);
+    L* ccf_scale_history_row(L*, L*);
   }
 
   struct Ref
@@ -251,13 +253,14 @@ namespace
   struct Census
   {
     std::string answers;
+    Ref buffer;
     U64 count = 0;
   };
 
   struct Search
   {
     L* b;
-    U64 cap, budget, seconds;
+    U64 cap, budget, seconds, audit_every, audited = 0;
     std::string out, case_out;
     Pool nodes, ghosts, envelopes;
     std::vector<U64> sources, targets;
@@ -275,6 +278,8 @@ namespace
     std::vector<std::string> witnesses;
     std::map<Id, std::set<Id>> family_keys;
     std::vector<Census> census;
+    Queue wide_columns;
+    std::set<std::pair<Id, Id>> counted_rows;
     std::vector<std::string> case_witness;
     U64 head = 0, steps = 0, fetched = 0, menu_misses = 0, model_calls = 0;
     U64 reader_ns = 0, menu_ns = 0;
@@ -284,9 +289,26 @@ namespace
       cap(lean_unbox(lean_array_uget_borrowed(params, 0)) - U64(1)),
       budget(lean_unbox(lean_array_uget_borrowed(params, 1)) - U64(1)),
       seconds(lean_unbox(lean_array_uget_borrowed(params, 2)) - U64(1)),
+      audit_every(lean_unbox(lean_array_uget_borrowed(params, 5))),
       out(lean_string_cstr(out)),
       case_out(lean_string_cstr(cases))
-    {}
+    {
+      if (lean_unbox(lean_array_uget_borrowed(params, 4)))
+      {
+        Ref cols(call<ccf_scale_wide_columns>(b));
+        for (size_t i = 0; i < lean_array_size(cols.p); ++i)
+          wide_columns.push_back(id(lean_unbox(lean_array_uget_borrowed(cols.p, i))));
+      }
+    }
+
+    Id intern_row(Ref buffer)
+    {
+      auto ans = bytes(buffer);
+      auto ci = case_rows.add(ans);
+      if (ci == census.size())
+        census.push_back({std::move(ans), std::move(buffer)});
+      return ci;
+    }
 
     Id queue(Queue q)
     {
@@ -442,12 +464,18 @@ namespace
         {
           auto compute = lean_ctor_get(r, 4);
           lean_inc(compute);
-          auto ans = bytes(Ref(lean_apply_1(compute, lean_box(0))));
-          entry->second = case_rows.add(ans);
-          if (entry->second == census.size())
-            census.push_back({std::move(ans), 0});
+          entry->second = intern_row(Ref(lean_apply_1(compute, lean_box(0))));
         }
         ci = entry->second;
+        auto extra = lean_ctor_get(r, 5);
+        if (!lean_is_scalar(extra))
+        {
+          auto fn = lean_ctor_get(extra, 0);
+          auto input = census.at(ci).buffer.p;
+          lean_inc(fn);
+          lean_inc(input);
+          ci = intern_row(Ref(lean_apply_1(fn, input)));
+        }
       }
       family_keys[fi].insert(ki);
       Reading v{gid, {ki, fi, ci}};
@@ -458,7 +486,7 @@ namespace
       return v;
     }
 
-    std::string replay_path(const Queue& path, Label l, Id branch)
+    Ref actions(const Queue& path)
     {
       Ref arr(lean_mk_empty_array_with_capacity(lean_box(path.size())));
       for (auto i = path.rbegin(); i != path.rend(); ++i)
@@ -467,6 +495,12 @@ namespace
         lean_inc(a);
         arr.p = lean_array_push(arr.p, a);
       }
+      return arr;
+    }
+
+    std::string replay_path(const Queue& path, Label l, Id branch)
+    {
+      auto arr = actions(path);
       Ref key(lean_mk_string(keys.names[l.key].c_str()));
       Ref family(lean_mk_string(families.names[l.family].c_str()));
       Ref line(
@@ -478,7 +512,7 @@ namespace
       return lean_string_cstr(line[0]);
     }
 
-    std::string replay(Id parent, Id edge, Label l, Id branch)
+    Queue parent_path(Id parent, Id edge)
     {
       Queue path{edge};
       while (parent != 0)
@@ -487,7 +521,12 @@ namespace
         path.push_back(p.edge);
         parent = p.parent;
       }
-      return replay_path(path, l, branch);
+      return path;
+    }
+
+    std::string replay(Id parent, Id edge, Label l, Id branch)
+    {
+      return replay_path(parent_path(parent, edge), l, branch);
     }
 
     template <typename Witness>
@@ -500,6 +539,8 @@ namespace
         witnesses.push_back(witness(NIL));
       if (l.cases != NIL)
       {
+        if (!wide_columns.empty())
+          counted_rows.emplace(l.key, l.cases);
         auto& c = census[l.cases];
         if (c.count == 0)
         {
@@ -546,6 +587,24 @@ namespace
             break;
           }
           auto r = read(f, arc);
+          if (audit_every && steps % audit_every == 0)
+          {
+            auto prefix = actions(parent_path(id(head), arc.edge));
+            Ref row(call<ccf_scale_history_row>(b, prefix.p));
+            if (lean_is_scalar(row.p))
+              throw std::runtime_error("ordered-history row replay failed");
+            const auto actual = bytes(Ref::borrow(row[0]));
+            const auto& cached = census.at(r.label.cases).answers;
+            if (actual != cached)
+            {
+              const auto i = std::mismatch(actual.begin(), actual.end(), cached.begin(), cached.end());
+              throw std::runtime_error(
+                "ordered-history mismatch on edge " + std::to_string(steps) +
+                ", frame " + std::to_string(head) + ", question " +
+                std::to_string(i.first - actual.begin()));
+            }
+            ++audited;
+          }
           record(r.label, 1, [&](Id i) {
             return replay(id(head), arc.edge, r.label, i);
           });
@@ -560,6 +619,8 @@ namespace
                     << visited.frames.size() << ", keys " << keys.names.size()
                     << std::endl;
       }
+      if (audit_every)
+        std::cout << "ordered-history row comparisons: " << audited << '\n';
       report(visited.frames.size());
     }
 
@@ -604,6 +665,24 @@ namespace
       }
       if (!case_out.empty())
       {
+        if (!wide_columns.empty())
+        {
+          std::set<std::pair<Id, std::string>> wider;
+          for (const auto& [key, ci] : counted_rows)
+          {
+            std::string bits;
+            for (Id i : wide_columns)
+            {
+              auto a = census.at(ci).answers.at(i);
+              if (a != 1 && a != 2)
+                throw std::logic_error("unknown coordinate in wider key");
+              bits.push_back(a);
+            }
+            wider.emplace(key, std::move(bits));
+          }
+          std::cout << "wider projection: " << wider.size() << "; extra coordinates: "
+                    << wide_columns.size() << '\n';
+        }
         Ref names(call<ccf_scale_case_names>(b));
         file.open(case_out);
         file << "index\tquestion\tknown_true\tknown_"
@@ -724,7 +803,11 @@ namespace
         required_keys.insert(label.key);
         family_keys[label.family].insert(label.key);
         if (label.cases != NIL)
+        {
           census[label.cases].count += count;
+          if (!wide_columns.empty())
+            counted_rows.emplace(label.key, label.cases);
+        }
         return;
       }
       Id bit = std::countr_zero(missing);

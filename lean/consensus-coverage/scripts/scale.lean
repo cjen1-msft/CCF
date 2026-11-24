@@ -7,6 +7,7 @@ import all scripts.explore
 import all ConsensusCoverage.GuardedDomain
 import all ConsensusCoverage.ReplayAnswers
 import all ConsensusCoverage.ScaleCensus
+import ConsensusCoverage.CensusGhost
 
 /-! Native bounded exploration: `scripts/build-explorer.sh` builds this entry
 point outside the checkout. `--scale` enumerates exact interned triples
@@ -77,6 +78,7 @@ private structure Reading where
   -- The native census forces the row once per (key, caseCode), never once per key alone.
   caseCode : Nat
   cases : Unit → ByteArray
+  extend : Option (ByteArray → ByteArray)
 
 -- A future unconditional reader must join the packed schema or get its own
 -- coordinate before it can be excluded from the finite residual census.
@@ -106,12 +108,44 @@ example (b : Bounds) (p next : FramePath) (a : Model.Action) (key : JointWitness
     (s t : Model.State) (a : Model.Action) : Option Reading := do
   let r ← ExplorerGhost.read b.deployment.cfg g s t a
   let key := toString (encode r.key)
-  if b.caseOut.isNone then return ⟨r.ghost, key, r.family, 0, fun _ => .empty⟩
+  if b.caseOut.isNone then return ⟨r.ghost, key, r.family, 0, fun _ => .empty, none⟩
   let c := censusInput b {state := s, ghost := g} {state := t, ghost := r.ghost} a r.key
-  return ⟨r.ghost, key, r.family, c.code, fun _ => caseVector c (keyAnswers r.key).toArray⟩
+  let extend ← if !b.readerCensus then pure none else do
+    let answer ← CensusGhost.answers b.deployment.cfg g r.ghost s t a
+    pure <| some fun (old : ByteArray) => Id.run do
+      let mut row := old
+      for h : i in [:FullProfile.stepBranches.size] do
+        if old[i]! != 0 then continue
+        if let some v := answer FullProfile.stepBranches[i] then
+          row := row.set! i (if v then 2 else 1)
+      return row
+  return ⟨r.ghost, key, r.family, c.code, fun _ => caseVector c (keyAnswers r.key).toArray, extend⟩
 
 @[export ccf_scale_case_names] def caseNames (_ : Bounds) :=
   FullProfile.stepBranches.map branchName
+
+@[export ccf_scale_wide_columns] def wideColumns (_ : Bounds) :=
+  FullProfile.stepBranches.zipIdx.filterMap fun (branch, i) =>
+    if Readers.covered.contains branch && !ReplayAnswers.unconditional.contains branch then some i else none
+
+/-- Audit one native row without the interned ghost, probe mask, or memo. -/
+@[export ccf_scale_history_row] def historyRow (b : Bounds) (actions : Array Model.Action) :
+    Option ByteArray := do
+  let d := b.deployment
+  let mut before := d.initial
+  let mut past := []
+  for h : i in [:actions.size] do
+    let a := actions[i]
+    let after ← (transitionSystem d.cfg d.nodes).step before a
+    if i + 1 == actions.size then
+      let old := ReplayAnswers.read d.cfg before a after past
+      let gen := Readers.read d.cfg before a after past
+      return FullProfile.stepBranches.foldl (fun row branch =>
+        let v := CensusReplay.answer old gen branch
+        row.push (v.elim 0 (fun yes => if yes then 2 else 1))) .empty
+    past := before :: past
+    before := after
+  none
 
 -- Reconstruct the actual delivery offset in the *ordered concrete queue*.
 -- In particular the compact BFS queue's ordering is not a witness.
@@ -129,7 +163,10 @@ example (b : Bounds) (p next : FramePath) (a : Model.Action) (key : JointWitness
       guard (toString (encode k) == expected &&
         Families.code (Families.classify d.cfg p.state a t p.past) == expectedFamily)
       if let some branch := FullProfile.stepBranches[caseIndex]? then
-        guard (ReplayAnswers.answer (ReplayAnswers.read d.cfg p.state a t p.past) (.step branch) == some true)
+        let old := ReplayAnswers.read d.cfg p.state a t p.past
+        let v := (ReplayAnswers.answer old (.step branch)).orElse fun _ =>
+          if b.readerCensus then Readers.read? (Readers.read d.cfg p.state a t p.past) branch else none
+        guard (v == some true)
     p := p.advance ⟨c, t⟩ k true {}
     i := i + 1
   return boundedWitness d p
@@ -147,11 +184,20 @@ public def main (args : List String) : IO Unit := do
     IO.println "  --palette, --case-out TSV, --out TSV. --scale also accepts --step-budget."
     IO.println "  --max-seconds limits exploration, not the final accounting and witness replay."
     IO.println "  --queue-ladder requires a fixpoint and reports all queue caps at once."
+    IO.println "  --scale --audit-reader-every N --reader-census replays every Nth counted row."
     return
   let ranked := args.head? == some "--queue-ladder"
   let symbolic := ranked || args.head? == some "--symbolic"
   if !symbolic && args.head? != some "--scale" then return ← explorerMain args
-  let b ← IO.ofExcept (boundOptions args.tail! {})
+  let (audit, options) ← match args.tail! with
+    | "--audit-reader-every" :: s :: rest => do
+      let some n := s.toNat? | throw (IO.userError "expected a positive reader audit interval")
+      if n == 0 then throw (IO.userError "expected a positive reader audit interval")
+      pure (n, rest)
+    | rest => pure (0, rest)
+  let b ← IO.ofExcept (boundOptions options {})
+  if audit > 0 && (symbolic || !b.readerCensus) then
+    throw (IO.userError "--audit-reader-every requires --scale and --reader-census")
   unless b.allows b.deployment.initial do throw (IO.userError "initial state outside bounds")
   unless b.maxCopies == 1 do throw (IO.userError "--scale requires one copy per envelope")
   unless b.deployment.nodes.all (· < 64) do throw (IO.userError "--scale requires node IDs < 64")
@@ -160,7 +206,7 @@ public def main (args : List String) : IO Unit := do
   if symbolic && b.stepBudget.isSome then throw (IO.userError "symbolic search accepts a time limit, not an edge budget")
   if ranked && b.maxSeconds.isSome then throw (IO.userError "--queue-ladder requires a fixpoint")
   let params := #[b.maxNetwork.elim 0 (· + 1), b.stepBudget.elim 0 (· + 1),
-    b.maxSeconds.elim 0 (· + 1), symbolic.toNat + ranked.toNat]
+    b.maxSeconds.elim 0 (· + 1), symbolic.toNat + ranked.toNat, b.readerCensus.toNat, audit]
   unless params.all (· < 2^63) do throw (IO.userError "bound exceeds native counter width")
   IO.println s!"scale bounds: voters={b.deployment.voters} nodes={b.deployment.nodes} \
     log={b.maxLog} term={b.maxTerm} copies=1 network={repr b.maxNetwork} palette={b.palette.name} \
