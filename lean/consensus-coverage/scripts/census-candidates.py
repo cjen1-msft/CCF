@@ -10,6 +10,16 @@ from collections import Counter
 from pathlib import Path
 
 
+def settings(prefix):
+    text = Path(str(prefix) + ".log").read_text()
+    config = re.search(r"voters=(\[[^]]*\]) nodes=(\[[^]]*\]) log=(\d+) term=(\d+) "
+                       r"copies=(\d+) network=(none|some \d+) palette=(\w+)", text)
+    if not config:
+        raise ValueError(f"{prefix}: no bounded configuration")
+    return dict(zip(("voters", "nodes", "log", "term", "copies", "network", "palette"),
+                    config.groups(), strict=True))
+
+
 def completed(prefix):
     text = Path(str(prefix) + ".log").read_text()
     fix = re.search(r"^frames: (\d+); expanded: (\d+); frontier: 0; fixpoint: true$", text, re.M)
@@ -39,6 +49,8 @@ def main():
     p.add_argument("--dag", type=Path, required=True, help="reader generator's direct reach DAG TSV")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--differential", type=Path, required=True)
+    p.add_argument("--contrasts", type=Path,
+                   help="total questions changing from absent to present between one-setting controls")
     p.add_argument("--positive-witnesses", action="append", type=Path, default=[],
                    help="positive-only evidence (a .cases.tsv), never included in fixpoint denominators")
     p.add_argument("models", nargs="+", type=Path, help="prefix of .cases.tsv and .log; baseline first")
@@ -89,6 +101,22 @@ def main():
             writer = csv.writer(f, delimiter="\t", lineterminator="\n")
             writer.writerow(header)
             writer.writerows(rows)
+    if a.contrasts:
+        configs = {m.name: settings(m) for m in a.models}
+        with a.contrasts.open("w") as f:
+            writer = csv.writer(f, delimiter="\t", lineterminator="\n")
+            writer.writerow(("changed_setting", "from", "to", "absent_in", "present_in", "question",
+                             "false_edges_before", "true_edges_after"))
+            for left, lc in configs.items():
+                for right, rc in configs.items():
+                    diff = [k for k in lc if lc[k] != rc[k]]
+                    if len(diff) != 1:
+                        continue
+                    k = diff[0]
+                    before, after = models[left][1], models[right][1]
+                    for q in sorted(exact):
+                        if not before[q][0] and after[q][0]:
+                            writer.writerow((k, lc[k], rc[k], left, right, q, before[q][1], after[q][0]))
     print(f"{len(candidates)} bounded negatives in {len({r[0] for r in candidates})} direct-reach groups;"
           f" {sum(bool(r[-1]) for r in candidates)} witnessed outside completed models;"
           f" {len(differential)} positive outside baseline only; {len(exact)} total coordinates.")
