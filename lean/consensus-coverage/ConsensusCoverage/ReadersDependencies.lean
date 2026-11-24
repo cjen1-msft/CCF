@@ -5,6 +5,8 @@ module
 
 import all ConsensusCoverage.ReadersGenerated
 import all ConsensusCoverage.ReadersCompiler
+import all ConsensusCoverage.ReadersPolarGenerated
+import all ConsensusCoverage.ReadersPolar
 meta import Lean
 
 /-! Report conservative input-use flags for the generated reader bodies.
@@ -50,6 +52,24 @@ private def inputs (name : Name) : Array String :=
   | `CCF.MultiNodeTransitionSystem.State.casesOn => #["node_table", "queue"]
   | `CCF.MultiNodeTransitionSystem.State.network
   | `ConsensusCoverage.LeaderEffect.probes => #["queue"]
+  | `ConsensusCoverage.ReadersPolar.Pools.states => #["history_input", "node_table", "queue"]
+  | `ConsensusCoverage.ReadersPolar.Pools.records => #["history_input", "historical_nodes", "node_table"]
+  | `ConsensusCoverage.ReadersPolar.Pools.sets
+  | `ConsensusCoverage.ReadersPolar.Pools.ids => #["configuration", "history_input", "historical_nodes",
+    "node_table", "commits"]
+  | `ConsensusCoverage.ReadersPolar.Pools.configurations
+  | `ConsensusCoverage.ReadersPolar.Pools.entries
+  | `ConsensusCoverage.ReadersPolar.Pools.logs => #["history_input", "historical_nodes", "node_table", "commits"]
+  | `ConsensusCoverage.ReadersPolar.Pools.envelopes
+  | `ConsensusCoverage.ReadersPolar.Pools.messages
+  | `ConsensusCoverage.ReadersPolar.Pools.acknowledgements
+  | `ConsensusCoverage.ReadersPolar.Pools.appendRequests
+  | `ConsensusCoverage.ReadersPolar.Pools.voteResponses => #["history_input", "node_table",
+    "action", "envelope", "queue"]
+  | `ConsensusCoverage.ReadersPolar.Pools.requests => #["history_input", "historical_nodes",
+    "node_table", "action", "envelope", "queue", "votes"]
+  | `ConsensusCoverage.ReadersPolar.Pools.naturals => #["configuration", "history_input", "historical_nodes",
+    "node_table", "action", "envelope", "queue", "commits"]
   | _ => #[]
 
 private def project (env : Environment) (name : Name) (i : Nat) : Option Name :=
@@ -122,6 +142,29 @@ run_cmd liftTermElabM do
     out.putStrLn (String.intercalate "\t"
       (ctor.toString :: (if covered then "1" else "0") ::
         cols.toList.map (fun field => if !covered then "-" else if flags.contains field then "1" else "0")))
+  out.flush
+
+run_cmd liftTermElabM do
+  let some file ← IO.getEnv "CCF_READERS_POLAR_DEPENDENCIES" | return
+  let env ← getEnv
+  let cols := #["configuration", "node_table", "history_input", "historical_nodes", "commits",
+    "canonical", "observations", "leaders", "elections", "grants", "votes", "action", "envelope",
+    "changed_bit", "queue"]
+  let ctors := (← getConstInfoInduct ``Classes.StepBranch).ctors
+  let dispatch ← getConstInfo `ConsensusCoverage.ReadersPolarCompiler.readView
+  let used := dispatch.value!.getUsedConstants
+  let out ← IO.FS.Handle.mk file .write
+  out.putStrLn (String.intercalate "\t" ("reader" :: "polarity" :: "available" :: cols.toList))
+  let mut memo := {}
+  for ctor in ctors do
+    for polarity in ["yes", "no"] do
+      let n := Name.mkStr `ConsensusCoverage.ReadersPolarCompiler.R (polarity ++ "_step_" ++ ctor.getString!)
+      let available := used.contains n
+      let (flags, next) := summarize env n memo
+      memo := next
+      out.putStrLn (String.intercalate "\t"
+        (ctor.toString :: polarity :: (if available then "1" else "0") ::
+          cols.toList.map (fun field => if !available then "-" else if flags.contains field then "1" else "0")))
   out.flush
 
 end
