@@ -12,19 +12,43 @@ open ConsensusCoverage
 
 meta section
 
+open Consensus.Model Consensus.Model.Node
+
+private abbrev ActionKey := Sum (Nat × Input) (Nat × Nat × Message)
+
+private def actionKey : Action → ActionKey
+  | .local n i => .inl (n, i)
+  | .deliver e => .inr (e.source, e.target, e.payload)
+
+private structure ReplayKey where
+  cfg : List Nat
+  nodes : List Nat
+  reverseActions : List ActionKey
+  deriving DecidableEq
+
 private structure Sample where
   schedule : Nat
   offset : Nat
   evidence : Readers.Evidence
   baseline : ReplayAnswers.Evidence
+  copies : Nat := 1
 
 private def samples : IO (List Sample) := do
+  let mut keys : Array ReplayKey := #[]
   let mut out := #[]
   for i in [:ReadersCorpus.scheduleCount] do
     let some steps := ReadersCorpus.steps i | throw (IO.userError s!"invalid schedule {i}")
+    let mut trace := []
     for (s, offset) in steps.zipIdx do
-      out := out.push ⟨i, offset, Readers.read s.cfg s.before s.act s.after s.past,
-        ReplayAnswers.read s.cfg s.before s.act s.after s.past⟩
+      trace := actionKey s.act :: trace
+      -- Initialization and model steps are functions of this entire input prefix.
+      let key : ReplayKey := ⟨s.cfg.val, s.nodes, trace⟩
+      if let some k := keys.findIdx? (fun prior => decide (prior = key)) then
+        out := out.modify k (fun s => { s with copies := s.copies + 1 })
+      else
+        keys := keys.push key
+        out := out.push ⟨i, offset, Readers.read s.cfg s.before s.act s.after s.past,
+          ReplayAnswers.read s.cfg s.before s.act s.after s.past, 1⟩
   return out.toList.mergeSort (fun a b => a.offset ≤ b.offset)
 
 private structure Obs where
@@ -33,6 +57,7 @@ private structure Obs where
   elapsed : List Nat := []
   exactInferred : Nat := 0
   negativesInferred : Nat := 0
+  duplicates : Nat := 0
 
 private def observe (rows : List Sample) (b : Classes.StepBranch) : IO (Obs × Bool) := do
   let exact := Readers.covered.contains b
@@ -43,6 +68,7 @@ private def observe (rows : List Sample) (b : Classes.StepBranch) : IO (Obs × B
     if exact then return ({ firstYes := some (s.schedule, s.offset), exactInferred := 1 }, true)
   let mut result : Obs := {}
   for (s, baseline) in knownYes ++ remaining do
+    result := { result with duplicates := result.duplicates + (s.copies - 1) }
     let answer ← if exact && baseline.isSome then do
         result := { result with exactInferred := result.exactInferred + 1 }
         pure baseline
@@ -76,8 +102,10 @@ public def main (args : List String) : IO Unit := do
   let some shards := shards.toNat? | throw (IO.userError "invalid shard count")
   unless shard < shards do throw (IO.userError "shard outside range")
   let sample ← samples
-  IO.eprintln s!"{ReadersCorpus.scheduleCount} initialized schedules; {sample.length} steps; shard {shard}/{shards}"
-  IO.println "question\tclass\tschedule\toffset\tbaseline_yes\texact_inferred\tnegatives_inferred\tcalls\tmin_ns\tmedian_ns\tmax_ns"
+  let steps := sample.foldl (fun n s => n + s.copies) 0
+  IO.eprintln s!"{ReadersCorpus.scheduleCount} initialized schedules; {steps} steps; shard {shard}/{shards}"
+  IO.eprintln s!"{sample.length} distinct initialized action prefixes"
+  IO.println "question\tclass\tschedule\toffset\tbaseline_yes\texact_inferred\tnegatives_inferred\tduplicates\tcalls\tmin_ns\tmedian_ns\tmax_ns"
   (← IO.getStdout).flush
   let trace := (← IO.getEnv "CCF_READERS_TRACE").isSome
   for (b, i) in FullProfile.stepBranches.toList.zipIdx do
@@ -92,7 +120,8 @@ public def main (args : List String) : IO Unit := do
     let ns := observed.elapsed.mergeSort
     let stat (x : Option Nat) := x.map toString |>.getD "-"
     let row := [name, status, schedule, offset, toString baseline,
-      toString observed.exactInferred, toString observed.negativesInferred, toString ns.length, stat ns.head?,
+      toString observed.exactInferred, toString observed.negativesInferred, toString observed.duplicates,
+      toString ns.length, stat ns.head?,
       stat (ns[ns.length / 2]?), stat ns.getLast?]
     IO.println (String.intercalate "\t" row)
     (← IO.getStdout).flush
