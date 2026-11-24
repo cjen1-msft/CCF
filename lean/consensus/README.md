@@ -276,7 +276,7 @@ anything; they need exact readers or separate proofs. The explorer's
 all 433 answers on 191 steps: the first occurrence of each new combination
 of always-known answers or family code.
 
-**Full recorded-action denominator: at least 204; at least 201 on multi-node deployments.**
+**Full recorded-action denominator: at least 210; at least 207 on multi-node deployments.**
 The [recorded-action specification](../consensus-coverage/ConsensusCoverage/ActionProfile.lean)
 assigns an initialized step exactly one 457-answer vector. All 433 step
 questions use [the same, unique context for the recorded action](../consensus-coverage/ConsensusCoverage/ActionContext.lean).
@@ -305,13 +305,33 @@ With two voters, logs of at most two entries, terms up to three and one copy
 of each envelope, the fixpoint has 618 proof states, 858 steps and 76
 combinations of the 64 always-known answers. Raising the term bound to four
 gives 1,891 states and 93 combinations; raising the log bound to three
-instead gives 10,259 states and 113. Larger bounds were stopped at a budget
-of 20,000 steps. Across all runs there were 150 combinations, 17 of them new,
-and [their witnesses](../consensus-coverage/ConsensusCoverage/BoundedWitnesses.lean)
-raise the kernel-checked bound to 204 and 201. The count is still growing
-with the bounds. That equal merge keys imply equal labels is checked
-empirically (no disagreement in 55,778 pairs of histories) but not proved,
-so a fixpoint here is evidence, not an exhaustion theorem.
+instead gives 10,259 states and 113.
+
+The search now carries the ghost forward step by step instead of rebuilding
+it from the history ([`ExplorerGhost`](../consensus-coverage/ConsensusCoverage/ExplorerGhost.lean);
+it agreed with the history readers on every checked step, but is not proved
+equal to them), and runs as a native binary built by
+[`build-explorer.sh`](../consensus-coverage/scripts/build-explorer.sh). That
+made it 5.7 times faster on a matched run, to about 1,800 to 3,100 proof
+states per second. This is far below an explicit-state model checker: the
+remaining time goes to computing each state's merge key and to re-checking
+merged histories against each other.
+
+With at most one message in flight, the largest fixpoint so far has
+2,000,475 proof states and 2,878,034 steps (logs of at most five entries,
+terms up to three) and 115 combinations. In that restricted model the count
+stops growing: raising the log bound from four to five adds none, and
+raising the term bound from five to six (logs of at most two) adds none.
+Without the cap on messages in flight the smallest model did not finish in
+25 minutes: 770,209 states, 2,105,760 steps and 103 combinations, with
+414,235 states still unexplored. So the growth comes from messages
+overlapping in the network, and whether it levels off there is not known.
+
+Across all runs there were 151 combinations; [their witnesses](../consensus-coverage/ConsensusCoverage/BoundedWitnesses.lean)
+raise the kernel-checked bound to 210 and 207. That equal merge keys imply
+equal labels is checked empirically (no disagreement in 877,560 pairs of
+histories in the largest run) but not proved, so a fixpoint here is
+evidence, not an exhaustion theorem.
 
 ```sh
 lake -d "$WS/consensus-coverage" env lean --run "$PWD/lean/consensus-coverage/scripts/explore.lean" \
