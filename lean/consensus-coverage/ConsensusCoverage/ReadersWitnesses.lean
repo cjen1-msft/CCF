@@ -72,32 +72,35 @@ private def claim10 : Claim :=
     .summary_message_appendEntriesRequest
   ], by decide +kernel⟩
 private def claim11 : Claim :=
-  ⟨26, 0, [.terms_post_log_inl], by decide +kernel⟩
+  ⟨21, 2, [.summary_message_appendEntriesResponse], by decide +kernel⟩
 private def claim12 : Claim :=
-  ⟨26, 2, [.match_ack_now_after_inl], by decide +kernel⟩
+  ⟨26, 0, [.terms_post_log_inl], by decide +kernel⟩
 private def claim13 : Claim :=
-  ⟨26, 3, [.match_ack_matchIndex_inl], by decide +kernel⟩
+  ⟨26, 2, [.match_ack_now_after_inl], by decide +kernel⟩
 private def claim14 : Claim :=
-  ⟨44, 0, [.summary_input_timeout, .summary_kind_checkQuorum], by decide +kernel⟩
+  ⟨26, 3, [.match_ack_matchIndex_inl], by decide +kernel⟩
 private def claim15 : Claim :=
-  ⟨46, 2, [.terms_now_after_inr], by decide +kernel⟩
+  ⟨44, 0, [.summary_input_timeout, .summary_kind_checkQuorum], by decide +kernel⟩
 private def claim16 : Claim :=
+  ⟨46, 2, [.terms_now_after_inr], by decide +kernel⟩
+private def claim17 : Claim :=
   ⟨131, 3, [
-    .message_terms_h_requestVoteRequest, .new_message_h_requestVoteRequest
+    .message_terms_h_requestVoteRequest, .new_message_h_requestVoteRequest,
+    .summary_message_proposeRequestVoteRequest
   ], by decide +kernel⟩
 
 private def claims : List Claim := [
   claim0, claim1, claim2, claim3, claim4, claim5, claim6, claim7, claim8, claim9, claim10,
-  claim11, claim12, claim13, claim14, claim15, claim16
+  claim11, claim12, claim13, claim14, claim15, claim16, claim17
 ]
 
 /-- Cases witnessed by an executable reader on a replayed corpus step. -/
 public def witnessed : List Classes.StepBranch := claims.flatMap (·.questions)
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 54 := by decide
+public theorem count : witnessed.Nodup ∧ witnessed.length = 56 := by decide
 
 public theorem union_count :
-    (witnessed ++ CaseWitnesses.witnessed).eraseDups.length = 59 := by decide
+    (witnessed ++ CaseWitnesses.witnessed).eraseDups.length = 61 := by decide
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
