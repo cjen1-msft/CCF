@@ -4,6 +4,7 @@ module
 -- Licensed under the Apache 2.0 License.
 
 public import ConsensusCoverage.JointWitnesses
+import all Consensus.Proofs.VoteFacts
 import all ConsensusCoverage.FrontierWitnesses
 import all ConsensusCoverage.JointWitnesses
 import all ConsensusCoverage.ReplayAnswers
@@ -361,6 +362,7 @@ private def bounded23Cert : Certificate := certify bounded23 [] bounded23Valid
     .election_safety_led_after_inr,
     .freshCampaign_term_inr,
     .freshCert_backing_inl,
+    .grantFactsBefore_grant_inl,
     .keep_backed_led_after_inr,
     .leader_logs_leader_inr,
     .led_cur_led_after_inr,
@@ -385,7 +387,7 @@ private def certificates : List Certificate := [cert0, cert1, bounded0Cert, boun
 public def witnessed : List Classes.StepBranch :=
   (certificates.flatMap (·.questions)).eraseDups
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 151 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 152 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
