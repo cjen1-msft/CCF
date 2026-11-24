@@ -6,13 +6,12 @@ import Consensus.Properties
 # Case splits of the consensus safety proofs, report only
 
 Runs the relevance walker (`Relevance.analyse`) over the proofs behind the public theorems of
-`Consensus.Properties`. The proof has no recorded splits, so every split the walker finds is
-reported as unrecorded. Two walks:
+`Consensus.Properties`. Reports recorded and unrecorded split counts for two walks:
 
-- `inlined`: scope `Consensus.Proofs`, so every theorem of the proof is inlined at each use, as
-  the generator would; theorems taking a step context (`Safety.Ctx`) are step-level and theorems
-  taking the invariant (`Safety.Inv`) are state-level. Counts are per call path.
-- `own`: each theorem of the kernel closure walked once with nothing inlined (an empty scope).
+- `inlined`: inline `Consensus.Proofs` theorem calls rather than sharing their branch records.
+  Theorems taking a step context (`Safety.Ctx`) are step-level and theorems taking the invariant
+  (`Safety.Inv`) are state-level. Counts are per call path.
+- `own`: each `Consensus.Proofs` theorem in the kernel closure walked once without inlining.
   Counts are per declaration, as written.
 
 Run from the repository root (the workspace is out of tree):
@@ -51,29 +50,6 @@ def roots : List Name :=
 
 def userName (c : Name) : Name := (privateToUserName? c).getD c
 
-/-- Theorems of `Consensus.Proofs` in the kernel closure of `root`. -/
-def closureOf (root : Name) : CoreM (Array Name) := do
-  let env ← getEnv
-  let mut seen : NameSet := {}
-  let mut todo := #[root]
-  let mut out := #[]
-  while !todo.isEmpty do
-    let c := todo.back!
-    todo := todo.pop
-    if seen.contains c then continue
-    seen := seen.insert c
-    let some ci := env.find? c | continue
-    if ci matches .thmInfo _ && (`Consensus.Proofs).isPrefixOf (userName c) then
-      out := out.push c
-    let es := match ci with
-      | .thmInfo v => #[v.type, v.value]
-      | .defnInfo v => #[v.type, v.value]
-      | .opaqueInfo v => #[v.type, v.value]
-      | _ => #[ci.type]
-    if let .inductInfo v := ci then todo := todo ++ v.ctors.toArray
-    for e in es do todo := todo ++ e.getUsedConstants
-  return out
-
 /-- Number of alternatives of a split head. -/
 def arity (c : Name) : MetaM Nat := do
   if [``dite, ``ite, ``Decidable.byCases, ``Classical.byCases, ``Or.elim, ``Or.by_cases].contains c
@@ -111,6 +87,7 @@ def report (label : String) (r : Relevance.Result) (out : System.FilePath) : Met
       toString u.path.size, (u.cond.take 300).toString]
   IO.FS.writeFile (out / s!"splits-{label}.tsv") ("\n".intercalate rows.toList ++ "\n")
   let prot := us.filter (!·.internal)
+  IO.println s!"[{label}] recorded splits {r.splits.size}; branches {r.branches.size}"
   IO.println s!"[{label}] unrecorded splits {us.size} ({prot.size} protocol, \
     {us.size - prot.size} internal); alternatives {alts} ({altsP} protocol); \
     theorems without value {r.noValue.size}: {r.noValue.toList.map userName |>.take 10}"
@@ -149,13 +126,13 @@ run_cmd liftTermElabM do
   let rs ← chosen.toArray.mapM (resolve ·)
   let mut closure : Array Name := #[]
   for r in rs do
-    let c ← closureOf r
+    let c ← Relevance.proofTheorems `Consensus.Proofs #[r]
     IO.println s!"closure of {userName r}: {c.size} theorems"
     for x in c do unless closure.contains x do closure := closure.push x
   IO.println s!"closure of all roots: {closure.size} theorems"
   if walk == "own" || walk == "both" then
-    let cfg : Relevance.Config := { scope := `ConsensusCoverage.Nothing, package := #[`Consensus],
-                                    stepPat, statePat }
+    let cfg : Relevance.Config := { scope := `Consensus.Proofs, package := #[`Consensus],
+                                    stepPat, statePat, followTheorems := false }
     let (r, t) ← timed (Relevance.analyse cfg closure)
     IO.println s!"[own] walk {t} s"
     report "own" r out

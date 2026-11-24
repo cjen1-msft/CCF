@@ -48,8 +48,9 @@ public theorem preserve {s t : Model.State} {g : Ghost} (prior : Inv s g)
     | inr =>
       obtain ⟨a, pre, le, keep⟩ := localStep _ _ now
       have bound := prior.bounds b old a pre
-      exact ⟨Nat.le_trans bound le, fun eq c v =>
-        keep (by omega) c (prior.keeps b old a pre (by omega) c v)⟩
+      refine ⟨Nat.le_trans bound le, fun eq c v => ?_⟩
+      have termEq := Nat.le_antisymm le (eq ▸ bound)
+      exact keep termEq c (prior.keeps b old a pre (eq.trans termEq.symm) c v)
   refine ⟨fun _ h _ mem => (current h mem).1, fun _ h _ mem => (current h mem).2, ?_⟩
   intro n k a b left right
   have compare {x y : NodeID} (left : ⟨n, k, some x⟩ ∈ advance g t)

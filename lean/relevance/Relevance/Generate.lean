@@ -25,7 +25,10 @@ arguments:
   example, `before :: rest` and `after :: before :: rest`);
 - `(derive := [D₁, …])`: theorems whose last explicit hypothesis is something the state pattern
   follows from (an execution, a reachability proof); the conclusion of each must mention the
-  state pattern's head.
+  state pattern's head;
+- `(requireRecorded := true)`: fail generation if either the generating walk or the
+  declaration-local walk of the kernel proof closure finds any unrecorded split, including
+  those internal to automation.
 
 Levels. The theorems in scope used by the roots (transitively) are classified by their header.
 A theorem is step-level when one of its hypotheses matches the `step` pattern; state-level when one
@@ -152,12 +155,34 @@ def classify (cfg : Config) (xs : Array Expr) (derived := true) : MetaM (Level �
   return (.other, #[])
 
 def theoremsUsed (cfg : Config) (c : Name) : CoreM (Array Name) := do
+  unless cfg.followTheorems do return #[]
   let some ci := (← getEnv).find? c | return #[]
   let some v := ci.value? (allowOpaque := true) | return #[]
   let env ← getEnv
   return v.getUsedConstants.filter fun d =>
     cfg.scope.isPrefixOf ((privateToUserName? d).getD d) &&
       (env.find? d matches some (.thmInfo _))
+
+/-- Theorems in scope in the kernel closure of the roots, including dependencies
+of definition bodies and theorem statements, not just direct calls. -/
+def proofTheorems (scope : Name) (roots : Array Name) : CoreM (Array Name) := do
+  let env ← getEnv
+  let mut seen : NameSet := {}
+  let mut todo := roots
+  let mut names := #[]
+  while !todo.isEmpty do
+    let c := todo.back!
+    todo := todo.pop
+    if seen.contains c then continue
+    seen := seen.insert c
+    let some ci := env.find? c | continue
+    if ci matches .thmInfo _ then
+      if scope.isPrefixOf ((privateToUserName? c).getD c) || roots.contains c then
+        names := names.push c
+    todo := todo ++ ci.type.getUsedConstants
+    if let some v := ci.value? (allowOpaque := true) then todo := todo ++ v.getUsedConstants
+    if let .inductInfo v := ci then todo := todo ++ v.ctors.toArray
+  return names
 
 structure Result where
   branches : Array BranchRec := #[]
@@ -549,9 +574,30 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
   let shared := match args.get? "shared" with
     | some s => s.isIdent && s.getId == `true
     | none => false
+  let requireRecorded ← match args.get? "requireRecorded" with
+    | none => pure false
+    | some s =>
+      unless s.isIdent do
+        throwErrorAt s "relevance_generate: requireRecorded expects true or false"
+      match s.getId with
+      | `true => pure true
+      | `false => pure false
+      | _ => throwErrorAt s "relevance_generate: requireRecorded expects true or false"
   let cfg : Config := { scope, package, stepPat, statePat, stateCtor, ns, preOf, postOf, derive,
                         shared }
   let r ← liftTermElabM <| analyse cfg roots
+  if requireRecorded then
+    let checkRecorded (walk : Result) : CommandElabM Unit := do
+      unless walk.unrecorded.isEmpty do
+        let sites := (walk.unrecorded.toList.take 8).map fun u =>
+          s!"\n  {u.decl} ({u.head})"
+        throwError "relevance_generate: {walk.unrecorded.size} unrecorded split(s):{String.join sites}"
+    checkRecorded r
+    let audited ← liftTermElabM do
+      let closure ← proofTheorems cfg.scope roots
+      analyse { cfg with followTheorems := false, shared := false, ns := .anonymous,
+                         stateCtor := none, derive := #[] } closure
+    checkRecorded audited
   if shared then
     let counted (b : BranchRec) := !b.dead && (counts r r.splits[b.splitId]!).1
     let walked := r.units.filter (·.walked)

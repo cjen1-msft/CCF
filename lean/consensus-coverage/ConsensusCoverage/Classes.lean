@@ -32,6 +32,6 @@ relevance_generate ConsensusCoverage.Classes
   (post := fun [Config.InitialConfiguration]
     (f : Frame) (after : Model.State) => f.advance after)
   (state := fun [Config.InitialConfiguration] (f : Frame) => Inv f)
-  (shared := true)
+  (shared := true) (requireRecorded := true)
 
 end

@@ -261,6 +261,8 @@ structure Config where
   derive : Array Name := #[]
   /-- Walk every theorem once (shared lemma cases) instead of once per call path. -/
   shared : Bool := false
+  /-- Follow theorem calls in scope; disable for a declaration-local audit. -/
+  followTheorems : Bool := true
 
 /-- The telescope of the current branch: the closed variables (in context order) and the
 hypotheses (their types, and the terms that prove them here: `let`-bound facts, then the
@@ -343,7 +345,8 @@ def strLit? : Expr → Option String
 
 def inScope (c : Name) : M Bool := do
   let c := (privateToUserName? c).getD c
-  return (← read).cfg.scope.isPrefixOf c
+  let cfg := (← read).cfg
+  return cfg.followTheorems && cfg.scope.isPrefixOf c
 
 def inPackage (pkg : Array Name) (c : Name) : Bool :=
   let c := (privateToUserName? c).getD c

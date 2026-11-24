@@ -940,9 +940,13 @@ private theorem CommitChain.advance {g bootstrap prev s t p} (c : CommitChain g 
     intro x mem
     obtain ⟨p, seen, sub⟩ := obs x mem
     exact ⟨p, .inl seen, sub⟩
-  induction c with
-  | fresh facts => exact .fresh (lift facts)
-  | backed facts prior _ le within ih => exact .backed (lift facts) (.inl prior) ih le within
+  split_rel chain := (induction c) with
+  | fresh =>
+    rename_i facts
+    exact .fresh (lift facts)
+  | backed =>
+    rename_i facts prior _ le within ih
+    exact .backed (lift facts) (.inl prior) ih le within
 
 private theorem commitChains_step {g bootstrap prev} {s : Model.State} (old : CommitChains g)
     (rooted : ∀ n st, (n, st) ∈ s.nodes → Rooted GENESIS st.log)
@@ -954,8 +958,10 @@ private theorem commitChains_step {g bootstrap prev} {s : Model.State} (old : Co
   | inl => exact (old _ _ past).advance
   | inr =>
     obtain ⟨now, le, bound, sig, term, acks⟩ := step
-    have two : 2 ≤ t := now.2.2.2.elim (fun h => by rw [h.1]; decide)
-      (fun ⟨l, i, elect⟩ => floor n t l i elect)
+    have two : 2 ≤ t := by
+      split_rel led := (rcases now.2.2.2 with ⟨boot, _⟩ | ⟨l, i, elect⟩) with
+      | inl => rw [boot]; decide
+      | inr => exact floor n t l i elect
     have facts : CommitFacts (LogFacts.advance bootstrap g prev s) st.log t b i :=
       ⟨.inr ⟨n, st, now, rfl⟩, rooted n st now.1, sorted n st now.1, two, le, bound, sig, term, acks⟩
     split_rel backing := (rcases backing with rfl | ⟨e, p, prior, le, sub⟩) with
@@ -1004,9 +1010,10 @@ private theorem Inv.owner {h : Frame} (inv : Inv h) {k l} (canon : h.logs.canon 
 
 private theorem Inv.leader_floor {h : Frame} (inv : Inv h) {n k} (led : Led h n k) :
     2 ≤ k := by
-  rcases led with ⟨rfl, _⟩ | ⟨p, i, e⟩
-  · decide
-  · exact Nat.le_trans (by decide : 2 ≤ 3)
+  split_rel led := (rcases led with ⟨rfl, _⟩ | ⟨p, i, e⟩) with
+  | inl => decide
+  | inr =>
+    exact Nat.le_trans (by decide : 2 ≤ 3)
       (inv.electionCerts n k p i (e)).above
 
 end Consensus.Proofs.Safety
@@ -2255,7 +2262,8 @@ private theorem take_eq_take_of_comparable {α : Type} {left right : List α} {n
 
 private theorem termAt_eq {log : List Entry} {index : Nat} (positive : 0 < index)
     (bound : index <= log.length)
-    : termAt log index = log[index - 1].term := by
+    : termAt log index = (log[index - 1]'(Nat.lt_of_lt_of_le
+        (Nat.sub_one_lt (Nat.ne_of_gt positive)) bound)).term := by
   simp [termAt, entryAt?, Nat.pos_iff_ne_zero.mp positive,
     List.getElem?_eq_getElem (Nat.lt_of_lt_of_le (Nat.sub_one_lt (Nat.ne_of_gt positive)) bound)]
 
@@ -2613,12 +2621,9 @@ private theorem chosen_bound {configurations : List Configuration}
           (configurations.filter fun configuration => configuration.index <= bound).length
           - 1
           ]'(by
-              have :=
-                List.length_filter_le
-                  (fun configuration : Configuration =>
-                    decide (configuration.index <= bound))
-                  configurations
-              omega)
+              exact Nat.lt_of_le_of_lt
+                (Nat.sub_le_sub_right (List.length_filter_le _ _) 1)
+                (Nat.sub_one_lt (Nat.ne_of_gt positive)))
       chosen.index <= bound
       \/ forall other, other ∈ configurations -> chosen.index <= other.index := by
   intro chosen
@@ -5213,17 +5218,19 @@ private theorem initial_state {node : NodeID} {state : NodeState}
 
 private theorem initial_seen {n : NodeID} {o : Observation}
     (seen : Seen (Frame.start initial) n o) : o = observe (initialLocal n) := by
-  obtain no | ⟨st, mem, term, log⟩ := seen
-  · contradiction
-  · rw [initial_state initialized mem] at term log
+  split_rel seen := (rcases seen with no | ⟨st, mem, term, log⟩) with
+  | inl => contradiction
+  | inr =>
+    rw [initial_state initialized mem] at term log
     cases o; cases term; cases log; rfl
 
 omit initialized in
 private theorem not_elected_single {current : Model.State} {node : NodeID}
     {term commit : Nat} {log : List Entry} : ¬ Elected (Frame.start current) node term log commit := by
-  rintro (no | ⟨p, impossible, _⟩)
-  · contradiction
-  · cases impossible
+  intro elected
+  split_rel elected := (rcases elected with no | ⟨_, impossible, _⟩) with
+  | inl => contradiction
+  | inr => cases impossible
 
 omit initialized in
 private theorem led_single {current : Model.State} {node : NodeID} {term : Nat}
@@ -5236,9 +5243,10 @@ private theorem led_single {current : Model.State} {node : NodeID} {term : Nat}
 private theorem initial_canon {term : Nat} {log : List Entry}
     (canon : Canon (Frame.start initial) term log)
     : term = BOOTSTRAP_TERM /\ log = (initialLocal INITIAL_PRIMARY).log := by
-  obtain no | ⟨n, st, ⟨mem, _, _, led⟩, rfl⟩ := canon
-  · contradiction
-  · obtain ⟨boot, rfl⟩ := led_single led
+  split_rel canon := (rcases canon with no | ⟨n, st, ⟨mem, _, _, led⟩, rfl⟩) with
+  | inl => contradiction
+  | inr =>
+    obtain ⟨boot, rfl⟩ := led_single led
     exact ⟨boot, by rw [initial_state initialized mem]⟩
 
 private theorem inv_initial : Inv (Frame.start initial) := by
@@ -5309,9 +5317,9 @@ private theorem inv_initial : Inv (Frame.start initial) := by
       | neg => simp_all
   · exact VoteFacts.initial initial fun _ _ _ => state_unique initialized.2.2.1
   · intro _ _ _ _ h
-    rcases h with no | ⟨_, impossible, _⟩
-    · exact False.elim no
-    · cases impossible
+    split_rel grant := (rcases h with no | ⟨_, impossible, _⟩) with
+    | inl => exact False.elim no
+    | inr => cases impossible
   · intro node state term now led
     obtain ⟨rfl, rfl⟩ := led_single led
     rw [stateOf now]
@@ -5495,9 +5503,11 @@ private theorem canon_chain {frame : Frame} (chain : LogFacts.Chain frame.logs)
 
 private theorem CommitChain.tip {g : LogFacts.Ghost} {t p} (chain : CommitChain g t p) :
     ∃ l b i, CommitFacts g l t b i ∧ p = l.take i := by
-  cases chain with
-  | fresh f => exact ⟨_, 0, _, f, rfl⟩
-  | backed f _ _ _ _ => exact ⟨_, _, _, f, rfl⟩
+  split_rel chain := (cases chain) with
+  | fresh =>
+    rename_i facts
+    exact ⟨_, 0, _, facts, rfl⟩
+  | backed => exact ⟨_, _, _, ‹CommitFacts g _ t _ _›, rfl⟩
 
 private theorem CommitChains.origin {g : LogFacts.Ghost} (chains : CommitChains g) :
     LogFacts.Origin g := by
@@ -5641,9 +5651,9 @@ private theorem seen_after {n : NodeID} {o : Observation} (seen : Seen (f.advanc
   | inl => exact .inl old
   | inr =>
     have eq : o = observe st := by cases o; cases term; cases log; rfl
-    rcases c.now_after mem with ⟨rfl, rfl⟩ | ⟨_, pre⟩
-    · exact .inr ⟨rfl, eq⟩
-    · exact .inl (eq ▸ c.inv.observed _ _ pre)
+    split_rel now_after := (rcases c.now_after mem with ⟨rfl, rfl⟩ | ⟨_, pre⟩) with
+    | inl => exact .inr ⟨rfl, eq⟩
+    | inr => exact .inl (eq ▸ c.inv.observed _ _ pre)
 
 private theorem post_seen : Seen (f.advance after) c.actor (observe c.post) :=
   .inr ⟨c.post, c.post_now, rfl, rfl⟩
@@ -6078,7 +6088,12 @@ private theorem rankAtGrant {v n t r k l i}
     simp only [voteLogUpToDate] at up
     left
     unfold VoteRank
-    omega
+    split_rel up_to_date := (rcases up with lt | ⟨eq, le⟩) with
+    | inl => exact .inl (Nat.lt_of_le_of_lt rank lt)
+    | inr =>
+      split_rel term := (rcases Nat.lt_or_eq_of_le rank with lt | same) with
+      | inl => exact .inl (Nat.lt_of_lt_of_le lt (Nat.le_of_eq eq.symm))
+      | inr => exact .inr ⟨same.trans eq.symm, Nat.le_trans index le⟩
   | inr =>
     obtain ⟨e, l', lo, hi, canon, missing⟩ := lost
     exact .inr ⟨e, l', atI ▸ lo, Nat.le_trans hi le, canon, missing⟩
@@ -6136,16 +6151,18 @@ private theorem freshCampaign {n t l i} (elect : ElectStep f after n t l i) :
   rw [logEq] at canon eq
   refine ⟨?_, a, canon, le, eq⟩
   change termAt l j < t
-  rcases termCase with lt | ⟨eq, role⟩
-  · have hi := termAt_le_of_mem (c.inv.terms n st mem) j
+  split_rel term := (rcases termCase with lt | ⟨eq, role⟩) with
+  | inl =>
+    have hi := termAt_le_of_mem (c.inv.terms n st mem) j
     rw [logEq] at hi
     exact Nat.lt_of_le_of_lt hi lt
-  · have low := (c.inv.candidate n st mem role).2.2.2.2
+  | inr =>
+    have low := (c.inv.candidate n st mem role).2.2.2.2
     have floor' : 0 < t := by omega
     have le' := termAt_le_of_mem (log := st.log) (bound := t - 1)
       (fun e h => Nat.le_sub_one_of_lt (eq ▸ low e h)) j
     rw [logEq] at le'
-    omega
+    exact Nat.lt_of_le_of_lt le' (Nat.sub_one_lt (Nat.ne_of_gt floor'))
 
 /-- The actor's own vote in the step. -/
 private theorem self_granted {term : Nat} (le : c.pre.currentTerm <= term)
@@ -6314,7 +6331,11 @@ private theorem blocked_step {n t l i} (old : Blocked f.logs n t l i) :
     change some f.current = some p at eq
     cases eq
     split_rel rank := (rcases c.rankAtGrant fresh seen sig term with ranked | ⟨e, _, above, below, _⟩) with
-    | inl => unfold VoteRank at ranked; omega
+    | inl =>
+      unfold VoteRank at ranked
+      split_rel vote_rank := (rcases ranked with lt | ⟨eq, le⟩) with
+      | inl => omega
+      | inr => omega
     | inr => omega
 
 private theorem blocked_no_election {n t l i} (blocked : Blocked f.logs n t l i)
@@ -6329,37 +6350,40 @@ private theorem pre_split {t : Nat} (fresh : c.pre.currentTerm < t) :
     Backed f c.pre.log c.pre.commitIndex (t - 1) ∨
       Blocked f.logs c.actor t c.pre.log c.pre.commitIndex := by
   obtain ⟨⟨_, backed⟩, _⟩ := c.inv.commit_backed c.actor c.pre c.pre_now
-  rcases backed with zero | ⟨e, p, committed, _, sub⟩
-  · exact .inl (.inl zero)
-  have m := committed
-  have backing := backing_split (bound := t - 1) (c.inv.commitChains e p m) m sub c.frontier_pre
-  split_rel backing := (rcases backing with ⟨e', q, prior, le, sub⟩ | ⟨l, k, b, i, f, gt, base, sub⟩) with
-  | inl => exact .inl (.inr ⟨e', q, prior, le, sub⟩)
+  split_rel pre_backed := (rcases backed with zero | ⟨e, p, committed, _, sub⟩) with
+  | inl => exact .inl (.inl zero)
   | inr =>
-    right
-    intro voters quorum
-    have len := List.length_take_of_le c.frontier_pre
-    have len' := List.length_take_of_le f.indexLe
-    have ge := sub.length_le
-    rw [len, len'] at ge
-    have agree := List.prefix_iff_eq_take.mp sub
-    rw [len, List.take_take, Nat.min_eq_left ge] at agree
-    obtain ⟨xs, q, obs⟩ := f.acks
-    obtain ⟨v, ack, vote⟩ := quorums_intersect_bounded Config.GENESIS_configured f.rooted
-      (c.inv.rooted c.actor c.pre c.pre_now) agree.symm base (Nat.le_refl _) f.baseLe ge
-      (signature_pos f.signature) q quorum
-    obtain ⟨a, seen, held⟩ := obs v ack
-    have low := termAt_le_of_mem (c.inv.terms c.actor c.pre c.pre_now)
-      (max c.pre.commitIndex (maxCommittableIndex c.pre.log))
-    refine ⟨v, vote, ?_, k, a, i, seen, by omega,
-      isSignatureAt_of_prefix held (isSignatureAt_take_of_le Nat.le.refl f.signature), ?_, ?_⟩
-    · intro grant
-      obtain ⟨l', observed⟩ := (c.inv.grantFacts v c.actor t _ grant).2
-      have bound : t ≤ c.pre.currentTerm := c.inv.term_mono c.actor c.pre ⟨t, l'⟩ c.pre_now observed
-      omega
-    · rw [termAt_of_prefix held (Nat.le_of_eq len'.symm), termAt_take Nat.le.refl, f.termAtIndex]
-    · change termAt c.pre.log _ < k
-      omega
+    have m := committed
+    have backing := backing_split (bound := t - 1) (c.inv.commitChains e p m) m sub c.frontier_pre
+    split_rel backing := (rcases backing with
+        ⟨e', q, prior, le, sub⟩ | ⟨l, k, b, i, f, gt, base, sub⟩) with
+    | inl => exact .inl (.inr ⟨e', q, prior, le, sub⟩)
+    | inr =>
+      right
+      intro voters quorum
+      have len := List.length_take_of_le c.frontier_pre
+      have len' := List.length_take_of_le f.indexLe
+      have ge := sub.length_le
+      rw [len, len'] at ge
+      have agree := List.prefix_iff_eq_take.mp sub
+      rw [len, List.take_take, Nat.min_eq_left ge] at agree
+      obtain ⟨xs, q, obs⟩ := f.acks
+      obtain ⟨v, ack, vote⟩ := quorums_intersect_bounded Config.GENESIS_configured f.rooted
+        (c.inv.rooted c.actor c.pre c.pre_now) agree.symm base (Nat.le_refl _) f.baseLe ge
+        (signature_pos f.signature) q quorum
+      obtain ⟨a, seen, held⟩ := obs v ack
+      have low := termAt_le_of_mem (c.inv.terms c.actor c.pre c.pre_now)
+        (max c.pre.commitIndex (maxCommittableIndex c.pre.log))
+      have later : t ≤ k :=
+        Nat.le_of_lt_succ ((Nat.sub_lt_iff_lt_add (Nat.zero_lt_of_lt fresh)).mp gt)
+      refine ⟨v, vote, ?_, k, a, i, seen, later,
+        isSignatureAt_of_prefix held (isSignatureAt_take_of_le Nat.le.refl f.signature), ?_, ?_⟩
+      · intro grant
+        obtain ⟨l', observed⟩ := (c.inv.grantFacts v c.actor t _ grant).2
+        have bound : t ≤ c.pre.currentTerm := c.inv.term_mono c.actor c.pre ⟨t, l'⟩ c.pre_now observed
+        exact (Nat.not_le_of_gt fresh) bound
+      · rw [termAt_of_prefix held (Nat.le_of_eq len'.symm), termAt_take Nat.le.refl, f.termAtIndex]
+      · exact Nat.lt_of_le_of_lt low (Nat.lt_of_lt_of_le fresh later)
 
 /-- A fresh campaign's committed prefix is backed, or doomed from the start. -/
 private theorem campaign_backed {state : NodeState} (logEq : state.log = c.pre.log)
@@ -6501,7 +6525,10 @@ private theorem core {g : LogFacts.Ghost} {v n t b i later commit bound k l log}
         obtain ⟨e, a, lo, hi, canon, missing⟩ := lost
         rw [← take_of_prefix_length sub partLength] at missing
         exact (missing (clean e a lo hi canon)).elim
-    have termGe : t ≤ termAt log j := rank.elim Nat.le_of_lt (fun eq => Nat.le_of_eq eq.1)
+    have termGe : t ≤ termAt log j := by
+      split_rel rank_bound := (rcases rank with lt | ⟨eq, _⟩) with
+      | inl => exact Nat.le_of_lt lt
+      | inr => exact Nat.le_of_eq eq
     have jPos : 0 < j := by
       split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos j with zero | positive) with
       | inl =>
@@ -6521,7 +6548,7 @@ private theorem core {g : LogFacts.Ghost} {v n t b i later commit bound k l log}
       exact List.take_prefix _ _
     split_rel lt_or_eq_of_le := (rcases Nat.lt_or_eq_of_le termGe with above | same) with
     | inl =>
-      have sub := clean _ anchored above (by omega) canon
+      have sub := clean _ anchored above (Nat.le_trans (Nat.le_sub_one_of_lt lower) window) canon
       split_rel lt_or_ge := (rcases Nat.lt_or_ge j i with short | long) with
       | inl =>
         exfalso
@@ -6536,7 +6563,7 @@ private theorem core {g : LogFacts.Ghost} {v n t b i later commit bound k l log}
       | inr =>
         exact viaAnchor long (take_of_prefix_length sub partLength)
     | inr =>
-      have indexLeJ : i ≤ j := rank.resolve_left (by omega) |>.2
+      have indexLeJ : i ≤ j := (rank.resolve_left (Nat.not_lt_of_ge (Nat.le_of_eq same.symm))).2
       rw [← same] at canon
       have comparable := chain _ _ _ canon step.canon
       have anchoredIndex := Nat.le_trans indexLeJ anchoredLength
@@ -6684,17 +6711,19 @@ private theorem freshCert {node : NodeID} {term commit : Nat} {log : List Entry}
   refine ⟨above, logEq ▸ c.inv.rooted _ _ mem, front, ?_,
     ⟨voters, quorum, fun v m =>
       (c.grantFactsBefore v node term _ ((granted v m))).1.1⟩⟩
-  rcases backing with zero | backed
-  · exact .inl zero
-  · obtain ⟨e, p, com, le, sub⟩ := backed
-    exact .inr ⟨e, p, com, by omega, sub⟩
+  split_rel backing := (rcases backing with zero | ⟨e, p, com, le, sub⟩) with
+  | inl => exact .inl zero
+  | inr =>
+    have pos := Nat.lt_of_lt_of_le (by decide : 0 < 3) above
+    exact .inr ⟨e, p, com, Nat.lt_of_le_of_lt le (Nat.sub_one_lt (Nat.ne_of_gt pos)), sub⟩
 
 private theorem previousBacking {n k l i} (e : (f.advance after).logs.elected n k l i) :
     ElectionCert f.logs (f.advance after).votes n k l i := by
-  rcases c.elected_after (e) with old | new
-  · exact (c.inv.electionCerts n k l i (old)).weaken
+  split_rel elected := (rcases c.elected_after e with old | new) with
+  | inl =>
+    exact (c.inv.electionCerts n k l i old).weaken
       (fun _ _ h => h) (fun _ h => VoteFacts.mem_advance.2 (.inr h))
-  · exact c.freshCert new
+  | inr => exact c.freshCert new
 
 private theorem electionCerts : ElectionCerts (f.advance after).logs
     (f.advance after).votes := fun _ _ _ _ e =>
@@ -6760,27 +6789,32 @@ private theorem rankedElections : RankedElections (f.advance after).logs
     apply cert.transport (fun _ m => VoteFacts.mem_advance.2 (.inr m))
       (fun _ _ m => .inl m) (fun _ _ _ le => le)
     intro x stamp k p seen lt
-    rcases seen with past | ⟨st, now, term, _⟩
-    · exact past
-    · have ge : t ≤ st.currentTerm := c.ballots.bounds _
+    split_rel seen := (rcases seen with past | ⟨st, now, term, _⟩) with
+    | inl => exact past
+    | inr =>
+      have ge : t ≤ st.currentTerm := c.ballots.bounds _
         (VoteFacts.mem_advance.2 (.inr stamp)) st now
       omega
   | inr =>
     apply (c.freshCampaign new).transport (fun _ m => m) (fun _ _ m => .inl m) ?_
       (fun _ _ _ _ obs _ => obs)
     intro k p witnessed le
-    suffices k ≠ t by omega
+    suffices ne : k ≠ t from Nat.le_sub_one_of_lt (Nat.lt_of_le_of_ne le ne)
     rintro rfl
     obtain ⟨other, old⟩ := c.inv.owner witnessed
     have same := c.election_safety other n k (old.mono after)
       (.inr ⟨l, i, .inr ⟨f.current, rfl, new⟩⟩)
     subst other
     obtain ⟨st', _, mem, _, _, _, _, termCase, _⟩ := new
-    rcases c.inv.led_cur n st' k mem old with lt | ⟨eq, notCandidate⟩
-    · rcases termCase with lt' | ⟨eq', _⟩ <;> omega
-    · rcases termCase with lt' | ⟨_, role⟩
-      · omega
-      · exact notCandidate role
+    split_rel led := (rcases c.inv.led_cur n st' k mem old with lt | ⟨eq, notCandidate⟩) with
+    | inl =>
+      split_rel term_when_older := (rcases termCase with lt' | ⟨eq', _⟩) with
+      | inl => exact (Nat.not_lt_of_ge (Nat.le_of_lt lt)) lt'
+      | inr => exact (Nat.ne_of_gt lt) eq'
+    | inr =>
+      split_rel term_when_equal := (rcases termCase with lt' | ⟨_, role⟩) with
+      | inl => exact (Nat.not_lt_of_ge (Nat.le_of_eq eq)) lt'
+      | inr => exact notCandidate role
 
 /-- A leader continuing in its term keeps its log. -/
 private theorem keep_log (sameTerm : c.post.currentTerm = c.pre.currentTerm)
@@ -6914,17 +6948,15 @@ private theorem canon_mono : CanonMono (f.advance after) := by
 private theorem chains : LogFacts.Chain (f.advance after).logs := by
   apply LogFacts.chain_step c.inv.chains
   rintro n st k ⟨now, rfl, role, led⟩ l canon
-  have old : Led (f.advance after) n st.currentTerm := by
-    rcases led with boot | ⟨p, i, elect⟩
-    · exact .inl boot
-    · exact .inr ⟨p, i, elect⟩
-  exact (c.canon_mono n st now role old).1 l (canon)
+  exact (c.canon_mono n st now role led).1 l canon
 
 private theorem winningPrefix : LogFacts.WinningPrefix (f.advance after).logs := by
   apply LogFacts.winningPrefix_step c.inv.winningPrefix
-  rintro n st k ⟨now, rfl, role, boot | ⟨l, i, elect⟩⟩ gt
-  · exact (Nat.not_lt_of_ge (Nat.le_of_eq boot.1) gt).elim
-  · have e := elect
+  rintro n st k ⟨now, rfl, role, led⟩ gt
+  split_rel led := (rcases led with boot | ⟨l, i, elect⟩) with
+  | inl => exact (Nat.not_lt_of_ge (Nat.le_of_eq boot.1) gt).elim
+  | inr =>
+    have e := elect
     exact ⟨l, i, elect, (c.canon_mono n st now role (.inr ⟨l, i, e⟩)).2 l i e⟩
 
 private theorem anchor : Anchor (f.advance after) := by
@@ -6992,9 +7024,9 @@ private theorem new_in_elected {leader : NodeID} {state : NodeState}
         -> term < later
         -> state.log.take index <+: log := by
   have floor : 2 ≤ term := by
-    rcases c.led_after step.1.2.2.2 with old | ⟨_, _, fresh⟩
-    · exact c.inv.leader_floor old
-    · exact Nat.le_trans (by decide : 2 ≤ 3) (c.electStep fresh).2.2.2.2.2.2.2
+    split_rel led := (rcases c.led_after step.1.2.2.2 with old | ⟨_, _, fresh⟩) with
+    | inl => exact c.inv.leader_floor old
+    | inr => exact Nat.le_trans (by decide : 2 ≤ 3) (c.electStep fresh).2.2.2.2.2.2.2
   have current := step.facts floor c.rooted c.sorted
   have partSignature := take_signature current.signature
   intro later
@@ -7006,7 +7038,9 @@ private theorem new_in_elected {leader : NodeID} {state : NodeState}
       have clean (e a) (above : term < e) (below : e ≤ later - 1)
           (canon : (f.advance after).logs.canon e a) : state.log.take index <+: a := by
         obtain ⟨n, l, i, won, sub⟩ := c.winningPrefix e a canon (Nat.lt_of_le_of_lt current.floor above)
-        exact (prefix_committable (ih e (by omega) n l i (won) above) partSignature).trans sub
+        have earlier := Nat.lt_of_le_of_lt below
+          (Nat.sub_one_lt (Nat.ne_of_gt (Nat.zero_lt_of_lt lt)))
+        exact (prefix_committable (ih e earlier n l i won above) partSignature).trans sub
       have low : commit <= base -> state.log.take base <+: log := by
         intro _
         split_rel backing := (rcases backing with zero | ⟨_, part, committed, below, inPart⟩) with
@@ -7044,7 +7078,7 @@ private theorem new_in_elected {leader : NodeID} {state : NodeState}
             | inl => exact comparable_of_prefix ((List.take_prefix _ _).trans left) sub
             | inr => exact comparable_of_prefix (List.take_prefix _ _) (sub.trans right)
           | inr_inr =>
-            exact comparable_of_prefix (clean earlier a higher (by omega) canon') sub
+            exact comparable_of_prefix (clean earlier a higher (Nat.le_sub_one_of_lt below) canon') sub
       split_rel agree_or_contained :=
           (rcases agree_or_contained current.baseLe current.indexLe campaign.frontier low high with
             done | ⟨k, agree, baseLe', commitLe⟩) with
@@ -7789,17 +7823,21 @@ private theorem inv_step : Inv (f.advance after) :=
     observed := fun _ st mem => .inr ⟨st, mem, rfl, rfl⟩
     term_mono := by
       intro n st o mem seen
-      rcases c.seen_after seen with old | ⟨rfl, rfl⟩
-      · rcases c.now_after mem with ⟨rfl, rfl⟩ | ⟨_, pre⟩
-        · exact Nat.le_trans (c.inv.term_mono _ _ _ c.pre_now old) c.term_le
-        · exact c.inv.term_mono _ _ _ pre old
-      · rw [c.now_post mem]
+      split_rel term_mono_seen := (rcases c.seen_after seen with old | ⟨rfl, rfl⟩) with
+      | inl =>
+        split_rel term_mono_now := (rcases c.now_after mem with ⟨rfl, rfl⟩ | ⟨_, pre⟩) with
+        | inl => exact Nat.le_trans (c.inv.term_mono _ _ _ c.pre_now old) c.term_le
+        | inr => exact c.inv.term_mono _ _ _ pre old
+      | inr =>
+        rw [c.now_post mem]
         exact Nat.le_refl _
     frontier := by
       intro n st mem
-      rcases c.now_after mem with ⟨rfl, rfl⟩ | ⟨_, old⟩
-      · exact Direct.commitFrontier_invariant.step _ _ _ _ _ (c.inv.frontier _ _ c.pre_now) c.tr.ran
-      · exact c.inv.frontier n st old
+      split_rel frontier_now := (rcases c.now_after mem with ⟨rfl, rfl⟩ | ⟨_, old⟩) with
+      | inl =>
+        exact Direct.commitFrontier_invariant.step _ _ _ _ _
+          (c.inv.frontier _ _ c.pre_now) c.tr.ran
+      | inr => exact c.inv.frontier n st old
   }
 
 end Consensus.Proofs.Safety.Ctx

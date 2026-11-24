@@ -55,7 +55,7 @@ public theorem Step.context_eq (s : Step) (c : @Ctx ⟨s.cfg⟩ s.frame s.after)
   have recorded := s.exists_context.choose_spec
   exact ⟨fun h => ActionContext.injective (h.trans recorded.symm), fun h => h ▸ recorded⟩
 
-/-- All 433 step coordinates share `s.context`; the 12 questions at either
+/-- All step coordinates share `s.context`; the state questions at either
 endpoint refer to the same initialization and history, extended by this step. -/
 public def holds (s : Step) : Question → Prop
   | .pre b => StateCoverage.Holds s.cfg s.before s.past b

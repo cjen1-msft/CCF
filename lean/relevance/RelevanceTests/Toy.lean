@@ -64,6 +64,15 @@ theorem at_or_below {s : State} (inv : Inv s) {n : Nat} (member : n ∈ s.sent) 
   | inl => exact .inl lower
   | inr => exact .inr same
 
+theorem unmarked (n : Nat) : n = 0 ∨ 0 < n := by
+  rcases Nat.eq_zero_or_pos n with zero | positive
+  · exact Or.inl zero
+  · exact Or.inr positive
+
+def behindDefinition (n : Nat) : { k : Nat // k = 0 ∨ 0 < k } := ⟨n, unmarked n⟩
+
+theorem viaDefinition (n : Nat) : n = 0 ∨ 0 < n := (behindDefinition n).property
+
 end Proof
 
 end RelevanceTests.Toy
@@ -80,6 +89,20 @@ relevance_generate RelevanceTests.Toy.Generated
   (step := fun (s : RelevanceTests.Toy.State) (a : RelevanceTests.Toy.Action)
     (t : RelevanceTests.Toy.State) => RelevanceTests.Toy.step s a = some t)
   (state := fun (s : RelevanceTests.Toy.State) => RelevanceTests.Toy.Inv s)
+  (requireRecorded := true)
+
+/--
+error: relevance_generate: 1 unrecorded split(s):
+  RelevanceTests.Toy.Proof.unmarked (Or.casesOn)
+-/
+#guard_msgs in
+relevance_generate RelevanceTests.Toy.Rejected
+  (scope := RelevanceTests.Toy.Proof) (package := [RelevanceTests.Toy])
+  (roots := [RelevanceTests.Toy.Proof.viaDefinition])
+  (step := fun (s : RelevanceTests.Toy.State) (a : RelevanceTests.Toy.Action)
+    (t : RelevanceTests.Toy.State) => RelevanceTests.Toy.step s a = some t)
+  (state := fun (s : RelevanceTests.Toy.State) => RelevanceTests.Toy.Inv s)
+  (shared := true) (requireRecorded := true)
 
 /-- The class predicate of the new number: some sent number was not sent before the step. -/
 example : RelevanceTests.Toy.Generated.sig { sent := [], high := 1 } (.send 1)
