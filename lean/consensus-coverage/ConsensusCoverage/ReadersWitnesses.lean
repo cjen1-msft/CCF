@@ -17,6 +17,8 @@ import all ConsensusCoverage.ReadersPolarFrontier
 import all ConsensusCoverage.ReadersPolar
 import all ConsensusCoverage.ReplayAnswers
 import all ConsensusCoverage.CaseWitnesses
+import all ConsensusCoverage.ReadersWitnessesCases
+import ConsensusCoverage.ReadersWitnessesChains
 import ConsensusCoverage.ReadersWitnessesSplit
 
 namespace ConsensusCoverage.ReadersWitnesses
@@ -24,6 +26,7 @@ namespace ConsensusCoverage.ReadersWitnesses
 open ActionProfile ReadersWitnessProof
 
 set_option maxHeartbeats 0
+set_option Elab.async false
 set_option pp.maxSteps 1500
 set_option maxRecDepth 8192
 
@@ -192,25 +195,11 @@ private def claims : List Claim := [
   claim31, claim32, claim33, claim34, claim35, claim36, claim37
 ]
 
-private def caseClaims : List (Claim ReadersCorpus.caseStepAt) :=
-  [⟨20, 4, [
-    .observeTerm_log_message_appendEntriesResponse, .observeTerm_commitIndex_message_appendEntriesResponse,
-    .observeTerm_commitIndex_message_proposeRequestVoteRequest, .observeTerm_commitIndex_message_other,
-    .observeTerm_log_message_proposeRequestVoteRequest, .observeTerm_log_message_other
-  ], by decide +kernel⟩,
-  ⟨21, 5, [.elect_backed_termCase_inr], by decide +kernel⟩,
-  ⟨23, 5, [.elect_backed_termCase_inl], by decide +kernel⟩,
-  ⟨29, 6, [.pre_split_pre_backed_inl], by decide +kernel⟩,
-  ⟨31, 11, [.handleAppendEntriesRequest_conflict_some], by decide +kernel⟩,
-  ⟨32, 9, [.commitChains_step_led_inr], by decide +kernel⟩]
-
-private def scenarioClaims : List (Claim ReadersCorpus.scenarioStepAt) :=
-  [⟨0, 18, [.pre_split_pre_backed_inr, .pre_split_backing_inl], by decide +kernel⟩]
-
 /-- Cases witnessed by an executable reader on a replayed corpus step. -/
 public def witnessed : List Classes.StepBranch :=
-  (claims.flatMap (·.questions) ++ caseClaims.flatMap (·.questions) ++
-    scenarioClaims.flatMap (·.questions)) ++ [.summary_message_requestVoteResponse]
+  (claims.flatMap (·.questions) ++ ReadersWitnessesCases.claims.flatMap (·.questions) ++
+    [.commitChains_step_led_inr] ++ ReadersWitnessesCases.backing.questions) ++
+  [.summary_message_requestVoteResponse]
 
 public theorem count : witnessed.Nodup ∧ witnessed.length = 201 := by decide
 
@@ -222,14 +211,14 @@ public theorem union_count :
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
-  rw [witnessed, List.mem_append, List.mem_append, List.mem_append, List.mem_singleton] at mem
-  rcases mem with ((direct | cases) | scenarios) | rfl
+  simp only [witnessed, List.mem_append, List.mem_singleton] at mem
+  rcases mem with (((direct | cases) | rfl) | backing) | rfl
   · obtain ⟨c, _, found⟩ := List.mem_flatMap.mp direct
     exact c.occurs found
   · obtain ⟨c, _, found⟩ := List.mem_flatMap.mp cases
     exact c.occurs found
-  · obtain ⟨c, _, found⟩ := List.mem_flatMap.mp scenarios
-    exact c.occurs found
+  · exact ReadersWitnessesChains.occurs
+  · exact ReadersWitnessesCases.backing.occurs backing
   · exact ReadersWitnessesSplit.voteResponse
 
 end ConsensusCoverage.ReadersWitnesses
