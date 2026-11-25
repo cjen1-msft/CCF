@@ -279,15 +279,15 @@ private def voteBump : Certificate := by
   exact voteNew (c := c) (x := a.x) ok (by decide +kernel) (src a.x.event) (request (msg a.x.event))
     (by decide +kernel) (by decide +kernel)
 
-private def stableRequest : Certificate := by
-  refine ⟨.voteRequest_summary_observe_bumping_inr, ?_⟩
-  at_sample stableVote 10 .voteRequest_summary_observe_bumping_inr a c ok
-  apply ReadersPolarObserve.R.yes_step_voteRequest_summary_observe_bumping_inr_sound _ _ c a.x ok
-    (ReadersPolar.prepare a.s.cfg a.x)
-  unfold ReadersPolarObserve.R.yes_step_voteRequest_summary_observe_bumping_inr
-  iterate 15 (rw [Bool.or_eq_true]; right)
+-- Check the successful disjunct alone rather than scanning earlier terms.
+local macro "polar_at " b:term:arg r:term:arg i:num test:ident sound:ident arm:num : term => `(by
+  refine ⟨$b, ?_⟩
+  at_sample $r $i $b a c ok
+  apply $sound _ _ c a.x ok (ReadersPolar.prepare a.s.cfg a.x)
+  unfold $test
+  iterate $arm (rw [Bool.or_eq_true]; right)
   rw [Bool.or_eq_true]; left
-  decide +kernel
+  decide +kernel)
 
 local macro "check_receive " b:term:arg r:term:arg i:num get:ident cert:ident : term => `(by
   refine ⟨$b, ?_⟩
@@ -301,8 +301,13 @@ local macro "check_bump " b:term:arg r:term:arg i:num tag:term:arg get:ident cer
   exact $cert (c := c) (x := a.x) ok (by decide +kernel) (src a.x.event) ($tag ($get (msg a.x.event)))
     (by decide +kernel) True.intro (by first | exact True.intro | decide +kernel) (by decide +kernel) (b := $b) rfl)
 
+open ReadersPolarObserve.R in
 private def certificates : List Certificate := [
-  voteBump, stableRequest,
+  voteBump,
+  polar_at .voteRequest_summary_observe_bumping_inr stableVote 10
+    yes_step_voteRequest_summary_observe_bumping_inr yes_step_voteRequest_summary_observe_bumping_inr_sound 15,
+  polar_at .observe_response_leader_neg delayedAck 9
+    yes_step_observe_response_leader_neg yes_step_observe_response_leader_neg_sound 9,
   check_receive .voteResponse_summary_mem_insert_inl campaign 5 response inserted,
   check_receive .voteResponse_summary_mem_insert_inr campaign 5 response oldVote,
   check_receive .voteRequest_summary_granted_pos campaign 4 request grantYes,

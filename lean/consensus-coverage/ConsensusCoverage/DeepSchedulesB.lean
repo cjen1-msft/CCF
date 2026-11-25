@@ -115,4 +115,15 @@ public def higherAck : Replay := script! ({ DeepSchedules.divergent with
     (DeepSchedules.divergent.ops.drop 5).take 4 ++
     [.msg 0 2 .appendEntriesRequest, .msg 2 0 .appendEntriesResponse] })
 
+-- Retain the old ACK while its target loses leadership. The new leader
+-- enters a one-voter configuration and appends two signatures. Copying the
+-- first unlocks delayed backing for the second on the otherwise inert ACK.
+public def delayedAck : Replay := script! (⟨{0, 1}, [0, 1], [
+  .input 0 (.append [{content := .signature, flushes := [(1, 2)]}]), .msg 0 1 .appendEntriesRequest,
+  .input 0 .nominateSuccessor, .msg 0 1 .proposeRequestVoteRequest, .msg 1 0 .requestVoteRequest,
+  .msg 0 1 .requestVoteResponse, .msg 1 0 .appendEntriesRequest,
+  .input 1 (.append [{content := .transaction 2 {configuration := some {1}}},
+    {content := .signature, flushes := [(0, 4)]}, {content := .signature}]),
+  .msg 1 0 .appendEntriesRequest, .msg 1 0 .appendEntriesResponse]⟩ : DeepSchedules.Script)
+
 end ConsensusCoverage.DeepSchedulesB

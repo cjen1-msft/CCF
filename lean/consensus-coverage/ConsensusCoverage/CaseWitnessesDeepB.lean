@@ -17,7 +17,7 @@ open ActionProfile
 public def witnessed : List Classes.StepBranch :=
   MaximumCasesB.questions ++ ReceiveCasesB.witnessed ++ CampaignCasesB.witnessed
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 31 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 32 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
