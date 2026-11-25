@@ -57,7 +57,11 @@ def main():
         groups[w].append(q)
     text = [start.rstrip()]
     certs = ["cert0", "cert1"]
-    for i, ((depth, schedule, choices), qs) in enumerate(sorted(groups.items())):
+    # ReadersCorpus indexes these schedules. Append new groups rather than
+    # inserting them before surviving ones when a new schedule sorts earlier.
+    order = {w: i for i, w in enumerate(dict.fromkeys(incumbent.values()))}
+    for i, w in enumerate(sorted(groups, key=lambda w: (order.get(w, len(order)), w))):
+        (depth, schedule, choices), qs = w, groups[w]
         run = f"bounded{i}"
         cert = f"{run}Cert"
         certs.append(cert)
