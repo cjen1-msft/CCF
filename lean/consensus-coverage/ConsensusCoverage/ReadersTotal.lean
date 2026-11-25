@@ -227,9 +227,9 @@ public theorem covered_count :
       (ReadersRefuted.covered.filter fun b =>
         b ∉ Readers.covered && b ∉ ReplayAnswers.unconditional).length = 17 ∧
       (ReadersEquiv.covered.filter (· ∉ baseColumns)).length = 2 ∧
-      (ReadersExtra.covered.filter (· ∉ oldColumns)).length = 10 ∧
+      (ReadersExtra.covered.filter (· ∉ oldColumns)).length = 12 ∧
       (HandReadersA.covered.filter (· ∉ coreColumns)).length = 73 ∧
       (HandReadersB.covered.filter (· ∉ coreColumns ++ HandReadersA.covered)).length = 39 ∧
-      covered.length = 329 ∧ unread.length = 187 := by decide +kernel
+      covered.length = 331 ∧ unread.length = 185 := by decide +kernel
 
 end ConsensusCoverage.ReadersTotal

@@ -40,6 +40,8 @@ run_cmd liftTermElabM do
   let columns := columns.insert ``Classes.StepBranch.acceptLog_eq_long_neg
   let columns := columns.insert ``Classes.StepBranch.acceptLog_eq_eq_or_lt_of_le_inl
   let columns := columns.insert ``Classes.StepBranch.acceptLog_eq_eq_or_lt_of_le_inr
+  let columns := columns.insert ``Classes.StepBranch.rankAtGrant_persist_inl
+  let columns := columns.insert ``Classes.StepBranch.rankAtGrant_persist_inr
   ReadersCompiler.driverWith none {
     namespaceName := `ConsensusCoverage.ReadersExtra.Compiled,
     columns := some columns, extraRules := true }
@@ -72,6 +74,6 @@ public theorem read?_at (s : Step) {b : Classes.StepBranch} (mem : b ∈ covered
     simpa only [read?, made, Option.bind_some] using eq
   exact read.trans (congrArg some (read?_correct s read).symm)
 
-public theorem covered_count : covered.length = 10 := by decide +kernel
+public theorem covered_count : covered.length = 12 := by decide +kernel
 
 end ConsensusCoverage.ReadersExtra

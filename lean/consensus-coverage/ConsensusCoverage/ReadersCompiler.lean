@@ -10,6 +10,7 @@ public import ConsensusCoverage.ReadersRequestCuts
 public import ConsensusCoverage.ReadersVoteReply
 public import ConsensusCoverage.CommitKeys
 public import Consensus.Proofs.LogFacts
+import all ConsensusCoverage.CommitMonitor
 import all ConsensusCoverage.ReadersAtoms
 import all ConsensusCoverage.ReadersIndex
 import all ConsensusCoverage.ReadersMatchGuard
@@ -46,6 +47,51 @@ theorem picked_some {o : Option Bool} {v : Bool} (h : o = some v)
     {p : Prop} (hp : picked o p) : v = true ↔ p := by
   cases h
   exact hp
+
+private theorem quorum_members (cs : List Node.Configuration) (required : List NodeID) :
+    CommitMonitor.quorum cs (fun _ => true) = true ↔
+      ∃ vs : Finset NodeID, hasQuorum cs vs ∧ ∀ v ∈ required, v ∈ vs := by
+  simpa [List.all_eq_true] using
+    (quorum_required (P := fun _ => True) cs required (fun _ => true) (by intro; simp))
+
+public def candidateFromPost (before after : NodeState) : NodeState :=
+  {after with role := .candidate, log := before.log, commitIndex := before.commitIndex}
+
+private def restoreIgnored (candidate after : NodeState) : NodeState :=
+  {
+    candidate with
+      sentIndex := after.sentIndex
+      matchIndex := after.matchIndex
+      primaryKnown := after.primaryKnown
+  }
+
+private theorem campaign_search_iff [Config.InitialConfiguration] {f : Frame} {t : Model.State}
+    (c : Ctx f t) {P : NodeState → Prop}
+    (stable : ∀ node, P node → P (restoreIgnored node c.post)) :
+    (∃ node, (Campaign c.actor c.pre c.event node ∧
+      hasQuorum node.activeConfigurations node.votesGranted ∧
+      Advance c.actor (primaryState node) c.post) ∧ P node) ↔
+      Wins c.actor c.pre c.event c.post ∧ P (candidateFromPost c.pre c.post) := by
+  have canonicalize {node : NodeState} (campaign : Campaign c.actor c.pre c.event node)
+      (advance : Advance c.actor (primaryState node) c.post) :
+      candidateFromPost c.pre c.post = restoreIgnored node c.post := by
+    have eq : c.post = primaryState node := by
+      obtain eq | strict := advance
+      · exact eq
+      · have bound := campaign_no_advance campaign
+        obtain ⟨_, _, _, _, _, _, grows, eq, _⟩ := strict
+        rw [eq] at grows
+        exact (Nat.not_lt_of_le bound grows).elim
+    obtain ⟨role, log, commit, _⟩ := campaign
+    rw [eq]
+    simp [candidateFromPost, restoreIgnored, primaryState, role, log, commit]
+  constructor
+  · rintro ⟨node, ⟨campaign, quorum, advance⟩, yes⟩
+    exact ⟨⟨node, campaign, quorum, advance⟩, canonicalize campaign advance ▸ stable node yes⟩
+  · rintro ⟨⟨node, campaign, quorum, advance⟩, yes⟩
+    refine ⟨candidateFromPost c.pre c.post, ?_, yes⟩
+    rw [canonicalize campaign advance]
+    exact ⟨campaign, quorum, advance⟩
 
 meta section
 
@@ -307,6 +353,51 @@ def sameConjuncts (p q : Expr) : MetaM Expr := do
   let qp ← withLocalDeclD `h q fun h => do
     mkLambdaFVars #[h] (← proveConjunction q h p)
   mkAppM ``Iff.intro #[pq, qp]
+
+private def campaignBinder (e : Expr) : Bool :=
+  e.isAppOfArity ``Exists 2 && (e.getArg! 0).isConstOf ``NodeState &&
+    e.appArg!.isLambda && (conjuncts e.appArg!.bindingBody!).any (·.isAppOfArity ``Campaign 4)
+
+private def normalizeCampaign (env : Env) (p : Expr) : MetaM Simp.Result := do
+  unless env.extraRules && (p.find? campaignBinder).isSome do return { expr := p }
+  let methods : Simp.Methods := { pre := fun e => do
+    unless campaignBinder e do return .continue
+    let cert? ← withNewMCtxDepth do
+      withLocalDeclD `candidate (mkConst ``NodeState) fun node => do
+        let body := e.appArg!.beta #[node]
+        let atoms := (conjuncts body).eraseDupsBy sameFormula
+        let [campaign] := atoms.filter (fun q => q.isAppOfArity ``Campaign 4 &&
+          q.appArg! == node) | return none
+        let [quorum] := atoms.filter (fun q => q.isAppOfArity ``hasQuorum 2 &&
+          q.appArg!.isAppOfArity ``NodeState.votesGranted 1 &&
+          q.appArg!.appArg! == node) | return none
+        let [advance] := atoms.filter (fun q => q.isAppOfArity ``Advance 3 &&
+          (q.getArg! 1).isAppOfArity ``primaryState 1 &&
+          (q.getArg! 1).appArg! == node) | return none
+        let core := [campaign, quorum, advance]
+        let and := mkApp2 (mkConst ``And)
+        let tail := (atoms.filter fun q => !(core.any (sameFormula · q))).foldr and (mkConst ``True)
+        let post ← mkAppM ``Ctx.post #[env.c]
+        let restored ← mkAppM ``restoreIgnored #[node, post]
+        let replacement := tail.replaceFVar node restored
+        unless ← withTransparency .default (isDefEq tail replacement) do return none
+        let res ← mkLambdaFVars #[node] tail
+        let stable ← withLocalDeclD `h tail fun h => do
+          mkLambdaFVars #[node, h] (← mkExpectedTypeHint h replacement)
+        let thm ← mkAppOptM ``campaign_search_iff #[none, none, none, env.c, res, stable]
+        let grouped := and (and campaign (and quorum advance)) tail
+        let pred ← mkLambdaFVars #[node] grouped
+        let lhs ← mkAppM ``Exists #[pred]
+        unless ← withTransparency .default (isDefEq ((← inferType thm).getArg! 0) lhs) do
+          return none
+        let step ← mkLambdaFVars #[node] (← sameConjuncts body grouped)
+        let congr ← mkAppOptM ``exists_congr #[mkConst ``NodeState, e.appArg!, pred, step]
+        return some (← mkAppM ``Iff.trans #[congr, thm])
+    let some cert := cert? | return .continue
+    return .visit {expr := (← inferType cert).appArg!, proof? := some (← mkAppM ``propext #[cert])} }
+  let ctx ← Simp.mkContext (congrTheorems := ← getSimpCongrTheorems)
+    (config := {autoUnfold := false})
+  return (← Simp.main p ctx (methods := methods)).1
 
 def envelopeGuard (env : Env) (x p h : Expr) : MetaM (Option Guard) := do
   unless ← withReducible (isDefEq (← inferType x) (mkConst ``Model.Envelope)) do return none
@@ -945,6 +1036,41 @@ partial def reflectExists (env : Env) (owner : Name) (p : Expr) (swapped := fals
         let iff ← mkAppM ``exists_vacuous #[witness, body]
         let some (b, cert) ← reflect env owner body | return none
         return some (b, ← mkAppM ``Iff.trans #[cert, ← mkAppM ``Iff.symm #[iff]])
+  -- A quorum with required members but no condition on its other members.
+  if env.extraRules && α.isAppOf ``CCF.Finset then
+    let members ← withLocalDeclD `vs α fun vs => do
+      let inner := pred.beta #[vs]
+      let (dependent, separate) := ((conjuncts inner).eraseDupsBy sameFormula).partition
+        (·.containsFVar vs.fvarId!)
+      let [hq] := dependent.filter (·.isAppOfArity ``hasQuorum 2) | return none
+      unless hq.appArg! == vs && !((hq.getArg! 0).containsFVar vs.fvarId!) do return none
+      let extras := dependent.filter (· != hq)
+      unless extras.all (fun m => m.isAppOfArity ``Membership.mem 5 && m.getArg! 3 == vs &&
+          !m.appArg!.containsFVar vs.fvarId!) do return none
+      let required ← mkListLit (mkConst ``NodeID) (extras.map (·.appArg!))
+      let cert ← mkAppM ``quorum_members #[hq.getArg! 0, required]
+      let and p q := mkApp2 (mkConst ``And) p q
+      let corePred ← mkLambdaFVars #[vs] (extras.foldr and hq)
+      let mut rules : SimpTheorems := {}
+      for n in [``List.forall_mem_cons, ``List.not_mem_nil, ``false_implies, ``forall_const, ``and_true] do
+        rules ← rules.addConst n
+      let vars ← simplify env (← typeArg cert 1) rules
+      let cert ← mkAppM ``Iff.trans #[cert, ← mkIffOfEq (← vars.getProof)]
+      let expanded ← Core.betaReduce ((← typeArg cert 1).appArg!.beta #[vs])
+      let bridge ← mkLambdaFVars #[vs] (← sameConjuncts expanded (corePred.beta #[vs]))
+      let cert ← mkAppM ``Iff.trans #[cert, ← mkAppOptM ``exists_congr #[α, none, corePred, bridge]]
+      let independent := separate.foldr and (mkConst ``True)
+      let some (_, independentCert) ← reflect env owner independent | return none
+      let cert ← mkAppM ``and_cert #[cert, independentCert]
+      let canon := and (corePred.beta #[vs]) independent
+      let canonPred ← mkLambdaFVars #[vs] canon
+      let pull ← mkAppOptM ``exists_and_right #[α, corePred, independent]
+      let cert ← mkAppM ``Iff.trans #[cert, ← mkAppM ``Iff.symm #[pull]]
+      let pointwise ← mkLambdaFVars #[vs] (← sameConjuncts canon inner)
+      let congr ← mkAppOptM ``exists_congr #[α, canonPred, pred, pointwise]
+      let cert ← mkAppM ``Iff.trans #[cert, congr]
+      return some (← boolOf cert, cert)
+    if let some r := members then return some r
   -- quorum: ∃ voters, hasQuorum cs voters ∧ ∀ v ∈ voters, P v
   let quorum? ← withLocalDeclD `vs α fun vs => do
     unless α.isAppOf ``CCF.Finset do return none
@@ -1434,7 +1560,9 @@ partial def compileUncached (env : Env) (n : Name) : CM RInfo := do
     let p := ci.value!.beta (pre ++ actuals)
     let call := mkAppN (mkConst n) (pre ++ actuals)
     let split := params.isEmpty && p.isAppOfArity ``Or 2
-    let cuts ← RequestTransport.normalize isGenerated env.ok env.xv env.f p
+    let campaign ← normalizeCampaign env p
+    let cuts ← campaign.mkEqTrans
+      (← RequestTransport.normalize isGenerated env.ok env.xv env.f campaign.expr)
     let r1 ← if !split && env.isFrame p then
       cuts.mkEqTrans (← simplify env cuts.expr env.first)
     else pure cuts

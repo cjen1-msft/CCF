@@ -603,9 +603,9 @@ primary, was not already primary in that term, and had commit index zero
 before the step. The 29 impossible cases are read as constant false.
 [`ReadersTotal.read`](../consensus-coverage/ConsensusCoverage/ReadersTotal.lean)
 combines these sources with structural equivalences and the compiled
-match-index and accepted-log readers. `read_correct` and `read_total` certify
-every returned answer and totality on the 329 covered questions. All 40
-unconditional replay readers are included; 187 of the 516 questions remain
+match-index, accepted-log, and ranking readers. `read_correct` and `read_total`
+certify every returned answer and totality on the 331 covered questions. All 40
+unconditional replay readers are included; 185 of the 516 questions remain
 unread.
 
 [`case-meanings.tsv`](../consensus-coverage/case-meanings.tsv) describes,
