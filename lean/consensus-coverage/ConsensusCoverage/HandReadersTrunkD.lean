@@ -9,6 +9,7 @@ import all ConsensusCoverage.HandReadersTrunkDTable
 import all ConsensusCoverage.HandReadersTrunkDSignature
 import all ConsensusCoverage.HandReadersTrunkDAtZero
 import all ConsensusCoverage.HandReadersTrunkDRecord
+import all ConsensusCoverage.HandReadersTrunkDNominate
 
 namespace ConsensusCoverage.HandReadersTrunkD
 
@@ -20,6 +21,8 @@ private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .termAt_take_zero_pos => some Prefix.zero
   | .recordCommit_eq_retire_pos => some (Record.exactReader true)
   | .recordCommit_eq_retire_neg => some (Record.exactReader false)
+  | .nominate_sends_successor_some => some (Nominate.exactReader true)
+  | .nominate_sends_successor_none => some (Nominate.exactReader false)
   | .mem_replaceNode_here_pos => some (Table.exactReader true)
   | .mem_replaceNode_here_neg => some (Table.exactReader false)
   | .signatureIndex_le_maxCommittableIndex_values_nil => some (Signed.exactReader .nil)
@@ -47,6 +50,6 @@ public theorem read_total (s : Step) {b} (h : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp h).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 13 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 15 := by decide +kernel
 
 end ConsensusCoverage.HandReadersTrunkD
