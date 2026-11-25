@@ -6,6 +6,7 @@ module
 public import ConsensusCoverage.JointWitnesses
 import all ConsensusCoverage.ReadersWitnesses
 import all ConsensusCoverage.DeepSchedules
+import all ConsensusCoverage.DeepElectionCases
 import all ConsensusCoverage.EventSupport
 import all ConsensusCoverage.JointWitnesses
 import all ConsensusCoverage.ActionProfile
@@ -37,14 +38,14 @@ private noncomputable def ordered (s : Step) (b : Classes.StepBranch) : Option B
 
 private abbrev Certificate := {b : Classes.StepBranch // ∃ s : Step, label s (.step b) = true}
 
-private def samePredicate (from_ to_ : Classes.StepBranch) (known : from_ ∈ ReadersWitnesses.witnessed)
-    (same : ∀ s : Step, @SolvedWitnesses.sig ⟨s.cfg⟩ s.frame s.after s.context from_ =
+private def transfer (from_ to_ : Classes.StepBranch) (known : from_ ∈ ReadersWitnesses.witnessed)
+    (enter : ∀ s : Step, @SolvedWitnesses.sig ⟨s.cfg⟩ s.frame s.after s.context from_ →
       @SolvedWitnesses.sig ⟨s.cfg⟩ s.frame s.after s.context to_) : Certificate := by
   refine ⟨to_, ?_⟩
   obtain ⟨s, yes⟩ := ReadersWitnesses.occurs known
   letI : Config.InitialConfiguration := ⟨s.cfg⟩
   refine ⟨s, (label_true s _).mpr ((SolvedWitnesses.sig_iff s.context _).mpr ?_)⟩
-  exact same s ▸ (SolvedWitnesses.sig_iff s.context _).mp ((label_true s _).mp yes)
+  exact enter s ((SolvedWitnesses.sig_iff s.context _).mp ((label_true s _).mp yes))
 
 private def certify (b : Classes.StepBranch) (chosen : Option Step)
     (checked : chosen.bind (ordered · b) = some true) : Certificate := by
@@ -90,14 +91,18 @@ private def certificates : List Certificate :=
    observed (threeTerms false) 18 .new_in_elected_lt_trichotomy_inl,
    observed (threeTerms true) 20 .new_in_elected_lt_trichotomy_inr_inr,
    observed retireOnAppend 10 .post_log_role_inr,
-   samePredicate .observeTerm_log_message_appendEntriesResponse
-     .observeTerm_log_message_proposeRequestVoteRequest (by decide +kernel) (fun _ => rfl),
-   samePredicate .observeTerm_commitIndex_message_appendEntriesResponse
-     .observeTerm_commitIndex_message_proposeRequestVoteRequest (by decide +kernel) (fun _ => rfl)]
+   transfer .observeTerm_log_message_appendEntriesResponse
+     .observeTerm_log_message_proposeRequestVoteRequest (by decide +kernel) (fun _ h => h),
+   transfer .observeTerm_commitIndex_message_appendEntriesResponse
+     .observeTerm_commitIndex_message_proposeRequestVoteRequest (by decide +kernel) (fun _ h => h),
+   transfer .led_cur_led_after_inr .led_after_led_inr (by decide +kernel)
+     (fun s => @DeepElectionCases.electedLed ⟨s.cfg⟩ _ _ s.context),
+   transfer .led_cur_led_after_inr .led_after_elected_after_inr (by decide +kernel)
+     (fun s => @DeepElectionCases.electedNew ⟨s.cfg⟩ _ _ s.context)]
 
 public def witnessed : List Classes.StepBranch := certificates.map Subtype.val
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 14 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 16 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
