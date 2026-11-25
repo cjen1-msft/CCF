@@ -14,6 +14,7 @@ public import ConsensusCoverage.LoopSendCasesB
 public import ConsensusCoverage.BatchArmsB
 public import ConsensusCoverage.NominationRetirementB
 public import ConsensusCoverage.BatchPacketCasesB
+public import ConsensusCoverage.AdvanceArmsB
 import all ConsensusCoverage.MaximumCasesB
 import all ConsensusCoverage.ReceiveCasesB
 import all ConsensusCoverage.CampaignCasesB
@@ -24,6 +25,7 @@ import all ConsensusCoverage.PromotionArmsB
 import all ConsensusCoverage.LoopSendCasesB
 import all ConsensusCoverage.BatchArmsB
 import all ConsensusCoverage.BatchPacketCasesB
+import all ConsensusCoverage.AdvanceArmsB
 
 namespace ConsensusCoverage.CaseWitnessesDeepB
 
@@ -32,14 +34,15 @@ open ActionProfile
 public def witnessed : List Classes.StepBranch :=
   MaximumCasesB.questions ++ ReceiveCasesB.witnessed ++ CampaignCasesB.witnessed ++ SelfQuorumCasesB.questions ++
     FollowerFoldCasesB.questions ++ FollowerArmsB.questions ++ PromotionArmsB.questions ++
-    LoopSendCasesB.questions ++ BatchArmsB.questions ++ [.nominate_sends_successor_none] ++ BatchPacketCasesB.questions
+    LoopSendCasesB.questions ++ BatchArmsB.questions ++ [.nominate_sends_successor_none] ++
+    BatchPacketCasesB.questions ++ AdvanceArmsB.questions
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 84 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 96 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
   simp only [witnessed, List.mem_append, List.mem_singleton] at mem
-  rcases mem with (((((((((maximum | message) | campaign) | selfQuorum) | follower) | fold) | promotion) | loop) | batch) | rfl) | packet
+  rcases mem with ((((((((((maximum | message) | campaign) | selfQuorum) | follower) | fold) | promotion) | loop) | batch) | rfl) | packet) | advance
   · exact MaximumCasesB.occurs maximum
   · exact ReceiveCasesB.occurs message
   · exact CampaignCasesB.occurs campaign
@@ -51,5 +54,6 @@ public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
   · exact BatchArmsB.occurs batch
   · exact NominationRetirementB.occurs
   · exact BatchPacketCasesB.occurs packet
+  · exact AdvanceArmsB.occurs advance
 
 end ConsensusCoverage.CaseWitnessesDeepB
