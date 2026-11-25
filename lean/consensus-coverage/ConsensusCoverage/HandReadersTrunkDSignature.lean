@@ -7,6 +7,8 @@ import all ConsensusCoverage.HandReadersTrunkDSignatureSites
 import all ConsensusCoverage.HandReadersTrunkDSignatureTransport
 import all ConsensusCoverage.HandReadersTrunkDSignatureErased
 import all ConsensusCoverage.HandReadersTrunkDSignatureData
+import all ConsensusCoverage.HandReadersTrunkDSignatureGate
+import all ConsensusCoverage.HandReadersElectionRank
 import all ConsensusCoverage.HandReadersTrunkAPrefix
 import all ConsensusCoverage.HandReadersTrunkALimit
 import all ConsensusCoverage.DeepSignedCases
@@ -90,22 +92,26 @@ run_cmd liftTermElabM do
         name:=(ns++`Equiv).str q.getString!,levelParams:=[],type:=←mkForallFVars xs (←mkAppM ``Iff #[lhs,rhs])
         value:=←mkLambdaFVars xs (←mkAppM ``Iff.intro #[mp,mpr])})
 
+private def electedCommit : Reader := actorRead fun _ pre _ post=>
+  decide (pre.role ≠ .primary ∧ post.role = .primary ∧ 0 < pre.commitIndex)
+
 def reader : Reader := fun cfg before act after past=>
   HandReadersTrunkA.Loop.signedPrefix.eval cfg before act after past ||
+    electedCommit cfg before act after past ||
     (ReadersAtoms.ofXAction cfg before after past act).any fun x=>
-      @Compiled.R.NonRanking ⟨cfg⟩ x || (ReadersExtra.read? cfg (some x) .rankAtGrant_persist_inl).getD false
+      HandReadersElection.Rank.view .ahead x || HandReadersElection.Rank.view .tied x ||
+      (gate cfg before act after past && @Compiled.R.NonRanking ⟨cfg⟩ x)
 
 def exactReader (k : DeepSignedCases.FoldCase) : Exact (DeepSignedCases.column k) where
   eval := reader
   eq_label s := by
     letI : Config.InitialConfiguration := ⟨s.cfg⟩
     obtain ⟨x,made,ok⟩ := ReadersAtoms.ofXAction_matches s
-    have rank := ReadersExtra.read?_at s (b := .rankAtGrant_persist_inl) (by decide +kernel)
-    rw [made] at rank
     apply Bool.eq_iff_iff.mpr
-    rw [label_true,holds,sig_iff,reader,made,Option.any_some,Bool.or_eq_true,Bool.or_eq_true,rank,Option.getD_some,
-      ←HandReadersTrunkA.Loop.signedPrefix.eq_label s,label_true,holds,sig_iff,label_true,holds,sig_iff,
-      Compiled.R.NonRanking_iff _ _ _ x ok]
+    rw [label_true,holds,sig_iff,reader,made,Option.any_some]
+    simp only [Bool.or_eq_true,Bool.and_eq_true,←HandReadersTrunkA.Loop.signedPrefix.eq_label s,
+      label_true,holds,sig_iff,HandReadersElection.Rank.view_iff s.context ok,←rank_partition,gateAt,
+      Compiled.R.NonRanking_iff _ _ _ x ok,electedCommit,actorRead_at,decide_eq_true_eq]
     have h : sig s.context (DeepSignedCases.column k) ↔ Erased s.frame s.after s.context := by
       cases k
       all_goals first
@@ -115,7 +121,23 @@ def exactReader (k : DeepSignedCases.FoldCase) : Exact (DeepSignedCases.column k
         | exact Equiv.step_signatureIndex_le_maxCommittableIndex_mem_cons_inr ..
         | exact Equiv.step_signatureIndex_le_maxCommittableIndex_signature_pos ..
         | exact Equiv.step_signatureIndex_le_maxCommittableIndex_signature_neg ..
-    rw [h,erased_iff,or_left_comm]
-    rfl
+    have quick (was : s.context.pre.role ≠ .primary) (now : s.context.post.role = .primary)
+        (pos : 0 < s.context.pre.commitIndex) : Erased s.frame s.after s.context :=
+      (Equiv.step_signatureIndex_le_maxCommittableIndex_values_nil ..).mp
+        (.inl (DeepSignedCases.roots s.context was now pos).1)
+    rw [h]
+    have exact' := erased_iff s.frame s.after s.context
+    have historical := nonRankingGate s.frame s.after s.context
+    constructor
+    · intro e
+      rcases exact'.mp e with deep | signed | rank
+      · exact .inr (.inr ⟨historical deep,deep⟩)
+      · exact .inl (.inl signed)
+      · exact .inr (.inl rank)
+    · rintro ((signed | ⟨was,now,pos⟩) | rank | ⟨_,deep⟩)
+      · exact exact'.mpr (.inr (.inl signed))
+      · exact quick was now pos
+      · exact exact'.mpr (.inr (.inr rank))
+      · exact exact'.mpr (.inl deep)
 
 end ConsensusCoverage.HandReadersTrunkD.Signed
