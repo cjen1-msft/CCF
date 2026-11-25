@@ -7,6 +7,7 @@ public import ConsensusCoverage.HandReadersABase
 import all ConsensusCoverage.HandReadersTrunkABatch
 import all ConsensusCoverage.HandReadersTrunkAPackets
 import all ConsensusCoverage.HandReadersTrunkAConflict
+import all ConsensusCoverage.HandReadersTrunkAAdvance
 
 namespace ConsensusCoverage.HandReadersTrunkA
 
@@ -25,6 +26,7 @@ private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .foldlM__items_cons_2 => some Batch.foldCons
   | .aeReply_conflict_none => some (Request.conflictReader false)
   | .aeReply_conflict_some => some (Request.conflictReader true)
+  | .commit_le_advance_inl => some Batch.commitIdentity
   | _ => none
 
 public def covered : List Classes.StepBranch :=
@@ -44,6 +46,6 @@ public theorem read_total (s : Step) {b} (mem : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp mem).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 12 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 13 := by decide +kernel
 
 end ConsensusCoverage.HandReadersTrunkA
