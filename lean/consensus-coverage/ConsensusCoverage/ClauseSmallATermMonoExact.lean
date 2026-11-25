@@ -12,6 +12,7 @@ import all ConsensusCoverage.CommitKeys
 import all ConsensusCoverage.CommitMonitor
 import all ConsensusCoverage.ClauseSmallATermMonoSource
 import all ConsensusCoverage.ExploredWitnesses
+import all ConsensusCoverage.EventSupport
 import all ConsensusCoverage.FrontierWitnesses
 import all ConsensusCoverage.HandReadersASeen
 import all ConsensusCoverage.HandReadersElectionBKeys
@@ -236,11 +237,11 @@ private theorem elected (extra : Bool) :
     ReadersAtoms.electedExact 1 3 fullLog 2 (s.after :: s.before :: s.past) = true :=
   by cases extra <;> decide +kernel
 
-private theorem certified_key (s : Step) (boot : s.cfg.min?.getD 0 = 0)
+private theorem certified_answers (s : Step) (boot : s.cfg.min?.getD 0 = 0)
     (current : (2,fullLog) ∈ CommitKeys.here 0 s.after (s.before :: s.past) (fun _ b => b == 3))
     (old : CommitKeys.keys 0 (s.before :: s.past) = [(2,fullLog.take 2),(2,fullLog.take 4)])
     (election : ReadersAtoms.electedExact 1 3 fullLog 2 (s.after :: s.before :: s.past) = true) :
-    keys s = true := by
+    keys s = true ∧ label s (.step .leader_floor_led_inl) = true := by
   letI : Config.InitialConfiguration := ⟨s.cfg⟩
   let hist := s.after :: s.before :: s.past
   rw [← boot] at current
@@ -280,8 +281,20 @@ private theorem certified_key (s : Step) (boot : s.cfg.min?.getD 0 = 0)
   have source := delayed_source s.context backward backing fresh wins (by decide) agree (by decide)
   have key := Keys.sufficient s.context (.inr ⟨source,n,st,backward.1.1,backward.1.2.2.1,
     backward.1.2.1.symm ▸ backward.1.2.2.2⟩)
-  exact ((label_true s (.step .replaceNode_keys_here_pos)).trans
-    (SolvedWitnesses.sig_iff s.context .replaceNode_keys_here_pos)).mpr key
+  refine ⟨((label_true s (.step .replaceNode_keys_here_pos)).trans
+    (SolvedWitnesses.sig_iff s.context .replaceNode_keys_here_pos)).mpr key, ?_⟩
+  have n_is_bootstrap : n = Config.INITIAL_PRIMARY := by
+    apply s.context.inv_step.election_safety n Config.INITIAL_PRIMARY 2
+    · exact backward.1.2.1.symm ▸ backward.1.2.2.2
+    · exact Or.inl ⟨rfl,rfl⟩
+  subst n
+  have floor := delayed_floor s.context backward backing fresh wins (by decide) agree
+  exact ((label_true s (.step .leader_floor_led_inl)).trans
+    (SolvedWitnesses.sig_iff s.context .leader_floor_led_inl)).mpr floor
+
+private theorem replay_answers (extra : Bool) :
+    keys (replay extra) = true ∧ label (replay extra) (.step .leader_floor_led_inl) = true :=
+  certified_answers (replay extra) (bootstrap extra) (committable extra) (old_keys extra) (elected extra)
 
 /-- Node 1 is elected in the new term before node 4 sees the shorter term-two
 signature. The next nomination leaves node records unchanged but extends
@@ -289,9 +302,28 @@ the old-term backing to the longer signature already held by nodes 0 and 1.
 The optional inactive deployment node contributes the remaining zero index. -/
 private theorem checked (extra : Bool) :
     nonTrunkLabel .term_mono (replay extra) = row ((extra,true),(extra,true)) false true := by
-  have yes := certified_key (replay extra) (bootstrap extra) (committable extra)
-    (old_keys extra) (elected extra)
-  rw [shape, closed_endpoints, unchanged_answer (replay extra) (actor_unchanged extra), yes]
+  rw [shape, closed_endpoints, unchanged_answer (replay extra) (actor_unchanged extra),
+    (replay_answers extra).1]
+
+private theorem newest_keys (extra : Bool) :
+    let s := replay extra
+    (fastHere s.after (s.before :: s.past) (CommitKeys.backed [(2,fullLog.take 2),(2,fullLog.take 4)]) ++
+      [(2,fullLog.take 2),(2,fullLog.take 4)]).eraseDups = [(2,fullLog.take 2),(2,fullLog.take 4),(2,fullLog)] :=
+  by cases extra <;> decide +kernel
+
+private theorem replay_commits (extra : Bool) :
+    let s := replay extra
+    CommitKeys.keys 0 (s.after :: s.before :: s.past) =
+      [(2,fullLog.take 2),(2,fullLog.take 4),(2,fullLog)] := by
+  let s := replay extra
+  change CommitKeys.keys 0 (s.after :: preHistory extra) = _
+  rw [CommitKeys.keys, old_keys, ← fastHere_eq]
+  exact newest_keys extra
+
+private theorem recorded_nomination (extra : Bool) :
+    let s := replay extra
+    EventSupport.actionTag s.act = .nominateSuccessor :=
+  by cases extra <;> decide +kernel
 
 private theorem remaining_lower (r : RestrictedProfile) (mem : r ∈ remaining) :
     ∃ s : Step, nonTrunkLabel .term_mono s = r := by

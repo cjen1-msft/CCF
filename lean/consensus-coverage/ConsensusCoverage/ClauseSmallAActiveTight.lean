@@ -123,12 +123,12 @@ private abbrev FloorSites (n : NodeID) (k : Nat) :=
   (reach% step_leader_floor_led_inl[7]) f t c n k ∨
   (reach% step_leader_floor_led_inl[8]) f t c n k
 
-private abbrev NewCompletenessPair :=
-  ∃ k p n later l i, Committed (f.advance t) k p ∧ Elected (f.advance t) n later l i ∧ k < later ∧
+private abbrev NewCompletenessPair (k : Nat) :=
+  ∃ p n later l i, Committed (f.advance t) k p ∧ Elected (f.advance t) n later l i ∧ k < later ∧
     ¬ (Committed f k p ∧ Elected f n later l i ∧ k < later)
 
 private theorem floor_sites {n k} (h : FloorSites c n k) :
-    Installed c ∨ @NewCompletenessPair _ f t := by
+    Installed c ∨ @NewCompletenessPair _ f t k := by
   rcases h with a | b | d | e | g | i | j | l | m
   · reach_unfold step_leader_floor_led_inl[0] at a
     rcases a with a | a
@@ -158,7 +158,7 @@ private theorem floor_sites {n k} (h : FloorSites c n k) :
       obtain ⟨_,_,_,source,_⟩ := j
       reach_unfold step_leader_floor_led_inl[6,1] at source
       obtain ⟨p,node,later,log,commit,basis,_⟩ := source
-      exact .inr ⟨k,p,node,later,log,commit,basis⟩
+      exact .inr ⟨p,node,later,log,commit,basis⟩
   · reach_unfold step_leader_floor_led_inl[7] at l
     obtain ⟨_,entries,ev,pos,sig_,_,_,_,term,_,_⟩ := l
     exact .inl ⟨entries,ev,pos,sig_,term⟩
@@ -169,9 +169,8 @@ private theorem floor_sites {n k} (h : FloorSites c n k) :
 local macro "provideFloor " h:term : tactic => `(tactic|
   repeat' first | exact $h | exact Or.inl $h | apply Or.inr)
 
-private theorem floor_source (h : sig c ff ∨ sig c gg) :
-    Installed c ∨ @NewCompletenessPair _ f t := by
-  have sites : ∃ n k, FloorSites c n k := by
+private theorem floor_source_class (h : sig c ff ∨ sig c gg) :
+    ∃ n k, FloorSites c n k := by
     rcases h with h | h
     · rcases h with a | a | a | a | a | a | a | a | a
       all_goals exact ⟨_,_,by provideFloor a.1⟩
@@ -179,8 +178,22 @@ private theorem floor_source (h : sig c ff ∨ sig c gg) :
       all_goals
         obtain ⟨n,k,site,_⟩ := a
         exact ⟨n,k,by provideFloor site⟩
-  obtain ⟨n,k,site⟩ := sites
-  exact floor_sites c site
+
+private theorem floor_source (h : sig c ff ∨ sig c gg) :
+    Installed c ∨ ∃ k, @NewCompletenessPair _ f t k := by
+  obtain ⟨n,k,site⟩ := floor_source_class c h
+  exact (floor_sites c site).imp_right (fun h => ⟨k,h⟩)
+
+theorem elected_floor_source (h : sig c gg) :
+    Installed c ∨ ∃ k, 3 ≤ k ∧ @NewCompletenessPair _ f t k := by
+  have sites : ∃ n k, FloorSites c n k ∧ ∃ l i, Elected f n k l i := by
+    rcases h with a | a | a | a | a | a | a | a | a
+    all_goals
+      obtain ⟨n,k,site,won,_⟩ := a
+      exact ⟨n,k,by provideFloor site,won⟩
+  obtain ⟨n,k,site,l,i,won⟩ := sites
+  exact (floor_sites c site).imp_right
+    (fun h => ⟨k,(c.inv.electionCerts n k l i won).above,h⟩)
 
 private theorem floor_backed (h : sig c ff ∨ sig c gg) :
     ∃ k p, Committed (f.advance t) k p := by
