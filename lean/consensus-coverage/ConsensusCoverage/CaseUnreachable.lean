@@ -106,6 +106,14 @@ public theorem certificates_zero_false (s : Step) :
   intro h
   certificate_paths s.context h
 
+public theorem certificates_committed_false (s : Step) :
+    label s (.step .certificates_agree_backing_inr) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply solved_false
+  change ¬ SolvedWitnesses.step_certificates_agree_backing_inr s.frame s.after s.context
+  intro h
+  certificate_paths s.context h
+
 public theorem act_nomination_false (s : Step) :
     label s (.step .act_input_nominateSuccessor) = false := by
   letI : Config.InitialConfiguration := ⟨s.cfg⟩
@@ -141,13 +149,14 @@ public theorem nomination_none_false (s : Step) :
 private def individual : List Classes.StepBranch :=
   [.mem_network_mem_append_inl, .act_input_nominateSuccessor,
     .nominateSuccessor_successor_some, .nominateSuccessor_successor_none,
-    .commit_backed_now_after_inr, .certificates_agree_backing_inl]
+    .commit_backed_now_after_inr, .certificates_agree_backing_inl,
+    .certificates_agree_backing_inr]
 
 /-- Cases refuted by the generic support checks or individual proofs below. -/
 public def refuted : List Classes.StepBranch :=
   FullProfile.stepBranches.toList.filter fun b => noSupport b || decide (b ∈ individual)
 
-public theorem count : refuted.Nodup ∧ refuted.length = 6 := by decide +kernel
+public theorem count : refuted.Nodup ∧ refuted.length = 7 := by decide +kernel
 
 public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
     ∀ s : Step, label s (.step b) = false := by
@@ -158,12 +167,13 @@ public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
   · exact support_false s b unsupported
   · have mem := of_decide_eq_true direct
     simp only [individual, List.mem_cons, List.not_mem_nil, or_false] at mem
-    rcases mem with rfl | rfl | rfl | rfl | rfl | rfl
+    rcases mem with rfl | rfl | rfl | rfl | rfl | rfl | rfl
     · exact retained_false s
     · exact act_nomination_false s
     · exact nomination_some_false s
     · exact nomination_none_false s
     · exact commit_backed_other_false s
     · exact certificates_zero_false s
+    · exact certificates_committed_false s
 
 end ConsensusCoverage.CaseUnreachable
