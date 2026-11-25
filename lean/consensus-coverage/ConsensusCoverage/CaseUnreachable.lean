@@ -4,6 +4,8 @@ module
 -- Licensed under the Apache 2.0 License.
 
 meta import ConsensusCoverage.ReachPath
+meta import ConsensusCoverage.PathPremises
+import all ConsensusCoverage.CampaignLookup
 public import ConsensusCoverage.EvidenceSupport
 public import ConsensusCoverage.EventSupport
 public import ConsensusCoverage.ReducedQuestions
@@ -221,13 +223,127 @@ private def individual : List Classes.StepBranch :=
     .nominateSuccessor_successor_some, .nominateSuccessor_successor_none,
     .commit_backed_now_after_inr, .certificates_agree_backing_inl,
     .certificates_agree_backing_inr, .new_in_elected_led_inr, .rv_stable_now_after_inl,
-    .led_cur_role_inr]
+    .led_cur_role_inr, .led_cur_now_after_inr, .persist_now_after_inr, .seen_after_now_after_inr,
+    .facts_advance_inr_2, .facts_role_inl, .facts_role_inr,
+    .certificates_agree_le_total_inl, .certificates_agree_le_total_inr,
+    .vals_upToDate_lt_or_eq_of_le_inl, .termAt_le_of_mem_found_none,
+    .termAt_mono_eq_zero_or_pos_inl]
+
+private theorem old_seen_other [Config.InitialConfiguration] {f : Frame} {t : State}
+    (c : Ctx f t) {n o} (other : n ≠ c.actor) (h : Seen (f.advance t) n o) : Seen f n o := by
+  rcases c.seen_after h with old | ⟨eq, _⟩
+  · exact old
+  · exact (other eq).elim
+
+private theorem persist_delta_actor [Config.InitialConfiguration] {f : Frame} {t : State}
+    (c : Ctx f t) {n st o i}
+    (r : (reach% SolvedWitnesses.step_persist_now_after_inr[0]) f t c c n st o i) :
+    n = c.actor := by
+  apply Classical.byContradiction
+  intro different
+  obtain ⟨now, seen, sig, fresh, _⟩ := r
+  rcases c.now_after now with ⟨eq, _⟩ | ⟨_, old⟩
+  · exact different eq
+  · exact fresh ⟨old, old_seen_other c different seen, sig⟩
+
+public theorem led_cur_other_false (s : Step) : label s (.step .led_cur_now_after_inr) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply solved_false
+  change ¬ SolvedWitnesses.step_led_cur_now_after_inr _ _ _
+  rintro ⟨_, _, _, r, ⟨other, old⟩, _⟩
+  exact r.2.2.1 ⟨old, s.context.led_other other r.2.1⟩
+
+public theorem persist_other_false (s : Step) : label s (.step .persist_now_after_inr) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply solved_false
+  change ¬ SolvedWitnesses.step_persist_now_after_inr _ _ _
+  rintro ⟨_, _, _, _, r, ⟨other, _⟩, _⟩
+  exact other (persist_delta_actor s.context r)
+
+public theorem seen_other_false (s : Step) : label s (.step .seen_after_now_after_inr) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply solved_false
+  change ¬ SolvedWitnesses.step_seen_after_now_after_inr _ _ _
+  rintro (h | h)
+  all_goals obtain ⟨n, o, r, _, st, _, _, _, _, _, ⟨other, _⟩, _⟩ := h
+  · obtain ⟨_, now, seen, fresh, _⟩ := r
+    rcases s.context.now_after now with ⟨eq, _⟩ | ⟨_, old⟩
+    · exact other eq
+    · exact fresh ⟨old, old_seen_other s.context other seen⟩
+  · rcases r with ⟨_, _, _, _, _, _, _, _, _, eq⟩ | ⟨_, _, r, _⟩
+    · exact other eq
+    · exact other (persist_delta_actor s.context r)
+
+private theorem no_winning_advance [Config.InitialConfiguration] {f : Frame} {t : State}
+    (c : Ctx f t) (middle : NodeState) (win : Wins c.actor c.pre c.event c.post)
+    (log : c.post.log = middle.log) (term : c.post.currentTerm = middle.currentTerm)
+    (lt : middle.commitIndex < c.post.commitIndex)
+    (eq : c.post.commitIndex = highestCommittableIndex middle c.actor) : False := by
+  obtain ⟨bound, signed, stamp, _⟩ := highestCommittableIndex_spec middle c.actor (eq ▸ lt)
+  exact no_election_entry c (c.wins_elect win) (signature_pos signed)
+    (log.symm ▸ bound) (by rw [log, term]; exact stamp)
+
+local macro "winning_advance_paths " c:term:arg h:term:arg : tactic => `(tactic|
+  (rcases ($h) with h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h
+   all_goals
+     obtain ⟨self, pre, ev, post, origin, candidate, rest⟩ := h
+     have pins : self = ($c).actor ∧ pre = ($c).pre ∧ ev = ($c).event ∧ post = ($c).post := by
+       path_premise origin
+     obtain ⟨hs, hp, he, ht⟩ := pins
+     subst self; subst pre; subst ev; subst post
+     apply no_winning_advance $c (primaryState candidate)
+     all_goals path_premise rest))
+
+public theorem winning_advance_false (s : Step) (b : Classes.StepBranch)
+    (arm : b = .facts_advance_inr_2 ∨ b = .facts_role_inl ∨ b = .facts_role_inr) :
+    label s (.step b) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply solved_false
+  rcases arm with rfl | rfl | rfl
+  all_goals
+    first | change ¬ SolvedWitnesses.step_facts_advance_inr_2 _ _ _
+          | change ¬ SolvedWitnesses.step_facts_role_inl _ _ _
+          | change ¬ SolvedWitnesses.step_facts_role_inr _ _ _
+    intro h
+    winning_advance_paths s.context h
+
+public theorem certificate_order_false (s : Step) (b : Classes.StepBranch)
+    (arm : b = .certificates_agree_le_total_inl ∨ b = .certificates_agree_le_total_inr) :
+    label s (.step b) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply solved_false
+  rcases arm with rfl | rfl
+  all_goals
+    first | change ¬ SolvedWitnesses.step_certificates_agree_le_total_inl _ _ _
+          | change ¬ SolvedWitnesses.step_certificates_agree_le_total_inr _ _ _
+    rintro (h|h|h|h|h|h|h|h)
+    all_goals
+      obtain ⟨n, m, k, l, i, _, _, r, _⟩ := h
+      apply no_repeat_election s.context (n := n) (m := m) (k := k) (l := l) (i := i)
+      all_goals path_premise r
+
+public theorem self_vote_strict_rank_false (s : Step) :
+    label s (.step .vals_upToDate_lt_or_eq_of_le_inl) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  let c := s.context
+  have frontier : c.pre.commitIndex ≤ maxCommittableIndex c.pre.log := by
+    rcases Nat.eq_zero_or_pos c.pre.commitIndex with zero | pos
+    · exact zero ▸ Nat.zero_le _
+    · exact Ledger.signatureIndex_le_maxCommittableIndex ((c.inv.frontier _ _ c.pre_now).2 pos)
+  apply solved_false
+  change ¬ SolvedWitnesses.step_vals_upToDate_lt_or_eq_of_le_inl _ _ c
+  rintro (h|h|h|h|h|h|h|h|h|h)
+  all_goals
+    obtain ⟨st, r, strict, _⟩ := h
+    have pin : st = c.pre := by path_premise r
+    rw [pin, Nat.max_eq_right frontier] at strict
+    exact Nat.lt_irrefl _ strict
 
 /-- Cases refuted by the generic support checks or individual proofs below. -/
 public def refuted : List Classes.StepBranch :=
   FullProfile.stepBranches.toList.filter fun b => noSupport b || decide (b ∈ individual)
 
-public theorem count : refuted.Nodup ∧ refuted.length = 10 := by decide +kernel
+public theorem count : refuted.Nodup ∧ refuted.length = 21 := by decide +kernel
 
 public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
     ∀ s : Step, label s (.step b) = false := by
@@ -238,7 +354,8 @@ public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
   · exact support_false s b unsupported
   · have mem := of_decide_eq_true direct
     simp only [individual, List.mem_cons, List.not_mem_nil, or_false] at mem
-    rcases mem with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    rcases mem with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+      | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
     · exact retained_false s
     · exact act_nomination_false s
     · exact nomination_some_false s
@@ -249,5 +366,14 @@ public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
     · exact new_in_elected_fresh_leader_false s
     · exact rv_stable_actor_false s
     · exact led_cur_retired_false s
+    · exact led_cur_other_false s
+    · exact persist_other_false s
+    · exact seen_other_false s
+    all_goals first
+      | exact winning_advance_false s _ (by decide)
+      | exact certificate_order_false s _ (by decide)
+      | exact self_vote_strict_rank_false s
+      | exact CampaignLookup.lookup_false s
+      | exact CampaignLookup.mono_false s
 
 end ConsensusCoverage.CaseUnreachable
