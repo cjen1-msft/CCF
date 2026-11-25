@@ -9,6 +9,7 @@ import all ConsensusCoverage.CensusGhost
 import all ConsensusCoverage.CensusObserved
 import all ConsensusCoverage.ReadersGenerated
 import all ConsensusCoverage.ReadersAtoms
+import all ConsensusCoverage.ReadersIndex
 import all ConsensusCoverage.GuardedDomain
 
 namespace ConsensusCoverage.CensusObservationRows
@@ -34,18 +35,24 @@ public def Factored (b : Classes.StepBranch) : Prop :=
     CensusObserved.Tracks h (x.base.after :: x.base.before :: x.base.past) →
     @Exec.readView (input x g h) ⟨cfg⟩ (physical x g h) b = @ReadersCompiler.readView ⟨cfg⟩ x b
 
+private noncomputable def truth (p : Prop) : Bool := @decide p (Classical.propDecidable _)
+
+private theorem any_as_exists (xs : List α) (p : α → Bool) :
+    xs.any p = truth (∃ a, a ∈ xs ∧ p a = true) := by
+  apply Bool.eq_iff_iff.mpr
+  simp only [truth, List.any_eq_true, decide_eq_true_eq]
+
 local macro "observed_proof " finite:ident raw:ident : tactic => `(tactic|
   (intro cfg x g h pre post
    change some (@$finite (input x g h) ⟨cfg⟩ (physical x g h)) = some (@$raw ⟨cfg⟩ x)
    congr 1
    unfold $finite:ident $raw:ident
-   simp only [physical, input, obs, slice, CensusObserved.observation_mem pre, CensusObserved.observation_mem post]
-   all_goals
-     repeat' first | apply congrArg (List.any _); funext a | split
-     all_goals
-       apply Bool.eq_iff_iff.mpr
-       simp only [List.any_eq_true, List.mem_attach, true_and, Subtype.exists, exists_prop,
-         CensusObserved.observation_mem pre, CensusObserved.observation_mem post]))
+   simp only [Exec.reach_237, ReadersCompiler.R.reach_237, Exec.reach_39, ReadersCompiler.R.reach_39,
+     Exec.reach_395, ReadersCompiler.R.reach_395, Exec.reach_26, ReadersCompiler.R.reach_26,
+     Exec.reach_25, ReadersCompiler.R.reach_25, ReadersIndex.sameSent, ReadersIndex.patchedMatch,
+     ReadersIndex.sameMatch, XView.sent, physical, input, obs, slice, any_as_exists,
+     List.mem_attach, true_and, Subtype.exists, exists_prop, List.mem_eraseDups, List.mem_flatMap,
+     List.mem_map, CensusObserved.observation_mem pre, CensusObserved.observation_mem post]))
 
 set_option linter.unusedSimpArgs false in
 private def certificates : List { b : Classes.StepBranch // Factored b } :=
@@ -54,9 +61,33 @@ private def certificates : List { b : Classes.StepBranch // Factored b } :=
    ⟨.inv_step_term_mono_seen_inl, by
     observed_proof Exec.step_inv_step_term_mono_seen_inl ReadersCompiler.R.step_inv_step_term_mono_seen_inl⟩,
    ⟨.inv_step_term_mono_seen_inr, by
-    observed_proof Exec.step_inv_step_term_mono_seen_inr ReadersCompiler.R.step_inv_step_term_mono_seen_inr⟩]
+    observed_proof Exec.step_inv_step_term_mono_seen_inr ReadersCompiler.R.step_inv_step_term_mono_seen_inr⟩,
+   ⟨.persist_now_after_inl, by
+    observed_proof Exec.step_persist_now_after_inl ReadersCompiler.R.step_persist_now_after_inl⟩,
+   ⟨.persist_persist_inl, by
+    observed_proof Exec.step_persist_persist_inl ReadersCompiler.R.step_persist_persist_inl⟩,
+   ⟨.persist_pre_kind_accept, by
+    observed_proof Exec.step_persist_pre_kind_accept ReadersCompiler.R.step_persist_pre_kind_accept⟩,
+   ⟨.persist_pre_kind_ack, by
+    observed_proof Exec.step_persist_pre_kind_ack ReadersCompiler.R.step_persist_pre_kind_ack⟩,
+   ⟨.persist_pre_kind_append, by
+    observed_proof Exec.step_persist_pre_kind_append ReadersCompiler.R.step_persist_pre_kind_append⟩,
+   ⟨.persist_pre_kind_elect, by
+    observed_proof Exec.step_persist_pre_kind_elect ReadersCompiler.R.step_persist_pre_kind_elect⟩,
+   ⟨.persist_pre_kind_same, by
+    observed_proof Exec.step_persist_pre_kind_same ReadersCompiler.R.step_persist_pre_kind_same⟩,
+   ⟨.persist_seen_after_inl, by
+    observed_proof Exec.step_persist_seen_after_inl ReadersCompiler.R.step_persist_seen_after_inl⟩,
+   ⟨.persist_seen_after_inr, by
+    observed_proof Exec.step_persist_seen_after_inr ReadersCompiler.R.step_persist_seen_after_inr⟩,
+   ⟨.rv_stable_now_after_inl, by
+    observed_proof Exec.step_rv_stable_now_after_inl ReadersCompiler.R.step_rv_stable_now_after_inl⟩,
+   ⟨.rv_stable_now_after_inr, by
+    observed_proof Exec.step_rv_stable_now_after_inr ReadersCompiler.R.step_rv_stable_now_after_inr⟩]
 
 public def columns : List Classes.StepBranch := certificates.map Subtype.val
+
+public theorem count : columns.Nodup ∧ columns.length = 14 := by decide +kernel
 
 public theorem correct {b : Classes.StepBranch} (mem : b ∈ columns) : Factored b := by
   obtain ⟨⟨_, proof⟩, _, rfl⟩ := List.mem_map.mp mem
