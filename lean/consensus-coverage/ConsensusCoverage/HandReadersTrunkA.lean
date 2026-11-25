@@ -5,6 +5,7 @@ module
 
 public import ConsensusCoverage.HandReadersABase
 import all ConsensusCoverage.HandReadersTrunkABatch
+import all ConsensusCoverage.HandReadersTrunkAPackets
 
 namespace ConsensusCoverage.HandReadersTrunkA
 
@@ -13,6 +14,10 @@ open Consensus ActionProfile HandReadersA
 private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .appendEntry_batch_peers_none => some Batch.peersNone
   | .appendEntry_batch_peers_some => some Batch.peersSome
+  | .appendEntry_batch_mem_append_inl => some Batch.entryOld
+  | .appendEntry_batch_mem_append_inr => some Batch.entryNew
+  | .sendEntries_batch_mem_append_inl => some Batch.sendOld
+  | .sendEntries_batch_mem_append_inr => some Batch.sendNew
   | .push_mem_append_inl => some Batch.pushOld
   | .push_mem_append_inr => some Batch.pushNew
   | .foldlM__items_nil_2 => some Batch.foldNil
@@ -36,6 +41,6 @@ public theorem read_total (s : Step) {b} (mem : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp mem).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 6 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 10 := by decide +kernel
 
 end ConsensusCoverage.HandReadersTrunkA
