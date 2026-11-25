@@ -5,6 +5,7 @@ module
 
 public import ConsensusCoverage.HandReadersABase
 import all ConsensusCoverage.HandReadersALeader
+import all ConsensusCoverage.HandReadersAObserve
 
 namespace ConsensusCoverage.HandReadersA
 
@@ -13,6 +14,20 @@ open Consensus ActionProfile
 private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .leader_logs_commit_pos => some (Leader.exactReader true)
   | .leader_logs_commit_neg => some (Leader.exactReader false)
+  | .observeTerm_log_message_appendEntriesResponse => some (Observe.ackAlias true)
+  | .observeTerm_commitIndex_message_appendEntriesResponse => some (Observe.ackAlias false)
+  | .observeTerm_log_message_proposeRequestVoteRequest => some (Observe.exactReader true .call)
+  | .observeTerm_log_primary_pos => some (Observe.exactReader true .primary)
+  | .observeTerm_log_primary_neg => some (Observe.exactReader true .backup)
+  | .observeTerm_log_newer_pos => some (Observe.exactReader true .higher)
+  | .observeTerm_log_newer_neg => some (Observe.exactReader true .stable)
+  | .observeTerm_log_message_other => some (Observe.exactReader true .other)
+  | .observeTerm_commitIndex_message_proposeRequestVoteRequest => some (Observe.exactReader false .call)
+  | .observeTerm_commitIndex_primary_pos => some (Observe.exactReader false .primary)
+  | .observeTerm_commitIndex_primary_neg => some (Observe.exactReader false .backup)
+  | .observeTerm_commitIndex_newer_pos => some (Observe.exactReader false .higher)
+  | .observeTerm_commitIndex_newer_neg => some (Observe.exactReader false .stable)
+  | .observeTerm_commitIndex_message_other => some (Observe.exactReader false .other)
   | _ => none
 
 public def covered : List Classes.StepBranch :=
@@ -32,6 +47,6 @@ public theorem read_total (s : Step) {b} (h : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp h).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 2 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 16 := by decide +kernel
 
 end ConsensusCoverage.HandReadersA
