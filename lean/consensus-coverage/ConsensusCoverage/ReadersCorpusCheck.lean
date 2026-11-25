@@ -29,8 +29,9 @@ private structure ReplayKey where
 private structure Sample where
   schedule : Nat
   offset : Nat
-  evidence : Readers.Evidence
-  baseline : ReplayAnswers.Evidence
+  tag : EventSupport.Tag
+  evidence : Thunk Readers.Evidence
+  baseline : Thunk ReplayAnswers.Evidence
   copies : Nat := 1
 
 private def samples : IO (List Sample) := do
@@ -47,8 +48,9 @@ private def samples : IO (List Sample) := do
         out := out.modify k (fun s => { s with copies := s.copies + 1 })
       else
         keys := keys.push key
-        out := out.push ⟨i, offset, Readers.read s.cfg s.before s.act s.after s.past,
-          ReplayAnswers.read s.cfg s.before s.act s.after s.past, 1⟩
+        out := out.push ⟨i, offset, EventSupport.actionTag s.act,
+          Thunk.mk fun _ => Readers.read s.cfg s.before s.act s.after s.past,
+          Thunk.mk fun _ => ReplayAnswers.read s.cfg s.before s.act s.after s.past, 1⟩
   return out.toList.mergeSort (fun a b => a.offset ≤ b.offset)
 
 private structure Obs where
@@ -59,18 +61,23 @@ private structure Obs where
   negativesInferred : Nat := 0
   duplicates : Nat := 0
 
-private def observe (rows : List Sample) (b : Classes.StepBranch) (search : Option Nat) :
+private def observe (rows : List Sample) (b : Classes.StepBranch) (positivesOnly : Bool)
+    (limit : Option Nat) :
     IO (Obs × Bool) := do
   let exact := Readers.covered.contains b
+  let allowed := EventSupport.allowed b
+  -- Excluded action kinds cannot be positive, but a partial reader may still
+  -- return unknown on them. Only omit those steps from positive searches.
+  let rows := if positivesOnly then rows.filter (fun s => decide (s.tag ∈ allowed)) else rows
   let (knownYes, remaining) :=
-    (rows.map fun s => (s, ReplayAnswers.answer s.baseline (.step b))).partition (·.2 == some true)
+    (rows.map fun s => (s, ReplayAnswers.answer s.baseline.get (.step b))).partition (·.2 == some true)
   if let (s, _) :: _ := knownYes then
     -- Both readers are sound, and the exact one is total.
     if exact then return ({ firstYes := some (s.schedule, s.offset), exactInferred := 1 }, true)
-  let candidates : List (Sample × Option Bool) := match search with
-    | none => knownYes ++ remaining
-    | some limit =>
-      (knownYes ++ remaining.filter (fun (_, answer) => answer != some false)).take limit
+  let remaining :=
+    if positivesOnly then remaining.filter (fun (_, answer) => answer != some false) else remaining
+  let candidates := knownYes ++ remaining
+  let candidates := limit.elim candidates candidates.take
   let mut result : Obs := {}
   for (s, baseline) in candidates do
     result := { result with duplicates := result.duplicates + (s.copies - 1) }
@@ -82,8 +89,9 @@ private def observe (rows : List Sample) (b : Classes.StepBranch) (search : Opti
         result := { result with negativesInferred := result.negativesInferred + 1 }
         pure none
       else do
+        let evidence := s.evidence.get
         let start ← IO.monoNanosNow
-        let found := Readers.read? s.evidence b
+        let found := Readers.read? evidence b
         let elapsed := (← IO.monoNanosNow) - start
         if let some v := found then
           if let some old := baseline then
@@ -117,15 +125,17 @@ public def main (args : List String) : IO Unit := do
     match value.toNat? with
     | some (limit + 1) => pure (limit + 1)
     | _ => throw (IO.userError "CCF_READERS_SEARCH_PREFIXES must be a positive integer")
+  let positivesOnly := search.isSome || (← IO.getEnv "CCF_READERS_POSITIVE_ONLY").isSome
   for (b, i) in FullProfile.stepBranches.toList.zipIdx do
     if i % shards != shard then continue
     let name := toString (repr b)
     if !selected.isEmpty && !selected.contains ((name.splitOn ".").getLast!) then continue
     if trace then IO.eprintln s!"reading {name}"
-    let (observed, baseline) ← observe sample b search
-    -- A bounded positive search cannot classify a row without a hit.
-    if search.isSome && observed.firstYes.isNone then
-      IO.eprintln s!"unmeasured {name}: no hit in bounded positive search"
+    let (observed, baseline) ← observe sample b positivesOnly search
+    -- Positive searches do not distinguish a negative from a missing answer.
+    if positivesOnly && observed.firstYes.isNone then
+      let scope := if search.isSome then "bounded positive search" else "all eligible prefixes"
+      IO.eprintln s!"unmeasured {name}: no hit in {scope}"
       continue
     let (status, schedule, offset) := match observed.firstYes with
       | some (s, i) => ("yes", toString s, toString i)
