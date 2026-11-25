@@ -4,6 +4,8 @@ module
 -- Licensed under the Apache 2.0 License.
 
 public import ConsensusCoverage.JointWitnesses
+import all ConsensusCoverage.DeepSchedules
+import all ConsensusCoverage.EventSupport
 import all ConsensusCoverage.JointWitnesses
 import all ConsensusCoverage.ActionProfile
 import all ConsensusCoverage.SolvedWitnesses
@@ -59,12 +61,19 @@ private theorem validAck : duplicateAck.valid := by
   change duplicateAck.cfg.Nonempty ∧ duplicateAck.nodes.Nodup
   decide
 
+open DeepSchedules in
+local macro "observed " sc:term:arg i:num b:term:arg : term =>
+  `(certify $b (selected (Script.run $sc) (Script.choices $sc) (by unfold Run.valid; decide) $i)
+    (by decide +kernel))
+
+open DeepSchedules in
 private def certificates : List Certificate :=
-  [certify .commit_backed_max_eq_or_inl (selected duplicateAck [] validAck 5) (by decide +kernel)]
+  [certify .commit_backed_max_eq_or_inl (selected duplicateAck [] validAck 5) (by decide +kernel),
+   observed installLater 12 .leader_floor_led_inr]
 
 public def witnessed : List Classes.StepBranch := certificates.map Subtype.val
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 1 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 2 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
