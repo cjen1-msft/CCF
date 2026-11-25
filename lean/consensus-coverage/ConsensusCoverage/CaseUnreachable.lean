@@ -224,7 +224,8 @@ private def individual : List Classes.StepBranch :=
     .certificates_agree_backing_inr, .new_in_elected_led_inr, .rv_stable_now_after_inl,
     .led_cur_role_inr, .led_cur_now_after_inr, .persist_now_after_inr, .seen_after_now_after_inr,
     .facts_advance_inr_2, .facts_role_inl, .facts_role_inr,
-    .certificates_agree_le_total_inl, .certificates_agree_le_total_inr]
+    .certificates_agree_le_total_inl, .certificates_agree_le_total_inr,
+    .vals_upToDate_lt_or_eq_of_le_inl]
 
 private theorem old_seen_other [Config.InitialConfiguration] {f : Frame} {t : State}
     (c : Ctx f t) {n o} (other : n ≠ c.actor) (h : Seen (f.advance t) n o) : Seen f n o := by
@@ -319,11 +320,28 @@ public theorem certificate_order_false (s : Step) (b : Classes.StepBranch)
       apply no_repeat_election s.context (n := n) (m := m) (k := k) (l := l) (i := i)
       all_goals path_premise r
 
+public theorem self_vote_strict_rank_false (s : Step) :
+    label s (.step .vals_upToDate_lt_or_eq_of_le_inl) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  let c := s.context
+  have frontier : c.pre.commitIndex ≤ maxCommittableIndex c.pre.log := by
+    rcases Nat.eq_zero_or_pos c.pre.commitIndex with zero | pos
+    · exact zero ▸ Nat.zero_le _
+    · exact Ledger.signatureIndex_le_maxCommittableIndex ((c.inv.frontier _ _ c.pre_now).2 pos)
+  apply solved_false
+  change ¬ SolvedWitnesses.step_vals_upToDate_lt_or_eq_of_le_inl _ _ c
+  rintro (h|h|h|h|h|h|h|h|h|h)
+  all_goals
+    obtain ⟨st, r, strict, _⟩ := h
+    have pin : st = c.pre := by path_premise r
+    rw [pin, Nat.max_eq_right frontier] at strict
+    exact Nat.lt_irrefl _ strict
+
 /-- Cases refuted by the generic support checks or individual proofs below. -/
 public def refuted : List Classes.StepBranch :=
   FullProfile.stepBranches.toList.filter fun b => noSupport b || decide (b ∈ individual)
 
-public theorem count : refuted.Nodup ∧ refuted.length = 18 := by decide +kernel
+public theorem count : refuted.Nodup ∧ refuted.length = 19 := by decide +kernel
 
 public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
     ∀ s : Step, label s (.step b) = false := by
@@ -335,7 +353,7 @@ public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
   · have mem := of_decide_eq_true direct
     simp only [individual, List.mem_cons, List.not_mem_nil, or_false] at mem
     rcases mem with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
-      | rfl | rfl | rfl | rfl | rfl
+      | rfl | rfl | rfl | rfl | rfl | rfl
     · exact retained_false s
     · exact act_nomination_false s
     · exact nomination_some_false s
@@ -349,6 +367,9 @@ public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
     · exact led_cur_other_false s
     · exact persist_other_false s
     · exact seen_other_false s
-    all_goals first | exact winning_advance_false s _ (by decide) | exact certificate_order_false s _ (by decide)
+    all_goals first
+      | exact winning_advance_false s _ (by decide)
+      | exact certificate_order_false s _ (by decide)
+      | exact self_vote_strict_rank_false s
 
 end ConsensusCoverage.CaseUnreachable
