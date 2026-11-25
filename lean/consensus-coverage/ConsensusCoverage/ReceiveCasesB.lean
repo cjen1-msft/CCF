@@ -7,6 +7,7 @@ public import ConsensusCoverage.DeepSchedulesB
 import all ConsensusCoverage.DeepSchedulesB
 import all ConsensusCoverage.GuardedDomain
 import all ConsensusCoverage.ReadersAtoms
+import all ConsensusCoverage.ReadersPolarObserve
 import all ConsensusCoverage.SolvedWitnesses
 import all ConsensusCoverage.ReachPath
 import all Consensus.Proofs.SafetyInvariant
@@ -246,6 +247,30 @@ private theorem grantNo (q : RequestVoteRequest) (ev : x.event = .receive n (.re
     (lt : x.base.pre.currentTerm < q.term) (g : ¬grant x.base.pre n q = true) :
     step_voteRequest_summary_granted_neg f t c := by grant_path x ok changed n q ev lt g
 
+local macro "insert_path " x:ident ok:ident ch:ident n:ident q:ident ev:ident peer:ident
+    guard:ident " with " member:tacticSeq : tactic => `(tactic|
+  (branch_at 15
+   rcases observe_bumping ($x).base.pre (message := .requestVoteResponse $q) trivial with h | h
+   · exact absurd h.1 (Nat.not_lt_of_ge (Nat.le_of_eq ($guard).2.1))
+   · refine ⟨($x).base.actor, ($x).base.pre, $n, $q, ?_, fun h => h.2 $peer,
+       h, h.1, h.2, $guard, _, [], Or.inl ⟨rfl, rfl⟩, ?_⟩
+     · long_path $ok $ch $ev
+     · $member))
+
+private theorem inserted (q : RequestVoteResponse) (ev : x.event = .receive n (.requestVoteResponse q))
+    (peer : n ∈ eligiblePeers x.base.pre x.base.actor)
+    (g : x.base.pre.role = .candidate ∧ q.term = x.base.pre.currentTerm ∧ q.voteGranted = true) :
+    step_voteResponse_summary_mem_insert_inl f t c := by
+  insert_path x ok changed n q ev peer g with
+    exact CCF.Finset.mem_insert.mpr (Or.inl rfl)
+
+private theorem oldVote (q : RequestVoteResponse) (ev : x.event = .receive n (.requestVoteResponse q))
+    (peer : n ∈ eligiblePeers x.base.pre x.base.actor)
+    (g : x.base.pre.role = .candidate ∧ q.term = x.base.pre.currentTerm ∧ q.voteGranted = true)
+    (selfVote : x.base.actor ∈ x.base.pre.votesGranted) : step_voteResponse_summary_mem_insert_inr f t c := by
+  insert_path x ok changed n q ev peer g with
+    exact ⟨_, CCF.Finset.mem_insert.mpr (Or.inr selfVote), selfVote⟩
+
 end
 
 private def voteBump : Certificate := by
@@ -253,6 +278,16 @@ private def voteBump : Certificate := by
   at_sample campaign 4 .voteRequest_summary_observe_bumping_inl a c ok
   exact voteNew (c := c) (x := a.x) ok (by decide +kernel) (src a.x.event) (request (msg a.x.event))
     (by decide +kernel) (by decide +kernel)
+
+private def stableRequest : Certificate := by
+  refine ⟨.voteRequest_summary_observe_bumping_inr, ?_⟩
+  at_sample stableVote 10 .voteRequest_summary_observe_bumping_inr a c ok
+  apply ReadersPolarObserve.R.yes_step_voteRequest_summary_observe_bumping_inr_sound _ _ c a.x ok
+    (ReadersPolar.prepare a.s.cfg a.x)
+  unfold ReadersPolarObserve.R.yes_step_voteRequest_summary_observe_bumping_inr
+  iterate 15 (rw [Bool.or_eq_true]; right)
+  rw [Bool.or_eq_true]; left
+  decide +kernel
 
 local macro "check_receive " b:term:arg r:term:arg i:num get:ident cert:ident : term => `(by
   refine ⟨$b, ?_⟩
@@ -267,7 +302,9 @@ local macro "check_bump " b:term:arg r:term:arg i:num tag:term:arg get:ident cer
     (by decide +kernel) True.intro (by first | exact True.intro | decide +kernel) (by decide +kernel) (b := $b) rfl)
 
 private def certificates : List Certificate := [
-  voteBump,
+  voteBump, stableRequest,
+  check_receive .voteResponse_summary_mem_insert_inl campaign 5 response inserted,
+  check_receive .voteResponse_summary_mem_insert_inr campaign 5 response oldVote,
   check_receive .voteRequest_summary_granted_pos campaign 4 request grantYes,
   check_receive .voteRequest_summary_granted_neg denyVote 7 request grantNo,
   check_receive .preVoteRequest_summary_observe_bumping_inl higherPreRequest 8 request preNew,

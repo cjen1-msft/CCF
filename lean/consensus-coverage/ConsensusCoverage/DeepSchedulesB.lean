@@ -101,6 +101,12 @@ public def higherPreRequest : Replay := script! ({ DeepSchedules.divergent with
   ops := DeepSchedules.divergent.ops.take 7 ++
     [.input 1 (.timeout .election), .msg 1 0 .requestPreVoteRequest] })
 
+-- Deliver the candidate's newer pre-vote first. It updates voter 2's term
+-- without recording a vote; the pending vote request now changes only the vote.
+public def stableVote : Replay := script! ({ DeepSchedules.threeTerms false with
+  ops := (DeepSchedules.threeTerms false).ops.take 8 ++ [.input 1 (.timeout .election),
+    .msg 1 2 .requestPreVoteRequest, .msg 1 2 .requestVoteRequest] })
+
 -- A pending duplicate append reaches voter 2 after it voted for leader 1.
 -- Clear the older ACK first so the last reply carries term 3 to primary 0.
 public def higherAck : Replay := script! ({ DeepSchedules.divergent with
