@@ -72,6 +72,40 @@ public theorem commit_backed_other_false (s : Step) :
   reach_unfold SolvedWitnesses.step_commit_backed_now_after_inr[0] at reach
   repeat' first | exact different reach.1 | obtain ⟨_, reach⟩ := reach
 
+-- Election safety makes the old leader the actor. Its term/role invariant
+-- then rules out both ways this actor could newly win in the same term.
+private theorem no_repeat_election [Config.InitialConfiguration] {f : Frame} {t : Model.State}
+    (c : Ctx f t) {n m k l i} (e : ElectStep f t n k l i) (old : Led f m k) : False := by
+  obtain rfl := c.new_old_unique e old
+  obtain ⟨actor, _, _, campaign, _⟩ := c.electStep e
+  subst n
+  rcases c.inv.led_cur c.actor c.pre k c.pre_now old with lt | ⟨eq, notCandidate⟩
+  · rcases campaign with newer | ⟨same, _⟩ <;> omega
+  · rcases campaign with newer | ⟨_, candidate⟩
+    · omega
+    · exact notCandidate candidate
+
+local macro "certificate_paths " c:term:arg h:term:arg : tactic => `(tactic|
+  (rcases ($h) with h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h
+   all_goals
+     first
+     | obtain ⟨_, _, _, _, _, _, _, reach, _⟩ := h
+       exact no_repeat_election $c reach.2.2.2.2.1 reach.2.2.2.2.2.1
+     | obtain ⟨_, _, _, _, _, _, reach, _⟩ := h
+       exact no_repeat_election $c reach.2.2.2.2.1 reach.2.2.2.2.2.1
+     | obtain ⟨_, _, _, _, _, _, _, reach, _⟩ := h
+       rcases reach with r | r <;> exact no_repeat_election $c r.2.2.2.2.1 r.2.2.2.2.2.1
+     | obtain ⟨_, _, _, _, _, _, reach, _⟩ := h
+       rcases reach with r | r <;> exact no_repeat_election $c r.2.2.2.2.1 r.2.2.2.2.2.1))
+
+public theorem certificates_zero_false (s : Step) :
+    label s (.step .certificates_agree_backing_inl) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply solved_false
+  change ¬ SolvedWitnesses.step_certificates_agree_backing_inl s.frame s.after s.context
+  intro h
+  certificate_paths s.context h
+
 public theorem act_nomination_false (s : Step) :
     label s (.step .act_input_nominateSuccessor) = false := by
   letI : Config.InitialConfiguration := ⟨s.cfg⟩
@@ -107,13 +141,13 @@ public theorem nomination_none_false (s : Step) :
 private def individual : List Classes.StepBranch :=
   [.mem_network_mem_append_inl, .act_input_nominateSuccessor,
     .nominateSuccessor_successor_some, .nominateSuccessor_successor_none,
-    .commit_backed_now_after_inr]
+    .commit_backed_now_after_inr, .certificates_agree_backing_inl]
 
 /-- Cases refuted by the generic support checks or individual proofs below. -/
 public def refuted : List Classes.StepBranch :=
   FullProfile.stepBranches.toList.filter fun b => noSupport b || decide (b ∈ individual)
 
-public theorem count : refuted.Nodup ∧ refuted.length = 5 := by decide +kernel
+public theorem count : refuted.Nodup ∧ refuted.length = 6 := by decide +kernel
 
 public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
     ∀ s : Step, label s (.step b) = false := by
@@ -124,11 +158,12 @@ public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
   · exact support_false s b unsupported
   · have mem := of_decide_eq_true direct
     simp only [individual, List.mem_cons, List.not_mem_nil, or_false] at mem
-    rcases mem with rfl | rfl | rfl | rfl | rfl
+    rcases mem with rfl | rfl | rfl | rfl | rfl | rfl
     · exact retained_false s
     · exact act_nomination_false s
     · exact nomination_some_false s
     · exact nomination_none_false s
     · exact commit_backed_other_false s
+    · exact certificates_zero_false s
 
 end ConsensusCoverage.CaseUnreachable
