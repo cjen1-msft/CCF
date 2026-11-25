@@ -24,6 +24,7 @@ public inductive Kind where
   | appendOld | voteNew | voteOld | ballotNew | ballotOld
   | preNew | preOld | preBallotNew | preBallotOld
   | ackPrimary | ackOther | ackNew | ackOld | bump | stable
+  | appendTag | voteTag | ballotTag | preTag | preBallotTag
   deriving DecidableEq
 
 public def column : Kind → Classes.StepBranch
@@ -42,6 +43,11 @@ public def column : Kind → Classes.StepBranch
   | .ackOld => .observe_response_bump_neg
   | .bump => .observe_bumping_bump_pos
   | .stable => .observe_bumping_bump_neg
+  | .appendTag => .observe_bumping_message_appendEntriesRequest
+  | .voteTag => .observe_bumping_message_requestVoteRequest
+  | .ballotTag => .observe_bumping_message_requestVoteResponse
+  | .preTag => .observe_bumping_message_requestPreVoteRequest
+  | .preBallotTag => .observe_bumping_message_requestPreVoteResponse
 
 private def accepts (k : Kind) (self : NodeID) (st : NodeState) : Event → Bool
   | .internal _ => false
@@ -50,15 +56,17 @@ private def accepts (k : Kind) (self : NodeID) (st : NodeState) : Event → Bool
     let newTerm := decide (st.currentTerm < msg.term)
     match msg with
     | .appendEntriesRequest _ => match k with
-      | .appendOld | .stable => !newTerm | .bump => newTerm | _ => false
+      | .appendOld | .stable => !newTerm | .bump => newTerm | .appendTag => true | _ => false
     | .requestVoteRequest _ => match k with
-      | .voteOld | .stable => !newTerm | .voteNew | .bump => newTerm | _ => false
+      | .voteOld | .stable => !newTerm | .voteNew | .bump => newTerm | .voteTag => true | _ => false
     | .requestPreVoteRequest _ => match k with
-      | .preOld | .stable => !newTerm | .preNew | .bump => newTerm | _ => false
+      | .preOld | .stable => !newTerm | .preNew | .bump => newTerm | .preTag => true | _ => false
     | .requestVoteResponse _ => match k with
-      | .ballotOld | .stable => peer && !newTerm | .ballotNew | .bump => peer && newTerm | _ => false
+      | .ballotOld | .stable => peer && !newTerm | .ballotNew | .bump => peer && newTerm
+      | .ballotTag => peer | _ => false
     | .requestPreVoteResponse _ => match k with
-      | .preBallotOld | .stable => peer && !newTerm | .preBallotNew | .bump => peer && newTerm | _ => false
+      | .preBallotOld | .stable => peer && !newTerm | .preBallotNew | .bump => peer && newTerm
+      | .preBallotTag => peer | _ => false
     | .appendEntriesResponse _ =>
       let primary := st.role == .primary
       match k with

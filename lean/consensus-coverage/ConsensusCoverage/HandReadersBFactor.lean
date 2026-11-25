@@ -156,16 +156,16 @@ private partial def splitAt (rs : Array Name) (xs : Array Expr) (p : Expr) : Met
 private partial def disjuncts (p : Expr) : List Expr :=
   if p.isAppOf ``Or then p.getArg! 0 :: disjuncts p.appArg! else [p]
 
-private partial def into (p val : Expr) (i : Nat) : MetaM Expr := do
-  if p.isAppOf ``Or then
+private partial def into (p val : Expr) (i count : Nat) : MetaM Expr := do
+  if count > 1 then
     if i == 0 then return ←mkAppOptM ``Or.inl #[none,some p.appArg!,some val]
-    return ←mkAppOptM ``Or.inr #[some (p.getArg! 0),none,some (←into p.appArg! val (i-1))]
+    return ←mkAppOptM ``Or.inr #[some (p.getArg! 0),none,some (←into p.appArg! val (i-1) (count-1))]
   unless i == 0 do throwError "missing alternative {i}"
   return val
 
 private partial def outOf (p h tgt : Expr) (fs : List Expr) : MetaM Expr := do
   let f :: rest := fs | throwError "missing origin proof"
-  if p.isAppOf ``Or then
+  unless rest.isEmpty do
     let g ← withLocalDeclD `r p.appArg! fun r => do mkLambdaFVars #[r] (←outOf p.appArg! r tgt rest)
     return ProofWalk.casesOr p h tgt f g
   return mkApp f h
@@ -178,9 +178,17 @@ private def compile (n : Name) : MetaM Unit := do
   lambdaTelescope (←getConstInfo n).value! fun xs body => do
     let arms := disjuncts body
     let parts ← arms.mapM (splitAt rs xs)
-    let clean := parts.head!.tail
+    let mut tails := #[]
+    let mut groups := #[]
     for part in parts do
-      unless ←isDefEq clean part.tail do throwError "{n} has different residual tests"
+      let mut idx := tails.size
+      for h : i in [:tails.size] do
+        if ←isDefEq tails[i] part.tail then
+          idx := i
+          break
+      if idx == tails.size then tails := tails.push part.tail
+      groups := groups.push idx
+    let clean := tails.toList.dropLast.foldr (fun a b => mkApp2 (mkConst ``Or) a b) tails.back!
     let src ← mkAppM ``Source #[xs[3]!]
     let quiet := mkAppN (mkConst ``Quiet) (xs.extract 0 3)
     let stem := xs ++ #[xs[2]!,←mkAppM ``Ctx.tr #[xs[3]!]]
@@ -189,16 +197,24 @@ private def compile (n : Name) : MetaM Unit := do
       value := ←mkLambdaFVars xs clean,hints := .abbrev,safety := .safe })
     withLocalDeclD `absent (←mkArrow (mkNot src) quiet) fun absent => do
       let target := mkApp2 (mkConst ``And) src (mkAppN (mkConst (factorName n)) xs)
-      let fw ← parts.mapM fun p => mkAppM ``forward #[p.proof,absent,mkAppN (mkConst (HandReadersBPaths.quietName p.root)) stem]
+      let fw ← parts.toArray.mapIdxM fun i p => do
+        let pr ← mkAppM ``forward #[p.proof,absent,mkAppN (mkConst (HandReadersBPaths.quietName p.root)) stem]
+        if tails.size == 1 then return pr
+        withLocalDeclD `h arms[i]! fun h => do
+          let (a,b) := ProofWalk.conjuncts (mkApp2 (mkConst ``And) src p.tail) (mkApp pr h)
+          mkLambdaFVars #[h] (←mkAppM ``And.intro #[a.2,←into clean b.2 groups[i]! tails.size])
       let lhs := mkAppN (mkConst n) xs
-      let forwardProof ← withLocalDeclD `hp lhs fun hp => do mkLambdaFVars #[hp] (←outOf body hp target fw)
+      let forwardProof ← withLocalDeclD `hp lhs fun hp => do mkLambdaFVars #[hp] (←outOf body hp target fw.toList)
       let arms' ← (#[15,16,9] : Array Nat).mapM fun i => do
-        let some j := parts.findIdx? (·.root == rs[i]!) | throwError "unavailable positive origin {i}"
-        let p := parts[j]!
-        let root := mkAppN (mkConst p.root) stem
+        let root := mkAppN (mkConst rs[i]!) stem
         withLocalDeclD `r root fun r => withLocalDeclD `yes clean fun yes => do
-          let old ← mkAppM ``inject #[p.proof,r,yes]
-          mkLambdaFVars #[r,yes] (←into body old j)
+          let proofs ← tails.mapIdxM fun g tail => do
+            let some j := (List.range parts.length).find? (fun j => parts[j]!.root == rs[i]! && groups[j]! == g)
+              | throwError "{n} residual {g} lacks positive origin {i}"
+            withLocalDeclD `h tail fun h => do
+              let old ← mkAppM ``inject #[parts[j]!.proof,r,h]
+              mkLambdaFVars #[h] (←into body old j parts.length)
+          mkLambdaFVars #[r,yes] (←outOf clean yes lhs proofs.toList)
       let back ← mkAppM ``backwards arms'
       let pr ← mkAppM ``Iff.intro #[forwardProof,back]
       let vars := xs.push absent
