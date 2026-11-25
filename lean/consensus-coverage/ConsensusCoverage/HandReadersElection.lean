@@ -4,6 +4,7 @@ module
 -- Licensed under the Apache 2.0 License.
 
 public import ConsensusCoverage.HandReadersABase
+import all ConsensusCoverage.HandReadersElectionAgreement
 import all ConsensusCoverage.HandReadersElectionCarried
 import all ConsensusCoverage.HandReadersElectionGrant
 import all ConsensusCoverage.HandReadersElectionRank
@@ -13,6 +14,8 @@ namespace ConsensusCoverage.HandReadersElection
 open Consensus ActionProfile HandReadersA
 
 private def lookup : (b : Classes.StepBranch) → Option (Exact b)
+  | .agree_or_contained_lt_or_ge_inl => some (Agreement.exactReader true)
+  | .agree_or_contained_lt_or_ge_inr => some (Agreement.exactReader false)
   | .carried_of_chain_certificate_fresh => some (Carried.exactReader .fresh)
   | .carried_of_chain_certificate_backed => some (Carried.exactReader .backed)
   | .carried_of_chain_agreement_inl => some (Carried.exactReader .contained)
@@ -43,6 +46,6 @@ public theorem read_total (s : Step) {b} (h : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp h).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 11 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 13 := by decide +kernel
 
 end ConsensusCoverage.HandReadersElection
