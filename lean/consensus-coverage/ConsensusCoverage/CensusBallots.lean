@@ -8,6 +8,8 @@ public import ConsensusCoverage.ActionProfile
 import all ConsensusCoverage.ActionProfile
 import all ConsensusCoverage.SolvedWitnesses
 import all Consensus.Proofs.SafetyInvariant
+public meta import ConsensusCoverage.ReachPath
+meta import Lean
 
 namespace ConsensusCoverage.CensusBallots
 
@@ -42,22 +44,18 @@ private theorem new_vote [Config.InitialConfiguration] {f : Frame} {t : State} (
   change term ≤ st.currentTerm at bound
   omega
 
-private theorem blocked [Config.InitialConfiguration] {f : Frame} {t : State} (c : Ctx f t) :
-    ¬ (reach_132 f t c c ∨ reach_133 f t c c ∨ reach_134 f t c c ∨ reach_135 f t c c ∨
-      reach_136 f t c c ∨ reach_137 f t c c ∨ reach_138 f t c c ∨ reach_139 f t c c ∨
-      reach_140 f t c c ∨ reach_141 f t c c ∨ reach_142 f t c c ∨ reach_143 f t c c) := by
-  have failedElection := @never_reelect _ _ _ c
-  have pastVote := @old_vote _ _ _ c
-  have nextVote := @new_vote _ _ _ c
-  intro h
-  rcases h with h|h|h|h|h|h|h|h|h|h|h|h
-  all_goals
-    first
-    | unfold reach_132 at h | unfold reach_133 at h | unfold reach_134 at h
-    | unfold reach_135 at h | unfold reach_136 at h | unfold reach_137 at h
-    | unfold reach_138 at h | unfold reach_139 at h | unfold reach_140 at h
-    | unfold reach_141 at h | unfold reach_142 at h | unfold reach_143 at h
-    grind only
+open Lean Meta Elab Tactic in
+local elab "expand_ballot_arm " hyp:ident : tactic => withMainContext do
+  let mut allowed := #[]
+  for root in [``step_ballot_step_mem_after_inl, ``step_ballot_step_mem_after_inr] do
+    let outer := ReachPath.children root.getPrefix (← getConstInfoDefn root).value
+    allowed := allowed ++ outer
+    for n in outer do allowed := allowed ++ ReachPath.children root.getPrefix (← getConstInfoDefn n).value
+  for _ in [:2] do
+    let ty ← withMainContext <| (← getFVarId hyp).getType
+    for name in ty.getUsedConstants.filter (allowed.contains ·) do
+      let guard := mkIdent name
+      evalTactic (← `(tactic| unfold $guard:ident at $hyp:ident))
 
 /-- Reaching either side of this split would require a voter observed below
 the term of its own vote, or a new election in a term that already had a leader. -/
@@ -68,16 +66,19 @@ public theorem label_false (s : Step) {b : Classes.StepBranch}
   apply Bool.eq_false_iff.mpr
   intro yes
   have arm := (SolvedWitnesses.sig_iff s.context b).mp ((label_true s _).mp yes)
-  apply blocked s.context
+  have failedElection := @never_reelect _ _ _ s.context
+  have pastVote := @old_vote _ _ _ s.context
+  have nextVote := @new_vote _ _ _ s.context
   rcases which with rfl | rfl
   all_goals
     first
     | change step_ballot_step_mem_after_inl _ _ _ at arm
     | change step_ballot_step_mem_after_inr _ _ _ at arm
     first | unfold step_ballot_step_mem_after_inl at arm | unfold step_ballot_step_mem_after_inr at arm
-    simp only [reach_144, reach_145, reach_146, reach_147, reach_148, reach_149,
-      reach_150, reach_151, reach_152, reach_153, reach_154, reach_155] at arm
-    grind only
+    rcases arm with h|h|h|h|h|h|h|h|h|h|h|h
+    all_goals
+      expand_ballot_arm h
+      grind only
 
 public def answer (b : Classes.StepBranch) : Option Bool :=
   if b = .ballot_step_mem_after_inl ∨ b = .ballot_step_mem_after_inr then some false else none

@@ -11,7 +11,7 @@ public meta import ConsensusCoverage.DelayedNominationRead
 public meta import ConsensusCoverage.Timely
 public meta import ConsensusCoverage.Families
 public meta import ConsensusCoverage.ReplayAnswers
-public meta import ConsensusCoverage.CensusReplay
+public meta import ConsensusCoverage.CensusExplorerReaders
 public meta import ConsensusCoverage.PairWitnesses
 meta import all ConsensusCoverage.CanonicalLogs
 meta import all ConsensusCoverage.CommitMonitor
@@ -78,6 +78,9 @@ open JointWitnesses (Key)
 meta section
 
 namespace ConsensusCoverage.Explore
+
+-- The native reader-free build replaces only this optional dependency.
+def readerHooks : Option CensusExplorerHooks := some CensusExplorerHooks.generated
 
 structure Deployment where
   voters : List NodeID
@@ -983,6 +986,8 @@ def boundOptions : List String → Bounds → Except String Bounds
         d.nodes == d.nodes.eraseDups && d.voters.all d.nodes.contains do
       throw "voters must be a nonempty set of distinct deployed node IDs; node IDs must be distinct"
     if b.caseOut == some b.out then throw "--case-out and --out must differ"
+    if b.readerCensus && readerHooks.isNone then
+      throw "this executable has no generated readers; build with --with-readers"
     if b.readerCensus && b.caseOut.isNone then throw "--reader-census requires --case-out"
     if b.finiteCaseReads && (b.caseOut.isNone || b.ghostMode == .history) then
       throw "--finite-case-reads requires --case-out and an incremental ghost"
@@ -1320,7 +1325,8 @@ structure CaseCounts where
   wider : Std.HashSet Nat := {}
 
 def extraColumns : Array Bool :=
-  FullProfile.stepBranches.map fun b => Readers.covered.contains b && !ReplayAnswers.unconditional.contains b
+  let covered := (readerHooks.map (·.covered)).getD []
+  FullProfile.stepBranches.map fun b => covered.contains b && !ReplayAnswers.unconditional.contains b
 
 def caseProjection : Array (Option Nat) :=
   let questions := (keyAnswers (decode 0)).map (·.1)
@@ -1359,7 +1365,8 @@ def readBoundedCases (b : Bounds) (p next : FramePath) (act : Model.Action)
     else match history with
       | some value => pure value
       | none => throw (IO.userError "missing ReplayAnswers history evidence")
-  let generated := if b.readerCensus then some (Readers.read cfg p.state act next.state p.past) else none
+  let generated := if b.readerCensus then
+    readerHooks.map fun hooks => (hooks.history cfg p.state act next.state p.past).1 else none
   if audit then
     unless decoded.all (fun (q, v) => history.any (fun e => ReplayAnswers.answer e q == some v)) do
       throw (IO.userError s!"decoded answers disagree with ReplayAnswers for {encode key}")
@@ -1374,7 +1381,7 @@ def readBoundedCases (b : Bounds) (p next : FramePath) (act : Model.Action)
       else ReplayAnswers.answer evidence question
     if b.finiteCaseReads && history.any (fun e => ReplayAnswers.answer e question != actual) then
       throw (IO.userError s!"finite case read disagreement at {i} for {encode key}")
-    let actual := actual.orElse fun _ => generated.bind (Readers.read? · FullProfile.stepBranches[i])
+    let actual := actual.orElse fun _ => generated.bind (· FullProfile.stepBranches[i])
     if b.readerCensus && extraColumns[i]! then
       let some value := actual | throw (IO.userError s!"covered reader returned unknown at {i}")
       wider := 2 * wider + value.toNat
