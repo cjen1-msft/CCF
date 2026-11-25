@@ -10,6 +10,7 @@ import all ConsensusCoverage.MessageWitnesses
 import all ConsensusCoverage.ExploredWitnesses
 import all ConsensusCoverage.BoundedWitnesses
 import all ConsensusCoverage.CaseWitnesses
+import all ConsensusCoverage.CensusWidth
 meta import Lean
 
 namespace ConsensusCoverage.ReadersCorpus
@@ -69,8 +70,33 @@ private def bounded : List Schedule :=
 private def cases : List Schedule :=
   certificate_schedules% CaseWitnesses.certificates from CaseWitnesses.certify validAt 2
 
-/-- Every schedule used by the four witness modules, in certificate order. -/
-private def schedules : List Schedule := joint ++ explored ++ bounded ++ cases
+private def widthSchedule (commands : List Command) : Schedule :=
+  ⟨CensusWidth.onTwo commands, [], by
+    change (CensusWidth.onTwo []).cfg.Nonempty ∧ (CensusWidth.onTwo []).nodes.Nodup
+    decide⟩
+
+open Lean Meta Elab Term in
+/-- Recover both schedules from every certified wider-label split. -/
+local elab "width_schedules%" : term => do
+  let mut list := (← getConstInfo ``CensusWidth.splits).value!
+  let mut out := #[]
+  repeat
+    let cell := (← whnf list).consumeMData
+    if cell.isAppOf ``List.nil then break
+    unless cell.isAppOfArity ``List.cons 3 do
+      throwError "expected a literal wider-label certificate list"
+    let call := (cell.getArg! 1).consumeMData
+    unless call.isAppOfArity ``CensusWidth.splitAt 6 do
+      throwError "expected a wider-label split with two schedules"
+    for i in [2, 3] do
+      out := out.push (mkApp (mkConst ``widthSchedule) (call.getArg! i))
+    list := cell.appArg!
+  mkListLit (mkConst ``Schedule) out.toList
+
+private def width : List Schedule := width_schedules%
+
+/-- Every schedule used by the witness modules, in certificate order. -/
+private def schedules : List Schedule := joint ++ explored ++ bounded ++ cases ++ width
 
 public def scheduleCount : Nat := schedules.length
 
@@ -85,5 +111,9 @@ public def stepAt (schedule offset : Nat) : Option Step :=
 /-- Case certificates keep their own indices when earlier families grow. -/
 public def caseStepAt (schedule offset : Nat) : Option Step :=
   cases[schedule]?.bind (·.at offset)
+
+/-- Wider-label certificates keep their own indices when earlier families grow. -/
+public def widthStepAt (schedule offset : Nat) : Option Step :=
+  width[schedule]?.bind (·.at offset)
 
 end ConsensusCoverage.ReadersCorpus
