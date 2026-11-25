@@ -12,6 +12,7 @@ import all ConsensusCoverage.HandReadersACommitTerm
 import all ConsensusCoverage.HandReadersAElection
 import all ConsensusCoverage.HandReadersAFacts
 import all ConsensusCoverage.HandReadersAHandler
+import all ConsensusCoverage.HandReadersAHistorySplit
 import all ConsensusCoverage.HandReadersALeader
 import all ConsensusCoverage.HandReadersAObserve
 import all ConsensusCoverage.HandReadersAOtherPeer
@@ -50,6 +51,12 @@ private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .pre_split_pre_backed_inr => some (PreBacking.exactReader .covered)
   | .pre_split_backing_inl => some (PreBacking.exactReader .prior)
   | .pre_split_backing_inr => some Facts.exactReader
+  | .backing_split_cert_fresh => some (HistorySplit.exactReader .fresh)
+  | .backing_split_cert_backed => some (HistorySplit.exactReader .backed)
+  | .backing_split_low_pos => some (HistorySplit.exactReader .low)
+  | .backing_split_low_neg => some (HistorySplit.exactReader .high)
+  | .backing_split_baseLe_pos => some (HistorySplit.exactReader .short)
+  | .backing_split_baseLe_neg => some (HistorySplit.exactReader .long)
   | .campaign_three_campaign_inl => some (CampaignRows.exactReader false true)
   | .campaign_three_campaign_inr => some (CampaignRows.exactReader false false)
   | .campaign_votes_campaign_inl => some (CampaignRows.exactReader true true)
@@ -120,6 +127,6 @@ public theorem read_total (s : Step) {b} (h : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp h).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 69 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 75 := by decide +kernel
 
 end ConsensusCoverage.HandReadersA
