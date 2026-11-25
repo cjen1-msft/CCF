@@ -60,6 +60,10 @@ import all ConsensusCoverage.AssistFollowerA
 import all ConsensusCoverage.AssistAcceptedA
 import all ConsensusCoverage.AssistCampaignA
 import all ConsensusCoverage.AssistEffectA
+import all ConsensusCoverage.ChoiceCasesB
+import all ConsensusCoverage.AssistReplyA
+import all ConsensusCoverage.AssistReplyBranchesA
+import all ConsensusCoverage.AssistConflictA
 import all ConsensusCoverage.FullProfile
 import all ConsensusCoverage.ReadersWitnesses
 import all ConsensusCoverage.ReadersWitnessesClosed
@@ -125,11 +129,42 @@ public theorem unsettled_iff (b : Classes.StepBranch) :
     exact Array.getElem_mem _
   simp [unsettled, all]
 
-public theorem witnessed_count : witnessed.Nodup ∧ witnessed.length = 474 := by decide +kernel
+public theorem witnessed_count : witnessed.Nodup ∧ witnessed.length = 487 := by decide +kernel
 
 public theorem refuted_count : refuted.Nodup ∧ refuted.length = 29 := by decide +kernel
 
-public theorem unsettled_count : unsettled.Nodup ∧ unsettled.length = 13 := by decide +kernel
+public theorem unsettled_count : unsettled.Nodup ∧ unsettled.length = 0 := by decide +kernel
+
+/-- Every recorded step question has been settled, without a bound on runs. -/
+public theorem unsettled_empty : unsettled = [] := List.length_eq_zero_iff.mp unsettled_count.2
+
+public theorem classified (b : Classes.StepBranch) : b ∈ witnessed ∨ b ∈ refuted := by
+  by_cases yes : b ∈ witnessed
+  · exact .inl yes
+  · by_cases no : b ∈ refuted
+    · exact .inr no
+    · have mem := (unsettled_iff b).2 ⟨yes, no⟩
+      rw [unsettled_empty] at mem
+      exact False.elim (List.not_mem_nil mem)
+
+public theorem witnessed_iff (b : Classes.StepBranch) :
+    b ∈ witnessed ↔ ∃ s : Step, label s (.step b) = true := by
+  refine ⟨occurs, ?_⟩
+  rintro ⟨s, yes⟩
+  rcases classified b with mem | no
+  · exact mem
+  · rw [impossible no s] at yes
+    contradiction
+
+public theorem refuted_iff (b : Classes.StepBranch) :
+    b ∈ refuted ↔ ∀ s : Step, label s (.step b) = false := by
+  refine ⟨impossible, ?_⟩
+  intro no
+  rcases classified b with mem | prior
+  · obtain ⟨s, yes⟩ := occurs mem
+    rw [no s] at yes
+    contradiction
+  · exact prior
 
 /-- Every total generated or legacy reader is accounted for in a proved
 class. One-sided readers may still give evidence about an unsettled case. -/
