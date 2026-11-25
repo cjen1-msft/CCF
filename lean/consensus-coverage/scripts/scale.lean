@@ -7,12 +7,10 @@ import all scripts.explore
 import all ConsensusCoverage.GuardedDomain
 import all ConsensusCoverage.ReplayAnswers
 import all ConsensusCoverage.ScaleCensus
-import ConsensusCoverage.CensusGhost
-import ConsensusCoverage.CensusBallots
-import ConsensusCoverage.CensusRaw
 
 /-! Native bounded exploration: `scripts/build-explorer.sh` builds this entry
-point outside the checkout. `--scale` enumerates exact interned triples
+point outside the checkout. The default target omits generated readers; build
+with `--with-readers` for either reader-census mode. `--scale` enumerates exact interned triples
 (ordered node table, finite ghost, queue). `--symbolic` instead computes
 one exact family of queues per (table, ghost) using decision diagrams.
 `--queue-ladder` annotates each queue with the smallest peak queue length
@@ -116,15 +114,14 @@ example (b : Bounds) (p next : FramePath) (a : Model.Action) (key : JointWitness
   if b.caseOut.isNone then return ⟨r.ghost, key, r.family, 0, fun _ => .empty, none⟩
   let c := censusInput b {state := s, ghost := g} {state := t, ghost := r.ghost} a r.key
   let extend ← if !b.readerCensus then pure none else do
-    let answer ← CensusGhost.answers b.deployment.cfg g r.ghost s t a
+    let hooks ← readerHooks
+    let answer ← hooks.finite b.deployment.cfg g r.ghost s t a
     pure <| some fun (old : ByteArray) => Id.run do
       let mut row := old
       for h : i in [:FullProfile.stepBranches.size] do
         if old[i]! != 0 then continue
         let branch := FullProfile.stepBranches[i]
-        -- These two labels are false on every initialized action, independently
-        -- of the finite ghost. The ordered-history audit still runs the reader.
-        if let some v := (CensusBallots.answer branch).orElse (fun _ => answer branch) then
+        if let some v := answer branch then
           row := row.set! i (if v then 2 else 1)
       return row
   return ⟨r.ghost, key, r.family, c.code, fun _ => caseVector c (keyAnswers r.key).toArray, extend⟩
@@ -133,8 +130,7 @@ example (b : Bounds) (p next : FramePath) (a : Model.Action) (key : JointWitness
   FullProfile.stepBranches.map branchName
 
 @[export ccf_scale_wide_columns] def wideColumns (_ : Bounds) :=
-  FullProfile.stepBranches.zipIdx.filterMap fun (branch, i) =>
-    if Readers.covered.contains branch && !ReplayAnswers.unconditional.contains branch then some i else none
+  extraColumns.zipIdx.filterMap fun (covered, i) => if covered then some i else none
 
 /-- Audit one native row without the interned ghost, probe mask, or memo. -/
 @[export ccf_scale_history_row] def historyRow (b : Bounds) (actions : Array Model.Action) :
@@ -147,8 +143,8 @@ example (b : Bounds) (p next : FramePath) (a : Model.Action) (key : JointWitness
     let after ← (transitionSystem d.cfg d.nodes).step before a
     if i + 1 == actions.size then
       let old := ReplayAnswers.read d.cfg before a after past
-      let gen := Readers.read d.cfg before a after past
-      return CensusRaw.row old gen
+      let hooks ← readerHooks
+      return (hooks.history d.cfg before a after past).2 old
     past := before :: past
     before := after
   none
@@ -171,7 +167,7 @@ example (b : Bounds) (p next : FramePath) (a : Model.Action) (key : JointWitness
       if let some branch := FullProfile.stepBranches[caseIndex]? then
         let old := ReplayAnswers.read d.cfg p.state a t p.past
         let v := (ReplayAnswers.answer old (.step branch)).orElse fun _ =>
-          if b.readerCensus then Readers.read? (Readers.read d.cfg p.state a t p.past) branch else none
+          if b.readerCensus then readerHooks.bind fun r => (r.history d.cfg p.state a t p.past).1 branch else none
         guard (v == some true)
     p := p.advance ⟨c, t⟩ k true {}
     i := i + 1
@@ -190,6 +186,8 @@ public def main (args : List String) : IO Unit := do
     IO.println "  --palette, --case-out TSV, --out TSV. --scale also accepts --step-budget."
     IO.println "  --max-seconds limits exploration, not the final accounting and witness replay."
     IO.println "  --queue-ladder requires a fixpoint and reports all queue caps at once."
+    if readerHooks.isNone then
+      IO.println "  Generated readers are not linked; rebuild with --with-readers to enable reader modes."
     IO.println "  --scale --reader-census evaluates the three-valued reader on every actual BFS path."
     IO.println "  --factored-reader-census reads the finite projection, without ordered witness pools."
     IO.println "  --scale --audit-reader-every N checks known finite answers on every Nth row."
